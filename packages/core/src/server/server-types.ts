@@ -49,6 +49,15 @@ export interface ServerOptions {
    * smaller to tighten one).
    */
   readonly maxBodyBytes?: number
+  /**
+   * Prototype-poisoning policy for JSON bodies (the schema path and `c.boundedJson`). An own
+   * `__proto__` key, or a `constructor` carrying a `prototype`, is the payload shape that turns a
+   * later innocent merge/assign into prototype pollution. `"reject"` (default) answers the same
+   * flat 400 as malformed JSON; `"strip"` removes the offending keys and continues; `"ignore"`
+   * parses as-is (only for routes that never merge body input into other objects). Clean payloads
+   * pay a substring pre-scan only - the deep walk runs solely on suspect text.
+   */
+  readonly protoPoisoning?: "reject" | "strip" | "ignore"
   /** Max inbound WebSocket message size (bytes) when `listen()`ing on Bun - frames over this are rejected
    * by the runtime before reaching your handler (so a huge frame can't be JSON-parsed into memory).
    * Default: `maxBodyBytes` (1 MB). */

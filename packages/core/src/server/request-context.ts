@@ -9,6 +9,7 @@ import { drainCapped, parseContentLength, readBoundedBytes } from "./body.ts"
 import type { Platform } from "./context.ts"
 import { type CookieOptions, parseCookies, serializeCookie } from "./cookies.ts"
 import { jsonError } from "./http.ts"
+import { guardParsedValue, type ProtoPoisoning, parseJsonGuarded } from "./proto-guard.ts"
 import { searchOf } from "./query.ts"
 import {
   CONTEXT_SEARCH,
@@ -17,6 +18,8 @@ import {
   getNeverAbortSignal,
   getUnboundedRequestBudget,
   headerOf,
+  PRE_DECODED_BODY,
+  type PreDecodedBody,
   requestOf,
   TEXT_DECODER,
 } from "./runtime-core.ts"
@@ -88,8 +91,14 @@ export class RequestContext implements RawContext {
   private declare cookiesValue: Readonly<Record<string, string>> | undefined
   private declare readonly source: RequestSource
   private declare readonly maxBodyBytes: number
+  private declare readonly protoPoisoning: ProtoPoisoning
 
-  constructor(source: RequestSource, params: Record<string, string>, maxBodyBytes: number)
+  constructor(
+    source: RequestSource,
+    params: Record<string, string>,
+    maxBodyBytes: number,
+    protoPoisoning?: ProtoPoisoning,
+  )
   constructor(
     source: RequestSource,
     params: Record<string, string>,
@@ -98,27 +107,32 @@ export class RequestContext implements RawContext {
     budget: RequestBudget,
     platform: Platform | undefined,
     maxBodyBytes: number,
+    protoPoisoning?: ProtoPoisoning,
   )
   constructor(
     source: RequestSource,
     params: Record<string, string>,
     searchOrMaxBodyBytes: string | number | undefined,
-    signal?: AbortSignal,
+    signalOrProtoPoisoning?: AbortSignal | ProtoPoisoning,
     budget?: RequestBudget,
     platform?: Platform,
     maxBodyBytes?: number,
+    protoPoisoning?: ProtoPoisoning,
   ) {
     this.source = source
     this.params = params
     if (typeof searchOrMaxBodyBytes === "number") {
       this.maxBodyBytes = searchOrMaxBodyBytes
+      this.protoPoisoning =
+        typeof signalOrProtoPoisoning === "string" ? signalOrProtoPoisoning : "reject"
       return
     }
     if (searchOrMaxBodyBytes !== undefined) this.searchValue = searchOrMaxBodyBytes
-    this.signalValue = signal
+    this.signalValue = signalOrProtoPoisoning as AbortSignal | undefined
     this.budgetValue = budget
     if (platform !== undefined) this.platformValue = platform
     this.maxBodyBytes = maxBodyBytes as number
+    this.protoPoisoning = protoPoisoning ?? "reject"
   }
 
   /**
@@ -133,8 +147,9 @@ export class RequestContext implements RawContext {
     search: string | undefined,
     maxBodyBytes: number,
     platform?: Platform,
+    protoPoisoning?: ProtoPoisoning,
   ): RequestContext {
-    const context = new RequestContext(source, params, maxBodyBytes)
+    const context = new RequestContext(source, params, maxBodyBytes, protoPoisoning)
     if (search !== undefined) context.searchValue = search
     if (platform !== undefined) context.platformValue = platform
     return context
@@ -222,7 +237,12 @@ export class RequestContext implements RawContext {
   }
 
   boundedJson<T = unknown>(maxBytes?: number): Promise<T> {
-    return readBoundedJsonBodyOrThrow<T>(this.source, this.maxBodyBytes, maxBytes)
+    return readBoundedJsonBodyOrThrow<T>(
+      this.source,
+      this.maxBodyBytes,
+      this.protoPoisoning,
+      maxBytes,
+    )
   }
 }
 
@@ -241,26 +261,35 @@ async function readBoundedBodyOrThrow(
     : jsonError(400, "invalid_content_length")
 }
 
-/** Backs `c.boundedJson`: `readBoundedBodyOrThrow` + `JSON.parse`, throwing a flat 400 on bad JSON. */
+/** Backs `c.boundedJson`: `readBoundedJsonSource`, throwing its flat 400/413 on failure. */
 async function readBoundedJsonBodyOrThrow<T>(
   req: RequestSource,
   maxBodyBytes: number,
+  protoPoisoning: ProtoPoisoning,
   maxBytes?: number,
 ): Promise<T> {
-  const parsed = await readBoundedJsonSource(req, maxBytes ?? maxBodyBytes)
+  const parsed = await readBoundedJsonSource(req, maxBytes ?? maxBodyBytes, protoPoisoning)
   if (parsed instanceof Response) throw parsed
   return parsed as T
 }
 
 /**
- * Read a JSON body with the same byte cap used by schema validation and `c.boundedJson`.
- * Non-chunked, framed requests with an in-cap `Content-Length` use the runtime-native `req.json()`;
+ * Read a JSON body with the same byte cap used by schema validation and `c.boundedJson`, then
+ * parse it through the prototype-poisoning guard (`protoPoisoning`, default `"reject"` - a
+ * poisoned payload answers the same flat 400 as malformed JSON). Non-chunked, framed requests
+ * with an in-cap `Content-Length` use the runtime's native `json()` and guard the parsed value;
  * chunked or length-less requests fall back to the streaming byte-cap guard.
  */
 export async function readBoundedJsonSource(
   req: RequestSource,
   maxBytes: number,
+  protoPoisoning: ProtoPoisoning = "reject",
 ): Promise<unknown | Response> {
+  // A pre-parsing hook (the transport-codec lane) may have decoded the body already - its stash
+  // is taken verbatim: the stasher enforced its own byte cap and poisoning policy on text this
+  // lane never sees. One symbol read; a miss on ordinary requests costs a cache-line, not a parse.
+  const preDecoded = (req as { [PRE_DECODED_BODY]?: PreDecodedBody })[PRE_DECODED_BODY]
+  if (preDecoded !== undefined) return preDecoded.value
   const declared = headerOf(req, "content-length")
   if (declared !== null) {
     // A present Content-Length must be a non-negative integer (HTTP grammar: `1*DIGIT`). A
@@ -274,8 +303,19 @@ export async function readBoundedJsonSource(
     if (length > maxBytes) return jsonError(413, "payload_too_large")
     const chunked = headerOf(req, "transfer-encoding") !== null
     if (!chunked) {
+      // Native `json()` keeps the runtime's fused decode+parse (measurably faster than
+      // buffering + a JS-side parse); the guard then walks the PARSED value, which needs no raw
+      // text - escapes are already resolved, so a `\u`-spelled `__proto__` is an own key like any
+      // other. The byte-exact delivered-size re-check lives in `readBoundedBytes` (the raw-bytes
+      // lane); here the declared length was already capped above and the runtime enforces framing.
+      let parsed: unknown
       try {
-        return await req.json()
+        parsed = await req.json()
+      } catch {
+        return jsonError(400, "invalid_json")
+      }
+      try {
+        return guardParsedValue(parsed, protoPoisoning)
       } catch {
         return jsonError(400, "invalid_json")
       }
@@ -286,7 +326,7 @@ export async function readBoundedJsonSource(
   const drained = await drainCapped(body, maxBytes)
   if (!drained.ok) return jsonError(413, "payload_too_large")
   try {
-    return JSON.parse(TEXT_DECODER.decode(drained.bytes))
+    return parseJsonGuarded(TEXT_DECODER.decode(drained.bytes), protoPoisoning)
   } catch {
     return jsonError(400, "invalid_json")
   }

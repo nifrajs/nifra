@@ -47,7 +47,7 @@ import type {
   StandardResult,
   StandardSchemaV1,
 } from "../schema/standard.ts"
-import { assertByteLimit, parseContentLength } from "./body.ts"
+import { assertByteLimit } from "./body.ts"
 import { type ClientIpTrust, resolveClientIp } from "./client-ip.ts"
 import type { Context, Platform, ResponseControls, RouteSchema } from "./context.ts"
 import { jsonError, pathnameOf, type UrlParts, urlPartsOf } from "./http.ts"
@@ -611,6 +611,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * no-WebSocket app never constructs (or bundles) it. */
   private topics: TopicRegistry | undefined
   private readonly maxBodyBytes: number
+  private readonly protoPoisoning: "reject" | "strip" | "ignore"
   private readonly wsMaxPayloadBytes: number
   private readonly requestTimeoutMs: number
   /** Installed by the `responseContract()` plugin; `undefined` = not installed, which is the default
@@ -700,6 +701,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.topics = undefined
     const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
     assertByteLimit(maxBodyBytes, "maxBodyBytes")
+    this.protoPoisoning = options.protoPoisoning ?? "reject"
     const wsMaxPayloadBytes = options.wsMaxPayloadBytes ?? maxBodyBytes
     assertByteLimit(wsMaxPayloadBytes, "wsMaxPayloadBytes")
     this.maxBodyBytes = maxBodyBytes
@@ -2304,6 +2306,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       createUnboundedRequestBudget(upgradeSignal),
       platform,
       this.maxBodyBytes,
+      this.protoPoisoning,
     )
     const settle = (value: unknown): WebSocketUpgradeOutcome =>
       value instanceof Response
@@ -2906,6 +2909,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       budget,
       platform,
       this.maxBodyBytes,
+      this.protoPoisoning,
     )
     this.logRequestError(err, ctx)
     return wrapResponse(jsonError(500, "internal_error"))
@@ -2977,7 +2981,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           return logError(
             err,
             nativeContext
-              ? RequestContext.native(source, params, search, this.maxBodyBytes, platform)
+              ? RequestContext.native(
+                  source,
+                  params,
+                  search,
+                  this.maxBodyBytes,
+                  platform,
+                  this.protoPoisoning,
+                )
               : new RequestContext(
                   source,
                   params,
@@ -2986,6 +2997,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
                   budget,
                   platform,
                   this.maxBodyBytes,
+                  this.protoPoisoning,
                 ),
           )
         }
@@ -2996,7 +3008,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
               logError(
                 err,
                 nativeContext
-                  ? RequestContext.native(source, params, search, this.maxBodyBytes, platform)
+                  ? RequestContext.native(
+                      source,
+                      params,
+                      search,
+                      this.maxBodyBytes,
+                      platform,
+                      this.protoPoisoning,
+                    )
                   : new RequestContext(
                       source,
                       params,
@@ -3005,6 +3024,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
                       budget,
                       platform,
                       this.maxBodyBytes,
+                      this.protoPoisoning,
                     ),
               ),
           )
@@ -3014,8 +3034,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
     return (source, params, search, signal, budget, platform, nativeContext) => {
       const ctx = nativeContext
-        ? RequestContext.native(source, params, search, this.maxBodyBytes, platform)
-        : new RequestContext(source, params, search, signal, budget, platform, this.maxBodyBytes)
+        ? RequestContext.native(
+            source,
+            params,
+            search,
+            this.maxBodyBytes,
+            platform,
+            this.protoPoisoning,
+          )
+        : new RequestContext(
+            source,
+            params,
+            search,
+            signal,
+            budget,
+            platform,
+            this.maxBodyBytes,
+            this.protoPoisoning,
+          )
       if (decorations !== undefined) Object.assign(ctx, decorations)
       let result: unknown
       try {
@@ -3132,8 +3168,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       wrapResponse: (response: Response) => T,
     ): MaybePromise<T> => {
       const ctx = nativeContext
-        ? RequestContext.native(source, params, search, this.maxBodyBytes, platform)
-        : new RequestContext(source, params, search, signal, budget, platform, this.maxBodyBytes)
+        ? RequestContext.native(
+            source,
+            params,
+            search,
+            this.maxBodyBytes,
+            platform,
+            this.protoPoisoning,
+          )
+        : new RequestContext(
+            source,
+            params,
+            search,
+            signal,
+            budget,
+            platform,
+            this.maxBodyBytes,
+            this.protoPoisoning,
+          )
       const finish = (value: unknown): MaybePromise<T> =>
         runParsed(value, ctx, finalize, wrapResponse)
       return this.readBodyInput(source, finish, wrapResponse, (err) =>
@@ -3197,8 +3249,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
     return (source, params, search, signal, budget, platform, nativeContext) => {
       const ctx = nativeContext
-        ? RequestContext.native(source, params, search, this.maxBodyBytes, platform)
-        : new RequestContext(source, params, search, signal, budget, platform, this.maxBodyBytes)
+        ? RequestContext.native(
+            source,
+            params,
+            search,
+            this.maxBodyBytes,
+            platform,
+            this.protoPoisoning,
+          )
+        : new RequestContext(
+            source,
+            params,
+            search,
+            signal,
+            budget,
+            platform,
+            this.maxBodyBytes,
+            this.protoPoisoning,
+          )
       if (decorations !== undefined) Object.assign(ctx, decorations)
       let validation: MaybePromise<StandardResult<unknown>>
       try {
@@ -3301,22 +3369,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       return Promise.resolve(wrapResponse(jsonError(415, "unsupported_media_type")))
     }
 
-    // A framed, in-cap, non-chunked body can use native json() directly. Chunked or length-less
-    // bodies use readBoundedJson, which enforces the streaming cap before parsing.
-    const declared = headerOf(source, "content-length")
-    if (declared !== null) {
-      const length = parseContentLength(declared)
-      if (length === undefined) {
-        return Promise.resolve(wrapResponse(jsonError(400, "invalid_content_length")))
-      }
-      if (length > this.maxBodyBytes) {
-        return Promise.resolve(wrapResponse(jsonError(413, "payload_too_large")))
-      }
-      if (headerOf(source, "transfer-encoding") === null) {
-        return source.json().then(onParsed, () => wrapResponse(jsonError(400, "invalid_json")))
-      }
-    }
-
+    // All JSON bodies go through readBoundedJson - the single enforcement point for the framed
+    // fast path (post-read byte re-check), the streaming cap, and the prototype-poisoning guard.
+    // A separate inlined native-json() fast path here would fork the trust boundary in two.
     try {
       return this.readBoundedJson(source).then(
         (parsed) => (parsed instanceof Response ? wrapResponse(parsed) : onParsed(parsed)),
@@ -4334,21 +4389,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   /**
-   * Read the body as text, capped at `maxBodyBytes`. Rejects (`null`) on a
-   * `Content-Length` over the cap *before* buffering, and aborts mid-stream once the
-   * running byte count exceeds it - so a lying or absent length can't force us to
-   * buffer an oversized payload.
-   *
-   * Fast path: when a non-chunked request carries a `Content-Length` within the cap,
-   * a native `req.json()` is already bounded - under HTTP/1.1 + HTTP/2 framing the
-   * runtime delivers at most `Content-Length` bytes - so we skip the manual stream
-   * loop and a separate text decode. It trusts the wire
-   * *framing*, not the header value: nifra only ever receives framed Requests from the
-   * runtime's HTTP server, never a hand-built one with a mismatched length. Chunked or
-   * length-less bodies fall through to the streaming byte-cap guard below.
+   * Read + parse the JSON body, capped at `maxBodyBytes` and screened by the server's
+   * `protoPoisoning` policy. Rejects a `Content-Length` over the cap *before* buffering,
+   * re-checks what was actually delivered after the read, and aborts a chunked or
+   * length-less body mid-stream once the running byte count exceeds the cap - so a lying
+   * or absent length can't force us to buffer an oversized payload.
    */
   private async readBoundedJson(req: RequestSource): Promise<unknown | Response> {
-    return readBoundedJsonSource(req, this.maxBodyBytes)
+    return readBoundedJsonSource(req, this.maxBodyBytes, this.protoPoisoning)
   }
 
   /** Adapt one route's compiled execution plan to Bun's already-matched request shape. Route

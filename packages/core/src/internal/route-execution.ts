@@ -22,6 +22,7 @@ import type { StandardSchemaV1 } from "../schema/standard.ts"
 import type { Platform, RouteSchema } from "../server/context.ts"
 import type { ResolvedIdempotency } from "../server/idempotency-lane.ts"
 import type { EffectLedgerRuntime, ResolvedEffectLedger } from "../server/ledger-lane.ts"
+import type { ProtoPoisoning } from "../server/proto-guard.ts"
 import type { Registry } from "../server/registry.ts"
 import { RequestContext } from "../server/request-context.ts"
 import type { ResponseContractRuntime } from "../server/response-contract-lane.ts"
@@ -137,6 +138,7 @@ interface RouteExecutionRuntime {
     wrapResponse: (response: Response) => T,
   ): MaybePromise<T>
   readonly maxBodyBytes: number
+  readonly protoPoisoning: ProtoPoisoning
   readonly effectLedgerRuntime: EffectLedgerRuntime | undefined
   readonly logger: {
     error(message: string, fields: { method: string; path: string; name: string }): void
@@ -294,8 +296,24 @@ export function compileRouteExecutionPlan(options: {
   ) => {
     const server = runtime as unknown as RouteExecutionRuntime
     const ctx = nativeContext
-      ? RequestContext.native(source, params, search, server.maxBodyBytes, platform)
-      : new RequestContext(source, params, search, signal, budget, platform, server.maxBodyBytes)
+      ? RequestContext.native(
+          source,
+          params,
+          search,
+          server.maxBodyBytes,
+          platform,
+          server.protoPoisoning,
+        )
+      : new RequestContext(
+          source,
+          params,
+          search,
+          signal,
+          budget,
+          platform,
+          server.maxBodyBytes,
+          server.protoPoisoning,
+        )
     let ledger: RequestLedger | undefined
     // The runtime is always present when a route resolved a ledger (enforced at registration).
     const ledgerRuntime = server.effectLedgerRuntime

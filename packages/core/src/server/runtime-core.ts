@@ -14,6 +14,20 @@ export const RESPONSE_RESULT = Symbol.for("nifra.response.result")
 export const CONTEXT_SET = Symbol("nifra.context.set")
 export const CONTEXT_SEARCH = Symbol("nifra.context.search")
 
+/**
+ * A transport codec (or other pre-parsing hook) that already decoded the body stashes the value
+ * here on the replacement `RequestSource`; the JSON body lane takes it verbatim instead of
+ * parsing again. Boxed so a decoded `undefined` stays distinguishable from "not present". The
+ * stasher owns the poisoning guard for what it stashes - the body lane's own guard only covers
+ * text the lane itself parses.
+ */
+export const PRE_DECODED_BODY = Symbol("nifra.body.preDecoded")
+
+/** The stash shape under {@link PRE_DECODED_BODY}. */
+export interface PreDecodedBody {
+  readonly value: unknown
+}
+
 export interface ResponseResult {
   readonly [RESPONSE_RESULT]: true
   toResponse(): Response
