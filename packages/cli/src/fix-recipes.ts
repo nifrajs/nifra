@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs"
 import { readFile, writeFile } from "node:fs/promises"
-import { resolve } from "node:path"
+import { join } from "node:path"
 import type { Diagnostic } from "./diagnostics.ts"
+import { resolveInsideProject } from "./project-path.ts"
 
 export interface FixRecipe {
   readonly id: string
@@ -31,7 +32,8 @@ registerFixRecipe({
   verify: "nifra check --lints-only",
   async apply(root, diagnostic) {
     if (diagnostic.file === undefined || diagnostic.line === undefined) return []
-    const path = resolve(root, diagnostic.file)
+    const path = await resolveInsideProject(root, diagnostic.file)
+    if (path === undefined) return []
     const lines = (await readFile(path, "utf8")).split("\n")
     const index = diagnostic.line - 1
     const original = lines[index]
@@ -93,9 +95,13 @@ registerFixRecipe({
       return []
     // The segment regex above admits "." and "..", which would resolve outside node_modules.
     if (packageName.split("/").some((segment) => segment === "." || segment === "..")) return []
-    const packageDir = resolve(root, "node_modules", packageName)
-    const packageJson = resolve(packageDir, "package.json")
-    if (!existsSync(packageJson)) return []
+    const packageDir = await resolveInsideProject(root, join("node_modules", packageName))
+    if (packageDir === undefined) return []
+    const packageJson = await resolveInsideProject(
+      root,
+      join("node_modules", packageName, "package.json"),
+    )
+    if (packageJson === undefined || !existsSync(packageJson)) return []
     const proc = Bun.spawn(["bun", "run", "build"], {
       cwd: packageDir,
       stdout: "ignore",

@@ -97,6 +97,41 @@ test("serves GET (JSON) + POST (body), resolves the bound port", async () => {
   expect(await echoed.json()).toEqual({ hi: "there" })
 })
 
+test("allowedHosts rejects an untrusted Host on both fast GET and POST paths", async () => {
+  const app = server()
+    .get("/host", (c) => ({ origin: new URL(c.req.url).origin }))
+    .post("/host", (c) => ({ origin: new URL(c.req.url).origin }))
+  running = await serve(app, { port: 0, allowedHosts: ["app.example"] })
+  const base = `http://127.0.0.1:${running.port}`
+
+  const get = await fetch(`${base}/host`, { headers: { host: "evil.example" } })
+  expect(get.status).toBe(400)
+  const post = await fetch(`${base}/host`, {
+    method: "POST",
+    headers: { host: "evil.example", "content-type": "application/json" },
+    body: "{}",
+  })
+  expect(post.status).toBe(400)
+})
+
+test("canonicalHost controls request URL construction and the default remains Host-derived", async () => {
+  const canonicalApp = server().get("/host", (c) => ({ origin: new URL(c.req.url).origin }))
+  running = await serve(canonicalApp, { port: 0, canonicalHost: "canonical.example" })
+  let response = await fetch(`http://127.0.0.1:${running.port}/host`, {
+    headers: { host: "evil.example" },
+  })
+  expect(await response.json()).toEqual({ origin: "http://canonical.example" })
+  await running.stop({ drainMs: 0 })
+  running = undefined
+
+  const defaultApp = server().get("/host", (c) => ({ origin: new URL(c.req.url).origin }))
+  running = await serve(defaultApp, { port: 0 })
+  response = await fetch(`http://127.0.0.1:${running.port}/host`, {
+    headers: { host: "evil.example" },
+  })
+  expect(await response.json()).toEqual({ origin: "http://evil.example" })
+})
+
 test("emits multiple Set-Cookie headers as separate lines (not comma-joined)", async () => {
   // `Headers.forEach` joins repeated headers with ", "; for Set-Cookie that's wrong (a cookie's
   // `Expires` contains a comma). The adapter must split them via `getSetCookie()` - so a response

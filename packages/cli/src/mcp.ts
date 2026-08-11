@@ -1314,8 +1314,8 @@ export function projectTools(
         const { collectCheckResult } = await import("./check.ts")
         const { applyDiagnosticRecipe } = await import("./fix-recipes.ts")
         const { applyDoctorAutoFix } = await import("./doctor.ts")
+        const { resolveInsideProject } = await import("./project-path.ts")
         const { writeFile, readFile } = await import("node:fs/promises")
-        const { resolve } = await import("node:path")
 
         let doctorResult: Awaited<ReturnType<typeof applyDoctorAutoFix>> | null = null
         try {
@@ -1348,7 +1348,8 @@ export function projectTools(
               const beforeLine = diffLines.find((l) => l.startsWith("-"))?.slice(1)
               const afterLine = diffLines.find((l) => l.startsWith("+"))?.slice(1)
               if (beforeLine !== undefined && afterLine !== undefined) {
-                const filePath = resolve(cwd, diag.file)
+                const filePath = await resolveInsideProject(cwd, diag.file)
+                if (filePath === undefined) continue
                 const content = await readFile(filePath, "utf-8")
                 const lines = content.split("\n")
                 const idx = diag.line - 1

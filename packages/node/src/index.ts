@@ -370,6 +370,10 @@ export interface ServeOptions {
    * `request.url` sees the public scheme. Forwarded headers are not trusted implicitly.
    */
   readonly protocol?: RequestProtocolOption
+  /** Reject requests whose normalized Host authority is not in this allowlist or callback result. */
+  readonly allowedHosts?: readonly string[] | ((host: string) => boolean)
+  /** Use this validated authority when constructing Request.url, ignoring the inbound Host value. */
+  readonly canonicalHost?: string
   /**
    * Install SIGTERM/SIGINT handlers that call `stop()` for a graceful drain on
    * `docker stop` / Ctrl-C. Off by default - taking over process signals is opt-in,
@@ -401,6 +405,86 @@ export interface NodeServer {
 
 const DEFAULT_DRAIN_MS = 10_000
 const DRAIN_POLL_MS = 10
+
+interface HostPolicy {
+  readonly allowedHosts: ReadonlySet<string> | ((host: string) => boolean) | undefined
+  readonly canonicalHost: string | undefined
+}
+
+function normalizeHostAuthority(value: string): string | undefined {
+  if (value.length === 0 || /[\r\n\s@/?#]/.test(value)) return undefined
+  let hostname: string
+  let port: string | undefined
+  if (value.startsWith("[")) {
+    const close = value.indexOf("]")
+    if (close === -1) return undefined
+    hostname = value.slice(1, close)
+    const rest = value.slice(close + 1)
+    if (rest !== "") {
+      if (!rest.startsWith(":")) return undefined
+      port = rest.slice(1)
+    }
+    if (hostname.length === 0 || !/^[0-9a-f:.%]+$/i.test(hostname)) return undefined
+    hostname = `[${hostname.toLowerCase()}]`
+  } else {
+    const colon = value.indexOf(":")
+    if (colon === -1) {
+      hostname = value
+    } else {
+      if (value.indexOf(":", colon + 1) !== -1) return undefined
+      hostname = value.slice(0, colon)
+      port = value.slice(colon + 1)
+    }
+    if (hostname.length === 0 || !/^[a-z0-9.-]+$/i.test(hostname)) return undefined
+    hostname = hostname.toLowerCase()
+  }
+  if (port !== undefined) {
+    if (!/^\d{1,5}$/.test(port)) return undefined
+    const numericPort = Number(port)
+    if (!Number.isSafeInteger(numericPort) || numericPort > 65_535) return undefined
+    port = String(numericPort)
+  }
+  return port === undefined ? hostname : `${hostname}:${port}`
+}
+
+function hostPolicyOf(options: ServeOptions): HostPolicy {
+  let allowedHosts: HostPolicy["allowedHosts"]
+  if (options.allowedHosts !== undefined && typeof options.allowedHosts !== "function") {
+    const normalized = new Set<string>()
+    for (const host of options.allowedHosts) {
+      const parsed = normalizeHostAuthority(host)
+      if (parsed === undefined) throw new TypeError(`@nifrajs/node: invalid allowed host ${host}`)
+      normalized.add(parsed)
+    }
+    allowedHosts = normalized
+  } else {
+    allowedHosts = options.allowedHosts
+  }
+  const canonicalHost =
+    options.canonicalHost === undefined ? undefined : normalizeHostAuthority(options.canonicalHost)
+  if (options.canonicalHost !== undefined && canonicalHost === undefined) {
+    throw new TypeError(`@nifrajs/node: invalid canonical host ${options.canonicalHost}`)
+  }
+  return { allowedHosts, canonicalHost }
+}
+
+function requestHost(req: IncomingMessage, policy: HostPolicy): string | undefined {
+  const inbound = typeof req.headers.host === "string" ? req.headers.host : "localhost"
+  const normalized = normalizeHostAuthority(inbound)
+  if (normalized === undefined) return undefined
+  if (policy.allowedHosts !== undefined) {
+    try {
+      const allowed =
+        typeof policy.allowedHosts === "function"
+          ? policy.allowedHosts(normalized)
+          : policy.allowedHosts.has(normalized)
+      if (!allowed) return undefined
+    } catch {
+      return undefined
+    }
+  }
+  return policy.canonicalHost ?? normalized
+}
 
 const STATIC_CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".js": "text/javascript; charset=utf-8",
@@ -590,11 +674,12 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
   let inFlight = 0
   let closed = false
   const protocol = protocolResolver(options.protocol)
+  const hostPolicy = hostPolicyOf(options)
   const staticState = options.static !== undefined ? staticStateOf(options.static) : undefined
   const server = createServer((nodeReq, nodeRes) => {
     inFlight += 1
     try {
-      const handled = handle(app, nodeReq, nodeRes, protocol, staticState)
+      const handled = handle(app, nodeReq, nodeRes, protocol, staticState, hostPolicy)
       if (handled instanceof Promise) {
         void handled.finally(() => {
           inFlight -= 1
@@ -615,7 +700,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
   if (resolveWs !== undefined) {
     let wssPromise: Promise<WsServer | undefined> | undefined
     server.on("upgrade", (nodeReq, socket, head) => {
-      void handleUpgrade(resolveWs, protocol, nodeReq, socket, head, () => {
+      void handleUpgrade(resolveWs, protocol, hostPolicy, nodeReq, socket, head, () => {
         wssPromise ??= loadWsServer()
         return wssPromise
       })
@@ -668,7 +753,13 @@ function handle(
   nodeRes: ServerResponse,
   getProtocol: RequestProtocolResolver,
   staticState: StaticState | undefined,
+  hostPolicy: HostPolicy,
 ): void | Promise<void> {
+  const host = requestHost(nodeReq, hostPolicy)
+  if (host === undefined) {
+    writeBadRequest(nodeRes)
+    return
+  }
   let protocol: RequestProtocol
   try {
     protocol = getProtocol(nodeReq)
@@ -714,7 +805,7 @@ function handle(
     try {
       const outcome = resolveNodeSource.call(
         app,
-        toNodeRequestSource(nodeReq, protocol),
+        toNodeRequestSource(nodeReq, protocol, host),
         platform,
         NODE_OUTCOME_RUNTIME,
       )
@@ -730,7 +821,7 @@ function handle(
     }
   }
 
-  const request = toWebRequest(nodeReq, protocol)
+  const request = toWebRequest(nodeReq, protocol, host)
   const resolveNode = (app as Partial<NodeFastHandler>).resolveNode
   if (typeof resolveNode === "function") {
     try {
@@ -781,6 +872,15 @@ function writeNodeOutcome(
 function writeInternalError(nodeRes: ServerResponse): void {
   nodeRes.writeHead(500, { "content-type": "application/json" })
   nodeRes.end(INTERNAL_ERROR_BODY)
+}
+
+function writeBadRequest(nodeRes: ServerResponse): void {
+  const body = "Bad Request"
+  nodeRes.writeHead(400, {
+    "content-type": "text/plain; charset=utf-8",
+    "content-length": String(Buffer.byteLength(body)),
+  })
+  nodeRes.end(body)
 }
 
 /** True when every header name in the record is already free of ASCII uppercase - the gate for
@@ -909,18 +1009,21 @@ function normalizeProtocol(value: string): RequestProtocol {
   )
 }
 
-function toWebRequest(req: IncomingMessage, protocol: RequestProtocol): Request {
-  const host = req.headers.host ?? "localhost"
+function toWebRequest(req: IncomingMessage, protocol: RequestProtocol, host: string): Request {
   const url = `${protocol}://${host}${req.url ?? "/"}`
   const method = req.method ?? "GET"
   return makeWebRequest(req, method, url, headerRecordFromNode(req.headers))
 }
 
-function toNodeRequestSource(req: IncomingMessage, protocol: RequestProtocol): NodeRequestSource {
+function toNodeRequestSource(
+  req: IncomingMessage,
+  protocol: RequestProtocol,
+  host: string,
+): NodeRequestSource {
   const method = req.method ?? "GET"
   return method === "GET" || method === "HEAD"
-    ? new LeanNodeGetSource(req, method, protocol)
-    : new LazyNodeRequestSource(req, method, protocol)
+    ? new LeanNodeGetSource(req, method, protocol, host)
+    : new LazyNodeRequestSource(req, method, protocol, host)
 }
 
 /**
@@ -966,16 +1069,18 @@ class LazyNodeRequestSource implements NodeRequestSource {
   private urlValue: string | undefined
   private readonly nodeReq: IncomingMessage
   private readonly protocol: RequestProtocol
+  private readonly host: string
 
-  constructor(nodeReq: IncomingMessage, method: string, protocol: RequestProtocol) {
+  constructor(nodeReq: IncomingMessage, method: string, protocol: RequestProtocol, host: string) {
     this.nodeReq = nodeReq
     this.method = method
     this.protocol = protocol
+    this.host = host
   }
 
   /** The absolute URL, built only when something reads it - routing uses `urlParts` instead. */
   get url(): string {
-    this.urlValue ??= `${this.protocol}://${this.nodeReq.headers.host ?? "localhost"}${this.nodeReq.url ?? "/"}`
+    this.urlValue ??= `${this.protocol}://${this.host}${this.nodeReq.url ?? "/"}`
     return this.urlValue
   }
 
@@ -1108,16 +1213,18 @@ class LeanNodeGetSource implements NodeRequestSource {
   private urlValue: string | undefined
   private readonly nodeReq: IncomingMessage
   private readonly protocol: RequestProtocol
+  private readonly host: string
 
-  constructor(nodeReq: IncomingMessage, method: string, protocol: RequestProtocol) {
+  constructor(nodeReq: IncomingMessage, method: string, protocol: RequestProtocol, host: string) {
     this.nodeReq = nodeReq
     this.method = method
     this.protocol = protocol
+    this.host = host
   }
 
   /** The absolute URL, built only when something reads it - routing uses `urlParts` instead. */
   get url(): string {
-    this.urlValue ??= `${this.protocol}://${this.nodeReq.headers.host ?? "localhost"}${this.nodeReq.url ?? "/"}`
+    this.urlValue ??= `${this.protocol}://${this.host}${this.nodeReq.url ?? "/"}`
     return this.urlValue
   }
 
@@ -1425,6 +1532,7 @@ const WS_STATUS_TEXT: Readonly<Record<number, string>> = {
 async function handleUpgrade(
   resolveWs: (request: Request) => WsUpgradeOutcome | Promise<WsUpgradeOutcome>,
   getProtocol: RequestProtocolResolver,
+  hostPolicy: HostPolicy,
   nodeReq: IncomingMessage,
   socket: Duplex,
   head: Buffer,
@@ -1432,7 +1540,12 @@ async function handleUpgrade(
 ): Promise<void> {
   let outcome: WsUpgradeOutcome
   try {
-    outcome = await resolveWs(toWebRequest(nodeReq, getProtocol(nodeReq)))
+    const host = requestHost(nodeReq, hostPolicy)
+    if (host === undefined) {
+      writeUpgradeRejection(socket, 400, "bad_request")
+      return
+    }
+    outcome = await resolveWs(toWebRequest(nodeReq, getProtocol(nodeReq), host))
   } catch {
     writeUpgradeRejection(socket, 500, "internal_error")
     return
