@@ -30,8 +30,8 @@ import type { LinkDescriptor } from "./manifest.ts"
 export interface GoogleFontOptions {
   /** Family name exactly as Google lists it, e.g. `"Inter"`, `"Open Sans"`, `"Roboto Mono"`. */
   readonly family: string
-  /** Weights to request - numbers (`400`), numeric strings, a variable range (`"100 900"`), or the
-   * keywords `"normal"`/`"bold"`. Defaults to `[400]`. */
+  /** Weights to request - numbers (`400`), numeric strings, a variable range (`"100..900"`, the
+   * CSS-style `"100 900"` also accepted), or the keywords `"normal"`/`"bold"`. Defaults to `[400]`. */
   readonly weights?: readonly (number | string)[]
   /** Styles to request. Defaults to `["normal"]`. */
   readonly styles?: readonly ("normal" | "italic")[]
@@ -144,7 +144,8 @@ function validateFamily(family: string): string {
 }
 
 /** Normalize a weight to the token Google expects: `400`, `"700"`, `normal`→`400`, `bold`→`700`, or a
- * variable range `"100 900"`. Rejects anything else (these land in the request URL). */
+ * variable range as `"100..900"` (also accepted spelled `"100 900"`). Rejects anything else (these
+ * land in the request URL). */
 function normalizeWeight(weight: number | string): string {
   if (typeof weight === "number") {
     if (!Number.isInteger(weight) || weight < 1 || weight > 1000) {
@@ -155,8 +156,16 @@ function normalizeWeight(weight: number | string): string {
   const w = weight.trim()
   if (w === "normal") return "400"
   if (w === "bold") return "700"
-  // A single numeric weight, or a variable range like "100 900".
-  if (/^\d{1,4}$/.test(w) || /^\d{1,4} \d{1,4}$/.test(w)) return w
+  if (/^\d{1,4}$/.test(w)) return w
+  // A variable range - Google's own "100..900" axis syntax or the CSS-style "100 900" spelling.
+  // Either way the URL token must be the DOTTED form; a literal space 400s at the CSS2 endpoint.
+  const range = /^(\d{1,4})(?:\.\.| )(\d{1,4})$/.exec(w)
+  if (range !== null) {
+    if (Number(range[1]) >= Number(range[2])) {
+      throw new Error(`loadGoogleFont: invalid weight range ${JSON.stringify(weight)} (min < max)`)
+    }
+    return `${range[1]}..${range[2]}`
+  }
   throw new Error(`loadGoogleFont: invalid weight ${JSON.stringify(weight)}`)
 }
 

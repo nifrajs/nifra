@@ -83,7 +83,21 @@ describe("googleFontsCssUrl()", () => {
     expect(googleFontsCssUrl({ family: "Inter", weights: ["normal", "bold"] })).toContain(
       "wght@400;700",
     )
-    expect(googleFontsCssUrl({ family: "Inter", weights: ["100 900"] })).toContain("wght@100 900")
+    // Either input spelling must land in the URL as CSS2's DOTTED axis form - a literal space 400s.
+    expect(googleFontsCssUrl({ family: "Inter", weights: ["100..900"] })).toContain("wght@100..900")
+    expect(googleFontsCssUrl({ family: "Inter", weights: ["100 900"] })).toContain("wght@100..900")
+    expect(
+      googleFontsCssUrl({ family: "Inter", weights: ["100 900"], styles: ["normal", "italic"] }),
+    ).toContain("ital,wght@0,100..900;1,100..900")
+  })
+
+  test("rejects an inverted or degenerate weight range", () => {
+    expect(() => googleFontsCssUrl({ family: "Inter", weights: ["900..100"] })).toThrow(
+      /invalid weight range/,
+    )
+    expect(() => googleFontsCssUrl({ family: "Inter", weights: ["400 400"] })).toThrow(
+      /invalid weight range/,
+    )
   })
 
   test("text subsetting adds an encoded &text= param", () => {
