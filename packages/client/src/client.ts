@@ -224,13 +224,41 @@ export function client(
  * `createWebApp({ api: inProcessClient(backend) })` can auto-mount the backend while forwarding the
  * outer runtime's `env` and `waitUntil`.
  */
+const utf8 = new TextEncoder()
+
+/** Byte length of a body whose size is knowable without reading a stream; `undefined` otherwise
+ * (a `ReadableStream` or `FormData` body stays lengthless - multipart framing is the runtime's). */
+function knownBodyLength(body: NonNullable<RequestInit["body"]>): number | undefined {
+  if (typeof body === "string") return utf8.encode(body).byteLength
+  if (body instanceof URLSearchParams) return utf8.encode(body.toString()).byteLength
+  if (body instanceof Blob) return body.size
+  if (body instanceof ArrayBuffer) return body.byteLength
+  if (ArrayBuffer.isView(body)) return body.byteLength
+  return undefined
+}
+
+/**
+ * A `Request` the way a network peer would deliver it: the `Request` constructor never derives
+ * `content-length`, so a synthetic in-process request with a body arrives LENGTHLESS - which a
+ * fail-closed length gate (e.g. `bodyLimit()`) correctly refuses with 411. Stamp the header
+ * whenever the body's size is knowable, so the in-process app sees what a socket would carry.
+ */
+function synthesizedRequest(url: string, init?: RequestInit): Request {
+  const request = new Request(url, init)
+  const body = init?.body
+  if (body === undefined || body === null || request.headers.has("content-length")) return request
+  const length = knownBodyLength(body)
+  if (length !== undefined) request.headers.set("content-length", String(length))
+  return request
+}
+
 export function inProcessClient<
   App extends { fetch(request: Request): Response | Promise<Response> },
 >(app: App, options?: InProcessClientOptions): InProcessClient<App> {
   // The in-process bridge: the client speaks `fetch(url, init)` (the `FetchFn` shape) while the app's
   // own `fetch` takes a `Request`. It is the proxy's per-call transport; the symbol-keyed mount below
   // is the platform-aware auto-mount path.
-  const direct: FetchFn = (url, init) => Promise.resolve(app.fetch(new Request(url, init)))
+  const direct: FetchFn = (url, init) => Promise.resolve(app.fetch(synthesizedRequest(url, init)))
   const bridge = options?.validateResponses === true ? withResponseValidation(app, direct) : direct
   // Mark the bridge as same-process: its response bodies are memory the app already holds, so
   // `parseBody` may use the native `Response.text()` read (measured ~23x cheaper than the streaming

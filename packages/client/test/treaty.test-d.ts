@@ -9,9 +9,19 @@ import { server } from "@nifrajs/core"
  */
 import type { Equal, Expect } from "@nifrajs/test-utils"
 
-declare const name: StandardSchemaV1<unknown, { name: string }>
-declare const page: StandardSchemaV1<unknown, { page: number }>
-declare const creds: StandardSchemaV1<unknown, { email: string; password: string }>
+// Input sides are concrete (not `unknown`) because the client types `body`/`query` from the
+// schema's INPUT side - what a caller sends over the wire, pre-validation.
+declare const name: StandardSchemaV1<{ name: string }, { name: string }>
+declare const page: StandardSchemaV1<{ page: number }, { page: number }>
+declare const creds: StandardSchemaV1<
+  { email: string; password: string },
+  { email: string; password: string }
+>
+// A defaulting schema: input and output diverge - the caller may omit `tags`.
+declare const draft: StandardSchemaV1<
+  { title: string; tags?: string[] },
+  { title: string; tags: string[] }
+>
 
 const app = server()
   .get("/", () => ({ root: true }))
@@ -38,6 +48,7 @@ const app = server()
   .get("/admin/users/:id", (c) => ({ id: c.params.id }))
   .get("/a/b/c/d", () => ({ deep: true }))
   .post("/auth/login", { body: creds }, () => ({ token: "t" }))
+  .post("/drafts", { body: draft }, (c) => ({ count: c.body.tags.length }))
   .post("/ping", () => ({ pong: true }))
   // A `/v1/*` group exercising the user-reported failures: a segment that is BOTH a GET leaf and a
   // namespace (`/v1/me` + `/v1/me/results`), and a wide static group alongside it (`/v1/destinations…`).
@@ -84,6 +95,12 @@ export type _AdminList = Expect<Equal<DataOf<typeof nestedStatic>, { id: string 
 
 const pinged = api.ping.post() // bodyless body-verb: body optional, options still allowed
 export type _Ping = Expect<Equal<DataOf<typeof pinged>, { pong: boolean }>>
+
+// body is typed from the schema's INPUT side: a defaulted field is optional for the caller, even
+// though the handler receives it filled in. (`InferOutput` here would demand `tags` on every call.)
+const drafted = api.drafts.post({ title: "t" }) // `tags` omitted - legal on the wire
+export type _Drafted = Expect<Equal<DataOf<typeof drafted>, { count: number }>>
+api.drafts.post({ title: "t", tags: ["a"] }) // supplying it is equally legal
 
 // leaf-vs-branch: `me` is both a GET leaf AND a namespace with a `results` child (user-reported (d)).
 const me = api.v1.me.get()

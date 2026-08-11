@@ -9,7 +9,7 @@ import { defineContract } from "@nifrajs/core/contract"
 import type { Equal, Expect } from "@nifrajs/test-utils"
 
 declare const userOut: StandardSchemaV1<unknown, { id: string; name: string }>
-declare const nameBody: StandardSchemaV1<unknown, { name: string }>
+declare const nameBody: StandardSchemaV1<{ name: string }, { name: string }>
 
 const contract = defineContract({
   getUser: { method: "GET", path: "/users/:id", response: userOut },

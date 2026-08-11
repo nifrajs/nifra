@@ -21,6 +21,22 @@ async function load({ api, params }: LoaderArgs<typeof backend>) {
   return { user: res.data }
 }
 
+test("inProcessClient stamps content-length so fail-closed length gates see a framed body", async () => {
+  // The `Request` constructor never derives content-length, so a synthetic in-process POST would
+  // arrive lengthless - and a Content-Length-based limiter (bodyLimit) would 411 it. The bridge
+  // stamps the byte length whenever it is knowable, matching what a socket would carry.
+  const echo = server().post(
+    "/echo-length",
+    { body: schema<{ title: string }>((v) => ({ value: v as { title: string } })) },
+    (c) => ({ contentLength: c.req.headers.get("content-length") }),
+  )
+  const typed = inProcessClient(echo)
+  const res = await typed["echo-length"].post({ title: "café" })
+  // BYTE length of the JSON encoding, not the string length (the e-acute is two UTF-8 bytes).
+  const bytes = new TextEncoder().encode(JSON.stringify({ title: "café" })).byteLength
+  expect(res.data).toEqual({ contentLength: String(bytes) })
+})
+
 test("inProcessClient + a typed loader resolve data in-process (no network)", async () => {
   const data = await load({
     params: { id: "7" },
