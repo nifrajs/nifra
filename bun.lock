@@ -272,6 +272,15 @@
     "packages/i18n": {
       "name": "@nifrajs/i18n",
       "version": "2.11.0",
+      "devDependencies": {
+        "@nifrajs/core": "workspace:*",
+      },
+      "peerDependencies": {
+        "@nifrajs/core": "workspace:^",
+      },
+      "optionalPeers": [
+        "@nifrajs/core",
+      ],
     },
     "packages/image": {
       "name": "@nifrajs/image",

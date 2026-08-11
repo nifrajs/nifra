@@ -6197,7 +6197,7 @@
     "kind": "function",
     "package": "@nifrajs/middleware",
     "signature": "export declare function language<const L extends readonly string[]>(options: LanguageOptions<L>): import(\"@nifrajs/core/server\").NifraPlugin<import(\"@nifrajs/core/server\").AnyServer, import(\"@nifrajs/core/server\").Server<any, any>>;",
-    "doc": "/**\n * Derives `c.language` from `Accept-Language` and emits `Content-Language` by default.\n */"
+    "doc": "/**\n * Derives `c.language` from `Accept-Language` and emits `Content-Language` by default.\n *\n * Header-only by design. For the full detector - `?lang=` query parameter → cookie →\n * `Accept-Language`, with optional cookie persistence - use `localeDetector()` from\n * `@nifrajs/i18n/detector`; use one or the other, not both.\n */"
   },
   {
     "name": "LanguageMatch",
@@ -6358,7 +6358,41 @@
     "kind": "type",
     "package": "@nifrajs/i18n",
     "signature": "export type Locale = string;",
-    "doc": "/**\n * Locale negotiation - pick the best supported locale for a request, from (in priority order) an\n * explicit cookie, then the `Accept-Language` header (quality-ranked, with a base-tag fallback so\n * `fr-CA` matches a supported `fr`). Pure + runtime-agnostic.\n */"
+    "doc": "/**\n * Locale negotiation - pick the best supported locale for a request, from (in priority order) an\n * explicit query parameter, then a cookie, then the `Accept-Language` header (quality-ranked, with\n * a base-tag fallback so `fr-CA` matches a supported `fr`). Pure + runtime-agnostic. The result is\n * always a member of the configured `locales` allow-list (or `defaultLocale`): request input is\n * *matched against* the list, never echoed back - so a hostile `?lang=` or header value cannot\n * reach the response. Parsing is split-based and linear; no regex runs on request input.\n */"
+  },
+  {
+    "name": "LocaleContext",
+    "kind": "interface",
+    "package": "@nifrajs/i18n",
+    "signature": "export interface LocaleContext {\n    /** The negotiated locale - always one of the configured `locales`. */\n    readonly locale: Locale;\n    readonly localeSource: LocaleSource;\n}",
+    "doc": "/** Context added by {@link localeDetector}. */"
+  },
+  {
+    "name": "localeDetector",
+    "kind": "function",
+    "package": "@nifrajs/i18n",
+    "signature": "export declare function localeDetector(options: LocaleDetectorOptions): import(\"@nifrajs/core/server\").ContextPlugin<LocaleContext>;",
+    "doc": "/**\n * Detect the request's locale and expose it as `c.locale` / `c.localeSource`.\n *\n * ```ts\n * import { localeDetector } from \"@nifrajs/i18n/detector\"\n *\n * app.use(\n *   localeDetector({\n *     locales: [\"en\", \"fr\", \"de\"],\n *     defaultLocale: \"en\",\n *     queryParam: \"lang\",\n *     cookie: \"locale\",\n *     persist: true,\n *   }),\n * ).get(\"/\", (c) => c.json({ locale: c.locale }))\n * ```\n */"
+  },
+  {
+    "name": "LocaleDetectorOptions",
+    "kind": "interface",
+    "package": "@nifrajs/i18n",
+    "signature": "export interface LocaleDetectorOptions extends NegotiateOptions {\n    /** Persist a `queryParam` choice into the locale cookie when it differs from the cookie's current\n     * value. Requires both `queryParam` and `cookie`. Default `false`. */\n    readonly persist?: boolean;\n    /** `Max-Age` (seconds) of the persisted cookie. Default one year. */\n    readonly cookieMaxAge?: number;\n    /** Emit `Content-Language` (kept if already set by the handler). Default `true`. */\n    readonly header?: boolean;\n}"
+  },
+  {
+    "name": "LocaleParts",
+    "kind": "interface",
+    "package": "@nifrajs/i18n",
+    "signature": "export interface LocaleParts {\n    readonly header: (name: string) => string | null;\n    readonly url?: string;\n    readonly query?: URLSearchParams;\n}",
+    "doc": "/**\n * The slice of a request the negotiation reads. Pass a `Request`, or this structural shape where no\n * `Request` object exists (e.g. inside an `onResponseHeaders` hook, which sees only `url` +\n * `header`). `query`/`url` are consulted only when `queryParam` is configured; an already-parsed\n * `query` is preferred over slicing `url`.\n */"
+  },
+  {
+    "name": "LocaleSource",
+    "kind": "type",
+    "package": "@nifrajs/i18n",
+    "signature": "export type LocaleSource = \"query\" | \"cookie\" | \"header\" | \"default\";",
+    "doc": "/** Which source produced the locale, in priority order. */"
   },
   {
     "name": "LocalProcessAdapter",
@@ -7365,14 +7399,14 @@
     "name": "negotiateLocale",
     "kind": "function",
     "package": "@nifrajs/i18n",
-    "signature": "export declare function negotiateLocale(request: Request, options: NegotiateOptions): Locale;",
-    "doc": "/**\n * Negotiate the request's locale. Order: a valid {@link NegotiateOptions.cookie} value →\n * `Accept-Language` (each `q`-ranked tag, exact then base-subtag) → `defaultLocale`.\n */"
+    "signature": "export declare function negotiateLocale(request: Request | LocaleParts, options: NegotiateOptions): Locale;",
+    "doc": "/**\n * Negotiate the request's locale. Order: a valid {@link NegotiateOptions.queryParam} value → a\n * valid {@link NegotiateOptions.cookie} value → `Accept-Language` (each `q`-ranked tag, exact then\n * base-subtag) → `defaultLocale`. {@link resolveLocale} additionally reports the winning source.\n */"
   },
   {
     "name": "NegotiateOptions",
     "kind": "interface",
     "package": "@nifrajs/i18n",
-    "signature": "export interface NegotiateOptions {\n    /** The locales the app supports, e.g. `[\"en\", \"fr\", \"de\"]`. Matched case-insensitively. */\n    readonly locales: readonly Locale[];\n    /** Returned when nothing matches. */\n    readonly defaultLocale: Locale;\n    /** A cookie name whose value (if a supported locale) wins over `Accept-Language` (a user's explicit\n     * choice). Omit to skip the cookie. */\n    readonly cookie?: string;\n}"
+    "signature": "export interface NegotiateOptions {\n    /** The locales the app supports, e.g. `[\"en\", \"fr\", \"de\"]`. Matched case-insensitively. */\n    readonly locales: readonly Locale[];\n    /** Returned when nothing matches. */\n    readonly defaultLocale: Locale;\n    /** A query parameter whose value (if a supported locale) wins over everything - a link carrying\n     * `?lang=fr` is an explicit ask. Omit to skip the query string. */\n    readonly queryParam?: string;\n    /** A cookie name whose value (if a supported locale) wins over `Accept-Language` (a user's explicit\n     * choice). Omit to skip the cookie. */\n    readonly cookie?: string;\n}"
   },
   {
     "name": "NetlifyEvent",
@@ -9274,11 +9308,24 @@
     "signature": "export interface ResolvedImage {\n    readonly src: string;\n    readonly srcSet?: string;\n    readonly sizes?: string;\n    readonly width: number;\n    readonly height: number;\n    readonly alt: string;\n    readonly loading: \"lazy\" | \"eager\";\n    readonly decoding: \"async\";\n    readonly fetchPriority?: \"high\";\n}"
   },
   {
+    "name": "ResolvedLocale",
+    "kind": "interface",
+    "package": "@nifrajs/i18n",
+    "signature": "export interface ResolvedLocale {\n    /** Always a member of `locales` (or `defaultLocale`) - never raw request input. */\n    readonly locale: Locale;\n    readonly source: LocaleSource;\n    /** The supported locale the request's cookie currently resolves to, when\n     * {@link NegotiateOptions.cookie} is configured and the cookie holds a valid value. Lets a caller\n     * persist a new choice only when it actually differs. */\n    readonly cookie?: Locale;\n}"
+  },
+  {
     "name": "resolveImage",
     "kind": "function",
     "package": "@nifrajs/image",
     "signature": "export declare function resolveImage(props: ImageProps, loader?: ImageLoader): ResolvedImage;",
     "doc": "/**\n * Resolve {@link ImageProps} + an {@link ImageLoader} into `<img>` attributes. CLS-safe (`width`/\n * `height` required + > 0, else a dev error), lazy + async-decoding by default, with a responsive\n * `srcSet` built from `widths` via the loader. If every width produces the same URL (e.g.\n * {@link identityLoader}), `srcSet` is omitted (it'd be redundant).\n */"
+  },
+  {
+    "name": "resolveLocale",
+    "kind": "function",
+    "package": "@nifrajs/i18n",
+    "signature": "export declare function resolveLocale(request: Request | LocaleParts, options: NegotiateOptions): ResolvedLocale;",
+    "doc": "/**\n * Negotiate the request's locale and report which source chose it. Order: a valid\n * {@link NegotiateOptions.queryParam} value → a valid {@link NegotiateOptions.cookie} value →\n * `Accept-Language` (each `q`-ranked tag, exact then base-subtag) → `defaultLocale`.\n */"
   },
   {
     "name": "resolveMeta",

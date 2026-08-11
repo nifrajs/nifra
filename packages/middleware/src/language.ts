@@ -78,6 +78,10 @@ export function pickLanguage<const L extends readonly string[]>(
 
 /**
  * Derives `c.language` from `Accept-Language` and emits `Content-Language` by default.
+ *
+ * Header-only by design. For the full detector - `?lang=` query parameter → cookie →
+ * `Accept-Language`, with optional cookie persistence - use `localeDetector()` from
+ * `@nifrajs/i18n/detector`; use one or the other, not both.
  */
 export function language<const L extends readonly string[]>(options: LanguageOptions<L>) {
   const { supported, defaultLanguage } = options

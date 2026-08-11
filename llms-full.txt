@@ -3023,10 +3023,13 @@ you bring JSON catalogs.
 
 ### Negotiate the locale
 
-`negotiateLocale` picks the best supported locale from a cookie (an explicit choice),
-then `Accept-Language` (quality-ranked, with `fr-CA`→`fr`
-base-subtag fallback), else your default. Resolve it in a loader and return just that locale's
-messages.
+`negotiateLocale` picks the best supported locale from a `?lang=` query
+parameter (an explicit ask), then a cookie (a remembered choice), then
+` Accept-Language` (quality-ranked, with `fr-CA`→`fr`
+base-subtag fallback), else your default. The answer is always drawn from your
+` locales` allow-list - request input is matched, never echoed - so a hostile
+` ?lang=` can't reach the response. Resolve it in a loader and return just that
+locale's messages.
 
 ```ts
 // In a loader: resolve the locale + return only that catalog's messages.
@@ -3034,10 +3037,31 @@ import { negotiateLocale } from "@nifrajs/i18n"
 import { catalogs, locales } from "../catalogs"
 
 export async function loader({ request }: { request: Request }) {
-  const q = new URL(request.url).searchParams.get("lang")
-  const locale = q && locales.includes(q) ? q : negotiateLocale(request, { locales, defaultLocale: "en", cookie: "lang" })
-  return { locale, messages: catalogs[locale] }   // cookie → Accept-Language → default
+  const locale = negotiateLocale(request, { locales, defaultLocale: "en", queryParam: "lang", cookie: "lang" })
+  return { locale, messages: catalogs[locale] }   // ?lang= → cookie → Accept-Language → default
 }
+```
+
+On the server, `localeDetector()` (from `@nifrajs/i18n/detector`, needs
+` @nifrajs/core`) wraps the same negotiation as a plugin: handlers read
+` c.locale`/`c.localeSource`, responses carry
+` Content-Language`. With `persist: true` it writes the locale cookie
+** only** when an explicit `?lang=` choice differs from the cookie - a
+header-derived guess is never pinned, and plain requests never grow a
+`Set-Cookie`, so responses stay cacheable. (`@nifrajs/middleware`'s
+` language()` is the header-only sibling; use one or the other.)
+
+```ts
+// Or as a server plugin: c.locale on every handler, Content-Language on every response.
+import { localeDetector } from "@nifrajs/i18n/detector"
+
+app.use(localeDetector({
+  locales: ["en", "fr", "de"],
+  defaultLocale: "en",
+  queryParam: "lang",
+  cookie: "locale",
+  persist: true,        // pin an explicit ?lang= choice into the cookie
+})).get("/", (c) => c.json({ locale: c.locale, via: c.localeSource }))
 ```
 
 ### Format messages
@@ -7763,6 +7787,27 @@ Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one
 bun add @nifrajs/i18n
 ```
 
+## Locale detection
+
+`negotiateLocale()` / `resolveLocale()` are pure: query parameter → cookie → `Accept-Language` →
+default, always answering from your `locales` allow-list (request input is matched, never echoed).
+The server plugin lives at `@nifrajs/i18n/detector` and needs `@nifrajs/core`:
+
+```ts
+import { localeDetector } from "@nifrajs/i18n/detector"
+
+app.use(
+  localeDetector({
+    locales: ["en", "fr", "de"],
+    defaultLocale: "en",
+    queryParam: "lang",
+    cookie: "locale",
+    persist: true, // pin an explicit ?lang= choice into the cookie
+  }),
+)
+// handlers see c.locale / c.localeSource; responses carry Content-Language
+```
+
 ## Docs
 
 - Reference: <https://nifra.dev/docs>
@@ -9236,7 +9281,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/i18n
 
-`createFormatter`, `Formatter`, `Locale`, `Messages`, `negotiateLocale`, `NegotiateOptions`
+`createFormatter`, `Formatter`, `Locale`, `LocaleParts`, `LocaleSource`, `Messages`, `negotiateLocale`, `NegotiateOptions`, `ResolvedLocale`, `resolveLocale`
 
 ## @nifrajs/image
 

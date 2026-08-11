@@ -10,6 +10,27 @@ Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one
 bun add @nifrajs/i18n
 ```
 
+## Locale detection
+
+`negotiateLocale()` / `resolveLocale()` are pure: query parameter → cookie → `Accept-Language` →
+default, always answering from your `locales` allow-list (request input is matched, never echoed).
+The server plugin lives at `@nifrajs/i18n/detector` and needs `@nifrajs/core`:
+
+```ts
+import { localeDetector } from "@nifrajs/i18n/detector"
+
+app.use(
+  localeDetector({
+    locales: ["en", "fr", "de"],
+    defaultLocale: "en",
+    queryParam: "lang",
+    cookie: "locale",
+    persist: true, // pin an explicit ?lang= choice into the cookie
+  }),
+)
+// handlers see c.locale / c.localeSource; responses carry Content-Language
+```
+
 ## Docs
 
 - Reference: <https://nifra.dev/docs>

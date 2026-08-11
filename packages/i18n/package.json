@@ -20,6 +20,11 @@
       "bun": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./detector": {
+      "bun": "./src/detector.ts",
+      "types": "./dist/detector.d.ts",
+      "default": "./dist/detector.js"
     }
   },
   "files": [
@@ -29,6 +34,17 @@
   "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "peerDependencies": {
+    "@nifrajs/core": "workspace:^"
+  },
+  "peerDependenciesMeta": {
+    "@nifrajs/core": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@nifrajs/core": "workspace:*"
   },
   "license": "MIT",
   "publishConfig": {

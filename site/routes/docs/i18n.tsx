@@ -16,10 +16,20 @@ import { negotiateLocale } from "@nifrajs/i18n"
 import { catalogs, locales } from "../catalogs"
 
 export async function loader({ request }: { request: Request }) {
-  const q = new URL(request.url).searchParams.get("lang")
-  const locale = q && locales.includes(q) ? q : negotiateLocale(request, { locales, defaultLocale: "en", cookie: "lang" })
-  return { locale, messages: catalogs[locale] }   // cookie → Accept-Language → default
+  const locale = negotiateLocale(request, { locales, defaultLocale: "en", queryParam: "lang", cookie: "lang" })
+  return { locale, messages: catalogs[locale] }   // ?lang= → cookie → Accept-Language → default
 }`
+
+const DETECTOR = `// Or as a server plugin: c.locale on every handler, Content-Language on every response.
+import { localeDetector } from "@nifrajs/i18n/detector"
+
+app.use(localeDetector({
+  locales: ["en", "fr", "de"],
+  defaultLocale: "en",
+  queryParam: "lang",
+  cookie: "locale",
+  persist: true,        // pin an explicit ?lang= choice into the cookie
+})).get("/", (c) => c.json({ locale: c.locale, via: c.localeSource }))`
 
 const PROVIDER = `// The page provides the formatter; components read it with useT().
 import { I18nProvider, useT } from "@nifrajs/web-react/i18n"
@@ -57,12 +67,26 @@ export default function I18n() {
 
       <h2>Negotiate the locale</h2>
       <p>
-        <code>negotiateLocale</code> picks the best supported locale from a cookie (an explicit choice),
-        then <code>Accept-Language</code> (quality-ranked, with <code>fr-CA</code>→<code>fr</code>
-        base-subtag fallback), else your default. Resolve it in a loader and return just that locale's
-        messages.
+        <code>negotiateLocale</code> picks the best supported locale from a <code>?lang=</code> query
+        parameter (an explicit ask), then a cookie (a remembered choice), then
+        <code> Accept-Language</code> (quality-ranked, with <code>fr-CA</code>→<code>fr</code>
+        base-subtag fallback), else your default. The answer is always drawn from your
+        <code> locales</code> allow-list - request input is matched, never echoed - so a hostile
+        <code> ?lang=</code> can't reach the response. Resolve it in a loader and return just that
+        locale's messages.
       </p>
       <CodeBlock code={NEGOTIATE} />
+      <p>
+        On the server, <code>localeDetector()</code> (from <code>@nifrajs/i18n/detector</code>, needs
+        <code> @nifrajs/core</code>) wraps the same negotiation as a plugin: handlers read
+        <code> c.locale</code>/<code>c.localeSource</code>, responses carry
+        <code> Content-Language</code>. With <code>persist: true</code> it writes the locale cookie
+        <b> only</b> when an explicit <code>?lang=</code> choice differs from the cookie - a
+        header-derived guess is never pinned, and plain requests never grow a{" "}
+        <code>Set-Cookie</code>, so responses stay cacheable. (<code>@nifrajs/middleware</code>'s
+        <code> language()</code> is the header-only sibling; use one or the other.)
+      </p>
+      <CodeBlock code={DETECTOR} />
 
       <h2>Format messages</h2>
       <p>
