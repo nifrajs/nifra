@@ -14,9 +14,10 @@
  * The cookie is written `Path=/; SameSite=Lax; Max-Age=...`, without `HttpOnly` (client-side
  * language switchers may read it) and without `Secure` (plain-http dev works). That is safe for
  * this cookie because its value is never trusted on read beyond allow-list matching - tampering
- * can only select one of the app's own supported locales.
+ * can only select one of the app's own supported locales. A `__Secure-`/`__Host-` cookie name
+ * opts into the prefix contract, and `Secure` is applied automatically.
  */
-import { defineContextPlugin, serializeCookie } from "@nifrajs/core/server"
+import { cookieNamePrefix, defineContextPlugin, serializeCookie } from "@nifrajs/core/server"
 import {
   type Locale,
   type LocaleSource,
@@ -73,6 +74,11 @@ export function localeDetector(options: LocaleDetectorOptions) {
     path: "/",
     sameSite: "lax",
     maxAge: options.cookieMaxAge ?? 31_536_000,
+    // A `__Secure-`/`__Host-` cookie name opts into the prefix contract: apply `Secure` (Path is
+    // already `/`, no Domain is set) so the persisting Set-Cookie satisfies it instead of throwing.
+    ...(persistCookie !== undefined && cookieNamePrefix(persistCookie) !== undefined
+      ? { secure: true }
+      : undefined),
   } as const
   // Fail a bad cookie name or Max-Age at construction, not on the first persisting response.
   if (persistCookie !== undefined) serializeCookie(persistCookie, defaultLocale, cookieAttrs)

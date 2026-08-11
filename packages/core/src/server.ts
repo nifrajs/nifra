@@ -32,6 +32,7 @@ export type {
 export {
   type CookieOptions,
   type CookieSecret,
+  cookieNamePrefix,
   parseCookies,
   serializeCookie,
   signValue,

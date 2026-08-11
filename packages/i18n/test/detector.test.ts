@@ -91,6 +91,24 @@ describe("localeDetector()", () => {
       )
       expect(res.headers.get("set-cookie")).toContain("Max-Age=60")
     })
+
+    test("a __Secure-/__Host- cookie name auto-applies Secure (prefix contract)", async () => {
+      // Without the auto-apply, construction would throw at the eager serializeCookie validation.
+      const res = await app({ ...base, cookie: "__Secure-locale", persist: true }).fetch(
+        new Request("http://x/?lang=fr"),
+      )
+      const cookie = res.headers.get("set-cookie")
+      expect(cookie).toStartWith("__Secure-locale=fr")
+      expect(cookie).toContain("Secure")
+
+      const host = await app({ ...base, cookie: "__Host-locale", persist: true }).fetch(
+        new Request("http://x/?lang=fr"),
+      )
+      const hostCookie = host.headers.get("set-cookie")
+      expect(hostCookie).toStartWith("__Host-locale=fr")
+      expect(hostCookie).toContain("Secure")
+      expect(hostCookie).toContain("Path=/")
+    })
   })
 
   test("validates construction", () => {

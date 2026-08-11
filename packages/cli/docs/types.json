@@ -2577,6 +2577,20 @@
     "doc": "/**\n * A tiny cookie jar for in-process tests - parses `Set-Cookie` off responses and emits a `Cookie`\n * request header, so a login → authenticated-request flow works without threading headers by hand. It\n * honours removal (`Max-Age=0` / a past `Expires`) so logout clears the cookie; other attributes\n * (Domain/Path/Secure/SameSite) are ignored - everything is same-origin in-process.\n */"
   },
   {
+    "name": "cookieNamePrefix",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function cookieNamePrefix(name: string): \"secure\" | \"host\" | undefined;",
+    "doc": "/**\n * RFC 6265bis cookie-name prefix, matched **case-insensitively** the way browsers match it -\n * `__secure-x` triggers the same enforcement as `__Secure-x`. `undefined` for unprefixed names.\n * Writers (set AND delete) must satisfy the prefix contract or the user agent silently discards\n * the whole `Set-Cookie`.\n */"
+  },
+  {
+    "name": "cookieNamePrefix",
+    "kind": "function",
+    "package": "nifra",
+    "signature": "export declare function cookieNamePrefix(name: string): \"secure\" | \"host\" | undefined;",
+    "doc": "/**\n * RFC 6265bis cookie-name prefix, matched **case-insensitively** the way browsers match it -\n * `__secure-x` triggers the same enforcement as `__Secure-x`. `undefined` for unprefixed names.\n * Writers (set AND delete) must satisfy the prefix contract or the user agent silently discards\n * the whole `Set-Cookie`.\n */"
+  },
+  {
     "name": "CookieOptions",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -10455,14 +10469,14 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function serializeCookie(name: string, value: string, options?: CookieOptions): string;",
-    "doc": "/**\n * Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g.\n * `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a\n * header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result - a serialization\n * bug should fail loudly, not silently emit a cookie the browser drops.\n */"
+    "doc": "/**\n * Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g.\n * `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a\n * header-injecting `Path`/`Domain`, a non-integer `maxAge`, a `__Secure-`/`__Host-` name whose\n * attributes violate its prefix contract, or an oversized result - a serialization bug should fail\n * loudly, not silently emit a cookie the browser drops.\n */"
   },
   {
     "name": "serializeCookie",
     "kind": "function",
     "package": "nifra",
     "signature": "export declare function serializeCookie(name: string, value: string, options?: CookieOptions): string;",
-    "doc": "/**\n * Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g.\n * `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a\n * header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result - a serialization\n * bug should fail loudly, not silently emit a cookie the browser drops.\n */"
+    "doc": "/**\n * Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g.\n * `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a\n * header-injecting `Path`/`Domain`, a non-integer `maxAge`, a `__Secure-`/`__Host-` name whose\n * attributes violate its prefix contract, or an oversized result - a serialization bug should fail\n * loudly, not silently emit a cookie the browser drops.\n */"
   },
   {
     "name": "serializeData",

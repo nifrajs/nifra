@@ -25,6 +25,21 @@ export interface CookieOptions {
 const COOKIE_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 const MAX_COOKIE_BYTES = 4096 // browsers cap a cookie near 4 KB - reject oversized before the wire
 
+/**
+ * RFC 6265bis cookie-name prefix, matched **case-insensitively** the way browsers match it -
+ * `__secure-x` triggers the same enforcement as `__Secure-x`. `undefined` for unprefixed names.
+ * Writers (set AND delete) must satisfy the prefix contract or the user agent silently discards
+ * the whole `Set-Cookie`.
+ */
+export function cookieNamePrefix(name: string): "secure" | "host" | undefined {
+  // Both prefixes start `__`; two charCode probes keep unprefixed names (the common case) free.
+  if (name.charCodeAt(0) !== 95 /* _ */ || name.charCodeAt(1) !== 95) return undefined
+  const lowered = name.toLowerCase()
+  if (lowered.startsWith("__secure-")) return "secure"
+  if (lowered.startsWith("__host-")) return "host"
+  return undefined
+}
+
 /** True if `v` contains a character illegal in a cookie attribute (control char or `;` separator) -
  * the header-injection guard for dev-supplied `Path`/`Domain`. */
 const hasIllegalChar = (v: string): boolean => {
@@ -102,14 +117,34 @@ export function parseCookies(header: string | null | undefined): Record<string, 
 /**
  * Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g.
  * `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a
- * header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result - a serialization
- * bug should fail loudly, not silently emit a cookie the browser drops.
+ * header-injecting `Path`/`Domain`, a non-integer `maxAge`, a `__Secure-`/`__Host-` name whose
+ * attributes violate its prefix contract, or an oversized result - a serialization bug should fail
+ * loudly, not silently emit a cookie the browser drops.
  */
 export function serializeCookie(name: string, value: string, options: CookieOptions = {}): string {
   if (!COOKIE_NAME.test(name)) {
     throw new Error(
       `[nifra] invalid cookie name ${JSON.stringify(name)}: must be an RFC 6265 token`,
     )
+  }
+  // Enforce the prefix contract: a violating cookie would be silently discarded by the user
+  // agent (or worse, only by SOME user agents, leaving the rest accepting a cookie whose prefix
+  // promises protections it doesn't have).
+  const prefix = cookieNamePrefix(name)
+  if (prefix !== undefined) {
+    if (options.secure !== true) {
+      throw new Error(
+        `[nifra] cookie ${JSON.stringify(name)}: ${prefix === "host" ? "__Host-" : "__Secure-"} requires Secure`,
+      )
+    }
+    if (prefix === "host") {
+      if (options.domain !== undefined) {
+        throw new Error(`[nifra] cookie ${JSON.stringify(name)}: __Host- forbids Domain`)
+      }
+      if (options.path !== "/") {
+        throw new Error(`[nifra] cookie ${JSON.stringify(name)}: __Host- requires Path=/`)
+      }
+    }
   }
   let str = `${name}=${encodeURIComponent(value)}`
   if (options.maxAge !== undefined) {

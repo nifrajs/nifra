@@ -90,6 +90,43 @@ describe("auth end-to-end (real nifra server: login → protected → logout)", 
     ).toBe(401)
   })
 
+  test("a __Host- session cookie works end to end: set satisfies the prefix, logout deletion carries Secure", async () => {
+    // c.set.cookie's secure-by-default (Secure + Path=/ + no Domain) satisfies the __Host-
+    // contract with zero config, and destroy()'s deletion Set-Cookie must satisfy it too or the
+    // browser discards the deletion and logout leaves the session cookie alive.
+    const sessions = createSessions<{ userId: string }>({
+      secret: SECRET,
+      store: new MemorySessionStore(),
+      cookieName: "__Host-session",
+    })
+    const app = server({ logger: silentLogger })
+      .post("/login", async (c) => {
+        const s = await sessions.get(c)
+        s.set("userId", "alice")
+        await sessions.commit(c, s)
+        return { ok: true }
+      })
+      .post("/logout", async (c) => {
+        await sessions.destroy(c, await sessions.get(c))
+        return { ok: true }
+      })
+    const login = await app.fetch(new Request(`${ORIGIN}/login`, { method: "POST" }))
+    const set = login.headers.getSetCookie()[0] ?? ""
+    expect(set.startsWith("__Host-session=")).toBe(true)
+    expect(set).toContain("Secure")
+    expect(set).toContain("Path=/")
+    expect(set).not.toContain("Domain")
+    const cookie = cookieHeader(login)
+    const logout = await app.fetch(
+      new Request(`${ORIGIN}/logout`, { method: "POST", headers: { cookie } }),
+    )
+    const deletion = logout.headers.getSetCookie()[0] ?? ""
+    expect(deletion.startsWith("__Host-session=")).toBe(true)
+    expect(deletion).toContain("Max-Age=0")
+    expect(deletion).toContain("Secure")
+    expect(deletion).toContain("Path=/")
+  })
+
   test("manager.read loads the session from a raw Request (the loader path)", async () => {
     const sessions = createSessions<{ userId: string }>({
       secret: SECRET,

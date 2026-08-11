@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test"
-import { parseCookies, serializeCookie, server, signValue, unsignValue } from "../src/index.ts"
+import {
+  cookieNamePrefix,
+  parseCookies,
+  serializeCookie,
+  server,
+  signValue,
+  silentLogger,
+  unsignValue,
+} from "../src/index.ts"
 
 const request = (method: string, path: string, headers?: Record<string, string>): Request =>
   new Request(`http://x${path}`, headers ? { method, headers } : { method })
@@ -72,6 +80,98 @@ describe("serializeCookie", () => {
       /Domain contains an illegal/,
     )
     expect(() => serializeCookie("big", "x".repeat(5000))).toThrow(/over the 4096B limit/)
+  })
+})
+
+describe("__Secure- / __Host- prefix contract (RFC 6265bis)", () => {
+  test("cookieNamePrefix classifies names the way browsers do (case-insensitive)", () => {
+    expect(cookieNamePrefix("__Secure-sid")).toBe("secure")
+    expect(cookieNamePrefix("__Host-sid")).toBe("host")
+    expect(cookieNamePrefix("__secure-sid")).toBe("secure")
+    expect(cookieNamePrefix("__HOST-sid")).toBe("host")
+    expect(cookieNamePrefix("sid")).toBeUndefined()
+    expect(cookieNamePrefix("__nifra_draft")).toBeUndefined() // `__` alone is not a prefix
+    expect(cookieNamePrefix("__Secure")).toBeUndefined() // no trailing dash → no prefix
+    expect(cookieNamePrefix("_Secure-sid")).toBeUndefined()
+  })
+
+  test("__Secure- requires Secure", () => {
+    expect(() => serializeCookie("__Secure-sid", "v")).toThrow(/__Secure- requires Secure/)
+    expect(() => serializeCookie("__Secure-sid", "v", { secure: false })).toThrow(
+      /__Secure- requires Secure/,
+    )
+    expect(serializeCookie("__Secure-sid", "v", { secure: true })).toContain("Secure")
+  })
+
+  test("__Host- requires Secure + Path=/ and forbids Domain", () => {
+    expect(() => serializeCookie("__Host-sid", "v", { path: "/" })).toThrow(
+      /__Host- requires Secure/,
+    )
+    expect(() => serializeCookie("__Host-sid", "v", { secure: true })).toThrow(
+      /__Host- requires Path=\//,
+    )
+    expect(() => serializeCookie("__Host-sid", "v", { secure: true, path: "/app" })).toThrow(
+      /__Host- requires Path=\//,
+    )
+    expect(() =>
+      serializeCookie("__Host-sid", "v", { secure: true, path: "/", domain: "example.com" }),
+    ).toThrow(/__Host- forbids Domain/)
+    const ok = serializeCookie("__Host-sid", "v", { secure: true, path: "/" })
+    expect(ok).toContain("__Host-sid=v")
+    expect(ok).toContain("Secure")
+    expect(ok).toContain("Path=/")
+  })
+
+  test("lowercase spellings are enforced identically (browsers match case-insensitively)", () => {
+    expect(() => serializeCookie("__secure-sid", "v")).toThrow(/__Secure- requires Secure/)
+    expect(() => serializeCookie("__host-sid", "v", { secure: true, path: "/x" })).toThrow(
+      /__Host- requires Path=\//,
+    )
+  })
+
+  test("c.set.cookie: a __Host- name works with zero config (secure-by-default satisfies it)", async () => {
+    const app = server().get("/s", (c) => {
+      c.set.cookie("__Host-sid", "abc")
+      return null
+    })
+    const sc = (await app.fetch(request("GET", "/s"))).headers.getSetCookie()
+    expect(sc).toHaveLength(1)
+    expect(sc[0]).toContain("__Host-sid=abc")
+    expect(sc[0]).toContain("Secure")
+    expect(sc[0]).toContain("Path=/")
+    expect(sc[0]).not.toContain("Domain")
+  })
+
+  test("c.set.cookie: overriding a prefixed cookie into a violation throws (500, not a silent drop)", async () => {
+    const app = server({ logger: silentLogger }).get("/bad", (c) => {
+      c.set.cookie("__Host-sid", "abc", { secure: false })
+      return null
+    })
+    expect((await app.fetch(request("GET", "/bad"))).status).toBe(500)
+  })
+
+  test("deleteCookie on a __Host- name emits Secure so the browser accepts the deletion", async () => {
+    // Regression for the Hono CVE-2026-39410 class: a deletion Set-Cookie violating the name's
+    // prefix contract is silently discarded by the browser, so "logout" leaves the session alive.
+    const app = server().get("/logout", (c) => {
+      c.set.deleteCookie("__Host-sid")
+      return null
+    })
+    const sc = (await app.fetch(request("GET", "/logout"))).headers.getSetCookie()
+    expect(sc).toHaveLength(1)
+    expect(sc[0]).toContain("__Host-sid=")
+    expect(sc[0]).toContain("Max-Age=0")
+    expect(sc[0]).toContain("Secure")
+    expect(sc[0]).toContain("Path=/")
+  })
+
+  test("deleteCookie on an unprefixed name stays exactly as before (no Secure added)", async () => {
+    const app = server().get("/logout", (c) => {
+      c.set.deleteCookie("sid")
+      return null
+    })
+    const sc = (await app.fetch(request("GET", "/logout"))).headers.getSetCookie()
+    expect(sc[0]).not.toContain("Secure")
   })
 })
 

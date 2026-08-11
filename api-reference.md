@@ -511,6 +511,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
+- **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
+  RFC 6265bis cookie-name prefix, matched **case-insensitively** the way browsers match it - `__secure-x` triggers the same enforcement as `__Secure-x`. `undefined` for unprefixed names. Writers (set AND delete) must satisfy the prefix contract or the user agent silently discards the whole `Set-Cooki…
 - **defineContextPlugin** _(function)_ - `defineContextPlugin: <D extends object>(name: string, apply: <R extends Registry, Ctx>(app: Server<R, Ctx>) => Server<R, Ctx & D>) => ContextPlugin<D>`
   Define a named plugin that **adds typed context and nothing else** - the `derive` case - without collapsing the caller's types. `use` instantiates the generic signature against the concrete receiver, so `R` and `Ctx` come back unchanged with `D` intersected onto the context.
 - **defineIdentityPlugin** _(function)_ - `defineIdentityPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
@@ -529,7 +531,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **redactLogFields** _(function)_ - `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
-  Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result - a serialization bug shou…
+  Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, a `__Secure-`/`__Host-` name whose attributes vio…
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
   Create a new {@link Server}. Pass an `Env` to type the platform bindings - `server<Env>()` makes `c.env: Env` in every handler + middleware, and types the `env` argument of `app.fetch` / `toFetchHandler`. Omit it and `c.env` is `unknown` (validate/cast before use).
 - **signValue** _(function)_ - `signValue: (value: string, secret: CookieSecret) => Promise<string>`
@@ -821,10 +823,12 @@ Every public export of every package and documented subpath - name, kind, signat
   Attributes for a `Set-Cookie`. `expires` is a `Date`; `maxAge` is in **seconds**.
 - **CookieSecret** _(type)_ - `type CookieSecret = string | readonly string[]`
   A signing secret, or a rotation list of them. With a list, **the first secret signs** and verification accepts **any** entry - so rotation is: prepend the new secret, keep the old one until every cookie signed by it has expired, then drop it. An empty list throws.
+- **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
+  RFC 6265bis cookie-name prefix, matched **case-insensitively** the way browsers match it - `__secure-x` triggers the same enforcement as `__Secure-x`. `undefined` for unprefixed names. Writers (set AND delete) must satisfy the prefix contract or the user agent silently discards the whole `Set-Cooki…
 - **parseCookies** _(function)_ - `parseCookies: (header: string | null | undefined) => Record<string, string>`
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing - a junk `Cookie` header shouldn't fail the request.
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
-  Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result - a serialization bug shou…
+  Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, a `__Secure-`/`__Host-` name whose attributes vio…
 - **signValue** _(function)_ - `signValue: (value: string, secret: CookieSecret) => Promise<string>`
   Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies. With a {@link CookieSecret} rotation list, signs with the first secret.
 - **unsignValue** _(function)_ - `unsignValue: (signed: string, secret: CookieSecret) => Promise<string | null>`
@@ -1454,6 +1458,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
+- **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
+  RFC 6265bis cookie-name prefix, matched **case-insensitively** the way browsers match it - `__secure-x` triggers the same enforcement as `__Secure-x`. `undefined` for unprefixed names. Writers (set AND delete) must satisfy the prefix contract or the user agent silently discards the whole `Set-Cooki…
 - **defineContextPlugin** _(function)_ - `defineContextPlugin: <D extends object>(name: string, apply: <R extends Registry, Ctx>(app: Server<R, Ctx>) => Server<R, Ctx & D>) => ContextPlugin<D>`
   Define a named plugin that **adds typed context and nothing else** - the `derive` case - without collapsing the caller's types. `use` instantiates the generic signature against the concrete receiver, so `R` and `Ctx` come back unchanged with `D` intersected onto the context.
 - **defineIdentityPlugin** _(function)_ - `defineIdentityPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
@@ -1472,7 +1478,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **redactLogFields** _(function)_ - `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
-  Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result - a serialization bug shou…
+  Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, a `__Secure-`/`__Host-` name whose attributes vio…
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
   Create a new {@link Server}. Pass an `Env` to type the platform bindings - `server<Env>()` makes `c.env: Env` in every handler + middleware, and types the `env` argument of `app.fetch` / `toFetchHandler`. Omit it and `c.env` is `unknown` (validate/cast before use).
 - **signValue** _(function)_ - `signValue: (value: string, secret: CookieSecret) => Promise<string>`
@@ -4234,6 +4240,8 @@ _No named exports (side-effect entrypoint)._
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…
 - **commonSecretPatterns** _(const)_ - `commonSecretPatterns: readonly RegExp[]`
   A conservative, high-signal set of patterns for {@link RedactOptions.valuePatterns} - opt in by passing it (or a subset) to `jsonLogger`/`redactLogFields`. Covers bearer tokens, JWTs, emails, and a few well-known key formats (Stripe, GitHub, AWS access-key ids). Chosen to minimize false positives; …
+- **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
+  RFC 6265bis cookie-name prefix, matched **case-insensitively** the way browsers match it - `__secure-x` triggers the same enforcement as `__Secure-x`. `undefined` for unprefixed names. Writers (set AND delete) must satisfy the prefix contract or the user agent silently discards the whole `Set-Cooki…
 - **defineContextPlugin** _(function)_ - `defineContextPlugin: <D extends object>(name: string, apply: <R extends Registry, Ctx>(app: Server<R, Ctx>) => Server<R, Ctx & D>) => ContextPlugin<D>`
   Define a named plugin that **adds typed context and nothing else** - the `derive` case - without collapsing the caller's types. `use` instantiates the generic signature against the concrete receiver, so `R` and `Ctx` come back unchanged with `D` intersected onto the context.
 - **defineIdentityPlugin** _(function)_ - `defineIdentityPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
@@ -4252,7 +4260,7 @@ _No named exports (side-effect entrypoint)._
 - **redactLogFields** _(function)_ - `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
-  Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, or an oversized result - a serialization bug shou…
+  Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, a `__Secure-`/`__Host-` name whose attributes vio…
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
   Create a new {@link Server}. Pass an `Env` to type the platform bindings - `server<Env>()` makes `c.env: Env` in every handler + middleware, and types the `env` argument of `app.fetch` / `toFetchHandler`. Omit it and `c.env` is `unknown` (validate/cast before use).
 - **signValue** _(function)_ - `signValue: (value: string, secret: CookieSecret) => Promise<string>`

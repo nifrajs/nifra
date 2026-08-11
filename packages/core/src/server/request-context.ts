@@ -7,7 +7,7 @@
 import type { RequestBudget } from "../budget.ts"
 import { drainCapped, parseContentLength, readBoundedBytes } from "./body.ts"
 import type { Platform } from "./context.ts"
-import { type CookieOptions, parseCookies, serializeCookie } from "./cookies.ts"
+import { type CookieOptions, cookieNamePrefix, parseCookies, serializeCookie } from "./cookies.ts"
 import { jsonError } from "./http.ts"
 import { guardParsedValue, type ProtoPoisoning, parseJsonGuarded } from "./proto-guard.ts"
 import { searchOf } from "./query.ts"
@@ -61,9 +61,16 @@ class LazyResponseControls implements CtxSet {
 
   deleteCookie(name: string, options?: Pick<CookieOptions, "path" | "domain">): void {
     // Expire immediately; default Path=/, and match the original path/domain or the browser keeps it.
+    // A prefixed name gets Secure on the deletion write too - the browser holds the deletion
+    // Set-Cookie to the same prefix contract as the original, and rejects it without.
     this._cookies ??= []
+    const base = { path: "/", ...options, maxAge: 0, expires: EPOCH }
     this._cookies.push(
-      serializeCookie(name, "", { path: "/", ...options, maxAge: 0, expires: EPOCH }),
+      serializeCookie(
+        name,
+        "",
+        cookieNamePrefix(name) !== undefined ? { ...base, secure: true } : base,
+      ),
     )
   }
 }
