@@ -134,6 +134,9 @@ backend in `nifra dev` and in prod alike - no hand-dispatch in `server-bun.ts` /
 - Run **`nifra check`** (`--json` for agents) as the done-gate: typecheck + typed-client drift +
   server-only-import-in-a-route + raw-`Response`-from-a-route + undeclared dependency. When capability
   assurance is configured, this also fails on raw effect-import bypasses and declaration/evidence drift.
+- For a release-equivalent repository gate, run **`bun run check:release`**: it builds first, then runs
+  the normal check, the explicit **`bun run check:corpus`** (LLM/docs/cards/Node contract), the
+  core hot-path performance gate, publish-consumer matrix, and coverage ratchet.
 - If the project has `nifra.assurance.ts`, also run **`nifra assure`** (`--json` in CI). It fails closed
   when a route is unclassified or lacks/forbids the enforcement evidence required by its first policy rule.
 - If that config declares `capabilities`, commit the output of **`nifra capabilities snapshot`** and run

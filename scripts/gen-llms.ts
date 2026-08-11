@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { basename } from "node:path"
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { basename, join } from "node:path"
 /**
  * Generate `llms.txt` (the llmstxt.org index) + `llms-full.txt` (the full single-document reference)
  * from the codebase, so they never drift from the docs:
@@ -257,18 +257,60 @@ interface Pkg {
   readonly name: string
   readonly description: string
   readonly dir: string
+  readonly types?: string
 }
 const pkgs: Pkg[] = []
 for (const file of new Glob("packages/*/package.json").scanSync(ROOT)) {
-  const json = JSON.parse(read(`${ROOT}/${file}`)) as { name?: string; description?: string }
+  const json = JSON.parse(read(`${ROOT}/${file}`)) as {
+    name?: string
+    description?: string
+    types?: string
+  }
   if (!json.name) continue
   pkgs.push({
     name: json.name,
     description: json.description ?? "",
     dir: `${ROOT}/${file.replace(/\/package\.json$/, "")}`,
+    ...(json.types !== undefined ? { types: json.types } : {}),
   })
 }
 pkgs.sort((a, b) => a.name.localeCompare(b.name))
+
+/**
+ * The type corpus is declaration-backed. Refuse to read an absent or older `dist` declaration so a
+ * caller cannot silently replace `types.json` with a partial source fallback after editing a package.
+ * Source-publishing packages intentionally have `types` under `src` and remain exempt.
+ */
+function assertDeclarationBuildIsFresh(): void {
+  const stale: string[] = []
+  for (const pkg of pkgs) {
+    const types = pkg.types
+    if (types === undefined || !types.startsWith("./dist/")) continue
+    const declaration = join(pkg.dir, types)
+    if (!existsSync(declaration)) {
+      stale.push(`${pkg.name}: missing ${types}`)
+      continue
+    }
+    const declarationMs = statSync(declaration).mtimeMs
+    let newestSourceMs = 0
+    for (const file of new Glob("src/**/*.{ts,tsx,mts,cts}").scanSync(pkg.dir)) {
+      try {
+        newestSourceMs = Math.max(newestSourceMs, statSync(join(pkg.dir, file)).mtimeMs)
+      } catch {
+        // An edit can remove a file while the corpus is being gathered; the next run sees the settled tree.
+      }
+    }
+    if (newestSourceMs > declarationMs) stale.push(`${pkg.name}: ${types} is older than src/`)
+  }
+  if (stale.length > 0) {
+    throw new Error(
+      "LLM corpus requires a fresh declaration build; run `bun run build` first:\n  " +
+        stale.join("\n  "),
+    )
+  }
+}
+
+assertDeclarationBuildIsFresh()
 
 // ---- types index (for the `nifra_types` MCP tool) ----------------------------------------------
 // The EXACT TypeScript of every exported symbol, parsed with the TS compiler from the declarations a

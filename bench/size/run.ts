@@ -162,15 +162,23 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
 // wraps mounts too, so the cost is availability of the seams, not a hot-path tax. Squeezed first:
 // the plan compiler's runner adapter table was deleted outright (the compiler now types the kernel
 // through an erased structural cast), which gave ~0.1 KB back before repricing.
+// Per-route transport body caps moved every core row together by ~1.6 KB gzip (bare 22.9 -> 24.6
+// measured): registration-time `bodyLimit` validation (finite/`"unlimited"`+reason, fail-closed),
+// and the in-place capped reader shadowing (`capTransportBodyReads`) that bounds direct `c.req`
+// body reads on every route without swapping request identity. Attributed with an esbuild metafile
+// diff against the pre-cap baseline: server.ts +1.7 KB min (registration + dispatch), body.ts
+// +2.0 KB min (the reader shadowing + capped stream), everything else noise - no optional
+// subsystem became reachable. The cap is the default-on security boundary, so its dispatch has to
+// live in the kernel; the ceilings move once, together.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
-  "nifra-bare": 22.9,
+  "nifra-bare": 24.7,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 26.0,
-  "nifra-effect-ledger": 24.8,
-  "nifra-mcp": 23.1,
-  "nifra-sse": 23.6,
-  "nifra-valibot": 23.9,
-  "nifra-typebox-t": 52.9,
+  "nifra-idempotency": 27.9,
+  "nifra-effect-ledger": 26.7,
+  "nifra-mcp": 25.0,
+  "nifra-sse": 25.4,
+  "nifra-valibot": 25.7,
+  "nifra-typebox-t": 54.8,
 }
 
 const main = async (): Promise<void> => {

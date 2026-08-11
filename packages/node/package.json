@@ -28,7 +28,7 @@
   ],
   "sideEffects": false,
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+    "build": "bun run ../../scripts/gen-node-outcome.ts && tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
   },
   "peerDependencies": {
     "ws": "^8.18.0"
