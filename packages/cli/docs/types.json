@@ -2042,7 +2042,7 @@
     "name": "CheckRule",
     "kind": "interface",
     "package": "@nifrajs/cli",
-    "signature": "export interface CheckRule {\n    readonly code: string;\n    readonly title: string;\n    scan(ctx: RuleContext): Promise<Diagnostic[]>;\n}"
+    "signature": "export interface CheckRule {\n    readonly code: string;\n    readonly title: string;\n    scan(ctx: RuleContext): Promise<readonly Diagnostic[]>;\n}"
   },
   {
     "name": "checkTrajectoryInvariants",
@@ -2856,6 +2856,13 @@
     "package": "@nifrajs/image",
     "signature": "export declare function createPngRasterizer(render: PngRenderer): OgImageRasterizer;",
     "doc": "/**\n * Adapt an injected SVG→PNG renderer to `ogImageResponse`.\n *\n * The renderer stays application-owned because codec/WASM choice is runtime-specific. For example:\n *\n * ```ts\n * import { Resvg } from \"@resvg/resvg-js\"\n * import { createPngRasterizer } from \"@nifrajs/image/og-png\"\n * const rasterizer = createPngRasterizer((svg) => new Resvg(svg).render().asPng())\n * ```\n *\n * This is the public reference adapter; the core package remains zero-dependency and keeps SVG as its\n * explicit default for callers that do not opt into a codec.\n */"
+  },
+  {
+    "name": "createProxy",
+    "kind": "function",
+    "package": "@nifrajs/proxy",
+    "signature": "export declare function createProxy(options: ProxyOptions): ProxyHandler;",
+    "doc": "/**\n * Create a proxy handler bound to one upstream origin.\n *\n * ```ts\n * const upstream = createProxy({ upstream: \"http://127.0.0.1:8081\", stripPrefix: \"/api\" })\n * app.all(\"/api/*\", (c) => upstream(c))\n * ```\n *\n * Streams both directions, preserves method/path/query/status, strips hop-by-hop and\n * Connection-nominated headers both ways, never follows upstream redirects, and answers flat\n * errors: `502 bad_gateway` when the upstream is unreachable, `504 gateway_timeout` on deadline.\n * WebSocket upgrade is not proxied.\n */"
   },
   {
     "name": "createQuery",
@@ -8489,6 +8496,26 @@
     "package": "@nifrajs/testing",
     "signature": "export declare function proveIdempotency(options: {\n    readonly run: () => Promise<EffectLedger> | EffectLedger;\n    readonly runs?: number;\n}): Promise<IdempotencyProof>;",
     "doc": "/** Run a token-only effect workload repeatedly and report the first stable replay differences. */"
+  },
+  {
+    "name": "ProxyContext",
+    "kind": "interface",
+    "package": "@nifrajs/proxy",
+    "signature": "export interface ProxyContext {\n    readonly req: Request;\n    readonly clientIp?: string | undefined;\n    readonly signal?: AbortSignal | undefined;\n}",
+    "doc": "/** Structural slice of a nifra `Context` the proxy reads - a plain `Request` works too. */"
+  },
+  {
+    "name": "ProxyHandler",
+    "kind": "type",
+    "package": "@nifrajs/proxy",
+    "signature": "export type ProxyHandler = (input: Request | ProxyContext) => Promise<Response>;",
+    "doc": "/** Forward a request (or a nifra context) to the configured upstream. */"
+  },
+  {
+    "name": "ProxyOptions",
+    "kind": "interface",
+    "package": "@nifrajs/proxy",
+    "signature": "export interface ProxyOptions {\n    /**\n     * The upstream to forward every request to, as a **bare origin** (`https://api.internal:8443`).\n     * A path, query, fragment, or credentials in the URL throws at construction; only `http:` and\n     * `https:` are accepted. The forwarded URL is this origin + the incoming path and query.\n     */\n    readonly upstream: string;\n    /** Mount prefix to remove from the incoming path before forwarding (`/api` + request\n     * `/api/users` → upstream `/users`). A path outside the prefix is forwarded unchanged. */\n    readonly stripPrefix?: string;\n    /**\n     * Forward caller metadata upstream. Default **false**: `Forwarded` and `X-Forwarded-*` headers\n     * are stripped, so a client-forged chain never reaches the upstream. When true, the inbound\n     * `X-Forwarded-For` is kept with the observed caller IP appended (pass the context so `c.clientIp`\n     * - already filtered by the app's trust declaration - is what gets appended), and\n     * `X-Forwarded-Proto`/`X-Forwarded-Host` are set from the incoming request.\n     */\n    readonly forwardClientIp?: boolean;\n    /** Upstream response deadline in milliseconds. Default `30_000`; expiry answers `504`. */\n    readonly timeoutMs?: number;\n    /** Static headers to set on every forwarded request (after hygiene, so they always win). */\n    readonly headers?: Readonly<Record<string, string>>;\n}"
   },
   {
     "name": "PublicDirCache",

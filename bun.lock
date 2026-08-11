@@ -377,6 +377,13 @@
         "@nifrajs/schema": "workspace:*",
       },
     },
+    "packages/proxy": {
+      "name": "@nifrajs/proxy",
+      "version": "2.11.0",
+      "devDependencies": {
+        "@nifrajs/core": "workspace:*",
+      },
+    },
     "packages/runner": {
       "name": "@nifrajs/runner",
       "version": "2.11.0",
@@ -894,6 +901,8 @@
     "@nifrajs/otel": ["@nifrajs/otel@workspace:packages/otel"],
 
     "@nifrajs/prompt": ["@nifrajs/prompt@workspace:packages/prompt"],
+
+    "@nifrajs/proxy": ["@nifrajs/proxy@workspace:packages/proxy"],
 
     "@nifrajs/runner": ["@nifrajs/runner@workspace:packages/runner"],
 

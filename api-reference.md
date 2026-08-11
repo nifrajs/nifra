@@ -2376,6 +2376,16 @@ Every public export of every package and documented subpath - name, kind, signat
 - **prompt** _(function)_ - `prompt: (instruction: string) => Prompt<undefined, string>`
   Define a type-safe prompt. Chain `.input()` / `.output()` with Standard Schemas, then `.run()` with a provider `complete` fn. Immutable - each chain step returns a new prompt.
 
+## @nifrajs/proxy
+
+- **ProxyContext** _(interface)_ - `interface ProxyContext`
+  Structural slice of a nifra `Context` the proxy reads - a plain `Request` works too.
+- **ProxyHandler** _(type)_ - `type ProxyHandler = (input: Request | ProxyContext) => Promise<Response>`
+  Forward a request (or a nifra context) to the configured upstream.
+- **ProxyOptions** _(interface)_ - `interface ProxyOptions`
+- **createProxy** _(function)_ - `createProxy: (options: ProxyOptions) => ProxyHandler`
+  Create a proxy handler bound to one upstream origin.
+
 ## @nifrajs/runner
 
 - **AppLike** _(interface)_ - `interface AppLike`

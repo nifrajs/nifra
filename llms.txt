@@ -75,6 +75,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - `@nifrajs/node` - Run a nifra app on Node's http server - a Request<->stream adapter with a graceful stop().
 - `@nifrajs/otel` - Distributed tracing for nifra - W3C traceparent/tracestate propagation + OpenTelemetry-semantic-convention spans via a pluggable exporter. Bridge to the OpenTelemetry SDK or log spans directly; no SDK bundled. Edge-safe.
 - `@nifrajs/prompt` - Type-safe prompts - bind an instruction to input/output Standard Schemas and get validated, typed LLM results from any provider.
+- `@nifrajs/proxy` - Reverse proxy for nifra - stream requests to one fixed upstream origin with hop-by-hop hygiene, SSRF-proof by construction. Dependency-free.
 - `@nifrajs/runner` - Run requests through a nifra app's fetch and capture structured results - the engine behind the playground and the agent run/verify tool. Dependency-free; runs in the browser, Bun, Node, Deno, and on the edge.
 - `@nifrajs/schema` - Built-in schema builder `t` - TypeBox-backed (free JSON Schema + compiled validators), implements Standard Schema so nifra routes validate it natively.
 - `@nifrajs/storage` - Blob storage mechanics for nifra - traversal-safe memory, filesystem, and R2 adapters, optional provider capabilities, and executable adapter conformance.
