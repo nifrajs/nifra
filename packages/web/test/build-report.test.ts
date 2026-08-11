@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   aggregateSizeReport,
+  BUILD_TARGETS,
   type ChunkSize,
   cloudflareRouteRules,
   diffManifestRoutes,
@@ -246,6 +247,40 @@ describe("generateServerEntry", () => {
     )
     expect(src).toContain("  styles,")
     expect(src).toContain("  routeStyles,")
+  })
+})
+
+describe("generateServerEntry - app `use` middleware passthrough", () => {
+  const serverTargets = BUILD_TARGETS.filter((t) => t !== "static")
+
+  test("useImport → every server target imports `use` and passes it to createWebApp", () => {
+    for (const target of serverTargets) {
+      const src = generateServerEntry({
+        target,
+        adapterImport: "../framework.ts",
+        useImport: "../framework.ts",
+      })
+      expect(src).toContain('import { use } from "../framework.ts"')
+      expect(src).toContain("  use,")
+    }
+  })
+
+  test("no useImport → no `use` import and no `use` option, on every server target", () => {
+    for (const target of serverTargets) {
+      const src = generateServerEntry({ target, adapterImport: "../framework.ts" })
+      expect(src).not.toContain("import { use }")
+      expect(src).not.toContain("  use,")
+    }
+  })
+
+  test("static still throws even with useImport", () => {
+    expect(() =>
+      generateServerEntry({
+        target: "static",
+        adapterImport: "../framework.ts",
+        useImport: "../framework.ts",
+      }),
+    ).toThrow(/static/)
   })
 })
 

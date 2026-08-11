@@ -1478,18 +1478,29 @@ export function generateServerEntry(options: {
   readonly adapterImport: string
   /** Import specifier for the module exporting `backend`, or `undefined` for a frontend-only app. */
   readonly backendImport?: string
+  /** Import specifier for the module exporting `use`, or `undefined`. Must resolve to the
+   * same edge-safe module as `adapterImport`. */
+  readonly useImport?: string
   /** Document `<title>` passed to `createWebApp`. */
   readonly title?: string
   /** Encoded root-relative public file paths copied into the deploy directory. */
   readonly publicFiles?: readonly string[]
 }): string {
-  const { target, adapterImport, backendImport, title = "nifra", publicFiles = [] } = options
+  const {
+    target,
+    adapterImport,
+    backendImport,
+    useImport,
+    title = "nifra",
+    publicFiles = [],
+  } = options
   if (target === "static") {
     throw new Error("[nifra/web] generateServerEntry: `static` has no server entry (SSG only)")
   }
   const lines: string[] = ['import { createWebApp } from "@nifrajs/web"']
   if (backendImport !== undefined) lines.push('import { inProcessClient } from "@nifrajs/client"')
   lines.push(`import { adapter } from ${JSON.stringify(adapterImport)}`)
+  if (useImport !== undefined) lines.push(`import { use } from ${JSON.stringify(useImport)}`)
   if (backendImport !== undefined) {
     lines.push(`import { backend } from ${JSON.stringify(backendImport)}`)
   }
@@ -1502,6 +1513,7 @@ export function generateServerEntry(options: {
     "",
     "const app = createWebApp({",
     "  adapter,",
+    ...(useImport !== undefined ? ["  use,"] : []),
     "  manifest,",
     "  clientEntry,",
     "  styles,",
@@ -1673,6 +1685,10 @@ export interface BuildTargetOptions {
   readonly adapterImport: string
   /** Import specifier (resolvable from `workDir`) of the module exporting `backend`, or `undefined`. */
   readonly backendImport?: string
+  /** Import specifier (resolvable from `workDir`) of the module exporting `use` (app-level middleware
+   * applied before page routes are declared), or `undefined`. Must resolve to the same edge-safe
+   * module as `adapterImport`. */
+  readonly useImport?: string
   /** Factory that builds the app for `static` prerendering, GIVEN the client build's manifest - so the
    * emitted hydration `<script src>` uses the REAL content-hashed entry (`client.entry`) plus the same
    * styles/route-preload the server targets use. A pre-built instance can't work here: the hash isn't known
@@ -1886,6 +1902,7 @@ export async function buildTargetWith(
     generateServerEntry({
       target,
       adapterImport: options.adapterImport,
+      ...(options.useImport !== undefined ? { useImport: options.useImport } : {}),
       ...(options.backendImport !== undefined ? { backendImport: options.backendImport } : {}),
       ...(options.title !== undefined ? { title: options.title } : {}),
       ...(publicFiles.length > 0 ? { publicFiles } : {}),

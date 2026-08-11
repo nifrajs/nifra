@@ -12,11 +12,16 @@
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
 import { inProcessClient } from "@nifrajs/client"
-import { createWebApp, DEFAULT_DEV_PORT, type RenderAdapter } from "@nifrajs/web"
+import {
+  type CreateWebAppOptions,
+  createWebApp,
+  DEFAULT_DEV_PORT,
+  type RenderAdapter,
+} from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import type { BunPlugin } from "bun"
 import { describeProject, describeRouteGraph, describeRoutes } from "./introspect.ts"
-import { type LoadedApp, loadApp } from "./load.ts"
+import { type LoadedApp, loadApp, type NifraFramework } from "./load.ts"
 import { chooseBuildPipeline, describePipeline } from "./pipeline-guard.ts"
 
 export interface Flags {
@@ -172,6 +177,8 @@ const CLI_VERSION = "2.11.0"
 // A render adapter + nifra server are opaque to the CLI (it just forwards them); cast at the seam.
 const asAdapter = (v: unknown): RenderAdapter => v as RenderAdapter
 const asBunPlugins = (v: readonly unknown[]): BunPlugin[] => v as BunPlugin[]
+const asUse = (v: (app: never) => void): NonNullable<CreateWebAppOptions["use"]> =>
+  v as NonNullable<CreateWebAppOptions["use"]>
 const apiOf = (backend: unknown): { api?: unknown } =>
   backend === undefined ? {} : { api: inProcessClient(backend as never) }
 
@@ -327,6 +334,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
           adapter: asAdapter(fw.adapter),
           manifest: discoverRoutes(routesDir, { importQuery }),
           clientEntry,
+          ...(fw.use ? { use: asUse(fw.use) } : {}),
           ...apiOf(backend),
         }),
     })
@@ -386,6 +394,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
         adapter: asAdapter(fw.adapter),
         manifest: discoverRoutes(routesDir, { load }),
         clientEntry,
+        ...(fw.use ? { use: asUse(fw.use) } : {}),
         ...apiOf(backend),
       }),
   })
@@ -400,6 +409,37 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
  * `nifra.config.ts`, which pulls in Vite plugins), and the backend from `backend.ts` when present;
  * `buildTarget` generates the per-target server entry from those + the app's `routes/`.
  */
+/**
+ * Refuse a `use` the generated server entry cannot import.
+ *
+ * `nifra build` emits `import { use } from <frameworkFile>` (framework.ts, the edge-bundlable file),
+ * but `loadApp` prefers `nifra.config.ts` - so an app with BOTH files whose `use` lives only in
+ * `nifra.config.ts` makes `fw.use` defined while `framework.ts` exports nothing of that name, and the
+ * build dies later with an opaque bundler error pointing at generated code. Refuse it here with the
+ * exact move instead, in the spirit of `assertPipelineSeparation` (load.ts).
+ *
+ * Detected by importing `frameworkFile` and checking the named export, not by comparing paths alone:
+ * a split app legitimately DEFINES `use` in framework.ts and re-exports it from nifra.config.ts
+ * (exactly how `adapter` reaches both readers), and a path compare would refuse that correct layout.
+ * The import is cheap - framework.ts is already in the loaded config's module graph in that layout.
+ */
+export async function assertUseIsEdgeExported(
+  use: NifraFramework["use"],
+  configPath: string,
+  frameworkFile: string,
+): Promise<void> {
+  if (use === undefined || configPath === frameworkFile) return
+  const mod = (await import(frameworkFile).catch(() => ({}))) as { use?: unknown }
+  if (typeof mod.use === "function") return
+  throw new Error(
+    `[nifra] \`use\` is exported from ${configPath} but not from ${frameworkFile}. ` +
+      "`nifra build` generates a server entry that imports `use` from framework.ts (the edge-bundled " +
+      "file), so this build would fail later with an opaque bundler error inside generated code.\n\n" +
+      "  - Define `use` in framework.ts and re-export it from nifra.config.ts " +
+      '(`export { use } from "./framework.ts"`) so `nifra dev` sees it too.',
+  )
+}
+
 async function buildForTarget(app: LoadedApp, target: string, flags: Flags): Promise<void> {
   const { isBuildTarget, renderSizeReport, BUILD_TARGETS } = await import("@nifrajs/web/build")
   if (!isBuildTarget(target)) {
@@ -431,6 +471,7 @@ async function buildForTarget(app: LoadedApp, target: string, flags: Flags): Pro
       ? resolve(cwd, "nifra.config.ts")
       : resolve(cwd, "framework.ts")
   const backendFile = resolve(cwd, "backend.ts")
+  await assertUseIsEdgeExported(fw.use, app.configPath, frameworkFile)
   // Plugin FORMAT differs by pipeline: the Bun build takes Bun plugins (clientPlugins/serverPlugins); the
   // Vite build takes the app's Vite plugins (fw.vitePlugins) for BOTH halves. buildTargetWith forwards
   // whatever it's given straight to the chosen bundler, which casts to its own plugin type.
@@ -449,6 +490,7 @@ async function buildForTarget(app: LoadedApp, target: string, flags: Flags): Pro
     workDir: resolve(cwd, ".nifra-build"),
     clientModule: fw.clientModule,
     adapterImport: frameworkFile,
+    ...(fw.use ? { useImport: frameworkFile } : {}),
     ...(backend !== undefined && existsSync(backendFile) ? { backendImport: backendFile } : {}),
     ...plugins,
     ...(fw.conditions ? { conditions: fw.conditions } : {}),
@@ -482,6 +524,7 @@ async function buildPrerenderApp(
       adapter: asAdapter(fw.adapter),
       manifest: discoverRoutes(routesDir),
       clientEntry: client.entry,
+      ...(fw.use ? { use: asUse(fw.use) } : {}),
       ...(client.routes ? { routePreload: client.routes } : {}),
       ...(client.css ? { styles: client.css } : {}),
       ...(client.routeStyles ? { routeStyles: client.routeStyles } : {}),

@@ -38,6 +38,12 @@ export interface NifraFramework {
   readonly adapter: unknown
   /** The client runtime module providing `mountRouter`, e.g. `"@nifrajs/web-react/client"`. */
   readonly clientModule: string
+  /** App-level middleware applied to the web app before its page routes are declared -
+   * e.g. `(app) => app.use(securityHeaders())`. Runs ahead of the `api`/`mounts` hooks.
+   *
+   * MUST be exported from `framework.ts`, not `nifra.config.ts`: `nifra build` emits a
+   * server entry that imports it, and that entry is edge-bundled. See the module header. */
+  readonly use?: (app: never) => void
   /** Vite plugins for `nifra dev`'s HMR, e.g. `[react()]` / `() => import("@vitejs/plugin-vue")…`. */
   readonly vitePlugins?: PluginsField
   /** Bun build plugins that compile routes for the CLIENT bundle (`nifra build`), e.g.
