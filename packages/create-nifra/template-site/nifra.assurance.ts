@@ -67,6 +67,8 @@ export default defineAssuranceConfig({
         name: "authenticated-write",
         match: { access: "write", zone: "domain" },
         require: [NIFRA_ASSURANCE.AUTHENTICATED],
+        requireProvenance: "runtime",
+        requireCsrfWithAuthenticated: true,
       },
       // Anything else that changes state must validate its input at the boundary. Adding a POST
       // without a `body` schema fails this - which is the point: the check notices, not review.

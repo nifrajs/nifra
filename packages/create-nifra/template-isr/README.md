@@ -37,6 +37,11 @@ holds across `hit`s and bumps on a `miss`/regeneration.
   curl -X POST 'http://localhost:3000/__nifra/revalidate?path=/' -H 'x-nifra-revalidate-token: dev-secret'
   ```
 
+The backend starter also installs security headers, explicit-origin CORS, a 30-second request
+deadline, bounded in-flight admission, and a development memory rate limit. For production, replace
+the memory limiter with a shared store (or explicitly set `NIFRA_ALLOW_MEMORY_RATE_LIMIT=true` for a
+deliberate single-instance deployment), and add authenticated/CSRF middleware to browser mutations.
+
 ## Deploy
 
 ```sh

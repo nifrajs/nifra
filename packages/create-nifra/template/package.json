@@ -13,6 +13,7 @@
   "dependencies": {
     "@nifrajs/client": "^2.11.0",
     "@nifrajs/core": "^2.11.0",
+    "@nifrajs/middleware": "^2.11.0",
     "@nifrajs/schema": "^2.11.0"
   },
   "devDependencies": {

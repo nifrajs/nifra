@@ -64,6 +64,8 @@ export default defineAssuranceConfig({
         name: "authenticated-write",
         match: { access: "write", zone: "domain" },
         require: [NIFRA_ASSURANCE.AUTHENTICATED],
+        requireProvenance: "runtime",
+        requireCsrfWithAuthenticated: true,
       },
       // Anything that changes state must validate its input at the boundary. This demo is read-only,
       // so the rule classifies nothing yet - which is the point: the first POST added to `page.ts`

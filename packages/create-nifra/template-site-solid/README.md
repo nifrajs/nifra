@@ -10,6 +10,12 @@ bun run dev        # nifra dev → true-HMR dev server (Bun + nifra SSR) at http
 bun run preview    # wrangler pages dev dist → preview the built Cloudflare bundle (run `bun run build` first)
 ```
 
+The backend starter includes response security headers, explicit-origin CORS, a 30-second request
+deadline, bounded concurrency, and a development rate limit. Its in-memory rate-limit store refuses
+production unless `NIFRA_ALLOW_MEMORY_RATE_LIMIT=true`; use a shared store for multi-instance deploys.
+For cookie sessions, add signed CSRF middleware and require both runtime authentication and CSRF
+evidence in `nifra.assurance.ts`.
+
 Routes are Solid function components (JSX, compiled by `solidBunPlugin`) under `routes/` - `index.tsx`
 (landing + a live loader/action counter), `_layout.tsx` (chrome), `_404.tsx`. The frontend adapter is
 one line in `framework.ts`; data lives behind `backend.ts`. Each `build*` script wires

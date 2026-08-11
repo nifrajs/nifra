@@ -41,7 +41,7 @@ const SCRIPTS: Readonly<Record<string, string>> = {
 }
 
 /** Nifra packages every site depends on, whatever it renders with. */
-const NIFRA_RUNTIME = ["client", "core", "schema", "deno", "node", "web"]
+const NIFRA_RUNTIME = ["client", "core", "middleware", "schema", "deno", "node", "web"]
 
 export function renderPackageJson(framework: FrameworkSpec): string {
   const dependencies: Record<string, string> = {}

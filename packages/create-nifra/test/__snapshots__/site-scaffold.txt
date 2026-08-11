@@ -218,6 +218,7 @@ export const adapter = reactAdapter
   "dependencies": {
     "@nifrajs/client": "^2.11.0",
     "@nifrajs/core": "^2.11.0",
+    "@nifrajs/middleware": "^2.11.0",
     "@nifrajs/schema": "^2.11.0",
     "@nifrajs/deno": "^2.11.0",
     "@nifrajs/node": "^2.11.0",
@@ -505,6 +506,7 @@ export const adapter = preactAdapter
   "dependencies": {
     "@nifrajs/client": "^2.11.0",
     "@nifrajs/core": "^2.11.0",
+    "@nifrajs/middleware": "^2.11.0",
     "@nifrajs/schema": "^2.11.0",
     "@nifrajs/deno": "^2.11.0",
     "@nifrajs/node": "^2.11.0",
@@ -819,6 +821,7 @@ export const adapter = solidAdapter
   "dependencies": {
     "@nifrajs/client": "^2.11.0",
     "@nifrajs/core": "^2.11.0",
+    "@nifrajs/middleware": "^2.11.0",
     "@nifrajs/schema": "^2.11.0",
     "@nifrajs/deno": "^2.11.0",
     "@nifrajs/node": "^2.11.0",
@@ -1129,6 +1132,7 @@ export const adapter = svelteAdapter
   "dependencies": {
     "@nifrajs/client": "^2.11.0",
     "@nifrajs/core": "^2.11.0",
+    "@nifrajs/middleware": "^2.11.0",
     "@nifrajs/schema": "^2.11.0",
     "@nifrajs/deno": "^2.11.0",
     "@nifrajs/node": "^2.11.0",
@@ -1468,6 +1472,7 @@ export const adapter = vueAdapter
   "dependencies": {
     "@nifrajs/client": "^2.11.0",
     "@nifrajs/core": "^2.11.0",
+    "@nifrajs/middleware": "^2.11.0",
     "@nifrajs/schema": "^2.11.0",
     "@nifrajs/deno": "^2.11.0",
     "@nifrajs/node": "^2.11.0",

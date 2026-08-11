@@ -10,6 +10,12 @@ bun run dev        # nifra dev → true-HMR dev server (Bun + nifra SSR) at http
 bun run preview    # wrangler pages dev dist → preview the built Cloudflare bundle (run `bun run build` first)
 ```
 
+The backend starter includes response security headers, explicit-origin CORS, a 30-second request
+deadline, bounded concurrency, and a development rate limit. Its in-memory rate-limit store refuses
+production unless `NIFRA_ALLOW_MEMORY_RATE_LIMIT=true`; use a shared store for multi-instance deploys.
+For cookie sessions, add signed CSRF middleware and require both runtime authentication and CSRF
+evidence in `nifra.assurance.ts`.
+
 Routes are **Vue SFCs** (`.vue`) under `routes/` - `index.vue` (landing + a live loader/action
 counter), `_layout.vue` (chrome via the default slot), `_404.vue`. A route SFC's plain `<script>`
 carries nifra's `loader`/`action`/`meta`; `<script setup>` + `<template>` are the component. The

@@ -1,4 +1,11 @@
 import { server } from "@nifrajs/core/server"
+import {
+  cors,
+  createAdmissionController,
+  MemoryStore,
+  rateLimit,
+  securityHeaders,
+} from "@nifrajs/middleware"
 import { page } from "./page"
 
 // Your backend contract - page loaders/actions call it in-process during SSR (no network).
@@ -15,4 +22,20 @@ import { page } from "./page"
 // all. Keeping this file pure means each route's reach is its own module's, which is what lets the
 // capability declarations in `nifra.assurance.ts` stay true as the app grows. Add a feature as a
 // module, merge it here.
-export const backend = server().merge(page)
+const rateStore = new MemoryStore({
+  allowInProduction: process.env.NIFRA_ALLOW_MEMORY_RATE_LIMIT === "true",
+})
+
+export const backend = server({
+  requestTimeoutMs: 30_000,
+  admission: createAdmissionController({ maxInFlight: 128, maxQueue: 0 }),
+})
+  .use(securityHeaders())
+  .use(
+    cors({
+      origin: process.env.CORS_ORIGIN ?? "http://localhost:3000",
+      credentials: false,
+    }),
+  )
+  .use(rateLimit({ store: rateStore, max: 120, windowMs: 60_000 }))
+  .merge(page)
