@@ -35,6 +35,7 @@ import {
   type StandardSchemaV1,
   validateStandard,
 } from "./schema/standard.ts"
+import { guardParsedValue, type ProtoPoisoning } from "./server/proto-guard.ts"
 
 const TOOL_NAME = /^[a-z][a-z0-9._-]{0,63}$/
 const MAX_EVIDENCE = 64
@@ -639,21 +640,30 @@ export async function executeTool<Input, Output>(
 
 export interface ToolHttpOptions extends Omit<ToolCallOptions, "signal" | "ledger"> {
   readonly method?: string
+  /** Prototype-poisoning policy for the JSON request body - mirrors the server option (this
+   * handler is standalone, so it carries its own). Default `"reject"`. */
+  readonly protoPoisoning?: ProtoPoisoning
 }
 
-/** Mount one contract behind a Web-standard handler. The handler accepts one JSON request body. */
+/**
+ * Mount one contract behind a Web-standard handler. The handler accepts one JSON request body.
+ * A body carrying a poisoned key (own `__proto__`, or `constructor.prototype`) is rejected with
+ * the same `input_invalid` result as malformed JSON. The body is read unbounded - cap request
+ * size at the platform/server mounting this handler.
+ */
 export function createToolHttpHandler<Input, Output>(
   tool: ToolContract<Input, Output>,
   options: ToolHttpOptions = {},
 ): (request: Request) => Promise<Response> {
   const method = (options.method ?? "POST").toUpperCase()
+  const protoPoisoning = options.protoPoisoning ?? "reject"
   return async (request) => {
     if (request.method.toUpperCase() !== method) {
       return new Response(null, { status: 405, headers: { allow: method } })
     }
     let input: unknown
     try {
-      input = await request.json()
+      input = guardParsedValue(await request.json(), protoPoisoning)
     } catch {
       return toolHttpResult({
         ok: false,

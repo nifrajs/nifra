@@ -2988,7 +2988,7 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function createToolHttpHandler<Input, Output>(tool: ToolContract<Input, Output>, options?: ToolHttpOptions): (request: Request) => Promise<Response>;",
-    "doc": "/** Mount one contract behind a Web-standard handler. The handler accepts one JSON request body. */"
+    "doc": "/**\n * Mount one contract behind a Web-standard handler. The handler accepts one JSON request body.\n * A body carrying a poisoned key (own `__proto__`, or `constructor.prototype`) is rejected with\n * the same `input_invalid` result as malformed JSON. The body is read unbounded - cap request\n * size at the platform/server mounting this handler.\n */"
   },
   {
     "name": "createTrajectoryTranscript",
@@ -12101,7 +12101,7 @@
     "name": "ToolHttpOptions",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface ToolHttpOptions extends Omit<ToolCallOptions, \"signal\" | \"ledger\"> {\n    readonly method?: string;\n}"
+    "signature": "export interface ToolHttpOptions extends Omit<ToolCallOptions, \"signal\" | \"ledger\"> {\n    readonly method?: string;\n    /** Prototype-poisoning policy for the JSON request body - mirrors the server option (this\n     * handler is standalone, so it carries its own). Default `\"reject\"`. */\n    readonly protoPoisoning?: ProtoPoisoning;\n}"
   },
   {
     "name": "toolHttpResult",

@@ -247,6 +247,48 @@ describe("typed tool contracts", () => {
     expect(denied.status).toBe(403)
   })
 
+  test("HTTP handler rejects a proto-poisoned body exactly like malformed JSON", async () => {
+    let executions = 0
+    const tool = defineTool({
+      name: "orders.poison",
+      description: "Poisoning target.",
+      input,
+      output,
+      capability: "orders.poison",
+      execute: () => {
+        executions += 1
+        return { ok: true }
+      },
+    })
+    const handler = createToolHttpHandler(tool, { capabilities: ["orders.poison"] })
+    const post = (body: string) =>
+      handler(new Request("http://test/tool", { method: "POST", body }))
+    const poisoned = await post('{"name": "a", "__proto__": {"admin": true}}')
+    const malformed = await post("{not json")
+    // Indistinguishable on the wire: same status, same result envelope shape.
+    expect(poisoned.status).toBe(malformed.status)
+    expect(await poisoned.json()).toMatchObject({
+      ok: false,
+      error: { code: "input_invalid", stage: "input" },
+    })
+    expect(executions).toBe(0)
+    expect((await post('{"constructor": {"prototype": {"x": 1}}}')).status).toBe(poisoned.status)
+
+    // strip: the poisoned key is deleted and the cleaned input executes normally.
+    const stripping = createToolHttpHandler(tool, {
+      capabilities: ["orders.poison"],
+      protoPoisoning: "strip",
+    })
+    const stripped = await stripping(
+      new Request("http://test/tool", {
+        method: "POST",
+        body: '{"name": "a", "__proto__": {"admin": true}}',
+      }),
+    )
+    expect(stripped.status).toBe(200)
+    expect(executions).toBe(1)
+  })
+
   test("shared adapter conformance checks denial, approval, and dry-run", async () => {
     const tool = defineTool({
       name: "orders.conformance",
