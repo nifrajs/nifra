@@ -18,6 +18,13 @@ import { serializeSearch } from "./search.ts"
 export interface NavigateOptions {
   /** Replace the current history entry instead of pushing a new one (like `history.replaceState`). */
   readonly replace?: boolean
+  /**
+   * Opaque per-entry state stored on the created history entry (under `history.state.nifraState`, so
+   * it never collides with the router's own bookkeeping keys). Structured-cloneable only, like
+   * `history.pushState`'s first argument. Read it back via `history.state.nifraState`; the browser
+   * restores it automatically on back/forward. Ignored for history-delta navigations.
+   */
+  readonly state?: unknown
 }
 
 /**
@@ -56,6 +63,7 @@ export interface NavigateTargetInput {
   readonly to: string
   readonly search?: Record<string, unknown>
   readonly replace?: boolean
+  readonly state?: unknown
 }
 
 /**
@@ -71,6 +79,7 @@ export interface NavigateFunction {
     readonly to: To
     readonly search?: NavigateSearchOf<To>
     readonly replace?: boolean
+    readonly state?: unknown
   }): void
 }
 
@@ -86,7 +95,11 @@ export function resolveNavigate(
 ): { readonly to: string | number; readonly options: NavigateOptions | undefined } {
   if (typeof to !== "object") return { to, options }
   const query = to.search !== undefined ? serializeSearch(to.search) : ""
-  return { to: to.to + query, options: to.replace === true ? { replace: true } : options }
+  if (to.replace !== true && to.state === undefined) return { to: to.to + query, options }
+  const resolved: { replace?: boolean; state?: unknown } = { ...options }
+  if (to.replace === true) resolved.replace = true
+  if (to.state !== undefined) resolved.state = to.state
+  return { to: to.to + query, options: resolved }
 }
 
 /**

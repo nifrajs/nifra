@@ -188,24 +188,30 @@ export function installHistory(
     }
   }
 
-  const commit = (path: string, url: URL, mode: "push" | "replace"): void => {
+  const commit = (path: string, url: URL, mode: "push" | "replace", state?: unknown): void => {
     const routePath = url.pathname + url.search
     if (router.match(routePath) === null) {
       settle()
       fallback(path)
       return
     }
+    // Caller-supplied entry state rides along under its own key (`nifraState`), so it can never
+    // collide with the router's bookkeeping (`nifraIndex`/`nifraScroll`); the browser restores the
+    // whole object on back/forward for free.
+    const entryState =
+      state !== undefined ? { nifraIndex: index, nifraState: state } : { nifraIndex: index }
     if (mode === "replace") {
       // Replace the current entry (same index) with the new URL. The entry we're leaving is discarded, so
       // its scroll isn't worth saving; the new route scrolls to its fragment target, else the top.
-      history.replaceState({ nifraIndex: index }, "", path)
+      history.replaceState(entryState, "", path)
       pendingScroll = url.hash !== "" ? { hash: hashId(url.hash) } : { pos: [0, 0] }
     } else {
       // Save the leaving entry's scroll (spread keeps its nifraIndex), push a fresh higher-indexed entry
       // (URL incl. any #hash), then scroll the new route: to the fragment target if given, else the top.
       history.replaceState({ ...(history.state ?? {}), nifraScroll: [scrollX, scrollY] }, "")
       index += 1
-      history.pushState({ nifraIndex: index }, "", path)
+      entryState.nifraIndex = index
+      history.pushState(entryState, "", path)
       pendingScroll = url.hash !== "" ? { hash: hashId(url.hash) } : { pos: [0, 0] }
     }
     here = url.pathname + url.search + url.hash
@@ -214,7 +220,7 @@ export function installHistory(
     settle()
   }
 
-  const go = (path: string, mode: "push" | "replace"): void => {
+  const go = (path: string, mode: "push" | "replace", state?: unknown): void => {
     // Validate before the blocker observes the target. A blocker receives parsed locations, so letting a
     // malformed string reach `locationOf` would make an otherwise no-throw navigate unexpectedly throw.
     const url = parseNavigationUrl(path)
@@ -222,8 +228,8 @@ export function installHistory(
       settle()
       return
     }
-    if (guard(path, () => commit(path, url, mode))) return
-    commit(path, url, mode)
+    if (guard(path, () => commit(path, url, mode, state))) return
+    commit(path, url, mode, state)
   }
 
   // Programmatic navigation for adapter `useNavigate` bindings, published through the DOM-free bridge
@@ -236,7 +242,7 @@ export function installHistory(
       history.go(to)
       return
     }
-    go(to, navOptions?.replace === true ? "replace" : "push")
+    go(to, navOptions?.replace === true ? "replace" : "push", navOptions?.state)
   }
   setBrowserNavigate(navigate)
 
