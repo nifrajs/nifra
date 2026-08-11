@@ -371,6 +371,14 @@ export interface ServeStaticOptions {
   readonly immutable?: boolean
   /** Extra headers merged onto every served file. */
   readonly headers?: Readonly<Record<string, string>>
+  /**
+   * Whether a path with a dot-leading segment (`/.env`, `/.git/config`, `/.hidden/app.js`) is
+   * served. Default `"deny"`: answered `404` - the same response as a missing file, so probing
+   * can't distinguish "hidden" from "absent". Dotfiles land in build output by accident, not by
+   * design (`.env` next to the bundle, a `.git` dir in a copied tree), so serving them is opt-in.
+   * Set `"allow"` if the directory deliberately contains them (e.g. `/.well-known`).
+   */
+  readonly dotfiles?: "deny" | "allow"
 }
 
 export interface ServeOptions {
@@ -445,6 +453,7 @@ interface StaticState {
   readonly prefix: string // normalized: "/assets" (no trailing slash) or "/"
   readonly immutable: boolean
   readonly headers: Readonly<Record<string, string>> | undefined
+  readonly denyDotfiles: boolean
 }
 
 function staticStateOf(options: ServeStaticOptions): StaticState {
@@ -456,7 +465,13 @@ function staticStateOf(options: ServeStaticOptions): StaticState {
   let to = raw.length
   while (to > from && raw.charCodeAt(to - 1) === 47) to--
   const prefix = raw === "/" ? "/" : `/${raw.slice(from, to)}`
-  return { root, prefix, immutable: options.immutable !== false, headers: options.headers }
+  return {
+    root,
+    prefix,
+    immutable: options.immutable !== false,
+    headers: options.headers,
+    denyDotfiles: options.dotfiles !== "allow",
+  }
 }
 
 /**
@@ -485,8 +500,20 @@ function staticMatch(
   // Reject traversal in the REQUEST form before it ever reaches the filesystem path join: a `..`
   // path segment (or a backslash Windows would treat as a separator) has no legitimate use in an
   // asset URL. Segment-precise on purpose - a filename merely CONTAINING `..` (`logo..png`) is legal.
-  if (rel.split("/").includes("..") || rel.includes("\\")) {
+  // The same segment pass covers dotfiles: the check runs post-decode, so `%2E`-spelled dots are
+  // already plain `.` here. Denied dotfiles answer 404, not 403 - identical to a missing file, so
+  // probing can't distinguish "hidden" from "absent" (traversal keeps its 403: `..` is an attack
+  // shape, and there is nothing behind it to conceal).
+  const segments = rel.split("/")
+  if (segments.includes("..") || rel.includes("\\")) {
     return { reject: new Response("Forbidden", { status: 403 }) }
+  }
+  if (state.denyDotfiles) {
+    for (const segment of segments) {
+      if (segment.charCodeAt(0) === 46 /* '.' */) {
+        return { reject: new Response("Not Found", { status: 404 }) }
+      }
+    }
   }
   const file = resolve(state.root, rel)
   // Confine to the served directory - the resolved path must sit at or below root.

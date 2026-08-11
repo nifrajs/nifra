@@ -1,9 +1,9 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { server } from "@nifrajs/core"
-import { type NodeServer, serve } from "../src/index.ts"
+import { type NodeServer, type ServeStaticOptions, serve } from "../src/index.ts"
 
 let dir = ""
 let running: NodeServer | undefined
@@ -14,6 +14,11 @@ beforeAll(async () => {
   await writeFile(join(dir, "style.css"), "body{}")
   await writeFile(join(dir, "large.txt"), "x".repeat(256 * 1024))
   await writeFile(join(dir, "logo..png"), "dotdot")
+  await writeFile(join(dir, ".env"), "SECRET=hunter2")
+  await mkdir(join(dir, ".git"))
+  await writeFile(join(dir, ".git", "config"), "[core]")
+  await mkdir(join(dir, ".hidden"))
+  await writeFile(join(dir, ".hidden", "app.js"), "hidden")
 })
 afterEach(async () => {
   await running?.stop({ drainMs: 0 })
@@ -25,8 +30,14 @@ afterAll(async () => {
 
 const app = server().get("/", () => ({ page: true }))
 
-async function startWithStatic(prefix?: string): Promise<string> {
-  running = await serve(app, { port: 0, static: { dir, ...(prefix ? { prefix } : {}) } })
+async function startWithStatic(
+  prefix?: string,
+  extra?: Partial<ServeStaticOptions>,
+): Promise<string> {
+  running = await serve(app, {
+    port: 0,
+    static: { dir, ...(prefix ? { prefix } : {}), ...extra },
+  })
   return `http://127.0.0.1:${running.port}`
 }
 
@@ -77,6 +88,41 @@ test("a `..` PATH SEGMENT is rejected, but a filename containing `..` is served"
   const ok = await fetch(`${base}/assets/logo..png`)
   expect(ok.status).toBe(200)
   expect(await ok.text()).toBe("dotdot")
+})
+
+test("dotfiles are denied by default with a 404 indistinguishable from a missing file", async () => {
+  const base = await startWithStatic()
+  const env = await fetch(`${base}/assets/.env`)
+  expect(env.status).toBe(404)
+  const missing = await fetch(`${base}/assets/nope.env`)
+  // Same status AND body as an absent file - probing can't tell "hidden" from "not there".
+  expect(await env.text()).toBe(await missing.text())
+  expect((await fetch(`${base}/assets/.git/config`)).status).toBe(404)
+})
+
+test("a dot-leading segment MID-path is denied too", async () => {
+  const base = await startWithStatic()
+  expect((await fetch(`${base}/assets/.hidden/app.js`)).status).toBe(404)
+})
+
+test("an encoded dot (%2E) is caught after decoding", async () => {
+  const base = await startWithStatic()
+  expect((await fetch(`${base}/assets/%2Eenv`)).status).toBe(404)
+  expect((await fetch(`${base}/assets/%2egit/config`)).status).toBe(404)
+})
+
+test("a filename merely CONTAINING a dot still serves (only the leading dot denies)", async () => {
+  const base = await startWithStatic()
+  expect((await fetch(`${base}/assets/app.js`)).status).toBe(200)
+  expect((await fetch(`${base}/assets/logo..png`)).status).toBe(200)
+})
+
+test('dotfiles: "allow" opts out', async () => {
+  const base = await startWithStatic(undefined, { dotfiles: "allow" })
+  const env = await fetch(`${base}/assets/.env`)
+  expect(env.status).toBe(200)
+  expect(await env.text()).toBe("SECRET=hunter2")
+  expect((await fetch(`${base}/assets/.hidden/app.js`)).status).toBe(200)
 })
 
 test("HEAD returns headers + content-length, no body", async () => {
