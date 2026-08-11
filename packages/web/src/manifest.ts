@@ -222,9 +222,11 @@ export interface RouteModule {
    */
   readonly getStaticPaths?: GetStaticPaths
   /**
-   * ISR freshness for this route, in **seconds**. `createWebApp` emits it as an `x-nifra-revalidate`
-   * response header that `withISR` reads to set the page's cache TTL (overriding the wrapper's
-   * default). Older-than-`revalidate` cached pages are served stale while regenerating.
+   * ISR freshness for this route, in **seconds**. `createWebApp` emits it as an
+   * `x-nifra-isr-revalidate` response header that `withISR` reads to set the page's cache TTL
+   * (overriding the wrapper's default). Older-than-`revalidate` cached pages are served stale while
+   * regenerating. (Distinct from the action-revalidation `x-nifra-revalidate` header - a CSV path
+   * list the client parses to refetch - so the two channels never alias.)
    */
   readonly revalidate?: number
   /** Optional bounded tags used by ISR on-demand invalidation (`?tag=...`). */

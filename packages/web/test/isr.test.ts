@@ -145,6 +145,16 @@ describe("withISR", () => {
     expect(calls()).toBe(1)
   })
 
+  test("a data-mode GET bypasses the cache entirely (never served a cached HTML document)", async () => {
+    const store = new MemoryCacheStore()
+    const { app, calls } = trackApp(() => html("v1"))
+    const handler = withISR(app, { store, revalidate: 60, now: () => 0 })
+    await handler(new Request("http://x/p")) // prime the cache with the document render
+    const res = await handler(new Request("http://x/p", { headers: { "x-nifra-data": "1" } }))
+    expect(res.headers.get("x-nifra-isr")).toBeNull() // passed through, not a cache hit
+    expect(calls()).toBe(2)
+  })
+
   test("stale serves the old body + regenerates behind it (waitUntil)", async () => {
     const store = new MemoryCacheStore()
     let body = "v1"

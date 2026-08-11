@@ -572,7 +572,10 @@ export function withISR(
   }
 
   return async (req, platform) => {
-    const key = req.method === "GET" ? keyOf(req) : null
+    // A data-mode soft-nav GET bypasses the cache entirely: entries are full HTML documents keyed
+    // by URL, and serving one to a loader-data fetch would hand the client HTML where it expects
+    // the loader payload. (The write path already refuses to cache data-mode responses.)
+    const key = req.method === "GET" && req.headers.get("x-nifra-data") === null ? keyOf(req) : null
     if (key === null) return app.fetch(req, platform)
 
     // Draft/preview: an editor (valid signed cookie) always renders fresh and is never cached, so
