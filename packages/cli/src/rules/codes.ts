@@ -18,6 +18,8 @@ export const RULE_CODES = Object.freeze({
   "NF-C015": "Assurance configuration check",
   "NF-C016": "Check configuration check",
   "NF-C017": "Rule pack validation",
+  "NF-C018": "Reserved client segment check",
+  "NF-C019": "Duplicate route registration check",
   "NF-D001": "Doctor check",
   "NF-A001": "Assurance bundle check",
   "NF-H001": "Hydration mismatch",

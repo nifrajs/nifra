@@ -21,6 +21,13 @@ import type { Subscription, Treaty, TreatyFromRegistry } from "./treaty.ts"
 import { ResponseContractViolation, withResponseValidation } from "./validate-responses.ts"
 import { NO_SOCKET, openWebSocket } from "./ws.ts"
 
+/**
+ * The RESERVED proxy keys, resolved before path segments (see `resolveSegment` and the `then`
+ * guard in `createProxy`): these seven verbs (case-insensitive) plus `subscribe`, `ws`, `index`,
+ * and `then` (exact). A route path containing a static segment spelling one is unreachable through
+ * the typed proxy - `treaty.ts` rejects the access at compile time (ReservedSegmentCollision) and
+ * `nifra check` flags the route (NF-C018). Keep the three surfaces in lockstep when touching this.
+ */
 const HTTP_VERBS: ReadonlySet<string> = new Set([
   "get",
   "post",

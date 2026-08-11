@@ -29,6 +29,7 @@ import { importTypeScript, type TypeScriptApi } from "./internal/typescript-impo
 import type { PipelineReport } from "./pipeline-report.ts"
 import { parseRulePacks, type RuleContext, runRuleRegistry, sourceIndex } from "./rules/index.ts"
 import { legacyRules } from "./rules/legacy.ts"
+import { routeRules } from "./rules/routes.ts"
 import { securityRules } from "./rules/security.ts"
 
 export interface SourceFinding {
@@ -2469,6 +2470,9 @@ export async function collectCheckResult(
     project: {
       legacyDiagnostics: diagnostics,
       assurance: opts.assurance,
+      // Route registrations collected during the source walk, so the route-table rules
+      // (rules/routes.ts) lint them without a second scan.
+      staticRoutes,
     },
   }
   const structuredDiagnostics = [...structuredExtras]
@@ -2476,7 +2480,7 @@ export async function collectCheckResult(
   try {
     registryDiagnostics = await runRuleRegistry(
       ruleContext,
-      [...legacyRules, ...securityRules],
+      [...legacyRules, ...securityRules, ...routeRules],
       applicationRulePacks,
     )
     structuredDiagnostics.push(...registryDiagnostics)
