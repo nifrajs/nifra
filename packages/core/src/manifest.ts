@@ -14,6 +14,7 @@ import {
   type RouteSnapshotSchema,
   snapshotRoutes,
 } from "./diff.ts"
+import type { ProjectEvidenceSnapshot } from "./evidence.ts"
 import { reflectRoutes } from "./reflection.ts"
 
 export interface NifraManifestAssurance {
@@ -60,7 +61,10 @@ export interface NifraManifestSignature {
 }
 
 export interface BuildNifraManifestInput {
-  readonly source: unknown
+  /** Runtime route source, retained for compatibility with callers that have not built a snapshot. */
+  readonly source?: unknown
+  /** Canonical offline evidence; when supplied, no second route reflection is performed. */
+  readonly evidence?: ProjectEvidenceSnapshot
   readonly assurance?: AssuranceReport
   readonly capabilities?: CapabilityAssuranceReport
 }
@@ -171,22 +175,40 @@ const sortedStrings = (values: Iterable<string>): readonly string[] =>
 
 /** Build one fail-closed, deterministic manifest from already-evaluated assurance reports. */
 export async function buildNifraManifest(input: BuildNifraManifestInput): Promise<NifraManifest> {
+  if (input.evidence === undefined && input.source === undefined) {
+    throw new TypeError("nifra manifest: source or canonical evidence is required")
+  }
   if (input.assurance !== undefined && !input.assurance.ok) {
+    throw new Error("nifra manifest: refusing to emit failing route assurance")
+  }
+  if (input.evidence?.assurance !== undefined && !input.evidence.assurance.ok) {
     throw new Error("nifra manifest: refusing to emit failing route assurance")
   }
   if (input.capabilities !== undefined && !input.capabilities.ok) {
     throw new Error("nifra manifest: refusing to emit failing capability assurance")
   }
+  if (input.evidence?.capabilities !== undefined && !input.evidence.capabilities.ok) {
+    throw new Error("nifra manifest: refusing to emit failing capability assurance")
+  }
   const reflected = new Map(
-    reflectRoutes(input.source).map((route) => [routeKey(route.method, route.path), route]),
+    (input.evidence?.routes ?? reflectRoutes(input.source)).map((route) => [
+      routeKey(route.method, route.path),
+      route,
+    ]),
   )
   const assured = new Map(
-    (input.assurance?.routes ?? []).map((route) => [routeKey(route.method, route.path), route]),
+    (input.evidence?.assurance?.routes ?? input.assurance?.routes ?? []).map((route) => [
+      routeKey(route.method, route.path),
+      route,
+    ]),
   )
   const capable = new Map(
-    (input.capabilities?.routes ?? []).map((route) => [routeKey(route.method, route.path), route]),
+    (input.evidence?.capabilities?.routes ?? input.capabilities?.routes ?? []).map((route) => [
+      routeKey(route.method, route.path),
+      route,
+    ]),
   )
-  const routes = snapshotRoutes(input.source)
+  const routes = (input.evidence?.routes ?? snapshotRoutes(input.source))
     .map((route): NifraManifestRoute => {
       const key = routeKey(route.method, route.path)
       const reflection = reflected.get(key)

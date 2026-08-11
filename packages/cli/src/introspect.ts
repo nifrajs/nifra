@@ -5,7 +5,13 @@
  * *this* project's actual surface, not just generic docs.
  */
 
-import { type ReflectedRoute, reflectRoutes, type SchemaReflection } from "@nifrajs/core/reflection"
+import {
+  type ProjectEvidenceSchema,
+  type ProjectEvidenceSchemaPart,
+  type ProjectEvidenceSnapshot,
+  snapshotProjectEvidence,
+} from "@nifrajs/core/evidence"
+import type { ReflectedRoute, SchemaReflection } from "@nifrajs/core/reflection"
 import type { Manifest } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import type { LoadedApp } from "./load.ts"
@@ -13,7 +19,59 @@ import { chooseBuildPipeline, describePipeline } from "./pipeline-guard.ts"
 
 /** Read the backend's registered routes, if it's a `server()` with a `.routes()` method. */
 export function backendRoutes(backend: unknown): ReflectedRoute[] {
-  return [...reflectRoutes(backend)]
+  return reflectedRoutesFromEvidence(snapshotProjectEvidence(backend))
+}
+
+function schemaPartToReflection(
+  value: ProjectEvidenceSchemaPart | undefined,
+): SchemaReflection | undefined {
+  return value === undefined
+    ? undefined
+    : { standard: undefined, jsonSchema: value.jsonSchema, fields: value.fields }
+}
+
+function schemaFromEvidence(schema: ProjectEvidenceSchema | undefined): ReflectedRoute["schema"] {
+  if (schema === undefined) return undefined
+  const errors = Object.fromEntries(
+    Object.entries(schema.errors ?? {}).map(([status, value]) => [
+      status,
+      schemaPartToReflection(value) as SchemaReflection,
+    ]),
+  )
+  const headers = schemaPartToReflection(schema.headers)
+  const body = schemaPartToReflection(schema.body)
+  const query = schemaPartToReflection(schema.query)
+  const params = schemaPartToReflection(schema.params)
+  const response = schemaPartToReflection(schema.response)
+  const sse = schemaPartToReflection(schema.sse)
+  return {
+    ...(schema.bodyLimit !== undefined ? { bodyLimit: schema.bodyLimit } : {}),
+    ...(schema.bodyLimitReason !== undefined ? { bodyLimitReason: schema.bodyLimitReason } : {}),
+    ...(headers !== undefined ? { headers } : {}),
+    ...(body !== undefined ? { body } : {}),
+    ...(query !== undefined ? { query } : {}),
+    ...(params !== undefined ? { params } : {}),
+    ...(response !== undefined ? { response } : {}),
+    ...(Object.keys(errors).length > 0 ? { errors } : {}),
+    ...(sse !== undefined ? { sse } : {}),
+  }
+}
+
+/** Adapt the canonical token-only snapshot to the legacy reflection view used by Markdown helpers. */
+export function reflectedRoutesFromEvidence(evidence: ProjectEvidenceSnapshot): ReflectedRoute[] {
+  return evidence.routes.map((route) => {
+    const schema = schemaFromEvidence(route.schema)
+    return {
+      method: route.method,
+      path: route.path,
+      ...(schema !== undefined ? { schema } : {}),
+      ...(route.assurance !== undefined ? { assurance: route.assurance } : {}),
+      ...(route.capabilities !== undefined ? { capabilities: route.capabilities } : {}),
+      ...(route.family === true ? { family: true } : {}),
+      ...(route.classification !== undefined ? { classification: route.classification } : {}),
+      ...(route.tool !== undefined ? { tool: route.tool } : {}),
+    }
+  })
 }
 
 interface JsonSchemaNode {
@@ -266,15 +324,18 @@ export interface RouteJson {
  * Markdown brief. Optionally filtered to routes whose path starts with `pathPrefix`. Reuses the exact
  * same `call` form and TS-shaped contracts the Markdown brief shows.
  */
-export function routesToJson(app: LoadedApp, pathPrefix?: string): RouteJson[] {
-  const shape = (v: unknown): string | undefined => {
+export function routesToJsonFromEvidence(
+  evidence: ProjectEvidenceSnapshot,
+  pathPrefix?: string,
+): RouteJson[] {
+  const shape = (v: ProjectEvidenceSchemaPart | undefined): string | undefined => {
     if (!v) return undefined
-    const js = (v as SchemaReflection).jsonSchema
+    const js = v.jsonSchema
     return js !== undefined
       ? tsTypeOf(js)
       : "(validated; shape not introspectable from this validator)"
   }
-  let routes = backendRoutes(app.backend)
+  let routes = [...evidence.routes]
   if (pathPrefix !== undefined && pathPrefix !== "") {
     routes = routes.filter((r) => r.path.startsWith(pathPrefix))
   }
@@ -295,6 +356,14 @@ export function routesToJson(app: LoadedApp, pathPrefix?: string): RouteJson[] {
         ...(response !== undefined && { response }),
       }
     })
+}
+
+export function routesToJson(
+  app: LoadedApp,
+  pathPrefix?: string,
+  evidence?: ProjectEvidenceSnapshot,
+): RouteJson[] {
+  return routesToJsonFromEvidence(evidence ?? snapshotProjectEvidence(app.backend), pathPrefix)
 }
 
 // ===================================================================================================

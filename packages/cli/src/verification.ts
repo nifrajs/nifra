@@ -19,6 +19,7 @@ import {
   type AssuranceReport,
   evaluateRouteAssurance,
 } from "@nifrajs/core/assurance"
+import { type ProjectEvidenceSnapshot, snapshotProjectEvidence } from "@nifrajs/core/evidence"
 import {
   type CapabilityProjectReport,
   collectCapabilityProjectReport,
@@ -50,6 +51,8 @@ export interface ProjectVerification {
   readonly routeAssurance?: AssuranceReport
   /** Static capability provenance, when the config declares a capabilities policy. */
   readonly capability?: CapabilityProjectReport
+  /** Canonical token-only route/schema/assurance/capability facts shared by offline projections. */
+  readonly evidence?: ProjectEvidenceSnapshot
   /**
    * The typed-contract check (scanners + typecheck + the assurance-fed capability/manifest diagnostics).
    * Lazy and memoized: `nifra assure` never calls it, so that command pays nothing for the source walk.
@@ -74,6 +77,7 @@ export async function collectProjectVerification(
   let configError: unknown
   let routeAssurance: AssuranceReport | undefined
   let capability: CapabilityProjectReport | undefined
+  let evidence: ProjectEvidenceSnapshot | undefined
   // One try mirrors `check`'s single catch: any failure to load or reflect the config becomes the
   // `configError` each view then renders in its own idiom (a diagnostic, a throw, a failed rung).
   try {
@@ -91,6 +95,10 @@ export async function collectProjectVerification(
     if (config.capabilities !== undefined) {
       capability = await collectCapabilityProjectReport(cwd, config.source, config.capabilities)
     }
+    evidence = snapshotProjectEvidence(config.source, {
+      ...(routeAssurance !== undefined ? { assurance: routeAssurance } : {}),
+      ...(capability !== undefined ? { capabilities: capability.report } : {}),
+    })
   } catch (error) {
     configError = error
     config = undefined
@@ -107,6 +115,7 @@ export async function collectProjectVerification(
     ...(configError !== undefined ? { error: configError } : {}),
     ...(routeAssurance !== undefined ? { routeAssurance } : {}),
     ...(capability !== undefined ? { capability } : {}),
+    ...(evidence !== undefined ? { evidence } : {}),
   }
 
   let checkResult: Promise<CheckResult> | undefined
@@ -117,6 +126,7 @@ export async function collectProjectVerification(
     ...(configError !== undefined ? { configError } : {}),
     ...(routeAssurance !== undefined ? { routeAssurance } : {}),
     ...(capability !== undefined ? { capability } : {}),
+    ...(evidence !== undefined ? { evidence } : {}),
     check(): Promise<CheckResult> {
       checkResult ??= collectCheckResult(cwd, {
         lintsOnly: options.lintsOnly ?? false,

@@ -13,7 +13,11 @@ import {
   routeClassification,
 } from "./classification.ts"
 import { normalizeRouteCapabilities } from "./internal/capability-runtime.ts"
-import { type AssuranceEvidence, validEvidence } from "./internal/route-assurance.ts"
+import {
+  type AssuranceEvidence,
+  evidenceProvenance,
+  validEvidence,
+} from "./internal/route-assurance.ts"
 import type { StandardSchemaV1 } from "./schema/standard.ts"
 import type { ToolAnnotations } from "./server/server.ts"
 
@@ -38,6 +42,11 @@ export interface SchemaReflection {
 }
 
 export interface ReflectedRouteSchema {
+  /** Effective transport body policy; surfaced so upload/streaming exemptions are auditable. */
+  readonly bodyLimit?: number | "unlimited"
+  readonly bodyLimitReason?: string
+  /** Request-header schema; names are normalized to lower-case at runtime. */
+  readonly headers?: SchemaReflection
   readonly body?: SchemaReflection
   readonly query?: SchemaReflection
   /** Path-params schema - constraints (uuid format, integer min/max) declared via `params: t.object(…)`. */
@@ -170,6 +179,13 @@ const reflectedRouteSchema = (value: unknown): ReflectedRouteSchema | undefined 
     }
   }
   return {
+    ...(schema.bodyLimit === "unlimited" || typeof schema.bodyLimit === "number"
+      ? { bodyLimit: schema.bodyLimit }
+      : {}),
+    ...(typeof schema.bodyLimitReason === "string"
+      ? { bodyLimitReason: schema.bodyLimitReason }
+      : {}),
+    ...(schema.headers !== undefined ? { headers: reflectSchema(schema.headers) } : {}),
     ...(schema.body !== undefined ? { body: reflectSchema(schema.body) } : {}),
     ...(schema.query !== undefined ? { query: reflectSchema(schema.query) } : {}),
     ...(schema.params !== undefined ? { params: reflectSchema(schema.params) } : {}),
@@ -193,9 +209,13 @@ const reflectedTool = (value: unknown): ReflectedRoute["tool"] => {
 
 const reflectedAssurance = (value: unknown): readonly AssuranceEvidence[] | undefined => {
   if (!Array.isArray(value)) return undefined
-  const evidence = value
-    .filter(validEvidence)
-    .map((item) => Object.freeze({ id: item.id, source: item.source.trim() }))
+  const evidence = value.filter(validEvidence).map((item) =>
+    Object.freeze({
+      id: item.id,
+      source: item.source.trim(),
+      provenance: evidenceProvenance(item),
+    }),
+  )
   return evidence.length > 0 ? Object.freeze(evidence) : undefined
 }
 

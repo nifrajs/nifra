@@ -691,6 +691,91 @@ describe("collectDuplicateInstalls - discovery anchored at the workspace root", 
     }
   })
 
+  test("follows a symlinked dependency into a sibling checkout that installed its own copy", async () => {
+    // `link:`/`npm link` of a package from another repo. The link target has its own node_modules, so
+    // code crossing the link runs against a SECOND @nifrajs/core - different registries and symbols -
+    // while a scan bounded by this workspace sees exactly one copy and reports clean.
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-linked-"))
+    try {
+      const app = join(dir, "app")
+      const sibling = join(dir, "sibling")
+      await mkdir(join(app, "node_modules", "@nifrajs", "core"), { recursive: true })
+      await mkdir(join(sibling, "node_modules", "@nifrajs", "core"), { recursive: true })
+      await mkdir(join(sibling, ".git"), { recursive: true })
+      await mkdir(join(app, "node_modules", "@myorg"), { recursive: true })
+      await symlink(sibling, join(app, "node_modules", "@myorg", "kit"), "dir")
+
+      await writeFile(
+        join(app, "package.json"),
+        JSON.stringify({
+          name: "app",
+          dependencies: { "@nifrajs/core": "2.11.0", "@myorg/kit": "link:../sibling" },
+        }),
+      )
+      await writeFile(
+        join(sibling, "package.json"),
+        JSON.stringify({ name: "@myorg/kit", dependencies: { "@nifrajs/core": "2.11.0" } }),
+      )
+      await writeFile(
+        join(app, "node_modules", "@nifrajs", "core", "package.json"),
+        JSON.stringify({ name: "@nifrajs/core", version: "2.11.0" }),
+      )
+      await writeFile(
+        join(sibling, "node_modules", "@nifrajs", "core", "package.json"),
+        JSON.stringify({ name: "@nifrajs/core", version: "2.11.0" }),
+      )
+
+      const pkg = JSON.parse(await readFile(join(app, "package.json"), "utf8")) as Record<
+        string,
+        unknown
+      >
+      const findings = await collectDuplicateInstalls(app, pkg)
+
+      expect(findings).toHaveLength(1)
+      expect(findings[0]?.package).toBe("@nifrajs/core")
+      expect(findings[0]?.copies).toHaveLength(2)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("a symlinked dependency resolving to the same copy is not a duplicate", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-linked-clean-"))
+    try {
+      const app = join(dir, "app")
+      const sibling = join(dir, "sibling")
+      await mkdir(join(app, "node_modules", "@myorg"), { recursive: true })
+      await mkdir(join(app, "node_modules", "@nifrajs", "core"), { recursive: true })
+      await mkdir(sibling, { recursive: true })
+      await mkdir(join(sibling, ".git"), { recursive: true })
+      await symlink(sibling, join(app, "node_modules", "@myorg", "kit"), "dir")
+      await writeFile(
+        join(app, "package.json"),
+        JSON.stringify({
+          name: "app",
+          dependencies: { "@nifrajs/core": "2.11.0", "@myorg/kit": "link:../sibling" },
+        }),
+      )
+      // The sibling declares the dependency but installed nothing: it resolves nowhere of its own,
+      // so there is still exactly one copy on disk.
+      await writeFile(
+        join(sibling, "package.json"),
+        JSON.stringify({ name: "@myorg/kit", dependencies: { "@nifrajs/core": "2.11.0" } }),
+      )
+      await writeFile(
+        join(app, "node_modules", "@nifrajs", "core", "package.json"),
+        JSON.stringify({ name: "@nifrajs/core", version: "2.11.0" }),
+      )
+      const pkg = JSON.parse(await readFile(join(app, "package.json"), "utf8")) as Record<
+        string,
+        unknown
+      >
+      expect(await collectDuplicateInstalls(app, pkg)).toEqual([])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   test("no workspace root above cwd leaves the previous behaviour intact", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-standalone-"))
     try {

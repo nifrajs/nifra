@@ -7,18 +7,19 @@
  */
 
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdir, rm, writeFile } from "node:fs/promises"
+import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { runAssurance } from "../src/assure.ts"
 import { runCapabilitySnapshot } from "../src/capabilities-tool.ts"
 import { runCheck } from "../src/check.ts"
 import { runLevels } from "../src/levels-tool.ts"
 import { runManifestEmit } from "../src/manifest-tool.ts"
+import { createFixtureProject, createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
-const FIXTURES = join(import.meta.dir, ".tmp-nifra-verification-golden")
+const FIXTURES = createFixtureRoot("nifra-verification-golden-")
 
 afterAll(async () => {
-  await rm(FIXTURES, { recursive: true, force: true })
+  removeFixtureRoot(FIXTURES)
 })
 
 /** Capture everything a command writes to stdout, with the fixture's absolute path folded to `<cwd>`
@@ -65,7 +66,7 @@ const FULL_CONFIG = [
  * the capability lockfile and trust manifest emitted so the ladder can climb and `check` sees them
  * in sync. Exercises every assurance-fed branch of all three commands at once. */
 async function fullProject(): Promise<string> {
-  const cwd = join(FIXTURES, "full")
+  const cwd = createFixtureProject(FIXTURES, "full-")
   await mkdir(cwd, { recursive: true })
   await writeFile(join(cwd, "backend.ts"), PAY_BACKEND)
   await writeFile(join(cwd, "nifra.assurance.ts"), FULL_CONFIG)
@@ -82,7 +83,7 @@ async function fullProject(): Promise<string> {
 
 /** Backend only, no assurance config: the common project shape. */
 async function plainProject(): Promise<string> {
-  const cwd = join(FIXTURES, "plain")
+  const cwd = createFixtureProject(FIXTURES, "plain-")
   await mkdir(cwd, { recursive: true })
   await writeFile(join(cwd, "backend.ts"), PAY_BACKEND)
   return cwd
@@ -91,7 +92,7 @@ async function plainProject(): Promise<string> {
 /** A route module tripping three source lints at once: an own-API fetch, a server-only import, and a
  * raw-Response return (the advisory). No assurance config. */
 async function dirtyProject(): Promise<string> {
-  const cwd = join(FIXTURES, "dirty")
+  const cwd = createFixtureProject(FIXTURES, "dirty-")
   await mkdir(join(cwd, "routes"), { recursive: true })
   await writeFile(
     join(cwd, "routes", "notes.tsx"),

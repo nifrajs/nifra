@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdir, rm, writeFile } from "node:fs/promises"
+import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { server } from "@nifrajs/core"
 import { defineCapabilityPolicy } from "@nifrajs/core/capabilities"
@@ -12,11 +12,12 @@ import {
   scanEffectImports,
 } from "../src/capabilities-tool.ts"
 import { collectCheckResult } from "../src/check.ts"
+import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
-const FIXTURES = join(import.meta.dir, ".tmp-nifra-capability-fixtures")
+const FIXTURES = createFixtureRoot("nifra-capability-fixtures-")
 
 afterAll(async () => {
-  await rm(FIXTURES, { recursive: true, force: true })
+  removeFixtureRoot(FIXTURES)
 })
 
 const policy = defineCapabilityPolicy({
@@ -84,6 +85,8 @@ describe("project provenance firewall", () => {
     const cwd = join(FIXTURES, "explicit")
     await mkdir(join(cwd, "src"), { recursive: true })
     await writeFile(join(cwd, "src/list.ts"), 'import "app-db/read"\n')
+    // Both declared seams are imported somewhere: an unused seam rule is its own finding.
+    await writeFile(join(cwd, "src/create.ts"), 'import "app-db/write"\n')
     const app = server().get("/orders", { capabilities: ["db.read"] }, () => [])
     const explicit = defineCapabilityPolicy({
       ...policy,
@@ -120,6 +123,66 @@ describe("project provenance firewall", () => {
     const project = await collectCapabilityProjectReport(cwd, app, approved)
     expect(project.report).toMatchObject({ ok: true, findings: [] })
     expect(project.violations).toEqual([])
+  })
+
+  test("reports a seam rule that matches nothing, with the specifier it probably meant", async () => {
+    const cwd = join(FIXTURES, "unmatched-seam")
+    await mkdir(join(cwd, "src"), { recursive: true })
+    await writeFile(join(cwd, "src/mail.ts"), "export const send = () => undefined\n")
+    await writeFile(
+      join(cwd, "backend.ts"),
+      `import "./src/mail.ts"
+       import "app-db/read"
+       import "app-db/write"`,
+    )
+    const app = server().get("/orders", { capabilities: ["db.read"] }, () => [])
+    const typo = defineCapabilityPolicy({
+      ...policy,
+      provenance: {
+        ...policy.provenance,
+        // Written as the file is named, not as the code imports it - matched as written, so it
+        // governs nothing.
+        imports: [
+          ...policy.provenance.imports,
+          { specifier: "src/mail", capabilities: ["db.read"] },
+        ],
+        routeModules: [{ match: { paths: ["/orders"] }, modules: ["src/missing.ts"] }],
+      },
+    })
+
+    const project = await collectCapabilityProjectReport(cwd, app, typo)
+    expect(project.report.ok).toBe(false)
+    expect(project.unmatchedSeams).toEqual([
+      { kind: "import", value: "src/mail", suggestions: ["./src/mail.ts"] },
+      { kind: "route-module", value: "src/missing.ts", suggestions: [] },
+    ])
+    expect(project.report.findings).toContainEqual(
+      expect.objectContaining({ code: "unmatched-provenance-seam", method: "*", path: "*" }),
+    )
+    expect(
+      project.report.findings.find((finding) => finding.code === "unmatched-provenance-seam")
+        ?.message,
+    ).toContain('did you mean "./src/mail.ts"?')
+  })
+
+  test("an optional seam rule may match nothing", async () => {
+    const cwd = join(FIXTURES, "optional-seam")
+    await mkdir(cwd, { recursive: true })
+    await writeFile(join(cwd, "backend.ts"), 'import "app-db/read"\nimport "app-db/write"\n')
+    const app = server().get("/orders", { capabilities: ["db.read"] }, () => [])
+    const shared = defineCapabilityPolicy({
+      ...policy,
+      provenance: {
+        ...policy.provenance,
+        imports: [
+          ...policy.provenance.imports,
+          { specifier: "app-blob/write", capabilities: ["db.write"], optional: true },
+        ],
+      },
+    })
+
+    const project = await collectCapabilityProjectReport(cwd, app, shared)
+    expect(project.unmatchedSeams).toEqual([])
   })
 
   test("fails closed when an import chain exceeds the provenance depth limit", async () => {

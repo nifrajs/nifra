@@ -64,6 +64,7 @@ export async function runManifestEmit(
   }
   const manifest = await buildNifraManifest({
     source: config.source,
+    ...(verification.evidence !== undefined ? { evidence: verification.evidence } : {}),
     assurance,
     ...(capabilityProject !== undefined ? { capabilities: capabilityProject.report } : {}),
   })

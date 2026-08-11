@@ -1,18 +1,19 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdir, rm, writeFile } from "node:fs/promises"
+import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { collectVerificationLevels, runLevels } from "../src/levels-tool.ts"
 import { runManifestEmit } from "../src/manifest-tool.ts"
+import { createFixtureProject, createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
-const FIXTURES = join(import.meta.dir, ".tmp-nifra-levels-fixtures")
+const FIXTURES = createFixtureRoot("nifra-levels-fixtures-")
 
 afterAll(async () => {
-  await rm(FIXTURES, { recursive: true, force: true })
+  removeFixtureRoot(FIXTURES)
 })
 
 /** A minimal project whose ladder climbs as far as the pieces we write for it. */
 async function project(name: string, options: { assurance?: boolean } = {}): Promise<string> {
-  const cwd = join(FIXTURES, name)
+  const cwd = createFixtureProject(FIXTURES, `${name}-`)
   await mkdir(cwd, { recursive: true })
   await writeFile(
     join(cwd, "backend.ts"),

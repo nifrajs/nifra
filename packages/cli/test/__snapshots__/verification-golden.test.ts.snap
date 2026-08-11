@@ -152,7 +152,8 @@ exports[`verification golden output: nifra assure full assurance project: --json
       "evidence": [
         {
           "id": "nifra.body-bounded",
-          "source": "route-schema"
+          "source": "route-schema",
+          "provenance": "runtime"
         }
       ],
       "missing": [],

@@ -23,6 +23,7 @@ import {
   stripComments,
   walkServerOnlyChain,
 } from "../src/check.ts"
+import { createSourceFacts } from "../src/internal/source-facts.ts"
 
 describe("scanFetchText - own-API fetch detection", () => {
   test("flags relative-URL fetch (string and template), with accurate line numbers", () => {
@@ -161,6 +162,16 @@ describe("scanStaticRouteText - conservative source-only route collection", () =
       scanStaticRouteText("legacy.ts", src).map((route) => `${route.method} ${route.path}`),
     ).toEqual(["GET /legacy"])
   })
+
+  test("AST refinement ignores route-shaped text inside ordinary strings", () => {
+    const facts = createSourceFacts(ts)
+    const src = [
+      'import { server } from "@nifrajs/core"',
+      "const docs = 'example: app.get(\"/fake\", handler)'",
+      'const app = server().get("/real", handler)',
+    ].join("\n")
+    expect(scanStaticRouteText("backend.ts", src, facts).map((r) => r.path)).toEqual(["/real"])
+  })
 })
 
 describe("scanServerOnlyImports - server-only imports in route modules", () => {
@@ -210,6 +221,20 @@ describe("scanServerOnlyImports - server-only imports in route modules", () => {
     expect(
       scanServerOnlyImports("routes/notes.tsx", 'import { db } from "../db"')[0]?.specifier,
     ).toBe("../db")
+  })
+
+  test("AST refinement ignores inline type-only aliases but keeps dynamic imports out of the scan", () => {
+    const facts = createSourceFacts(ts)
+    expect(
+      scanServerOnlyImports(
+        "routes/notes.tsx",
+        'import { type DbClient as NotesDb } from "../db"',
+        facts,
+      ),
+    ).toEqual([])
+    expect(
+      scanServerOnlyImports("routes/notes.tsx", 'const load = () => import("../db")', facts),
+    ).toEqual([])
   })
 })
 
@@ -342,6 +367,19 @@ describe("scanResponseRoutes (feedback 2026-06: raw Response collapses typed cli
       ].join("\n"),
     )
     const found = scanResponseRoutes("backend.ts", src)
+    expect(found).toHaveLength(1)
+    expect(found[0]?.snippet).toContain('"/real"')
+  })
+
+  test("AST refinement ignores raw-Response text inside ordinary strings", () => {
+    const facts = createSourceFacts(ts)
+    const src = backend(
+      [
+        "\nconst docs = 'example: return new Response(\"fake\")'",
+        '.get("/real", () => new Response("y"))',
+      ].join("\n"),
+    )
+    const found = scanResponseRoutes("backend.ts", src, facts)
     expect(found).toHaveLength(1)
     expect(found[0]?.snippet).toContain('"/real"')
   })

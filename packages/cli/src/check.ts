@@ -19,10 +19,12 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { dirname, isAbsolute, join, resolve, sep } from "node:path"
 import type { AssuranceConfig, AssuranceReport } from "@nifrajs/core/assurance"
+import { type ProjectEvidenceSnapshot, snapshotProjectEvidence } from "@nifrajs/core/evidence"
 import { Glob } from "bun"
 import type * as TSApi from "typescript"
 import type { CapabilityProjectReport } from "./capabilities-tool.ts"
 import { type Diagnostic, diagnostic } from "./diagnostics.ts"
+import { createSourceFacts, type SourceFacts } from "./internal/source-facts.ts"
 import { importProjectTypeScript, type TypeScriptApi } from "./internal/typescript-import.ts"
 // Type-only: `pipeline-report.ts` imports this module's source scanners, so a value import here would
 // close a cycle. Doctor is what actually runs the collector (see the `pipeline` rule below).
@@ -242,6 +244,7 @@ function scanRoutePattern(
   content: string,
   code: string,
   pattern: RegExp,
+  facts?: SourceFacts,
 ): StaticRouteFinding[] {
   const out: StaticRouteFinding[] = []
   const lines = content.split("\n")
@@ -253,6 +256,16 @@ function scanRoutePattern(
       `${pattern === ROUTE_REGISTRATION_DQ ? '"' : "'"}${m[2] ?? ""}${pattern === ROUTE_REGISTRATION_DQ ? '"' : "'"}`,
     )
     if (path === undefined || !path.startsWith("/") || path.startsWith("//")) continue
+    if (facts !== undefined) {
+      const source = facts.parse(file, content)
+      // A parseable source model is authoritative for candidate locations. If parsing is unavailable
+      // or the source is malformed, retain the lexical finding and fail closed.
+      if (
+        source !== undefined &&
+        facts.isRouteRegistrationAt(source, m.index, method, path) !== true
+      )
+        continue
+    }
     const line = lineAt(content, m.index)
     out.push({ file, line, snippet: (lines[line - 1] ?? "").trim(), method, path })
   }
@@ -476,12 +489,16 @@ export function scanFetchText(
 }
 
 /** Statically collect simple Nifra route registrations from source, without importing app code. */
-export function scanStaticRouteText(file: string, content: string): StaticRouteFinding[] {
+export function scanStaticRouteText(
+  file: string,
+  content: string,
+  facts?: SourceFacts,
+): StaticRouteFinding[] {
   const code = stripComments(content)
   if (!isPotentialBackendSource(code)) return []
   return [
-    ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_DQ),
-    ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_SQ),
+    ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_DQ, facts),
+    ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_SQ, facts),
   ].sort(bySite)
 }
 
@@ -1209,7 +1226,11 @@ export function scanRemovedImports(file: string, content: string): SourceFinding
 /** Scan a route module for top-level server-only imports. Returns `[]` for non-route files (only
  * `routes/` modules are browser-bundled, so a server-only import elsewhere is fine). Each finding carries
  * the offending `specifier` so the diagnostic can render the `routeFile → specifier` chain. Pure. */
-export function scanServerOnlyImports(file: string, content: string): ServerImportFinding[] {
+export function scanServerOnlyImports(
+  file: string,
+  content: string,
+  facts?: SourceFacts,
+): ServerImportFinding[] {
   if (!ROUTE_FILE.test(file)) return []
   const out: ServerImportFinding[] = []
   const lines = content.split("\n")
@@ -1220,6 +1241,13 @@ export function scanServerOnlyImports(file: string, content: string): ServerImpo
     if (positions[m.index] === " ") continue
     const specifier = m[1] ?? ""
     if (!SERVER_ONLY.test(specifier)) continue
+    if (facts !== undefined) {
+      const source = facts.parse(file, content)
+      // Inline `import { type X } from "…"` is erased just like `import type`; don't call it a
+      // runtime leak. A parse failure keeps the old lexical finding so the security rule fails closed.
+      if (source !== undefined && facts.isValueImportAt(source, m.index, specifier) === false)
+        continue
+    }
     const line = lineAt(content, m.index)
     out.push({ file, line, snippet: (lines[line - 1] ?? "").trim(), specifier })
   }
@@ -1266,22 +1294,31 @@ const staticImportRegex = (): RegExp => new RegExp(STATIC_IMPORT.source, STATIC_
  * each with the match index (for line attribution). Mirrors {@link STATIC_IMPORT}, so `import type` +
  * dynamic `import()` are already excluded. Uses a fresh regex instance, so it's safe under the reentrant
  * transitive walk. Pure. */
-function staticImportEdges(content: string): Array<{ specifier: string; index: number }> {
+function staticImportEdges(
+  content: string,
+  facts?: SourceFacts,
+  file?: string,
+): Array<{ specifier: string; index: number }> {
   const edges: Array<{ specifier: string; index: number }> = []
   const re = staticImportRegex()
   const code = stripComments(content)
   const positions = codePositionMask(content)
   for (let m = re.exec(code); m !== null; m = re.exec(code)) {
     if (positions[m.index] === " ") continue
-    if (m[1] !== undefined) edges.push({ specifier: m[1], index: m.index })
+    if (m[1] === undefined) continue
+    if (facts !== undefined && file !== undefined) {
+      const source = facts.parse(file, content)
+      if (source !== undefined && facts.isValueImportAt(source, m.index, m[1]) === false) continue
+    }
+    edges.push({ specifier: m[1], index: m.index })
   }
   return edges
 }
 
 /** Extract the static, non-type import specifiers from a module's source (the edges to follow/inspect).
  * Mirrors {@link STATIC_IMPORT}, so `import type` + dynamic `import()` are already excluded. Pure. */
-export function parseStaticImports(content: string): string[] {
-  return staticImportEdges(content).map((e) => e.specifier)
+export function parseStaticImports(content: string, facts?: SourceFacts, file?: string): string[] {
+  return staticImportEdges(content, facts, file).map((e) => e.specifier)
 }
 
 /** The server-only SINK an import specifier names directly (a `node:`/`bun:` builtin or a known
@@ -1324,6 +1361,7 @@ export function walkServerOnlyChain(
   routeContent: string,
   resolve: ModuleResolver,
   read: ModuleReader,
+  facts?: SourceFacts,
 ): readonly string[] | undefined {
   // Frontier nodes carry the absolute file to inspect, the source to scan, the display chain so far
   // (route + the as-written specifier of each hop), and the file the imports resolve relative to.
@@ -1340,7 +1378,7 @@ export function walkServerOnlyChain(
     const next: Node[] = []
     for (const node of frontier) {
       if (node.depth >= TRANSITIVE_MAX_DEPTH) continue
-      for (const spec of parseStaticImports(node.content)) {
+      for (const spec of parseStaticImports(node.content, facts, node.abs)) {
         // (a) A by-name sink (builtin / known server-only pkg) → the chain ends here (shortest first,
         // since BFS reaches the nearest sink before any deeper one).
         const sink = directSinkSpecifier(spec)
@@ -1381,6 +1419,7 @@ export function resolveServerOnlyChains(
   content: string,
   resolve: ModuleResolver,
   read: ModuleReader,
+  facts?: SourceFacts,
 ): TransitiveServerImportFinding[] {
   if (!ROUTE_FILE.test(file)) return []
   const lines = content.split("\n")
@@ -1389,7 +1428,7 @@ export function resolveServerOnlyChains(
   // Collect the route's import edges up front (fresh-regex scan) so the per-edge logic below can call
   // the REENTRANT transitive walk without corrupting a shared regex's `lastIndex` (the walk also scans
   // imports). Driving `STATIC_IMPORT.exec` here directly would restart this loop forever.
-  for (const { specifier, index } of staticImportEdges(content)) {
+  for (const { specifier, index } of staticImportEdges(content, facts, file)) {
     if (flaggedSpecifiers.has(specifier)) continue
     const line = lineAt(content, index)
     const snippet = (lines[line - 1] ?? "").trim()
@@ -1428,7 +1467,7 @@ export function resolveServerOnlyChains(
         continue
       }
       // Walk INTO the dependency: build the chain `[depAbs, …]` then re-root it at the route's import.
-      const subChain = walkServerOnlyChain(abs, depContent, resolve, read)
+      const subChain = walkServerOnlyChain(abs, depContent, resolve, read, facts)
       if (subChain !== undefined) {
         flaggedSpecifiers.add(specifier)
         // subChain is `[depAbs, …hops…, sink]`; replace its head (the resolved dep path) with the
@@ -1457,7 +1496,11 @@ const RESPONSE_RETURN = /(?:=>\s*|return\s+)(?:new\s+Response|Response\s*\.\s*js
 
 /** Scan a backend module (one that calls `server(`) for handlers returning a raw `Response`, which collapses
  * the typed client's `data` to `never`. Pure + line-accurate; returns `[]` for files with no `server(` call. */
-export function scanResponseRoutes(file: string, content: string): SourceFinding[] {
+export function scanResponseRoutes(
+  file: string,
+  content: string,
+  facts?: SourceFacts,
+): SourceFinding[] {
   // Strip comments + template literals first: a commented-out or doc-example `return new Response(`
   // must not raise a spurious advisory. Lengths are preserved, so lineAt + the raw-line snippet align.
   const code = stripComments(content)
@@ -1466,6 +1509,12 @@ export function scanResponseRoutes(file: string, content: string): SourceFinding
   const lines = content.split("\n")
   RESPONSE_RETURN.lastIndex = 0
   for (let m = RESPONSE_RETURN.exec(code); m !== null; m = RESPONSE_RETURN.exec(code)) {
+    if (facts !== undefined) {
+      const source = facts.parse(file, content)
+      // A parseable AST rejects `return new Response(` text that only lives in a normal string. On
+      // malformed source we keep the lexical candidate; the typecheck gate will report the syntax error.
+      if (source !== undefined && facts.isResponseSyntaxAt(source, m.index) !== true) continue
+    }
     const line = lineAt(content, m.index)
     // A `// nifra-expect raw-response` pragma marks an intentional raw Response (a file/redirect that can't
     // be a typed route), silencing this advisory. Honor it on the return line itself, OR on the line above
@@ -1791,6 +1840,8 @@ export interface CheckAssuranceContext {
   readonly routeAssurance?: AssuranceReport
   /** Static capability provenance, when the config declares a capabilities policy. */
   readonly capability?: CapabilityProjectReport
+  /** Canonical token-only evidence reused by manifest and other offline projections. */
+  readonly evidence?: ProjectEvidenceSnapshot
 }
 
 /** Optional per-project `nifra.check.json` - pure data (no code execution), so it's safe to read before
@@ -2085,6 +2136,10 @@ export async function collectCheckResult(
   // once, before the walk, so a project without it is told the rule did not run rather than being
   // handed a clean report the rule never produced.
   const sqlCompiler = await (opts.loadTypeScript ?? (() => importProjectTypeScript(cwd)))()
+  // AST facts are a lazy refinement of lexical candidates. The parser is not invoked for a file until
+  // one of the route/import/response scanners finds something worth disambiguating, and the cache is
+  // shared across those rules for this check run.
+  const sourceFacts = sqlCompiler === undefined ? undefined : createSourceFacts(sqlCompiler)
   // One loader + parse cache for the whole walk, so a shared `sql-fragments.ts` is read once no matter
   // how many route modules import a fragment out of it.
   const sqlImports = sqlCompiler === undefined ? undefined : createProjectSqlImports(cwd)
@@ -2097,11 +2152,11 @@ export async function collectCheckResult(
     walkSource(cwd, (rel, content) => {
       sourceFiles.push({ file: rel, content })
       fetches.push(...scanFetchText(rel, content, checkConfig.externalMounts))
-      staticRoutes.push(...scanStaticRouteText(rel, content))
+      staticRoutes.push(...scanStaticRouteText(rel, content, sourceFacts))
       untypedClients.push(...scanUntypedClient(rel, content))
       removedImports.push(...scanRemovedImports(rel, content))
       if (ROUTE_FILE.test(rel)) routeModules.push({ rel, content })
-      responseRoutes.push(...scanResponseRoutes(rel, content))
+      responseRoutes.push(...scanResponseRoutes(rel, content, sourceFacts))
       if (sqlCompiler !== undefined)
         interpolatedSql.push(...scanInterpolatedSql(rel, content, sqlCompiler, sqlImports))
     }),
@@ -2132,7 +2187,9 @@ export async function collectCheckResult(
     }
   }
   for (const { rel, content } of routeModules) {
-    serverImports.push(...resolveServerOnlyChains(rel, content, resolveModule, readModule))
+    serverImports.push(
+      ...resolveServerOnlyChains(rel, content, resolveModule, readModule, sourceFacts),
+    )
   }
 
   const diagnostics: CheckDiagnostic[] = []
@@ -2425,6 +2482,7 @@ export async function collectCheckResult(
       let config: AssuranceConfig
       let project: CapabilityProjectReport | undefined
       let routeAssurance: AssuranceReport | undefined
+      let evidence: ProjectEvidenceSnapshot | undefined
       if (provided !== undefined) {
         // A load/evaluate failure travels as `provided.error`; re-throwing lands it in the same
         // capability-config diagnostic the standalone catch produces.
@@ -2432,6 +2490,7 @@ export async function collectCheckResult(
         config = provided.config as AssuranceConfig
         project = provided.capability
         routeAssurance = provided.routeAssurance
+        evidence = provided.evidence
       } else {
         const { loadAssuranceConfig } = await import("./assure.ts")
         config = await loadAssuranceConfig(cwd)
@@ -2458,6 +2517,12 @@ export async function collectCheckResult(
                     candidate.method === finding.method && candidate.path === finding.path,
                 )
               : undefined
+          // An unmatched seam is a policy defect, not a route defect: the fix is in the policy file,
+          // so it gets its own steps instead of the route-side provenance guidance.
+          const seamFix =
+            finding.code === "unmatched-provenance-seam"
+              ? "Write the seam exactly as the code imports it, or delete the rule."
+              : undefined
           diagnostics.push({
             rule: "capability-assurance",
             severity: "error",
@@ -2466,18 +2531,30 @@ export async function collectCheckResult(
               : truncation !== undefined
                 ? { chain: truncation.chain }
                 : {}),
-            message: `${finding.message} - ${CAPABILITY_HINT}`,
-            fix: CAPABILITY_HINT,
-            suggestion: {
-              kind: "manual",
-              title: "Restore declared effect provenance",
-              steps: [
-                "Route effectful work through an import listed in capabilities.provenance.imports.",
-                "Declare the exact capability token on the route; do not widen unrelated routes in the same file.",
-                "For domain writes, add the adapter the capability definition requires: `schema.idempotency` for the `request` tier, `.use(durableCommand({ journal }))` from @nifrajs/middleware for the `durable` tier.",
-                "Run `nifra capabilities snapshot` only after assurance passes, then review the lockfile diff.",
-              ],
-            },
+            message: `${finding.message}${seamFix === undefined ? ` - ${CAPABILITY_HINT}` : ""}`,
+            fix: seamFix ?? CAPABILITY_HINT,
+            suggestion:
+              seamFix === undefined
+                ? {
+                    kind: "manual",
+                    title: "Restore declared effect provenance",
+                    steps: [
+                      "Route effectful work through an import listed in capabilities.provenance.imports.",
+                      "Declare the exact capability token on the route; do not widen unrelated routes in the same file.",
+                      "For domain writes, add the adapter the capability definition requires: `schema.idempotency` for the `request` tier, `.use(durableCommand({ journal }))` from @nifrajs/middleware for the `durable` tier.",
+                      "Run `nifra capabilities snapshot` only after assurance passes, then review the lockfile diff.",
+                    ],
+                  }
+                : {
+                    kind: "manual",
+                    title: "Point the provenance rule at a module that exists",
+                    steps: [
+                      "Copy the specifier from the import statement itself - it is matched as written, with no extension or index resolution.",
+                      "Use a trailing `/*` when the seam is a directory of modules (`@myorg/db/*`).",
+                      "For a routeModules entry, give the project-relative path of the file that implements the route.",
+                      "Delete the rule if the seam it governed is gone; leaving it in place proves nothing.",
+                    ],
+                  },
           })
         }
       }
@@ -2496,6 +2573,10 @@ export async function collectCheckResult(
                 : {}),
             },
           )
+        evidence ??= snapshotProjectEvidence(config.source, {
+          assurance,
+          ...(capabilityReport !== undefined ? { capabilities: capabilityReport } : {}),
+        })
         const path = resolve(cwd, config.manifest.path ?? "nifra.manifest.json")
         let message: string | undefined
         if (!assurance.ok || (capabilityReport !== undefined && !capabilityReport.ok)) {
@@ -2506,7 +2587,7 @@ export async function collectCheckResult(
         } else {
           try {
             const current = await buildNifraManifest({
-              source: config.source,
+              evidence,
               assurance,
               ...(capabilityReport !== undefined ? { capabilities: capabilityReport } : {}),
             })

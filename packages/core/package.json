@@ -67,6 +67,11 @@
       "types": "./dist/diff.d.ts",
       "default": "./dist/diff.js"
     },
+    "./evidence": {
+      "bun": "./src/evidence.ts",
+      "types": "./dist/evidence.d.ts",
+      "default": "./dist/evidence.js"
+    },
     "./assurance": {
       "bun": "./src/assurance.ts",
       "types": "./dist/assurance.d.ts",

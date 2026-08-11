@@ -11,12 +11,18 @@ import {
   type CapabilityZone,
   defineCapabilityPolicy,
 } from "./capabilities.ts"
+import {
+  type DataClassification,
+  classificationAtLeast as isClassificationAtLeast,
+  isDataClassification,
+} from "./classification.ts"
 import type {
   AssuranceDeclaration,
   AssuranceEvidence,
   AssuranceScope,
 } from "./internal/route-assurance.ts"
 import {
+  evidenceProvenance,
   NIFRA_ASSURANCE_IDS,
   routeGlob,
   validEvidenceId,
@@ -74,6 +80,8 @@ export interface AssuranceRouteSelector {
    * match a route that only writes an audit log.
    */
   readonly zone?: CapabilityZone
+  /** Match routes whose response classification is at least this sensitivity. */
+  readonly classificationAtLeast?: DataClassification
 }
 
 /** Extra inputs an assurance evaluation needs beyond the routes themselves. */
@@ -110,6 +118,19 @@ export interface AssuranceRule {
   readonly require?: readonly string[]
   /** Evidence ids the route must not carry (useful for public webhooks and health routes). */
   readonly forbid?: readonly string[]
+  /**
+   * Provenance required for every id in require. any (default) preserves compatibility with
+   * existing policies; runtime rejects schema.assurance author assertions and accepts only
+   * evidence installed by middleware/plugins or framework runtime policy. declared is useful for
+   * explicitly reviewing in-handler assertions and should not be used as an enforcement gate.
+   */
+  readonly requireProvenance?: "any" | "runtime" | "declared"
+  /**
+   * When true, an authenticated route selected by this rule must also carry runtime CSRF evidence.
+   * Enable this on rules covering cookie/session-authenticated browser routes; bearer-only APIs
+   * should use a separate rule because they do not have browser ambient-authority exposure.
+   */
+  readonly requireCsrfWithAuthenticated?: boolean
 }
 
 export interface AssurancePolicy {
@@ -255,7 +276,15 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
     // silence - and a selector that loses its only constraint matches EVERY route, making the rule
     // swallow everything after it. A misspelled key is a policy hole, so it is refused here.
     const unknown = Object.keys(rule.match).filter(
-      (key) => !["methods", "paths", "tools", "capabilities", ...CLASS_SELECTOR_KEYS].includes(key),
+      (key) =>
+        ![
+          "methods",
+          "paths",
+          "tools",
+          "capabilities",
+          ...CLASS_SELECTOR_KEYS,
+          "classificationAtLeast",
+        ].includes(key),
     )
     if (unknown.length > 0) {
       throw new Error(
@@ -297,8 +326,40 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
         `route assurance: rule ${JSON.stringify(name)} zone selector must be "domain" or "operational"`,
       )
     }
+    if (
+      rule.match.classificationAtLeast !== undefined &&
+      !isDataClassification(rule.match.classificationAtLeast)
+    ) {
+      throw new Error(
+        "route assurance: rule " +
+          JSON.stringify(name) +
+          ' classificationAtLeast must be "public", "pii", or "secret"',
+      )
+    }
     const required = normalizeEvidenceIds(rule.require, "required")
     const forbidden = normalizeEvidenceIds(rule.forbid, "forbidden")
+    if (
+      rule.requireProvenance !== undefined &&
+      rule.requireProvenance !== "any" &&
+      rule.requireProvenance !== "runtime" &&
+      rule.requireProvenance !== "declared"
+    ) {
+      throw new Error(
+        "route assurance: rule " +
+          JSON.stringify(name) +
+          ' requireProvenance must be "any", "runtime", or "declared"',
+      )
+    }
+    if (
+      rule.requireCsrfWithAuthenticated !== undefined &&
+      typeof rule.requireCsrfWithAuthenticated !== "boolean"
+    ) {
+      throw new Error(
+        "route assurance: rule " +
+          JSON.stringify(name) +
+          " requireCsrfWithAuthenticated must be boolean",
+      )
+    }
     const overlap = required.find((id) => forbidden.includes(id))
     if (overlap !== undefined) {
       throw new Error(
@@ -314,9 +375,16 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
         ...(capabilities !== undefined ? { capabilities: Object.freeze([...capabilities]) } : {}),
         ...(access !== undefined ? { access } : {}),
         ...(zone !== undefined ? { zone } : {}),
+        ...(rule.match.classificationAtLeast !== undefined
+          ? { classificationAtLeast: rule.match.classificationAtLeast }
+          : {}),
       }),
       require: required,
       forbid: forbidden,
+      ...(rule.requireProvenance !== undefined
+        ? { requireProvenance: rule.requireProvenance }
+        : {}),
+      ...(rule.requireCsrfWithAuthenticated === true ? { requireCsrfWithAuthenticated: true } : {}),
     })
   })
   return Object.freeze({
@@ -438,15 +506,21 @@ export function defineAssuranceConfig(config: AssuranceConfig): AssuranceConfig 
  * accept user policy must reject that combination up front - `defineAssuranceConfig` does.
  */
 export function matchesAssuranceSelector(
-  route: Pick<ReflectedRoute, "method" | "path" | "tool" | "capabilities">,
+  route: Pick<ReflectedRoute, "method" | "path" | "tool" | "capabilities" | "classification">,
   selector: AssuranceRouteSelector,
   definitions?: ReadonlyMap<string, CapabilityDefinition>,
 ): boolean {
-  const { methods, paths, tools, capabilities, access, zone } = selector
+  const { methods, paths, tools, capabilities, access, zone, classificationAtLeast } = selector
   if (methods !== undefined && !methods.includes(route.method as Method)) return false
   if (paths !== undefined && !paths.some((pattern) => routeGlob(pattern).test(route.path)))
     return false
   if (tools !== undefined && (route.tool !== undefined) !== tools) return false
+  if (
+    classificationAtLeast !== undefined &&
+    (route.classification === undefined ||
+      !isClassificationAtLeast(route.classification.max, classificationAtLeast))
+  )
+    return false
   const declared = route.capabilities ?? []
   if (capabilities !== undefined && !capabilities.some((token) => declared.includes(token)))
     return false
@@ -517,8 +591,25 @@ export function evaluateRouteAssurance(
       continue
     }
 
-    const missing = (rule.require ?? []).filter((id) => !evidenceIds.has(id))
+    const requiredProvenance = rule.requireProvenance ?? "any"
+    let missing = (rule.require ?? []).filter((id) => {
+      if (!evidenceIds.has(id)) return true
+      if (requiredProvenance === "any") return false
+      return !evidence.some(
+        (item) => item.id === id && evidenceProvenance(item) === requiredProvenance,
+      )
+    })
     const forbidden = (rule.forbid ?? []).filter((id) => evidenceIds.has(id))
+    if (
+      rule.requireCsrfWithAuthenticated === true &&
+      evidenceIds.has(NIFRA_ASSURANCE_IDS.AUTHENTICATED) &&
+      !evidence.some(
+        (item) => item.id === NIFRA_ASSURANCE_IDS.CSRF && evidenceProvenance(item) === "runtime",
+      )
+    ) {
+      const id = NIFRA_ASSURANCE_IDS.CSRF
+      if (!missing.includes(id)) missing = [...missing, id]
+    }
     for (const id of missing) {
       findings.push({
         code: "missing-evidence",
@@ -526,7 +617,10 @@ export function evaluateRouteAssurance(
         path: route.path,
         rule: rule.name,
         evidence: id,
-        message: `${route.method} ${route.path} (${rule.name}) is missing ${id}`,
+        message:
+          requiredProvenance === "any"
+            ? `${route.method} ${route.path} (${rule.name}) is missing ${id}`
+            : `${route.method} ${route.path} (${rule.name}) is missing ${requiredProvenance} evidence for ${id}`,
       })
     }
     for (const id of forbidden) {

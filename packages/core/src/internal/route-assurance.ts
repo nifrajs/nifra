@@ -7,6 +7,9 @@ export type AssuranceScope = "global" | "subsequent" | "plugin"
 export interface AssuranceEvidence {
   readonly id: string
   readonly source: string
+  /** Runtime-installed enforcement versus an author assertion on a route. Optional for legacy
+   * reflected descriptors; evaluators infer legacy values from source when absent. */
+  readonly provenance?: "runtime" | "declared"
 }
 
 /** Metadata installed on a middleware/plugin by {@link withRouteAssurance}. */
@@ -31,7 +34,32 @@ export const NIFRA_ASSURANCE_IDS = Object.freeze({
   IP_RESTRICTED: "nifra.ip-restricted",
   RATE_LIMITED: "nifra.rate-limited",
   SECURITY_HEADERS: "nifra.security-headers",
+  RESPONSE_CONTRACT: "nifra.response-contract",
 } as const)
+
+/** Create evidence with provenance stored non-enumerably so existing route descriptors remain
+ * byte-compatible while strict assurance policies can reject author-only assertions. */
+export function evidenceWithProvenance(
+  id: string,
+  source: string,
+  provenance: "runtime" | "declared",
+): AssuranceEvidence {
+  const evidence: { id: string; source: string; provenance?: "runtime" | "declared" } = {
+    id,
+    source,
+  }
+  Object.defineProperty(evidence, "provenance", {
+    value: provenance,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  })
+  return Object.freeze(evidence)
+}
+
+export function evidenceProvenance(value: AssuranceEvidence): "runtime" | "declared" {
+  return value.provenance ?? (value.source === "declared" ? "declared" : "runtime")
+}
 
 const escapeRegex = (value: string): string => value.replace(/[|\\{}()[\]^$+?.-]/g, "\\$&")
 
@@ -142,7 +170,13 @@ export function assuranceEvidenceFor(
     const key = `${declaration.id}\n${declaration.source}`
     if (seen.has(key)) continue
     seen.add(key)
-    evidence.push(Object.freeze({ id: declaration.id, source: declaration.source }))
+    evidence.push(
+      evidenceWithProvenance(
+        declaration.id,
+        declaration.source,
+        declaration.provenance === "declared" ? "declared" : "runtime",
+      ),
+    )
   }
   return Object.freeze(evidence)
 }

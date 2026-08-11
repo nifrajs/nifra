@@ -6,7 +6,18 @@ import {
   NIFRA_ASSURANCE,
   withRouteAssurance,
 } from "../src/assurance.ts"
-import { defineIdentityPlugin, definePlugin, type Middleware, server } from "../src/index.ts"
+import { defineIdentityPlugin, type Middleware, server } from "../src/index.ts"
+import type { StandardSchemaV1, StandardTypes } from "../src/schema/standard.ts"
+import { responseContract } from "../src/server/response-contract-lane.ts"
+
+const responseSchema: StandardSchemaV1<unknown, { id: string }> = {
+  "~standard": {
+    version: 1,
+    vendor: "assurance-test",
+    validate: (value: unknown) => ({ value: value as { id: string } }),
+    types: undefined as unknown as StandardTypes<unknown, { id: string }>,
+  },
+}
 
 const evidence = (app: { routes(): readonly unknown[] }, path: string): readonly string[] => {
   const route = app
@@ -61,7 +72,7 @@ describe("route assurance evidence", () => {
 
   test("subsequent evidence follows Nifra's order-scoped hook semantics", () => {
     const auth = withRouteAssurance(
-      definePlugin("test-auth", (app) => app.beforeHandle(() => undefined)),
+      defineIdentityPlugin("test-auth", (app) => app.beforeHandle(() => undefined)),
       { id: "test.authenticated", source: "test-auth", scope: "subsequent" },
     )
     const app = server()
@@ -126,7 +137,9 @@ describe("route assurance evidence", () => {
       .get("/own", () => ({ ok: true }))
       .merge(group)
 
-    expect(evidence(app, "/own")).toEqual(["test.global"])
+    // Merged hooks are scoped to the group's routes, and the evidence follows the enforcement:
+    // the group's routes carry it, the parent's own routes never gain a claim nothing covers.
+    expect(evidence(app, "/own")).toEqual([])
     expect(evidence(app, "/group")).toEqual(["test.global"])
   })
 })
@@ -321,6 +334,107 @@ describe("inline route assurance (schema.assurance) - in-handler-guarded routes 
     expect(() => server().get("/x", { assurance: ["NOT VALID"] }, () => null)).toThrow(
       "invalid evidence id",
     )
+  })
+
+  test("strict runtime provenance rejects an inline declared assertion", () => {
+    const app = server().get(
+      "/strict-admin",
+      { assurance: [NIFRA_ASSURANCE.AUTHENTICATED] },
+      () => ({ ok: true }),
+    )
+    const policy = defineAssurancePolicy({
+      rules: [
+        {
+          name: "admin",
+          match: { paths: ["/strict-admin"] },
+          require: [NIFRA_ASSURANCE.AUTHENTICATED],
+          requireProvenance: "runtime",
+        },
+      ],
+    })
+    const report = evaluateRouteAssurance(app, policy)
+    expect(report.ok).toBe(false)
+    expect(report.findings[0]?.message).toContain("runtime evidence")
+  })
+})
+
+describe("assurance relationships", () => {
+  test("cookie-authenticated mutation rules can require runtime CSRF evidence", () => {
+    const auth = withRouteAssurance<Middleware>(
+      { name: "session-auth", beforeHandle: () => undefined },
+      { id: NIFRA_ASSURANCE.AUTHENTICATED, source: "session-auth", scope: "subsequent" },
+    )
+    const csrf = withRouteAssurance<Middleware>(
+      { name: "csrf", onRequest: () => undefined },
+      {
+        id: NIFRA_ASSURANCE.CSRF,
+        source: "csrf",
+        scope: "global",
+        methods: ["POST"],
+      },
+    )
+    const policy = defineAssurancePolicy({
+      rules: [
+        {
+          name: "browser-mutation",
+          match: { methods: ["POST"] },
+          require: [NIFRA_ASSURANCE.AUTHENTICATED],
+          requireProvenance: "runtime",
+          requireCsrfWithAuthenticated: true,
+        },
+      ],
+    })
+
+    const protectedApp = server()
+      .use(auth)
+      .use(csrf)
+      .post("/account", () => ({ ok: true }))
+    expect(evaluateRouteAssurance(protectedApp, policy)).toMatchObject({ ok: true, findings: [] })
+
+    const missingCsrf = server()
+      .use(auth)
+      .post("/account", () => ({ ok: true }))
+    const report = evaluateRouteAssurance(missingCsrf, policy)
+    expect(report.ok).toBe(false)
+    expect(report.findings).toEqual([
+      expect.objectContaining({
+        code: "missing-evidence",
+        evidence: NIFRA_ASSURANCE.CSRF,
+      }),
+    ])
+  })
+
+  test("a sensitive classified route can require runtime response-contract enforcement", () => {
+    const policy = defineAssurancePolicy({
+      rules: [
+        {
+          name: "sensitive-output",
+          match: { classificationAtLeast: "pii" },
+          require: [NIFRA_ASSURANCE.RESPONSE_CONTRACT],
+          requireProvenance: "runtime",
+        },
+      ],
+    })
+    const enforced = server()
+      .use(responseContract("enforce"))
+      .get("/profile", { response: responseSchema, classification: "pii" }, () => ({
+        id: "user-1",
+      }))
+    expect(evaluateRouteAssurance(enforced, policy)).toMatchObject({ ok: true, findings: [] })
+
+    const unenforced = server().get(
+      "/profile",
+      { response: responseSchema, classification: "pii" },
+      () => ({ id: "user-1" }),
+    )
+    const report = evaluateRouteAssurance(unenforced, policy)
+    expect(report.ok).toBe(false)
+    expect(report.findings).toEqual([
+      expect.objectContaining({
+        code: "missing-evidence",
+        evidence: NIFRA_ASSURANCE.RESPONSE_CONTRACT,
+      }),
+    ])
   })
 })
 
