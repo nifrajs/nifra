@@ -25,6 +25,25 @@ export interface ScoredType extends TypeEntry {
   readonly score: number
 }
 
+interface PreparedType {
+  readonly type: TypeEntry
+  readonly nameTokens: ReadonlySet<string>
+  readonly bodyLower: string
+}
+
+const preparedTypesCache = new WeakMap<readonly TypeEntry[], readonly PreparedType[]>()
+const prepareTypes = (types: readonly TypeEntry[]): readonly PreparedType[] => {
+  const cached = preparedTypesCache.get(types)
+  if (cached !== undefined) return cached
+  const prepared = types.map((type) => ({
+    type,
+    nameTokens: new Set(tokenize(type.name)),
+    bodyLower: `${type.signature} ${type.doc ?? ""}`.toLowerCase(),
+  }))
+  preparedTypesCache.set(types, prepared)
+  return prepared
+}
+
 /** Exact (case-insensitive) name lookup - returns every declaration with that name (a name can exist in
  * more than one package). */
 export function lookupType(types: readonly TypeEntry[], name: string): TypeEntry[] {
@@ -41,13 +60,12 @@ export function searchTypes(
   const terms = queryTermGroups(query)
   if (terms.length === 0) return []
   const scored: ScoredType[] = []
-  for (const t of types) {
-    const nameTokens = new Set(tokenize(t.name))
-    const body = `${t.signature} ${t.doc ?? ""}`.toLowerCase()
+  for (const prepared of prepareTypes(types)) {
+    const t = prepared.type
     let score = 0
     for (const term of terms) {
-      if (tokenSetHas(nameTokens, term)) score += 8
-      score += countBodyHits(body, term, 4)
+      if (tokenSetHas(prepared.nameTokens, term)) score += 8
+      score += countBodyHits(prepared.bodyLower, term, 4)
     }
     if (score > 0) scored.push({ ...t, score })
   }
@@ -149,14 +167,20 @@ export function renderTypesResult(
 
 /** Load the bundled type corpus (`docs/types.json`), resolved relative to this module so it works from
  * `src/` (dev) and `dist/` (published) alike. */
-export async function loadTypesCorpus(): Promise<TypeEntry[] | undefined> {
-  const url = new URL("../docs/types.json", import.meta.url)
-  try {
-    const text = await Bun.file(url).text()
-    if (text.length === 0) return undefined
-    const parsed = JSON.parse(text) as TypeEntry[]
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : undefined
-  } catch {
-    return undefined
-  }
+let typesCorpusPromise: Promise<TypeEntry[] | undefined> | undefined
+
+/** The published corpus is immutable, so keep one loaded array and its derived search fields. */
+export function loadTypesCorpus(): Promise<TypeEntry[] | undefined> {
+  typesCorpusPromise ??= (async () => {
+    const url = new URL("../docs/types.json", import.meta.url)
+    try {
+      const text = await Bun.file(url).text()
+      if (text.length === 0) return undefined
+      const parsed = JSON.parse(text) as TypeEntry[]
+      return Array.isArray(parsed) && parsed.length > 0 ? parsed : undefined
+    } catch {
+      return undefined
+    }
+  })()
+  return typesCorpusPromise
 }

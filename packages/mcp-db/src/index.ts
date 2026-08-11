@@ -31,6 +31,10 @@ export interface SqliteDatabaseLike {
   prepare(sql: string): { all(...params: unknown[]): unknown[] }
   /** Execute a statement for its side effect (used only for `PRAGMA query_only`). */
   run(sql: string): unknown
+  /** Optional native interrupt for drivers that can abort a synchronous statement. */
+  interrupt?: () => void
+  /** Optional immutable snapshot support used to isolate Bun SQLite queries in a worker. */
+  serialize?: (name?: string) => Uint8Array
 }
 
 /** Context forwarded to `authorize` - the inbound HTTP Request carrying the `run_query` call. */
@@ -51,6 +55,12 @@ export interface RunQueryOptions {
   readonly maxRows?: number
   /** Max serialized result size in bytes (default 100 KB). */
   readonly maxResultBytes?: number
+  /** Maximum wall-clock time for planning, execution, and optional counting (default 5 seconds). */
+  readonly queryTimeoutMs?: number
+  /** Return an exact total after row truncation. Off by default because it re-executes the query. */
+  readonly exactTotal?: boolean
+  /** Maximum simultaneous run_query calls on this database connection (default 1). */
+  readonly maxConcurrentQueries?: number
 }
 
 export interface ServeDatabaseAsMcpOptions {
@@ -215,6 +225,118 @@ function assertResultLimit(value: number, name: string): void {
   }
 }
 
+class QueryTimeoutError extends Error {
+  constructor() {
+    super("query exceeded the time limit")
+    this.name = "QueryTimeoutError"
+  }
+}
+
+type QuerySession = {
+  run(sql: string, deadline: number): Promise<unknown[]>
+}
+
+const SQLITE_WORKER_SOURCE = `
+self.onmessage = (event) => {
+  let db
+  try {
+    const { Database } = require("bun:sqlite")
+    db = new Database(event.data.snapshot)
+    db.run("PRAGMA query_only = ON")
+    const rows = db.prepare(event.data.sql).all()
+    self.postMessage({ ok: true, rows })
+  } catch (error) {
+    self.postMessage({ ok: false, error: String(error) })
+  } finally {
+    db?.close()
+  }
+}
+`
+
+function isWorkerAvailable(): boolean {
+  return typeof Worker !== "undefined" && typeof Blob !== "undefined" && typeof URL !== "undefined"
+}
+
+function workerQuery(snapshot: Uint8Array, sql: string, deadline: number): Promise<unknown[]> {
+  const remaining = deadline - Date.now()
+  if (remaining <= 0) return Promise.reject(new QueryTimeoutError())
+  const sourceUrl = URL.createObjectURL(
+    new Blob([SQLITE_WORKER_SOURCE], { type: "text/javascript" }),
+  )
+  const worker = new Worker(sourceUrl)
+  return new Promise<unknown[]>((resolve, reject) => {
+    let settled = false
+    const finish = (error: Error | undefined, rows?: unknown[]): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      URL.revokeObjectURL(sourceUrl)
+      worker.terminate()
+      if (error === undefined) resolve(rows ?? [])
+      else reject(error)
+    }
+    const timer = setTimeout(() => finish(new QueryTimeoutError()), remaining)
+    worker.onmessage = (
+      event: MessageEvent<{ ok?: boolean; rows?: unknown[]; error?: string }>,
+    ) => {
+      if (event.data.ok === true) finish(undefined, event.data.rows)
+      else finish(new Error(event.data.error ?? "query failed in worker"))
+    }
+    worker.onerror = () => finish(new Error("query failed in worker"))
+    try {
+      worker.postMessage({ snapshot, sql })
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error(String(error)))
+    }
+  })
+}
+
+function openQuerySession(db: SqliteDatabaseLike): () => QuerySession {
+  if (typeof db.serialize === "function" && isWorkerAvailable()) {
+    return () => {
+      const snapshot = db.serialize?.()
+      if (snapshot === undefined) throw new McpDbConfigError("database snapshot is unavailable")
+      return {
+        run: (sql, deadline) => workerQuery(snapshot, sql, deadline),
+      }
+    }
+  }
+  if (typeof db.interrupt === "function") {
+    return () => ({
+      async run(sql, deadline) {
+        const remaining = deadline - Date.now()
+        if (remaining <= 0) throw new QueryTimeoutError()
+        let timedOut = false
+        const timer = setTimeout(() => {
+          timedOut = true
+          try {
+            db.interrupt?.()
+          } catch {
+            // A failed interrupt is handled by the deadline check below.
+          }
+        }, remaining)
+        try {
+          const rows = db.prepare(sql).all()
+          if (timedOut || Date.now() > deadline) throw new QueryTimeoutError()
+          return rows
+        } catch (error) {
+          if (timedOut || Date.now() > deadline) throw new QueryTimeoutError()
+          throw error
+        } finally {
+          clearTimeout(timer)
+        }
+      },
+    })
+  }
+  throw new McpDbConfigError(
+    "run_query requires a serializable Bun SQLite database or a database interrupt function",
+  )
+}
+
+function hasRecursiveCte(sql: string): boolean {
+  return /\bwith\s+recursive\b/i.test(stripSqlNoise(sql))
+}
+
 /**
  * Serve `db` as a mountable MCP server (`mcp.fetch` at `POST /mcp`). See module docs for the
  * security model. Throws {@link McpDbConfigError} on any unsafe configuration - always at
@@ -250,8 +372,14 @@ export function serveDatabaseAsMcp(
 
   const maxRows = options.runQuery?.maxRows ?? 100
   const maxResultBytes = options.runQuery?.maxResultBytes ?? 100 * 1024
+  const queryTimeoutMs = options.runQuery?.queryTimeoutMs ?? 5_000
+  const maxConcurrentQueries = options.runQuery?.maxConcurrentQueries ?? 1
   assertResultLimit(maxRows, "maxRows")
   assertResultLimit(maxResultBytes, "maxResultBytes")
+  assertResultLimit(queryTimeoutMs, "queryTimeoutMs")
+  assertResultLimit(maxConcurrentQueries, "maxConcurrentQueries")
+  const openQuery = options.runQuery === undefined ? undefined : openQuerySession(db)
+  let activeQueries = 0
 
   const listTables = defineMcpTool({
     name: "list_tables",
@@ -304,89 +432,111 @@ export function serveDatabaseAsMcp(
         required: ["sql"],
       },
       intent: "table",
-      handler: (args) => {
-        const sql = String(args.sql ?? "").trim()
-        if (sql === "") return { isError: true, text: "empty query" }
-        if (!isSingleStatement(sql)) {
-          return { isError: true, text: "only a single statement is allowed" }
+      handler: async (args) => {
+        if (activeQueries >= maxConcurrentQueries) {
+          return { isError: true, text: "too many concurrent queries" }
         }
-        if (!isReadStatement(sql)) {
-          return { isError: true, text: "only SELECT (or WITH…SELECT) statements are allowed" }
-        }
-
-        // Verify via the query plan that only allowlisted tables are touched. SQLite names every
-        // scanned/searched relation in EXPLAIN QUERY PLAN detail rows.
-        const query = executableSql(sql)
-        let planRows: Array<{ detail?: unknown }>
+        activeQueries += 1
         try {
-          planRows = db.prepare(`EXPLAIN QUERY PLAN ${query}`).all() as Array<{ detail?: unknown }>
-        } catch (error) {
-          return { isError: true, text: `query failed to plan: ${String(error)}` }
-        }
-        for (const row of planRows) {
-          const detail = typeof row.detail === "string" ? row.detail : ""
-          // SQLite also emits non-table nodes such as `SCAN CONSTANT ROW` for a
-          // constant-only SELECT. Only treat a scan/search target as a relation
-          // when it is not one of those planner pseudo-nodes.
-          if (
-            /^SCAN\s+CONSTANT\s+ROW$/i.test(detail.trim()) ||
-            /^SCAN\s+SUBQUERY\s+\d+$/i.test(detail.trim())
-          ) {
-            continue
+          const sql = String(args.sql ?? "").trim()
+          if (sql === "") return { isError: true, text: "empty query" }
+          if (!isSingleStatement(sql)) {
+            return { isError: true, text: "only a single statement is allowed" }
           }
-          const match = /(?:SCAN|SEARCH)\s+(?:TABLE\s+)?([A-Za-z_][A-Za-z0-9_]*)/i.exec(detail)
-          if (match !== null) {
-            const relation = match[1]?.toLowerCase() ?? ""
-            if (!allowlist.has(relation)) {
-              return {
-                isError: true,
-                text: `query touches ${JSON.stringify(match[1])}, which is not exposed`,
+          if (!isReadStatement(sql)) {
+            return { isError: true, text: "only SELECT (or WITH…SELECT) statements are allowed" }
+          }
+          if (hasRecursiveCte(sql)) return { isError: true, text: "query exceeded the time limit" }
+
+          const session = openQuery?.()
+          if (session === undefined) return { isError: true, text: "query exceeded the time limit" }
+          const deadline = Date.now() + queryTimeoutMs
+
+          // Verify via the query plan that only allowlisted tables are touched. SQLite names every
+          // scanned/searched relation in EXPLAIN QUERY PLAN detail rows.
+          const query = executableSql(sql)
+          let planRows: Array<{ detail?: unknown }>
+          try {
+            planRows = (await session.run(`EXPLAIN QUERY PLAN ${query}`, deadline)) as Array<{
+              detail?: unknown
+            }>
+          } catch (error) {
+            if (error instanceof QueryTimeoutError) return { isError: true, text: error.message }
+            return { isError: true, text: `query failed to plan: ${String(error)}` }
+          }
+          for (const row of planRows) {
+            const detail = typeof row.detail === "string" ? row.detail : ""
+            // SQLite also emits non-table nodes such as `SCAN CONSTANT ROW` for a
+            // constant-only SELECT. Only treat a scan/search target as a relation
+            // when it is not one of those planner pseudo-nodes.
+            if (
+              /^SCAN\s+CONSTANT\s+ROW$/i.test(detail.trim()) ||
+              /^SCAN\s+SUBQUERY\s+\d+$/i.test(detail.trim())
+            ) {
+              continue
+            }
+            const match = /(?:SCAN|SEARCH)\s+(?:TABLE\s+)?([A-Za-z_][A-Za-z0-9_]*)/i.exec(detail)
+            if (match !== null) {
+              const relation = match[1]?.toLowerCase() ?? ""
+              if (!allowlist.has(relation)) {
+                return {
+                  isError: true,
+                  text: `query touches ${JSON.stringify(match[1])}, which is not exposed`,
+                }
               }
             }
           }
-        }
 
-        let limitedRows: unknown[]
-        try {
-          // Fetch at most one row beyond the advertised cap. This keeps the database driver's
-          // materialization bounded even when the caller submits `SELECT * FROM a_huge_table`.
-          limitedRows = db
-            .prepare(`SELECT * FROM (${query}) AS "__nifra_result" LIMIT ${maxRows + 1}`)
-            .all()
-        } catch (error) {
-          return { isError: true, text: `query failed: ${String(error)}` }
-        }
-
-        const wasLimited = limitedRows.length > maxRows
-        let total = limitedRows.length
-        if (wasLimited) {
+          let limitedRows: unknown[]
           try {
-            const countRows = db
-              .prepare(`SELECT count(*) AS "__nifra_total" FROM (${query}) AS "__nifra_count"`)
-              .all() as Array<{ __nifra_total?: unknown }>
-            const count = countRows[0]?.__nifra_total
-            if (typeof count !== "number" || !Number.isSafeInteger(count) || count < maxRows) {
-              return { isError: true, text: "query failed: invalid row count" }
-            }
-            total = count
+            // Fetch at most one row beyond the advertised cap. This keeps the database driver's
+            // materialization bounded even when the caller submits `SELECT * FROM a_huge_table`.
+            limitedRows = await session.run(
+              `SELECT * FROM (${query}) AS "__nifra_result" LIMIT ${maxRows + 1}`,
+              deadline,
+            )
           } catch (error) {
-            return { isError: true, text: `query failed to count results: ${String(error)}` }
+            if (error instanceof QueryTimeoutError) return { isError: true, text: error.message }
+            return { isError: true, text: `query failed: ${String(error)}` }
           }
+
+          const wasLimited = limitedRows.length > maxRows
+          let total: number | null = limitedRows.length
+          if (wasLimited && options.runQuery?.exactTotal === true) {
+            try {
+              const countRows = (await session.run(
+                `SELECT count(*) AS "__nifra_total" FROM (${query}) AS "__nifra_count"`,
+                deadline,
+              )) as Array<{ __nifra_total?: unknown }>
+              const count = countRows[0]?.__nifra_total
+              if (typeof count !== "number" || !Number.isSafeInteger(count) || count < maxRows) {
+                return { isError: true, text: "query failed: invalid row count" }
+              }
+              total = count
+            } catch (error) {
+              if (error instanceof QueryTimeoutError) return { isError: true, text: error.message }
+              return { isError: true, text: `query failed to count results: ${String(error)}` }
+            }
+          } else if (wasLimited) {
+            total = null
+          }
+          let shown = Math.min(limitedRows.length, maxRows)
+          let payload = limitedRows.slice(0, shown)
+          let serialized = JSON.stringify(payload)
+          while (serialized.length > maxResultBytes && shown > 0) {
+            shown = Math.max(0, Math.floor(shown / 2))
+            payload = limitedRows.slice(0, shown)
+            serialized = JSON.stringify(payload)
+          }
+          const truncated = wasLimited || shown < limitedRows.length
+          const result: Record<string, unknown> = {
+            rows: payload,
+            ...(truncated ? { truncated: true, total } : {}),
+          }
+          return { text: JSON.stringify(result), structuredContent: result }
+        } finally {
+          activeQueries -= 1
         }
-        let shown = Math.min(limitedRows.length, maxRows)
-        let payload = limitedRows.slice(0, shown)
-        let serialized = JSON.stringify(payload)
-        while (serialized.length > maxResultBytes && shown > 0) {
-          shown = Math.max(0, Math.floor(shown / 2))
-          payload = limitedRows.slice(0, shown)
-          serialized = JSON.stringify(payload)
-        }
-        const truncated = shown < total
-        const result: Record<string, unknown> = {
-          rows: payload,
-          ...(truncated ? { truncated: { shown, total } } : {}),
-        }
-        return { text: JSON.stringify(result), structuredContent: result }
       },
     })
     tools.push(runQuery)

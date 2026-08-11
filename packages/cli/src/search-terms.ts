@@ -44,6 +44,9 @@ const ALIASES: Readonly<Record<string, readonly string[]>> = {
   ws: ["websocket", "websockets"],
 }
 
+export const MAX_QUERY_CHARS = 256
+export const MAX_QUERY_TERMS = 12
+
 export const tokenize = (s: string): string[] =>
   s
     .toLowerCase()
@@ -51,10 +54,12 @@ export const tokenize = (s: string): string[] =>
     .filter((t) => t.length > 1)
 
 export function queryTermGroups(query: string): SearchTermGroup[] {
-  return [...new Set(tokenize(query))].map((term) => ({
-    term,
-    variants: [term, ...(ALIASES[term] ?? [])],
-  }))
+  return [...new Set(tokenize(query.slice(0, MAX_QUERY_CHARS)))]
+    .slice(0, MAX_QUERY_TERMS)
+    .map((term) => ({
+      term,
+      variants: [term, ...(ALIASES[term] ?? [])],
+    }))
 }
 
 function tokenMatches(term: string, token: string): boolean {

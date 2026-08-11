@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import {
+  getCachedDocSections,
   loadDocsCorpus,
   renderDocsResult,
   searchSections,
   splitSections,
 } from "../src/docs-search.ts"
+import { MAX_QUERY_CHARS, MAX_QUERY_TERMS, queryTermGroups } from "../src/search-terms.ts"
 
 const DOC = [
   "# nifra - full developer documentation",
@@ -72,6 +74,17 @@ describe("renderDocsResult", () => {
 
   test("no match → actionable message", () => {
     expect(renderDocsResult(DOC, "zzz-nothing", 3)).toContain("section index")
+  })
+
+  test("bounds query terms and reuses the prepared section cache", () => {
+    const noisy = Array.from({ length: 10_000 }, (_, index) => `term-${index}`).join(" ")
+    const groups = queryTermGroups(noisy)
+    expect(groups).toHaveLength(MAX_QUERY_TERMS)
+    const firstTerm = "a".repeat(MAX_QUERY_CHARS - 1)
+    expect(queryTermGroups(`${firstTerm} b`)[0]?.term).toBe(firstTerm)
+
+    renderDocsResult(DOC, noisy, 3)
+    expect(getCachedDocSections(DOC)).toBe(getCachedDocSections(DOC))
   })
 })
 

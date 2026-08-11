@@ -72,6 +72,12 @@ describe("construction fails closed", () => {
         runQuery: { authorize: () => true, maxResultBytes: Number.POSITIVE_INFINITY },
       }),
     ).toThrow(/maxResultBytes/)
+    expect(() =>
+      serveDatabaseAsMcp(seededDb(), {
+        tables: ["habits"],
+        runQuery: { authorize: () => true, queryTimeoutMs: Number.NaN },
+      }),
+    ).toThrow(/queryTimeoutMs/)
   })
 })
 
@@ -128,10 +134,12 @@ describe("run_query (opt-in)", () => {
     expect(isError).toBe(false)
     const result = JSON.parse(text) as {
       rows: unknown[]
-      truncated?: { shown: number; total: number }
+      truncated?: boolean
+      total?: number | null
     }
     expect(result.rows).toHaveLength(1)
-    expect(result.truncated).toEqual({ shown: 1, total: 2 })
+    expect(result.truncated).toBe(true)
+    expect(result.total).toBeNull()
   })
 
   test("writes are rejected (statement gate)", async () => {
@@ -203,22 +211,29 @@ describe("run_query (opt-in)", () => {
     const { text } = await call(tiny, "run_query", { sql: "SELECT * FROM blobs" })
     const result = JSON.parse(text) as {
       rows: unknown[]
-      truncated?: { shown: number; total: number }
+      truncated?: boolean
+      total?: number | null
     }
     expect(result.rows.length).toBeLessThanOrEqual(2)
-    expect(result.truncated?.total).toBe(20)
+    expect(result.truncated).toBe(true)
+    expect(result.total).toBe(20)
     expect(text.length).toBeLessThanOrEqual(3000)
   })
 
   test("bounds database materialization before applying the row cap", async () => {
     let materialized = 0
+    let countCalls = 0
     const fakeDb = {
       run() {},
+      interrupt() {},
       prepare(sql: string) {
         return {
           all() {
             if (sql.startsWith("EXPLAIN QUERY PLAN")) return [{ detail: "SCAN TABLE habits" }]
-            if (sql.includes("__nifra_total")) return [{ __nifra_total: 100_000 }]
+            if (sql.includes("__nifra_total")) {
+              countCalls += 1
+              return [{ __nifra_total: 100_000 }]
+            }
             const limit = Number(/LIMIT (\d+)$/.exec(sql)?.[1] ?? 100_000)
             materialized = Math.max(materialized, limit)
             return Array.from({ length: limit }, (_, id) => ({ id }))
@@ -233,6 +248,21 @@ describe("run_query (opt-in)", () => {
     const result = await call(bounded, "run_query", { sql: "SELECT * FROM habits" })
     expect(result.isError).toBe(false)
     expect(materialized).toBe(3) // maxRows + one sentinel row, never the full 100k result
-    expect(JSON.parse(result.text).truncated).toEqual({ shown: 2, total: 100_000 })
+    expect(countCalls).toBe(0)
+    expect(JSON.parse(result.text).truncated).toBe(true)
+    expect(JSON.parse(result.text).total).toBeNull()
+  })
+
+  test("rejects recursive CTEs with the bounded query error", async () => {
+    const result = await call(
+      server,
+      "run_query",
+      {
+        sql: "WITH RECURSIVE loop(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM loop) SELECT x FROM loop",
+      },
+      auth,
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toBe("query exceeded the time limit")
   })
 })

@@ -17,6 +17,13 @@ export interface DocSection {
   readonly body: string
 }
 
+export interface PreparedDocSection extends DocSection {
+  readonly headingTokens: ReadonlySet<string>
+  readonly bodyLower: string
+}
+
+const sectionCache = new Map<string, readonly PreparedDocSection[]>()
+
 /** Split the generated doc into its `##` sections (the `# title` intro becomes "Overview"). */
 export function splitSections(markdown: string): DocSection[] {
   const out: DocSection[] = []
@@ -40,6 +47,23 @@ export function splitSections(markdown: string): DocSection[] {
   return out
 }
 
+function prepareSection(section: DocSection): PreparedDocSection {
+  return {
+    ...section,
+    headingTokens: new Set(tokenize(section.heading)),
+    bodyLower: section.body.toLowerCase(),
+  }
+}
+
+/** Return the immutable-build section parse and derived search fields from the process cache. */
+export function getCachedDocSections(markdown: string): readonly PreparedDocSection[] {
+  const cached = sectionCache.get(markdown)
+  if (cached !== undefined) return cached
+  const prepared = splitSections(markdown).map(prepareSection)
+  sectionCache.set(markdown, prepared)
+  return prepared
+}
+
 export interface ScoredSection extends DocSection {
   readonly score: number
 }
@@ -48,7 +72,7 @@ export interface ScoredSection extends DocSection {
  * (headings are curated names for exactly these lookups); body occurrences cap per term so one
  * spammy section can't drown a precisely-titled one. */
 export function searchSections(
-  sections: readonly DocSection[],
+  sections: readonly (DocSection | PreparedDocSection)[],
   query: string,
   limit: number,
 ): ScoredSection[] {
@@ -56,14 +80,14 @@ export function searchSections(
   if (terms.length === 0) return []
   const scored: ScoredSection[] = []
   for (const section of sections) {
-    const headingTokens = new Set(tokenize(section.heading))
-    const bodyLower = section.body.toLowerCase()
+    const prepared =
+      "headingTokens" in section && "bodyLower" in section ? section : prepareSection(section)
     let score = 0
     for (const term of terms) {
-      if (tokenSetHas(headingTokens, term)) score += 8
-      score += countBodyHits(bodyLower, term, 5)
+      if (tokenSetHas(prepared.headingTokens, term)) score += 8
+      score += countBodyHits(prepared.bodyLower, term, 5)
     }
-    if (score > 0) scored.push({ ...section, score })
+    if (score > 0) scored.push({ heading: section.heading, body: section.body, score })
   }
   return scored.sort((a, b) => b.score - a.score).slice(0, limit)
 }
@@ -78,7 +102,7 @@ export function renderDocsResult(
   query: string | undefined,
   limit: number,
 ): string {
-  const sections = splitSections(markdown)
+  const sections = getCachedDocSections(markdown)
   if (query === undefined || query.trim() === "") {
     const index = sections.map((s) => `- ${s.heading}`).join("\n")
     return `# nifra docs - section index (pass \`query\` to fetch matching sections)\n\n${index}`
@@ -100,12 +124,18 @@ export function renderDocsResult(
 
 /** Load the bundled corpus. Resolves relative to this module so it works from `src/` (repo dev)
  * and `dist/` (published) alike - `docs/llms-full.txt` sits at the package root next to both. */
-export async function loadDocsCorpus(): Promise<string | undefined> {
-  const url = new URL("../docs/llms-full.txt", import.meta.url)
-  try {
-    const text = await Bun.file(url).text()
-    return text.length > 0 ? text : undefined
-  } catch {
-    return undefined
-  }
+let docsCorpusPromise: Promise<string | undefined> | undefined
+
+/** The published corpus is immutable, so one read and one parsed-section cache are sufficient. */
+export function loadDocsCorpus(): Promise<string | undefined> {
+  docsCorpusPromise ??= (async () => {
+    const url = new URL("../docs/llms-full.txt", import.meta.url)
+    try {
+      const text = await Bun.file(url).text()
+      return text.length > 0 ? text : undefined
+    } catch {
+      return undefined
+    }
+  })()
+  return docsCorpusPromise
 }

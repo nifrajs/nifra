@@ -35,6 +35,7 @@ export function docsTools(
         properties: {
           query: {
             type: "string",
+            maxLength: 256,
             description: "Keywords to match against doc sections (omit for the index).",
           },
           limit: { type: "number", description: "Max sections to return (default 3, max 5)." },
@@ -64,6 +65,7 @@ export function docsTools(
         properties: {
           query: {
             type: "string",
+            maxLength: 256,
             description: "What you want an example of (omit for the index).",
           },
           limit: { type: "number", description: "Max examples to return (default 3, max 5)." },
@@ -94,6 +96,7 @@ export function docsTools(
           },
           query: {
             type: "string",
+            maxLength: 256,
             description:
               "Keyword search over names + signatures (when you don't know the exact name).",
           },
