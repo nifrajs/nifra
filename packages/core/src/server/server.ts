@@ -4547,10 +4547,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * length-less body mid-stream once the running byte count exceeds the cap - so a lying
    * or absent length can't force us to buffer an oversized payload.
    */
-  private async readBoundedJson(
+  private readBoundedJson(
     req: RequestSource,
     maxBodyBytes = this.maxBodyBytes,
   ): Promise<unknown | Response> {
+    // Not `async`: this is a pass-through, and wrapping the lane's own promise in a coroutine
+    // frame costs an extra microtask hop on every JSON body.
     return readBoundedJsonSource(req, maxBodyBytes, this.protoPoisoning)
   }
 
