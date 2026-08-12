@@ -2,6 +2,17 @@
   "name": "@nifrajs/devtools",
   "version": "2.11.0",
   "description": "Interactive DevTools overlay for nifra dev - loader traces, ISR status, route metadata.",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "devtools",
+    "debugging",
+    "developer-experience",
+    "ssr",
+    "loaders",
+    "overlay"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",

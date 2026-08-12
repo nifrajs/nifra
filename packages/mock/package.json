@@ -2,6 +2,17 @@
   "name": "@nifrajs/mock",
   "version": "2.11.0",
   "description": "Contract-based mock server - reads route schemas and generates fake responses.",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "mock",
+    "mock-server",
+    "testing",
+    "contract-testing",
+    "openapi",
+    "fixtures"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",

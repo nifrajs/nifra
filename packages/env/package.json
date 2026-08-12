@@ -6,10 +6,11 @@
     "bun",
     "typescript",
     "nifra",
-    "web-framework",
-    "full-stack",
-    "edge",
-    "ssr"
+    "env",
+    "environment-variables",
+    "dotenv",
+    "config",
+    "validation"
   ],
   "type": "module",
   "main": "./dist/index.js",

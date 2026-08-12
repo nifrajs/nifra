@@ -1,0 +1,43 @@
+{
+  "name": "@nifrajs/skills",
+  "version": "2.11.0",
+  "description": "Agent skills for nifra - portable SKILL.md bundles that teach a coding agent Nifra's contracts, boundaries, and CI gates, and point it at the live MCP server instead of stale recall.",
+  "keywords": [
+    "pi-package",
+    "nifra",
+    "bun",
+    "typescript",
+    "ai-agent",
+    "agent-skills",
+    "skills",
+    "claude-code",
+    "cursor",
+    "mcp",
+    "agents-md",
+    "web-framework"
+  ],
+  "type": "module",
+  "files": [
+    "skills",
+    ".claude-plugin"
+  ],
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
+  },
+  "sideEffects": false,
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/skills"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://nifra.dev/docs/agents"
+}

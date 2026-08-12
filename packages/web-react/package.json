@@ -6,10 +6,12 @@
     "bun",
     "typescript",
     "nifra",
-    "web-framework",
-    "full-stack",
-    "edge",
-    "ssr"
+    "react",
+    "ssr",
+    "hydration",
+    "streaming-ssr",
+    "render-adapter",
+    "full-stack"
   ],
   "type": "module",
   "main": "./dist/index.js",

@@ -6,10 +6,12 @@
     "bun",
     "typescript",
     "nifra",
-    "web-framework",
-    "full-stack",
-    "edge",
-    "ssr"
+    "jobs",
+    "background-jobs",
+    "queue",
+    "worker",
+    "retries",
+    "task-queue"
   ],
   "type": "module",
   "main": "./dist/index.js",

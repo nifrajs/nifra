@@ -6,10 +6,12 @@
     "bun",
     "typescript",
     "nifra",
-    "web-framework",
-    "full-stack",
-    "edge",
-    "ssr"
+    "content",
+    "markdown",
+    "mdx",
+    "content-collections",
+    "frontmatter",
+    "cms"
   ],
   "type": "module",
   "types": "./src/index.ts",

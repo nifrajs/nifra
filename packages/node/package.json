@@ -6,10 +6,12 @@
     "bun",
     "typescript",
     "nifra",
-    "web-framework",
-    "full-stack",
-    "edge",
-    "ssr"
+    "node",
+    "nodejs",
+    "http",
+    "adapter",
+    "runtime",
+    "server"
   ],
   "type": "module",
   "main": "./dist/index.js",

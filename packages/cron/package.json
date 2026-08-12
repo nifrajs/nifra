@@ -6,10 +6,11 @@
     "bun",
     "typescript",
     "nifra",
-    "web-framework",
-    "full-stack",
-    "edge",
-    "ssr"
+    "cron",
+    "scheduler",
+    "scheduled-tasks",
+    "jobs",
+    "crontab"
   ],
   "type": "module",
   "main": "./dist/index.js",

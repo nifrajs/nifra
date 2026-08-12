@@ -6,10 +6,12 @@
     "bun",
     "typescript",
     "nifra",
-    "web-framework",
-    "full-stack",
-    "edge",
-    "ssr"
+    "islands",
+    "signals",
+    "reactivity",
+    "dom-bindings",
+    "hydration",
+    "web"
   ],
   "type": "module",
   "main": "./dist/index.js",

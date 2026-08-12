@@ -6,10 +6,12 @@
     "bun",
     "typescript",
     "nifra",
-    "web-framework",
-    "full-stack",
+    "cloudflare",
+    "cloudflare-workers",
+    "durable-objects",
     "edge",
-    "ssr"
+    "websockets",
+    "adapter"
   ],
   "type": "module",
   "types": "./src/index.ts",

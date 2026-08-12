@@ -6,10 +6,12 @@
     "bun",
     "typescript",
     "nifra",
-    "web-framework",
-    "full-stack",
     "testing",
-    "ssr"
+    "contract-testing",
+    "property-testing",
+    "fuzzing",
+    "conformance",
+    "adversarial"
   ],
   "type": "module",
   "main": "./dist/index.js",

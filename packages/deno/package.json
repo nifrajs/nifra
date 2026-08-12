@@ -6,10 +6,11 @@
     "bun",
     "typescript",
     "nifra",
-    "web-framework",
-    "full-stack",
-    "edge",
-    "ssr"
+    "deno",
+    "deno-deploy",
+    "adapter",
+    "runtime",
+    "edge"
   ],
   "type": "module",
   "main": "./dist/index.js",

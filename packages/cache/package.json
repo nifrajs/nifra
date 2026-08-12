@@ -6,10 +6,11 @@
     "bun",
     "typescript",
     "nifra",
-    "web-framework",
-    "full-stack",
-    "edge",
-    "ssr"
+    "cache",
+    "kv",
+    "ttl",
+    "stale-while-revalidate",
+    "cache-tags"
   ],
   "type": "module",
   "main": "./dist/index.js",

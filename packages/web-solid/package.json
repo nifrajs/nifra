@@ -6,10 +6,12 @@
     "bun",
     "typescript",
     "nifra",
-    "web-framework",
-    "full-stack",
-    "edge",
-    "ssr"
+    "solid",
+    "solidjs",
+    "ssr",
+    "hydration",
+    "render-adapter",
+    "full-stack"
   ],
   "type": "module",
   "main": "./dist/index.js",
