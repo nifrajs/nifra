@@ -1,5 +1,168 @@
 # @nifrajs/cli
 
+## 2.12.0
+
+### Minor Changes
+
+- df100d3: Canonical project evidence: a single reflected snapshot of a project's routes, schemas, assurance,
+  and capabilities, exported as `@nifrajs/core/evidence` (`snapshotProjectEvidence`). Tools that used
+  to reflect the app a second time now project from the snapshot instead, so the manifest, the check
+  report, and introspection cannot disagree about what the app declares.
+
+  `createManifest` accepts the snapshot as `evidence` and skips its own reflection when given one. It
+  refuses to emit a manifest whose route-assurance or capability evidence is failing, so a manifest is
+  never a record of a project that does not pass its own gates. The previous `source` input still
+  works; one of the two is required.
+
+- df100d3: `nifra check`'s text-scanning rules confirm their candidates against a parsed source model before
+  reporting. A route path spelled inside an ordinary string, a `return new Response(` written in a
+  comment or template text, and an erased inline `import { type X }` no longer produce findings that
+  a reader has to dismiss by hand.
+
+  The parser is a refinement, never a relaxation: it is invoked lazily - only once a lexical scan
+  finds something worth disambiguating - the parse is cached across rules for the run, and a file that
+  fails to parse keeps its lexical finding so the security rules stay fail-closed.
+
+- b5aa099: `nifra check` verdicts are now install- and cwd-invariant, fully visible in the text report, and configurable per rule:
+
+  - **Report parity.** Every diagnostic that affects the exit code now appears in the human text report, not only in `--json` - registry rules and application rule packs render under their code titles, and the trailer states the exact error/advisory counts behind the verdict.
+  - **Typecheck can no longer skip silently.** A project with a `tsconfig.json` but no installed TypeScript now fails the check with an actionable diagnostic (`bun add -d typescript`) instead of a dim skip line, and the skip note names the reason.
+  - **Project-resolved compiler.** `tsc` and the TypeScript API used by compiler-backed lints resolve upward from the project root (monorepo hoisting included), so verdicts no longer depend on the working directory or on how the CLI was installed. Security lints that cannot run without TypeScript emit an explicit "did NOT run" advisory instead of passing silently.
+  - **`nifra.check.json` rule overrides.** A new `rules` map accepts per-rule `severity` (`error`/`warn`/`info`/`off`) and `ignore` globs, keyed by NF- code or legacy rule name; applied overrides are echoed in the report and the JSON result for auditability, and invalid entries warn instead of silently applying.
+  - **NF-S002 severity by file role.** Non-constant-time secret comparisons in server-role files (`*.server.ts`, `server/`, `backend.ts`) stay errors; the same pattern in client-leaning files (`.tsx`/`.jsx`, `routes/`) reports as a warning. The `@nifra-gate-reviewed` marker now applies from anywhere inside the preceding comment block.
+
+- 27e06a9: Typed collision escape for reserved-named route segments. The client proxy resolves the seven HTTP verbs (any casing) plus `subscribe`, `ws`, `index`, and `then` before path segments, so a route like `POST /api/delete` cannot be reached by dot access - `api.delete` is the DELETE verb. The typed spelling is now a call on the parent node: `api.api("delete").post()` sends `POST /api/delete`. The call signature accepts exactly the colliding segment names under that node (it is not a general string path builder), coexists with param calls on the same node (an object is a param bag, a string literal the segment), and covers all eleven reserved names including `then`. Purely additive - no runtime change, no existing call site affected.
+
+  `NF-C018` accordingly downgrades from error to warning and its message now spells out the escape call for the flagged route, alongside the existing rename and `nifra-expect reserved-segment` options.
+
+- 9314567: `nifra doctor` follows linked dependencies when looking for duplicate installs. A package linked in
+  from a sibling repo (`link:`, `npm link`, a local file dependency) resolves through a symlink that
+  leaves the workspace, and the copies of `@nifrajs/*` installed inside that sibling were invisible to
+  the duplicate check - the exact shape that produces two incompatible copies of core in one build.
+  Doctor now resolves each linked dependency to its real path, probes it for identity-sensitive
+  packages, and reports every copy with the path it was found at. The scan is bounded (linked roots
+  and probes are capped) and stays inside the linked package's own repository.
+- 3d8d8e4: Add production-readiness checks to `nifra doctor`, including target-aware reporting and a `--strict` mode for failing when applicable guarantees are absent.
+- ce3128f: `nifra mcp` resolves the project it describes instead of trusting the directory it was spawned in.
+  An MCP client configured with a different working directory used to get confident answers about
+  whatever happened to be there - or about no project at all - with nothing in the response saying so.
+
+  - `nifra mcp <dir>` takes an explicit project directory; a human-named root always wins.
+  - Without one, the spawn directory walks UP to the nearest nifra marker (a `package.json` depending
+    on `@nifrajs/*`, or a `nifra.config.ts` monorepo root), so starting in a subdirectory still lands
+    on the project.
+  - After the handshake the server reads the client's MCP `roots`. When the guess found no project, or
+    found one disjoint from every workspace root, and exactly ONE workspace root is a nifra project,
+    that root is adopted. Ambiguity adopts nothing.
+  - What cannot be resolved fails closed: project-scoped tools refuse with a remediation message that
+    lists the candidate roots. When a root IS in effect, every project tool result carries a note
+    naming it, and the `initialize` instructions announce it.
+
+- ba85ce7: The MCP server says when it is answering from a different nifra than the project builds with. A
+  client that launches a globally installed `nifra mcp` gets confident, authoritative answers about
+  types, checks, and docs from whichever CLI version happens to be on the machine - the mismatch is
+  invisible in every answer. The server now compares its own version against the `@nifrajs/cli` (or
+  `@nifrajs/core`) installed in the resolved project root, and when the feature versions differ it
+  stamps a warning naming both versions on the `initialize` instructions and on every project tool
+  result, with the command that runs the project's own CLI instead. Patch-level differences are not
+  reported.
+- 5a02c51: Route-table lints in `nifra check`: `NF-C018` (error) flags routes whose static path segments spell a reserved typed-client proxy key (get/post/put/patch/delete/head/options in any casing, plus `subscribe`, `ws`, `index`, `then`) - such routes are unreachable through the typed client; opt out for an intentionally non-typed-client route with `// nifra-expect reserved-segment` above the registration. `NF-C019` (error) flags the same method+path registered twice in one file, where which registration serves is undefined.
+- 0aadd62: Four new built-in security lints in `nifra check`: `NF-S004` warns when a `cors` origin predicate never reads the origin (it allows every origin), `NF-S005` warns on `redirect(..., { external: true })` call sites so open-redirect surfaces stay auditable, `NF-S006` warns when a security escape hatch (`allowLengthless`, `allowGlobalKey`, `allowInProduction`) is enabled and names the assurance claim it weakens, and `NF-S007` (info) nudges Secure cookies toward `__Host-`/`__Secure-` prefixes. All four honor the `@nifra-gate-reviewed` marker and share the existing one-parse-per-file pipeline.
+- 866d59f: `nifra check`'s interpolated-SQL rule follows a query fragment into the module that exports it. A project that keeps its column lists and order clauses in a `sql-fragments.ts` and imports them by name no longer gets an error on every query assembled from them, so the rule's errors stay the ones worth reading.
+
+  Resolution stops wherever proof does, because a wrong resolution here silences a real SQL injection rather than reporting a false one. It follows `export const NAME = "…"`, the two-statement `const NAME = …; export { NAME }`, and barrels (`export { NAME } from`, `export *`), reached by a named import from a relative specifier that lands on real source inside the project. Everything else still flags: a default or namespace import, an exported `let`, an initializer that is a call, a bare specifier (a dependency's exports are not the project's to prove), two `export *` sources offering the same name, a chain longer than three modules, a cyclic barrel, a file that does not parse, and a local binding that shadows the import. A resolved fragment still feeds the keyword scan, so hostile SQL parked in a shared constant is found rather than trusted, and the fragment's own identifiers are read in its own module - never in the file that imported it.
+
+- a5d3f5b: Add stable diagnostic codes, application-supplied rule packs, fix recipes, assurance bundles, contract lock snapshots, hydration assurance hooks, replay metadata, security verification rules, and idempotency proofs.
+- e2d1939: Add typed tool contracts with shared fail-closed adapters, static verification work graphs, bounded provider-neutral agent turns, deterministic trajectory replay, and an explicit execution-policy seam with a non-isolating local process adapter.
+- e83e6eb: A capability provenance rule that matches nothing is now a finding. Seam specifiers in
+  `provenance.imports` and `provenance.routeModules` are compared with the text the code imports, so a
+  rule written as `src/db` when the module is imported as `./src/db.ts` silently governed zero
+  modules - the policy looked satisfied because nothing was ever attributed to it. `nifra check` now
+  reports `unmatched-provenance-seam` for every declared seam no scanned source matched, with the
+  nearest specifiers that were actually seen ("did you mean ...?") and a fix that points at rewriting
+  the rule to match the import, or deleting it.
+
+  `forbiddenImports` is deliberately excluded: zero matches there is the success state.
+
+  A rule that is genuinely absent in some projects sharing one policy can opt out with
+  `optional: true`, which suppresses the finding for that seam only.
+
+### Patch Changes
+
+- 33548fe: The two CLI paths that bound a caller-supplied path to the project root now resolve it through the
+  filesystem instead of comparing strings. `loadBackend`'s entry check and `resolveProjectDir` both
+  compared the textual path, so a symlink inside the project pointed anywhere and still read as inside -
+  and importing an entry executes it. Both now canonicalize with `realpath` before the containment test
+  (`resolveProjectDir` walks up to the deepest existing ancestor, so a not-yet-created directory still
+  resolves), and the test itself covers the Windows cross-drive case where `relative()` returns an
+  absolute path that starts with neither `..` nor a separator.
+
+  `nifra init-agents` refuses to write through a symlink: a symlinked ancestor directory or a symlinked
+  target file aborts with an error rather than landing the file wherever the link points. Writes are
+  also atomic (temp file plus rename, `wx` so the temp cannot follow an existing name), so an
+  interrupted run can no longer leave a half-written config behind.
+
+- 0a91064: The docs, examples, and types MCP searches bound their own cost. A query is truncated to 256
+  characters and 12 distinct terms before scoring (`MAX_QUERY_CHARS` / `MAX_QUERY_TERMS`), and the
+  schemas advertise the same 256-character limit. Each bundled corpus is read once per process and its
+  sections are parsed, tokenized, and lowercased once, instead of on every call - the corpus ships
+  immutable in a published build, so there is nothing to invalidate.
+
+  Auto-fixes write only inside the project. A diagnostic path is rejected when it is absolute, when it
+  escapes the root lexically, or when its real path lands outside after symlinks resolve; the fix is
+  skipped rather than applied. Both the generic MCP edit path and the fix recipes share the one
+  `resolveInsideProject` helper.
+
+- Updated dependencies [df100d3]
+- Updated dependencies [0efacea]
+- Updated dependencies [cd1732c]
+- Updated dependencies [df100d3]
+- Updated dependencies [27e06a9]
+- Updated dependencies [9a9346e]
+- Updated dependencies [b5f47c0]
+- Updated dependencies [fc33c0f]
+- Updated dependencies [7dd3f28]
+- Updated dependencies [fa51aba]
+- Updated dependencies [c4e8bb0]
+- Updated dependencies [11d1658]
+- Updated dependencies [33ee9ff]
+- Updated dependencies [9a692a2]
+- Updated dependencies [5f71c23]
+- Updated dependencies [3788b36]
+- Updated dependencies [0863ef0]
+- Updated dependencies [ae5338f]
+- Updated dependencies [8847825]
+- Updated dependencies [cb04de8]
+- Updated dependencies [f3cc02e]
+- Updated dependencies [9a9346e]
+- Updated dependencies [4c2123d]
+- Updated dependencies [5e4e31a]
+- Updated dependencies [24f1787]
+- Updated dependencies [9a9346e]
+- Updated dependencies [b045f9e]
+- Updated dependencies [df07059]
+- Updated dependencies [9a9346e]
+- Updated dependencies [9a9346e]
+- Updated dependencies [dbc0b79]
+- Updated dependencies [bd5c624]
+- Updated dependencies [3868e1b]
+- Updated dependencies [a5d3f5b]
+- Updated dependencies [00819c5]
+- Updated dependencies [e2bdd4a]
+- Updated dependencies [e2d1939]
+- Updated dependencies [e83e6eb]
+- Updated dependencies [64d25db]
+- Updated dependencies [c55f7a3]
+- Updated dependencies [f8b0097]
+  - @nifrajs/core@2.12.0
+  - @nifrajs/client@2.12.0
+  - create-nifra@2.12.0
+  - @nifrajs/web@2.12.0
+  - @nifrajs/mcp@2.12.0
+  - @nifrajs/schema@2.12.0
+  - @nifrajs/testing@2.12.0
+  - @nifrajs/runner@2.12.0
+
 ## 2.11.0
 
 ### Minor Changes

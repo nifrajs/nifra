@@ -1,5 +1,19 @@
 # @nifrajs/auth
 
+## 2.12.0
+
+### Minor Changes
+
+- dbc0b79: Signing-secret rotation. `signValue`/`unsignValue` (and the new `CookieSecret` type), session `secret`, and CSRF `secret` now also accept a rotation list: the first secret signs, any listed secret verifies, so keys rotate without invalidating live cookies, sessions, or CSRF tokens. Every listed secret must meet the 32-byte floor and an empty list throws; the single-secret path is unchanged.
+
+### Patch Changes
+
+- 023891a: `destroy(c)` called without a `Session` object now revokes the stored record addressed by the request's
+  signed session cookie, instead of only clearing the cookie. A logout handler that had not first loaded
+  the session cleared the browser's copy while the server-side record stayed valid for its full TTL, so a
+  copy of the cookie taken before logout still authenticated. The id comes from the signed cookie, so
+  only a session the caller actually presented can be deleted.
+
 ## 2.11.0
 
 ## 2.10.0

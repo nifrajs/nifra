@@ -1,5 +1,65 @@
 # @nifrajs/node
 
+## 2.12.0
+
+### Minor Changes
+
+- 0a91064: Two new `serve()` options decide the authority in `request.url`. `allowedHosts` takes a list or a
+  predicate and answers `400` before the app runs when the inbound `Host` is not one of them;
+  `canonicalHost` builds every request URL from one fixed authority and ignores the inbound value, the
+  right setting behind a proxy that already validates. Both parse the header properly: the port is
+  range-checked, the bracketed IPv6 form is handled, and anything carrying CR/LF, whitespace, or
+  userinfo is rejected.
+
+  The check runs at request entry, so the lean GET path that builds its URL lazily is covered too.
+  With neither option set, behavior is unchanged and the host in `request.url` remains
+  client-controlled - the README now says so, along with the public-only contract for the `static`
+  root.
+
+- df18a93: The static file server denies dotfiles by default. A request whose path contains a dot-leading
+  segment (`/.env`, `/.git/config`, `/.hidden/app.js`) - including `%2E`-encoded spellings - answers
+  `404` with the same body as a missing file, so probing cannot distinguish "hidden" from "absent".
+  Dotfiles land in build output by accident (`.env` next to the bundle, a copied `.git` tree), so
+  serving them is opt-in: set the new `dotfiles: "allow"` option when the directory deliberately
+  contains them (e.g. `/.well-known`). Filenames that merely contain dots (`logo..png`) are
+  unaffected; the check rides the existing traversal pass, adding no filesystem access and no
+  per-request cost on clean paths.
+
+### Patch Changes
+
+- ae5338f: Cut per-request overhead on the JSON body lane and the Node adapter.
+
+  The bounded JSON reader now returns the body read's own promise instead of running as an async
+  function, so a framed JSON POST pays one microtask hop rather than several. The prototype-poisoning
+  walk checks the suspect keys during the single enumeration it already performs instead of probing
+  each node twice. The Node adapter memoizes Host-authority normalization, which repeats for every
+  request of a deployment.
+
+  No behaviour change: the same bodies are accepted, the same poisoning shapes are rejected or
+  stripped, and the same Host values normalize to the same authority.
+
+- 5e4e31a: The Node-direct response path asks "are these header names already the lowercase wire spelling"
+  once per request instead of three times. Core answers it where the answer is already in hand - the
+  static-header fold derives each name's lowercase form anyway, and the native response walk was
+  walking the same keys - and publishes it as a symbol-keyed mark the header view and `@nifrajs/node`'s
+  direct writer read instead of re-scanning. An app that registers a raw `onNodeResponse` twin (one
+  handed the record itself rather than the case-normalizing view) is never marked and keeps the
+  per-reader scans, since such a twin writes after the point the mark would be set. Wire output is
+  unchanged by construction: it is the same answer, from the same pass.
+
+  Header-normalization frames fall from 4.1% to 1.5% of self time on a middleware-heavy route and from
+  1.6% to 0.6% on a hookless one (V8 CPU profile, `GET /users/:id`). `@nifrajs/middleware`'s Node
+  response twins set one header at a time through a helper that keeps the record in V8's fast property
+  mode rather than re-homing it into a null-prototype object, which demoted every later lookup on the
+  response path to dictionary mode.
+
+- f8b0097: A `.ws()` route's `maxPayloadBytes` is now enforced on every runtime, not only the ones whose socket
+  implementation happened to police it. The declared cap travels with the upgrade outcome, so the Node
+  bridge hands it to `ws` as `maxPayload`, and the Deno and Workers/`attachWebSocket` message paths
+  measure the frame and close with `1009 message too large` instead of delivering it. A route that
+  declares no cap is untouched and pays nothing: sizing a text frame costs a UTF-8 encode, so the
+  measurement only runs where a cap exists.
+
 ## 2.11.0
 
 ## 2.10.0

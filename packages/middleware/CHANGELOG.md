@@ -1,5 +1,83 @@
 # @nifrajs/middleware
 
+## 2.12.0
+
+### Minor Changes
+
+- 0fd146f: The default idempotency store key is now scoped by a digest of the caller's credential headers as
+  well as by method + path. Presenting another caller's `Idempotency-Key` used to address their stored
+  entry and replay their response; it now addresses a different key entirely. The headers that identify
+  a caller are configurable via `principalHeaders` (default: Authorization, Cookie, x-api-key), and only
+  a SHA-256 digest ever becomes part of a key - a raw credential as a store key would show up in every
+  Redis `KEYS` dump and slow-log line. A custom `key` still replaces the scoping wholesale and must fold
+  in the principal itself; it may now be async.
+
+  `MemoryIdempotencyStore` is bounded: `maxEntries` (default 10,000) and `maxKeyBytes` (default 1024).
+  Reaching the cap refuses rather than evicts - every entry is a live lock or a response someone is
+  entitled to replay, so evicting to make room is how a duplicate charge happens - and the middleware
+  answers `503 idempotency_unavailable` with `retry-after`. Expired entries are swept incrementally, so
+  a normal request never walks the map.
+
+- 9a9346e: `app.use(plugin)` keeps the caller's server type. A plugin built with `definePlugin` whose input
+  server type is not pinned used to widen the app to `Server<any, any>`, so every route declared
+  before _and_ after the `use` lost its types and the typed client silently degraded to `any`. That
+  case is now a compile error at the `use` call site, naming the definer to switch to; the plugin is
+  unchanged at runtime.
+
+  Pick the definer that matches what the plugin does: `defineContextPlugin<D>` when it adds context
+  via `derive`/`decorate` (the registry threads through and `D` is added to every downstream handler
+  context), `defineRouterPlugin` when it mounts routes/hooks and adds no context (mount as a side
+  effect, return the app). `definePlugin` still works when its input type is pinned - annotate the
+  parameter (`(app: typeof api) => ...`) or pass explicit type arguments.
+
+  Every first-party plugin now threads: `jwt`, `tokenAuth`, `basicAuth`, `durableCommand`, `etag`,
+  `compression`, `problemDetails`, `prettyJson`, `methodOverride`, `trailingSlash`, `cacheControl`,
+  `devtools`, and `metrics` return an `IdentityPlugin`; `timing`, `language`, and `tracing` return a
+  `ContextPlugin` of what they add (`{ timing }`, `{ language, languageMatch }`, and
+  `{ trace, observation, causality }` respectively), so `c.timing` / `c.language` / `c.trace` are
+  typed without a manual annotation. `combine(...)` is typed as an identity bundle and
+  `namedCombine(name, ...)` is its deduped, named form.
+
+  A type-level test asserts the threading for each definer shape, so a regression fails `typecheck`
+  rather than surfacing as `any` in a downstream app.
+
+- 59e547b: `securityHeaders` gains opt-in cross-origin isolation knobs: `crossOriginOpenerPolicy`, `crossOriginEmbedderPolicy`, `crossOriginResourcePolicy`, and `permissionsPolicy`. All remain off by default and are declared as static response headers, so the fused native lanes are preserved.
+- dbc0b79: Signing-secret rotation. `signValue`/`unsignValue` (and the new `CookieSecret` type), session `secret`, and CSRF `secret` now also accept a rotation list: the first secret signs, any listed secret verifies, so keys rotate without invalidating live cookies, sessions, or CSRF tokens. Every listed secret must meet the 32-byte floor and an empty list throws; the single-secret path is unchanged.
+
+### Patch Changes
+
+- eb3602b: `cache()` no longer serves a stored entry to a credentialed request. The write side already refused to
+  store a personalized response, but a request carrying credentials could still be answered from an
+  entry stored earlier by an anonymous caller, before the route's own authentication ran. Reads now
+  apply the same test as writes: a request carrying a credential header only reads an entry whose own
+  `Cache-Control` marks it public (`public` or `s-maxage`). The credential headers are configurable via
+  `authenticatedHeaders` and now include `x-api-key` alongside Authorization and Cookie. Routes with
+  `cacheAuthenticated: true` are unaffected.
+- 70ebad4: `jwt()` now verifies that a `CryptoKey` passed as the verification key actually matches the algorithm
+  being verified. A key imported for one algorithm was previously used as-is for whichever `alg` the
+  configuration named, so an HMAC secret could be handed to an RS256 verification (and vice versa),
+  turning the algorithm choice into something the key no longer pins down. The key's `type`,
+  `algorithm.name`, `algorithm.hash`, and `verify` usage must all line up, or the token is rejected with
+  a JWT error. Raw string and `Uint8Array` secrets are imported by the middleware itself and were
+  already bound.
+- 5e4e31a: The Node-direct response path asks "are these header names already the lowercase wire spelling"
+  once per request instead of three times. Core answers it where the answer is already in hand - the
+  static-header fold derives each name's lowercase form anyway, and the native response walk was
+  walking the same keys - and publishes it as a symbol-keyed mark the header view and `@nifrajs/node`'s
+  direct writer read instead of re-scanning. An app that registers a raw `onNodeResponse` twin (one
+  handed the record itself rather than the case-normalizing view) is never marked and keeps the
+  per-reader scans, since such a twin writes after the point the mark would be set. Wire output is
+  unchanged by construction: it is the same answer, from the same pass.
+
+  Header-normalization frames fall from 4.1% to 1.5% of self time on a middleware-heavy route and from
+  1.6% to 0.6% on a hookless one (V8 CPU profile, `GET /users/:id`). `@nifrajs/middleware`'s Node
+  response twins set one header at a time through a helper that keeps the record in V8's fast property
+  mode rather than re-homing it into a null-prototype object, which demoted every later lookup on the
+  response path to dictionary mode.
+
+- Updated dependencies [9a9346e]
+  - @nifrajs/schema@2.12.0
+
 ## 2.11.0
 
 ### Patch Changes

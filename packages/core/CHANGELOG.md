@@ -1,5 +1,252 @@
 # @nifrajs/core
 
+## 2.12.0
+
+### Minor Changes
+
+- df100d3: Route-assurance rules can distinguish enforcement from assertion, and can select routes by data
+  sensitivity.
+
+  - **`requireProvenance`** on a rule: `"any"` (default, unchanged) accepts every evidence entry;
+    `"runtime"` accepts only evidence installed by middleware, a plugin, or framework runtime policy
+    and rejects an author's inline `schema.assurance` claim; `"declared"` is the inverse, useful for
+    reviewing what handlers assert about themselves. Provenance is carried non-enumerably on each
+    evidence entry, so existing reflected route descriptors keep their exact serialized shape.
+  - **`requireCsrfWithAuthenticated`** on a rule: an authenticated route selected by that rule must
+    also carry runtime CSRF evidence. Intended for rules covering cookie- or session-authenticated
+    browser routes; bearer-only APIs have no ambient-authority exposure and belong in their own rule.
+  - **`match.classificationAtLeast`**: select routes whose declared response classification is at
+    least `"public"`, `"pii"`, or `"secret"`, so a policy can demand more of the routes that carry
+    more.
+
+  A failure message names the required provenance when it is not `"any"`, so the report says which
+  kind of evidence is missing rather than only which id.
+
+- 0efacea: Add a generic server `onStop` lifecycle hook and have OTLP tracing exporters flush and shut down automatically when attached to a server. Manual OTLP lifecycle calls remain available for standalone exporters.
+- df100d3: Canonical project evidence: a single reflected snapshot of a project's routes, schemas, assurance,
+  and capabilities, exported as `@nifrajs/core/evidence` (`snapshotProjectEvidence`). Tools that used
+  to reflect the app a second time now project from the snapshot instead, so the manifest, the check
+  report, and introspection cannot disagree about what the app declares.
+
+  `createManifest` accepts the snapshot as `evidence` and skips its own reflection when given one. It
+  refuses to emit a manifest whose route-assurance or capability evidence is failing, so a manifest is
+  never a record of a project that does not pass its own gates. The previous `source` input still
+  works; one of the two is required.
+
+- b5f47c0: `__Secure-` and `__Host-` cookie name prefixes (RFC 6265bis) are now enforced, matched
+  case-insensitively the way browsers match them. `serializeCookie` throws on a `Set-Cookie` that
+  violates its name's prefix contract - `__Secure-` requires `Secure`; `__Host-` requires `Secure`
+  and `Path=/` and forbids `Domain` - instead of emitting a cookie the user agent silently discards.
+  `c.set.cookie`'s secure defaults already satisfy both contracts, so prefixed names work with zero
+  configuration, and `c.set.deleteCookie` applies `Secure` to the deletion write for a prefixed name
+  so the browser accepts the deletion (the failure mode behind Hono's CVE-2026-39410 class: a
+  non-conforming deletion leaves the cookie alive after logout). The new `cookieNamePrefix(name)`
+  export classifies a name as `"secure"`, `"host"`, or unprefixed. `@nifrajs/i18n`'s `localeDetector`
+  applies `Secure` automatically when its persist cookie name carries a prefix.
+- fc33c0f: The server type records which copy of `@nifrajs/core` declared it. `Server` carries a type-only
+  `__nifraCoreVersion` brand holding the package's feature version (`major.minor`), exported as
+  `NifraFeatureVersion`, so a hover over `typeof app` - or an assertion in a test - says which core an
+  app is built against. Nothing is emitted at runtime and no field is allocated per server.
+
+  Two copies of core in one build stay a compile error, as before; `nifra doctor` is what names the
+  two install paths.
+
+- c4e8bb0: New `errorLogDetail` server option controls how much of an unhandled error reaches the log for a 500:
+  `"full"` (the default, unchanged - name, the error's own text as `detail`, and `stack`), `"message"`
+  (no stack), or `"none"` (name only). None of it ever reaches the client; a 500 response is a bare
+  `internal_error` either way. An error's text can quote the input that produced it, so an app whose log
+  sink is outside its trust boundary can now narrow what is recorded - the sharper instrument stays the
+  redacting logger (`jsonLogger({ valuePatterns: commonSecretPatterns })`), which scrubs tokens and
+  emails out of `detail` and `stack` while keeping the diagnosis intact.
+- 11d1658: `assure(app, evidence)` from `@nifrajs/core/assurance` publishes enforcement evidence from outside
+  the plugin chain. When the thing enforcing a control is not a nifra plugin - an edge gateway, a
+  service mesh, an outer framework that owns the shell wrapping the app - the assurance policy had no
+  way to see it, and the only way to keep the app green was switching the affected rules off. The
+  evidence can now be attached at the mount site or immediately before `serve`, after every route is
+  registered:
+
+  ```ts
+  import { assure, NIFRA_ASSURANCE } from "@nifrajs/core/assurance";
+
+  const app = buildApp();
+  assure(app, { id: NIFRA_ASSURANCE.AUTHENTICATED, source: "edge-gateway" });
+  serve(app);
+  ```
+
+  `scope` defaults to `global`, so the evidence applies to every route already registered; narrow it
+  with `methods` and `paths` (absolute globs), or pass `scope: "subsequent"` to cover only routes
+  registered after the call. Invalid evidence ids and `scope: "plugin"` fail closed at the call.
+
+  Attached evidence always carries `declared` provenance - nifra did not install the enforcement and
+  cannot observe it - so a rule with `requireProvenance: "runtime"` still rejects the route. Evidence
+  declared through `withRouteAssurance` now carries the provenance it was given rather than always
+  reporting `runtime`.
+
+  It lives on the `assurance` subpath and applies through the ordinary middleware seam, so an app that
+  never calls it carries none of this: the bare server bundle is unchanged.
+
+- 8847825: Add `app.mountFetch()` for mounting an arbitrary fetch handler below a path prefix, with optional prefix stripping and platform argument forwarding. Mounted handlers are explicitly outside typed response-contract enforcement.
+- 9a9346e: `merge()` now scopes a group's `onRequest` hooks to the group's own routes, following the same locality rule its `derive`/`beforeHandle` chains already obey: a `bodyLimit()` mounted on an uploads group no longer starts gating every route of the app that composes it in. The guard is a single route probe against a snapshot of the group's catalog, so requests outside the group pay one lookup and pass untouched; the group's Node-native hook twins are scoped the same way. Global assurance declared by a group's middleware follows the enforcement - it is folded onto exactly the merged routes, so `routes()` never claims a group's protection for parent routes its hooks do not see.
+
+  A group with hooks but no routes is a middleware bundle: its hooks can only mean app-wide intent, so they are still appended globally, unchanged. Apps that relied on a route-carrying group's hooks running app-wide should register that middleware on the parent server with `.use()`.
+
+- 9a9346e: `app.use(plugin)` keeps the caller's server type. A plugin built with `definePlugin` whose input
+  server type is not pinned used to widen the app to `Server<any, any>`, so every route declared
+  before _and_ after the `use` lost its types and the typed client silently degraded to `any`. That
+  case is now a compile error at the `use` call site, naming the definer to switch to; the plugin is
+  unchanged at runtime.
+
+  Pick the definer that matches what the plugin does: `defineContextPlugin<D>` when it adds context
+  via `derive`/`decorate` (the registry threads through and `D` is added to every downstream handler
+  context), `defineRouterPlugin` when it mounts routes/hooks and adds no context (mount as a side
+  effect, return the app). `definePlugin` still works when its input type is pinned - annotate the
+  parameter (`(app: typeof api) => ...`) or pass explicit type arguments.
+
+  Every first-party plugin now threads: `jwt`, `tokenAuth`, `basicAuth`, `durableCommand`, `etag`,
+  `compression`, `problemDetails`, `prettyJson`, `methodOverride`, `trailingSlash`, `cacheControl`,
+  `devtools`, and `metrics` return an `IdentityPlugin`; `timing`, `language`, and `tracing` return a
+  `ContextPlugin` of what they add (`{ timing }`, `{ language, languageMatch }`, and
+  `{ trace, observation, causality }` respectively), so `c.timing` / `c.language` / `c.trace` are
+  typed without a manual annotation. `combine(...)` is typed as an identity bundle and
+  `namedCombine(name, ...)` is its deduped, named form.
+
+  A type-level test asserts the threading for each definer shape, so a regression fails `typecheck`
+  rather than surfacing as `any` in a downstream app.
+
+- b045f9e: JSON bodies are now guarded against prototype poisoning. A payload carrying an own `__proto__`
+  key, or a `constructor` whose value carries a `prototype`, is rejected with the same flat `400`
+  as malformed JSON - before validation and before the handler. The new `protoPoisoning` server
+  option selects the policy: `"reject"` (default), `"strip"` (delete the keys in place and
+  continue), or `"ignore"` (opt out). The check covers the schema body lane, `c.boundedJson`, the
+  streaming no-length path, and `\u`-escaped spellings of the poisoned keys; the transport-codec
+  lane enforces the same policy on its own decoder via a matching `protoPoisoning` plugin option.
+  The common clean payload keeps the runtime's native fast path - the guard is a single iterative
+  pass over the parsed value, allocation-free, and benchmarks within noise of the unguarded
+  baseline.
+- 9a9346e: Routes and contract operations accept a `headers` schema, validated at the boundary alongside
+  `body`, `query`, and `params`. Field names are materialized lower-case onto a null-prototype record
+  before validation, so a hostile field name (`__proto__`, `constructor`) cannot reach
+  `Object.prototype`, and repeated fields arrive already comma-joined by the platform. The validated
+  result is available to the handler as typed data instead of ad-hoc `c.req.header(...)` reads, and a
+  failure answers the same flat `400` as any other input-validation failure.
+
+  The section flows through the rest of the surface: contract diffs report `headers` as its own
+  breaking-change section, and OpenAPI generation emits the schema as `in: header` parameters.
+
+- 9a9346e: Per-route transport body caps. A route or contract operation may declare `bodyLimit` - a byte count,
+  or the explicit string `"unlimited"` paired with a `bodyLimitReason` that records why the route is
+  exempt. The route's cap overrides the server-wide `maxBodyBytes` for that route only, so a single
+  upload endpoint no longer forces the whole app's ceiling upward, and an exemption is a reviewable
+  declaration rather than a silent absence. An invalid value - a cap that is not a non-negative safe
+  integer, `"unlimited"` without a non-empty reason, or a reason given without `"unlimited"` - is a
+  `RouteConfigError` carrying the `INVALID_BODY_LIMIT` code at registration, not a surprise at request
+  time.
+- dbc0b79: Signing-secret rotation. `signValue`/`unsignValue` (and the new `CookieSecret` type), session `secret`, and CSRF `secret` now also accept a rotation list: the first secret signs, any listed secret verifies, so keys rotate without invalidating live cookies, sessions, or CSRF tokens. Every listed secret must meet the 32-byte floor and an empty list throws; the single-secret path is unchanged.
+- a5d3f5b: Add stable diagnostic codes, application-supplied rule packs, fix recipes, assurance bundles, contract lock snapshots, hydration assurance hooks, replay metadata, security verification rules, and idempotency proofs.
+- 00819c5: `createToolHttpHandler` caps its JSON request body. The handler is standalone - it is not mounted on
+  a server and so inherited no `maxBytes` - and used to read the body unbounded, documenting the limit
+  as the mounting platform's job. It now defaults to 1 MiB (`DEFAULT_TOOL_MAX_BYTES`), configurable
+  with `maxBytes`. An oversized body answers a flat `413` and a malformed `Content-Length` a flat
+  `400`, both before the parse, so nothing oversized is ever materialized as a JS value.
+
+  Running uncapped stays possible but must be declared: `maxBytes: "unlimited"` requires a non-empty
+  `maxBytesReason`, and a reason without `"unlimited"`, or a cap that is not a non-negative safe
+  integer, throws when the handler is created rather than at request time.
+
+  **Breaking for bodies over 1 MiB.** A tool whose inputs legitimately exceed that must set `maxBytes`
+  to its real ceiling, or opt out with a reason.
+
+- e2d1939: Add typed tool contracts with shared fail-closed adapters, static verification work graphs, bounded provider-neutral agent turns, deterministic trajectory replay, and an explicit execution-policy seam with a non-isolating local process adapter.
+- e83e6eb: A capability provenance rule that matches nothing is now a finding. Seam specifiers in
+  `provenance.imports` and `provenance.routeModules` are compared with the text the code imports, so a
+  rule written as `src/db` when the module is imported as `./src/db.ts` silently governed zero
+  modules - the policy looked satisfied because nothing was ever attributed to it. `nifra check` now
+  reports `unmatched-provenance-seam` for every declared seam no scanned source matched, with the
+  nearest specifiers that were actually seen ("did you mean ...?") and a fix that points at rewriting
+  the rule to match the import, or deleting it.
+
+  `forbiddenImports` is deliberately excluded: zero matches there is the success state.
+
+  A rule that is genuinely absent in some projects sharing one policy can opt out with
+  `optional: true`, which suppresses the finding for that seam only.
+
+### Patch Changes
+
+- cd1732c: The body-size cap now holds on the bytes actually delivered, not on what the request declared.
+  The `Content-Length` fast path re-checks the real byte count after the read: a source that hands
+  over more bytes than it declared - a lying client or an adapter that decodes/expands the body
+  upstream - is rejected with the same flat `413`, even though its header passed the fast-reject
+  hint. One integer comparison on a buffer already in hand; the streaming lane already counted real
+  bytes and is unchanged.
+- 9a9346e: A contract operation's client-visible `body` and `query` types are now the schema's INPUT side, not
+  its output side - matching what the inline registry already does. A schema that fills in defaults
+  made the contract client demand the post-validation shape, so a caller had to send fields the schema
+  exists to supply. Handler-facing context types are unchanged and still carry the validated output.
+- 5f71c23: Cut iterator overhead from the async lifecycle chain, the static-header pass, and cookie signing.
+
+  An array iterator declared inside an async function stays live across the `await` that follows it, so
+  neither JSC nor V8 sinks it: the `beforeHandle`/`onError` chains paid 43ns per hook on Bun and ~9ns
+  on Node for iteration alone. The static response-header pass paid it twice per header, once for the
+  list and once for the pair destructuring (211ns per response on a 5-header set), and signed cookies
+  paid it per digest byte (238ns per signature on Bun). All three now index directly.
+
+- 3788b36: Walk arrays by index in the prototype-poisoning guard.
+
+  A JSON body that is mostly array data was walked through the array iterator protocol, which JSC does
+  not elide: on Bun a 9KB array of numbers cost 27us to guard instead of 2.2us, and the gap scaled
+  with the body cap. The guard now indexes the array directly, which measures identically on V8 and
+  removes the amplification on JSC.
+
+- ae5338f: Cut per-request overhead on the JSON body lane and the Node adapter.
+
+  The bounded JSON reader now returns the body read's own promise instead of running as an async
+  function, so a framed JSON POST pays one microtask hop rather than several. The prototype-poisoning
+  walk checks the suspect keys during the single enumeration it already performs instead of probing
+  each node twice. The Node adapter memoizes Host-authority normalization, which repeats for every
+  request of a deployment.
+
+  No behaviour change: the same bodies are accepted, the same poisoning shapes are rejected or
+  stripped, and the same Host values normalize to the same authority.
+
+- 5e4e31a: The Node-direct response path asks "are these header names already the lowercase wire spelling"
+  once per request instead of three times. Core answers it where the answer is already in hand - the
+  static-header fold derives each name's lowercase form anyway, and the native response walk was
+  walking the same keys - and publishes it as a symbol-keyed mark the header view and `@nifrajs/node`'s
+  direct writer read instead of re-scanning. An app that registers a raw `onNodeResponse` twin (one
+  handed the record itself rather than the case-normalizing view) is never marked and keeps the
+  per-reader scans, since such a twin writes after the point the mark would be set. Wire output is
+  unchanged by construction: it is the same answer, from the same pass.
+
+  Header-normalization frames fall from 4.1% to 1.5% of self time on a middleware-heavy route and from
+  1.6% to 0.6% on a hookless one (V8 CPU profile, `GET /users/:id`). `@nifrajs/middleware`'s Node
+  response twins set one header at a time through a helper that keeps the record in V8's fast property
+  mode rather than re-homing it into a null-prototype object, which demoted every later lookup on the
+  response path to dictionary mode.
+
+- bd5c624: Collapse the JSON body lane onto one guarded path and make the poisoning walk cheaper.
+
+  Framed JSON bodies now take the runtime's fused `json()` at every size instead of splitting at 1KB,
+  and the guard walks the parsed value directly - the raw-text substring pre-scan is gone, since it
+  cost more than the walk it was meant to avoid. The walk itself only stacks object nodes, so scalar
+  keys and scalar array elements no longer make the round trip through it.
+
+  No behaviour change: the same payloads are accepted, and the same poisoning shapes - including ones
+  spelled with `\uXXXX` escapes - are still rejected or stripped under `protoPoisoning`.
+
+- e2bdd4a: `createToolHttpHandler` applies the prototype-poisoning policy to its JSON request body. A body
+  carrying an own `__proto__` key, or an own `constructor` key whose value holds an own `prototype`,
+  is rejected with the same `input_invalid` tool result as malformed JSON, so probing cannot
+  distinguish a blocked payload from a syntax error. The handler is standalone (never mounted on a
+  server), so it carries its own `protoPoisoning` option - `"reject"` (default), `"strip"`, or
+  `"ignore"` - mirroring the server option. The body remains read unbounded; cap request size at the
+  platform or server mounting the handler.
+- f8b0097: A `.ws()` route's `maxPayloadBytes` is now enforced on every runtime, not only the ones whose socket
+  implementation happened to police it. The declared cap travels with the upgrade outcome, so the Node
+  bridge hands it to `ws` as `maxPayload`, and the Deno and Workers/`attachWebSocket` message paths
+  measure the frame and close with `1009 message too large` instead of delivering it. A route that
+  declares no cap is untouched and pays nothing: sizing a text frame costs a UTF-8 encode, so the
+  measurement only runs where a cap exists.
+
 ## 2.11.0
 
 ## 2.10.0
