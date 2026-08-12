@@ -162,6 +162,43 @@ describe("session - store mode", () => {
     expect(d.deleted).toContain("nifra_session")
   })
 
+  // A logout route that never calls `get()` used to clear the browser cookie and leave the server
+  // record alive, so a copy of the cookie taken before logout kept working.
+  test("destroy without a loaded session revokes the record named by the signed cookie", async () => {
+    const store = new MemorySessionStore()
+    const sessions = createSessions<Data>({ secret: SECRET, store, now: () => 1000 })
+    const a = ctx()
+    const s = await sessions.get(a.context)
+    s.set("userId", "u1")
+    await sessions.commit(a.context, s)
+    const cookie = lastCookie(a.setCalls)
+
+    const d = ctx({ nifra_session: cookie })
+    await sessions.destroy(d.context)
+    expect(d.deleted).toContain("nifra_session")
+    expect((await sessions.get(ctx({ nifra_session: cookie }).context)).isEmpty).toBe(true)
+  })
+
+  test("a cookie that fails the signature check deletes nothing", async () => {
+    const store = new MemorySessionStore()
+    const sessions = createSessions<Data>({ secret: SECRET, store, now: () => 1000 })
+    const a = ctx()
+    const s = await sessions.get(a.context)
+    s.set("userId", "u1")
+    await sessions.commit(a.context, s)
+    const cookie = lastCookie(a.setCalls)
+
+    // Same session id, broken signature: an unauthenticated caller must not be able to log out
+    // (or otherwise revoke) an id it merely guessed. The mutated character is the FIRST of the
+    // signature segment - the LAST one carries only 4 significant bits of the 32-byte digest, so
+    // several spellings of it decode to the same bytes and the tamper would not register.
+    const dot = cookie.lastIndexOf(".")
+    const head = cookie[dot + 1]
+    const forged = `${cookie.slice(0, dot + 1)}${head === "A" ? "B" : "A"}${cookie.slice(dot + 2)}`
+    await sessions.destroy(ctx({ nifra_session: forged }).context)
+    expect((await sessions.get(ctx({ nifra_session: cookie }).context)).get("userId")).toBe("u1")
+  })
+
   test("mutators: set/unset/has/clear/data", async () => {
     const sessions = make()
     const s = await sessions.get(ctx().context)

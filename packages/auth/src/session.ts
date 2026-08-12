@@ -250,9 +250,17 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
   }
 
   const destroy = async (c: SessionContext, session?: Session<Data>): Promise<void> => {
-    if (store !== undefined && session !== undefined) {
-      const state = states.get(session)
-      if (state?.id !== undefined) await store.delete(state.id)
+    if (store !== undefined) {
+      let id: string | undefined
+      if (session !== undefined) {
+        id = states.get(session)?.id
+      } else {
+        // Revoke the record addressed by the signed request cookie even when the caller did not
+        // first load a Session object. The signature check prevents deleting attacker-chosen IDs.
+        const raw = c.cookies[cookieName]
+        if (raw !== undefined) id = (await unsignValue(raw, secret)) ?? undefined
+      }
+      if (id !== undefined) await store.delete(id)
     }
     c.set.deleteCookie(cookieName, {
       path: cookieOpts.path ?? "/",
