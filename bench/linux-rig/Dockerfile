@@ -12,9 +12,10 @@ RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash -s "bun-v1.3
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh -s v2.9.4 \
     && ln -sf /usr/local/bin/deno /usr/bin/deno
 
-# oha (linux aarch64)
+# oha (linux aarch64) - must match the host version the harness is written against: run.ts passes
+# `--output-format json`, which older oha rejects, and a rejected flag reads as a 0 rps row.
 RUN curl -fsSL -o /usr/local/bin/oha \
-    https://github.com/hatoo/oha/releases/download/v1.4.7/oha-linux-arm64 \
+    https://github.com/hatoo/oha/releases/download/v1.14.0/oha-linux-arm64 \
     && chmod +x /usr/local/bin/oha
 
 WORKDIR /repo
