@@ -613,6 +613,7 @@
         "@nifrajs/core": "workspace:*",
         "@nifrajs/deno": "workspace:*",
         "@nifrajs/events": "workspace:*",
+        "@nifrajs/i18n": "workspace:*",
         "@nifrajs/mcp": "workspace:*",
         "@nifrajs/node": "workspace:*",
         "@nifrajs/runner": "workspace:*",
