@@ -67,9 +67,16 @@ describe("withHeaders", () => {
 // The Node-direct twin of the above: middleware that never builds a Web Response writes one header
 // straight onto the outcome record. It keeps the caller's record rather than re-homing it into a
 // null-prototype object, so the one name a plain assignment cannot store needs its own path.
+const outcome = (headers?: Record<string, string | readonly string[]>): NodeResponseContext => ({
+  status: 200,
+  headers,
+  cookies: undefined,
+  body: null,
+})
+
 describe("setNodeHeader", () => {
   test("creates the record on first write, then assigns onto the same object", () => {
-    const res: NodeResponseContext = { status: 200 }
+    const res = outcome()
     setNodeHeader(res, "x-a", "1")
     const record = res.headers
     setNodeHeader(res, "x-b", ["2", "3"])
@@ -78,7 +85,7 @@ describe("setNodeHeader", () => {
   })
 
   test("stores a `__proto__` header as own data, leaving the prototype untouched", () => {
-    const res: NodeResponseContext = { status: 200, headers: {} }
+    const res = outcome({})
     setNodeHeader(res, "__proto__", "poison")
     const headers = res.headers as Record<string, unknown>
     // A plain assignment here would hit the inherited setter and store nothing at all, so the name
