@@ -53,11 +53,11 @@ jobs:
       # The commit CI actually validated, not whatever main points at now. Without this a push that
       # lands while CI is still running would be published on the strength of the previous commit's
       # checks - the exact gap this gate exists to close.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.14 # pinned to match CI - reproducible publishes
 
@@ -66,7 +66,11 @@ jobs:
 
       - name: Version Packages PR / publish to npm
         id: changesets
-        uses: changesets/action@v1
+        # v1.9.0. Pinned to a released commit, not a branch tip: an unreleased tip is code nobody has
+        # cut, reviewed as a release, or run anywhere - on the step that holds NPM_TOKEN. Staying on
+        # v1 is deliberate too; v2 renames every input below (version -> version-script, publish ->
+        # publish-script, ...) and drops the GITHUB_TOKEN env, so it would run with defaults instead.
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d
         with:
           version: bun run changeset:version
           publish: bun run changeset:publish # = `bun run build && changeset publish`
