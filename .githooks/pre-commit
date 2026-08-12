@@ -82,10 +82,15 @@ if [ -n "$LINTABLE" ]; then
 fi
 
 # ---- 3. llms-corpus tripwire -------------------------------------------------------------------
-if grep -qE '^site/routes/docs/.*\.(tsx|mdx)$' <<< "$STAGED"; then
+# A docs edit that touches only a fenced code sample regenerates to a byte-identical llms-full.txt,
+# so the file can never be staged and the tripwire would be unsatisfiable. `NIFRA_LLMS_OK=1` is the
+# same escape hatch gate 1b uses: set it only after `bun run build && bun run gen:llms` left the
+# corpora clean (`bun run check:llms` confirms).
+if grep -qE '^site/routes/docs/.*\.(tsx|mdx)$' <<< "$STAGED" && [ "${NIFRA_LLMS_OK:-0}" != 1 ]; then
   if ! git diff --cached --name-only | grep -q '^llms-full.txt$'; then
     echo "pre-commit: a docs page is staged but llms-full.txt is not - the llms corpora are stale." >&2
     echo "pre-commit: run 'bun run build && bun run gen:llms', stage the regenerated files, and commit again." >&2
+    echo "pre-commit: if that provably changes nothing, re-run the commit with NIFRA_LLMS_OK=1." >&2
     exit 1
   fi
 fi
