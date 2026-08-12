@@ -184,6 +184,51 @@ describe("server error logging", () => {
     expect(entry.stack).toBeUndefined()
   })
 
+  // What reaches the sink is the app's call. The default diagnoses; the narrower tiers exist for an
+  // operator who does not trust the sink with an error's own text.
+  test("errorLogDetail: 'message' keeps the text and drops the stack", async () => {
+    const lines: string[] = []
+    const app = server({
+      logger: jsonLogger((line) => lines.push(line)),
+      errorLogDetail: "message",
+    }).get("/boom", () => {
+      throw new Error("kaboom")
+    })
+    expect((await app.fetch(new Request("http://x/boom"))).status).toBe(500)
+    const entry = JSON.parse(lines[0] ?? "")
+    expect(entry).toMatchObject({ name: "Error", detail: "kaboom" })
+    expect(entry.stack).toBeUndefined()
+  })
+
+  test("errorLogDetail: 'none' logs metadata only", async () => {
+    const lines: string[] = []
+    const app = server({
+      logger: jsonLogger((line) => lines.push(line)),
+      errorLogDetail: "none",
+    }).get("/boom", () => {
+      throw new Error("kaboom")
+    })
+    expect((await app.fetch(new Request("http://x/boom"))).status).toBe(500)
+    const entry = JSON.parse(lines[0] ?? "")
+    expect(entry).toMatchObject({ method: "GET", path: "/boom", name: "Error" })
+    expect(entry.detail).toBeUndefined()
+    expect(entry.stack).toBeUndefined()
+  })
+
+  // The leak this option is aimed at has a narrower instrument: the redacting logger scrubs the
+  // secret out of the error's own text while the diagnosis survives.
+  test("valuePatterns redact a secret inside the error's own text", async () => {
+    const lines: string[] = []
+    const app = server({
+      logger: jsonLogger((line) => lines.push(line), { valuePatterns: commonSecretPatterns }),
+    }).get("/boom", () => {
+      throw new Error("upstream rejected sk_live_0123456789abcdef")
+    })
+    expect((await app.fetch(new Request("http://x/boom"))).status).toBe(500)
+    const entry = JSON.parse(lines[0] ?? "")
+    expect(entry.detail).toBe("upstream rejected [REDACTED]")
+  })
+
   test("a handled error (onError returns a response) never reaches the logger", async () => {
     const logs: string[] = []
     const capture: Logger = {

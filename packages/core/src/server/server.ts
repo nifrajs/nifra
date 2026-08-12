@@ -625,6 +625,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   /** Installed WebSocket runtime for `.ws()` routes; `undefined` until `.use(websocket())`. */
   private wsRuntime: WsRuntime | undefined
   private readonly logger: Logger
+  /** How much of an unhandled error {@link logRequestError} records. See `ServerOptions.errorLogDetail`. */
+  private readonly errorLogDetail: "full" | "message" | "none"
   /** App-wide validation-error fallback; a route's own `schema.onValidationError` takes precedence. */
   private readonly defaultOnValidationError?: RouteSchema["onValidationError"]
   private bunServer: RunningServer | undefined
@@ -716,6 +718,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.responseContractRuntime = undefined
     this.idempotencyRuntime = undefined
     this.logger = options.logger ?? jsonLogger()
+    this.errorLogDetail = options.errorLogDetail ?? "full"
     this.defaultOnValidationError = options.onValidationError
     this.bunServer = undefined
     this.sealed = false
@@ -4517,6 +4520,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   /** Log an unhandled request error to the (redacting) logger - shared by {@link runLifecycle} and the
    * bare fast path ({@link bareError}) so both record the same fields. Never throws; never leaks. */
   private logRequestError(err: unknown, ctx: RawContext): void {
+    // An error's own text can quote the input that produced it, so how much of it reaches the sink is
+    // the app's call (`errorLogDetail`). The default keeps it: a 500 with no message and no stack is
+    // an incident nobody can diagnose, and the framework already ships the narrower instrument for
+    // the leak - a redacting logger with `valuePatterns`. `"none"` is there for an untrusted sink.
+    const detail = this.errorLogDetail
     this.logger.error("unhandled request error", {
       method: ctx.req.method,
       path: pathnameOf(ctx.req.url),
@@ -4524,8 +4532,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       // `detail`, not `message`: the logger uses `message` for its own first argument, so a field of
       // that name is silently overwritten and the thrown error's own text never reaches the sink. It
       // survived only incidentally inside `stack`, and was lost outright for a non-Error throw.
-      detail: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      ...(detail === "none" ? {} : { detail: err instanceof Error ? err.message : String(err) }),
+      ...(detail === "full" && err instanceof Error ? { stack: err.stack } : {}),
     })
   }
 

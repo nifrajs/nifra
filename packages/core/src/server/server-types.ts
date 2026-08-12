@@ -122,6 +122,21 @@ export interface ServerOptions {
   /** Structured logger for framework events (redacts secrets). Default: JSON to stderr. */
   readonly logger?: Logger
   /**
+   * How much of an unhandled error reaches the log for a 500. Never reaches the client either way -
+   * the response is always a bare `internal_error`.
+   *
+   * - `"full"` (default) - `name`, the error's own text as `detail`, and `stack`.
+   * - `"message"` - `name` and `detail`, no stack.
+   * - `"none"` - `name` only.
+   *
+   * An error's text can quote the input that produced it, which is how request data ends up in a log
+   * sink. The framework's answer is the redacting logger rather than blanket suppression: pass
+   * `logger: jsonLogger({ valuePatterns: commonSecretPatterns })` to scrub tokens, JWTs, and emails
+   * out of `detail` and `stack` while keeping the diagnosis. Reach for `"none"` when the sink itself
+   * is the thing you don't trust.
+   */
+  readonly errorLogDetail?: "full" | "message" | "none"
+  /**
    * App-wide fallback fired when a route **without its own `onValidationError`** fails body/query
    * validation. Same contract as the per-route hook (`(issues, ctx, kind) => Response | repaired-value |
    * undefined`): a route's own hook takes precedence, and a route can fall through to the plain `422` by
