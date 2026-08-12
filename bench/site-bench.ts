@@ -131,6 +131,49 @@ export function httpSliceFromNode(
   return rows.sort((a, b) => b.reqs - a.reqs)
 }
 
+/**
+ * The landing's per-runtime slice: nifra's `GET /users/:id` throughput on each runtime, alongside
+ * that runtime's own raw-server ceiling as `pctOfRaw`.
+ *
+ * The percentage is the point. Raw req/s is NOT comparable across runtimes - Bun's, Node's and
+ * Deno's servers, HTTP parsers and thread pools differ enough that a cross-runtime absolute says
+ * more about the runtime than about nifra. "How much of this runtime's own ceiling does the
+ * framework keep" is comparable, and it is what the landing claims.
+ *
+ * A runtime missing either cell is dropped rather than published at a percentage computed from a
+ * hole. Rows are ordered by throughput, matching how the landing renders them.
+ */
+export function httpRuntimeFromResults(
+  results: Record<
+    string,
+    Record<string, Record<string, { readonly rps: number } | undefined> | undefined> | undefined
+  >,
+  workload = "GET /users/:id",
+): readonly HttpRuntimeRow[] {
+  const runtimeConfig: ReadonlyArray<{ key: string; title: string; ceiling: string }> = [
+    { key: "bun", title: "Bun", ceiling: "bun-native" },
+    { key: "deno", title: "Deno", ceiling: "deno-raw" },
+    { key: "node", title: "Node", ceiling: "node-raw" },
+  ]
+  const ok = (n: number | undefined): n is number => n !== undefined && Number.isFinite(n) && n > 0
+
+  const rows: HttpRuntimeRow[] = []
+  for (const runtime of runtimeConfig) {
+    const source = results[runtime.key]
+    if (source === undefined) continue
+    const nifra = source.nifra?.[workload]?.rps
+    const raw = source[runtime.ceiling]?.[workload]?.rps
+    if (!ok(nifra) || !ok(raw)) continue
+    rows.push({
+      runtime: runtime.title,
+      reqs: Math.round(nifra),
+      pctOfRaw: Math.round((nifra / raw) * 100),
+      you: true,
+    })
+  }
+  return rows.sort((a, b) => b.reqs - a.reqs)
+}
+
 /** Convert the complete core GET/POST matrix to the canonical article/page slice. A partial runtime
  * result omits its table; the aggregate writer only publishes this slice when all runtimes ran. */
 export function httpWorkloadsFromResults(

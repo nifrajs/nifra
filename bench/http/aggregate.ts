@@ -14,7 +14,12 @@
  */
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { httpSliceFromNode, httpWorkloadsFromResults, writeSiteBench } from "../site-bench.ts"
+import {
+  httpRuntimeFromResults,
+  httpSliceFromNode,
+  httpWorkloadsFromResults,
+  writeSiteBench,
+} from "../site-bench.ts"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const RUN = join(HERE, "run.ts")
@@ -224,10 +229,12 @@ process.stderr.write(`updated ${BENCHMARKS}\n`)
 // `bench:http bun` run leaves the site's Node slice intact rather than wiping it.
 const httpSlice = httpSliceFromNode(merged.node as never)
 const httpWorkloads = httpWorkloadsFromResults(merged)
+const httpRuntime = httpRuntimeFromResults(merged)
 if (httpSlice.length > 0) {
   await writeSiteBench({
     http: httpSlice,
     // A single-runtime run must not erase the other runtime tables in the canonical dataset.
     ...(runtimes.length === 3 && httpWorkloads.length === 3 ? { httpWorkloads } : {}),
+    ...(runtimes.length === 3 && httpRuntime.length === 3 ? { httpRuntime } : {}),
   })
 }
