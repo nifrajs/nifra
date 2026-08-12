@@ -121,6 +121,131 @@ const stripSqlNoise = (sql: string): string =>
     .replace(/--[^\n]*/g, " ")
     .replace(/\/\*[\s\S]*?\*\//g, " ")
 
+// SQLite's bare-identifier alphabet. Non-ASCII is included because SQLite treats any byte >= 0x80 as
+// an identifier character; leaving it out would end a word early and split one table name into two.
+const WORD_START = /[A-Za-z_\u0080-\uffff]/
+const WORD_PART = /[A-Za-z0-9_$\u0080-\uffff]/
+
+/** One lexical unit of SQL. `bare` distinguishes a keyword-capable word from a quoted identifier, so
+ * `FROM "from"` reads the second token as a table name and not as another clause. */
+interface SqlToken {
+  readonly kind: "word" | "punct"
+  /** Identifier text with quoting removed and escapes collapsed; the raw character for punctuation. */
+  readonly value: string
+  /** True for an unquoted word - only these can be SQL keywords. */
+  readonly bare: boolean
+}
+
+/**
+ * Tokenize far enough to name every relation. A regex cannot do this job: SQLite needs no separator
+ * between a keyword and a quoted identifier (`FROM"users"` is legal), and it accepts four identifier
+ * quotings - `"x"`, `[x]`, `` `x` ``, and bare. A `\s+`-anchored pattern silently reads none of
+ * those as a table reference, which is exactly how an aliased `FROM"users"AS habits` slipped past
+ * the allowlist and returned a non-exposed table's rows.
+ *
+ * String literals and comments become nothing, so a `FROM` inside attacker-controlled text is inert.
+ */
+function tokenizeSql(sql: string): SqlToken[] {
+  const tokens: SqlToken[] = []
+  let i = 0
+  /** Read a quoted identifier, collapsing the doubled-delimiter escape SQLite uses for `"` and `` ` ``. */
+  const readQuoted = (close: string, escapable: boolean): void => {
+    let value = ""
+    i++ // past the opening delimiter
+    while (i < sql.length) {
+      if (sql[i] === close) {
+        if (escapable && sql[i + 1] === close) {
+          value += close
+          i += 2
+          continue
+        }
+        i++
+        tokens.push({ kind: "word", value, bare: false })
+        return
+      }
+      value += sql[i]
+      i++
+    }
+    // Unterminated - emit what we have. The caller's single-statement and plan checks still run.
+    tokens.push({ kind: "word", value, bare: false })
+  }
+  while (i < sql.length) {
+    const char = sql[i] as string
+    if (char === " " || char === "\t" || char === "\n" || char === "\r" || char === "\f") {
+      i++
+    } else if (char === "-" && sql[i + 1] === "-") {
+      const end = sql.indexOf("\n", i)
+      i = end === -1 ? sql.length : end + 1
+    } else if (char === "/" && sql[i + 1] === "*") {
+      const end = sql.indexOf("*/", i + 2)
+      i = end === -1 ? sql.length : end + 2
+    } else if (char === "'") {
+      // Literal: consumed and dropped, so its contents can never be read as SQL.
+      i++
+      while (i < sql.length) {
+        if (sql[i] === "'") {
+          if (sql[i + 1] === "'") {
+            i += 2
+            continue
+          }
+          i++
+          break
+        }
+        i++
+      }
+    } else if (char === '"') {
+      readQuoted('"', true)
+    } else if (char === "`") {
+      readQuoted("`", true)
+    } else if (char === "[") {
+      readQuoted("]", false) // MSSQL-style bracket quoting: no escape form
+    } else if (WORD_START.test(char)) {
+      const start = i
+      while (i < sql.length && WORD_PART.test(sql[i] as string)) i++
+      tokens.push({ kind: "word", value: sql.slice(start, i), bare: true })
+    } else if (char >= "0" && char <= "9") {
+      while (i < sql.length && /[0-9A-Za-z._]/.test(sql[i] as string)) i++
+    } else {
+      tokens.push({ kind: "punct", value: char, bare: false })
+      i++
+    }
+  }
+  return tokens
+}
+
+/** True when `token` is the unquoted keyword `word` (case-insensitive). */
+const isKeyword = (token: SqlToken | undefined, word: string): boolean =>
+  token?.bare === true && token.value.toLowerCase() === word
+
+/**
+ * Every relation the statement names after `FROM`/`JOIN`, lowercased, with CTE names excluded.
+ * A schema qualifier resolves to its table (`main.habits` -> `habits`); a subquery contributes
+ * nothing of its own because its inner `FROM` is tokenized alongside everything else.
+ */
+function relationNames(sql: string): string[] {
+  const tokens = tokenizeSql(sql)
+  // `name AS (` only ever introduces a CTE - a column alias cannot be followed by a paren - so this
+  // needs no `WITH` tracking to be exact.
+  const ctes = new Set<string>()
+  for (let i = 1; i < tokens.length - 1; i++) {
+    const name = tokens[i - 1] as SqlToken
+    if (isKeyword(tokens[i], "as") && tokens[i + 1]?.value === "(" && name.kind === "word") {
+      ctes.add(name.value.toLowerCase())
+    }
+  }
+  const names: string[] = []
+  for (let i = 0; i < tokens.length; i++) {
+    if (!isKeyword(tokens[i], "from") && !isKeyword(tokens[i], "join")) continue
+    const first = tokens[i + 1]
+    if (first === undefined || first.kind !== "word") continue // `FROM (subquery)` - nothing to name here
+    // A qualified reference names the table second; an unqualified one names it first.
+    const qualified = tokens[i + 2]?.value === "." && tokens[i + 3]?.kind === "word"
+    const table = qualified ? (tokens[i + 3] as SqlToken).value : first.value
+    if (table !== "" && !ctes.has(table.toLowerCase())) names.push(table.toLowerCase())
+  }
+  return names
+}
+
 /** Reject multi-statement input: allow one terminator only when it is the final character. */
 const isSingleStatement = (sql: string): boolean => {
   let quote: "'" | '"' | null = null
@@ -505,9 +630,22 @@ export function serveDatabaseAsMcp(
 
           const deadline = Date.now() + queryTimeoutMs
 
+          // Verify SQL relation tokens before the plan check. SQLite's plan output uses aliases as
+          // scan targets (e.g. `users AS habits` becomes `SCAN habits`), so plan-only validation can
+          // mistake an attacker-controlled alias for an allowlisted table.
+          const executable = executableSql(sql)
+          for (const relation of relationNames(executable)) {
+            if (!allowlist.has(relation)) {
+              return {
+                isError: true,
+                text: `query touches ${JSON.stringify(relation)}, which is not exposed`,
+              }
+            }
+          }
+
           // Verify via the query plan that only allowlisted tables are touched. SQLite names every
           // scanned/searched relation in EXPLAIN QUERY PLAN detail rows.
-          const query = executableSql(sql)
+          const query = executable
           let planRows: Array<{ detail?: unknown }>
           try {
             planRows = (await session.run(`EXPLAIN QUERY PLAN ${query}`, deadline)) as Array<{
@@ -528,7 +666,12 @@ export function serveDatabaseAsMcp(
             ) {
               continue
             }
-            const match = /(?:SCAN|SEARCH)\s+(?:TABLE\s+)?([A-Za-z_][A-Za-z0-9_]*)/i.exec(detail)
+            // A schema-qualified reference plans as `SCAN main.habits`. The table is the last dotted
+            // segment; reading the first would reject `main.habits` as a table literally named "main".
+            const match =
+              /(?:SCAN|SEARCH)\s+(?:TABLE\s+)?(?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*)/i.exec(
+                detail,
+              )
             if (match !== null) {
               const relation = match[1]?.toLowerCase() ?? ""
               if (!allowlist.has(relation)) {
@@ -575,18 +718,25 @@ export function serveDatabaseAsMcp(
           }
           let shown = Math.min(limitedRows.length, maxRows)
           let payload = limitedRows.slice(0, shown)
-          let serialized = JSON.stringify(payload)
-          while (serialized.length > maxResultBytes && shown > 0) {
+          let result: Record<string, unknown> = {
+            rows: payload,
+            ...(wasLimited || shown < limitedRows.length ? { truncated: true, total } : {}),
+          }
+          let serialized = JSON.stringify(result)
+          const encoded = new TextEncoder()
+          while (encoded.encode(serialized).byteLength > maxResultBytes && shown > 0) {
             shown = Math.max(0, Math.floor(shown / 2))
             payload = limitedRows.slice(0, shown)
-            serialized = JSON.stringify(payload)
+            result = {
+              rows: payload,
+              ...(wasLimited || shown < limitedRows.length ? { truncated: true, total } : {}),
+            }
+            serialized = JSON.stringify(result)
           }
-          const truncated = wasLimited || shown < limitedRows.length
-          const result: Record<string, unknown> = {
-            rows: payload,
-            ...(truncated ? { truncated: true, total } : {}),
+          if (encoded.encode(serialized).byteLength > maxResultBytes) {
+            return { isError: true, text: "query result exceeds maxResultBytes" }
           }
-          return { text: JSON.stringify(result), structuredContent: result }
+          return { text: serialized, structuredContent: result }
         } finally {
           activeQueries -= 1
         }
@@ -608,46 +758,23 @@ export function serveDatabaseAsMcp(
   // the wrapped fetch authorizes, and direct handle() dispatch fails closed (no Request → no auth).
   const { authorize } = options.runQuery
 
-  const rpcId = (id: unknown): string | number | null =>
-    typeof id === "string" || typeof id === "number" ? id : null
-
-  const unauthorizedResult = (id: unknown): JsonRpcResponse =>
-    ({
-      jsonrpc: "2.0",
-      id: rpcId(id),
-      result: {
-        content: [{ type: "text", text: "unauthorized" }],
-        isError: true,
-      },
-    }) as JsonRpcResponse
-
-  const isRunQueryCall = (message: unknown): message is { id?: unknown } => {
-    if (typeof message !== "object" || message === null) return false
-    const { method, params } = message as { method?: unknown; params?: { name?: unknown } }
-    return method === "tools/call" && params?.name === "run_query"
-  }
-
   return {
     ...server,
-    async fetch(request: Request): Promise<Response> {
-      if (request.method === "POST") {
-        let body: unknown
-        try {
-          body = await request.clone().json()
-        } catch {
-          return server.fetch(request) // malformed JSON → the protocol layer's error handling
-        }
-        const messages = Array.isArray(body) ? body : [body]
-        const queryCall = messages.find(isRunQueryCall)
-        if (queryCall !== undefined) {
-          const ok = await authorize({ toolName: "run_query", request })
-          if (!ok) return Response.json(unauthorizedResult(queryCall.id))
-        }
-      }
-      return server.fetch(request)
-    },
+    fetch: (request: Request) =>
+      server.fetch(request, {
+        authorizeMessage: async (message, inbound) =>
+          message.method !== "tools/call" || message.params?.name !== "run_query"
+            ? true
+            : authorize({ toolName: "run_query", request: inbound }),
+      }),
     async handle(message) {
-      if (isRunQueryCall(message)) return unauthorizedResult(message.id)
+      if (message.method === "tools/call" && message.params?.name === "run_query") {
+        return {
+          jsonrpc: "2.0",
+          id: typeof message.id === "string" || typeof message.id === "number" ? message.id : null,
+          result: { content: [{ type: "text", text: "unauthorized" }], isError: true },
+        } as JsonRpcResponse
+      }
       return server.handle(message)
     },
   }

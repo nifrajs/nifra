@@ -132,6 +132,39 @@ describe("run_query (opt-in)", () => {
     expect(result.text).toBe("unauthorized")
   })
 
+  // The wire shape a client actually branches on: an HTTP status it can act on, and a code in
+  // JSON-RPC's implementation-defined server-error band rather than one the spec reserves.
+  test("the rejection is a 403 with a JSON-RPC error, carrying no rows", async () => {
+    const response = await server.fetch(
+      new Request("http://t/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 7,
+          method: "tools/call",
+          params: { name: "run_query", arguments: { sql: "SELECT * FROM habits" } },
+        }),
+      }),
+    )
+    expect(response.status).toBe(403)
+    const body = (await response.json()) as {
+      id?: unknown
+      result?: unknown
+      error?: { code?: number; message?: string }
+    }
+    expect(body.id).toBe(7)
+    expect(body.result).toBeUndefined()
+    expect(body.error?.code).toBe(-32001)
+    expect(body.error?.message).toBe("unauthorized")
+  })
+
+  test("a non-run_query tool is unaffected by the authorize gate", async () => {
+    const result = await call(server, "list_tables")
+    expect(result.isError).toBe(false)
+    expect(result.text).toContain("habits")
+  })
+
   test("authorized SELECT returns rows, capped with a truncation marker", async () => {
     const { text, isError } = await call(server, "run_query", { sql: "SELECT * FROM habits" }, auth)
     expect(isError).toBe(false)
@@ -268,6 +301,56 @@ describe("run_query (opt-in)", () => {
     expect(result.isError).toBe(true)
     expect(result.text).toBe('query touches "loop", which is not exposed')
   })
+
+  // An alias renames the relation in EXPLAIN QUERY PLAN output (`users AS habits` plans as
+  // `SCAN habits`), so the plan alone cannot tell an allowlisted table from an attacker's alias for
+  // an unexposed one. The SQL itself has to be read - and read the way SQLite reads it: no separator
+  // is required between a keyword and a quoted identifier, and four identifier quotings are legal.
+  // Every case below returned the unexposed `users` table's rows against a whitespace-anchored,
+  // double-quote-only matcher.
+  const ALIAS_ESCAPES: ReadonlyArray<readonly [string, string]> = [
+    ["no separator before a quoted name", 'SELECT * FROM"users"AS habits'],
+    ["no separator and an implicit alias", 'SELECT * FROM"users"habits'],
+    ["bracket quoting", "SELECT * FROM [users] AS habits"],
+    ["backtick quoting", "SELECT * FROM `users` AS habits"],
+    ["bracket quoting, no separator", "SELECT * FROM [users]habits"],
+    ["backtick quoting, no separator", "SELECT * FROM`users`habits"],
+    ["schema-qualified and bracket-quoted", "SELECT * FROM main.[users] AS habits"],
+    ["comment as the separator", "SELECT * FROM/**/users AS habits"],
+    ["plain alias", "SELECT * FROM users AS habits"],
+    ["aliased subquery", "SELECT * FROM (SELECT * FROM [users]) AS habits"],
+    [
+      "a CTE over the unexposed table",
+      "WITH x AS (SELECT * FROM [users]) SELECT * FROM x AS habits",
+    ],
+  ]
+  for (const [label, sql] of ALIAS_ESCAPES) {
+    test(`an unexposed table stays unexposed: ${label}`, async () => {
+      const result = await call(server, "run_query", { sql }, auth)
+      expect(result.isError).toBe(true)
+      expect(result.text).toContain("is not exposed")
+      expect(result.text).not.toContain("secret@example.com")
+    })
+  }
+
+  // The mirror of the above: reading the SQL must not start rejecting queries that only ever touch
+  // allowlisted tables, however they are spelled.
+  const ALLOWED_SPELLINGS: ReadonlyArray<readonly [string, string]> = [
+    ["double-quoted", 'SELECT * FROM "habits"'],
+    ["bracket-quoted", "SELECT * FROM [habits]"],
+    ["backtick-quoted", "SELECT * FROM `habits`"],
+    ["schema-qualified", "SELECT * FROM main.habits"],
+    ["schema-qualified and quoted", 'SELECT * FROM main."habits"'],
+    ["a CTE over an exposed table", "WITH x AS (SELECT * FROM habits) SELECT * FROM x"],
+    ["a literal that merely looks like SQL", "SELECT * FROM habits WHERE name = 'FROM users'"],
+  ]
+  for (const [label, sql] of ALLOWED_SPELLINGS) {
+    test(`an exposed table stays queryable: ${label}`, async () => {
+      const result = await call(server, "run_query", { sql }, auth)
+      expect(result.isError).toBe(false)
+      expect(JSON.parse(result.text).rows).toBeArray()
+    })
+  }
 })
 
 describe("query execution lanes", () => {
