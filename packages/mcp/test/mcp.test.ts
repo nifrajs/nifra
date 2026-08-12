@@ -13,6 +13,7 @@ import {
   UI_EXTENSION_KEY,
   UI_MIME,
 } from "../src/index.ts"
+import { createMcpProtocolState } from "../src/protocol.ts"
 
 const INFO = { name: "test", version: "0.0.0" }
 
@@ -256,6 +257,51 @@ describe("handleRpc - MCP Apps extensions", () => {
     )
     expect((res as { result: Record<string, unknown> }).result).toEqual({
       content: [{ type: "text", text: "pong" }],
+    })
+  })
+})
+
+// On stdio a single peer multiplexes every request over one pipe, so the request id is the only
+// thing tying a response to its caller. Two in-flight calls sharing an id make `notifications/
+// cancelled` ambiguous - it would abort whichever one happens to hold the slot - and let the second
+// response be read as the answer to the first.
+describe("handleRpc - duplicate in-flight request ids", () => {
+  const slowTool: McpTool = {
+    name: "slow",
+    description: "blocks until released",
+    inputSchema: { type: "object", properties: {} },
+    handler: () => release.then(() => "done"),
+  }
+  let releaseFn: () => void = () => {}
+  let release: Promise<void> = new Promise<void>((r) => {
+    releaseFn = r
+  })
+
+  test("a second call reusing an in-flight id is refused, and the id frees on completion", async () => {
+    const state = createMcpProtocolState()
+    const call = (): Promise<unknown> =>
+      handleRpc(
+        { id: 1, method: "tools/call", params: { name: "slow" } },
+        [slowTool],
+        INFO,
+        {},
+        { state },
+      )
+
+    const first = call()
+    const duplicate = (await call()) as { error: { code: number; message: string } }
+    expect(duplicate.error.code).toBe(-32600)
+    expect(duplicate.error.message).toMatch(/duplicate request id/)
+
+    releaseFn()
+    expect((await first) as { result: unknown }).toMatchObject({
+      result: { content: [{ type: "text", text: "done" }] },
+    })
+
+    // The slot is released in `finally`, so the client can legitimately reuse the id afterwards.
+    release = Promise.resolve()
+    expect((await call()) as { result: unknown }).toMatchObject({
+      result: { content: [{ type: "text", text: "done" }] },
     })
   })
 })

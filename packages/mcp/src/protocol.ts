@@ -413,6 +413,9 @@ export async function handleRpc(
       const args = (params?.arguments as Record<string, unknown>) ?? {}
       const controller = new AbortController()
       const key = requestKey(id)
+      if (key !== undefined && state.activeRequests.has(key)) {
+        return rpcError(rid, -32600, "duplicate request id is already in progress")
+      }
       const cleanupAbort = linkAbortSignal(options.signal, controller)
       if (key !== undefined) state.activeRequests.set(key, controller)
       const progressToken = progressTokenOf(params)
