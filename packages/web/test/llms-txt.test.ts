@@ -98,4 +98,14 @@ describe("generateLlmsTxt", () => {
     const out = await generateLlmsTxt(true, [], {})
     expect(out).toContain("No API routes registered.")
   })
+
+  // The repo this test runs in has an AGENTS.md, so the default must not be publishing it: these
+  // endpoints are public, and that file is written for the team.
+  test("the project's AGENTS.md is not published unless the app opts in", async () => {
+    const off = await generateLlmsTxt(true, [], {})
+    expect(off).not.toContain("Guidelines & Conventions")
+
+    const on = await generateLlmsTxt(true, [], {}, { includeLocalGuidelines: true })
+    expect(on).toContain("Guidelines & Conventions")
+  })
 })

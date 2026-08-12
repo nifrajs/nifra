@@ -1437,6 +1437,11 @@ export interface CreateWebAppOptions<Env = unknown> {
    * `prerendered.json`). Injected as `window.__NIFRA_PRERENDERED__` on every page so a client soft-nav
    * into a prerendered route fetches its static `_data.json` instead of hitting the worker. */
   readonly prerenderedPaths?: readonly string[]
+  /** Publish the project's `AGENTS.md` inside `/llms.txt` and `/llms-full.txt`. **Off by default**:
+   * those endpoints are public and unauthenticated, while `AGENTS.md` is a repo file written for the
+   * team - unreleased feature names, internal hostnames, and "don't touch X yet" notes live there
+   * routinely. Turn it on only for a repo whose guidelines you would publish as a page. */
+  readonly publishLocalGuidelines?: boolean
   /** SSG: per dynamic route pattern, its `getStaticPaths` `fallback` (from `enumerateStaticRoutes` or
    * the build's `prerendered.json`). A route mapped to `"404"` rejects any path NOT in
    * `prerenderedPaths` with the 404 page - the unlisted path simply doesn't exist. `"ssr"` (the
@@ -2292,15 +2297,16 @@ export function createWebApp<Env = unknown>(
   }
 
   // Register llms.txt & llms-full.txt
+  const llmsOptions = { includeLocalGuidelines: options.publishLocalGuidelines === true }
   app.register("GET", "/llms.txt", undefined, async () => {
-    const text = await generateLlmsTxt(false, manifest.routes, api)
+    const text = await generateLlmsTxt(false, manifest.routes, api, llmsOptions)
     return new Response(text, {
       headers: { "content-type": "text/plain; charset=utf-8" },
     })
   })
 
   app.register("GET", "/llms-full.txt", undefined, async () => {
-    const text = await generateLlmsTxt(true, manifest.routes, api)
+    const text = await generateLlmsTxt(true, manifest.routes, api, llmsOptions)
     return new Response(text, {
       headers: { "content-type": "text/plain; charset=utf-8" },
     })
