@@ -241,6 +241,25 @@ describe("scaffold - rejections", () => {
     await scaffold({ target: dir, template: "api" })
     await expect(scaffold({ target: dir, template: "api" })).rejects.toThrow()
   })
+
+  // The name is substituted into deploy scripts a shell runs, so a metacharacter or a leading `-` is
+  // refused. Ordinary directory names that npm accepts are not.
+  test("a project name with shell metacharacters or a leading dash is refused", async () => {
+    for (const bad of ["my app", "a;rm -rf /", "$(id)", "-rf", "a`id`", ".hidden", "_priv"]) {
+      const dir = await freshDir(bad)
+      await expect(scaffold({ target: dir, template: "api" })).rejects.toThrow(
+        /invalid project name/,
+      )
+    }
+  })
+
+  test("npm-legal names that are not lowercase-and-hyphens are accepted", async () => {
+    for (const good of ["MyApp", "my_app", "app.v2", "app2"]) {
+      const dir = await freshDir(good)
+      await scaffold({ target: dir, template: "api" })
+      expect((await readPkg(dir)).name).toBe(good)
+    }
+  })
 })
 
 // Exercise the CLI's run() flow (argv parse → scaffold → next-steps message / exit code) in-process.
@@ -427,7 +446,7 @@ describe("CI workflows (--ci github)", () => {
 
   test("githubDeployWorkflow: cf-pages uses wrangler-action + names the project + lists secrets", () => {
     const yml = githubDeployWorkflow("cf-pages", "my-app")
-    expect(yml).toContain("cloudflare/wrangler-action@v3")
+    expect(yml).toContain("cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd")
     expect(yml).toContain("command: pages deploy dist --project-name=my-app")
     expect(yml).toContain("CLOUDFLARE_API_TOKEN")
     // Asserting the literal GitHub Actions expression survives (wasn't eaten by JS template interpolation).
@@ -440,7 +459,7 @@ describe("CI workflows (--ci github)", () => {
   test("githubDeployWorkflow: vercel + deno use their CLIs/actions", () => {
     expect(githubDeployWorkflow("vercel", "x")).toContain("vercel deploy --prebuilt --prod")
     const deno = githubDeployWorkflow("deno", "x")
-    expect(deno).toContain("denoland/deployctl@v1")
+    expect(deno).toContain("denoland/deployctl@87e43e57b2336bcaf96bcd193687edcb3c5795c1")
     expect(deno).toContain("project: x")
     expect(deno).toContain("id-token: write") // OIDC
   })
@@ -448,7 +467,7 @@ describe("CI workflows (--ci github)", () => {
   test("githubDeployWorkflow: self-hosted bun/node ship an artifact + a host-specific placeholder", () => {
     for (const t of ["bun", "node"]) {
       const yml = githubDeployWorkflow(t, "x")
-      expect(yml).toContain("actions/upload-artifact@v4")
+      expect(yml).toContain("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02")
       expect(yml).toContain("Self-hosted: deploy is host-specific")
       expect(yml).toContain("No deploy secrets required")
     }

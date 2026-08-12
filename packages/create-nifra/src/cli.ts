@@ -104,7 +104,7 @@ const SELF_HOSTED_STEP = (hint: string): string =>
       # (${hint}). Until then, CI builds on every push and uploads the bundle as an artifact.
       - name: Upload build
         if: github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: build
           path: dist*`
@@ -135,7 +135,7 @@ const CI_DEPLOY: Record<string, CiDeploy> = {
     secrets: [],
     step: `      - name: Publish to Deno Deploy
         if: github.ref == 'refs/heads/main'
-        uses: denoland/deployctl@v1
+        uses: denoland/deployctl@87e43e57b2336bcaf96bcd193687edcb3c5795c1
         with:
           project: NAME
           entrypoint: dist-deno/server-deno.js`,
@@ -145,7 +145,7 @@ const CI_DEPLOY: Record<string, CiDeploy> = {
     secrets: ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"],
     step: `      - name: Publish to Cloudflare Pages
         if: github.ref == 'refs/heads/main'
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd
         with:
           apiToken: \${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: \${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -191,8 +191,8 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
       - run: bun install --frozen-lockfile
       # The gate, before the build. nifra.assurance.ts states what these routes must prove - an
       # unauthenticated write, a mutation with no body schema, a handler reaching a database it never
@@ -248,6 +248,19 @@ export interface ScaffoldResult {
  * destination. Pure enough to unit-test (no argv, no process.exit).
  */
 export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
+  // Validated first, before a single file is copied - a name rejected halfway through would leave a
+  // half-written project directory behind. npm's own character set for an unscoped name, wider than
+  // lowercase-and-hyphens on purpose: `MyApp` and `my_app` are ordinary directory names, and refusing
+  // them aborts a scaffold npm would have accepted. Still narrow, because the name is substituted into
+  // deploy scripts (`--name NAME`) that a shell runs - hence no metacharacters, no whitespace, and no
+  // leading `-` to be read as a flag.
+  const name = basename(opts.target)
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) || name.length > 214) {
+    throw new Error(
+      `invalid project name ${JSON.stringify(name)}: use letters, digits, "-", "_", and "." ` +
+        `(starting with a letter or digit), up to 214 characters`,
+    )
+  }
   const template = opts.template ?? "api"
   if (TEMPLATES[template] === undefined) {
     // "fullstack" is the one name people guess that means two different things - steer both readings.
@@ -336,7 +349,6 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
     // A template without a `gitignore` - nothing to restore.
   }
 
-  const name = basename(opts.target)
   const pkgPath = join(opts.target, "package.json")
   const pkg = JSON.parse(await readFile(pkgPath, "utf8")) as {
     name?: string
