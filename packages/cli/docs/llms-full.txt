@@ -2015,6 +2015,25 @@ bad JSON a `400` - thrown as control-flow `Response`s the lifecycle catches,
 so the cap can't be silently skipped. Pass a larger `maxBytes` for an upload route, a
 smaller one to tighten an endpoint.
 
+The cap is enforced on the bytes actually **delivered**, never on the number the caller wrote in
+`Content-Length`. That distinction is the whole defense: an adapter that rebuilds a
+request from an event envelope, or any code assembling a `Request` by hand, can carry a
+header claiming 5 bytes over a payload of five megabytes. A runtime HTTP parser cannot lie that way,
+because it framed the body at the declared length itself, so nifra's ingress adapters mark their
+requests as runtime-framed and skip the recount entirely:
+`listen()` on Bun, `toFetchHandler(app)` on Workers and edge,
+`@nifrajs/deno`, and `@nifrajs/node` (which reads exact byte counts in the
+first place). Nothing to configure on any of them.
+
+Only a request arriving through a path nifra ships no adapter for pays the extra pass over the body.
+If you serve an edge runtime by exporting the app directly rather than through
+`toFetchHandler`, `server({ trustBodyFraming: true })` asserts that every
+`app.fetch` request came from the platform's own parser. It is an assertion about
+deployment topology, so do not set it on an app whose `fetch` is also called with
+requests built from untrusted input. It trusts the _frame_, never the cap: an over-cap declared
+length is still a `413`, and a body with no `Content-Length` still goes
+through the streaming guard.
+
 ### File uploads - `@nifrajs/uploads`
 
 A dependency-free package for the upload-hardening basics. `validateUpload` enforces a
@@ -3155,6 +3174,14 @@ const app = server<Env>()
 export default { fetch: (req: Request, env: Env, ctx: ExecutionContext) =>
   app.fetch(req, { env, waitUntil: ctx.waitUntil.bind(ctx) }) }
 ```
+
+Export through `toFetchHandler` rather than handing the app out directly. Besides
+`env` and `ctx.waitUntil`, it tells nifra the request came from the
+platform's own HTTP parser, which lets the
+[bounded-body cap](/docs/security) trust the declared
+`Content-Length` as a real transport frame instead of re-counting every JSON body.
+A bare `export default app` has no such signal and pays the extra pass unless you
+set `server({ trustBodyFraming: true })`.
 
 ### Background work
 

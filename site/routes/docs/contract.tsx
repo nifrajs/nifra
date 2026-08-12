@@ -296,7 +296,9 @@ const app = server().merge(createBillingRouter({ charge: async (plan) => ({ id: 
 // 4. Build the client from the EXPORTED contract value - decoupled, no \`typeof app\` import needed.
 const api = client(billingContract, "https://api.example.com")
 const { data } = await api.billing.plan.get()          // GET  /billing/plan
-await api.billing.subscribe.post({ plan: "pro" })      // POST /billing/subscribe, body typed`
+// "subscribe" is a reserved client word (the SSE subscriber), so this segment is reached by
+// CALLING the parent node with the segment name - same request, same typed body.
+await api.billing("subscribe").post({ plan: "pro" })   // POST /billing/subscribe, body typed`
 
 export default function Contract() {
   return (

@@ -59,6 +59,15 @@ export default function Edge() {
         <code>env</code>.
       </p>
       <CodeBlock code={ENV} />
+      <p>
+        Export through <code>toFetchHandler</code> rather than handing the app out directly. Besides{" "}
+        <code>env</code> and <code>ctx.waitUntil</code>, it tells nifra the request came from the
+        platform's own HTTP parser, which lets the{" "}
+        <a href="/docs/security">bounded-body cap</a> trust the declared{" "}
+        <code>Content-Length</code> as a real transport frame instead of re-counting every JSON body.
+        A bare <code>export default app</code> has no such signal and pays the extra pass unless you
+        set <code>server({"{ trustBodyFraming: true }"})</code>.
+      </p>
 
       <h2>Background work</h2>
       <p>

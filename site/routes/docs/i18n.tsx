@@ -21,9 +21,10 @@ export async function loader({ request }: { request: Request }) {
 }`
 
 const DETECTOR = `// Or as a server plugin: c.locale on every handler, Content-Language on every response.
+import { server } from "@nifrajs/core"
 import { localeDetector } from "@nifrajs/i18n/detector"
 
-app.use(localeDetector({
+const app = server().use(localeDetector({
   locales: ["en", "fr", "de"],
   defaultLocale: "en",
   queryParam: "lang",

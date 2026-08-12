@@ -315,6 +315,27 @@ export default function Security() {
         so the cap can't be silently skipped. Pass a larger <code>maxBytes</code> for an upload route, a
         smaller one to tighten an endpoint.
       </p>
+      <p>
+        The cap is enforced on the bytes actually <b>delivered</b>, never on the number the caller wrote in{" "}
+        <code>Content-Length</code>. That distinction is the whole defense: an adapter that rebuilds a
+        request from an event envelope, or any code assembling a <code>Request</code> by hand, can carry a
+        header claiming 5 bytes over a payload of five megabytes. A runtime HTTP parser cannot lie that way,
+        because it framed the body at the declared length itself, so nifra's ingress adapters mark their
+        requests as runtime-framed and skip the recount entirely:{" "}
+        <code>listen()</code> on Bun, <code>toFetchHandler(app)</code> on Workers and edge,{" "}
+        <code>@nifrajs/deno</code>, and <code>@nifrajs/node</code> (which reads exact byte counts in the
+        first place). Nothing to configure on any of them.
+      </p>
+      <p>
+        Only a request arriving through a path nifra ships no adapter for pays the extra pass over the body.
+        If you serve an edge runtime by exporting the app directly rather than through{" "}
+        <code>toFetchHandler</code>, <code>server({"{ trustBodyFraming: true }"})</code> asserts that every{" "}
+        <code>app.fetch</code> request came from the platform's own parser. It is an assertion about
+        deployment topology, so do not set it on an app whose <code>fetch</code> is also called with
+        requests built from untrusted input. It trusts the <i>frame</i>, never the cap: an over-cap declared
+        length is still a <code>413</code>, and a body with no <code>Content-Length</code> still goes
+        through the streaming guard.
+      </p>
 
       <h2>File uploads - <code>@nifrajs/uploads</code></h2>
       <p>
