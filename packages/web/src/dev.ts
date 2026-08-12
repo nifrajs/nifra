@@ -254,6 +254,15 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
   // `nifra.config.ts` and the same objects serve dev and `nifra build`. Guarding the emitted code with
   // `if (import.meta.hot)` is not sufficient either - `Bun.build` keeps the branch, so the HMR calls
   // ship to production. This flag is the phase signal; `nifra build` never sets it.
+  // A programmatically started dev server must restore the process env it mutates once stopped, or the
+  // dev-phase flags set here outlive it: a later in-process consumer sharing the process (a test suite,
+  // a tool that starts then stops a server) would read them as if a dev server were still running.
+  // Captured before the first write, restored in `stop()`.
+  const priorDevEnv: Record<string, string | undefined> = {
+    [DEV_HMR_ENV]: process.env[DEV_HMR_ENV],
+    [DEV_ROOT_ENV]: process.env[DEV_ROOT_ENV],
+    [DEV_ROUTES_ENV]: process.env[DEV_ROUTES_ENV],
+  }
   process.env[DEV_HMR_ENV] = "1"
   // Dev-shaped runtimes for SSR, matching what the client bundle gets: a library ships its dev build
   // behind the `development` export condition with a `NODE_ENV` fallback for resolvers that set no
@@ -544,6 +553,11 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
       ssrGraph.dispose()
       server.stop(true)
       rmSync(devDir, { recursive: true, force: true })
+      // Put the dev-phase env flags back the way this server found them (see `priorDevEnv`).
+      for (const [key, prior] of Object.entries(priorDevEnv)) {
+        if (prior === undefined) delete process.env[key]
+        else process.env[key] = prior
+      }
     },
   }
 }
