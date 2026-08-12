@@ -181,5 +181,11 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
+      # The fixture's client bundle imports `@nifrajs/web/client`, which resolves to the published
+      # `dist/client.js` under a browser-target build - so the packages have to be built first, the
+      # same as every other job that exercises the shipped artifact.
+      - name: Build
+        run: bun run build
+
       - name: Compare Bun and Vite production pipelines on the fixture app
         run: bun run check:pipeline-parity
