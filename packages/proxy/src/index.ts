@@ -194,7 +194,7 @@ export function createProxy(options: ProxyOptions): ProxyHandler {
 
     const incoming = new URL(req.url)
     let path = incoming.pathname
-    if (stripPrefix !== undefined && path.startsWith(stripPrefix)) {
+    if (stripPrefix !== undefined && (path === stripPrefix || path.startsWith(`${stripPrefix}/`))) {
       const rest = path.slice(stripPrefix.length)
       path = rest === "" || !rest.startsWith("/") ? `/${rest}` : rest
     }

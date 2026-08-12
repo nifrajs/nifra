@@ -68,6 +68,17 @@ describe("createProxy()", () => {
     expect(seen?.path).toBe("/other/thing")
   })
 
+  // The prefix is a path segment, not a string prefix. Matching it as a substring rewrote sibling
+  // routes that merely start with the same characters - `/apidocs` was forwarded as `docs`.
+  test("stripPrefix matches whole segments, not a leading substring", async () => {
+    const proxy = createProxy({ upstream: ORIGIN, stripPrefix: "/api" })
+    respond = () => new Response("ok")
+    await proxy(new Request("http://edge.test/apidocs/intro"))
+    expect(seen?.path).toBe("/apidocs/intro")
+    await proxy(new Request("http://edge.test/api-v2/users"))
+    expect(seen?.path).toBe("/api-v2/users")
+  })
+
   test("a protocol-relative path cannot change the upstream host", async () => {
     const proxy = createProxy({ upstream: ORIGIN })
     respond = () => new Response("still-here")
