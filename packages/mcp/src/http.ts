@@ -75,6 +75,15 @@ export interface McpHttpOptions {
    * Set it (e.g. a localhost origin for a hardened local host) to reject any other browser origin with 403.
    */
   readonly allowedOrigins?: readonly string[]
+  /**
+   * Optional authorization, run once per request against the parsed message - after the body has been
+   * read under the size cap, so it never costs a second read of the stream. Returning `false` answers
+   * `403` with a JSON-RPC error (`MCP_ERROR.UNAUTHORIZED`) and the handler never sees the message.
+   */
+  readonly authorizeMessage?: (
+    message: JsonRpcRequest,
+    request: Request,
+  ) => boolean | Promise<boolean>
 }
 
 function parseContentLength(value: string): number | undefined {
@@ -242,6 +251,15 @@ export async function respondMcpHttp(
     return Response.json(rpcError(null, -32700, "parse error"), { status: 400, headers: cors })
   }
   const message = parsed.value as JsonRpcRequest
+  if (options.authorizeMessage !== undefined) {
+    const authorized = await options.authorizeMessage(message, request)
+    if (!authorized) {
+      return Response.json(rpcError(message.id ?? null, MCP_ERROR.UNAUTHORIZED, "unauthorized"), {
+        status: 403,
+        headers: cors,
+      })
+    }
+  }
   const bodyVersion = modernVersionOf(message.params)
   // Mirror the protocol version back for intermediaries (SHOULD, 2025-06-18+); absent is fine.
   const echoVersion = request.headers.get("mcp-protocol-version")

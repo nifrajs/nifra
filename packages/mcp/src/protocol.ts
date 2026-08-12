@@ -29,7 +29,13 @@ const SUPPORTED_PROTOCOL_VERSIONS = new Set([
  * legacy. This server is dual-era: `handleRpc` answers both on the same dispatch, per request. */
 export const MODERN_PROTOCOL_VERSION = "2026-07-28"
 /** MCP-reserved JSON-RPC error codes (2026-07-28 error-code policy carves out -32020..-32099 for the spec). */
-export const MCP_ERROR = { HEADER_MISMATCH: -32020, UNSUPPORTED_VERSION: -32022 } as const
+export const MCP_ERROR = {
+  HEADER_MISMATCH: -32020,
+  UNSUPPORTED_VERSION: -32022,
+  /** Rejected by `authorizeMessage`. In JSON-RPC's implementation-defined server-error band
+   * (-32099..-32000), unlike a code in the -326xx range, which is reserved for the spec's own use. */
+  UNAUTHORIZED: -32001,
+} as const
 const META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersion"
 const META_SERVER_INFO = "io.modelcontextprotocol/serverInfo"
 

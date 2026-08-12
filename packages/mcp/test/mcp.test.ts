@@ -351,6 +351,45 @@ describe("createMcpServer.fetch - end to end over HTTP", () => {
     const res = await mcp.handle({ id: 9, method: "tools/list" })
     expect((res as { result: { tools: unknown[] } }).result.tools).toHaveLength(1)
   })
+
+  // A route guard sees one opaque POST; only a per-message hook can let a caller list tools while
+  // refusing to run them. The refusal must carry no result at all, not an empty one.
+  test("authorizeMessage gates individual messages; the per-request override wins", async () => {
+    const readOnly = createMcpServer({
+      name: "orders",
+      version: "1.0.0",
+      tools: [ordersTool],
+      widgets: [widget],
+      authorizeMessage: (message) => message.method !== "tools/call",
+    })
+
+    const listed = await readOnly.fetch(post({ jsonrpc: "2.0", id: 1, method: "tools/list" }))
+    expect(listed.status).toBe(200)
+
+    const called = await readOnly.fetch(
+      post({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "list_orders" } }),
+    )
+    expect(called.status).toBe(403)
+    const body = (await called.json()) as {
+      id: number
+      result?: unknown
+      error: { code: number; message: string }
+    }
+    expect(body.id).toBe(2)
+    expect(body.result).toBeUndefined()
+    expect(body.error.code).toBe(MCP_ERROR.UNAUTHORIZED)
+
+    // The surrounding handler resolved a session that does allow writes.
+    const elevated = await readOnly.fetch(
+      post({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "list_orders" } }),
+      { authorizeMessage: () => true },
+    )
+    expect(elevated.status).toBe(200)
+    expect(
+      ((await elevated.json()) as { result: { structuredContent: { orders: unknown[] } } }).result
+        .structuredContent.orders,
+    ).toHaveLength(2)
+  })
 })
 
 describe("respondMcpHttp - transport hardening", () => {
