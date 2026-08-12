@@ -1,0 +1,23 @@
+{
+  "name": "nifra",
+  "owner": {
+    "name": "Nifra",
+    "url": "https://nifra.dev"
+  },
+  "metadata": {
+    "description": "Official Claude Code plugins for the Nifra framework.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "nifra",
+      "source": "./packages/skills",
+      "description": "Skills for building and verifying Nifra apps: contract-first APIs, full-stack SSR on five UI libraries, and the check/assure/capabilities gates.",
+      "version": "2.11.0",
+      "author": { "name": "Nifra" },
+      "homepage": "https://nifra.dev/docs/agents",
+      "license": "MIT",
+      "keywords": ["nifra", "typescript", "bun", "web-framework", "mcp"]
+    }
+  ]
+}

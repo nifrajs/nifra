@@ -258,6 +258,10 @@ interface Pkg {
   readonly description: string
   readonly dir: string
   readonly types?: string
+  /** Whether the manifest declares any code entry at all (`exports` / `main` / `bin` / `types`). A
+   * package that declares none ships data - `@nifrajs/skills` is markdown - so it CANNOT contribute a
+   * signature, and the untyped gate below must not read that as the build-was-skipped failure. */
+  readonly code: boolean
 }
 const pkgs: Pkg[] = []
 for (const file of new Glob("packages/*/package.json").scanSync(ROOT)) {
@@ -265,6 +269,9 @@ for (const file of new Glob("packages/*/package.json").scanSync(ROOT)) {
     name?: string
     description?: string
     types?: string
+    exports?: unknown
+    main?: unknown
+    bin?: unknown
   }
   if (!json.name) continue
   pkgs.push({
@@ -272,6 +279,11 @@ for (const file of new Glob("packages/*/package.json").scanSync(ROOT)) {
     description: json.description ?? "",
     dir: `${ROOT}/${file.replace(/\/package\.json$/, "")}`,
     ...(json.types !== undefined ? { types: json.types } : {}),
+    code:
+      json.exports !== undefined ||
+      json.main !== undefined ||
+      json.bin !== undefined ||
+      json.types !== undefined,
   })
 }
 pkgs.sort((a, b) => a.name.localeCompare(b.name))
@@ -662,7 +674,7 @@ types.sort((a, b) => a.name.localeCompare(b.name) || a.package.localeCompare(b.p
  * absent, so `types.json` gets rewritten with almost nothing in it - the only tell being a count in a
  * log line. That now stops here instead of being committed.
  */
-const untyped = pkgs.filter((p) => !types.some((t) => t.package === p.name))
+const untyped = pkgs.filter((p) => p.code && !types.some((t) => t.package === p.name))
 if (untyped.length > 0) {
   console.error(
     `✗ ${untyped.length} published package(s) contribute no types:\n` +

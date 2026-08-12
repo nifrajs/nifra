@@ -418,6 +418,10 @@
         "@nifrajs/core": "workspace:^",
       },
     },
+    "packages/skills": {
+      "name": "@nifrajs/skills",
+      "version": "2.11.0",
+    },
     "packages/storage": {
       "name": "@nifrajs/storage",
       "version": "2.11.0",
@@ -928,6 +932,8 @@
     "@nifrajs/schema": ["@nifrajs/schema@workspace:packages/schema"],
 
     "@nifrajs/site": ["@nifrajs/site@workspace:site"],
+
+    "@nifrajs/skills": ["@nifrajs/skills@workspace:packages/skills"],
 
     "@nifrajs/storage": ["@nifrajs/storage@workspace:packages/storage"],
 

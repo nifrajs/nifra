@@ -32,14 +32,30 @@ const types = JSON.parse(
   await Bun.file(`${ROOT}/packages/cli/docs/types.json`).text(),
 ) as TypeEntry[]
 
+/**
+ * Published packages that declare a code entry. A manifest with no `exports`/`main`/`bin`/`types`
+ * ships data rather than an API - `@nifrajs/skills` is markdown - so it has no signature to
+ * contribute, and counting it as missing would read as the build-was-skipped failure above. Same
+ * exemption `gen:llms` applies when it generates the file this grades.
+ */
 const publishedPackages = async (): Promise<string[]> => {
   const names: string[] = []
   for await (const file of new Glob("packages/*/package.json").scan(ROOT)) {
     const manifest = JSON.parse(await Bun.file(`${ROOT}/${file}`).text()) as {
       name?: string
       private?: boolean
+      exports?: unknown
+      main?: unknown
+      bin?: unknown
+      types?: unknown
     }
     if (manifest.private === true || manifest.name === undefined) continue
+    const code =
+      manifest.exports !== undefined ||
+      manifest.main !== undefined ||
+      manifest.bin !== undefined ||
+      manifest.types !== undefined
+    if (!code) continue
     names.push(manifest.name)
   }
   return names.sort()

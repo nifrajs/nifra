@@ -127,6 +127,9 @@ const PUBLINT_ONLY = [
   // itself (`typescript` is a peer, provided by the consumer's editor), so attw's Node/bundler
   // consumer-resolution model doesn't apply to it - publint validates its package.json/exports.
   { name: "@nifrajs/ts-plugin", dir: "packages/ts-plugin" },
+  // `@nifrajs/skills` ships markdown only (agent `SKILL.md` bundles + the Claude Code plugin
+  // manifest) - no code, no exports map, nothing for attw to resolve. publint validates the manifest.
+  { name: "@nifrajs/skills", dir: "packages/skills" },
 ] as const
 
 // Workspace-privacy gate: publishing is deny-by-default. A new package must be deliberately added to
