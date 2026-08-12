@@ -2,7 +2,7 @@
 import type { TransportCodec, TransportCodecRegistry } from "../transport-codec.ts"
 import { readBoundedBytes } from "./body.ts"
 import { jsonError } from "./http.ts"
-import { guardDecodedValue, type ProtoPoisoning } from "./proto-guard.ts"
+import { guardParsedValue, type ProtoPoisoning } from "./proto-guard.ts"
 import { isResponseResult, PRE_DECODED_BODY, type PreDecodedBody } from "./runtime-core.ts"
 import type { AnyServer, IdentityPlugin } from "./server.ts"
 
@@ -84,7 +84,7 @@ export function transportCodecs(
         // payload answers exactly like an undecodable one.
         return {
           matched: true,
-          value: guardDecodedValue(text, codec.decode(text), protoPoisoning),
+          value: guardParsedValue(codec.decode(text), protoPoisoning),
         }
       } catch {
         return {

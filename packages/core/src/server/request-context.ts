@@ -307,16 +307,9 @@ async function readBoundedJsonBodyOrThrow<T>(
  * Read a JSON body with the same byte cap used by schema validation and `c.boundedJson`, then
  * parse it through the prototype-poisoning guard (`protoPoisoning`, default `"reject"` - a
  * poisoned payload answers the same flat 400 as malformed JSON). Non-chunked, framed requests
- * with an in-cap `Content-Length` split on size: small bodies use native `json()` and walk the
- * parsed value, large ones buffer the text for the prescan-first two-tier guard; chunked or
- * length-less requests fall back to the streaming byte-cap guard.
+ * with an in-cap `Content-Length` take the runtime's fused `json()` and walk the parsed value;
+ * chunked or length-less requests fall back to the streaming byte-cap guard.
  */
-/** Framed bodies at or under this many declared bytes take native `json()` plus the parsed-value
- * walk; larger bodies buffer text for the prescan lane. Measured crossover on Bun is ~1-2KB (the
- * walk grows with node count, the prescan is ~flat in size); Node sits at parity on both sides,
- * so the split never loses there. */
-const NATIVE_JSON_MAX_BYTES = 1024
-
 /**
  * Deliberately **not** `async`: the framed lane is the hot path for every JSON POST, and an async
  * wrapper costs a coroutine frame, a wrapper promise, and an extra microtask hop on top of the one
@@ -351,29 +344,17 @@ export function readBoundedJsonSource(
     if (length > maxBytes) return Promise.resolve(jsonError(413, "payload_too_large"))
     const chunked = headerOf(req, "transfer-encoding") !== null
     if (!chunked) {
-      // Two guarded sub-lanes, split on the declared size. Small bodies keep the runtime's fused
-      // decode+parse `json()` and pay the per-node walk - at typical API sizes the walk (~150ns)
-      // is cheaper than leaving the fused path. Large bodies buffer the raw text so the two-tier
-      // guard can PRESCAN it (three substring `includes()` passes, ~flat in size) and walk only
-      // on a suspect hit - the walk grows with node count, and at 16KB it triples parse cost on
-      // Bun while the prescan lane halves it. `TEXT_DECODER` decodes exactly like native
-      // `json()` (UTF-8, BOM strip, replacement chars), so parse and error semantics match
-      // across the lanes. Under `"ignore"` no guard runs at any size, and `json()` is always the
-      // cheapest path. The byte-exact delivered-size re-check lives in `readBoundedBytes` (the
+      // One guarded lane at every size: the runtime's fused decode+parse `json()`, then the walk
+      // over the parsed value. There used to be a second lane above 1KB that buffered the raw text
+      // so the guard could substring-prescan it; the prescan turned out to cost 2-4x the walk on
+      // both engines for every body shape an API receives, so the text is no longer worth
+      // materializing and the split is gone. Under `"ignore"` the walk is skipped and this is a
+      // bare `json()`. The byte-exact delivered-size re-check lives in `readBoundedBytes` (the
       // raw-bytes lane); here the declared length was already capped above and the runtime
       // enforces framing.
-      if (protoPoisoning === "ignore" || length <= NATIVE_JSON_MAX_BYTES) {
-        return raw.json().then((parsed) => {
-          try {
-            return guardParsedValue(parsed, protoPoisoning)
-          } catch {
-            return jsonError(400, "invalid_json")
-          }
-        }, INVALID_JSON)
-      }
-      return raw.arrayBuffer().then((buffer) => {
+      return raw.json().then((parsed) => {
         try {
-          return parseJsonGuarded(TEXT_DECODER.decode(buffer), protoPoisoning)
+          return guardParsedValue(parsed, protoPoisoning)
         } catch {
           return jsonError(400, "invalid_json")
         }
