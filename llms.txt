@@ -79,6 +79,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - `@nifrajs/proxy` - Reverse proxy for nifra - stream requests to one fixed upstream origin with hop-by-hop hygiene, SSRF-proof by construction. Dependency-free.
 - `@nifrajs/runner` - Run requests through a nifra app's fetch and capture structured results - the engine behind the playground and the agent run/verify tool. Dependency-free; runs in the browser, Bun, Node, Deno, and on the edge.
 - `@nifrajs/schema` - Built-in schema builder `t` - TypeBox-backed (free JSON Schema + compiled validators), implements Standard Schema so nifra routes validate it natively.
+- `@nifrajs/skills` - Agent skills for nifra - portable SKILL.md bundles that teach a coding agent Nifra's contracts, boundaries, and CI gates, and point it at the live MCP server instead of stale recall.
 - `@nifrajs/storage` - Blob storage mechanics for nifra - traversal-safe memory, filesystem, and R2 adapters, optional provider capabilities, and executable adapter conformance.
 - `@nifrajs/testing` - Contract-derived adversarial tests, runtime-matrix response conformance, and cookie-aware in-process sessions for Nifra apps.
 - `@nifrajs/ts-plugin` - TypeScript language-service plugin for nifra - go-to-definition from a route-path string literal to the routes/ file that serves it.

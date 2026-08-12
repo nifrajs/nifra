@@ -10,7 +10,9 @@ built so both humans and coding agents can change it safely.</p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@nifrajs/core"><img src="https://img.shields.io/npm/v/@nifrajs/core?label=npm" alt="npm"></a>
+  <a href="https://www.npmjs.com/package/@nifrajs/core"><img src="https://img.shields.io/npm/dm/@nifrajs/core?label=downloads" alt="downloads"></a>
   <a href="https://github.com/nifrajs/nifra/actions/workflows/ci.yml"><img src="https://github.com/nifrajs/nifra/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://bun.sh"><img src="https://img.shields.io/badge/Bun-%3E%3D1.3-000?logo=bun" alt="Bun >= 1.3"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT"></a>
 </p>
 
@@ -80,6 +82,13 @@ nifra init-agents                          # or: write .mcp.json + AGENTS.md + C
 
 Highlights of the 15-tool loop: `nifra_context` (live routes + schemas), `nifra_example` (snippets typechecked against your installed version - no hallucinated APIs), `nifra_run` (verify a route in-process), `nifra_check` (drift gate that returns the fix), `nifra_assure` (security evidence per route). [Full tool list →](https://nifra.dev/docs/agents)
 
+Agents that read skills get the conventions too - the same four skills on every surface:
+
+```sh
+pi install npm:@nifrajs/skills                                     # Pi
+/plugin marketplace add nifrajs/nifra && /plugin install nifra@nifra  # Claude Code
+```
+
 Not in a Nifra repo? The docs tools are also hosted - add `https://mcp.nifra.dev` to Claude, Cursor, or ChatGPT and it learns Nifra from the same verified corpora, no checkout. One MCP, two transports (the same hosted-plus-local pairing Supabase, Stripe, and GitHub use): project tools run only on your machine over stdio - **your code never reaches our servers**.
 
 ## Proof, not promises
@@ -119,7 +128,7 @@ Measured, published, reproducible ([methodology + every row, including the ones 
 
 Run it yourself: `bun run bench:http` · `bun run bench:ssr`
 
-## Batteries (40 packages, all typed, all optional)
+## Batteries (44 packages, all typed, all optional)
 
 | | |
 |---|---|
@@ -127,7 +136,7 @@ Run it yourself: `bun run bench:http` · `bun run bench:ssr`
 | Full-stack | [`web`](packages/web) SSR core · `web-react` / `web-vue` / `web-solid` / `web-svelte` / `web-preact` adapters |
 | App services | [`auth`](packages/auth) · [`jobs`](packages/jobs) · [`cron`](packages/cron) · [`cache`](packages/cache) · [`storage`](packages/storage) · [`uploads`](packages/uploads) · [`image`](packages/image) · [`i18n`](packages/i18n) · [`env`](packages/env) · [`content`](packages/content) |
 | Quality | [`testing`](packages/testing) contract-derived tests · [`mock`](packages/mock) contract mocks · [`otel`](packages/otel) tracing · [`devtools`](packages/devtools) |
-| Agents | [`cli`](packages/cli) the `nifra` toolchain · [`mcp`](packages/mcp) build MCP servers · [`prompt`](packages/prompt) schema-validated LLM output |
+| Agents | [`cli`](packages/cli) the `nifra` toolchain · [`mcp`](packages/mcp) build MCP servers · [`prompt`](packages/prompt) schema-validated LLM output · [`skills`](packages/skills) portable agent skills |
 
 Every package documents its own surface; the root stays lean and everything advanced is an opt-in subpath, so you never pay for a concept you don't import. [All packages →](https://nifra.dev/docs)
 
