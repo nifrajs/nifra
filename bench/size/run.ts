@@ -170,15 +170,24 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
 // +2.0 KB min (the reader shadowing + capped stream), everything else noise - no optional
 // subsystem became reachable. The cap is the default-on security boundary, so its dispatch has to
 // live in the kernel; the ceilings move once, together.
+// Two moves are priced into the ceilings below. The larger one predates this repricing and had
+// already put every row over: the transport-cap and portable-tier work above landed without the
+// table being brought forward, so the gate was failing on numbers nobody had accepted (bare measured
+// 25.1 KB against a 24.7 ceiling). The smaller one is current: a declared WebSocket payload cap
+// carried on the upgrade outcome, `errorLogDetail`'s registration-time choice of what an error log
+// carries, and the header-case proof the response walk publishes for its readers - together +0.25 KB
+// gzip, uniform across the matrix (bare 25.1 -> 25.3), because all three sit in the kernel where any
+// route can reach them. Every ceiling is now the measured number plus ~0.2 KB, so a regression of the
+// same size as that batch still trips the gate rather than fitting inside the slack.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
-  "nifra-bare": 24.7,
+  "nifra-bare": 25.5,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 27.9,
-  "nifra-effect-ledger": 26.7,
-  "nifra-mcp": 25.0,
-  "nifra-sse": 25.4,
-  "nifra-valibot": 25.7,
-  "nifra-typebox-t": 54.8,
+  "nifra-idempotency": 28.6,
+  "nifra-effect-ledger": 27.5,
+  "nifra-mcp": 25.8,
+  "nifra-sse": 26.2,
+  "nifra-valibot": 26.5,
+  "nifra-typebox-t": 55.6,
 }
 
 const main = async (): Promise<void> => {
