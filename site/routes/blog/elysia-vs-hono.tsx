@@ -1,11 +1,11 @@
-import { pageMeta } from "../../meta"
+import { postMeta } from "../../meta"
 
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = postMeta(
+  "elysia-vs-hono",
   "Elysia vs Hono in 2026: which Bun framework fits · Nifra",
   "Elysia vs Hono compared honestly - throughput on identical workloads, typed clients (Eden vs hc), validation, portability - with measured numbers and a disclosed bias: we build Nifra, a third option.",
-  "/blog/elysia-vs-hono",
 )
 
 export default function ElysiaVsHono() {

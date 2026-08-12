@@ -76,9 +76,18 @@ interface DocPage {
 
 const read = (path: string): string => readFileSync(path, "utf8")
 
-/** `pageMeta("title", "description")` → the two strings. */
+/**
+ * A docs route's head → its title and description.
+ *
+ * Two call shapes, because docs pages carry a route path the head helper needs for their canonical
+ * and breadcrumb: `docsMeta("/docs/routing", "title", "description")` and the older
+ * `pageMeta("title", "description", ...)`. Matching only one of them would silently produce an
+ * `llms.txt` with empty titles, so both are read here.
+ */
 function extractMeta(src: string): { title: string; description: string } {
-  const m = src.match(/pageMeta\(\s*"((?:[^"\\]|\\.)*)"\s*,\s*"((?:[^"\\]|\\.)*)"/)
+  const m =
+    src.match(/docsMeta\(\s*"[^"]*"\s*,\s*"((?:[^"\\]|\\.)*)"\s*,\s*"((?:[^"\\]|\\.)*)"/) ??
+    src.match(/pageMeta\(\s*"((?:[^"\\]|\\.)*)"\s*,\s*"((?:[^"\\]|\\.)*)"/)
   const unesc = (s: string): string => s.replace(/\\"/g, '"').replace(/\\n/g, " ")
   return { title: m ? unesc(m[1]!) : "", description: m ? unesc(m[2]!) : "" }
 }

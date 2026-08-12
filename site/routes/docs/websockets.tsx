@@ -1,13 +1,13 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 
 // Pure content page - no interactivity, so ship zero framework JS.
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/websockets",
   "Nifra - WebSockets",
   "app.ws(path, handler) registers a typed WebSocket route - an upgrade guard, a portable socket, contract-validated messages, and topic pub/sub - served on Bun, Deno, Node, and Cloudflare Workers.",
-  "/docs/websockets",
 )
 
 const BASIC = `import { server } from "@nifrajs/core/server"

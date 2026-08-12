@@ -1,14 +1,14 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 
 // Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/images",
   "Nifra - images",
   "A CLS-safe responsive <Image> with pluggable loaders - a CDN, or Nifra's self-hosted resize endpoint (Bun.Image, sharp, or WASM on the edge) with optional signed URLs.",
-  "/docs/images",
 )
 
 const BACKENDS = `// doc-check: skip - illustrates third-party codecs (sharp, @jsquash/*); install them to run it.

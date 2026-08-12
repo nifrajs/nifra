@@ -1,11 +1,11 @@
-import { pageMeta } from "../../meta"
+import { postMeta } from "../../meta"
 
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = postMeta(
+  "nextjs-alternatives-2026",
   "Next.js alternatives in 2026 - what to use and when · Nifra",
   "An honest guide to Next.js alternatives in 2026: Remix, SvelteKit, Nuxt, SolidStart, Astro, and Nifra - who each is for, measured SSR throughput, and the cases where staying on Next.js is right.",
-  "/blog/nextjs-alternatives-2026",
 )
 
 export default function NextjsAlternatives() {

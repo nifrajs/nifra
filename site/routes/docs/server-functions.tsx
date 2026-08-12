@@ -1,14 +1,14 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 
 // Pure content page - no React interactivity (TOC/copy/search are the layout enhancer + the Nira
 // island), so ship zero framework JS.
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/server-functions",
   "Nifra - Server functions",
   "Write a function on the server and call it from a component. The module never reaches the browser, the arguments are validated, and the mounted function is an ordinary route - so assurance, capabilities and the effect ledger all apply.",
-  "/docs/server-functions",
 )
 
 const DECLARE = `// todos.fn.ts - the suffix is what tells the build to strip this module from the client.

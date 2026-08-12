@@ -1,14 +1,14 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 
 // Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/plugins",
   "Nifra - Plugins & middleware",
   "Extend Nifra with definePlugin (typed context, idempotent) + hook-bundle middleware. Official middleware: requestId, logger, etag, bearer, apiKey, basicAuth, jwt/jwks, csrf, ipRestriction, bodyLimit, cors, securityHeaders, rateLimit, compression, cacheControl, cache, prettyJson, timing, methodOverride, trailingSlash, language, poweredBy, combine, openapi, healthcheck, idempotency.",
-  "/docs/plugins",
 )
 
 const PLUGIN = `// doc-check: skip - fragment: the outer \`app\`, \`verify\`, and \`db\` are your application's.

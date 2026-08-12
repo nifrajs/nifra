@@ -1,14 +1,14 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 
 // Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/rendering",
   "Nifra - Rendering: SSG & ISR",
   "Prerender static routes, enumerate dynamic ones, and cache rendered pages with stale-while-revalidate - on every runtime including the edge.",
-  "/docs/rendering",
 )
 
 const PRERENDER = `// A static route: render it to a static index.html at build time.

@@ -1,12 +1,6 @@
-import { pageMeta } from "../../meta"
+import { breadcrumbs, pageMeta } from "../../meta"
 
 export const hydrate = false
-
-export const meta = pageMeta(
-  "Nifra compared - vs Next.js, Elysia, Hono, Fastify",
-  "Honest, benchmark-backed comparisons of Nifra against Next.js, Elysia, Hono, and Fastify - including where each alternative is the right choice.",
-  "/compare",
-)
 
 const PAGES: ReadonlyArray<{ slug: string; title: string; summary: string }> = [
   {
@@ -34,6 +28,31 @@ const PAGES: ReadonlyArray<{ slug: string; title: string; summary: string }> = [
       "Ahead on Node in the current run - ~12% on the validated POST - and the same app unchanged on Bun runs several times faster. What each framework gives you beyond raw speed.",
   },
 ]
+
+export const meta = pageMeta(
+  "Nifra compared - vs Next.js, Elysia, Hono, Fastify",
+  "Honest, benchmark-backed comparisons of Nifra against Next.js, Elysia, Hono, and Fastify - including where each alternative is the right choice.",
+  "/compare",
+  {
+    structuredData: [
+      // An `ItemList` of the four comparisons: it tells a crawler the section is a set of four pages
+      // and what each one covers, from the index alone.
+      {
+        "@context": "https://schema.org",
+        "@type": "ItemList",
+        name: "Nifra compared",
+        itemListElement: PAGES.map((page, index) => ({
+          "@type": "ListItem",
+          position: index + 1,
+          name: page.title,
+          description: page.summary,
+          url: `https://nifra.dev/compare/${page.slug}`,
+        })),
+      },
+      breadcrumbs([{ name: "Compare", path: "/compare" }]),
+    ],
+  },
+)
 
 export default function CompareIndex() {
   return (

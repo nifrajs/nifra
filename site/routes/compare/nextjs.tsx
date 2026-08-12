@@ -1,11 +1,12 @@
-import { pageMeta } from "../../meta"
+import { compareMeta } from "../../meta"
 
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = compareMeta(
+  "nextjs",
+  "Nifra vs Next.js",
   "Nifra vs Next.js - a faster, typed, multi-runtime alternative",
   "Nifra vs Next.js compared honestly: server rendering throughput (25x in reproducible benchmarks), end-to-end types without codegen, five UI frameworks instead of one, and where Next.js is still the right choice.",
-  "/compare/nextjs",
 )
 
 export default function VsNextjs() {

@@ -1,12 +1,12 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { postMeta } from "../../meta"
 
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = postMeta(
+  "fullstack-bun-guide",
   "Building a full-stack TypeScript app on Bun · Nifra",
   "A practical guide to building a typed full-stack app on Bun with nifra: file-based routes, typed loaders, server functions, validation at the boundary, and deploying the same app to Node, Deno, or the edge.",
-  "/blog/fullstack-bun-guide",
 )
 
 const SCAFFOLD = `bunx create-nifra taskboard --template site --framework react

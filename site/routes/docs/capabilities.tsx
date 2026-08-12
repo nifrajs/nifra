@@ -1,13 +1,13 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 
 // Pure content page - no React interactivity, so ship zero framework JS.
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/capabilities",
   "Nifra - Effect provenance",
   "A route declares the effects it performs, and `nifra check` fails it for being able to reach further than it declared. How reach is computed, why that shapes your modules, and how the declaration turns into an enforced policy.",
-  "/docs/capabilities",
 )
 
 const POLICY = `import { server } from "@nifrajs/core/server"

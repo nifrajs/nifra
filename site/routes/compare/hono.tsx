@@ -1,11 +1,12 @@
-import { pageMeta } from "../../meta"
+import { compareMeta } from "../../meta"
 
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = compareMeta(
+  "hono",
+  "Nifra vs Hono",
   "Nifra vs Hono - typed full-stack vs run-anywhere router",
   "Nifra vs Hono compared honestly: what router micro-benchmarks hide, measured throughput with realistic middleware, typed clients, and when Hono's run-anywhere minimalism is exactly right.",
-  "/compare/hono",
 )
 
 export default function VsHono() {

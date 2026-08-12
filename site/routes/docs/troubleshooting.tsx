@@ -1,14 +1,14 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 
 // Pure content page - no React interactivity (TOC/copy/search are the layout enhancer + the Nira
 // island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/troubleshooting",
   "Nifra - Troubleshooting",
   "Fixes keyed on the literal error strings Nifra prints: `reached the client bundle` (a node:/native import in the browser bundle), `server-only module reached the client bundle` (the server-only marker), and `resolveDispatcher` / `Invalid hook call` (duplicate React).",
-  "/docs/troubleshooting",
 )
 
 // The server-only marker - the new opt-in client-leak guard. A pure-server module with no `node:`

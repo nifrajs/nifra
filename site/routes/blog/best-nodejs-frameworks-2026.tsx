@@ -1,12 +1,12 @@
 import { HTTP_WORKLOADS } from "../../data/benchmarks"
-import { pageMeta } from "../../meta"
+import { postMeta } from "../../meta"
 
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = postMeta(
+  "best-nodejs-frameworks-2026",
   "The best Node.js frameworks in 2026 · Nifra",
   "An honest guide to Node.js web frameworks in 2026 - Fastify, Express, NestJS, Hono, and Nifra - with published throughput numbers, typing stories, and a disclosed bias: we build nifra.",
-  "/blog/best-nodejs-frameworks-2026",
 )
 
 function httpValue(runtime: string, name: string, workload: "getUsers" | "postUsers"): string {

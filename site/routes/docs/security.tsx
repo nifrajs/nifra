@@ -1,14 +1,14 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 
 // Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
-export const meta = pageMeta(
-  "Nifra - security & hardening",
-  "Bounded request bodies, magic-byte file-upload validation, constant-time webhook verification, and idempotency-key replay - the hardening primitives every production app needs, built in.",
+export const meta = docsMeta(
   "/docs/security",
+  "Nifra - security & hardening",
+  "Bounded request bodies, JSON prototype-poisoning defense, magic-byte file-upload validation, constant-time webhook verification, security response headers, and idempotency-key replay - the hardening primitives every production app needs, built in.",
 )
 
 const RESPONSE_CONTRACT = `import { server } from "@nifrajs/core/server"
@@ -53,6 +53,36 @@ app.post("/rpc", async (c) => {
   // …bad JSON → 400. Then validate \`body\` with your schema before trusting it.
   return { method: body.method }
 })`
+
+const PROTO = `import { server } from "@nifrajs/core/server"
+
+// Default is "reject". A JSON body with an own \`__proto__\` key - or a \`constructor\`
+// carrying a \`prototype\` - is the exact shape that turns a later innocent { ...body }
+// merge or Object.assign into prototype pollution. It answers the SAME flat 400 as
+// malformed JSON, so an attacker learns nothing from the response.
+const app = server({ protoPoisoning: "reject" }) // "strip" | "ignore" also available
+
+app.post("/profile", async (c) => {
+  const body = await c.boundedJson<{ name: string }>() // and the schema-route path
+  // Reached only for a clean payload. Under "strip" the offending keys are deleted and
+  // the handler sees the cleaned object; under "ignore" the body passes through as-is.
+  return { name: body.name }
+})`
+
+const SECURITY_HEADERS = `import { server } from "@nifrajs/core/server"
+import { securityHeaders } from "@nifrajs/middleware"
+
+// Always on (covering errors and 404s too): X-Content-Type-Options: nosniff,
+// X-Frame-Options: DENY, Referrer-Policy: no-referrer. The rest are opt-in - each is a
+// deliberate cross-origin decision, so nifra never turns them on behind your back:
+const app = server().use(securityHeaders({
+  crossOriginOpenerPolicy: "same-origin",      // isolate the browsing-context group
+  crossOriginResourcePolicy: "same-origin",    // block cross-origin embedding of your responses
+  crossOriginEmbedderPolicy: "require-corp",   // enable crossOriginIsolated (SharedArrayBuffer, …)
+  permissionsPolicy: "camera=(), geolocation=()",
+  contentSecurityPolicy: "default-src 'self'",
+  hsts: { maxAge: 63072000, includeSubDomains: true, preload: true }, // opt in once HTTPS-only
+}))`
 
 const UPLOADS = `// doc-check: skip - fragment: \`app\`, \`save\`, \`id\`, and \`env\` are your application's.
 import { validateUpload, signDownloadUrl } from "@nifrajs/uploads"
@@ -337,6 +367,33 @@ export default function Security() {
         through the streaming guard.
       </p>
 
+      <h2>Prototype-poisoning defense</h2>
+      <p>
+        Every JSON body nifra parses - the schema-validated route and <code>c.boundedJson</code>
+        alike - is screened for the prototype-pollution shape: an own <code>__proto__</code> key, or
+        a <code>constructor</code> whose value carries a <code>prototype</code>. <code>JSON.parse</code>
+        creates these as ordinary data properties, and the damage lands later, when innocent code does{" "}
+        <code>{"{ ...body }"}</code>, <code>Object.assign(target, body)</code>, or a deep merge and
+        walks that key onto a real prototype. The screen is on by default.
+      </p>
+      <CodeBlock code={PROTO} lang="ts" />
+      <p>
+        <code>protoPoisoning</code> is a server option with three settings.
+        <code> &quot;reject&quot;</code> (the default) answers the same flat <code>400</code> as
+        malformed JSON - indistinguishable on the wire, so a probe learns nothing.{" "}
+        <code>&quot;strip&quot;</code> deletes the offending keys and hands the handler the cleaned
+        value, siblings intact. <code>&quot;ignore&quot;</code> parses as-is, for a route you are sure
+        never merges body input into another object. A string <i>value</i> of <code>&quot;__proto__&quot;</code>{" "}
+        is legal data and never triggers - only an own key of that name does.
+      </p>
+      <p>
+        The check is sound against escape smuggling: a <code>__proto__</code>-spelled key
+        parses to the same own property, so it is caught the same way. And it is cheap on the common
+        path - a clean body pays a substring pre-scan only; the deep walk runs solely when the raw text
+        actually contains a suspect token, so an honest payload is never charged for the tree it does
+        not have.
+      </p>
+
       <h2>File uploads - <code>@nifrajs/uploads</code></h2>
       <p>
         A dependency-free package for the upload-hardening basics. <code>validateUpload</code> enforces a
@@ -434,6 +491,23 @@ export default function Security() {
         </li>
       </ul>
 
+      <h2>Security response headers - <code>securityHeaders</code></h2>
+      <p>
+        <code>securityHeaders()</code> sets a safe-by-default response header set on every response,
+        errors and 404s included. Three are always on - <code>X-Content-Type-Options: nosniff</code>,{" "}
+        <code>X-Frame-Options: DENY</code>, and <code>Referrer-Policy: no-referrer</code>. The
+        cross-origin isolation headers (<code>COOP</code>/<code>COEP</code>/<code>CORP</code>),{" "}
+        <code>Permissions-Policy</code>, <code>Content-Security-Policy</code>, and <code>HSTS</code> are
+        opt-in, because each one can break a working app (embedding, popups, HTTP) and so is a
+        deliberate choice, never a silent default.
+      </p>
+      <CodeBlock code={SECURITY_HEADERS} lang="ts" />
+      <p>
+        Every value is fixed at construction, so the headers are declared statically rather than
+        written by a response hook - an app whose response middleware is only this keeps the fused
+        native response lanes. A route that sets one of these names itself keeps its own value.
+      </p>
+
       <h2>Route assurance - prove every route is guarded</h2>
       <p>
         Installing security middleware is not the same as proving it covers every route. Nifra&apos;s
@@ -478,8 +552,11 @@ export default function Security() {
       <h2>Already built in</h2>
       <p>
         These add to Nifra's standing defaults: strict-by-default schema validation (unknown fields
-        rejected), SSR serialization that escapes every inline-script value, signed-cookie sessions + CSRF
-        + route guards (<a href="/docs/auth">@nifrajs/auth</a>), bearer/apiKey auth + a shared-store rate
+        rejected), SSR serialization that escapes every inline-script value,{" "}
+        <code>__Host-</code>/<code>__Secure-</code> cookie-prefix enforcement (a cookie whose
+        attributes violate its prefix contract fails at serialization rather than being silently
+        dropped by the browser), signed-cookie sessions + CSRF + route guards
+        (<a href="/docs/auth">@nifrajs/auth</a>), bearer/apiKey auth + a shared-store rate
         limiter (<a href="/docs/plugins">@nifrajs/middleware</a>), and a hardened image-resize endpoint
         (<a href="/docs/images">@nifrajs/image/server</a>).
       </p>

@@ -1,14 +1,14 @@
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 import { CodeBlock } from "../../highlight"
 
 // Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/deployment",
   "Nifra - Deployment",
   "One Nifra app, one command per target - Bun, Node (Docker), Deno Deploy, Cloudflare Pages, Vercel Edge.",
-  "/docs/deployment",
 )
 
 const SCAFFOLD = `# Scaffold the multi-target site with a chosen default deploy target:

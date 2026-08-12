@@ -1,14 +1,14 @@
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 import { CodeBlock } from "../../highlight"
 
 // Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/data",
   "Nifra - Loaders & actions",
   "Typed loaders and actions in Nifra: data on the server, mutations, revalidation.",
-  "/docs/data",
 )
 
 const LOADER = `// A loader runs on the server - in-process during SSR (no network round-trip),

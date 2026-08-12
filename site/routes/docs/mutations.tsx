@@ -1,14 +1,14 @@
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 import { CodeBlock } from "../../highlight"
 
 // Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/mutations",
   "Nifra - Optimistic UI & fetchers",
   "Optimistic updates and concurrent fetchers in Nifra: instant feedback, row-level mutations.",
-  "/docs/mutations",
 )
 
 const OPTIMISTIC = `// doc-check: skip - component-body fragment: \`id\` and \`todo\` are the row's props.

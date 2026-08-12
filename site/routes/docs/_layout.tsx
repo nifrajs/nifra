@@ -1,82 +1,9 @@
 import type { ReactNode } from "react"
+import { DOCS_GROUPS as GROUPS } from "../../data/docs-nav"
 
 // Nested layout for /docs/* - a sidebar inside the root chrome (layout chain: root → docs → page).
-// Grouped + ordered for a first-time reader: get a backend running, add a frontend, harden it, ship
-// it, migrate into it.
-const GROUPS: ReadonlyArray<{ title: string; links: ReadonlyArray<{ href: string; label: string }> }> = [
-  {
-    title: "Start here",
-    links: [
-      { href: "/docs", label: "Getting started" },
-      { href: "/docs/contract", label: "Framework contract" },
-      { href: "/docs/api", label: "API & typed client" },
-      { href: "/docs/types-first", label: "Types-first" },
-      { href: "/docs/testing", label: "Contract testing" },
-      { href: "/docs/database", label: "Database" },
-      { href: "/docs/comparison", label: "vs other frameworks" },
-    ],
-  },
-  {
-    title: "Frontend",
-    links: [
-      { href: "/docs/frameworks", label: "Frameworks" },
-      { href: "/docs/routing", label: "Routing" },
-      { href: "/docs/data", label: "Loaders & actions" },
-      { href: "/docs/backends", label: "Backends & API" },
-      { href: "/docs/server-functions", label: "Server functions" },
-      { href: "/docs/mutations", label: "Optimistic UI" },
-      { href: "/docs/query", label: "Query cache" },
-      { href: "/docs/streaming", label: "Streaming" },
-      { href: "/docs/hydration", label: "Hydration" },
-      { href: "/docs/content", label: "Content & MDX" },
-      { href: "/docs/images", label: "Images" },
-      { href: "/docs/fonts", label: "Fonts" },
-      { href: "/docs/i18n", label: "i18n" },
-    ],
-  },
-  {
-    title: "Production",
-    links: [
-      { href: "/docs/auth", label: "Auth & sessions" },
-      { href: "/docs/security", label: "Security & uploads" },
-      { href: "/docs/budgets", label: "Request budgets" },
-      { href: "/docs/plugins", label: "Plugins & middleware" },
-      { href: "/docs/integrations", label: "Integrations" },
-      { href: "/docs/edge", label: "Edge & bindings" },
-      { href: "/docs/websockets", label: "WebSockets" },
-    ],
-  },
-  {
-    title: "Proof",
-    links: [
-      { href: "/docs/verification", label: "Verification ladder" },
-      { href: "/docs/capabilities", label: "Effect provenance" },
-      { href: "/docs/agents", label: "Coding agents" },
-      { href: "/docs/causality", label: "Execution causality" },
-      { href: "/docs/failure-lab", label: "Failure laboratory" },
-      { href: "/docs/certification", label: "Adapter certification" },
-    ],
-  },
-  {
-    title: "Build & deploy",
-    links: [
-      { href: "/docs/rendering", label: "SSG & ISR" },
-      { href: "/docs/dev", label: "Dev & HMR" },
-      { href: "/docs/cli", label: "CLI" },
-      { href: "/docs/deployment", label: "Deployment" },
-      { href: "/docs/troubleshooting", label: "Troubleshooting" },
-    ],
-  },
-  {
-    title: "Migrate",
-    links: [
-      { href: "/docs/migrate-2", label: "Upgrade from Nifra 1.x" },
-      { href: "/docs/migrate-frontend", label: "From Next, Nuxt, SvelteKit" },
-      { href: "/docs/migrate-backend", label: "From Express, Hono, Fastify" },
-      { href: "/docs/migrate-route-by-route", label: "Migrate route by route" },
-    ],
-  },
-]
+// The nav itself lives in `data/docs-nav.ts` because `docsMeta()` reads the same list to build each
+// page's BreadcrumbList: one list, so the sidebar and the crawler never disagree.
 
 const NAV_SCRIPT = `(function(){
   // 1. Mark active link + Breadcrumbs

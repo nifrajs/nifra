@@ -1,14 +1,14 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 
 // Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/frameworks",
   "Nifra - Frameworks",
   "One agnostic core, five UI frameworks: React, Solid, Vue, Preact, and Svelte - same loaders, streaming, islands, and routing, unchanged.",
-  "/docs/frameworks",
 )
 
 // Same minimal counter app (a layout + a $state/useState counter), each bundled minified for the

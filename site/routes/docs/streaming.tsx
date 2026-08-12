@@ -1,14 +1,14 @@
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 import { CodeBlock } from "../../highlight"
 
 // Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/streaming",
   "Nifra - Streaming",
   "Streaming SSR, Suspense, and defer() in Nifra - on every runtime including the edge.",
-  "/docs/streaming",
 )
 
 const DEFER = `// Send the page shell immediately; stream the slow part in when it resolves.

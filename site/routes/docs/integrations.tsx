@@ -1,12 +1,12 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/integrations",
   "Nifra - Integrations (Stripe, and any npm library)",
   "Third-party libraries work in Nifra as-is - handlers are plain TypeScript. The Stripe recipe end-to-end: SDK calls in a route, constant-time webhook verification, and idempotent processing.",
-  "/docs/integrations",
 )
 
 const SDK = `// doc-check: skip - fragment: \`env\` and your price ids are your application's.

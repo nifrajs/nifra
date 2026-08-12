@@ -1,11 +1,11 @@
-import { pageMeta } from "../../meta"
+import { postMeta } from "../../meta"
 
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = postMeta(
+  "best-bun-frameworks-2026",
   "The best Bun frameworks in 2026 · Nifra",
   "An honest guide to Bun web frameworks in 2026 - Elysia, Hono, and Nifra compared on speed, typing, scope, and ecosystem, with published benchmarks and a clear disclosure: we build one of them.",
-  "/blog/best-bun-frameworks-2026",
 )
 
 export default function BestBunFrameworks() {

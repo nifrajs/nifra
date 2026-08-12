@@ -1,12 +1,12 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/verification",
   "Nifra - Verification ladder",
   "Five cumulative levels, from a typed contract to contract-derived invariant tests, that say what a Nifra project actually proves.",
-  "/docs/verification",
 )
 
 const LEVELS = `# What does this project prove right now?

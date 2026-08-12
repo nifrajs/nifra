@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Nifra Blog</title>
+    <link>https://nifra.dev/blog</link>
+    <atom:link href="https://nifra.dev/rss.xml" rel="self" type="application/rss+xml"/>
+    <description>Engineering notes from building nifra.</description>
+    <language>en</language>
+    <lastBuildDate>Tue, 04 Aug 2026 00:00:00 GMT</lastBuildDate>
+    <item>
+      <title>Choosing a TypeScript API framework in 2026</title>
+      <link>https://nifra.dev/blog/typescript-api-framework</link>
+      <guid isPermaLink="true">https://nifra.dev/blog/typescript-api-framework</guid>
+      <pubDate>Tue, 04 Aug 2026 00:00:00 GMT</pubDate>
+      <description>The three levels of 'typed' - handlers, inferred clients, runtime validation - and how Nifra, tRPC, Elysia, Hono, Fastify, and NestJS score on each, with a ten-minute test that beats any comparison table.</description>
+    </item>
+    <item>
+      <title>The best Bun frameworks in 2026</title>
+      <link>https://nifra.dev/blog/best-bun-frameworks-2026</link>
+      <guid isPermaLink="true">https://nifra.dev/blog/best-bun-frameworks-2026</guid>
+      <pubDate>Tue, 04 Aug 2026 00:00:00 GMT</pubDate>
+      <description>Elysia, Hono, and Nifra compared on speed, typing, scope, and ecosystem - with published benchmarks and our bias disclosed.</description>
+    </item>
+    <item>
+      <title>The best Node.js frameworks in 2026</title>
+      <link>https://nifra.dev/blog/best-nodejs-frameworks-2026</link>
+      <guid isPermaLink="true">https://nifra.dev/blog/best-nodejs-frameworks-2026</guid>
+      <pubDate>Tue, 04 Aug 2026 00:00:00 GMT</pubDate>
+      <description>Fastify, Express, NestJS, Hono, and Nifra - measured throughput, typing stories, and a one-minute decision guide.</description>
+    </item>
+    <item>
+      <title>Bun vs Node.js: same app, both runtimes, measured</title>
+      <link>https://nifra.dev/blog/bun-vs-node</link>
+      <guid isPermaLink="true">https://nifra.dev/blog/bun-vs-node</guid>
+      <pubDate>Tue, 04 Aug 2026 00:00:00 GMT</pubDate>
+      <description>The comparison most benchmarks fake: an identical application benchmarked on both runtimes. Where Bun's 2x holds and where it shrinks.</description>
+    </item>
+    <item>
+      <title>Fastify vs Express in 2026: measured, not vibes</title>
+      <link>https://nifra.dev/blog/fastify-vs-express</link>
+      <guid isPermaLink="true">https://nifra.dev/blog/fastify-vs-express</guid>
+      <pubDate>Tue, 04 Aug 2026 00:00:00 GMT</pubDate>
+      <description>Fresh numbers for the eternal Node question, plus when neither is the right answer.</description>
+    </item>
+    <item>
+      <title>Elysia vs Hono in 2026: which Bun framework fits</title>
+      <link>https://nifra.dev/blog/elysia-vs-hono</link>
+      <guid isPermaLink="true">https://nifra.dev/blog/elysia-vs-hono</guid>
+      <pubDate>Tue, 04 Aug 2026 00:00:00 GMT</pubDate>
+      <description>Identical-workload throughput, Eden vs hc, validation, portability - and the one difference that decides most projects.</description>
+    </item>
+    <item>
+      <title>Next.js alternatives in 2026 - what to use and when</title>
+      <link>https://nifra.dev/blog/nextjs-alternatives-2026</link>
+      <guid isPermaLink="true">https://nifra.dev/blog/nextjs-alternatives-2026</guid>
+      <pubDate>Tue, 04 Aug 2026 00:00:00 GMT</pubDate>
+      <description>Remix, SvelteKit, Nuxt, SolidStart, Astro, and Nifra matched to the three reasons people actually leave - including when staying is right.</description>
+    </item>
+    <item>
+      <title>Building a full-stack TypeScript app on Bun</title>
+      <link>https://nifra.dev/blog/fullstack-bun-guide</link>
+      <guid isPermaLink="true">https://nifra.dev/blog/fullstack-bun-guide</guid>
+      <pubDate>Tue, 04 Aug 2026 00:00:00 GMT</pubDate>
+      <description>From scaffold to deploy: file-based routes, typed loaders, validation at the boundary, and why the same app runs unchanged on Node, Deno, or the edge.</description>
+    </item>
+    <item>
+      <title>Your framework's docs should be an MCP server</title>
+      <link>https://nifra.dev/blog/docs-as-mcp</link>
+      <guid isPermaLink="true">https://nifra.dev/blog/docs-as-mcp</guid>
+      <pubDate>Tue, 04 Aug 2026 00:00:00 GMT</pubDate>
+      <description>Most code is now written by an AI agent reading your docs. Why Nifra ships its documentation, examples, and exact API types as a live MCP endpoint, and how CI keeps a machine-readable corpus from lying.</description>
+    </item>
+  </channel>
+</rss>

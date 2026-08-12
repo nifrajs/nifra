@@ -1,12 +1,12 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/agents",
   "Nifra - Coding agents",
   "An MCP server that lets an agent build a Nifra app and then prove it: verified docs and examples, a drift gate to fix against, real requests to check behaviour, and a ladder that says what the project actually holds.",
-  "/docs/agents",
 )
 
 const SETUP = `# Registers the MCP server and writes the agent files. Never clobbers what is already there.

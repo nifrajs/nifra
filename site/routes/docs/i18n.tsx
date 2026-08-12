@@ -1,14 +1,14 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 
 // Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/i18n",
   "Nifra - i18n",
   "Locale negotiation + a tiny ICU message formatter on the platform Intl, framework-agnostic.",
-  "/docs/i18n",
 )
 
 const NEGOTIATE = `// In a loader: resolve the locale + return only that catalog's messages.

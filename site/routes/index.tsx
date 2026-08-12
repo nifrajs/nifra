@@ -1,12 +1,27 @@
 import { HERO_SSR, HTTP_BENCH, PROOF } from "../data/benchmarks"
 import { CodeBlock } from "../highlight"
 import { HOME_COUNTER_ENTRY } from "../islands/entries"
-import { pageMeta } from "../meta"
+import { pageMeta, softwareApplication } from "../meta"
 
 export const meta = pageMeta(
   "Nifra - the TypeScript framework for AI-edited codebases",
   "Build typed APIs and full-stack apps that humans and coding agents can change safely. Nifra combines live MCP project context, verified scaffolds, a no-codegen typed client, multi-framework SSR, and one app across Bun, Node, Deno, and the edge.",
   "/",
+  // The one page that describes the project rather than a document, so the SoftwareApplication and
+  // the site-wide Organization record both live here and nowhere else.
+  {
+    structuredData: [
+      softwareApplication(),
+      {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        name: "Nifra",
+        url: "https://nifra.dev",
+        logo: "https://nifra.dev/assets/og.jpg",
+        sameAs: ["https://github.com/nifrajs/nifra", "https://www.npmjs.com/org/nifrajs"],
+      },
+    ],
+  },
 )
 
 // Static page - ships zero framework JS. The only client code is a tiny enhancer (the install

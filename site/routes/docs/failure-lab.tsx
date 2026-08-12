@@ -1,12 +1,12 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/failure-lab",
   "Nifra - Failure laboratory",
   "Replayable durable-failure schedules on virtual time: crash after commit, duplicate delivery, reordering, budget expiry, and checkpoint contention.",
-  "/docs/failure-lab",
 )
 
 const LAB = `import { createFailureLab } from "@nifrajs/testing"

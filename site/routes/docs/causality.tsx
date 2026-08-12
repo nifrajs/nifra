@@ -1,12 +1,12 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/causality",
   "Nifra - Execution causality",
   "Carry one bounded, payload-free lineage across the durable seams a trace cannot span: commands, events, workflows, projections, and repairs.",
-  "/docs/causality",
 )
 
 const START = `import { createMemoryCausalityStore, startCausality } from "@nifrajs/core/causality"

@@ -1,12 +1,12 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/testing",
   "Nifra - Contract-derived adversarial testing",
   "Turn route schemas into hostile input, response-conformance, replay, shrinking, and runtime-matrix tests with @nifrajs/testing.",
-  "/docs/testing",
 )
 
 const VALIDATE_RESPONSES = `import { testClient } from "@nifrajs/client"

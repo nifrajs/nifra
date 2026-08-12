@@ -1,13 +1,13 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 
 // Pure content page - no interactivity, so ship zero framework JS.
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/hydration",
   "Nifra - Hydration & pre-hydration forms",
   "SSR pages become interactive after hydration. Nifra keeps that gap safe: progressive-enhancement forms and links work before it, and a JS-only form's broken native submit is guarded automatically.",
-  "/docs/hydration",
 )
 
 const POST_FORM = `// Native POST before hydration, client takeover after. Nothing to do.

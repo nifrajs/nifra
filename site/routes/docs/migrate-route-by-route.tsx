@@ -1,12 +1,12 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/migrate-route-by-route",
   "Nifra - Migrate route by route",
   "Keep an existing Hono, Elysia, Express, or Workers app running while moving routes into typed Nifra handlers one at a time.",
-  "/docs/migrate-route-by-route",
 )
 
 const HONO = `import { Hono } from "hono"

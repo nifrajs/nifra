@@ -1,12 +1,12 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/budgets",
   "Nifra - Request budgets",
   "Propagate one absolute deadline through Nifra requests and downstream adapters without resetting time at each hop.",
-  "/docs/budgets",
 )
 
 const SERVER = `import { server } from "@nifrajs/core/server"

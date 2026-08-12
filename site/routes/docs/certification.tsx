@@ -1,12 +1,12 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/certification",
   "Nifra - Adapter certification",
   "Prove a storage, cache, job, runtime, or event adapter against its interface and emit a hash-verifiable capability matrix.",
-  "/docs/certification",
 )
 
 const CERTIFY = `// doc-check: skip - createRedisCache stands in for the adapter under test

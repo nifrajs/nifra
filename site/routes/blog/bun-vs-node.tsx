@@ -1,12 +1,12 @@
 import { HTTP_WORKLOADS } from "../../data/benchmarks"
-import { pageMeta } from "../../meta"
+import { postMeta } from "../../meta"
 
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = postMeta(
+  "bun-vs-node",
   "Bun vs Node.js in 2026: same app, both runtimes, measured · Nifra",
   "Bun vs Node.js compared with a control most benchmarks lack: the identical application, same framework, same routes, benchmarked on both runtimes. Where Bun's ~2x holds, where it shrinks, and when Node is still the right call.",
-  "/blog/bun-vs-node",
 )
 
 function httpValue(runtime: string, name: string, workload: "getUsers" | "postUsers"): string {

@@ -1,14 +1,14 @@
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 import { CodeBlock } from "../../highlight"
 
 // Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/edge",
   "Nifra - Edge & bindings",
   "Typed platform bindings in Nifra: c.env, Platform<Env>, c.waitUntil, KV/D1 on the edge.",
-  "/docs/edge",
 )
 
 const ENV = `// server<Env>() types the platform env end-to-end - c.env is your Env in every

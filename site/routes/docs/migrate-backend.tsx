@@ -1,14 +1,14 @@
-import { pageMeta } from "../../meta"
+import { docsMeta } from "../../meta"
 import { CodeBlock } from "../../highlight"
 
 // Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
 // the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = docsMeta(
+  "/docs/migrate-backend",
   "Nifra - Migrating from Express, Hono, Fastify & Elysia",
   "Move a backend to Nifra: routing, middleware, validation, and body parsing map directly from Express, Hono, Fastify, and Elysia - and you gain a typed client, multi-runtime deploy, and optional SSR.",
-  "/docs/migrate-backend",
 )
 
 const EXPRESS = `// Express

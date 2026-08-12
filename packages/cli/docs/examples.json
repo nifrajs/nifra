@@ -360,10 +360,22 @@
     "code": "import { server, jsonLogger, commonSecretPatterns } from \"@nifrajs/core/server\"\n\n// Key-name redaction is always on; valuePatterns adds opt-in value + message scanning.\nconst app = server({\n  logger: jsonLogger(undefined, { valuePatterns: commonSecretPatterns }),\n})\n\n// logger.error(\"auth failed for user@example.com with Bearer abc.def\")\n//   → { ...,\"message\":\"auth failed for [REDACTED] with [REDACTED]\" }\n// Add your own: { valuePatterns: [...commonSecretPatterns, /\\bord_[a-z0-9]+/g] }"
   },
   {
+    "name": "PROTO",
+    "topic": "Nifra - security & hardening",
+    "slug": "security",
+    "code": "import { server } from \"@nifrajs/core/server\"\n\n// Default is \"reject\". A JSON body with an own `__proto__` key - or a `constructor`\n// carrying a `prototype` - is the exact shape that turns a later innocent { ...body }\n// merge or Object.assign into prototype pollution. It answers the SAME flat 400 as\n// malformed JSON, so an attacker learns nothing from the response.\nconst app = server({ protoPoisoning: \"reject\" }) // \"strip\" | \"ignore\" also available\n\napp.post(\"/profile\", async (c) => {\n  const body = await c.boundedJson<{ name: string }>() // and the schema-route path\n  // Reached only for a clean payload. Under \"strip\" the offending keys are deleted and\n  // the handler sees the cleaned object; under \"ignore\" the body passes through as-is.\n  return { name: body.name }\n})"
+  },
+  {
     "name": "RESPONSE_CONTRACT",
     "topic": "Nifra - security & hardening",
     "slug": "security",
     "code": "import { server } from \"@nifrajs/core/server\"\nimport { responseContract } from \"@nifrajs/core/response-contract\"\nimport { t } from \"@nifrajs/schema\"\n\nconst PublicUser = t.object({ id: t.string(), name: t.string() })\n\n// \"warn\" logs and changes nothing; \"enforce\" makes the contract the upper bound too.\n// Not installing the plugin is \"off\" - and keeps the lane out of your bundle entirely.\nexport const app = server().use(responseContract(\"enforce\")).get(\n  \"/me\",\n  { response: PublicUser },\n  async () => {\n    // Every column, including the ones the contract never declared.\n    const user = { id: \"u1\", name: \"Ada\", email: \"a@b.c\", passwordHash: \"...\" }\n    return user\n  },\n)\n\n// off      -> {\"id\":\"u1\",\"name\":\"Ada\",\"email\":\"a@b.c\",\"passwordHash\":\"...\"}\n// enforce  -> {\"id\":\"u1\",\"name\":\"Ada\"}"
+  },
+  {
+    "name": "SECURITY_HEADERS",
+    "topic": "Nifra - security & hardening",
+    "slug": "security",
+    "code": "import { server } from \"@nifrajs/core/server\"\nimport { securityHeaders } from \"@nifrajs/middleware\"\n\n// Always on (covering errors and 404s too): X-Content-Type-Options: nosniff,\n// X-Frame-Options: DENY, Referrer-Policy: no-referrer. The rest are opt-in - each is a\n// deliberate cross-origin decision, so nifra never turns them on behind your back:\nconst app = server().use(securityHeaders({\n  crossOriginOpenerPolicy: \"same-origin\",      // isolate the browsing-context group\n  crossOriginResourcePolicy: \"same-origin\",    // block cross-origin embedding of your responses\n  crossOriginEmbedderPolicy: \"require-corp\",   // enable crossOriginIsolated (SharedArrayBuffer, …)\n  permissionsPolicy: \"camera=(), geolocation=()\",\n  contentSecurityPolicy: \"default-src 'self'\",\n  hsts: { maxAge: 63072000, includeSubDomains: true, preload: true }, // opt in once HTTPS-only\n}))"
   },
   {
     "name": "DECLARE",

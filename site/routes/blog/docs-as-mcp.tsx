@@ -1,12 +1,12 @@
 import { CodeBlock } from "../../highlight"
-import { pageMeta } from "../../meta"
+import { postMeta } from "../../meta"
 
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = postMeta(
+  "docs-as-mcp",
   "Your framework's docs should be an MCP server · Nifra",
   "Most code in a modern app is written by an AI agent reading your docs. Nifra ships its documentation, runnable examples, and exact API types as a live MCP server - here is why, how it stays honest, and how to do it for your own project.",
-  "/blog/docs-as-mcp",
 )
 
 const CONNECT = `# Claude Code

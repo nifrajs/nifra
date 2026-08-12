@@ -1,12 +1,12 @@
 import { HTTP_WORKLOADS } from "../../data/benchmarks"
-import { pageMeta } from "../../meta"
+import { postMeta } from "../../meta"
 
 export const hydrate = false
 
-export const meta = pageMeta(
+export const meta = postMeta(
+  "typescript-api-framework",
   "Choosing a TypeScript API framework in 2026 · Nifra",
   "What 'TypeScript framework' actually means - typed handlers vs inferred clients vs runtime validation - and how Nifra, tRPC, Elysia, Hono, Fastify, and NestJS compare on each level, with measured throughput.",
-  "/blog/typescript-api-framework",
 )
 
 function httpValue(runtime: string, name: string, workload: "getUsers" | "postUsers"): string {

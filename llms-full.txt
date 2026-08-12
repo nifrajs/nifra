@@ -1917,7 +1917,7 @@ createWebApp({
 
 ## Nifra - security & hardening
 
-> Bounded request bodies, magic-byte file-upload validation, constant-time webhook verification, and idempotency-key replay - the hardening primitives every production app needs, built in.
+> Bounded request bodies, JSON prototype-poisoning defense, magic-byte file-upload validation, constant-time webhook verification, security response headers, and idempotency-key replay - the hardening primitives every production app needs, built in.
 
 The pieces every production endpoint needs - a body-size cap for raw routes, real file-type
 validation, constant-time webhook verification, and idempotent retries - ship as first-party
@@ -2033,6 +2033,46 @@ deployment topology, so do not set it on an app whose `fetch` is also called wit
 requests built from untrusted input. It trusts the _frame_, never the cap: an over-cap declared
 length is still a `413`, and a body with no `Content-Length` still goes
 through the streaming guard.
+
+### Prototype-poisoning defense
+
+Every JSON body nifra parses - the schema-validated route and `c.boundedJson`
+alike - is screened for the prototype-pollution shape: an own `__proto__` key, or
+a `constructor` whose value carries a `prototype`. `JSON.parse`
+creates these as ordinary data properties, and the damage lands later, when innocent code does
+`{ ...body }`, `Object.assign(target, body)`, or a deep merge and
+walks that key onto a real prototype. The screen is on by default.
+
+```ts
+import { server } from "@nifrajs/core/server"
+
+// Default is "reject". A JSON body with an own `__proto__` key - or a `constructor`
+// carrying a `prototype` - is the exact shape that turns a later innocent { ...body }
+// merge or Object.assign into prototype pollution. It answers the SAME flat 400 as
+// malformed JSON, so an attacker learns nothing from the response.
+const app = server({ protoPoisoning: "reject" }) // "strip" | "ignore" also available
+
+app.post("/profile", async (c) => {
+  const body = await c.boundedJson<{ name: string }>() // and the schema-route path
+  // Reached only for a clean payload. Under "strip" the offending keys are deleted and
+  // the handler sees the cleaned object; under "ignore" the body passes through as-is.
+  return { name: body.name }
+})
+```
+
+`protoPoisoning` is a server option with three settings.
+` "reject"` (the default) answers the same flat `400` as
+malformed JSON - indistinguishable on the wire, so a probe learns nothing.
+`"strip"` deletes the offending keys and hands the handler the cleaned
+value, siblings intact. `"ignore"` parses as-is, for a route you are sure
+never merges body input into another object. A string _value_ of `"__proto__"`
+is legal data and never triggers - only an own key of that name does.
+
+The check is sound against escape smuggling: a `__proto__`-spelled key
+parses to the same own property, so it is caught the same way. And it is cheap on the common
+path - a clean body pays a substring pre-scan only; the deep walk runs solely when the raw text
+actually contains a suspect token, so an honest payload is never charged for the tree it does
+not have.
 
 ### File uploads - `@nifrajs/uploads`
 
@@ -2213,6 +2253,37 @@ trustworthy client IP can be derived, and never trusts `X-Forwarded-For` unless 
 bodies before routing (fails closed with `411` on a length-less body). The read-time
 guard above (`c.boundedBody` / schema cap) remains the source of truth.
 
+### Security response headers - `securityHeaders`
+
+`securityHeaders()` sets a safe-by-default response header set on every response,
+errors and 404s included. Three are always on - `X-Content-Type-Options: nosniff`,
+`X-Frame-Options: DENY`, and `Referrer-Policy: no-referrer`. The
+cross-origin isolation headers (`COOP`/`COEP`/`CORP`),
+`Permissions-Policy`, `Content-Security-Policy`, and `HSTS` are
+opt-in, because each one can break a working app (embedding, popups, HTTP) and so is a
+deliberate choice, never a silent default.
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { securityHeaders } from "@nifrajs/middleware"
+
+// Always on (covering errors and 404s too): X-Content-Type-Options: nosniff,
+// X-Frame-Options: DENY, Referrer-Policy: no-referrer. The rest are opt-in - each is a
+// deliberate cross-origin decision, so nifra never turns them on behind your back:
+const app = server().use(securityHeaders({
+  crossOriginOpenerPolicy: "same-origin",      // isolate the browsing-context group
+  crossOriginResourcePolicy: "same-origin",    // block cross-origin embedding of your responses
+  crossOriginEmbedderPolicy: "require-corp",   // enable crossOriginIsolated (SharedArrayBuffer, …)
+  permissionsPolicy: "camera=(), geolocation=()",
+  contentSecurityPolicy: "default-src 'self'",
+  hsts: { maxAge: 63072000, includeSubDomains: true, preload: true }, // opt in once HTTPS-only
+}))
+```
+
+Every value is fixed at construction, so the headers are declared statically rather than
+written by a response hook - an app whose response middleware is only this keeps the fused
+native response lanes. A route that sets one of these names itself keeps its own value.
+
 ### Route assurance - prove every route is guarded
 
 Installing security middleware is not the same as proving it covers every route. Nifra&apos;s
@@ -2355,8 +2426,11 @@ const sagas = createSagaEngine({
 ### Already built in
 
 These add to Nifra's standing defaults: strict-by-default schema validation (unknown fields
-rejected), SSR serialization that escapes every inline-script value, signed-cookie sessions + CSRF
-+ route guards ([@nifrajs/auth](/docs/auth)), bearer/apiKey auth + a shared-store rate
+rejected), SSR serialization that escapes every inline-script value,
+`__Host-`/`__Secure-` cookie-prefix enforcement (a cookie whose
+attributes violate its prefix contract fails at serialization rather than being silently
+dropped by the browser), signed-cookie sessions + CSRF + route guards
+([@nifrajs/auth](/docs/auth)), bearer/apiKey auth + a shared-store rate
 limiter ([@nifrajs/middleware](/docs/plugins)), and a hardened image-resize endpoint
 ([@nifrajs/image/server](/docs/images)).
 
