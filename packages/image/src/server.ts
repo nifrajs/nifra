@@ -45,6 +45,18 @@ export interface ImageHandlerOptions {
   readonly maxWidth?: number
   /** Max concurrent transforms (codec work is CPU/memory-heavy). Excess requests queue. Default 4. */
   readonly concurrency?: number
+  /**
+   * Max requests reading a source at once - the admission width. Sized above `concurrency` on purpose:
+   * a remote source is network-bound, and holding a codec slot across a 10s fetch would let a handful
+   * of slow origins idle the CPU lane out entirely. Default `concurrency * 2`.
+   *
+   * This is also the memory bound: at most this many source buffers exist at once, so the ceiling is
+   * `sourceConcurrency * maxSourceBytes` (default 8 x 20 MiB = 160 MiB) plus the codec's own working
+   * set. Lower it, or `maxSourceBytes`, on a small instance.
+   */
+  readonly sourceConcurrency?: number
+  /** Maximum queued image requests beyond the admission width. Default `concurrency * 16`. */
+  readonly maxQueue?: number
   /** `Cache-Control: public, max-age=<n>, immutable` seconds. Default 1 year. */
   readonly cacheMaxAge?: number
   /** Quality used when `?q` is absent. Default 75. */
@@ -86,8 +98,10 @@ interface ResolvedConfig {
   readonly fetchTimeoutMs: number
   readonly fetchImpl: typeof fetch
   readonly signing: { readonly secret: string } | null
-  readonly acquire: () => Promise<void>
-  readonly release: () => void
+  /** Admission: held for the whole request, so it bounds how many source buffers are alive at once. */
+  readonly admit: Semaphore
+  /** The codec lane: taken only around probe + transform, never across a source read. */
+  readonly codec: Semaphore
 }
 
 /**
@@ -109,10 +123,17 @@ function resolveConfig(options: ImageHandlerOptions): ResolvedConfig {
   const maxSourceBytes = options.maxSourceBytes ?? 20 * 1024 * 1024
   const maxSourcePixels = options.maxSourcePixels ?? 40_000_000
   const concurrency = options.concurrency ?? 4
+  const sourceConcurrency = options.sourceConcurrency ?? concurrency * 2
+  const maxQueue = options.maxQueue ?? concurrency * 16
   assertNonNegativeSafeInteger(maxSourceBytes, "maxSourceBytes")
   assertPositiveSafeInteger(maxSourcePixels, "maxSourcePixels")
   assertPositiveSafeInteger(concurrency, "concurrency")
-  const sem = createSemaphore(concurrency)
+  assertPositiveSafeInteger(sourceConcurrency, "sourceConcurrency")
+  assertNonNegativeSafeInteger(maxQueue, "maxQueue")
+  if (sourceConcurrency < concurrency) {
+    // Otherwise the codec lane can never fill, and `concurrency` silently means something narrower.
+    throw new RangeError("image: sourceConcurrency must be >= concurrency")
+  }
   return {
     backend: options.backend ?? bunImageBackend(),
     root: options.root !== undefined ? resolvePath(options.root) : null,
@@ -125,8 +146,10 @@ function resolveConfig(options: ImageHandlerOptions): ResolvedConfig {
     fetchTimeoutMs: options.fetchTimeoutMs ?? 10_000,
     fetchImpl: options.fetch ?? globalThis.fetch,
     signing: options.signing ?? null,
-    acquire: sem.acquire,
-    release: sem.release,
+    admit: createSemaphore(sourceConcurrency, maxQueue),
+    // Every admitted request must be able to wait for a codec slot, so the waiter bound is the
+    // admission width - this semaphore rejects nothing; `admit` is the only place a 503 comes from.
+    codec: createSemaphore(concurrency, sourceConcurrency),
   }
 }
 
@@ -188,26 +211,34 @@ async function handle(req: Request, cfg: ResolvedConfig): Promise<Response> {
     return new Response(null, { status: 304, headers: cacheHeaders })
   }
 
-  // 4. Resolve + read the source under the SSRF policy (fail-closed: unknown source kind → 403/400).
-  const source = await readSource(src, cfg)
-  if (!source.ok) return errorResponse(source.status, source.code)
-
-  // 5. Probe → enforce the portable pixel cap → clamp to intrinsic (never upscale) → transform.
-  //    The codec work is bounded by the concurrency semaphore.
-  await cfg.acquire()
+  // 4/5. Admission precedes source reads so queued requests do not retain large buffers. It is a
+  //      separate, wider lane from the codec one below: a remote source is a network wait, and letting
+  //      it hold a codec slot would let `concurrency` slow origins stall every transform on the box.
+  if (!(await cfg.admit.acquire())) return errorResponse(503, "image_queue_full")
   try {
-    const probe = await cfg.backend.probe(source.bytes)
-    if (probe.width * probe.height > cfg.maxSourcePixels) {
-      return errorResponse(413, "source_too_large")
+    const source = await readSource(src, cfg)
+    if (!source.ok) return errorResponse(source.status, source.code)
+    // The bytes are in hand; now queue for CPU. This semaphore never refuses - its waiter bound is the
+    // admission width - so a wait here is a wait, not a 503.
+    await cfg.codec.acquire()
+    let out: Awaited<ReturnType<ImageBackend["transform"]>>
+    try {
+      // Probe → enforce the portable pixel cap → clamp to intrinsic (never upscale) → transform.
+      const probe = await cfg.backend.probe(source.bytes)
+      if (probe.width * probe.height > cfg.maxSourcePixels) {
+        return errorResponse(413, "source_too_large")
+      }
+      const targetWidth = Math.max(1, Math.min(width, probe.width))
+      const format = negotiateFormat(probe.format, wantsWebp)
+      out = await cfg.backend.transform({
+        bytes: source.bytes,
+        width: targetWidth,
+        quality,
+        format,
+      })
+    } finally {
+      cfg.codec.release()
     }
-    const targetWidth = Math.max(1, Math.min(width, probe.width))
-    const format = negotiateFormat(probe.format, wantsWebp)
-    const out = await cfg.backend.transform({
-      bytes: source.bytes,
-      width: targetWidth,
-      quality,
-      format,
-    })
 
     const headers = new Headers(cacheHeaders)
     headers.set("Content-Type", out.contentType)
@@ -224,7 +255,7 @@ async function handle(req: Request, cfg: ResolvedConfig): Promise<Response> {
     // Unexpected - never leak internals to the client.
     return errorResponse(500, "internal_error")
   } finally {
-    cfg.release()
+    cfg.admit.release()
   }
 }
 
@@ -392,15 +423,22 @@ function errorResponse(
  * waiter (the active count is never transiently decremented), so a concurrent `acquire()` can't slip
  * past the limit in the microtask gap. Bounds concurrent codec work.
  */
-function createSemaphore(max: number): { acquire: () => Promise<void>; release: () => void } {
+interface Semaphore {
+  acquire(): Promise<boolean>
+  release(): void
+}
+
+function createSemaphore(max: number, maxWaiters: number): Semaphore {
   let active = 0
   const waiters: Array<() => void> = []
-  const acquire = async (): Promise<void> => {
+  const acquire = async (): Promise<boolean> => {
     if (active < max) {
       active++
-      return
+      return true
     }
+    if (waiters.length >= maxWaiters) return false
     await new Promise<void>((res) => waiters.push(res)) // slot handed over by release(), active unchanged
+    return true
   }
   const release = (): void => {
     const next = waiters.shift()

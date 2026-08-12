@@ -6,10 +6,12 @@
     "bun",
     "typescript",
     "nifra",
-    "web-framework",
-    "full-stack",
-    "edge",
-    "ssr"
+    "image",
+    "image-optimization",
+    "responsive-images",
+    "srcset",
+    "sharp",
+    "cls"
   ],
   "type": "module",
   "main": "./dist/index.js",

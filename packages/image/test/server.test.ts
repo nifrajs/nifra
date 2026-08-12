@@ -488,6 +488,49 @@ describe("concurrency", () => {
     expect(stub.transformCalls.length).toBe(5)
     expect(stub.peak).toBe(2)
   })
+
+  // Reading a source is a network wait, not CPU. Charging it to the codec lane meant `concurrency`
+  // slow origins could idle every core on the box while holding every slot.
+  test("a stalled source fetch does not hold a codec slot", async () => {
+    const stub = makeStub()
+    const root = await tempRoot()
+    await writeFile(join(root, "a.png"), makePng(4, 4))
+    const stalled = deferred()
+    const stalling = (async () => {
+      await stalled.promise
+      return new Response(makePng(4, 4), { headers: { "content-type": "image/png" } })
+    }) as unknown as typeof fetch
+
+    const h = createImageHandler({
+      backend: stub.backend,
+      root,
+      allowedOrigins: ["https://cdn.example"],
+      fetch: stalling,
+      concurrency: 1,
+      sourceConcurrency: 4,
+    })
+    // Two remote requests parked mid-fetch, filling what used to be the whole codec lane.
+    const remote = [
+      h(get("src=https%3A%2F%2Fcdn.example%2Fa.png&w=10")),
+      h(get("src=https%3A%2F%2Fcdn.example%2Fb.png&w=10")),
+    ]
+    await Bun.sleep(10)
+    expect(stub.transformCalls.length).toBe(0) // both are still waiting on the network
+
+    // A local source behind them still gets the CPU.
+    expect((await h(get("src=/a.png&w=10"))).status).toBe(200)
+    expect(stub.transformCalls.length).toBe(1)
+
+    stalled.resolve()
+    expect((await Promise.all(remote)).every((r) => r.status === 200)).toBe(true)
+    expect(stub.peak).toBe(1) // the codec lane itself is still exactly `concurrency` wide
+  })
+
+  test("sourceConcurrency below concurrency is rejected at construction", () => {
+    expect(() => createImageHandler({ concurrency: 4, sourceConcurrency: 2 })).toThrow(
+      /sourceConcurrency/,
+    )
+  })
 })
 
 // --- real Bun.Image backend ------------------------------------------------
