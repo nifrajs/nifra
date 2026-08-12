@@ -118,6 +118,27 @@ describe("cache()", () => {
     expect(cookie.headers.get("x-nifra-cache")).toBe("BYPASS")
   })
 
+  // The write side was already guarded; the read side is the other half. An entry stored from an
+  // anonymous request is a pre-auth artifact, so replaying it to a credentialed request answers
+  // before the route's own authentication ever runs.
+  test("an anonymously-cached entry is not replayed to a credentialed request", async () => {
+    let calls = 0
+    const app = server()
+      .use(cache({ store: new MemoryResponseCache(), ttlMs: 60_000 }))
+      .get("/feed", () => ({ n: ++calls }))
+
+    expect((await app.fetch(new Request("http://x/feed"))).headers.get("x-nifra-cache")).toBe(
+      "MISS",
+    )
+    expect((await app.fetch(new Request("http://x/feed"))).headers.get("x-nifra-cache")).toBe("HIT")
+
+    const authed = await app.fetch(
+      new Request("http://x/feed", { headers: { authorization: "Bearer t" } }),
+    )
+    expect(authed.headers.get("x-nifra-cache")).toBe("BYPASS")
+    expect(await authed.json()).toEqual({ n: 2 }) // the handler ran; the stored entry was not served
+  })
+
   test("caches an authenticated request when the response is explicitly public", async () => {
     let calls = 0
     const app = server()

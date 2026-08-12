@@ -89,6 +89,8 @@ export interface CacheOptions {
    * personalized response (RFC 9111 §3.5), or it would be replayed to other users. Leave this off unless
    * the cached route is genuinely the same for every caller. */
   readonly cacheAuthenticated?: boolean
+  /** Credential headers that make a request private. Defaults to Authorization, Cookie, and x-api-key. */
+  readonly authenticatedHeaders?: readonly string[]
   /** Response header for cache status. Default `"x-nifra-cache"`; set `false` to disable. */
   readonly cacheStatusHeader?: string | false
 }
@@ -199,12 +201,17 @@ export function cache(options: CacheOptions): Middleware {
   const respectResponseCacheControl = options.respectResponseCacheControl !== false
   const cacheSetCookie = options.cacheSetCookie === true
   const cacheAuthenticated = options.cacheAuthenticated === true
+  const authenticatedHeaders = (
+    options.authenticatedHeaders ?? ["authorization", "cookie", "x-api-key"]
+  ).map((header) => header.toLowerCase())
   const cacheStatusHeader =
     options.cacheStatusHeader === undefined ? "x-nifra-cache" : options.cacheStatusHeader
   if (cacheStatusHeader !== false && cacheStatusHeader.trim() === "") {
     throw new Error("cache: cacheStatusHeader is empty")
   }
   const hits = new WeakSet<Request>()
+  const hasAuthentication = (req: Request): boolean =>
+    authenticatedHeaders.some((header) => req.headers.has(header))
 
   return {
     name: "cache",
@@ -216,6 +223,18 @@ export function cache(options: CacheOptions): Middleware {
       const key = keyOf(req)
       const entry = await store.get(key)
       if (entry === undefined) return undefined
+      // Never replay a personalized entry before route-scoped authentication runs. Public entries
+      // remain eligible (and are explicitly marked by their response Cache-Control metadata).
+      if (
+        !cacheAuthenticated &&
+        hasAuthentication(req) &&
+        !cacheControlHas(new Headers(entry.headers as Array<[string, string]>), [
+          "public",
+          "s-maxage",
+        ])
+      ) {
+        return undefined
+      }
       if (Date.now() >= entry.expiresAt) {
         await store.delete?.(key)
         return undefined
@@ -251,7 +270,7 @@ export function cache(options: CacheOptions): Middleware {
       // across users. Opt in with `cacheAuthenticated: true` for a route that's the same for everyone.
       if (
         !cacheAuthenticated &&
-        (req.headers.has("authorization") || req.headers.has("cookie")) &&
+        hasAuthentication(req) &&
         !cacheControlHas(res.headers, ["public", "s-maxage"])
       ) {
         return withStatusHeader(res, cacheStatusHeader, "BYPASS")
