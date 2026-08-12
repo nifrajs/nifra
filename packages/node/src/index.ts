@@ -165,6 +165,10 @@ const INTERNAL_ERROR_BODY = '{"ok":false,"error":"internal_error"}'
 const EMPTY_BUFFER = Buffer.alloc(0)
 const NODE_RESPONSE_BODY = Symbol.for("nifra.response.body")
 const RESPONSE_RESULT = Symbol.for("nifra.response.result")
+/** Core's proof that a header record's names are already the lowercase wire spelling - set once per
+ * request by the native response walk, which had to look at the same keys anyway. Declared by key
+ * rather than imported: the same cross-package convention as the two marks above. */
+const LOWERCASE_HEADER_KEYS = Symbol.for("nifra.headers.lowercase")
 
 function isBodylessStatus(status: number): boolean {
   return status === 204 || status === 205 || status === 304
@@ -933,7 +937,9 @@ function writeJsonOutcome(
 ): void {
   // The outcome's record is the request's own (`c.set.headers`, already mutated by any native
   // response hooks), and its writers - middleware twins and the framework's own additions - emit
-  // lowercase names. When a key scan confirms that, the record is used as-is and the additions
+  // lowercase names. Confirmed either by core's mark (the native response walk already looked at
+  // these keys, so re-walking them here is the same pass twice) or, when the record never went
+  // through that walk, by the scan below. Either way the record is then used as-is and the additions
   // below mutate it in place; nothing reads it after the write. Only a mixed-case key (a user's
   // hand-set `X-Foo`) pays the normalization copy, keeping the wire byte-identical to undici's
   // `Headers` lowercasing on every other runtime.
@@ -947,7 +953,10 @@ function writeJsonOutcome(
     // this record key by key on every response (measured at over twice fastify's share of the same
     // frame on a bare route). A literal keeps it in fast mode.
     headers = {}
-  } else if (allHeaderKeysLowercase(source)) {
+  } else if (
+    (source as Record<symbol, unknown>)[LOWERCASE_HEADER_KEYS] === true ||
+    allHeaderKeysLowercase(source)
+  ) {
     headers = source as Record<string, string | string[]>
   } else {
     headers = Object.create(null) as Record<string, string | string[]>

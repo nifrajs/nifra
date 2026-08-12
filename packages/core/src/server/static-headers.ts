@@ -9,6 +9,8 @@
  * hook) is applied later and therefore wins.
  */
 
+import { markLowercaseHeaderKeys } from "./header-case.ts"
+
 /** Valid HTTP field-name characters (RFC 9110 token). */
 const HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 
@@ -118,25 +120,47 @@ function store<V>(record: Record<string, V>, name: string, value: V): void {
  * than left alongside - one header name spelled two ways in a single record ships as a comma-joined
  * value on the Web paths and as two lines on Node, so writing the static entry blind would change
  * the wire instead of being overridden.
+ *
+ * `markLowercase` asks for the all-lowercase proof to be published on the result when it holds. The
+ * merge is the natural place to answer that: the static names were lowercased at registration, and
+ * the loop below already derives `lower` for every own name to decide the override, so `lower !==
+ * name` is the whole answer at no added cost. Only the Node-direct lane asks - its readers are the
+ * ones that would otherwise re-walk these keys - and only for an app with no raw native response
+ * twin, since such a twin writes the record past the case-normalizing view AFTER this runs.
  */
 export function mergeStaticHeaderRecord<V>(
   statics: Readonly<Record<string, string>>,
   own: Readonly<Record<string, V>>,
+  markLowercase = false,
 ): Record<string, V | string> {
   const merged: Record<string, V | string> = { ...statics }
+  let allLowercase = true
   for (const name of Object.keys(own)) {
     const value = own[name] as V
     if (value === undefined) continue
     const lower = name.toLowerCase()
-    if (lower !== name && Object.hasOwn(merged, lower)) delete merged[lower]
+    if (lower !== name) {
+      allLowercase = false
+      if (Object.hasOwn(merged, lower)) delete merged[lower]
+    }
     store(merged, name, value)
+  }
+  if (markLowercase && allLowercase) {
+    markLowercaseHeaderKeys(merged as Record<string, string | readonly string[]>)
   }
   return merged
 }
 
-/** A fresh, mutable copy of the static record - what the lanes whose writers mutate the record get. */
+/**
+ * A fresh, mutable copy of the static record - what the lanes whose writers mutate the record get.
+ * Every name in it was lowercased at registration, so `markLowercase` publishes a proof that needs no
+ * scan at all; the gate on it is the same one {@link mergeStaticHeaderRecord} documents.
+ */
 export function staticHeaderRecordCopy(
   statics: StaticResponseHeaders,
+  markLowercase = false,
 ): Record<string, string | readonly string[]> {
-  return { ...statics.record }
+  const copy = { ...statics.record }
+  if (markLowercase) markLowercaseHeaderKeys(copy)
+  return copy
 }

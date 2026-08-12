@@ -1,5 +1,5 @@
 import { type ContextPlugin, defineContextPlugin } from "@nifrajs/core/server"
-import { withHeaders, withNodeHeaders } from "./_utils.ts"
+import { setNodeHeader, withHeaders } from "./_utils.ts"
 
 export interface RequestIdOptions {
   /** Header read for an inbound id (trace propagation) + echoed on the response. Default `"x-request-id"`. */
@@ -62,9 +62,7 @@ export function requestId(options: RequestIdOptions = {}): ContextPlugin<{ reque
           // exactly this one record-property check. Anything the derive never saw - a 404, a native
           // short-circuit - gets the inbound id or a fresh one here.
           if (res.headers?.[wireHeader] !== undefined) return
-          withNodeHeaders(res, (headers) => {
-            headers[wireHeader] = req.header(header) ?? generate()
-          })
+          setNodeHeader(res, wireHeader, req.header(header) ?? generate())
         },
       })
       .derive((c) => {

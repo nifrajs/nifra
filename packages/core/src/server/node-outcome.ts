@@ -138,10 +138,18 @@ export function nodeOutcomeToResponse(outcome: NodeServeOutcome): Response {
  * The record handed over is always a fresh copy: the Node writers mutate the outcome's record in
  * place (content-type, content-length, cookies), and the static record is shared by every request.
  * Its names are already lowercase, so the writer's all-lowercase fast path still holds.
+ *
+ * `markLowercase` publishes that fast path as a proof on the record instead of leaving each reader to
+ * re-derive it. This stage can answer it for free - the static names were lowercased at registration
+ * and the merge lowercases every own name anyway - and it runs BEFORE the response hooks, so it
+ * covers the hookless lane too, which never reaches the native walk that would otherwise mark. The
+ * caller passes `false` for an app carrying a raw `onNodeResponse` twin: that twin writes the record
+ * directly, past the case-normalizing view, after this point.
  */
 export function withStaticNodeHeaders(
   outcome: NodeServeOutcome,
   statics: StaticResponseHeaders,
+  markLowercase = false,
 ): NodeServeOutcome {
   if (outcome.kind === "response") {
     return { kind: "response", response: applyStaticResponseHeaders(outcome.response, statics) }
@@ -149,8 +157,8 @@ export function withStaticNodeHeaders(
   const own = outcome.headers
   const headers =
     own === undefined
-      ? staticHeaderRecordCopy(statics)
-      : mergeStaticHeaderRecord(statics.record, own)
+      ? staticHeaderRecordCopy(statics, markLowercase)
+      : mergeStaticHeaderRecord(statics.record, own, markLowercase)
   return { ...outcome, headers }
 }
 

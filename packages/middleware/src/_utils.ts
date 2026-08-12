@@ -162,17 +162,34 @@ export function withHeaders(res: Response, apply: (headers: Headers) => void): R
   return res
 }
 
-/** Mutate Node-direct response headers without constructing a Web Response. */
-export function withNodeHeaders(
+/**
+ * Set one Node-direct response header without constructing a Web Response. `name` must already be
+ * the lowercase wire spelling - the record documents that contract, and it is what `Headers` emits
+ * on every other runtime.
+ *
+ * The outcome's own record is used AS-IS. Re-homing it into a null-prototype object - the obvious
+ * way to make `__proto__` inert - demotes it to V8's dictionary mode for the rest of the request,
+ * and everything downstream then pays dictionary lookups on the response hot path: the direct
+ * writer's key walk, and Node's own `_storeHeader` walk over every name. Values here are strings and
+ * string arrays, so assigning one through the inherited `__proto__` setter is a spec-level no-op
+ * rather than pollution; the single name that setter would swallow is defined as an own data
+ * property instead. Same trade core's portable header view makes over the same record.
+ */
+export function setNodeHeader(
   res: NodeResponseContext,
-  apply: (headers: Record<string, string | readonly string[]>) => void,
+  name: string,
+  value: string | readonly string[],
 ): void {
-  if (res.headers === undefined) {
-    res.headers = Object.create(null) as Record<string, string | readonly string[]>
-  } else if (Object.getPrototypeOf(res.headers) !== null) {
-    const safe = Object.create(null) as Record<string, string | readonly string[]>
-    Object.assign(safe, res.headers)
-    res.headers = safe
+  res.headers ??= {}
+  const headers = res.headers
+  if (name === "__proto__") {
+    Object.defineProperty(headers, name, {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    })
+    return
   }
-  apply(res.headers)
+  headers[name] = value
 }

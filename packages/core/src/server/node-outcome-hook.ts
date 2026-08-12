@@ -1,6 +1,7 @@
 /** Lazy Node-direct renderer seam. The base server retains the typed method but not its renderer. */
 
 import type { Platform } from "./context.ts"
+import { hasLowercaseHeaderKeysMark, hasUpperAscii } from "./header-case.ts"
 import type { NodeServeOutcome } from "./node-outcome.ts"
 import type { CtxSet, MaybePromise } from "./server.ts"
 
@@ -126,6 +127,9 @@ class RecordHeadersView implements ResponseHeadersView {
 
   #prepare(record: Record<string, string | readonly string[]>): void {
     this.#prepared = true
+    // The native response walk proved this record's names before any twin ran (and every write this
+    // view makes stores the wire spelling), so the index is known-empty without touching a key.
+    if (hasLowercaseHeaderKeysMark(record)) return
     // `Object.keys`, not `for...in`: the record is a `{}`-prototype literal on the render paths, and
     // a for-in would let an enumerable `Object.prototype` property become a header on the wire.
     const keys = Object.keys(record)
@@ -136,24 +140,15 @@ class RecordHeadersView implements ResponseHeadersView {
       // framework, `c.set`, and middleware twins all write the wire spelling. An inline ASCII scan
       // answers the common case without leaving the loop, and only a genuinely mixed-case key (a
       // hand-written `X-Foo`) pays for the lowercase copy and the alias entry.
-      if (!RecordHeadersView.#hasUpperAscii(key)) continue
+      if (!hasUpperAscii(key)) continue
       if (this.#alias === undefined) this.#alias = new Map()
       this.#alias.set(key.toLowerCase(), key)
     }
   }
 
-  /** True when the name contains an ASCII `A`-`Z`, i.e. is not already the wire spelling. */
-  static #hasUpperAscii(name: string): boolean {
-    for (let i = 0; i < name.length; i++) {
-      const code = name.charCodeAt(i)
-      if (code >= 65 && code <= 90) return true
-    }
-    return false
-  }
-
   /** The wire spelling of a header name, without paying `toLowerCase` when it already is one. */
   static #lower(name: string): string {
-    return RecordHeadersView.#hasUpperAscii(name) ? name.toLowerCase() : name
+    return hasUpperAscii(name) ? name.toLowerCase() : name
   }
 
   /** The stored key for an already-lowercased name. Resolution is the prepared index ONLY - a

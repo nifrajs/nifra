@@ -52,6 +52,11 @@ import type {
 import { assertByteLimit, markTransportCap, markTrustedBodyFraming } from "./body.ts"
 import { type ClientIpTrust, resolveClientIp } from "./client-ip.ts"
 import type { Context, Platform, ResponseControls, RouteSchema } from "./context.ts"
+import {
+  hasLowercaseHeaderKeysMark,
+  headerKeysAllLowercase,
+  markLowercaseHeaderKeys,
+} from "./header-case.ts"
 import { headerObjectOf } from "./headers.ts"
 import { jsonError, pathnameOf, type UrlParts, urlPartsOf } from "./http.ts"
 import { type NodeServeOutcome, withStaticNodeHeaders } from "./node-outcome.ts"
@@ -645,6 +650,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private readonly onNodeResponseHooks: Array<NodeResponseHook | undefined>
   /** Registration-time eligibility for the Node response twin lane. */
   private nodeResponseHooksComplete: boolean
+  /**
+   * True once a bundle registers a RAW `onNodeResponse` twin - one handed the outcome's header
+   * record itself rather than the case-normalizing view. Their names are contractually the wire
+   * spelling, but registration cannot PROVE it, so such an app forgoes the all-lowercase mark and
+   * every reader re-derives the answer, exactly as before the mark existed.
+   */
+  private hasRawNodeResponseHook: boolean
   private readonly onResponseFinalizedHooks: RawOnResponseFinalized[]
   /**
    * Statically declared response headers, merged and prebuilt at registration; `undefined` (the
@@ -734,6 +746,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.onResponseHooks = []
     this.onNodeResponseHooks = []
     this.nodeResponseHooksComplete = true
+    this.hasRawNodeResponseHook = false
     this.onResponseFinalizedHooks = []
     this.staticResponseHeaders = undefined
     this.wrapWebResponse = IDENTITY_RESPONSE
@@ -1095,6 +1108,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       this.onResponseHooks.push(arg.onResponse)
       this.onNodeResponseHooks.push(arg.onNodeResponse)
       if (arg.onNodeResponse === undefined) this.nodeResponseHooksComplete = false
+      else this.hasRawNodeResponseHook = true
     } else if (arg.onNodeResponse !== undefined) {
       throw new TypeError("onNodeResponse() requires a paired onResponse() hook")
     }
@@ -1914,6 +1928,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.onResponseHooks.push(...source.onResponseHooks)
     this.onNodeResponseHooks.push(...source.onNodeResponseHooks)
     this.nodeResponseHooksComplete &&= source.nodeResponseHooksComplete
+    this.hasRawNodeResponseHook ||= source.hasRawNodeResponseHook
     this.onResponseFinalizedHooks.push(...source.onResponseFinalizedHooks)
     if (source.responseBodyTag !== undefined) {
       const owner = this.enableResponseBodyTagging()
@@ -2168,12 +2183,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // header or body hook reads them through its view), and on the no-hook path too (which returns
     // the outcome straight to the writer without the finish step below).
     const statics = this.staticResponseHeaders
+    // The fold also publishes the all-lowercase proof, which is why it is worth doing here rather
+    // than in the finish step: it is the only stage the HOOKLESS lane passes through, and that lane
+    // returns straight to the writer below without ever reaching `finishNodeResponse`.
+    const markLowercase = !this.hasRawNodeResponseHook
     const outcome =
       statics === undefined
         ? resolved
         : resolved instanceof Promise
-          ? resolved.then((settled) => withStaticNodeHeaders(settled, statics))
-          : withStaticNodeHeaders(resolved, statics)
+          ? resolved.then((settled) => withStaticNodeHeaders(settled, statics, markLowercase))
+          : withStaticNodeHeaders(resolved, statics, markLowercase)
     if (webResponseHooks) {
       return outcome instanceof Promise
         ? outcome.then((settled) => this.finishNodeWebResponse(settled, source, runtime))
@@ -2224,13 +2243,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
 
     let headers = outcome.headers as Record<string, string | readonly string[]> | undefined
+    // ONE pass over the names, here, before any twin runs. The same question is asked three times per
+    // request downstream - the Content-Type lookup just below, the header view's alias index, and the
+    // `@nifrajs/node` writer's normalization gate - and each used to walk the record itself. An app
+    // declaring static headers has already had it answered by the fold in `resolveNode`, for free, so
+    // the pass runs only for the records nothing looked at yet.
+    const lowercaseKeys =
+      headers === undefined ||
+      hasLowercaseHeaderKeysMark(headers) ||
+      headerKeysAllLowercase(headers)
     if (outcome.kind === "json" && outcome.body !== null) {
       // The json render adds its Content-Type at WRITE time, so a body hook checking content types
       // would see nothing. Materialize the writer's own value into the hook-visible record - same
       // string the writer would emit, so the wire is unchanged.
       const hasType =
         headers !== undefined &&
-        Object.keys(headers).some((key) => key.toLowerCase() === "content-type")
+        (lowercaseKeys
+          ? headers["content-type"] !== undefined
+          : Object.keys(headers).some((key) => key.toLowerCase() === "content-type"))
       if (!hasType) {
         const defaultContentType = runtime.jsonContentType ?? "application/json;charset=utf-8"
         if (headers === undefined) {
@@ -2243,6 +2273,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           headers["content-type"] = defaultContentType
         }
       }
+    }
+    // Publish the proof for the view and the direct writer - but only for an app whose every twin
+    // normalizes case. A raw `onNodeResponse` twin writes the record straight, past the view, so a
+    // mark set before it ran could be made to lie, and a lying mark would ship a mixed-case name that
+    // `Headers` lowercases on every other runtime. Those apps keep the per-reader scans.
+    if (lowercaseKeys && headers !== undefined && !this.hasRawNodeResponseHook) {
+      markLowercaseHeaderKeys(headers)
     }
     const context: NodeResponseContext = {
       status: outcome.status,

@@ -1,6 +1,6 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import type { Middleware, NodeRequestContext, NodeResponseContext } from "@nifrajs/core/server"
-import { withHeaders, withNodeHeaders } from "./_utils.ts"
+import { setNodeHeader, withHeaders } from "./_utils.ts"
 
 export interface RateLimitResult {
   /** Hits recorded in the current window, including this one. */
@@ -301,13 +301,11 @@ export function rateLimit(options: RateLimitOptions): Middleware {
             const info = nativeQuota.get(req)
             if (info === undefined) return
             nativeQuota.delete(req)
-            withNodeHeaders(res, (headers) => {
-              // Lowercase on purpose: the Web path's `Headers` lowercases names on the wire, so
-              // this is byte-identical output.
-              headers["ratelimit-limit"] = String(max)
-              headers["ratelimit-remaining"] = String(info.remaining)
-              headers["ratelimit-reset"] = String(info.resetSeconds)
-            })
+            // Lowercase on purpose: the Web path's `Headers` lowercases names on the wire, so this
+            // is byte-identical output.
+            setNodeHeader(res, "ratelimit-limit", String(max))
+            setNodeHeader(res, "ratelimit-remaining", String(info.remaining))
+            setNodeHeader(res, "ratelimit-reset", String(info.resetSeconds))
           },
         }
       : {}),
