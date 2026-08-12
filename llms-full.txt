@@ -1922,7 +1922,8 @@ createWebApp({
 The pieces every production endpoint needs - a body-size cap for raw routes, real file-type
 validation, constant-time webhook verification, and idempotent retries - ship as first-party
 primitives. All are **edge-safe** (WebCrypto, no `node:crypto`) and run unchanged
-on Bun, Node, Deno, and Workers.
+on Bun, Node, Deno, and Workers. For how these defaults stack up against Hono, Fastify,
+Express, and Elysia, see [security posture, compared](/docs/security-comparison).
 
 ### Responses that cannot leak more than they declare
 
@@ -6695,6 +6696,422 @@ The same seam works with Elysia, an Express app exposed through an adapter, or a
 handler. Pass its fetch-compatible function directly. For a Workers-style handler, the
 platform argument carries bindings and `waitUntil`; mounted code remains responsible
 for its own framework-specific request and response conventions.
+
+## Nifra security posture vs Hono, Fastify, Express, Elysia
+
+> A dimension-by-dimension security comparison of Nifra against the current releases of Hono, Fastify, Express, and Elysia - which hardening each framework ships by default, which is opt-in, and which is left to third-party packages.
+
+Which hardening each framework actually ships. A dimension-by-dimension read of Nifra&rsquo;s
+security defaults against the **current releases** of Hono, Fastify, Express, and Elysia -
+what is on by default, what is opt-in, and what is left to a third-party package. For how each
+Nifra primitive works, see [Security & hardening](/docs/security).
+
+### The honest verdict
+
+Nifra is **at or above parity on every dimension where a comparison is meaningful**, and
+ahead of all four on several:
+
+-
+**Ahead of all four:** CORS misconfiguration resistance, redirect safety, WebSocket
+origin policy, rate-limiter safe-by-construction design, route-level security evidence
+(`nifra assure`), response over-exposure enforcement, upload content
+verification, env-independent error responses, client-IP trust model.
+
+-
+**Par with the best-in-class:** body limits (Fastify class), JSON prototype-poisoning
+rejection (par Fastify, default-on), schema validation (par Fastify/Elysia), CSRF (par
+Fastify), security headers (par Hono, first-party), cookie prefixes (par Hono), sessions,
+JWT hardening, static serving, supply chain (par Hono&rsquo;s zero-dependency core).
+
+**One caveat no capability table removes.** Hono, Fastify, and Express have orders of
+magnitude more production exposure and more external researchers looking at them. Nifra&rsquo;s
+protections are implementation-verified and unit-tested, but have not had that volume of
+adversarial attention or a third-party audit. Ongoing scrutiny is the part only time buys.
+
+### How this was measured
+
+Nifra side: an implementation-level read of every security-relevant module across
+`core`, `middleware`, `auth`, `node`,
+`web`, `uploads`, and `cli` - defaults and failure modes, not
+marketing claims. Competitor side: current official documentation for defaults, verified as of
+August 2026 against Hono 4.12.x, Fastify 5.x, Express 5.1 / 4.21.x, and Elysia 1.4.x. The
+comparison unit is what a developer gets **by default** and what the framework makes
+**impossible to get wrong**, not what a maximally careful expert could configure - because
+most real-world security incidents are misconfiguration-by-default.
+
+### Summary matrix
+
+Legend: **B** built-in and on by default, **b** built-in opt-in, **O** official
+add-on package, **3** third-party / community, **-** absent. The verdict column is Nifra
+relative to the field.
+
+Dimension
+Nifra
+Hono
+Fastify
+Express
+Elysia
+Verdict
+
+Default body-size cap
+B 1 MB
+- (opt-in mw)
+B 1 MiB
+- (needs body-parser)
+- (runtime cap only)
+par Fastify; ahead of the rest
+
+Bounded streaming reads
+B
+b
+B
+O
+-
+par-plus
+
+Body cap on delivered bytes (not the claimed length)
+B
+- (keys on Content-Length)
+b
+-
+-
+ahead
+
+Proto-pollution-inert parsers (query / cookie / form / params)
+B null-proto
+B
+B
+B (5.x simple parser)
+B
+par
+
+JSON proto-key rejection
+B (reject default)
+-
+B (proto + constructor)
+-
+b (schema-strip)
+par Fastify
+
+Route ReDoS surface
+B none (strict grammar)
+B
+B (find-my-way)
+B (path-to-regexp)
+B
+par
+
+Input schema validation
+B per-route Standard Schema
+b (validator mw)
+B ajv
+-
+B TypeBox
+par with best
+
+Response over-exposure prevention
+B contract warn/enforce
+-
+b (serializer)
+-
+B normalize
+ahead (with Elysia)
+
+Error responses leak-free by construction
+B env-independent flat 500
+B
+B (mostly)
+b (dev leaks stacks)
+B (mostly)
+ahead
+
+CORS safe-by-construction
+B fail-loud ctor
+b (reflect-with-creds configurable)
+O
+O
+O
+ahead
+
+CSRF
+B two layers (origin + signed double-submit)
+b (origin heuristic)
+O token-based
+3 (csurf deprecated)
+-
+ahead; par Fastify
+
+Security headers (first-party)
+b (nosniff/XFO/RP on; COOP/COEP/CORP/PP/CSP/HSTS opt-in)
+b (broader default set once added)
+O helmet
+3 helmet
+3
+par Hono; ahead of the helmet-dependent ones
+
+Cookie signing + safe serialization
+B
+b
+O
+O
+B
+par-plus
+
+`__Host-`/`__Secure-` prefix enforcement
+
+B (throws on violation)
+B (throws on violation)
+O
+O
+-
+par Hono
+
+Sessions (HttpOnly, SameSite, fixation, fail-closed)
+B
+-
+O
+3 (express-session)
+3
+ahead
+
+JWT hardening (alg allowlist, none-reject, exp required)
+B
+b (no allowlist, exp optional)
+O (fast-jwt)
+3
+O (jose)
+par-plus
+
+Rate limiting
+B forced-decision ctor
+3
+O
+3
+3
+ahead
+
+Client IP / proxy trust
+B explicit, fail-closed
+b (per-runtime helpers)
+B (trustProxy)
+B (manual trust proxy)
+-
+ahead
+
+Reverse-proxy hop-by-hop hygiene
+B (strips both directions)
+b (proxy helper)
+O (http-proxy)
+3
+-
+ahead
+
+Load shedding / overload
+B admission (in-flight + loop lag)
+-
+O under-pressure
+-
+-
+ahead; par Fastify
+
+Static serving traversal defense
+B 7-layer + dotfile deny
+3
+O (send-based)
+O (send-based)
+O
+ahead
+
+Redirect safety (open-redirect + CRLF)
+B same-origin default
+-
+-
+-
+-
+ahead (unique)
+
+WebSocket origin check
+B same-origin default
+-
+-
+-
+-
+ahead (unique)
+
+Upload content verification (magic bytes, EXIF strip)
+B package
+-
+O limits only
+3 (multer)
+b (t.File type/size)
+ahead
+
+Constant-time webhook verification
+B (multi-key rotation)
+-
+-
+-
+-
+ahead (unique)
+
+Idempotency-key replay
+B (atomic-claim store)
+-
+-
+-
+-
+ahead (unique)
+
+Supply chain (runtime deps in core)
+0
+0
+~dozen
+many
+few
+par with Hono
+
+Machine-checkable route security evidence
+
+B (`nifra assure`)
+
+-
+-
+-
+-
+unique
+
+Security lint (fail-open, non-constant-time, PII logs)
+B (NF-S001..007)
+-
+-
+-
+-
+unique
+
+### Dimension detail
+
+#### Body limits and bounded reads
+
+Nifra applies a 1 MB default cap to the schema lane and to
+`c.boundedBody`/`c.boundedJson`: an over-cap `Content-Length`
+is rejected before buffering (413), a malformed one is a 400, and a chunked or length-less
+body is drained through a true streaming byte counter that cancels at the cap. The cap is
+charged on the bytes actually **delivered**, never on the number a caller wrote in the
+header - so an adapter that rebuilds a request from an event envelope cannot smuggle a large
+payload behind a small declared length. Fastify enforces its 1 MiB default on real bytes and
+is the gold standard among the four; Nifra matches it. Hono&rsquo;s `bodyLimit` is
+an opt-in middleware that keys on `Content-Length`; Express relies on
+body-parser&rsquo;s 100 KB default only if you mount it; Elysia inherits the runtime cap
+(Bun&rsquo;s 128 MB).
+
+#### Prototype pollution
+
+Every hand-rolled parser (query, cookies, form, route params) produces null-prototype objects,
+so `__proto__`/`constructor` keys are inert there by construction. The
+JSON body lane **rejects** the poisoning shape by default - an own `__proto__`
+key, or a `constructor` carrying a `prototype` - answering the same flat
+400 as malformed JSON, with `"strip"` and `"ignore"`
+as alternatives. That matches Fastify, whose `onProtoPoisoning` and
+`onConstructorPoisoning` both default to `&apos;error&apos;`. Hono and
+Express do not reject proto keys in the JSON body; Elysia strips undeclared keys only on a
+validated route via its schema normalization.
+
+#### Validation and response contracts
+
+Nifra does per-route Standard Schema validation for body/query/params, and - the
+differentiating half - **response** schemas as an enforced upper bound:
+`"warn"` logs undeclared fields, `"enforce"` strips
+them. That kills the `passwordHash`-in-the-response class at the framework layer.
+Fastify offers the same protection through a declared response schema (opt-in); Elysia&rsquo;s
+exactMirror normalization strips undeclared response fields and is its strongest default.
+Hono&rsquo;s validator is opt-in with no response-side story, and Express ships nothing.
+
+#### CORS, CSRF, and error handling
+
+Nifra&rsquo;s `cors()` throws at construction when `credentials: true`
+meets `origin: "*"`, never reflects an origin by default with credentials,
+and lands headers on error responses too - it is **the only one of the five where the
+dangerous configuration is a construction-time error**. The other four leave
+reflect-with-credentials configurable. CSRF is two independent layers (Origin/Referer check
+plus a signed double-submit token, timing-safe); Hono&rsquo;s CSRF is an Origin /
+Sec-Fetch-Site heuristic, Fastify&rsquo;s official token package is comparable, Express&rsquo;s
+csurf is deprecated, and Elysia ships none in-tree. Uncaught errors become a flat 500
+unconditionally - not env-gated - so no configuration leaks a stack to the wire; Express&rsquo;s
+dev handler printing stacks when `NODE_ENV` is unset is the perennial
+counter-example.
+
+#### Headers, cookies, sessions, JWT
+
+Both Nifra and Hono ship a first-party security-headers middleware you add with
+`use()`. Nifra&rsquo;s turns on nosniff, `X-Frame-Options: DENY`, and
+`Referrer-Policy: no-referrer`, and keeps the headers that can break a working app
+(COOP/COEP/CORP, Permissions-Policy, CSP, HSTS) opt-in by design; Hono&rsquo;s covers a broader
+list on by default once added, HSTS included. Cookie serialization enforces RFC 6265 name
+tokens, caps at 4096 bytes, and enforces `__Host-`/`__Secure-` prefix
+preconditions at serialization time, throwing on a violation - the same behavior Hono&rsquo;s
+cookie helper has, and stricter than a silent browser drop. Sessions are always HMAC-signed,
+HttpOnly, SameSite=Lax, fail-closed, with `regenerate()` for fixation - no
+competitor ships sessions in-tree. JWT verification demands an algorithm allowlist, rejects
+`alg: none`, blocks algorithm confusion at the key level, and requires
+`exp` by default; Hono&rsquo;s JWT middleware takes a single required algorithm with
+no enforced allowlist and treats `exp` as optional, so Nifra is stricter there.
+
+#### Static serving, redirects, uploads, proxying
+
+Static serving runs seven layers - decode with 400 on malformed input, NUL rejection,
+segment-precise `..` rejection, backslash rejection, containment via
+`resolve`+`relative`, a `realpath` symlink re-check, and a
+default **dotfile deny** (a served `.env`/`.git` answers 404).
+`redirect()` requires a same-origin path by default and rejects CR/LF - Nifra is the
+only one of the five with a safe-by-default redirect. Uploads verify the real type by magic
+bytes and strip EXIF/GPS by re-encode, where the others do size limits at best.
+`@nifrajs/proxy` strips the RFC 9110 hop-by-hop set - plus every
+`Connection`-nominated header - in **both** directions by default.
+
+#### Rate limiting, IP trust, load shedding
+
+The rate limiter&rsquo;s constructor refuses to run until you choose a key source, so the
+&ldquo;trust proxy = spoofable keys&rdquo; footgun is a construction-time error;
+`X-Forwarded-For` is ignored at the default and counted from the right only when you
+declare trusted proxies. `c.clientIp` is the socket peer unless you pass an explicit
+trust config, and short chains fail closed. Admission sheds on live capacity evidence
+(in-flight count plus event-loop lag). Fastify&rsquo;s under-pressure is the only peer for load
+shedding; nothing else in the field forces the key decision or fails closed on IP trust.
+
+### Beyond parity - what none of the four ship
+
+-
+**Route assurance evidence.** Middleware publishes machine-checkable per-route claims
+(`AUTHENTICATED`, `BODY_BOUNDED`, `CSRF`,
+`RATE_LIMITED`, `IP_RESTRICTED`, `SECURITY_HEADERS`,
+`IDEMPOTENCY_KEY`), and `nifra assure` fails CI when a policy is unmet.
+Evidence is honest: an escape hatch suppresses its own claim.
+
+-
+**Security lint rules** - fail-open gate detection, non-constant-time secret comparison,
+sensitive values in log calls, and more, running in `nifra check`.
+
+-
+**Fail-loud constructors as a design norm** - CORS credentials+wildcard, rate-limit
+missing key decision, CSRF short secrets, in-memory stores in production - all
+construction-time errors, not runtime surprises.
+
+-
+**Response-contract enforce mode, admission load-shedding, idempotency keys, magic-byte +
+EXIF-strip uploads, and constant-time webhook verification** - each exists somewhere as a
+third-party add-on for the others; Nifra ships them first-party with assurance integration.
+
+### Where each alternative is still the right call
+
+This is a security read, not a blanket &ldquo;pick Nifra&rdquo;. Hono&rsquo;s run-anywhere
+minimalism and its zero-dependency core are genuinely excellent; Fastify&rsquo;s maturity,
+ecosystem, and years of adversarial attention are real advantages a young framework cannot
+claim; Express&rsquo;s ubiquity means every hire already knows it. Nifra&rsquo;s argument is
+narrower and honest: it makes the dangerous configurations _unrepresentable_, ships the
+hardening primitives first-party, and lets `nifra assure` prove in CI that every
+route is guarded. For the full capability and throughput comparison, see
+[vs other frameworks](/docs/comparison) and the
+[per-framework pages](/compare).
 
 ## Nifra - Contract-derived adversarial testing
 

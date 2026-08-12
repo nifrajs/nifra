@@ -291,7 +291,8 @@ export default function Security() {
         The pieces every production endpoint needs - a body-size cap for raw routes, real file-type
         validation, constant-time webhook verification, and idempotent retries - ship as first-party
         primitives. All are <b>edge-safe</b> (WebCrypto, no <code>node:crypto</code>) and run unchanged
-        on Bun, Node, Deno, and Workers.
+        on Bun, Node, Deno, and Workers. For how these defaults stack up against Hono, Fastify,
+        Express, and Elysia, see <a href="/docs/security-comparison">security posture, compared</a>.
       </p>
 
       <h2>Responses that cannot leak more than they declare</h2>

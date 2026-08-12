@@ -55,6 +55,7 @@ export const DOCS_GROUPS: readonly DocsGroup[] = [
     links: [
       { href: "/docs/auth", label: "Auth & sessions" },
       { href: "/docs/security", label: "Security & uploads" },
+      { href: "/docs/security-comparison", label: "Security vs others" },
       { href: "/docs/budgets", label: "Request budgets" },
       { href: "/docs/plugins", label: "Plugins & middleware" },
       { href: "/docs/integrations", label: "Integrations" },
