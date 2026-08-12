@@ -9,6 +9,7 @@
   },
   "devDependencies": {
     "@mdx-js/mdx": "^3",
+    "@nifrajs/aws-lambda": "workspace:*",
     "@nifrajs/cli": "workspace:*",
     "@nifrajs/client": "workspace:*",
     "@nifrajs/content": "workspace:*",
