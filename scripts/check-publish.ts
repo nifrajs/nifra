@@ -29,6 +29,11 @@ const LIBRARIES = [
   // to strip types under node_modules), so the Node/bundler type-resolution model applies to it.
   // Loadability under Deno itself is gated separately by `bun run check:deno-tarball`.
   "deno",
+  // The two adapters that reach a consumer the same way every library above does - a built
+  // `dist/*.js` + `.d.ts` behind an `exports` map - so the same publint/attw model applies. They were
+  // publishable without being listed here, which meant they shipped without either check ever running.
+  "aws-lambda",
+  "proxy",
   "runner",
   "env",
   "cron",
