@@ -152,7 +152,25 @@ async function importKey(
   kid: string | undefined,
 ): Promise<CryptoKey> {
   const hash = HASH[alg]
-  if (key instanceof CryptoKey) return key
+  if (key instanceof CryptoKey) {
+    const algorithm = key.algorithm as {
+      readonly name: string
+      readonly hash?: { readonly name?: string }
+    }
+    const expectedName = HMAC_ALGS.has(alg) ? "HMAC" : "RSASSA-PKCS1-v1_5"
+    const expectedType = HMAC_ALGS.has(alg) ? "secret" : "public"
+    const actualHash =
+      "hash" in algorithm && typeof algorithm.hash === "object" ? algorithm.hash.name : undefined
+    if (
+      key.type !== expectedType ||
+      algorithm.name !== expectedName ||
+      actualHash !== hash ||
+      !key.usages.includes("verify")
+    ) {
+      throw jwtError("CryptoKey does not match the requested JWT algorithm")
+    }
+    return key
+  }
   if (typeof key === "string" || key instanceof Uint8Array) {
     if (!HMAC_ALGS.has(alg)) throw jwtError("symmetric key cannot verify an RSA token")
     return crypto.subtle.importKey("raw", secretBytes(key, "jwt"), { name: "HMAC", hash }, false, [

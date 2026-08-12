@@ -73,6 +73,81 @@ describe("jwt() / verifyJwt()", () => {
     ).rejects.toThrow(/toString/)
   })
 
+  // A caller-supplied CryptoKey used to be handed to `subtle.verify` untouched, so the header's
+  // `alg` decided the digest while the key decided nothing. An HS512 key verifying an HS256 header,
+  // or an RSA public key standing in for the HMAC secret, is a confused-deputy the allow-list of
+  // algorithms cannot see.
+  test("a CryptoKey that does not match the header algorithm is rejected", async () => {
+    const claims = { sub: "u1", exp: 2_000_000_000 }
+    const token = await hmacToken(claims)
+    const now = (): number => 1_900_000_000
+
+    const wrongHash = await crypto.subtle.importKey(
+      "raw",
+      ENC.encode(SECRET),
+      { name: "HMAC", hash: "SHA-512" },
+      false,
+      ["verify"],
+    )
+    await expect(verifyJwt(token, { key: wrongHash, algorithms: ["HS256"], now })).rejects.toThrow(
+      /CryptoKey/,
+    )
+
+    const pair = await crypto.subtle.generateKey(
+      {
+        name: "RSASSA-PKCS1-v1_5",
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([1, 0, 1]),
+        hash: "SHA-256",
+      },
+      true,
+      ["sign", "verify"],
+    )
+    // Right digest, wrong family and wrong key type - an asymmetric public key is not a shared secret.
+    await expect(
+      verifyJwt(token, { key: pair.publicKey, algorithms: ["HS256"], now }),
+    ).rejects.toThrow(/CryptoKey/)
+    // And the mirror: an HMAC secret cannot stand in for the RS256 verification key.
+    const rsHead = b64url(ENC.encode(JSON.stringify({ alg: "RS256", typ: "JWT" })))
+    const rsBody = b64url(ENC.encode(JSON.stringify(claims)))
+    const rsSig = await crypto.subtle.sign(
+      { name: "RSASSA-PKCS1-v1_5" },
+      pair.privateKey,
+      ENC.encode(`${rsHead}.${rsBody}`),
+    )
+    const rsToken = `${rsHead}.${rsBody}.${b64url(rsSig)}`
+    const hmacVerify = await crypto.subtle.importKey(
+      "raw",
+      ENC.encode(SECRET),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["verify"],
+    )
+    await expect(
+      verifyJwt(rsToken, { key: hmacVerify, algorithms: ["RS256"], now }),
+    ).rejects.toThrow(/CryptoKey/)
+
+    // A key that cannot verify is refused before `subtle.verify` throws an opaque DOMException.
+    const signOnly = await crypto.subtle.importKey(
+      "raw",
+      ENC.encode(SECRET),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    )
+    await expect(verifyJwt(token, { key: signOnly, algorithms: ["HS256"], now })).rejects.toThrow(
+      /CryptoKey/,
+    )
+
+    // The matching key still works, so the guard is not simply refusing every CryptoKey.
+    expect(
+      (await verifyJwt(token, { key: hmacVerify, algorithms: ["HS256"], now })).claims.sub,
+    ).toBe("u1")
+    expect(
+      (await verifyJwt(rsToken, { key: pair.publicKey, algorithms: ["RS256"], now })).claims,
+    ).toBeDefined()
+  })
+
   test("authorizes an HS256 token and exposes typed claims", async () => {
     interface Claims extends JwtClaims {
       readonly sub: string
