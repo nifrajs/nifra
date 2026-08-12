@@ -258,7 +258,7 @@ async function init(): Promise<void> {
         for (const other of document.querySelectorAll<HTMLButtonElement>("[data-preset]")) {
           other.classList.remove("active")
         }
-        void run(code, reqs, out)
+        // Copilot output is untrusted editor content; require the user to review it and click Run.
       } else if (res.error.error === "network_error") {
         appendMsg(
           "assistant",
@@ -300,7 +300,7 @@ async function init(): Promise<void> {
     }
   }
   // Run once so the results panel is populated on first paint (restored or default).
-  void run(code, reqs, out)
+  if (!restored) void run(code, reqs, out)
 }
 
 void init()
