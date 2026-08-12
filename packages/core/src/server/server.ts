@@ -2375,7 +2375,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       return { kind: "reject", response: jsonError(403, "forbidden_origin") }
     }
     if (handler.upgrade === undefined) {
-      return { kind: "upgrade", handler, data: undefined, pubsub, attach }
+      return {
+        kind: "upgrade",
+        handler,
+        data: undefined,
+        pubsub,
+        attach,
+        maxPayloadBytes: this.wsMaxPayloadBytes,
+      }
     }
     const upgradeSignal = getNeverAbortSignal()
     const ctx = new RequestContext(
@@ -2391,7 +2398,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     const settle = (value: unknown): WebSocketUpgradeOutcome =>
       value instanceof Response
         ? { kind: "reject", response: value }
-        : { kind: "upgrade", handler, data: value, pubsub, attach }
+        : {
+            kind: "upgrade",
+            handler,
+            data: value,
+            pubsub,
+            attach,
+            maxPayloadBytes: this.wsMaxPayloadBytes,
+          }
     try {
       const result = handler.upgrade(ctx as unknown as WebSocketContext<EnvOf<Ctx>>)
       return result instanceof Promise

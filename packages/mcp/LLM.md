@@ -26,7 +26,7 @@ Build MCP servers - and MCP Apps (interactive `ui://` widgets, SEP-1865) - for a
 - **toMcpTool** _(function)_ - `toMcpTool: <Input, Output>(tool: ToolContract<Input, Output>, options?: McpToolContractOptions) => McpTool` · from `@nifrajs/mcp/tool-contract`
 - **uiResourceMeta** _(function)_ - `uiResourceMeta: (uri: string) => Record<string, unknown>` · from `@nifrajs/mcp`
 - **widgetDocument** _(function)_ - `widgetDocument: (opts: DefineMcpWidgetOptions) => string` · from `@nifrajs/mcp`
-- **MCP_ERROR** _(const)_ - `MCP_ERROR: { readonly HEADER_MISMATCH: -32020; readonly UNSUPPORTED_VERSION: -32022; }` · from `@nifrajs/mcp`
+- **MCP_ERROR** _(const)_ - `MCP_ERROR: { readonly HEADER_MISMATCH: -32020; readonly UNSUPPORTED_VERSION: -32022; readonly UNAUTHORIZED: -32001; }` · from `@nifrajs/mcp`
 - **MODERN_PROTOCOL_VERSION** _(const)_ - `MODERN_PROTOCOL_VERSION: "2026-07-28"` · from `@nifrajs/mcp`
 
 _…and 36 more - see [`api-reference.md`](../../api-reference.md#nifrajsmcp) for the complete list._

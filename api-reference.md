@@ -1669,7 +1669,7 @@ Every public export of every package and documented subpath - name, kind, signat
   A WebSocket route's lifecycle. All callbacks optional; only `message` is needed for an echo.
 - **WebSocketUpgradeOutcome** _(type)_ - `type WebSocketUpgradeOutcome`
   The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters: - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request. - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`. - `upgrade` - perform the runtim…
-- **attachWebSocket** _(function)_ - `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; }) => NifraWebSocket`
+- **attachWebSocket** _(function)_ - `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; maxPayloadBytes?: number; }) => NifraWebSocket`
   Wire a standard server-side `WebSocket` to a nifra {@link WebSocketHandler}, returning the portable {@link NifraWebSocket}. Shared by the Deno and Workers bridges. `openNow` fires `open` immediately (Workers, where the socket is already open after `accept()`); otherwise `open` waits for the socket'…
 - **websocket** _(function)_ - `websocket: () => IdentityPlugin`
   Enable WebSocket routes on a server: `.use(websocket())` turns on `app.ws()`. Applying it twice is a no-op (named plugin dedupe).
@@ -2009,7 +2009,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **JsonRpcNotification** _(interface)_ - `interface JsonRpcNotification`
 - **JsonRpcRequest** _(interface)_ - `interface JsonRpcRequest`
 - **JsonRpcResponse** _(type)_ - `type JsonRpcResponse = | { jsonrpc: "2.0"; id: JsonRpcId; result: unknown } | { jsonrpc: "2.0"; id: JsonRpcId; error: { code: number; message: string; data?: unknown } }`
-- **MCP_ERROR** _(const)_ - `MCP_ERROR: { readonly HEADER_MISMATCH: -32020; readonly UNSUPPORTED_VERSION: -32022; }`
+- **MCP_ERROR** _(const)_ - `MCP_ERROR: { readonly HEADER_MISMATCH: -32020; readonly UNSUPPORTED_VERSION: -32022; readonly UNAUTHORIZED: -32001; }`
   MCP-reserved JSON-RPC error codes (2026-07-28 error-code policy carves out -32020..-32099 for the spec).
 - **MODERN_PROTOCOL_VERSION** _(const)_ - `MODERN_PROTOCOL_VERSION: "2026-07-28"`
   The stateless per-request revision (2026-07-28+). A request carrying its version in `_meta` (`io.modelcontextprotocol/protocolVersion`) is served in modern mode; an `initialize` request stays legacy. This server is dual-era: `handleRpc` answers both on the same dispatch, per request.
@@ -2077,7 +2077,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **JsonRpcNotification** _(interface)_ - `interface JsonRpcNotification`
 - **JsonRpcRequest** _(interface)_ - `interface JsonRpcRequest`
 - **JsonRpcResponse** _(type)_ - `type JsonRpcResponse = | { jsonrpc: "2.0"; id: JsonRpcId; result: unknown } | { jsonrpc: "2.0"; id: JsonRpcId; error: { code: number; message: string; data?: unknown } }`
-- **MCP_ERROR** _(const)_ - `MCP_ERROR: { readonly HEADER_MISMATCH: -32020; readonly UNSUPPORTED_VERSION: -32022; }`
+- **MCP_ERROR** _(const)_ - `MCP_ERROR: { readonly HEADER_MISMATCH: -32020; readonly UNSUPPORTED_VERSION: -32022; readonly UNAUTHORIZED: -32001; }`
   MCP-reserved JSON-RPC error codes (2026-07-28 error-code policy carves out -32020..-32099 for the spec).
 - **MODERN_PROTOCOL_VERSION** _(const)_ - `MODERN_PROTOCOL_VERSION: "2026-07-28"`
   The stateless per-request revision (2026-07-28+). A request carrying its version in `_meta` (`io.modelcontextprotocol/protocolVersion`) is served in modern mode; an `initialize` request stays legacy. This server is dual-era: `handleRpc` answers both on the same dispatch, per request.
@@ -2277,6 +2277,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **healthcheck** _(function)_ - `healthcheck: (options?: HealthcheckOptions) => IdentityPlugin`
   Register **liveness** (`/health`) and **readiness** (`/ready`) endpoints. Liveness is a flat `200` (the process is serving). Readiness runs each `check` and returns `200 { status: "ok", checks }` when all pass, or `503 { status: "error", checks }` when any fail (a thrown check counts as failed). Bo…
 - **idempotency** _(function)_ - `idempotency: (options: IdempotencyOptions) => Middleware`
+  Idempotency-key middleware. Apply with `app.use(idempotency({ store }))`.
 - **ipRestriction** _(function)_ - `ipRestriction: (options: IpRestrictionOptions) => Middleware`
   IP allow/deny middleware. It fails closed when no trustworthy client IP can be derived. Configure `clientIp`, `trustedProxies`, or a trusted single-IP `header`; unconfigured X-Forwarded-For is never trusted.
 - **jwk** _(function)_ - `jwk: (key: JwtVerificationKey) => JwtKeyResolver`

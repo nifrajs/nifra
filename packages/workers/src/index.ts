@@ -105,6 +105,9 @@ export function createWebSocketHub<Env = unknown>(
       attachWebSocket(server, outcome.handler, outcome.data, {
         openNow: true,
         pubsub: outcome.pubsub,
+        ...(outcome.maxPayloadBytes === undefined
+          ? {}
+          : { maxPayloadBytes: outcome.maxPayloadBytes }),
       })
       // `webSocket` is a Workers-only `ResponseInit` field, and 101 is only valid on Workers.
       return new Response(null, { status: 101, webSocket: pair[0] } as unknown as ResponseInit)

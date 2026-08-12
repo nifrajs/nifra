@@ -54,6 +54,7 @@ type WsUpgradeOutcome =
       readonly handler: NifraWsHandler
       readonly data: unknown
       readonly pubsub: WsPubSub
+      readonly maxPayloadBytes?: number
     }
 
 /** Anything exposing a Web `fetch` handler - a nifra `app`, for instance. */
@@ -141,7 +142,7 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
     if (o.kind === "pass") return runFetch(request, info)
     if (o.kind === "reject") return o.response
     const { socket, response } = Deno.upgradeWebSocket(request)
-    attachDenoWebSocket(socket, o.handler, o.data, o.pubsub)
+    attachDenoWebSocket(socket, o.handler, o.data, o.pubsub, o.maxPayloadBytes)
     return response
   }
 
@@ -203,6 +204,10 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
   return Promise.resolve({ port: addr.port, stop })
 }
 
+/** Shared across sockets: only a capped route ever uses it, so a per-connection one would allocate
+ * for every client to serve a feature most apps never enable. */
+const payloadEncoder = new TextEncoder()
+
 function internalError(): Response {
   return new Response('{"ok":false,"error":"internal_error"}', {
     status: 500,
@@ -222,6 +227,7 @@ function attachDenoWebSocket(
   handler: NifraWsHandler,
   data: unknown,
   pubsub: WsPubSub,
+  maxPayloadBytes?: number,
 ): void {
   const ws: NifraWs = {
     send: (payload) => socket.send(payload),
@@ -256,6 +262,18 @@ function attachDenoWebSocket(
   socket.addEventListener("message", (event) => {
     const raw: unknown = event.data
     const payload: NifraWsData = typeof raw === "string" ? raw : new Uint8Array(raw as ArrayBuffer)
+    // Only a route that declared a cap pays for measuring the frame - sizing a text frame means a
+    // full UTF-8 encode and the buffer that comes with it, on every message.
+    if (maxPayloadBytes !== undefined) {
+      const payloadBytes =
+        typeof raw === "string"
+          ? payloadEncoder.encode(raw).byteLength
+          : (payload as Uint8Array).byteLength
+      if (payloadBytes > maxPayloadBytes) {
+        socket.close(1009, "message too large")
+        return
+      }
+    }
     safe(() => handler.message?.(ws, payload))
   })
   socket.addEventListener("close", (event) => {

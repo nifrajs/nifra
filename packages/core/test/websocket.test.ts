@@ -152,6 +152,32 @@ describe("app.listen() WebSockets", () => {
     expect(outcome).toBe("rejected")
   })
 
+  // End-to-end over a real Bun socket: the server option has to reach the runtime, not just the
+  // upgrade outcome, or every adapter enforces nothing.
+  test("wsMaxPayloadBytes closes a socket that sends an oversize frame", async () => {
+    running = server({ wsMaxPayloadBytes: 8 })
+      .use(websocket())
+      .ws("/echo", { message: (ws, data) => ws.send(data) })
+      .listen(0)
+    const closed = await new Promise<number>((resolve, reject) => {
+      const c = new WebSocket(`ws://127.0.0.1:${running?.port}/echo`)
+      const timer = setTimeout(() => reject(new Error("timeout")), 3000)
+      c.addEventListener("open", () => c.send("x".repeat(64)))
+      c.addEventListener("message", () => {
+        clearTimeout(timer)
+        reject(new Error("the oversize frame was echoed back"))
+      })
+      c.addEventListener("close", (e) => {
+        clearTimeout(timer)
+        resolve(e.code)
+      })
+    })
+    // Bun drops the connection outright rather than sending a 1009 close frame, so the client sees
+    // 1006 (abnormal closure); the `attachWebSocket` path used by the other adapters sends 1009.
+    // What matters at this level is that the frame was refused and never reached the handler.
+    expect([1006, 1009]).toContain(closed)
+  })
+
   test("a normal HTTP route works alongside WS routes", async () => {
     running = makeApp().listen(0)
     const res = await fetch(`http://127.0.0.1:${running.port}/health`)
@@ -320,6 +346,65 @@ describe("attachWebSocket", () => {
     expect(seen[0]).toBe("text")
     expect(seen[1]).toBeInstanceOf(Uint8Array)
     expect(Array.from(seen[1] as Uint8Array)).toEqual([1, 2])
+  })
+
+  // Without a cap the handler sees whatever the peer sent, so a single frame can pin however much
+  // memory the runtime was willing to buffer. 1009 is the RFC 6455 "message too big" code.
+  test("an oversize frame closes with 1009 and never reaches the handler", () => {
+    const socket = new FakeSocket()
+    const seen: unknown[] = []
+    attachWebSocket(
+      socket,
+      {
+        message: (_ws, data) => {
+          seen.push(data)
+        },
+      },
+      undefined,
+      { openNow: true, pubsub: new TopicRegistry(), maxPayloadBytes: 4 },
+    )
+    socket.fire("message", { data: "ok" }) // 2 bytes - delivered
+    expect(seen).toEqual(["ok"])
+
+    socket.fire("message", { data: "toolong" })
+    expect(seen).toHaveLength(1)
+    expect(socket.closedWith).toEqual({ code: 1009, reason: "message too large" })
+
+    // The cap counts UTF-8 bytes, not UTF-16 code units: 3 characters, 6 bytes.
+    const utf8 = new FakeSocket()
+    const seenUtf8: unknown[] = []
+    attachWebSocket(
+      utf8,
+      {
+        message: (_ws, data) => {
+          seenUtf8.push(data)
+        },
+      },
+      undefined,
+      { openNow: true, pubsub: new TopicRegistry(), maxPayloadBytes: 4 },
+    )
+    utf8.fire("message", { data: "ééé" })
+    expect(seenUtf8).toEqual([])
+    expect(utf8.closedWith).toEqual({ code: 1009, reason: "message too large" })
+
+    // And binary frames are measured by their real byte length.
+    const bin = new FakeSocket()
+    const seenBin: unknown[] = []
+    attachWebSocket(
+      bin,
+      {
+        message: (_ws, data) => {
+          seenBin.push(data)
+        },
+      },
+      undefined,
+      { openNow: true, pubsub: new TopicRegistry(), maxPayloadBytes: 4 },
+    )
+    bin.fire("message", { data: new Uint8Array([1, 2, 3, 4]).buffer })
+    expect(seenBin).toHaveLength(1)
+    bin.fire("message", { data: new Uint8Array([1, 2, 3, 4, 5]).buffer })
+    expect(seenBin).toHaveLength(1)
+    expect(bin.closedWith).toEqual({ code: 1009, reason: "message too large" })
   })
 
   test("close threads code + reason; data is exposed and mutable", () => {

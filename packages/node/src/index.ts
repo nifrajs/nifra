@@ -80,6 +80,7 @@ type WsUpgradeOutcome =
       readonly handler: NifraWsHandler
       readonly data: unknown
       readonly pubsub: WsPubSub
+      readonly maxPayloadBytes?: number
     }
 
 /** Structural view of the `ws` package's `WebSocket` (no `@types/ws` dependency - see `loadWsServer`). */
@@ -717,10 +718,18 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
   if (resolveWs !== undefined) {
     let wssPromise: Promise<WsServer | undefined> | undefined
     server.on("upgrade", (nodeReq, socket, head) => {
-      void handleUpgrade(resolveWs, protocol, hostPolicy, nodeReq, socket, head, () => {
-        wssPromise ??= loadWsServer()
-        return wssPromise
-      })
+      void handleUpgrade(
+        resolveWs,
+        protocol,
+        hostPolicy,
+        nodeReq,
+        socket,
+        head,
+        (maxPayloadBytes) => {
+          wssPromise ??= loadWsServer(maxPayloadBytes)
+          return wssPromise
+        },
+      )
     })
   }
 
@@ -1527,21 +1536,27 @@ function nodeResponseBody(response: Response): string | Uint8Array | undefined {
 // --- WebSocket bridge: Node has no built-in WS server, so upgrades go through the OPTIONAL `ws`
 // package, lazy-imported on the first upgrade (non-WS apps never load it). ---
 
-type WsServerCtor = new (options: { noServer: true }) => WsServer
+type WsServerCtor = new (options: { noServer: true; maxPayload?: number }) => WsServer
 
 /** A non-literal specifier so TS treats `import(...)` as `any` - `ws` is an optional peer with no
  * `@types/ws` dependency here (the surface is structurally typed via {@link WsServer}/{@link WsSocket}). */
 const WS_MODULE_SPECIFIER = "ws"
 
 /** Lazily build a noServer `ws` `WebSocketServer`, or `undefined` if `ws` isn't installed. */
-async function loadWsServer(): Promise<WsServer | undefined> {
+async function loadWsServer(maxPayloadBytes?: number): Promise<WsServer | undefined> {
   try {
     const mod = (await import(WS_MODULE_SPECIFIER)) as {
       WebSocketServer?: WsServerCtor
       default?: { WebSocketServer?: WsServerCtor }
     }
     const Ctor = mod.WebSocketServer ?? mod.default?.WebSocketServer
-    return Ctor === undefined ? undefined : new Ctor({ noServer: true })
+    return Ctor === undefined
+      ? undefined
+      : new Ctor(
+          maxPayloadBytes === undefined
+            ? { noServer: true }
+            : { noServer: true, maxPayload: maxPayloadBytes },
+        )
   } catch {
     return undefined // `ws` not installed - caller responds 501
   }
@@ -1566,7 +1581,7 @@ async function handleUpgrade(
   nodeReq: IncomingMessage,
   socket: Duplex,
   head: Buffer,
-  getWss: () => Promise<WsServer | undefined>,
+  getWss: (maxPayloadBytes?: number) => Promise<WsServer | undefined>,
 ): Promise<void> {
   let outcome: WsUpgradeOutcome
   try {
@@ -1588,7 +1603,7 @@ async function handleUpgrade(
     await writeRejectionResponse(socket, outcome.response)
     return
   }
-  const wss = await getWss()
+  const wss = await getWss(outcome.maxPayloadBytes)
   if (wss === undefined) {
     writeUpgradeRejection(socket, 501, "websocket_unavailable") // `ws` not installed
     return

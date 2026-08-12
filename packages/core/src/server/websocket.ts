@@ -207,6 +207,7 @@ export type WebSocketUpgradeOutcome =
        * a standard socket without a static import of the WS implementation (which would defeat the
        * `.use(websocket())` tree-shaking). `@nifrajs/workers` may import `attachWebSocket` directly instead. */
       readonly attach: WsAttach
+      readonly maxPayloadBytes?: number
     }
 
 /** The socket-wiring signature the upgrade outcome carries (the installed runtime's `attach`). */
@@ -214,7 +215,7 @@ export type WsAttach = (
   socket: StandardWebSocket,
   handler: WebSocketHandler,
   data: unknown,
-  options: { openNow: boolean; pubsub: TopicRegistry },
+  options: { openNow: boolean; pubsub: TopicRegistry; maxPayloadBytes?: number },
 ) => NifraWebSocket
 
 /**
@@ -249,7 +250,7 @@ export function attachWebSocket(
   socket: StandardWebSocket,
   handler: WebSocketHandler,
   data: unknown,
-  options: { openNow: boolean; pubsub: TopicRegistry },
+  options: { openNow: boolean; pubsub: TopicRegistry; maxPayloadBytes?: number },
 ): NifraWebSocket {
   const { pubsub } = options
   const ws: NifraWebSocket = {
@@ -282,9 +283,23 @@ export function attachWebSocket(
   }
   // Deliver binary as ArrayBuffer (→ Uint8Array) rather than Blob, where the runtime allows it.
   if ("binaryType" in socket) socket.binaryType = "arraybuffer"
+  const maxPayloadBytes = options.maxPayloadBytes
   socket.addEventListener("message", (event: { readonly data: unknown }) => {
     const raw = event.data
     const payload: WebSocketData = typeof raw === "string" ? raw : toBinary(raw)
+    // Measuring a text frame costs a full UTF-8 encode plus the buffer it allocates, so it happens
+    // only for a route that actually declared a cap. Reading `.byteLength` off an already-decoded
+    // binary frame is free, but the branch stays under the same guard to keep one shape here.
+    if (maxPayloadBytes !== undefined) {
+      const payloadBytes =
+        typeof raw === "string"
+          ? WS_PAYLOAD_ENCODER.encode(raw).byteLength
+          : (payload as Uint8Array).byteLength
+      if (payloadBytes > maxPayloadBytes) {
+        socket.close(1009, "message too large")
+        return
+      }
+    }
     safe(() => handler.message?.(ws, payload))
   })
   socket.addEventListener(
@@ -304,6 +319,7 @@ export function attachWebSocket(
 }
 
 const WS_MESSAGE_DECODER = new TextDecoder()
+const WS_PAYLOAD_ENCODER = new TextEncoder()
 
 /**
  * If the handler declares a `messageSchema`, return a copy whose `message` validates each frame -
