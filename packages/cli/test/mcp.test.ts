@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { realpathSync } from "node:fs"
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { basename, join } from "node:path"
 import type { StandardSchemaV1 } from "@nifrajs/core"
 import { server } from "@nifrajs/core"
 import { mcp } from "@nifrajs/core/mcp"
@@ -28,7 +29,7 @@ import {
   type McpResource,
   type McpTool,
 } from "../src/mcp-protocol.ts"
-import { runBackend } from "../src/mcp-run.ts"
+import { loadBackend, runBackend } from "../src/mcp-run.ts"
 
 const INFO = { name: "nifra", version: "0.0.0-test" }
 const tools: McpTool[] = [
@@ -393,6 +394,41 @@ describe("runBackend (nifra_run engine) - input guards", () => {
     await rm(dir, { recursive: true, force: true })
   })
 
+  // Loading a backend means importing it, which runs it. The `entry` arg comes from MCP args, and a
+  // lexical containment check is satisfied by a symlink whose target sits anywhere on the disk.
+  test("a backend entry that resolves outside the project root is refused before it is imported", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-run-root-"))
+    const outside = await mkdtemp(join(tmpdir(), "nifra-run-outside-"))
+    try {
+      const evil = join(outside, "evil.ts")
+      await writeFile(
+        evil,
+        [
+          "globalThis.__NIFRA_TEST_PWNED__ = true",
+          "export const app = { fetch: () => null }",
+          "",
+        ].join("\n"),
+      )
+      await symlink(evil, join(root, "backend.ts"))
+
+      const viaSymlink = (await loadBackend(root)) as { error?: string }
+      expect(viaSymlink.error).toContain("outside the project root")
+
+      const viaTraversal = (await loadBackend(root, `../${basename(outside)}/evil.ts`)) as {
+        error?: string
+      }
+      expect(viaTraversal.error).toContain("outside the project root")
+
+      // The refusals happened before the import - the module body never ran.
+      expect(
+        (globalThis as { __NIFRA_TEST_PWNED__?: boolean }).__NIFRA_TEST_PWNED__,
+      ).toBeUndefined()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+
   test("non-array requests are rejected", async () => {
     expect(await runBackend("/tmp", "nope" as unknown)).toEqual({
       error: "expected { requests: [...] }",
@@ -698,6 +734,40 @@ describe("nifra_check / nifra_test - `dir` scopes to a subdirectory", () => {
     expect(resolveProjectDir(root, "../escape")).toBeNull() // climbs out → rejected
     expect(resolveProjectDir(root, "/etc/passwd")).toBeNull() // absolute elsewhere → rejected
     expect(resolveProjectDir(root, "app/../../escape")).toBeNull() // normalizes then escapes → rejected
+  })
+
+  // A purely lexical check is satisfied by `proj/link` while the write lands wherever the link
+  // points. `dir` comes from MCP args, so the attacker picks it.
+  test("resolveProjectDir refuses a symlink that leaves the root, and canonicalizes what stays", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-mcp-root-"))
+    const outside = await mkdtemp(join(tmpdir(), "nifra-mcp-outside-"))
+    try {
+      await mkdir(join(root, "app"), { recursive: true })
+      await symlink(outside, join(root, "escape"))
+      await symlink(join(root, "app"), join(root, "inside"))
+
+      const canonicalRoot = realpathSync(root)
+      expect(resolveProjectDir(root, "app")).toBe(join(canonicalRoot, "app"))
+      // A link that stays inside resolves to its target, not to the link path.
+      expect(resolveProjectDir(root, "inside")).toBe(join(canonicalRoot, "app"))
+      expect(resolveProjectDir(root, "escape")).toBeNull()
+      expect(resolveProjectDir(root, "escape/sub")).toBeNull()
+      // A directory that does not exist yet is still allowed - it is rebuilt under the real root.
+      expect(resolveProjectDir(root, "not/created/yet")).toBe(
+        join(canonicalRoot, "not", "created", "yet"),
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  test("a missing segment directly under the filesystem root is rebuilt intact", () => {
+    // The parent of the first existing ancestor is `/`, whose trailing separator is part of it.
+    // Slicing past its length would eat the first character of the segment name.
+    expect(resolveProjectDir("/", "nifra-does-not-exist-xyz/deep")).toBe(
+      "/nifra-does-not-exist-xyz/deep",
+    )
   })
 
   test("nifra_check with dir checks only that subtree; an escaping dir errors", async () => {

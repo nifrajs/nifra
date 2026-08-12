@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { existsSync } from "node:fs"
+import { mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -123,6 +124,50 @@ describe("initAgents - --force", () => {
       mcpServers: Record<string, unknown>
     }
     expect(mcp.mcpServers.nifra).toBeDefined()
+  })
+})
+
+// `safeJoin` only proves the textual path stays inside the project. A symlink planted at one of
+// those names redirects the write to wherever it points - outside the root, with the running user's
+// privileges - and `--force` is exactly the flag that would follow it.
+describe("initAgents - symlink guards", () => {
+  test("refuses to write through a symlinked file, even with --force", async () => {
+    const dir = await freshDir()
+    const outside = await freshDir()
+    const victim = join(outside, "victim.md")
+    await writeFile(victim, "untouched\n")
+    await symlink(victim, join(dir, "CLAUDE.md"))
+
+    await expect(initAgents(dir, { force: true })).rejects.toThrow(/non-regular file/)
+    expect(await readFile(victim, "utf8")).toBe("untouched\n")
+  })
+
+  test("refuses to write through a symlinked parent directory", async () => {
+    const dir = await freshDir()
+    const outside = await freshDir()
+    await symlink(outside, join(dir, ".cursor"))
+
+    await expect(initAgents(dir, { force: true })).rejects.toThrow(/unsafe parent path/)
+    expect(existsSync(join(outside, "mcp.json"))).toBe(false)
+  })
+
+  test("refuses to append to a symlinked AGENTS.md", async () => {
+    const dir = await freshDir()
+    const outside = await freshDir()
+    const victim = join(outside, "notes.md")
+    await writeFile(victim, "untouched\n")
+    // CLAUDE.md is written before AGENTS.md, so only AGENTS.md is symlinked here.
+    await symlink(victim, join(dir, "AGENTS.md"))
+
+    await expect(initAgents(dir)).rejects.toThrow(/non-regular file/)
+    expect(await readFile(victim, "utf8")).toBe("untouched\n")
+  })
+
+  test("leaves no temp file behind on a successful write", async () => {
+    const dir = await freshDir()
+    await initAgents(dir)
+    const stray = (await readdir(dir)).filter((name) => name.includes(".nifra-"))
+    expect(stray).toEqual([])
   })
 })
 

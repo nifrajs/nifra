@@ -5,8 +5,8 @@
  * exported so it's unit-testable in-process; the entry below wires it to stdin/stdout.
  */
 
-import { existsSync } from "node:fs"
-import { resolve, sep } from "node:path"
+import { existsSync, realpathSync } from "node:fs"
+import { isAbsolute, relative, resolve, sep } from "node:path"
 import { pathToFileURL } from "node:url"
 import { type AppLike, runApp } from "@nifrajs/runner"
 
@@ -26,8 +26,23 @@ export async function loadBackend(
   }
   // The `entry` arg comes from MCP args; importing it executes it. Keep it inside the project root so a
   // crafted `entry` (`../../x`, an absolute path) can't run arbitrary modules outside the project.
-  const root = resolve(cwd)
-  if (found !== root && !found.startsWith(root + sep)) {
+  const root = realpathSync(resolve(cwd))
+  let canonicalFound: string
+  try {
+    canonicalFound = realpathSync(found)
+  } catch {
+    return { error: `refusing to load an unresolved backend entry: ${entry}` }
+  }
+  const rel = relative(root, canonicalFound)
+  // `isAbsolute` is not redundant with the `..` test: across two Windows drives `relative()` gives up
+  // and returns the absolute target, which starts with neither `..` nor the separator - and then
+  // `resolve(root, rel)` returns that same absolute path, so the round-trip check agrees with it too.
+  if (
+    rel.startsWith("..") ||
+    rel === sep ||
+    isAbsolute(rel) ||
+    resolve(root, rel) !== canonicalFound
+  ) {
     return { error: `refusing to load a backend entry outside the project root: ${entry}` }
   }
 

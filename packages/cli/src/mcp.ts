@@ -35,8 +35,9 @@
  * module is the I/O shell (stdin loop, tool wiring, the run subprocess).
  */
 
+import { realpathSync } from "node:fs"
 import { readFile, stat } from "node:fs/promises"
-import { basename, resolve, sep } from "node:path"
+import { basename, isAbsolute, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import { type ReflectedRoute, reflectRoutes } from "@nifrajs/core/reflection"
 import { Glob } from "bun"
@@ -708,7 +709,31 @@ export function projectFeatures(
 export function resolveProjectDir(root: string, dir: string | undefined): string | null {
   if (dir === undefined || dir === "") return root
   const target = resolve(root, dir)
-  return target === root || target.startsWith(root + sep) ? target : null
+  let canonicalRoot: string
+  try {
+    canonicalRoot = realpathSync(root)
+  } catch {
+    const lexical = relative(root, target)
+    return lexical === "" || (!lexical.startsWith("..") && !isAbsolute(lexical)) ? target : null
+  }
+  let probe = target
+  const missing: string[] = []
+  while (true) {
+    try {
+      const canonicalProbe = realpathSync(probe)
+      const rel = relative(canonicalRoot, canonicalProbe)
+      if (rel.startsWith("..") || isAbsolute(rel)) return null
+      return missing.length === 0 ? canonicalProbe : resolve(canonicalProbe, ...missing.reverse())
+    } catch {
+      const parent = resolve(probe, "..")
+      if (parent === probe) return null
+      // `basename`, not a slice past `parent`: when `parent` is the filesystem root its trailing
+      // separator is part of it, so `parent.length + 1` eats the first character of the segment and
+      // the path gets rebuilt wrong.
+      missing.push(basename(probe))
+      probe = parent
+    }
+  }
 }
 
 /** Consistent error string for a `dir` that escapes the project root. */

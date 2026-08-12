@@ -18,7 +18,8 @@
  * cwd (no `..` traversal escaping the project root).
  */
 
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import type { Stats } from "node:fs"
+import { lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { isAbsolute, relative, resolve } from "node:path"
 import {
   AGENTS_MD_PATH,
@@ -68,6 +69,44 @@ const fileExists = (path: string): Promise<boolean> =>
     .then(() => true)
     .catch(() => false)
 
+/** `lstat`, with "it isn't there" reported as `undefined` instead of a throw. Every other failure
+ * (EACCES, ELOOP, ...) still propagates - only absence is an expected outcome here. */
+async function lstatOrMissing(path: string): Promise<Stats | undefined> {
+  try {
+    return await lstat(path)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
+    throw error
+  }
+}
+
+/**
+ * Refuse to write through a symlinked ancestor. `safeJoin` only proves the *textual* path stays
+ * under the project root; a symlinked `.cursor` still lands the write wherever it points. The walk
+ * stops at the first missing segment - `mkdir` will create the rest, so there is nothing to check.
+ */
+async function assertSafeParents(cwd: string, abs: string): Promise<void> {
+  const rel = relative(cwd, resolve(abs, ".."))
+  let current = cwd
+  for (const part of rel.split(/[\\/]/).filter(Boolean)) {
+    current = resolve(current, part)
+    const stat = await lstatOrMissing(current)
+    if (stat === undefined) break
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new Error(`[nifra] refusing unsafe parent path: ${part}`)
+    }
+  }
+}
+
+/** Refuse to write anything that is not a plain absent-or-regular file: a symlink here would
+ * redirect the write, and a directory or device node would make it fail in a confusing way. */
+async function assertRegularTarget(abs: string, rel: string): Promise<void> {
+  const stat = await lstatOrMissing(abs)
+  if (stat !== undefined && (stat.isSymbolicLink() || !stat.isFile())) {
+    throw new Error(`[nifra] refusing to write non-regular file: ${rel}`)
+  }
+}
+
 /**
  * Write a whole-file generator's output to `path` unless it already exists and `force` is false.
  * Returns the per-file result for the report.
@@ -79,13 +118,29 @@ async function writeOwned(
   force: boolean,
 ): Promise<InitAgentsFileResult> {
   const abs = safeJoin(cwd, rel)
+  await assertSafeParents(cwd, abs)
+  await assertRegularTarget(abs, rel)
   if (!force && (await fileExists(abs))) {
     return { path: rel, action: "skipped", note: "exists - pass --force to overwrite" }
   }
   // `.cursor/mcp.json` needs its parent dir; `recursive` is a no-op for the root-level files.
   await mkdir(resolve(abs, ".."), { recursive: true })
-  await writeFile(abs, content)
+  await atomicWrite(abs, content)
   return { path: rel, action: "wrote" }
+}
+
+/** Write via a sibling temp file so a crash mid-write can't leave a half-written config in place.
+ * `wx` fails rather than following an existing name, and the temp is cleaned up on any failure so a
+ * botched run doesn't litter the user's project. */
+async function atomicWrite(abs: string, content: string): Promise<void> {
+  const tmp = `${abs}.nifra-${process.pid}-${Date.now()}`
+  await writeFile(tmp, content, { flag: "wx" })
+  try {
+    await rename(tmp, abs)
+  } catch (error) {
+    await rm(tmp, { force: true })
+    throw error
+  }
 }
 
 /**
@@ -96,6 +151,8 @@ async function writeOwned(
  */
 async function ensureAgentsMd(cwd: string): Promise<InitAgentsFileResult> {
   const abs = safeJoin(cwd, AGENTS_MD_PATH)
+  await assertSafeParents(cwd, abs)
+  await assertRegularTarget(abs, AGENTS_MD_PATH)
   const section = agentsMcpSection()
   let existing: string | undefined
   try {
@@ -104,7 +161,7 @@ async function ensureAgentsMd(cwd: string): Promise<InitAgentsFileResult> {
     existing = undefined // no AGENTS.md yet
   }
   if (existing === undefined) {
-    await writeFile(
+    await atomicWrite(
       abs,
       `# AGENTS.md\n\nGuidance for AI coding agents working in this repo.\n\n${section}\n`,
     )
@@ -115,7 +172,7 @@ async function ensureAgentsMd(cwd: string): Promise<InitAgentsFileResult> {
     return { path: AGENTS_MD_PATH, action: "present", note: "already has an MCP section" }
   }
   const sep = existing.endsWith("\n") ? "\n" : "\n\n"
-  await writeFile(abs, `${existing}${sep}${section}\n`)
+  await atomicWrite(abs, `${existing}${sep}${section}\n`)
   return { path: AGENTS_MD_PATH, action: "appended" }
 }
 
