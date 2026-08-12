@@ -71,9 +71,9 @@ describe("idempotency middleware", () => {
 
   test("a concurrent in-flight request gets a 409 (not a double-run)", async () => {
     const store = new MemoryIdempotencyStore()
-    // The default key is scoped by method+path, so seed the lock under the SAME scoped key the request
-    // will compute ("POST /pay\nbusy"), simulating another instance/request holding it.
-    await store.begin("POST /pay\nbusy", 60_000)
+    // The default key is scoped by method+path+principal, so seed the lock under the SAME scoped key
+    // the request will compute - `post()` sends no credentials, hence the `anon` principal segment.
+    await store.begin("POST /pay\nanon\nbusy", 60_000)
     const { app, calls } = counterApp({ store })
 
     const res = await app.fetch(post("busy"))
@@ -105,6 +105,90 @@ describe("idempotency middleware", () => {
     expect(await pay.json()).toEqual({ which: "pay" })
     expect(await refund.json()).toEqual({ which: "refund" })
     expect(refund.headers.get("idempotent-replayed")).toBeNull()
+  })
+
+  // A key is caller-chosen, so without principal scoping "shared" is a guessable address into another
+  // user's cached response - the reply to *their* request, headers and all, handed to whoever asks.
+  test("the default key is principal-scoped - a second caller's identical key replays nothing", async () => {
+    const { app, calls } = counterApp({ store: new MemoryIdempotencyStore() })
+    const as = (token: string) =>
+      new Request("http://x/pay", {
+        method: "POST",
+        body: "{}",
+        headers: { "idempotency-key": "shared", authorization: `Bearer ${token}` },
+      })
+
+    expect(await (await app.fetch(as("alice"))).json()).toEqual({ charge: 1 })
+    const mallory = await app.fetch(as("mallory"))
+    expect(await mallory.json()).toEqual({ charge: 2 }) // her own run, not Alice's stored response
+    expect(mallory.headers.get("idempotent-replayed")).toBeNull()
+    expect(calls()).toBe(2)
+  })
+
+  test("an authenticated caller still dedupes against itself (scoping narrows, it does not disable)", async () => {
+    const { app, calls } = counterApp({ store: new MemoryIdempotencyStore() })
+    const req = () =>
+      new Request("http://x/pay", {
+        method: "POST",
+        body: "{}",
+        headers: { "idempotency-key": "k1", cookie: "sid=abc" },
+      })
+
+    expect(await (await app.fetch(req())).json()).toEqual({ charge: 1 })
+    const retry = await app.fetch(req())
+    expect(await retry.json()).toEqual({ charge: 1 })
+    expect(retry.headers.get("idempotent-replayed")).toBe("true")
+    expect(calls()).toBe(1)
+  })
+
+  test("no credential header ⇒ the anonymous scope, which still dedupes", async () => {
+    const { app, calls } = counterApp({ store: new MemoryIdempotencyStore() })
+    await app.fetch(post("k1"))
+    expect((await app.fetch(post("k1"))).headers.get("idempotent-replayed")).toBe("true")
+    expect(calls()).toBe(1)
+  })
+
+  test("a raw credential never appears in a store key (only its digest)", async () => {
+    const store = new MemoryIdempotencyStore()
+    const seen: string[] = []
+    const spy: MemoryIdempotencyStore = Object.assign(
+      Object.create(store) as MemoryIdempotencyStore,
+      {
+        begin: (key: string, ttl: number) => {
+          seen.push(key)
+          return store.begin(key, ttl)
+        },
+      },
+    )
+    const { app } = counterApp({ store: spy })
+    await app.fetch(
+      new Request("http://x/pay", {
+        method: "POST",
+        body: "{}",
+        headers: { "idempotency-key": "k1", authorization: "Bearer super-secret-token" },
+      }),
+    )
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).not.toContain("super-secret-token")
+    expect(seen[0]).toContain("k1")
+  })
+
+  // Evicting a live entry to make room would hand out the duplicate execution this middleware exists
+  // to prevent, and do it silently. A 503 the client retries is the honest answer.
+  test("a full store answers 503, never a silent duplicate execution", async () => {
+    const store = new MemoryIdempotencyStore({ maxEntries: 1 })
+    const { app, calls } = counterApp({ store })
+    expect(await (await app.fetch(post("k1"))).json()).toEqual({ charge: 1 })
+
+    const overflow = await app.fetch(post("k2"))
+    expect(overflow.status).toBe(503)
+    expect(await overflow.json()).toEqual({ ok: false, error: "idempotency_unavailable" })
+    expect(overflow.headers.get("retry-after")).toBe("1")
+    expect(calls()).toBe(1) // the handler never ran for k2
+
+    // The retained entry is still the one it was, so k1 replays rather than re-charging.
+    expect((await app.fetch(post("k1"))).headers.get("idempotent-replayed")).toBe("true")
+    expect(calls()).toBe(1)
   })
 
   test("a 5xx is not cached - the lock releases so a retry re-runs the handler", async () => {

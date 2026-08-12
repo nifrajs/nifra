@@ -47,15 +47,34 @@ export interface IdempotencyStore {
 export interface MemoryIdempotencyStoreOptions {
   /** Allow the in-memory store in production. Off by default - a per-instance store can't dedupe across instances. */
   readonly allowInProduction?: boolean
+  /** Maximum retained locks + records. Default `10_000`. */
+  readonly maxEntries?: number
+  /** Maximum key length in UTF-8 bytes. Default `1024`. */
+  readonly maxKeyBytes?: number
 }
 
 type Entry =
   | { readonly kind: "lock"; readonly expiresAt: number }
   | { readonly kind: "record"; readonly record: IdempotencyRecord; readonly expiresAt: number }
 
+const KEY_ENCODER = new TextEncoder()
+
+/**
+ * Thrown by a store that is full of entries none of which may be discarded. The middleware turns it
+ * into a `503` with `retry-after`; a store that can grow (Redis) never raises it.
+ */
+export class IdempotencyCapacityError extends Error {
+  constructor() {
+    super("idempotency store is at capacity")
+    this.name = "IdempotencyCapacityError"
+  }
+}
+
 /** In-process store. Refuses to run in production unless explicitly allowed (per-instance ⇒ no cross-instance dedupe). */
 export class MemoryIdempotencyStore implements IdempotencyStore {
   private readonly entries = new Map<string, Entry>()
+  private readonly maxEntries: number
+  private readonly maxKeyBytes: number
 
   constructor(options: MemoryIdempotencyStoreOptions = {}) {
     if (options.allowInProduction !== true && process.env.NODE_ENV === "production") {
@@ -64,11 +83,51 @@ export class MemoryIdempotencyStore implements IdempotencyStore {
           "Use a shared store (e.g. Redis), or pass { allowInProduction: true } for a single-instance deploy.",
       )
     }
+    this.maxEntries = options.maxEntries ?? 10_000
+    this.maxKeyBytes = options.maxKeyBytes ?? 1024
+    if (!Number.isSafeInteger(this.maxEntries) || this.maxEntries < 1)
+      throw new RangeError("MemoryIdempotencyStore: maxEntries must be a positive safe integer")
+    if (!Number.isSafeInteger(this.maxKeyBytes) || this.maxKeyBytes < 1)
+      throw new RangeError("MemoryIdempotencyStore: maxKeyBytes must be a positive safe integer")
+  }
+
+  private validateKey(key: string): void {
+    if (KEY_ENCODER.encode(key).byteLength > this.maxKeyBytes)
+      throw new RangeError("MemoryIdempotencyStore: key is too large")
+  }
+
+  private maintain(now: number): void {
+    // Expiry cleanup is incremental so normal requests never scan the full map.
+    let checked = 0
+    for (const [key, entry] of this.entries) {
+      if (entry.expiresAt <= now) this.entries.delete(key)
+      if (++checked >= 16) break
+    }
+  }
+
+  private reserve(key: string, entry: Entry): void {
+    if (!this.entries.has(key) && this.entries.size >= this.maxEntries) {
+      // The incremental sweep only samples, so pay for a full one before declaring the store full.
+      const now = Date.now()
+      for (const [existing, held] of this.entries) {
+        if (held.expiresAt <= now) this.entries.delete(existing)
+      }
+    }
+    if (!this.entries.has(key) && this.entries.size >= this.maxEntries) {
+      // Refuse rather than evict. Every entry here is either a lock on a request still running or a
+      // response another request is entitled to replay, so dropping one to make room hands out
+      // exactly the duplicate execution this store exists to prevent - and does it silently, under
+      // the load where it is most likely to matter. A 503 is the honest answer; raise `maxEntries`.
+      throw new IdempotencyCapacityError()
+    }
+    this.entries.set(key, entry)
   }
 
   begin(key: string, lockTtlMs: number): Promise<IdempotencyClaim> {
+    this.validateKey(key)
     assertPositiveTtl(lockTtlMs, "lockTtlMs")
     const now = Date.now()
+    this.maintain(now)
     const entry = this.entries.get(key)
     if (entry !== undefined && entry.expiresAt > now) {
       return Promise.resolve(
@@ -78,13 +137,14 @@ export class MemoryIdempotencyStore implements IdempotencyStore {
       )
     }
     // Free (or expired): take the lock. Synchronous Map write ⇒ atomic on a single instance.
-    this.entries.set(key, { kind: "lock", expiresAt: now + lockTtlMs })
+    this.reserve(key, { kind: "lock", expiresAt: now + lockTtlMs })
     return Promise.resolve({ state: "new" })
   }
 
   complete(key: string, record: IdempotencyRecord, ttlMs: number): Promise<void> {
+    this.validateKey(key)
     assertPositiveTtl(ttlMs, "ttlMs")
-    this.entries.set(key, { kind: "record", record, expiresAt: Date.now() + ttlMs })
+    this.reserve(key, { kind: "record", record, expiresAt: Date.now() + ttlMs })
     return Promise.resolve()
   }
 
@@ -111,12 +171,29 @@ export interface IdempotencyOptions {
   /** Whether a response should be cached for replay. Default: status `< 500` (don't replay transient 5xx). */
   readonly shouldCache?: (response: Response) => boolean
   /**
-   * Derive the store key from the request. Default: the `header` value **scoped by method + path**, so the
-   * same key on a different endpoint can't collide. Return a **principal-scoped** key (e.g.
-   * `` `${userId}:${req.headers.get("idempotency-key")}` ``) so one user can't replay another's stored
-   * response on a shared key. Return `null`/`""` to skip dedupe for this request.
+   * Derive the store key from the request. Default: the `header` value scoped by method + path **and
+   * by a digest of the caller's credentials** (see `principalHeaders`), so neither a different
+   * endpoint nor a different caller can collide on one key. Return `null`/`""` to skip dedupe for
+   * this request.
+   *
+   * Supplying your own replaces that scoping entirely - a custom key MUST fold in the principal
+   * itself (e.g. `` `${userId}:${req.headers.get("idempotency-key")}` ``), or one user can replay
+   * another's stored response by guessing their key.
    */
-  readonly key?: (req: Request, header: string) => string | null
+  readonly key?: (req: Request, header: string) => string | null | Promise<string | null>
+  /**
+   * Headers whose values identify the caller. Their digest scopes the default key, so the same
+   * `Idempotency-Key` from two callers addresses two entries and neither can read the other's cached
+   * response. Defaults to Authorization, Cookie, and x-api-key. Only a digest is stored - a raw
+   * credential must never become a store key, which would put it in front of every Redis `KEYS` dump
+   * and slow-log line. Ignored when `key` is supplied.
+   *
+   * The digest covers the header value verbatim, so anything that varies between two requests from the
+   * same caller - a rotated bearer token, an analytics cookie appended mid-session - lands on a fresh
+   * key and the retry executes again. Narrow the list (or supply `key`) when the app has a stable
+   * principal id to scope by; that is strictly better than digesting a whole `Cookie` header.
+   */
+  readonly principalHeaders?: readonly string[]
 }
 
 const DEFAULT_METHODS = ["POST", "PUT", "PATCH", "DELETE"] as const
@@ -258,8 +335,47 @@ function replay(record: IdempotencyRecord): Response {
   return new Response(bodyFor(fromBase64(record.body)), { status: record.status, headers })
 }
 
+const DEFAULT_PRINCIPAL_HEADERS = ["authorization", "cookie", "x-api-key"] as const
+
+/** SHA-256 of the caller's credential headers, base64url. Only the digest ever becomes part of a store
+ * key: a raw `Authorization` value used as a key would be printed by every Redis `KEYS` dump, slow-log
+ * line, and store-side metric that treats keys as non-sensitive. */
+async function principalDigest(req: Request, headers: readonly string[]): Promise<string | null> {
+  let material = ""
+  for (const name of headers) {
+    const value = req.headers.get(name)
+    // The header name is part of the material so `authorization: x` and `x-api-key: x` can't collide.
+    if (value !== null) material += `${name}:${value}\n`
+  }
+  if (material === "") return null // no credentials presented - an anonymous caller
+  const hash = await crypto.subtle.digest("SHA-256", KEY_ENCODER.encode(material))
+  return toBase64(new Uint8Array(hash)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+}
+
+/**
+ * The default store key: the `header` value scoped by method + path (so the same key on a different
+ * endpoint can't collide) **and by a digest of the caller's credentials** (so one caller can't replay
+ * another's stored response by presenting their key). `null` when no key header is present - no dedupe.
+ */
+function defaultIdempotencyKey(
+  req: Request,
+  header: string,
+  principalHeaders: readonly string[],
+): Promise<string | null> | null {
+  const raw = req.headers.get(header)
+  if (raw === null || raw === "") return null
+  const scope = `${req.method.toUpperCase()} ${new URL(req.url).pathname}`
+  return principalDigest(req, principalHeaders).then(
+    (principal) => `${scope}\n${principal ?? "anon"}\n${raw}`,
+  )
+}
+
 /**
  * Idempotency-key middleware. Apply with `app.use(idempotency({ store }))`.
+ *
+ * The store key is scoped by method + path **and** by a digest of the caller's credential headers, so
+ * a key one caller chose addresses only that caller's entry - presenting someone else's key replays
+ * nothing. See `principalHeaders`; a custom `key` replaces that scoping and must do it itself.
  *
  * **`Set-Cookie` is intentionally not cached or replayed** - a cookie set on the first request is
  * session-specific, so replaying it to a different caller (key collision or abuse) would leak/fixate a
@@ -267,14 +383,6 @@ function replay(record: IdempotencyRecord): Response {
  *
  * Caching buffers the response body, so apply this to JSON/API routes, not streaming SSR responses.
  */
-/** The default store key: the `header` value scoped by method + path, so the same key on a different
- * endpoint can't collide (cross-resource replay). `null` when no key header is present (no dedupe). */
-function defaultIdempotencyKey(req: Request, header: string): string | null {
-  const raw = req.headers.get(header)
-  if (raw === null || raw === "") return null
-  return `${req.method.toUpperCase()} ${new URL(req.url).pathname}\n${raw}`
-}
-
 export function idempotency(options: IdempotencyOptions): Middleware {
   const { store } = options
   const header = (options.header ?? "idempotency-key").toLowerCase()
@@ -288,16 +396,36 @@ export function idempotency(options: IdempotencyOptions): Middleware {
     throw new Error("idempotency: maxBytes must be a non-negative integer")
   }
   const shouldCache = options.shouldCache ?? ((res: Response) => res.status < 500)
-  const keyOf = options.key ?? defaultIdempotencyKey
+  const principalHeaders = (options.principalHeaders ?? DEFAULT_PRINCIPAL_HEADERS).map((name) =>
+    name.toLowerCase(),
+  )
+  const custom = options.key
+  const keyOf =
+    custom === undefined
+      ? (req: Request): Promise<string | null> | null =>
+          defaultIdempotencyKey(req, header, principalHeaders)
+      : (req: Request): string | null | Promise<string | null> => custom(req, header)
   const claimed = new WeakMap<Request, string>()
 
   const middleware: Middleware = {
     name: "idempotency",
     async onRequest(req) {
       if (!methods.has(req.method.toUpperCase())) return undefined
-      const key = keyOf(req, header)
+      const key = await keyOf(req)
       if (key === null || key === "") return undefined // opt-in per request - no key ⇒ no dedupe
-      const claim = await store.begin(key, lockTtlMs)
+      let claim: IdempotencyClaim
+      try {
+        claim = await store.begin(key, lockTtlMs)
+      } catch (err) {
+        // A full store can't tell a first request from a retry, and guessing either way is wrong:
+        // serving the request risks a duplicate side effect, replaying nothing risks losing one. Say
+        // so with a 503 the client is expected to retry, rather than a 500 that reads as a bug.
+        if (!(err instanceof IdempotencyCapacityError)) throw err
+        return new Response(JSON.stringify({ ok: false, error: "idempotency_unavailable" }), {
+          status: 503,
+          headers: { "content-type": "application/json", "retry-after": "1" },
+        })
+      }
       if (claim.state === "replay") return replay(claim.record)
       if (claim.state === "in_flight") {
         return new Response(JSON.stringify({ ok: false, error: "idempotency_in_progress" }), {
