@@ -601,6 +601,13 @@
         "@nifrajs/core": "workspace:*",
       },
     },
+    "scripts/fixtures/pipeline-parity": {
+      "name": "pipeline-parity-fixture",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@nifrajs/web": "workspace:*",
+      },
+    },
     "site": {
       "name": "@nifrajs/site",
       "version": "2.11.0",
@@ -1787,6 +1794,8 @@
     "pino-abstract-transport": ["pino-abstract-transport@3.0.0", "", { "dependencies": { "split2": "^4.0.0" } }, "sha512-wlfUczU+n7Hy/Ha5j9a/gZNy7We5+cXp8YL+X+PG8S0KXxw7n/JXA3c46Y0zQznIJ83URJiwy7Lh56WLokNuxg=="],
 
     "pino-std-serializers": ["pino-std-serializers@7.1.0", "", {}, "sha512-BndPH67/JxGExRgiX1dX0w1FvZck5Wa4aal9198SrRhZjH3GxKQUKIBnYJTdj2HDN3UQAS06HlfcSbQj2OHmaw=="],
+
+    "pipeline-parity-fixture": ["pipeline-parity-fixture@workspace:scripts/fixtures/pipeline-parity"],
 
     "pkce-challenge": ["pkce-challenge@5.0.1", "", {}, "sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ=="],
 

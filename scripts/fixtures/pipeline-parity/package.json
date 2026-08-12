@@ -1,0 +1,9 @@
+{
+  "name": "pipeline-parity-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Fixture app for scripts/check-pipeline-parity.ts. A workspace member so the framework client entry the builder generates next to these routes resolves @nifrajs/web the way a real app does.",
+  "devDependencies": {
+    "@nifrajs/web": "workspace:*"
+  }
+}

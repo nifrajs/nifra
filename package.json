@@ -10,7 +10,8 @@
     "internal/*",
     "bench",
     "examples",
-    "site"
+    "site",
+    "scripts/fixtures/pipeline-parity"
   ],
   "scripts": {
     "prepare": "git config core.hooksPath .githooks || true",
