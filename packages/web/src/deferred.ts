@@ -227,7 +227,7 @@ export const MAP_DEFERRED_SOURCE = `const mapDeferred = (d) => {
   if (typeof d.__nifra_deferred === "number") return { __nifra_deferred: true, id: d.__nifra_deferred, promise: window.__nifraDeferred(d.__nifra_deferred) }
   if (Array.isArray(d)) return d.map(mapDeferred)
   const out = {}
-  for (const k in d) out[k] = mapDeferred(d[k])
+  for (const k of Object.keys(d)) Object.defineProperty(out, k, { value: mapDeferred(d[k]), enumerable: true, writable: true, configurable: true })
   return out
 }`
 
@@ -266,8 +266,20 @@ function markersFromPlaceholders(data: unknown, pending: Pending): unknown {
       typeof value === "object" &&
       (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
     ) {
+      // A plain `{}`, not a null-prototype object: `defineProperty` is what makes a `__proto__` key
+      // land as ordinary data instead of walking the setter, and it does that on any target. Stripping
+      // `Object.prototype` on top of it buys nothing and hands the app an object whose `toString`,
+      // `hasOwnProperty`, and `constructor` are gone - the kind of value a template or a helper
+      // library calls a method on and crashes.
       const out: Record<string, unknown> = {}
-      for (const [key, v] of Object.entries(value)) out[key] = walk(v)
+      for (const [key, v] of Object.entries(value)) {
+        Object.defineProperty(out, key, {
+          value: walk(v),
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        })
+      }
       return out
     }
     return value

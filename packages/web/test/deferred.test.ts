@@ -260,6 +260,22 @@ describe("parseNdjsonData (client soft-nav transport)", () => {
     expect(data).toEqual({ count: 5 })
   })
 
+  // A `__proto__` key in the payload must land as ordinary own data, not walk the prototype setter -
+  // and the rebuilt object must still be a *normal* object, since the app's components and whatever
+  // helper library they use will call `Object.prototype` methods on it.
+  test("a __proto__ key in the payload pollutes nothing, and the result keeps its prototype", async () => {
+    const data = (await parseNdjsonData(
+      streamOf([{ text: '{"user":{"__proto__":{"admin":true},"name":"ada"}}\n' }]),
+    )) as { user: Record<string, unknown> }
+
+    expect(({} as Record<string, unknown>).admin).toBeUndefined() // Object.prototype untouched
+    expect(Object.getPrototypeOf(data.user)).toBe(Object.prototype)
+    expect(Object.getOwnPropertyDescriptor(data.user, "__proto__")?.value).toEqual({ admin: true })
+    expect(data.user.name).toBe("ada")
+    expect(Object.hasOwn(data.user, "name")).toBe(true)
+    expect(typeof data.user.toString).toBe("function") // usable by a template / helper library
+  })
+
   test("an aborted stream leaves markers pending (a superseded nav - no error flash)", async () => {
     const ac = new AbortController()
     const data = (await parseNdjsonData(
