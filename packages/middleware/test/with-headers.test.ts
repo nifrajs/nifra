@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { withHeaders } from "../src/_utils.ts"
+import type { NodeResponseContext } from "@nifrajs/core/server"
+import { setNodeHeader, withHeaders } from "../src/_utils.ts"
 
 // The shared mutate-in-place-or-clone helper under cors/timing/powered-by/securityHeaders.
 describe("withHeaders", () => {
@@ -60,5 +61,32 @@ describe("withHeaders", () => {
       }),
     ).toThrow("callback failure")
     expect(calls).toBe(1)
+  })
+})
+
+// The Node-direct twin of the above: middleware that never builds a Web Response writes one header
+// straight onto the outcome record. It keeps the caller's record rather than re-homing it into a
+// null-prototype object, so the one name a plain assignment cannot store needs its own path.
+describe("setNodeHeader", () => {
+  test("creates the record on first write, then assigns onto the same object", () => {
+    const res: NodeResponseContext = { status: 200 }
+    setNodeHeader(res, "x-a", "1")
+    const record = res.headers
+    setNodeHeader(res, "x-b", ["2", "3"])
+    expect(res.headers).toBe(record) // same record - no re-home, no dictionary demotion
+    expect(res.headers).toEqual({ "x-a": "1", "x-b": ["2", "3"] })
+  })
+
+  test("stores a `__proto__` header as own data, leaving the prototype untouched", () => {
+    const res: NodeResponseContext = { status: 200, headers: {} }
+    setNodeHeader(res, "__proto__", "poison")
+    const headers = res.headers as Record<string, unknown>
+    // A plain assignment here would hit the inherited setter and store nothing at all, so the name
+    // would silently vanish from the wire. It has to be an enumerable own property to be written.
+    expect(Object.hasOwn(headers, "__proto__")).toBe(true)
+    expect(Object.keys(headers)).toEqual(["__proto__"])
+    expect(headers["__proto__"]).toBe("poison")
+    expect(Object.getPrototypeOf(headers)).toBe(Object.prototype)
+    expect(({} as Record<string, unknown>)["poison"]).toBeUndefined()
   })
 })

@@ -287,6 +287,40 @@ describe("idempotency middleware", () => {
     expect(calls).toBe(2)
   })
 
+  test("cancelling an over-maxBytes body cancels the upstream and frees its lock", async () => {
+    const enc = new TextEncoder()
+    let cancelled: unknown
+    const app = server()
+      .use(idempotency({ store: new MemoryIdempotencyStore(), maxBytes: 4 }))
+      .post("/stream", () => {
+        const source = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(enc.encode("12345"))
+          },
+          pull(controller) {
+            controller.enqueue(enc.encode("67890"))
+          },
+          cancel(reason) {
+            cancelled = reason
+          },
+        })
+        return new Response(source)
+      })
+    const res = await app.fetch(
+      new Request("http://x/stream", {
+        method: "POST",
+        body: "{}",
+        headers: { "idempotency-key": "cancel" },
+      }),
+    )
+    // The client walks away after the first buffered chunk. The replay wrapper holds a reader on the
+    // upstream, so a cancel that stopped at the wrapper would leave the handler's stream locked open.
+    const reader = res.body!.getReader()
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe("12345")
+    await reader.cancel("client gone")
+    expect(cancelled).toBe("client gone")
+  })
+
   test("validates construction", () => {
     expect(() => idempotency({ store: new MemoryIdempotencyStore(), maxBytes: -1 })).toThrow(
       /maxBytes/,
