@@ -61,7 +61,15 @@ function sweep(root: unknown, policy: "reject" | "strip"): unknown {
       // Only objects are stacked, here and below: a scalar carries no keys, so pushing it just to
       // pop and type-test it is pure stack traffic. Filtering at the push site measured 1.5-3x
       // faster on every body shape, both engines - the win grows with how scalar-heavy the body is.
-      for (const item of node) {
+      //
+      // Indexed, not `for...of`: JSC allocates an array iterator per loop and calls `next()` per
+      // element, and it does not escape either. Measured on Bun 1.3 the iterator form costs 4x on
+      // an array of records, 8x on strings, and 12x on numbers - a 9KB numeric body walked in 27us
+      // instead of 2.2us, which at the 1MB default cap is milliseconds of CPU an attacker picks.
+      // V8 optimizes the iterator away, so on Node the two forms measure identical; the indexed
+      // loop is simply the form that is fast on both.
+      for (let i = 0; i < node.length; i++) {
+        const item = node[i]
         if (item !== null && typeof item === "object") stack.push(item)
       }
       continue
