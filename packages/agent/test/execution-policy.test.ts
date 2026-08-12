@@ -54,6 +54,31 @@ describe("local execution policy adapter", () => {
     expect(result.signal).toBe("SIGKILL")
   }, 10_000)
 
+  // `maxOutputBytes` is one budget over the whole capture, not one per stream. Two independent
+  // counters let a process that writes to both pipes buffer twice the configured ceiling.
+  test("stdout and stderr share one output budget", async () => {
+    const adapter = createLocalProcessAdapter({ maxOutputBytes: 10 })
+    const result = await adapter.run({
+      command: process.execPath,
+      args: [
+        "-e",
+        'process.stdout.write("o".repeat(1000)); process.stderr.write("e".repeat(1000))',
+      ],
+      policy: {
+        filesystem: "cwd",
+        network: "allow",
+        timeMs: 5_000,
+        capabilityCeiling: ["process.run"],
+      },
+    })
+    expect(result.stdout.length + result.stderr.length).toBe(10)
+  })
+
+  test("rejects a non-positive maxOutputBytes at construction", () => {
+    expect(() => createLocalProcessAdapter({ maxOutputBytes: 0 })).toThrow(/maxOutputBytes/)
+    expect(() => createLocalProcessAdapter({ maxOutputBytes: 1.5 })).toThrow(/maxOutputBytes/)
+  })
+
   test("rejects a working directory outside the adapter cwd", async () => {
     const adapter = createLocalProcessAdapter({ cwd: process.cwd() })
     await expect(

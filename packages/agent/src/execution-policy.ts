@@ -169,22 +169,21 @@ function spawnProcess(input: SpawnInput): Promise<LocalProcessResult> {
     let timedOut = false
     let cancelled = false
     let settled = false
-    const append = (target: Uint8Array[], chunk: Uint8Array, used: { value: number }): void => {
-      const remaining = input.maxOutputBytes - used.value
+    const outputUsed = { value: 0 }
+    const append = (target: Uint8Array[], chunk: Uint8Array): void => {
+      const remaining = input.maxOutputBytes - outputUsed.value
       if (remaining <= 0) return
       const selected = chunk.byteLength <= remaining ? chunk : chunk.slice(0, remaining)
       target.push(selected)
-      used.value += selected.byteLength
+      outputUsed.value += selected.byteLength
     }
-    const stdoutUsed = { value: 0 }
-    const stderrUsed = { value: 0 }
     if (child.stdout === null || child.stderr === null) {
       child.kill()
       reject(new LocalProcessPolicyError("invalid_request"))
       return
     }
-    child.stdout.on("data", (chunk: Uint8Array) => append(stdout, chunk, stdoutUsed))
-    child.stderr.on("data", (chunk: Uint8Array) => append(stderr, chunk, stderrUsed))
+    child.stdout.on("data", (chunk: Uint8Array) => append(stdout, chunk))
+    child.stderr.on("data", (chunk: Uint8Array) => append(stderr, chunk))
     let killTimer: ReturnType<typeof setTimeout> | undefined
     const terminate = (): void => {
       child.kill("SIGTERM")
