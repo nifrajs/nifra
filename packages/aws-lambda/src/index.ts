@@ -112,6 +112,10 @@ interface AwsLambdaGlobal {
 }
 
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
+const assertBodyLimit = (value: number): void => {
+  if (!Number.isSafeInteger(value) || value < 0)
+    throw new RangeError("maxBodyBytes must be a non-negative safe integer")
+}
 
 const TEXT_ENCODER = new TextEncoder()
 // `fatal` makes invalid UTF-8 throw (the base64 signal); `ignoreBOM` keeps a leading BOM in the
@@ -277,6 +281,7 @@ export function handle(
   options: LambdaOptions = {},
 ): (event: LambdaEvent, context?: LambdaContext) => Promise<LambdaResult> {
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
+  assertBodyLimit(maxBodyBytes)
   return async (event, context) => {
     const { response, pending } = await invoke(app, event, context, maxBodyBytes)
     try {
@@ -312,6 +317,7 @@ export function streamHandle(
     )
   }
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
+  assertBodyLimit(maxBodyBytes)
   return awslambda.streamifyResponse(async (event, responseStream, context) => {
     const { response, pending } = await invoke(app, event, context, maxBodyBytes)
     const { headers, cookies } = resultHeaders(response)

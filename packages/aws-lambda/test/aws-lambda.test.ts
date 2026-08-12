@@ -119,6 +119,17 @@ describe("handle()", () => {
       expect(ran).toBe(false)
     })
 
+    // A negative or fractional ceiling compares false against every size, so the limit silently
+    // stops existing. Better to refuse the config at construction than to serve unbounded.
+    test("a nonsensical maxBodyBytes is refused at construction", () => {
+      const app = server().post("/", (c) => c.json({ ok: true }))
+      expect(() => handle(app, { maxBodyBytes: -1 })).toThrow(/maxBodyBytes/)
+      expect(() => handle(app, { maxBodyBytes: 1.5 })).toThrow(/maxBodyBytes/)
+      expect(() => handle(app, { maxBodyBytes: Number.NaN })).toThrow(/maxBodyBytes/)
+      expect(() => handle(app, { maxBodyBytes: Number.POSITIVE_INFINITY })).toThrow(/maxBodyBytes/)
+      expect(() => handle(app, { maxBodyBytes: 0 })).not.toThrow()
+    })
+
     test("a body on GET is dropped, not an error", async () => {
       const app = server().get("/", (c) => c.json({ ok: true }))
       const result = await handle(app)(v2Event({ body: "stray", isBase64Encoded: false }))

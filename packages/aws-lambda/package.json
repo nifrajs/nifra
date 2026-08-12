@@ -6,10 +6,12 @@
     "bun",
     "typescript",
     "nifra",
-    "web-framework",
-    "full-stack",
-    "edge",
-    "ssr"
+    "aws",
+    "aws-lambda",
+    "api-gateway",
+    "serverless",
+    "adapter",
+    "edge"
   ],
   "type": "module",
   "main": "./dist/index.js",
