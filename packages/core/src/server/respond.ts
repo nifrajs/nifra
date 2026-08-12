@@ -298,7 +298,27 @@ export function fusedRespondNoSet(
   result: unknown,
   tagResponseBody: ResponseBodyTagOption = false,
   statics?: StaticResponseHeaders,
+  unstamped = false,
 ): Response {
+  // With no response hook registered, no code path ever asks whether these headers are mutable, so
+  // stamping the Headers object into the mutability WeakSet is dead work - `Response.json` alone is
+  // cheaper on Bun than the same construction plus the WeakSet write. `unstamped` is the caller's
+  // assertion that the hook walk is empty; an app that registers ANY response hook keeps the stamp,
+  // because the alternative is the set/delete mutability probe on every single response (each one
+  // carries a fresh `Headers`, so the probe's memo never amortizes) - measured 19% slower than
+  // stamping. Default false: an unknown caller pays one WeakSet write rather than a probe per response.
+  if (
+    unstamped &&
+    (tagResponseBody === false || tagResponseBody === undefined) &&
+    statics === undefined &&
+    result !== undefined &&
+    typeof result === "object" &&
+    result !== null &&
+    !(result instanceof Response) &&
+    !isResponseResult(result)
+  ) {
+    return Response.json(result)
+  }
   if (
     result !== undefined &&
     !(result instanceof Response) &&
@@ -362,9 +382,10 @@ export function fusedRespond(
   ctx: RawContext,
   tagResponseBody: ResponseBodyTagOption = false,
   statics?: StaticResponseHeaders,
+  unstamped = false,
 ): Response {
   const set = ctx[CONTEXT_SET]()
-  if (set === undefined) return fusedRespondNoSet(result, tagResponseBody, statics)
+  if (set === undefined) return fusedRespondNoSet(result, tagResponseBody, statics, unstamped)
   return toResponse(result as HandlerResult, set, tagResponseBody, statics)
 }
 

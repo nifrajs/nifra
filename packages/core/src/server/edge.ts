@@ -103,6 +103,16 @@ export function toFetchHandler<Env = unknown>(
   const resolveWs = app.resolveWebSocketUpgrade?.bind(app)
   return {
     fetch: (request, env, ctx) => {
+      // The platform's own HTTP parser delimited this body, so the declared Content-Length IS the
+      // transport frame rather than a caller's hint - the same guarantee Bun's native routes and
+      // `Deno.serve` carry, and the reason `serve(request, env, ctx)` is a stronger statement about
+      // provenance than a bare `app.fetch(req)` (which anyone in-process can call with a hand-built
+      // Request). The mark keeps core's JSON lane on the runtime's fused parse instead of copying
+      // the body out to recount its bytes. Written as the registered symbol, not an import of
+      // `markTrustedBodyFraming`, so this file keeps its no-runtime-edge property: a GET-only edge
+      // app must not pull `body.ts` (and `http.ts` behind it) into its bundle for one flag.
+      ;(request as unknown as Record<symbol, unknown>)[Symbol.for("nifra.body.trustedFraming")] =
+        true
       const platform: Platform<Env> = { env, waitUntil: (promise) => ctx.waitUntil(promise) }
       // WebSocket broadcast on Workers: route upgrades to the hub Durable Object (it holds the
       // connections + runs the app's pub/sub, so `app.publish` reaches every client). The hub itself

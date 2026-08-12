@@ -7,10 +7,9 @@ import { parseJsonGuarded } from "../src/server/proto-guard.ts"
  * The JSON body lane must not hand handlers a value that poisons prototypes downstream.
  * `JSON.parse` itself is safe - it creates `__proto__` as an own DATA property
  * (CreateDataProperty, never the setter) - the danger is any later merge/assign copying that key
- * onto a real prototype. Text-in-hand lanes pre-scan for suspect substrings and deep-walk only on
- * a hit; the native-json() fast path walks the parsed value directly. Policy: `"reject"` (default)
- * answers the same flat 400 as malformed JSON, `"strip"` deletes the keys in place, `"ignore"`
- * opts out.
+ * onto a real prototype. Every guarded lane walks the parsed value once; `"ignore"` skips that
+ * walk. Policy: `"reject"` (default) answers the same flat 400 as malformed JSON, `"strip"`
+ * deletes the keys in place, `"ignore"` opts out.
  */
 describe("parseJsonGuarded - policy matrix", () => {
   test("reject: own __proto__ at the top level throws", () => {
@@ -157,9 +156,9 @@ describe("protoPoisoning end to end (schema lane + c.boundedJson)", () => {
     expect((await app.fetch(streamRequest("/users", POISONED))).status).toBe(400)
   })
 
-  test("large framed bodies cross the prescan sub-lane with the same policy surface", async () => {
-    // Past the size split the framed path buffers text and prescans it instead of walking the
-    // parsed value - same flat 400 on poison, same clean passthrough as the small sub-lane.
+  test("large framed bodies use the same guarded policy surface", async () => {
+    // The framed path verifies delivered bytes before parsing - same flat 400 on poison, same clean
+    // passthrough as the small lane.
     const pad = "x".repeat(2000)
     const app = server().post("/users", { body: anyBody }, (c) => ({
       name: (c.body as { name?: unknown }).name,
@@ -171,7 +170,7 @@ describe("protoPoisoning end to end (schema lane + c.boundedJson)", () => {
     expect(await clean.json()).toEqual({ name: "Ada" })
   })
 
-  test("strip cleans a large framed body through the prescan sub-lane", async () => {
+  test("strip cleans a large framed body through the framed lane", async () => {
     const pad = "x".repeat(2000)
     const app = server({ protoPoisoning: "strip" }).post("/users", { body: anyBody }, (c) => {
       const body = c.body as Record<string, unknown>

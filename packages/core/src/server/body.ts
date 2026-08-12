@@ -13,6 +13,7 @@ interface BodySource {
   readonly headers: Pick<Headers, "get">
   readonly body: ReadableStream<Uint8Array> | null
   arrayBuffer(): Promise<ArrayBuffer>
+  bytes?(): Promise<Uint8Array>
 }
 
 /** The pre-cap reader surface a transport-capped request stashes under {@link RAW_BODY_READERS}. */
@@ -20,6 +21,8 @@ export interface RawBodyReaders {
   readonly headers: Pick<Headers, "get">
   readonly body: ReadableStream<Uint8Array> | null
   arrayBuffer(): Promise<ArrayBuffer>
+  /** Runtime-native exact-byte reader, when the request implementation exposes one. */
+  bytes?(): Promise<Uint8Array>
   json(): Promise<unknown>
 }
 
@@ -116,7 +119,11 @@ export async function readBoundedBytes(
     if (length > maxBytes) return { ok: false, status: 413 }
     const chunked = req.headers.get("transfer-encoding") !== null
     if (!chunked) {
-      const bytes = new Uint8Array(await req.arrayBuffer())
+      const bytesReader = req.bytes
+      const bytes =
+        bytesReader === undefined
+          ? new Uint8Array(await req.arrayBuffer())
+          : await bytesReader.call(req)
       // Content-Length was the fast-reject hint, never the enforcement: a lying or buffering
       // source (an adapter that decoded/expanded the body upstream) can hand over more bytes
       // than it declared. `length <= maxBytes` held above, so one comparison seals the cap.
@@ -131,6 +138,36 @@ export async function readBoundedBytes(
 
 /** Key under which a transport-capped request stashes its {@link RawBodyReaders}. */
 export const RAW_BODY_READERS = Symbol("nifra.body.rawReaders")
+
+/**
+ * Ingress mark for a request whose bytes a runtime HTTP parser already delimited - Bun's compiled
+ * native route table, `Deno.serve`, or an edge runtime that hands its own `Request` through
+ * untouched. For those the declared Content-Length IS the transport frame, so the JSON lane keeps
+ * the runtime's fused decode+parse instead of copying the body out to count it.
+ *
+ * Everything unmarked - a hand-built `Request`, the in-process client, and above all an adapter
+ * that REBUILDS a body from parts an attacker supplied (an event envelope carrying both a header
+ * map and a payload) - stays on the delivered-byte check. That is the shape the cap actually
+ * defends against: a `content-length` copied from the caller while the body was decoded to a
+ * different size.
+ *
+ * Registered (`Symbol.for`) on purpose, matching `nifra.response.body`: `@nifrajs/deno` mirrors
+ * core's types rather than importing them, so an adapter must be able to set this without taking a
+ * dependency on core. Forging it needs in-process code execution, which could equally just call
+ * `app.fetch` with any `Request` it likes - so the registry costs no ground the process didn't
+ * already own.
+ */
+const TRUSTED_FRAMING = Symbol.for("nifra.body.trustedFraming")
+
+/** Mark a request delivered straight from a runtime HTTP parser. */
+export function markTrustedBodyFraming(source: object): void {
+  ;(source as { [TRUSTED_FRAMING]?: true })[TRUSTED_FRAMING] = true
+}
+
+/** True only for the runtime-framed ingress mark. */
+export function hasTrustedBodyFraming(source: object): boolean {
+  return (source as { [TRUSTED_FRAMING]?: true })[TRUSTED_FRAMING] === true
+}
 
 /** A capped request/source is capped exactly once; re-entry is a no-op. */
 const TRANSPORT_CAPPED = new WeakSet<object>()
@@ -238,6 +275,7 @@ function capRequestBodyReads(request: Request, maxBytes: number): void {
     arrayBuffer: request.arrayBuffer.bind(request),
     json: request.json.bind(request),
   }
+  if (typeof request.bytes === "function") raw.bytes = request.bytes.bind(request)
   // One bounded buffer backs every shadowed reader; a second read replays it instead of failing
   // with "body already used" (a strict superset of the native one-shot contract).
   let buffered: Promise<Uint8Array> | undefined

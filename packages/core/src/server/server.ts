@@ -49,7 +49,7 @@ import type {
   StandardResult,
   StandardSchemaV1,
 } from "../schema/standard.ts"
-import { assertByteLimit, markTransportCap } from "./body.ts"
+import { assertByteLimit, markTransportCap, markTrustedBodyFraming } from "./body.ts"
 import { type ClientIpTrust, resolveClientIp } from "./client-ip.ts"
 import type { Context, Platform, ResponseControls, RouteSchema } from "./context.ts"
 import { headerObjectOf } from "./headers.ts"
@@ -275,6 +275,8 @@ export interface RequestSource {
   readonly body: ReadableStream<Uint8Array> | null
   arrayBuffer(): Promise<ArrayBuffer>
   json(): Promise<unknown>
+  /** Optional runtime-native exact-byte reader (Bun's Request.bytes, when available). */
+  bytes?(): Promise<Uint8Array>
   /** Present only when materializing a `Request` is non-trivial (the Node lazy source); for a real
    * `Request` passed as the source it's absent and {@link requestOf} returns the source itself. */
   readonly request?: Request
@@ -588,6 +590,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private topics: TopicRegistry | undefined
   private readonly maxBodyBytes: number
   private readonly protoPoisoning: "reject" | "strip" | "ignore"
+  /** `trustBodyFraming`: mark every `app.fetch` request as runtime-framed (see ServerOptions). */
+  private readonly trustBodyFraming: boolean
   private readonly wsMaxPayloadBytes: number
   private readonly requestTimeoutMs: number
   /** Installed by the `responseContract()` plugin; `undefined` = not installed, which is the default
@@ -678,6 +682,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
     assertByteLimit(maxBodyBytes, "maxBodyBytes")
     this.protoPoisoning = options.protoPoisoning ?? "reject"
+    this.trustBodyFraming = options.trustBodyFraming ?? false
     const wsMaxPayloadBytes = options.wsMaxPayloadBytes ?? maxBodyBytes
     assertByteLimit(wsMaxPayloadBytes, "wsMaxPayloadBytes")
     this.maxBodyBytes = maxBodyBytes
@@ -1982,6 +1987,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * Bun/Node/Deno omit it (then `c.env` is `undefined` and `c.waitUntil` runs fire-and-forget).
    */
   fetch(req: Request, platform?: Platform<EnvOf<Ctx>>): MaybePromise<Response> {
+    // An edge deployment whose only ingress is this method declares its requests runtime-framed at
+    // construction; everything else stays on the delivered-byte check (see `trustBodyFraming`).
+    if (this.trustBodyFraming) markTrustedBodyFraming(req)
     // A real `Request` satisfies `RequestSource`, so it's passed straight through - no per-request
     // wrapper allocation on the Web/Bun hot path.
     return this.fetchSource(req, platform)
@@ -3085,7 +3093,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         }
         if (result instanceof Promise) {
           return result.then(
-            (value) => fusedRespondNoSet(value, this.responseBodyTag, this.staticResponseHeaders),
+            (value) =>
+              fusedRespondNoSet(
+                value,
+                this.responseBodyTag,
+                this.staticResponseHeaders,
+                this.onResponseHooks.length === 0,
+              ),
             (err) =>
               logError(
                 err,
@@ -3111,7 +3125,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
               ),
           )
         }
-        return fusedRespondNoSet(result, this.responseBodyTag, this.staticResponseHeaders)
+        return fusedRespondNoSet(
+          result,
+          this.responseBodyTag,
+          this.staticResponseHeaders,
+          this.onResponseHooks.length === 0,
+        )
       }
     }
     return (source, params, search, signal, budget, platform, nativeContext) => {
@@ -3136,11 +3155,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       }
       if (result instanceof Promise) {
         return result.then(
-          (value) => fusedRespond(value, ctx, this.responseBodyTag, this.staticResponseHeaders),
+          (value) =>
+            fusedRespond(
+              value,
+              ctx,
+              this.responseBodyTag,
+              this.staticResponseHeaders,
+              this.onResponseHooks.length === 0,
+            ),
           (err) => logError(err, ctx),
         )
       }
-      return fusedRespond(result, ctx, this.responseBodyTag, this.staticResponseHeaders)
+      return fusedRespond(
+        result,
+        ctx,
+        this.responseBodyTag,
+        this.staticResponseHeaders,
+        this.onResponseHooks.length === 0,
+      )
     }
   }
 
@@ -3276,7 +3308,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         platform,
         nativeContext,
         (result, _set, ctx) =>
-          fusedRespond(result, ctx, this.responseBodyTag, this.staticResponseHeaders),
+          fusedRespond(
+            result,
+            ctx,
+            this.responseBodyTag,
+            this.staticResponseHeaders,
+            this.onResponseHooks.length === 0,
+          ),
         this.wrapWebResponse,
       ) as MaybePromise<Response>
   }
@@ -3311,11 +3349,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       }
       if (result instanceof Promise) {
         return result.then(
-          (settled) => fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders),
+          (settled) =>
+            fusedRespond(
+              settled,
+              ctx,
+              this.responseBodyTag,
+              this.staticResponseHeaders,
+              this.onResponseHooks.length === 0,
+            ),
           (err) => logError(err, ctx),
         )
       }
-      return fusedRespond(result, ctx, this.responseBodyTag, this.staticResponseHeaders)
+      return fusedRespond(
+        result,
+        ctx,
+        this.responseBodyTag,
+        this.staticResponseHeaders,
+        this.onResponseHooks.length === 0,
+      )
     }
     return (source, params, search, signal, budget, platform, nativeContext) => {
       const ctx = nativeContext
@@ -3438,7 +3489,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // fast path (post-read byte re-check), the streaming cap, and the prototype-poisoning guard.
     // A separate inlined native-json() fast path here would fork the trust boundary in two.
     try {
-      return this.readBoundedJson(source, maxBodyBytes).then(
+      return this.readBoundedJson(
+        source,
+        maxBodyBytes,
         (parsed) => (parsed instanceof Response ? wrapResponse(parsed) : onParsed(parsed)),
         onError,
       )
@@ -4553,13 +4606,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * length-less body mid-stream once the running byte count exceeds the cap - so a lying
    * or absent length can't force us to buffer an oversized payload.
    */
-  private readBoundedJson(
+  private readBoundedJson(req: RequestSource, maxBodyBytes?: number): Promise<unknown | Response>
+  private readBoundedJson<T>(
+    req: RequestSource,
+    maxBodyBytes: number,
+    onResult: (parsed: unknown | Response) => T | Promise<T>,
+    onError: (error: unknown) => T | Promise<T>,
+  ): Promise<T>
+  private readBoundedJson<T>(
     req: RequestSource,
     maxBodyBytes = this.maxBodyBytes,
-  ): Promise<unknown | Response> {
+    onResult?: (parsed: unknown | Response) => T | Promise<T>,
+    onError?: (error: unknown) => T | Promise<T>,
+  ): Promise<unknown | Response | T> {
     // Not `async`: this is a pass-through, and wrapping the lane's own promise in a coroutine
     // frame costs an extra microtask hop on every JSON body.
-    return readBoundedJsonSource(req, maxBodyBytes, this.protoPoisoning)
+    return onResult === undefined
+      ? readBoundedJsonSource(req, maxBodyBytes, this.protoPoisoning)
+      : readBoundedJsonSource(req, maxBodyBytes, this.protoPoisoning, onResult, onError!)
   }
 
   /** Adapt one route's compiled execution plan to Bun's already-matched request shape. Route
@@ -4571,6 +4635,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     signal: AbortSignal | undefined,
     budget: RequestBudget | undefined,
   ): BunNativeHandler {
+    // This callback is reached only from Bun's compiled native route table. Bun has already parsed
+    // the HTTP framing, so the JSON lane may retain its native fused `json()` parse without weakening
+    // the portable/adapted source contract (those sources are never marked).
+    const markFramed = (request: Request): void => markTrustedBodyFraming(request)
     // The fused native lane bypasses `runMatched`, so the route's transport byte cap must be
     // marked here too - otherwise a Bun `listen()` fused route would leave direct `c.req` body
     // reads uncapped. The non-fused branches go through `fetchMatched` -> `runMatched`, which marks.
@@ -4586,16 +4654,23 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           }
     if (paramNames.length === 0) {
       if (capped === undefined) {
-        return (request) => this.fetchMatched(request, entry, EMPTY_PARAMS)
+        return (request) => {
+          markFramed(request)
+          return this.fetchMatched(request, entry, EMPTY_PARAMS)
+        }
       }
       if (this.acceptInboundDeadlines) {
-        return (request) =>
-          request.headers.get(NIFRA_DEADLINE_HEADER) !== null
+        return (request) => {
+          markFramed(request)
+          return request.headers.get(NIFRA_DEADLINE_HEADER) !== null
             ? this.fetchMatched(request, entry, EMPTY_PARAMS)
             : capped(request, EMPTY_PARAMS, undefined, signal!, budget!, undefined, true)
+        }
       }
-      return (request) =>
-        capped(request, EMPTY_PARAMS, undefined, signal!, budget!, undefined, true)
+      return (request) => {
+        markFramed(request)
+        return capped(request, EMPTY_PARAMS, undefined, signal!, budget!, undefined, true)
+      }
     }
 
     const malformed =
@@ -4604,6 +4679,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         : hasReplacementParam
     if (capped === undefined) {
       return (request) => {
+        markFramed(request)
         const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
         if (malformed(params)) return this.fetchSource(request)
         return this.fetchMatched(request, entry, params)
@@ -4611,6 +4687,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
     if (this.acceptInboundDeadlines) {
       return (request) => {
+        markFramed(request)
         const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
         if (malformed(params)) return this.fetchSource(request)
         return request.headers.get(NIFRA_DEADLINE_HEADER) !== null
@@ -4619,6 +4696,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       }
     }
     return (request) => {
+      markFramed(request)
       const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
       if (malformed(params)) return this.fetchSource(request)
       return capped(request, params, undefined, signal!, budget!, undefined, true)

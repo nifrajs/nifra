@@ -90,13 +90,22 @@ function sweep(root: unknown, policy: "reject" | "strip"): unknown {
     for (const key in record) {
       const value = record[key]
       const nested = value !== null && typeof value === "object"
-      if (key === "__proto__") {
+      // Keep the hot clean-key check branch-local and cheap. JSON keys are strings, and the length
+      // + first-code-unit guards avoid a full string comparison for the overwhelming majority of
+      // fields while preserving exact equality for the two security-sensitive names.
+      if (key.length === 9 && key.charCodeAt(0) === 95 /* _ */ && key === "__proto__") {
         if (policy === "reject") throw POISONED
         // biome-ignore lint/complexity/useLiteralKeys: bracket access keeps the guarded key an explicit string, never a prototype walk
         delete record["__proto__"]
         continue
       }
-      if (key === "constructor" && nested && Object.hasOwn(value, "prototype")) {
+      if (
+        key.length === 11 &&
+        key.charCodeAt(0) === 99 /* c */ &&
+        key === "constructor" &&
+        nested &&
+        Object.hasOwn(value, "prototype")
+      ) {
         if (policy === "reject") throw POISONED
         // biome-ignore lint/complexity/useLiteralKeys: bracket access keeps the guarded key an explicit string, never a prototype walk
         delete record["constructor"]

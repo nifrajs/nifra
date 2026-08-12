@@ -150,6 +150,11 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
     info: { readonly remoteAddr?: { readonly hostname?: string } },
   ): Response | Promise<Response> {
     try {
+      // `Deno.serve` delimited this body with its own HTTP parser, so the declared Content-Length is
+      // the transport frame, not a caller's hint - the same guarantee Bun's native routes carry. The
+      // mark lets core's JSON lane keep the runtime's fused parse instead of copying the body out to
+      // recount it. Registered symbol because this adapter deliberately never imports core.
+      ;(request as { [k: symbol]: unknown })[Symbol.for("nifra.body.trustedFraming")] = true
       // Deno's socket peer (the one address a client can't forge) → `c.clientIp`, unless the app's
       // `clientIp` trust declaration derives it from the forwarding chain instead.
       const clientIp = info.remoteAddr?.hostname

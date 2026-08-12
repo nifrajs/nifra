@@ -61,6 +61,24 @@ export interface ServerOptions {
    * pay a substring pre-scan only - the deep walk runs solely on suspect text.
    */
   readonly protoPoisoning?: "reject" | "strip" | "ignore"
+  /**
+   * Declare that every `Request` reaching `app.fetch` was framed by a runtime HTTP parser, so its
+   * `Content-Length` is an exact transport boundary rather than a hint. Set this ONLY when the
+   * runtime's own request object is handed through untouched with no adapter in between to mark it -
+   * a bare `export default app` on an edge runtime. Every supported ingress already marks itself:
+   * `listen()` on Bun, `toFetchHandler(app)` on Workers/edge, `@nifrajs/deno`, and `@nifrajs/node`
+   * (which reads exact bytes and never needs the mark). Reach for this option only for an ingress
+   * nifra does not ship an adapter for.
+   *
+   * Left off (default), the JSON body lane copies the body out and enforces the cap on DELIVERED
+   * bytes, because an unmarked request may have been rebuilt by an adapter that kept a caller's
+   * `content-length` while decoding a payload of a different size. That check costs an extra pass
+   * over the body, which is why an edge deployment that cannot be lied to may opt out of it.
+   *
+   * Do not set this on an app whose `fetch` is also called with `Request`s assembled from
+   * untrusted input.
+   */
+  readonly trustBodyFraming?: boolean
   /** Max inbound WebSocket message size (bytes) when `listen()`ing on Bun - frames over this are rejected
    * by the runtime before reaching your handler (so a huge frame can't be JSON-parsed into memory).
    * Default: `maxBodyBytes` (1 MB). */

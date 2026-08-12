@@ -894,6 +894,40 @@ test("SECURITY: an oversized Content-Length is rejected (413) through the lazy s
   expect(res.status).toBe(413)
 })
 
+test("SECURITY: an UNDERSTATED Content-Length cannot smuggle a body past the cap", async () => {
+  // Sibling of the overstated case above, and the one the JSON lane's `jsonWithByteLength` reader
+  // exists for: a client that declares 5 bytes and then writes megabytes. Node's HTTP parser frames
+  // the body at the DECLARED length, so the handler can only ever see those 5 bytes - the surplus is
+  // left in the buffer as a (garbage) pipelined request, never appended to this one. The property
+  // pinned here is that the framing holds end to end: the route sees truncated JSON and answers 400,
+  // the oversized payload never reaches validation, and no 200 is ever produced.
+  let handlerRan = false
+  const app = server().post("/u", { body: nameBody }, (c) => {
+    handlerRan = true
+    return c.body
+  })
+  running = await serve(app, { port: 0 })
+
+  const smuggled = `{"name":"${"a".repeat(2_000_000)}"}` // 2 MB, twice the default 1 MB cap
+  const socket = connect(running.port, "127.0.0.1")
+  socket.on("error", () => {}) // the server closes on the garbage pipelined remainder
+  await new Promise<void>((resolve) => socket.once("connect", () => resolve()))
+  let received = ""
+  socket.on("data", (chunk: Buffer) => {
+    received += chunk.toString("latin1")
+  })
+  socket.write(
+    `POST /u HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 5\r\n\r\n${smuggled}`,
+  )
+  await Bun.sleep(150) // let the response come back before the socket is torn down
+  socket.destroy()
+
+  // `{"nam` - the first 5 declared bytes - is not valid JSON, so the route rejects it.
+  expect(received.startsWith("HTTP/1.1 400")).toBe(true)
+  expect(received).not.toContain("HTTP/1.1 200")
+  expect(handlerRan).toBe(false)
+})
+
 test("SECURITY: an oversized STREAMED (chunked) body is capped before the handler runs", async () => {
   // No Content-Length → the lazy source exposes the live stream, and nifra's streaming byte-cap must
   // cancel it once over the cap. We assert the SERVER-SIDE property (the handler never sees the

@@ -120,6 +120,7 @@ interface NodeRequestSource {
   readonly body: ReadableStream<Uint8Array> | null
   arrayBuffer(): Promise<ArrayBuffer>
   json(): Promise<unknown>
+  jsonWithByteLength?(): Promise<{ readonly value: unknown; readonly byteLength: number }>
   readonly request: Request
 }
 
@@ -1138,6 +1139,19 @@ class LazyNodeRequestSource implements NodeRequestSource {
   json(): Promise<unknown> {
     if (this.requestValue !== undefined) return this.requestValue.json()
     return this.readNodeBody().then((buffer) => JSON.parse(buffer.toString("utf8")) as unknown)
+  }
+
+  jsonWithByteLength(): Promise<{ readonly value: unknown; readonly byteLength: number }> {
+    if (this.requestValue !== undefined) {
+      return this.requestValue.arrayBuffer().then((buffer) => ({
+        value: JSON.parse(Buffer.from(buffer).toString("utf8")) as unknown,
+        byteLength: buffer.byteLength,
+      }))
+    }
+    return this.readNodeBody().then((buffer) => ({
+      value: JSON.parse(buffer.toString("utf8")) as unknown,
+      byteLength: buffer.byteLength,
+    }))
   }
 
   get request(): Request {

@@ -8,8 +8,9 @@ import type { RequestBudget } from "../budget.ts"
 import {
   applyTransportCap,
   drainCapped,
+  hasTrustedBodyFraming,
   parseContentLength,
-  rawBodySourceOf,
+  RAW_BODY_READERS,
   readBoundedBytes,
 } from "./body.ts"
 import type { Platform } from "./context.ts"
@@ -317,21 +318,58 @@ async function readBoundedJsonBodyOrThrow<T>(
  * own promise chain instead, and only the streaming fallback - which is already doing IO in a loop
  * - runs as an async function. Callers that `await` the result are unaffected.
  */
+type JsonResultContinuation<T> = (result: unknown | Response) => T | Promise<T>
+type JsonErrorContinuation<T> = (error: unknown) => T | Promise<T>
+type FramedJsonSource = RequestSource & {
+  readonly bytes?: () => Promise<Uint8Array>
+  readonly jsonWithByteLength?: () => Promise<{
+    readonly value: unknown
+    readonly byteLength: number
+  }>
+}
+
 export function readBoundedJsonSource(
   req: RequestSource,
   maxBytes: number,
+  protoPoisoning?: ProtoPoisoning,
+): Promise<unknown | Response>
+export function readBoundedJsonSource<T>(
+  req: RequestSource,
+  maxBytes: number,
+  protoPoisoning: ProtoPoisoning,
+  onResult: JsonResultContinuation<T>,
+  onError: JsonErrorContinuation<T>,
+): Promise<T>
+export function readBoundedJsonSource<T>(
+  req: RequestSource,
+  maxBytes: number,
   protoPoisoning: ProtoPoisoning = "reject",
-): Promise<unknown | Response> {
+  onResult?: JsonResultContinuation<T>,
+  onError?: JsonErrorContinuation<T>,
+): Promise<unknown | Response | T> {
   // A pre-parsing hook (the transport-codec lane) may have decoded the body already - its stash
   // is taken verbatim: the stasher enforced its own byte cap and poisoning policy on text this
   // lane never sees. One symbol read; a miss on ordinary requests costs a cache-line, not a parse.
   const preDecoded = (req as { [PRE_DECODED_BODY]?: PreDecodedBody })[PRE_DECODED_BODY]
-  if (preDecoded !== undefined) return Promise.resolve(preDecoded.value)
+  if (preDecoded !== undefined) {
+    return onResult === undefined
+      ? Promise.resolve(preDecoded.value)
+      : Promise.resolve(preDecoded.value).then(onResult)
+  }
   // Read through the pre-cap readers when the request is transport-capped: this lane enforces its
   // own `maxBytes` (which may exceed the route's transport cap), so the shadowed user-facing
   // readers must not narrow it.
-  const raw = rawBodySourceOf(req)
-  const declared = headerOf(req, "content-length")
+  // Keep the source's header dispatch local: the normal Node source exposes a direct `header`
+  // lookup, while a Web Request only exposes `Headers.get`. Rechecking that optional method through
+  // `headerOf` twice per body is measurable on the framed lane. The raw-reader shadow is still
+  // bypassed for reads, but header authority remains the original source (same semantics as before).
+  const raw = ((req as { [RAW_BODY_READERS]?: RequestSource })[RAW_BODY_READERS] ??
+    req) as FramedJsonSource
+  const sourceHeader = req.header
+  const declared =
+    sourceHeader === undefined
+      ? req.headers.get("content-length")
+      : sourceHeader.call(req, "content-length")
   if (declared !== null) {
     // A present Content-Length must be a non-negative integer (HTTP grammar: `1*DIGIT`). A
     // non-numeric / negative / fractional / exponential value (`Number()` would happily accept
@@ -340,28 +378,112 @@ export function readBoundedJsonSource(
     // would otherwise be read in full. Real HTTP servers only hand us a valid framed length; this
     // hardens hand-built Requests (tests, the in-process client) and crafted input.
     const length = parseContentLength(declared)
-    if (length === undefined) return Promise.resolve(jsonError(400, "invalid_content_length"))
-    if (length > maxBytes) return Promise.resolve(jsonError(413, "payload_too_large"))
-    const chunked = headerOf(req, "transfer-encoding") !== null
+    if (length === undefined)
+      return onResult === undefined
+        ? Promise.resolve(jsonError(400, "invalid_content_length"))
+        : Promise.resolve(jsonError(400, "invalid_content_length")).then(onResult)
+    if (length > maxBytes)
+      return onResult === undefined
+        ? Promise.resolve(jsonError(413, "payload_too_large"))
+        : Promise.resolve(jsonError(413, "payload_too_large")).then(onResult)
+    const chunked =
+      (sourceHeader === undefined
+        ? req.headers.get("transfer-encoding")
+        : sourceHeader.call(req, "transfer-encoding")) !== null
     if (!chunked) {
-      // One guarded lane at every size: the runtime's fused decode+parse `json()`, then the walk
-      // over the parsed value. There used to be a second lane above 1KB that buffered the raw text
-      // so the guard could substring-prescan it; the prescan turned out to cost 2-4x the walk on
-      // both engines for every body shape an API receives, so the text is no longer worth
-      // materializing and the split is gone. Under `"ignore"` the walk is skipped and this is a
-      // bare `json()`. The byte-exact delivered-size re-check lives in `readBoundedBytes` (the
-      // raw-bytes lane); here the declared length was already capped above and the runtime
-      // enforces framing.
-      return raw.json().then((parsed) => {
-        try {
-          return guardParsedValue(parsed, protoPoisoning)
-        } catch {
-          return jsonError(400, "invalid_json")
-        }
-      }, INVALID_JSON)
+      // Bun's compiled native route table receives a Request whose bytes were already delimited by
+      // Bun's HTTP parser. Keep the exact-byte path for every portable/adapted source, but preserve
+      // Bun's fused decode+parse on this trusted ingress; the declared length is the transport frame
+      // there, not an attacker-controlled hint. The parsed-value poisoning walk still applies.
+      if (hasTrustedBodyFraming(req)) {
+        return raw.json().then(
+          (parsed) => {
+            let guarded: unknown
+            try {
+              guarded = guardParsedValue(parsed, protoPoisoning)
+            } catch {
+              return onResult === undefined
+                ? jsonError(400, "invalid_json")
+                : onResult(jsonError(400, "invalid_json"))
+            }
+            return onResult === undefined ? guarded : onResult(guarded)
+          },
+          () => (onResult === undefined ? INVALID_JSON() : onResult(INVALID_JSON())),
+        )
+      }
+      const jsonWithByteLength = raw.jsonWithByteLength
+      if (jsonWithByteLength !== undefined) {
+        return jsonWithByteLength.call(raw).then(
+          ({ value, byteLength }) => {
+            if (byteLength > length || byteLength > maxBytes) {
+              return onResult === undefined
+                ? jsonError(413, "payload_too_large")
+                : onResult(jsonError(413, "payload_too_large"))
+            }
+            let guarded: unknown
+            try {
+              guarded = guardParsedValue(value, protoPoisoning)
+            } catch {
+              return onResult === undefined
+                ? jsonError(400, "invalid_json")
+                : onResult(jsonError(400, "invalid_json"))
+            }
+            return onResult === undefined ? guarded : onResult(guarded)
+          },
+          () => (onResult === undefined ? INVALID_JSON() : onResult(INVALID_JSON())),
+        )
+      }
+      const bytesReader = raw.bytes
+      if (bytesReader !== undefined) {
+        return bytesReader.call(raw).then(
+          (bytes) => {
+            if (bytes.byteLength > length || bytes.byteLength > maxBytes) {
+              return onResult === undefined
+                ? jsonError(413, "payload_too_large")
+                : onResult(jsonError(413, "payload_too_large"))
+            }
+            try {
+              const parsed = parseJsonGuarded(TEXT_DECODER.decode(bytes), protoPoisoning)
+              return onResult === undefined ? parsed : onResult(parsed)
+            } catch {
+              return onResult === undefined
+                ? jsonError(400, "invalid_json")
+                : onResult(jsonError(400, "invalid_json"))
+            }
+          },
+          () => (onResult === undefined ? INVALID_JSON() : onResult(INVALID_JSON())),
+        )
+      }
+      // Read the actual framed bytes before parsing. A declared length is only a hint on Web
+      // Requests and adapter-shaped sources: a caller can construct a Request (or an adapter can
+      // decode/expand a body) whose header claims fewer bytes than the delivered payload. Calling
+      // native `json()` here would accept that understatement and bypass the cap. The byte lane
+      // already owns this post-read check; keeping the JSON lane on the same raw-byte read makes the
+      // trust boundary consistent. `Uint8Array(buffer)` is a view, not a copy.
+      return raw.arrayBuffer().then(
+        (buffer) => {
+          const bytes = new Uint8Array(buffer)
+          if (bytes.byteLength > length || bytes.byteLength > maxBytes) {
+            return onResult === undefined
+              ? jsonError(413, "payload_too_large")
+              : onResult(jsonError(413, "payload_too_large"))
+          }
+          let parsed: unknown
+          try {
+            parsed = parseJsonGuarded(TEXT_DECODER.decode(bytes), protoPoisoning)
+          } catch {
+            return onResult === undefined
+              ? jsonError(400, "invalid_json")
+              : onResult(jsonError(400, "invalid_json"))
+          }
+          return onResult === undefined ? parsed : onResult(parsed)
+        },
+        () => (onResult === undefined ? INVALID_JSON() : onResult(INVALID_JSON())),
+      )
     }
   }
-  return readStreamedJsonSource(raw, maxBytes, protoPoisoning)
+  const streamed = readStreamedJsonSource(raw, maxBytes, protoPoisoning)
+  return onResult === undefined ? streamed : streamed.then(onResult, onError)
 }
 
 /** The shared rejection handler for a body read that never completed (client abort, socket error,
