@@ -154,7 +154,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
       // the transport frame, not a caller's hint - the same guarantee Bun's native routes carry. The
       // mark lets core's JSON lane keep the runtime's fused parse instead of copying the body out to
       // recount it. Registered symbol because this adapter deliberately never imports core.
-      ;(request as { [k: symbol]: unknown })[Symbol.for("nifra.body.trustedFraming")] = true
+      ;(request as unknown as Record<symbol, unknown>)[Symbol.for("nifra.body.trustedFraming")] =
+        true
       // Deno's socket peer (the one address a client can't forge) → `c.clientIp`, unless the app's
       // `clientIp` trust declaration derives it from the forwarding chain instead.
       const clientIp = info.remoteAddr?.hostname
