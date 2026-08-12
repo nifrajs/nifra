@@ -72,13 +72,10 @@ export const backend = server()
       const plural = entity === "weather" ? "weather" : `${entity}s`
       const capitalizedEntity = entity.charAt(0).toUpperCase() + entity.slice(1)
 
-      const code = `import { server } from "@nifrajs/core/server"
-import { t } from "@nifrajs/schema"
+      const code = `// Local memory store for playground simulation
+const ${plural}List = []
 
-// Local memory store for playground simulation
-const ${plural}List: any[] = []
-
-export default server()
+return server()
   .get("/${plural}", () => {
     return ${plural}List
   })
@@ -95,8 +92,7 @@ export default server()
       c.set.status = 201
       return newRecord
     }
-  )
-`
+  )`
 
       return {
         message: `I've created a custom ${capitalizedEntity} API endpoint structure with input schema validation. You can see it loaded in the app.ts editor, along with corresponding test requests. Click Run to execute it!`,
