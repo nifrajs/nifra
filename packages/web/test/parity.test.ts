@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { collectIdentityParity } from "../src/internal/parity.ts"
+import { collectDevelopmentParityInput, collectIdentityParity } from "../src/internal/parity.ts"
 
 test("shared identity parity resolves a workspace from an app subdirectory", async () => {
   const root = await mkdtemp(join(tmpdir(), "nifra-parity-"))
@@ -44,6 +44,38 @@ test("shared identity parity resolves a workspace from an app subdirectory", asy
     expect(result.findings[0]?.package).toBe("react")
     expect(result.findings[0]?.copies).toHaveLength(3)
     expect(result.findings[0]?.remediation).toContain("reinstall")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("development parity counts a Svelte <style> block as css without a css import", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-parity-sfc-"))
+  try {
+    const routesDir = join(root, "routes")
+    await mkdir(routesDir, { recursive: true })
+    await writeFile(
+      join(routesDir, "index.svelte"),
+      '<div id="page">hi</div>\n<style>\n  #page { color: #ff3e00; }\n</style>\n',
+    )
+    const input = collectDevelopmentParityInput(routesDir, false)
+    expect(input.css).toEqual(["css:present"])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("development parity reports no css for a style-free route", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-parity-nocss-"))
+  try {
+    const routesDir = join(root, "routes")
+    await mkdir(routesDir, { recursive: true })
+    await writeFile(
+      join(routesDir, "index.tsx"),
+      "export default function Index() {\n  return null\n}\n",
+    )
+    const input = collectDevelopmentParityInput(routesDir, false)
+    expect(input.css).toEqual([])
   } finally {
     await rm(root, { recursive: true, force: true })
   }

@@ -80,6 +80,12 @@ export interface DevelopmentParityInput {
 const SOURCE_EXTENSIONS = /\.(?:c|m)?(?:j|t)sx?$|\.(?:mdx|svelte|vue)$/
 const CSS_IMPORT =
   /(?:import\s+(?:[^"']+\s+from\s+)?|from\s+)["'][^"']+\.(?:css|scss|sass|less|styl)(?:\?[^"']*)?["']/i
+/** A single-file-component `<style>` block (Svelte/Vue). The bundler extracts these into the app
+ * stylesheet even though no `import "...css"` statement exists, so the dev contract must count them
+ * or a scoped-style component would look style-free next to a production manifest that carries css. */
+const SFC_STYLE = /<style[\s>]/i
+const isSingleFileComponent = (file: string): boolean =>
+  file.endsWith(".svelte") || file.endsWith(".vue")
 
 export type ManifestParitySection = "module-graph" | "public-files" | "css"
 
@@ -489,9 +495,10 @@ export function collectDevelopmentParityInput(
   )
   if (routeManifest.notFound !== undefined) routes._404 = 1
   const sourceRoot = dirname(resolve(routesDir))
-  const css = sourceFilesUnder(sourceRoot).some((file) =>
-    CSS_IMPORT.test(readFileSync(file, "utf8")),
-  )
+  const css = sourceFilesUnder(sourceRoot).some((file) => {
+    const content = readFileSync(file, "utf8")
+    return CSS_IMPORT.test(content) || (isSingleFileComponent(file) && SFC_STYLE.test(content))
+  })
     ? ["css:present"]
     : []
   return {
