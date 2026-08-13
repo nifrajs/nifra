@@ -1,5 +1,29 @@
 # @nifrajs/cli
 
+## 2.13.0
+
+### Minor Changes
+
+- 6510fdc: Add `nifra verify`, one command that runs the repository verification gate. `--release` runs the full
+  build, test, coverage, corpus, consumer, and cross-runtime set; the default runs a fast lint,
+  typecheck, and test pass. `--json` emits a machine-readable result carrying each gate's status and
+  remediation, so the same gate serves humans, CI, and agents.
+
+### Patch Changes
+
+- Updated dependencies [e0b2dd6]
+- Updated dependencies [7535ce1]
+- Updated dependencies [1704308]
+- Updated dependencies [6510fdc]
+  - @nifrajs/core@2.13.0
+  - @nifrajs/web@2.13.0
+  - @nifrajs/client@2.13.0
+  - @nifrajs/mcp@2.13.0
+  - @nifrajs/schema@2.13.0
+  - @nifrajs/testing@2.13.0
+  - @nifrajs/runner@2.13.0
+  - create-nifra@2.13.0
+
 ## 2.12.1
 
 ### Patch Changes

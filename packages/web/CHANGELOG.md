@@ -1,5 +1,27 @@
 # @nifrajs/web
 
+## 2.13.0
+
+### Minor Changes
+
+- 6510fdc: Fail a build or dev-server start when identity-sensitive packages (the framework runtime, React,
+  Preact, Svelte, Solid, Vue) resolve to more than one physical copy, or when the development and
+  production manifests diverge in routes, public files, or styles. Single-file-component `<style>`
+  blocks count as styles, so a scoped-style Svelte or Vue component is not reported as diverging from a
+  production manifest that carries its extracted stylesheet.
+
+### Patch Changes
+
+- e0b2dd6: Harden three regex-adjacent input paths against pathological input. The byte-range parser bounds an
+  oversized `Range` header before the matcher runs rather than after; the problem-details type builder
+  strips trailing slashes with a linear scan instead of a backtracking pattern; and the dev SSR
+  import-graph specifier pattern no longer has an ambiguous whitespace group. Behavior is unchanged for
+  valid input.
+- Updated dependencies [e0b2dd6]
+- Updated dependencies [7535ce1]
+- Updated dependencies [1704308]
+  - @nifrajs/core@2.13.0
+
 ## 2.12.1
 
 ### Patch Changes
