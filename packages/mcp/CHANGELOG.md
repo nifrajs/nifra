@@ -1,5 +1,26 @@
 # @nifrajs/mcp
 
+## 2.12.0
+
+### Minor Changes
+
+- cb04de8: New `authorizeMessage` option on `createMcpServer` (and per request via
+  `mcp.fetch(request, { authorizeMessage })`): a hook run once per parsed message, before any tool runs,
+  that answers `403` with a JSON-RPC `unauthorized` error (`MCP_ERROR.UNAUTHORIZED`) when it returns
+  `false`. The HTTP layer above an MCP mount only ever sees one opaque POST, so a route guard cannot
+  express "this caller may list tools but may not call the write ones" - this is the seam that can. It
+  runs after the body has been read under `maxBodyBytes`, so it costs no second read of the stream.
+- e2d1939: Add typed tool contracts with shared fail-closed adapters, static verification work graphs, bounded provider-neutral agent turns, deterministic trajectory replay, and an explicit execution-policy seam with a non-isolating local process adapter.
+
+### Patch Changes
+
+- f3cc02e: `handleRpc` rejects a `tools/call` whose request id is already in flight, with
+  `-32600 duplicate request id is already in progress`, instead of starting a second call under the same
+  id. Registering the second call overwrote the first's `AbortController`, so `notifications/cancelled`
+  for that id then cancelled only the newer call and left the earlier one running with nothing able to
+  stop it. JSON-RPC requires an id to be unique among in-flight requests, so no conforming client is
+  affected.
+
 ## 2.11.0
 
 ## 2.10.0

@@ -1,5 +1,48 @@
 # @nifrajs/mcp-db
 
+## 2.12.0
+
+### Minor Changes
+
+- 81b1579: `run_query` now bounds what one call can cost. `queryTimeoutMs` (default 5 seconds) covers planning,
+  execution, and the optional count; `maxConcurrentQueries` (default 1) rejects calls that arrive
+  while the lane is busy. Row truncation no longer counts the full result to report a total: the
+  response carries `truncated: true` with `total: null`, and an exact total is opt-in per server via
+  `exactTotal`, which re-runs the query as a count.
+
+  Where the query runs depends on the database, and the difference is visible in the timeout it can
+  enforce. A file-backed database is reopened read-only in a worker that is spawned once, reused for
+  every call, and terminated when a deadline passes - so a runaway statement is stopped, and no call
+  copies the database. An in-memory database has no file to reopen and runs on the serving thread,
+  where a synchronous statement cannot be preempted; there the deadline still bounds the response but
+  is only observed once the statement returns. `SqliteDatabaseLike` gained an optional `filename` to
+  express that difference; any database shaped like it keeps working either way.
+
+### Patch Changes
+
+- 18c8301: The table allowlist is now checked against the SQL the query actually names, not only against SQLite's
+  query plan. A plan row reports the alias as its scan target, so `FROM "users" AS habits` planned as
+  `SCAN habits` and passed an allowlist that exposed `habits` but not `users`. A small tokenizer now
+  reads every relation after `FROM`/`JOIN` before the query runs - it handles all four SQLite identifier
+  quotings and the keyword-adjacent form (`FROM"users"`) a whitespace-anchored pattern cannot, drops
+  string literals and comments so text can never be read as SQL, and excludes CTE names. The plan check
+  still runs afterwards, and now resolves a schema-qualified `SCAN main.habits` to `habits` rather than
+  rejecting it as a table named `main`.
+
+  `maxResultBytes` is enforced on the encoded UTF-8 byte length of the whole payload, envelope included,
+  rather than on the JS string length of the rows alone - a multi-byte result could exceed the cap it
+  had just been measured against. A payload still over the cap after halving down to zero rows is an
+  error rather than an oversized response.
+
+  Authorization moves onto `@nifrajs/mcp`'s new `authorizeMessage` seam, so a `run_query` call is
+  authorized from the message the server already parsed instead of from a second `request.clone().json()`
+  read of the body.
+
+- Updated dependencies [cb04de8]
+- Updated dependencies [f3cc02e]
+- Updated dependencies [e2d1939]
+  - @nifrajs/mcp@2.12.0
+
 ## 2.11.0
 
 ### Patch Changes

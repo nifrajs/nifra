@@ -1,5 +1,71 @@
 # @nifrajs/web
 
+## 2.12.0
+
+### Minor Changes
+
+- 4c2123d: `navigate()` accepts a `state` option: opaque, structured-cloneable per-entry state stored on the
+  history entry it creates, in both the string and object call forms. It is written under
+  `history.state.nifraState` so it can never collide with the router's own bookkeeping keys
+  (`nifraIndex`/`nifraScroll`), read back as `history.state.nifraState`, and restored by the browser on
+  back/forward at no cost. History-delta navigations (`navigate(-1)`) ignore it.
+- c55f7a3: `/llms.txt` and `/llms-full.txt` no longer publish the project's `AGENTS.md`. Those endpoints are
+  public and unauthenticated, while `AGENTS.md` is a repo file written for the team - unreleased feature
+  names, internal hostnames, and "don't touch X yet" notes live in it routinely, and every app that
+  happened to have one was serving it to anyone who asked. Set `publishLocalGuidelines: true` on
+  `createWebApp` to restore the old behaviour for a repo whose guidelines you would publish as a page.
+  Everything else in both endpoints (routes, pages, client-call examples) is unchanged.
+
+### Patch Changes
+
+- fa51aba: Restore the dev-phase environment flags a programmatically started dev server sets when it stops, so a later in-process consumer sharing the process does not read them as if a dev server were still running.
+- 33ee9ff: `loadGoogleFont` emits a variable weight range in the dotted form the fonts endpoint expects. A
+  range spelled CSS-style (`"100 900"`) was passed through with its literal space, which the endpoint
+  answers with a `400`; both spellings are accepted now and normalized to `"100..900"`. A reversed or
+  degenerate range (min not less than max) throws at the call site instead of producing a request that
+  fails at load time.
+- 0863ef0: `withISR` no longer serves a cached page to a soft-navigation data request. Cache entries are full
+  HTML documents keyed by URL, so a client-side navigation's loader fetch (`x-nifra-data`) could
+  receive a document where it expects a loader payload. Those GETs now bypass the cache entirely,
+  matching the write path, which already refused to store data-mode responses.
+- 24f1787: Align Vite production CSS Module scoped names with the Bun pipeline and the Vite development server so switching pipelines preserves the class-name map.
+- df07059: `redirect()` (and any `Response` control-flow signal) now behaves identically whether a loader or action returns it or throws it. A loader that RETURNS `redirect(...)` passes the response through to the client verbatim instead of serializing the `Response` object as loader data; a returned status signal renders its boundary exactly like a thrown one. An action (or a layout gate on the mutation path) that THROWS `redirect(...)` gets the same treatment as a returned one: a client submit receives the `X-Nifra-Redirect` header on a 204 and navigates, a native form POST receives the 3xx.
+- a5d3f5b: Add stable diagnostic codes, application-supplied rule packs, fix recipes, assurance bundles, contract lock snapshots, hydration assurance hooks, replay metadata, security verification rules, and idempotency proofs.
+- 64d25db: Deferred-data reconstruction stores every key with `Object.defineProperty`, on the server walk and in
+  the injected client mapper alike. A `__proto__` key in serialized data previously went through plain
+  assignment, which walks the inherited setter instead of storing data - so the key silently vanished
+  from the reconstructed object, and on the client it reached a prototype setter with attacker-shaped
+  data. The result is still a plain `{}` with `Object.prototype` intact, so `toString`, `hasOwnProperty`
+  and `constructor` keep working on the value the app receives.
+- Updated dependencies [df100d3]
+- Updated dependencies [0efacea]
+- Updated dependencies [cd1732c]
+- Updated dependencies [df100d3]
+- Updated dependencies [9a9346e]
+- Updated dependencies [b5f47c0]
+- Updated dependencies [fc33c0f]
+- Updated dependencies [c4e8bb0]
+- Updated dependencies [11d1658]
+- Updated dependencies [5f71c23]
+- Updated dependencies [3788b36]
+- Updated dependencies [ae5338f]
+- Updated dependencies [8847825]
+- Updated dependencies [9a9346e]
+- Updated dependencies [5e4e31a]
+- Updated dependencies [9a9346e]
+- Updated dependencies [b045f9e]
+- Updated dependencies [9a9346e]
+- Updated dependencies [9a9346e]
+- Updated dependencies [dbc0b79]
+- Updated dependencies [bd5c624]
+- Updated dependencies [a5d3f5b]
+- Updated dependencies [00819c5]
+- Updated dependencies [e2bdd4a]
+- Updated dependencies [e2d1939]
+- Updated dependencies [e83e6eb]
+- Updated dependencies [f8b0097]
+  - @nifrajs/core@2.12.0
+
 ## 2.11.0
 
 ### Minor Changes

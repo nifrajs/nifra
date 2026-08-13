@@ -1,5 +1,17 @@
 # @nifrajs/client
 
+## 2.12.0
+
+### Minor Changes
+
+- 27e06a9: Typed collision escape for reserved-named route segments. The client proxy resolves the seven HTTP verbs (any casing) plus `subscribe`, `ws`, `index`, and `then` before path segments, so a route like `POST /api/delete` cannot be reached by dot access - `api.delete` is the DELETE verb. The typed spelling is now a call on the parent node: `api.api("delete").post()` sends `POST /api/delete`. The call signature accepts exactly the colliding segment names under that node (it is not a general string path builder), coexists with param calls on the same node (an object is a param bag, a string literal the segment), and covers all eleven reserved names including `then`. Purely additive - no runtime change, no existing call site affected.
+
+  `NF-C018` accordingly downgrades from error to warning and its message now spells out the escape call for the flagged route, alongside the existing rename and `nifra-expect reserved-segment` options.
+
+### Patch Changes
+
+- 9a692a2: `inProcessClient` now stamps `content-length` on the synthetic requests it builds whenever the body's byte size is knowable (string, `URLSearchParams`, `Blob`, `ArrayBuffer`, typed-array bodies). The `Request` constructor never derives the header, so an in-process POST used to arrive lengthless - which a fail-closed Content-Length gate such as `bodyLimit()` correctly refuses with 411 even though the same call over a socket would carry the header and pass. In-process requests now look exactly like their network twins; stream and `FormData` bodies stay lengthless, matching chunked transfer.
+
 ## 2.11.0
 
 ## 2.10.0

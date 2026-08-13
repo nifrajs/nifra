@@ -1,5 +1,46 @@
 # @nifrajs/devtools
 
+## 2.12.0
+
+### Minor Changes
+
+- 9a9346e: `app.use(plugin)` keeps the caller's server type. A plugin built with `definePlugin` whose input
+  server type is not pinned used to widen the app to `Server<any, any>`, so every route declared
+  before _and_ after the `use` lost its types and the typed client silently degraded to `any`. That
+  case is now a compile error at the `use` call site, naming the definer to switch to; the plugin is
+  unchanged at runtime.
+
+  Pick the definer that matches what the plugin does: `defineContextPlugin<D>` when it adds context
+  via `derive`/`decorate` (the registry threads through and `D` is added to every downstream handler
+  context), `defineRouterPlugin` when it mounts routes/hooks and adds no context (mount as a side
+  effect, return the app). `definePlugin` still works when its input type is pinned - annotate the
+  parameter (`(app: typeof api) => ...`) or pass explicit type arguments.
+
+  Every first-party plugin now threads: `jwt`, `tokenAuth`, `basicAuth`, `durableCommand`, `etag`,
+  `compression`, `problemDetails`, `prettyJson`, `methodOverride`, `trailingSlash`, `cacheControl`,
+  `devtools`, and `metrics` return an `IdentityPlugin`; `timing`, `language`, and `tracing` return a
+  `ContextPlugin` of what they add (`{ timing }`, `{ language, languageMatch }`, and
+  `{ trace, observation, causality }` respectively), so `c.timing` / `c.language` / `c.trace` are
+  typed without a manual annotation. `combine(...)` is typed as an identity bundle and
+  `namedCombine(name, ...)` is its deduped, named form.
+
+  A type-level test asserts the threading for each definer shape, so a regression fails `typecheck`
+  rather than surfacing as `any` in a downstream app.
+
+### Patch Changes
+
+- 0a91064: The loopback access gate reads the serving adapter's socket peer instead of the request URL's host.
+  An adapter that reports a peer address decides the gate from that address alone (`127.0.0.0/8`,
+  `::1`, and the IPv4-mapped `::ffff:127.x.x.x` form, with brackets and any zone suffix normalized
+  away), so the inbound `Host` header no longer influences whether a caller counts as local. Runtimes
+  with no socket peer, such as edge workers, keep the URL-host check.
+
+  `allowRemote`, the origin check, and the optional `authorize` hook are unchanged.
+
+- Updated dependencies [0efacea]
+- Updated dependencies [9a9346e]
+  - @nifrajs/otel@2.12.0
+
 ## 2.11.0
 
 ### Patch Changes

@@ -1,5 +1,89 @@
 # @nifrajs/examples
 
+## 2.12.0
+
+### Patch Changes
+
+- Updated dependencies [df100d3]
+- Updated dependencies [023891a]
+- Updated dependencies [0efacea]
+- Updated dependencies [cd1732c]
+- Updated dependencies [eb3602b]
+- Updated dependencies [df100d3]
+- Updated dependencies [df100d3]
+- Updated dependencies [b5aa099]
+- Updated dependencies [33548fe]
+- Updated dependencies [0a91064]
+- Updated dependencies [27e06a9]
+- Updated dependencies [9a9346e]
+- Updated dependencies [b5f47c0]
+- Updated dependencies [fc33c0f]
+- Updated dependencies [fa51aba]
+- Updated dependencies [9314567]
+- Updated dependencies [3d8d8e4]
+- Updated dependencies [c4e8bb0]
+- Updated dependencies [11d1658]
+- Updated dependencies [33ee9ff]
+- Updated dependencies [ceda72d]
+- Updated dependencies [0fd146f]
+- Updated dependencies [2c004ca]
+- Updated dependencies [9a692a2]
+- Updated dependencies [5f71c23]
+- Updated dependencies [3788b36]
+- Updated dependencies [0863ef0]
+- Updated dependencies [ae5338f]
+- Updated dependencies [70ebad4]
+- Updated dependencies [8847825]
+- Updated dependencies [cb04de8]
+- Updated dependencies [f3cc02e]
+- Updated dependencies [ce3128f]
+- Updated dependencies [ba85ce7]
+- Updated dependencies [9a9346e]
+- Updated dependencies [4c2123d]
+- Updated dependencies [0a91064]
+- Updated dependencies [5e4e31a]
+- Updated dependencies [24f1787]
+- Updated dependencies [9a9346e]
+- Updated dependencies [b045f9e]
+- Updated dependencies [df07059]
+- Updated dependencies [9a9346e]
+- Updated dependencies [9a9346e]
+- Updated dependencies [5a02c51]
+- Updated dependencies [0aadd62]
+- Updated dependencies [59e547b]
+- Updated dependencies [dbc0b79]
+- Updated dependencies [bd5c624]
+- Updated dependencies [866d59f]
+- Updated dependencies [df18a93]
+- Updated dependencies [a5d3f5b]
+- Updated dependencies [00819c5]
+- Updated dependencies [e2bdd4a]
+- Updated dependencies [e2d1939]
+- Updated dependencies [e83e6eb]
+- Updated dependencies [64d25db]
+- Updated dependencies [c55f7a3]
+- Updated dependencies [f8b0097]
+  - @nifrajs/core@2.12.0
+  - @nifrajs/auth@2.12.0
+  - @nifrajs/middleware@2.12.0
+  - @nifrajs/cli@2.12.0
+  - @nifrajs/client@2.12.0
+  - @nifrajs/i18n@2.12.0
+  - @nifrajs/web@2.12.0
+  - @nifrajs/image@2.12.0
+  - @nifrajs/node@2.12.0
+  - @nifrajs/mcp@2.12.0
+  - @nifrajs/schema@2.12.0
+  - @nifrajs/web-react@2.12.0
+  - @nifrajs/web-vue@2.12.0
+  - @nifrajs/web-svelte@2.12.0
+  - @nifrajs/deno@2.12.0
+  - @nifrajs/workers@2.12.0
+  - @nifrajs/web-preact@2.12.0
+  - @nifrajs/web-solid@2.12.0
+  - @nifrajs/content@2.12.0
+  - @nifrajs/web-vanilla@2.12.0
+
 ## 2.11.0
 
 ### Patch Changes
