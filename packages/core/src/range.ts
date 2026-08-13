@@ -42,10 +42,12 @@ function validSize(size: number): void {
 export function parseByteRange(value: string | null, size: number): ByteRangeResult {
   validSize(size)
   if (value === null) return { kind: "none" }
+  // Bound the input before the regex runs, not after: an oversized header must never reach the
+  // matcher in the first place.
+  if (value.length > MAX_RANGE_HEADER_LENGTH) return { kind: "none" }
   const match = /^bytes\s*=\s*(.+)$/i.exec(value)
   if (match === null) return { kind: "none" }
   const source = match[1]!
-  if (source.length > MAX_RANGE_HEADER_LENGTH) return { kind: "none" }
   let separators = 0
   for (const character of source) {
     if (character === "," && ++separators >= MAX_RANGE_SPECIFIERS) return { kind: "none" }

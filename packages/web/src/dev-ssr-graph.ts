@@ -87,7 +87,7 @@ const appSourceFilter = (root: string): RegExp =>
  * including `export ... from`. What it matches is only a candidate: a hit counts as an import only if the
  * transpiler's own scan reported the same specifier, which is what keeps a lookalike string literal out.
  */
-const SPECIFIER = /\b(from|import|require)(\s*\(?\s*)(["'])([^"'\n]+)\3/g
+const SPECIFIER = /\b(from|import|require)((?:\s*\()?\s*)(["'])([^"'\n]+)\3/g
 
 export interface SsrGraphOptions {
   /** The app root. Only files under it (and outside `node_modules`) are tracked. */

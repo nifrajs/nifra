@@ -103,9 +103,15 @@ async function readCappedBody(
   }
 }
 
+function stripTrailingSlashes(value: string): string {
+  let end = value.length
+  while (end > 0 && value.charCodeAt(end - 1) === 47 /* "/" */) end--
+  return end === value.length ? value : value.slice(0, end)
+}
+
 function problemType(typeBase: string | undefined, code: string): string {
   if (typeBase === undefined) return "about:blank"
-  return `${typeBase.replace(/\/+$/, "")}/${encodeURIComponent(code)}`
+  return `${stripTrailingSlashes(typeBase)}/${encodeURIComponent(code)}`
 }
 
 function problemDocument(
