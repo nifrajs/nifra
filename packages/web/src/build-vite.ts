@@ -33,6 +33,11 @@ import {
 } from "./build.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
+import {
+  assertDevelopmentProductionParity,
+  assertIdentityParity,
+  collectDevelopmentParityInput,
+} from "./internal/parity.ts"
 import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
 import { importVite, isViteUnresolved } from "./internal/vite-import.ts"
 import { scopedName } from "./plugins/css-modules.ts"
@@ -128,6 +133,7 @@ export interface BuildClientViteOptions extends Omit<BuildClientOptions, "plugin
 export async function buildClientVite(options: BuildClientViteOptions): Promise<BuildManifest> {
   const { routesDir, outDir, clientModule } = options
   const root = resolvePath(options.root ?? dirname(routesDir))
+  await assertIdentityParity(root)
   const resolve = options.resolve ?? ((file: string) => `${routesDir}/${file}`)
   const publicPath = options.publicPath ?? "/assets/"
   mkdirSync(outDir, { recursive: true })
@@ -325,6 +331,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     ...(css.length > 0 ? { css } : {}),
     ...(Object.keys(routeStyles).length > 0 ? { routeStyles } : {}),
   }
+  assertDevelopmentProductionParity(collectDevelopmentParityInput(routesDir, publicDir), manifest)
   writeFileSync(`${outDir}/manifest.json`, JSON.stringify(manifest, null, 2))
   return manifest
 }

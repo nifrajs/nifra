@@ -154,6 +154,11 @@
       "bun": "./src/fn-state.ts",
       "types": "./dist/fn-state.d.ts",
       "default": "./dist/fn-state.js"
+    },
+    "./internal/parity": {
+      "bun": "./src/internal/parity.ts",
+      "types": "./dist/internal/parity.d.ts",
+      "default": "./dist/internal/parity.js"
     }
   },
   "files": [

@@ -61,7 +61,8 @@ function publicPackages(): Pkg[] {
     const entries: PkgEntry[] = []
     if (json.exports !== null && typeof json.exports === "object") {
       for (const [subpath, target] of Object.entries(json.exports as Record<string, unknown>)) {
-        if (subpath !== "." && !subpath.startsWith("./")) continue
+        if (subpath !== "." && (!subpath.startsWith("./") || subpath.startsWith("./internal/")))
+          continue
         const entry = sourceEntry(dir, target)
         if (entry === undefined) continue
         entries.push({

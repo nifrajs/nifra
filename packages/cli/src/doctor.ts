@@ -17,9 +17,16 @@
  * undeclared import there fails a clean `bun install --frozen-lockfile` build just the same.
  */
 import type { Dirent } from "node:fs"
-import { lstat, readdir, realpath, stat } from "node:fs/promises"
+import { readdir, stat } from "node:fs/promises"
 import { builtinModules } from "node:module"
 import { dirname, join, relative, sep } from "node:path"
+import {
+  collectIdentityParity,
+  displayPath,
+  type IdentityParityCopy,
+  type IdentityParityFinding,
+  resolvedInstalledCopy,
+} from "@nifrajs/web/internal/parity"
 import { codePositionMask, type SourceFinding, stripComments, walkSource } from "./check.ts"
 import { collectPipelineReport, type PipelineReport } from "./pipeline-report.ts"
 import { type ResolvedTarget, resolveTarget } from "./port.ts"
@@ -178,17 +185,8 @@ export interface DoctorReadiness {
   readonly items: readonly DoctorReadinessItem[]
 }
 
-export interface DuplicateInstallCopy {
-  /** Installed version, or `unknown` when package metadata is incomplete. */
-  readonly version: string
-  /** Physical package directory, relative to the doctor root when possible. */
-  readonly path: string
-  /** Workspace package roots whose normal Node/Bun resolution selects this copy. */
-  readonly importers: readonly string[]
-}
-
-export interface DuplicateInstallFinding {
-  readonly package: string
+export interface DuplicateInstallCopy extends IdentityParityCopy {}
+export interface DuplicateInstallFinding extends Omit<IdentityParityFinding, "copies"> {
   readonly copies: readonly DuplicateInstallCopy[]
 }
 
@@ -229,8 +227,6 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
 const MAX_WORKSPACE_IMPORTERS = 2_048
-const IDENTITY_SENSITIVE_PACKAGES = new Set(["@nifrajs/core", "react", "react-dom"])
-
 function workspacePatterns(pkg: Record<string, unknown>): string[] {
   const raw = pkg.workspaces
   const entries = Array.isArray(raw)
@@ -343,251 +339,25 @@ const scopeForFile = (scopes: readonly DoctorPackageScope[], file: string): Doct
       (file === scope.relativeRoot || file.startsWith(`${scope.relativeRoot}/`)),
   ) ?? (scopes.find((scope) => scope.relativeRoot === "") as DoctorPackageScope)
 
-function duplicateTargets(pkg: Record<string, unknown>): string[] {
-  const targets = new Set<string>()
-  for (const field of DEPENDENCY_FIELDS) {
-    for (const name of depNames(pkg, field)) {
-      if (name.startsWith("@nifrajs/") || IDENTITY_SENSITIVE_PACKAGES.has(name)) targets.add(name)
-    }
-  }
-  return [...targets].sort()
-}
-
-async function resolvedInstalledCopy(
-  importer: string,
-  boundary: string,
-  name: string,
-): Promise<{ path: string; version: string } | undefined> {
-  const parts = name.split("/")
-  for (let dir = importer; ; dir = dirname(dir)) {
-    const packageDir = join(dir, "node_modules", ...parts)
-    const meta = await readJson(join(packageDir, "package.json"))
-    if (meta !== undefined) {
-      try {
-        return {
-          path: await realpath(packageDir),
-          version:
-            typeof meta.version === "string" && meta.version.length > 0 ? meta.version : "unknown",
-        }
-      } catch {
-        return undefined
-      }
-    }
-    if (dir === boundary) return undefined
-    const parent = dirname(dir)
-    if (parent === dir) return undefined
-  }
-}
-
-const MAX_LINKED_PACKAGES = 64
-const MAX_LINK_PROBES = 4_096
-
-/** Is `path` inside `root` (or `root` itself)? Both must already be real paths. */
-const isInside = (root: string, path: string): boolean =>
-  path === root || path.startsWith(root.endsWith(sep) ? root : `${root}${sep}`)
-
-/**
- * The repo boundary for a linked package: the nearest ancestor holding a `.git`, so the upward
- * `node_modules` walk inside a sibling checkout stops where that checkout does instead of climbing
- * into a shared parent directory. Falls back to the package directory itself.
- */
-async function linkedRepoBoundary(packageRoot: string): Promise<string> {
-  let dir = packageRoot
-  for (let depth = 0; depth < 8; depth++) {
-    if (await pathExists(join(dir, ".git"))) return dir
-    const parent = dirname(dir)
-    if (parent === dir) break
-    dir = parent
-  }
-  return packageRoot
-}
-
-/**
- * Dependency roots that are symlinks OUT of the scanned workspace - a sibling checkout linked in with
- * `link:`/`file:`/`npm link`. Their own `node_modules` is a second physical install root, so a shared
- * package (`@nifrajs/core`, React) resolves to a different directory there than it does here. That is
- * a real duplicate: module identity is path-based, so registries, symbols, and hooks do not match
- * across the two copies - the exact split that reads as "my types collapsed for no reason".
- *
- * One level deep and bounded: links inside a linked package are not followed.
- */
-async function linkedPackageRoots(
-  importerRoots: readonly string[],
-  manifests: readonly Record<string, unknown>[],
-  scanRoot: string,
-): Promise<string[]> {
-  const realScanRoot = await realpath(scanRoot).catch(() => scanRoot)
-  const found = new Map<string, true>()
-  let probes = 0
-  for (const [index, importerRoot] of importerRoots.entries()) {
-    const pkg = manifests[index]
-    if (pkg === undefined) continue
-    const names = new Set<string>()
-    for (const field of DEPENDENCY_FIELDS) for (const name of depNames(pkg, field)) names.add(name)
-    for (const name of names) {
-      if (probes++ >= MAX_LINK_PROBES || found.size >= MAX_LINKED_PACKAGES) return [...found.keys()]
-      const candidate = join(importerRoot, "node_modules", ...name.split("/"))
-      // `lstat` first: on macOS `realpath` also rewrites symlinked ANCESTORS (`/tmp` ->
-      // `/private/tmp`), which would read as a link out of the workspace for every dependency.
-      const link = await lstat(candidate).catch(() => undefined)
-      if (link === undefined || !link.isSymbolicLink()) continue
-      const resolved = await realpath(candidate).catch(() => undefined)
-      if (resolved === undefined || isInside(realScanRoot, resolved)) continue
-      found.set(resolved, true)
-    }
-  }
-  return [...found.keys()]
-}
-
-const displayPath = (cwd: string, path: string): string => {
-  const rel = relative(cwd, path)
-  return rel === "" ? "." : rel
-}
-
-/**
- * Resolve the workspace root that actually governs `cwd`, or `undefined` when there is none.
- *
- * Everything below is anchored to a package that declares `workspaces`. In a monorepo you run
- * `nifra check` from the app - `apps/web` - and THAT manifest declares nothing, so the scan collapses
- * to the app itself and the sibling package holding the second copy is never probed. Running from an
- * app subdirectory is the normal case, which made this the configuration the check was blind in.
- *
- * An ancestor is adopted only when its `workspaces` patterns genuinely match `cwd`. A parent
- * directory that happens to contain a manifest is not automatically this project's root, and adopting
- * one would silently widen the scan to an unrelated tree. The walk also stops at a `.git` boundary
- * (checked after the manifest, so a repo root that IS the workspace root still counts) and at the
- * filesystem root.
- */
-/** Whether `path` exists at all. `stat`, not a file read: a `.git` is a directory in a normal
- * checkout and a FILE in a worktree or submodule, and both mark the same boundary. */
-const pathExists = (path: string): Promise<boolean> =>
-  stat(path).then(
-    () => true,
-    () => false,
-  )
-
-async function findWorkspaceRoot(
-  cwd: string,
-): Promise<{ root: string; package: Record<string, unknown> } | undefined> {
-  let dir = dirname(cwd)
-  for (;;) {
-    const manifestPath = join(dir, "package.json")
-    const manifest = await readJson(manifestPath)
-    if (manifest !== undefined) {
-      const patterns = workspacePatterns(manifest)
-      if (patterns.length > 0 && (await patternsCover(dir, patterns, cwd))) {
-        return { root: dir, package: manifest }
-      }
-    }
-    // A `.git` here means we have reached this project's boundary; anything above belongs to a
-    // different repo (or a parent checkout) and must not be adopted.
-    if (await pathExists(join(dir, ".git"))) return undefined
-    const parent = dirname(dir)
-    if (parent === dir) return undefined
-    dir = parent
-  }
-}
-
-/** Whether any of `root`'s workspace patterns resolves to a manifest inside `target`'s package. */
-async function patternsCover(root: string, patterns: string[], target: string): Promise<boolean> {
-  for (const pattern of patterns) {
-    const packagePattern = `${pattern.replace(/\/$/, "")}/package.json`
-    for await (const rel of new Bun.Glob(packagePattern).scan({ cwd: root, dot: false })) {
-      if (rel.split(/[\\/]/).includes("node_modules")) continue
-      if (dirname(join(root, rel)) === target) return true
-    }
-  }
-  return false
-}
+/* Identity-sensitive install resolution is owned by @nifrajs/web/internal/parity. */
 
 /** Find identity-sensitive dependencies that resolve to multiple physical directories. Two copies at
  * the same version still fail: module identity (React hooks, Nifra symbols/registries) is path-based.
  *
  * `cwd` is where the user ran the check; the scan is anchored at the workspace root above it (see
- * {@link findWorkspaceRoot}) so sibling packages are probed, while paths are still REPORTED relative
- * to `cwd` so the findings read the way the user's terminal does. */
+ * The shared parity seam resolves the governing workspace root, while paths are still REPORTED
+ * relative to `cwd` so the findings read the way the user's terminal does. */
 export async function collectDuplicateInstalls(
   cwd: string,
   rootPackage: Record<string, unknown>,
 ): Promise<DuplicateInstallFinding[]> {
-  const workspace = await findWorkspaceRoot(cwd)
-  const scanRoot = workspace?.root ?? cwd
-  const importers = await workspaceImporters(scanRoot, workspace?.package ?? rootPackage)
-  const byPackage = new Map<string, Map<string, { version: string; importers: Set<string> }>>()
-  const record = (
-    name: string,
-    copy: { path: string; version: string },
-    importer: string,
-  ): void => {
-    let copies = byPackage.get(name)
-    if (copies === undefined) {
-      copies = new Map()
-      byPackage.set(name, copies)
-    }
-    const entry = copies.get(copy.path) ?? { version: copy.version, importers: new Set<string>() }
-    entry.importers.add(importer)
-    copies.set(copy.path, entry)
-  }
-
-  const targets = new Set<string>()
-  for (const importer of importers) {
-    for (const name of duplicateTargets(importer.package)) {
-      if (importer.package.name === name) continue
-      targets.add(name)
-      // Boundary is the SCAN root, not `cwd`: an importer can now sit beside or above the directory
-      // the user ran from, and stopping the upward walk at `cwd` would abandon it before reaching the
-      // hoisted copy it actually resolves.
-      const copy = await resolvedInstalledCopy(importer.root, scanRoot, name)
-      if (copy !== undefined) record(name, copy, displayPath(cwd, importer.root))
-    }
-  }
-
-  // Probe the workspace root for every target too, even when the root manifest doesn't declare it.
-  // A hoisted root copy is reachable from any package that lacks its own nested one, so leaving it
-  // out hides the very split it should catch: every declaring package nested onto one copy while the
-  // root resolved a different one, which reads as a single copy when only declarers are consulted.
-  for (const name of targets) {
-    const copy = await resolvedInstalledCopy(scanRoot, scanRoot, name)
-    if (copy !== undefined) record(name, copy, displayPath(cwd, scanRoot))
-  }
-
-  // Sibling checkouts linked in (`link:`/`file:`/`npm link`) install their own copies. Their
-  // resolution is what the runtime and `tsc` actually use for code that crosses the link, so a split
-  // there is as real as one inside this workspace - and invisible to a scan bounded by the workspace.
-  const linkedRoots = await linkedPackageRoots(
-    [...importers.map((importer) => importer.root), scanRoot],
-    [...importers.map((importer) => importer.package), workspace?.package ?? rootPackage],
-    scanRoot,
+  const result = await collectIdentityParity(cwd, rootPackage, { useWorkspaceRoot: true })
+  return result.findings.map(
+    (finding): DuplicateInstallFinding => ({
+      ...finding,
+      copies: finding.copies.map((copy): DuplicateInstallCopy => ({ ...copy })),
+    }),
   )
-  for (const linkedRoot of linkedRoots) {
-    const linkedPackage = await readJson(join(linkedRoot, "package.json"))
-    const boundary = await linkedRepoBoundary(linkedRoot)
-    const linkedTargets = new Set([
-      ...targets,
-      ...(linkedPackage === undefined ? [] : duplicateTargets(linkedPackage)),
-    ])
-    for (const name of linkedTargets) {
-      if (linkedPackage?.name === name) continue
-      const copy = await resolvedInstalledCopy(linkedRoot, boundary, name)
-      if (copy !== undefined) record(name, copy, displayPath(cwd, linkedRoot))
-    }
-  }
-
-  const findings: DuplicateInstallFinding[] = []
-  for (const [name, copies] of [...byPackage.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-    if (copies.size < 2) continue
-    findings.push({
-      package: name,
-      copies: [...copies.entries()]
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([path, copy]) => ({
-          version: copy.version,
-          path: displayPath(cwd, path),
-          importers: [...copy.importers].sort(),
-        })),
-    })
-  }
-  return findings
 }
 
 /** A workspace-linked dependency whose build artifact is older than its source. */
@@ -1131,18 +901,9 @@ export async function runDoctor(
       for (const copy of finding.copies) {
         console.log(`      ${copy.version} at ${copy.path} ← ${copy.importers.join(", ")}`)
       }
-      if (finding.package === "@nifrajs/core") {
-        console.log(
-          "      ↳ a second @nifrajs/core breaks module identity: `typeof backend` collapses to `any`",
-        )
-        console.log(
-          "        at `.merge()` and route-type inference silently degrades - usually that error's root cause.",
-        )
-      }
+      console.log(`      ${finding.explanation}`)
+      console.log(`      fix: ${finding.remediation}`)
     }
-    console.log(
-      "\n  Align dependency ranges and reinstall from the workspace root; doctor never deletes installs.",
-    )
   }
   if (result.readiness?.strict === true && result.readiness.ok === false) {
     console.log("\n✗ production readiness is incomplete under --strict")

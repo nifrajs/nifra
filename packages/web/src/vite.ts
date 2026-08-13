@@ -21,6 +21,7 @@ import { createDevDiagnostics } from "./dev-diagnostics.ts"
 import { listenOrExplain } from "./dev-port.ts"
 import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry, setSsrModuleLoader } from "./index.ts"
+import { assertIdentityParity } from "./internal/parity.ts"
 import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
 import { importVite } from "./internal/vite-import.ts"
 import { scopedName } from "./plugins/css-modules.ts"
@@ -296,6 +297,7 @@ function packageNameOf(specifier: string): string | undefined {
 export async function createViteDevServer(options: ViteDevServerOptions): Promise<ViteDevServer> {
   const root = resolvePath(options.root ?? process.cwd())
   const routesDir = resolvePath(options.routesDir)
+  await assertIdentityParity(root)
   const port = options.port ?? DEFAULT_DEV_PORT
 
   // Which files are the app's own components, for framework plugins that hot-patch at component

@@ -62,6 +62,7 @@
       "@nifrajs/test-utils": ["./internal/test-utils/src/index.ts"],
       "@nifrajs/web/fn": ["./packages/web/src/fn.ts"],
       "@nifrajs/web/diagnostic": ["./packages/web/src/diagnostic.ts"],
+      "@nifrajs/web/internal/parity": ["./packages/web/src/internal/parity.ts"],
       "create-nifra/agent-files": ["./packages/create-nifra/src/agent-files.ts"]
     }
   },

@@ -13,6 +13,11 @@ import { sanitizeOutputNames } from "./chunk-names.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
 import {
+  assertDevelopmentProductionParity,
+  assertIdentityParity,
+  collectDevelopmentParityInput,
+} from "./internal/parity.ts"
+import {
   generateServerFnStub,
   SERVER_FN_MODULE,
   SERVER_ONLY_MODULE,
@@ -941,6 +946,8 @@ export function formatManifestDrift(
  */
 export async function buildClient(options: BuildClientOptions): Promise<BuildManifest> {
   const { routesDir, outDir, clientModule } = options
+  const root = resolvePath(dirname(routesDir))
+  await assertIdentityParity(root)
   const resolve = options.resolve ?? ((file: string) => `${routesDir}/${file}`)
   const publicPath = options.publicPath ?? "/assets/"
   mkdirSync(outDir, { recursive: true })
@@ -1141,6 +1148,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     ...(css.length > 0 ? { css } : {}),
     ...(Object.keys(routeStyles).length > 0 ? { routeStyles } : {}),
   }
+  assertDevelopmentProductionParity(collectDevelopmentParityInput(routesDir, publicDir), manifest)
   writeFileSync(`${outDir}/manifest.json`, JSON.stringify(manifest, null, 2))
   return manifest
 }

@@ -1,5 +1,14 @@
 import { expect, test } from "bun:test"
-import { compareParity, formatParityReport, type ParitySnapshot } from "./check-pipeline-parity.ts"
+import {
+  createDevelopmentParityManifest,
+  normalizeBuildManifest,
+} from "../packages/web/src/internal/parity.ts"
+import {
+  compareManifestParity,
+  compareParity,
+  formatParityReport,
+  type ParitySnapshot,
+} from "./check-pipeline-parity.ts"
 
 const snapshot = (overrides: Partial<ParitySnapshot> = {}): ParitySnapshot => ({
   routeManifest: ["_layout", "about", "index"],
@@ -35,5 +44,24 @@ test("pipeline parity fails when a CSS Module value changes", () => {
       bun: { box: "styles_box_hash" },
       vite: { box: "other_hash" },
     },
+  ])
+})
+
+test("shared parity reports module graph, public file, and CSS drift", () => {
+  const development = createDevelopmentParityManifest({
+    routes: { index: 1 },
+    publicFiles: ["/robots.txt"],
+    css: ["css:present"],
+  })
+  const production = normalizeBuildManifest({
+    entry: "/assets/entry.js",
+    assets: ["/assets/entry.js", "/assets/index.js"],
+    routes: { about: ["/assets/about.js"] },
+    publicFiles: ["/favicon.ico"],
+  })
+  expect(compareManifestParity(development, production).map((item) => item.section)).toEqual([
+    "module-graph",
+    "public-files",
+    "css",
   ])
 })

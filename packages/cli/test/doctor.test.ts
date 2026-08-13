@@ -654,6 +654,8 @@ describe("collectDuplicateInstalls - discovery anchored at the workspace root", 
       expect(findings[0]?.copies).toHaveLength(2)
       // Identical versions: the finding is about two paths, not two versions.
       expect(findings[0]?.copies.map((c) => c.version)).toEqual(["19.2.7", "19.2.7"])
+      expect(findings[0]?.explanation).toContain("physical path")
+      expect(findings[0]?.remediation).toContain("reinstall")
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

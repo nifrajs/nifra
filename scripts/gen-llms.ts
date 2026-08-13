@@ -616,7 +616,16 @@ function declaredEntries(exportsMap: unknown, out: Set<string>): void {
  */
 function publishedDts(dir: string): string[] {
   const manifest = JSON.parse(read(`${dir}/package.json`)) as { exports?: unknown }
-  return declarationFiles(dir, manifest.exports)
+  const exportsMap = manifest.exports
+  const publicMap =
+    exportsMap !== null && typeof exportsMap === "object" && !Array.isArray(exportsMap)
+      ? Object.fromEntries(
+          Object.entries(exportsMap as Record<string, unknown>).filter(
+            ([key]) => key === "." || !key.startsWith("./internal/"),
+          ),
+        )
+      : exportsMap
+  return declarationFiles(dir, publicMap)
 }
 
 /**

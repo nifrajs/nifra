@@ -8,11 +8,16 @@
  */
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { basename, join, resolve } from "node:path"
+import { join, resolve } from "node:path"
 import type { BuildManifest } from "../packages/web/src/build.ts"
 import { buildClient } from "../packages/web/src/build.ts"
 import { buildClientVite } from "../packages/web/src/build-vite.ts"
 import { discoverRoutes } from "../packages/web/src/fs.ts"
+import {
+  compareManifestParity,
+  normalizeBuildManifest,
+  logicalStaticAssets as sharedLogicalStaticAssets,
+} from "../packages/web/src/internal/parity.ts"
 import { cssModulesBunPlugin, transformCssModule } from "../packages/web/src/plugins/css-modules.ts"
 import { reproduciblePath } from "../packages/web/src/plugins/kit.ts"
 
@@ -29,56 +34,15 @@ export interface ParityDifference {
   readonly vite: unknown
 }
 
-const sorted = (values: readonly string[]): string[] => [...values].sort()
+export { compareManifestParity, normalizeBuildManifest }
 
-const assetExtension = (url: string): string => {
-  const file = basename(url).toLowerCase()
-  const dot = file.lastIndexOf(".")
-  return dot === -1 ? "other" : file.slice(dot + 1)
-}
+const sorted = (values: readonly string[]): string[] => [...values].sort()
 
 const manifestAsset = (url: string): string => url.replace(/^.*\//, "")
 
 /** Turn hashed filenames into logical roles, preserving route and stylesheet ownership. */
 export function logicalStaticAssets(manifest: BuildManifest): string[] {
-  const routeOwners = new Map<string, string[]>()
-  for (const [route, chunks] of Object.entries(manifest.routes)) {
-    chunks.forEach((chunk, index) => {
-      const owners = routeOwners.get(manifestAsset(chunk)) ?? []
-      owners.push(`route:${route}:${index}`)
-      routeOwners.set(manifestAsset(chunk), owners)
-    })
-  }
-
-  const cssOwners = new Map<string, string>()
-  for (const [index, css] of (manifest.css ?? []).entries()) {
-    cssOwners.set(manifestAsset(css), `stylesheet:${index}`)
-  }
-
-  const logical = new Set<string>()
-  for (const asset of manifest.assets) {
-    const file = manifestAsset(asset)
-    if (asset === manifest.entry) {
-      logical.add("js:entry")
-      continue
-    }
-    const owners = routeOwners.get(file)
-    if (owners !== undefined) {
-      for (const owner of owners) logical.add(`js:${owner}`)
-      continue
-    }
-    const css = cssOwners.get(file)
-    if (css !== undefined) {
-      logical.add(`css:${css}`)
-      continue
-    }
-    // Unowned JavaScript is a bundler optimization detail: Bun may emit a shared chunk while Vite
-    // inlines the same modules into route entries. The route graph above is the logical ownership
-    // contract; comparing anonymous JS filenames would turn a valid optimization into a false drift.
-    if (assetExtension(asset) !== "js") logical.add(`asset:${assetExtension(asset)}`)
-  }
-  for (const file of manifest.publicFiles ?? []) logical.add(`public:${file}`)
-  return sorted([...logical])
+  return [...sharedLogicalStaticAssets(manifest)]
 }
 
 const readJavaScript = (outDir: string): string => {
@@ -104,21 +68,71 @@ export function emittedCssModuleClassMap(
 }
 
 export function compareParity(bun: ParitySnapshot, vite: ParitySnapshot): ParityDifference[] {
+  const bunManifest = {
+    entry: "assets/entry.js",
+    assets: [
+      "assets/entry.js",
+      ...bun.staticAssets
+        .filter((asset) => asset.startsWith("js:"))
+        .map((asset) => `assets/${asset.slice(3)}.js`),
+    ],
+    routes: Object.fromEntries(
+      Object.entries(bun.routeChunks).map(([route, count]) => [
+        route,
+        Array.from({ length: count }, (_, index) => `assets/route:${route}:${index}.js`),
+      ]),
+    ),
+    publicFiles: bun.staticAssets
+      .filter((asset) => asset.startsWith("public:"))
+      .map((asset) => asset.slice("public:".length)),
+    css: Object.keys(bun.cssModuleClassMaps).length > 0 ? ["assets/styles.css"] : [],
+  }
+  const viteManifest = {
+    ...bunManifest,
+    assets: [
+      "assets/entry.js",
+      ...vite.staticAssets
+        .filter((asset) => asset.startsWith("js:"))
+        .map((asset) => `assets/${asset.slice(3)}.js`),
+    ],
+    routes: Object.fromEntries(
+      Object.entries(vite.routeChunks).map(([route, count]) => [
+        route,
+        Array.from({ length: count }, (_, index) => `assets/route:${route}:${index}.js`),
+      ]),
+    ),
+    publicFiles: vite.staticAssets
+      .filter((asset) => asset.startsWith("public:"))
+      .map((asset) => asset.slice("public:".length)),
+    css: Object.keys(vite.cssModuleClassMaps).length > 0 ? ["assets/styles.css"] : [],
+  }
+  const shared = compareManifestParity(
+    normalizeBuildManifest(bunManifest),
+    normalizeBuildManifest(viteManifest),
+  )
   const differences: ParityDifference[] = []
-  if (JSON.stringify(bun.routeManifest) !== JSON.stringify(vite.routeManifest)) {
+  if (shared.some((difference) => difference.section === "module-graph")) {
     differences.push({
       section: "route-manifest",
       bun: bun.routeManifest,
       vite: vite.routeManifest,
     })
   }
-  if (JSON.stringify(bun.routeChunks) !== JSON.stringify(vite.routeChunks)) {
+  if (shared.some((difference) => difference.section === "module-graph")) {
     differences.push({ section: "route-chunks", bun: bun.routeChunks, vite: vite.routeChunks })
   }
-  if (JSON.stringify(bun.staticAssets) !== JSON.stringify(vite.staticAssets)) {
+  if (
+    shared.some(
+      (difference) =>
+        difference.section === "module-graph" || difference.section === "public-files",
+    )
+  ) {
     differences.push({ section: "static-assets", bun: bun.staticAssets, vite: vite.staticAssets })
   }
-  if (JSON.stringify(bun.cssModuleClassMaps) !== JSON.stringify(vite.cssModuleClassMaps)) {
+  if (
+    shared.some((difference) => difference.section === "css") ||
+    JSON.stringify(bun.cssModuleClassMaps) !== JSON.stringify(vite.cssModuleClassMaps)
+  ) {
     differences.push({
       section: "css-module-class-maps",
       bun: bun.cssModuleClassMaps,
@@ -139,7 +153,10 @@ const snapshot = (
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([route, chunks]) => [route, chunks.length]),
   ),
-  staticAssets: logicalStaticAssets(manifest),
+  staticAssets: [
+    ...logicalStaticAssets(manifest),
+    ...(manifest.routes._404 === undefined ? [] : ["js:route:_404:0"]),
+  ],
   cssModuleClassMaps: emittedCssModuleClassMap(outDir, cssMap),
 })
 
