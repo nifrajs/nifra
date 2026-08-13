@@ -1,5 +1,15 @@
 # @nifrajs/web-preact
 
+## 2.12.1
+
+### Patch Changes
+
+- Updated dependencies [fba30c7]
+  - @nifrajs/core@2.12.1
+  - @nifrajs/i18n@2.12.1
+  - @nifrajs/web@2.12.1
+  - @nifrajs/image@2.12.1
+
 ## 2.12.0
 
 ### Patch Changes

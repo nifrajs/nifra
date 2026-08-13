@@ -1,5 +1,19 @@
 # @nifrajs/cli
 
+## 2.12.1
+
+### Patch Changes
+
+- Updated dependencies [fba30c7]
+  - @nifrajs/core@2.12.1
+  - @nifrajs/client@2.12.1
+  - @nifrajs/mcp@2.12.1
+  - @nifrajs/schema@2.12.1
+  - @nifrajs/testing@2.12.1
+  - @nifrajs/web@2.12.1
+  - @nifrajs/runner@2.12.1
+  - create-nifra@2.12.1
+
 ## 2.12.0
 
 ### Minor Changes
