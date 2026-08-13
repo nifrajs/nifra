@@ -49,7 +49,12 @@ import type {
   StandardResult,
   StandardSchemaV1,
 } from "../schema/standard.ts"
-import { assertByteLimit, markTransportCap, markTrustedBodyFraming } from "./body.ts"
+import {
+  assertByteLimit,
+  markTransportCap,
+  markTrustedBodyFraming,
+  type RawBodyReaders,
+} from "./body.ts"
 import { type ClientIpTrust, resolveClientIp } from "./client-ip.ts"
 import type { Context, Platform, ResponseControls, RouteSchema } from "./context.ts"
 import {
@@ -285,6 +290,11 @@ export interface RequestSource {
   /** Present only when materializing a `Request` is non-trivial (the Node lazy source); for a real
    * `Request` passed as the source it's absent and {@link requestOf} returns the source itself. */
   readonly request?: Request
+  /** Optional pre-`Request` reader surface for the transport cap. A source that reads its own
+   * transport bytes (the Node lazy source reads the socket) exposes them here so a capped direct
+   * read (`c.req.json()`) buffers off the transport instead of routing through the deferred
+   * `Request`. `body` must stay the live stream - the cap still guards a chunked body mid-flight. */
+  rawBodyReaders?(): RawBodyReaders
 }
 
 /** The empty context extension. `NonNullable<unknown>` is `{}` without tripping noBannedTypes. */

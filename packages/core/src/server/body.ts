@@ -256,10 +256,8 @@ function cappedStreamOf(
  * An over-cap read rejects with `reject(413)` (a lying `Content-Length` with `reject(400)`), which
  * the lifecycle already treats as control flow - the same contract as `c.boundedBody`.
  */
-function capRequestBodyReads(request: Request, maxBytes: number): void {
-  if (TRANSPORT_CAPPED.has(request)) return
-  TRANSPORT_CAPPED.add(request)
-  const reject = transportCapError
+/** The request's own pre-shadow readers - the fallback surface when the source offers none. */
+function requestBodyReaders(request: Request): RawBodyReaders {
   const bodyDescriptor = descriptorOf(request, "body")
   const raw: RawBodyReaders = {
     get headers() {
@@ -276,6 +274,14 @@ function capRequestBodyReads(request: Request, maxBytes: number): void {
     json: request.json.bind(request),
   }
   if (typeof request.bytes === "function") raw.bytes = request.bytes.bind(request)
+  return raw
+}
+
+function capRequestBodyReads(request: Request, maxBytes: number, preset?: RawBodyReaders): void {
+  if (TRANSPORT_CAPPED.has(request)) return
+  TRANSPORT_CAPPED.add(request)
+  const reject = transportCapError
+  const raw = preset ?? requestBodyReaders(request)
   // One bounded buffer backs every shadowed reader; a second read replays it instead of failing
   // with "body already used" (a strict superset of the native one-shot contract).
   let buffered: Promise<Uint8Array> | undefined
@@ -350,13 +356,24 @@ export function markTransportCap(source: object, maxBytes: number): void {
  * lane's pre-decoded body), and hook-observed references all survive. Framework readers bypass the
  * shadow through {@link rawBodySourceOf} and enforce their own caps - `c.boundedBody(explicit)`
  * still overrides in either direction. An unmarked source (`bodyLimit: "unlimited"`) is untouched.
+ *
+ * A source that owns its transport bytes directly (Node's lazy source reads the socket itself)
+ * supplies them through `RequestSource.rawBodyReaders`: the capped readers then buffer off the
+ * socket instead of routing every read back through a runtime `Request` the source was still
+ * deferring. The cap is identical either way - the same {@link readBoundedBytes} enforces it.
  */
 export function applyTransportCap(source: object, request: Request): void {
   const maxBytes = (source as { [TRANSPORT_CAP]?: number })[TRANSPORT_CAP]
-  // The capped check comes BEFORE the body-null check: post-cap, `request.body` is the shadowed
-  // getter, and re-reading it on every `c.req` access would rebuild capped state for nothing.
-  if (maxBytes === undefined || TRANSPORT_CAPPED.has(request) || request.body === null) return
-  capRequestBodyReads(request, maxBytes)
+  // The capped check comes BEFORE the body probe: post-cap, `request.body` is the shadowed getter,
+  // and re-reading it on every `c.req` access would rebuild capped state for nothing.
+  if (maxBytes === undefined || TRANSPORT_CAPPED.has(request)) return
+  const provide = (source as { rawBodyReaders?: () => RawBodyReaders }).rawBodyReaders
+  const preset = provide === undefined ? undefined : provide.call(source)
+  // The null-body shortcut is only worth its probe when there is no cheaper surface: on a source
+  // that defers its `Request`, reading `request.body` would materialize the very object the preset
+  // readers exist to avoid. Capping a bodiless request costs nothing but the shadowing itself.
+  if (preset === undefined && request.body === null) return
+  capRequestBodyReads(request, maxBytes, preset)
   // A wrapper source (Node's lazy source) delegates its own body readers to the request once it
   // materializes - which are now the shadowed ones. Mirror the raw-reader stash onto the source so
   // framework readers (`rawBodySourceOf(source)`) keep reading pre-shadow there too.

@@ -123,6 +123,21 @@ interface NodeRequestSource {
   json(): Promise<unknown>
   jsonWithByteLength?(): Promise<{ readonly value: unknown; readonly byteLength: number }>
   readonly request: Request
+  rawBodyReaders?(): NodeRawBodyReaders
+}
+
+/**
+ * Core's `RawBodyReaders`: the pre-cap reader surface the transport cap buffers through. Mirrored
+ * structurally here rather than imported, matching how the rest of this adapter states core's
+ * contracts. Handing it over keeps a capped `c.req.json()` on the socket - no undici `Request` is
+ * built to read a body this source already knows how to read.
+ */
+interface NodeRawBodyReaders {
+  readonly headers: Pick<Headers, "get">
+  readonly body: ReadableStream<Uint8Array> | null
+  arrayBuffer(): Promise<ArrayBuffer>
+  bytes(): Promise<Uint8Array>
+  json(): Promise<unknown>
 }
 
 interface NodeContextSet {
@@ -1087,6 +1102,33 @@ function originUrlParts(target: string): { pathname: string; search: string } {
   }
 }
 
+/** An `ArrayBuffer` spanning exactly the view - Node hands back pooled buffers, so a caller that
+ * receives the raw `.buffer` would see (and could reach into) unrelated requests' bytes. */
+function detachedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+}
+
+function parseJsonBytes(bytes: Uint8Array): unknown {
+  const buffer = Buffer.isBuffer(bytes)
+    ? bytes
+    : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  return JSON.parse(buffer.toString("utf8")) as unknown
+}
+
+/** A one-chunk stream replaying already-buffered bytes. `highWaterMark: 0` keeps construction free
+ * of a pull, and the copy keeps the shared buffer out of a consumer's reach. */
+function streamOfBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        controller.enqueue(bytes.slice())
+        controller.close()
+      },
+    },
+    { highWaterMark: 0 },
+  )
+}
+
 /**
  * Lazy view over a Node `IncomingMessage`. Methods live on the prototype (not re-allocated per
  * request), and every materialization is deferred: the `Headers` object, the Web `ReadableStream`
@@ -1101,6 +1143,7 @@ class LazyNodeRequestSource implements NodeRequestSource {
   private requestValue: Request | undefined
   private consumedBody: Buffer | undefined
   private readBodyPromise: Promise<Buffer> | undefined
+  private rawReaders: NodeRawBodyReaders | undefined
   private urlValue: string | undefined
   private readonly nodeReq: IncomingMessage
   private readonly protocol: RequestProtocol
@@ -1170,6 +1213,54 @@ class LazyNodeRequestSource implements NodeRequestSource {
       value: JSON.parse(buffer.toString("utf8")) as unknown,
       byteLength: buffer.byteLength,
     }))
+  }
+
+  /**
+   * The transport cap's pre-shadow readers. Header probes hit Node's already-lowercased bag instead
+   * of building a `Headers`, and the byte readers buffer the socket directly - so a capped
+   * `c.req.json()` never materializes the undici `Request` this source is still deferring. `body`
+   * stays the live stream, so core's streaming guard still aborts a chunked body mid-flight rather
+   * than buffering it first.
+   */
+  rawBodyReaders(): NodeRawBodyReaders {
+    const source = this
+    this.rawReaders ??= {
+      headers: { get: (name: string) => source.header(name) },
+      get body(): ReadableStream<Uint8Array> | null {
+        return source.rawBodyStream()
+      },
+      arrayBuffer: () => source.rawBodyBytes().then(detachedArrayBuffer),
+      bytes: () => source.rawBodyBytes(),
+      json: () => source.rawBodyBytes().then(parseJsonBytes),
+    }
+    return this.rawReaders
+  }
+
+  /**
+   * Body bytes for the transport cap, straight off the socket. Once the Web `Request` already owns
+   * the stream (a hook that read `c.req.signal` materialized it before any body read), draining that
+   * stream is the only safe source - re-listening on the node request would split the body in two.
+   */
+  private rawBodyBytes(): Promise<Uint8Array> {
+    if (this.consumedBody !== undefined) return Promise.resolve(this.consumedBody)
+    const handed = this.bodyValue
+    if (handed != null) {
+      return new Response(handed).arrayBuffer().then((buffer) => new Uint8Array(buffer))
+    }
+    return this.readNodeBody()
+  }
+
+  /**
+   * The raw body stream, never routed back through `this.request` - post-cap that getter is the
+   * shadowed one, which reads back through these very readers. An already-consumed body replays
+   * from its buffer, matching the cap's own replay-instead-of-fail contract.
+   */
+  private rawBodyStream(): ReadableStream<Uint8Array> | null {
+    if (this.method === "GET" || this.method === "HEAD") return null
+    const consumed = this.consumedBody
+    if (consumed !== undefined) return streamOfBytes(consumed)
+    this.bodyValue ??= Readable.toWeb(this.nodeReq) as ReadableStream<Uint8Array>
+    return this.bodyValue
   }
 
   get request(): Request {

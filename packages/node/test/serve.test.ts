@@ -1062,3 +1062,125 @@ test("boundedBody's explicit cap still overrides the route cap after a c.req tou
   expect(res.status).toBe(200)
   expect(await res.json()).toEqual({ len: 100, touched: "application/octet-stream" })
 })
+
+test("SECURITY: the transport cap rejects an over-cap direct c.req.json() on the lazy source", async () => {
+  // The lazy source hands the cap its own socket readers, so a direct read never routes through a
+  // materialized Request. The cap must be exactly as strict on that surface: a 100-byte body on a
+  // 10-byte route is a 413 before the handler ever sees a value.
+  let handlerValue: unknown
+  const app = server({ maxBodyBytes: 10 }).post("/direct", async (c) => {
+    handlerValue = await c.req.json()
+    return { ok: true }
+  })
+  running = await serve(app, { port: 0 })
+
+  const res = await fetch(`http://localhost:${running.port}/direct`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: "a".repeat(100) }),
+  })
+  expect(res.status).toBe(413)
+  expect(handlerValue).toBeUndefined()
+})
+
+test("SECURITY: an over-cap CHUNKED body is capped mid-stream on a direct c.req read", async () => {
+  // No Content-Length → the cap's raw `body` must still be the LIVE stream, so the streaming guard
+  // aborts once the running byte count passes the cap. Buffering first and checking after would
+  // defeat the very case the cap exists for.
+  let capped: number | undefined
+  let completed = false
+  const app = server({ maxBodyBytes: 1024 }).post("/stream", async (c) => {
+    try {
+      await c.req.arrayBuffer()
+      completed = true
+    } catch (error) {
+      if (error instanceof Response) capped = error.status
+      throw error
+    }
+    return { ok: true }
+  })
+  running = await serve(app, { port: 0 })
+
+  const chunk = new Uint8Array(4096).fill(97)
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (let i = 0; i < 4; i++) controller.enqueue(chunk) // 16 KB > 1 KB cap
+      controller.close()
+    },
+  })
+  try {
+    await fetch(`http://localhost:${running.port}/stream`, {
+      method: "POST",
+      body: stream,
+      duplex: "half",
+    } as RequestInit & { duplex: "half" })
+  } catch {
+    // A streaming client can see a reset when the server caps mid-upload - expected.
+  }
+  await Bun.sleep(50)
+  expect(capped).toBe(413)
+  expect(completed).toBe(false)
+})
+
+test("c.req.body replays after a direct c.req.json() instead of re-entering the capped readers", async () => {
+  // The capped `body` getter reads the raw surface, and on the lazy source that surface must not
+  // route back through `c.req` - which is the capped getter itself. A consumed body replays.
+  const app = server().post("/twice", async (c) => {
+    const parsed = (await c.req.json()) as { n: number }
+    const body = c.req.body
+    const replayed =
+      body === null
+        ? ""
+        : new TextDecoder().decode((await new Response(body).bytes()) as Uint8Array)
+    return { parsed, replayed }
+  })
+  running = await serve(app, { port: 0 })
+
+  const res = await fetch(`http://localhost:${running.port}/twice`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ n: 7 }),
+  })
+  expect(await res.json()).toEqual({ parsed: { n: 7 }, replayed: '{"n":7}' })
+})
+
+test("c.req.json() is complete after a non-body member already materialized the Request", async () => {
+  // Reading a non-body member (`bodyUsed`) builds the real Request and hands it the body stream. The
+  // cap's raw readers must then drain THAT stream rather than re-listening on the node request,
+  // which would split the body between two readers.
+  const app = server().post("/late", (c) => {
+    void c.req.bodyUsed
+    return c.req.json()
+  })
+  running = await serve(app, { port: 0 })
+
+  const res = await fetch(`http://localhost:${running.port}/late`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ hello: "world" }),
+  })
+  expect(await res.json()).toEqual({ hello: "world" })
+})
+
+test("SECURITY: c.req.clone() inherits the route cap on the lazy source", async () => {
+  // A clone must not mint an uncapped escape hatch: the same 413 applies to the copy.
+  let cloneStatus: number | undefined
+  const app = server({ maxBodyBytes: 10 }).post("/clone", async (c) => {
+    try {
+      await c.req.clone().text()
+    } catch (error) {
+      if (error instanceof Response) cloneStatus = error.status
+      throw error
+    }
+    return { ok: true }
+  })
+  running = await serve(app, { port: 0 })
+
+  const res = await fetch(`http://localhost:${running.port}/clone`, {
+    method: "POST",
+    headers: { "content-type": "text/plain" },
+    body: "x".repeat(100),
+  })
+  expect(res.status).toBe(413)
+  expect(cloneStatus).toBe(413)
+})
