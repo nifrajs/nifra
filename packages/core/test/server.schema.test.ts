@@ -215,6 +215,25 @@ describe("body validation", () => {
     expect(await res.json()).toEqual({ name: "a longer but bounded name" })
   })
 
+  test("a schema body route can read request metadata before body validation", async () => {
+    const app = server({ maxBodyBytes: 10 })
+      .derive((c) => ({
+        authorization: c.req.headers.get("authorization"),
+      }))
+      .post("/metadata", { body: userBody, bodyLimit: 100 }, (c) => ({
+        authorization: c.authorization,
+        name: c.body.name,
+      }))
+    const res = await app.fetch(
+      new Request("http://localhost/metadata", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: "Bearer test" },
+        body: JSON.stringify({ name: "Ada" }),
+      }),
+    )
+    expect(await res.json()).toEqual({ authorization: "Bearer test", name: "Ada" })
+  })
+
   test("a valid streamed body (no Content-Length) reads through the streaming path", async () => {
     const app = server().post("/users", { body: userBody }, (c) => c.body)
     const req = streamRequest("/users", JSON.stringify({ name: "Ada" }))

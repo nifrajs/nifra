@@ -2841,7 +2841,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // never direct-reads pays nothing. Framework readers bypass the shadow (`rawBodySourceOf`) and
     // keep their own caps, so `c.boundedBody(explicit)` still overrides upward.
     // `bodyLimit: "unlimited"` (undefined here) skips the cap entirely.
-    if (entry.bodyLimit !== undefined) {
+    // A schema route consumes and validates the body through `readBodyInput` before any derive or
+    // handler can reach `c.req`; that lane already enforces `entry.bodyLimit`. Installing the full
+    // direct-reader cap on `c.req` here would allocate bound readers, closures, and a stream wrapper
+    // for a body that is already consumed. Keep the lazy transport cap for raw-body routes, where a
+    // user read is the only framework-owned body boundary.
+    if (entry.bodyLimit !== undefined && entry.schema?.body === undefined) {
       const method = source.method
       if (method !== "GET" && method !== "HEAD") markTransportCap(source, entry.bodyLimit)
     }
@@ -4701,7 +4706,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // The fused native lane bypasses `runMatched`, so the route's transport byte cap must be
     // marked here too - otherwise a Bun `listen()` fused route would leave direct `c.req` body
     // reads uncapped. The non-fused branches go through `fetchMatched` -> `runMatched`, which marks.
-    const bodyLimit = entry.bodyLimit
+    const bodyLimit = entry.schema?.body === undefined ? entry.bodyLimit : undefined
     const inner = fused
     const capped: FusedWebRunner | undefined =
       inner === undefined || bodyLimit === undefined
