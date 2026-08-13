@@ -150,7 +150,7 @@ function withStaticHeaderInit(
 const IS_DENO = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined"
 let denoJsonContentType: string | undefined
 
-function responseJsonContentType(): string {
+export function responseJsonContentType(): string {
   if (denoJsonContentType === undefined) {
     denoJsonContentType = Response.json(0).headers.get("content-type") ?? "application/json"
   }
