@@ -256,6 +256,169 @@ function isResponseResult(value: unknown): value is NodeResponseResult {
   )
 }
 
+interface DeferredBodyView {
+  readonly status: number
+  readonly headers: Record<string, string>
+  readonly body: string
+}
+
+/** The native `Response` body-init type, sourced from the constructor (core stays DOM-lib-free). */
+type ResponseBodyInit = ConstructorParameters<typeof Response>[0]
+
+/**
+ * The content-type a native `new Response(<string>)` infers when the caller sets none. Read off the
+ * native `Response` at load (before any patch), so a deferred string body carries the exact same
+ * content-type byte for byte as the runtime would have produced. */
+const STRING_BODY_CONTENT_TYPE =
+  new Response("").headers.get("content-type") ?? "text/plain;charset=UTF-8"
+
+/**
+ * The one shape a raw `new Response(...)` can be served from without building the undici `Response`:
+ * a string body, no `statusText`, and no headers or a plain-object record of string values (a
+ * `Headers` instance, an entries array, a `Map` all fail the prototype check and take the real path).
+ * `undefined` means "this needs a real `Response`". A string body with no explicit content-type gets
+ * the same one the native constructor would have inferred, so the wire bytes are unchanged.
+ */
+function deferredBodyView(
+  body: ResponseBodyInit,
+  init: ResponseInit | undefined,
+): DeferredBodyView | undefined {
+  if (typeof body !== "string") return undefined
+  if (init === undefined || init === null) {
+    return { status: 200, headers: { "content-type": STRING_BODY_CONTENT_TYPE }, body }
+  }
+  if (init.statusText !== undefined) return undefined
+  const headers: Record<string, string> = {}
+  let hasContentType = false
+  const source = init.headers
+  if (source !== undefined) {
+    const proto = Object.getPrototypeOf(source)
+    if (proto !== Object.prototype && proto !== null) return undefined
+    for (const name of Object.keys(source)) {
+      const value = (source as Record<string, unknown>)[name]
+      if (typeof value !== "string") return undefined
+      const lower = name.toLowerCase()
+      headers[lower] = value
+      if (lower === "content-type") hasContentType = true
+    }
+  }
+  if (!hasContentType) headers["content-type"] = STRING_BODY_CONTENT_TYPE
+  return { status: init.status ?? 200, headers, body }
+}
+
+/**
+ * A `Response` stand-in for the opt-in global patch ({@link installFastResponse}). A *simple* `new
+ * Response("Hi")` defers exactly like `c.text` does - it carries the `ResponseResult` protocol
+ * `toOutcome` prefers, so the reply reaches the writer without a body-stream drain - while anything
+ * with a shape only a real `Response` carries (a stream, a `Blob`, `null`, a `Headers` instance)
+ * builds one up front, unchanged. Kept here, not imported from core: this adapter depends on core
+ * only through the shared `Symbol.for` marks, never a package import.
+ */
+const DeferringResponse = /* @__PURE__ */ (() => {
+  const NativeResponse = globalThis.Response
+
+  class DeferringResponse {
+    /** Set from the start for a non-simple body; otherwise built lazily from `#view`. */
+    #real: Response | undefined
+    /** The direct-write view for a simple body; `undefined` once `#real` exists. */
+    #view: DeferredBodyView | undefined
+
+    constructor(body?: ResponseBodyInit, init?: ResponseInit) {
+      const view = deferredBodyView(body, init)
+      if (view === undefined) {
+        this.#real = new NativeResponse(body, init)
+      } else {
+        this.#view = view
+      }
+    }
+
+    get status(): number {
+      return this.#view !== undefined ? this.#view.status : (this.#real as Response).status
+    }
+
+    get _real(): Response {
+      if (this.#real === undefined) {
+        const view = this.#view as DeferredBodyView
+        const real = new NativeResponse(view.body, { status: view.status, headers: view.headers })
+        // Tag the materialized body so a hook that only read `.headers` still writes bytes without a
+        // drain - the same mark `nodeOutcomeFromResponse` reads.
+        Object.defineProperty(real, NODE_RESPONSE_BODY, { value: view.body })
+        this.#real = real
+      }
+      return this.#real
+    }
+
+    toResponse(): Response {
+      return this._real
+    }
+
+    toNodeBody(): DeferredBodyView | undefined {
+      return this.#real === undefined ? this.#view : undefined
+    }
+  }
+
+  // Forward every other Response member to the lazily materialized real response; data properties
+  // (e.g. Symbol.toStringTag) are reached through the chained prototype without a brand check.
+  const own = new Set<string | symbol>([
+    "constructor",
+    "status",
+    "_real",
+    "toResponse",
+    "toNodeBody",
+  ])
+  const keys: Array<string | symbol> = [
+    ...Object.getOwnPropertyNames(NativeResponse.prototype),
+    ...Object.getOwnPropertySymbols(NativeResponse.prototype),
+  ]
+  for (const key of keys) {
+    if (own.has(key)) continue
+    const descriptor = Object.getOwnPropertyDescriptor(NativeResponse.prototype, key)
+    if (descriptor === undefined) continue
+    if (typeof descriptor.value === "function") {
+      Object.defineProperty(DeferringResponse.prototype, key, {
+        configurable: true,
+        writable: true,
+        value: function (this: InstanceType<typeof DeferringResponse>, ...args: unknown[]) {
+          const real = this._real as unknown as Record<string | symbol, unknown>
+          return (real[key] as (...a: unknown[]) => unknown).apply(real, args)
+        },
+      })
+    } else if (descriptor.get !== undefined) {
+      Object.defineProperty(DeferringResponse.prototype, key, {
+        configurable: true,
+        get(this: InstanceType<typeof DeferringResponse>) {
+          return (this._real as unknown as Record<string | symbol, unknown>)[key]
+        },
+      })
+    }
+  }
+  Object.defineProperty(DeferringResponse.prototype, RESPONSE_RESULT, { value: true })
+  Object.setPrototypeOf(DeferringResponse.prototype, NativeResponse.prototype)
+  // Inherit the native statics (`Response.json` / `redirect` / `error`) so they still resolve after
+  // the swap; those build a real `Response` - the deferral is for the constructor path.
+  Object.setPrototypeOf(DeferringResponse, NativeResponse)
+  // `Response.json(...)` (and a native `Response` some other library built before the swap) returns a
+  // native instance, whose prototype sits *above* ours; treat any native `Response` as an instance so
+  // `x instanceof Response` stays true across the swap. A deferred instance chains through
+  // `NativeResponse.prototype` too, so it also passes.
+  Object.defineProperty(DeferringResponse, Symbol.hasInstance, {
+    configurable: true,
+    value: (instance: unknown): boolean => instance instanceof NativeResponse,
+  })
+  return DeferringResponse
+})()
+
+/**
+ * Swap `globalThis.Response` for {@link DeferringResponse}. Idempotent (guarded on identity, so a
+ * repeated `serve({ fastResponse: true })` is a no-op) and not auto-restored: the swap is transparent
+ * for every construction (simple bodies defer, the rest build a real `Response`), so it can stay in
+ * place for the process lifetime once any server opts in.
+ */
+function installFastResponse(): void {
+  if (globalThis.Response === (DeferringResponse as unknown)) return
+  globalThis.Response = DeferringResponse as unknown as typeof Response
+}
+
 function appendCookiesToResponse(
   response: Response,
   cookies: readonly string[] | undefined,
@@ -412,6 +575,18 @@ export interface ServeOptions {
    * SSR/API routes). Replaces the hand-rolled `/assets/*` reader in self-hosted entries.
    */
   readonly static?: ServeStaticOptions
+  /**
+   * Make a hand-rolled `return new Response(body)` ride the direct-write lane, by swapping
+   * `globalThis.Response` for a stand-in that defers a *simple* construction (a string body, no
+   * `statusText`, no headers or a plain header record) the way `c.text` / `c.json` already do.
+   *
+   * Off by default: prefer `c.text` / `c.json`, which get this without a global swap. Reach for the
+   * flag only when handlers construct `Response` by hand on the hot path. It patches a process-global
+   * builtin, so every `new Response(...)` anywhere in the process goes through the stand-in -
+   * transparent (non-simple bodies build a real `Response`, and simple ones stay `instanceof
+   * Response`), but a broad enough change to be opt-in.
+   */
+  readonly fastResponse?: boolean
 }
 
 export interface NodeServer {
@@ -708,6 +883,7 @@ function activateAsyncContextFrame(): void {
 export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeServer> {
   activateAsyncContextFrame()
   enableNodeDirect(app)
+  if (options.fastResponse === true) installFastResponse()
   let inFlight = 0
   let closed = false
   const protocol = protocolResolver(options.protocol)

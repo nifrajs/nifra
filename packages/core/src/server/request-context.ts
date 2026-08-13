@@ -288,6 +288,13 @@ export class RequestContext implements RawContext {
     this.headersValue = value
   }
 
+  /**
+   * Return a JSON body. Prefer this (and {@link text}) over a hand-rolled `return new Response(...)`:
+   * on Node these helpers hand the adapter a status, a header record, and the bytes directly, so the
+   * Web `Response` is deferred and the reply lands on the fastest write lane. A raw `new Response` is
+   * fully supported and returns identical bytes, but it is the last-resort lane - the adapter has to
+   * drain its body stream, which no direct-write helper pays.
+   */
   json(body: unknown, init?: ResponseInit | number): Response {
     const i = statusInit(init)
     if (!DEFERS_RESPONSE) return Response.json(body, i)
@@ -303,6 +310,11 @@ export class RequestContext implements RawContext {
     return lazyResponse(text, i?.status ?? 200, headers)
   }
 
+  /**
+   * Return a text body. The fast lane on Node - see {@link json}. Reach for a raw `return new
+   * Response(body)` only when you need a Response shape these helpers do not build; it costs the
+   * adapter a body-stream drain that this path skips.
+   */
   text(body: string, init?: ResponseInit | number): Response {
     const i = statusInit(init)
     if (DEFERS_RESPONSE) {
