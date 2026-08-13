@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/web-react",
-  "version": "2.12.0",
+  "version": "2.12.1",
   "description": "React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babel).",
   "keywords": [
     "bun",

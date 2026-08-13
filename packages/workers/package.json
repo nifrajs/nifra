@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/workers",
-  "version": "2.12.0",
+  "version": "2.12.1",
   "description": "Cloudflare Workers helpers for nifra - a Durable Object hub for cross-connection WebSocket broadcast.",
   "keywords": [
     "bun",
