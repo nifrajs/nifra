@@ -24,6 +24,80 @@ import {
   walkServerOnlyChain,
 } from "../src/check.ts"
 import { createSourceFacts } from "../src/internal/source-facts.ts"
+import {
+  collectReleaseVerification,
+  type ReleaseCommandResult,
+  type ReleaseCommandSpec,
+  resolveVerificationRoot,
+} from "../src/release-verification.ts"
+import { createFixtureProject, createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
+
+describe("release verification", () => {
+  test("uses the workspace root when invoked from a subdirectory and runs the default plan", async () => {
+    const root = createFixtureRoot("verify-root")
+    try {
+      await Bun.write(
+        join(root, "package.json"),
+        JSON.stringify({ private: true, workspaces: ["*"] }),
+      )
+      const project = createFixtureProject(root, "project-")
+      await Bun.write(join(project, "package.json"), JSON.stringify({ name: "project" }))
+      expect(await resolveVerificationRoot(project)).toBe(root)
+
+      const calls: ReleaseCommandSpec[] = []
+      const fake = async (spec: ReleaseCommandSpec): Promise<ReleaseCommandResult> => {
+        calls.push(spec)
+        return { exitCode: 0 }
+      }
+      const result = await collectReleaseVerification(project, { runCommand: fake })
+      expect(result.ok).toBe(true)
+      expect(result.gates.map((gate) => gate.id)).toEqual([
+        "lint",
+        "typecheck",
+        "tests",
+        "docs",
+        "api-corpus",
+        "cards-corpus",
+        "node-outcome-corpus",
+        "sitemap",
+        "public-boundary",
+        "size",
+      ])
+      expect(calls.every((call) => call.cwd === root)).toBe(true)
+      expect(new Set(calls.map((call) => call.env.NIFRA_VERIFY_GATE)).size).toBe(calls.length)
+    } finally {
+      removeFixtureRoot(root)
+    }
+  })
+
+  test("runs coverage before its ratchet and stops after the first failed gate", async () => {
+    const root = createFixtureRoot("verify-release")
+    try {
+      await Bun.write(join(root, "package.json"), JSON.stringify({ private: true, workspaces: [] }))
+      const calls: string[] = []
+      const fake = async (spec: ReleaseCommandSpec): Promise<ReleaseCommandResult> => {
+        calls.push(spec.args.join(" "))
+        return {
+          exitCode:
+            spec.args.join(" ") === "run test:coverage"
+              ? 0
+              : spec.args.join(" ") === "run check:coverage"
+                ? 1
+                : 0,
+        }
+      }
+      const result = await collectReleaseVerification(root, { mode: "release", runCommand: fake })
+      expect(result.ok).toBe(false)
+      expect(calls.indexOf("run test:coverage")).toBeLessThan(calls.indexOf("run check:coverage"))
+      expect(result.gates.find((gate) => gate.id === "coverage")?.remediation).toContain(
+        "test:coverage",
+      )
+      expect(result.gates.at(-1)?.status).toBe("skipped")
+    } finally {
+      removeFixtureRoot(root)
+    }
+  })
+})
 
 describe("scanFetchText - own-API fetch detection", () => {
   test("flags relative-URL fetch (string and template), with accurate line numbers", () => {

@@ -104,6 +104,8 @@ Usage:
   nifra check   [--json] [--lints-only]  Gate: typecheck + lints (hand-rolled fetch(), untyped client("…"),
                                          server-only imports in routes/). Run as "done"; --json for agents;
                                          --lints-only skips tsc for a near-instant inner-loop pass.
+  nifra verify   [--release] [--json]    Run the shared repository verification gate. --release runs the
+                                         full build, test, coverage, corpus, consumer, and cross-runtime gate.
   nifra fix     [--code <NF-code>]       Apply a registered diagnostic recipe, then print the remaining
                                          structured diagnostics.
   nifra sync-manifest                    Regenerate a committed web server-manifest.ts from routes/ WITHOUT
@@ -647,6 +649,15 @@ async function main(): Promise<void> {
       }))
     )
       process.exitCode = 1
+    return
+  }
+  if (command === "verify") {
+    const { runReleaseVerification } = await import("./release-verification.ts")
+    const ok = await runReleaseVerification(process.cwd(), {
+      mode: argv.includes("--release") ? "release" : "default",
+      json: argv.includes("--json"),
+    })
+    if (!ok) process.exitCode = 1
     return
   }
   if (command === "fix") {
