@@ -323,13 +323,25 @@ const DeferringResponse = /* @__PURE__ */ (() => {
     /** The direct-write view for a simple body; `undefined` once `#real` exists. */
     #view: DeferredBodyView | undefined
 
-    constructor(body?: ResponseBodyInit, init?: ResponseInit) {
+    constructor(body?: ResponseBodyInit, init?: ResponseInit, prebuilt?: DeferredBodyView) {
+      // `c.json`/`c.text` reach the fast lane through `fromView`: core has already built the owned,
+      // lowercase, content-typed record, so the view is taken as-is - no second header walk.
+      if (prebuilt !== undefined) {
+        this.#view = prebuilt
+        return
+      }
       const view = deferredBodyView(body, init)
       if (view === undefined) {
         this.#real = new NativeResponse(body, init)
       } else {
         this.#view = view
       }
+    }
+
+    /** A deferred response over an already-built direct-write view - the seam core's `c.json`/`c.text`
+     * register (see below), skipping the `deferredBodyView` walk the raw `new Response` patch runs. */
+    static fromView(view: DeferredBodyView): Response {
+      return new DeferringResponse(undefined, undefined, view) as unknown as Response
     }
 
     get status(): number {
@@ -407,6 +419,18 @@ const DeferringResponse = /* @__PURE__ */ (() => {
   })
   return DeferringResponse
 })()
+
+// Hand core's `c.json`/`c.text` Node fast lane a deferred-response factory over the shared-symbol seam
+// (no core import - the same `Symbol.for` convention as the marks above, so core ships none of this
+// class in a Bun/Deno bundle). Reuses DeferringResponse from an already-owned header record, so the
+// helper skips the header re-walk `deferredBodyView` does for the raw `new Response` patch. `??=`:
+// first adapter load wins; a re-import is a no-op.
+const DEFERRED_RESPONDER_KEY = Symbol.for("nifra.deferred.responder")
+;(globalThis as unknown as Record<symbol, unknown>)[DEFERRED_RESPONDER_KEY] ??= (
+  body: string,
+  status: number,
+  headers: Record<string, string>,
+): Response => DeferringResponse.fromView({ status, headers, body })
 
 /**
  * Swap `globalThis.Response` for {@link DeferringResponse}. Idempotent (guarded on identity, so a

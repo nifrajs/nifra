@@ -17,7 +17,6 @@ import type { Platform } from "./context.ts"
 import { type CookieOptions, cookieNamePrefix, parseCookies, serializeCookie } from "./cookies.ts"
 import { headerObjectOf } from "./headers.ts"
 import { jsonError } from "./http.ts"
-import { lazyResponse } from "./lazy-response.ts"
 import { guardParsedValue, type ProtoPoisoning, parseJsonGuarded } from "./proto-guard.ts"
 import { searchOf } from "./query.ts"
 import { responseJsonContentType } from "./respond.ts"
@@ -103,6 +102,28 @@ const DEFERS_RESPONSE =
   typeof (globalThis as { Bun?: unknown }).Bun === "undefined" &&
   typeof (globalThis as { process?: { versions?: { node?: unknown } } }).process?.versions?.node ===
     "string"
+
+/**
+ * The Node adapter's deferred-response factory, received over the shared-symbol seam rather than a
+ * package import - `@nifrajs/node` stays dependency-free from core's runtime and talks to it only
+ * through `Symbol.for` marks, so the stand-in it builds (and the ~0.4 KB gzip the class costs) never
+ * ships in a Bun/Deno bundle that will never run this branch. `c.json`/`c.text` route the Node fast
+ * lane through it: given a status, an owned header record, and the bytes, it returns a `Response`-shaped
+ * value the bridge writes straight to the socket (no undici `Response` built, no body stream drained).
+ * Absent - no adapter loaded - the two helpers fall back to a real `Response`. Cached on first read;
+ * the adapter registers at its own module load, before any request reaches a handler.
+ */
+const DEFERRED_RESPONDER_KEY = Symbol.for("nifra.deferred.responder")
+type DeferredResponder = (body: string, status: number, headers: Record<string, string>) => Response
+let deferredResponder: DeferredResponder | undefined
+function deferredResponderFor(): DeferredResponder | undefined {
+  if (deferredResponder === undefined) {
+    deferredResponder = (globalThis as unknown as Record<symbol, DeferredResponder | undefined>)[
+      DEFERRED_RESPONDER_KEY
+    ]
+  }
+  return deferredResponder
+}
 
 /**
  * A header record the deferred response can own outright - a fresh object with lowercase names, since
@@ -298,6 +319,8 @@ export class RequestContext implements RawContext {
   json(body: unknown, init?: ResponseInit | number): Response {
     const i = statusInit(init)
     if (!DEFERS_RESPONSE) return Response.json(body, i)
+    const defer = deferredResponderFor()
+    if (defer === undefined) return Response.json(body, i)
     // The same bytes `Response.json` would produce, kept one step short of it so the direct writer
     // can have them. `JSON.stringify` returns `undefined` for a value with no JSON form (`undefined`,
     // a function, a symbol) - exactly the case where `Response.json` throws, so hand it back the
@@ -307,7 +330,7 @@ export class RequestContext implements RawContext {
     if (text === undefined) return Response.json(body, i)
     const headers = ownHeaderRecord(i?.headers, responseJsonContentType())
     if (headers === undefined) return Response.json(body, i)
-    return lazyResponse(text, i?.status ?? 200, headers)
+    return defer(text, i?.status ?? 200, headers)
   }
 
   /**
@@ -318,14 +341,17 @@ export class RequestContext implements RawContext {
   text(body: string, init?: ResponseInit | number): Response {
     const i = statusInit(init)
     if (DEFERS_RESPONSE) {
-      // The content-type each shape would have ended up with: nifra's declared default when the
-      // caller brought no headers, the runtime's own string-body default when they did (there the
-      // caller owns the content-type, and only fills in for one they did not set).
-      const headers = ownHeaderRecord(
-        i?.headers,
-        i?.headers === undefined ? TEXT_CONTENT_TYPE : responseTextContentType(),
-      )
-      if (headers !== undefined) return lazyResponse(body, i?.status ?? 200, headers)
+      const defer = deferredResponderFor()
+      if (defer !== undefined) {
+        // The content-type each shape would have ended up with: nifra's declared default when the
+        // caller brought no headers, the runtime's own string-body default when they did (there the
+        // caller owns the content-type, and only fills in for one they did not set).
+        const headers = ownHeaderRecord(
+          i?.headers,
+          i?.headers === undefined ? TEXT_CONTENT_TYPE : responseTextContentType(),
+        )
+        if (headers !== undefined) return defer(body, i?.status ?? 200, headers)
+      }
     }
     // Default to text/plain; if the caller passes their own headers, they own the content-type.
     if (i?.headers !== undefined) return new Response(body, i)

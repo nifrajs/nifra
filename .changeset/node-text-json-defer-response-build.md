@@ -1,5 +1,6 @@
 ---
 "@nifrajs/core": patch
+"@nifrajs/node": patch
 ---
 
 On Node, `c.text(...)` and `c.json(...)` now defer building the Web `Response`. The adapter writes a

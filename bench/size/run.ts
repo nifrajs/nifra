@@ -179,15 +179,24 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
 // gzip, uniform across the matrix (bare 25.1 -> 25.3), because all three sit in the kernel where any
 // route can reach them. Every ceiling is now the measured number plus ~0.2 KB, so a regression of the
 // same size as that batch still trips the gate rather than fitting inside the slack.
+// Two forces moved the ceilings this round; the net is +~0.1 KB gzip, uniform across the matrix (bare
+// 25.3 -> 25.6). CREDIT: the `c.json`/`c.text` Node fast lane's deferred-`Response` stand-in left the
+// core bundle (~0.25 KB gzip off bare). It is a Node-only optimization - Bun and Deno hand a real
+// `Response` to their native server and never take the branch - so it now lives in `@nifrajs/node`,
+// handed to core over the shared `Symbol.for` seam and shipped only in a Node bundle. COST, larger:
+// the regex pathological-input hardening (bounded matchers over untrusted path/query input) and the
+// per-route direct body-read caps both sit in the kernel where any route on any runtime can reach
+// them, so their ~0.35 KB gzip is paid once in `nifra-bare` and inherited. Same rule as before: each
+// ceiling is the measured number plus ~0.2 KB, tight enough that a regression of that size still trips.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
-  "nifra-bare": 25.5,
+  "nifra-bare": 25.8,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 28.6,
-  "nifra-effect-ledger": 27.5,
-  "nifra-mcp": 25.8,
-  "nifra-sse": 26.2,
-  "nifra-valibot": 26.5,
-  "nifra-typebox-t": 55.6,
+  "nifra-idempotency": 28.9,
+  "nifra-effect-ledger": 27.8,
+  "nifra-mcp": 26.1,
+  "nifra-sse": 26.5,
+  "nifra-valibot": 26.8,
+  "nifra-typebox-t": 55.9,
 }
 
 const main = async (): Promise<void> => {

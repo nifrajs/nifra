@@ -444,8 +444,8 @@
     "lines": 91.8918918918919
   },
   "packages/core/src/server/request-context.ts": {
-    "functions": 90.69767441860465,
-    "lines": 100
+    "functions": 84.78260869565217,
+    "lines": 92.26190476190476
   },
   "packages/core/src/server/respond.ts": {
     "functions": 95.83333333333334,
@@ -840,8 +840,8 @@
     "lines": 87.5
   },
   "packages/node/src/index.ts": {
-    "functions": 90.0709219858156,
-    "lines": 99.23444976076556
+    "functions": 87.95180722891565,
+    "lines": 98.39662447257383
   },
   "packages/otel/src/causality.ts": {
     "functions": 100,
