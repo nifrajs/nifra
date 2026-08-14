@@ -90,25 +90,34 @@ describe("renderSizeReport", () => {
 // --- Server-manifest drift (#7) -----------------------------------------------------------------------
 
 // An eager manifest (the default `generateServerManifest` shape) importing three routes + the bare
-// `@nifrajs/web` import (which must be ignored) + a baked clientEntry.
+// `@nifrajs/web` import (which must be ignored) + a baked clientEntry. Import specifiers are emitted
+// extensionless (so a bare `tsc` compiles the manifest); the route-map KEYS carry the `.tsx` identity.
 const EAGER_MANIFEST = [
-  'import { buildManifest } from "@nifrajs/web"',
-  'import * as m0 from "./routes/_layout.tsx"',
-  'import * as m1 from "./routes/about.tsx"',
-  'import * as m2 from "./routes/index.tsx"',
-  "const modules = { }",
+  'import { buildManifest, type RouteModule } from "@nifrajs/web"',
+  'import * as m0 from "./routes/_layout"',
+  'import * as m1 from "./routes/about"',
+  'import * as m2 from "./routes/index"',
+  "const modules: Record<string, RouteModule> = {",
+  '  "_layout.tsx": m0,',
+  '  "about.tsx": m1,',
+  '  "index.tsx": m2,',
+  "}",
   'export const clientEntry = "/assets/_nifra-entry-deadbeef.js"',
+  "export const styles = []",
+  "export const routeStyles = {}",
   "export const manifest = buildManifest(Object.keys(modules), (file) => () => Promise.resolve(modules[file]))",
 ].join("\n")
 
 // A lazy manifest (`() => import(...)`), the other shape generateServerManifest emits.
 const LAZY_MANIFEST = [
-  'import { buildManifest } from "@nifrajs/web"',
-  "const loaders = {",
-  '  "_layout.tsx": () => import("./routes/_layout.tsx"),',
-  '  "index.tsx": () => import("./routes/index.tsx"),',
+  'import { buildManifest, type RouteModule } from "@nifrajs/web"',
+  "const loaders: Record<string, () => Promise<RouteModule>> = {",
+  '  "_layout.tsx": () => import("./routes/_layout"),',
+  '  "index.tsx": () => import("./routes/index"),',
   "}",
   'export const clientEntry = "/assets/_nifra-entry-cafe1234.js"',
+  "export const styles = []",
+  "export const routeStyles = {}",
   "export const manifest = buildManifest(Object.keys(loaders), (file) => () => loaders[file]())",
 ].join("\n")
 
@@ -125,9 +134,16 @@ describe("parseManifestRouteFiles", () => {
     expect(parseManifestRouteFiles(LAZY_MANIFEST)).toEqual(["_layout.tsx", "index.tsx"])
   })
 
-  test("respects a custom routes prefix", () => {
-    const src = 'import * as m0 from "../app/routes/index.tsx"'
-    expect(parseManifestRouteFiles(src, "../app/routes/")).toEqual(["index.tsx"])
+  test("reads the extension-bearing keys regardless of import prefix, ignoring baked routeStyles", () => {
+    const src = [
+      "const loaders: Record<string, () => Promise<RouteModule>> = {",
+      '  "index.tsx": () => import("../app/routes/index"),',
+      "}",
+      // A single-line `routeStyles` whose keys must NOT be mistaken for route-map entries - including
+      // one (`gone.tsx`) that is not a live route at all.
+      'export const routeStyles = {"index.tsx":["/a.css"],"gone.tsx":["/b.css"]}',
+    ].join("\n")
+    expect(parseManifestRouteFiles(src)).toEqual(["index.tsx"])
   })
 })
 
@@ -491,13 +507,20 @@ describe("server-manifest resync preserves what it cannot recompute", () => {
     expect(next).toContain("/assets/_nifra-deadbeef.js")
     expect(next).toContain("/assets/app-1.css")
     expect(next).toContain("/assets/index-9.css")
-    expect(next).toContain("./routes/index.tsx")
+    // The route is re-emitted with its extensionless import specifier and its `.tsx` map key.
+    expect(next).toContain('import * as m0 from "./routes/index"')
+    expect(next).toContain('"index.tsx": m0,')
   })
 
   test("resync keeps the manifest's existing eager/lazy shape", () => {
     // Switching a committed manifest from lazy to eager (or back) changes the app's chunking, which a
     // command that only re-lists routes has no business doing.
-    const lazySource = BUILT.replace("const modules = { }", "const loaders = { }")
+    // The REAL lazy emit annotates the declaration (`const loaders: Record<...> = {`); the `:` between
+    // the name and `=` is exactly what defeated the old substring detector, so the fixture must carry it.
+    const lazySource = BUILT.replace(
+      "const modules = { }",
+      "const loaders: Record<string, () => Promise<RouteModule>> = { }",
+    )
     const manifest = {
       routes: [
         {

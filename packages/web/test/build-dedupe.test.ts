@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test"
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import type { BunPlugin } from "bun"
 import { preactDedupePlugin, reactDedupePlugin } from "../src/build.ts"
 
@@ -40,6 +43,54 @@ test("reactDedupePlugin pins react + jsx runtimes to one copy, leaves react-dom/
   expect(matches("react-dom")).toBe(false)
   expect(matches("react-dom/server")).toBe(false)
   expect(matches("react-router")).toBe(false)
+})
+
+test("reactDedupePlugin handles a linked package repo without mutating the consumer store", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-linked-react-"))
+  try {
+    const app = join(root, "consumer-app")
+    const shared = join(root, "shared-package-repo")
+    const appReact = join(app, "node_modules", "react")
+    const linkedReact = join(shared, "node_modules", "react")
+    const linkedPackage = join(app, "node_modules", "linked-widget")
+    const storeSentinel = join(app, "node_modules", ".bun", "store-sentinel.txt")
+    for (const dir of [appReact, linkedReact, join(app, "node_modules", ".bun")])
+      await mkdir(dir, { recursive: true })
+    await writeFile(join(app, "package.json"), JSON.stringify({ name: "consumer-app" }))
+    await writeFile(
+      join(shared, "package.json"),
+      JSON.stringify({ name: "linked-widget", version: "0.1.0" }),
+    )
+    const reactPackage = JSON.stringify({
+      name: "react",
+      version: "19.2.7",
+      exports: {
+        ".": "./index.js",
+        "./jsx-runtime": "./jsx-runtime.js",
+        "./jsx-dev-runtime": "./jsx-dev-runtime.js",
+      },
+    })
+    await writeFile(join(appReact, "package.json"), reactPackage)
+    await writeFile(join(linkedReact, "package.json"), reactPackage)
+    for (const dir of [appReact, linkedReact]) {
+      await writeFile(join(dir, "index.js"), "export {}\n")
+      await writeFile(join(dir, "jsx-runtime.js"), "export {}\n")
+      await writeFile(join(dir, "jsx-dev-runtime.js"), "export {}\n")
+    }
+    await symlink(shared, linkedPackage, "dir")
+    await writeFile(storeSentinel, "must remain untouched\n")
+
+    const before = await readFile(storeSentinel, "utf8")
+    const { pinned } = collectPins(reactDedupePlugin(app))
+    const after = await readFile(storeSentinel, "utf8")
+
+    expect(pinned("react")).toBe(Bun.resolveSync("react", app))
+    expect(pinned("react")).not.toBe(Bun.resolveSync("react", shared))
+    expect(pinned("react/jsx-runtime")).toBe(Bun.resolveSync("react/jsx-runtime", app))
+    expect(after).toBe(before)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 // `examples/web-preact` is the nearest dir where `preact` resolves inside the nifra tree (it isn't a dep

@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import ts from "typescript"
 import {
   buildManifest,
   createWebApp,
@@ -143,13 +147,17 @@ test("generateServerManifest emits STATIC imports + a buildManifest-backed manif
     resolve: (file) => `./routes/${file}`,
     clientEntry: "/assets/entry-abc123.js",
   })
-  expect(code).toContain('import { buildManifest } from "@nifrajs/web"')
+  expect(code).toContain('import { buildManifest, type RouteModule } from "@nifrajs/web"')
+  expect(code).toContain("const modules: Record<string, RouteModule> = {")
   // STATIC `import * as` per unique file (5) - including dedicated terminal status pages.
   expect(code.match(/^import \* as m\d+ from /gm)?.length).toBe(5)
-  // Files are sorted: _404 (m0), _410 (m1), _layout (m2), index (m3), users/[id] (m4).
-  expect(code).toContain('import * as m1 from "./routes/_410.tsx"')
-  expect(code).toContain('import * as m2 from "./routes/_layout.tsx"')
-  expect(code).toContain('import * as m4 from "./routes/users/[id].tsx"')
+  // Files are sorted: _404 (m0), _410 (m1), _layout (m2), index (m3), users/[id] (m4). Import specifiers
+  // are EXTENSIONLESS so the manifest typechecks under a bare `tsc`; the map keys below keep `.tsx`.
+  expect(code).toContain('import * as m1 from "./routes/_410"')
+  expect(code).toContain('import * as m2 from "./routes/_layout"')
+  expect(code).toContain('import * as m4 from "./routes/users/[id]"')
+  // No source extension survives in an `import * as` specifier (the map keys below still carry it).
+  expect(code).not.toMatch(/^import \* as m\d+ from .*\.tsx"/gm)
   // modules map keyed by the route-relative path buildManifest expects (derives patterns from them).
   expect(code).toContain('"_410.tsx": m1,')
   expect(code).toContain('"index.tsx": m3,')
@@ -199,10 +207,14 @@ test("generateServerManifest({ lazy }) emits per-route import() loaders (no eage
     clientEntry: "/assets/entry-abc123.js",
     lazy: true,
   })
-  // LAZY loaders: `() => import("./routes/x")` (static specifier → one chunk per route).
-  expect(code).toContain('"index.tsx": () => import("./routes/index.tsx"),')
-  expect(code).toContain('"users/[id].tsx": () => import("./routes/users/[id].tsx"),')
+  // LAZY loaders: `() => import("./routes/x")` (static specifier → one chunk per route). The specifier
+  // is EXTENSIONLESS so the manifest typechecks under a bare `tsc`; the map KEY keeps its `.tsx`.
+  expect(code).toContain('"index.tsx": () => import("./routes/index"),')
+  expect(code).toContain("const loaders: Record<string, () => Promise<RouteModule>> = {")
+  expect(code).toContain('"users/[id].tsx": () => import("./routes/users/[id]"),')
   expect(code.match(/=> import\("\.\/routes\//g)?.length).toBe(4)
+  // No source extension survives in an import specifier (TS5097 under a plain tsc).
+  expect(code).not.toContain('import("./routes/index.tsx")')
   // No eager `import * as` namespace imports in lazy mode.
   expect(code).not.toContain("import * as m")
   // Built from the per-file loaders; clientEntry still baked; still fs-free.
@@ -211,6 +223,60 @@ test("generateServerManifest({ lazy }) emits per-route import() loaders (no eage
   )
   expect(code).toContain('export const clientEntry = "/assets/entry-abc123.js"')
   expect(code).not.toContain('"node:fs"')
+})
+
+test("generated server manifests compile under a strict consumer tsconfig", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-server-manifest-types-"))
+  try {
+    const routesDir = join(root, "routes")
+    await mkdir(routesDir, { recursive: true })
+    await writeFile(
+      join(routesDir, "index.tsx"),
+      "export default function Index() { return null }\n",
+    )
+    const manifest = buildManifest(["index.tsx"], importer)
+    // NOTE: `allowImportingTsExtensions` is deliberately NOT set - the generated manifest must typecheck
+    // under a bare consumer tsconfig. It used to emit `.tsx` import specifiers (TS5097 without the flag);
+    // extensionless specifiers resolve to the source file under any `moduleResolution` and need no flag.
+    const compilerOptions: ts.CompilerOptions = {
+      baseUrl: process.cwd(),
+      jsx: ts.JsxEmit.ReactJSX,
+      ignoreDeprecations: "6.0",
+      module: ts.ModuleKind.ESNext,
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
+      noEmit: true,
+      paths: {
+        "@nifrajs/web": [join(import.meta.dir, "../dist/index.d.ts")],
+      },
+      skipLibCheck: true,
+      strict: true,
+      target: ts.ScriptTarget.ESNext,
+    }
+
+    for (const [name, lazy] of [
+      ["eager", false],
+      ["lazy", true],
+    ] as const) {
+      const file = join(root, `${name}-server-manifest.ts`)
+      await writeFile(
+        file,
+        generateServerManifest(manifest, {
+          resolve: (route) => join(routesDir, route),
+          clientEntry: "/assets/entry.js",
+          lazy,
+        }),
+      )
+      const program = ts.createProgram([file], compilerOptions)
+      const diagnostics = ts.getPreEmitDiagnostics(program)
+      expect(
+        diagnostics.map((diagnostic) =>
+          ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"),
+        ),
+      ).toEqual([])
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 test("the lazy runtime pattern round-trips through createWebApp (loaders called on demand)", async () => {

@@ -789,28 +789,36 @@ export interface ManifestDrift {
   readonly extra: readonly string[]
 }
 
-// The route-relative specifiers the generated manifest imports. Both shapes `generateServerManifest`
-// emits are matched: eager `import * as m0 from "./routes/x.tsx"` and lazy `() => import("./routes/x")`.
-// Captures the path inside the quotes; the caller strips the routes-dir prefix to compare with discovery.
-// `\s*(?:\(\s*)?` rather than `\s*\(?\s*`: two adjacent unbounded whitespace runs with an optional
-// token between them are ambiguous, and that ambiguity backtracks quadratically on a long space run.
-const MANIFEST_IMPORT = /(?:import\s+\*\s+as\s+\w+\s+from|import)\s*(?:\(\s*)?["']([^"']+)["']\)?/g
+// The route-relative file keys the generated manifest's route map declares. Both shapes are matched by
+// their VALUE: eager `  "routes/x.tsx": m0,` and lazy `  "routes/x.tsx": () => import("./routes/x"),`.
+// The KEY (not the import specifier) is the route identity `discoverRoutes` produces, extension and all;
+// the import specifier is emitted extensionless (so a bare `tsc` compiles the manifest) and could not be
+// mapped back to the exact `.tsx`/`.ts` key. The baked `routeStyles` JSON is a single line, so its keys
+// are never at an indented line start and never match. `[ \t]+` (not `\s+`) so the `m` anchor stays on
+// the same line and one route-map entry cannot span two lines of source.
+const MANIFEST_ROUTE_ENTRY = /^[ \t]+(["'])([^"'\n]+)\1\s*:\s*(?:m\d+\b|\(\s*\)\s*=>\s*import\b)/gm
+// The lazy shape declares `const loaders`, the eager shape `const modules`. Anchored at a line start,
+// NOT `.includes("const loaders =")`: the real emit is `const loaders: Record<...> = {`, whose `:` type
+// annotation sits between the name and the `=`, so the ` =` substring never matched and every lazy
+// manifest was re-synced as eager (silently converting `import()` splitting into a single eager bundle).
+const MANIFEST_IS_LAZY = /^const loaders\b/m
 // The baked client-entry line: `export const clientEntry = "…"`.
 const MANIFEST_CLIENT_ENTRY = /export\s+const\s+clientEntry\s*=\s*["']([^"']+)["']/
 
 /**
- * Extract the route-relative file list the committed server-manifest imports, normalized to the same
- * `routes/`-relative keys `discoverRoutes` produces (e.g. `docs/index.tsx`). `routesPrefix` is the
- * specifier prefix the manifest used for the routes dir (default `./routes/`, what `buildServer`'s
- * default `resolve` emits). Only import specifiers under that prefix are route files; the
- * `@nifrajs/web` import (and any other bare specifier) is ignored. Pure - operates on source text.
+ * Extract the route-relative file list a committed server-manifest declares, as the same
+ * `routes/`-relative keys `discoverRoutes` produces (e.g. `docs/index.tsx`). Reads the route map's KEYS,
+ * which carry the file extension and no directory prefix - exactly discovery's shape - so the result is
+ * independent of the specifier prefix the manifest happened to import with. The `@nifrajs/web` import and
+ * the baked `clientEntry`/`styles`/`routeStyles` lines carry no route-map entry and are ignored.
+ *
+ * `_routesPrefix` is accepted for call-site compatibility but no longer needed: the keys are already
+ * prefix-free. Pure - operates on source text.
  */
-export function parseManifestRouteFiles(source: string, routesPrefix = "./routes/"): string[] {
+export function parseManifestRouteFiles(source: string, _routesPrefix?: string): string[] {
   const files = new Set<string>()
-  for (const match of source.matchAll(MANIFEST_IMPORT)) {
-    const spec = match[1]
-    if (spec === undefined || !spec.startsWith(routesPrefix)) continue
-    files.add(spec.slice(routesPrefix.length))
+  for (const match of source.matchAll(MANIFEST_ROUTE_ENTRY)) {
+    if (match[2] !== undefined) files.add(match[2])
   }
   return [...files].sort()
 }
@@ -885,7 +893,7 @@ export function resyncServerManifestSource(
     clientEntry: parseManifestClientEntry(source) ?? "",
     styles: parseManifestStyles(source),
     routeStyles: parseManifestRouteStyles(source),
-    lazy: source.includes("const loaders ="),
+    lazy: MANIFEST_IS_LAZY.test(source),
   })
 }
 
