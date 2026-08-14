@@ -4,7 +4,9 @@ import {
   createDurableExecutionAdapter,
   type DurableExecutionAdapter,
   DurableObjectExecutionAdapter,
+  DurableObjectRecordBackend,
   type DurableObjectStorage,
+  type DurableRecordBackend,
   MemoryDurableRecordBackend,
   type PostgresClient,
   PostgresDurableExecutionAdapter,
@@ -12,6 +14,7 @@ import {
   type PostgresQueryResult,
   runDurableExecutionAdapterConformance,
   SQLiteDurableExecutionAdapter,
+  SQLiteDurableRecordBackend,
 } from "../src/durable-adapters.ts"
 import { stringify as stringifyWire } from "../src/wire.ts"
 
@@ -294,5 +297,74 @@ describe("durable execution adapter conformance", () => {
     expect(
       () => new PostgresDurableRecordBackend(client, { tablePrefix: `a${"b".repeat(45)}` }),
     ).toThrow("invalid SQL table prefix")
+  })
+
+  // The reconciliation `scan` + lease lifecycle on the SQLite and Durable-Object record backends is only
+  // reached by a reconciliation worker, not the atomic-primitive conformance suite. Drive both directly
+  // against their real in-memory fakes so scan pagination and the lease acquire/renew/checkpoint/release
+  // paths stay covered.
+  async function exercisesScanAndLeaseLifecycle(backend: DurableRecordBackend): Promise<void> {
+    expect(
+      await backend.create("effect", "r-1", { version: 1, state: "executing", updatedAt: 1 }),
+    ).toBe(true)
+    expect(
+      await backend.create("effect", "r-2", { version: 1, state: "executing", updatedAt: 2 }),
+    ).toBe(true)
+    expect(
+      await backend.create("effect", "r-3", { version: 1, state: "admission", updatedAt: 3 }),
+    ).toBe(true)
+
+    const full = await backend.scan("effect", { states: ["executing"], updatedBefore: 5, limit: 5 })
+    expect(full.records).toHaveLength(2)
+    expect(full.cursor).toBeUndefined()
+
+    const firstPage = await backend.scan("effect", {
+      states: ["executing"],
+      updatedBefore: 5,
+      limit: 1,
+    })
+    expect(firstPage.records).toHaveLength(1)
+    expect(firstPage.cursor).toBeDefined()
+
+    const lease = await backend.acquireLease({ name: "worker", owner: "a", now: 10, leaseMs: 100 })
+    expect(lease?.owner).toBe("a")
+    const token = lease?.token ?? ""
+    expect(
+      await backend.acquireLease({ name: "worker", owner: "b", now: 20, leaseMs: 100 }),
+    ).toBeUndefined()
+    expect(
+      await backend.renewLease({
+        name: "worker",
+        owner: "a",
+        token: "wrong",
+        now: 30,
+        leaseMs: 100,
+      }),
+    ).toBe(false)
+    expect(
+      await backend.renewLease({ name: "worker", owner: "a", token, now: 30, leaseMs: 100 }),
+    ).toBe(true)
+    expect(
+      await backend.checkpointLease({ name: "worker", owner: "a", token, cursor: "r-2" }),
+    ).toBe(true)
+    expect(await backend.releaseLease({ name: "worker", owner: "a", token })).toBe(true)
+  }
+
+  test("SQLite record backend covers scan pagination and the lease lifecycle", async () => {
+    const db = new Database(":memory:")
+    try {
+      const backend = new SQLiteDurableRecordBackend(db)
+      backend.migrate()
+      expect(await backend.scan("effect", { states: [], limit: 5 })).toEqual({ records: [] })
+      await exercisesScanAndLeaseLifecycle(backend)
+    } finally {
+      db.close()
+    }
+  })
+
+  test("Durable-Object record backend covers scan pagination and the lease lifecycle", async () => {
+    await exercisesScanAndLeaseLifecycle(
+      new DurableObjectRecordBackend(new MemoryDurableObjectStorage()),
+    )
   })
 })
