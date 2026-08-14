@@ -29,9 +29,11 @@ test("the stable catalog is the public command allowlist", () => {
     "contracts",
     "sync-manifest",
     "sync-routes",
+    "prove",
+    "replay",
+    "port",
   ])
   expect(names).not.toContain("verify")
-  expect(names).not.toContain("prove")
 })
 
 test("CLI help/card projection and MCP descriptors read the same catalog", () => {

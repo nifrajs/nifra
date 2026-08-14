@@ -83,7 +83,6 @@ import {
   type ToolingDrift,
 } from "./mcp-root.ts"
 import { loadTypesCorpus } from "./types-search.ts"
-import { collectProjectWorkGraph } from "./work-graph.ts"
 
 /** Path to a sibling child entry (`mcp-run` / `mcp-render` / `mcp-ws`), resolved next to this module (`.ts` in
  * dev, `.js` once built). Each runs in a FRESH subprocess per call so the project's current code loads. */
@@ -889,66 +888,6 @@ export function projectTools(
       },
     },
     {
-      name: "nifra_prove",
-      description:
-        "Build the static verification work graph for this project. Pass changed files to get only impacted routes and the cheapest proof plan. The result includes a serializable evidence bundle and a machine-checkable stop condition. Requires a fresh build and never probes a running application.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          files: {
-            type: "array",
-            items: { type: "string" },
-            description: "Project-relative changed files. Omit for a graph overview.",
-          },
-          minLevel: {
-            type: "integer",
-            minimum: 0,
-            maximum: 4,
-            description: "Required proof level for the stop condition. Defaults to 1.",
-          },
-        },
-        additionalProperties: false,
-      },
-      handler: async (args) => {
-        const files = args.files
-        const minLevel = args.minLevel
-        if (
-          (files !== undefined &&
-            (!Array.isArray(files) || files.some((file) => typeof file !== "string"))) ||
-          (minLevel !== undefined &&
-            (typeof minLevel !== "number" ||
-              !Number.isInteger(minLevel) ||
-              minLevel < 0 ||
-              minLevel > 4))
-        ) {
-          return JSON.stringify(
-            {
-              ok: false,
-              error: "files must be strings and minLevel must be an integer from 0 to 4",
-            },
-            null,
-            2,
-          )
-        }
-        try {
-          return JSON.stringify(
-            await collectProjectWorkGraph(cwd, {
-              ...(files === undefined ? {} : { changedFiles: files }),
-              ...(minLevel === undefined ? {} : { minLevel }),
-            }),
-            null,
-            2,
-          )
-        } catch (error) {
-          return JSON.stringify(
-            { ok: false, error: error instanceof Error ? error.message : "work graph failed" },
-            null,
-            2,
-          )
-        }
-      },
-    },
-    {
       name: "nifra_explain",
       description:
         "Turn a nifra error into a STRUCTURED diagnostic instead of eyeballing a stack trace: a stable `code`, the top frame in YOUR source, a codeframe around the offending line, and - when nifra recognises the failure - the plain-language `cause` + `fix` + docs anchor. Pass `error` (and `stack` if you have it, e.g. from nifra_run/nifra_test output or a failing build) to explain a specific failure; or pass `port` to fetch the running dev server's most recent SSR failure from `/__nifra/last-error`. Returns the same JSON the dev overlay renders.",
@@ -1335,33 +1274,6 @@ export function projectTools(
           null,
           2,
         )
-      },
-    },
-    {
-      name: "nifra_replay",
-      description: "Validate and dispatch a token-only replay metadata file.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          file: { type: "string", description: "Replay file relative to the project root." },
-        },
-        required: ["file"],
-        additionalProperties: false,
-      },
-      handler: async (args) => {
-        const file = (args as { file?: unknown }).file
-        if (typeof file !== "string" || file.trim() === "")
-          return JSON.stringify({ ok: false, error: "file is required" })
-        const { runReplay } = await import("./replay.ts")
-        try {
-          return JSON.stringify(await runReplay(cwd, file), null, 2)
-        } catch (error) {
-          return JSON.stringify(
-            { ok: false, error: error instanceof Error ? error.message : String(error) },
-            null,
-            2,
-          )
-        }
       },
     },
   ]

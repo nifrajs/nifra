@@ -19,6 +19,13 @@ import type { DoctorResult } from "./doctor.ts"
 import type { VerificationLevelsResult } from "./levels-tool.ts"
 import type { LoadedApp } from "./load.ts"
 import type { ManifestEmitCommandResult } from "./manifest-tool.ts"
+import { collectPortResult, type PortResult, renderReport } from "./port.ts"
+import type { ReplayResult } from "./replay.ts"
+import {
+  collectProjectWorkGraph,
+  type ProjectWorkGraphResult,
+  renderWorkGraphText,
+} from "./work-graph.ts"
 
 export type CommandTransport = "cli" | "mcp"
 export type CommandStability = "stable" | "experimental"
@@ -329,6 +336,26 @@ interface SyncInput {
   readonly dir?: string | undefined
 }
 
+interface ProveInput {
+  readonly files?: readonly string[] | undefined
+  readonly minLevel?: number | undefined
+  readonly json?: boolean | undefined
+  readonly dir?: string | undefined
+}
+
+interface ReplayInput {
+  readonly file: string
+  readonly dir?: string | undefined
+}
+
+interface PortInput {
+  readonly target?: string | undefined
+  readonly json?: boolean | undefined
+  readonly ci?: boolean | undefined
+  readonly strict?: boolean | undefined
+  readonly dir?: string | undefined
+}
+
 interface CheckCommandOutput extends CheckResult {}
 interface AssureCommandOutput {
   readonly report?: unknown
@@ -629,6 +656,61 @@ const SYNC_SCHEMA = input<SyncInput>(
     const raw = withDir(record(value))
     return {
       ...parseBooleanFlags(raw, ["json"]),
+      ...(raw.dir === undefined ? {} : { dir: raw.dir }),
+    }
+  },
+)
+
+const PROVE_SCHEMA = input<ProveInput>(
+  objectSchema({
+    files: { type: "array", items: { type: "string" } },
+    minLevel: { type: "integer", minimum: 0, maximum: 4 },
+    json: { type: "boolean" },
+    dir: { type: "string" },
+  }),
+  (value) => {
+    const raw = withDir(record(value))
+    let files: readonly string[] | undefined
+    if (raw.files !== undefined) {
+      if (!Array.isArray(raw.files) || raw.files.some((entry) => typeof entry !== "string"))
+        throw new TypeError("files must be an array of strings")
+      files = raw.files as readonly string[]
+    }
+    const minLevel = optionalNumber(raw.minLevel, "minLevel")
+    if (minLevel !== undefined && (!Number.isInteger(minLevel) || minLevel < 0 || minLevel > 4))
+      throw new TypeError("minLevel must be an integer from 0 to 4")
+    return {
+      ...(files === undefined ? {} : { files }),
+      ...(minLevel === undefined ? {} : { minLevel }),
+      ...parseBooleanFlags(raw, ["json"]),
+      ...(raw.dir === undefined ? {} : { dir: raw.dir }),
+    }
+  },
+)
+
+const REPLAY_SCHEMA = input<ReplayInput>(
+  objectSchema({ file: { type: "string" }, dir: { type: "string" } }, ["file"]),
+  (value) => {
+    const raw = withDir(record(value))
+    const file = optionalString(raw.file, "file")
+    if (file === undefined || file.trim() === "") throw new TypeError("file is required")
+    return { file, ...(raw.dir === undefined ? {} : { dir: raw.dir }) }
+  },
+)
+
+const PORT_SCHEMA = input<PortInput>(
+  objectSchema({
+    target: { type: "string" },
+    json: { type: "boolean" },
+    ci: { type: "boolean" },
+    strict: { type: "boolean" },
+    dir: { type: "string" },
+  }),
+  (value) => {
+    const raw = withDir(record(value))
+    return {
+      target: optionalString(raw.target, "target"),
+      ...parseBooleanFlags(raw, ["json", "ci", "strict"]),
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
     }
   },
@@ -1172,6 +1254,89 @@ const syncRoutesSpec: CommandSpec<SyncInput, SyncCommandOutput> = {
   ],
 }
 
+const proveSpec: CommandSpec<ProveInput, ProjectWorkGraphResult> = {
+  name: "prove",
+  summary:
+    "Build the static verification work graph, plan the cheapest proofs for the changed files, and report a machine-checkable stop condition.",
+  input: PROVE_SCHEMA,
+  output: output({ type: "object" }),
+  transports: ["cli", "mcp"],
+  stability: "stable",
+  argv: {
+    flags: [
+      { name: "file", field: "files", type: "string[]" },
+      { name: "min", field: "minLevel", type: "number" },
+      { name: "json", field: "json", type: "boolean" },
+    ],
+  },
+  async run(value, ctx) {
+    return collectProjectWorkGraph(ctx.cwd, {
+      ...(value.files === undefined ? {} : { changedFiles: value.files }),
+      ...(value.minLevel === undefined ? {} : { minLevel: value.minLevel }),
+    })
+  },
+  render: (out) => [renderWorkGraphText(out)],
+  success: (out) => out.evidence.stop.done,
+}
+
+const replaySpec: CommandSpec<ReplayInput, ReplayResult> = {
+  name: "replay",
+  summary: "Validate a token-only verification metadata file and dispatch it against its gate.",
+  input: REPLAY_SCHEMA,
+  output: output({ type: "object" }),
+  transports: ["cli", "mcp"],
+  stability: "stable",
+  argv: { positionals: ["file"] },
+  async run(value, ctx) {
+    const { runReplay } = await import("./replay.ts")
+    return runReplay(ctx.cwd, value.file)
+  },
+  render: (out) => [JSON.stringify(out, null, 2)],
+  success: (out) => out.ok,
+}
+
+const portSpec: CommandSpec<PortInput, PortResult> = {
+  name: "port",
+  summary:
+    "Print a feature by deploy-target portability matrix with file:line evidence and gate against an unsupported target.",
+  input: PORT_SCHEMA,
+  output: output({ type: "object" }),
+  transports: ["cli", "mcp"],
+  stability: "stable",
+  argv: {
+    flags: [
+      { name: "target", field: "target", type: "string" },
+      { name: "json", field: "json", type: "boolean" },
+      { name: "ci", field: "ci", type: "boolean" },
+      { name: "strict", field: "strict", type: "boolean" },
+    ],
+  },
+  async run(value, ctx) {
+    return collectPortResult(ctx.cwd, {
+      ...(value.target === undefined ? {} : { target: value.target }),
+      ...(value.strict === true ? { strict: true } : {}),
+    })
+  },
+  render: (out, input) => {
+    const report = renderReport(out, { strict: input?.strict === true })
+    const gating = input?.ci === true || input?.target !== undefined
+    if (gating && out.resolved === undefined)
+      return [
+        report,
+        "",
+        "[nifra] --ci needs a deploy target to gate against, and none was detected. Pass --target <bun|node|deno|cf-pages|vercel>.",
+      ]
+    return [report]
+  },
+  success: (out, input) => {
+    const gating = input.ci === true || input.target !== undefined
+    if (!gating) return true
+    if (out.resolved === undefined) return false
+    return out.json.blocked.length === 0
+  },
+  json: (out) => out.json,
+}
+
 export const commandSpecs = Object.freeze([
   checkSpec,
   assureSpec,
@@ -1187,6 +1352,9 @@ export const commandSpecs = Object.freeze([
   contractsSpec,
   syncManifestSpec,
   syncRoutesSpec,
+  proveSpec,
+  replaySpec,
+  portSpec,
 ] as const)
 
 const commandByName = new Map(commandSpecs.map((spec) => [spec.name, spec]))

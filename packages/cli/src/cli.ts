@@ -772,63 +772,6 @@ async function main(): Promise<void> {
     }
     return
   }
-  if (command === "replay") {
-    const file = argv[1]
-    if (file === undefined || file.startsWith("-")) {
-      console.error("[nifra] replay needs a file path")
-      process.exitCode = 1
-      return
-    }
-    try {
-      const { runReplay } = await import("./replay.ts")
-      const result = await runReplay(process.cwd(), file)
-      console.log(JSON.stringify(result, null, 2))
-      if (!result.ok) process.exitCode = 1
-    } catch (err) {
-      console.error(formatCliError(err))
-      process.exitCode = 1
-    }
-    return
-  }
-  if (command === "prove") {
-    const valueAfter = (flag: string): string | undefined => {
-      const index = argv.indexOf(flag)
-      const value = index === -1 ? undefined : argv[index + 1]
-      if (index !== -1 && (value === undefined || value.startsWith("-"))) {
-        throw new Error(`[nifra] ${flag} needs a value`)
-      }
-      return value
-    }
-    try {
-      const minRaw = valueAfter("--min")
-      const min = minRaw === undefined ? undefined : Number(minRaw)
-      if (min !== undefined && (!Number.isInteger(min) || min < 0 || min > 4)) {
-        throw new Error("[nifra] --min must be an integer level between 0 and 4")
-      }
-      const changedFiles: string[] = []
-      for (let index = 0; index < argv.length; index++) {
-        if (argv[index] !== "--file") continue
-        const file = argv[index + 1]
-        if (file === undefined || file.startsWith("-"))
-          throw new Error("[nifra] --file needs a path")
-        changedFiles.push(file)
-        index++
-      }
-      const { runWorkGraph } = await import("./work-graph.ts")
-      if (
-        !(await runWorkGraph(process.cwd(), {
-          json: argv.includes("--json"),
-          ...(changedFiles.length === 0 ? {} : { changedFiles }),
-          ...(min === undefined ? {} : { minLevel: min }),
-        }))
-      )
-        process.exitCode = 1
-    } catch (err) {
-      console.error(formatCliError(err))
-      process.exitCode = 1
-    }
-    return
-  }
   // `upgrade` is a pure cwd file-transformer (package.json pins + import moves) driven by a per-release
   // recipe, then verified with `nifra check`. Dispatch before the eager `loadApp` - it must run on any
   // repo (API-only, not built, or mid-upgrade with edits that don't yet typecheck under dry-run).
@@ -853,29 +796,6 @@ async function main(): Promise<void> {
   }
   // `port` is a pure cwd-based portability linter (scans source, doesn't run the app) - like `check`/
   // `doctor`, dispatch before the eager `loadApp` so it runs on an API-only / not-yet-built project.
-  if (command === "port") {
-    const { runPort } = await import("./port.ts")
-    const targetIdx = argv.indexOf("--target")
-    const target = targetIdx !== -1 ? argv[targetIdx + 1] : undefined
-    if (targetIdx !== -1 && (target === undefined || target.startsWith("-"))) {
-      console.error("[nifra] --target needs a value: bun | node | deno | cf-pages | vercel")
-      process.exitCode = 1
-      return
-    }
-    try {
-      const passed = await runPort(process.cwd(), {
-        ...(target !== undefined ? { target } : {}),
-        json: argv.includes("--json"),
-        ci: argv.includes("--ci"),
-        strict: argv.includes("--strict"),
-      })
-      if (!passed) process.exitCode = 1
-    } catch (err) {
-      console.error(formatCliError(err))
-      process.exitCode = 1
-    }
-    return
-  }
   if (command !== "dev" && command !== "build" && command !== "start") {
     console.error(`[nifra] unknown command: ${command}\n`)
     console.error(HELP)
