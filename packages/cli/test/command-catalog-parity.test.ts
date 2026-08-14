@@ -10,7 +10,7 @@ import {
   renderCommandCatalogLines,
   toCommandCatalogEntry,
 } from "../src/command-catalog.ts"
-import { catalogProjectTools } from "../src/mcp.ts"
+import { catalogProjectTools, toMcpTool } from "../src/mcp.ts"
 
 test("the stable catalog is the public command allowlist", () => {
   const names = commandCatalog.map((entry) => entry.name)
@@ -47,6 +47,14 @@ test("CLI help/card projection and MCP descriptors read the same catalog", () =>
     expect(tool).toBeDefined()
     expect(tool?.description).toBe(entry.summary)
     expect(tool?.inputSchema).toEqual(entry.inputSchema)
+    const adapted = toMcpTool(entry, {
+      cwd: "/fake",
+      loadAppCached: async () => {
+        throw new Error("not called while describing tools")
+      },
+    })
+    expect(adapted.name).toBe(tool!.name)
+    expect(adapted.inputSchema).toEqual(entry.inputSchema)
   }
 })
 

@@ -42,6 +42,7 @@ import { fileURLToPath } from "node:url"
 import { type ReflectedRoute, reflectRoutes } from "@nifrajs/core/reflection"
 import { Glob } from "bun"
 import {
+  type CommandCatalogEntry,
   type CommandCtx,
   type CommandSpec,
   commandCatalog,
@@ -51,7 +52,6 @@ import {
 import { collectContractProof } from "./contract-proof.ts"
 import { loadDocsCorpus } from "./docs-search.ts"
 import { loadExamplesCorpus } from "./examples.ts"
-import { describeProject } from "./introspect.ts"
 import type { LoadAppOptions, LoadedApp } from "./load.ts"
 import { detectMonorepo, loadMonorepoApps } from "./load.ts"
 import { docsTools } from "./mcp-docs-tools.ts"
@@ -760,15 +760,18 @@ export interface CommandMcpToolOptions {
 
 /** Adapt one executable catalog spec to its MCP descriptor and project-scoped handler. */
 export function toMcpTool(
-  spec: CommandSpec<unknown, unknown>,
+  source: CommandSpec<unknown, unknown> | CommandCatalogEntry,
   options: CommandMcpToolOptions,
 ): McpTool {
+  const spec = "run" in source ? source : findCommandSpec(source.name)
+  if (spec === undefined) throw new Error(`missing command spec for ${source.name}`)
+  const entry = "run" in source ? undefined : source
   const { cwd } = options
   const loadAppCached = options.loadAppCached ?? createCachedAppLoader(cwd)
   return {
-    name: commandMcpName(spec.name),
-    description: spec.summary,
-    inputSchema: spec.input.jsonSchema,
+    name: commandMcpName(entry?.name ?? spec.name),
+    description: entry?.summary ?? spec.summary,
+    inputSchema: entry?.inputSchema ?? spec.input.jsonSchema,
     handler: async (args: Record<string, unknown>, context: McpToolContext) => {
       const raw = { ...args }
       const dir = raw.dir
