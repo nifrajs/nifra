@@ -11,13 +11,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@nifrajs/client": "^2.14.0",
-    "@nifrajs/core": "^2.14.0",
-    "@nifrajs/middleware": "^2.14.0",
-    "@nifrajs/schema": "^2.14.0"
+    "@nifrajs/client": "^2.14.1",
+    "@nifrajs/core": "^2.14.1",
+    "@nifrajs/middleware": "^2.14.1",
+    "@nifrajs/schema": "^2.14.1"
   },
   "devDependencies": {
-    "@nifrajs/cli": "^2.14.0",
+    "@nifrajs/cli": "^2.14.1",
     "@types/bun": "latest",
     "typescript": "^6.0.3"
   }

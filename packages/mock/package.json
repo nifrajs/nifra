@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/mock",
-  "version": "2.14.0",
+  "version": "2.14.1",
   "description": "Contract-based mock server - reads route schemas and generates fake responses.",
   "keywords": [
     "bun",

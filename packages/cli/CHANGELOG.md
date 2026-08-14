@@ -1,5 +1,19 @@
 # @nifrajs/cli
 
+## 2.14.1
+
+### Patch Changes
+
+- Updated dependencies [bf93902]
+  - @nifrajs/core@2.14.1
+  - @nifrajs/client@2.14.1
+  - @nifrajs/mcp@2.14.1
+  - @nifrajs/schema@2.14.1
+  - @nifrajs/testing@2.14.1
+  - @nifrajs/web@2.14.1
+  - @nifrajs/runner@2.14.1
+  - create-nifra@2.14.1
+
 ## 2.14.0
 
 ### Minor Changes

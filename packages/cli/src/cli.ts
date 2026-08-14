@@ -191,7 +191,7 @@ Port: \`dev\` and \`start\` share the default ${DEFAULT_DEV_PORT}. Override with
 ${renderCommandCatalogHelp()}`
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
-const CLI_VERSION = "2.14.0"
+const CLI_VERSION = "2.14.1"
 
 // A render adapter + nifra server are opaque to the CLI (it just forwards them); cast at the seam.
 const asAdapter = (v: unknown): RenderAdapter => v as RenderAdapter
