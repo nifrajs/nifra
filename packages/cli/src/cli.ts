@@ -20,7 +20,7 @@ import {
 } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import type { BunPlugin } from "bun"
-import { describeProject, describeRouteGraph, describeRoutes } from "./introspect.ts"
+import { bindCommandArgv, findCommandSpec, renderCommandCatalogHelp } from "./command-catalog.ts"
 import { type LoadedApp, loadApp, type NifraFramework } from "./load.ts"
 import { chooseBuildPipeline, describePipeline } from "./pipeline-guard.ts"
 
@@ -186,7 +186,9 @@ Reads nifra.config.ts (adapter + clientModule + plugins; or framework.ts), backe
 routes/ from the current directory. Run from your project root.
 
 Port: \`dev\` and \`start\` share the default ${DEFAULT_DEV_PORT}. Override with \`--port <n>\` (alias \`-p\`) or the
-\`PORT\` env var (\`--port\` wins over \`PORT\`, which wins over the default).`
+\`PORT\` env var (\`--port\` wins over \`PORT\`, which wins over the default).
+
+${renderCommandCatalogHelp()}`
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
 const CLI_VERSION = "2.13.0"
@@ -705,18 +707,25 @@ async function main(): Promise<void> {
     )
     return
   }
-  // `check` is a pure cwd-based gate (typecheck + lint) - it must run even when the project doesn't
-  // load (API-only, not built yet), so it dispatches before the eager `loadApp` below.
-  if (command === "check") {
-    const { runCheck } = await import("./check.ts")
-    if (
-      !(await runCheck(process.cwd(), {
-        json: argv.includes("--json"),
-        structured: argv.includes("--json"),
-        lintsOnly: argv.includes("--lints-only"),
-      }))
-    )
+  const catalogSpec = command === undefined ? undefined : findCommandSpec(command)
+  if (catalogSpec?.transports.includes("cli")) {
+    try {
+      const input = bindCommandArgv(catalogSpec, argv.slice(1))
+      const output = await catalogSpec.run(input, { cwd: process.cwd(), cliVersion: CLI_VERSION })
+      const asRecord = output as unknown as Record<string, unknown>
+      const wantsJson = asRecord.json === true || argv.includes("--json")
+      if (wantsJson) {
+        const value = catalogSpec.json?.(output, input) ?? output
+        console.log(typeof value === "string" ? value : JSON.stringify(value, null, 2))
+      } else {
+        console.log(catalogSpec.render(output, input).join("\n"))
+      }
+      if (catalogSpec.success !== undefined && !catalogSpec.success(output, input))
+        process.exitCode = 1
+    } catch (err) {
+      console.error(formatCliError(err))
       process.exitCode = 1
+    }
     return
   }
   if (command === "verify") {
@@ -728,29 +737,6 @@ async function main(): Promise<void> {
     if (!ok) process.exitCode = 1
     return
   }
-  if (command === "fix") {
-    const codeIndex = argv.indexOf("--code")
-    const code = codeIndex === -1 ? undefined : argv[codeIndex + 1]
-    try {
-      const { collectCheckResult } = await import("./check.ts")
-      const { applyDiagnosticRecipe } = await import("./fix-recipes.ts")
-      const result = await collectCheckResult(process.cwd(), { lintsOnly: true })
-      const changed: string[] = []
-      for (const diagnostic of result.structuredDiagnostics ?? []) {
-        if (code !== undefined && diagnostic.code !== code) continue
-        changed.push(...(await applyDiagnosticRecipe(process.cwd(), diagnostic)))
-      }
-      const final = await collectCheckResult(process.cwd(), { lintsOnly: true })
-      console.log(
-        JSON.stringify({ changed, diagnostics: final.structuredDiagnostics ?? [] }, null, 2),
-      )
-      if (final.ok === false) process.exitCode = 1
-    } catch (err) {
-      console.error(formatCliError(err))
-      process.exitCode = 1
-    }
-    return
-  }
   // `init-agents` retrofits the agent-discovery files (.mcp.json, CLAUDE.md, …) into the cwd. It's a
   // pure file-writing command independent of the app loading, so dispatch it before the eager `loadApp`
   // (an existing app might be API-only or not yet built). It always succeeds unless a write throws.
@@ -760,76 +746,6 @@ async function main(): Promise<void> {
       json: argv.includes("--json"),
       force: argv.includes("--force"),
     })
-    return
-  }
-  // `sync-manifest` rewrites a committed web `server-manifest.ts` from the current `routes/` tree, without
-  // a full build. Pure fs/text (re-scan routes, preserve baked client assets), so - like `check` - dispatch
-  // it before the eager `loadApp`.
-  if (command === "sync-manifest") {
-    const { runSyncManifest } = await import("./sync-manifest.ts")
-    if (!(await runSyncManifest(process.cwd()))) process.exitCode = 1
-    return
-  }
-  // `sync-routes` regenerates the route-search types `.d.ts` (typed `navigate({ to, search })`) from
-  // `routes/`. Pure fs/text (needs only the route tree, not `framework.ts`), so dispatch before `loadApp`.
-  if (command === "sync-routes") {
-    const { runSyncRoutes } = await import("./sync-routes.ts")
-    if (!(await runSyncRoutes(process.cwd()))) process.exitCode = 1
-    return
-  }
-  // `doctor` is a pure cwd check (imports vs declared deps) - like `check`, dispatch before `loadApp`
-  // so it runs on an API-only / not-yet-built project.
-  if (command === "doctor") {
-    const { runDoctor } = await import("./doctor.ts")
-    const targetIdx = argv.indexOf("--target")
-    const target = targetIdx !== -1 ? argv[targetIdx + 1] : undefined
-    if (targetIdx !== -1 && (target === undefined || target.startsWith("-"))) {
-      console.error("[nifra] --target needs a value: bun | node | deno | cf-pages | vercel")
-      process.exitCode = 1
-      return
-    }
-    if (
-      !(await runDoctor(process.cwd(), {
-        json: argv.includes("--json"),
-        autoFix: argv.includes("--auto-fix") || argv.includes("--fix"),
-        strict: argv.includes("--strict"),
-        cliVersion: CLI_VERSION,
-        ...(target === undefined ? {} : { target }),
-      }))
-    )
-      process.exitCode = 1
-    return
-  }
-  // `snapshot` / `diff` load ONLY backend.ts (the API contract) - like `check`, they must run on an
-  // API-only project, so they dispatch before the eager `loadApp`.
-  if (command === "snapshot") {
-    const { runSnapshot } = await import("./diff-tool.ts")
-    const outIdx = argv.indexOf("--out")
-    const out = outIdx !== -1 ? argv[outIdx + 1] : undefined
-    if (outIdx !== -1 && (out === undefined || out.startsWith("-"))) {
-      console.error("[nifra] --out needs a file path")
-      process.exitCode = 1
-      return
-    }
-    try {
-      await runSnapshot(process.cwd(), out !== undefined ? { out } : {})
-    } catch (err) {
-      console.error(formatCliError(err))
-      process.exitCode = 1
-    }
-    return
-  }
-  if (command === "diff") {
-    const { runDiff, DEFAULT_SNAPSHOT_FILE } = await import("./diff-tool.ts")
-    const baseline = argv.slice(1).find((arg) => !arg.startsWith("-")) ?? DEFAULT_SNAPSHOT_FILE
-    try {
-      if (!(await runDiff(process.cwd(), baseline, { json: argv.includes("--json") }))) {
-        process.exitCode = 1
-      }
-    } catch (err) {
-      console.error(formatCliError(err))
-      process.exitCode = 1
-    }
     return
   }
   if (command === "sdk") {
@@ -856,68 +772,6 @@ async function main(): Promise<void> {
     }
     return
   }
-  // Route assurance intentionally loads only its explicit config (which imports the backend it audits),
-  // not the full SSR app. Like snapshot/diff, this works for API-only projects.
-  if (command === "assure") {
-    const { runAssurance } = await import("./assure.ts")
-    const configIdx = argv.indexOf("--config")
-    const config = configIdx !== -1 ? argv[configIdx + 1] : undefined
-    if (configIdx !== -1 && (config === undefined || config.startsWith("-"))) {
-      console.error("[nifra] --config needs a file path")
-      process.exitCode = 1
-      return
-    }
-    try {
-      if (
-        !(await runAssurance(process.cwd(), {
-          json: argv.includes("--json"),
-          bundle: assureBundleRequested(argv),
-          strict: argv.includes("--strict"),
-          hydration: argv.includes("--hydration"),
-          interact: argv.includes("--interact"),
-          ...(argv.includes("--out") ? { out: argv[argv.indexOf("--out") + 1] } : {}),
-          ...(config !== undefined ? { config } : {}),
-        }))
-      )
-        process.exitCode = 1
-    } catch (err) {
-      console.error(formatCliError(err))
-      process.exitCode = 1
-    }
-    return
-  }
-  if (command === "contracts") {
-    const action = argv[1]
-    const outIndex = argv.indexOf("--out")
-    const out = outIndex === -1 ? undefined : argv[outIndex + 1]
-    try {
-      const { checkContractsLock, isVacuousLock, snapshotContracts } = await import(
-        "./contracts.ts"
-      )
-      if (action === "snapshot") {
-        const lock = await snapshotContracts(process.cwd(), out)
-        if (argv.includes("--json")) console.log(JSON.stringify(lock, null, 2))
-        else console.log(`[nifra] wrote ${Object.keys(lock.routes).length} contract digests`)
-        if (await isVacuousLock(lock)) {
-          console.warn(
-            "[nifra] advisory: no route schemas declared - the trust manifest is vacuous (every hash is the empty-schema digest), so drift detection guards nothing until routes declare schemas.",
-          )
-        }
-      } else if (action === "check") {
-        const result = await checkContractsLock(process.cwd())
-        const output = { ok: result.present && result.diagnostics.length === 0, ...result }
-        console.log(JSON.stringify(output, null, 2))
-        if (!output.ok) process.exitCode = 1
-      } else {
-        console.error("[nifra] contracts needs snapshot or check")
-        process.exitCode = 1
-      }
-    } catch (err) {
-      console.error(formatCliError(err))
-      process.exitCode = 1
-    }
-    return
-  }
   if (command === "replay") {
     const file = argv[1]
     if (file === undefined || file.startsWith("-")) {
@@ -930,143 +784,6 @@ async function main(): Promise<void> {
       const result = await runReplay(process.cwd(), file)
       console.log(JSON.stringify(result, null, 2))
       if (!result.ok) process.exitCode = 1
-    } catch (err) {
-      console.error(formatCliError(err))
-      process.exitCode = 1
-    }
-    return
-  }
-  if (command === "capabilities") {
-    const action = argv[1]
-    const valueAfter = (flag: string): string | undefined => {
-      const index = argv.indexOf(flag)
-      const value = index === -1 ? undefined : argv[index + 1]
-      if (index !== -1 && (value === undefined || value.startsWith("-"))) {
-        throw new Error(`[nifra] ${flag} needs a file path`)
-      }
-      return value
-    }
-    try {
-      const { runCapabilityCheck, runCapabilityExplain, runCapabilitySnapshot } = await import(
-        "./capabilities-tool.ts"
-      )
-      const config = valueAfter("--config")
-      if (action === "snapshot") {
-        const out = valueAfter("--out")
-        if (
-          !(await runCapabilitySnapshot(process.cwd(), {
-            ...(config !== undefined ? { config } : {}),
-            ...(out !== undefined ? { out } : {}),
-          }))
-        )
-          process.exitCode = 1
-      } else if (action === "check") {
-        const lockfile = valueAfter("--lockfile")
-        if (
-          !(await runCapabilityCheck(process.cwd(), {
-            ...(config !== undefined ? { config } : {}),
-            ...(lockfile !== undefined ? { lockfile } : {}),
-            json: argv.includes("--json"),
-          }))
-        )
-          process.exitCode = 1
-      } else if (action === "explain") {
-        const positional: string[] = []
-        for (let index = 2; index < argv.length; index++) {
-          const arg = argv[index]!
-          if (arg === "--config") {
-            index++
-            continue
-          }
-          if (arg === "--json" || arg.startsWith("-")) continue
-          positional.push(arg)
-        }
-        if (positional.length !== 2) {
-          throw new Error("[nifra] capabilities explain needs <METHOD> <path>")
-        }
-        if (
-          !(await runCapabilityExplain(process.cwd(), positional[0]!, positional[1]!, {
-            ...(config !== undefined ? { config } : {}),
-            json: argv.includes("--json"),
-          }))
-        )
-          process.exitCode = 1
-      } else {
-        throw new Error("[nifra] capabilities needs `snapshot`, `check`, or `explain`")
-      }
-    } catch (err) {
-      console.error(formatCliError(err))
-      process.exitCode = 1
-    }
-    return
-  }
-  if (command === "manifest") {
-    const action = argv[1]
-    const valueAfter = (flag: string): string | undefined => {
-      const index = argv.indexOf(flag)
-      const value = index === -1 ? undefined : argv[index + 1]
-      if (index !== -1 && (value === undefined || value.startsWith("-"))) {
-        throw new Error(`[nifra] ${flag} needs a value`)
-      }
-      return value
-    }
-    try {
-      const { runManifestDiff, runManifestEmit } = await import("./manifest-tool.ts")
-      if (action === "emit") {
-        const config = valueAfter("--config")
-        const out = valueAfter("--out")
-        const sign = valueAfter("--sign")
-        if (
-          !(await runManifestEmit(process.cwd(), {
-            ...(config !== undefined ? { config } : {}),
-            ...(out !== undefined ? { out } : {}),
-            ...(sign !== undefined ? { sign } : {}),
-          }))
-        )
-          process.exitCode = 1
-      } else if (action === "diff") {
-        const paths = argv.slice(2).filter((arg) => !arg.startsWith("-"))
-        if (paths.length !== 2) throw new Error("[nifra] manifest diff needs <before> <after>")
-        if (
-          !(await runManifestDiff(process.cwd(), paths[0]!, paths[1]!, {
-            json: argv.includes("--json"),
-          }))
-        )
-          process.exitCode = 1
-      } else {
-        throw new Error("[nifra] manifest needs `emit` or `diff`")
-      }
-    } catch (err) {
-      console.error(formatCliError(err))
-      process.exitCode = 1
-    }
-    return
-  }
-  if (command === "levels") {
-    const valueAfter = (flag: string): string | undefined => {
-      const index = argv.indexOf(flag)
-      const value = index === -1 ? undefined : argv[index + 1]
-      if (index !== -1 && (value === undefined || value.startsWith("-"))) {
-        throw new Error(`[nifra] ${flag} needs a value`)
-      }
-      return value
-    }
-    try {
-      const { runLevels } = await import("./levels-tool.ts")
-      const config = valueAfter("--config")
-      const minRaw = valueAfter("--min")
-      const min = minRaw === undefined ? undefined : Number(minRaw)
-      if (min !== undefined && (!Number.isInteger(min) || min < 0 || min > 4)) {
-        throw new Error("[nifra] --min must be an integer level between 0 and 4")
-      }
-      if (
-        !(await runLevels(process.cwd(), {
-          json: argv.includes("--json"),
-          ...(config !== undefined ? { config } : {}),
-          ...(min !== undefined ? { min } : {}),
-        }))
-      )
-        process.exitCode = 1
     } catch (err) {
       console.error(formatCliError(err))
       process.exitCode = 1
@@ -1159,13 +876,7 @@ async function main(): Promise<void> {
     }
     return
   }
-  if (
-    command !== "dev" &&
-    command !== "build" &&
-    command !== "start" &&
-    command !== "context" &&
-    command !== "routes"
-  ) {
+  if (command !== "dev" && command !== "build" && command !== "start") {
     console.error(`[nifra] unknown command: ${command}\n`)
     console.error(HELP)
     process.exitCode = 1
@@ -1175,36 +886,7 @@ async function main(): Promise<void> {
   const app = await loadApp(process.cwd(), flags.out)
   if (command === "dev") await dev(app, flags)
   else if (command === "build") await buildForTarget(app, flags.target, flags)
-  else if (command === "context") console.log(describeProject(app))
-  else if (command === "routes") {
-    if (argv.includes("--graph")) {
-      console.log(await describeRouteGraph(app, { json: argv.includes("--json") }))
-    } else if (argv.includes("--modes")) {
-      // `--modes` answers a different question than the default table: not "what URLs exist" but "how
-      // does each render, and can the target I'm about to deploy to actually honour that". Resolves
-      // against `--target` when given, so a `static` build's server-needing route fails here, in one
-      // place, instead of 404ing in production.
-      const { buildRouteManifest, renderRouteManifest } = await import(
-        "@nifrajs/web/route-manifest"
-      )
-      const manifest = discoverRoutes(app.routesDir)
-      // `flags.target` defaults to "bun" for `build`; here an EXPLICIT `--target` is what opts into
-      // gating, so read it from argv rather than inheriting the build default (which would silently gate
-      // every `nifra routes --modes` against bun).
-      const targetIdx = argv.indexOf("--target")
-      const target = targetIdx !== -1 ? argv[targetIdx + 1] : undefined
-      const routeManifest = await buildRouteManifest(manifest, {
-        ...(target !== undefined ? { target } : {}),
-      })
-      if (argv.includes("--json")) console.log(JSON.stringify(routeManifest, null, 2))
-      else console.log(renderRouteManifest(routeManifest))
-      // A target that cannot honour a route is a build-breaking fact, not a note: exit non-zero so the
-      // same command in CI gates the deploy it is warning about.
-      if (routeManifest.conflicts.length > 0) process.exitCode = 1
-    } else {
-      console.log(await describeRoutes(app, { json: argv.includes("--json") }))
-    }
-  } else await start(app, flags)
+  else await start(app, flags)
 }
 
 // Only run the CLI when invoked as the entry (`bun cli.ts …`), not when a test imports it for the

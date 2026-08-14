@@ -36,3 +36,20 @@ _…and 56 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) fo
 - `nifra check` (`--json` for agents) is the **done-gate**: typecheck + typed-client drift + server-only-import-in-a-route (with the transitive import chain) + raw-`Response`-from-a-route + undeclared dependency.
 - One rule picks the bundler for BOTH `nifra dev` and `nifra build`: Bun, unless `vitePlugins` are the app's ONLY transforms (the Bun pipeline cannot run those), in which case Vite - so dev and prod never disagree. `--vite`/`--bun` force it. `nifra build` emits a complete deploy (`--target` selects node/deno/cf-pages/vercel/static). Keep the deploy-safe adapter in `framework.ts` and Vite/compiler tooling in CLI-only `nifra.config.ts`.
 - `nifra mcp` exposes live project tools (`nifra_docs`, `nifra_example`, `nifra_check`) to an agent.
+
+## Stable project commands
+
+- nifra check [--lints-only] [--json] - Run the typed-contract, source-lint, and dependency drift gate.
+- nifra assure [--config <value>] [--out <value>] [--json] [--bundle] [--strict] [--hydration] [--interact] - Evaluate route classification and fail-closed enforcement evidence.
+- nifra levels [--config <value>] [--seed <value>] [--min <value>] [--json] - Compute the cumulative L0 typed-contract through L4 invariant verification ladder.
+- nifra capabilities <action> <method> <path> [--config <value>] [--out <value>] [--lockfile <value>] [--json] - Snapshot, check, or explain token-only capability provenance and lockfile drift.
+- nifra manifest <action> <before> <after> [--config <value>] [--out <value>] [--sign <value>] [--json] - Emit or diff the hash-verified route trust manifest.
+- nifra routes [--json] [--graph] [--modes] [--target <value>] - List, graph, or target-check every page and API route the app serves.
+- nifra context [--path <value>] [--kind <value>] - Print the project route index and framework conventions for an agent.
+- nifra doctor [--json] [--auto-fix] [--strict] [--target <value>] - Find undeclared imports, duplicate identity installs, and pipeline readiness drift.
+- nifra fix [--code <value>] [--json] - Apply registered mechanical diagnostic recipes and return remaining findings.
+- nifra snapshot [--out <value>] [--json] - Write the backend API contract as a versioned JSON baseline.
+- nifra diff <baseline> [--json] - Compare the current backend contract with a baseline and fail on breaking changes.
+- nifra contracts <action> [--out <value>] [--json] - Snapshot or check the deterministic route contract lock.
+- nifra sync-manifest [--json] - Regenerate generated server-manifest route tables without a full build.
+- nifra sync-routes [--json] - Regenerate nifra-routes.d.ts so typed navigation follows route search schemas.

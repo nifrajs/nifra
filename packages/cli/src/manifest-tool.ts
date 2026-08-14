@@ -5,6 +5,7 @@ import { resolve } from "node:path"
 import {
   buildNifraManifest,
   diffNifraManifests,
+  type NifraManifest,
   type NifraManifestDiff,
   parseNifraManifest,
   serializeNifraManifest,
@@ -38,11 +39,18 @@ export function formatManifestDiff(diff: NifraManifestDiff): string {
   return lines.join("\n")
 }
 
-/** Build only after both assurance layers pass, then optionally create an operator-signed sidecar. */
-export async function runManifestEmit(
+export interface ManifestEmitCommandResult {
+  readonly ok: boolean
+  readonly path: string
+  readonly manifest?: NifraManifest
+  readonly signaturePath?: string
+}
+
+/** Emit the manifest without printing. This is the execution seam used by all adapters. */
+export async function collectManifestEmit(
   cwd: string,
   options: { readonly config?: string; readonly out?: string; readonly sign?: string } = {},
-): Promise<boolean> {
+): Promise<ManifestEmitCommandResult> {
   const verification = await collectProjectVerification(cwd, {
     ...(options.config !== undefined ? { config: options.config } : {}),
   })
@@ -58,9 +66,9 @@ export async function runManifestEmit(
   if (assurance === undefined) {
     throw new Error("[nifra] assurance evaluation was unavailable for manifest emission")
   }
+  const path = resolve(cwd, options.out ?? config.manifest?.path ?? DEFAULT_MANIFEST_FILE)
   if (!assurance.ok || (capabilityProject !== undefined && !capabilityProject.report.ok)) {
-    console.error("[nifra] refusing to emit a manifest from failing assurance")
-    return false
+    return { ok: false, path }
   }
   const manifest = await buildNifraManifest({
     source: config.source,
@@ -68,9 +76,9 @@ export async function runManifestEmit(
     assurance,
     ...(capabilityProject !== undefined ? { capabilities: capabilityProject.report } : {}),
   })
-  const path = resolve(cwd, options.out ?? config.manifest?.path ?? DEFAULT_MANIFEST_FILE)
   await Bun.write(path, `${serializeNifraManifest(manifest)}\n`)
 
+  let signaturePath: string | undefined
   if (options.sign !== undefined) {
     if (config.manifest?.signer === undefined) {
       throw new Error(
@@ -79,29 +87,52 @@ export async function runManifestEmit(
     }
     const signer = await config.manifest.signer(options.sign)
     const signature = await signNifraManifest(manifest, signer)
-    await Bun.write(`${path}.sig`, `${serializeNifraManifestSignature(signature)}\n`)
+    signaturePath = `${path}.sig`
+    await Bun.write(signaturePath, `${serializeNifraManifestSignature(signature)}\n`)
+  }
+  return { ok: true, path, manifest, ...(signaturePath === undefined ? {} : { signaturePath }) }
+}
+
+/** Build only after both assurance layers pass, then optionally create an operator-signed sidecar. */
+export async function runManifestEmit(
+  cwd: string,
+  options: { readonly config?: string; readonly out?: string; readonly sign?: string } = {},
+): Promise<boolean> {
+  const result = await collectManifestEmit(cwd, options)
+  if (!result.ok) {
+    console.error("[nifra] refusing to emit a manifest from failing assurance")
+    return false
   }
   console.log(
-    `[nifra] wrote manifest to ${path}${options.sign === undefined ? "" : ` and ${path}.sig`}`,
+    `[nifra] wrote manifest to ${result.path}${result.signaturePath === undefined ? "" : ` and ${result.signaturePath}`}`,
   )
   return true
 }
 
 /** Diff two already-emitted, hash-verified artifacts. Suitable for deploy promotion gates. */
+export async function collectManifestDiff(
+  cwd: string,
+  beforePath: string,
+  afterPath: string,
+): Promise<NifraManifestDiff> {
+  const before = resolve(cwd, beforePath)
+  const after = resolve(cwd, afterPath)
+  if (!existsSync(before)) throw new Error(`[nifra] manifest not found: ${before}`)
+  if (!existsSync(after)) throw new Error(`[nifra] manifest not found: ${after}`)
+  return diffNifraManifests(
+    await parseNifraManifest(await Bun.file(before).text(), before),
+    await parseNifraManifest(await Bun.file(after).text(), after),
+  )
+}
+
+/** Diff two already-emitted, hash-verified artifacts and print the result. */
 export async function runManifestDiff(
   cwd: string,
   beforePath: string,
   afterPath: string,
   options: { readonly json?: boolean } = {},
 ): Promise<boolean> {
-  const before = resolve(cwd, beforePath)
-  const after = resolve(cwd, afterPath)
-  if (!existsSync(before)) throw new Error(`[nifra] manifest not found: ${before}`)
-  if (!existsSync(after)) throw new Error(`[nifra] manifest not found: ${after}`)
-  const diff = diffNifraManifests(
-    await parseNifraManifest(await Bun.file(before).text(), before),
-    await parseNifraManifest(await Bun.file(after).text(), after),
-  )
+  const diff = await collectManifestDiff(cwd, beforePath, afterPath)
   console.log(
     options.json === true
       ? JSON.stringify({ hasBreaking: diff.hasBreaking, changes: diff.changes }, null, 2)

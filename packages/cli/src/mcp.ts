@@ -41,6 +41,13 @@ import { basename, isAbsolute, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import { type ReflectedRoute, reflectRoutes } from "@nifrajs/core/reflection"
 import { Glob } from "bun"
+import {
+  type CommandCtx,
+  type CommandSpec,
+  commandCatalog,
+  commandMcpName,
+  findCommandSpec,
+} from "./command-catalog.ts"
 import { collectContractProof } from "./contract-proof.ts"
 import { loadDocsCorpus } from "./docs-search.ts"
 import { loadExamplesCorpus } from "./examples.ts"
@@ -746,13 +753,82 @@ function dirError(dir: string | undefined): string {
 }
 
 /** Build the project-scoped tools for `cwd`. */
+export interface CommandMcpToolOptions {
+  readonly cwd: string
+  readonly loadAppCached?: () => Promise<LoadedApp>
+}
+
+/** Adapt one executable catalog spec to its MCP descriptor and project-scoped handler. */
+export function toMcpTool(
+  spec: CommandSpec<unknown, unknown>,
+  options: CommandMcpToolOptions,
+): McpTool {
+  const { cwd } = options
+  const loadAppCached = options.loadAppCached ?? createCachedAppLoader(cwd)
+  return {
+    name: commandMcpName(spec.name),
+    description: spec.summary,
+    inputSchema: spec.input.jsonSchema,
+    handler: async (args: Record<string, unknown>, context: McpToolContext) => {
+      const raw = { ...args }
+      const dir = raw.dir
+      if (dir !== undefined && typeof dir !== "string") return dirError(undefined)
+      const target = resolveProjectDir(cwd, dir as string | undefined)
+      if (target === null) return dirError(dir as string | undefined)
+      if (typeof raw.config === "string") {
+        const config = resolve(target, raw.config)
+        if (config !== target && !config.startsWith(`${target}${sep}`))
+          return JSON.stringify(
+            { ok: false, error: "config must stay inside the selected project directory" },
+            null,
+            2,
+          )
+      }
+      delete raw.dir
+      let input: unknown
+      try {
+        input = spec.input.parse(raw)
+      } catch (error) {
+        return JSON.stringify(
+          { ok: false, error: error instanceof Error ? error.message : String(error) },
+          null,
+          2,
+        )
+      }
+      const commandContext: CommandCtx = {
+        cwd: target,
+        signal: context.signal,
+        progress: () => context.reportProgress?.(0.5, 1),
+        ...(target === cwd ? { loadApp: loadAppCached } : {}),
+      }
+      const output = await spec.run(input, commandContext)
+      const value = spec.json?.(output, input) ?? output
+      return typeof value === "string" ? value : JSON.stringify(value, null, 2)
+    },
+  }
+}
+
+export function catalogProjectTools(
+  cwd: string,
+  loadAppCached: () => Promise<LoadedApp> = createCachedAppLoader(cwd),
+): McpTool[] {
+  return commandCatalog
+    .filter((entry) => entry.transports.includes("mcp"))
+    .map((entry) => {
+      const spec = findCommandSpec(entry.name)
+      if (spec === undefined) throw new Error(`missing command spec for ${entry.name}`)
+      return toMcpTool(spec, { cwd, loadAppCached })
+    })
+}
+
 export function projectTools(
   cwd: string,
   loadAppCached: (outDirName?: string) => Promise<LoadedApp> = createCachedAppLoader(cwd),
 ): McpTool[] {
   const warmRun = createWarmHandler("mcp-run", cwd, "run")
   const warmRender = createWarmHandler("mcp-render", cwd, "render")
-  return [
+  const catalogTools = catalogProjectTools(cwd, () => loadAppCached())
+  const legacyTools: McpTool[] = [
     {
       name: "nifra_contract_proof",
       description:
@@ -867,30 +943,6 @@ export function projectTools(
             2,
           )
         }
-      },
-    },
-    {
-      name: "nifra_context",
-      description:
-        "Get this nifra project's surface. Call it once UNFILTERED for a tight INDEX: the route list (API routes as `METHOD path`, page routes as `pattern → file`) + framework conventions + a pointer - cheap even on a big app, no per-route schema dump. Then pass `path` (a route prefix like /api/orders) and/or `kind` (api|pages) to fetch the FULL contract for that slice (body/query/response TS shapes + the exact typed-client call form).",
-      inputSchema: {
-        type: "object",
-        properties: {
-          path: {
-            type: "string",
-            description: "Only routes whose path/pattern starts with this prefix.",
-          },
-          kind: {
-            type: "string",
-            enum: ["api", "pages"],
-            description: "Limit to API routes or page routes.",
-          },
-        },
-        additionalProperties: false,
-      },
-      handler: async (args) => {
-        const filter = args as { path?: string; kind?: "api" | "pages" }
-        return describeProject(await loadAppCached(), filter)
       },
     },
     {
@@ -1061,26 +1113,6 @@ export function projectTools(
             2,
           )
         }
-      },
-    },
-    {
-      name: "nifra_routes",
-      description:
-        "List this project's API routes as STRUCTURED JSON - each `{ method, path, call, body?, query?, response? }`, where `call` is the exact typed-client call form and the shapes are compact TS-typed contracts. For programmatic use (list_routes / get_route_schema) instead of parsing the nifra_context Markdown. No args = every route; pass `path` (a path or prefix like /api/orders) to narrow to those routes.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          path: {
-            type: "string",
-            description: "Only routes whose path starts with this prefix (omit for all routes).",
-          },
-        },
-        additionalProperties: false,
-      },
-      handler: async (args) => {
-        const { routesToJson } = await import("./introspect.ts")
-        const { path } = args as { path?: string }
-        return JSON.stringify(routesToJson(await loadAppCached(), path), null, 2)
       },
     },
     {
@@ -1280,211 +1312,6 @@ export function projectTools(
       },
     },
     {
-      name: "nifra_check",
-      description:
-        'Run the project\'s drift gate and return a structured result { ok, typecheck, diagnostics[], pipeline? }: typecheck (the frontend↔backend contract), plus lints for hand-rolled fetch() to your own API, untyped client("…") calls missing <typeof app>, and server-only imports in routes/. `pipeline` answers "which bundler does this app run on" (bun|vite, for dev AND build alike) without starting a server, and its `pipeline` diagnostics catch the hazards of having two: a plugin in the slot the other bundler reads (accepted, then never called), a dev toolchain imported by the file `nifra build` bundles into the production server, and `conditions` that cannot reach Bun\'s dev client bundle. Read it before adding a plugin or a compiler. Pass lintsOnly:true for a near-instant lint pass while iterating; run the full gate (default) to confirm the work is done - fix every diagnostic before finishing.',
-      inputSchema: {
-        type: "object",
-        properties: {
-          lintsOnly: {
-            type: "boolean",
-            description: "Skip tsc; run only the near-instant source lints (inner-loop mode).",
-          },
-          dir: {
-            type: "string",
-            description:
-              'Run the check in this subdirectory (relative to the project root), e.g. "app" or "packages/api". Use it when the MCP server\'s root is a monorepo but you want to check just one app. Default: the project root.',
-          },
-        },
-        additionalProperties: false,
-      },
-      handler: async (args, context) => {
-        const { collectCheckResult } = await import("./check.ts")
-        const opts = args as { lintsOnly?: boolean; dir?: string }
-        const target = resolveProjectDir(cwd, opts.dir)
-        if (target === null) return dirError(opts.dir)
-        const result = await collectCheckResult(target, {
-          lintsOnly: opts.lintsOnly ?? false,
-          signal: context.signal,
-          // Bound the result so a large project can't emit an MCP message big enough to break the stdio
-          // transport (`-32000: Connection closed`). If `truncated` comes back, fix the shown diagnostics
-          // and re-run. The scan already skips gitignored trees (walkSource), so this is the safety net.
-          maxDiagnostics: 100,
-        })
-        return JSON.stringify(
-          result.structuredDiagnostics === undefined
-            ? result
-            : { ...result, diagnostics: result.structuredDiagnostics },
-          null,
-          2,
-        )
-      },
-    },
-    {
-      name: "nifra_fix",
-      description:
-        "Automatically fix diagnostic lints (such as rewriting hand-rolled fetch() calls to the typed nifra client, adding generic types to client factory calls, and resolving dependency drift in package.json). Runs diagnostics, applies all mechanical edit suggestions, applies doctor dependency fixes, and returns the remaining unresolved diagnostics.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          code: {
-            type: "string",
-            description:
-              "Apply the registered recipe for one stable diagnostic code when available.",
-          },
-        },
-        additionalProperties: false,
-      },
-      handler: async (args, context) => {
-        const { collectCheckResult } = await import("./check.ts")
-        const { applyDiagnosticRecipe } = await import("./fix-recipes.ts")
-        const { applyDoctorAutoFix } = await import("./doctor.ts")
-        const { resolveInsideProject } = await import("./project-path.ts")
-        const { writeFile, readFile } = await import("node:fs/promises")
-
-        let doctorResult: Awaited<ReturnType<typeof applyDoctorAutoFix>> | null = null
-        try {
-          doctorResult = await applyDoctorAutoFix(cwd)
-        } catch {
-          // ignore doctor errors
-        }
-
-        const checkResult = await collectCheckResult(cwd, {
-          lintsOnly: true,
-          signal: context.signal,
-          maxDiagnostics: 100,
-        })
-
-        const requestedCode = (args as { code?: unknown }).code
-        const recipeFixed: string[] = []
-        if (typeof requestedCode === "string") {
-          for (const diagnostic of checkResult.structuredDiagnostics ?? []) {
-            if (diagnostic.code !== requestedCode) continue
-            recipeFixed.push(...(await applyDiagnosticRecipe(cwd, diagnostic)))
-          }
-        }
-
-        const fixed: Array<{ file: string; line: number; title: string }> = []
-
-        for (const diag of checkResult.diagnostics) {
-          if (diag.file && diag.line && diag.suggestion?.kind === "edit" && diag.suggestion.diff) {
-            try {
-              const diffLines = diag.suggestion.diff.split("\n")
-              const beforeLine = diffLines.find((l) => l.startsWith("-"))?.slice(1)
-              const afterLine = diffLines.find((l) => l.startsWith("+"))?.slice(1)
-              if (beforeLine !== undefined && afterLine !== undefined) {
-                const filePath = await resolveInsideProject(cwd, diag.file)
-                if (filePath === undefined) continue
-                const content = await readFile(filePath, "utf-8")
-                const lines = content.split("\n")
-                const idx = diag.line - 1
-                if (lines[idx] === beforeLine) {
-                  lines[idx] = afterLine
-                  await writeFile(filePath, lines.join("\n"), "utf-8")
-                  fixed.push({
-                    file: diag.file,
-                    line: diag.line,
-                    title: diag.suggestion.title,
-                  })
-                }
-              }
-            } catch {
-              // ignore edit errors
-            }
-          }
-        }
-
-        const finalResult = await collectCheckResult(cwd, {
-          lintsOnly: false,
-          signal: context.signal,
-          maxDiagnostics: 100,
-        })
-
-        return JSON.stringify(
-          {
-            ok: finalResult.ok,
-            fixed,
-            recipeFixed,
-            doctorFixed: doctorResult?.fixed ?? [],
-            remainingDiagnostics: finalResult.diagnostics,
-          },
-          null,
-          2,
-        )
-      },
-    },
-    {
-      name: "nifra_assure",
-      description:
-        "Evaluate nifra.assurance.ts and return the complete route-assurance report: every reflected route's first matching policy rule, enforcement evidence, missing/forbidden evidence, and the fail-closed ok bit. Use after adding or changing routes/security middleware; fix every finding before finishing.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          config: {
-            type: "string",
-            description:
-              "Config path relative to the selected project directory. Default: nifra.assurance.ts.",
-          },
-          bundle: {
-            type: "boolean",
-            description: "Return the single gate bundle with verdict and explicit skipped gates.",
-          },
-          strict: {
-            type: "boolean",
-            description: "Treat warning diagnostics as failures in the bundle.",
-          },
-          hydration: {
-            type: "boolean",
-            description: "Run the hydration assurance gate.",
-          },
-          interact: {
-            type: "boolean",
-            description: "Run declared hydration probes after the client mounts.",
-          },
-          dir: {
-            type: "string",
-            description:
-              'Evaluate this project subdirectory (relative to the MCP root), e.g. "apps/api". Default: the project root.',
-          },
-        },
-        additionalProperties: false,
-      },
-      handler: async (args) => {
-        const opts = args as {
-          config?: string
-          dir?: string
-          bundle?: boolean
-          strict?: boolean
-          hydration?: boolean
-          interact?: boolean
-        }
-        const target = resolveProjectDir(cwd, opts.dir)
-        if (target === null) return dirError(opts.dir)
-        const config = opts.config === undefined ? undefined : resolve(target, opts.config)
-        if (config !== undefined && config !== target && !config.startsWith(target + sep)) {
-          return JSON.stringify(
-            { ok: false, error: "config must stay inside the selected project directory" },
-            null,
-            2,
-          )
-        }
-        const { collectAssuranceReport, collectAssureBundle } = await import("./assure.ts")
-        if (opts.bundle === true || opts.strict === true || opts.hydration === true) {
-          return JSON.stringify(
-            await collectAssureBundle(target, {
-              ...(config === undefined ? {} : { config }),
-              ...(opts.strict === undefined ? {} : { strict: opts.strict }),
-              ...(opts.hydration === undefined ? {} : { hydration: opts.hydration }),
-              ...(opts.interact === undefined ? {} : { interact: opts.interact }),
-            }),
-            null,
-            2,
-          )
-        }
-        return JSON.stringify(await collectAssuranceReport(target, config), null, 2)
-      },
-    },
-    {
       name: "nifra_hydrate",
       description: "Run the hydration assurance gate and return stable NF-H diagnostics.",
       inputSchema: {
@@ -1534,82 +1361,8 @@ export function projectTools(
         }
       },
     },
-    {
-      name: "nifra_levels",
-      description:
-        "Compute this project's verification ladder and return { achieved, levels[] }, where each level carries { level, name, ok, reasons[] }. The ladder is cumulative: L0 typed contract (nifra check), L1 route assurance, L2 reviewed capability lockfile, L3 route trust manifest in sync, L4 contract invariants, so a level only holds when every level below it holds, and `achieved` is -1 when even L0 fails. This is the single gate that reports what a change actually proves: run it after finishing work, and treat any `reasons` on a level the project already claimed as a regression to fix.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          config: {
-            type: "string",
-            description:
-              "Assurance config path relative to the selected project directory. Default: nifra.assurance.ts.",
-          },
-          seed: {
-            type: "number",
-            description: "Deterministic seed for the L4 invariant run. Default 1.",
-          },
-          dir: {
-            type: "string",
-            description:
-              'Evaluate this project subdirectory (relative to the MCP root), e.g. "apps/api". Default: the project root.',
-          },
-        },
-        additionalProperties: false,
-      },
-      handler: async (args) => {
-        const opts = args as { config?: string; seed?: number; dir?: string }
-        const target = resolveProjectDir(cwd, opts.dir)
-        if (target === null) return dirError(opts.dir)
-        if (opts.seed !== undefined && !Number.isSafeInteger(opts.seed)) {
-          return JSON.stringify({ ok: false, error: "seed must be a safe integer" }, null, 2)
-        }
-        const config = opts.config === undefined ? undefined : resolve(target, opts.config)
-        if (config !== undefined && config !== target && !config.startsWith(target + sep)) {
-          return JSON.stringify(
-            { ok: false, error: "config must stay inside the selected project directory" },
-            null,
-            2,
-          )
-        }
-        const { collectVerificationLevels } = await import("./levels-tool.ts")
-        return JSON.stringify(
-          await collectVerificationLevels(target, {
-            ...(opts.config === undefined ? {} : { config: opts.config }),
-            ...(opts.seed === undefined ? {} : { seed: opts.seed }),
-          }),
-          null,
-          2,
-        )
-      },
-    },
-    {
-      name: "nifra_doctor",
-      description:
-        "Check this project for packages imported in source but NOT declared in package.json - the Bun-workspace trap where an import resolves at runtime (hoisting/workspace) so tests pass and `bun install` says no changes, yet tsc fails and a fresh/standalone install can't resolve it. Also reports `pipeline`: which bundler (bun|vite) this app's dev AND build phases run on and why, plus config hazards that only exist because there are two - a plugin sitting in the slot the other bundler reads (accepted, then never called), a dev toolchain imported by the file `nifra build` bundles into the production server (builds clean, dies at startup), and `conditions` that cannot reach the client bundle Bun's dev server serves. Returns { ok, ran, findings[], pipeline?, fixed?, skippedFixes? }. Pass autoFix:true to update package.json only when the dependency version can be inferred locally from an ancestor package.json or installed package metadata; otherwise the tool returns the exact bun add command to run.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          autoFix: {
-            type: "boolean",
-            description:
-              "When true, write safe package.json fixes using only locally inferred versions. Does not run install or use the network.",
-          },
-        },
-        additionalProperties: false,
-      },
-      handler: async (args) => {
-        const opts = args as { autoFix?: boolean }
-        const { applyDoctorAutoFix, collectDoctorResult } = await import("./doctor.ts")
-        return JSON.stringify(
-          opts.autoFix === true ? await applyDoctorAutoFix(cwd) : await collectDoctorResult(cwd),
-          null,
-          2,
-        )
-      },
-    },
   ]
+  return [...catalogTools, ...legacyTools]
 }
 
 type ToolBackend = {

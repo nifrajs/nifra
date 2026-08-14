@@ -23,6 +23,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { Glob } from "bun"
 import ts from "typescript"
+import { renderCommandCatalogLines } from "../packages/cli/src/command-catalog.ts"
 
 const ROOT = `${import.meta.dir}/..`
 // A card is a quick read by design: cap the export list and the per-line signature so one card stays
@@ -361,6 +362,10 @@ function cardFor(pkg: Pkg, exports: readonly ExportRow[]): string {
   }
   lines.push("", "## Footguns", "")
   for (const f of footguns) lines.push(`- ${f}`)
+  if (pkg.name === "@nifrajs/cli") {
+    lines.push("", "## Stable project commands", "")
+    for (const command of renderCommandCatalogLines()) lines.push(`- ${command}`)
+  }
   lines.push("")
   return lines.join("\n")
 }
