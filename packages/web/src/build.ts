@@ -1105,12 +1105,17 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     const base = basename(path)
     return base.slice(0, base.lastIndexOf("-")) // strip `-${hash}.css`
   }
+  // `css` is the union of every emitted stylesheet, matching the Vite pipeline (build-vite.ts) so the
+  // field means the same thing on both bundlers. The bootstrap aggregate lists first, preserving the
+  // fallback link order `createWebApp` uses (whole-app stylesheet before any route-scoped one); the
+  // per-route `cssBundle` outputs follow. Dropping those per-route outputs (the old `aggregate`-only
+  // shape) left them in `manifest.assets` but not `css`, so a route-scoped stylesheet normalized to
+  // `asset:css` and tripped the module-graph parity contract - a bundler-dependent divergence.
   const cssAssets = result.outputs.filter((o) => o.kind === "asset" && o.path.endsWith(".css"))
-  const aggregate = cssAssets
-    .filter((o) => cssNameOf(o.path) === bootstrapName)
-    .map((o) => toUrl(o.path))
-  const css: readonly string[] =
-    aggregate.length > 0 ? aggregate : cssAssets.map((o) => toUrl(o.path))
+  const css: readonly string[] = [
+    ...cssAssets.filter((o) => cssNameOf(o.path) === bootstrapName),
+    ...cssAssets.filter((o) => cssNameOf(o.path) !== bootstrapName),
+  ].map((o) => toUrl(o.path))
 
   // CSS - per-route: each route/layout file is its own entrypoint, so the build metafile records its
   // `cssBundle` - exactly the CSS that file's subtree uses (shared-component CSS is inlined into each

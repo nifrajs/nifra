@@ -230,6 +230,25 @@ async function main(): Promise<void> {
         `Vite route manifest drifted from the fixture: ${JSON.stringify(viteSnapshot.routeManifest)}`,
       )
     }
+    // `manifest.css` must be the union of every emitted stylesheet on both bundlers - not the bootstrap
+    // aggregate alone. A per-route stylesheet dropped from `css` (but kept in `assets`) is exactly the
+    // Bun-vs-Vite divergence that normalized a route stylesheet to `asset:css`. The two-route fixture
+    // gives `about` its own stylesheet, so this holds the invariant that produced that bug.
+    for (const [name, manifest] of [
+      ["Bun", bun],
+      ["Vite", vite],
+    ] as const) {
+      const css = new Set(manifest.css ?? [])
+      for (const [route, styles] of Object.entries(manifest.routeStyles ?? {})) {
+        for (const url of styles) {
+          if (!css.has(url)) {
+            throw new Error(
+              `${name} manifest.css dropped a per-route stylesheet: route ${route} links ${url}, absent from css ${JSON.stringify([...css])}`,
+            )
+          }
+        }
+      }
+    }
     const differences = compareParity(bunSnapshot, viteSnapshot)
     if (process.argv.includes("--json")) {
       console.log(JSON.stringify({ bun: bunSnapshot, vite: viteSnapshot, differences }, null, 2))

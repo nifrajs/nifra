@@ -81,11 +81,20 @@ export interface DevelopmentParityInput {
   readonly routes: Readonly<Record<string, number>>
   readonly publicFiles: readonly string[]
   readonly css: readonly string[]
+  /** The scanned first-party source root, carried only so a css parity failure can name where the
+   * scanner looked. Optional: callers that hand-build an input for a unit test may omit it. */
+  readonly sourceRoot?: string
 }
 
 const SOURCE_EXTENSIONS = /\.(?:c|m)?(?:j|t)sx?$|\.(?:mdx|svelte|vue)$/
+/** A first-party reference to a stylesheet by an explicit path specifier. Covers static `import`,
+ * re-export `from`, dynamic `import(...)`, and `require(...)`. It stays deliberately *sound*: it only
+ * matches when a stylesheet specifier genuinely exists, never on an unreferenced `.css` file in the
+ * tree. With the css parity comparison now directional (a scanner miss passes, a false positive fails),
+ * a loose pattern would fail correct apps. Specifiers that cannot end in a stylesheet extension (a bare
+ * package `exports` subpath) stay unreachable without a resolver; those fall in the passing direction. */
 const CSS_IMPORT =
-  /(?:import\s+(?:[^"']+\s+from\s+)?|from\s+)["'][^"']+\.(?:css|scss|sass|less|styl)(?:\?[^"']*)?["']/i
+  /(?:import\s+(?:[^"']+\s+from\s+)?|from\s+|(?:import|require)\s*\(\s*)["'][^"']+\.(?:css|scss|sass|less|styl)(?:\?[^"']*)?["']/i
 /** A single-file-component `<style>` block (Svelte/Vue). The bundler extracts these into the app
  * stylesheet even though no `import "...css"` statement exists, so the dev contract must count them
  * or a scoped-style component would look style-free next to a production manifest that carries css. */
@@ -276,8 +285,17 @@ const identityTargets = (pkg: Record<string, unknown>): readonly string[] =>
     .filter((name) => name.startsWith("@nifrajs/") || IDENTITY_SENSITIVE_PACKAGES.has(name))
     .sort()
 
-const IDENTITY_REMEDIATION =
+/** version-skew is a range problem: one reinstall from the root collapses it. */
+const VERSION_SKEW_REMEDIATION =
   "Align dependency ranges and reinstall from the workspace root so every importer resolves one physical copy; nifra does not rewrite lockfiles for identity conflicts."
+/** duplicate-path is a topology problem. When the copies come from a linked sibling repo, a reinstall
+ * does not collapse them - each tree keeps its own copy. One tree must resolve into the other: dedupe
+ * so the identity-sensitive package is a single physical realpath (e.g. symlink each duplicate to the
+ * linked repo's copy), refusing on version skew rather than silently swapping versions. */
+const DUPLICATE_PATH_REMEDIATION =
+  "Deduplicate so this package resolves to a single physical path. If a copy comes from a linked sibling repo, reinstalling will not collapse it - point one tree's copy at the other's (symlink the duplicate to the linked repo's copy) instead of reinstalling."
+const identityRemediation = (cause: IdentityParityCause): string =>
+  cause === "version-skew" ? VERSION_SKEW_REMEDIATION : DUPLICATE_PATH_REMEDIATION
 
 /** Find duplicate identity-sensitive package realpaths without reading application payloads. */
 export async function collectIdentityParity(
@@ -361,7 +379,7 @@ export async function collectIdentityParity(
         cause === "version-skew"
           ? `${name} resolves to multiple versions and physical paths, so module state and symbols are not shared`
           : `${name} is loaded from more than one physical path, so module state and symbols are not shared`,
-      remediation: IDENTITY_REMEDIATION,
+      remediation: identityRemediation(cause),
     })
   }
   return { workspaceRoot: scanRoot, findings }
@@ -449,9 +467,13 @@ export function normalizeBuildManifest(manifest: BuildManifestLike): ParityManif
           .sort(([a], [b]) => a.localeCompare(b))
           .map(([route, chunks]) => [route, chunks.length]),
       ),
-      emittedAssets: logicalStaticAssets(manifest).filter(
-        (asset) => !asset.startsWith("css:") && !asset.startsWith("public:"),
-      ),
+      // Allowlist, not denylist: the dev/prod module-graph contract is the JavaScript module graph
+      // only. `js:entry` and `js:route:<id>:<n>` are the roles dev can reconstruct from source. Which
+      // *non-JS* files a bundler emits (svg, woff2, an extracted stylesheet) is an output detail, not
+      // a claim dev can make - dev serves those from source. The stylesheet claim that matters keeps
+      // its own `css` section; `public/` keeps `publicFiles`. A denylist admitted every future
+      // `asset:*` prefix by default, which is how an emitted `asset:svg` hard-failed every build.
+      emittedAssets: logicalStaticAssets(manifest).filter((asset) => asset.startsWith("js:")),
     },
     publicFiles: [...(manifest.publicFiles ?? [])].sort(),
     css: (manifest.css ?? []).length > 0 ? ["css:present"] : [],
@@ -530,6 +552,7 @@ export function collectDevelopmentParityInput(
     routes,
     publicFiles: publicFilesUnder(publicDir),
     css,
+    sourceRoot,
   }
 }
 
@@ -552,9 +575,71 @@ export function compareManifestParity(
       development: development.publicFiles,
       production: production.publicFiles,
     })
-  if (!equal(development.css, production.css))
+  // css is the one section with an inference-based side. The dev scanner (CSS_IMPORT) is
+  // sound-but-incomplete by construction, so `dev empty, prod css` is a scanner miss, not an app
+  // defect - it passes. Fail only the load-bearing direction: dev found styles the build does not
+  // ship, so the production page would render unstyled. module-graph and public-files stay on equality
+  // because both sides are ground truth there.
+  if (development.css.length > 0 && production.css.length === 0)
     differences.push({ section: "css", development: development.css, production: production.css })
   return differences
+}
+
+/** The forms `CSS_IMPORT` cannot see, quoted in a css parity failure so the reader knows where to look. */
+const CSS_SCANNER_BLIND_SPOTS =
+  "a dynamic import(), a bare package subpath (exports), require(), an @import inside a stylesheet, or plugin-injected css"
+
+const symmetricDifference = (
+  a: readonly string[],
+  b: readonly string[],
+): { readonly onlyDevelopment: readonly string[]; readonly onlyProduction: readonly string[] } => {
+  const left = new Set(a)
+  const right = new Set(b)
+  return {
+    onlyDevelopment: a.filter((value) => !right.has(value)),
+    onlyProduction: b.filter((value) => !left.has(value)),
+  }
+}
+
+/** Turn one parity difference into a message that names the offending files, not two opaque blobs. */
+function explainParityDifference(
+  difference: ManifestParityDifference,
+  development: DevelopmentParityInput,
+  production: BuildManifestLike,
+): string {
+  if (difference.section === "css") {
+    const shipped = (production.css ?? []).join(", ")
+    const where = development.sourceRoot === undefined ? "" : ` under ${development.sourceRoot}`
+    return (
+      `css: production ships [${shipped || "(none)"}] but the development scanner found no static ` +
+      `stylesheet import${where} - it is blind to ${CSS_SCANNER_BLIND_SPOTS}`
+    )
+  }
+  if (difference.section === "module-graph") {
+    const dev = difference.development as ParityManifest["moduleGraph"]
+    const prod = difference.production as ParityManifest["moduleGraph"]
+    const routes = symmetricDifference(dev.routes, prod.routes)
+    const assets = symmetricDifference(dev.emittedAssets, prod.emittedAssets)
+    const parts: string[] = []
+    if (routes.onlyDevelopment.length > 0 || routes.onlyProduction.length > 0)
+      parts.push(
+        `routes only in development=${JSON.stringify(routes.onlyDevelopment)} only in production=${JSON.stringify(routes.onlyProduction)}`,
+      )
+    if (assets.onlyDevelopment.length > 0 || assets.onlyProduction.length > 0)
+      parts.push(
+        `chunks only in development=${JSON.stringify(assets.onlyDevelopment)} only in production=${JSON.stringify(assets.onlyProduction)}`,
+      )
+    if (parts.length === 0)
+      parts.push(
+        `route chunk counts differ: development=${JSON.stringify(dev.routeChunks)} production=${JSON.stringify(prod.routeChunks)}`,
+      )
+    return `module-graph: ${parts.join("; ")}`
+  }
+  const files = symmetricDifference(
+    difference.development as readonly string[],
+    difference.production as readonly string[],
+  )
+  return `${difference.section}: only in development=${JSON.stringify(files.onlyDevelopment)} only in production=${JSON.stringify(files.onlyProduction)}`
 }
 
 /** Validate a production manifest against the source manifest a development server should serve. */
@@ -568,10 +653,7 @@ export function assertDevelopmentProductionParity(
   )
   if (differences.length > 0) {
     const detail = differences
-      .map(
-        (difference) =>
-          `${difference.section}: development=${JSON.stringify(difference.development)} production=${JSON.stringify(difference.production)}`,
-      )
+      .map((difference) => explainParityDifference(difference, development, production))
       .join("; ")
     throw new Error(`[nifra] development and production manifest parity failed: ${detail}`)
   }

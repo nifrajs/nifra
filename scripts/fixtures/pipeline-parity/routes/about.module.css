@@ -1,0 +1,8 @@
+.card {
+  border: 1px solid;
+  padding: 1rem;
+}
+
+.badge {
+  font-weight: 600;
+}
