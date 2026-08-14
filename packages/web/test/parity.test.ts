@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -42,6 +42,53 @@ test("formatIdentityParityFindings renders package, cause, versions and paths", 
   expect(rendered).toContain("versions: 19.2.7;")
   expect(rendered).toContain("apps/web/node_modules/react")
   expect(rendered).toContain("node_modules/react")
+})
+
+test("identity parity does not sweep a sibling repo reached through a store symlink", async () => {
+  // The regression: a dependency symlinked into ANOTHER project's package store (bun's `.bun/…`, an
+  // `npm link` target) used to be treated as a linked source checkout, so the scan walked up to that
+  // project's `.git` and reported its entire unrelated dependency tree as this project's duplicates -
+  // permanent findings in a repo the developer is not working in. The store copy itself is still
+  // recorded (it is what this project loads); only the walk above it is refused.
+  const ground = await mkdtemp(join(tmpdir(), "nifra-parity-store-"))
+  try {
+    const root = join(ground, "project")
+    const other = join(ground, "other")
+    const stored = join(other, "node_modules", ".bun", "react@19.2.6", "node_modules", "react")
+    await mkdir(join(root, ".git"), { recursive: true })
+    await mkdir(join(root, "node_modules", "@nifrajs", "core"), { recursive: true })
+    await mkdir(join(other, ".git"), { recursive: true })
+    await mkdir(join(other, "node_modules", "@nifrajs", "core"), { recursive: true })
+    await mkdir(stored, { recursive: true })
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({
+        name: "project",
+        dependencies: { react: "19.2.6", "@nifrajs/core": "2.0.0" },
+      }),
+    )
+    await writeFile(
+      join(root, "node_modules", "@nifrajs", "core", "package.json"),
+      JSON.stringify({ name: "@nifrajs/core", version: "2.0.0" }),
+    )
+    await writeFile(
+      join(stored, "package.json"),
+      JSON.stringify({ name: "react", version: "19.2.6" }),
+    )
+    // The sibling repo's own stale copy: reachable only by walking ABOVE the store path.
+    await writeFile(
+      join(other, "node_modules", "@nifrajs", "core", "package.json"),
+      JSON.stringify({ name: "@nifrajs/core", version: "1.12.0" }),
+    )
+    await symlink(stored, join(root, "node_modules", "react"))
+
+    const result = await collectIdentityParity(root)
+    expect(result.findings.map((finding) => finding.package)).not.toContain("@nifrajs/core")
+    // Only one physical react is reachable, so it is not a duplicate either.
+    expect(result.findings).toHaveLength(0)
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
 })
 
 test("shared identity parity resolves a workspace from an app subdirectory", async () => {

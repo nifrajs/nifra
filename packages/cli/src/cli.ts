@@ -21,6 +21,7 @@ import {
 import { discoverRoutes } from "@nifrajs/web/fs"
 import type { BunPlugin } from "bun"
 import { bindCommandArgv, findCommandSpec, renderCommandCatalogHelp } from "./command-catalog.ts"
+import { applyEnvFiles, takeEnvFileFlags } from "./env-file.ts"
 import { type LoadedApp, loadApp, type NifraFramework } from "./load.ts"
 import { chooseBuildPipeline, describePipeline } from "./pipeline-guard.ts"
 
@@ -187,6 +188,12 @@ routes/ from the current directory. Run from your project root.
 
 Port: \`dev\` and \`start\` share the default ${DEFAULT_DEV_PORT}. Override with \`--port <n>\` (alias \`-p\`) or the
 \`PORT\` env var (\`--port\` wins over \`PORT\`, which wins over the default).
+
+Env: \`--env-file <path>\` works on EVERY command and may be repeated (later files win). Commands that
+reflect your app import it, so an app that validates its environment at module scope needs that
+environment present - without it the app aborts before nifra runs a single check. A variable already
+set in the process environment is never overwritten by a file.
+  e.g. \`nifra check --env-file .env.local\`
 
 ${renderCommandCatalogHelp()}`
 
@@ -661,8 +668,34 @@ export function assureBundleRequested(argv: readonly string[]): boolean {
   )
 }
 
+/**
+ * A command that reflects the project imports it, and an app that validates its environment at module
+ * scope calls `process.exit` from inside that import. Nothing is throwable at that point, so the whole
+ * output is the app's own abort message with no hint that a nifra command triggered it. Name the cause
+ * on the way out and point at the flag that supplies the environment.
+ */
+function installReflectionExitHint(): (command: string | undefined) => void {
+  let inFlight: string | undefined
+  process.on("exit", (code) => {
+    if (inFlight === undefined || code === 0) return
+    process.stderr.write(
+      `\n[nifra] \`nifra ${inFlight}\` reflects this project by importing it, and the import exited ` +
+        `with code ${code} before the command produced a result - the message above came from your app, not nifra.\n` +
+        `        If it is the app's environment validation, supply the environment and re-run:\n` +
+        `        nifra ${inFlight} --env-file .env.local\n`,
+    )
+  })
+  return (command) => {
+    inFlight = command
+  }
+}
+
 async function main(): Promise<void> {
-  const argv = Bun.argv.slice(2)
+  const { argv: rawArgv, files: envFiles } = takeEnvFileFlags(Bun.argv.slice(2))
+  // Applied before any command runs: a reflecting command imports the app on its first await, and the
+  // app reads its environment at module scope, so the variables must already be in place by then.
+  if (envFiles.length > 0) await applyEnvFiles(process.cwd(), envFiles)
+  const argv = rawArgv
   const command = argv[0]
   if (command === undefined || command === "--help" || command === "-h" || command === "help") {
     console.log(HELP)
@@ -709,9 +742,12 @@ async function main(): Promise<void> {
   }
   const catalogSpec = command === undefined ? undefined : findCommandSpec(command)
   if (catalogSpec?.transports.includes("cli")) {
+    const markReflecting = installReflectionExitHint()
     try {
       const input = bindCommandArgv(catalogSpec, argv.slice(1))
+      markReflecting(command)
       const output = await catalogSpec.run(input, { cwd: process.cwd(), cliVersion: CLI_VERSION })
+      markReflecting(undefined)
       const asRecord = output as unknown as Record<string, unknown>
       const wantsJson = asRecord.json === true || argv.includes("--json")
       if (wantsJson) {
@@ -723,6 +759,9 @@ async function main(): Promise<void> {
       if (catalogSpec.success !== undefined && !catalogSpec.success(output, input))
         process.exitCode = 1
     } catch (err) {
+      // A thrown error is nifra's own reporting path, not a silent abort: clear the sentinel so the
+      // hint stays reserved for the case where the process died inside the app import.
+      markReflecting(undefined)
       console.error(formatCliError(err))
       process.exitCode = 1
     }

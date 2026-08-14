@@ -240,7 +240,23 @@ export const resolvedInstalledCopy = async (
   }
 }
 
+/**
+ * How far above a linked package its dependencies may legitimately live.
+ *
+ * A linked SOURCE CHECKOUT (`link:../../nifra/packages/core`) really does resolve its imports from its
+ * own repo's `node_modules`, so the walk goes up to that repo's `.git` - a duplicate found there is one
+ * this project genuinely dual-loads.
+ *
+ * A path that lands INSIDE a `node_modules` directory is a package-manager store copy, not a checkout:
+ * a symlink into another project's store (bun's `.bun/<pkg>@<version>`, an `npm link` target, a shared
+ * global store) resolves there. Everything above such a copy belongs to whoever owns that store, and
+ * walking up would sweep an unrelated project's entire dependency tree into this project's duplicate
+ * report - permanent findings in a repo the developer is not even working in, that no change here can
+ * clear. Clamp to the copy itself: only its own nested `node_modules` counts, which is exactly the set
+ * of modules it can actually load.
+ */
 const linkedRepoBoundary = async (packageRoot: string): Promise<string> => {
+  if (packageRoot.split(sep).includes("node_modules")) return packageRoot
   let dir = packageRoot
   for (let depth = 0; depth < 8; depth++) {
     if (await pathExists(join(dir, ".git"))) return dir
