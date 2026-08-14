@@ -582,13 +582,18 @@ const IDENTITY_RESPONSE = (response: Response): Response => response
 const RESPONSE_TIMEOUT = (): Response => jsonError(503, "request_timeout")
 
 // The unused-order-scoped-hook audit (recorder, seal check, stack capture, message) is a dev-time
-// diagnostic. Every guard below is the INLINE expression `typeof process !== "undefined" &&
-// process.env.NODE_ENV !== "production"` rather than a shared `const`, because a bundler's
-// `process.env.NODE_ENV` define only folds the check away - dead-code-eliminating the whole audit from
-// the shipped bundle - when it appears inline; Bun does not propagate a module const into the branch.
-// Every real production bundler (vite/esbuild/webpack/next, `bun build --production`) injects that
-// define, so this restores the bare kernel size. The `typeof process` guard keeps the check from
-// throwing on a process-less runtime when no define was applied.
+// diagnostic. Every guard below keeps the INLINE literal `process.env.NODE_ENV !== "production"` at the
+// branch - never a shared const holding the folded boolean - because a bundler's `process.env.NODE_ENV`
+// define only dead-code-eliminates the audit when the literal appears at the `if`; Bun does not
+// propagate a module const's value into the branch. Every real production bundler (vite/esbuild/webpack/
+// next, `bun build --production`) injects that define, turning each guard into `hookAuditRuntime &&
+// false`, which folds away - dropping the whole audit and restoring the bare kernel size.
+//
+// `hookAuditRuntime` is the one shared flag: `typeof globalThis.Deno === "undefined"`. Deno ships a
+// node-compat `process`, so `typeof process` does NOT gate it out there, yet reading `process.env`
+// throws `NotCapable` without `--allow-env`. The flag short-circuits before the env read on Deno (audit
+// off) while a production define still folds `<flag> && false` to `false` on every other runtime.
+const hookAuditRuntime = typeof (globalThis as { Deno?: unknown }).Deno === "undefined"
 
 // This module's own path, captured once from a sentinel stack. Every internal frame of an
 // order-scoped hook push (the public method, its `use()`-bundle dispatcher, the recorder) lives here,
@@ -844,7 +849,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.sealed = false
     // Guarded so a production define strips the call, leaving `beginHookAudit`/`hookAudit` unreferenced
     // for the bundler to eliminate; a non-bundled production run skips it the same way.
-    if (process.env.NODE_ENV !== "production") {
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production") {
       beginHookAudit(this, options.unusedScopedHooks ?? "warn", options.logger !== undefined)
     }
     this.derives = []
@@ -924,7 +929,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   derive<D extends object>(fn: (context: Context & Ctx) => MaybePromise<D>): Server<R, Ctx & D> {
     this.assertConfigurable("derive()")
     this.derives.push(fn as unknown as RawDerive)
-    if (process.env.NODE_ENV !== "production") recordScopedHook(this, this.catalog.size, "derive")
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      recordScopedHook(this, this.catalog.size, "derive")
     return this as unknown as Server<R, Ctx & D>
   }
 
@@ -936,7 +942,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   decorate<const K extends string, V>(key: K, value: V): Server<R, Ctx & Record<K, V>> {
     this.assertConfigurable("decorate()")
     this.decorations[key] = value
-    if (process.env.NODE_ENV !== "production") recordScopedHook(this, this.catalog.size, "decorate")
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      recordScopedHook(this, this.catalog.size, "decorate")
     return this as unknown as Server<R, Ctx & Record<K, V>>
   }
 
@@ -962,7 +969,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   beforeHandle(fn: (context: Context & Ctx) => MaybePromise<unknown>): this {
     this.assertConfigurable("beforeHandle()")
     this.beforeHandleHooks.push(fn as unknown as RawBeforeHandle)
-    if (process.env.NODE_ENV !== "production")
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
       recordScopedHook(this, this.catalog.size, "beforeHandle")
     return this
   }
@@ -978,7 +985,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   around(fn: <T>(context: Context & Ctx, next: () => MaybePromise<T>) => MaybePromise<T>): this {
     this.assertConfigurable("around()")
     this.aroundHooks.push(fn as unknown as RawAround)
-    if (process.env.NODE_ENV !== "production") recordScopedHook(this, this.catalog.size, "around")
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      recordScopedHook(this, this.catalog.size, "around")
     return this
   }
 
@@ -1003,7 +1011,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.capabilityInterceptors.push(
       Object.freeze({ interceptor, timeoutMs: Math.min(timeoutMs, 2_147_483_647) }),
     )
-    if (process.env.NODE_ENV !== "production")
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
       recordScopedHook(this, this.catalog.size, "aroundCapability")
     return this
   }
@@ -1024,7 +1032,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   afterHandle(fn: (result: unknown, context: Context & Ctx) => MaybePromise<unknown>): this {
     this.assertConfigurable("afterHandle()")
     this.afterHandleHooks.push(fn as unknown as RawAfterHandle)
-    if (process.env.NODE_ENV !== "production")
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
       recordScopedHook(this, this.catalog.size, "afterHandle")
     return this
   }
@@ -1035,7 +1043,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   onError(fn: (error: unknown, context: Context & Ctx) => MaybePromise<unknown>): this {
     this.assertConfigurable("onError()")
     this.onErrorHooks.push(fn as unknown as RawErrorHandler)
-    if (process.env.NODE_ENV !== "production") recordScopedHook(this, this.catalog.size, "onError")
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      recordScopedHook(this, this.catalog.size, "onError")
     return this
   }
 
@@ -2172,7 +2181,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   ): MaybePromise<Response> {
     // Seal once on the first request so test servers (no `listen()`) still get the dead-hook check.
     // After that it is a single boolean read - the per-request cost the option promises to keep at zero.
-    if (process.env.NODE_ENV !== "production") sealHookAudit(this, this.catalog.size, this.logger)
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      sealHookAudit(this, this.catalog.size, this.logger)
     // Off path (default): straight through - one property check, no closure, no promise.
     if (this.capacityGate === undefined) return this.fetchSourceInner(source, platform)
     return this.admitGated(requestOf(source), () => this.fetchSourceInner(source, platform))
@@ -2298,7 +2308,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     suppliedRuntime?: NodeOutcomeRuntime,
   ): MaybePromise<NodeServeOutcome> {
     // Seal once on the Node-direct lane too - it can bypass `fetchSource` entirely (hookless outcome).
-    if (process.env.NODE_ENV !== "production") sealHookAudit(this, this.catalog.size, this.logger)
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      sealHookAudit(this, this.catalog.size, this.logger)
     // A paired header-only native hook can preserve the Node-direct JSON/body outcome for successful
     // responses. Arbitrary onResponse transforms need a real Web Response, but a buffered outcome can
     // be materialized with a direct-write marker and return to the socket path when the hook mutates
@@ -5022,7 +5033,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       )
     }
     // Seal before Bun.serve: in `"error"` mode this throws instead of leaving a bound port behind.
-    if (process.env.NODE_ENV !== "production") sealHookAudit(this, this.catalog.size, this.logger)
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      sealHookAudit(this, this.catalog.size, this.logger)
     // Bun's `Server` is the concrete handle; we expose the stable `RunningServer`
     // subset so the public types don't depend on the ambient `Bun` global. The cast
     // bridges them - Bun's `.port` is `number | undefined` (undefined only for unix
