@@ -48,6 +48,7 @@ import {
 } from "../schema/standard.ts"
 import { INSTALL_RESPONSE_CONTRACT } from "./install.ts"
 import type { IdentityPlugin } from "./plugin.ts"
+import { isResponseResult } from "./runtime-core.ts"
 import type { AnyServer } from "./server.ts"
 
 /**
@@ -91,8 +92,11 @@ export function checkResponseContract(
   mode: "warn" | "enforce",
 ): ResponseContractOutcome | Promise<ResponseContractOutcome> {
   // A handler may return a raw Response as deliberate control flow (a redirect, a stream). There is no
-  // JSON payload to hold to the contract, and re-serializing one would corrupt it.
-  if (result instanceof Response || result === undefined) return { kind: "ok", value: result }
+  // JSON payload to hold to the contract, and re-serializing one would corrupt it. A `status(...)` is
+  // the same control flow in plain-data form: the contract describes the route's SUCCESS payload, so
+  // holding an early exit (a 401 body, say) to it would fail every guarded route that declares one.
+  if (result instanceof Response || result === undefined || isResponseResult(result))
+    return { kind: "ok", value: result }
   const settled = schema["~standard"].validate(result)
   return settled instanceof Promise
     ? settled.then((r) => interpret(r, result, mode))

@@ -22,10 +22,10 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 - **redactLogFields** _(function)_ - `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
 - **signValue** _(function)_ - `signValue: (value: string, secret: CookieSecret) => Promise<string>`
+- **status** _(function)_ - `status: (code: number, body?: unknown, init?: { readonly headers?: Readonly<Record<string, string>>; }) => ResponseResult`
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(…`
-- **toLambdaHandler** _(function)_ - `toLambdaHandler: <Env = unknown>(app: FetchApp<Env>) => LambdaHandler`
 
-_…and 95 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 98 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

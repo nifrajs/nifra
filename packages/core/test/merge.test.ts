@@ -67,9 +67,9 @@ describe("merge - domain-group composition", () => {
 
     expect((await app.fetch(new Request("http://x/merged-boom"))).status).toBe(500)
     const node = await app.resolveNode(new Request("http://x/merged-boom"))
-    expect(node.kind).toBe("response")
-    if (node.kind !== "response") throw new Error("unreachable")
-    expect(node.response.status).toBe(500)
+    expect(node.kind).toBe("json")
+    if (node.kind !== "json") throw new Error("unreachable")
+    expect(node.status).toBe(500)
     expect(parentLogs).toEqual(["unhandled request error", "unhandled request error"])
     expect(groupLogs).toEqual([])
   })

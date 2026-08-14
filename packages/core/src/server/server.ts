@@ -64,7 +64,7 @@ import {
   markLowercaseHeaderKeys,
 } from "./header-case.ts"
 import { headerObjectOf } from "./headers.ts"
-import { jsonError, pathnameOf, type UrlParts, urlPartsOf } from "./http.ts"
+import { jsonError, pathnameOf, plainError, type UrlParts, urlPartsOf } from "./http.ts"
 import { type NodeServeOutcome, withStaticNodeHeaders } from "./node-outcome.ts"
 import {
   type NodeOutcomeRuntime,
@@ -108,7 +108,10 @@ import {
   getUnboundedRequestBudget,
   type HandlerResult,
   headerOf,
+  isResponseResult,
+  type ResponseResult,
   requestOf,
+  status,
 } from "./runtime-core.ts"
 import { normalizeStaticResponseHeaders, type StaticResponseHeaders } from "./static-headers.ts"
 
@@ -433,10 +436,11 @@ function requireMcpRuntime(runtime: McpRuntime | undefined): McpRuntime {
 }
 
 /** The handler's permitted return type. When the route declares a `response` schema, the return is
- * constrained to the contract's type (or a raw `Response`) - so the implementation can't drift from the
- * declared contract. Without a `response` schema it's unconstrained (`HandlerResult`), exactly as before. */
+ * constrained to the contract's type (a raw `Response`, or a `status(...)` early exit - both are
+ * control flow, not the declared payload) - so the implementation can't drift from the declared
+ * contract. Without a `response` schema it's unconstrained (`HandlerResult`), exactly as before. */
 type ResponseOf<S extends RouteSchema> = S extends { response: infer R extends StandardSchemaV1 }
-  ? InferOutput<R> | Response
+  ? InferOutput<R> | Response | ResponseResult
   : HandlerResult
 
 /**
@@ -498,12 +502,23 @@ const STOP_HOOK_TIMEOUT_MS = 5_000
  * for the same request, so a browser that could open a socket was told its POST was cross-origin. */
 const wsSameOrigin = isSameOriginRequest
 
-function validationError(issues: ReadonlyArray<StandardIssue>): Response {
+function validationIssues(issues: ReadonlyArray<StandardIssue>): {
+  ok: false
+  error: string
+  issues: unknown[]
+} {
   const serialized = issues.map((issue) => {
     const path = issue.path?.map((seg) => String(typeof seg === "object" ? seg.key : seg))
     return path !== undefined ? { message: issue.message, path } : { message: issue.message }
   })
-  return Response.json({ ok: false, error: "validation", issues: serialized }, { status: 422 })
+  return { ok: false, error: "validation", issues: serialized }
+}
+
+/** The 422 as plain data - the shape every lane's response wrapper takes, so a rejected body costs
+ * what an accepted one costs: on Node it is written straight to the socket with a `content-length`
+ * instead of being built as a `Response` and drained back out. */
+function plainValidationError(issues: ReadonlyArray<StandardIssue>): ResponseResult {
+  return status(422, validationIssues(issues))
 }
 
 // `jsonError`, `urlPartsOf`, `pathnameOf` moved to `./http.ts` (a dependency-free leaf shared with the
@@ -558,6 +573,21 @@ function responseSet(ctx: RawContext): CtxSet {
   return ctx[CONTEXT_SET]() ?? EMPTY_RESPONSE_CONTROLS
 }
 
+/**
+ * A `derive` that answered with a response rather than a context extension - `status(...)`, or a bare
+ * `Response`. The request ends there, on the same lane a `beforeHandle`'s early return takes.
+ *
+ * `derive` is the one stage that could not exit early: `beforeHandle` says "done" by returning a
+ * value, but a derive's return value IS the extension, so the only way out was `throw`ing a
+ * `Response` - which measured as the single most expensive way to answer (the `Response` object
+ * costs ~40% of the rejection lane; see `PlainRender`). Neither shape had a meaning here before:
+ * `Object.assign(ctx, response)` copies nothing (a `Response`'s properties live on its prototype),
+ * so a derive that returned one silently fell through to the handler it meant to prevent.
+ */
+function isDeriveEarlyExit(extension: unknown): boolean {
+  return isResponseResult(extension) || extension instanceof Response
+}
+
 function isContextlessNoArgArrow(handler: (context: never) => unknown): boolean {
   if (handler.length !== 0) return false
   try {
@@ -578,8 +608,17 @@ type FeatureVersionOf<V extends string> = V extends `${infer Major}.${infer Mino
  */
 export type NifraFeatureVersion = FeatureVersionOf<Version>
 
+/**
+ * The Web lanes' `wrapResponse` input, as a `Response`. A plain-data carrier ({@link plainError},
+ * `status(...)`) is rendered on the ordinary JSON lane rather than through its own `toResponse`, so
+ * it picks up the same prebuilt init a handler's plain return uses. `EMPTY_RESPONSE_CONTROLS` because
+ * these renders happen where no request context exists - before routing, or after it was abandoned.
+ */
+const webResponseOf = (result: Response | ResponseResult): Response =>
+  result instanceof Response ? result : toResponse(result, EMPTY_RESPONSE_CONTROLS)
+
 // Stable module-level finalizers so `fetch`/`resolveNode` allocate no per-request closures.
-const IDENTITY_RESPONSE = (response: Response): Response => response
+const IDENTITY_RESPONSE = (response: Response | ResponseResult): Response => webResponseOf(response)
 const RESPONSE_TIMEOUT = (): Response => jsonError(503, "request_timeout")
 
 // The unused-order-scoped-hook audit (recorder, seal check, stack capture, message) is a dev-time
@@ -781,7 +820,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private staticResponseHeaders: StaticResponseHeaders | undefined
   /** `wrapResponse` for the Web lanes: identity until static headers exist to fold into the
    * framework's own error/404/timeout renders, which are built outside the header init. */
-  private wrapWebResponse: (response: Response) => Response
+  private wrapWebResponse: (response: Response | ResponseResult) => Response
   private webResponseTimeout: () => Response
   /** Body/raw response hooks need a framework-payload marker; keep that decision per app. */
   private responseBodyTag: object | undefined
@@ -926,8 +965,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * declared *after* this call, and reaches none declared before. One added after the last route
    * (e.g. on the app returned by a route-registering factory) covers nothing - see
    * {@link ServerOptions.unusedScopedHooks}.
+   *
+   * Returning a `status(...)` (or a `Response`) instead of an extension ends the request there - the
+   * guard shape, and the cheap one: it renders as plain data on the same lane a handler's return
+   * takes, where `throw new Response(...)` pays ~40% of the rejection lane to build the object. That
+   * branch is control flow, so it does not widen the derived context type.
    */
-  derive<D extends object>(fn: (context: Context & Ctx) => MaybePromise<D>): Server<R, Ctx & D> {
+  derive<D extends object>(
+    fn: (context: Context & Ctx) => MaybePromise<D | ResponseResult | Response>,
+  ): Server<R, Ctx & D> {
     this.assertConfigurable("derive()")
     this.derives.push(fn as unknown as RawDerive)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
@@ -1102,7 +1148,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         : { ...this.staticResponseHeaders.record, ...record }
     this.staticResponseHeaders = buildStaticResponseHeaders(merged)
     const statics = this.staticResponseHeaders
-    this.wrapWebResponse = (response) => applyStaticResponseHeaders(response, statics)
+    this.wrapWebResponse = (response) =>
+      applyStaticResponseHeaders(webResponseOf(response), statics)
     this.webResponseTimeout = () => applyStaticResponseHeaders(RESPONSE_TIMEOUT(), statics)
     return this
   }
@@ -2679,7 +2726,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     source: RequestSource,
     platform: Platform | undefined,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     // True only from the Web `fetch` path - unlocks each route's fused lane, whose output type IS
     // `Response` (`T = Response` there by construction; the node path always passes false).
@@ -2707,7 +2754,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     source: RequestSource,
     platform: Platform | undefined,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
   ): MaybePromise<T> {
     const hooks = this.onNodeRequestHooks
@@ -2741,7 +2788,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     source: RequestSource,
     platform: Platform | undefined,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
   ): Promise<T> {
     if (first !== undefined) return wrapResponse(first)
@@ -2769,7 +2816,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     source: RequestSource,
     platform: Platform | undefined,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
   ): MaybePromise<T> {
@@ -2816,7 +2863,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     sourceAtAwait: RequestSource,
     platform: Platform | undefined,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
   ): Promise<T> {
@@ -2910,7 +2957,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     source: RequestSource,
     platform: Platform | undefined,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
   ): MaybePromise<T> {
@@ -2962,17 +3009,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       }
       if (match.reason === "method-not-allowed") {
         return wrapResponse(
-          jsonError(405, "method_not_allowed", { Allow: match.allowed.join(", ") }),
+          // Lowercase on purpose: a plain render's headers go into the node outcome record verbatim,
+          // and every other name in that record is lowercase (the Web lane normalizes either way).
+          plainError(405, "method_not_allowed", { allow: match.allowed.join(", ") }),
         )
       }
-      return wrapResponse(jsonError(404, "not_found"))
+      return wrapResponse(plainError(404, "not_found"))
     }
 
     // Inspect only captured values for escapes. Scanning the full pathname repeated work the router
     // already did and made every plain dynamic route pay for unrelated static path bytes.
     const params = match.params === EMPTY_PARAMS ? match.params : decodeRouteParams(match.params)
     if (params === null) {
-      return wrapResponse(jsonError(400, "malformed_path"))
+      return wrapResponse(plainError(400, "malformed_path"))
     }
 
     return this.runMatched(
@@ -3012,7 +3061,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     params: Record<string, string>,
     search: string | undefined,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
   ): MaybePromise<T> {
@@ -3070,7 +3119,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     params: Record<string, string>,
     search: string | undefined,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
     webFast: boolean,
   ): MaybePromise<T> {
@@ -3092,7 +3141,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         ? undefined
         : admitDeadline(source.headers, this.deadlineAdmissionOptions)
     if (admission !== undefined && !admission.ok) {
-      return wrapResponse(jsonError(admission.status, admission.reason))
+      return wrapResponse(plainError(admission.status, admission.reason))
     }
     const effectiveTimeoutMs = admission?.timeoutMs ?? 0
 
@@ -3151,7 +3200,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     if (controller !== undefined && outcome instanceof Promise) {
       const timedOut =
         admission?.inherited === true
-          ? () => wrapResponse(jsonError(504, "deadline_exceeded"))
+          ? () => wrapResponse(plainError(504, "deadline_exceeded"))
           : onTimeout
       return this.withTimeout(
         outcome,
@@ -3182,7 +3231,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     budget: RequestBudget,
     platform: Platform | undefined,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     let result: unknown
     try {
@@ -3226,9 +3275,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     signal: AbortSignal,
     budget: RequestBudget,
     platform: Platform | undefined,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): T {
     if (err instanceof Response) return wrapResponse(err)
+    if (isResponseResult(err)) return wrapResponse(toResponse(err, EMPTY_RESPONSE_CONTROLS))
     const ctx = new RequestContext(
       source,
       params,
@@ -3240,7 +3290,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       this.protoPoisoning,
     )
     this.logRequestError(err, ctx)
-    return wrapResponse(jsonError(500, "internal_error"))
+    return wrapResponse(plainError(500, "internal_error"))
   }
 
   /**
@@ -3257,7 +3307,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     let result: unknown
     try {
@@ -3295,8 +3345,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // static headers here rather than through the shared `wrapResponse` seam.
     const logError = (err: unknown, ctx: RawContext): Response => {
       if (err instanceof Response) return this.wrapWebResponse(err)
+      // A thrown `status(...)`: control flow, rendered as the plain data it is.
+      if (isResponseResult(err)) return this.wrapWebResponse(toResponse(err, responseSet(ctx)))
       this.logRequestError(err, ctx)
-      return this.wrapWebResponse(jsonError(500, "internal_error"))
+      return this.wrapWebResponse(plainError(500, "internal_error"))
     }
     if (contextless && decorations === undefined) {
       // `() => ...` can't observe the context - skip allocating one entirely (errors still build
@@ -3427,13 +3479,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     const logError = <T>(
       err: unknown,
       ctx: RawContext,
-      wrapResponse: (response: Response) => T,
+      wrapResponse: (response: Response | ResponseResult) => T,
     ): T => this.bareError(err, ctx, wrapResponse)
 
     const runHandler = <T>(
       ctx: RawContext,
       finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response) => T,
+      wrapResponse: (response: Response | ResponseResult) => T,
     ): MaybePromise<T> => {
       if (decorations !== undefined) Object.assign(ctx, decorations)
       let output: MaybePromise<HandlerResult>
@@ -3465,9 +3517,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       result: StandardResult<unknown>,
       ctx: RawContext,
       finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response) => T,
+      wrapResponse: (response: Response | ResponseResult) => T,
     ): MaybePromise<T> => {
-      if (result.issues !== undefined) return wrapResponse(validationError(result.issues))
+      if (result.issues !== undefined) return wrapResponse(plainValidationError(result.issues))
       ctx.body = result.value
       return runHandler(ctx, finalize, wrapResponse)
     }
@@ -3476,7 +3528,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       parsed: unknown,
       ctx: RawContext,
       finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response) => T,
+      wrapResponse: (response: Response | ResponseResult) => T,
     ): MaybePromise<T> => {
       let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
       try {
@@ -3512,7 +3564,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       platform: Platform | undefined,
       nativeContext: boolean,
       finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-      wrapResponse: (response: Response) => T,
+      wrapResponse: (response: Response | ResponseResult) => T,
     ): MaybePromise<T> => {
       const ctx = nativeContext
         ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
@@ -3575,8 +3627,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // static headers here rather than through the shared `wrapResponse` seam.
     const logError = (err: unknown, ctx: RawContext): Response => {
       if (err instanceof Response) return this.wrapWebResponse(err)
+      // A thrown `status(...)`: control flow, rendered as the plain data it is.
+      if (isResponseResult(err)) return this.wrapWebResponse(toResponse(err, responseSet(ctx)))
       this.logRequestError(err, ctx)
-      return this.wrapWebResponse(jsonError(500, "internal_error"))
+      return this.wrapWebResponse(plainError(500, "internal_error"))
     }
     const runHandler = (ctx: RawContext, value: unknown): MaybePromise<Response> => {
       ctx.query = value
@@ -3631,21 +3685,29 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         return validation.then(
           (settled) =>
             settled.issues !== undefined
-              ? this.wrapWebResponse(validationError(settled.issues))
+              ? this.wrapWebResponse(plainValidationError(settled.issues))
               : runHandler(ctx, settled.value),
           (err) => logError(err, ctx),
         )
       }
       if (validation.issues !== undefined)
-        return this.wrapWebResponse(validationError(validation.issues))
+        return this.wrapWebResponse(plainValidationError(validation.issues))
       return runHandler(ctx, validation.value)
     }
   }
 
-  private bareError<T>(err: unknown, ctx: RawContext, wrapResponse: (response: Response) => T): T {
+  private bareError<T>(
+    err: unknown,
+    ctx: RawContext,
+    wrapResponse: (response: Response | ResponseResult) => T,
+  ): T {
     if (err instanceof Response) return wrapResponse(err)
+    // A thrown `status(...)` is control flow here too. These lanes render through `wrapResponse`, so
+    // this one pays for a `Response` - `return status(...)` takes the plain lane and is the shape to
+    // reach for on a route with no lifecycle stage to exit from.
+    if (isResponseResult(err)) return wrapResponse(toResponse(err, responseSet(ctx)))
     this.logRequestError(err, ctx)
-    return wrapResponse(jsonError(500, "internal_error"))
+    return wrapResponse(plainError(500, "internal_error"))
   }
 
   // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
@@ -3655,7 +3717,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     ctx: RawContext,
     run: () => MaybePromise<T>,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     let outcome: MaybePromise<T>
     try {
@@ -3693,7 +3755,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     source: RequestSource,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): Promise<T> {
     return this.readBodyInput(
       source,
@@ -3710,7 +3772,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     source: RequestSource,
     maxBodyBytes: number,
     onParsed: (parsed: unknown) => MaybePromise<T>,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     onError: (err: unknown) => MaybePromise<T>,
   ): Promise<T> {
     const contentType = headerOf(source, "content-type") ?? ""
@@ -3721,7 +3783,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           onError,
         ) as Promise<T>
       }
-      return Promise.resolve(wrapResponse(jsonError(415, "unsupported_media_type")))
+      return Promise.resolve(wrapResponse(plainError(415, "unsupported_media_type")))
     }
 
     // All JSON bodies go through readBoundedJson - the single enforcement point for the framed
@@ -3747,7 +3809,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     parsed: unknown,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     try {
       const bodySchema = entry.schema!.body!
@@ -3782,7 +3844,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse?: (response: Response) => T,
+    wrapResponse?: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     if (entry.hasDecorations) Object.assign(ctx, entry.decorations)
     const handlerOutput = entry.handler(ctx)
@@ -3805,7 +3867,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     recovery: unknown,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     originalIssues: ReadonlyArray<StandardIssue>,
     kind: "body" | "query",
   ): MaybePromise<T> {
@@ -3817,12 +3879,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         const validation = entry.schema.body["~standard"].validate(recovery)
         if (validation instanceof Promise) {
           return validation.then((settled) => {
-            if (settled.issues !== undefined) return wrapResponse(validationError(settled.issues))
+            if (settled.issues !== undefined)
+              return wrapResponse(plainValidationError(settled.issues))
             ctx.body = settled.value
             return this.executeHandler(entry, ctx, finalize)
           })
         }
-        if (validation.issues !== undefined) return wrapResponse(validationError(validation.issues))
+        if (validation.issues !== undefined)
+          return wrapResponse(plainValidationError(validation.issues))
         ctx.body = validation.value
         return this.executeHandler(entry, ctx, finalize)
       }
@@ -3831,19 +3895,21 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         if (validation instanceof Promise) {
           return validation.then(
             (settled) => {
-              if (settled.issues !== undefined) return wrapResponse(validationError(settled.issues))
+              if (settled.issues !== undefined)
+                return wrapResponse(plainValidationError(settled.issues))
               ctx.query = settled.value
               return this.executeHandler(entry, ctx, finalize, wrapResponse)
             },
             (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
           )
         }
-        if (validation.issues !== undefined) return wrapResponse(validationError(validation.issues))
+        if (validation.issues !== undefined)
+          return wrapResponse(plainValidationError(validation.issues))
         ctx.query = validation.value
         return this.executeHandler(entry, ctx, finalize, wrapResponse)
       }
     }
-    return wrapResponse(validationError(originalIssues))
+    return wrapResponse(plainValidationError(originalIssues))
   }
 
   private applyBodyValidation<T>(
@@ -3851,7 +3917,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     result: StandardResult<unknown>,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     if (result.issues !== undefined) {
       const hook = entry.schema?.onValidationError ?? this.defaultOnValidationError
@@ -3880,7 +3946,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           "body",
         )
       }
-      return wrapResponse(validationError(result.issues))
+      return wrapResponse(plainValidationError(result.issues))
     }
     ctx.body = result.value
     return this.executeHandler(entry, ctx, finalize)
@@ -3892,7 +3958,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     try {
       // Call the validator directly for the raw StandardResult (read `.issues`/`.value`) - skip
@@ -3930,7 +3996,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     result: StandardResult<unknown>,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     if (result.issues !== undefined) {
       const hook = entry.schema?.onValidationError ?? this.defaultOnValidationError
@@ -3959,7 +4025,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           "query",
         )
       }
-      return wrapResponse(validationError(result.issues))
+      return wrapResponse(plainValidationError(result.issues))
     }
     ctx.query = result.value
     return this.executeHandler(entry, ctx, finalize, wrapResponse)
@@ -4101,7 +4167,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     source: RequestSource,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     try {
       const headersSchema = entry.schema?.headers
@@ -4174,7 +4240,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     source: RequestSource,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     result: StandardResult<unknown>,
   ): MaybePromise<T> {
     try {
@@ -4201,7 +4267,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     source: RequestSource,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     const paramsSchema = entry.schema?.params
     if (paramsSchema === undefined) {
@@ -4232,7 +4298,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     try {
       // The execution plan only selects this runner when the route has a query schema. Keeping the
@@ -4266,7 +4332,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     source: RequestSource,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     return this.readAndValidateBody(source, entry, ctx).then(
       (bodyError) =>
@@ -4285,7 +4351,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     source: RequestSource,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     return this.readAndValidateBody(source, entry, ctx).then(
       (bodyError) =>
@@ -4301,7 +4367,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     const querySchema = entry.schema?.query
     return querySchema === undefined
@@ -4313,7 +4379,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     result: StandardResult<unknown>,
   ): MaybePromise<T> {
     const queryError = this.applyLifecycleValidation(entry, result, ctx, "query")
@@ -4335,7 +4401,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     source: RequestSource,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     result: StandardResult<unknown>,
   ): MaybePromise<T> {
     try {
@@ -4357,8 +4423,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     source: RequestSource,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
-    paramsError: MaybePromise<Response | undefined>,
+    wrapResponse: (response: Response | ResponseResult) => T,
+    paramsError: MaybePromise<Response | ResponseResult | undefined>,
   ): MaybePromise<T> {
     if (paramsError instanceof Promise) {
       return paramsError.then(
@@ -4382,8 +4448,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     source: RequestSource,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
-    paramsError: Response | undefined,
+    wrapResponse: (response: Response | ResponseResult) => T,
+    paramsError: Response | ResponseResult | undefined,
   ): MaybePromise<T> {
     if (paramsError !== undefined) return wrapResponse(paramsError)
     if (entry.schema?.body !== undefined) {
@@ -4399,8 +4465,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
-    bodyError: Response | undefined,
+    wrapResponse: (response: Response | ResponseResult) => T,
+    bodyError: Response | ResponseResult | undefined,
   ): MaybePromise<T> {
     if (bodyError !== undefined) return wrapResponse(bodyError)
     const querySchema = entry.schema?.query
@@ -4419,7 +4485,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     result: StandardResult<unknown>,
   ): MaybePromise<T> {
     try {
@@ -4440,8 +4506,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
-    queryError: Response | undefined,
+    wrapResponse: (response: Response | ResponseResult) => T,
+    queryError: Response | ResponseResult | undefined,
   ): MaybePromise<T> {
     if (queryError !== undefined) return wrapResponse(queryError)
     return this.runLifecycleHooks(entry, ctx, finalize, wrapResponse)
@@ -4451,7 +4517,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     if (entry.lifecycleHookLane === "derive-before") {
       return this.runLifecycleDeriveBefore(entry, ctx, finalize, wrapResponse)
@@ -4463,6 +4529,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         if (extension instanceof Promise) {
           return this.continueLifecycleAfterDerive(entry, ctx, finalize, wrapResponse, i, extension)
         }
+        if (isDeriveEarlyExit(extension)) return finalize(extension, responseSet(ctx))
         Object.assign(ctx, extension)
       }
       for (let i = 0; i < entry.beforeHandle.length; i++) {
@@ -4490,13 +4557,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     try {
       const extension = entry.derives[0]!(ctx)
       if (extension instanceof Promise) {
         return this.continueLifecycleAfterDerive(entry, ctx, finalize, wrapResponse, 0, extension)
       }
+      if (isDeriveEarlyExit(extension)) return finalize(extension, responseSet(ctx))
       Object.assign(ctx, extension)
 
       const outcome = entry.beforeHandle[0]!(ctx)
@@ -4524,7 +4592,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     result: unknown,
   ): MaybePromise<T> {
     try {
@@ -4538,15 +4606,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     firstIndex: number,
     first: Promise<unknown>,
   ): Promise<T> {
     try {
-      Object.assign(ctx, await first)
+      const settled = await first
+      if (isDeriveEarlyExit(settled)) return finalize(settled, responseSet(ctx))
+      Object.assign(ctx, settled)
       for (let i = firstIndex + 1; i < entry.derives.length; i++) {
-        const extension = entry.derives[i]!(ctx)
-        Object.assign(ctx, extension instanceof Promise ? await extension : extension)
+        const raw = entry.derives[i]!(ctx)
+        const extension = raw instanceof Promise ? await raw : raw
+        if (isDeriveEarlyExit(extension)) return finalize(extension, responseSet(ctx))
+        Object.assign(ctx, extension)
       }
       return await this.runLifecycleHooksAsync(entry, ctx, finalize, wrapResponse)
     } catch (err) {
@@ -4558,7 +4630,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): Promise<T> {
     try {
       // Indexed, not `for...of`. An array iterator declared inside an async function stays live
@@ -4580,7 +4652,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     firstIndex: number,
     first: Promise<unknown>,
   ): Promise<T> {
@@ -4602,7 +4674,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): Promise<T> {
     try {
       const output = entry.handler(ctx)
@@ -4617,7 +4689,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     initial: unknown,
   ): MaybePromise<T> {
     try {
@@ -4646,7 +4718,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     firstIndex: number,
     first: Promise<unknown>,
   ): Promise<T> {
@@ -4666,7 +4738,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     result: unknown,
   ): MaybePromise<T> {
     try {
@@ -4688,7 +4760,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private finishContractOutcome<T>(
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
     outcome: {
       readonly kind: "ok" | "warn" | "violation"
       readonly value?: unknown
@@ -4701,7 +4773,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         path: pathnameOf(ctx.req.url),
         detail: outcome.message,
       })
-      return wrapResponse(jsonError(500, "internal_error"))
+      return wrapResponse(plainError(500, "internal_error"))
     }
     if (outcome.kind === "warn") {
       this.logger.warn("response contract", {
@@ -4718,13 +4790,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     err: unknown,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): Promise<T> {
     // A *thrown* Response is deliberate control flow, not an error - a guard throws a redirect/401,
     // an action throws an error page. Return it as-is (Remix/SvelteKit semantics); don't run onError
     // or log it as a 500. This is what makes `throw redirect(...)` / `requireSession(...)` work from
     // any handler or loader.
     if (err instanceof Response) return wrapResponse(err)
+    // Same rule for a thrown `status(...)`, but through `finalize` rather than `wrapResponse`: the
+    // value is still plain data, so the ordinary JSON lane renders it and no `Response` is built.
+    if (isResponseResult(err)) return finalize(err, responseSet(ctx))
     // onError hooks may return a custom response; otherwise the default 500 stands.
     // Indexed for the same reason as the `beforeHandle` chain above: the iterator would outlive
     // the `await` and stay heap-allocated on both engines.
@@ -4736,7 +4811,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // Never crash the server or leak internals. The client gets a flat 500; the detail goes to the
     // (redacting) logger. Body-read failures and around-hook failures land here too.
     this.logRequestError(err, ctx)
-    return wrapResponse(jsonError(500, "internal_error"))
+    return wrapResponse(plainError(500, "internal_error"))
   }
 
   /** Log an unhandled request error to the (redacting) logger - shared by {@link runLifecycle} and the
@@ -4763,7 +4838,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     req: RequestSource,
     entry: RouteEntry,
     ctx: RawContext,
-  ): Promise<Response | undefined> {
+  ): Promise<Response | ResponseResult | undefined> {
     const contentType = headerOf(req, "content-type") ?? ""
     let parsed: unknown
     if (contentType === "application/json" || contentType.includes("application/json")) {
@@ -4777,7 +4852,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     } else {
       // multipart/form-data (file uploads) stays 415 on the schema path by design - files don't
       // fit a value schema; use a schema-less route + @nifrajs/uploads helpers for those.
-      return jsonError(415, "unsupported_media_type")
+      return plainError(415, "unsupported_media_type")
     }
     const validation = entry.schema!.body!["~standard"].validate(parsed)
     const result = validation instanceof Promise ? await validation : validation
@@ -4791,7 +4866,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     result: StandardResult<unknown>,
     ctx: RawContext,
     kind: "body" | "query" | "params" | "headers",
-  ): MaybePromise<Response | undefined> {
+  ): MaybePromise<Response | ResponseResult | undefined> {
     const assign = (value: unknown): void => {
       if (kind === "body") ctx.body = value
       else if (kind === "query") ctx.query = value
@@ -4803,7 +4878,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       return undefined
     }
     const hook = entry.schema?.onValidationError ?? this.defaultOnValidationError
-    if (hook === undefined) return validationError(result.issues)
+    if (hook === undefined) return plainValidationError(result.issues)
     const attempted = hook(result.issues, ctx as unknown as Context, kind)
     if (attempted instanceof Promise) {
       return attempted.then((recovery) =>
@@ -4819,8 +4894,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     issues: ReadonlyArray<StandardIssue>,
     recovery: unknown,
     assign: (value: unknown) => void,
-  ): MaybePromise<Response | undefined> {
-    if (recovery === undefined) return validationError(issues)
+  ): MaybePromise<Response | ResponseResult | undefined> {
+    if (recovery === undefined) return plainValidationError(issues)
     if (recovery instanceof Response) return recovery
     const schema =
       kind === "body"
@@ -4833,12 +4908,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     const retried = schema!["~standard"].validate(recovery)
     if (retried instanceof Promise) {
       return retried.then((settled) => {
-        if (settled.issues !== undefined) return validationError(settled.issues)
+        if (settled.issues !== undefined) return plainValidationError(settled.issues)
         assign(settled.value)
         return undefined
       })
     }
-    if (retried.issues !== undefined) return validationError(retried.issues)
+    if (retried.issues !== undefined) return plainValidationError(retried.issues)
     assign(retried.value)
     return undefined
   }

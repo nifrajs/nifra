@@ -71,6 +71,7 @@ export {
   type VercelHandler,
 } from "./server/platform-adapters.ts"
 export type { Registry, RouteInfo } from "./server/registry.ts"
+export { type PlainRender, type ResponseResult, status } from "./server/runtime-core.ts"
 export {
   type AdmissionController,
   type AdmissionDecision,

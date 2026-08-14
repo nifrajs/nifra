@@ -150,7 +150,7 @@ interface NodeContextSet {
 interface NodeOutcomeRuntime {
   toOutcome(result: unknown, set: NodeContextSet): NodeServeOutcome
   toResponse(outcome: NodeServeOutcome): Response
-  fromResponse(response: Response): NodeServeOutcome
+  fromResponse(response: Response | NodeResponseResult): NodeServeOutcome
   timeout(): NodeServeOutcome
   /** The Content-Type the json render writes implicitly - surfaced to core's native hook walk. */
   readonly jsonContentType?: string
@@ -205,6 +205,20 @@ function normalizeBodylessResponse(response: Response): Response {
 const NODE_OUTCOME_RUNTIME: NodeOutcomeRuntime = {
   toOutcome(result, set) {
     if (isResponseResult(result)) {
+      // A plain render never builds a `Response` - same `kind: "json"` lane a handler's return takes.
+      const plain = result.plain
+      if (plain !== undefined) {
+        return {
+          kind: "json",
+          status: plain.status,
+          headers: plainRenderHeaders(plain.headers, set._headers),
+          cookies: set._cookies,
+          body:
+            plain.body === undefined || isBodylessStatus(plain.status)
+              ? null
+              : JSON.stringify(plain.body),
+        }
+      }
       const body = result.toNodeBody?.()
       if (body !== undefined) {
         return {
@@ -246,6 +260,25 @@ interface NodeResponseResult {
     readonly headers: Readonly<Record<string, string | readonly string[]>> | undefined
     readonly body: string | Uint8Array
   }
+  /** Core's `PlainRender` - a response still in value form, rendered without building a `Response`.
+   * Structural, like the rest of this interface: the marker is a `Symbol.for`, so a value from any
+   * copy of core matches. */
+  readonly plain?: {
+    readonly status: number
+    readonly headers?: Readonly<Record<string, string>>
+    readonly body: unknown
+  }
+}
+
+/** Mirror of core's `plainRenderHeaders`: the render's own headers on top of `c.set.headers`, always
+ * a fresh record when it has any, because the writers below mutate what they are handed and a
+ * `status(...)` value is commonly hoisted and reused across requests. */
+function plainRenderHeaders(
+  own: Readonly<Record<string, string>> | undefined,
+  ambient: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (own === undefined) return ambient
+  return ambient === undefined ? { ...own } : { ...ambient, ...own }
 }
 
 function isResponseResult(value: unknown): value is NodeResponseResult {
@@ -454,8 +487,28 @@ function appendCookiesToResponse(
   return response
 }
 
-function nodeOutcomeFromResponse(response: Response): NodeServeOutcome {
-  response = normalizeBodylessResponse(response)
+/** Early exits built outside the handler's finalizer - an `onRequest` hook's response, a mount's,
+ * every framework error render. A plain-data carrier takes the `kind: "json"` lane a handler's plain
+ * return takes, with no `Response` built and none drained; there is no `c.set` at these sites, which
+ * is why they are wrapped rather than finalized. */
+function nodeOutcomeFromResponse(result: Response | NodeResponseResult): NodeServeOutcome {
+  if (!(result instanceof Response)) {
+    const plain = result.plain
+    if (plain !== undefined) {
+      return {
+        kind: "json",
+        status: plain.status,
+        headers: plain.headers === undefined ? undefined : { ...plain.headers },
+        cookies: undefined,
+        body:
+          plain.body === undefined || isBodylessStatus(plain.status)
+            ? null
+            : JSON.stringify(plain.body),
+      }
+    }
+    return nodeOutcomeFromResponse(result.toResponse())
+  }
+  const response = normalizeBodylessResponse(result)
   if (!response.bodyUsed) {
     const body = (response as { readonly [NODE_RESPONSE_BODY]?: unknown })[NODE_RESPONSE_BODY]
     if (typeof body === "string" || body instanceof Uint8Array) {

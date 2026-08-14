@@ -27,7 +27,7 @@ import type { ProtoPoisoning } from "../server/proto-guard.ts"
 import type { Registry } from "../server/registry.ts"
 import { RequestContext } from "../server/request-context.ts"
 import type { ResponseContractRuntime } from "../server/response-contract-lane.ts"
-import type { HandlerResult } from "../server/runtime-core.ts"
+import type { HandlerResult, ResponseResult } from "../server/runtime-core.ts"
 import type { CtxSet, MaybePromise, RawContext, RequestSource, Server } from "../server/server.ts"
 
 export type InternalHandler = (ctx: RawContext) => MaybePromise<HandlerResult>
@@ -50,7 +50,7 @@ export type RouteExecutionRunner = <T, R extends Registry, Ctx>(
   platform: Platform | undefined,
   nativeContext: boolean,
   finalize: (result: unknown, set: CtxSet) => T,
-  wrapResponse: (response: Response) => T,
+  wrapResponse: (response: Response | ResponseResult) => T,
 ) => MaybePromise<T>
 
 export type ContextRouteRunner = <T, R extends Registry, Ctx>(
@@ -59,7 +59,7 @@ export type ContextRouteRunner = <T, R extends Registry, Ctx>(
   source: RequestSource,
   ctx: RawContext,
   finalize: (result: unknown, set: CtxSet) => T,
-  wrapResponse: (response: Response) => T,
+  wrapResponse: (response: Response | ResponseResult) => T,
 ) => MaybePromise<T>
 
 /** The kernel's private execution surface, mirrored structurally. The runner methods are private on
@@ -77,66 +77,66 @@ interface RouteExecutionRuntime {
     budget: RequestBudget,
     platform: Platform | undefined,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T>
   runBare<T>(
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T>
   runBodyOnly<T>(
     entry: RouteEntry,
     source: RequestSource,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T>
   runQueryOnly<T>(
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T>
   runLifecycleHooks<T>(
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T>
   runLifecycleQuery<T>(
     entry: RouteEntry,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T>
   runLifecycleBody<T>(
     entry: RouteEntry,
     source: RequestSource,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T>
   runLifecycleBodyQuery<T>(
     entry: RouteEntry,
     source: RequestSource,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T>
   runLifecycle<T>(
     entry: RouteEntry,
     source: RequestSource,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T>
   runWithAround<T>(
     entry: RouteEntry,
     ctx: RawContext,
     run: () => MaybePromise<T>,
     finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T>
   readonly maxBodyBytes: number
   readonly protoPoisoning: ProtoPoisoning
@@ -406,5 +406,5 @@ export type FusedBodyRunner = <T>(
   platform: Platform | undefined,
   nativeContext: boolean,
   finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
-  wrapResponse: (response: Response) => T,
+  wrapResponse: (response: Response | ResponseResult) => T,
 ) => MaybePromise<T>

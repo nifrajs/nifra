@@ -11,7 +11,14 @@ import {
   rememberMutableHeaders,
   taggedResponseBody,
 } from "./respond.ts"
-import { type HandlerResult, isResponseResult } from "./runtime-core.ts"
+import {
+  EMPTY_RESPONSE_CONTROLS,
+  type HandlerResult,
+  isResponseResult,
+  type PlainRender,
+  plainRenderHeaders,
+  type ResponseResult,
+} from "./runtime-core.ts"
 import type { CtxSet } from "./server.ts"
 import {
   mergeStaticHeaderRecord,
@@ -58,6 +65,8 @@ export type NodeServeOutcome =
  */
 export function toNodeOutcome(result: HandlerResult, set: CtxSet): NodeServeOutcome {
   if (isResponseResult(result)) {
+    const plain = result.plain
+    if (plain !== undefined) return plainNodeOutcome(plain, set)
     const body = result.toNodeBody?.()
     if (body !== undefined) {
       return {
@@ -82,6 +91,24 @@ export function toNodeOutcome(result: HandlerResult, set: CtxSet): NodeServeOutc
     headers: set._headers,
     cookies: set._cookies,
     body,
+  }
+}
+
+/**
+ * A `status(...)` (or any other {@link PlainRender} carrier) on the node lane: the same `kind: "json"`
+ * outcome a handler's plain return produces, so an early exit is written to the socket by the same
+ * direct writer, with a `content-length`, and never builds a `Response`.
+ */
+export function plainNodeOutcome(plain: PlainRender, set: CtxSet): NodeServeOutcome {
+  return {
+    kind: "json",
+    status: plain.status,
+    headers: plainRenderHeaders(plain, set),
+    cookies: set._cookies,
+    body:
+      plain.body === undefined || isBodylessStatus(plain.status)
+        ? null
+        : JSON.stringify(plain.body),
   }
 }
 
@@ -162,8 +189,22 @@ export function withStaticNodeHeaders(
   return { ...outcome, headers }
 }
 
-export function nodeOutcomeFromResponse(response: Response): NodeServeOutcome {
-  response = normalizeBodylessResponse(response)
+/**
+ * The node lane's `wrapResponse`: what an early exit built OUTSIDE the handler's finalizer renders as
+ * - an `onRequest` hook's `Response`, a mount's, and every framework error render.
+ *
+ * A plain-data carrier ({@link plainError}, `status(...)`) takes the same `kind: "json"` lane a
+ * handler's plain return takes: no `Response` built, and none drained. `EMPTY_RESPONSE_CONTROLS`
+ * rather than the request's `c.set` on purpose - these renders happen where no context exists (before
+ * routing, or after it was abandoned), which is exactly why they are wrapped rather than finalized.
+ */
+export function nodeOutcomeFromResponse(result: Response | ResponseResult): NodeServeOutcome {
+  if (!(result instanceof Response)) {
+    const plain = result.plain
+    if (plain !== undefined) return plainNodeOutcome(plain, EMPTY_RESPONSE_CONTROLS)
+    return nodeOutcomeFromResponse(result.toResponse())
+  }
+  const response = normalizeBodylessResponse(result)
   const body = nodeResponseBody(response)
   return body === undefined
     ? { kind: "response", response }

@@ -3,6 +3,7 @@
 import type { Platform } from "./context.ts"
 import { hasLowercaseHeaderKeysMark, hasUpperAscii } from "./header-case.ts"
 import type { NodeServeOutcome } from "./node-outcome.ts"
+import type { ResponseResult } from "./runtime-core.ts"
 import type { CtxSet, MaybePromise } from "./server.ts"
 
 /**
@@ -309,7 +310,7 @@ export interface NodeOutcomeRuntime {
   toOutcome(result: unknown, set: CtxSet): NodeServeOutcome
   /** Materialize a buffered outcome for a Web response hook without losing its direct-write marker. */
   toResponse(outcome: NodeServeOutcome): Response
-  fromResponse(response: Response): NodeServeOutcome
+  fromResponse(response: Response | ResponseResult): NodeServeOutcome
   timeout(): NodeServeOutcome
   /** The `Content-Type` this runtime's json render writes implicitly. The native hook walk
    * materializes it into the hook-visible header record so a body hook's content-type checks see

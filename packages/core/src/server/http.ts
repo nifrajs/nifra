@@ -1,8 +1,9 @@
 /**
- * Dependency-free HTTP helpers shared by the kernel and the opt-in request lanes (idempotency,
- * effect-ledger). Kept in a leaf module so a lane can reuse them without importing the server, and so
- * the server can reuse them without pulling a lane's feature code into the base bundle.
+ * HTTP helpers shared by the kernel and the opt-in request lanes (idempotency, effect-ledger). Kept
+ * in a leaf module (runtime-core aside, itself a leaf) so a lane can reuse them without importing the
+ * server, and so the server can reuse them without pulling a lane's feature code into the base bundle.
  */
+import { type ResponseResult, status as statusResult } from "./runtime-core.ts"
 
 /** A uniform JSON error envelope: `{ ok: false, error }` at the given status. */
 export function jsonError(
@@ -14,6 +15,27 @@ export function jsonError(
     { ok: false, error },
     headers !== undefined ? { status, headers } : { status },
   )
+}
+
+/**
+ * The same envelope as {@link jsonError}, as plain data rather than a built `Response`.
+ *
+ * This is what the framework's own renders - 404, 405, 422, the body caps, the timeouts, 500 - answer
+ * with wherever the value flows into a lane's response wrapper, so an error costs what a handler's
+ * plain return costs. Building the `Response` was measured as the dominant cost of answering early
+ * (see `PlainRender`), and on the Node lane an error `Response` is worse still: it is untagged, so
+ * the adapter cannot recognize its body and drains it through a Web stream, which is also why an
+ * error answered chunked while an ordinary return carries a `content-length`.
+ *
+ * `jsonError` stays for the callers that genuinely need a `Response` object (mount bridges, the
+ * lanes' own typed returns).
+ */
+export function plainError(
+  status: number,
+  error: string,
+  headers?: Record<string, string>,
+): ResponseResult {
+  return statusResult(status, { ok: false, error }, headers !== undefined ? { headers } : undefined)
 }
 
 export interface UrlParts {

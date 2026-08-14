@@ -53,9 +53,11 @@ describe("fused body lane", () => {
     const node = await app.resolveNode(jsonReq({ name: 42 }))
     expect(web.status).toBe(422)
     expect(await web.json()).toMatchObject({ ok: false, error: "validation" })
-    expect(node.kind).toBe("response")
-    if (node.kind !== "response") throw new Error("unreachable")
-    expect(node.response.status).toBe(422)
+    // The 422 is plain data on both lanes, so Node renders it directly - same bytes, no Response.
+    expect(node.kind).toBe("json")
+    if (node.kind !== "json") throw new Error("unreachable")
+    expect(node.status).toBe(422)
+    expect(JSON.parse(node.body ?? "null")).toMatchObject({ ok: false, error: "validation" })
   })
 
   test("decorations and response controls survive the compiled continuation", async () => {

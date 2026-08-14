@@ -431,6 +431,8 @@ Every public export of every package and documented subpath - name, kind, signat
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
 - **OnRequestResult** _(type)_ - `type OnRequestResult = Response | Request | undefined`
 - **Params** _(type)_ - `type Params<Path extends string> = Prettify<RawParams<Path>>`
+- **PlainRender** _(interface)_ - `interface PlainRender`
+  A response described as plain data - the status, any headers of its own, and a body still in value form. A `ResponseResult` carrying one is rendered on the SAME lane a handler's plain return takes: `JSON.stringify` straight into the node writer's `kind: "json"` outcome, or the web lane's prebuilt J…
 - **Platform** _(interface)_ - `interface Platform<Env = unknown>`
   Runtime platform inputs, passed as `app.fetch(request, platform)`. Edge adapters (e.g. Cloudflare Workers) supply `env` (bindings) + `waitUntil`; Bun/Node/Deno omit them. Optional + runtime-neutral, so `app.fetch` stays a Web-standard handler.
 - **PlatformResponse** _(interface)_ - `interface PlatformResponse`
@@ -458,6 +460,7 @@ Every public export of every package and documented subpath - name, kind, signat
   A portable header-only response hook - the recommended shape for response middleware that only reads or writes headers (security headers, CORS reflection, cache directives, negotiation). It runs on every runtime from one implementation: the server adapts it into the Web `onResponse` walk AND the No…
 - **ResponseHeadersView** _(interface)_ - `interface ResponseHeadersView`
   The mutable, case-insensitive header surface a portable {@link ResponseHeadersHook} writes through. Deliberately the subset of the Web `Headers` interface every runtime can satisfy natively: on the Web paths the hook receives the response's own `Headers` object directly (which structurally implemen…
+- **ResponseResult** _(interface)_ - `interface ResponseResult`
 - **RouteConfigError** _(class)_ - `class RouteConfigError`
   Thrown at route registration when a route is misconfigured. This is the boot-time rejection layer: loud and early, never deferred to the first request.
 - **RouteConfigErrorCode** _(type)_ - `type RouteConfigErrorCode`
@@ -542,6 +545,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies. With a {@link CookieSecret} rotation list, signs with the first secret.
 - **silentLogger** _(const)_ - `silentLogger: Logger`
   Discards everything - for tests, or when log output is handled elsewhere.
+- **status** _(function)_ - `status: (code: number, body?: unknown, init?: { readonly headers?: Readonly<Record<string, string>>; }) => ResponseResult`
+  Finish the request here, with this status and body, without building a `Response`.
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
   Adapt a nifra app to an edge "ExportedHandler" - use it as a Cloudflare Workers (or any `fetch(request, env, ctx)` runtime) default export. It threads `env` + `ctx.waitUntil` into the nifra Context, so handlers read `c.env` and schedule background work via `c.waitUntil`:
 - **toLambdaHandler** _(function)_ - `toLambdaHandler: <Env = unknown>(app: FetchApp<Env>) => LambdaHandler`
@@ -1414,6 +1419,8 @@ Every public export of every package and documented subpath - name, kind, signat
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
 - **OnRequestResult** _(type)_ - `type OnRequestResult = Response | Request | undefined`
 - **Params** _(type)_ - `type Params<Path extends string> = Prettify<RawParams<Path>>`
+- **PlainRender** _(interface)_ - `interface PlainRender`
+  A response described as plain data - the status, any headers of its own, and a body still in value form. A `ResponseResult` carrying one is rendered on the SAME lane a handler's plain return takes: `JSON.stringify` straight into the node writer's `kind: "json"` outcome, or the web lane's prebuilt J…
 - **Platform** _(interface)_ - `interface Platform<Env = unknown>`
   Runtime platform inputs, passed as `app.fetch(request, platform)`. Edge adapters (e.g. Cloudflare Workers) supply `env` (bindings) + `waitUntil`; Bun/Node/Deno omit them. Optional + runtime-neutral, so `app.fetch` stays a Web-standard handler.
 - **PlatformResponse** _(interface)_ - `interface PlatformResponse`
@@ -1441,6 +1448,7 @@ Every public export of every package and documented subpath - name, kind, signat
   A portable header-only response hook - the recommended shape for response middleware that only reads or writes headers (security headers, CORS reflection, cache directives, negotiation). It runs on every runtime from one implementation: the server adapts it into the Web `onResponse` walk AND the No…
 - **ResponseHeadersView** _(interface)_ - `interface ResponseHeadersView`
   The mutable, case-insensitive header surface a portable {@link ResponseHeadersHook} writes through. Deliberately the subset of the Web `Headers` interface every runtime can satisfy natively: on the Web paths the hook receives the response's own `Headers` object directly (which structurally implemen…
+- **ResponseResult** _(interface)_ - `interface ResponseResult`
 - **RouteConfigError** _(class)_ - `class RouteConfigError`
   Thrown at route registration when a route is misconfigured. This is the boot-time rejection layer: loud and early, never deferred to the first request.
 - **RouteConfigErrorCode** _(type)_ - `type RouteConfigErrorCode`
@@ -1522,6 +1530,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies. With a {@link CookieSecret} rotation list, signs with the first secret.
 - **silentLogger** _(const)_ - `silentLogger: Logger`
   Discards everything - for tests, or when log output is handled elsewhere.
+- **status** _(function)_ - `status: (code: number, body?: unknown, init?: { readonly headers?: Readonly<Record<string, string>>; }) => ResponseResult`
+  Finish the request here, with this status and body, without building a `Response`.
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
   Adapt a nifra app to an edge "ExportedHandler" - use it as a Cloudflare Workers (or any `fetch(request, env, ctx)` runtime) default export. It threads `env` + `ctx.waitUntil` into the nifra Context, so handlers read `c.env` and schedule background work via `c.waitUntil`:
 - **toLambdaHandler** _(function)_ - `toLambdaHandler: <Env = unknown>(app: FetchApp<Env>) => LambdaHandler`
@@ -4252,6 +4262,8 @@ _No named exports (side-effect entrypoint)._
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
 - **OnRequestResult** _(type)_ - `type OnRequestResult = Response | Request | undefined`
 - **Params** _(type)_ - `type Params<Path extends string> = Prettify<RawParams<Path>>`
+- **PlainRender** _(interface)_ - `interface PlainRender`
+  A response described as plain data - the status, any headers of its own, and a body still in value form. A `ResponseResult` carrying one is rendered on the SAME lane a handler's plain return takes: `JSON.stringify` straight into the node writer's `kind: "json"` outcome, or the web lane's prebuilt J…
 - **Platform** _(interface)_ - `interface Platform<Env = unknown>`
   Runtime platform inputs, passed as `app.fetch(request, platform)`. Edge adapters (e.g. Cloudflare Workers) supply `env` (bindings) + `waitUntil`; Bun/Node/Deno omit them. Optional + runtime-neutral, so `app.fetch` stays a Web-standard handler.
 - **PlatformResponse** _(interface)_ - `interface PlatformResponse`
@@ -4279,6 +4291,7 @@ _No named exports (side-effect entrypoint)._
   A portable header-only response hook - the recommended shape for response middleware that only reads or writes headers (security headers, CORS reflection, cache directives, negotiation). It runs on every runtime from one implementation: the server adapts it into the Web `onResponse` walk AND the No…
 - **ResponseHeadersView** _(interface)_ - `interface ResponseHeadersView`
   The mutable, case-insensitive header surface a portable {@link ResponseHeadersHook} writes through. Deliberately the subset of the Web `Headers` interface every runtime can satisfy natively: on the Web paths the hook receives the response's own `Headers` object directly (which structurally implemen…
+- **ResponseResult** _(interface)_ - `interface ResponseResult`
 - **RouteConfigError** _(class)_ - `class RouteConfigError`
   Thrown at route registration when a route is misconfigured. This is the boot-time rejection layer: loud and early, never deferred to the first request.
 - **RouteConfigErrorCode** _(type)_ - `type RouteConfigErrorCode`
@@ -4363,6 +4376,8 @@ _No named exports (side-effect entrypoint)._
   Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies. With a {@link CookieSecret} rotation list, signs with the first secret.
 - **silentLogger** _(const)_ - `silentLogger: Logger`
   Discards everything - for tests, or when log output is handled elsewhere.
+- **status** _(function)_ - `status: (code: number, body?: unknown, init?: { readonly headers?: Readonly<Record<string, string>>; }) => ResponseResult`
+  Finish the request here, with this status and body, without building a `Response`.
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
   Adapt a nifra app to an edge "ExportedHandler" - use it as a Cloudflare Workers (or any `fetch(request, env, ctx)` runtime) default export. It threads `env` + `ctx.waitUntil` into the nifra Context, so handlers read `c.env` and schedule background work via `c.waitUntil`:
 - **toLambdaHandler** _(function)_ - `toLambdaHandler: <Env = unknown>(app: FetchApp<Env>) => LambdaHandler`

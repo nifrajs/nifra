@@ -28,6 +28,28 @@ export interface PreDecodedBody {
   readonly value: unknown
 }
 
+/**
+ * A response described as plain data - the status, any headers of its own, and a body still in value
+ * form. A `ResponseResult` carrying one is rendered on the SAME lane a handler's plain return takes:
+ * `JSON.stringify` straight into the node writer's `kind: "json"` outcome, or the web lane's prebuilt
+ * JSON init. No `Response` is constructed anywhere on the node path.
+ *
+ * That matters because building one is the dominant cost of answering early. Measured on the rig, one
+ * server per shape, all five answering the same 401: `c.set.status` + a plain object 82802 req/s,
+ * `beforeHandle` returning that same object 81819, `return new Response(...)` 49668, `throw new
+ * Response(...)` 47505, the same throw from a `derive` 48746. The `Response` costs 40%; the throw
+ * around it costs another 4%; unwinding a lifecycle stage instead of a handler costs nothing
+ * measurable. So the fix for a slow rejection is not a faster throw - it is not allocating the
+ * `Response`.
+ */
+export interface PlainRender {
+  readonly status: number
+  /** Headers belonging to this render. They win over anything the request left in `c.set.headers`. */
+  readonly headers?: Readonly<Record<string, string>>
+  /** The body as a value, serialized by the lane that renders it. `undefined` means no body. */
+  readonly body: unknown
+}
+
 export interface ResponseResult {
   readonly [RESPONSE_RESULT]: true
   toResponse(): Response
@@ -36,6 +58,9 @@ export interface ResponseResult {
     readonly headers: Readonly<Record<string, string | readonly string[]>> | undefined
     readonly body: string | Uint8Array
   }
+  /** Present when this result can be rendered as plain data - see {@link PlainRender}. Every lane
+   * checks it before `toNodeBody`/`toResponse`, so a carrier that has one never builds a `Response`. */
+  readonly plain?: PlainRender
 }
 
 export function isResponseResult(value: unknown): value is ResponseResult {
@@ -45,6 +70,69 @@ export function isResponseResult(value: unknown): value is ResponseResult {
     (value as { readonly [RESPONSE_RESULT]?: unknown })[RESPONSE_RESULT] === true &&
     typeof (value as { readonly toResponse?: unknown }).toResponse === "function"
   )
+}
+
+/**
+ * The headers a plain render ships: its own on top of whatever the request left in `c.set.headers`,
+ * so an ambient header (a request id, say) survives an early exit the way it survives an ordinary
+ * return, and a header named at the exit site still wins.
+ *
+ * Always a fresh object when the render has headers of its own: the node writers mutate the record
+ * they are handed (content-type, content-length, cookies), and a `status(...)` value is commonly
+ * hoisted to module scope and answered from on every request.
+ */
+export function plainRenderHeaders(
+  plain: PlainRender,
+  set: CtxSet,
+): Record<string, string> | undefined {
+  const own = plain.headers
+  if (own === undefined) return set._headers
+  return set._headers === undefined ? { ...own } : { ...set._headers, ...own }
+}
+
+/**
+ * Finish the request here, with this status and body, without building a `Response`.
+ *
+ * Returned or thrown, from a handler or from any lifecycle stage:
+ *
+ * ```ts
+ * app.derive((c) => {
+ *   const user = sessionOf(c)
+ *   if (user === undefined) return status(401, { error: "unauthorized" })
+ *   return { user }
+ * })
+ * ```
+ *
+ * A `derive` is the reason this exists as a value rather than as a rule about `beforeHandle`: a
+ * `beforeHandle` already short-circuits by returning a value, but a `derive`'s return IS the context
+ * extension, so before this its only exit was `throw new Response(...)` - the most expensive way to
+ * say 401 (see {@link PlainRender} for the measurements). Returning it is preferred; throwing it
+ * carries the same cost as any other throw and stays supported so a guard helper called for effect
+ * (`requireSession(c)`) can still end the request from inside a call it makes.
+ *
+ * The body is serialized by the lane that renders it, exactly like a handler's plain return, so the
+ * response carries a `content-length` rather than falling to chunked, and queued cookies still apply.
+ */
+export function status(
+  code: number,
+  body?: unknown,
+  init?: { readonly headers?: Readonly<Record<string, string>> },
+): ResponseResult {
+  const headers = init?.headers
+  const plain: PlainRender =
+    headers === undefined ? { status: code, body } : { status: code, headers, body }
+  return {
+    [RESPONSE_RESULT]: true,
+    plain,
+    // Only the lanes that cannot take plain data reach this - an edge runtime handed the value by a
+    // caller outside the server, say. Built on demand, never on the lanes that matter.
+    toResponse(): Response {
+      const headers: Record<string, string> = { ...init?.headers }
+      if (body === undefined) return new Response(null, { status: code, headers })
+      headers["content-type"] ??= "application/json;charset=utf-8"
+      return new Response(JSON.stringify(body), { status: code, headers })
+    },
+  }
 }
 
 /** The concrete `Request` for a source - itself when a real `Request` was passed (the Web path), or the

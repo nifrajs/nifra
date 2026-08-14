@@ -209,7 +209,13 @@ describe("resolveNode - JSON-data fast path", () => {
   })
 })
 
-describe("resolveNode - fallback to a Response", () => {
+// Responses that are NOT the handler's plain return: a lazy result, a marked buffered body, a
+// handler-built `Response`, and the framework's own error renders. The errors take the same
+// `kind: "json"` lane a plain return takes - they are plain data (`plainError`), so nothing is built
+// and nothing is drained; only a real `Response` (a redirect, a hook's, a stream) stays `kind:
+// "response"`. Each error case is pinned byte-for-byte against `app.fetch` so the two lanes cannot
+// drift apart.
+describe("resolveNode - responses built outside the handler's plain return", () => {
   test("a lazy response result becomes a node-direct body without constructing a Response", async () => {
     const responseResult = Symbol.for("nifra.response.result")
     let builtResponse = false
@@ -299,51 +305,62 @@ describe("resolveNode - fallback to a Response", () => {
     expect(cookies.some((c) => c.startsWith("sid=tok"))).toBe(true)
   })
 
-  test("404 → response", async () => {
+  test("404 → json render, byte-identical to app.fetch", async () => {
     const app = server()
       .use(nodeDirect())
       .get("/here", () => ({}))
     const outcome = await app.resolveNode(req("/missing"))
-    expect(outcome.kind).toBe("response")
-    if (outcome.kind !== "response") throw new Error("unreachable")
-    expect(outcome.response.status).toBe(404)
+    const viaFetch = await app.fetch(req("/missing"))
+    expect(outcome.kind).toBe("json")
+    if (outcome.kind !== "json") throw new Error("unreachable")
+    expect(outcome.status).toBe(404)
+    expect(viaFetch.status).toBe(404)
+    expect(outcome.body).toBe(await viaFetch.text())
   })
 
-  test("405 → response with Allow header", async () => {
+  test("405 → json render with Allow header", async () => {
     const app = server()
       .use(nodeDirect())
       .get("/only-get", () => ({}))
     const outcome = await app.resolveNode(req("/only-get", { method: "POST" }))
-    expect(outcome.kind).toBe("response")
-    if (outcome.kind !== "response") throw new Error("unreachable")
-    expect(outcome.response.status).toBe(405)
-    expect(outcome.response.headers.get("allow")).toContain("GET")
+    const viaFetch = await app.fetch(req("/only-get", { method: "POST" }))
+    expect(outcome.kind).toBe("json")
+    if (outcome.kind !== "json") throw new Error("unreachable")
+    expect(outcome.status).toBe(405)
+    expect(String(outcome.headers?.allow)).toContain("GET")
+    expect(viaFetch.headers.get("allow")).toContain("GET")
+    expect(outcome.body).toBe(await viaFetch.text())
   })
 
-  test("malformed percent-encoded path → 400 response", async () => {
+  test("malformed percent-encoded path → 400 json render", async () => {
     const app = server()
       .use(nodeDirect())
       .get("/x/:id", (c) => ({ id: c.params.id }))
     const outcome = await app.resolveNode(req("/x/%ZZ"))
-    expect(outcome.kind).toBe("response")
-    if (outcome.kind !== "response") throw new Error("unreachable")
-    expect(outcome.response.status).toBe(400)
+    const viaFetch = await app.fetch(req("/x/%ZZ"))
+    expect(outcome.kind).toBe("json")
+    if (outcome.kind !== "json") throw new Error("unreachable")
+    expect(outcome.status).toBe(400)
+    expect(outcome.body).toBe(await viaFetch.text())
   })
 
-  test("a validation failure → response (never a json fast-path)", async () => {
+  test("a validation failure → json render, same bytes as app.fetch", async () => {
     const app = server()
       .use(nodeDirect())
       .post("/users", { body: nameBody }, (c) => ({ created: c.body.name }))
-    const outcome = await app.resolveNode(
+    const send = () =>
       req("/users", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name: 123 }),
-      }),
-    )
-    expect(outcome.kind).toBe("response")
-    if (outcome.kind !== "response") throw new Error("unreachable")
-    expect(outcome.response.status).toBe(422)
+      })
+    const outcome = await app.resolveNode(send())
+    const viaFetch = await app.fetch(send())
+    expect(outcome.kind).toBe("json")
+    if (outcome.kind !== "json") throw new Error("unreachable")
+    expect(outcome.status).toBe(422)
+    expect(viaFetch.status).toBe(422)
+    expect(outcome.body).toBe(await viaFetch.text())
   })
 
   test("a thrown Response (redirect) is returned as control flow", async () => {
@@ -359,17 +376,19 @@ describe("resolveNode - fallback to a Response", () => {
     expect(outcome.response.headers.get("location")).toBe("/login")
   })
 
-  test("a thrown Error → flat 500 response (no leak), via the same path as app.fetch", async () => {
+  test("a thrown Error → flat 500 json render (no leak), same bytes as app.fetch", async () => {
     const app = server({ logger: silentLogger })
       .use(nodeDirect())
       .get("/boom", () => {
         throw new Error("kaboom")
       })
     const outcome = await app.resolveNode(req("/boom"))
-    expect(outcome.kind).toBe("response")
-    if (outcome.kind !== "response") throw new Error("unreachable")
-    expect(outcome.response.status).toBe(500)
-    expect(await outcome.response.json()).toEqual({ ok: false, error: "internal_error" })
+    const viaFetch = await app.fetch(req("/boom"))
+    expect(outcome.kind).toBe("json")
+    if (outcome.kind !== "json") throw new Error("unreachable")
+    expect(outcome.status).toBe(500)
+    expect(outcome.body).toBe(JSON.stringify({ ok: false, error: "internal_error" }))
+    expect(outcome.body).toBe(await viaFetch.text())
   })
 
   test("onError hook result is rendered through the node path", async () => {

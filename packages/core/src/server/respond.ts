@@ -9,6 +9,8 @@ import {
   EMPTY_RESPONSE_CONTROLS,
   type HandlerResult,
   isResponseResult,
+  type PlainRender,
+  plainRenderHeaders,
 } from "./runtime-core.ts"
 import type { CtxSet, RawContext } from "./server.ts"
 import { mergeStaticHeaderRecord, type StaticResponseHeaders } from "./static-headers.ts"
@@ -22,6 +24,16 @@ function headersInit(set: CtxSet): Record<string, string> | Headers | undefined 
   const headers = new Headers(set._headers)
   for (const cookie of cookies) headers.append("set-cookie", cookie)
   return headers
+}
+
+/** The `c.set` a plain render stands for: its status and headers, carrying over the request's queued
+ * cookies so `set.cookie(...)` then an early exit still ships them. */
+function plainRenderSet(plain: PlainRender, set: CtxSet): CtxSet {
+  return {
+    status: plain.status,
+    _headers: plainRenderHeaders(plain, set),
+    _cookies: set._cookies,
+  } as CtxSet
 }
 
 // Keep the fast JSON respond path byte-identical to `Response.json` without probing it at module
@@ -396,6 +408,18 @@ export function toResponse(
   statics?: StaticResponseHeaders,
 ): Response {
   if (isResponseResult(result)) {
+    const plain = result.plain
+    if (plain !== undefined) {
+      // Rendered as the value it is, on the branches below, rather than through `toResponse()`: the
+      // status and headers fold into a `set` and the body takes the ordinary JSON lane. One level
+      // only - a plain render's body is a user value, never another response carrier.
+      return toResponse(
+        plain.body as HandlerResult,
+        plainRenderSet(plain, set),
+        tagResponseBody,
+        statics,
+      )
+    }
     return withStatics(
       appendCookiesToResponse(normalizeBodylessResponse(result.toResponse()), set),
       statics,
