@@ -34,6 +34,23 @@ export const NIFRA_BINARY_HEADER = "x-nifra-binary"
 /** A `Response` a route declared as binary. `Jsonify` maps this to `Blob`. */
 export type BinaryResponse = Response & { readonly [NIFRA_BYTES]: true }
 
+/**
+ * Marker on a raw response's TYPE carrying the payload it serializes to. Like {@link NIFRA_BYTES} it is
+ * a unique symbol declared *required*, so an ordinary `Response` cannot satisfy it by accident - an
+ * optional brand would be met by every `Response`, and every raw-response route would wrongly claim a
+ * typed body.
+ */
+declare const NIFRA_RAW: unique symbol
+
+/**
+ * A raw `Response` whose JSON body a route declared as `T`. Returning a bare `Response` drops a route
+ * out of the typed contract - the client reads its `data` as `never`, since a `Response`'s own
+ * properties say nothing about the payload. {@link raw} brands the `Response` with the shape it
+ * actually serializes, so `Jsonify` answers `Jsonify<T>` and the route stays inside the typed client.
+ * The brand is a phantom: nothing is added at runtime.
+ */
+export type RawResponse<T> = Response & { readonly [NIFRA_RAW]: T }
+
 /** What can be sent as bytes without being re-encoded on the way out. */
 export type BinaryBody = ArrayBuffer | ArrayBufferView | Blob | ReadableStream<Uint8Array>
 
@@ -125,4 +142,22 @@ export function bytes(body: BinaryBody, options: BytesOptions = {}): BinaryRespo
     status: options.status ?? 200,
     headers,
   }) as BinaryResponse
+}
+
+/**
+ * Brand a hand-built `Response` with the payload type `T` its body serializes to, so a route that must
+ * return a `Response` directly still types `res.data` as `Jsonify<T>` on the client instead of `never`.
+ * Use it for the endpoints that build their own `Response` - a token minted by a third-party SDK, a
+ * redirect that also carries a JSON body, a hand-tuned cache header - but should still be part of the
+ * contract. Purely a type assertion: the `Response` is returned unchanged, nothing is added at runtime.
+ *
+ *     app.get("/livekit-token", async (c) =>
+ *       raw<{ token: string }>(Response.json({ token: await mint(c) })))
+ *     // client: res.data is typed { token: string }
+ *
+ * The payload `T` is the type the body serializes to - it is not validated, so it is a promise the route
+ * must keep. For bytes prefer {@link bytes}, which also sets the media-type headers.
+ */
+export function raw<T>(response: Response): RawResponse<T> {
+  return response as RawResponse<T>
 }

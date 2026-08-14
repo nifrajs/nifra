@@ -1,3 +1,4 @@
+import type { BinaryResponse, RawResponse } from "../binary.ts"
 import type { InferInput, InferOutput, StandardSchemaV1 } from "../schema/standard.ts"
 import type { Params, RouteSchema } from "./context.ts"
 
@@ -79,11 +80,25 @@ export type RouteInfoFor<Path extends string, S extends RouteSchema, Output> = {
   readonly sse: RegistrySse<S>
 }
 
-/** The client-visible output of a handler: its awaited return, minus raw `Response`. */
-export type OutputOf<H extends (...args: never[]) => unknown> = Exclude<
-  Awaited<ReturnType<H>>,
-  Response
+/**
+ * The client-visible output of a handler: its awaited return, with an UNbranded raw `Response` removed
+ * (a route returning a bare `Response` has no describable body). A response branded by `bytes()`
+ * ({@link BinaryResponse}) or `raw()` ({@link RawResponse}) is KEPT, so the brand reaches the client's
+ * `Jsonify` and types `data` as `Blob` / `Jsonify<T>` rather than collapsing to `never`.
+ */
+export type OutputOf<H extends (...args: never[]) => unknown> = KeepBrandedResponse<
+  Awaited<ReturnType<H>>
 >
+
+/** Preserve a `bytes()`/`raw()`-branded response; drop only a bare `Response`. Distributes over a
+ * union return, so `Foo | BinaryResponse` keeps both arms. */
+type KeepBrandedResponse<O> = O extends BinaryResponse
+  ? O
+  : O extends RawResponse<unknown>
+    ? O
+    : O extends Response
+      ? never
+      : O
 
 /**
  * The registry entry for a WebSocket route (stored under the pseudo-method key `"WS"`, so WS routes
