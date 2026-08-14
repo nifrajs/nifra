@@ -8,6 +8,10 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { cp, lstat, mkdir, realpath } from "node:fs/promises"
 import { dirname, join, relative, resolve as resolvePath, sep } from "node:path"
+import {
+  singleCopyPlugin as declaredSingleCopyPlugin,
+  readSingleCopyDeclaration,
+} from "@nifrajs/core/single-copy"
 import { type BunPlugin, Glob } from "bun"
 import { sanitizeOutputNames } from "./chunk-names.ts"
 import { discoverRoutes } from "./fs.ts"
@@ -1015,6 +1019,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
         ...buildExtras,
         minify: options.minify ?? true,
         plugins: [
+          ...declaredSingleCopyPlugins(root),
           reactDedupePlugin(routesDir),
           preactDedupePlugin(routesDir),
           svelteDedupePlugin(routesDir),
@@ -1329,6 +1334,21 @@ export const svelteDedupePlugin = (from: string): BunPlugin => ({
 })
 
 /**
+ * The app's declared single-copy rule, applied to the bundle.
+ *
+ * The three plugins above cover the framework runtimes by name, which is the case that bites hardest
+ * and needs no configuration. This one covers what a name list cannot know: `@nifrajs/*` (two copies
+ * of `@nifrajs/core` are two `Server` classes, and `Server` has private members, so `.merge()` stops
+ * accepting the other's app) and whatever else the app named in
+ * `"nifra": { "singleCopy": [...] }`.
+ *
+ * Nothing declared means no plugin at all - the plan does filesystem work, so it is not built for the
+ * majority of apps that have a single copy of everything and never think about this.
+ */
+const declaredSingleCopyPlugins = (root: string): readonly BunPlugin[] =>
+  readSingleCopyDeclaration(root) === undefined ? [] : [declaredSingleCopyPlugin({ cwd: root })]
+
+/**
  * Remix-style `.server` convention for the CLIENT build. A module named `*.server.ts(x)` (`db.server.ts`,
  * `auth.server.ts`, …) is server-only - empty it in the browser bundle so its (possibly `node:` / native /
  * Capacitor) import subtree never reaches the client. The body is CJS-with-a-Proxy so any named OR default
@@ -1444,6 +1464,7 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
     // Lazy → one chunk per route (loaded on first request); eager → a single self-contained file.
     splitting: lazy,
     plugins: [
+      ...declaredSingleCopyPlugins(resolvePath(dirname(routesDir))),
       ...(edge ? [reactDomEdgePlugin(entryDir), solidWebServerPlugin(entryDir)] : []),
       reactDedupePlugin(entryDir),
       preactDedupePlugin(entryDir),

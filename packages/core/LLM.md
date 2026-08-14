@@ -10,7 +10,7 @@ Bun-native, contract-first HTTP framework - the router, server, and route descri
 
 ## Public entrypoints
 
-`@nifrajs/core` · `@nifrajs/core/assurance` · `@nifrajs/core/binary` · `@nifrajs/core/budget` · `@nifrajs/core/capabilities` · `@nifrajs/core/causality` · `@nifrajs/core/channel` · `@nifrajs/core/classification` · `@nifrajs/core/contract` · `@nifrajs/core/cookies` · `@nifrajs/core/data` · `@nifrajs/core/diff` · `@nifrajs/core/durable-adapters` · `@nifrajs/core/durable-execution` · `@nifrajs/core/effect-ledger` · `@nifrajs/core/effect-lifecycle` · `@nifrajs/core/effect-scope` · `@nifrajs/core/evidence` · `@nifrajs/core/execution-policy` · `@nifrajs/core/idempotency` · `@nifrajs/core/idempotency-plugin` · `@nifrajs/core/ledger` · `@nifrajs/core/logger` · `@nifrajs/core/manifest` · `@nifrajs/core/mcp` · `@nifrajs/core/mount` · `@nifrajs/core/node-direct` · `@nifrajs/core/pattern` · `@nifrajs/core/range` · `@nifrajs/core/reconciliation-worker` · `@nifrajs/core/reflection` · `@nifrajs/core/replay` · `@nifrajs/core/response-contract` · `@nifrajs/core/router` · `@nifrajs/core/schema` · `@nifrajs/core/seo` · `@nifrajs/core/server` · `@nifrajs/core/sse` · `@nifrajs/core/tool-catalog` · `@nifrajs/core/tool-contract` · `@nifrajs/core/transport-codec` · `@nifrajs/core/transport-codec-rich` · `@nifrajs/core/transport-plugin` · `@nifrajs/core/webhook` · `@nifrajs/core/wire` · `@nifrajs/core/ws`
+`@nifrajs/core` · `@nifrajs/core/assurance` · `@nifrajs/core/binary` · `@nifrajs/core/budget` · `@nifrajs/core/capabilities` · `@nifrajs/core/causality` · `@nifrajs/core/channel` · `@nifrajs/core/classification` · `@nifrajs/core/contract` · `@nifrajs/core/cookies` · `@nifrajs/core/data` · `@nifrajs/core/diff` · `@nifrajs/core/durable-adapters` · `@nifrajs/core/durable-execution` · `@nifrajs/core/effect-ledger` · `@nifrajs/core/effect-lifecycle` · `@nifrajs/core/effect-scope` · `@nifrajs/core/evidence` · `@nifrajs/core/execution-policy` · `@nifrajs/core/idempotency` · `@nifrajs/core/idempotency-plugin` · `@nifrajs/core/ledger` · `@nifrajs/core/logger` · `@nifrajs/core/manifest` · `@nifrajs/core/mcp` · `@nifrajs/core/mount` · `@nifrajs/core/node-direct` · `@nifrajs/core/pattern` · `@nifrajs/core/range` · `@nifrajs/core/reconciliation-worker` · `@nifrajs/core/reflection` · `@nifrajs/core/replay` · `@nifrajs/core/response-contract` · `@nifrajs/core/router` · `@nifrajs/core/schema` · `@nifrajs/core/seo` · `@nifrajs/core/server` · `@nifrajs/core/single-copy` · `@nifrajs/core/single-copy/register` · `@nifrajs/core/sse` · `@nifrajs/core/tool-catalog` · `@nifrajs/core/tool-contract` · `@nifrajs/core/transport-codec` · `@nifrajs/core/transport-codec-rich` · `@nifrajs/core/transport-plugin` · `@nifrajs/core/webhook` · `@nifrajs/core/wire` · `@nifrajs/core/ws`
 
 ## Key exports
 
@@ -29,7 +29,7 @@ Bun-native, contract-first HTTP framework - the router, server, and route descri
 - **attachEffectLedger** _(function)_ - `attachEffectLedger: (context: object, ledger: RequestLedger) => void` · from `@nifrajs/core/ledger`
 - **attachWebSocket** _(function)_ - `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; …` · from `@nifrajs/core/ws`
 
-_…and 593 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 609 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 

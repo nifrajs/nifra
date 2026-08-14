@@ -5,6 +5,7 @@ import { join } from "node:path"
 import {
   aliasMatcher,
   applyDoctorAutoFix,
+  collectAllDuplicateInstalls,
   collectDoctorResult,
   collectDuplicateInstalls,
   collectStaleWorkspaceDists,
@@ -659,7 +660,59 @@ describe("collectDuplicateInstalls - discovery anchored at the workspace root", 
       // Identical versions: the finding is about two paths, not two versions.
       expect(findings[0]?.copies.map((c) => c.version)).toEqual(["19.2.7", "19.2.7"])
       expect(findings[0]?.explanation).toContain("physical path")
-      expect(findings[0]?.remediation).toContain("reinstall")
+      // Nothing declared this package single-copy, so it is still a hard finding, and the remediation
+      // names both ways out: one physical path, or a declaration nifra enforces.
+      expect(findings[0]?.deduplicated).toBe(false)
+      expect(findings[0]?.remediation).toContain("single physical path")
+      expect(findings[0]?.remediation).toContain("singleCopy")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("a declared single-copy duplicate leaves the failing set and lands in the reported one", async () => {
+    // Same fixture as above plus the declaration. `nifra check` must go green on it: the copies are
+    // real, but the resolver collapses them, and the only alternative would be to demand a topology
+    // change (one shared node_modules) that a linked sibling repo cannot make.
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-single-copy-"))
+    try {
+      const app = join(dir, "apps", "web")
+      const kit = join(dir, "packages", "kit")
+      await mkdir(join(app, "src"), { recursive: true })
+      await mkdir(join(kit, "node_modules", "react"), { recursive: true })
+      await mkdir(join(dir, "node_modules", "react"), { recursive: true })
+      await mkdir(join(dir, ".git"), { recursive: true })
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "root", private: true, workspaces: ["apps/*", "packages/*"] }),
+      )
+      await writeFile(
+        join(app, "package.json"),
+        JSON.stringify({
+          name: "web",
+          dependencies: { react: "19.2.7" },
+          nifra: { singleCopy: ["react"] },
+        }),
+      )
+      await writeFile(
+        join(kit, "package.json"),
+        JSON.stringify({ name: "kit", dependencies: { react: "19.2.7" } }),
+      )
+      for (const copy of [join(dir, "node_modules", "react"), join(kit, "node_modules", "react")]) {
+        await writeFile(
+          join(copy, "package.json"),
+          JSON.stringify({ name: "react", version: "19.2.7" }),
+        )
+      }
+      const appPkg = JSON.parse(await readFile(join(app, "package.json"), "utf8")) as Record<
+        string,
+        unknown
+      >
+      const identity = await collectAllDuplicateInstalls(app, appPkg)
+      expect(identity.duplicates).toEqual([])
+      expect(identity.deduplicated).toHaveLength(1)
+      expect(identity.deduplicated[0]?.package).toBe("react")
+      expect(identity.deduplicated[0]?.deduplicated).toBe(true)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

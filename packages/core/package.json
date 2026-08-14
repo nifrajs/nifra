@@ -251,6 +251,16 @@
       "bun": "./src/execution-policy.ts",
       "types": "./dist/execution-policy.d.ts",
       "default": "./dist/execution-policy.js"
+    },
+    "./single-copy": {
+      "bun": "./src/single-copy.ts",
+      "types": "./dist/single-copy.d.ts",
+      "default": "./dist/single-copy.js"
+    },
+    "./single-copy/register": {
+      "bun": "./src/single-copy-register.ts",
+      "types": "./dist/single-copy-register.d.ts",
+      "default": "./dist/single-copy-register.js"
     }
   },
   "files": [
@@ -265,7 +275,9 @@
     "./src/node-direct.ts",
     "./dist/node-direct.js",
     "./src/mcp-runtime.ts",
-    "./dist/mcp-runtime.js"
+    "./dist/mcp-runtime.js",
+    "./src/single-copy-register.ts",
+    "./dist/single-copy-register.js"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"

@@ -116,7 +116,12 @@ backend in `nifra dev` and in prod alike - no hand-dispatch in `server-bun.ts` /
 - **Dynamic `[param]`**: plain SSR runs the loader for ANY param value - guard and
   `throw new Response("", { status: 404 })` for unknown ids.
 - **React is deduped** in both the build and the vite dev server, so a `file:`-linked package shipping
-  its own React no longer nulls the SSR hook dispatcher.
+  its own React no longer nulls the SSR hook dispatcher. A `link:` dependency on a **separate
+  checkout** is the case the build can't reach on its own (that repo's install owns its
+  `node_modules`): declare `"nifra": { "singleCopy": ["react", "react-dom", "@nifrajs/*"] }` in the
+  app's `package.json`, and preload `@nifrajs/core/single-copy/register` from `bunfig.toml` (under
+  both `preload` and `[test].preload`) so unbundled runs are covered too. It never redirects across
+  versions - a version skew stays fatal in `nifra check`. See `/docs/troubleshooting`.
 - **Server-only code** → three ways to keep it out of the browser bundle:
   - put it in a `*.server.ts` module - the client build empties it (its `node:` / native imports never
     ship), no extra import needed;

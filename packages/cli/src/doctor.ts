@@ -142,6 +142,12 @@ export interface DoctorResult {
   readonly findings: readonly DoctorFinding[]
   /** Packages that resolve to more than one physical install across this workspace. */
   readonly duplicateInstalls: readonly DuplicateInstallFinding[]
+  /**
+   * Duplicate installs the app declared single-copy (`"nifra": { "singleCopy": [...] }`), which nifra
+   * collapses to one copy at resolve time. Reported so the topology stays visible, never folded into
+   * `ok`: the copies exist on disk but cannot both load. Absent on an older result shape.
+   */
+  readonly deduplicatedInstalls?: readonly DuplicateInstallFinding[]
   /** Workspace-linked deps whose `default`-condition artifact lags their `bun`-condition source.
    * Advisory (never folded into `ok`): while actively editing a linked package its dist is always
    * momentarily behind - the finding matters when a dev server starts against it. */
@@ -361,13 +367,27 @@ export async function collectDuplicateInstalls(
   cwd: string,
   rootPackage: Record<string, unknown>,
 ): Promise<DuplicateInstallFinding[]> {
+  return (await collectAllDuplicateInstalls(cwd, rootPackage)).duplicates
+}
+
+const asDuplicateInstall = (finding: IdentityParityFinding): DuplicateInstallFinding => ({
+  ...finding,
+  copies: finding.copies.map((copy): DuplicateInstallCopy => ({ ...copy })),
+})
+
+/** Both halves of the identity scan: what still breaks, and what a declaration already collapses. */
+export async function collectAllDuplicateInstalls(
+  cwd: string,
+  rootPackage: Record<string, unknown>,
+): Promise<{
+  readonly duplicates: DuplicateInstallFinding[]
+  readonly deduplicated: DuplicateInstallFinding[]
+}> {
   const result = await collectIdentityParity(cwd, rootPackage, { useWorkspaceRoot: true })
-  return result.findings.map(
-    (finding): DuplicateInstallFinding => ({
-      ...finding,
-      copies: finding.copies.map((copy): DuplicateInstallCopy => ({ ...copy })),
-    }),
-  )
+  return {
+    duplicates: result.findings.map(asDuplicateInstall),
+    deduplicated: result.deduplicated.map(asDuplicateInstall),
+  }
 }
 
 /** A workspace-linked dependency whose build artifact is older than its source. */
@@ -719,7 +739,8 @@ export async function collectDoctorResult(
     { includeTests: true },
   )
   findings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)
-  const duplicateInstalls = await collectDuplicateInstalls(cwd, pkg)
+  const identity = await collectAllDuplicateInstalls(cwd, pkg)
+  const duplicateInstalls = identity.duplicates
   const staleDists = await collectStaleWorkspaceDists(cwd, pkg)
   const pipeline = await collectPipelineReport(cwd)
   const pipelineErrors = pipeline.findings.filter((f) => f.severity === "error")
@@ -739,6 +760,7 @@ export async function collectDoctorResult(
     ran: true,
     findings,
     duplicateInstalls,
+    deduplicatedInstalls: identity.deduplicated,
     staleDists,
     readiness,
     ...(toolingDrift !== undefined ? { toolingDrift } : {}),
@@ -949,6 +971,18 @@ export async function runDoctor(
       }
       console.log(`      ${finding.explanation}`)
       console.log(`      fix: ${finding.remediation}`)
+    }
+  }
+  // Not a failure and not silence: the copies are real, and whoever reads this report needs to know
+  // the graph is held together by a declaration rather than by the install.
+  if (result.deduplicatedInstalls !== undefined && result.deduplicatedInstalls.length > 0) {
+    console.log("\n• identity-sensitive packages deduplicated by declaration:\n")
+    for (const finding of result.deduplicatedInstalls) {
+      console.log(`  ${finding.package} @ ${finding.versions.join(", ")}`)
+      for (const copy of finding.copies) {
+        console.log(`      ${copy.path} ← ${copy.importers.join(", ")}`)
+      }
+      console.log(`      ${finding.remediation}`)
     }
   }
   if (result.readiness?.strict === true && result.readiness.ok === false) {

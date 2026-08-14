@@ -9,6 +9,13 @@
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs"
 import { lstat, realpath, stat } from "node:fs/promises"
 import { dirname, join, relative, resolve, sep } from "node:path"
+import {
+  matchesSingleCopyDeclaration,
+  readSingleCopyDeclaration,
+  readSingleCopyRegistration,
+  SINGLE_COPY_REGISTER_SPECIFIER,
+  type SingleCopyRegistration,
+} from "@nifrajs/core/single-copy"
 import { discoverRoutes } from "../fs.ts"
 
 const DEPENDENCY_FIELDS = [
@@ -47,11 +54,40 @@ export interface IdentityParityFinding {
   readonly cause: IdentityParityCause
   readonly explanation: string
   readonly remediation: string
+  /**
+   * The copies exist but the app declared this package single-copy, so the resolver collapses them
+   * before anything loads. Reported, never fatal - see `SingleCopyCoverage`.
+   */
+  readonly deduplicated: boolean
+}
+
+/**
+ * What the app declared about deduplication, and how much of it is actually armed.
+ *
+ * A duplicate physical path is only a defect if something still LOADS both copies. An app consuming a
+ * linked sibling repository cannot collapse the paths without giving up the property it chose `link:`
+ * for - each repository owning its own `node_modules` - so nifra lets it declare the packages instead
+ * (`"nifra": { "singleCopy": [...] }` in package.json) and verifies the declaration here rather than
+ * failing on the raw path count.
+ *
+ * Bundled phases need nothing further: `buildClient`/`buildServer`/dev inject the resolver themselves.
+ * Unbundled phases do, because Bun's runtime never offers a bare specifier to a resolver hook, so the
+ * plugin has to be preloaded to intercept the load. `registration` is that proof, read statically out
+ * of `bunfig.toml`.
+ */
+export interface SingleCopyCoverage {
+  /** Declared package names and patterns, exactly as written. Empty when nothing was declared. */
+  readonly declared: readonly string[]
+  readonly registration: SingleCopyRegistration
 }
 
 export interface IdentityParityResult {
   readonly workspaceRoot: string
+  /** Findings that no declaration covers - the ones a build must refuse to start on. */
   readonly findings: readonly IdentityParityFinding[]
+  /** Duplicates the declaration covers. Worth printing, never worth failing. */
+  readonly deduplicated: readonly IdentityParityFinding[]
+  readonly singleCopy: SingleCopyCoverage
 }
 
 export interface IdentityParityOptions {
@@ -304,14 +340,33 @@ const identityTargets = (pkg: Record<string, unknown>): readonly string[] =>
 /** version-skew is a range problem: one reinstall from the root collapses it. */
 const VERSION_SKEW_REMEDIATION =
   "Align dependency ranges and reinstall from the workspace root so every importer resolves one physical copy; nifra does not rewrite lockfiles for identity conflicts."
-/** duplicate-path is a topology problem. When the copies come from a linked sibling repo, a reinstall
- * does not collapse them - each tree keeps its own copy. One tree must resolve into the other: dedupe
- * so the identity-sensitive package is a single physical realpath (e.g. symlink each duplicate to the
- * linked repo's copy), refusing on version skew rather than silently swapping versions. */
-const DUPLICATE_PATH_REMEDIATION =
-  "Deduplicate so this package resolves to a single physical path. If a copy comes from a linked sibling repo, reinstalling will not collapse it - point one tree's copy at the other's (symlink the duplicate to the linked repo's copy) instead of reinstalling."
-const identityRemediation = (cause: IdentityParityCause): string =>
-  cause === "version-skew" ? VERSION_SKEW_REMEDIATION : DUPLICATE_PATH_REMEDIATION
+/** duplicate-path is a topology problem. When the copies come from a linked sibling repo a reinstall
+ * does not collapse them - each tree keeps its own copy, which is the whole reason `link:` was chosen.
+ * So the fix is either one physical path, or a declaration that nifra can verify and enforce. */
+const duplicatePathRemediation = (name: string): string =>
+  `Deduplicate so ${name} resolves to a single physical path, or declare it single-copy: add "nifra": { "singleCopy": ["${name}"] } to package.json and preload "${SINGLE_COPY_REGISTER_SPECIFIER}" from bunfig.toml. nifra then rewrites every duplicate to this app's copy - at one version only, so align ranges first if the copies ever differ.`
+const identityRemediation = (cause: IdentityParityCause, name: string): string =>
+  cause === "version-skew" ? VERSION_SKEW_REMEDIATION : duplicatePathRemediation(name)
+
+/** What is left to do about a duplicate the declaration already covers. */
+const deduplicatedRemediation = (registration: SingleCopyRegistration): string =>
+  registration.run || registration.test
+    ? "Declared single-copy and enforced: every duplicate is rewritten to this app's copy, so one module instance loads."
+    : `Declared single-copy, so bundled output is deduplicated by the build. Unbundled runs are NOT: Bun's runtime never offers a bare specifier to a resolver, so add preload = ["${SINGLE_COPY_REGISTER_SPECIFIER}"] to bunfig.toml (and under [test]) or \`bun test\` still loads both copies.`
+
+/**
+ * Read the declaration and its runtime proof, preferring the directory the caller is in.
+ *
+ * A monorepo declares this per app, not once at the root: the app is what owns the `node_modules` the
+ * duplicates must collapse into, and two apps in one workspace can legitimately differ. The workspace
+ * root is the fallback so a single-package project needs no second file.
+ */
+const singleCopyCoverage = (cwd: string, scanRoot: string): SingleCopyCoverage => {
+  const declared = readSingleCopyDeclaration(cwd) ?? readSingleCopyDeclaration(scanRoot) ?? []
+  const local = readSingleCopyRegistration(cwd)
+  const registration = local.run || local.test ? local : readSingleCopyRegistration(scanRoot)
+  return { declared, registration }
+}
 
 /** Find duplicate identity-sensitive package realpaths without reading application payloads. */
 export async function collectIdentityParity(
@@ -374,7 +429,9 @@ export async function collectIdentityParity(
     }
   }
 
+  const singleCopy = singleCopyCoverage(requestedRoot, scanRoot)
   const findings: IdentityParityFinding[] = []
+  const deduplicated: IdentityParityFinding[] = []
   for (const [name, copies] of [...byPackage.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     if (copies.size < 2) continue
     const resolvedCopies = [...copies.entries()]
@@ -386,7 +443,12 @@ export async function collectIdentityParity(
       }))
     const versions = [...new Set(resolvedCopies.map((copy) => copy.version))].sort()
     const cause: IdentityParityCause = versions.length > 1 ? "version-skew" : "duplicate-path"
-    findings.push({
+    // A declaration never covers a version skew. Redirecting across versions would hand a package a
+    // version it did not ask for, which converts a loud install problem into a quiet behavioural one -
+    // so the skew stays fatal and the ranges have to be fixed.
+    const covered =
+      cause === "duplicate-path" && matchesSingleCopyDeclaration(singleCopy.declared, name)
+    const finding: IdentityParityFinding = {
       package: name,
       copies: resolvedCopies,
       versions,
@@ -394,11 +456,17 @@ export async function collectIdentityParity(
       explanation:
         cause === "version-skew"
           ? `${name} resolves to multiple versions and physical paths, so module state and symbols are not shared`
-          : `${name} is loaded from more than one physical path, so module state and symbols are not shared`,
-      remediation: identityRemediation(cause),
-    })
+          : covered
+            ? `${name} is installed at more than one physical path and is declared single-copy, so every duplicate is rewritten to this app's copy`
+            : `${name} is loaded from more than one physical path, so module state and symbols are not shared`,
+      remediation: covered
+        ? deduplicatedRemediation(singleCopy.registration)
+        : identityRemediation(cause, name),
+      deduplicated: covered,
+    }
+    ;(covered ? deduplicated : findings).push(finding)
   }
-  return { workspaceRoot: scanRoot, findings }
+  return { workspaceRoot: scanRoot, findings, deduplicated, singleCopy }
 }
 
 /** One `- pkg [cause]: ...` line per finding, shared by the hard failure and the dev warning. */
@@ -418,7 +486,15 @@ export function formatIdentityParityFindings(findings: readonly IdentityParityFi
 export const identityParityHeadline = (count: number): string =>
   `${count} primary package finding${count === 1 ? "" : "s"}`
 
-/** Fail before dev/build when the same identity-sensitive package has multiple realpaths. */
+/**
+ * Fail before dev/build when the same identity-sensitive package has multiple realpaths AND nothing
+ * is collapsing them.
+ *
+ * A declared package is not a suppression: the build injects the single-copy resolver, so the duplicate
+ * genuinely cannot reach the output. Failing on it anyway would leave the only supported answer being
+ * to change the install topology, which is the thing an app using linked sibling repositories cannot
+ * do. `result.deduplicated` still carries every covered duplicate for the caller to print.
+ */
 export async function assertIdentityParity(
   cwd: string,
   rootPackage?: Record<string, unknown>,

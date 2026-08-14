@@ -36,6 +36,7 @@ test("formatIdentityParityFindings renders package, cause, versions and paths", 
       versions: ["19.2.7"],
       explanation: "react is loaded from more than one physical path",
       remediation: "Align dependency ranges and reinstall from the workspace root",
+      deduplicated: false,
     },
   ])
   expect(rendered).toContain("- react [duplicate-path]:")
@@ -132,7 +133,12 @@ test("shared identity parity resolves a workspace from an app subdirectory", asy
     expect(result.findings[0]?.copies).toHaveLength(3)
     expect(result.findings[0]?.cause).toBe("duplicate-path")
     expect(result.findings[0]?.versions).toEqual(["19.2.7"])
-    expect(result.findings[0]?.remediation).toContain("reinstall")
+    // Undeclared, so the finding is fatal and its remediation offers both routes out: one physical
+    // path, or a declaration nifra can enforce.
+    expect(result.findings[0]?.deduplicated).toBe(false)
+    expect(result.findings[0]?.remediation).toContain("single physical path")
+    expect(result.findings[0]?.remediation).toContain("singleCopy")
+    expect(result.deduplicated).toHaveLength(0)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -279,9 +285,145 @@ test("identity remediation is cause-specific (duplicate-path does not just say r
       versions: ["2.14.1"],
       explanation: "@nifrajs/core is loaded from more than one physical path",
       remediation:
-        "Deduplicate so this package resolves to a single physical path. If a copy comes from a linked sibling repo, reinstalling will not collapse it - point one tree's copy at the other's (symlink the duplicate to the linked repo's copy) instead of reinstalling.",
+        'Deduplicate so @nifrajs/core resolves to a single physical path, or declare it single-copy: add "nifra": { "singleCopy": ["@nifrajs/core"] } to package.json and preload "@nifrajs/core/single-copy/register" from bunfig.toml.',
+      deduplicated: false,
     },
   ])
-  expect(rendered).toContain("Deduplicate so this package resolves to a single physical path")
-  expect(rendered).toContain("linked sibling repo")
+  expect(rendered).toContain("resolves to a single physical path")
+  expect(rendered).toContain("singleCopy")
+})
+
+/**
+ * A two-repository fixture: an app, and a package it consumes by symlink from a checkout the app's
+ * install does not own. Each side has its own react at the same version - the state `link:` produces
+ * and no reinstall collapses.
+ */
+const linkedRepos = async (
+  label: string,
+  over: { readonly appPackage?: Record<string, unknown>; readonly bunfig?: string } = {},
+) => {
+  const ground = await mkdtemp(join(tmpdir(), `nifra-single-copy-${label}-`))
+  const app = join(ground, "app")
+  const sibling = join(ground, "sibling")
+  await mkdir(join(app, ".git"), { recursive: true })
+  await mkdir(join(app, "node_modules", "react"), { recursive: true })
+  await mkdir(join(app, "node_modules", "@example"), { recursive: true })
+  await mkdir(join(sibling, ".git"), { recursive: true })
+  await mkdir(join(sibling, "node_modules", "react"), { recursive: true })
+  await mkdir(join(sibling, "packages", "ui"), { recursive: true })
+  await writeFile(
+    join(app, "package.json"),
+    JSON.stringify({
+      name: "app",
+      dependencies: { react: "19.2.8", "@example/ui": "link:../sibling/packages/ui" },
+      ...over.appPackage,
+    }),
+  )
+  if (over.bunfig !== undefined) await writeFile(join(app, "bunfig.toml"), over.bunfig)
+  await writeFile(
+    join(sibling, "packages", "ui", "package.json"),
+    JSON.stringify({ name: "@example/ui", peerDependencies: { react: ">=19" } }),
+  )
+  await writeFile(
+    join(app, "node_modules", "react", "package.json"),
+    JSON.stringify({ name: "react", version: "19.2.8" }),
+  )
+  await writeFile(
+    join(sibling, "node_modules", "react", "package.json"),
+    JSON.stringify({ name: "react", version: "19.2.8" }),
+  )
+  await symlink(join(sibling, "packages", "ui"), join(app, "node_modules", "@example", "ui"))
+  return { ground, app, sibling }
+}
+
+test("a linked sibling repo's second react is fatal when nothing is declared", async () => {
+  const { ground, app } = await linkedRepos("undeclared")
+  try {
+    const result = await collectIdentityParity(app)
+    expect(result.findings.map((finding) => finding.package)).toEqual(["react"])
+    expect(result.deduplicated).toHaveLength(0)
+    expect(result.singleCopy.declared).toEqual([])
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("declaring a package single-copy moves its duplicate out of the failing set", async () => {
+  const { ground, app } = await linkedRepos("declared", {
+    appPackage: { nifra: { singleCopy: ["react", "@nifrajs/*"] } },
+    bunfig:
+      'preload = ["@nifrajs/core/single-copy/register"]\n[test]\npreload = ["@nifrajs/core/single-copy/register"]\n',
+  })
+  try {
+    const result = await collectIdentityParity(app)
+    // The copies are still REPORTED - they exist, and the guarantee now rests on a declaration that a
+    // future edit could delete. What changes is that they no longer stop a build.
+    expect(result.findings).toHaveLength(0)
+    expect(result.deduplicated.map((finding) => finding.package)).toEqual(["react"])
+    expect(result.deduplicated[0]?.deduplicated).toBe(true)
+    expect(result.singleCopy.registration.run).toBe(true)
+    expect(result.singleCopy.registration.test).toBe(true)
+    expect(result.deduplicated[0]?.remediation).toContain("enforced")
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("a declaration without the bunfig preload says which phase is still uncovered", async () => {
+  const { ground, app } = await linkedRepos("no-preload", {
+    appPackage: { nifra: { singleCopy: true } },
+  })
+  try {
+    const result = await collectIdentityParity(app)
+    expect(result.deduplicated).toHaveLength(1)
+    expect(result.singleCopy.registration.run).toBe(false)
+    // The build injects the resolver itself, so bundled output is fine; `bun test` is not, and the
+    // remediation has to name that gap rather than reporting a clean bill of health.
+    expect(result.deduplicated[0]?.remediation).toContain("bunfig.toml")
+    expect(result.deduplicated[0]?.remediation).toContain("bun test")
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("a declaration never covers a version skew", async () => {
+  const ground = await mkdtemp(join(tmpdir(), "nifra-single-copy-skew-"))
+  try {
+    const app = join(ground, "app")
+    const sibling = join(ground, "sibling")
+    await mkdir(join(app, ".git"), { recursive: true })
+    await mkdir(join(app, "node_modules", "react"), { recursive: true })
+    await mkdir(join(app, "node_modules", "@example"), { recursive: true })
+    await mkdir(join(sibling, ".git"), { recursive: true })
+    await mkdir(join(sibling, "node_modules", "react"), { recursive: true })
+    await mkdir(join(sibling, "packages", "ui"), { recursive: true })
+    await writeFile(
+      join(app, "package.json"),
+      JSON.stringify({
+        name: "app",
+        dependencies: { react: "19.2.8", "@example/ui": "link:../sibling/packages/ui" },
+        nifra: { singleCopy: ["react"] },
+      }),
+    )
+    await writeFile(
+      join(sibling, "packages", "ui", "package.json"),
+      JSON.stringify({ name: "@example/ui", peerDependencies: { react: ">=19" } }),
+    )
+    await writeFile(
+      join(app, "node_modules", "react", "package.json"),
+      JSON.stringify({ name: "react", version: "19.2.8" }),
+    )
+    await writeFile(
+      join(sibling, "node_modules", "react", "package.json"),
+      JSON.stringify({ name: "react", version: "19.2.7" }),
+    )
+    await symlink(join(sibling, "packages", "ui"), join(app, "node_modules", "@example", "ui"))
+    const result = await collectIdentityParity(app)
+    // Redirecting across versions would serve 19.2.8 to a package that asked for 19.2.7 - a loud
+    // install problem turned into a quiet behavioural one. The skew stays fatal.
+    expect(result.deduplicated).toHaveLength(0)
+    expect(result.findings.map((finding) => finding.cause)).toEqual(["version-skew"])
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
 })

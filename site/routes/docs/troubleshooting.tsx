@@ -43,6 +43,27 @@ export async function loader(_ctx: LoaderContext) {
   return { notes: db.query("select * from notes").all() }
 }`
 
+// The single-copy declaration. Static, in package.json, because `nifra check` must be able to read it
+// without importing the app's config - reading plugins would mean executing app code in a preflight.
+const SINGLE_COPY_DECLARATION = `{
+  "name": "my-app",
+  "dependencies": {
+    "react": "19.2.8",
+    "@example/ui": "link:../design-system/packages/ui"
+  },
+  "nifra": {
+    "singleCopy": ["react", "react-dom", "@nifrajs/*"]
+  }
+}`
+
+// The runtime arm. The build injects the resolver itself; nothing bundles \`bun test\`, so the
+// registrar has to be preloaded there or both copies load again.
+const SINGLE_COPY_PRELOAD = `# bunfig.toml
+preload = ["@nifrajs/core/single-copy/register"]
+
+[test]
+preload = ["@nifrajs/core/single-copy/register"]`
+
 // Fix 1 for TS2589: split one long chain into domain groups and merge() them. Each group is its own
 // short server() chain (well under the ceiling), and merge() is a single R & R2 intersection with no
 // per-call context work - so the cost stays flat however many groups you compose. Self-contained
@@ -223,9 +244,9 @@ export default function Troubleshooting() {
       <p>
         Nifra <strong>dedupes React</strong> in both the production build and the Vite dev server, so
         the framework itself won't load two copies. The usual culprit is a{" "}
-        <strong><code>file:</code>-linked package</strong> (a local component library you{" "}
-        <code>bun link</code> or reference with <code>file:../lib</code>) that bundles its own React in
-        its own <code>node_modules</code>:
+        <strong><code>file:</code>- or <code>link:</code>-linked package</strong> (a local component
+        library you <code>bun link</code> or reference with <code>link:../lib</code>) that bundles its
+        own React in its own <code>node_modules</code>. Fix the install first, if you can:
       </p>
       <ul>
         <li>
@@ -243,6 +264,58 @@ export default function Troubleshooting() {
           package manager duplicated it.
         </li>
       </ul>
+
+      <h3>When the duplicate can't be installed away: declare it single-copy</h3>
+      <p>
+        A <code>link:</code> dependency on a <strong>separate checkout</strong> is the case none of the
+        above reaches. The linked package's files live in the other repo, so Node and Bun resolve their
+        imports from <em>that</em> repo's real path - and that repo's install owns its{" "}
+        <code>node_modules</code>. Peer deps don't help (the copy is already installed there),{" "}
+        <code>overrides</code> don't help (they govern your install, not theirs), and deleting the
+        nested copy is undone by the next install in the sibling repo. Only a resolver can answer this:
+        the walk has to be intercepted, not rearranged.
+      </p>
+      <p>
+        Declare the packages in your app's <code>package.json</code>. It is a <strong>static</strong>{" "}
+        declaration on purpose - <code>nifra check</code> reads it without importing your config, so
+        the preflight never executes app code:
+      </p>
+      <CodeBlock code={SINGLE_COPY_DECLARATION} lang="json" />
+      <p>
+        <code>"singleCopy": true</code> is shorthand for Nifra's built-in identity-sensitive set:{" "}
+        <code>@nifrajs/*</code>, <code>react</code>, <code>react-dom</code>, <code>preact</code>,{" "}
+        <code>solid-js</code>, <code>svelte</code>, <code>vue</code>. Entries may be exact names or a{" "}
+        <code>@scope/*</code> pattern. <code>@nifrajs/*</code> belongs in this set for the same reason
+        React does: two copies of <code>@nifrajs/core</code> are two distinct <code>Server</code>{" "}
+        classes, so <code>.merge()</code> stops accepting an app built against the other one.
+      </p>
+      <p>
+        <strong>The build honours the declaration on its own</strong> -{" "}
+        <code>buildClient</code> and <code>buildServer</code> inject the resolver, so bundled output
+        already loads one copy. Unbundled phases do not: Bun's <em>runtime</em> resolver never offers a
+        bare specifier to a plugin, so <code>bun test</code>, <code>bun run</code>, and preloaded
+        scripts still load both copies unless you preload the registrar:
+      </p>
+      <CodeBlock code={SINGLE_COPY_PRELOAD} lang="toml" />
+      <p>
+        Both sections matter, and they are independent: <code>preload</code> covers{" "}
+        <code>bun run</code>, <code>[test].preload</code> covers <code>bun test</code>. Declaring
+        without preloading is a real state, not a mistake -{" "}
+        <code>nifra check</code> reports it and names the phase left uncovered.
+      </p>
+      <p>
+        <strong>What it will not do:</strong> redirect across <em>versions</em>. If the two copies are{" "}
+        <code>19.2.7</code> and <code>19.2.8</code>, the redirect is skipped and{" "}
+        <code>nifra check</code> still fails with <code>version-skew</code>. Silently collapsing a
+        version difference would trade a loud install problem for a quiet behavioural one; align the
+        ranges instead.
+      </p>
+      <p>
+        A declared duplicate is <strong>reported, not suppressed</strong>.{" "}
+        <code>nifra check</code> keeps printing the copies as a warning and{" "}
+        <code>nifra doctor</code> lists them under "deduplicated by declaration", so the topology stays
+        visible - it just stops being fatal.
+      </p>
       <blockquote>
         <p>
           [!NOTE]

@@ -1534,6 +1534,42 @@ Every public export of every package and documented subpath - name, kind, signat
   Verify a `value.signature` produced by {@link signValue} and return the value, or `null` if the signature is missing, malformed, or doesn't match. Verification is **constant-time** (`crypto.subtle.verify`), so a wrong signature can't be discovered byte-by-byte via timing.
 - **urlPartsOf** _(function)_ - `urlPartsOf: (url: string) => UrlParts`
 
+### `@nifrajs/core/single-copy`
+
+- **IDENTITY_SENSITIVE_PACKAGES** _(const)_ - `IDENTITY_SENSITIVE_PACKAGES: readonly string[]`
+  Packages whose duplication is a defect rather than a waste. Each keeps module-scoped state that every importer must share - a hook dispatcher, a renderer's options global, a class identity - so a second physical copy breaks behaviour instead of merely costing bytes. Anything scoped `@nifrajs/` qual…
+- **SINGLE_COPY_ACTIVE** _(const)_ - `SINGLE_COPY_ACTIVE: typeof SINGLE_COPY_ACTIVE`
+  Set once the runtime plugin is installed, so a checker can tell "one copy" from "deduplicated".
+- **SINGLE_COPY_REGISTER_SPECIFIER** _(const)_ - `SINGLE_COPY_REGISTER_SPECIFIER: "@nifrajs/core/single-copy/register"`
+  The public specifier a `bunfig.toml` preload must name to arm the runtime.
+- **SingleCopyOptions** _(interface)_ - `interface SingleCopyOptions`
+- **SingleCopyPlan** _(interface)_ - `interface SingleCopyPlan`
+- **SingleCopyPlugin** _(interface)_ - `interface SingleCopyPlugin`
+  A Bun plugin - `Bun.plugin(...)` for the runtime, or a `plugins:` entry for `Bun.build`.
+- **SingleCopyRedirect** _(interface)_ - `interface SingleCopyRedirect`
+  One foreign copy that will be redirected into the app's copy.
+- **SingleCopyRegistration** _(interface)_ - `interface SingleCopyRegistration`
+  Which unbundled phases have the resolver preloaded. Bundled phases never need it - nifra's build injects the plugin itself.
+- **SingleCopySkip** _(interface)_ - `interface SingleCopySkip`
+  A foreign copy deliberately left alone, and why - never silently dropped.
+- **SingleCopySkipReason** _(type)_ - `type SingleCopySkipReason = "version-skew" | "no-counterpart"`
+- **matchesSingleCopyDeclaration** _(const)_ - `matchesSingleCopyDeclaration: (declared: readonly string[], name: string) => boolean`
+  Match a package name against a declaration entry: an exact name, or a `@scope/*` prefix.
+- **planSingleCopy** _(function)_ - `planSingleCopy: (options?: SingleCopyOptions) => SingleCopyPlan`
+  Work out which foreign copies exist and which of them may be redirected.
+- **readSingleCopyDeclaration** _(function)_ - `readSingleCopyDeclaration: (cwd: string) => readonly string[] | undefined`
+  The declaration, read from `package.json` - deliberately NOT from `nifra.config.ts`.
+- **readSingleCopyRegistration** _(function)_ - `readSingleCopyRegistration: (cwd: string) => SingleCopyRegistration`
+  Read the runtime proof out of `bunfig.toml`.
+- **registerSingleCopy** _(function)_ - `registerSingleCopy: (options?: SingleCopyOptions) => SingleCopyPlan`
+  Install the plugin into the Bun RUNTIME. Import `@nifrajs/core/single-copy/register` from a `bunfig.toml` preload rather than calling this from application code: a resolver installed from inside a module cannot affect the imports that module already resolved.
+- **singleCopyPlugin** _(function)_ - `singleCopyPlugin: (options?: SingleCopyOptions) => SingleCopyPlugin`
+  Pin every declared package to the app's copy.
+
+### `@nifrajs/core/single-copy/register`
+
+_No named exports (side-effect entrypoint)._
+
 ### `@nifrajs/core/sse`
 
 - **SSEContext** _(interface)_ - `interface SSEContext`
@@ -2520,7 +2556,7 @@ Every public export of every package and documented subpath - name, kind, signat
   Build a page from rows you fetched with `limit + 1`. If the extra row came back there are more pages: drop it and emit a `nextCursor` from the last KEPT row via `cursorOf`; otherwise `nextCursor` is `null`.
 - **registerFormat** _(function)_ - `registerFormat: (name: string, validate: (value: string) => boolean) => void`
   Register (or override) a string format usable as `t.string({ format: name })`.
-- **t** _(const)_ - `t: { readonly string: (options?: StringOptions) => NifraSchema<import("@sinclair/typebox").TString>; readonly number: (options?: NumberOptions) => NifraSchema<import("@sinclair/typebox").TNumber>; readonly integer: (opt…`
+- **t** _(const)_ - `t: { readonly string: (options?: StringOptions) => NifraSchema<any>; readonly number: (options?: NumberOptions) => NifraSchema<any>; readonly integer: (options?: IntegerOptions) => NifraSchema<any>; readonly boolean: ()…`
   The built-in schema builder. Each constructor returns a `NifraSchema` - a Standard Schema whose validated output type flows into `c.body`/`c.query`, and whose `jsonSchema` powers `toOpenAPI`. Options (min/max, length, pattern, …) pass straight through to TypeBox and so become JSON Schema constraint…
 - **toOpenAPI** _(function)_ - `toOpenAPI: (input: ContractShape | Server, options?: ToOpenAPIOptions) => OpenAPIDocument`
   Generate an OpenAPI 3.1 document from a contract or a running app. See the module doc for the detail model.
@@ -3640,7 +3676,7 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(interface)_ - `interface NavigateFunction`
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
-- **SearchContext** _(const)_ - `SearchContext: import("preact").Context<Record<string, unknown>>`
+- **SearchContext** _(const)_ - `SearchContext: any`
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Blocker`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean (`useBlocker(isDirty)`) or a predicate `({ currentLocation, nextLocation }) => boolean`, and get back a {@link Blocker}. When a navigation (an anchor click, `u…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
@@ -3752,13 +3788,13 @@ _No named exports (side-effect entrypoint)._
   Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigati…
 - **BlockerState** _(type)_ - `type BlockerState = "unblocked" | "blocked" | "proceeding"`
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
-- **Link** _(const)_ - `Link: import("react").ForwardRefExoticComponent<LinkProps & import("react").RefAttributes<HTMLAnchorElement>>`
+- **Link** _(const)_ - `Link: any`
   A client-navigating anchor. Renders a real `<a href={to}>` (so it's a working link before hydration and for right-click / open-in-new-tab), and on a plain left-click navigates through the router instead of a full reload. Calling `navigate` + `preventDefault` here means `installHistory`'s document-l…
 - **LinkProps** _(interface)_ - `interface LinkProps`
   {@link Link} props: every `<a>` attribute except `href` (set from `to`), plus `to` + `replace`.
 - **Location** _(interface)_ - `interface Location`
   The parsed current location. `hash` is always `""` - the fragment is client-only and never reaches the router state / server, so exposing a live hash would hydration-mismatch; read `window.location.hash` directly (in an effect) if you truly need it.
-- **NavLink** _(const)_ - `NavLink: import("react").ForwardRefExoticComponent<NavLinkProps & import("react").RefAttributes<HTMLAnchorElement>>`
+- **NavLink** _(const)_ - `NavLink: any`
   A {@link Link} that knows whether it points at the current location. Adds `aria-current="page"` when active and resolves function-form `className`/`style`/`children` with `{ isActive, isPending }`. Default matching is prefix-on-segment-boundary (so `/users` is active on `/users/7`); pass `end` for …
 - **NavLinkProps** _(interface)_ - `interface NavLinkProps`
   {@link NavLink} props - like {@link LinkProps}, but `className`/`style`/`children` may be functions of the active state, and `end`/`caseSensitive` tune matching.
@@ -3772,7 +3808,7 @@ _No named exports (side-effect entrypoint)._
   {@link Navigate} props: the destination `to` and whether to `replace` the history entry.
 - **Navigation** _(interface)_ - `interface Navigation`
   The current navigation state, mirroring the Remix `useNavigation()` shape for familiarity.
-- **RouterContext** _(const)_ - `RouterContext: import("react").Context<RouterContextValue>`
+- **RouterContext** _(const)_ - `RouterContext: any`
 - **RouterContextValue** _(interface)_ - `interface RouterContextValue`
   The current route the routing hooks read. Provided by `compose` on SSR + client mount alike.
 - **SearchParamsInit** _(type)_ - `type SearchParamsInit = URLSearchParams | Record<string, string | readonly string[]> | string`
@@ -3887,7 +3923,7 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(interface)_ - `interface NavigateFunction`
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
-- **SearchContext** _(const)_ - `SearchContext: Context<Accessor<Record<string, unknown>> | undefined>`
+- **SearchContext** _(const)_ - `SearchContext: any`
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Accessor<Blocker>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a reactive {@link Blocker} accessor. When a navigation (an anchor click, `useNavi…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
@@ -3940,7 +3976,7 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-svelte/i18n`
 
-- **I18nProvider** _(const)_ - `I18nProvider: Component<I18nProviderProps, {}, string>`
+- **I18nProvider** _(const)_ - `I18nProvider: Component<I18nProviderProps>`
 - **I18nProviderProps** _(interface)_ - `interface I18nProviderProps`
   Hand-written types for `I18nProvider.svelte` (consumers resolve these via the `./i18n` re-export).
 - **useT** _(function)_ - `useT: () => Formatter`
@@ -4018,7 +4054,7 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-vue/await`
 
-- **Await** _(const)_ - `Await: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ resolve: { required: true; }; }>, () => VNode | undefined, {}, {}, {}, import("vue").ComponentOptionsMixin, import("vue").ComponentOptionsMixin, {}, …`
+- **Await** _(const)_ - `Await: any`
   `<Await :resolve="deferredOrValue">` with scoped slots `default(value)`, `fallback()`, `error(err)`. An already-resolved `resolve` (a plain value, or a client navigation that awaited it) renders `default` immediately. A `Deferred` renders `fallback` until it settles on the client.
 
 ### `@nifrajs/web-vue/client`
@@ -4035,7 +4071,7 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-vue/content`
 
-- **Content** _(const)_ - `Content: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ html: { type: StringConstructor; required: true; }; as: { type: StringConstructor; default: string; }; }>, () => import("vue").VNode<import("vue").…`
+- **Content** _(const)_ - `Content: any`
   Render trusted HTML into a wrapper element. `inheritAttrs: false` + manual attr spread so passthrough (`class`, `id`, `style`, …) lands on the wrapper exactly once.
 
 ### `@nifrajs/web-vue/fetcher`
@@ -4058,14 +4094,14 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-vue/i18n`
 
-- **I18nProvider** _(const)_ - `I18nProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ locale: { type: StringConstructor; required: true; }; messages: { type: PropType<Messages>; required: true; }; }>, () => import("vue").VNode<i…`
+- **I18nProvider** _(const)_ - `I18nProvider: any`
   Provide a {@link Formatter} (built from `locale` + `messages`) to the subtree. Recomputes when `locale`/`messages` change, so a locale switch re-renders consumers. Renders its default slot.
 - **useT** _(function)_ - `useT: () => Formatter`
   Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above.
 
 ### `@nifrajs/web-vue/image`
 
-- **Image** _(const)_ - `Image: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ src: { type: StringConstructor; required: true; }; width: { type: NumberConstructor; required: true; }; height: { type: NumberConstructor; required: …`
+- **Image** _(const)_ - `Image: any`
 
 ### `@nifrajs/web-vue/plugin`
 
@@ -4095,7 +4131,7 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(interface)_ - `interface NavigateFunction`
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
-- **SearchProvider** _(const)_ - `SearchProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ value: { type: ObjectConstructor; required: true; }; }>, () => import("vue").VNode<import("vue").RendererNode, import("vue").RendererElement…`
+- **SearchProvider** _(const)_ - `SearchProvider: any`
   The provider `compose` wraps the layout tree in. It `provide`s a `computed` view of its `value` prop, so as the mount re-renders with each navigation's search the injected ref updates reactively (setup runs once, but the computed keeps tracking the prop). Renders its default slot (the folded chain).
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readonly<ShallowRef<Blocker>>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a reactive {@link Blocker} ref. When a navigation (an anchor click, `useNavigate`…

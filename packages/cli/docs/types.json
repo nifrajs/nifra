@@ -5462,6 +5462,13 @@
     "doc": "/** Header stamped on a replayed response so clients/proxies can tell a replay from a fresh run. */"
   },
   {
+    "name": "IDENTITY_SENSITIVE_PACKAGES",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare const IDENTITY_SENSITIVE_PACKAGES: readonly string[];",
+    "doc": "/**\n * Packages whose duplication is a defect rather than a waste. Each keeps module-scoped state that\n * every importer must share - a hook dispatcher, a renderer's options global, a class identity - so a\n * second physical copy breaks behaviour instead of merely costing bytes. Anything scoped `@nifrajs/`\n * qualifies for the same reason and is matched by pattern.\n */"
+  },
+  {
     "name": "identityLoader",
     "kind": "const",
     "package": "@nifrajs/image",
@@ -6626,6 +6633,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function matchesAssuranceSelector(route: Pick<ReflectedRoute, \"method\" | \"path\" | \"tool\" | \"capabilities\" | \"classification\">, selector: AssuranceRouteSelector, definitions?: ReadonlyMap<string, CapabilityDefinition>): boolean;",
     "doc": "/**\n * Shared selector semantics for policy rules and framework adapters.\n *\n * `definitions` is only consulted by the `access`/`zone` selectors; every other selector reads\n * reflection alone. A caller that omits it while the selector needs it gets no match, so callers that\n * accept user policy must reject that combination up front - `defineAssuranceConfig` does.\n */"
+  },
+  {
+    "name": "matchesSingleCopyDeclaration",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare const matchesSingleCopyDeclaration: (declared: readonly string[], name: string) => boolean;",
+    "doc": "/**\n * Match a package name against a declaration entry: an exact name, or a `@scope/*` prefix.\n *\n * Exported because the enforcement and the CHECK must agree on it exactly. If `nifra check` decided\n * coverage by its own rule, a package could be reported as deduplicated while the plugin walked past\n * it - which is worse than no check at all, because it is a green light for a broken graph.\n */"
   },
   {
     "name": "matchRoutePattern",
@@ -8284,6 +8298,13 @@
     "signature": "export declare function planProofs(graph: WorkGraph, impact: ImpactReport, targetLevel?: number): ProofPlan;"
   },
   {
+    "name": "planSingleCopy",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function planSingleCopy(options?: SingleCopyOptions): SingleCopyPlan;",
+    "doc": "/**\n * Work out which foreign copies exist and which of them may be redirected.\n *\n * Pure discovery: it reads `package.json` files and symlink targets, never application source, and\n * never mutates anything. Both the plugin and `nifra check`'s verification are built on it, so the\n * enforcement and the report cannot drift apart.\n */"
+  },
+  {
     "name": "Platform",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -9018,6 +9039,20 @@
     "doc": "/**\n * Read just the leading bytes of an image file (via the platform `Bun.file`/`fetch` blob) and parse its\n * dimensions. Build-time tooling: pre-read dimensions into a manifest so `<Image>` is CLS-safe without\n * hardcoding sizes. Reads at most `maxBytes` (default 64 KB - enough for any header).\n */"
   },
   {
+    "name": "readSingleCopyDeclaration",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function readSingleCopyDeclaration(cwd: string): readonly string[] | undefined;",
+    "doc": "/**\n * The declaration, read from `package.json` - deliberately NOT from `nifra.config.ts`.\n *\n * `nifra check` holds a pre-load invariant: it never imports the app's config, because importing is\n * executing. A dedupe claim has to be verifiable by a checker that refuses to run the app, so it lives\n * in the one file every tool already parses. `true` means the built-in identity-sensitive set.\n */"
+  },
+  {
+    "name": "readSingleCopyRegistration",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function readSingleCopyRegistration(cwd: string): SingleCopyRegistration;",
+    "doc": "/**\n * Read the runtime proof out of `bunfig.toml`.\n *\n * Line-oriented on purpose: this runs inside `nifra check`, which must not execute or import anything\n * from the project, and the shape being read is a literal array of strings under a known key. A full\n * TOML parse would buy nothing here and would turn an unrelated syntax error elsewhere in the file\n * into a failure to answer this question.\n */"
+  },
+  {
     "name": "reconcileEffects",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -9231,6 +9266,13 @@
     "package": "@nifrajs/schema",
     "signature": "export declare function registerFormat(name: string, validate: (value: string) => boolean): void;",
     "doc": "/** Register (or override) a string format usable as `t.string({ format: name })`. */"
+  },
+  {
+    "name": "registerSingleCopy",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function registerSingleCopy(options?: SingleCopyOptions): SingleCopyPlan;",
+    "doc": "/**\n * Install the plugin into the Bun RUNTIME. Import `@nifrajs/core/single-copy/register` from a\n * `bunfig.toml` preload rather than calling this from application code: a resolver installed from\n * inside a module cannot affect the imports that module already resolved.\n */"
   },
   {
     "name": "Registry",
@@ -11256,6 +11298,73 @@
     "package": "nifra",
     "signature": "export declare const silentLogger: Logger;",
     "doc": "/** Discards everything - for tests, or when log output is handled elsewhere. */"
+  },
+  {
+    "name": "SINGLE_COPY_ACTIVE",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare const SINGLE_COPY_ACTIVE: unique symbol;",
+    "doc": "/** Set once the runtime plugin is installed, so a checker can tell \"one copy\" from \"deduplicated\". */"
+  },
+  {
+    "name": "SINGLE_COPY_REGISTER_SPECIFIER",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare const SINGLE_COPY_REGISTER_SPECIFIER = \"@nifrajs/core/single-copy/register\";",
+    "doc": "/** The public specifier a `bunfig.toml` preload must name to arm the runtime. */"
+  },
+  {
+    "name": "SingleCopyOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface SingleCopyOptions {\n    /** The app root whose copy wins. Defaults to `process.cwd()`. */\n    readonly cwd?: string;\n    /** Package names or `@scope/*` patterns. Defaults to the `nifra.singleCopy` declaration. */\n    readonly packages?: readonly string[];\n}"
+  },
+  {
+    "name": "SingleCopyPlan",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface SingleCopyPlan {\n    /** The app root whose installed copy wins. */\n    readonly root: string;\n    /** Declared package names and patterns, as written. */\n    readonly declared: readonly string[];\n    readonly redirects: readonly SingleCopyRedirect[];\n    readonly skipped: readonly SingleCopySkip[];\n}"
+  },
+  {
+    "name": "singleCopyPlugin",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function singleCopyPlugin(options?: SingleCopyOptions): SingleCopyPlugin;",
+    "doc": "/**\n * Pin every declared package to the app's copy.\n *\n * Two hooks, because the two phases resolve differently. `onResolve` is the direct statement of the\n * rule and it is what a BUNDLER honours - it sees every bare specifier. The runtime does not deliver\n * bare specifiers to it at all, so the `onLoad` arm intercepts the foreign file itself and hands back\n * a re-export of the counterpart in the winning copy. The importer gets the same function objects and\n * therefore the same module state, which is the entire requirement.\n */"
+  },
+  {
+    "name": "SingleCopyPlugin",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface SingleCopyPlugin extends BunPlugin {\n    /** What it will do, computed once at construction. Exposed so a caller can report it. */\n    readonly plan: SingleCopyPlan;\n}",
+    "doc": "/** A Bun plugin - `Bun.plugin(...)` for the runtime, or a `plugins:` entry for `Bun.build`. */"
+  },
+  {
+    "name": "SingleCopyRedirect",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface SingleCopyRedirect {\n    readonly package: string;\n    /** Absolute realpath of the copy that loses - the one a linked package would otherwise load. */\n    readonly from: string;\n    /** Absolute realpath of the copy that wins - the one resolvable from the app root. */\n    readonly to: string;\n    readonly version: string;\n}",
+    "doc": "/** One foreign copy that will be redirected into the app's copy. */"
+  },
+  {
+    "name": "SingleCopyRegistration",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface SingleCopyRegistration {\n    /** `preload` at the top level: covers `bun run` and anything that loads app sources directly. */\n    readonly run: boolean;\n    /** `[test] preload`: covers `bun test`, the surface that runs app sources unbundled. */\n    readonly test: boolean;\n    /** The `bunfig.toml` that was read, if one exists. */\n    readonly config?: string;\n}",
+    "doc": "/** Which unbundled phases have the resolver preloaded. Bundled phases never need it - nifra's build\n * injects the plugin itself. */"
+  },
+  {
+    "name": "SingleCopySkip",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface SingleCopySkip {\n    readonly package: string;\n    readonly from: string;\n    readonly reason: SingleCopySkipReason;\n    readonly detail: string;\n}",
+    "doc": "/** A foreign copy deliberately left alone, and why - never silently dropped. */"
+  },
+  {
+    "name": "SingleCopySkipReason",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type SingleCopySkipReason = \"version-skew\" | \"no-counterpart\";"
   },
   {
     "name": "sitemap",

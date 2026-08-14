@@ -2593,9 +2593,22 @@ export async function collectCheckResult(
           steps: [
             "Align workspace dependency and peer ranges on one compatible version.",
             "Remove stale nested installs and run the package manager from the workspace root.",
-            "Run `nifra doctor` again; do not suppress same-version duplicate paths.",
+            'If the copies come from a linked sibling repository and collapsing them is not an option, declare the package: "nifra": { "singleCopy": ["<package>"] } in package.json, plus the bunfig.toml preload.',
+            "Run `nifra doctor` again; do not suppress an undeclared same-version duplicate path.",
           ],
         },
+      })
+    }
+    // Declared single-copy: the resolver collapses these before anything loads, so the build is sound
+    // and the gate stays green. It is still worth a line - the guarantee lives in a declaration now,
+    // and a reader who deletes it gets a null hook dispatcher with no obvious cause.
+    for (const finding of dr.deduplicatedInstalls ?? []) {
+      const copies = finding.copies.map((copy) => copy.path).join("; ")
+      diagnostics.push({
+        rule: "duplicate-install",
+        severity: "warning",
+        message: `${finding.package} is installed at ${finding.copies.length} paths (${copies}) and is declared single-copy - nifra resolves every duplicate to this app's copy`,
+        fix: finding.remediation,
       })
     }
     // Advisory (never fails the gate): while actively editing a linked package its dist is always

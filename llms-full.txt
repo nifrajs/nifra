@@ -4654,9 +4654,9 @@ global state; a second copy nulls it out and every hook throws.
 
 Nifra **dedupes React** in both the production build and the Vite dev server, so
 the framework itself won't load two copies. The usual culprit is a
-**`file:`-linked package** (a local component library you
-`bun link` or reference with `file:../lib`) that bundles its own React in
-its own `node_modules`:
+**`file:`- or `link:`-linked package** (a local component
+library you `bun link` or reference with `link:../lib`) that bundles its
+own React in its own `node_modules`. Fix the install first, if you can:
 
 -
 Make React a **peer dependency** of the linked package (not a regular
@@ -4671,6 +4671,70 @@ copy.
 -
 Delete the linked package's nested `node_modules/react` after linking if your
 package manager duplicated it.
+
+#### When the duplicate can't be installed away: declare it single-copy
+
+A `link:` dependency on a **separate checkout** is the case none of the
+above reaches. The linked package's files live in the other repo, so Node and Bun resolve their
+imports from _that_ repo's real path - and that repo's install owns its
+`node_modules`. Peer deps don't help (the copy is already installed there),
+`overrides` don't help (they govern your install, not theirs), and deleting the
+nested copy is undone by the next install in the sibling repo. Only a resolver can answer this:
+the walk has to be intercepted, not rearranged.
+
+Declare the packages in your app's `package.json`. It is a **static**
+declaration on purpose - `nifra check` reads it without importing your config, so
+the preflight never executes app code:
+
+```ts
+{
+  "name": "my-app",
+  "dependencies": {
+    "react": "19.2.8",
+    "@example/ui": "link:../design-system/packages/ui"
+  },
+  "nifra": {
+    "singleCopy": ["react", "react-dom", "@nifrajs/*"]
+  }
+}
+```
+
+`"singleCopy": true` is shorthand for Nifra's built-in identity-sensitive set:
+`@nifrajs/*`, `react`, `react-dom`, `preact`,
+`solid-js`, `svelte`, `vue`. Entries may be exact names or a
+`@scope/*` pattern. `@nifrajs/*` belongs in this set for the same reason
+React does: two copies of `@nifrajs/core` are two distinct `Server`
+classes, so `.merge()` stops accepting an app built against the other one.
+
+**The build honours the declaration on its own** -
+`buildClient` and `buildServer` inject the resolver, so bundled output
+already loads one copy. Unbundled phases do not: Bun's _runtime_ resolver never offers a
+bare specifier to a plugin, so `bun test`, `bun run`, and preloaded
+scripts still load both copies unless you preload the registrar:
+
+```ts
+# bunfig.toml
+preload = ["@nifrajs/core/single-copy/register"]
+
+[test]
+preload = ["@nifrajs/core/single-copy/register"]
+```
+
+Both sections matter, and they are independent: `preload` covers
+`bun run`, `[test].preload` covers `bun test`. Declaring
+without preloading is a real state, not a mistake -
+`nifra check` reports it and names the phase left uncovered.
+
+**What it will not do:** redirect across _versions_. If the two copies are
+`19.2.7` and `19.2.8`, the redirect is skipped and
+`nifra check` still fails with `version-skew`. Silently collapsing a
+version difference would trade a loud install problem for a quiet behavioural one; align the
+ranges instead.
+
+A declared duplicate is **reported, not suppressed**.
+`nifra check` keeps printing the copies as a warning and
+`nifra doctor` lists them under "deduplicated by declaration", so the topology stays
+visible - it just stops being fatal.
 
 [!NOTE]
 
