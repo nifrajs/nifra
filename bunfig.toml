@@ -21,12 +21,13 @@ preload = ["./scripts/test-preload.ts"]
 #
 # So exclusions here have to be earned per file and stated with a number, not assumed for a category.
 coveragePathIgnorePatterns = [
-  # `vite.ts` sits at 100% LINE coverage. The two functions keeping it under the 90% FUNCTION floor are
-  # `() => {}` - the no-op catches on `reader.cancel()` (a client disconnecting mid-stream) and
-  # `vite.close()` (teardown after a bind failure). Both are error swallows on error paths; reaching
-  # them means contriving a rejection from Vite's own teardown, which would measure the mock rather than
-  # the code. This exclusion is the file's line coverage saying it is exercised and its function count
-  # saying two empty bodies are not - so it is kept, with the number, rather than chased.
+  # `vite.ts` sits at 97.6% LINE / 90.3% FUNCTION coverage (28/31 functions, measured 2026-08-14). It
+  # clears the 90% floor, but by a single function: the three uncovered are `() => {}` no-op catches -
+  # the error swallows on `reader.cancel()` (a client disconnecting mid-stream) and on `vite.close()`
+  # teardown after a bind failure. Covering or shedding one flips the file across the floor run-to-run.
+  # Reaching those bodies means contriving a rejection from Vite's own teardown, which would measure the
+  # mock rather than the code. Excluded to keep the gate off a razor-thin margin of empty error bodies,
+  # not because the file is untested - its 97.6% line coverage says it is exercised.
   "**/web/src/vite.ts",
   # Throwaway temp APPS that the build-tooling tests (`buildTarget`/`buildClient`) generate + bundle:
   # their stub route components are bundled, never rendered (the stub adapter emits chain length, not
@@ -55,12 +56,16 @@ coveragePathIgnorePatterns = [
   # components are bundled, not exercised, so they report low function coverage. They're sample code,
   # not unit-tested product code - exclude from the per-file gate.
   "**/examples/**",
-  # `@nifrajs/mcp` (MCP protocol/JSON-RPC + the MCP Apps React UI) is dev/agent tooling, same class as
-  # `cli/src` above. Its own suite (`packages/mcp/test`) isn't in the gated root run - its React-widget
-  # test reads `react/index.js`, which conflicts with the full-suite coverage instrumentation - so `mcp/src`
-  # is only INCIDENTALLY imported by the cli tests (which exercise the protocol path ~90%). Exclude it from
-  # the per-file gate so that incidental import doesn't drag a partially-covered module under threshold.
-  "**/mcp/src/**",
+  # `@nifrajs/mcp/react`'s `reactWidget` bundles a component with `Bun.build`, which reads
+  # `react/index.js` from the consumer tree. Under a large `--coverage` process that read throws
+  # `Unexpected reading file: .../react/index.js` and fails the widget test - reproducible on 1.3.14,
+  # measured 2026-08-14. So its bundling test (`react.test.ts`) is kept in the pass/fail `test` run but
+  # OUT of `test:coverage`; the rest of `mcp/src` (protocol, http, tool, tool-contract, server, standard,
+  # widget, bridge) IS gated - `mcp.test.ts` + `tool-contract.test.ts` run in `test:coverage` and the cli
+  # tests lift protocol/http to ~97/91%. `react.ts` itself never loads in the coverage run (nothing there
+  # calls `reactWidget`), so exclude it explicitly: it documents why the file is absent and stops a future
+  # coverage-run import of it from dragging in the crashing bundle. Its logic is asserted by `react.test.ts`.
+  "**/mcp/src/react.ts",
   # `@nifrajs/ts-plugin`'s index.ts is the TypeScript language-service GLUE (`init`/`create`, the
   # language-service proxy, and `getDefinitionAndBoundSpan` wiring) - it only runs inside a real tsserver,
   # which bun:test has no host for (same class as cli/src's stdio surface). The LOGIC it wires is pure and

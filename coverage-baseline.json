@@ -691,6 +691,46 @@
     "functions": 93.75,
     "lines": 100
   },
+  "packages/mcp-db/src/index.ts": {
+    "functions": 97.5,
+    "lines": 92.59198396793587
+  },
+  "packages/mcp/src/bridge.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/mcp/src/http.ts": {
+    "functions": 90.9090909090909,
+    "lines": 91.52542372881356
+  },
+  "packages/mcp/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/mcp/src/protocol.ts": {
+    "functions": 93.10344827586206,
+    "lines": 97.6470588235294
+  },
+  "packages/mcp/src/server.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/mcp/src/standard.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/mcp/src/tool-contract.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/mcp/src/tool.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/mcp/src/widget.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/middleware/src/_utils.ts": {
     "functions": 100,
     "lines": 99.23664122137404

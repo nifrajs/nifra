@@ -52,6 +52,13 @@ describe("defineMcpWidget", () => {
     expect(widget.meta).toEqual({ ui: { resourceUri: "ui://orders/table" } })
   })
 
+  test("escapes HTML metacharacters in the document title", async () => {
+    const w = defineMcpWidget({ uri: "ui://x/y", name: "n", title: `A & B <script>`, html: "" })
+    const { text } = await w.resource.read()
+    expect(text).toContain("<title>A &amp; B &lt;script&gt;</title>")
+    expect(text).not.toContain("<title>A & B <script></title>")
+  })
+
   test("the bridge handles host theme pushes (shadcn token convention)", async () => {
     const { text } = await widget.resource.read()
     expect(text).toContain("ui/notifications/theme")
