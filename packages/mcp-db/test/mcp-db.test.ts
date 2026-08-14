@@ -430,4 +430,26 @@ describe("query execution lanes", () => {
       rmSync(directory, { recursive: true, force: true })
     }
   })
+
+  test("a worker query that outlives its deadline is discarded, not awaited", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "nifra-mcp-db-"))
+    const path = join(directory, "slow.db")
+    const db = new Database(path)
+    db.run("CREATE TABLE habits (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+    // A 1ms budget the worker cannot meet: spawning the thread, importing bun:sqlite and opening the
+    // file already exceeds it, so the deadline timer fires first and the lane drops the connection it
+    // can no longer bound rather than waiting on native SQLite. Exercises the worker abandon path.
+    const served = serveDatabaseAsMcp(db, {
+      tables: ["habits"],
+      runQuery: { authorize: () => true, queryTimeoutMs: 1 },
+    })
+    try {
+      const result = await call(served, "run_query", { sql: "SELECT name FROM habits" })
+      expect(result.isError).toBe(true)
+      expect(result.text).toBe("query exceeded the time limit")
+    } finally {
+      db.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
 })
