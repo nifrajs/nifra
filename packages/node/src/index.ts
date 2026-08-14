@@ -19,7 +19,7 @@ import {
   type ServerResponse,
 } from "node:http"
 import { extname, isAbsolute, relative, resolve, sep } from "node:path"
-import { type Duplex, Readable } from "node:stream"
+import type { Duplex, Readable } from "node:stream"
 import { fileURLToPath } from "node:url"
 // srvx's lazy spec-shaped Response - see nodeOutcomeToResponse for why the bridge uses it.
 import { FastResponse } from "srvx/node"
@@ -859,7 +859,11 @@ async function readStatic(
     const stream = handle.createReadStream()
     return {
       kind: "response",
-      response: new Response(Readable.toWeb(stream) as ReadableStream<Uint8Array>, { headers }),
+      // Claimable rather than `Readable.toWeb`: served straight from disk to the socket when this
+      // response reaches the writer untouched, and read as an ordinary Web stream by anything that
+      // gets to it first (a middleware that rewrites or compresses the body, say), which refuses
+      // the claim and takes the conversion instead.
+      response: new Response(claimableWebStream(stream), { headers }),
     }
   } catch {
     await handle?.close().catch(() => {})
