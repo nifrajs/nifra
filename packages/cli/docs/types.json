@@ -8607,7 +8607,7 @@
     "name": "ProjectFacts",
     "kind": "interface",
     "package": "@nifrajs/cli",
-    "signature": "export interface ProjectFacts {\n    readonly [key: string]: unknown;\n}"
+    "signature": "export interface ProjectFacts {\n    readonly source: SourceIndex;\n    readonly routes: readonly StaticRouteFinding[];\n    readonly importGraph: readonly TransitiveServerImportFinding[];\n    readonly packages: ProjectPackageFacts;\n    readonly pipeline?: PipelineReport;\n    readonly policies: ProjectPolicyFacts;\n    readonly sourceFindings: ProjectSourceFindings;\n    readonly legacyDiagnostics: readonly CheckDiagnostic[];\n}"
   },
   {
     "name": "ProjectWorkGraphResult",
@@ -13220,14 +13220,14 @@
     "name": "VERSION",
     "kind": "const",
     "package": "@nifrajs/core",
-    "signature": "export declare const VERSION: \"2.13.0\";",
+    "signature": "export declare const VERSION: \"2.14.0\";",
     "doc": "/**\n * Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't\n * read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and\n * `check:publish` asserts it equals `@nifrajs/core`'s package version.\n */"
   },
   {
     "name": "VERSION",
     "kind": "const",
     "package": "nifra",
-    "signature": "export declare const VERSION: \"2.13.0\";",
+    "signature": "export declare const VERSION: \"2.14.0\";",
     "doc": "/**\n * Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't\n * read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and\n * `check:publish` asserts it equals `@nifrajs/core`'s package version.\n */"
   },
   {

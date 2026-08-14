@@ -1,5 +1,61 @@
 # @nifrajs/web
 
+## 2.14.0
+
+### Minor Changes
+
+- 489c6b6: `nifra dev` gains `--allow-duplicate-identity`, which downgrades the Vite dev server's startup
+  identity-parity check from a hard failure to a loud warning. The check catches two physical copies of
+  an identity-sensitive package (React, the framework adapter, `@nifrajs/core`) resolving in one process,
+  which reliably breaks hydration and framework context - so it stays a hard stop by default, and
+  `nifra build` never honors the flag. But when the duplicate originates in a linked sibling repo you
+  cannot fix in the moment, the previous behavior took the dev server down with no way to keep working.
+  With the flag, the server prints the same finding detail (packages, versions, resolved paths) and a
+  reminder that duplicate identity can still corrupt hydration, then continues at exit 0. The web option
+  `createViteDevServer({ allowDuplicateIdentity: true })` exposes the same escape programmatically.
+
+### Patch Changes
+
+- 62e22e2: The generated `server-manifest.ts` now imports each route module by an extensionless specifier, so a
+  plain `tsc` over the project compiles it without `allowImportingTsExtensions`. Previously the manifest
+  emitted `.tsx`/`.ts` import paths that only `nifra check` (which sets that flag) accepted, and a bare
+  `tsc` reported TS5097 for every route. Route identity is unchanged: the manifest map keys still carry
+  the original file path with its extension.
+
+  Manifest drift detection (`nifra check`, `nifra sync-manifest`) now reads those extension-bearing map
+  keys rather than the import specifiers, so it keeps matching the discovered `routes/` tree exactly and
+  does not false-report every route as drifted against the extensionless specifiers.
+
+- 62e22e2: `nifra sync-manifest` now preserves a lazy manifest's shape instead of silently rewriting it as eager.
+  The re-sync detected the lazy (`() => import(...)` per route) vs eager (`import * as`) form by looking
+  for `const loaders =` in the source, but the generated declaration is `const loaders: Record<...> = {` -
+  the type annotation sits between the name and the `=`, so the check never matched and every lazy
+  manifest came back eager, collapsing per-route code splitting into a single boot-time bundle. Detection
+  now anchors on the `const loaders` declaration itself, so a route-table refresh keeps the app's chunking
+  exactly as committed.
+- 8dffdf4: `.use(plugin)` no longer silently collapses the app's typed route registry to `any` when a plugin's own
+  types are unpinned. A plugin whose parameter and return infer as `Server<any, any>` - an auth or router
+  plugin that widened - now makes `.use()` return the non-callable `PluginTypeCollapsed` marker at the
+  call site, rather than an `any` that only surfaces hundreds of lines away as `never`/`any` in the typed
+  client. Build the plugin with `defineIdentityPlugin`/`defineContextPlugin`, or pin its input server
+  type, and it threads the caller's registry and context unchanged.
+
+  `serverFunctions()` now ships as such an identity plugin, so `app.use(serverFunctions(...))` keeps every
+  route declared before and after it fully typed.
+
+- 489c6b6: The Vite dev pipeline no longer serves a stale SSR module after an edit to a file a route imports. Vite
+  re-evaluates a directly-changed module on its own, but a parent that merely imports the changed leaf
+  kept its cached SSR bindings, so the re-created app walked a graph that was fresh at the leaf and stale
+  above it. That surfaced as phantom hydration mismatches (SSR rendered through an old module, the client
+  through the new one) and stale i18n catalogs. On every change the dev server now evicts the changed file
+  together with its transitive importer closure from the SSR graph before rebuilding the app, so the next
+  render re-walks the whole affected subtree. Apps whose only transforms are `vitePlugins` (and are
+  therefore forced onto the Vite pipeline) get correct hot reloads without a manual restart.
+- Updated dependencies [701961a]
+- Updated dependencies [62133bf]
+- Updated dependencies [8dffdf4]
+  - @nifrajs/core@2.14.0
+
 ## 2.13.0
 
 ### Minor Changes

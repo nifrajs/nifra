@@ -1,5 +1,105 @@
 # @nifrajs/cli
 
+## 2.14.0
+
+### Minor Changes
+
+- 489c6b6: `nifra assure --json` again emits the route-assurance report `{ ok, routes, findings }`. A prior release
+  had silently repurposed `--json` to print the structured `{ version, gates, verdict }` assurance bundle,
+  so a consumer parsing the report shape saw its fields vanish with no version signal. The bundle is now
+  opt-in behind an explicit `nifra assure --bundle` (always JSON); the bundle-only flags `--strict`,
+  `--hydration`, `--interact`, and `--out` continue to imply it, and `--bundle --json` still yields the
+  bundle. Plain `nifra assure` prints the human table as before. If you adopted `assure --json` for the
+  bundle since it changed, switch to `assure --bundle`.
+- a8130aa: `nifra build` now fails when a workspace-linked dependency ships a `dist` artifact that is missing or
+  older than its source. The `"bun": "./src"` / `"default": "./dist"` conditional-export split lets Bun
+  (the build, the tests) read live source while the deployed app and any Node consumer read `dist`, so a
+  green build could bundle stale or absent compiled output and nothing in a diff would show it. The check
+  runs after the compile proves the source is buildable and names each offending package so the fix
+  (rebuild it) is obvious. It is a no-op outside a workspace, since a tarball-installed dependency cannot
+  drift. The doctor already surfaces the same skew as a development-time advisory; at build time it is now
+  a hard failure, because that is the artifact that ships.
+- ea6b82a: `nifra --help` now lists a stable project command catalog, and the CLI, the `nifra mcp` project tools,
+  and the generated `@nifrajs/cli` card all describe those commands - `check`, `assure`, `levels`,
+  `capabilities`, `manifest`, `routes`, `context`, `doctor`, `fix`, `snapshot`, `diff`, `contracts`,
+  `sync-manifest`, `sync-routes` - from one projection, so a command's name, one-line summary, and input
+  schema can no longer drift between the three surfaces. A parity check fails the build if they do.
+  `nifra verify` and `nifra prove` are intentionally excluded and stay hand-rolled.
+
+  `nifra fix` now prints a human summary by default and reserves JSON for `nifra fix --json`; the `--json`
+  shape gains an `ok` field alongside `changed` and `diagnostics`. A script that parsed plain `nifra fix`
+  output as JSON must pass `--json`.
+
+  Structured `--json` results carry a versioned envelope, and the reader still accepts the prior
+  un-enveloped shape, so an existing consumer keeps working across the change.
+
+- 489c6b6: `nifra dev` gains `--allow-duplicate-identity`, which downgrades the Vite dev server's startup
+  identity-parity check from a hard failure to a loud warning. The check catches two physical copies of
+  an identity-sensitive package (React, the framework adapter, `@nifrajs/core`) resolving in one process,
+  which reliably breaks hydration and framework context - so it stays a hard stop by default, and
+  `nifra build` never honors the flag. But when the duplicate originates in a linked sibling repo you
+  cannot fix in the moment, the previous behavior took the dev server down with no way to keep working.
+  With the flag, the server prints the same finding detail (packages, versions, resolved paths) and a
+  reminder that duplicate identity can still corrupt hydration, then continues at exit 0. The web option
+  `createViteDevServer({ allowDuplicateIdentity: true })` exposes the same escape programmatically.
+- a8130aa: The interpolated-SQL rule now resolves a query-call argument identifier to its same-file initializer
+  before shaping it, so extracting a variable no longer launders a finding. Previously
+  `` await c.query(`SELECT ... '${input}'`) `` was flagged but the identical hoisted form
+  `` const q = `SELECT ... '${input}'`; await c.query(q) `` passed clean, because const-resolution
+  reached consts referenced inside a template but never the argument identifier itself.
+
+  Resolution covers const and never-reassigned `let`, at both function-local and module scope, and
+  follows a chain of identifier initializers transitively. The nearest enclosing binding wins, so a local
+  never resolves through a shadowed outer name. A resolved dynamic statement is an error exactly as the
+  inline form is; a static hoisted statement (including a const assembled from other static consts) stays
+  green. Identifiers that cannot be resolved in-file - parameters, imports, reassigned bindings - are left
+  unflagged rather than guessed at, so a helper that receives a prepared statement as a parameter is not
+  falsely accused.
+
+  New per-statement escape hatch for the case where a dynamic-looking statement is provably safe (a
+  generated placeholder list, say): a `// nifra-expect sql-dynamic: <reason>` comment on or directly above
+  the flagged line silences that one statement. The reason is mandatory - a bare marker with no reason
+  does not suppress.
+
+### Patch Changes
+
+- 8dd97c0: App load now rejects a `clientModule` that has no `./` prefix but names a real local file. Such a
+  specifier is read as a bare package specifier and resolved against `node_modules`, not the project - so
+  `src/client.tsx` (a forgotten `./`) is ignored, no package is found, and the bundle fails deep in the
+  build with an opaque "cannot resolve". Load catches it up front and reports the one-character fix
+  (`./src/client.tsx`), so `nifra dev` and `nifra build` resolve the same local entry. Scoped (`@…`),
+  absolute, and genuine bare-package specifiers are unaffected.
+- a8130aa: `nifra doctor` now flags a running CLI whose feature version differs from the `@nifrajs/cli` (or
+  `@nifrajs/core`) the project installs. A stale global or `bunx`-cached binary answering about a
+  project it does not match returns types, checks, and docs that describe a surface the code does not
+  have, and every answer still reads as authoritative. The finding is advisory - it names both versions
+  and points at the project's own CLI, but never fails the gate on its own, since a version mismatch of
+  the binary is an environment condition rather than a defect in the project. Reported only when the
+  command supplies its own version, so callers that already annotate drift (the MCP server) do not
+  double-report; the `--json` shape gains an optional `toolingDrift` field. Patch differences are
+  ignored - they never change the described surface.
+- a8130aa: `nifra check` now prints an advisory when the contract lock is vacuous - every route hashes to the
+  empty-schema digest because no route declares a `body`, `query`, `params`, or `response` schema. Such a
+  lock passes drift detection unconditionally: it can only ever compare an empty schema to an empty
+  schema, so it guards nothing. The advisory says so and points at declaring route schemas, so a first
+  run on an unschematized app does not leave a lock that looks protective but is not. A lock with no
+  routes at all is not treated as vacuous, since there is no unguarded contract to warn about.
+- Updated dependencies [489c6b6]
+- Updated dependencies [701961a]
+- Updated dependencies [62e22e2]
+- Updated dependencies [62e22e2]
+- Updated dependencies [62133bf]
+- Updated dependencies [8dffdf4]
+- Updated dependencies [489c6b6]
+  - @nifrajs/web@2.14.0
+  - @nifrajs/core@2.14.0
+  - @nifrajs/client@2.14.0
+  - @nifrajs/mcp@2.14.0
+  - @nifrajs/schema@2.14.0
+  - @nifrajs/testing@2.14.0
+  - @nifrajs/runner@2.14.0
+  - create-nifra@2.14.0
+
 ## 2.13.0
 
 ### Minor Changes
