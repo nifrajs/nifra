@@ -1,6 +1,9 @@
-import { expect, test } from "bun:test"
+import { afterAll, expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import ts from "typescript"
-import { findRoutePathLiteral, findRoutesDir } from "../src/index.ts"
+import plugin, { findRoutePathLiteral, findRoutesDir } from "../src/index.ts"
 import { resolveRouteFile } from "../src/resolve.ts"
 
 const ROUTES = [
@@ -56,4 +59,58 @@ test("findRoutesDir walks up to the nearest directory containing routes/", () =>
   expect(findRoutesDir("/app/routes/about.tsx", has)).toBe("/app/routes")
   expect(findRoutesDir("/app/src/deep/component.tsx", has)).toBe("/app/routes")
   expect(findRoutesDir("/elsewhere/file.ts", () => false)).toBeUndefined()
+})
+
+// End-to-end wiring: the default-export plugin factory, its language-service proxy, and
+// `routeDefinitionAt` (the on-disk glue). Everything above tests the pure helpers in isolation;
+// this drives the real `create()` path against a real `ts.LanguageService` over a temp app.
+const root = mkdtempSync(join(tmpdir(), "nifra-ts-plugin-"))
+mkdirSync(join(root, "routes"), { recursive: true })
+writeFileSync(join(root, "routes", "about.tsx"), "export default function About() {}\n")
+const srcPath = join(root, "app.tsx")
+const appCode = 'const go = () => navigate({ to: "/about" })\n'
+writeFileSync(srcPath, appCode)
+
+afterAll(() => rmSync(root, { recursive: true, force: true }))
+
+function makeLanguageService(): ts.LanguageService {
+  const host: ts.LanguageServiceHost = {
+    getScriptFileNames: () => [srcPath],
+    getScriptVersion: () => "1",
+    getScriptSnapshot: (f) => (f === srcPath ? ts.ScriptSnapshot.fromString(appCode) : undefined),
+    getCurrentDirectory: () => root,
+    getCompilationSettings: () => ({ jsx: ts.JsxEmit.ReactJSX, allowJs: true }),
+    getDefaultLibFileName: (o) => ts.getDefaultLibFilePath(o),
+    fileExists: ts.sys.fileExists,
+    readFile: ts.sys.readFile,
+    readDirectory: ts.sys.readDirectory,
+    directoryExists: ts.sys.directoryExists,
+    getDirectories: ts.sys.getDirectories,
+  }
+  return ts.createLanguageService(host, ts.createDocumentRegistry())
+}
+
+const createProxy = (ls: ts.LanguageService): ts.LanguageService =>
+  plugin({ typescript: ts }).create({
+    languageService: ls,
+  } as unknown as ts.server.PluginCreateInfo)
+
+test("the plugin proxy sends go-to-definition on a route literal to its routes/ file", () => {
+  const proxy = createProxy(makeLanguageService())
+  const pos = appCode.indexOf("/about") + 2 // cursor inside the literal
+  const def = proxy.getDefinitionAndBoundSpan(srcPath, pos)
+  expect(def?.definitions?.[0]?.fileName).toBe(join(root, "routes", "about.tsx"))
+  // The bound span underlines the path, not the quotes.
+  const { start, length } = def!.textSpan
+  expect(appCode.slice(start, start + length)).toBe("/about")
+})
+
+test("the plugin proxy delegates untouched methods and falls through off a route literal", () => {
+  const real = makeLanguageService()
+  const proxy = createProxy(real)
+  // A non-augmented method is bound straight to the real service.
+  expect(Array.isArray(proxy.getSyntacticDiagnostics(srcPath))).toBe(true)
+  // A position not on a route literal yields no route definition - the plugin defers to the host.
+  const def = proxy.getDefinitionAndBoundSpan(srcPath, appCode.indexOf("go"))
+  expect(def?.definitions?.some((d) => d.fileName.endsWith("routes/about.tsx"))).not.toBe(true)
 })

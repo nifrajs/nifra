@@ -234,6 +234,68 @@ describe("agentTelemetry", () => {
     expect(spans[0]!.attributes["tool.output_bytes"]).toBe(5)
   })
 
+  test("takes the declared byte count when a content-length header is present", async () => {
+    const { exporter, spans } = collectingExporter()
+    const app = server()
+      .use(agentTelemetry({ exporter }))
+      .get(
+        "/_nifra/tool/sized",
+        () =>
+          new Response("hello", {
+            headers: { "content-length": "5", "content-type": "text/plain" },
+          }),
+      )
+
+    const response = await app.fetch(new Request("http://localhost/_nifra/tool/sized"))
+    expect(response.headers.get("content-length")).toBe("5")
+    // The span closes off the header without draining the body - no stream wrapper needed.
+    expect(spans.length).toBe(1)
+    expect(spans[0]!.attributes["tool.output_bytes"]).toBe(5)
+    expect(spans[0]!.endTime).toBeDefined()
+  })
+
+  test("records zero bytes for a null-body response", async () => {
+    const { exporter, spans } = collectingExporter()
+    const app = server()
+      .use(agentTelemetry({ exporter }))
+      .get("/_nifra/tool/empty", () => new Response(null, { status: 204 }))
+
+    const response = await app.fetch(new Request("http://localhost/_nifra/tool/empty"))
+    expect(response.status).toBe(204)
+    expect(spans.length).toBe(1)
+    expect(spans[0]!.attributes["tool.output_bytes"]).toBe(0)
+    expect(spans[0]!.endTime).toBeDefined()
+  })
+
+  test("ends the span when a streamed body errors mid-flight", async () => {
+    const { exporter, spans } = collectingExporter()
+    const partial = new TextEncoder().encode("part")
+    const app = server()
+      .use(agentTelemetry({ exporter }))
+      .get(
+        "/_nifra/tool/faulty",
+        () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(partial)
+              },
+              pull(controller) {
+                controller.error(new Error("stream blew up"))
+              },
+            }),
+          ),
+      )
+
+    const response = await app.fetch(new Request("http://localhost/_nifra/tool/faulty"))
+    await expect(response.text()).rejects.toThrow()
+
+    // The counting wrapper's catch path still ends the span - a torn stream can't leak it.
+    expect(spans.length).toBe(1)
+    expect(spans[0]!.endTime).toBeDefined()
+    expect(spans[0]!.attributes["tool.output_bytes"]).toBe(partial.byteLength)
+  })
+
   test("supports custom toolPathPrefix", async () => {
     const { exporter, spans } = collectingExporter()
     const app = server()

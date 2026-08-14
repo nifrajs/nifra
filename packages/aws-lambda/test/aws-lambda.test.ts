@@ -204,6 +204,27 @@ describe("handle()", () => {
     expect(result.statusCode).toBe(200)
     expect(done).toBe(true)
   })
+
+  test("a response whose body fails to read collapses to the flat 500", async () => {
+    // Distinct from a throwing app (which `invoke` catches internally): here `app.fetch` returns a
+    // Response cleanly and the failure surfaces only when `toResult` drains it. The outer catch owns
+    // this - it must still settle to the flat 500 rather than reject the Lambda handler.
+    const tornBody = {
+      fetch(): Response {
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              controller.error(new Error("body read exploded"))
+            },
+          }),
+        )
+      },
+    }
+    const result = await handle(tornBody)(v2Event())
+    expect(result.statusCode).toBe(500)
+    expect(result.body).toBe('{"ok":false,"error":"internal_error"}')
+    expect(result.isBase64Encoded).toBe(false)
+  })
 })
 
 describe("streamHandle()", () => {

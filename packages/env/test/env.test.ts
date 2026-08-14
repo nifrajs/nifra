@@ -57,6 +57,18 @@ describe("env coercing helpers", () => {
     )
     expect(defineEnv({ U: env.url({ optional: true }) }, { source: {} }).U).toBeUndefined()
   })
+
+  test("required-when-unset: every helper errors, and optional/default short-circuit it", () => {
+    // The unset branch of each helper - the miss it takes when the variable is absent and there is
+    // neither a default nor `optional`. Each helper owns its own copy of this branch.
+    expect(() => defineEnv({ N: env.number() }, { source: {} })).toThrow(/N: is required/)
+    expect(defineEnv({ N: env.number({ optional: true }) }, { source: {} }).N).toBeUndefined()
+    expect(() => defineEnv({ B: env.boolean() }, { source: {} })).toThrow(/B: is required/)
+    expect(() => defineEnv({ E: env.enum(["a", "b"]) }, { source: {} })).toThrow(
+      /E: is required \(one of: a, b\)/,
+    )
+    expect(() => defineEnv({ U: env.url() }, { source: {} })).toThrow(/U: is required/)
+  })
 })
 
 describe("defineEnv", () => {
