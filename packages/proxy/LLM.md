@@ -8,12 +8,21 @@ Reverse proxy for nifra - stream requests to one fixed upstream origin with hop-
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/proxy` · `@nifrajs/proxy/undici`
+
 ## Key exports
 
-- **createProxy** _(function)_ - `createProxy: (options: ProxyOptions) => ProxyHandler`
-- **ProxyContext** _(interface)_ - `interface ProxyContext`
-- **ProxyOptions** _(interface)_ - `interface ProxyOptions`
-- **ProxyHandler** _(type)_ - `type ProxyHandler = (input: Request | ProxyContext) => Promise<Response>`
+- **createProxy** _(function)_ - `createProxy: (options: ProxyOptions) => ProxyHandler` · from `@nifrajs/proxy`
+- **undiciTransport** _(function)_ - `undiciTransport: (options?: UndiciTransportOptions) => ProxyTransport` · from `@nifrajs/proxy/undici`
+- **ProxyContext** _(interface)_ - `interface ProxyContext` · from `@nifrajs/proxy`
+- **ProxyOptions** _(interface)_ - `interface ProxyOptions` · from `@nifrajs/proxy`
+- **ProxyUpstreamRequest** _(interface)_ - `interface ProxyUpstreamRequest` · from `@nifrajs/proxy`
+- **ProxyUpstreamResponse** _(interface)_ - `interface ProxyUpstreamResponse` · from `@nifrajs/proxy`
+- **UndiciTransportOptions** _(interface)_ - `interface UndiciTransportOptions` · from `@nifrajs/proxy/undici`
+- **ProxyHandler** _(type)_ - `type ProxyHandler = (input: Request | ProxyContext) => Promise<Response>` · from `@nifrajs/proxy`
+- **ProxyTransport** _(type)_ - `type ProxyTransport = ( target: URL, request: ProxyUpstreamRequest, ) => Promise<ProxyUpstreamResponse>` · from `@nifrajs/proxy`
 
 ## Footguns
 

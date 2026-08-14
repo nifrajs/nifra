@@ -2463,13 +2463,27 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ## @nifrajs/proxy
 
+### `@nifrajs/proxy`
+
 - **ProxyContext** _(interface)_ - `interface ProxyContext`
   Structural slice of a nifra `Context` the proxy reads - a plain `Request` works too.
 - **ProxyHandler** _(type)_ - `type ProxyHandler = (input: Request | ProxyContext) => Promise<Response>`
   Forward a request (or a nifra context) to the configured upstream.
 - **ProxyOptions** _(interface)_ - `interface ProxyOptions`
+- **ProxyTransport** _(type)_ - `type ProxyTransport = ( target: URL, request: ProxyUpstreamRequest, ) => Promise<ProxyUpstreamResponse>`
+  How the forwarded request reaches the upstream. Defaults to `fetch`.
+- **ProxyUpstreamRequest** _(interface)_ - `interface ProxyUpstreamRequest`
+  The forwarded request, after hygiene, as handed to a {@link ProxyTransport}.
+- **ProxyUpstreamResponse** _(interface)_ - `interface ProxyUpstreamResponse`
+  What a {@link ProxyTransport} returns. Header hygiene on the way back is the proxy's job.
 - **createProxy** _(function)_ - `createProxy: (options: ProxyOptions) => ProxyHandler`
   Create a proxy handler bound to one upstream origin.
+
+### `@nifrajs/proxy/undici`
+
+- **UndiciTransportOptions** _(interface)_ - `interface UndiciTransportOptions`
+- **undiciTransport** _(function)_ - `undiciTransport: (options?: UndiciTransportOptions) => ProxyTransport`
+  Create an undici-backed {@link ProxyTransport}.
 
 ## @nifrajs/runner
 

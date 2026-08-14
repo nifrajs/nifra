@@ -21,6 +21,11 @@
       "bun": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./undici": {
+      "bun": "./src/undici.ts",
+      "types": "./dist/undici.d.ts",
+      "default": "./dist/undici.js"
     }
   },
   "files": [
@@ -31,8 +36,17 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
   },
+  "peerDependencies": {
+    "undici": ">=7"
+  },
+  "peerDependenciesMeta": {
+    "undici": {
+      "optional": true
+    }
+  },
   "devDependencies": {
-    "@nifrajs/core": "workspace:*"
+    "@nifrajs/core": "workspace:*",
+    "undici": "^8.10.0"
   },
   "license": "MIT",
   "publishConfig": {

@@ -8753,7 +8753,28 @@
     "name": "ProxyOptions",
     "kind": "interface",
     "package": "@nifrajs/proxy",
-    "signature": "export interface ProxyOptions {\n    /**\n     * The upstream to forward every request to, as a **bare origin** (`https://api.internal:8443`).\n     * A path, query, fragment, or credentials in the URL throws at construction; only `http:` and\n     * `https:` are accepted. The forwarded URL is this origin + the incoming path and query.\n     */\n    readonly upstream: string;\n    /** Mount prefix to remove from the incoming path before forwarding (`/api` + request\n     * `/api/users` → upstream `/users`). A path outside the prefix is forwarded unchanged. */\n    readonly stripPrefix?: string;\n    /**\n     * Forward caller metadata upstream. Default **false**: `Forwarded` and `X-Forwarded-*` headers\n     * are stripped, so a client-forged chain never reaches the upstream. When true, the inbound\n     * `X-Forwarded-For` is kept with the observed caller IP appended (pass a `ProxyContext` so\n     * `c.clientIp` - already filtered by the app's trust declaration - is what gets appended). With a\n     * bare `Request`, forwarding metadata is suppressed rather than passed through.\n     */\n    readonly forwardClientIp?: boolean;\n    /** Upstream response deadline in milliseconds. Default `30_000`; expiry answers `504`. */\n    readonly timeoutMs?: number;\n    /** Static headers to set on every forwarded request (after hygiene, so they always win). */\n    readonly headers?: Readonly<Record<string, string>>;\n}"
+    "signature": "export interface ProxyOptions {\n    /**\n     * The upstream to forward every request to, as a **bare origin** (`https://api.internal:8443`).\n     * A path, query, fragment, or credentials in the URL throws at construction; only `http:` and\n     * `https:` are accepted. The forwarded URL is this origin + the incoming path and query.\n     */\n    readonly upstream: string;\n    /** Mount prefix to remove from the incoming path before forwarding (`/api` + request\n     * `/api/users` → upstream `/users`). A path outside the prefix is forwarded unchanged. */\n    readonly stripPrefix?: string;\n    /**\n     * Forward caller metadata upstream. Default **false**: `Forwarded` and `X-Forwarded-*` headers\n     * are stripped, so a client-forged chain never reaches the upstream. When true, the inbound\n     * `X-Forwarded-For` is kept with the observed caller IP appended (pass a `ProxyContext` so\n     * `c.clientIp` - already filtered by the app's trust declaration - is what gets appended). With a\n     * bare `Request`, forwarding metadata is suppressed rather than passed through.\n     */\n    readonly forwardClientIp?: boolean;\n    /**\n     * Deadline in milliseconds for the upstream to *begin* answering. Default `30_000`; expiry\n     * answers `504`. It covers up to the response headers, which is the only window in which a `504`\n     * is still sendable - once the status has been relayed the exchange cannot be turned into one. A\n     * body that starts and then stalls is the transport's timeout to enforce (undici's `bodyTimeout`,\n     * for instance); caller disconnect still tears the upstream down at any point.\n     */\n    readonly timeoutMs?: number;\n    /** Static headers to set on every forwarded request (after hygiene, so they always win). */\n    readonly headers?: Readonly<Record<string, string>>;\n    /**\n     * How to reach the upstream. Defaults to `fetch`. See {@link ProxyTransport} - a transport\n     * carries security obligations. `@nifrajs/proxy/undici` is the fast path on Node.\n     */\n    readonly transport?: ProxyTransport;\n}"
+  },
+  {
+    "name": "ProxyTransport",
+    "kind": "type",
+    "package": "@nifrajs/proxy",
+    "signature": "export type ProxyTransport = (target: URL, request: ProxyUpstreamRequest) => Promise<ProxyUpstreamResponse>;",
+    "doc": "/**\n * How the forwarded request reaches the upstream. Defaults to `fetch`.\n *\n * A transport is a security boundary, and swapping it moves three of this package's guarantees into\n * your implementation. It MUST dial exactly `target` and nothing else, MUST NOT follow redirects\n * (relay the 3xx as-is), and MUST leave TLS verification on. It MUST NOT add, drop, or rewrite the\n * headers it is handed - they have already been sanitised, and re-adding `host` or a forwarding\n * header undoes that work.\n *\n * `@nifrajs/proxy/undici` ships one that satisfies all of this and is substantially faster than\n * `fetch` on Node.\n */"
+  },
+  {
+    "name": "ProxyUpstreamRequest",
+    "kind": "interface",
+    "package": "@nifrajs/proxy",
+    "signature": "export interface ProxyUpstreamRequest {\n    readonly method: string;\n    /** Already sanitised: hop-by-hop, Connection-nominated, `Proxy-*`, `host`, and (unless opted in)\n     *  forwarding headers are gone, and static `headers` have been applied. Send them as given. */\n    readonly headers: Headers;\n    readonly body: ReadableStream<Uint8Array> | null;\n    /** Aborts on the deadline or on caller disconnect. A transport MUST honour it. */\n    readonly signal: AbortSignal;\n}",
+    "doc": "/** The forwarded request, after hygiene, as handed to a {@link ProxyTransport}. */"
+  },
+  {
+    "name": "ProxyUpstreamResponse",
+    "kind": "interface",
+    "package": "@nifrajs/proxy",
+    "signature": "export interface ProxyUpstreamResponse {\n    readonly status: number;\n    /** Empty string is fine - HTTP/2 has no reason phrase, and nothing downstream depends on it. */\n    readonly statusText: string;\n    readonly headers: Headers;\n    readonly body: ReadableStream<Uint8Array> | null;\n}",
+    "doc": "/** What a {@link ProxyTransport} returns. Header hygiene on the way back is the proxy's job. */"
   },
   {
     "name": "PublicDirCache",
@@ -12563,6 +12584,19 @@
     "package": "@nifrajs/core",
     "signature": "export declare const UNBOUNDED_DEADLINE: number;",
     "doc": "/** Sentinel used only for an unbounded local budget. It is never written to the wire. */"
+  },
+  {
+    "name": "undiciTransport",
+    "kind": "function",
+    "package": "@nifrajs/proxy",
+    "signature": "export declare function undiciTransport(options?: UndiciTransportOptions): ProxyTransport;",
+    "doc": "/** Create an undici-backed {@link ProxyTransport}. */"
+  },
+  {
+    "name": "UndiciTransportOptions",
+    "kind": "interface",
+    "package": "@nifrajs/proxy",
+    "signature": "export interface UndiciTransportOptions {\n    /**\n     * Connection pool to dial through - an undici `Agent`, `Pool`, or any other `Dispatcher`. Omit to\n     * use undici's global dispatcher. Supply one to tune `connections` per origin, which is the knob\n     * that matters under load. It must not compose a redirect interceptor: this proxy relays 3xx\n     * rather than following it, and a dispatcher that follows would hand the upstream the next hop.\n     */\n    readonly dispatcher?: Dispatcher;\n    /**\n     * Milliseconds of silence tolerated *within* the response body before undici destroys it.\n     * `createProxy`'s own `timeoutMs` only covers the wait for response headers - after the status is\n     * relayed a `504` is no longer sendable - so this is what protects against a body that starts and\n     * then stalls. Default `30_000`; `0` disables it.\n     */\n    readonly bodyTimeoutMs?: number;\n}"
   },
   {
     "name": "unsafeInlineScript",

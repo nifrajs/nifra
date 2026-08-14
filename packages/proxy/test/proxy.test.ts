@@ -233,6 +233,49 @@ describe("createProxy()", () => {
     expect(await res.text()).toBe("first,second")
   })
 
+  // The seam hands over ALREADY-sanitised headers. If hygiene ran after the transport instead, a
+  // custom transport would see the caller's Connection-nominated leak - so assert the order here,
+  // not just the outcome.
+  test("a custom transport receives sanitised headers and its response is relayed", async () => {
+    let sawHeaders: Headers | undefined
+    let sawTarget: URL | undefined
+    const proxy = createProxy({
+      upstream: ORIGIN,
+      headers: { "x-api-key": "k1" },
+      transport: async (target, request) => {
+        sawTarget = target
+        sawHeaders = request.headers
+        return {
+          status: 203,
+          statusText: "",
+          headers: new Headers({ "x-from": "custom", connection: "x-leak", "x-leak": "no" }),
+          body: new Response("relayed").body,
+        }
+      },
+    })
+    const res = await proxy(
+      new Request("http://edge.test/v1/x?a=1", {
+        headers: { connection: "x-internal", "x-internal": "leak-me", "x-app": "stays" },
+      }),
+    )
+    expect(sawTarget?.origin).toBe(ORIGIN)
+    expect(sawTarget?.pathname + (sawTarget?.search ?? "")).toBe("/v1/x?a=1")
+    expect(sawHeaders?.get("x-internal")).toBeNull()
+    expect(sawHeaders?.get("host")).toBeNull()
+    expect(sawHeaders?.get("x-app")).toBe("stays")
+    expect(sawHeaders?.get("x-api-key")).toBe("k1")
+    // Response hygiene still runs on whatever the transport returns.
+    expect(res.status).toBe(203)
+    expect(res.headers.get("x-from")).toBe("custom")
+    expect(res.headers.get("x-leak")).toBeNull()
+    expect(await res.text()).toBe("relayed")
+  })
+
+  test("undiciTransport() refuses to construct under Bun", async () => {
+    const { undiciTransport } = await import("../src/undici.ts")
+    expect(() => undiciTransport()).toThrow(/Node remedy/)
+  })
+
   test("works mounted in a nifra app via mountFetch", async () => {
     const { server } = await import("@nifrajs/core")
     const proxy = createProxy({ upstream: ORIGIN })

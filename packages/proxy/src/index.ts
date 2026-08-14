@@ -22,6 +22,43 @@ export interface ProxyContext {
   readonly signal?: AbortSignal | undefined
 }
 
+/** The forwarded request, after hygiene, as handed to a {@link ProxyTransport}. */
+export interface ProxyUpstreamRequest {
+  readonly method: string
+  /** Already sanitised: hop-by-hop, Connection-nominated, `Proxy-*`, `host`, and (unless opted in)
+   *  forwarding headers are gone, and static `headers` have been applied. Send them as given. */
+  readonly headers: Headers
+  readonly body: ReadableStream<Uint8Array> | null
+  /** Aborts on the deadline or on caller disconnect. A transport MUST honour it. */
+  readonly signal: AbortSignal
+}
+
+/** What a {@link ProxyTransport} returns. Header hygiene on the way back is the proxy's job. */
+export interface ProxyUpstreamResponse {
+  readonly status: number
+  /** Empty string is fine - HTTP/2 has no reason phrase, and nothing downstream depends on it. */
+  readonly statusText: string
+  readonly headers: Headers
+  readonly body: ReadableStream<Uint8Array> | null
+}
+
+/**
+ * How the forwarded request reaches the upstream. Defaults to `fetch`.
+ *
+ * A transport is a security boundary, and swapping it moves three of this package's guarantees into
+ * your implementation. It MUST dial exactly `target` and nothing else, MUST NOT follow redirects
+ * (relay the 3xx as-is), and MUST leave TLS verification on. It MUST NOT add, drop, or rewrite the
+ * headers it is handed - they have already been sanitised, and re-adding `host` or a forwarding
+ * header undoes that work.
+ *
+ * `@nifrajs/proxy/undici` ships one that satisfies all of this and is substantially faster than
+ * `fetch` on Node.
+ */
+export type ProxyTransport = (
+  target: URL,
+  request: ProxyUpstreamRequest,
+) => Promise<ProxyUpstreamResponse>
+
 export interface ProxyOptions {
   /**
    * The upstream to forward every request to, as a **bare origin** (`https://api.internal:8443`).
@@ -40,10 +77,21 @@ export interface ProxyOptions {
    * bare `Request`, forwarding metadata is suppressed rather than passed through.
    */
   readonly forwardClientIp?: boolean
-  /** Upstream response deadline in milliseconds. Default `30_000`; expiry answers `504`. */
+  /**
+   * Deadline in milliseconds for the upstream to *begin* answering. Default `30_000`; expiry
+   * answers `504`. It covers up to the response headers, which is the only window in which a `504`
+   * is still sendable - once the status has been relayed the exchange cannot be turned into one. A
+   * body that starts and then stalls is the transport's timeout to enforce (undici's `bodyTimeout`,
+   * for instance); caller disconnect still tears the upstream down at any point.
+   */
   readonly timeoutMs?: number
   /** Static headers to set on every forwarded request (after hygiene, so they always win). */
   readonly headers?: Readonly<Record<string, string>>
+  /**
+   * How to reach the upstream. Defaults to `fetch`. See {@link ProxyTransport} - a transport
+   * carries security obligations. `@nifrajs/proxy/undici` is the fast path on Node.
+   */
+  readonly transport?: ProxyTransport
 }
 
 /** Forward a request (or a nifra context) to the configured upstream. */
@@ -121,10 +169,10 @@ function upstreamRequestHeaders(
   return out
 }
 
-function relayedResponseHeaders(upstream: Response): Headers {
-  const nominated = connectionNominated(upstream.headers)
+function relayedResponseHeaders(upstreamHeaders: Headers): Headers {
+  const nominated = connectionNominated(upstreamHeaders)
   const out = new Headers()
-  for (const [name, value] of upstream.headers) {
+  for (const [name, value] of upstreamHeaders) {
     if (dropHeader(name, nominated)) continue
     // fetch() already decoded the body per Content-Encoding, so the stored encoding and length no
     // longer describe the bytes being relayed. (Re-compression is the compression() middleware's job.)
@@ -133,8 +181,33 @@ function relayedResponseHeaders(upstream: Response): Headers {
     if (name === "set-cookie") continue
     out.append(name, value)
   }
-  for (const cookie of upstream.headers.getSetCookie()) out.append("set-cookie", cookie)
+  for (const cookie of upstreamHeaders.getSetCookie()) out.append("set-cookie", cookie)
   return out
+}
+
+/**
+ * Default transport. `redirect: "manual"` is not a preference - following an upstream redirect
+ * would let the upstream choose the proxy's next destination, so it is pinned here and a 3xx is
+ * relayed to the caller untouched.
+ */
+const fetchTransport: ProxyTransport = async (target, request) => {
+  const init: RequestInit & { duplex?: "half" } = {
+    method: request.method,
+    headers: request.headers,
+    redirect: "manual",
+    signal: request.signal,
+  }
+  if (request.body !== null) {
+    init.body = request.body
+    init.duplex = "half"
+  }
+  const response = await fetch(target, init)
+  return {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+    body: response.body,
+  }
 }
 
 /**
@@ -185,6 +258,7 @@ export function createProxy(options: ProxyOptions): ProxyHandler {
       throw new TypeError(`[nifra/proxy] static header is not allowed: ${name}`)
     }
   }
+  const transport = options.transport ?? fetchTransport
 
   return async (input) => {
     const req = input instanceof Request ? input : input.req
@@ -204,32 +278,46 @@ export function createProxy(options: ProxyOptions): ProxyHandler {
     target.pathname = path
     target.search = incoming.search
 
-    const timeout = AbortSignal.timeout(timeoutMs)
-    const signal = callerSignal !== undefined ? AbortSignal.any([timeout, callerSignal]) : timeout
-    const body = req.method === "GET" || req.method === "HEAD" ? undefined : req.body
-    const init: RequestInit & { duplex?: "half" } = {
-      method: req.method,
-      headers: upstreamRequestHeaders(req, clientIp, options),
-      redirect: "manual",
-      signal,
-    }
-    if (body !== null && body !== undefined) {
-      init.body = body
-      init.duplex = "half"
+    // One AbortController instead of `AbortSignal.timeout` + `AbortSignal.any`: that pair costs
+    // ~12x more per request on Node, and its timer is only reclaimed once GC gets to the signal.
+    // Here the timer is cancelled the moment the upstream answers, so a burst of in-flight requests
+    // cannot leave a deadline-long backlog of live timers in the wheel. The caller listener
+    // deliberately outlives the timer - a client that disconnects mid-body must still tear the
+    // upstream stream down.
+    const controller = new AbortController()
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, timeoutMs)
+    if (callerSignal !== undefined) {
+      if (callerSignal.aborted) {
+        clearTimeout(timer)
+        controller.abort()
+      } else {
+        callerSignal.addEventListener("abort", () => controller.abort(), { once: true })
+      }
     }
 
-    let upstream: Response
+    let upstream: ProxyUpstreamResponse
     try {
-      upstream = await fetch(target, init)
+      upstream = await transport(target, {
+        method: req.method,
+        headers: upstreamRequestHeaders(req, clientIp, options),
+        body: req.method === "GET" || req.method === "HEAD" ? null : req.body,
+        signal: controller.signal,
+      })
     } catch (error) {
-      if (timeout.aborted) return flatError(504, "gateway_timeout")
+      clearTimeout(timer)
+      if (timedOut) return flatError(504, "gateway_timeout")
       if (callerSignal?.aborted === true) throw error
       return flatError(502, "bad_gateway")
     }
+    clearTimeout(timer)
     return new Response(upstream.body, {
       status: upstream.status,
       statusText: upstream.statusText,
-      headers: relayedResponseHeaders(upstream),
+      headers: relayedResponseHeaders(upstream.headers),
     })
   }
 }
