@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import {
   consumeLaunchToken,
@@ -9,6 +9,7 @@ import {
   serializeBunfig,
   writeBunDevConfig,
 } from "../src/dev-bun-config.ts"
+import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
 /**
  * The `nifra dev --bun` boundary-plugin channel: a generated bunfig delivers the production
@@ -108,7 +109,7 @@ test("the generated plugin module composes the app's own clientPlugins, by relat
 })
 
 test("launch token: only the fresh parent-minted value verifies, exactly once", async () => {
-  const root = mkdtempSync(join(import.meta.dir, ".tmp-nifra-devbun-token-"))
+  const root = createFixtureRoot("tmp-nifra-devbun-token-")
   try {
     const { launchToken } = await writeBunDevConfig(root)
     // A fixed/guessed value - the S-02 bypass shape - must NOT verify (and consumes the file).
@@ -120,7 +121,7 @@ test("launch token: only the fresh parent-minted value verifies, exactly once", 
     expect(consumeLaunchToken(root, second.launchToken)).toBe(false)
     expect(consumeLaunchToken(root, undefined)).toBe(false)
   } finally {
-    rmSync(root, { recursive: true, force: true })
+    removeFixtureRoot(root)
   }
 })
 
@@ -133,7 +134,7 @@ test("launch token: only the fresh parent-minted value verifies, exactly once", 
 test(
   "a dev server started with the generated bunfig strips *.fn and *.server from the client",
   async () => {
-    const root = mkdtempSync(join(import.meta.dir, ".tmp-nifra-devbun-"))
+    const root = createFixtureRoot("tmp-nifra-devbun-")
     let proc: ReturnType<typeof Bun.spawn> | undefined
     try {
       const webPkg = resolve(import.meta.dir, "../../web")
@@ -179,7 +180,7 @@ test(
       expect(js).toContain("/fn/")
     } finally {
       proc?.kill()
-      rmSync(root, { recursive: true, force: true })
+      removeFixtureRoot(root)
     }
   },
   { timeout: 30_000 },
@@ -188,7 +189,7 @@ test(
 test(
   "a dev server started with the generated bunfig compiles CSS Modules and serves their stylesheet",
   async () => {
-    const root = mkdtempSync(join(import.meta.dir, ".tmp-nifra-devbun-css-"))
+    const root = createFixtureRoot("tmp-nifra-devbun-css-")
     let proc: ReturnType<typeof Bun.spawn> | undefined
     try {
       const webPkg = resolve(import.meta.dir, "../../web")
@@ -226,7 +227,7 @@ test(
       expect(css).toMatch(/(?:rebeccapurple|#639)/)
     } finally {
       proc?.kill()
-      rmSync(root, { recursive: true, force: true })
+      removeFixtureRoot(root)
     }
   },
   { timeout: 30_000 },
@@ -239,7 +240,7 @@ test(
     // generated module re-imports the app's config to compose them in. Without this an app whose only
     // transforms are `clientPlugins` had no Bun dev loop at all. This proves the whole chain works
     // through `[serve.static]`, including the async `setup` the thunk form needs.
-    const root = mkdtempSync(join(import.meta.dir, ".tmp-nifra-devbun-appplugin-"))
+    const root = createFixtureRoot("tmp-nifra-devbun-appplugin-")
     let proc: ReturnType<typeof Bun.spawn> | undefined
     try {
       const webPkg = resolve(import.meta.dir, "../../web")
@@ -301,14 +302,14 @@ test(
       expect(js).not.toContain("SERVER_ONLY_SECRET_ABC")
     } finally {
       proc?.kill()
-      rmSync(root, { recursive: true, force: true })
+      removeFixtureRoot(root)
     }
   },
   { timeout: 30_000 },
 )
 
 test("writeBunDevConfig merges the app's own bunfig", async () => {
-  const root = mkdtempSync(join(import.meta.dir, ".tmp-nifra-devbun-merge-"))
+  const root = createFixtureRoot("tmp-nifra-devbun-merge-")
   try {
     writeFileSync(
       join(root, "bunfig.toml"),
@@ -324,6 +325,6 @@ test("writeBunDevConfig merges the app's own bunfig", async () => {
     )
     expect(dirname(bunfigPath)).toBe(resolve(root, ".nifra", "dev-bun"))
   } finally {
-    rmSync(root, { recursive: true, force: true })
+    removeFixtureRoot(root)
   }
 })

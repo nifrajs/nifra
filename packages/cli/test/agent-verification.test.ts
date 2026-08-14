@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdir, rm, writeFile } from "node:fs/promises"
+import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { server } from "@nifrajs/core"
 import { defineReplayFile } from "@nifrajs/core/replay"
@@ -15,11 +15,12 @@ import { applyDiagnosticRecipe, listFixRecipes } from "../src/fix-recipes.ts"
 import { runReplay } from "../src/replay.ts"
 import { assertUniqueRuleCodes } from "../src/rules/codes.ts"
 import { validateRulePacks } from "../src/rules/index.ts"
+import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
-const ROOT = join(import.meta.dir, ".tmp-agent-verification")
+const ROOT = createFixtureRoot("tmp-agent-verification")
 
-afterAll(async () => {
-  await rm(ROOT, { recursive: true, force: true })
+afterAll(() => {
+  removeFixtureRoot(ROOT)
 })
 
 describe("agent verification surfaces", () => {

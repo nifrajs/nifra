@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { assertUseIsEdgeExported } from "../src/cli.ts"
+import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
 /**
  * The `use` passthrough: an app-level middleware exported from the config must reach the web app the
@@ -12,7 +13,7 @@ import { assertUseIsEdgeExported } from "../src/cli.ts"
 test(
   "nifra dev (bun): a config `use` middleware covers page responses",
   async () => {
-    const root = mkdtempSync(join(import.meta.dir, ".tmp-nifra-use-"))
+    const root = createFixtureRoot("tmp-nifra-use-")
     let proc: ReturnType<typeof Bun.spawn> | undefined
     try {
       mkdirSync(join(root, "routes"), { recursive: true })
@@ -75,7 +76,7 @@ test(
       expect(res.headers.get("x-app-use")).toBe("reached")
     } finally {
       proc?.kill()
-      rmSync(root, { recursive: true, force: true })
+      removeFixtureRoot(root)
     }
   },
   { timeout: 90_000 },
@@ -87,7 +88,7 @@ test(
 // GENERATED code; the guard refuses it up front with the exact move.
 
 test("guard: `use` in nifra.config.ts without a framework.ts export throws, naming both files", async () => {
-  const root = mkdtempSync(join(import.meta.dir, ".tmp-nifra-use-guard-"))
+  const root = createFixtureRoot("tmp-nifra-use-guard-")
   try {
     const frameworkFile = join(root, "framework.ts")
     const configPath = join(root, "nifra.config.ts")
@@ -101,19 +102,19 @@ test("guard: `use` in nifra.config.ts without a framework.ts export throws, nami
     expect(err?.message).toContain(frameworkFile)
     expect(err?.message).toContain("re-export")
   } finally {
-    rmSync(root, { recursive: true, force: true })
+    removeFixtureRoot(root)
   }
 })
 
 test("guard: `use` defined in framework.ts and re-exported from nifra.config.ts passes", async () => {
-  const root = mkdtempSync(join(import.meta.dir, ".tmp-nifra-use-guard-"))
+  const root = createFixtureRoot("tmp-nifra-use-guard-")
   try {
     const frameworkFile = join(root, "framework.ts")
     const configPath = join(root, "nifra.config.ts")
     writeFileSync(frameworkFile, "export const use = () => {}\n")
     await assertUseIsEdgeExported(() => {}, configPath, frameworkFile)
   } finally {
-    rmSync(root, { recursive: true, force: true })
+    removeFixtureRoot(root)
   }
 })
 

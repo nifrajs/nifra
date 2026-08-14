@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { runWebSocket } from "../src/mcp-ws.ts"
+import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
 const BACKEND = [
   'import { websocket } from "@nifrajs/core/ws"',
@@ -24,12 +25,12 @@ const BACKEND = [
 ].join("\n")
 
 async function withBackend<T>(fn: (cwd: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(process.cwd(), ".tmp-nifra-ws-"))
+  const dir = createFixtureRoot("tmp-nifra-ws-")
   try {
     await writeFile(join(dir, "backend.ts"), BACKEND)
     return await fn(dir)
   } finally {
-    await rm(dir, { recursive: true, force: true })
+    removeFixtureRoot(dir)
   }
 }
 

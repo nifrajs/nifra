@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdir, rm, writeFile } from "node:fs/promises"
+import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import {
   DEFAULT_ASSURANCE_CONFIG,
@@ -8,10 +8,12 @@ import {
   runAssurance,
 } from "../src/assure.ts"
 
-const FIXTURES = join(import.meta.dir, ".tmp-nifra-assurance-fixtures")
+import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
-afterAll(async () => {
-  await rm(FIXTURES, { recursive: true, force: true })
+const FIXTURES = createFixtureRoot("tmp-nifra-assurance-fixtures")
+
+afterAll(() => {
+  removeFixtureRoot(FIXTURES)
 })
 
 const BACKEND = `import { server } from "@nifrajs/core"

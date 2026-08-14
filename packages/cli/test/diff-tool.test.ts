@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdir, rm, writeFile } from "node:fs/promises"
+import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import type { RoutesDiff } from "@nifrajs/core/diff"
 import {
@@ -13,10 +13,12 @@ import {
 
 // Fixtures live INSIDE the package so the dynamically imported backend.ts resolves @nifrajs/* from
 // the workspace (a system tmp dir has no node_modules above it).
-const FIXTURES = join(import.meta.dir, ".tmp-nifra-diff-fixtures")
+import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
-afterAll(async () => {
-  await rm(FIXTURES, { recursive: true, force: true })
+const FIXTURES = createFixtureRoot("tmp-nifra-diff-fixtures")
+
+afterAll(() => {
+  removeFixtureRoot(FIXTURES)
 })
 
 const BACKEND_V1 = `import { server } from "@nifrajs/core"

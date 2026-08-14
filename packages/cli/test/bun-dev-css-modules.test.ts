@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
+import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
 /**
  * `nifra dev`'s Bun pipeline has TWO module loaders: Bun's dev-server bundler builds the client
@@ -16,7 +17,7 @@ import { join, resolve } from "node:path"
 test(
   "nifra dev (bun): the SSR class name matches the client stylesheet's selector",
   async () => {
-    const root = mkdtempSync(join(import.meta.dir, ".tmp-nifra-devcss-"))
+    const root = createFixtureRoot("tmp-nifra-devcss-")
     let proc: ReturnType<typeof Bun.spawn> | undefined
     try {
       mkdirSync(join(root, "routes"), { recursive: true })
@@ -92,7 +93,7 @@ test(
       expect(css).toMatch(/(?:rebeccapurple|#639)/)
     } finally {
       proc?.kill()
-      rmSync(root, { recursive: true, force: true })
+      removeFixtureRoot(root)
     }
   },
   { timeout: 90_000 },

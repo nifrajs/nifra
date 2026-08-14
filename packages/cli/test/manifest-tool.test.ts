@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdir, rm, writeFile } from "node:fs/promises"
+import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { parseNifraManifest } from "@nifrajs/core/manifest"
 import { collectCheckResult } from "../src/check.ts"
@@ -10,10 +10,12 @@ import {
   runManifestEmit,
 } from "../src/manifest-tool.ts"
 
-const FIXTURES = join(import.meta.dir, ".tmp-nifra-manifest-fixtures")
+import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
-afterAll(async () => {
-  await rm(FIXTURES, { recursive: true, force: true })
+const FIXTURES = createFixtureRoot("tmp-nifra-manifest-fixtures")
+
+afterAll(() => {
+  removeFixtureRoot(FIXTURES)
 })
 
 async function project(name: string, path = "/health"): Promise<string> {

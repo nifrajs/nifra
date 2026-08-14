@@ -1,12 +1,14 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdir, rm, writeFile } from "node:fs/promises"
+import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { collectContractProof } from "../src/contract-proof.ts"
 
-const FIXTURES = join(import.meta.dir, ".tmp-nifra-contract-proof")
+import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
-afterAll(async () => {
-  await rm(FIXTURES, { recursive: true, force: true })
+const FIXTURES = createFixtureRoot("tmp-nifra-contract-proof")
+
+afterAll(() => {
+  removeFixtureRoot(FIXTURES)
 })
 
 describe("joined contract proof", () => {

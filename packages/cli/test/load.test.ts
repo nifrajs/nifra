@@ -1,16 +1,17 @@
 import { afterAll, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { loadApp } from "../src/load.ts"
+import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
 const dirs: string[] = []
 
 afterAll(() => {
-  for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
+  for (const dir of dirs) removeFixtureRoot(dir)
 })
 
 test("plugin thunks resolve exactly once and remain available to later phases", async () => {
-  const root = mkdtempSync(`${import.meta.dir}/.tmp-load-`)
+  const root = createFixtureRoot("tmp-load-")
   dirs.push(root)
   mkdirSync(join(root, "routes"))
   writeFileSync(join(root, "routes", "index.ts"), "export default function Page() {}\n")
@@ -40,7 +41,7 @@ test("plugin thunks resolve exactly once and remain available to later phases", 
 })
 
 async function loadWithClientModule(spec: string): Promise<string> {
-  const root = mkdtempSync(`${import.meta.dir}/.tmp-load-`)
+  const root = createFixtureRoot("tmp-load-")
   dirs.push(root)
   mkdirSync(join(root, "routes"))
   writeFileSync(join(root, "routes", "index.ts"), "export default function Page() {}\n")
@@ -69,7 +70,7 @@ test("a bare/package clientModule specifier is left unchanged", async () => {
 // When a real local file sits at that path the user forgot the `./`, and the bundle would fail with an
 // opaque "cannot resolve" - so load rejects it up front with the fix instead of failing silently.
 test("a non-relative clientModule shadowing a local file is rejected with the ./ fix", async () => {
-  const root = mkdtempSync(`${import.meta.dir}/.tmp-load-`)
+  const root = createFixtureRoot("tmp-load-")
   dirs.push(root)
   mkdirSync(join(root, "routes"))
   writeFileSync(join(root, "routes", "index.ts"), "export default function Page() {}\n")

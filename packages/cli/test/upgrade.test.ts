@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { getRecipe, listRecipeVersions, type UpgradeRecipe } from "../src/recipes/index.ts"
 import {
@@ -12,10 +12,12 @@ import {
   runUpgrade,
 } from "../src/upgrade.ts"
 
-const FIXTURES = join(import.meta.dir, ".tmp-nifra-upgrade-fixtures")
+import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
-afterEach(async () => {
-  await rm(FIXTURES, { recursive: true, force: true })
+const FIXTURES = createFixtureRoot("tmp-nifra-upgrade-fixtures")
+
+afterEach(() => {
+  removeFixtureRoot(FIXTURES)
 })
 
 const RECIPE: UpgradeRecipe = {
