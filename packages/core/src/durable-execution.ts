@@ -319,7 +319,7 @@ export class MemoryDurableEffectStore implements DurableEffectStore {
     const next = durableEffectProtocol.transition(current, input)
     if (next === undefined) return false
     if (current === undefined) return false
-    this.records.set(input.effectId, Object.freeze(cloneValue(next)))
+    this.records.set(input.effectId, Object.freeze(next))
     bucketMove(this.byState, current.state, input.to, input.effectId)
     return true
   }
@@ -815,14 +815,14 @@ export class MemoryApprovalStore implements ApprovalStore {
     const record = this.records.get(input.approvalId)
     const next = durableApprovalProtocol.decide(record, input)
     if (next === undefined) return false
-    this.records.set(input.approvalId, Object.freeze(cloneValue(next)))
+    this.records.set(input.approvalId, Object.freeze(next))
     return true
   }
   consume(input: Parameters<ApprovalStore["consume"]>[0]): ApprovalConsumeResult {
     const record = this.records.get(input.approvalId)
     const transition = durableApprovalProtocol.consume(record, input)
     if (transition.next !== undefined)
-      this.records.set(input.approvalId, Object.freeze(cloneValue(transition.next)))
+      this.records.set(input.approvalId, Object.freeze(transition.next))
     return transition.result
   }
   list(): readonly ApprovalRecord[] {
@@ -1533,7 +1533,7 @@ export class MemorySagaStore implements SagaStore {
     const next = durableSagaProtocol.transition(current, input)
     if (next === undefined) return false
     if (current === undefined) return false
-    this.records.set(input.sagaId, Object.freeze(cloneValue(next)))
+    this.records.set(input.sagaId, Object.freeze(next))
     bucketMove(this.byState, current.state, input.record.state, input.sagaId)
     return true
   }
