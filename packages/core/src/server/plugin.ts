@@ -86,7 +86,7 @@ export interface PluginTypeCollapsed {
  * every route type flowing through it is about to be widened away.
  */
 // biome-ignore lint/suspicious/noExplicitAny: matches any Server shape to inspect its Registry alone
-type ServerTypeUnpinned<S> = [S] extends [Server<infer R, any>]
+export type ServerTypeUnpinned<S> = [S] extends [Server<infer R, any>]
   ? 0 extends 1 & R
     ? true
     : false

@@ -228,7 +228,12 @@ import {
 import type { EffectLedgerRuntime, ResolvedEffectLedger } from "./ledger-lane.ts"
 import { jsonLogger, type Logger } from "./logger.ts"
 import type { McpRuntime } from "./mcp-hook.ts"
-import type { ContextPlugin, IdentityPlugin } from "./plugin.ts"
+import type {
+  ContextPlugin,
+  IdentityPlugin,
+  PluginTypeCollapsed,
+  ServerTypeUnpinned,
+} from "./plugin.ts"
 import type {
   AddRoute,
   EmptyRegistry,
@@ -1187,8 +1192,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * called with `this` and its result is returned, so an inline plugin's `derive`/`decorate` thread
    * the added context to handlers defined after `use` (the overload is generic over the concrete
    * `this`). A named plugin already applied is skipped (idempotent dedupe).
+   *
+   * If the plugin's return type is unpinned - `Server<any, any>`, as a hand-rolled `(app) => app` or a
+   * `NifraPlugin<AnyServer, AnyServer>` infers (e.g. an auth plugin whose own types collapsed) - this
+   * returns the non-callable {@link PluginTypeCollapsed} instead of silently widening the whole typed
+   * client to `any`. `.get()`/`.post()` then fail right here rather than surfacing as `any` hundreds of
+   * lines away. Fix at the plugin: build it with {@link defineIdentityPlugin}/{@link defineContextPlugin},
+   * or pin its input server type. This mirrors the guard {@link definePlugin} already applies.
    */
-  use<Out extends AnyServer>(plugin: (app: this) => Out): Out
+  use<Out extends AnyServer>(
+    plugin: (app: this) => Out,
+  ): [ServerTypeUnpinned<Out>] extends [true] ? PluginTypeCollapsed : Out
   /**
    * Apply a {@link Middleware} bundle - wire each hook it provides to its lifecycle point. Returns
    * `this` (no context-type merging); call it before the routes its `beforeHandle`/`afterHandle`

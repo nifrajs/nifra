@@ -8,7 +8,13 @@
  * Each assertion is exported so `noUnusedLocals` treats it as used.
  */
 import type { Equal, Expect } from "@nifrajs/test-utils"
-import type { ContextPlugin, IdentityPlugin, Server } from "../src/index.ts"
+import type {
+  AnyServer,
+  ContextPlugin,
+  IdentityPlugin,
+  PluginTypeCollapsed,
+  Server,
+} from "../src/index.ts"
 import { defineContextPlugin, defineIdentityPlugin, definePlugin, server } from "../src/index.ts"
 
 type RegistryOf<S> = S extends Server<infer R> ? R : never
@@ -69,6 +75,14 @@ export type _InlineAddsContext = Expect<Equal<ContextOf<typeof inline>["greeting
 const collapsed = definePlugin("collapsed", (a) => a.derive(() => ({ user: "u" })))
 // @ts-expect-error definePlugin erased the server type: use defineContextPlugin/defineRouterPlugin
 app.use(collapsed)
+
+// --- a hand-rolled plugin whose types collapsed to Server<any, any> (an auth plugin from a package
+// that widened - the "#1 reported anti-drift bug") is caught at the `.use()` call site: it returns the
+// non-callable PluginTypeCollapsed, NOT `any`, so the widening cannot spread silently to the client. ---
+declare const rawCollapsing: (app: AnyServer) => AnyServer
+const collapsedRaw = app.use(rawCollapsing)
+export type _RawCollapseIsFlagged = Expect<Equal<typeof collapsedRaw, PluginTypeCollapsed>>
+export type _RawCollapseNotAny = Expect<Equal<IsAny<typeof collapsedRaw>, false>>
 
 // Pinning the input type is the documented escape hatch and still threads.
 const pinned = definePlugin("pinned", (a: typeof app) => a.derive(() => ({ user: "u" })))

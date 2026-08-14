@@ -45,7 +45,10 @@
  * bespoke dispatcher.
  */
 import {
+  type AnyServer,
   type Context,
+  defineIdentityPlugin,
+  type IdentityPlugin,
   isSameOriginRequest,
   type RouteSchema,
   type StandardSchemaV1,
@@ -151,10 +154,7 @@ export type ServerFnModule = Readonly<Record<string, unknown>>
  *
  * Exports that are not server functions are ignored, so `export type` and helpers can live alongside.
  */
-export function serverFunctions<S extends ServerFnHost>(
-  namespace: string,
-  module: ServerFnModule,
-): (app: S) => S {
+export function serverFunctions(namespace: string, module: ServerFnModule): IdentityPlugin {
   if (!NAMESPACE.test(namespace)) {
     throw new Error(
       `[nifra/fn] invalid server-function namespace ${JSON.stringify(namespace)} - use lowercase dot/dash segments (it becomes a URL path).`,
@@ -164,7 +164,7 @@ export function serverFunctions<S extends ServerFnHost>(
     (entry): entry is [string, ServerFn<unknown, unknown>] => isServerFn(entry[1]),
   )
 
-  const apply = (app: S): S => {
+  const apply = <S extends AnyServer>(app: S): S => {
     for (const [name, fn] of mounted) {
       if (!EXPORT_NAME.test(name)) {
         throw new Error(
@@ -197,5 +197,5 @@ export function serverFunctions<S extends ServerFnHost>(
     }
     return app
   }
-  return Object.assign(apply, { pluginName: `nifra:server-fn:${namespace}` })
+  return defineIdentityPlugin(`nifra:server-fn:${namespace}`, apply)
 }
