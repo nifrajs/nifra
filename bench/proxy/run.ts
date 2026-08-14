@@ -90,7 +90,8 @@ const nodeTarget = (framework: string): Target => ({
 })
 
 const NIFRA_NODE_BUNDLE = `${import.meta.dir}/dist/serve-node-nifra.js`
-const nifraNodeTarget = (framework: string, mode: "fetch" | "undici"): Target => ({
+type NifraNodeMode = "fetch" | "undici" | "serve-undici" | "bare-undici" | "web-undici"
+const nifraNodeTarget = (framework: string, mode: NifraNodeMode): Target => ({
   framework,
   prepare: async () => {
     const result = await Bun.build({
@@ -117,6 +118,9 @@ const SECTIONS: readonly Section[] = [
     targets: [
       nifraNodeTarget("nifra", "fetch"),
       nifraNodeTarget("nifra-undici", "undici"),
+      nifraNodeTarget("serve-undici", "serve-undici"),
+      nifraNodeTarget("bare-undici", "bare-undici"),
+      nifraNodeTarget("web-undici", "web-undici"),
       nodeTarget("hono"),
       nodeTarget("fastify"),
       nodeTarget("node-raw"),
