@@ -1112,7 +1112,7 @@ function writeNodeOutcome(
     writeBodyOutcome(outcome, nodeRes, isHead)
     return
   }
-  return writeNodeResponse(outcome.response, nodeRes, isHead)
+  return writeNodeResponse(outcome.response, nodeRes, method)
 }
 
 /** A flat 500 with no leaked detail - the adapter's last-resort guard if a handler throws. */
@@ -1786,10 +1786,9 @@ function waitForDrain(nodeRes: ServerResponse): Promise<boolean> {
 function writeNodeResponse(
   response: Response,
   nodeRes: ServerResponse,
-  methodOrHead: string | boolean = false,
+  method?: string,
 ): void | Promise<void> {
-  const isHead =
-    typeof methodOrHead === "boolean" ? methodOrHead : methodOrHead.toUpperCase() === "HEAD"
+  const isHead = method?.toUpperCase() === "HEAD"
   // `ServerResponse.setHeaders` (Node 18.14+) takes the Headers object directly and iterates its
   // native Symbol.iterator, which - unlike `Headers.forEach`/`.get()` - never comma-joins repeated
   // `Set-Cookie` values (Node's own implementation carries the identical correctness note this
