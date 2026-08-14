@@ -54,6 +54,7 @@ import {
   markTransportCap,
   markTrustedBodyFraming,
   type RawBodyReaders,
+  UNLIMITED_BODY_BYTES,
 } from "./body.ts"
 import { type ClientIpTrust, resolveClientIp } from "./client-ip.ts"
 import type { Context, Platform, ResponseControls, RouteSchema } from "./context.ts"
@@ -1627,6 +1628,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     handler: (context: never) => unknown,
   ): CatalogRoute {
     const pattern = compileRoutePattern(path)
+    // Resolved here, once: `undefined` past this point means the route declared `"unlimited"`, NOT
+    // "nothing declared". Readers fall back to UNLIMITED_BODY_BYTES accordingly.
     let bodyLimit: number | undefined = this.maxBodyBytes
     const invalidBodyLimit = (message: string): never => {
       throw new RouteConfigError("INVALID_BODY_LIMIT", `route ${method} ${path}: ${message}`)
@@ -1769,7 +1772,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           handler as unknown as InternalHandler,
           schema.body as StandardSchemaV1,
           hasDecorations ? routeDecorations : undefined,
-          bodyLimit ?? this.maxBodyBytes,
+          bodyLimit ?? UNLIMITED_BODY_BYTES,
         )
       : undefined
     const fusedWeb =
@@ -1778,14 +1781,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
             handler as unknown as InternalHandler,
             hasDecorations ? routeDecorations : undefined,
             isContextlessNoArgArrow(handler),
-            bodyLimit ?? this.maxBodyBytes,
+            bodyLimit ?? UNLIMITED_BODY_BYTES,
           )
         : fusedQuery
           ? this.buildFusedQueryWeb(
               handler as unknown as InternalHandler,
               hasDecorations ? routeDecorations : undefined,
               schema.query as StandardSchemaV1,
-              bodyLimit ?? this.maxBodyBytes,
+              bodyLimit ?? UNLIMITED_BODY_BYTES,
             )
           : fusedBody
             ? this.buildFusedBodyWeb(fusedBodyRunner as FusedBodyRunner)
@@ -2124,7 +2127,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
             entry.handler,
             entry.schema?.body as StandardSchemaV1,
             entry.hasDecorations ? entry.decorations : undefined,
-            entry.bodyLimit ?? this.maxBodyBytes,
+            entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
           )
         : undefined
     const fusedWeb =
@@ -2135,13 +2138,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
               entry.handler,
               entry.hasDecorations ? entry.decorations : undefined,
               entry.schema?.query as StandardSchemaV1,
-              entry.bodyLimit ?? this.maxBodyBytes,
+              entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
             )
           : this.buildFusedWeb(
               entry.handler,
               entry.hasDecorations ? entry.decorations : undefined,
               isContextlessNoArgArrow(entry.handler),
-              entry.bodyLimit ?? this.maxBodyBytes,
+              entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
             )
     return {
       ...route,
@@ -3040,7 +3043,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         search,
         wrapResponse,
         {
-          maxBodyBytes: entry.bodyLimit ?? this.maxBodyBytes,
+          maxBodyBytes: entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
           runLanes: (buffered, plat, ent, prm, srch) =>
             this.idempotencyRunLanes(buffered, plat, ent as RouteEntry, prm, srch),
         },
@@ -3694,7 +3697,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   ): Promise<T> {
     return this.readBodyInput(
       source,
-      entry.bodyLimit ?? this.maxBodyBytes,
+      entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
       (parsed) => this.finishBodyOnly(entry, parsed, ctx, finalize, wrapResponse),
       wrapResponse,
       (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
@@ -4764,11 +4767,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     const contentType = headerOf(req, "content-type") ?? ""
     let parsed: unknown
     if (contentType === "application/json" || contentType.includes("application/json")) {
-      const json = await this.readBoundedJson(req, entry.bodyLimit ?? this.maxBodyBytes)
+      const json = await this.readBoundedJson(req, entry.bodyLimit ?? UNLIMITED_BODY_BYTES)
       if (json instanceof Response) return json
       parsed = json
     } else if (isUrlEncodedForm(contentType)) {
-      const form = await readBoundedForm(req, entry.bodyLimit ?? this.maxBodyBytes)
+      const form = await readBoundedForm(req, entry.bodyLimit ?? UNLIMITED_BODY_BYTES)
       if (form instanceof Response) return form
       parsed = form
     } else {

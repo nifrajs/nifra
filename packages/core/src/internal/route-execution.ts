@@ -19,6 +19,7 @@
 import type { RequestBudget } from "../budget.ts"
 import type { RequestLedger } from "../ledger.ts"
 import type { StandardSchemaV1 } from "../schema/standard.ts"
+import { UNLIMITED_BODY_BYTES } from "../server/body.ts"
 import type { Platform, RouteSchema } from "../server/context.ts"
 import type { ResolvedIdempotency } from "../server/idempotency-lane.ts"
 import type { EffectLedgerRuntime, ResolvedEffectLedger } from "../server/ledger-lane.ts"
@@ -295,7 +296,7 @@ export function compileRouteExecutionPlan(options: {
     wrapResponse,
   ) => {
     const server = runtime as unknown as RouteExecutionRuntime
-    const maxBodyBytes = entry.bodyLimit ?? server.maxBodyBytes
+    const maxBodyBytes = entry.bodyLimit ?? UNLIMITED_BODY_BYTES
     const ctx = nativeContext
       ? RequestContext.native(source, params, search, maxBodyBytes, platform, server.protoPoisoning)
       : new RequestContext(
@@ -346,7 +347,13 @@ export interface RouteExecutionPlan {
 export interface RouteEntry {
   readonly handler: InternalHandler
   readonly schema: RouteSchema | undefined
-  /** Effective transport body cap; `undefined` is an explicit streaming/upload exemption. */
+  /**
+   * Effective transport body cap, already resolved at registration: the route's own
+   * `schema.bodyLimit` when it declared one, the server's `maxBodyBytes` otherwise. `undefined` is
+   * an explicit streaming/upload exemption (`bodyLimit: "unlimited"`) and means NO cap - readers
+   * must fall back to {@link UNLIMITED_BODY_BYTES}, never to the server default, which would be a
+   * tighter bound than the route asked for.
+   */
   readonly bodyLimit: number | undefined
   /** Resolved idempotency config; `undefined` = off (the dedupe lane is never entered). */
   readonly idempotent: ResolvedIdempotency | undefined

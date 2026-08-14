@@ -37,6 +37,14 @@ export function rawBodySourceOf<T extends BodySource>(req: T): T {
   return ((req as { [RAW_BODY_READERS]?: T })[RAW_BODY_READERS] as T | undefined) ?? req
 }
 
+/**
+ * The byte cap a route that declared `bodyLimit: "unlimited"` reads under. It is a real number, not
+ * `Infinity` or a skipped check: every bounded reader keeps its single `> maxBytes` enforcement
+ * point (and its `assertByteLimit` guard) rather than growing an uncapped branch that a future
+ * caller could reach by accident. No HTTP body reaches 2^53-1 bytes, so this is unlimited in fact.
+ */
+export const UNLIMITED_BODY_BYTES = Number.MAX_SAFE_INTEGER
+
 /** Security/resource limits must be finite byte counts. Invalid values otherwise make `> maxBytes`
  * comparisons fail open (notably for `NaN`) and can re-enable unbounded buffering. */
 export function assertByteLimit(value: number, name = "maxBytes"): void {
