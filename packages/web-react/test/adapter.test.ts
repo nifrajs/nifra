@@ -1,7 +1,22 @@
 import { expect, test } from "bun:test"
 import { assertRenderAdapterConformance } from "@nifrajs/web"
-import { createElement, type ReactNode, Suspense, use } from "react"
+import type { ReactNode } from "react"
 import { reactAdapter } from "../src/index.ts"
+
+// This test represents a consumer route module, so resolve React from the consumer app root (the test
+// process cwd), exactly as the SSR adapter resolves react-dom/server. In a linked parent workspace the
+// package-local peer symlink can point at that parent's install while the test itself runs from Nifra's
+// root; a bare `import "react"` would then test the workspace link rather than the consumer identity. The
+// fallback supports running this package's tests from a workspace root that does not itself declare React.
+function consumerReactPath(): string {
+  try {
+    return Bun.resolveSync("react", process.cwd())
+  } catch {
+    return Bun.resolveSync("react", import.meta.dir)
+  }
+}
+
+const { createElement, Suspense, use } = await import(consumerReactPath())
 
 test("reactAdapter conforms to the executable RenderAdapter interface", async () => {
   const layout = (marker: string) => (props: { children: ReactNode }) =>

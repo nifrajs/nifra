@@ -53,6 +53,10 @@ test("throws naming BOTH paths when the two reacts differ", () => {
   expect(message).toContain("/app/node_modules/react-dom/node_modules/react/index.js")
   expect(message).toContain("/app/node_modules/react/index.js")
   expect(message).toContain("two copies of React")
+  expect(message).toContain("react-dom/server → react")
+  expect(message).toContain('route component import "react"')
+  expect(message).toContain("resolved from: /app/node_modules/react-dom")
+  expect(message).toContain(`resolved from: ${process.cwd()}`)
   // It says the thing that actually fixes it, and warns off the thing that looks like it should.
   expect(message).toContain("nifra doctor")
   expect(message).toContain("dedupe")

@@ -4,7 +4,10 @@ import { existsSync, readFileSync } from "node:fs"
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path"
 import { matchesAssuranceSelector } from "@nifrajs/core/assurance"
 import {
+  type AssuredCapabilityRoute,
   type CapabilityAssuranceReport,
+  type CapabilityDefinition,
+  type CapabilityFinding,
   type CapabilityPolicy,
   type CapabilitySnapshot,
   type CapabilitySnapshotRoute,
@@ -108,6 +111,64 @@ export interface CapabilityProvenanceTruncation {
   readonly path: string
   readonly reason: "depth-limit" | "module-limit"
   readonly chain: readonly string[]
+}
+
+export interface CapabilityRouteExplanation {
+  readonly ok: boolean
+  readonly method: string
+  readonly path: string
+  readonly route: AssuredCapabilityRoute
+  readonly definitions: readonly CapabilityDefinition[]
+  readonly findings: readonly CapabilityFinding[]
+  readonly violations: readonly CapabilityImportViolation[]
+  readonly truncations: readonly CapabilityProvenanceTruncation[]
+  /** This command explains declarations and static evidence; it does not infer handler-internal branches. */
+  readonly note: string
+}
+
+/** Explain one reflected route using only declared capability tokens and collected static evidence. */
+export function explainCapabilityRoute(
+  policy: CapabilityPolicy,
+  project: CapabilityProjectReport,
+  methodInput: string,
+  path: string,
+): CapabilityRouteExplanation | undefined {
+  const method = methodInput.toUpperCase()
+  const route = project.report.routes.find(
+    (candidate) => candidate.method === method && candidate.path === path,
+  )
+  if (route === undefined) return undefined
+
+  const findings = project.report.findings.filter(
+    (finding) =>
+      (finding.method === method && finding.path === path) ||
+      (finding.method === "*" && finding.path === "*"),
+  )
+  const violations = project.violations.filter(
+    (violation) => violation.method === method && violation.path === path,
+  )
+  const truncations = project.truncations.filter(
+    (truncation) => truncation.method === method && truncation.path === path,
+  )
+  const ids = new Set<string>([
+    ...route.declared,
+    ...route.evidence.map((evidence) => evidence.id),
+    ...findings.flatMap((finding) =>
+      finding.capability === undefined ? [] : [finding.capability],
+    ),
+  ])
+  const definitions = policy.definitions.filter((definition) => ids.has(definition.id))
+  return Object.freeze({
+    ok: findings.length === 0 && violations.length === 0 && truncations.length === 0,
+    method,
+    path,
+    route,
+    definitions: Object.freeze(definitions),
+    findings: Object.freeze(findings),
+    violations: Object.freeze(violations),
+    truncations: Object.freeze(truncations),
+    note: "Nifra explains declarations and static provenance only; it does not guess handler-internal branches or runtime data flow.",
+  })
 }
 
 function resolveLocalModule(
@@ -492,20 +553,103 @@ function unsafeProject(project: CapabilityProjectReport): boolean {
   return !project.report.ok || project.violations.length > 0 || project.truncations.length > 0
 }
 
+export interface CapabilitySnapshotCommandResult {
+  readonly ok: boolean
+  readonly path: string
+  readonly snapshot?: CapabilitySnapshot
+  readonly report: CapabilityAssuranceReport
+  readonly violations: readonly CapabilityImportViolation[]
+  readonly truncations: readonly CapabilityProvenanceTruncation[]
+}
+
+export interface CapabilityCheckCommandResult {
+  readonly ok: boolean
+  readonly report: CapabilityAssuranceReport
+  readonly violations: readonly CapabilityImportViolation[]
+  readonly truncations: readonly CapabilityProvenanceTruncation[]
+  readonly changes: readonly string[]
+}
+
+/** Collect the snapshot result without printing. The CLI and command catalog use this pure face. */
+export async function collectCapabilitySnapshot(
+  cwd: string,
+  options: { readonly config?: string; readonly out?: string } = {},
+): Promise<CapabilitySnapshotCommandResult> {
+  const { policy, project } = await currentProject(cwd, options.config)
+  const path = resolve(cwd, options.out ?? policy.lockfile ?? "capabilities.lock.json")
+  if (unsafeProject(project)) {
+    return {
+      ok: false,
+      path,
+      report: project.report,
+      violations: project.violations,
+      truncations: project.truncations,
+    }
+  }
+  const snapshot = snapshotCapabilities(project.report)
+  await Bun.write(path, `${JSON.stringify(snapshot, null, 2)}\n`)
+  return {
+    ok: true,
+    path,
+    snapshot,
+    report: project.report,
+    violations: project.violations,
+    truncations: project.truncations,
+  }
+}
+
+/** Collect the lockfile gate without printing. */
+export async function collectCapabilityCheck(
+  cwd: string,
+  options: { readonly config?: string; readonly lockfile?: string } = {},
+): Promise<CapabilityCheckCommandResult> {
+  const { policy, project } = await currentProject(cwd, options.config)
+  const path = resolve(cwd, options.lockfile ?? policy.lockfile ?? "capabilities.lock.json")
+  if (!existsSync(path)) throw new Error(`[nifra] capability lockfile not found: ${path}`)
+  const baseline = parseCapabilityLockfile(await Bun.file(path).text(), path)
+  const current = snapshotCapabilities(project.report)
+  const changes = diffCapabilitySnapshots(baseline, current)
+  return {
+    ok: !unsafeProject(project) && changes.length === 0,
+    report: project.report,
+    violations: project.violations,
+    truncations: project.truncations,
+    changes,
+  }
+}
+
+export type CapabilityExplainCommandResult =
+  | CapabilityRouteExplanation
+  | { readonly ok: false; readonly error: string; readonly routes: readonly string[] }
+
+/** Collect one route explanation without printing. */
+export async function collectCapabilityExplanation(
+  cwd: string,
+  method: string,
+  path: string,
+  options: { readonly config?: string } = {},
+): Promise<CapabilityExplainCommandResult> {
+  const { policy, project } = await currentProject(cwd, options.config)
+  const explanation = explainCapabilityRoute(policy, project, method, path)
+  if (explanation !== undefined) return explanation
+  return {
+    ok: false,
+    error: `[nifra] capability route not found: ${method.toUpperCase()} ${path}`,
+    routes: project.report.routes.map((route) => `${route.method} ${route.path}`),
+  }
+}
+
 /** Write a lockfile only from a clean, fully-covered project report. */
 export async function runCapabilitySnapshot(
   cwd: string,
   options: { readonly config?: string; readonly out?: string } = {},
 ): Promise<boolean> {
-  const { policy, project } = await currentProject(cwd, options.config)
-  if (unsafeProject(project)) {
+  const result = await collectCapabilitySnapshot(cwd, options)
+  if (!result.ok) {
     console.error("[nifra] refusing to snapshot failing capability assurance")
     return false
   }
-  const snapshot = snapshotCapabilities(project.report)
-  const path = resolve(cwd, options.out ?? policy.lockfile ?? "capabilities.lock.json")
-  await Bun.write(path, `${JSON.stringify(snapshot, null, 2)}\n`)
-  console.log(`[nifra] wrote capability lockfile to ${path}`)
+  console.log(`[nifra] wrote capability lockfile to ${result.path}`)
   return true
 }
 
@@ -514,22 +658,17 @@ export async function runCapabilityCheck(
   cwd: string,
   options: { readonly config?: string; readonly lockfile?: string; readonly json?: boolean } = {},
 ): Promise<boolean> {
-  const { policy, project } = await currentProject(cwd, options.config)
-  const path = resolve(cwd, options.lockfile ?? policy.lockfile ?? "capabilities.lock.json")
-  if (!existsSync(path)) throw new Error(`[nifra] capability lockfile not found: ${path}`)
-  const baseline = parseCapabilityLockfile(await Bun.file(path).text(), path)
-  const current = snapshotCapabilities(project.report)
-  const changes = diffCapabilitySnapshots(baseline, current)
-  const ok = !unsafeProject(project) && changes.length === 0
+  const result = await collectCapabilityCheck(cwd, options)
+  const ok = result.ok
   if (options.json === true) {
     console.log(
       JSON.stringify(
         {
           ok,
-          report: project.report,
-          violations: project.violations,
-          truncations: project.truncations,
-          changes,
+          report: result.report,
+          violations: result.violations,
+          truncations: result.truncations,
+          changes: result.changes,
         },
         null,
         2,
@@ -538,16 +677,85 @@ export async function runCapabilityCheck(
   } else if (ok) {
     console.log("✓ capability assurance and lockfile are current")
   } else {
-    for (const finding of project.report.findings) console.log(`✖ ${finding.message}`)
-    for (const violation of project.violations)
+    for (const finding of result.report.findings) console.log(`✖ ${finding.message}`)
+    for (const violation of result.violations)
       console.log(
         `✖ ${violation.method} ${violation.path}: ${violation.chain.join(" → ")} - ${violation.reason}`,
       )
-    for (const truncation of project.truncations)
+    for (const truncation of result.truncations)
       console.log(
         `✖ ${truncation.method} ${truncation.path}: ${truncation.chain.join(" → ")} - ${truncation.reason}`,
       )
-    for (const change of changes) console.log(`✖ capability lock drift: ${change}`)
+    for (const change of result.changes) console.log(`✖ capability lock drift: ${change}`)
   }
   return ok
+}
+
+function formatCapabilityRouteExplanation(explanation: CapabilityRouteExplanation): string {
+  const lines = [
+    `${explanation.method} ${explanation.path}`,
+    `status: ${explanation.ok ? "assured" : "needs attention"}`,
+    `provenance coverage: ${explanation.route.covered ? "covered" : "uncovered"}`,
+    `declared: ${explanation.route.declared.length > 0 ? explanation.route.declared.join(", ") : "none"}`,
+    `evidence: ${
+      explanation.route.evidence.length > 0
+        ? explanation.route.evidence
+            .map((item) => `${item.id} [${item.kind}] from ${item.source}`)
+            .join(", ")
+        : "none"
+    }`,
+    `unproven: ${explanation.route.unproven.length > 0 ? explanation.route.unproven.join(", ") : "none"}`,
+  ]
+  if (explanation.definitions.length > 0) {
+    lines.push("definitions:")
+    for (const definition of explanation.definitions) {
+      lines.push(
+        `  ${definition.id}: zone=${definition.zone}, access=${definition.access}, idempotency=${definition.idempotency ?? "none"}`,
+      )
+    }
+  }
+  if (explanation.findings.length > 0) {
+    lines.push("findings:")
+    for (const finding of explanation.findings) lines.push(`  ✖ ${finding.message}`)
+  }
+  for (const violation of explanation.violations) {
+    lines.push(`  ✖ ${violation.chain.join(" → ")} - ${violation.reason}`)
+  }
+  for (const truncation of explanation.truncations) {
+    lines.push(`  ✖ ${truncation.chain.join(" → ")} - ${truncation.reason}`)
+  }
+  lines.push(`note: ${explanation.note}`)
+  return lines.join("\n")
+}
+
+/** Explain one route's token-only capability declaration and static provenance. */
+export async function runCapabilityExplain(
+  cwd: string,
+  method: string,
+  path: string,
+  options: { readonly config?: string; readonly json?: boolean } = {},
+): Promise<boolean> {
+  const explanation = await collectCapabilityExplanation(cwd, method, path, options)
+  if ("error" in explanation) {
+    const message = explanation.error
+    if (options.json === true) {
+      console.log(
+        JSON.stringify(
+          {
+            ok: false,
+            error: message,
+            routes: explanation.routes,
+          },
+          null,
+          2,
+        ),
+      )
+    } else {
+      console.error(message)
+    }
+    return false
+  }
+  if (options.json === true) console.log(JSON.stringify(explanation, null, 2))
+  else console.log(formatCapabilityRouteExplanation(explanation))
+  return explanation.ok
 }

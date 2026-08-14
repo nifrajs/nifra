@@ -54,6 +54,30 @@ describe("nifra assure", () => {
     expect(await runAssurance(cwd, { json: true })).toBe(true)
   })
 
+  test("--json prints the {ok,routes,findings} report; --bundle prints the {version,gates,verdict} bundle", async () => {
+    const cwd = await project("shapes")
+    const captured: string[] = []
+    const original = console.log
+    console.log = (...args: unknown[]) => captured.push(args.map(String).join(" "))
+    try {
+      await runAssurance(cwd, { json: true })
+      await runAssurance(cwd, { bundle: true })
+    } finally {
+      console.log = original
+    }
+    const report = JSON.parse(captured[0] ?? "{}") as Record<string, unknown>
+    expect(report).toHaveProperty("ok")
+    expect(report).toHaveProperty("routes")
+    expect(report).toHaveProperty("findings")
+    expect(report.gates).toBeUndefined()
+
+    const bundle = JSON.parse(captured[1] ?? "{}") as Record<string, unknown>
+    expect(bundle).toHaveProperty("version")
+    expect(bundle).toHaveProperty("gates")
+    expect(bundle).toHaveProperty("verdict")
+    expect(bundle.findings).toBeUndefined()
+  })
+
   test("fails when policy requires evidence the route does not carry", async () => {
     const cwd = await project(
       "fail",

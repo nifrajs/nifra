@@ -6,6 +6,7 @@ import { defineCapabilityPolicy } from "@nifrajs/core/capabilities"
 import {
   collectCapabilityProjectReport,
   diffCapabilitySnapshots,
+  explainCapabilityRoute,
   parseCapabilityLockfile,
   runCapabilityCheck,
   runCapabilitySnapshot,
@@ -231,6 +232,44 @@ describe("project provenance firewall", () => {
     const project = await collectCapabilityProjectReport(cwd, app, wide)
     expect(project.report.ok).toBe(false)
     expect(project.truncations[0]?.reason).toBe("module-limit")
+  })
+})
+
+describe("capability route explanation", () => {
+  test("returns declarations, definitions, and static evidence without inferring handler branches", async () => {
+    const cwd = join(FIXTURES, "explain-route")
+    await mkdir(join(cwd, "src"), { recursive: true })
+    await writeFile(
+      join(cwd, "backend.ts"),
+      `import { server } from "@nifrajs/core"
+       import "app-db/read"
+       export const backend = server().get("/orders", { capabilities: ["db.read"] }, () => [])`,
+    )
+    // Keep the second policy seam present in the project without making it reachable from this route.
+    await writeFile(join(cwd, "src/write-adapter.ts"), 'import "app-db/write"\n')
+    const app = server().get("/orders", { capabilities: ["db.read"] }, () => [])
+    const project = await collectCapabilityProjectReport(cwd, app, policy)
+    const explanation = explainCapabilityRoute(policy, project, "get", "/orders")
+
+    expect(explanation).toMatchObject({
+      ok: true,
+      method: "GET",
+      path: "/orders",
+      route: {
+        covered: true,
+        declared: ["db.read"],
+        unproven: [],
+      },
+      definitions: [{ id: "db.read", zone: "domain", access: "read", idempotency: "none" }],
+      findings: [],
+      violations: [],
+      truncations: [],
+    })
+    expect(explanation?.route.evidence).toEqual([
+      { id: "db.read", kind: "static", source: "app-db/read" },
+    ])
+    expect(explanation?.note).toContain("does not guess handler-internal branches")
+    expect(explainCapabilityRoute(policy, project, "GET", "/missing")).toBeUndefined()
   })
 })
 

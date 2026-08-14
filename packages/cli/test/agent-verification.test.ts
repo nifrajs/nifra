@@ -1,9 +1,16 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { mkdir, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { server } from "@nifrajs/core"
 import { defineReplayFile } from "@nifrajs/core/replay"
+import { t } from "@nifrajs/schema"
 import { collectAssureBundle } from "../src/assure.ts"
-import { checkContractsLock, snapshotContracts } from "../src/contracts.ts"
+import {
+  buildContractsLock,
+  checkContractsLock,
+  isVacuousLock,
+  snapshotContracts,
+} from "../src/contracts.ts"
 import { applyDiagnosticRecipe, listFixRecipes } from "../src/fix-recipes.ts"
 import { runReplay } from "../src/replay.ts"
 import { assertUniqueRuleCodes } from "../src/rules/codes.ts"
@@ -43,6 +50,25 @@ describe("agent verification surfaces", () => {
       'import { server } from "@nifrajs/core"\nexport const backend = server().get("/users", () => ({ ok: false }))\n',
     )
     expect((await checkContractsLock(dir)).diagnostics).toHaveLength(0)
+  })
+
+  test("a lock whose every route has no schema is vacuous; declaring one clears it", async () => {
+    const noSchema = await buildContractsLock(
+      server()
+        .get("/a", () => ({ ok: true }))
+        .get("/b", () => ({ ok: true })),
+    )
+    expect(await isVacuousLock(noSchema)).toBe(true)
+
+    const withSchema = await buildContractsLock(
+      server()
+        .get("/a", () => ({ ok: true }))
+        .get("/b", { query: t.object({ q: t.string() }) }, () => ({ ok: true })),
+    )
+    expect(await isVacuousLock(withSchema)).toBe(false)
+
+    // No routes at all is not "vacuous" - there is no unguarded contract to warn about.
+    expect(await isVacuousLock(await buildContractsLock(server()))).toBe(false)
   })
 
   test("assurance bundle includes explicit skipped gates", async () => {

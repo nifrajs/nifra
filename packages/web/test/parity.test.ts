@@ -2,7 +2,39 @@ import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { collectDevelopmentParityInput, collectIdentityParity } from "../src/internal/parity.ts"
+import {
+  collectDevelopmentParityInput,
+  collectIdentityParity,
+  formatIdentityParityFindings,
+  identityParityHeadline,
+} from "../src/internal/parity.ts"
+
+test("identityParityHeadline pluralizes on the finding count", () => {
+  expect(identityParityHeadline(1)).toBe("1 primary package finding")
+  expect(identityParityHeadline(2)).toBe("2 primary package findings")
+})
+
+// The dev `--allow-duplicate-identity` warning and the hard failure share this formatter, so a change
+// to one keeps the same detail (package, cause, versions, resolved paths) in the other.
+test("formatIdentityParityFindings renders package, cause, versions and paths", () => {
+  const rendered = formatIdentityParityFindings([
+    {
+      package: "react",
+      cause: "duplicate-path",
+      copies: [
+        { version: "19.2.7", path: "apps/web/node_modules/react", importers: ["apps/web"] },
+        { version: "19.2.7", path: "node_modules/react", importers: ["."] },
+      ],
+      versions: ["19.2.7"],
+      explanation: "react is loaded from more than one physical path",
+      remediation: "Align dependency ranges and reinstall from the workspace root",
+    },
+  ])
+  expect(rendered).toContain("- react [duplicate-path]:")
+  expect(rendered).toContain("versions: 19.2.7;")
+  expect(rendered).toContain("apps/web/node_modules/react")
+  expect(rendered).toContain("node_modules/react")
+})
 
 test("shared identity parity resolves a workspace from an app subdirectory", async () => {
   const root = await mkdtemp(join(tmpdir(), "nifra-parity-"))
@@ -43,6 +75,8 @@ test("shared identity parity resolves a workspace from an app subdirectory", asy
     expect(result.findings).toHaveLength(1)
     expect(result.findings[0]?.package).toBe("react")
     expect(result.findings[0]?.copies).toHaveLength(3)
+    expect(result.findings[0]?.cause).toBe("duplicate-path")
+    expect(result.findings[0]?.versions).toEqual(["19.2.7"])
     expect(result.findings[0]?.remediation).toContain("reinstall")
   } finally {
     await rm(root, { recursive: true, force: true })

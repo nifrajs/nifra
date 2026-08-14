@@ -36,9 +36,15 @@ export interface IdentityParityCopy {
   readonly importers: readonly string[]
 }
 
+export type IdentityParityCause = "version-skew" | "duplicate-path"
+
 export interface IdentityParityFinding {
   readonly package: string
   readonly copies: readonly IdentityParityCopy[]
+  /** Unique package versions observed across the physical copies. */
+  readonly versions: readonly string[]
+  /** `version-skew` when copies advertise different versions; otherwise the same-version path split. */
+  readonly cause: IdentityParityCause
   readonly explanation: string
   readonly remediation: string
 }
@@ -271,7 +277,7 @@ const identityTargets = (pkg: Record<string, unknown>): readonly string[] =>
     .sort()
 
 const IDENTITY_REMEDIATION =
-  "Align dependency ranges and reinstall from the workspace root so every importer resolves one physical copy."
+  "Align dependency ranges and reinstall from the workspace root so every importer resolves one physical copy; nifra does not rewrite lockfiles for identity conflicts."
 
 /** Find duplicate identity-sensitive package realpaths without reading application payloads. */
 export async function collectIdentityParity(
@@ -337,21 +343,46 @@ export async function collectIdentityParity(
   const findings: IdentityParityFinding[] = []
   for (const [name, copies] of [...byPackage.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     if (copies.size < 2) continue
+    const resolvedCopies = [...copies.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([path, copy]) => ({
+        version: copy.version,
+        path: displayPath(cwd, path),
+        importers: [...copy.importers].sort(),
+      }))
+    const versions = [...new Set(resolvedCopies.map((copy) => copy.version))].sort()
+    const cause: IdentityParityCause = versions.length > 1 ? "version-skew" : "duplicate-path"
     findings.push({
       package: name,
-      copies: [...copies.entries()]
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([path, copy]) => ({
-          version: copy.version,
-          path: displayPath(cwd, path),
-          importers: [...copy.importers].sort(),
-        })),
-      explanation: `${name} is loaded from more than one physical path, so module state and symbols are not shared`,
+      copies: resolvedCopies,
+      versions,
+      cause,
+      explanation:
+        cause === "version-skew"
+          ? `${name} resolves to multiple versions and physical paths, so module state and symbols are not shared`
+          : `${name} is loaded from more than one physical path, so module state and symbols are not shared`,
       remediation: IDENTITY_REMEDIATION,
     })
   }
   return { workspaceRoot: scanRoot, findings }
 }
+
+/** One `- pkg [cause]: ...` line per finding, shared by the hard failure and the dev warning. */
+export function formatIdentityParityFindings(findings: readonly IdentityParityFinding[]): string {
+  return findings
+    .map(
+      (finding) =>
+        `- ${finding.package} [${finding.cause}]: ${finding.explanation}. ${finding.remediation}\n` +
+        `  versions: ${finding.versions.join(", ")}; paths: ${finding.copies
+          .map((copy) => copy.path)
+          .join(", ")}`,
+    )
+    .join("\n")
+}
+
+/** `2 primary package findings` / `1 primary package finding`. */
+export const identityParityHeadline = (count: number): string =>
+  `${count} primary package finding${count === 1 ? "" : "s"}`
 
 /** Fail before dev/build when the same identity-sensitive package has multiple realpaths. */
 export async function assertIdentityParity(
@@ -361,15 +392,9 @@ export async function assertIdentityParity(
 ): Promise<IdentityParityResult> {
   const result = await collectIdentityParity(cwd, rootPackage, options)
   if (result.findings.length === 0) return result
-  const details = result.findings
-    .map(
-      (finding) =>
-        `${finding.package}: ${finding.explanation}. ${finding.remediation} Paths: ${finding.copies
-          .map((copy) => copy.path)
-          .join(", ")}`,
-    )
-    .join("; ")
-  throw new Error(`[nifra] identity parity failed: ${details}`)
+  throw new Error(
+    `[nifra] identity parity failed (${identityParityHeadline(result.findings.length)}):\n${formatIdentityParityFindings(result.findings)}`,
+  )
 }
 
 const assetName = (url: string): string => url.replace(/^.*\//, "")

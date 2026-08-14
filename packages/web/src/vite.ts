@@ -21,7 +21,12 @@ import { createDevDiagnostics } from "./dev-diagnostics.ts"
 import { listenOrExplain } from "./dev-port.ts"
 import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry, setSsrModuleLoader } from "./index.ts"
-import { assertIdentityParity } from "./internal/parity.ts"
+import {
+  assertIdentityParity,
+  collectIdentityParity,
+  formatIdentityParityFindings,
+  identityParityHeadline,
+} from "./internal/parity.ts"
 import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
 import { importVite } from "./internal/vite-import.ts"
 import { scopedName } from "./plugins/css-modules.ts"
@@ -34,6 +39,18 @@ interface FetchApp {
   fetch(request: Request): Response | Promise<Response>
 }
 
+// A node in Vite's module graph. `importers` is the union of client and SSR importers - walking it
+// over-invalidates (a client-only importer gets re-evaluated on the SSR side too), which is safe:
+// re-evaluation is idempotent, and correctness of the served module beats sparing a dev re-eval.
+interface ViteModuleNode {
+  readonly importers: Set<ViteModuleNode>
+}
+// Structural slice of Vite's legacy unified module graph. Absent on a Vite that renamed it (the
+// invalidation degrades to Vite's own change handling, i.e. today's behavior) - never a hard failure.
+interface ViteModuleGraph {
+  getModulesByFile(file: string): Set<ViteModuleNode> | undefined
+  invalidateModule(mod: ViteModuleNode): void
+}
 // Structural slice of the Vite dev server this module drives (avoids a hard type dep on `vite`).
 interface ViteLike {
   /** Load a module through VITE's graph - the seam that makes the Vite pipeline own SSR too. */
@@ -41,6 +58,8 @@ interface ViteLike {
   readonly middlewares: (req: IncomingMessage, res: ServerResponse, next: () => void) => void
   transformIndexHtml(url: string, html: string): Promise<string>
   ssrFixStacktrace(err: Error): void
+  /** The module graph, used to invalidate a changed file AND its transitive importers before reload. */
+  readonly moduleGraph?: ViteModuleGraph
   readonly watcher: {
     on(event: "change" | "add" | "unlink", cb: (path: string) => void): void
   }
@@ -99,6 +118,14 @@ export interface ViteDevServerOptions {
   readonly publicDir?: string | false
   /** Client-visible environment prefix (default `"PUBLIC_"`; empty disables exposure). */
   readonly publicEnvPrefix?: string
+  /**
+   * Downgrade the startup identity-parity check from a hard failure to a loud warning (dev only).
+   * The check catches two physical copies of an identity-sensitive package (e.g. React) resolving in
+   * one process, which reliably breaks hydration and framework context. When a duplicate comes from a
+   * linked sibling repo you cannot fix in the moment, set this to keep the dev server running while you
+   * resolve it; `nifra build` never honors it. Wired to `nifra dev --allow-duplicate-identity`.
+   */
+  readonly allowDuplicateIdentity?: boolean
 }
 
 export interface ViteDevServer {
@@ -297,7 +324,16 @@ function packageNameOf(specifier: string): string | undefined {
 export async function createViteDevServer(options: ViteDevServerOptions): Promise<ViteDevServer> {
   const root = resolvePath(options.root ?? process.cwd())
   const routesDir = resolvePath(options.routesDir)
-  await assertIdentityParity(root)
+  if (options.allowDuplicateIdentity === true) {
+    const parity = await collectIdentityParity(root)
+    if (parity.findings.length > 0)
+      console.warn(
+        `[nifra] identity parity bypassed via --allow-duplicate-identity (${identityParityHeadline(parity.findings.length)}):\n${formatIdentityParityFindings(parity.findings)}\n` +
+          "[nifra] dev is continuing, but duplicate module identity can break hydration and framework context - fix the resolution before you ship.",
+      )
+  } else {
+    await assertIdentityParity(root)
+  }
   const port = options.port ?? DEFAULT_DEV_PORT
 
   // Which files are the app's own components, for framework plugins that hot-patch at component
@@ -474,12 +510,36 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   setSsrModuleLoader(ssrLoad)
   app = await options.createApp(entryUrl, ssrLoad)
 
+  // Evict a changed file from the SSR graph together with every module that (transitively) imports it,
+  // BEFORE re-creating the app. Vite re-evaluates a directly-changed module on its own, but a parent
+  // that merely imports the changed leaf keeps its cached SSR bindings - so the re-imported entry walks
+  // a graph that is fresh at the leaf and stale everywhere above it. That is what surfaces downstream as
+  // phantom hydration mismatches (SSR renders through an old module, the client through the new one) and
+  // stale i18n catalogs. Invalidating the importer closure makes the next `ssrLoadModule(entry)` re-walk
+  // the whole affected subtree. `importers` is the client+SSR union, so this over-invalidates slightly;
+  // in a dev server that only costs a re-evaluation, never correctness.
+  const invalidateImporterClosure = (path: string): void => {
+    const graph = vite.moduleGraph
+    if (graph === undefined) return
+    const roots = graph.getModulesByFile(path)
+    if (roots === undefined) return
+    const seen = new Set<ViteModuleNode>()
+    const stack = [...roots]
+    for (let mod = stack.pop(); mod !== undefined; mod = stack.pop()) {
+      if (seen.has(mod)) continue
+      seen.add(mod)
+      graph.invalidateModule(mod)
+      for (const importer of mod.importers) stack.push(importer)
+    }
+  }
+
   // Re-create the app on change so a hard reload picks up a route ADD/REMOVE (the manifest comes
-  // from a directory scan, which `ssrLoadModule` cannot invalidate). Module CONTENT no longer needs a
-  // version counter: Vite owns SSR resolution now and re-evaluates changed modules itself, which is
-  // the cache-busting the old `importQuery` was emulating against Bun's import cache.
+  // from a directory scan, which `ssrLoadModule` cannot invalidate). Module CONTENT is re-evaluated by
+  // Vite plus the importer-closure invalidation above; no version counter against Bun's import cache is
+  // needed anymore, the way the old `importQuery` cache-buster was.
   let refreshVersion = 0
-  const refreshApp = (): void => {
+  const refreshApp = (path?: string): void => {
+    if (path !== undefined) invalidateImporterClosure(path)
     const version = ++refreshVersion
     Promise.resolve(options.createApp(entryUrl, ssrLoad))
       .then((next) => {
@@ -491,7 +551,7 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   for (const event of ["add", "unlink"] as const) {
     vite.watcher.on(event, (path) => {
       if (path.startsWith(`${routesDir}/`) || path.startsWith(`${routesDir}\\`)) writeClientEntry()
-      refreshApp()
+      refreshApp(path)
     })
   }
 

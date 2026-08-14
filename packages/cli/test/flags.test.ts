@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
 import { DEFAULT_DEV_PORT } from "@nifrajs/web"
-import { formatCliError, parseFlags } from "../src/cli.ts"
+import { assureBundleRequested, formatCliError, parseFlags } from "../src/cli.ts"
 
 // parseFlags reads Bun.env.PORT; snapshot + restore so tests don't leak the override into each other.
 const savedPort = Bun.env.PORT
@@ -40,6 +40,23 @@ test("parseFlags parses --out and --poll independently of port", () => {
   expect(flags.out).toBe("build")
   expect(flags.poll).toBe(true)
   expect(flags.port).toBe(DEFAULT_DEV_PORT)
+})
+
+test("parseFlags parses --allow-duplicate-identity (default off)", () => {
+  delete Bun.env.PORT
+  expect(parseFlags([]).allowDuplicateIdentity).toBe(false)
+  expect(parseFlags(["--allow-duplicate-identity"]).allowDuplicateIdentity).toBe(true)
+})
+
+// Guards the regression: `assure --json` must stay the {ok,routes,findings} report. The bundle is
+// opt-in, so bare --json (or no flag) never routes to the {gates,verdict} lane.
+test("assureBundleRequested: --json alone is the report; --bundle and bundle-only flags opt in", () => {
+  expect(assureBundleRequested([])).toBe(false)
+  expect(assureBundleRequested(["--json"])).toBe(false)
+  expect(assureBundleRequested(["--bundle"])).toBe(true)
+  expect(assureBundleRequested(["--bundle", "--json"])).toBe(true)
+  for (const flag of ["--strict", "--hydration", "--interact", "--out"])
+    expect(assureBundleRequested([flag])).toBe(true)
 })
 
 // `Bun.build` reports a bundle failure as an AggregateError whose `.message` is a generic "Bundle

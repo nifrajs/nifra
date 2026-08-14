@@ -129,8 +129,10 @@ export function assertSingleReactCore(
     "[nifra/web-react] two copies of React reached SSR, so hooks render against a null dispatcher " +
       "(the `resolveDispatcher().useState is null` crash). react-dom renders with a DIFFERENT React " +
       "than your components import:\n" +
-      `  react-dom's react:  ${rendererReact}\n` +
-      `  components' react:  ${componentsReact}\n` +
+      `  react-dom/server → react:       ${rendererReact}\n` +
+      `    resolved from: ${dirnamePortable(reactDomServerPath)}\n` +
+      `  route component import "react": ${componentsReact}\n` +
+      `    resolved from: ${appRoot()}\n` +
       "Module identity is path-based, so two copies fail even at the same version. Dedupe react to one " +
       "physical copy - usually a single hoisted install at the workspace root (`nifra doctor` locates " +
       "the duplicate). A Vite `resolve.dedupe`/alias fixes only the client bundle, not this SSR path.",

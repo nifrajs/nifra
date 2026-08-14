@@ -9,7 +9,7 @@
  *
  * Bun-only (it runs the framework's TS + Bun plugins directly). The *output* runs anywhere.
  */
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { inProcessClient } from "@nifrajs/client"
 import {
@@ -40,6 +40,10 @@ export interface Flags {
    *
    * `nifra build --bun`: force the Bun build. Refuses when that would drop the app's `vitePlugins`. */
   readonly bun: boolean
+  /** `nifra dev --allow-duplicate-identity`: downgrade the Vite dev server's identity-parity check from
+   * a hard failure to a loud warning so a duplicate coming from a linked sibling repo doesn't take dev
+   * down while you fix the resolution. Dev only - `nifra build` always fails hard on a duplicate. */
+  readonly allowDuplicateIdentity: boolean
 }
 
 const HELP = `nifra - zero-config dev/build/start for a nifra app
@@ -53,6 +57,10 @@ Usage:
                                          preserved), no Vite in the process. CSS Modules, plain CSS,
                                          Tailwind and the app's own \`clientPlugins\`/\`serverPlugins\` run
                                          through the same Bun transforms production uses.
+                [--allow-duplicate-identity]  Downgrade the Vite dev server's identity-parity check to a
+                                         loud warning instead of a hard failure, so a duplicate React/
+                                         adapter copy from a linked sibling repo doesn't take dev down
+                                         while you fix the resolution. Dev only - \`nifra build\` still fails.
   nifra build   [--out <dir>] [--report]  Emit a complete deploy directory.
                 [--target <t>]             Target a FULL deploy dir for <t>:
                                          bun | node | deno | cf-pages | vercel | static. Packages
@@ -123,11 +131,13 @@ Usage:
                                          closed. Exits non-zero on any breaking change - run it in CI.
   nifra sdk     --lang <python|go> [--out <file>]
                                          Generate a deterministic non-TypeScript SDK from backend.ts.
-  nifra assure  [--config <file>] [--json] [--strict] [--out <file>] [--hydration] [--interact]
-                                         Emit one structured assurance bundle. The bundle records every
-                                         applicable gate as pass, fail, or skip and exits non-zero unless
-                                         its verdict is green. Without these bundle flags, the legacy
-                                         route-assurance report remains available.
+  nifra assure  [--config <file>] [--json]  Route-assurance report. Human table by default; --json emits
+                                         the {ok, routes, findings} report for agents.
+  nifra assure  --bundle [--json] [--strict] [--out <file>] [--hydration] [--interact]
+                                         Emit one structured assurance {version, gates, verdict} bundle
+                                         (always JSON). Records every applicable gate as pass, fail, or
+                                         skip and exits non-zero unless its verdict is green. --strict,
+                                         --hydration, --interact and --out imply --bundle.
   nifra contracts snapshot [--out <file>] Write the deterministic route contract lock.
   nifra contracts check [--json]          Check the current routes against contracts.lock.json.
   nifra replay <file>                     Replay a token-only verification metadata file.
@@ -137,6 +147,8 @@ Usage:
   nifra capabilities check [--lockfile <file>] [--config <file>] [--json]
                                          CI gate: fail on raw effect-import bypasses, declaration/evidence
                                          drift, unsafe GET/HEAD writes, idempotency gaps, or lockfile drift.
+  nifra capabilities explain <METHOD> <path> [--config <file>] [--json]
+                                         Explain one route's declared capability tokens and static provenance.
   nifra manifest emit [--out <file>] [--config <file>] [--sign <key-ref>]
                                          Emit a deterministic route trust artifact after assurance passes;
                                          optionally write an Ed25519 signature via the configured KMS signer.
@@ -389,6 +401,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
     ...(fw.publicEnvPrefix !== undefined ? { publicEnvPrefix: fw.publicEnvPrefix } : {}),
     poll: flags.poll,
     port: flags.port,
+    ...(flags.allowDuplicateIdentity ? { allowDuplicateIdentity: true } : {}),
     ...(fw.conditions ? { conditions: fw.conditions } : {}),
     ...(fw.define ? { define: fw.define } : {}),
     // `load` resolves route modules through VITE, not through Bun. That is what makes the Vite
@@ -442,6 +455,38 @@ export async function assertUseIsEdgeExported(
       "file), so this build would fail later with an opaque bundler error inside generated code.\n\n" +
       "  - Define `use` in framework.ts and re-export it from nifra.config.ts " +
       '(`export { use } from "./framework.ts"`) so `nifra dev` sees it too.',
+  )
+}
+
+/**
+ * A production build must not ship a workspace-linked package whose `default`-condition artifact is
+ * missing or older than its source. The `"bun": "./src"` / `"default": "./dist"` split means Bun (this
+ * build, the tests) reads live source while the deployed app and any node consumer read `dist/` - so a
+ * green `nifra build` can bundle stale or absent dist and the drift never shows in a diff. The doctor
+ * reports the same skew as an advisory during development; at build time it is a hard failure, because
+ * this is the artifact that ships. No-op outside a workspace: tarball-installed deps cannot drift.
+ */
+async function assertFreshWorkspaceDists(cwd: string): Promise<void> {
+  const pkgPath = resolve(cwd, "package.json")
+  if (!existsSync(pkgPath)) return
+  let rootPackage: Record<string, unknown>
+  try {
+    rootPackage = JSON.parse(readFileSync(pkgPath, "utf8")) as Record<string, unknown>
+  } catch {
+    return // an unreadable/!JSON package.json is a separate problem; don't mask it as a stale-dist failure
+  }
+  const { collectStaleWorkspaceDists } = await import("./doctor.ts")
+  const stale = await collectStaleWorkspaceDists(cwd, rootPackage)
+  if (stale.length === 0) return
+  const lines = stale.map((f) =>
+    f.missing
+      ? `  ${f.package}: ${f.distFile} was never built (source ${f.sourceFile})`
+      : `  ${f.package}: ${f.distFile} is ${f.behindSeconds}s behind ${f.sourceFile}`,
+  )
+  throw new Error(
+    `[nifra] build blocked: ${stale.length} workspace-linked package(s) ship a stale or missing dist artifact, so the deployed app would serve code this build did not produce:\n${lines.join(
+      "\n",
+    )}\nBuild the offending package(s) (\`bun run build\` in each) so every export target exists and is at least as new as its source, then rebuild.`,
   )
 }
 
@@ -505,6 +550,11 @@ async function buildForTarget(app: LoadedApp, target: string, flags: Flags): Pro
     // The static target needs a built app to drive prerendering - only build it when targeting static.
     ...(target === "static" ? { prerenderApp: await buildPrerenderApp(app) } : {}),
   })
+  // A production build must not certify itself green while a workspace-linked dependency ships a dist
+  // artifact older than (or absent next to) its source: the `bun`->src condition let this compile read
+  // live source, but the deployed app and every node consumer read `dist/`. Gate here, after the compile
+  // proved the source is buildable, so the failure names the package to rebuild rather than a bundle error.
+  await assertFreshWorkspaceDists(cwd)
   console.log(`nifra build (${target}, ${decision.pipeline}) → ${result.run}`)
   // The pipeline is stated on every build, not only the surprising ones - an auto-selected Vite build
   // must never look like the default, and a default Bun build must not leave the question open either.
@@ -575,6 +625,7 @@ export function parseFlags(args: readonly string[]): Flags {
   let report = false
   let vite = false
   let bun = false
+  let allowDuplicateIdentity = false
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
     if ((a === "--port" || a === "-p") && args[i + 1]) port = Number(args[++i])
@@ -584,11 +635,28 @@ export function parseFlags(args: readonly string[]): Flags {
     else if (a === "--report") report = true
     else if (a === "--vite") vite = true
     else if (a === "--bun") bun = true
+    else if (a === "--allow-duplicate-identity") allowDuplicateIdentity = true
   }
   if (!Number.isFinite(port) || port < 0 || port > 65535) {
     throw new Error(`[nifra] invalid --port: ${port}`)
   }
-  return { port, out, poll, target, report, vite, bun }
+  return { port, out, poll, target, report, vite, bun, allowDuplicateIdentity }
+}
+
+/**
+ * `assure` uses the structured-bundle lane only when explicitly asked. A bare `--json` is NOT a
+ * request for the bundle - it keeps the legacy `{ ok, routes, findings }` report machine-readable, so a
+ * pre-bundle consumer is never silently handed the `{ gates, verdict }` shape. `--bundle` (or a
+ * bundle-only flag) opts in; `--bundle --json` still yields the bundle, which is always JSON.
+ */
+export function assureBundleRequested(argv: readonly string[]): boolean {
+  return (
+    argv.includes("--bundle") ||
+    argv.includes("--strict") ||
+    argv.includes("--hydration") ||
+    argv.includes("--interact") ||
+    argv.includes("--out")
+  )
 }
 
 async function main(): Promise<void> {
@@ -725,6 +793,7 @@ async function main(): Promise<void> {
         json: argv.includes("--json"),
         autoFix: argv.includes("--auto-fix") || argv.includes("--fix"),
         strict: argv.includes("--strict"),
+        cliVersion: CLI_VERSION,
         ...(target === undefined ? {} : { target }),
       }))
     )
@@ -802,12 +871,7 @@ async function main(): Promise<void> {
       if (
         !(await runAssurance(process.cwd(), {
           json: argv.includes("--json"),
-          bundle:
-            argv.includes("--json") ||
-            argv.includes("--strict") ||
-            argv.includes("--hydration") ||
-            argv.includes("--interact") ||
-            argv.includes("--out"),
+          bundle: assureBundleRequested(argv),
           strict: argv.includes("--strict"),
           hydration: argv.includes("--hydration"),
           interact: argv.includes("--interact"),
@@ -827,11 +891,18 @@ async function main(): Promise<void> {
     const outIndex = argv.indexOf("--out")
     const out = outIndex === -1 ? undefined : argv[outIndex + 1]
     try {
-      const { checkContractsLock, snapshotContracts } = await import("./contracts.ts")
+      const { checkContractsLock, isVacuousLock, snapshotContracts } = await import(
+        "./contracts.ts"
+      )
       if (action === "snapshot") {
         const lock = await snapshotContracts(process.cwd(), out)
         if (argv.includes("--json")) console.log(JSON.stringify(lock, null, 2))
         else console.log(`[nifra] wrote ${Object.keys(lock.routes).length} contract digests`)
+        if (await isVacuousLock(lock)) {
+          console.warn(
+            "[nifra] advisory: no route schemas declared - the trust manifest is vacuous (every hash is the empty-schema digest), so drift detection guards nothing until routes declare schemas.",
+          )
+        }
       } else if (action === "check") {
         const result = await checkContractsLock(process.cwd())
         const output = { ok: result.present && result.diagnostics.length === 0, ...result }
@@ -876,7 +947,9 @@ async function main(): Promise<void> {
       return value
     }
     try {
-      const { runCapabilityCheck, runCapabilitySnapshot } = await import("./capabilities-tool.ts")
+      const { runCapabilityCheck, runCapabilityExplain, runCapabilitySnapshot } = await import(
+        "./capabilities-tool.ts"
+      )
       const config = valueAfter("--config")
       if (action === "snapshot") {
         const out = valueAfter("--out")
@@ -897,8 +970,29 @@ async function main(): Promise<void> {
           }))
         )
           process.exitCode = 1
+      } else if (action === "explain") {
+        const positional: string[] = []
+        for (let index = 2; index < argv.length; index++) {
+          const arg = argv[index]!
+          if (arg === "--config") {
+            index++
+            continue
+          }
+          if (arg === "--json" || arg.startsWith("-")) continue
+          positional.push(arg)
+        }
+        if (positional.length !== 2) {
+          throw new Error("[nifra] capabilities explain needs <METHOD> <path>")
+        }
+        if (
+          !(await runCapabilityExplain(process.cwd(), positional[0]!, positional[1]!, {
+            ...(config !== undefined ? { config } : {}),
+            json: argv.includes("--json"),
+          }))
+        )
+          process.exitCode = 1
       } else {
-        throw new Error("[nifra] capabilities needs `snapshot` or `check`")
+        throw new Error("[nifra] capabilities needs `snapshot`, `check`, or `explain`")
       }
     } catch (err) {
       console.error(formatCliError(err))
