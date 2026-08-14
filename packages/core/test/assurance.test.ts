@@ -126,6 +126,30 @@ describe("route assurance evidence", () => {
     expect(app.routes()[0]?.assurance?.[0]?.source).toBe("route-schema")
   })
 
+  test("an explicit route bodyLimit publishes the core read-time body bound", () => {
+    // The raw-body case: no schema to validate through, so the transport cap is the only thing
+    // bounding `c.req.body` - and it binds a stream, which a Content-Length gate cannot.
+    const app = server()
+      .post("/upload", { bodyLimit: 2_000_000 }, () => ({ ok: true }))
+      .post("/plain", () => ({ ok: true }))
+      .post(
+        "/unlimited",
+        { bodyLimit: "unlimited", bodyLimitReason: "proxied to storage" },
+        () => ({
+          ok: true,
+        }),
+      )
+
+    expect(evidence(app, "/upload")).toEqual([NIFRA_ASSURANCE.BODY_BOUNDED])
+    expect(app.routes().find((route) => route.path === "/upload")?.assurance?.[0]?.source).toBe(
+      "route-schema",
+    )
+    // The server-wide maxBodyBytes default covers this route but is nobody's decision, so it is not
+    // published as evidence; an opted-out route publishes nothing at all.
+    expect(evidence(app, "/plain")).toEqual([])
+    expect(evidence(app, "/unlimited")).toEqual([])
+  })
+
   test("merged global evidence follows merged global hook semantics", () => {
     const global = withRouteAssurance<Middleware>(
       { name: "global", onRequest: () => undefined },

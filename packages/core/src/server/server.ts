@@ -1901,7 +1901,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       })
       routeAssurance.push(Object.freeze(declared))
     }
-    if (schema?.body !== undefined) {
+    // Two ways a route proves its body is bounded, both enforced by the core at read time:
+    // `schema.body` (the validated read is bounded) and an explicit finite `schema.bodyLimit` (the
+    // transport cap shadows every reader, including a raw `c.req.body` stream that a Content-Length
+    // middleware cannot bound). `bodyLimit: "unlimited"` publishes nothing on its own: that route
+    // deliberately opted out, and only a `schema.body` there keeps it bounded.
+    // The server-wide `maxBodyBytes` default is not evidence. It applies to every route whether or
+    // not anyone thought about it, so publishing it would make the id pass everywhere and prove
+    // nothing; this evidence marks a bound the route chose.
+    if (schema?.body !== undefined || typeof schema?.bodyLimit === "number") {
       routeAssurance.push(
         Object.freeze({
           id: NIFRA_ASSURANCE_IDS.BODY_BOUNDED,
