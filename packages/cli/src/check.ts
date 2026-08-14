@@ -30,6 +30,7 @@ import { importProjectTypeScript, type TypeScriptApi } from "./internal/typescri
 // close a cycle. Doctor is what actually runs the collector (see the `pipeline` rule below).
 import type { PipelineReport } from "./pipeline-report.ts"
 import { RULE_CODES } from "./rules/codes.ts"
+import { commentBlockMarkerReason } from "./rules/comment-markers.ts"
 import { parseRulePacks, type RuleContext, runRuleRegistry, sourceIndex } from "./rules/index.ts"
 import { LEGACY_RULE_CODES, legacyRules } from "./rules/legacy.ts"
 import { routeRules } from "./rules/routes.ts"
@@ -902,6 +903,158 @@ function templateShape(
   return { staticText, dynamic }
 }
 
+/** A same-file binding the argument resolver proved holds one expression: a `const`, or a `let` the
+ * whole file never reassigns. `"shadow"` marks a nearer binding of the name we can NOT read through (a
+ * parameter, `var`, destructured, uninitialized, reassigned `let`) - it stops the outward walk so a
+ * farther, resolvable const of the same name is never read in its place. */
+type ResolvableBinding = { readonly initializer: TSApi.Expression } | "shadow"
+
+/** Whether `name` is written to anywhere in the file - a plain, compound, or `++`/`--` assignment to a
+ * bare identifier of that name. A `let` that is is over-cautiously refused (it might be reassigned from
+ * request data); a `const` never needs this. Over-refusal only ever leaves an interpolation flagged as
+ * before, never the reverse. */
+function isReassignedInFile(ts: TypeScriptApi, source: TSApi.SourceFile, name: string): boolean {
+  let found = false
+  const visit = (node: TSApi.Node): void => {
+    if (found) return
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      ts.isIdentifier(node.left) &&
+      node.left.text === name
+    ) {
+      found = true
+      return
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken ||
+        node.operator === ts.SyntaxKind.MinusMinusToken) &&
+      ts.isIdentifier(node.operand) &&
+      node.operand.text === name
+    ) {
+      found = true
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return found
+}
+
+/** Does `binding` bind `name` (as a plain identifier or nested inside a destructuring pattern)? Mirrors
+ * the pattern walk in {@link isShadowedAt}. */
+function bindingNameCovers(ts: TypeScriptApi, binding: TSApi.BindingName, name: string): boolean {
+  return ts.isIdentifier(binding)
+    ? binding.text === name
+    : binding.elements.some(
+        (element) =>
+          !ts.isOmittedExpression(element) &&
+          (ts.isIdentifier(element.name)
+            ? element.name.text === name
+            : bindingNameCovers(ts, element.name, name)),
+      )
+}
+
+/** Inspect the bindings a single scope node introduces DIRECTLY (not nested) for `name`: parameters and
+ * catch variables of a function/catch, `var`/`let`/`const` and function/class declarations of a
+ * statement list. Returns the readable initializer, `"shadow"` for a form we cannot read through, or
+ * `undefined` when this scope does not bind the name at all. */
+function directBinding(
+  ts: TypeScriptApi,
+  source: TSApi.SourceFile,
+  scope: TSApi.Node,
+  name: string,
+): ResolvableBinding | undefined {
+  if (ts.isFunctionLike(scope)) {
+    for (const parameter of scope.parameters) {
+      if (bindingNameCovers(ts, parameter.name, name)) return "shadow"
+    }
+  }
+  if (ts.isCatchClause(scope)) {
+    const declared = scope.variableDeclaration
+    if (declared !== undefined && bindingNameCovers(ts, declared.name, name)) return "shadow"
+  }
+  const statements: readonly TSApi.Statement[] | undefined = ts.isSourceFile(scope)
+    ? scope.statements
+    : ts.isBlock(scope) || ts.isModuleBlock(scope)
+      ? scope.statements
+      : ts.isCaseClause(scope) || ts.isDefaultClause(scope)
+        ? scope.statements
+        : undefined
+  const lists: TSApi.VariableDeclarationList[] = []
+  if (statements !== undefined) {
+    for (const statement of statements) {
+      if (ts.isVariableStatement(statement)) lists.push(statement.declarationList)
+      if (
+        (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) &&
+        statement.name?.text === name
+      ) {
+        return "shadow"
+      }
+    }
+  }
+  if (
+    (ts.isForStatement(scope) || ts.isForInStatement(scope) || ts.isForOfStatement(scope)) &&
+    scope.initializer !== undefined &&
+    ts.isVariableDeclarationList(scope.initializer)
+  ) {
+    lists.push(scope.initializer)
+  }
+  for (const list of lists) {
+    for (const declaration of list.declarations) {
+      if (!bindingNameCovers(ts, declaration.name, name)) continue
+      // A destructured or uninitialized binding, or a `var` (hoisting + reassignment risk), is not a
+      // value we can read one expression out of.
+      if (!ts.isIdentifier(declaration.name) || declaration.initializer === undefined)
+        return "shadow"
+      const isConst = (list.flags & ts.NodeFlags.Const) !== 0
+      const isLet = (list.flags & ts.NodeFlags.Let) !== 0
+      if (isConst) return { initializer: declaration.initializer }
+      if (isLet && !isReassignedInFile(ts, source, name))
+        return { initializer: declaration.initializer }
+      return "shadow"
+    }
+  }
+  return undefined
+}
+
+/**
+ * Resolve a query-call ARGUMENT identifier to the expression it was initialized from, so a statement
+ * parked in a variable is scanned as if it had been written inline at the call. This is the counterpart
+ * to {@link resolveStaticSqlText}: that folds a const's text INTO a template's shape; this unfolds the
+ * whole statement back out of the variable it was lifted into. Without it, ANY interpolated-SQL finding
+ * could be silenced, invisibly, by hoisting the statement to `const q = …` first.
+ *
+ * Same-file only. Nearest enclosing declaration wins, so a shadowing local is read and never a
+ * same-named module const. Reads through a `const`, or a `let` the file never reassigns, at function or
+ * module scope; transitive through an identifier-valued initializer; depth-capped. A parameter, an
+ * imported or destructured binding, a reassigned `let`, a `var`, or a name with no same-file
+ * declaration returns `undefined` - which leaves the argument scanned as itself (unflagged unless it is
+ * a module const that resolves to static text: exactly the pre-feature behavior).
+ */
+function resolveArgumentInitializer(
+  ts: TypeScriptApi,
+  node: TSApi.Identifier,
+  depth: number,
+): TSApi.Expression | undefined {
+  if (depth > CONST_RESOLUTION_DEPTH) return undefined
+  const source = node.getSourceFile()
+  const name = node.text
+  for (let scope: TSApi.Node | undefined = node.parent; scope !== undefined; scope = scope.parent) {
+    const binding = directBinding(ts, source, scope, name)
+    if (binding === "shadow") return undefined
+    if (binding !== undefined) {
+      let init = binding.initializer
+      while (ts.isParenthesizedExpression(init)) init = init.expression
+      return ts.isIdentifier(init) ? resolveArgumentInitializer(ts, init, depth + 1) : init
+    }
+    if (ts.isSourceFile(scope)) break
+  }
+  return undefined
+}
+
 /** Describe only the first argument's syntax; comments/strings elsewhere cannot influence the result. */
 function sqlExpressionShape(
   ts: TypeScriptApi,
@@ -990,6 +1143,17 @@ function sqlExpressionShape(
       }
     }
   }
+  // A bare name that did not resolve to compile-time text. If it is a same-file binding we can prove
+  // holds one expression, scan THAT expression's shape - so a statement hoisted into `const q = …` is
+  // read exactly as if it were written inline at the call, closing the "extract a variable to launder
+  // the finding" hole. `literal` is forced false: the value arrived through a variable, which is the
+  // property the `unsafe`/`$queryRawUnsafe` hatch rule keys on.
+  if (ts.isIdentifier(node)) {
+    const initializer = resolveArgumentInitializer(ts, node, 0)
+    if (initializer !== undefined) {
+      return { ...sqlExpressionShape(ts, initializer, scope), literal: false }
+    }
+  }
   return {
     staticText: "",
     dynamic: true,
@@ -1023,6 +1187,11 @@ function sqlMethod(
 }
 
 const SQL_RECEIVER = /(?:^|\.)(?:db|sql|prisma|drizzle|database|conn|connection|client|tx)$/i
+
+/** The opt-out pragma that silences one interpolated-SQL finding. Written `// nifra-expect sql-dynamic:
+ * <reason>` on the flagged line or in the comment block directly above it; the reason after the colon
+ * is mandatory (see {@link commentBlockMarkerReason}). Scoped to the single statement it sits on. */
+const SQL_DYNAMIC_PRAGMA = "nifra-expect sql-dynamic"
 
 /**
  * Scan one file's text for SQL assembled by interpolation. Pure + line-accurate.
@@ -1062,7 +1231,12 @@ export function scanInterpolatedSql(
         if (unsafeEscape || assembledSql) {
           const index = node.getStart(source)
           const line = source.getLineAndCharacterOfPosition(index).line + 1
-          out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
+          // Sanctioned escape hatch for genuinely-dynamic-but-bound SQL (batch VALUES placeholder
+          // generation, an allowlisted identifier). The reason is mandatory: a bare `// nifra-expect
+          // sql-dynamic` with no reason after the colon does NOT silence, so the hatch always leaves a
+          // greppable audit trail instead of becoming a second laundering trick.
+          const silenced = commentBlockMarkerReason(lines, line, SQL_DYNAMIC_PRAGMA) !== undefined
+          if (!silenced) out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
         }
       }
     }
@@ -2353,6 +2527,7 @@ export async function collectCheckResult(
           "Pass the value as an argument alongside the statement, so the driver binds it.",
           `Or switch to the driver's tagged template (sql\`… ${SQL_INTERPOLATION_EXAMPLE} …\`): the tag receives substitutions separately and binds them.`,
           "An identifier that genuinely cannot be bound (a table or column name) must be checked against an allowlist you control, never taken from the request.",
+          "If the statement is dynamic but every value is already bound (generating `($1),($2),…` for a batch insert), mark it with a `// nifra-expect sql-dynamic: <reason>` comment on the line above - the reason is required.",
         ],
       },
     })
@@ -2390,7 +2565,7 @@ export async function collectCheckResult(
       diagnostics.push({
         rule: "duplicate-install",
         severity: "error",
-        message: `${finding.package} resolves to multiple physical copies (${copies}) - ${finding.explanation}`,
+        message: `${finding.package} identity preflight found ${finding.cause} (${copies}) - ${finding.explanation}`,
         fix: finding.remediation,
         suggestion: {
           kind: "manual",
@@ -2649,6 +2824,20 @@ export async function collectCheckResult(
         }),
       )
     } else {
+      if (contract.vacuous) {
+        // Every route hashes to the empty-schema digest, so the lock exists but the drift rule guards
+        // nothing: it can only ever compare "no schema" to "no schema". Say so, or a green contract check
+        // reads as proof of a stable contract when there is no contract to be stable.
+        structuredExtras.push(
+          diagnostic({
+            code: "NF-K001",
+            severity: "info",
+            message:
+              "no route schemas declared - the trust manifest is vacuous: every contract hash is the empty-schema digest, so drift detection guards nothing. Declare route schemas (body/query/params/response) so the lock has a contract to protect.",
+            verify: "nifra check --lints-only",
+          }),
+        )
+      }
       for (const finding of contract.diagnostics) {
         diagnostics.push({
           rule: "contract-drift",

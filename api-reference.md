@@ -604,7 +604,11 @@ Every public export of every package and documented subpath - name, kind, signat
 - **BytesOptions** _(interface)_ - `interface BytesOptions`
 - **NIFRA_BINARY_HEADER** _(const)_ - `NIFRA_BINARY_HEADER: "x-nifra-binary"`
   Runtime marker paired with the type-only brand so clients do not have to guess from media type.
+- **RawResponse** _(type)_ - `type RawResponse<T> = Response & { readonly [NIFRA_RAW]: T }`
+  A raw `Response` whose JSON body a route declared as `T`. Returning a bare `Response` drops a route out of the typed contract - the client reads its `data` as `never`, since a `Response`'s own properties say nothing about the payload. {@link raw} brands the `Response` with the shape it actually ser…
 - **bytes** _(function)_ - `bytes: (body: BinaryBody, options?: BytesOptions) => BinaryResponse`
+- **raw** _(function)_ - `raw: <T>(response: Response) => RawResponse<T>`
+  Brand a hand-built `Response` with the payload type `T` its body serializes to, so a route that must return a `Response` directly still types `res.data` as `Jsonify<T>` on the client instead of `never`. Use it for the endpoints that build their own `Response` - a token minted by a third-party SDK, …
 
 ### `@nifrajs/core/budget`
 
@@ -3040,7 +3044,6 @@ Every public export of every package and documented subpath - name, kind, signat
 - **generateRouteSearchTypes** _(function)_ - `generateRouteSearchTypes: (manifest: Manifest, options: GenerateRouteSearchTypesOptions) => string`
   Codegen: emit a `.d.ts` that types cross-route `navigate({ to, search })` against each route's `searchSchema`. It augments the {@link RouteSearch} map with `"<pattern>": SearchOf<typeof import(...)>` for every **static** route (one with no `:param`/`*` segment - a concrete `to` a caller can pass; a…
 - **generateServerManifest** _(function)_ - `generateServerManifest: (manifest: Manifest, options: GenerateServerManifestOptions) => string`
-  Codegen: emit a **server manifest** module (as source) for disk-less edge runtimes (Cloudflare Workers, …) - and, with a `target`, any portable server bundle. `discoverRoutes` scans `node:fs` and dynamic-imports each route by a *runtime* path - neither exists on workerd. This instead emits **static…
 - **getBrowserNavigate** _(function)_ - `getBrowserNavigate: () => BrowserNavigate | undefined`
   The active browser navigate, or `undefined` on the server / before `installHistory` has run. A binding calls it when present and falls back to native navigation otherwise.
 - **gone** _(function)_ - `gone: (options?: StatusPageOptions) => never`
@@ -3183,8 +3186,8 @@ Every public export of every package and documented subpath - name, kind, signat
   True when a drift report is clean (no missing + no extra routes).
 - **parseManifestClientEntry** _(function)_ - `parseManifestClientEntry: (source: string) => string | undefined`
   The baked `clientEntry` URL in a committed server-manifest, or `undefined` if absent. Pure.
-- **parseManifestRouteFiles** _(function)_ - `parseManifestRouteFiles: (source: string, routesPrefix?: string) => string[]`
-  Extract the route-relative file list the committed server-manifest imports, normalized to the same `routes/`-relative keys `discoverRoutes` produces (e.g. `docs/index.tsx`). `routesPrefix` is the specifier prefix the manifest used for the routes dir (default `./routes/`, what `buildServer`'s defaul…
+- **parseManifestRouteFiles** _(function)_ - `parseManifestRouteFiles: (source: string, _routesPrefix?: string) => string[]`
+  Extract the route-relative file list a committed server-manifest declares, as the same `routes/`-relative keys `discoverRoutes` produces (e.g. `docs/index.tsx`). Reads the route map's KEYS, which carry the file extension and no directory prefix - exactly discovery's shape - so the result is indepen…
 - **parseManifestRouteStyles** _(function)_ - `parseManifestRouteStyles: (source: string) => Record<string, string[]>`
   The baked per-route `routeStyles` map in a committed server-manifest (empty if absent/unparseable). Pure.
 - **parseManifestStyles** _(function)_ - `parseManifestStyles: (source: string) => string[]`
@@ -3330,7 +3333,7 @@ Every public export of every package and documented subpath - name, kind, signat
   A UI binding boundary: source declarations and generated client stubs are both accepted.
 - **serverFn** _(function)_ - `serverFn: <Input = void, Output = unknown>(config: ServerFnConfig<Input>, fn: (input: Input, context: Context) => MaybePromise<Output>) => ServerFn<Input, Output>`
   Declare a server function.
-- **serverFunctions** _(function)_ - `serverFunctions: <S extends ServerFnHost>(namespace: string, module: ServerFnModule) => (app: S) => S`
+- **serverFunctions** _(function)_ - `serverFunctions: (namespace: string, module: ServerFnModule) => IdentityPlugin`
   Mount a module's server functions under `namespace`, returning a plugin for `app.use(...)`.
 
 ### `@nifrajs/web/fn-state`

@@ -41,8 +41,7 @@ async function sha256(value: string): Promise<string> {
   return [...digest].map((item) => item.toString(16).padStart(2, "0")).join("")
 }
 
-function schemaValue(route: ReflectedRoute, side: "request" | "response"): unknown {
-  const schema = route.schema
+function schemaValue(schema: ReflectedRoute["schema"], side: "request" | "response"): unknown {
   if (schema === undefined) return {}
   if (side === "request") {
     return {
@@ -64,9 +63,26 @@ function schemaValue(route: ReflectedRoute, side: "request" | "response"): unkno
 }
 
 export async function digestRoute(route: ReflectedRoute): Promise<ContractDigest> {
-  const request = JSON.stringify(canonical(schemaValue(route, "request")))
-  const response = JSON.stringify(canonical(schemaValue(route, "response")))
+  const request = JSON.stringify(canonical(schemaValue(route.schema, "request")))
+  const response = JSON.stringify(canonical(schemaValue(route.schema, "response")))
   return { request: await sha256(request), response: await sha256(response) }
+}
+
+/** The digest a route with NO declared schema produces on both sides - `sha256("{}")`. A lock whose
+ * every route hashes to this is guarding nothing: drift detection can only ever compare empty schema to
+ * empty schema. Computed through the same canonical/stringify path as {@link digestRoute} so it tracks
+ * that path rather than a hard-coded literal. */
+export async function emptySchemaDigest(): Promise<string> {
+  return sha256(JSON.stringify(canonical(schemaValue(undefined, "request"))))
+}
+
+/** Whether every route in `lock` hashes to the empty-schema digest (so no route declares a schema). An
+ * empty `routes` map is NOT vacuous in this sense - there is no route whose contract went unguarded. */
+export async function isVacuousLock(lock: ContractsLock): Promise<boolean> {
+  const digests = Object.values(lock.routes)
+  if (digests.length === 0) return false
+  const empty = await emptySchemaDigest()
+  return digests.every((d) => d.request === empty && d.response === empty)
 }
 
 export async function buildContractsLock(source: unknown): Promise<ContractsLock> {
@@ -131,11 +147,16 @@ export function parseContractsLock(value: unknown): ContractsLock {
 export async function checkContractsLock(
   cwd: string,
   file = DEFAULT_CONTRACTS_LOCK,
-): Promise<{ present: boolean; diagnostics: Array<{ route?: string; message: string }> }> {
+): Promise<{
+  present: boolean
+  vacuous: boolean
+  diagnostics: Array<{ route?: string; message: string }>
+}> {
   const path = resolve(cwd, file)
-  if (!existsSync(path)) return { present: false, diagnostics: [] }
+  if (!existsSync(path)) return { present: false, vacuous: false, diagnostics: [] }
   const parsed = parseContractsLock(JSON.parse(await Bun.file(path).text()))
   const current = await buildContractsLock(await loadBackend(cwd))
+  const vacuous = await isVacuousLock(current)
   const diagnostics: Array<{ route?: string; message: string }> = []
   const keys = new Set([...Object.keys(parsed.routes), ...Object.keys(current.routes)])
   for (const key of [...keys].sort()) {
@@ -153,5 +174,5 @@ export async function checkContractsLock(
       })
     }
   }
-  return { present: true, diagnostics }
+  return { present: true, vacuous, diagnostics }
 }

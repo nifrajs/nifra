@@ -250,6 +250,8 @@ describe("collectDoctorResult - project-level import vs declared-deps diff", () 
         "1.12.0",
         "1.13.0",
       ])
+      expect(result.duplicateInstalls[0]?.cause).toBe("version-skew")
+      expect(result.duplicateInstalls[0]?.versions).toEqual(["1.12.0", "1.13.0"])
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
@@ -292,6 +294,8 @@ describe("collectDoctorResult - project-level import vs declared-deps diff", () 
       "1.12.0",
       "1.12.0",
     ])
+    expect(result.duplicateInstalls[0]?.cause).toBe("duplicate-path")
+    expect(result.duplicateInstalls[0]?.versions).toEqual(["1.12.0"])
     await rm(dir, { recursive: true, force: true })
   })
 
@@ -887,6 +891,68 @@ describe("collectStaleWorkspaceDists - a linked dep's dist lagging its src", () 
     } finally {
       await rm(fresh, { recursive: true, force: true })
       await rm(copied, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("collectDoctorResult - CLI-vs-project version drift", () => {
+  const installCore = async (dir: string, version: string): Promise<void> => {
+    const coreDir = join(dir, "node_modules", "@nifrajs", "core")
+    await mkdir(coreDir, { recursive: true })
+    await writeFile(
+      join(coreDir, "package.json"),
+      JSON.stringify({ name: "@nifrajs/core", version }),
+    )
+  }
+
+  test("flags a running CLI a feature version behind the installed core - advisory, not ok-failing", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-drift-"))
+    try {
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "^2.11.0" } }),
+      )
+      await installCore(dir, "2.11.3")
+      const result = await collectDoctorResult(dir, { cliVersion: "2.10.0" })
+      expect(result.toolingDrift).toEqual({
+        cli: "2.10.0",
+        project: "2.11.3",
+        package: "@nifrajs/core",
+      })
+      // Drift is an environment condition, never a project defect: it must not fail the gate on its own.
+      expect(result.ok).toBe(true)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("no drift when feature versions agree (patch differences ignored)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-drift-"))
+    try {
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "^2.11.0" } }),
+      )
+      await installCore(dir, "2.11.9")
+      const result = await collectDoctorResult(dir, { cliVersion: "2.11.0" })
+      expect(result.toolingDrift).toBeUndefined()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("never computed when the caller omits cliVersion (MCP path annotates drift itself)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-drift-"))
+    try {
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "^2.11.0" } }),
+      )
+      await installCore(dir, "1.0.0")
+      const result = await collectDoctorResult(dir)
+      expect(result.toolingDrift).toBeUndefined()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
     }
   })
 })

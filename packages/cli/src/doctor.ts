@@ -28,6 +28,7 @@ import {
   resolvedInstalledCopy,
 } from "@nifrajs/web/internal/parity"
 import { codePositionMask, type SourceFinding, stripComments, walkSource } from "./check.ts"
+import { detectToolingDrift, type ToolingDrift } from "./mcp-root.ts"
 import { collectPipelineReport, type PipelineReport } from "./pipeline-report.ts"
 import { type ResolvedTarget, resolveTarget } from "./port.ts"
 
@@ -144,6 +145,14 @@ export interface DoctorResult {
    * Advisory (never folded into `ok`): while actively editing a linked package its dist is always
    * momentarily behind - the finding matters when a dev server starts against it. */
   readonly staleDists: readonly StaleDistFinding[]
+  /**
+   * The running CLI is a different feature version than the `@nifrajs/cli` (or `@nifrajs/core`) the
+   * project installs. Advisory (never folded into `ok`): a stale global/bunx binary answering about a
+   * project it does not match is an environment problem, not a defect in the project - but every
+   * answer it gives (types, checks, docs) reads as authoritative. Present only when `cliVersion` was
+   * supplied and the feature versions disagree. Computed by {@link detectToolingDrift}.
+   */
+  readonly toolingDrift?: ToolingDrift
   /** Static production-readiness evidence for the selected deploy target. */
   readonly readiness?: DoctorReadiness
   /**
@@ -672,7 +681,7 @@ async function inferDependencyFix(
 /** Run doctor against the project at `cwd`: diff source imports vs declared deps. */
 export async function collectDoctorResult(
   cwd: string,
-  opts: { readonly target?: string; readonly strict?: boolean } = {},
+  opts: { readonly target?: string; readonly strict?: boolean; readonly cliVersion?: string } = {},
 ): Promise<DoctorResult> {
   const pkg = await readJson(join(cwd, "package.json"))
   if (pkg === undefined)
@@ -700,7 +709,12 @@ export async function collectDoctorResult(
   const pipeline = await collectPipelineReport(cwd)
   const pipelineErrors = pipeline.findings.filter((f) => f.severity === "error")
   const readiness = await collectDoctorReadiness(cwd, opts)
-  // `staleDists` is advisory (see DoctorResult): it never fails `ok`.
+  // A stale binary answering about a project it does not match is an environment condition, so like
+  // `staleDists` it is reported but never folded into `ok`. Skipped entirely when the caller did not
+  // pass its own version (e.g. the MCP server, which already annotates every result with the drift).
+  const toolingDrift =
+    opts.cliVersion !== undefined ? await detectToolingDrift(cwd, opts.cliVersion) : undefined
+  // `staleDists` and `toolingDrift` are advisory (see DoctorResult): they never fail `ok`.
   return {
     ok:
       findings.length === 0 &&
@@ -712,6 +726,7 @@ export async function collectDoctorResult(
     duplicateInstalls,
     staleDists,
     readiness,
+    ...(toolingDrift !== undefined ? { toolingDrift } : {}),
     ...(pipeline.ran ? { pipeline } : {}),
   }
 }
@@ -719,7 +734,7 @@ export async function collectDoctorResult(
 /** Safely add undeclared imports to package.json when the version can be inferred without network I/O. */
 export async function applyDoctorAutoFix(
   cwd: string,
-  opts: { readonly target?: string; readonly strict?: boolean } = {},
+  opts: { readonly target?: string; readonly strict?: boolean; readonly cliVersion?: string } = {},
 ): Promise<DoctorResult> {
   const before = await collectDoctorResult(cwd, opts)
   if (!before.ran || before.findings.length === 0) return before
@@ -798,6 +813,8 @@ export async function runDoctor(
     readonly autoFix?: boolean
     readonly strict?: boolean
     readonly target?: string
+    /** The running CLI's own version, so doctor can flag a binary that mismatches the project. */
+    readonly cliVersion?: string
   } = {},
 ): Promise<boolean> {
   const result = opts.autoFix
@@ -872,6 +889,19 @@ export async function runDoctor(
     }
     console.log("")
   }
+  // Advisory, printed regardless of ok: the binary answering is a different feature version than the
+  // one the project builds with, so its types/checks/docs describe a surface the code does not have.
+  if (result.toolingDrift !== undefined) {
+    const drift = result.toolingDrift
+    console.log(
+      `⚠ this CLI is nifra ${drift.cli}, but the project installs ${drift.package} ${drift.project} - ` +
+        "its types, checks, and docs may describe a different version than your code builds with.",
+    )
+    console.log(
+      "      fix: run the project's own CLI (`bunx --bun nifra doctor` from the project directory, " +
+        "or ./node_modules/.bin/nifra)\n",
+    )
+  }
   if (result.ok) {
     console.log(
       "✓ every imported package is declared and identity-sensitive installs are deduplicated",
@@ -897,7 +927,8 @@ export async function runDoctor(
       `${byPkg.size > 0 ? "\n" : ""}✗ identity-sensitive packages resolve to multiple physical copies:\n`,
     )
     for (const finding of result.duplicateInstalls) {
-      console.log(`  ${finding.package}`)
+      console.log(`  ${finding.package} [${finding.cause}]`)
+      console.log(`      versions: ${finding.versions.join(", ")}`)
       for (const copy of finding.copies) {
         console.log(`      ${copy.version} at ${copy.path} ← ${copy.importers.join(", ")}`)
       }
