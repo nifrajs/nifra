@@ -40,12 +40,34 @@ type ClaimableStream = ReadableStream<Uint8Array> & {
 }
 
 /**
+ * What cancelling the Web view should do to the Node stream under it.
+ *
+ * `"destroy"` releases the source immediately, which is what a response body wants: a client that
+ * walked away from a file or an upstream response must not cost another byte of it.
+ *
+ * `"drain"` lets the source run to its own end and destroys it then, which is what a REQUEST body
+ * wants, and is `Readable.toWeb`'s behaviour rather than a new policy. Destroying an
+ * `IncomingMessage` destroys its socket, so cancelling a half-read upload synchronously tears the
+ * connection down before the handler can answer - a body rejected by the size cap reaches the client
+ * as a connection reset instead of the `413` that explains it. Draining leaves the socket writable
+ * long enough for the response to go out. It does NOT mean reading the rest of a hostile upload:
+ * once that response completes, Node destroys the socket itself because the request is incomplete,
+ * so an over-cap body stops arriving within roughly the cap either way (measured: a 64 MB body
+ * against a 1 MB cap transfers about 2 MB before the connection closes, on this path and on
+ * `Readable.toWeb` alike).
+ */
+export type CancelPolicy = "destroy" | "drain"
+
+/**
  * A Web view of `source` that defers to it lazily and can be traded back in for it.
  *
  * `highWaterMark: 0` keeps construction free of a speculative pull - a stream that is going to be
  * claimed must not have read a byte first.
  */
-export function claimableWebStream(source: Readable): ReadableStream<Uint8Array> {
+export function claimableWebStream(
+  source: Readable,
+  onCancel: CancelPolicy = "destroy",
+): ReadableStream<Uint8Array> {
   let iterator: AsyncIterator<Buffer | Uint8Array> | undefined
   let surrendered = false
 
@@ -85,7 +107,23 @@ export function claimableWebStream(source: Readable): ReadableStream<Uint8Array>
       cancel(reason): void {
         if (surrendered) return
         surrendered = true
-        source.destroy(reason instanceof Error ? reason : undefined)
+        const error = reason instanceof Error ? reason : undefined
+        if (onCancel === "destroy" || source.destroyed) {
+          source.destroy(error)
+          return
+        }
+        // The source stays live after this returns, so it keeps the right to emit `error` - and an
+        // unhandled `error` on a Node stream terminates the process. A client that resets the
+        // connection mid-drain is an ordinary event here, not a fault worth propagating: the read
+        // was already abandoned.
+        source.on("error", () => {
+          if (!source.destroyed) source.destroy()
+        })
+        // Both, because only one of them is reached: a source that runs out ends, and one whose
+        // socket is torn down by the completed response closes without ending.
+        source.once("end", () => source.destroy())
+        source.once("close", () => source.destroy())
+        source.resume()
       },
     },
     { highWaterMark: 0 },

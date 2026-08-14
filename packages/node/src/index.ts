@@ -1395,7 +1395,7 @@ class LazyNodeRequestSource implements NodeRequestSource {
   get body(): ReadableStream<Uint8Array> | null {
     if (this.method === "GET" || this.method === "HEAD") return null
     if (this.consumedBody !== undefined) return this.request.body
-    this.bodyValue ??= claimableWebStream(this.nodeReq)
+    this.bodyValue ??= claimableWebStream(this.nodeReq, "drain")
     return this.bodyValue
   }
 
@@ -1472,7 +1472,7 @@ class LazyNodeRequestSource implements NodeRequestSource {
     if (this.method === "GET" || this.method === "HEAD") return null
     const consumed = this.consumedBody
     if (consumed !== undefined) return streamOfBytes(consumed)
-    this.bodyValue ??= claimableWebStream(this.nodeReq)
+    this.bodyValue ??= claimableWebStream(this.nodeReq, "drain")
     return this.bodyValue
   }
 
@@ -1648,7 +1648,7 @@ function makeWebRequest(
   const init: RequestInit & { duplex?: "half" } = { method, headers }
   if (method !== "GET" && method !== "HEAD") {
     // Stream the body in; `duplex: "half"` is required for a streamed request body.
-    init.body = body ?? claimableWebStream(req)
+    init.body = body ?? claimableWebStream(req, "drain")
     init.duplex = "half"
   }
   return new Request(url, init)
