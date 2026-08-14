@@ -2603,19 +2603,27 @@ export async function collectCheckResult(
     // Bun reads live `src` while Vite's SSR runner reads the artifact, so a stale one 500s inside
     // framework/shared-package code and reads exactly like an upstream regression.
     for (const f of dr.staleDists) {
+      // The rebuild is only actionable with the LOCATION: a workspace link routinely points into a
+      // sibling repo, so "rebuild @nifrajs/core" left the developer to go find the checkout and guess
+      // the script. Name the directory and the package's own script, or say plainly that it declares
+      // none - never suggest a command that would fail.
+      const rebuild =
+        f.buildScript === undefined
+          ? `${f.packageDir} declares no build script - build it the way that package expects`
+          : `cd ${f.packageDir} && bun run ${f.buildScript}   (or \`nifra fix --code NF-C010\`)`
       diagnostics.push({
         rule: "stale-workspace-dist",
         severity: "warning",
         message: f.missing
-          ? `${f.package} was never built - ${f.distFile} is missing, but its export map serves it to Vite SSR/node consumers while Bun reads src - rebuild ${f.package}`
-          : `${f.package} has a stale build artifact - ${f.distFile} is ${f.behindSeconds}s older than ${f.sourceFile}, and Vite SSR/node consumers read the artifact while Bun reads src - rebuild ${f.package}`,
-        fix: `rebuild ${f.package}`,
-        evidence: [f.package, f.distFile, f.sourceFile],
+          ? `${f.package} was never built - ${f.distFile} is missing, but its export map serves it to Vite SSR/node consumers while Bun reads src - ${rebuild}`
+          : `${f.package} has a stale build artifact - ${f.distFile} is ${f.behindSeconds}s older than ${f.sourceFile}, and Vite SSR/node consumers read the artifact while Bun reads src - ${rebuild}`,
+        fix: rebuild,
+        evidence: [f.package, f.distFile, f.sourceFile, f.packageDir],
         suggestion: {
           kind: "manual",
           title: `Rebuild ${f.package}`,
           steps: [
-            `Run the package's build (usually \`bun run build\` in its directory) so ${f.distFile} matches its source again.`,
+            rebuild,
             "Only workspace-linked installs drift; npm tarballs are immutable and never flagged.",
           ],
         },

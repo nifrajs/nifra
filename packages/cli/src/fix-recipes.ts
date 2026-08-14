@@ -1,8 +1,7 @@
-import { existsSync } from "node:fs"
 import { readFile, writeFile } from "node:fs/promises"
-import { join } from "node:path"
 import type { Diagnostic } from "./diagnostics.ts"
 import { resolveInsideProject } from "./project-path.ts"
+import { resolveWorkspaceLinkedPackage } from "./workspace-link.ts"
 
 export interface FixRecipe {
   readonly id: string
@@ -91,25 +90,28 @@ registerFixRecipe({
   verify: "nifra doctor --json",
   async apply(root, diagnostic) {
     const packageName = diagnostic.evidence?.[0]
-    if (packageName === undefined || !/^@?[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)?$/.test(packageName))
-      return []
-    // The segment regex above admits "." and "..", which would resolve outside node_modules.
-    if (packageName.split("/").some((segment) => segment === "." || segment === "..")) return []
-    const packageDir = await resolveInsideProject(root, join("node_modules", packageName))
-    if (packageDir === undefined) return []
-    const packageJson = await resolveInsideProject(
-      root,
-      join("node_modules", packageName, "package.json"),
-    )
-    if (packageJson === undefined || !existsSync(packageJson)) return []
-    const proc = Bun.spawn(["bun", "run", "build"], {
-      cwd: packageDir,
+    if (packageName === undefined) return []
+    // Resolved from the NAME through the project's own node_modules chain, not from any path carried
+    // by the diagnostic. A workspace link points outside the project by definition - that escape is
+    // what makes the artifact able to go stale - so `resolveInsideProject` would reject every package
+    // this diagnostic can ever name. `resolveWorkspaceLinkedPackage` states its own rules instead:
+    // reachable through the project's install, not a registry tarball, and declaring its own build.
+    const linked = await resolveWorkspaceLinkedPackage(root, packageName)
+    // Refusing is a result the caller has to see. Returning "changed nothing" made `nifra fix
+    // --code NF-C010` a silent no-op on the only findings that produce it.
+    if (!linked.ok) throw new Error(`[nifra] cannot rebuild ${packageName}: ${linked.reason}`)
+    const proc = Bun.spawn(["bun", "run", linked.buildScript], {
+      cwd: linked.dir,
       stdout: "ignore",
       stderr: "pipe",
     })
     const error = await new Response(proc.stderr).text()
     const exitCode = await proc.exited
-    if (exitCode !== 0) throw new Error(error.trim() || `build failed for ${packageName}`)
+    if (exitCode !== 0) {
+      throw new Error(
+        `[nifra] \`bun run ${linked.buildScript}\` failed in ${linked.dir}: ${error.trim() || `exit code ${exitCode}`}`,
+      )
+    }
     return [diagnostic.evidence?.[1] ?? packageName]
   },
 })

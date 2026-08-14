@@ -31,6 +31,7 @@ import { codePositionMask, type SourceFinding, stripComments, walkSource } from 
 import { detectToolingDrift, type ToolingDrift } from "./mcp-root.ts"
 import { collectPipelineReport, type PipelineReport } from "./pipeline-report.ts"
 import { type ResolvedTarget, resolveTarget } from "./port.ts"
+import { buildScriptName } from "./workspace-link.ts"
 
 // Runtime-provided modules that are never an npm dependency: Node core (bare + `node:` form) and Bun's
 // own `bun` module. `node:`/`bun:`-prefixed specifiers are filtered in packageOf by prefix.
@@ -372,6 +373,14 @@ export async function collectDuplicateInstalls(
 /** A workspace-linked dependency whose build artifact is older than its source. */
 export interface StaleDistFinding {
   readonly package: string
+  /** Where the linked package actually lives, relative to the doctor root when possible. A workspace
+   * link routinely points into a SIBLING repo, so "rebuild it" is not actionable without the path -
+   * this is the directory the rebuild runs in. */
+  readonly packageDir: string
+  /** The package's own build script name (`scripts.build` etc.), or `undefined` when it declares none -
+   * then the rebuild cannot be automated and the report says so instead of suggesting a command that
+   * would fail. */
+  readonly buildScript: string | undefined
   /** The `default`-condition artifact (what Vite's SSR runner, vitest, and node consumers load),
    * relative to the doctor root when possible. `missing: true` means it was never built at all. */
   readonly distFile: string
@@ -482,6 +491,8 @@ export async function collectStaleWorkspaceDists(
           newest = candidate
       }
       if (newest === undefined) continue
+      const packageDir = displayPath(cwd, copy.path)
+      const buildScript = buildScriptName(meta)
       // Report the package once, anchored on its stalest (or missing) artifact.
       let worst: StaleDistFinding | undefined
       for (const pair of pairs) {
@@ -491,6 +502,8 @@ export async function collectStaleWorkspaceDists(
           distStat === undefined
             ? {
                 package: name,
+                packageDir,
+                buildScript,
                 distFile: displayPath(cwd, distPath),
                 missing: true,
                 sourceFile: displayPath(cwd, newest.file),
@@ -499,6 +512,8 @@ export async function collectStaleWorkspaceDists(
             : distStat.mtimeMs < newest.mtimeMs
               ? {
                   package: name,
+                  packageDir,
+                  buildScript,
                   distFile: displayPath(cwd, distPath),
                   missing: false,
                   sourceFile: displayPath(cwd, newest.file),

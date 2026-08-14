@@ -376,6 +376,9 @@ interface ContextCommandOutput {
 interface FixCommandOutput {
   readonly ok: boolean
   readonly changed: readonly string[]
+  /** Recipes that refused, with the reason. A recipe that cannot act says so here instead of
+   * aborting the run or - worse - reporting nothing at all. */
+  readonly failed: readonly { readonly code: string; readonly reason: string }[]
   readonly diagnostics: readonly unknown[]
 }
 interface SnapshotCommandOutput {
@@ -1071,6 +1074,7 @@ const fixSpec: CommandSpec<FixInput, FixCommandOutput> = {
     properties: {
       ok: { type: "boolean" },
       changed: { type: "array" },
+      failed: { type: "array" },
       diagnostics: { type: "array" },
     },
     required: ["ok", "diagnostics"],
@@ -1091,18 +1095,34 @@ const fixSpec: CommandSpec<FixInput, FixCommandOutput> = {
       ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
     })
     const changed: string[] = []
+    const failed: { code: string; reason: string }[] = []
     for (const diagnostic of result.structuredDiagnostics ?? [])
       if (value.code === undefined || diagnostic.code === value.code)
-        changed.push(...(await applyDiagnosticRecipe(ctx.cwd, diagnostic)))
+        // One recipe that cannot act must not cancel the others, and must not pass silently either:
+        // record why and keep going, so a run over many diagnostics still reports every outcome.
+        try {
+          changed.push(...(await applyDiagnosticRecipe(ctx.cwd, diagnostic)))
+        } catch (error) {
+          failed.push({
+            code: diagnostic.code,
+            reason: error instanceof Error ? error.message : String(error),
+          })
+        }
     const final = await collectCheckResult(ctx.cwd, {
       lintsOnly: true,
       ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
     })
-    return { ok: final.ok, changed, diagnostics: final.structuredDiagnostics ?? final.diagnostics }
+    return {
+      ok: final.ok,
+      changed,
+      failed,
+      diagnostics: final.structuredDiagnostics ?? final.diagnostics,
+    }
   },
   render: (out) => [
     out.ok ? "✓ fixes applied" : "✖ unresolved diagnostics remain",
     ...out.changed.map((file) => `  changed ${file}`),
+    ...out.failed.map((f) => `  could not fix ${f.code}: ${f.reason}`),
     ...out.diagnostics.map((d) => `  ${String((d as { code?: unknown }).code ?? "diagnostic")}`),
   ],
   success: (out) => out.ok,
