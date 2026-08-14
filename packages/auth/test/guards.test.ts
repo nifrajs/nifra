@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { isResponseResult, type ResponseResult } from "../../core/src/server/runtime-core.ts"
 import {
   createSessions,
   requireSession,
@@ -25,6 +26,15 @@ const caught = (fn: () => unknown): unknown => {
   throw new Error("expected the guard to throw")
 }
 
+/** A guard's rejection is plain data, not a `Response` - that is what keeps a thrown guard on the
+ * same rendering lane as a returned `status(...)`. The `plain` render is the assertion that matters;
+ * `toResponse()` is checked alongside it so the off-lane fallback stays byte-identical. */
+const rejectionOf = (thrown: unknown): ResponseResult => {
+  expect(thrown).not.toBeInstanceOf(Response)
+  if (!isResponseResult(thrown)) throw new Error("expected a status(...) render")
+  return thrown
+}
+
 describe("requireSession", () => {
   test("returns a non-empty session", async () => {
     const s = await freshSession()
@@ -32,18 +42,24 @@ describe("requireSession", () => {
     expect(requireSession(s)).toBe(s)
   })
 
-  test("throws a 401 Response when empty (no redirectTo)", async () => {
+  test("throws a plain 401 render when empty (no redirectTo)", async () => {
     const empty = await freshSession()
-    const thrown = caught(() => requireSession(empty))
-    expect(thrown).toBeInstanceOf(Response)
-    expect((thrown as Response).status).toBe(401)
+    const rejection = rejectionOf(caught(() => requireSession(empty)))
+    expect(rejection.plain).toEqual({ status: 401, body: { ok: false, error: "unauthorized" } })
+    const res = rejection.toResponse()
+    expect(res.status).toBe(401)
+    expect(await res.json()).toEqual({ ok: false, error: "unauthorized" })
   })
 
-  test("throws a 302 to redirectTo when empty", async () => {
+  test("throws a plain 302 render to redirectTo when empty", async () => {
     const empty = await freshSession()
-    const res = caught(() => requireSession(empty, { redirectTo: "/login" })) as Response
-    expect(res.status).toBe(302)
-    expect(res.headers.get("location")).toBe("/login")
+    const rejection = rejectionOf(caught(() => requireSession(empty, { redirectTo: "/login" })))
+    expect(rejection.plain).toEqual({
+      status: 302,
+      headers: { location: "/login" },
+      body: undefined,
+    })
+    expect(rejection.toResponse().headers.get("location")).toBe("/login")
   })
 
   test("rejects an open-redirect redirectTo as a config error", async () => {
@@ -62,14 +78,15 @@ describe("requireUser", () => {
     expect(requireUser(s, "userId")).toBe("u7")
   })
 
-  test("throws a 302 when absent + redirectTo", async () => {
+  test("throws a 302 render when absent + redirectTo", async () => {
     const empty = await freshSession()
-    const res = caught(() => requireUser(empty, "userId", { redirectTo: "/login" })) as Response
-    expect(res.status).toBe(302)
+    const rejection = rejectionOf(caught(() => requireUser(empty, "userId", { redirectTo: "/l" })))
+    expect(rejection.plain?.status).toBe(302)
+    expect(rejection.plain?.headers?.location).toBe("/l")
   })
 
-  test("throws a 401 when absent + no redirectTo", async () => {
+  test("throws a 401 render when absent + no redirectTo", async () => {
     const empty = await freshSession()
-    expect((caught(() => requireUser(empty, "userId")) as Response).status).toBe(401)
+    expect(rejectionOf(caught(() => requireUser(empty, "userId"))).plain?.status).toBe(401)
   })
 })

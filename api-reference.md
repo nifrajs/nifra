@@ -73,7 +73,7 @@ Every public export of every package and documented subpath - name, kind, signat
 ## @nifrajs/auth
 
 - **AuthorizationRequest** _(interface)_ - `interface AuthorizationRequest<Subject = unknown, Resource = unknown>`
-  Public authorization seam. Nifra supplies the control-flow contract; the application or data layer supplies the actual policy. No subject/resource data is persisted or interpreted here.
+  What a policy is asked to decide: this subject, doing this action, optionally to this resource.
 - **Authorizer** _(type)_ - `type Authorizer<Subject = unknown, Resource = unknown> = ( request: AuthorizationRequest<Subject, Resource>, ) => boolean | Promise<boolean>`
 - **CsrfOptions** _(interface)_ - `interface CsrfOptions`
 - **GuardOptions** _(interface)_ - `interface GuardOptions`
@@ -102,7 +102,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **isAuthorized** _(function)_ - `isAuthorized: <Subject, Resource>(authorizer: Authorizer<Subject, Resource>, request: AuthorizationRequest<Subject, Resource>) => Promise<boolean>`
   Evaluate a policy, failing closed for any non-true result.
 - **requireAuthorization** _(function)_ - `requireAuthorization: <Subject, Resource>(authorizer: Authorizer<Subject, Resource>, request: AuthorizationRequest<Subject, Resource>) => Promise<void>`
-  Require an application/data-layer policy to allow an action; denied requests throw a 403 Response.
+  Require an application/data-layer policy to allow an action. A denied request throws a plain `status(403)` render - the same control-flow signal a guard throws, on the same rendering lane as a returned one, so the denial never builds a `Response`. Like the guards, it throws because it is called for…
 - **requireSession** _(function)_ - `requireSession: <Data extends Record<string, unknown>>(session: Session<Data>, options?: GuardOptions) => Session<Data>`
   Require a non-empty session. Returns it when present; otherwise throws a `Response` (302/401). Use at the top of a protected loader: `const session = requireSession(await sessions.get(c), { redirectTo: "/login" })`.
 - **requireUser** _(function)_ - `requireUser: <Data extends Record<string, unknown>, K extends keyof Data>(session: Session<Data>, key: K, options?: GuardOptions) => NonNullable<Data[K]>`

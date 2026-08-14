@@ -2,6 +2,9 @@
  * Public authorization seam. Nifra supplies the control-flow contract; the application or data layer
  * supplies the actual policy. No subject/resource data is persisted or interpreted here.
  */
+import { status } from "@nifrajs/core/server"
+
+/** What a policy is asked to decide: this subject, doing this action, optionally to this resource. */
 export interface AuthorizationRequest<Subject = unknown, Resource = unknown> {
   readonly subject: Subject
   readonly action: string
@@ -20,11 +23,15 @@ export async function isAuthorized<Subject, Resource>(
   return (await authorizer(request)) === true
 }
 
-/** Require an application/data-layer policy to allow an action; denied requests throw a 403 Response. */
+/** Require an application/data-layer policy to allow an action. A denied request throws a plain
+ * `status(403)` render - the same control-flow signal a guard throws, on the same rendering lane as a
+ * returned one, so the denial never builds a `Response`. Like the guards, it throws because it is
+ * called for effect from inside the work it protects; where the caller can return, return
+ * `status(403, ...)` instead. */
 export async function requireAuthorization<Subject, Resource>(
   authorizer: Authorizer<Subject, Resource>,
   request: AuthorizationRequest<Subject, Resource>,
 ): Promise<void> {
   if (await isAuthorized(authorizer, request)) return
-  throw Response.json({ ok: false, error: "forbidden" }, { status: 403 })
+  throw status(403, { ok: false, error: "forbidden" })
 }

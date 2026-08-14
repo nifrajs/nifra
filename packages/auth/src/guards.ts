@@ -1,9 +1,18 @@
 /**
  * Route guards - run at the top of a protected loader/action/handler. On a missing session they
- * **throw a `Response`** (a 302 to your login path, or a 401); nifra returns a thrown Response as-is, so
- * the guard short-circuits the rest of the handler. Pairs with `@nifrajs/auth` sessions but only needs the
- * `Session` shape, so it's framework-agnostic.
+ * **throw** a `status(...)` render (a 302 to your login path, or a 401); nifra treats a thrown
+ * `status(...)` as control flow and renders it on the ordinary plain-data lane, so the guard
+ * short-circuits the rest of the handler at the cost of a normal return, without a `Response` being
+ * built or drained.
+ *
+ * The throw is the point of a guard: `requireSession(...)` is called for effect from inside the
+ * handler, so its caller cannot return the rejection on its behalf - only unwinding gets out of a
+ * half-finished handler. Everywhere the caller CAN return - a `beforeHandle`, a `derive`, the handler
+ * itself - return `status(...)` instead; see its docs.
+ *
+ * Pairs with `@nifrajs/auth` sessions but only needs the `Session` shape, so it's framework-agnostic.
  */
+import { type ResponseResult, status } from "@nifrajs/core/server"
 import type { Session } from "./session.ts"
 
 /** What a guard does when the check fails: 302 to `redirectTo` (a same-origin path), or - omitted - a
@@ -12,11 +21,9 @@ export interface GuardOptions {
   readonly redirectTo?: string
 }
 
-const rejection = (options: GuardOptions): Response => {
+const rejection = (options: GuardOptions): ResponseResult => {
   const to = options.redirectTo
-  if (to === undefined) {
-    return Response.json({ ok: false, error: "unauthorized" }, { status: 401 })
-  }
+  if (to === undefined) return status(401, { ok: false, error: "unauthorized" })
   // Same-origin guard (mirrors @nifrajs/web `redirect`): a single leading "/", never "//host" or an
   // absolute URL. `redirectTo` is dev-authored, so a bad value is a config bug - fail loud here.
   if (!to.startsWith("/") || to.startsWith("//")) {
@@ -24,7 +31,7 @@ const rejection = (options: GuardOptions): Response => {
       `[nifra/auth] guard redirectTo must be a same-origin path beginning with "/" (got ${JSON.stringify(to)})`,
     )
   }
-  return new Response(null, { status: 302, headers: { location: to } })
+  return status(302, undefined, { headers: { location: to } })
 }
 
 /**

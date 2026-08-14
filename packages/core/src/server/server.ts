@@ -3278,7 +3278,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     wrapResponse: (response: Response | ResponseResult) => T,
   ): T {
     if (err instanceof Response) return wrapResponse(err)
-    if (isResponseResult(err)) return wrapResponse(toResponse(err, EMPTY_RESPONSE_CONTROLS))
+    // Handed over as the plain data it is: `wrapResponse` renders it on the JSON lane (no `Response`
+    // built on Node). There is no context here by construction, so there is no `c.set` to merge.
+    if (isResponseResult(err)) return wrapResponse(err)
     const ctx = new RequestContext(
       source,
       params,
@@ -3314,13 +3316,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       if (entry.hasDecorations) Object.assign(ctx, entry.decorations)
       result = entry.handler(ctx)
     } catch (err) {
-      return this.bareError(err, ctx, wrapResponse)
+      return this.bareError(err, ctx, finalize, wrapResponse)
     }
     if (result instanceof Promise) {
       // Async handler on an otherwise-bare route: finish on a microtask, with the same error handling.
       return result.then(
         (value) => finalize(value, responseSet(ctx)),
-        (err) => this.bareError(err, ctx, wrapResponse),
+        (err) => this.bareError(err, ctx, finalize, wrapResponse),
       )
     }
     return finalize(result, responseSet(ctx))
@@ -3479,8 +3481,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     const logError = <T>(
       err: unknown,
       ctx: RawContext,
+      finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
       wrapResponse: (response: Response | ResponseResult) => T,
-    ): T => this.bareError(err, ctx, wrapResponse)
+    ): T => this.bareError(err, ctx, finalize, wrapResponse)
 
     const runHandler = <T>(
       ctx: RawContext,
@@ -3492,7 +3495,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       try {
         output = handler(ctx)
       } catch (err) {
-        return logError(err, ctx, wrapResponse)
+        return logError(err, ctx, finalize, wrapResponse)
       }
       if (output instanceof Promise) {
         return output.then(
@@ -3500,16 +3503,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
             try {
               return finalize(result, responseSet(ctx), ctx)
             } catch (err) {
-              return logError(err, ctx, wrapResponse)
+              return logError(err, ctx, finalize, wrapResponse)
             }
           },
-          (err) => logError(err, ctx, wrapResponse),
+          (err) => logError(err, ctx, finalize, wrapResponse),
         )
       }
       try {
         return finalize(output, responseSet(ctx), ctx)
       } catch (err) {
-        return logError(err, ctx, wrapResponse)
+        return logError(err, ctx, finalize, wrapResponse)
       }
     }
 
@@ -3534,7 +3537,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       try {
         validation = bodySchema["~standard"].validate(parsed)
       } catch (err) {
-        return logError(err, ctx, wrapResponse)
+        return logError(err, ctx, finalize, wrapResponse)
       }
       if (validation instanceof Promise) {
         return validation.then(
@@ -3542,16 +3545,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
             try {
               return runValidated(settled, ctx, finalize, wrapResponse)
             } catch (err) {
-              return logError(err, ctx, wrapResponse)
+              return logError(err, ctx, finalize, wrapResponse)
             }
           },
-          (err) => logError(err, ctx, wrapResponse),
+          (err) => logError(err, ctx, finalize, wrapResponse),
         )
       }
       try {
         return runValidated(validation, ctx, finalize, wrapResponse)
       } catch (err) {
-        return logError(err, ctx, wrapResponse)
+        return logError(err, ctx, finalize, wrapResponse)
       }
     }
 
@@ -3581,7 +3584,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       const finish = (value: unknown): MaybePromise<T> =>
         runParsed(value, ctx, finalize, wrapResponse)
       return this.readBodyInput(source, maxBodyBytes, finish, wrapResponse, (err) =>
-        logError(err, ctx, wrapResponse),
+        logError(err, ctx, finalize, wrapResponse),
       )
     }
   }
@@ -3699,13 +3702,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   private bareError<T>(
     err: unknown,
     ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): T {
     if (err instanceof Response) return wrapResponse(err)
-    // A thrown `status(...)` is control flow here too. These lanes render through `wrapResponse`, so
-    // this one pays for a `Response` - `return status(...)` takes the plain lane and is the shape to
-    // reach for on a route with no lifecycle stage to exit from.
-    if (isResponseResult(err)) return wrapResponse(toResponse(err, responseSet(ctx)))
+    // A thrown `status(...)` is control flow, and it is still plain data: rendered through the same
+    // `finalize` a returned one takes, with the request's `c.set`, so it costs what the return costs.
+    if (isResponseResult(err)) return finalize(err, responseSet(ctx), ctx)
     this.logRequestError(err, ctx)
     return wrapResponse(plainError(500, "internal_error"))
   }
@@ -4785,13 +4788,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return finalize(outcome.value, responseSet(ctx))
   }
 
-  private async handleLifecycleError<T>(
+  /** Synchronous by design, and `MaybePromise` rather than `Promise` for the same reason: control flow
+   * out of a lifecycle stage must not cost a promise. An `async` method allocates one and defers the
+   * result a microtask even when every branch it takes returns immediately, which is the common case
+   * here - a thrown `status(...)`/`Response`, or a route with no `onError` hook at all. Only the hook
+   * loop, which may await, drops into {@link runErrorHooks}. */
+  private handleLifecycleError<T>(
     entry: RouteEntry,
     err: unknown,
     ctx: RawContext,
     finalize: (result: unknown, set: CtxSet) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
-  ): Promise<T> {
+  ): MaybePromise<T> {
     // A *thrown* Response is deliberate control flow, not an error - a guard throws a redirect/401,
     // an action throws an error page. Return it as-is (Remix/SvelteKit semantics); don't run onError
     // or log it as a 500. This is what makes `throw redirect(...)` / `requireSession(...)` work from
@@ -4800,7 +4808,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // Same rule for a thrown `status(...)`, but through `finalize` rather than `wrapResponse`: the
     // value is still plain data, so the ordinary JSON lane renders it and no `Response` is built.
     if (isResponseResult(err)) return finalize(err, responseSet(ctx))
-    // onError hooks may return a custom response; otherwise the default 500 stands.
+    if (entry.onError.length === 0) {
+      // Never crash the server or leak internals. The client gets a flat 500; the detail goes to the
+      // (redacting) logger. Body-read failures and around-hook failures land here too.
+      this.logRequestError(err, ctx)
+      return wrapResponse(plainError(500, "internal_error"))
+    }
+    return this.runErrorHooks(entry, err, ctx, finalize, wrapResponse)
+  }
+
+  /** The `onError` chain, split off {@link handleLifecycleError} so its `await` costs only the routes
+   * that registered a hook. A hook may return a custom response; otherwise the default 500 stands. */
+  private async runErrorHooks<T>(
+    entry: RouteEntry,
+    err: unknown,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
+  ): Promise<T> {
     // Indexed for the same reason as the `beforeHandle` chain above: the iterator would outlive
     // the `await` and stay heap-allocated on both engines.
     for (let i = 0; i < entry.onError.length; i++) {
@@ -4808,8 +4833,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       const handled = outcome instanceof Promise ? await outcome : outcome
       if (handled !== undefined) return finalize(handled, responseSet(ctx))
     }
-    // Never crash the server or leak internals. The client gets a flat 500; the detail goes to the
-    // (redacting) logger. Body-read failures and around-hook failures land here too.
     this.logRequestError(err, ctx)
     return wrapResponse(plainError(500, "internal_error"))
   }
