@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url"
 // srvx's lazy spec-shaped Response - see nodeOutcomeToResponse for why the bridge uses it.
 import { FastResponse } from "srvx/node"
 import type { NodeServeOutcome } from "./generated/node-outcome.ts"
+import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
 
 /** The runtime platform a nifra app accepts as `fetch`'s 2nd arg - here, the observed socket peer. */
 interface NodePlatform {
@@ -1390,7 +1391,7 @@ class LazyNodeRequestSource implements NodeRequestSource {
   get body(): ReadableStream<Uint8Array> | null {
     if (this.method === "GET" || this.method === "HEAD") return null
     if (this.consumedBody !== undefined) return this.request.body
-    this.bodyValue ??= Readable.toWeb(this.nodeReq) as ReadableStream<Uint8Array>
+    this.bodyValue ??= claimableWebStream(this.nodeReq)
     return this.bodyValue
   }
 
@@ -1467,7 +1468,7 @@ class LazyNodeRequestSource implements NodeRequestSource {
     if (this.method === "GET" || this.method === "HEAD") return null
     const consumed = this.consumedBody
     if (consumed !== undefined) return streamOfBytes(consumed)
-    this.bodyValue ??= Readable.toWeb(this.nodeReq) as ReadableStream<Uint8Array>
+    this.bodyValue ??= claimableWebStream(this.nodeReq)
     return this.bodyValue
   }
 
@@ -1643,7 +1644,7 @@ function makeWebRequest(
   const init: RequestInit & { duplex?: "half" } = { method, headers }
   if (method !== "GET" && method !== "HEAD") {
     // Stream the body in; `duplex: "half"` is required for a streamed request body.
-    init.body = body ?? (Readable.toWeb(req) as ReadableStream<Uint8Array>)
+    init.body = body ?? claimableWebStream(req)
     init.duplex = "half"
   }
   return new Request(url, init)
@@ -1810,7 +1811,55 @@ function writeNodeResponse(
     if (!nodeRes.destroyed && !nodeRes.writableEnded && nodeRes.writable) nodeRes.end()
     return
   }
+  // A body that is a Web view over a Node stream (an upstream response relayed by
+  // `@nifrajs/proxy/undici`, say) goes to the socket as the Node stream it already is, skipping the
+  // per-chunk trip through Web objects that the reader loop below pays for.
+  const nodeBody = response.bodyUsed ? null : claimNodeStream(response.body)
+  if (nodeBody !== null) return pipeNodeResponseBody(nodeBody, nodeRes)
   return writeNodeResponseBody(response, nodeRes)
+}
+
+/**
+ * Send a claimed Node body straight to the socket.
+ *
+ * `pipe` rather than `pipeline`: the status line is already flushed by here, so the only teardown
+ * still available is a destroy on both ends, and `pipeline`'s per-request `eos` machinery costs
+ * more than it buys at this point - it measured as a net loss against the Web reader loop it
+ * replaces, where plain `pipe` measured as a win on both GET and POST.
+ *
+ * The two destroys below are belt-and-braces, not the mechanism: for a body claimed from
+ * `@nifrajs/proxy`, the request's abort signal already tears the upstream down when the client
+ * hangs up, and an upstream that dies mid-body already reaches the client as a broken transfer
+ * rather than a short `200`. They are kept because `pipe` itself guarantees neither, and the claim
+ * seam is open to any transport - including one that wires no signal.
+ */
+function pipeNodeResponseBody(body: Readable, nodeRes: ServerResponse): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false
+    const done = (): void => {
+      if (settled) return
+      settled = true
+      if (!body.destroyed) body.destroy()
+      resolve()
+    }
+    // Attached before anything here can destroy `body`, and with `on` rather than `once`, because
+    // destroying an upstream body emits `error` (undici raises `RequestAbortedError` for a request
+    // cut short) and an unhandled `error` on a Node stream terminates the process. Every path below
+    // ends in a destroy, including the ones that run after this listener has already fired once.
+    body.on("error", () => {
+      // Only meaningful before the response completes; afterwards there is nothing left to abort.
+      if (!settled && !nodeRes.destroyed && !nodeRes.writableEnded) nodeRes.destroy()
+      done()
+    })
+    // The client is already gone: `pipe` would wait on `close`/`finish` that have both fired.
+    if (nodeRes.destroyed || nodeRes.writableEnded || !nodeRes.writable) {
+      done()
+      return
+    }
+    nodeRes.once("close", done)
+    nodeRes.once("finish", done)
+    body.pipe(nodeRes)
+  })
 }
 
 async function writeNodeResponseBody(response: Response, nodeRes: ServerResponse): Promise<void> {

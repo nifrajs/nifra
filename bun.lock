@@ -400,6 +400,7 @@
       "version": "2.14.1",
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
+        "@nifrajs/node": "workspace:*",
         "undici": "^8.10.0",
       },
       "peerDependencies": {

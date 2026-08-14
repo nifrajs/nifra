@@ -31,6 +31,7 @@
 import { Readable } from "node:stream"
 import { type Dispatcher, request as undiciRequest } from "undici"
 import type { ProxyTransport, ProxyUpstreamResponse } from "./index.ts"
+import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
 
 export interface UndiciTransportOptions {
   /**
@@ -69,6 +70,11 @@ function toHeaders(raw: Readonly<Record<string, string | string[] | undefined>>)
   return out
 }
 
+function requestBody(body: ReadableStream<Uint8Array> | null): Readable | null {
+  if (body === null) return null
+  return claimNodeStream(body) ?? Readable.fromWeb(body)
+}
+
 /** Create an undici-backed {@link ProxyTransport}. */
 export function undiciTransport(options: UndiciTransportOptions = {}): ProxyTransport {
   // Under Bun the `undici` specifier resolves to a built-in shim whose response bodies have no
@@ -94,8 +100,12 @@ export function undiciTransport(options: UndiciTransportOptions = {}): ProxyTran
     const response = await undiciRequest(target, {
       method: request.method as Dispatcher.HttpMethod,
       headers,
-      // Node's own stream type, so undici never has to guess how to consume it.
-      body: request.body === null ? null : Readable.fromWeb(request.body),
+      // Node's own stream type, so undici never has to guess how to consume it. When the adapter
+      // upstream of us built that Web stream over a Node one and nothing has read it, take the
+      // Node stream back instead of converting: the client's body then reaches undici without ever
+      // being repackaged. `claimNodeStream` returns null for any stream that is foreign, held, or
+      // already read, and the conversion below is what happens then.
+      body: requestBody(request.body),
       signal: request.signal,
       bodyTimeout,
       ...(dispatcher === undefined ? {} : { dispatcher }),
@@ -115,7 +125,10 @@ export function undiciTransport(options: UndiciTransportOptions = {}): ProxyTran
       status: response.statusCode,
       statusText: "",
       headers: toHeaders(response.headers),
-      body: Readable.toWeb(response.body) as ReadableStream<Uint8Array>,
+      // Claimable rather than `Readable.toWeb`: an adapter that writes this response to a Node
+      // socket (`@nifrajs/node`) can pipe the upstream stream straight through, and anything else
+      // reads it as the ordinary Web stream it is.
+      body: claimableWebStream(response.body),
     }
   }
 }
