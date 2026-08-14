@@ -576,6 +576,99 @@ export type NifraFeatureVersion = FeatureVersionOf<Version>
 const IDENTITY_RESPONSE = (response: Response): Response => response
 const RESPONSE_TIMEOUT = (): Response => jsonError(503, "request_timeout")
 
+// The unused-order-scoped-hook audit (recorder, seal check, stack capture, message) is a dev-time
+// diagnostic. Every guard below is the INLINE expression `typeof process !== "undefined" &&
+// process.env.NODE_ENV !== "production"` rather than a shared `const`, because a bundler's
+// `process.env.NODE_ENV` define only folds the check away - dead-code-eliminating the whole audit from
+// the shipped bundle - when it appears inline; Bun does not propagate a module const into the branch.
+// Every real production bundler (vite/esbuild/webpack/next, `bun build --production`) injects that
+// define, so this restores the bare kernel size. The `typeof process` guard keeps the check from
+// throwing on a process-less runtime when no define was applied.
+
+// This module's own path, captured once from a sentinel stack. Every internal frame of an
+// order-scoped hook push (the public method, its `use()`-bundle dispatcher, the recorder) lives here,
+// so `captureCallerSite` skips anything starting with it and lands on the user's calling frame.
+const SERVER_MODULE_PATH = /* @__PURE__ */ ((): string | undefined => {
+  const frame = new Error().stack?.split("\n")[1]
+  return frame?.match(/\(?([^()\s]+):\d+:\d+\)?\s*$/)?.[1]
+})()
+
+/** One `file:line:col` frame for the caller of an order-scoped hook method, for the unused-hook
+ * report. Only ever called behind the `unusedScopedHooks !== "off"` guard, so the `Error` (the sole
+ * non-trivial cost) is never constructed when the check is disabled. */
+const captureCallerSite = (): string | undefined => {
+  const stack = new Error().stack
+  if (stack === undefined) return undefined
+  for (const line of stack.split("\n").slice(1)) {
+    const frame = line.match(/\(?([^()\s]+:\d+:\d+)\)?\s*$/)?.[1]
+    if (frame === undefined) continue
+    if (SERVER_MODULE_PATH !== undefined && frame.startsWith(`${SERVER_MODULE_PATH}:`)) continue
+    return frame
+  }
+  return undefined
+}
+
+/** Per-server bookkeeping for the unused-order-scoped-hook audit. Deliberately NOT `Server` fields or
+ * methods: those emit class members (a field declaration, a method shell) that a bundler cannot remove
+ * even after their bodies fold away. Held here in a module WeakMap and reached only through the
+ * functions below, every call guarded by `process.env.NODE_ENV !== "production"`, so a production define
+ * folds the guards away, leaves this map and these functions unreferenced, and the bundler eliminates
+ * the whole audit - restoring the bare kernel size. */
+interface HookAuditState {
+  readonly policy: "warn" | "error" | "off"
+  readonly hasCustomLogger: boolean
+  readonly sites: {
+    readonly kind: string
+    readonly routesAtPush: number
+    readonly site: string | undefined
+  }[]
+  checked: boolean
+}
+const hookAudit = /* @__PURE__ */ new WeakMap<object, HookAuditState>()
+
+/** Start tracking one server's order-scoped hook pushes (once, from the constructor). */
+const beginHookAudit = (
+  key: object,
+  policy: "warn" | "error" | "off",
+  hasCustomLogger: boolean,
+): void => {
+  hookAudit.set(key, { policy, hasCustomLogger, sites: [], checked: false })
+}
+
+/** Record one order-scoped hook push: the route count at that moment (so `routesAtPush === total` at
+ * seal means no route was declared after it) and the caller's frame. */
+const recordScopedHook = (key: object, routesAtPush: number, kind: string): void => {
+  const state = hookAudit.get(key)
+  if (state === undefined || state.policy === "off") return
+  state.sites.push({ kind, routesAtPush, site: captureCallerSite() })
+}
+
+/** Run the deadness check exactly once. A hook whose recorded route count equals the final route count
+ * had no route declared after it - unambiguously dead, since the scoping feature (a hook that covers
+ * only later routes) always leaves at least one such route. Zero-route apps are exempt (different
+ * mistake, and the warning would be noise). */
+const sealHookAudit = (
+  key: object,
+  total: number,
+  logger: { warn(message: string): void },
+): void => {
+  const state = hookAudit.get(key)
+  if (state === undefined || state.checked) return
+  state.checked = true
+  if (state.policy === "off" || total === 0) return
+  const dead = state.sites.filter((hook) => hook.routesAtPush === total)
+  if (dead.length === 0) return
+  const detail = dead.map((hook) => `  ${hook.kind}()  at ${hook.site ?? "<unknown>"}`).join("\n")
+  const message =
+    `[nifra] ${dead.length} order-scoped hook(s) apply to no route - they were added after the ` +
+    `last route was registered, and register() snapshots the chain into each route as it is ` +
+    `declared:\n${detail}\nMove them before the routes they should cover. App-global hooks ` +
+    `(onRequest/onResponse) are not order-scoped and can be added at any time.`
+  if (state.policy === "error") throw new FrameworkError("UNUSED_SCOPED_HOOKS", message)
+  if (state.hasCustomLogger) logger.warn(message)
+  else console.warn(message)
+}
+
 /**
  * The inline server. Routes are chainable and fully type-inferred. `derive`/
  * `decorate` extend the handler context (`Ctx`) for routes defined *after* them,
@@ -744,6 +837,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.defaultOnValidationError = options.onValidationError
     this.bunServer = undefined
     this.sealed = false
+    // Guarded so a production define strips the call, leaving `beginHookAudit`/`hookAudit` unreferenced
+    // for the bundler to eliminate; a non-bundled production run skips it the same way.
+    if (process.env.NODE_ENV !== "production") {
+      beginHookAudit(this, options.unusedScopedHooks ?? "warn", options.logger !== undefined)
+    }
     this.derives = []
     this.decorations = {}
     this.beforeHandleHooks = []
@@ -812,17 +910,28 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return this
   }
 
-  /** Add a per-request, computed context extension for subsequent routes. */
+  /**
+   * Add a per-request, computed context extension. Order-scoped: it is snapshotted into every route
+   * declared *after* this call, and reaches none declared before. One added after the last route
+   * (e.g. on the app returned by a route-registering factory) covers nothing - see
+   * {@link ServerOptions.unusedScopedHooks}.
+   */
   derive<D extends object>(fn: (context: Context & Ctx) => MaybePromise<D>): Server<R, Ctx & D> {
     this.assertConfigurable("derive()")
     this.derives.push(fn as unknown as RawDerive)
+    if (process.env.NODE_ENV !== "production") recordScopedHook(this, this.catalog.size, "derive")
     return this as unknown as Server<R, Ctx & D>
   }
 
-  /** Add a static context value for subsequent routes. */
+  /**
+   * Add a static context value. Order-scoped: captured by every route declared *after* this call, and
+   * by none before; one added after the last route reaches nothing
+   * (see {@link ServerOptions.unusedScopedHooks}).
+   */
   decorate<const K extends string, V>(key: K, value: V): Server<R, Ctx & Record<K, V>> {
     this.assertConfigurable("decorate()")
     this.decorations[key] = value
+    if (process.env.NODE_ENV !== "production") recordScopedHook(this, this.catalog.size, "decorate")
     return this as unknown as Server<R, Ctx & Record<K, V>>
   }
 
@@ -840,10 +949,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return this
   }
 
-  /** Run after validation, before the handler; a non-`undefined` return short-circuits. Order-scoped. */
+  /**
+   * Run after validation, before the handler; a non-`undefined` return short-circuits. Order-scoped:
+   * it is snapshotted into every route declared *after* this call and covers none declared before, so
+   * one added after the last route reaches nothing (see {@link ServerOptions.unusedScopedHooks}).
+   */
   beforeHandle(fn: (context: Context & Ctx) => MaybePromise<unknown>): this {
     this.assertConfigurable("beforeHandle()")
     this.beforeHandleHooks.push(fn as unknown as RawBeforeHandle)
+    if (process.env.NODE_ENV !== "production")
+      recordScopedHook(this, this.catalog.size, "beforeHandle")
     return this
   }
 
@@ -851,10 +966,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * Wrap the matched route lifecycle for subsequent routes. This is intentionally generic over the
    * route output, so wrappers like async context storage do not force Node's direct JSON path through
    * a Web `Response`. The first registered wrapper is outermost.
+   *
+   * Order-scoped: captured by every route declared *after* this call, none before; one added after the
+   * last route reaches nothing (see {@link ServerOptions.unusedScopedHooks}).
    */
   around(fn: <T>(context: Context & Ctx, next: () => MaybePromise<T>) => MaybePromise<T>): this {
     this.assertConfigurable("around()")
     this.aroundHooks.push(fn as unknown as RawAround)
+    if (process.env.NODE_ENV !== "production") recordScopedHook(this, this.catalog.size, "around")
     return this
   }
 
@@ -879,6 +998,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.capabilityInterceptors.push(
       Object.freeze({ interceptor, timeoutMs: Math.min(timeoutMs, 2_147_483_647) }),
     )
+    if (process.env.NODE_ENV !== "production")
+      recordScopedHook(this, this.catalog.size, "aroundCapability")
     return this
   }
 
@@ -892,17 +1013,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return this
   }
 
-  /** Transform the handler's result before it is serialized. Order-scoped. */
+  /** Transform the handler's result before it is serialized. Order-scoped: captured by routes declared
+   * *after* this call, none before; one added after the last route reaches nothing (see
+   * {@link ServerOptions.unusedScopedHooks}). */
   afterHandle(fn: (result: unknown, context: Context & Ctx) => MaybePromise<unknown>): this {
     this.assertConfigurable("afterHandle()")
     this.afterHandleHooks.push(fn as unknown as RawAfterHandle)
+    if (process.env.NODE_ENV !== "production")
+      recordScopedHook(this, this.catalog.size, "afterHandle")
     return this
   }
 
-  /** Handle a thrown error; a non-`undefined` return becomes the response (else the default 500). Order-scoped. */
+  /** Handle a thrown error; a non-`undefined` return becomes the response (else the default 500).
+   * Order-scoped: captured by routes declared *after* this call, none before; one added after the last
+   * route reaches nothing (see {@link ServerOptions.unusedScopedHooks}). */
   onError(fn: (error: unknown, context: Context & Ctx) => MaybePromise<unknown>): this {
     this.assertConfigurable("onError()")
     this.onErrorHooks.push(fn as unknown as RawErrorHandler)
+    if (process.env.NODE_ENV !== "production") recordScopedHook(this, this.catalog.size, "onError")
     return this
   }
 
@@ -1064,8 +1192,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   /**
    * Apply a {@link Middleware} bundle - wire each hook it provides to its lifecycle point. Returns
    * `this` (no context-type merging); call it before the routes its `beforeHandle`/`afterHandle`
-   * should cover (those are order-scoped; `onRequest`/`onResponse` are global). A named bundle already
-   * applied is skipped (idempotent).
+   * should cover (those are order-scoped; `onRequest`/`onResponse` are global). A bundle applied after
+   * the last route reaches nothing - {@link ServerOptions.unusedScopedHooks} logs that at seal. A named
+   * bundle already applied is skipped (idempotent).
    */
   use(mw: Middleware): this
   use(arg: Middleware | ((app: this) => AnyServer)): AnyServer {
@@ -2027,6 +2156,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     source: RequestSource,
     platform?: Platform<EnvOf<Ctx>>,
   ): MaybePromise<Response> {
+    // Seal once on the first request so test servers (no `listen()`) still get the dead-hook check.
+    // After that it is a single boolean read - the per-request cost the option promises to keep at zero.
+    if (process.env.NODE_ENV !== "production") sealHookAudit(this, this.catalog.size, this.logger)
     // Off path (default): straight through - one property check, no closure, no promise.
     if (this.capacityGate === undefined) return this.fetchSourceInner(source, platform)
     return this.admitGated(requestOf(source), () => this.fetchSourceInner(source, platform))
@@ -2151,6 +2283,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     platform?: Platform<EnvOf<Ctx>>,
     suppliedRuntime?: NodeOutcomeRuntime,
   ): MaybePromise<NodeServeOutcome> {
+    // Seal once on the Node-direct lane too - it can bypass `fetchSource` entirely (hookless outcome).
+    if (process.env.NODE_ENV !== "production") sealHookAudit(this, this.catalog.size, this.logger)
     // A paired header-only native hook can preserve the Node-direct JSON/body outcome for successful
     // responses. Arbitrary onResponse transforms need a real Web Response, but a buffered outcome can
     // be materialized with a direct-write marker and return to the socket path when the hook mutates
@@ -4873,6 +5007,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         "listen() uses Bun.serve and runs only on Bun. Serve on Node with @nifrajs/node or on Deno with @nifrajs/deno, or hand app.fetch to any fetch-compatible runtime (Workers, etc.).",
       )
     }
+    // Seal before Bun.serve: in `"error"` mode this throws instead of leaving a bound port behind.
+    if (process.env.NODE_ENV !== "production") sealHookAudit(this, this.catalog.size, this.logger)
     // Bun's `Server` is the concrete handle; we expose the stable `RunningServer`
     // subset so the public types don't depend on the ambient `Bun` global. The cast
     // bridges them - Bun's `.port` is `number | undefined` (undefined only for unix

@@ -43,6 +43,10 @@ async function measure(
       entrypoints: [entry],
       target: opts.target,
       minify: true,
+      // Model a real production bundle: vite/esbuild/webpack/next and `bun build --production` all
+      // inject this define, so framework dev-only branches (guarded by `process.env.NODE_ENV`)
+      // dead-code-eliminate. Measuring without it over-counts what actually ships.
+      define: { "process.env.NODE_ENV": '"production"' },
       ...(opts.external ? { external: opts.external } : {}),
       ...(opts.conditions ? { conditions: opts.conditions } : {}),
     })

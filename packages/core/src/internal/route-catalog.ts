@@ -80,6 +80,12 @@ export class RouteCatalog {
     return this.records
   }
 
+  /** Number of registered routes. Read at hook push time and at seal to detect an order-scoped hook
+   * that captured no route (see `Server.sealConfiguration`). */
+  get size(): number {
+    return this.records.length
+  }
+
   routeDescriptors(): ReadonlyArray<RouteDescriptor> {
     return this.descriptors
   }

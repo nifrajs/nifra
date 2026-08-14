@@ -220,3 +220,43 @@ test("without the server option the same slow page is not timed out", async () =
   ])
   expect(settled).toBe("still-running")
 }, 10_000)
+
+test("a post-hoc order-scoped use() warns at seal, while the use seam stays silent", async () => {
+  // The exact failure the `use` seam exists to prevent: `app.use(guard)` after `createWebApp` reaches
+  // zero page routes (they were all declared inside). `unusedScopedHooks` (default "warn") now surfaces
+  // it at seal. The `use:` seam runs before the routes, so the same guard there covers them and is silent.
+  const guard: Middleware = { name: "late-guard", beforeHandle: () => {} }
+
+  const captureWarnings = async (act: () => Promise<unknown>): Promise<string[]> => {
+    const original = console.warn
+    const messages: string[] = []
+    console.warn = (...args: unknown[]): void => {
+      messages.push(String(args[0]))
+    }
+    try {
+      await act()
+    } finally {
+      console.warn = original
+    }
+    return messages
+  }
+
+  const late = createWebApp({ adapter: stub, manifest: manifestOf(), clientEntry: "/c.js" })
+  late.use(guard)
+  const lateWarnings = await captureWarnings(() =>
+    Promise.resolve(late.fetch(new Request("http://x/"))),
+  )
+  expect(lateWarnings.length).toBe(1)
+  expect(lateWarnings[0]).toContain("beforeHandle()")
+
+  const early = createWebApp({
+    adapter: stub,
+    manifest: manifestOf(),
+    clientEntry: "/c.js",
+    use: (a) => a.use(guard),
+  })
+  const earlyWarnings = await captureWarnings(() =>
+    Promise.resolve(early.fetch(new Request("http://x/"))),
+  )
+  expect(earlyWarnings.length).toBe(0)
+})

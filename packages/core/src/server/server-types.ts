@@ -144,6 +144,21 @@ export interface ServerOptions {
    * Fastify's `setErrorHandler`) instead of repeating a formatter per route.
    */
   readonly onValidationError?: RouteSchema["onValidationError"]
+  /**
+   * What to do when an order-scoped hook (`derive`/`beforeHandle`/`around`/`aroundCapability`/
+   * `afterHandle`/`onError`/`decorate`) covers no route because it was added after the last route was
+   * registered. `register()` snapshots the current chain into each route as it is declared, so a hook
+   * appended after every route reaches nothing and is silently dead. `"warn"` (default) logs once at
+   * seal (first `listen()`/`fetch`/`resolveNode`); `"error"` throws a `FrameworkError`
+   * (`UNUSED_SCOPED_HOOKS`); `"off"` skips the bookkeeping entirely, including the one-frame stack
+   * capture. App-global hooks (`onRequest`/`onResponse`/...) are unaffected in every mode.
+   *
+   * This is a development-time diagnostic: the whole audit is guarded by `process.env.NODE_ENV !==
+   * "production"`, so any bundler that defines `NODE_ENV` (vite/esbuild/webpack/next, `bun build
+   * --production`) dead-code-eliminates it, leaving zero bytes and zero per-request cost in the shipped
+   * bundle. It fires in development, test, and CI - where you catch the mistake - not in production.
+   */
+  readonly unusedScopedHooks?: "warn" | "error" | "off"
 }
 
 /** A fetch-compatible handler used by {@link Server.mountFetch}. */
