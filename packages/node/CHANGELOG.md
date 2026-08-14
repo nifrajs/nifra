@@ -1,5 +1,42 @@
 # @nifrajs/node
 
+## 2.13.0
+
+### Patch Changes
+
+- 7535ce1: A direct body read on Node - `c.req.json()`, `c.req.text()`, `c.req.arrayBuffer()`, `c.req.bytes()`
+  on a raw-body route - now reads straight off the socket instead of first building the Web `Request`
+  the adapter had been deferring. The body cap is unchanged and still enforced by the same bounded
+  reader: an over-cap `Content-Length` is rejected before buffering, a chunked body is still aborted
+  mid-stream rather than buffered first, `clone()` inherits the cap, and `c.boundedBody(explicit)`
+  still overrides it in either direction. `c.req` keeps its identity and every other member behaves
+  as before. Net: a raw-body `POST` that reads through `c.req` gets a large throughput gain - roughly
+  +65% on the JSON-body workload in the Bun HTTP framework benchmark on Node - and is no longer the
+  slowest lane in a nifra app.
+- 9ee466e: Add an opt-in `serve({ fastResponse: true })`. With it on, a handler that returns a hand-rolled
+  `new Response(body)` with a string body rides the same direct-write lane `c.text` / `c.json` already
+  use: the reply reaches the socket from a status, a header record, and the bytes, instead of the
+  adapter draining a `Response` body stream. It works by swapping `globalThis.Response` for a stand-in
+  that defers a _simple_ construction (a string body, no `statusText`, and no headers or a plain header
+  record) and builds a real `Response` for anything else (a stream, a `Blob`, `null`, a `Headers`
+  instance) unchanged. A simple response is byte-identical to before, including the `content-type` the
+  native constructor infers, and stays `instanceof Response`.
+
+  Off by default: `c.text` / `c.json` get the fast lane without any global change, so prefer them.
+  Reach for `fastResponse` only when handlers build `Response` by hand on a hot path - it patches a
+  process-global builtin, so every `new Response(...)` in the process goes through the stand-in.
+
+- 1704308: On Node, `c.text(...)` and `c.json(...)` now defer building the Web `Response`. The adapter writes a
+  text or JSON body to the socket from a status, a header record, and the bytes directly, so the
+  `Response` those helpers used to construct up front - about a quarter of the request budget on a
+  small response - is built only if something actually reads the Web surface (a response hook,
+  `app.fetch`, or user code touching `.headers`), and forwarded to from then on. The returned value is
+  still a real `Response`: `instanceof Response` holds, the status, headers, and body are unchanged,
+  and the content-type is byte-identical to what the eager `Response` carried. Bun and Deno, which hand
+  the `Response` to their native server, are unaffected. Net: a plain text or JSON return on Node lands
+  on the adapter's fastest write lane - on the Bun HTTP framework benchmark the text workloads (Ping,
+  Query) go from roughly 0.75x of Fastify to level with it, and clear of Hono.
+
 ## 2.12.1
 
 ## 2.12.0
