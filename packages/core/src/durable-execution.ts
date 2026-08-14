@@ -13,7 +13,9 @@ import type {
   CapabilityExecutionJournal,
 } from "./internal/capability-runtime.ts"
 import { validCapabilityId } from "./internal/capability-runtime.ts"
-import { safeEqual } from "./internal/safe-equal.ts"
+import { durableApprovalProtocol } from "./internal/durable-approval-protocol.ts"
+import { durableEffectProtocol } from "./internal/durable-effect-protocol.ts"
+import { durableSagaProtocol } from "./internal/durable-saga-protocol.ts"
 
 export type { CapabilityApprovalGate, CapabilityExecutionIdentity, CapabilityExecutionJournal }
 
@@ -208,13 +210,21 @@ export function createDurableEffectJournal(
     errorCode?: string,
   ): Promise<void> => {
     const record = await current(effectId)
-    if (record.state !== from) throw new DurableEffectTransitionError(effectId, `${from}->${to}`)
-    const accepted = await options.store.transition({
+    const next = durableEffectProtocol.transition(record, {
       effectId,
       version: record.version,
       from,
       to,
       updatedAt: now(),
+      ...(errorCode === undefined ? {} : { errorCode }),
+    })
+    if (next === undefined) throw new DurableEffectTransitionError(effectId, `${from}->${to}`)
+    const accepted = await options.store.transition({
+      effectId,
+      version: record.version,
+      from,
+      to,
+      updatedAt: next.updatedAt,
       ...(errorCode === undefined ? {} : { errorCode }),
     })
     if (!accepted) throw new DurableEffectTransitionError(effectId, `${from}->${to}`)
@@ -261,12 +271,22 @@ export function createDurableEffectJournal(
         throw new TypeError("durable effect errorCode is invalid")
       const record = await current(effectId)
       const to = input.began ? "unknown" : "failed"
-      const accepted = await options.store.transition({
+      const next = durableEffectProtocol.transition(record, {
         effectId,
         version: record.version,
         from: record.state,
         to,
         updatedAt: now(),
+        errorCode: input.errorCode,
+      })
+      if (next === undefined)
+        throw new DurableEffectTransitionError(effectId, `${record.state}->${to}`)
+      const accepted = await options.store.transition({
+        effectId,
+        version: record.version,
+        from: record.state,
+        to,
+        updatedAt: next.updatedAt,
         errorCode: input.errorCode,
       })
       if (!accepted) throw new DurableEffectTransitionError(effectId, `${record.state}->${to}`)
@@ -296,18 +316,10 @@ export class MemoryDurableEffectStore implements DurableEffectStore {
 
   transition(input: Parameters<DurableEffectStore["transition"]>[0]): boolean {
     const current = this.records.get(input.effectId)
-    if (current === undefined || current.version !== input.version || current.state !== input.from)
-      return false
-    this.records.set(
-      input.effectId,
-      Object.freeze({
-        ...current,
-        state: input.to,
-        updatedAt: input.updatedAt,
-        version: current.version + 1,
-        ...(input.errorCode === undefined ? {} : { errorCode: input.errorCode }),
-      }),
-    )
+    const next = durableEffectProtocol.transition(current, input)
+    if (next === undefined) return false
+    if (current === undefined) return false
+    this.records.set(input.effectId, Object.freeze(cloneValue(next)))
     bucketMove(this.byState, current.state, input.to, input.effectId)
     return true
   }
@@ -801,64 +813,17 @@ export class MemoryApprovalStore implements ApprovalStore {
   }
   decide(input: Parameters<ApprovalStore["decide"]>[0]): boolean {
     const record = this.records.get(input.approvalId)
-    if (
-      record === undefined ||
-      record.tenantId !== input.tenantId ||
-      record.state !== "pending" ||
-      record.expiresAt <= input.now
-    )
-      return false
-    this.records.set(
-      input.approvalId,
-      Object.freeze({
-        ...record,
-        state: input.decision,
-        decidedBy: input.decidedBy,
-        updatedAt: input.now,
-        version: record.version + 1,
-      }),
-    )
+    const next = durableApprovalProtocol.decide(record, input)
+    if (next === undefined) return false
+    this.records.set(input.approvalId, Object.freeze(cloneValue(next)))
     return true
   }
   consume(input: Parameters<ApprovalStore["consume"]>[0]): ApprovalConsumeResult {
     const record = this.records.get(input.approvalId)
-    if (record === undefined) return { state: "missing" }
-    if (
-      record.tenantId !== input.tenantId ||
-      record.principalId !== input.principalId ||
-      record.capability !== input.capability ||
-      record.target !== input.target ||
-      !safeEqual(record.digest, input.digest)
-    )
-      return { state: "binding" }
-    if (!safeEqual(record.tokenHash, input.tokenHash)) return { state: "token" }
-    if (record.state === "consumed") return { state: "replay" }
-    if (record.expiresAt <= input.now || record.state === "expired") {
-      if (record.state !== "expired")
-        this.records.set(
-          input.approvalId,
-          Object.freeze({
-            ...record,
-            state: "expired",
-            updatedAt: input.now,
-            version: record.version + 1,
-          }),
-        )
-      return { state: "expired" }
-    }
-    if (record.state === "pending") return { state: "pending" }
-    if (record.state === "denied") return { state: "denied" }
-    if (record.state !== "approved") return { state: "token" }
-    this.records.set(
-      input.approvalId,
-      Object.freeze({
-        ...record,
-        state: "consumed",
-        updatedAt: input.now,
-        version: record.version + 1,
-      }),
-    )
-    return { state: "consumed" }
+    const transition = durableApprovalProtocol.consume(record, input)
+    if (transition.next !== undefined)
+      this.records.set(input.approvalId, Object.freeze(cloneValue(transition.next)))
+    return transition.result
   }
   list(): readonly ApprovalRecord[] {
     return Object.freeze(
@@ -1174,7 +1139,12 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
     current: SagaRecord,
     update: Omit<SagaRecord, "version">,
   ): Promise<SagaRecord> => {
-    const next = Object.freeze({ ...update, version: current.version + 1 })
+    const next = durableSagaProtocol.transition(current, {
+      sagaId: current.sagaId,
+      version: current.version,
+      record: Object.freeze({ ...update, version: current.version + 1 }),
+    })
+    if (next === undefined) throw new SagaConcurrencyError(current.sagaId)
     if (
       !(await options.store.compareAndSet({
         sagaId: current.sagaId,
@@ -1190,16 +1160,7 @@ export function createSagaEngine(options: SagaEngineOptions): SagaEngine {
     index: number,
     step: SagaStepRecord,
     state = record.state,
-  ): Omit<SagaRecord, "version"> => ({
-    ...record,
-    state,
-    steps: Object.freeze(
-      record.steps.map((candidate, candidateIndex) =>
-        candidateIndex === index ? Object.freeze(step) : candidate,
-      ),
-    ),
-    updatedAt: now(),
-  })
+  ): Omit<SagaRecord, "version"> => durableSagaProtocol.withStep(record, index, step, state, now())
   const effectScope = createEffectScope({
     ...(observer === undefined ? {} : { observers: [observer] }),
   })
@@ -1569,13 +1530,10 @@ export class MemorySagaStore implements SagaStore {
   }
   compareAndSet(input: Parameters<SagaStore["compareAndSet"]>[0]): boolean {
     const current = this.records.get(input.sagaId)
-    if (
-      current === undefined ||
-      current.version !== input.version ||
-      input.record.version !== input.version + 1
-    )
-      return false
-    this.records.set(input.sagaId, Object.freeze(cloneValue(input.record)))
+    const next = durableSagaProtocol.transition(current, input)
+    if (next === undefined) return false
+    if (current === undefined) return false
+    this.records.set(input.sagaId, Object.freeze(cloneValue(next)))
     bucketMove(this.byState, current.state, input.record.state, input.sagaId)
     return true
   }

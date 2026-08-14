@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite"
 import { describe, expect, test } from "bun:test"
 import {
   createDurableExecutionAdapter,
+  type DurableExecutionAdapter,
   DurableObjectExecutionAdapter,
   type DurableObjectStorage,
   MemoryDurableRecordBackend,
@@ -52,17 +53,73 @@ class ScriptedPostgresClient implements PostgresClient {
   }
 }
 
+function postgresConformanceAdapter(): PostgresDurableExecutionAdapter {
+  const client = new ScriptedPostgresClient()
+  const effect = {
+    effectId: "effect",
+    capability: "test.write",
+    state: "admission",
+    createdAt: 1,
+    updatedAt: 1,
+    version: 1,
+  }
+  const approval = {
+    approvalId: "approval",
+    effectId: "effect",
+    capability: "test.write",
+    tenantId: "tenant",
+    principalId: "principal",
+    tokenHash: "hash",
+    state: "pending",
+    createdAt: 1,
+    expiresAt: 100,
+    updatedAt: 1,
+    version: 1,
+  }
+  client.responses.push(
+    { rows: [{ id: "effect" }] },
+    { rows: [] },
+    { rows: [{ payload: stringifyWire(effect) }] },
+    { rows: [{ id: "effect" }] },
+    {
+      rows: [
+        {
+          payload: stringifyWire({ ...effect, state: "executing", version: 2, updatedAt: 2 }),
+        },
+      ],
+    },
+    { rows: [{ id: "approval" }] },
+    { rows: [{ payload: stringifyWire(approval) }] },
+    { rows: [{ id: "approval" }] },
+    {
+      rows: [
+        {
+          payload: stringifyWire({ ...approval, state: "approved", version: 2, updatedAt: 2 }),
+        },
+      ],
+    },
+    { rows: [{ id: "approval" }] },
+    {
+      rows: [
+        {
+          payload: stringifyWire({ ...approval, state: "consumed", version: 3, updatedAt: 3 }),
+        },
+      ],
+    },
+    { rows: [{ id: "saga" }] },
+    { rows: [{ id: "saga" }] },
+    { rows: [{ name: "worker", owner: "a", token: "token", expires_at: 101 }] },
+    { rows: [] },
+    { rows: [{ name: "worker" }] },
+    { rows: [{ name: "worker" }] },
+  )
+  return new PostgresDurableExecutionAdapter(client)
+}
+
 describe("durable execution adapter conformance", () => {
-  test("one atomic backend satisfies effect, approval, saga, and lease semantics", async () => {
+  test("one atomic backend exposes the expected primitives", async () => {
     const backend = new MemoryDurableRecordBackend()
     const adapter = createDurableExecutionAdapter(backend)
-    const result = await runDurableExecutionAdapterConformance(adapter)
-    expect(result).toEqual({
-      effects: true,
-      approvals: true,
-      sagas: true,
-      leases: true,
-    })
 
     await backend.create("effect", "scan-a", {
       version: 1,
@@ -117,55 +174,53 @@ describe("durable execution adapter conformance", () => {
     ).toBe(false)
   })
 
-  test("SQLite production adapter passes the shared conformance suite", async () => {
-    const db = new Database(":memory:")
-    try {
-      const adapter = new SQLiteDurableExecutionAdapter(db)
-      adapter.migrate()
-      expect(await runDurableExecutionAdapterConformance(adapter)).toEqual({
-        effects: true,
-        approvals: true,
-        sagas: true,
-        leases: true,
-      })
-      expect(await adapter.backend.scan("effect", { states: [], limit: 1 })).toEqual({
-        records: [],
-      })
-    } finally {
-      db.close()
+  const adapterCases: readonly {
+    readonly name: string
+    readonly create: () => {
+      readonly adapter: DurableExecutionAdapter
+      readonly close?: () => void
     }
-  })
+  }[] = [
+    {
+      name: "memory",
+      create: () => ({ adapter: createDurableExecutionAdapter(new MemoryDurableRecordBackend()) }),
+    },
+    {
+      name: "sqlite",
+      create: () => {
+        const db = new Database(":memory:")
+        const adapter = new SQLiteDurableExecutionAdapter(db)
+        adapter.migrate()
+        return { adapter, close: () => db.close() }
+      },
+    },
+    {
+      name: "durable object",
+      create: () => ({
+        adapter: new DurableObjectExecutionAdapter(new MemoryDurableObjectStorage()),
+      }),
+    },
+    {
+      name: "postgres",
+      create: () => ({ adapter: postgresConformanceAdapter() }),
+    },
+  ] as const
 
-  test("Durable Object production adapter passes the shared conformance suite", async () => {
-    const adapter = new DurableObjectExecutionAdapter(new MemoryDurableObjectStorage())
-    expect(await runDurableExecutionAdapterConformance(adapter)).toEqual({
-      effects: true,
-      approvals: true,
-      sagas: true,
-      leases: true,
+  for (const candidate of adapterCases) {
+    test(`${candidate.name} adapter passes the shared protocol conformance suite`, async () => {
+      const instance = candidate.create()
+      try {
+        expect(await runDurableExecutionAdapterConformance(instance.adapter)).toEqual({
+          effects: true,
+          approvals: true,
+          sagas: true,
+          leases: true,
+        })
+      } finally {
+        instance.close?.()
+      }
     })
-    expect(await adapter.backend.scan("effect", { states: ["executing"], limit: 1 })).toBeDefined()
-    expect(
-      await adapter.backend.renewLease({
-        name: "missing",
-        owner: "a",
-        token: "token",
-        now: 1,
-        leaseMs: 1,
-      }),
-    ).toBe(false)
-    expect(
-      await adapter.backend.checkpointLease({
-        name: "missing",
-        owner: "a",
-        token: "token",
-        cursor: "next",
-      }),
-    ).toBe(false)
-    expect(
-      await adapter.backend.releaseLease({ name: "missing", owner: "a", token: "token" }),
-    ).toBe(false)
-  })
+  }
 
   test("Postgres adapter parameterizes records and exercises every atomic primitive", async () => {
     const client = new ScriptedPostgresClient()

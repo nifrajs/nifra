@@ -4,6 +4,7 @@ import {
   ApprovalBindingError,
   ApprovalDeniedError,
   ApprovalPendingError,
+  type ApprovalRecord,
   ApprovalRequiredError,
   ApprovalTokenExpiredError,
   ApprovalTokenInvalidError,
@@ -11,6 +12,7 @@ import {
   createApprovalCoordinator,
   createDurableEffectJournal,
   createSagaEngine,
+  type DurableEffectRecord,
   defineSaga,
   MemoryApprovalStore,
   MemoryDurableEffectStore,
@@ -20,8 +22,13 @@ import {
   reconcileSagas,
   reconcileSagasPage,
   SagaAmbiguousStepError,
+  type SagaRecord,
   SagaResolutionError,
+  type SagaStepRecord,
 } from "../src/durable-execution.ts"
+import { durableApprovalProtocol } from "../src/internal/durable-approval-protocol.ts"
+import { durableEffectProtocol } from "../src/internal/durable-effect-protocol.ts"
+import { durableSagaProtocol } from "../src/internal/durable-saga-protocol.ts"
 import { server } from "../src/server.ts"
 
 const secret = (): Uint8Array => crypto.getRandomValues(new Uint8Array(32))
@@ -33,6 +40,123 @@ const approvalInput = (resumeToken?: string) => ({
   identity: { tenantId: "tenant_1", principalId: "user_1" },
   ...(resumeToken === undefined ? {} : { resumeToken }),
   signal: new AbortController().signal,
+})
+
+describe("durable protocol state transitions", () => {
+  test("effect transitions require the expected version and state", () => {
+    const current: DurableEffectRecord = {
+      effectId: "effect_1",
+      capability: "payments.charge",
+      state: "admission",
+      createdAt: 1,
+      updatedAt: 1,
+      version: 1,
+    }
+    const next = durableEffectProtocol.transition(current, {
+      effectId: "effect_1",
+      version: 1,
+      from: "admission",
+      to: "executing",
+      updatedAt: 2,
+    })
+    expect(next).toMatchObject({ state: "executing", updatedAt: 2, version: 2 })
+    expect(
+      durableEffectProtocol.transition(current, {
+        effectId: "effect_1",
+        version: 1,
+        from: "executing",
+        to: "committed",
+        updatedAt: 3,
+      }),
+    ).toBeUndefined()
+  })
+
+  test("approval transitions bind identity and consume exactly once", () => {
+    const current: ApprovalRecord = {
+      approvalId: "approval_1",
+      effectId: "effect_1",
+      capability: "payments.charge",
+      tenantId: "tenant_1",
+      principalId: "principal_1",
+      tokenHash: "token_hash",
+      state: "pending",
+      createdAt: 1,
+      expiresAt: 100,
+      updatedAt: 1,
+      version: 1,
+    }
+    const approved = durableApprovalProtocol.decide(current, {
+      approvalId: "approval_1",
+      tenantId: "tenant_1",
+      decision: "approved",
+      decidedBy: "operator_1",
+      now: 2,
+    })
+    expect(approved).toMatchObject({ state: "approved", version: 2 })
+    const consumed = durableApprovalProtocol.consume(approved, {
+      approvalId: "approval_1",
+      tenantId: "tenant_1",
+      principalId: "principal_1",
+      capability: "payments.charge",
+      tokenHash: "token_hash",
+      now: 3,
+    })
+    expect(consumed.result).toEqual({ state: "consumed" })
+    expect(consumed.next).toMatchObject({ state: "consumed", version: 3 })
+    expect(
+      durableApprovalProtocol.consume(approved, {
+        approvalId: "approval_1",
+        tenantId: "tenant_2",
+        principalId: "principal_1",
+        capability: "payments.charge",
+        tokenHash: "token_hash",
+        now: 3,
+      }).result,
+    ).toEqual({ state: "binding" })
+  })
+
+  test("saga transitions provide a versioned record and immutable step update", () => {
+    const step: SagaStepRecord = {
+      name: "charge",
+      effectId: "effect_1",
+      compensationEffectId: "compensate_1",
+      state: "executing",
+      compensationArgs: { paymentId: "payment_1" },
+      attempts: 0,
+    }
+    const current: SagaRecord = {
+      sagaId: "saga_1",
+      definition: "checkout",
+      state: "running",
+      input: {},
+      steps: [step],
+      createdAt: 1,
+      updatedAt: 1,
+      version: 1,
+    }
+    const next = durableSagaProtocol.transition(current, {
+      sagaId: "saga_1",
+      version: 1,
+      record: { ...current, state: "completed", version: 2, updatedAt: 2 },
+    })
+    expect(next).toMatchObject({ state: "completed", version: 2 })
+    expect(
+      durableSagaProtocol.transition(current, {
+        sagaId: "saga_1",
+        version: 2,
+        record: { ...current, version: 3 },
+      }),
+    ).toBeUndefined()
+    const committed = durableSagaProtocol.withStep(
+      current,
+      0,
+      { ...step, state: "committed", result: { ok: true } },
+      "running",
+      2,
+    )
+    expect(committed.steps[0]).toMatchObject({ state: "committed", result: { ok: true } })
+    expect(committed.updatedAt).toBe(2)
+  })
 })
 
 describe("durable approvals", () => {

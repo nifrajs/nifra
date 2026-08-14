@@ -13,6 +13,9 @@ import type {
   SagaRecord,
   SagaStore,
 } from "./durable-execution.ts"
+import { durableApprovalProtocol } from "./internal/durable-approval-protocol.ts"
+import { durableEffectProtocol } from "./internal/durable-effect-protocol.ts"
+import { durableSagaProtocol } from "./internal/durable-saga-protocol.ts"
 import { safeEqual } from "./internal/safe-equal.ts"
 import type { ReconciliationLease, ReconciliationLeaseStore } from "./reconciliation-worker.ts"
 import { parse as parseWire, stringify as stringifyWire } from "./wire.ts"
@@ -93,20 +96,8 @@ export function createDurableExecutionAdapter(
     get: (effectId) => backend.get<DurableEffectRecord>("effect", effectId),
     async transition(input) {
       const current = await backend.get<DurableEffectRecord>("effect", input.effectId)
-      if (
-        current === undefined ||
-        current.version !== input.version ||
-        current.state !== input.from
-      ) {
-        return false
-      }
-      const next: DurableEffectRecord = {
-        ...current,
-        state: input.to,
-        updatedAt: input.updatedAt,
-        version: current.version + 1,
-        ...(input.errorCode === undefined ? {} : { errorCode: input.errorCode }),
-      }
+      const next = durableEffectProtocol.transition(current, input)
+      if (next === undefined) return false
       return await backend.compareAndSet("effect", input.effectId, input.version, next)
     },
     scan: (input) =>
@@ -119,46 +110,26 @@ export function createDurableExecutionAdapter(
     get: (approvalId) => backend.get<ApprovalRecord>("approval", approvalId),
     async decide(input) {
       const current = await backend.get<ApprovalRecord>("approval", input.approvalId)
-      if (
-        current === undefined ||
-        current.tenantId !== input.tenantId ||
-        current.state !== "pending" ||
-        current.expiresAt <= input.now
-      ) {
-        return false
-      }
-      const decided: ApprovalRecord = {
-        ...current,
-        state: input.decision,
-        decidedBy: input.decidedBy,
-        updatedAt: input.now,
-        version: current.version + 1,
-      }
-      return await backend.compareAndSet("approval", input.approvalId, current.version, decided)
+      const next = durableApprovalProtocol.decide(current, input)
+      if (current === undefined || next === undefined) return false
+      return await backend.compareAndSet("approval", input.approvalId, current.version, next)
     },
     async consume(input): Promise<ApprovalConsumeResult> {
       const current = await backend.get<ApprovalRecord>("approval", input.approvalId)
-      if (current === undefined) return { state: "missing" }
-      if (current.tenantId !== input.tenantId || current.principalId !== input.principalId)
-        return { state: "binding" }
+      const transition = durableApprovalProtocol.consume(current, input)
       if (
-        current.capability !== input.capability ||
-        current.target !== input.target ||
-        !safeEqual(current.digest, input.digest)
+        current === undefined ||
+        transition.result.state !== "consumed" ||
+        transition.next === undefined
       )
-        return { state: "binding" }
-      if (!safeEqual(current.tokenHash, input.tokenHash)) return { state: "token" }
-      if (current.state === "consumed") return { state: "replay" }
-      if (current.state === "denied") return { state: "denied" }
-      if (current.state === "pending") return { state: "pending" }
-      if (current.state === "expired" || current.expiresAt <= input.now) return { state: "expired" }
-      const consumed = await backend.compareAndSet("approval", input.approvalId, current.version, {
-        ...current,
-        state: "consumed",
-        updatedAt: input.now,
-        version: current.version + 1,
-      })
-      return consumed ? { state: "consumed" } : { state: "replay" }
+        return transition.result
+      const consumed = await backend.compareAndSet(
+        "approval",
+        input.approvalId,
+        current.version,
+        transition.next,
+      )
+      return consumed ? transition.result : { state: "replay" }
     },
   }
 
@@ -166,8 +137,12 @@ export function createDurableExecutionAdapter(
     durability: "durable",
     create: (record) => backend.create("saga", record.sagaId, clone(record)),
     get: (sagaId) => backend.get<SagaRecord>("saga", sagaId),
-    compareAndSet: (input) =>
-      backend.compareAndSet("saga", input.sagaId, input.version, clone(input.record)),
+    compareAndSet: (input) => {
+      const next = durableSagaProtocol.transition(undefined, input)
+      return next === undefined
+        ? false
+        : backend.compareAndSet("saga", input.sagaId, input.version, clone(next))
+    },
     scan: (input) => backend.scan<SagaRecord>("saga", input as ReconciliationScanOptions<string>),
   }
 
