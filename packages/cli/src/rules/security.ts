@@ -108,8 +108,8 @@ export const secretComparisonRule: CheckRule = {
     const ts = await importProjectTypeScript(ctx.root)
     if (ts === undefined) return didNotRun("NF-S002", "Non-constant-time secret comparison scan")
     const findings: Diagnostic[] = []
-    for (const file of ctx.sources.files) {
-      const parsed = parsedFile(ts, ctx.sources, file)
+    for (const file of ctx.project.source.files) {
+      const parsed = parsedFile(ts, ctx.project.source, file)
       if (parsed === undefined) continue
       const { tree, lines } = parsed
       const visit = (node: TSApi.Node): void => {
@@ -169,8 +169,8 @@ export const piiLogRule: CheckRule = {
     const ts = await importProjectTypeScript(ctx.root)
     if (ts === undefined) return didNotRun("NF-S003", "Sensitive-value-in-log scan")
     const findings: Diagnostic[] = []
-    for (const file of ctx.sources.files) {
-      const parsed = parsedFile(ts, ctx.sources, file)
+    for (const file of ctx.project.source.files) {
+      const parsed = parsedFile(ts, ctx.project.source, file)
       if (parsed === undefined) continue
       const { tree, lines } = parsed
       const visit = (node: TSApi.Node): void => {
@@ -217,8 +217,8 @@ export const failOpenGateRule: CheckRule = {
     const ts = await importProjectTypeScript(ctx.root)
     if (ts === undefined) return didNotRun("NF-S001", "Fail-open gate scan")
     const findings: Diagnostic[] = []
-    for (const file of ctx.sources.files) {
-      const parsed = parsedFile(ts, ctx.sources, file)
+    for (const file of ctx.project.source.files) {
+      const parsed = parsedFile(ts, ctx.project.source, file)
       if (parsed === undefined) continue
       const { tree, lines } = parsed
       const visit = (node: TSApi.Node): void => {
@@ -284,8 +284,8 @@ export const corsOriginPredicateRule: CheckRule = {
     const ts = await importProjectTypeScript(ctx.root)
     if (ts === undefined) return didNotRun("NF-S004", "CORS origin predicate scan")
     const findings: Diagnostic[] = []
-    for (const file of ctx.sources.files) {
-      const parsed = parsedFile(ts, ctx.sources, file)
+    for (const file of ctx.project.source.files) {
+      const parsed = parsedFile(ts, ctx.project.source, file)
       if (parsed === undefined) continue
       const { tree, lines } = parsed
       const visit = (node: TSApi.Node): void => {
@@ -345,8 +345,8 @@ export const externalRedirectRule: CheckRule = {
     const ts = await importProjectTypeScript(ctx.root)
     if (ts === undefined) return didNotRun("NF-S005", "External redirect opt-out scan")
     const findings: Diagnostic[] = []
-    for (const file of ctx.sources.files) {
-      const parsed = parsedFile(ts, ctx.sources, file)
+    for (const file of ctx.project.source.files) {
+      const parsed = parsedFile(ts, ctx.project.source, file)
       if (parsed === undefined) continue
       const { tree, lines } = parsed
       const visit = (node: TSApi.Node): void => {
@@ -402,8 +402,8 @@ export const assuranceEscapeHatchRule: CheckRule = {
     const ts = await importProjectTypeScript(ctx.root)
     if (ts === undefined) return didNotRun("NF-S006", "Security escape hatch scan")
     const findings: Diagnostic[] = []
-    for (const file of ctx.sources.files) {
-      const parsed = parsedFile(ts, ctx.sources, file)
+    for (const file of ctx.project.source.files) {
+      const parsed = parsedFile(ts, ctx.project.source, file)
       if (parsed === undefined) continue
       const { tree, lines } = parsed
       const visit = (node: TSApi.Node): void => {
@@ -445,8 +445,8 @@ export const unprefixedSecureCookieRule: CheckRule = {
     const ts = await importProjectTypeScript(ctx.root)
     if (ts === undefined) return didNotRun("NF-S007", "Secure cookie prefix scan")
     const findings: Diagnostic[] = []
-    for (const file of ctx.sources.files) {
-      const parsed = parsedFile(ts, ctx.sources, file)
+    for (const file of ctx.project.source.files) {
+      const parsed = parsedFile(ts, ctx.project.source, file)
       if (parsed === undefined) continue
       const { tree } = parsed
       const visit = (node: TSApi.Node): void => {

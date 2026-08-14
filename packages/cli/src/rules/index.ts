@@ -1,5 +1,8 @@
 import type { Diagnostic } from "../diagnostics.ts"
+import type { ProjectFacts } from "../project-facts.ts"
 import { isBuiltInCode } from "./codes.ts"
+
+export type { ProjectFacts } from "../project-facts.ts"
 
 export interface SourceFile {
   readonly file: string
@@ -9,10 +12,6 @@ export interface SourceFile {
 export interface SourceIndex {
   readonly files: readonly string[]
   read(file: string): string | undefined
-}
-
-export interface ProjectFacts {
-  readonly [key: string]: unknown
 }
 
 export interface RuleContext {

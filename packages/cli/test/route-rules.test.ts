@@ -1,16 +1,18 @@
 import { describe, expect, test } from "bun:test"
 import { scanStaticRouteText } from "../src/check.ts"
-import { runRuleRegistry, sourceIndex } from "../src/rules/index.ts"
+import { runRuleRegistry } from "../src/rules/index.ts"
 import { routeRules } from "../src/rules/routes.ts"
+import { projectFacts } from "./rule-facts.ts"
 
 /** Run the route-table rules exactly as `collectCheckResult` wires them: routes come from the
  * static scan of the same source the rules can read back for pragma checks. */
 async function scan(file: string, content: string) {
+  const facts = projectFacts(file, content, scanStaticRouteText(file, content))
   return runRuleRegistry(
     {
       root: "/tmp/project",
-      sources: sourceIndex([{ file, content }]),
-      project: { staticRoutes: scanStaticRouteText(file, content) },
+      sources: facts.source,
+      project: facts,
     },
     routeRules,
   )
@@ -100,14 +102,21 @@ describe("NF-C019 duplicate route registration", () => {
 
     const a = scanStaticRouteText("apps/a/backend.ts", backend(['  .get("/health", () => ({}))']))
     const b = scanStaticRouteText("apps/b/backend.ts", backend(['  .get("/health", () => ({}))']))
+    const facts = projectFacts("apps/a/backend.ts", "", [...a, ...b])
     const crossFile = await runRuleRegistry(
       {
         root: "/tmp/project",
-        sources: sourceIndex([
-          { file: "apps/a/backend.ts", content: "" },
-          { file: "apps/b/backend.ts", content: "" },
-        ]),
-        project: { staticRoutes: [...a, ...b] },
+        sources: {
+          files: ["apps/a/backend.ts", "apps/b/backend.ts"],
+          read: () => "",
+        },
+        project: {
+          ...facts,
+          source: {
+            files: ["apps/a/backend.ts", "apps/b/backend.ts"],
+            read: () => "",
+          },
+        },
       },
       routeRules,
     )
@@ -116,11 +125,15 @@ describe("NF-C019 duplicate route registration", () => {
 })
 
 test("route rules are total over malformed project facts", async () => {
+  const facts = projectFacts("x", "")
   const findings = await runRuleRegistry(
     {
       root: "/tmp/project",
-      sources: sourceIndex([]),
-      project: { staticRoutes: [null, 42, { file: "x" }, "nope"] },
+      sources: facts.source,
+      project: {
+        ...facts,
+        routes: [null, 42, { file: "x" }, "nope"] as never,
+      },
     },
     routeRules,
   )

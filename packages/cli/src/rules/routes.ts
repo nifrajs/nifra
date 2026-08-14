@@ -3,8 +3,8 @@ import { commentBlockHasMarker } from "./comment-markers.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
 
 /**
- * Route-table lints over the statically collected route registrations (`scanStaticRouteText` in
- * ../check.ts fills `ctx.project.staticRoutes` during the source walk - no second scan here).
+ * Route-table lints over the statically collected route registrations (`ProjectFacts.routes` is built
+ * once before the registry runs - no rule re-walks source).
  *
  * NF-C018 exists because the typed client's proxy intercepts a fixed set of property names before
  * path resolution (`resolveSegment` + the thenable guard in @nifrajs/client): the seven HTTP verbs
@@ -41,20 +41,19 @@ interface StaticRouteFact {
 
 /** Parse-don't-cast over the project fact: a malformed entry is dropped, never trusted. */
 function routeFacts(ctx: RuleContext): StaticRouteFact[] {
-  const raw = ctx.project.staticRoutes
-  if (!Array.isArray(raw)) return []
+  const raw: readonly unknown[] = ctx.project.routes
   const out: StaticRouteFact[] = []
   for (const item of raw) {
-    if (typeof item !== "object" || item === null) continue
-    const record = item as Record<string, unknown>
+    if (typeof item !== "object" || item === null || Array.isArray(item)) continue
+    const record = Object.fromEntries(Object.entries(item))
     if (
-      typeof record.file === "string" &&
-      typeof record.line === "number" &&
-      typeof record.method === "string" &&
-      typeof record.path === "string"
-    ) {
-      out.push({ file: record.file, line: record.line, method: record.method, path: record.path })
-    }
+      typeof record.file !== "string" ||
+      typeof record.line !== "number" ||
+      typeof record.method !== "string" ||
+      typeof record.path !== "string"
+    )
+      continue
+    out.push({ file: record.file, line: record.line, method: record.method, path: record.path })
   }
   return out
 }
@@ -91,7 +90,7 @@ export const reservedSegmentRule: CheckRule = {
         if (collision === undefined) continue
         let lines = linesByFile.get(route.file)
         if (lines === undefined) {
-          lines = (ctx.sources.read(route.file) ?? "").split("\n")
+          lines = (ctx.project.source.read(route.file) ?? "").split("\n")
           linesByFile.set(route.file, lines)
         }
         if (commentBlockHasMarker(lines, route.line, RESERVED_SEGMENT_PRAGMA)) continue

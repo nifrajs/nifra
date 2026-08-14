@@ -1,14 +1,16 @@
 import { describe, expect, test } from "bun:test"
 import { parseCompatibleReplayFile } from "@nifrajs/core/replay"
-import { runRuleRegistry, sourceIndex } from "../src/rules/index.ts"
+import { runRuleRegistry } from "../src/rules/index.ts"
 import { securityRules } from "../src/rules/security.ts"
+import { projectFacts } from "./rule-facts.ts"
 
 async function scan(file: string, content: string) {
+  const facts = projectFacts(file, content)
   return runRuleRegistry(
     {
       root: "/tmp/project",
-      sources: sourceIndex([{ file, content }]),
-      project: {},
+      sources: facts.source,
+      project: facts,
     },
     securityRules,
   )
@@ -161,17 +163,20 @@ test("shares source reads across built-in security rules", async () => {
     "const token = input.token",
     "if (token === expected) console.log(email)",
   ].join("\n")
+  const baseFacts = projectFacts("routes/security.ts", content)
+  const source = {
+    files: ["routes/security.ts"],
+    read: () => {
+      reads += 1
+      return content
+    },
+  }
+  const facts = { ...baseFacts, source }
   const findings = await runRuleRegistry(
     {
       root: "/tmp/project",
-      sources: {
-        files: ["routes/security.ts"],
-        read: () => {
-          reads += 1
-          return content
-        },
-      },
-      project: {},
+      sources: facts.source,
+      project: facts,
     },
     securityRules,
   )

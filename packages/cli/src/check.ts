@@ -29,6 +29,7 @@ import { importProjectTypeScript, type TypeScriptApi } from "./internal/typescri
 // Type-only: `pipeline-report.ts` imports this module's source scanners, so a value import here would
 // close a cycle. Doctor is what actually runs the collector (see the `pipeline` rule below).
 import type { PipelineReport } from "./pipeline-report.ts"
+import { freezeProjectFacts, type ProjectFactsSeed } from "./project-facts.ts"
 import { RULE_CODES } from "./rules/codes.ts"
 import { commentBlockMarkerReason } from "./rules/comment-markers.ts"
 import { parseRulePacks, type RuleContext, runRuleRegistry, sourceIndex } from "./rules/index.ts"
@@ -2020,7 +2021,7 @@ export interface CheckAssuranceContext {
 
 /** Optional per-project `nifra.check.json` - pure data (no code execution), so it's safe to read before
  * the app is built or even importable, preserving check's pre-`loadApp` invariant. */
-interface CheckConfig {
+export interface CheckConfig {
   readonly externalMounts: readonly string[]
   readonly rules: Readonly<Record<string, RuleOverride>>
 }
@@ -2269,25 +2270,27 @@ function responseRouteSuggestion(): CheckSuggestion {
   }
 }
 
-/** Run the three checks and assemble a structured, machine-readable result. The single source the CLI
- * report, `--json`, and the MCP tool all render from. */
-export async function collectCheckResult(
+interface CheckCollectionOptions {
+  readonly lintsOnly?: boolean
+  readonly signal?: AbortSignal
+  readonly maxDiagnostics?: number
+  readonly loadTypeScript?: () => Promise<TypeScriptApi | undefined>
+  readonly assurance?: CheckAssuranceContext
+}
+
+interface ProjectScan {
+  readonly facts: ProjectFactsSeed
+  readonly typecheck: TypecheckResult
+  readonly sqlCompiler: TypeScriptApi | undefined
+  readonly checkConfigError?: string
+  readonly checkConfigWarnings: readonly string[]
+}
+
+/** Build the rule input from one source walk and the other check-wide scans. */
+async function buildProjectScan(
   cwd: string,
-  opts: {
-    readonly lintsOnly?: boolean
-    readonly signal?: AbortSignal
-    /** Cap the returned `diagnostics` to this many (adds {@link CheckResult.truncated}). The MCP tool sets
-     * it so a huge project can't produce a transport-breaking result; the CLI leaves it unset (all shown). */
-    readonly maxDiagnostics?: number
-    /** How the interpolated-SQL rule gets its compiler. Injectable so the "not installed" path - the
-     * one where a security rule reports that it did not run - is testable on a machine that has it. */
-    readonly loadTypeScript?: () => Promise<TypeScriptApi | undefined>
-    /** Route-assurance inputs already computed by {@link collectProjectVerification}. When present,
-     * the capability + trust-manifest diagnostics reuse them instead of loading/reflecting a second
-     * time; when absent, they are computed here (unchanged standalone behavior). */
-    readonly assurance?: CheckAssuranceContext
-  } = {},
-): Promise<CheckResult> {
+  opts: Pick<CheckCollectionOptions, "lintsOnly" | "signal" | "loadTypeScript">,
+): Promise<ProjectScan> {
   const fetches: SourceFinding[] = []
   const staticRoutes: StaticRouteFinding[] = []
   const untypedClients: SourceFinding[] = []
@@ -2295,31 +2298,18 @@ export async function collectCheckResult(
   const serverImports: TransitiveServerImportFinding[] = []
   const responseRoutes: SourceFinding[] = []
   const interpolatedSql: SourceFinding[] = []
-  // Route modules (rel + content) collected during the walk, so the TRANSITIVE server-only resolution
-  // (#4.4) - which needs fs-backed import resolution, not just per-file text - runs after the walk.
   const routeModules: Array<{ rel: string; content: string }> = []
   const sourceFiles: Array<{ file: string; content: string }> = []
-  // Load the optional check config first - the typed-client scan needs the external-mount allowlist as it
-  // walks. It's a tiny pure-JSON read; a malformed file surfaces as a warning below, never blocking.
   const {
     config: checkConfig,
     error: checkConfigError,
     warnings: checkConfigWarnings,
   } = await loadCheckConfig(cwd)
-  // The interpolated-SQL rule parses with the TypeScript compiler, which is an optional peer. Resolved
-  // once, before the walk, so a project without it is told the rule did not run rather than being
-  // handed a clean report the rule never produced.
   const sqlCompiler = await (opts.loadTypeScript ?? (() => importProjectTypeScript(cwd)))()
-  // AST facts are a lazy refinement of lexical candidates. The parser is not invoked for a file until
-  // one of the route/import/response scanners finds something worth disambiguating, and the cache is
-  // shared across those rules for this check run.
   const sourceFacts = sqlCompiler === undefined ? undefined : createSourceFacts(sqlCompiler)
-  // One loader + parse cache for the whole walk, so a shared `sql-fragments.ts` is read once no matter
-  // how many route modules import a fragment out of it.
   const sqlImports = sqlCompiler === undefined ? undefined : createProjectSqlImports(cwd)
-  // lintsOnly: skip the tsc pass (seconds on a big project) and run just the near-instant source
-  // lints - the agent inner-loop mode; the full gate stays the definition of done.
-  const [tc, _, dr, manifestDrift] = await Promise.all([
+
+  const [typecheckResult, _, doctor, manifestDrift] = await Promise.all([
     opts.lintsOnly
       ? Promise.resolve<TypecheckResult>({ ran: false, ok: true, note: "lints-only mode" })
       : typecheck(cwd, opts.signal),
@@ -2338,19 +2328,12 @@ export async function collectCheckResult(
     scanServerManifestDrift(cwd),
   ])
 
-  // #4.4: resolve the FULL transitive server-only chain per route. The resolver/reader are fs-backed
-  // (`Bun.resolveSync` from the importing file's dir + a sync read), so the walk follows the real local
-  // module graph (`route → ../data → ../db → node:crypto`). Both are best-effort + total: a resolve/read
-  // miss returns `undefined`, and the walk falls back to the direct edge. The whole walk is bounded
-  // (depth + visited caps), so a deep/cyclic graph can't blow up the check.
   const resolveModule: ModuleResolver = (fromFile, specifier) => {
     try {
-      // `fromFile` is a cwd-RELATIVE route path on the first hop (`routes/x.tsx`) but ABSOLUTE on the
-      // deeper hops the walk takes (it carries resolved absolute paths) - resolve the dir for each.
       const fromAbs = isAbsolute(fromFile) ? fromFile : join(cwd, fromFile)
       return Bun.resolveSync(specifier, dirname(fromAbs))
     } catch {
-      return undefined // unresolvable (bare pkg without install, tsconfig path alias, missing file)
+      return undefined
     }
   }
   const readModule: ModuleReader = (absPath) => {
@@ -2366,6 +2349,43 @@ export async function collectCheckResult(
     )
   }
 
+  const source = sourceIndex(sourceFiles)
+  const facts: ProjectFactsSeed = {
+    source,
+    routes: staticRoutes,
+    importGraph: serverImports,
+    packages: { doctor, manifestDrift },
+    ...(doctor.pipeline === undefined ? {} : { pipeline: doctor.pipeline }),
+    policies: { checkConfig, rulePacks: [] },
+    sourceFindings: { fetches, untypedClients, removedImports, responseRoutes, interpolatedSql },
+  }
+  return {
+    facts,
+    typecheck: typecheckResult,
+    sqlCompiler,
+    ...(checkConfigError === undefined ? {} : { checkConfigError }),
+    checkConfigWarnings,
+  }
+}
+
+/** Run the three checks and assemble a structured, machine-readable result. The single source the CLI
+ * report, `--json`, and the MCP tool all render from. */
+export async function collectCheckResult(
+  cwd: string,
+  opts: CheckCollectionOptions = {},
+): Promise<CheckResult> {
+  const scan = await buildProjectScan(cwd, opts)
+  const factsSeed = scan.facts
+  const { fetches, untypedClients, removedImports, responseRoutes, interpolatedSql } =
+    factsSeed.sourceFindings
+  const staticRoutes = factsSeed.routes
+  const serverImports = factsSeed.importGraph
+  const { doctor: dr, manifestDrift } = factsSeed.packages
+  const { checkConfig } = factsSeed.policies
+  const tc = scan.typecheck
+  const sqlCompiler = scan.sqlCompiler
+  const checkConfigError = scan.checkConfigError
+  const checkConfigWarnings = scan.checkConfigWarnings
   const diagnostics: CheckDiagnostic[] = []
   const structuredExtras: Diagnostic[] = []
   if (checkConfigError !== undefined) {
@@ -2441,7 +2461,7 @@ export async function collectCheckResult(
       })
   }
   const routes = staticRouteMap(staticRoutes)
-  for (const f of fetches.sort(bySite)) {
+  for (const f of [...fetches].sort(bySite)) {
     diagnostics.push({
       rule: "typed-client",
       severity: "error",
@@ -2452,7 +2472,7 @@ export async function collectCheckResult(
       suggestion: ownFetchSuggestion(f, routes),
     })
   }
-  for (const f of removedImports.sort(bySite)) {
+  for (const f of [...removedImports].sort(bySite)) {
     const entry = REMOVED_IMPORTS.find(
       (candidate) =>
         f.snippet.includes(`"${candidate.specifier}`) ||
@@ -2467,7 +2487,7 @@ export async function collectCheckResult(
       fix: entry?.replacement ?? "see the changelog",
     })
   }
-  for (const f of untypedClients.sort(bySite)) {
+  for (const f of [...untypedClients].sort(bySite)) {
     diagnostics.push({
       rule: "untyped-client",
       severity: "error",
@@ -2478,7 +2498,7 @@ export async function collectCheckResult(
       suggestion: untypedClientSuggestion(f),
     })
   }
-  for (const f of serverImports.sort(bySite)) {
+  for (const f of [...serverImports].sort(bySite)) {
     // #4.4: the FULL transitive chain the import-resolution walk found - `route → ../data → ../db →
     // node:crypto`, matching the build leak-guard's depth - instead of just the direct edge. The chain's
     // tail is the actual server-only sink; the head is the route. When a precise resolve wasn't possible
@@ -2511,7 +2531,7 @@ export async function collectCheckResult(
       },
     })
   }
-  for (const f of interpolatedSql.sort(bySite)) {
+  for (const f of [...interpolatedSql].sort(bySite)) {
     diagnostics.push({
       rule: "interpolated-sql",
       severity: "error",
@@ -2533,7 +2553,7 @@ export async function collectCheckResult(
     })
   }
   // Advisory - surfaced but NOT folded into `ok`, so it never fails the gate (a raw Response is valid).
-  for (const f of responseRoutes.sort(bySite)) {
+  for (const f of [...responseRoutes].sort(bySite)) {
     diagnostics.push({
       rule: "response-route",
       severity: "warning",
@@ -2645,6 +2665,8 @@ export async function collectCheckResult(
   // without nifra.assurance.ts retain the historical scan and hot path unchanged.
   const provided = opts.assurance
   let applicationRulePacks: readonly import("./rules/index.ts").RulePack[] = []
+  let loadedPolicy = provided
+  let loadedCapability: CapabilityProjectReport | undefined = provided?.capability
   const assuranceConfigPath = join(cwd, "nifra.assurance.ts")
   if (provided !== undefined ? provided.present : existsSync(assuranceConfigPath)) {
     try {
@@ -2669,6 +2691,14 @@ export async function collectCheckResult(
           const { collectCapabilityProjectReport } = await import("./capabilities-tool.ts")
           project = await collectCapabilityProjectReport(cwd, config.source, config.capabilities)
         }
+        loadedPolicy = {
+          present: true,
+          config,
+          ...(routeAssurance === undefined ? {} : { routeAssurance }),
+          ...(project === undefined ? {} : { capability: project }),
+          ...(evidence === undefined ? {} : { evidence }),
+        }
+        loadedCapability = project
       }
       applicationRulePacks = parseRulePacks(config.rulePacks)
       const capabilityReport = project?.report
@@ -2791,6 +2821,7 @@ export async function collectCheckResult(
         }
       }
     } catch (err) {
+      loadedPolicy = { present: true, error: err }
       diagnostics.push({
         rule: "capability-config",
         severity: "error",
@@ -2864,16 +2895,22 @@ export async function collectCheckResult(
     }
   }
 
+  const projectFacts = freezeProjectFacts(
+    {
+      ...factsSeed,
+      policies: {
+        ...factsSeed.policies,
+        ...(loadedPolicy === undefined ? {} : { assurance: loadedPolicy }),
+        ...(loadedCapability === undefined ? {} : { capability: loadedCapability }),
+        rulePacks: applicationRulePacks,
+      },
+    },
+    diagnostics,
+  )
   const ruleContext: RuleContext = {
     root: cwd,
-    sources: sourceIndex(sourceFiles),
-    project: {
-      legacyDiagnostics: diagnostics,
-      assurance: opts.assurance,
-      // Route registrations collected during the source walk, so the route-table rules
-      // (rules/routes.ts) lint them without a second scan.
-      staticRoutes,
-    },
+    sources: projectFacts.source,
+    project: projectFacts,
   }
   const structuredDiagnostics = [...structuredExtras]
   let registryDiagnostics: Diagnostic[] = []
@@ -2881,7 +2918,7 @@ export async function collectCheckResult(
     registryDiagnostics = await runRuleRegistry(
       ruleContext,
       [...legacyRules, ...securityRules, ...routeRules],
-      applicationRulePacks,
+      projectFacts.policies.rulePacks,
     )
     structuredDiagnostics.push(...registryDiagnostics)
   } catch (error) {
