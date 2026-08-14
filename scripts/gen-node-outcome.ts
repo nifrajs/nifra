@@ -10,6 +10,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 import ts from "typescript"
+import { runNodeOutcomeConformance } from "./node-outcome-conformance.ts"
 
 const ROOT = resolve(import.meta.dir, "..")
 const SOURCE = resolve(ROOT, "packages/core/src/server/node-outcome.ts")
@@ -47,6 +48,7 @@ if (import.meta.main) {
       console.error(`✗ ${TARGET} is stale - run \`bun run gen:node-outcome\`.`)
       process.exit(1)
     }
+    await runNodeOutcomeConformance()
     console.log("✓ @nifrajs/node outcome contract is current")
   } else {
     mkdirSync(resolve(TARGET, ".."), { recursive: true })

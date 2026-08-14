@@ -1032,9 +1032,9 @@ function handle(
   if (staticState !== undefined && (nodeReq.method === "GET" || nodeReq.method === "HEAD")) {
     const matched = staticMatch(staticState, nodeReq.url ?? "/")
     if (matched !== "pass") {
-      if ("reject" in matched) return writeNodeResponse(matched.reject, nodeRes)
+      if ("reject" in matched) return writeNodeResponse(matched.reject, nodeRes, nodeReq.method)
       return readStatic(matched.file, staticState, nodeReq.method ?? "GET").then(
-        (outcome) => writeNodeOutcome(outcome, nodeRes),
+        (outcome) => writeNodeOutcome(outcome, nodeRes, nodeReq.method),
         () => writeInternalError(nodeRes),
       )
     }
@@ -1056,10 +1056,10 @@ function handle(
       )
       return outcome instanceof Promise
         ? outcome.then(
-            (settled) => writeNodeOutcome(settled, nodeRes),
+            (settled) => writeNodeOutcome(settled, nodeRes, nodeReq.method),
             () => writeInternalError(nodeRes),
           )
-        : writeNodeOutcome(outcome, nodeRes)
+        : writeNodeOutcome(outcome, nodeRes, nodeReq.method)
     } catch {
       writeInternalError(nodeRes)
       return
@@ -1073,10 +1073,10 @@ function handle(
       const outcome = resolveNode.call(app, request, platform)
       return outcome instanceof Promise
         ? outcome.then(
-            (settled) => writeNodeOutcome(settled, nodeRes),
+            (settled) => writeNodeOutcome(settled, nodeRes, nodeReq.method),
             () => writeInternalError(nodeRes),
           )
-        : writeNodeOutcome(outcome, nodeRes)
+        : writeNodeOutcome(outcome, nodeRes, nodeReq.method)
     } catch {
       writeInternalError(nodeRes)
       return
@@ -1087,10 +1087,10 @@ function handle(
     const response = app.fetch(request, platform)
     return response instanceof Promise
       ? response.then(
-          (settled) => writeNodeResponse(settled, nodeRes),
+          (settled) => writeNodeResponse(settled, nodeRes, nodeReq.method),
           () => writeInternalError(nodeRes),
         )
-      : writeNodeResponse(response, nodeRes)
+      : writeNodeResponse(response, nodeRes, nodeReq.method)
   } catch {
     // The app should never throw (nifra returns a 500), but never leak a stack to the wire.
     writeInternalError(nodeRes)
@@ -1101,16 +1101,18 @@ function handle(
 function writeNodeOutcome(
   outcome: NodeServeOutcome,
   nodeRes: ServerResponse,
+  method?: string,
 ): void | Promise<void> {
+  const isHead = method?.toUpperCase() === "HEAD"
   if (outcome.kind === "json") {
-    writeJsonOutcome(outcome, nodeRes)
+    writeJsonOutcome(outcome, nodeRes, isHead)
     return
   }
   if (outcome.kind === "body") {
-    writeBodyOutcome(outcome, nodeRes)
+    writeBodyOutcome(outcome, nodeRes, isHead)
     return
   }
-  return writeNodeResponse(outcome.response, nodeRes)
+  return writeNodeResponse(outcome.response, nodeRes, isHead)
 }
 
 /** A flat 500 with no leaked detail - the adapter's last-resort guard if a handler throws. */
@@ -1149,6 +1151,7 @@ function allHeaderKeysLowercase(record: Readonly<Record<string, unknown>>): bool
 function writeJsonOutcome(
   outcome: Extract<NodeServeOutcome, { kind: "json" }>,
   nodeRes: ServerResponse,
+  isHead = false,
 ): void {
   // The outcome's record is the request's own (`c.set.headers`, already mutated by any native
   // response hooks), and its writers - middleware twins and the framework's own additions - emit
@@ -1196,8 +1199,11 @@ function writeJsonOutcome(
     headers["set-cookie"] = [...outcome.cookies]
   }
   nodeRes.writeHead(outcome.status, headers)
-  if (outcome.body !== null) nodeRes.end(outcome.body)
-  else nodeRes.end()
+  if (isHead || outcome.body === null) {
+    nodeRes.end()
+  } else {
+    nodeRes.end(outcome.body)
+  }
 }
 
 /**
@@ -1208,6 +1214,7 @@ function writeJsonOutcome(
 function writeBodyOutcome(
   outcome: Extract<NodeServeOutcome, { kind: "body" }>,
   nodeRes: ServerResponse,
+  isHead = false,
 ): void {
   // Body outcomes already carry response-normalized header names and values. Node consumes the same
   // mutable runtime shapes (`string` / `string[]`); avoid cloning this record and every Set-Cookie
@@ -1236,7 +1243,8 @@ function writeBodyOutcome(
     }
     nodeRes.writeHead(outcome.status, headers)
   }
-  nodeRes.end(outcome.body)
+  if (isHead) nodeRes.end()
+  else nodeRes.end(outcome.body)
 }
 
 const byteLengthOf = (body: string | Uint8Array): number =>
@@ -1775,7 +1783,13 @@ function waitForDrain(nodeRes: ServerResponse): Promise<boolean> {
   })
 }
 
-function writeNodeResponse(response: Response, nodeRes: ServerResponse): void | Promise<void> {
+function writeNodeResponse(
+  response: Response,
+  nodeRes: ServerResponse,
+  methodOrHead: string | boolean = false,
+): void | Promise<void> {
+  const isHead =
+    typeof methodOrHead === "boolean" ? methodOrHead : methodOrHead.toUpperCase() === "HEAD"
   // `ServerResponse.setHeaders` (Node 18.14+) takes the Headers object directly and iterates its
   // native Symbol.iterator, which - unlike `Headers.forEach`/`.get()` - never comma-joins repeated
   // `Set-Cookie` values (Node's own implementation carries the identical correctness note this
@@ -1784,6 +1798,10 @@ function writeNodeResponse(response: Response, nodeRes: ServerResponse): void | 
   // `writeHead`: headers are already flushed by the time `writeHead` returns.
   nodeRes.setHeaders(response.headers)
   nodeRes.writeHead(response.status)
+  if (isHead) {
+    nodeRes.end()
+    return
+  }
   const directBody = nodeResponseBody(response)
   if (directBody !== undefined) {
     nodeRes.end(directBody)
