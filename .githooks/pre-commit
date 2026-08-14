@@ -10,7 +10,8 @@
 #      gut it), the hook just says exactly what to run.
 #
 # Both generators in (1) extract every public export from each `src/index.ts` with the TypeScript
-# compiler API - they read SOURCE, not `dist`, so they need no build and run in a few seconds.
+# compiler API - they read SOURCE, not `dist`, so they need no build and run in a few seconds. They run
+# against a throwaway checkout of the INDEX, never the working tree: see gate 1.
 #
 # Activated via `core.hooksPath=.githooks` (set by the root `prepare` script on install; see package.json).
 set -euo pipefail
@@ -25,10 +26,38 @@ STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
 # ---- 1. Source-derived docs --------------------------------------------------------------------
 # Any staged add/copy/modify/rename under a package's src, or to a doc generator, can change the
 # exported API surface the docs are built from.
+#
+# The generators run against a THROWAWAY CHECKOUT OF THE INDEX, not the working tree. Reading the
+# working tree would document code that is not in this commit: an unstaged export elsewhere in the repo
+# (a `git add -p` split, a partially staged file, a second checkout/agent editing another package) would
+# be extracted, staged by the `git add` below, and committed - and CI's check:api, which rebuilds from
+# the COMMITTED source, would then fail on it. This is the same rule gate 2 applies to partially staged
+# files: never sweep unstaged work into a commit.
+#
+# `git checkout-index` materializes exactly what is staged. The generators are then executed FROM that
+# snapshot, so their `ROOT` (`import.meta.dir/..`) and every relative import they make - including
+# gen-llm-cards' import of the CLI command catalog - resolve inside it. `node_modules` is symlinked in
+# for third-party types; workspace `@nifrajs/*` imports resolve through the snapshot's own tsconfig
+# `paths` (which point at `./packages/*/src`), so cross-package types come from the index too.
 if grep -qE '^(packages/[^/]+/src/.*\.ts|scripts/gen-(api-reference|llm-cards)\.ts)$' <<< "$STAGED"; then
-  echo "pre-commit: package source staged - refreshing api-reference.md + LLM.md cards…"
-  bun run gen:api >/dev/null
-  bun run gen:cards >/dev/null
+  echo "pre-commit: package source staged - refreshing api-reference.md + LLM.md cards from the index…"
+  REPO_ROOT=$(git rev-parse --show-toplevel)
+  SNAPSHOT=$(mktemp -d "${TMPDIR:-/tmp}/nifra-precommit-index-XXXXXX")
+  trap 'rm -rf "$SNAPSHOT"' EXIT
+  git checkout-index -a -f --prefix="$SNAPSHOT/"
+  ln -s "$REPO_ROOT/node_modules" "$SNAPSHOT/node_modules"
+
+  # Both generators self-check their output (a resolution failure empties the export lists and they
+  # exit non-zero), so a snapshot that cannot resolve fails the commit loudly instead of writing stubs.
+  bun "$SNAPSHOT/scripts/gen-api-reference.ts" >/dev/null
+  bun "$SNAPSHOT/scripts/gen-llm-cards.ts" >/dev/null
+
+  # Copy the index-derived artifacts back over the working tree. These files are generated, never
+  # hand-edited ("Do not edit by hand - run `bun run gen:cards`"), so there is no local edit to lose.
+  cp "$SNAPSHOT/api-reference.md" "$REPO_ROOT/api-reference.md"
+  for CARD in "$SNAPSHOT"/packages/*/LLM.md; do
+    cp "$CARD" "$REPO_ROOT/packages/$(basename "$(dirname "$CARD")")/LLM.md"
+  done
 
   # Stage only the generated artifacts (no-op when nothing changed). Never touches other files.
   git add -- api-reference.md packages/*/LLM.md
