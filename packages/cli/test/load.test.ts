@@ -64,3 +64,22 @@ test("a relative clientModule is resolved to absolute at load", async () => {
 test("a bare/package clientModule specifier is left unchanged", async () => {
   expect(await loadWithClientModule("@nifrajs/web-react/client")).toBe("@nifrajs/web-react/client")
 })
+
+// A specifier with no `./` prefix is read as a bare PACKAGE specifier (resolved against node_modules).
+// When a real local file sits at that path the user forgot the `./`, and the bundle would fail with an
+// opaque "cannot resolve" - so load rejects it up front with the fix instead of failing silently.
+test("a non-relative clientModule shadowing a local file is rejected with the ./ fix", async () => {
+  const root = mkdtempSync(`${import.meta.dir}/.tmp-load-`)
+  dirs.push(root)
+  mkdirSync(join(root, "routes"))
+  writeFileSync(join(root, "routes", "index.ts"), "export default function Page() {}\n")
+  mkdirSync(join(root, "src"))
+  writeFileSync(join(root, "src", "client.tsx"), "export function mountRouter() {}\n")
+  writeFileSync(
+    join(root, "framework.ts"),
+    `export const adapter = {}\nexport const clientModule = "src/client.tsx"\n`,
+  )
+  await expect(
+    loadApp(root, "dist", { importQuery: `test=${crypto.randomUUID()}` }),
+  ).rejects.toThrow(/no "\.\/" prefix.*"\.\/src\/client\.tsx"/s)
+})

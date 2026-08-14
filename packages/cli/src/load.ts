@@ -13,7 +13,7 @@
  * reach the edge bundle. A simple single-target app with no edge build can put it all in `framework.ts`.
  */
 import { existsSync } from "node:fs"
-import { resolve } from "node:path"
+import { isAbsolute, resolve } from "node:path"
 import { checkPipelineSeparation } from "./pipeline-guard.ts"
 
 /**
@@ -210,11 +210,30 @@ export async function loadApp(
   // resolved to absolute here. It is embedded verbatim as an import specifier in the generated client
   // entry, and `nifra dev` and `nifra build` write that entry into DIFFERENT directories - so a relative
   // specifier would resolve against different bases and load in one phase but not the other. A bare or
-  // package specifier (`@nifrajs/web-react/client`) is location-independent and passes through unchanged.
-  const clientModule =
-    fw.clientModule.startsWith("./") || fw.clientModule.startsWith("../")
-      ? resolve(cwd, fw.clientModule)
-      : fw.clientModule
+  // package specifier (`@nifrajs/web-react/client`) or an already-absolute path is location-independent
+  // and passes through unchanged.
+  let clientModule: string
+  if (fw.clientModule.startsWith("./") || fw.clientModule.startsWith("../")) {
+    clientModule = resolve(cwd, fw.clientModule)
+  } else {
+    // A specifier that is neither `./`-relative, scoped (`@…`), nor absolute is read as a BARE PACKAGE
+    // specifier - resolved against `node_modules`, not `cwd`. If a real local file sits at that path
+    // (a `./` was forgotten: `src/client.tsx` instead of `./src/client.tsx`), the bundler would ignore
+    // the file, fail to find a package, and surface an opaque "cannot resolve" deep in the build. Reject
+    // it here with the one-character fix rather than letting it fail silently.
+    if (
+      !isAbsolute(fw.clientModule) &&
+      !fw.clientModule.startsWith("@") &&
+      existsSync(resolve(cwd, fw.clientModule))
+    ) {
+      throw new Error(
+        `[nifra] clientModule "${fw.clientModule}" has no "./" prefix, so it is read as a bare package ` +
+          `specifier - but a local file exists at that path. Prefix it with "./" (e.g. ` +
+          `"./${fw.clientModule}") so \`nifra dev\` and \`nifra build\` resolve the same local entry.`,
+      )
+    }
+    clientModule = fw.clientModule
+  }
   const [vitePlugins, clientPlugins, serverPlugins] = await Promise.all([
     resolvePlugins(fw.vitePlugins),
     resolvePlugins(fw.clientPlugins),
