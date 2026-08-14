@@ -499,31 +499,34 @@ export function readBoundedJsonSource<T>(
       return onResult === undefined
         ? Promise.resolve(jsonError(413, "payload_too_large"))
         : Promise.resolve(jsonError(413, "payload_too_large")).then(onResult)
+    // Trusted framing (Bun's native route table, Deno.serve): the runtime's HTTP parser already
+    // delimited the bytes, so the declared length IS the transport frame and chunked routing is
+    // moot - the over-cap 413 above already enforced the byte cap. Take the runtime's fused
+    // decode+parse straight away, before the transfer-encoding probe that only exists to route
+    // *untrusted* Node/adapter sources to the streaming lane. Skipping that probe drops one
+    // `Headers.get()` from every Bun/Deno JSON POST; Node/adapter sources are never marked and fall
+    // through below. The parsed-value poisoning walk still applies.
+    if (hasTrustedBodyFraming(req)) {
+      return raw.json().then(
+        (parsed) => {
+          let guarded: unknown
+          try {
+            guarded = guardParsedValue(parsed, protoPoisoning)
+          } catch {
+            return onResult === undefined
+              ? jsonError(400, "invalid_json")
+              : onResult(jsonError(400, "invalid_json"))
+          }
+          return onResult === undefined ? guarded : onResult(guarded)
+        },
+        () => (onResult === undefined ? INVALID_JSON() : onResult(INVALID_JSON())),
+      )
+    }
     const chunked =
       (sourceHeader === undefined
         ? req.headers.get("transfer-encoding")
         : sourceHeader.call(req, "transfer-encoding")) !== null
     if (!chunked) {
-      // Bun's compiled native route table receives a Request whose bytes were already delimited by
-      // Bun's HTTP parser. Keep the exact-byte path for every portable/adapted source, but preserve
-      // Bun's fused decode+parse on this trusted ingress; the declared length is the transport frame
-      // there, not an attacker-controlled hint. The parsed-value poisoning walk still applies.
-      if (hasTrustedBodyFraming(req)) {
-        return raw.json().then(
-          (parsed) => {
-            let guarded: unknown
-            try {
-              guarded = guardParsedValue(parsed, protoPoisoning)
-            } catch {
-              return onResult === undefined
-                ? jsonError(400, "invalid_json")
-                : onResult(jsonError(400, "invalid_json"))
-            }
-            return onResult === undefined ? guarded : onResult(guarded)
-          },
-          () => (onResult === undefined ? INVALID_JSON() : onResult(INVALID_JSON())),
-        )
-      }
       const jsonWithByteLength = raw.jsonWithByteLength
       if (jsonWithByteLength !== undefined) {
         return jsonWithByteLength.call(raw).then(
