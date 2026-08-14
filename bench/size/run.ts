@@ -2,6 +2,7 @@
  * Bundle-size benchmark - **deterministic** (no load test, no box noise; bytes are bytes).
  *
  *   bun run bench:size
+ *   bun run bench:size --attribution
  *
  * Measures the **server footprint**: a trivial 2-route JSON server per framework (nifra / Hono /
  * Elysia / raw `Bun.serve`) bundled with `Bun.build({ minify: true })` and gzipped - what actually
@@ -13,12 +14,14 @@
  */
 
 import { mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { dirname, join } from "node:path"
+import { dirname, join, relative, resolve } from "node:path"
 import { gzipSync } from "bun"
 
 const here = dirname(Bun.fileURLToPath(import.meta.url))
+const root = resolve(here, "../..")
 const tmp = join(here, ".tmp") // inside bench/ so node_modules (workspace @nifrajs/* + hono/elysia) resolve
 const CHECK = process.argv.includes("--check")
+const ATTRIBUTION = process.argv.includes("--attribution")
 mkdirSync(tmp, { recursive: true })
 
 const kb = (n: number): string => `${(n / 1024).toFixed(1)} KB`
@@ -28,12 +31,32 @@ interface Size {
   readonly label: string
   readonly min: number
   readonly gz: number
+  readonly inputs?: Readonly<Record<string, number>>
+}
+
+interface Metafile {
+  readonly outputs: Readonly<
+    Record<
+      string,
+      { readonly inputs?: Readonly<Record<string, { readonly bytesInOutput: number }>> }
+    >
+  >
+}
+
+function displayInput(input: string): string {
+  const absolute = input.startsWith("/") ? input : resolve(root, input)
+  return relative(root, absolute) || "."
 }
 
 async function measure(
   label: string,
   source: string,
-  opts: { target: "bun" | "browser"; external?: string[]; conditions?: string[] },
+  opts: {
+    target: "bun" | "browser"
+    external?: string[]
+    conditions?: string[]
+    attribution?: boolean
+  },
 ): Promise<Size | null> {
   const entry = join(tmp, `${label.replace(/[^a-z0-9]/gi, "_")}.tsx`)
   writeFileSync(entry, source)
@@ -47,6 +70,7 @@ async function measure(
       // inject this define, so framework dev-only branches (guarded by `process.env.NODE_ENV`)
       // dead-code-eliminate. Measuring without it over-counts what actually ships.
       define: { "process.env.NODE_ENV": '"production"' },
+      ...(opts.attribution ? { metafile: true } : {}),
       ...(opts.external ? { external: opts.external } : {}),
       ...(opts.conditions ? { conditions: opts.conditions } : {}),
     })
@@ -63,7 +87,49 @@ async function measure(
   }
   let src = ""
   for (const o of built.outputs) src += await o.text()
-  return { label, min: src.length, gz: gzipSync(Buffer.from(src)).length }
+  if (!opts.attribution) return { label, min: src.length, gz: gzipSync(Buffer.from(src)).length }
+
+  const metafile = (built as typeof built & { metafile?: Metafile }).metafile
+  if (!metafile)
+    throw new Error(`Bundle attribution requested for ${label}, but Bun returned no metafile`)
+  const inputs: Record<string, number> = {}
+  for (const output of Object.values(metafile.outputs)) {
+    for (const [input, info] of Object.entries(output.inputs ?? {})) {
+      if (info.bytesInOutput <= 0) continue
+      const name = displayInput(input)
+      inputs[name] = (inputs[name] ?? 0) + info.bytesInOutput
+    }
+  }
+  return { label, min: src.length, gz: gzipSync(Buffer.from(src)).length, inputs }
+}
+
+function attributionTable(rows: ReadonlyArray<Size>): void {
+  const labels = rows.map((row) => row.label)
+  const inputNames = new Set<string>()
+  for (const row of rows) for (const input of Object.keys(row.inputs ?? {})) inputNames.add(input)
+  const inputs = [...inputNames].sort((a, b) => {
+    const totalA = rows.reduce((sum, row) => sum + (row.inputs?.[a] ?? 0), 0)
+    const totalB = rows.reduce((sum, row) => sum + (row.inputs?.[b] ?? 0), 0)
+    return totalB - totalA || a.localeCompare(b)
+  })
+  const inputWidth = Math.max(42, ...inputs.map((input) => input.length + 2))
+  const columnWidths = labels.map((label) => Math.max(12, label.length + 2))
+  const cell = (value: string, width: number): string => value.padEnd(width)
+  console.log("\n## Bundle attribution - minified output bytes by input\n")
+  console.log(
+    `  ${cell("input", inputWidth)}${labels.map((label, i) => cell(label, columnWidths[i] as number)).join("")}`,
+  )
+  for (const input of inputs) {
+    console.log(
+      `  ${cell(input, inputWidth)}${rows.map((row, i) => cell(String(row.inputs?.[input] ?? 0), columnWidths[i] as number)).join("")}`,
+    )
+  }
+  console.log(
+    `  ${cell("TOTAL", inputWidth)}${rows.map((row, i) => cell(String(Object.values(row.inputs ?? {}).reduce((sum, bytes) => sum + bytes, 0)), columnWidths[i] as number)).join("")}`,
+  )
+  console.log(
+    "\nInputs are minified bytes attributed by Bun's metafile; shared bytes are not additive across rows.",
+  )
 }
 
 function table(title: string, rows: ReadonlyArray<Size>, baseline?: string): void {
@@ -91,6 +157,16 @@ export default server().get("/", () => ({ hello: "world" })).get("/users/:id", (
 export default new Hono().get("/", (c) => c.json({ hello: "world" })).get("/users/:id", (c) => c.json({ id: c.req.param("id") }))`,
   elysia: `import { Elysia } from "elysia"
 export default new Elysia().get("/", () => ({ hello: "world" })).get("/users/:id", ({ params }: { params: { id: string } }) => ({ id: params.id }))`,
+}
+
+const ATTRIBUTION_ROWS: Record<string, string> = {
+  bare: SERVER.nifra as string,
+  "+node": `import { server } from "@nifrajs/core/server"
+import { nodeDirect } from "@nifrajs/core/node-direct"
+export default server().use(nodeDirect()).get("/", () => ({ hello: "world" })).get("/users/:id", (c) => ({ id: c.params.id }))`,
+  "+websocket": `import { server } from "@nifrajs/core/server"
+import { websocket } from "@nifrajs/core/ws"
+export default server().use(websocket()).get("/", () => ({ hello: "world" })).get("/users/:id", (c) => ({ id: c.params.id })).ws("/chat", { message: (ws, data) => ws.send(data) })`,
 }
 
 // Feature rows pin the marginal cost of optional lanes and validator choices. Keep these app shapes
@@ -206,6 +282,22 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
 const main = async (): Promise<void> => {
   console.log(`\nBundle size - Bun.build({ minify: true }) + gzip  (Bun ${Bun.version})`)
   console.log("Deterministic: identical app shape per row, same minifier. Lower is better.")
+
+  if (ATTRIBUTION) {
+    const rows: Size[] = []
+    for (const [label, source] of Object.entries(ATTRIBUTION_ROWS)) {
+      const measured = await measure(label, source, { target: "bun", attribution: true })
+      if (measured) rows.push(measured)
+    }
+    const missing = Object.keys(ATTRIBUTION_ROWS).filter(
+      (label) => !rows.some((row) => row.label === label),
+    )
+    if (missing.length > 0) {
+      throw new Error(`Bundle attribution measured fewer rows than declared: ${missing.join(", ")}`)
+    }
+    attributionTable(rows)
+    return
+  }
 
   const server: Size[] = []
   for (const [label, source] of Object.entries(SERVER)) {
