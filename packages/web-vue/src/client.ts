@@ -79,6 +79,7 @@ export function mountRouter(options: MountRouterOptions): void {
           pending: s.pending,
           search: searchOfChain(searchSchemas?.[s.routeId] ?? [], rawSearch),
           ...(s.submission ? { submission: s.submission } : {}),
+          ...(s.boundaries !== undefined ? { boundaries: s.boundaries } : {}),
         })
       }
     },

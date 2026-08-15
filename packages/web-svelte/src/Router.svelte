@@ -37,6 +37,7 @@
       pending: snapshot.pending,
       search: searchOfChain(searchSchemas?.[snapshot.routeId] ?? [], q === -1 ? "" : snapshot.path.slice(q)),
       ...(snapshot.submission ? { submission: snapshot.submission } : {}),
+      ...(snapshot.boundaries !== undefined ? { boundaries: snapshot.boundaries } : {}),
     }
   })
 </script>

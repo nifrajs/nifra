@@ -81,6 +81,9 @@ export function mountRouter(options: MountRouterOptions): void {
         get submission() {
           return snapshot().submission
         },
+        get boundaries() {
+          return snapshot().boundaries
+        },
       } as RenderProps
       // The matched chain is fixed for this mount (routeId is constant here); a route *change* disposes
       // and re-mounts below, so the root render fn reads no signal and never re-runs on its own.

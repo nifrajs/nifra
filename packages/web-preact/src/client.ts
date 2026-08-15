@@ -59,6 +59,7 @@ export function mountRouter(options: MountRouterOptions): void {
       search: searchOfChain(searchSchemas?.[state.routeId] ?? [], rawSearch),
       // The in-flight submission (for optimistic UI) - spread only when present.
       ...(state.submission ? { submission: state.submission } : {}),
+      ...(state.boundaries !== undefined ? { boundaries: state.boundaries } : {}),
     })
   }
   preactHydrate(h(Router, null), container as Element)

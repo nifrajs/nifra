@@ -37,7 +37,10 @@ export function compose(chain: readonly unknown[], props: RenderProps): VNode {
     // boundary marker, the page) reads `undefined` and is unaffected.
     node = h(
       chain[i] as ComponentType<{ data: unknown }>,
-      { data: props.layoutData?.[i] ?? null },
+      {
+        data: props.layoutData?.[i] ?? null,
+        ...(props.boundaries !== undefined ? { boundaries: props.boundaries } : {}),
+      },
       node,
     ) as VNode
   }

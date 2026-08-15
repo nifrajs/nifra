@@ -6,6 +6,8 @@
  * without importing the document renderer through the root module. The singleton is stored on
  * globalThis because the Bun and Vite dev pipelines can evaluate two copies in one process.
  */
+
+import type { BoundaryStates } from "./boundary.ts"
 import type { Submission } from "./router.ts"
 
 /** The data handed to a route component. */
@@ -26,6 +28,8 @@ export interface RenderProps {
   readonly path?: string
   /** The route's typed, validated search params. */
   readonly search?: Record<string, unknown>
+  /** Neutral named-boundary states; adapters choose how each boundary's `render` UI is mounted. */
+  readonly boundaries?: BoundaryStates
 }
 
 /**
@@ -72,5 +76,7 @@ export const ROUTE_GLOBAL = "__NIFRA_ROUTE__"
 /** Global the server serializes an action's data return into (absent on GETs); the client reads it
  * so hydration after a native form POST matches the server-rendered markup. */
 export const ACTION_GLOBAL = "__NIFRA_ACTION__"
+/** Dynamic-boundary states for hydration; absent when a route declares no boundaries. */
+export const BOUNDARY_GLOBAL = "__NIFRA_BOUNDARIES__"
 /** Marker attribute used to find a non-default hydration container. */
 export const ROOT_ATTRIBUTE = "data-nifra-root"

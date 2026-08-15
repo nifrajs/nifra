@@ -1130,6 +1130,85 @@
     "doc": "/** A boolean: `true`/`1`/`yes`/`on` → true; `false`/`0`/`no`/`off`/empty → false (case-insensitive). */"
   },
   {
+    "name": "Boundary",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type Boundary<Data, UI> = StaticBoundary<Data, UI> | DynamicBoundary<Data, UI> | InterceptBoundary<Data, UI>;",
+    "doc": "/** A discriminated union: the `mode` selects the context type accepted by `load`. */"
+  },
+  {
+    "name": "BOUNDARY_GLOBAL",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const BOUNDARY_GLOBAL = \"__NIFRA_BOUNDARIES__\";",
+    "doc": "/** Dynamic-boundary states for hydration; absent when a route declares no boundaries. */"
+  },
+  {
+    "name": "BoundaryDescriptor",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface BoundaryDescriptor {\n    readonly name: string;\n    readonly mode: BoundaryMode;\n    readonly hasLoad: boolean;\n    readonly errorId?: string;\n}",
+    "doc": "/** Neutral manifest descriptor: no framework component crosses the web core boundary. */"
+  },
+  {
+    "name": "boundaryDescriptors",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function boundaryDescriptors(boundaries: readonly BoundaryRegistration[]): ReadonlyArray<BoundaryDescriptor>;",
+    "doc": "/** Validate and serialize the neutral boundary manifest. Duplicate names fail closed at startup. */"
+  },
+  {
+    "name": "BoundaryError",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface BoundaryError {\n    readonly name: string;\n    readonly message: string;\n}"
+  },
+  {
+    "name": "BoundaryMode",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type BoundaryMode = \"static\" | \"dynamic\" | {\n    readonly intercept: string;\n};"
+  },
+  {
+    "name": "boundaryModeKey",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function boundaryModeKey(mode: BoundaryMode): string;",
+    "doc": "/** Stable mode label for adapter registries and diagnostics. */"
+  },
+  {
+    "name": "BoundaryRegistration",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type BoundaryRegistration = (ErasedBoundaryBase & {\n    readonly mode: \"static\";\n    readonly load?: (ctx: StaticCtx) => unknown | Promise<unknown>;\n}) | (ErasedBoundaryBase & {\n    readonly mode: \"dynamic\";\n    readonly load?: (ctx: BoundaryRequestCtx) => unknown | Promise<unknown>;\n}) | (ErasedBoundaryBase & {\n    readonly mode: {\n        readonly intercept: string;\n    };\n    readonly load?: (ctx: BoundaryRequestCtx) => unknown | Promise<unknown>;\n});"
+  },
+  {
+    "name": "BoundaryRequestCtx",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface BoundaryRequestCtx {\n    readonly request: Request;\n    readonly params: Readonly<Record<string, string>>;\n    readonly api: unknown;\n    readonly env: unknown;\n    readonly draft: boolean;\n    readonly search: Readonly<Record<string, unknown>>;\n    readonly signal: AbortSignal;\n}",
+    "doc": "/** Request-scoped inputs available to dynamic and intercepting boundaries. */"
+  },
+  {
+    "name": "BoundaryState",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface BoundaryState {\n    readonly name: string;\n    readonly mode: BoundaryMode;\n    readonly status: BoundaryStatus;\n    readonly data?: unknown;\n    readonly error?: BoundaryError;\n    readonly errorId?: string;\n}",
+    "doc": "/** Serializable boundary state passed to the adapter's render seam. */"
+  },
+  {
+    "name": "BoundaryStates",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type BoundaryStates = Readonly<Record<string, BoundaryState>>;"
+  },
+  {
+    "name": "BoundaryStatus",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type BoundaryStatus = \"unresolved\" | \"pending\" | \"ready\" | \"error\";"
+  },
+  {
     "name": "BoundDataPort",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -4062,6 +4141,19 @@
     "signature": "export type DurableRecordKind = \"effect\" | \"approval\" | \"saga\";"
   },
   {
+    "name": "DynamicBoundary",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type DynamicBoundary<Data, UI> = BoundaryBase<Data, UI> & {\n    readonly mode: \"dynamic\";\n    readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data>;\n};"
+  },
+  {
+    "name": "DynamicBoundaryBatch",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DynamicBoundaryBatch {\n    readonly initial: BoundaryStates;\n    readonly pending: ReadonlyArray<PendingBoundary>;\n    /** Resolves to final per-boundary states for non-streaming consumers and tests. */\n    readonly complete: Promise<BoundaryStates>;\n}",
+    "doc": "/** Runtime handles for a concurrent boundary batch. `initial` is renderable immediately. */"
+  },
+  {
     "name": "effect",
     "kind": "function",
     "package": "@nifrajs/islets",
@@ -5957,6 +6049,12 @@
     "signature": "export interface InstallHistoryOptions {\n    /** Full-page fallback when a client navigation can't proceed (default: `location.assign`). */\n    readonly fallback?: (path: string) => void;\n}"
   },
   {
+    "name": "InterceptBoundary",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type InterceptBoundary<Data, UI> = BoundaryBase<Data, UI> & {\n    readonly mode: {\n        readonly intercept: string;\n    };\n    readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data>;\n};"
+  },
+  {
     "name": "InvariantExecutor",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -6564,7 +6662,7 @@
     "name": "LayoutEntry",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface LayoutEntry {\n    readonly file: string;\n    readonly load: () => Promise<{\n        default: unknown;\n        meta?: MetaInput;\n    }>;\n}",
+    "signature": "export interface LayoutEntry {\n    readonly file: string;\n    readonly load: () => Promise<RouteModule>;\n}",
     "doc": "/** A layout (or `_404`/`_error`) entry: its source file (for client codegen) + a lazy loader.\n *\n * A `_layout.tsx` may export `meta` (static {@link Meta} or a function of the loader data + params,\n * same shape as a route's) to contribute sitewide `<head>` tags - `hreflang`/`preconnect`/etc. that\n * belong on every page under the layout. The layout chain's heads merge with the page's: arrays\n * (`meta`/`link`) concatenate outermost→innermost→page; scalars (`title`) are nearest-wins (the page\n * overrides an inner layout, which overrides an outer one). See `mergeHeads` in `@nifrajs/web`. */"
   },
   {
@@ -8544,6 +8642,13 @@
     "signature": "export declare function pathnameOf(url: string): string;"
   },
   {
+    "name": "PendingBoundary",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface PendingBoundary {\n    readonly name: string;\n    readonly mode: BoundaryMode;\n    readonly errorId?: string;\n    readonly promise: Promise<unknown>;\n}",
+    "doc": "/** A dynamic load that has started but is not part of the initial render barrier. */"
+  },
+  {
     "name": "pickLanguage",
     "kind": "function",
     "package": "@nifrajs/middleware",
@@ -9667,7 +9772,7 @@
     "name": "RenderPageOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RenderPageOptions {\n    readonly adapter: RenderAdapter;\n    /** The layout chain to render - outermost layout → page (opaque; the adapter renders it). */\n    readonly chain: readonly unknown[];\n    /** The loader output for this request. */\n    readonly data: unknown;\n    /** An action's data return (POST only) - surfaced to the page as `actionData` + serialized\n     * for the client so post-POST hydration matches. Omit on GETs. */\n    readonly actionData?: unknown;\n    /**\n     * URL of the built client entry (loaded as a module script).\n     *\n     * Optional ONLY on a `hydrate: false` page, where there is no client takeover to feed and this value\n     * reaches no output at all. The union below is what enforces that: omitting it on a hydrating page\n     * stays a compile error rather than rendering `src=\"\"`.\n     */\n    readonly clientEntry?: string;\n    /** Chunk URLs for the **matched** route (its layout chain + own chunk) to `modulepreload` in the\n     * shell - so the route code downloads in parallel with the entry instead of after it\n     * (`buildClient`'s per-route map). Empty/omitted ⇒ only the entry is preloaded (unchanged). */\n    readonly preload?: readonly string[];\n    /** Stylesheet URLs for the **matched** route (its layout chain + own CSS, from `buildClient`'s\n     * `BuildManifest.css`) - injected as `<link rel=\"stylesheet\">` in `<head>` so styles arrive with the\n     * first paint (no FOUC). Rendered even on non-hydrated pages. Empty/omitted ⇒ none (unchanged). */\n    readonly styles?: readonly string[];\n    /** SSG: the prerendered-path set, serialized to `window.__NIFRA_PRERENDERED__` so the client fetches\n     * a static `_data.json` on soft-nav into a prerendered route. Empty/omitted ⇒ not injected. */\n    readonly prerenderedPaths?: readonly string[];\n    /** ISR: route freshness in seconds, emitted as the `x-nifra-isr-revalidate` header for a `withISR`\n     * wrapper to read. Omit ⇒ no header (the wrapper's default TTL applies). */\n    readonly revalidate?: number;\n    /** ISR invalidation tags emitted as a bounded `x-nifra-isr-tags` header. */\n    readonly revalidateTags?: readonly string[];\n    /** Matched route id; written to `window.__NIFRA_ROUTE__` so the client hydrates this chain. */\n    readonly routeId?: string;\n    /** The matched route's decoded path params - surfaced to the page as `params` (via {@link RenderProps})\n     * so an adapter's `useParams` is SSR-correct. Omit ⇒ `{}` (a route with no dynamic segments, or an\n     * error/404 render). */\n    readonly params?: Readonly<Record<string, string>>;\n    /** The request's `pathname + search` - surfaced as `path` (via {@link RenderProps}) so an adapter's\n     * `useLocation`/`useSearchParams` render the right URL server-side and hydrate without drift. Omit ⇒\n     * `\"\"`. */\n    readonly path?: string;\n    /** The route's validated search (`searchOf(mod.searchSchema, url.search)`, the same value handed to\n     * the loader as `ctx.search`), surfaced as `search` (via {@link RenderProps}) so an adapter's\n     * `useSearch` is SSR-correct. Omit ⇒ `{}` (a render with no search context). */\n    readonly search?: Record<string, unknown>;\n    /** Per-layout loader data, forwarded to the adapter as `RenderProps.layoutData`. Aligned with the\n     * chain's layout prefix; omitted when no layout in the chain has a loader. */\n    readonly layoutData?: readonly unknown[];\n    /** HTTP status for the response (default 200; e.g. 404 for a not-found page). */\n    readonly status?: number;\n    /** Extra response headers - e.g. the `cache-control` a terminal status page wants. `content-type`\n     * is ignored (the document is always HTML) and the ISR freshness header is applied after these,\n     * so neither can be overridden from here. */\n    readonly headers?: HeadersLike;\n    /** Document title (fallback when `head.title` is unset). */\n    readonly title?: string;\n    /** Resolved route head - `title` overrides `title` above; `meta`/`link` render as managed\n     * (`data-nifra`) tags the client updates on navigation.\n     *\n     * **Head contract (the layout chain contributes).** `createWebApp` resolves this via\n     * {@link mergeHeads}: a route's head is its **layout chain's** `meta`/`head` exports merged with the\n     * page's. A `_layout.tsx` may `export const meta` (or `export function meta(args)`) - its tags land\n     * on every page below it (the home for `hreflang`, `preconnect`, a section-default `<title>`). The\n     * merge is **nearest-wins for scalars** (the page's `title` overrides an inner layout's, which\n     * overrides an outer one; an undefined page title keeps the layout's) and **concatenated for the\n     * `meta`/`link` arrays** (outermost layout first, page last). `<meta>`/`<link>` attributes pass a\n     * shared tag-specific allowlist (including inert `data-*` metadata) and values are escaped. */\n    readonly head?: Meta;\n    /** Id of the container wrapping the app markup (default `\"root\"`). A non-default id also gets\n     * {@link ROOT_ATTRIBUTE}, which is how the generated client entry finds the container to hydrate -\n     * the entry is built once and cannot know what a given render chose. */\n    readonly rootId?: string;\n    /** When `false`, emit a complete but **non-hydrated** document - no client entry script, data\n     * globals, or modulepreloads. Used for server-rendered `_error` pages: a terminal state that needs no\n     * client takeover, and it sidesteps an SSR/hydrate mismatch (the server rendered the boundary, not\n     * the page the client manifest maps this route id to). Default `true`. */\n    readonly hydrate?: boolean;\n    /** Island client bundles (`@nifrajs/web/islands`) to load as `<script type=\"module\">` in the document\n     * tail - emitted **regardless of `hydrate`**, so a static (`hydrate: false`) page can still mount\n     * no-framework islands. URLs are attribute-escaped. Empty/omitted ⇒ none (unchanged output). */\n    readonly islandScripts?: readonly string[];\n    /** CSP nonce applied to every framework-owned executable script in this document. */\n    readonly nonce?: string;\n    /**\n     * Advanced: a per-route slot the renderer fills with the request-invariant document pieces (shell\n     * prefix/suffix, tail statics) on the first render and reuses afterwards, skipping their re-assembly.\n     *\n     * Only pass a cache when every shell-shaping input is IDENTICAL across the requests sharing it:\n     * same `head` content (a static meta chain - never a `meta(data)` function), `title`, `styles`,\n     * `preload`, `islandScripts`, `clientEntry`, `rootId`, `hydrate`, and `prerenderedPaths`. Per-request\n     * values (`data`, `params`, `search`, `actionData`, `layoutData`, deferred state) are always assembled\n     * fresh and safe. A per-request `nonce` disables the cache automatically. `createWebApp` wires this\n     * per route, gated on the route + layout metas being static.\n     */\n    readonly assemblyCache?: RenderAssemblyCache;\n}"
+    "signature": "export interface RenderPageOptions {\n    readonly adapter: RenderAdapter;\n    /** The layout chain to render - outermost layout → page (opaque; the adapter renders it). */\n    readonly chain: readonly unknown[];\n    /** The loader output for this request. */\n    readonly data: unknown;\n    /** An action's data return (POST only) - surfaced to the page as `actionData` + serialized\n     * for the client so post-POST hydration matches. Omit on GETs. */\n    readonly actionData?: unknown;\n    /**\n     * URL of the built client entry (loaded as a module script).\n     *\n     * Optional ONLY on a `hydrate: false` page, where there is no client takeover to feed and this value\n     * reaches no output at all. The union below is what enforces that: omitting it on a hydrating page\n     * stays a compile error rather than rendering `src=\"\"`.\n     */\n    readonly clientEntry?: string;\n    /** Chunk URLs for the **matched** route (its layout chain + own chunk) to `modulepreload` in the\n     * shell - so the route code downloads in parallel with the entry instead of after it\n     * (`buildClient`'s per-route map). Empty/omitted ⇒ only the entry is preloaded (unchanged). */\n    readonly preload?: readonly string[];\n    /** Stylesheet URLs for the **matched** route (its layout chain + own CSS, from `buildClient`'s\n     * `BuildManifest.css`) - injected as `<link rel=\"stylesheet\">` in `<head>` so styles arrive with the\n     * first paint (no FOUC). Rendered even on non-hydrated pages. Empty/omitted ⇒ none (unchanged). */\n    readonly styles?: readonly string[];\n    /** SSG: the prerendered-path set, serialized to `window.__NIFRA_PRERENDERED__` so the client fetches\n     * a static `_data.json` on soft-nav into a prerendered route. Empty/omitted ⇒ not injected. */\n    readonly prerenderedPaths?: readonly string[];\n    /** ISR: route freshness in seconds, emitted as the `x-nifra-isr-revalidate` header for a `withISR`\n     * wrapper to read. Omit ⇒ no header (the wrapper's default TTL applies). */\n    readonly revalidate?: number;\n    /** ISR invalidation tags emitted as a bounded `x-nifra-isr-tags` header. */\n    readonly revalidateTags?: readonly string[];\n    /** Matched route id; written to `window.__NIFRA_ROUTE__` so the client hydrates this chain. */\n    readonly routeId?: string;\n    /** The matched route's decoded path params - surfaced to the page as `params` (via {@link RenderProps})\n     * so an adapter's `useParams` is SSR-correct. Omit ⇒ `{}` (a route with no dynamic segments, or an\n     * error/404 render). */\n    readonly params?: Readonly<Record<string, string>>;\n    /** The request's `pathname + search` - surfaced as `path` (via {@link RenderProps}) so an adapter's\n     * `useLocation`/`useSearchParams` render the right URL server-side and hydrate without drift. Omit ⇒\n     * `\"\"`. */\n    readonly path?: string;\n    /** The route's validated search (`searchOf(mod.searchSchema, url.search)`, the same value handed to\n     * the loader as `ctx.search`), surfaced as `search` (via {@link RenderProps}) so an adapter's\n     * `useSearch` is SSR-correct. Omit ⇒ `{}` (a render with no search context). */\n    readonly search?: Record<string, unknown>;\n    /** Per-layout loader data, forwarded to the adapter as `RenderProps.layoutData`. Aligned with the\n     * chain's layout prefix; omitted when no layout in the chain has a loader. */\n    readonly layoutData?: readonly unknown[];\n    /** Dynamic-boundary states, forwarded to the adapter and serialized for hydration when present. */\n    readonly boundaries?: BoundaryStates;\n    /** HTTP status for the response (default 200; e.g. 404 for a not-found page). */\n    readonly status?: number;\n    /** Extra response headers - e.g. the `cache-control` a terminal status page wants. `content-type`\n     * is ignored (the document is always HTML) and the ISR freshness header is applied after these,\n     * so neither can be overridden from here. */\n    readonly headers?: HeadersLike;\n    /** Document title (fallback when `head.title` is unset). */\n    readonly title?: string;\n    /** Resolved route head - `title` overrides `title` above; `meta`/`link` render as managed\n     * (`data-nifra`) tags the client updates on navigation.\n     *\n     * **Head contract (the layout chain contributes).** `createWebApp` resolves this via\n     * {@link mergeHeads}: a route's head is its **layout chain's** `meta`/`head` exports merged with the\n     * page's. A `_layout.tsx` may `export const meta` (or `export function meta(args)`) - its tags land\n     * on every page below it (the home for `hreflang`, `preconnect`, a section-default `<title>`). The\n     * merge is **nearest-wins for scalars** (the page's `title` overrides an inner layout's, which\n     * overrides an outer one; an undefined page title keeps the layout's) and **concatenated for the\n     * `meta`/`link` arrays** (outermost layout first, page last). `<meta>`/`<link>` attributes pass a\n     * shared tag-specific allowlist (including inert `data-*` metadata) and values are escaped. */\n    readonly head?: Meta;\n    /** Id of the container wrapping the app markup (default `\"root\"`). A non-default id also gets\n     * {@link ROOT_ATTRIBUTE}, which is how the generated client entry finds the container to hydrate -\n     * the entry is built once and cannot know what a given render chose. */\n    readonly rootId?: string;\n    /** When `false`, emit a complete but **non-hydrated** document - no client entry script, data\n     * globals, or modulepreloads. Used for server-rendered `_error` pages: a terminal state that needs no\n     * client takeover, and it sidesteps an SSR/hydrate mismatch (the server rendered the boundary, not\n     * the page the client manifest maps this route id to). Default `true`. */\n    readonly hydrate?: boolean;\n    /** Island client bundles (`@nifrajs/web/islands`) to load as `<script type=\"module\">` in the document\n     * tail - emitted **regardless of `hydrate`**, so a static (`hydrate: false`) page can still mount\n     * no-framework islands. URLs are attribute-escaped. Empty/omitted ⇒ none (unchanged output). */\n    readonly islandScripts?: readonly string[];\n    /** CSP nonce applied to every framework-owned executable script in this document. */\n    readonly nonce?: string;\n    /**\n     * Advanced: a per-route slot the renderer fills with the request-invariant document pieces (shell\n     * prefix/suffix, tail statics) on the first render and reuses afterwards, skipping their re-assembly.\n     *\n     * Only pass a cache when every shell-shaping input is IDENTICAL across the requests sharing it:\n     * same `head` content (a static meta chain - never a `meta(data)` function), `title`, `styles`,\n     * `preload`, `islandScripts`, `clientEntry`, `rootId`, `hydrate`, and `prerenderedPaths`. Per-request\n     * values (`data`, `params`, `search`, `actionData`, `layoutData`, deferred state) are always assembled\n     * fresh and safe. A per-request `nonce` disables the cache automatically. `createWebApp` wires this\n     * per route, gated on the route + layout metas being static.\n     */\n    readonly assemblyCache?: RenderAssemblyCache;\n}"
   },
   {
     "name": "renderPageResult",
@@ -9679,7 +9784,7 @@
     "name": "RenderProps",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RenderProps {\n    readonly data: unknown;\n    /** Per-layout loader data, aligned index-for-index with the layout prefix of `chain`. */\n    readonly layoutData?: readonly unknown[];\n    readonly actionData?: unknown;\n    /** True while a client navigation or submit is in flight (client-only; absent/false on SSR). */\n    readonly pending?: boolean;\n    /** The path a client navigation is transitioning TO while `pending` (client-only; absent on SSR). */\n    readonly pendingPath?: string;\n    /** The in-flight client submit, for optimistic UI (client-only; absent on SSR). */\n    readonly submission?: Submission;\n    /** The matched route's decoded path params. */\n    readonly params?: Readonly<Record<string, string>>;\n    /** The current URL's `pathname + search` (no hash). */\n    readonly path?: string;\n    /** The route's typed, validated search params. */\n    readonly search?: Record<string, unknown>;\n}",
+    "signature": "export interface RenderProps {\n    readonly data: unknown;\n    /** Per-layout loader data, aligned index-for-index with the layout prefix of `chain`. */\n    readonly layoutData?: readonly unknown[];\n    readonly actionData?: unknown;\n    /** True while a client navigation or submit is in flight (client-only; absent/false on SSR). */\n    readonly pending?: boolean;\n    /** The path a client navigation is transitioning TO while `pending` (client-only; absent on SSR). */\n    readonly pendingPath?: string;\n    /** The in-flight client submit, for optimistic UI (client-only; absent on SSR). */\n    readonly submission?: Submission;\n    /** The matched route's decoded path params. */\n    readonly params?: Readonly<Record<string, string>>;\n    /** The current URL's `pathname + search` (no hash). */\n    readonly path?: string;\n    /** The route's typed, validated search params. */\n    readonly search?: Record<string, unknown>;\n    /** Neutral named-boundary states; adapters choose how each boundary's `render` UI is mounted. */\n    readonly boundaries?: BoundaryStates;\n}",
     "doc": "/** The data handed to a route component. */"
   },
   {
@@ -9879,6 +9984,13 @@
     "kind": "interface",
     "package": "@nifrajs/i18n",
     "signature": "export interface ResolvedLocale {\n    /** Always a member of `locales` (or `defaultLocale`) - never raw request input. */\n    readonly locale: Locale;\n    readonly source: LocaleSource;\n    /** The supported locale the request's cookie currently resolves to, when\n     * {@link NegotiateOptions.cookie} is configured and the cookie holds a valid value. Lets a caller\n     * persist a new choice only when it actually differs. */\n    readonly cookie?: Locale;\n}"
+  },
+  {
+    "name": "resolveDynamicBoundaries",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function resolveDynamicBoundaries(boundaries: readonly BoundaryRegistration[], context: BoundaryRequestCtx): Promise<BoundaryStates>;",
+    "doc": "/**\n * Resolve all dynamic boundaries concurrently. Each receives a fresh frozen context object; one\n * failure becomes that boundary's error state and never rejects a sibling or exposes sibling data.\n * Static/intercepting modes remain `unresolved` until their phase-specific runtime owns them.\n */"
   },
   {
     "name": "resolveImage",
@@ -10395,7 +10507,7 @@
     "name": "RouteModule",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RouteModule {\n    readonly default: unknown;\n    readonly loader?: Loader;\n    readonly action?: Action;\n    /** Optional client-only loader. It runs after hydration and on client navigations. */\n    readonly clientLoader?: ClientLoader;\n    /** Optional client-only submit wrapper. The server action remains mandatory for mutations. */\n    readonly clientAction?: ClientAction;\n    /** A Standard Schema validating this route's URL search params. When present, `ctx.search` is parsed +\n     * validated against it (failing closed to the schema's defaults on invalid input); type it into the\n     * loader with `LoaderArgs<Api, Env, typeof searchSchema>`. */\n    readonly searchSchema?: StandardSchemaV1<unknown, Record<string, unknown>>;\n    /** Search keys that are purely client-side UI (`\"tab\"`, a client-side `\"sort\"`, `\"modal\"`) and do NOT\n     * affect this route's loader. When a client navigation stays on the same route + pathname and changes\n     * ONLY these keys, the router updates the URL (so `useSearch` re-renders) WITHOUT re-running the loader.\n     * Any other key change revalidates as usual - so omitting a data-affecting key here can never serve\n     * stale data, it only forgoes the optimization. Client-only: the server always renders fresh. */\n    readonly searchClientKeys?: readonly string[];\n    readonly meta?: MetaInput;\n    /**\n     * Opt this route out of nifra's full-document client hydration. The server still renders the full\n     * HTML document, loaders/actions still run, and native links/forms still work; the generated app\n     * client, route chunks, and loader globals are omitted for hard navigations. Intended for static or\n     * island-hydrated pages where interactivity is mounted by smaller, explicit client entries.\n     */\n    readonly hydrate?: boolean;\n    /**\n     * Opt a **static** route (no `:param`/`*`) into build-time prerendering (SSG): `prerenderRoutes`\n     * (from `@nifrajs/web/build`) renders it to a static `index.html` at build. The loader runs at build\n     * with the in-process `api` (build-safe data only - no per-request cookies/secrets); `defer()` on a\n     * prerendered route resolves at build. For **dynamic** routes use {@link getStaticPaths} instead.\n     */\n    readonly prerender?: boolean;\n    /**\n     * Enumerate the concrete params to prerender for a **dynamic** (`:param`) route - the SSG path list\n     * (blogs/docs/etc.). Runs at build; `prerenderRoutes` renders one `index.html` per returned path.\n     */\n    readonly getStaticPaths?: GetStaticPaths;\n    /**\n     * ISR freshness for this route, in **seconds**. `createWebApp` emits it as an\n     * `x-nifra-isr-revalidate` response header that `withISR` reads to set the page's cache TTL\n     * (overriding the wrapper's default). Older-than-`revalidate` cached pages are served stale while\n     * regenerating. (Distinct from the action-revalidation `x-nifra-revalidate` header - a CSV path\n     * list the client parses to refetch - so the two channels never alias.)\n     */\n    readonly revalidate?: number;\n    /** Optional bounded tags used by ISR on-demand invalidation (`?tag=...`). */\n    readonly revalidateTags?: readonly string[];\n    /**\n     * No-framework island bundles (`@nifrajs/web/islands`) to load on this route, as `<script\n     * type=\"module\">` in the document tail. Loaded **regardless of `hydrate`** - pair with\n     * `export const hydrate = false` for a static page that ships zero framework JS and mounts\n     * interactivity through `<Island>` markers + `mountIslands` enhancers instead.\n     */\n    readonly islandScripts?: readonly string[];\n}",
+    "signature": "export interface RouteModule {\n    readonly default: unknown;\n    readonly loader?: Loader;\n    readonly action?: Action;\n    /** Optional client-only loader. It runs after hydration and on client navigations. */\n    readonly clientLoader?: ClientLoader;\n    /** Optional client-only submit wrapper. The server action remains mandatory for mutations. */\n    readonly clientAction?: ClientAction;\n    /** Named async boundaries owned by this route. The adapter renders their neutral state seam. */\n    readonly boundaries?: readonly BoundaryRegistration[];\n    /** A Standard Schema validating this route's URL search params. When present, `ctx.search` is parsed +\n     * validated against it (failing closed to the schema's defaults on invalid input); type it into the\n     * loader with `LoaderArgs<Api, Env, typeof searchSchema>`. */\n    readonly searchSchema?: StandardSchemaV1<unknown, Record<string, unknown>>;\n    /** Search keys that are purely client-side UI (`\"tab\"`, a client-side `\"sort\"`, `\"modal\"`) and do NOT\n     * affect this route's loader. When a client navigation stays on the same route + pathname and changes\n     * ONLY these keys, the router updates the URL (so `useSearch` re-renders) WITHOUT re-running the loader.\n     * Any other key change revalidates as usual - so omitting a data-affecting key here can never serve\n     * stale data, it only forgoes the optimization. Client-only: the server always renders fresh. */\n    readonly searchClientKeys?: readonly string[];\n    readonly meta?: MetaInput;\n    /**\n     * Opt this route out of nifra's full-document client hydration. The server still renders the full\n     * HTML document, loaders/actions still run, and native links/forms still work; the generated app\n     * client, route chunks, and loader globals are omitted for hard navigations. Intended for static or\n     * island-hydrated pages where interactivity is mounted by smaller, explicit client entries.\n     */\n    readonly hydrate?: boolean;\n    /**\n     * Opt a **static** route (no `:param`/`*`) into build-time prerendering (SSG): `prerenderRoutes`\n     * (from `@nifrajs/web/build`) renders it to a static `index.html` at build. The loader runs at build\n     * with the in-process `api` (build-safe data only - no per-request cookies/secrets); `defer()` on a\n     * prerendered route resolves at build. For **dynamic** routes use {@link getStaticPaths} instead.\n     */\n    readonly prerender?: boolean;\n    /**\n     * Enumerate the concrete params to prerender for a **dynamic** (`:param`) route - the SSG path list\n     * (blogs/docs/etc.). Runs at build; `prerenderRoutes` renders one `index.html` per returned path.\n     */\n    readonly getStaticPaths?: GetStaticPaths;\n    /**\n     * ISR freshness for this route, in **seconds**. `createWebApp` emits it as an\n     * `x-nifra-isr-revalidate` response header that `withISR` reads to set the page's cache TTL\n     * (overriding the wrapper's default). Older-than-`revalidate` cached pages are served stale while\n     * regenerating. (Distinct from the action-revalidation `x-nifra-revalidate` header - a CSV path\n     * list the client parses to refetch - so the two channels never alias.)\n     */\n    readonly revalidate?: number;\n    /** Optional bounded tags used by ISR on-demand invalidation (`?tag=...`). */\n    readonly revalidateTags?: readonly string[];\n    /**\n     * No-framework island bundles (`@nifrajs/web/islands`) to load on this route, as `<script\n     * type=\"module\">` in the document tail. Loaded **regardless of `hydrate`** - pair with\n     * `export const hydrate = false` for a static page that ships zero framework JS and mounts\n     * interactivity through `<Island>` markers + `mountIslands` enhancers instead.\n     */\n    readonly islandScripts?: readonly string[];\n}",
     "doc": "/** A route module - the default component + optional loader / action / meta. */"
   },
   {
@@ -10469,7 +10581,7 @@
     "name": "RouterState",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RouterState {\n    readonly routeId: string;\n    readonly params: Record<string, string>;\n    /** The current URL path (used to revalidate the active loader after an action). */\n    readonly path: string;\n    readonly data: unknown;\n    /** Per-layout loader data, aligned with the matched chain's leading layout prefix. Absent when no\n     * layout in that chain has a loader. */\n    readonly layoutData?: readonly unknown[] | undefined;\n    /** An action's data return after a client-side submit (cleared on navigation). */\n    readonly actionData?: unknown;\n    /** True while a navigation or submit is in flight (drives loading UI). */\n    readonly pending: boolean;\n    /** The path a navigation is transitioning TO while `pending` (cleared when it settles). Lets a\n     * `NavLink` know whether its own `to` is the one loading; `undefined` when idle. */\n    readonly pendingPath?: string | undefined;\n    /** The in-flight submit (set during a `submit`, cleared when it settles) - for optimistic UI. */\n    readonly submission?: Submission;\n}",
+    "signature": "export interface RouterState {\n    readonly routeId: string;\n    readonly params: Record<string, string>;\n    /** The current URL path (used to revalidate the active loader after an action). */\n    readonly path: string;\n    readonly data: unknown;\n    /** Per-layout loader data, aligned with the matched chain's leading layout prefix. Absent when no\n     * layout in that chain has a loader. */\n    readonly layoutData?: readonly unknown[] | undefined;\n    /** Neutral named-boundary states for the active route. */\n    readonly boundaries?: BoundaryStates;\n    /** An action's data return after a client-side submit (cleared on navigation). */\n    readonly actionData?: unknown;\n    /** True while a navigation or submit is in flight (drives loading UI). */\n    readonly pending: boolean;\n    /** The path a navigation is transitioning TO while `pending` (cleared when it settles). Lets a\n     * `NavLink` know whether its own `to` is the one loading; `undefined` when idle. */\n    readonly pendingPath?: string | undefined;\n    /** The in-flight submit (set during a `submit`, cleared when it settles) - for optimistic UI. */\n    readonly submission?: Submission;\n}",
     "doc": "/** The router's observable state. A new object is published on every transition. */"
   },
   {
@@ -12084,10 +12196,23 @@
     "signature": "export interface StartCausalityOptions {\n    /** Stable graph identity. Generate once at the ingress boundary, then propagate it. */\n    readonly executionId: string;\n    /** Epoch milliseconds. Injectable for deterministic tests. Default `Date.now()`. */\n    readonly at?: number;\n    /** Observation opened for this exact node. */\n    readonly trace?: CausalityTrace;\n}"
   },
   {
+    "name": "startDynamicBoundaries",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function startDynamicBoundaries(boundaries: readonly BoundaryRegistration[], context: BoundaryRequestCtx): DynamicBoundaryBatch;",
+    "doc": "/**\n * Start all dynamic boundary loads at once without making the page wait for the slowest sibling.\n * The initial states contain `status: \"pending\"`; callers that support deferred values can attach\n * each `pending.promise` to its own slot. `complete` still provides settled, isolated states to\n * non-streaming callers, preserving the simple reference API.\n */"
+  },
+  {
     "name": "StartObservation",
     "kind": "interface",
     "package": "@nifrajs/otel",
     "signature": "export interface StartObservation {\n    readonly name: string;\n    /** Explicit parent. `null` forces a root span; `undefined` falls back to `traceparent`. */\n    readonly parent?: ObservationParent | null;\n    /** Inbound W3C header used when `parent` is undefined. */\n    readonly traceparent?: string | null;\n    readonly attributes?: Readonly<Record<string, AttributeValue>>;\n    /** Non-parent causal relationships, for example an outbox event that resumed this workflow. */\n    readonly links?: readonly ObservationLink[];\n}"
+  },
+  {
+    "name": "StaticBoundary",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type StaticBoundary<Data, UI> = BoundaryBase<Data, UI> & {\n    readonly mode: \"static\";\n    readonly load?: (ctx: StaticCtx) => Data | Promise<Data>;\n};"
   },
   {
     "name": "StaticCollection",
@@ -12095,6 +12220,13 @@
     "package": "@nifrajs/content",
     "signature": "export interface StaticCollection<Frontmatter> {\n    all(): Promise<ReadonlyArray<Entry<Frontmatter>>>;\n    get(slug: string): Promise<Entry<Frontmatter> | null>;\n}",
     "doc": "/** Read-only collection surface (`all()`/`get()`) - structurally compatible with `defineCollection`'s\n * `Collection`, but with no filesystem access. */"
+  },
+  {
+    "name": "StaticCtx",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface StaticCtx {\n    readonly phase: \"build\";\n    readonly origin?: string;\n}",
+    "doc": "/** Build-safe inputs available to a static boundary. It intentionally has no request/session/params API. */"
   },
   {
     "name": "StaticPath",

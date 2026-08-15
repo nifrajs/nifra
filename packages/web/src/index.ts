@@ -22,6 +22,13 @@ import {
   type UrlParts,
   urlPartsOf,
 } from "@nifrajs/core/server"
+import type { BoundaryRegistration } from "./boundary.ts"
+import {
+  type BoundaryRequestCtx,
+  type BoundaryStates,
+  boundaryDescriptors,
+  startDynamicBoundaries,
+} from "./boundary.ts"
 import {
   DEFERRED_ERROR_CODE,
   DEFERRED_RUNTIME,
@@ -59,6 +66,7 @@ import type {
 import type { RenderAdapter, RenderProps } from "./render-seam.ts"
 import {
   ACTION_GLOBAL,
+  BOUNDARY_GLOBAL,
   DATA_GLOBAL,
   LAYOUT_DATA_GLOBAL,
   ROOT_ATTRIBUTE,
@@ -77,6 +85,27 @@ import {
 import { searchOf, searchOfChain } from "./search.ts"
 
 // Draft / preview mode - a signed cookie that flips `ctx.draft` for loaders + bypasses ISR for editors.
+export {
+  type Boundary,
+  type BoundaryDescriptor,
+  type BoundaryError,
+  type BoundaryMode,
+  type BoundaryRegistration,
+  type BoundaryRequestCtx,
+  type BoundaryState,
+  type BoundaryStates,
+  type BoundaryStatus,
+  boundaryDescriptors,
+  boundaryModeKey,
+  type DynamicBoundary,
+  type DynamicBoundaryBatch,
+  type InterceptBoundary,
+  type PendingBoundary,
+  resolveDynamicBoundaries,
+  type StaticBoundary,
+  type StaticCtx,
+  startDynamicBoundaries,
+} from "./boundary.ts"
 export {
   DRAFT_COOKIE,
   type DraftCookieControls,
@@ -260,6 +289,7 @@ export {
 } from "./conformance.ts"
 export {
   ACTION_GLOBAL,
+  BOUNDARY_GLOBAL,
   DATA_GLOBAL,
   LAYOUT_DATA_GLOBAL,
   type RenderAdapter,
@@ -402,6 +432,8 @@ export interface RenderPageOptions {
   /** Per-layout loader data, forwarded to the adapter as `RenderProps.layoutData`. Aligned with the
    * chain's layout prefix; omitted when no layout in the chain has a loader. */
   readonly layoutData?: readonly unknown[]
+  /** Dynamic-boundary states, forwarded to the adapter and serialized for hydration when present. */
+  readonly boundaries?: BoundaryStates
   /** HTTP status for the response (default 200; e.g. 404 for a not-found page). */
   readonly status?: number
   /** Extra response headers - e.g. the `cache-control` a terminal status page wants. `content-type`
@@ -508,6 +540,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     hydrate = true,
     islandScripts = [],
     nonce,
+    boundaries,
     headers: extraHeaders,
   } = options
   if (nonce !== undefined && nonce.trim() === "") {
@@ -542,12 +575,24 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     actionData === undefined
       ? undefined
       : prepareDeferred(actionData, deferred.length + layoutDeferred.length)
+  const boundarySplit =
+    boundaries === undefined
+      ? undefined
+      : prepareDeferred(
+          boundaries,
+          deferred.length + layoutDeferred.length + (actionSplit?.deferred.length ?? 0),
+        )
   // On the common page-only path (no layout loader, no action) reuse `deferred` directly instead of
   // allocating a fresh spread array every request.
   const allDeferred =
-    layoutDeferred.length === 0 && actionSplit === undefined
+    layoutDeferred.length === 0 && actionSplit === undefined && boundarySplit === undefined
       ? deferred
-      : [...deferred, ...layoutDeferred, ...(actionSplit ? actionSplit.deferred : [])]
+      : [
+          ...deferred,
+          ...layoutDeferred,
+          ...(actionSplit ? actionSplit.deferred : []),
+          ...(boundarySplit ? boundarySplit.deferred : []),
+        ]
   // Omitted entirely when no layout has a loader - a page-only app emits exactly what it did before.
   const layoutTail =
     options.layoutData === undefined
@@ -559,6 +604,10 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     actionSplit === undefined
       ? ""
       : `window.${ACTION_GLOBAL}=${serializeData(actionSplit.forClient)};`
+  const boundaryTail =
+    boundarySplit === undefined
+      ? ""
+      : `window.${BOUNDARY_GLOBAL}=${serializeData(boundarySplit.forClient)};`
   const deferredRuntime =
     allDeferred.length > 0 ? `<script${nonceAttr}>${DEFERRED_RUNTIME}</script>` : ""
   // The regex only injects the CSP nonce into the (constant) hydration head; with no nonce it's a
@@ -639,7 +688,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   // Tail - the loader-data globals + the client module. Module scripts defer (run after parse), so
   // the data global + every streamed deferred resolution are set before the entry hydrates.
   const tailHtml = hydrate
-    ? `${slot.tailPre}${action}${slot.tailMid}${layoutTail}${slot.tailData}${serializeData(forClient)}${slot.tailPost}`
+    ? `${slot.tailPre}${action}${slot.tailMid}${layoutTail}${boundaryTail}${slot.tailData}${serializeData(forClient)}${slot.tailPost}`
     : (slot.tailPost as string)
   const headers: Record<string, string> = { "content-type": "text/html; charset=utf-8" }
   // Caller-supplied headers (a terminal status page's `cache-control`, say). Applied before the
@@ -670,6 +719,9 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     // Spread only when present, so a page-only render produces exactly the props it did before.
     ...(options.layoutData !== undefined
       ? { layoutData: layoutSplits.map((split) => split.forComponent) }
+      : {}),
+    ...(boundarySplit !== undefined
+      ? { boundaries: boundarySplit.forComponent as BoundaryStates }
       : {}),
   }
 
@@ -993,6 +1045,7 @@ type LoadedLayoutModules = ReadonlyArray<{
   // A layout may declare its own `searchSchema`; the route's effective search merges the layout chain's
   // schemas with the page's (page-wins). Present on the raw module already - typed here so it is readable.
   searchSchema?: RouteModule["searchSchema"]
+  boundaries?: readonly BoundaryRegistration[]
 }>
 
 /**
@@ -2095,6 +2148,7 @@ export function createWebApp<Env = unknown>(
       const draft = await draftFlag(c.req)
       let data: unknown
       let layoutData: readonly unknown[] | undefined
+      let boundaryStates: BoundaryStates | undefined
       let layoutModules: LoadedLayoutModules | undefined
       let layoutRetained: readonly number[] = []
       try {
@@ -2121,12 +2175,40 @@ export function createWebApp<Env = unknown>(
         )
         layoutModules = run.modules
         layoutRetained = run.retained
+        const boundaryDefinitions = [
+          ...run.modules.flatMap((layout) => layout.boundaries ?? []),
+          ...(mod.boundaries ?? []),
+        ]
+        if (boundaryDefinitions.length > 0) boundaryDescriptors(boundaryDefinitions)
+        const effectiveSearch = searchChainOf(run.modules, mod, c.req)
+        const boundaryBatch =
+          boundaryDefinitions.length === 0
+            ? undefined
+            : startDynamicBoundaries(boundaryDefinitions, {
+                request: c.req,
+                params: c.params,
+                api,
+                env: c.env,
+                draft,
+                search: effectiveSearch,
+                signal: c.req.signal,
+              } satisfies BoundaryRequestCtx)
+        // Boundary data is attached as one Deferred marker per slot. The shell can render
+        // immediately with each slot pending, while the existing deferred protocol emits the first
+        // completed sibling independently instead of waiting for the slowest boundary.
+        if (boundaryBatch !== undefined) {
+          const streamed = { ...boundaryBatch.initial }
+          for (const entry of boundaryBatch.pending) {
+            const initial = streamed[entry.name]
+            if (initial !== undefined)
+              streamed[entry.name] = { ...initial, data: defer(entry.promise) }
+          }
+          boundaryStates = streamed
+        }
         // The page loader gets the EFFECTIVE search (layout chain + page, page-wins), now that the layout
         // modules are loaded - so `ctx.search` includes a layout's shared keys (`?org`), matching `useSearch`.
         const [pageData] = await Promise.all([
-          mod.loader
-            ? mod.loader({ ...ctx, search: searchChainOf(run.modules, mod, c.req) })
-            : null,
+          mod.loader ? mod.loader({ ...ctx, search: effectiveSearch }) : null,
           run.pending, // a non-gate layout loader that rejects must still surface, not go unhandled
         ])
         data = pageData
@@ -2182,21 +2264,30 @@ export function createWebApp<Env = unknown>(
           offset += split.deferred.length
         }
         const deferred = [...pageSplit.deferred, ...layoutSplits.flatMap((split) => split.deferred)]
+        const boundarySplit =
+          boundaryStates === undefined
+            ? undefined
+            : prepareDeferred(boundaryStates, deferred.length)
+        const allDeferred = [
+          ...deferred,
+          ...(boundarySplit === undefined ? [] : boundarySplit.deferred),
+        ]
         const payload =
-          layoutData === undefined
+          layoutData === undefined && boundarySplit === undefined
             ? pageSplit.forClient
             : {
                 v: 1 as const,
                 data: pageSplit.forClient,
                 layoutData: layoutSplits.map((split) => split.forClient),
                 retained: layoutRetained,
+                ...(boundarySplit === undefined ? {} : { boundaries: boundarySplit.forClient }),
               }
         // Bare value when there is no layout data - the pre-envelope shape, so a client running older
         // code against a newer server keeps working.
-        if (deferred.length === 0) {
+        if (allDeferred.length === 0) {
           return Response.json(payload ?? null)
         }
-        return new Response(ndjsonStream(payload, deferred), {
+        return new Response(ndjsonStream(payload, allDeferred), {
           headers: { "content-type": "application/x-ndjson; charset=utf-8" },
         })
       }
@@ -2226,6 +2317,7 @@ export function createWebApp<Env = unknown>(
           search: searchChainOf(layoutModules ?? [], mod, c.req),
           hydrate: hydrateRoute,
           ...(layoutData !== undefined ? { layoutData } : {}),
+          ...(boundaryStates !== undefined ? { boundaries: boundaryStates } : {}),
           ...preloadOf(route.id),
           ...stylesOf(route.id),
           prerenderedPaths: options.prerenderedPaths ?? [],
@@ -2556,6 +2648,7 @@ export function generateClientEntry(
     `  data: mapDeferred(window.${DATA_GLOBAL}),`,
     // Undefined on a page-only app, which is exactly what the router treats as "no layout data".
     `  layoutData: window.${LAYOUT_DATA_GLOBAL} && window.${LAYOUT_DATA_GLOBAL}.map(mapDeferred),`,
+    `  boundaries: mapDeferred(window.${BOUNDARY_GLOBAL}),`,
     // actionData (only set after a form POST) is in the initial state so the binding hydrates
     // consistently with the server-rendered markup; mapped through `mapDeferred` too so a deferred
     // action's placeholders become registry markers (a no-op when the action didn't defer).

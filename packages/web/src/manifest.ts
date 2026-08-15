@@ -5,6 +5,7 @@
  * portable (no fs, no DOM) and fully unit-testable. Edge deploys pre-build the manifest.
  */
 import type { StandardSchemaV1 } from "@nifrajs/core/server"
+import type { BoundaryRegistration } from "./boundary.ts"
 
 /** Context passed to a route `loader`. The `api` + `env` are injected by `createWebApp` and typed
  * per-route via `@nifrajs/client`'s `LoaderArgs<Api, Env>` (here they are opaque to the agnostic core). */
@@ -233,6 +234,8 @@ export interface RouteModule {
   readonly clientLoader?: ClientLoader
   /** Optional client-only submit wrapper. The server action remains mandatory for mutations. */
   readonly clientAction?: ClientAction
+  /** Named async boundaries owned by this route. The adapter renders their neutral state seam. */
+  readonly boundaries?: readonly BoundaryRegistration[]
   /** A Standard Schema validating this route's URL search params. When present, `ctx.search` is parsed +
    * validated against it (failing closed to the schema's defaults on invalid input); type it into the
    * loader with `LoaderArgs<Api, Env, typeof searchSchema>`. */
@@ -291,7 +294,7 @@ export interface RouteModule {
  * overrides an inner layout, which overrides an outer one). See `mergeHeads` in `@nifrajs/web`. */
 export interface LayoutEntry {
   readonly file: string
-  readonly load: () => Promise<{ default: unknown; meta?: MetaInput }>
+  readonly load: () => Promise<RouteModule>
 }
 
 /** One matched route: pattern, nested layout ids (outermost → innermost), source file, loader. */

@@ -30,7 +30,10 @@ export function compose(chain: readonly unknown[], props: RenderProps): ReactNod
     // boundary marker, the page) reads `undefined` and is unaffected.
     node = createElement(
       chain[i] as FunctionComponent<{ data: unknown }>,
-      { data: props.layoutData?.[i] ?? null },
+      {
+        data: props.layoutData?.[i] ?? null,
+        ...(props.boundaries !== undefined ? { boundaries: props.boundaries } : {}),
+      },
       node,
     )
   }

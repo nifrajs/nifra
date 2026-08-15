@@ -37,7 +37,7 @@
   </svelte:boundary>
 {:else}
   {@const Layout = chain[0]}
-  <Layout data={layoutData?.[0] ?? null}>
+  <Layout data={layoutData?.[0] ?? null} boundaries={props.boundaries}>
     {#snippet children()}
       <Self chain={chain.slice(1)} {props} layoutData={layoutData?.slice(1)} />
     {/snippet}

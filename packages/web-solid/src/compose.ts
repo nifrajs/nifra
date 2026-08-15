@@ -23,7 +23,12 @@ export function compose(chain: readonly unknown[], props: RenderProps): () => JS
     // prefix, so `layoutData[i]` belongs to `chain[i]`; anything past that end (a client-only `_error`
     // boundary marker, the page) reads `undefined` and is unaffected.
     const layoutData = props.layoutData?.[i] ?? null
-    node = () => createComponent(Layout, { data: layoutData, children: child() })
+    node = () =>
+      createComponent(Layout, {
+        data: layoutData,
+        ...(props.boundaries !== undefined ? { boundaries: props.boundaries } : {}),
+        children: child(),
+      })
   }
   const inner = node
   // The provider `value` is an ACCESSOR reading `props.search` - a getter over the mount's snapshot on

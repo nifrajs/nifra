@@ -2927,6 +2927,8 @@ _No named exports (side-effect entrypoint)._
   Global the server serializes an action's data return into (absent on GETs); the client reads it so hydration after a native form POST matches the server-rendered markup.
 - **Action** _(type)_ - `type Action = (ctx: LoaderContext) => unknown | Promise<unknown>`
   A route's optional mutation, run on POST. Shares the loader context (params/request/api); read the form/JSON body off `request`. Returns either a control-flow value (a `redirect()`, a `status(...)` render, or a hand-rolled `Response` - all passed straight through) or data, surfaced to the page comp…
+- **BOUNDARY_GLOBAL** _(const)_ - `BOUNDARY_GLOBAL: "__NIFRA_BOUNDARIES__"`
+  Dynamic-boundary states for hydration; absent when a route declares no boundaries.
 - **Blocker** _(interface)_ - `interface Blocker`
   A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The pair is what a boolean `when` can't express - the app shows its OWN async confirmation UI, then cal…
 - **BlockerController** _(interface)_ - `interface BlockerController`
@@ -2937,6 +2939,19 @@ _No named exports (side-effect entrypoint)._
   A parsed navigation target the {@link BlockerFunction} decides on. `pathname`/`search`/`hash` match the DOM `Location` shape (search keeps its `?`, hash its `#`).
 - **BlockerState** _(type)_ - `type BlockerState = "unblocked" | "blocked" | "proceeding"`
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
+- **Boundary** _(type)_ - `type Boundary<Data, UI> = | StaticBoundary<Data, UI> | DynamicBoundary<Data, UI> | InterceptBoundary<Data, UI>`
+  A discriminated union: the `mode` selects the context type accepted by `load`.
+- **BoundaryDescriptor** _(interface)_ - `interface BoundaryDescriptor`
+  Neutral manifest descriptor: no framework component crosses the web core boundary.
+- **BoundaryError** _(interface)_ - `interface BoundaryError`
+- **BoundaryMode** _(type)_ - `type BoundaryMode = "static" | "dynamic" | { readonly intercept: string }`
+- **BoundaryRegistration** _(type)_ - `type BoundaryRegistration`
+- **BoundaryRequestCtx** _(interface)_ - `interface BoundaryRequestCtx`
+  Request-scoped inputs available to dynamic and intercepting boundaries.
+- **BoundaryState** _(interface)_ - `interface BoundaryState`
+  Serializable boundary state passed to the adapter's render seam.
+- **BoundaryStates** _(type)_ - `type BoundaryStates = Readonly<Record<string, BoundaryState>>`
+- **BoundaryStatus** _(type)_ - `type BoundaryStatus = "unresolved" | "pending" | "ready" | "error"`
 - **BrowserNavigate** _(type)_ - `type BrowserNavigate = (to: string | number, options?: NavigateOptions) => void`
   A history-aware navigate. A **string** `to` is a same-origin path (`/users/7?tab=a`) navigated to (push, or replace with `{ replace: true }`); a **number** is a history delta (`-1` back, `1` forward), matching the browser's `history.go`. Registered by `installHistory`.
 - **CacheStore** _(interface)_ - `interface CacheStore`
@@ -2975,6 +2990,9 @@ _No named exports (side-effect entrypoint)._
   A serializable snapshot of the cache's successful queries - the SSR→client bridge payload.
 - **DraftCookieControls** _(interface)_ - `interface DraftCookieControls`
   The response-cookie surface `enableDraft`/`disableDraft` need - nifra's `c.set`. Structural, so any nifra handler context satisfies it without importing the full `Context`.
+- **DynamicBoundary** _(type)_ - `type DynamicBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "dynamic" readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data> }`
+- **DynamicBoundaryBatch** _(interface)_ - `interface DynamicBoundaryBatch`
+  Runtime handles for a concurrent boundary batch. `initial` is renderable immediately.
 - **EnableDraftOptions** _(interface)_ - `interface EnableDraftOptions`
 - **FetchRouteData** _(type)_ - `type FetchRouteData = ( path: string, match: RouteMatch, signal?: AbortSignal, navigation?: { readonly from: string readonly retain: readonly number[] }, ) => Promise<unknown>`
   How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch (and its deferred stream).
@@ -3013,6 +3031,7 @@ _No named exports (side-effect entrypoint)._
   A stable per-key handle for an infinite (paged) query.
 - **InfiniteQueryOptions** _(interface)_ - `interface InfiniteQueryOptions<T, P>`
   Options for an {@link InfiniteQueryHandle}. `getNextPageParam` (required) derives the param for the next page from the last page - return `undefined`/`null` to signal there is no next page.
+- **InterceptBoundary** _(type)_ - `type InterceptBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: { readonly intercept: string } readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data> }`
 - **KVCacheStore** _(class)_ - `class KVCacheStore`
   A {@link CacheStore} backed by a **Cloudflare Workers KV** namespace (or any {@link KVNamespaceLike} binding) - the production-grade shared/durable store ISR wants: cached pages and on-demand purges hold *across* worker instances (unlike the per-instance {@link MemoryCacheStore}). Entries serialize…
 - **KVCacheStoreOptions** _(interface)_ - `interface KVCacheStoreOptions`
@@ -3065,6 +3084,8 @@ _No named exports (side-effect entrypoint)._
   Inputs for {@link openGraph} - the common Open Graph properties. All optional; only the provided ones become tags. `type` defaults to `"website"`.
 - **PRE_HYDRATION_GUARD** _(const)_ - `PRE_HYDRATION_GUARD: string`
   Pre-hydration form guard - a tiny inline script flushed in `<head>` (it runs in the window between first paint and the island bundle taking over). It neutralizes the one real hydration footgun: a JS-only form (a hand-wired `onSubmit` with no native fallback) submitting *natively* before its handler…
+- **PendingBoundary** _(interface)_ - `interface PendingBoundary`
+  A dynamic load that has started but is not part of the initial render barrier.
 - **PreviewEndpointOptions** _(interface)_ - `interface PreviewEndpointOptions`
   Config for {@link previewEndpoint}.
 - **PublicDirCache** _(interface)_ - `interface PublicDirCache`
@@ -3135,6 +3156,9 @@ _No named exports (side-effect entrypoint)._
   Type-level intent marker for a value that must only exist on the server - a secret, a DB handle, a server-only client. `ServerOnly<T>` is structurally `T` (the brand is an optional phantom field, so existing code keeps type-checking), but it advertises to readers + the compiler that the value is no…
 - **SsrModuleLoader** _(type)_ - `type SsrModuleLoader = (id: string) => Promise<unknown>`
   Loads a module through the dev server's module graph rather than the runtime's resolver.
+- **StaticBoundary** _(type)_ - `type StaticBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "static" readonly load?: (ctx: StaticCtx) => Data | Promise<Data> }`
+- **StaticCtx** _(interface)_ - `interface StaticCtx`
+  Build-safe inputs available to a static boundary. It intentionally has no request/session/params API.
 - **StaticPath** _(interface)_ - `interface StaticPath`
   One concrete parameterization of a dynamic route, returned by {@link GetStaticPaths}.
 - **StaticPaths** _(interface)_ - `interface StaticPaths`
@@ -3151,6 +3175,10 @@ _No named exports (side-effect entrypoint)._
   Explicit escape hatch for executable inline code. A CSP nonce is mandatory.
 - **assertRenderAdapterConformance** _(function)_ - `assertRenderAdapterConformance: (adapter: RenderAdapter, fixture: RenderAdapterConformanceFixture) => Promise<void>`
   Execute the observable {@link RenderAdapter} interface against a framework-specific fixture.
+- **boundaryDescriptors** _(function)_ - `boundaryDescriptors: (boundaries: readonly BoundaryRegistration[]) => ReadonlyArray<BoundaryDescriptor>`
+  Validate and serialize the neutral boundary manifest. Duplicate names fail closed at startup.
+- **boundaryModeKey** _(function)_ - `boundaryModeKey: (mode: BoundaryMode) => string`
+  Stable mode label for adapter registries and diagnostics.
 - **buildManifest** _(function)_ - `buildManifest: (files: readonly string[], importer: (file: string) => () => Promise<RouteModule>) => Manifest`
   Build a manifest from route file paths (relative to the routes dir) + an `importer` that turns a path into a lazy module loader. Pure - no fs. Throws at boot (the loud-and-early RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error` files are special; other `_`-prefixed files are …
 - **canonical** _(function)_ - `canonical: (href: string) => LinkDescriptor`
@@ -3208,6 +3236,8 @@ _No named exports (side-effect entrypoint)._
 - **renderPage** _(function)_ - `renderPage: (options: RenderPageInput) => MaybePromise<Response>`
   Server: render a full HTML document for a page - the adapter's hydration head + the SSR markup (**streamed**) + the serialized loader data + the client module - as a `Response`. The shell (`<head>` + the open container) flushes first, the adapter's app stream follows, then the tail (data globals + …
 - **renderPageResult** _(function)_ - `renderPageResult: (options: RenderPageInput) => MaybePromise<RenderedPage>`
+- **resolveDynamicBoundaries** _(function)_ - `resolveDynamicBoundaries: (boundaries: readonly BoundaryRegistration[], context: BoundaryRequestCtx) => Promise<BoundaryStates>`
+  Resolve all dynamic boundaries concurrently. Each receives a fresh frozen context object; one failure becomes that boundary's error state and never rejects a sibling or exposes sibling data. Static/intercepting modes remain `unresolved` until their phase-specific runtime owns them.
 - **resolveMeta** _(function)_ - `resolveMeta: (meta: MetaInput | undefined, args: MetaArgs) => Meta`
   Resolve a route's `meta` export - a static object, or a function of the route's data/params.
 - **resolveNavigate** _(function)_ - `resolveNavigate: (to: string | number | NavigateTargetInput, options?: NavigateOptions) => { readonly to: string | number; readonly options: NavigateOptions | undefined; }`
@@ -3236,6 +3266,8 @@ _No named exports (side-effect entrypoint)._
   Publish or clear the dev server's SSR module loader.
 - **ssrModuleLoader** _(function)_ - `ssrModuleLoader: () => SsrModuleLoader | undefined`
   Return the dev server's SSR module loader, when one owns SSR resolution.
+- **startDynamicBoundaries** _(function)_ - `startDynamicBoundaries: (boundaries: readonly BoundaryRegistration[], context: BoundaryRequestCtx) => DynamicBoundaryBatch`
+  Start all dynamic boundary loads at once without making the page wait for the slowest sibling. The initial states contain `status: "pending"`; callers that support deferred values can attach each `pending.promise` to its own slot. `complete` still provides settled, isolated states to non-streaming …
 - **statusPage** _(function)_ - `statusPage: (status: number, options?: StatusPageOptions) => never`
   Render a terminal page at any 4xx/5xx status - the escape hatch behind {@link notFound} and {@link gone} (402, 451, …). Uses `_<status>.tsx` if present, otherwise `_404`.
 - **unsafeInlineScript** _(function)_ - `unsafeInlineScript: (content: string, options: { readonly nonce: string; readonly type?: "module" | "text/javascript"; }) => UnsafeScriptDescriptor`
