@@ -35,7 +35,7 @@
  */
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/core/server"
 import { serve } from "@nifrajs/node"
-import { server } from "../../packages/core/dist/server.js"
+import { server, status } from "../../packages/core/dist/server.js"
 import { cors, securityHeaders } from "../../packages/middleware/dist/index.js"
 
 const RUNGS = ["full", "nocors", "nosec", "noreqid", "noderive", "nohook", "bare"] as const
@@ -95,11 +95,10 @@ const limitQuery: StandardSchemaV1<unknown, { limit: string }> = {
   },
 }
 
-const UNAUTHORIZED = () =>
-  new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
-    status: 401,
-    headers: { "content-type": "application/json" },
-  })
+// The guard shape nifra documents: a plain render, not a built `Response`. Thrown here rather than
+// returned because the lower rungs raise it from inside a handler, where there is no derive to
+// return from - the lifecycle catches either the same way.
+const UNAUTHORIZED = () => status(401, { ok: false, error: "unauthorized" })
 
 // Rungs below `noderive` still authenticate - the work moves into the handler rather than
 // disappearing, so the rung prices the DERIVE STAGE, not the auth check itself.

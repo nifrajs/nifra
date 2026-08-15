@@ -1,6 +1,6 @@
 /** Realistic-shape nifra server: security headers + CORS + request-id + bearer auth, cookie read,
  * validated query/body, ~3KB list responses - the same work elysia-rw.ts does, idiomatically. */
-import { server } from "@nifrajs/core/server"
+import { server, status } from "@nifrajs/core/server"
 import { cors, securityHeaders } from "@nifrajs/middleware"
 import { t } from "@nifrajs/schema"
 
@@ -25,10 +25,7 @@ const app = server()
   .derive((c) => {
     const auth = c.req.headers.get("authorization")
     if (auth === null || !auth.startsWith("Bearer ") || auth.length < 24) {
-      throw new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
-        status: 401,
-        headers: { "content-type": "application/json" },
-      })
+      return status(401, { ok: false, error: "unauthorized" })
     }
     return { userId: auth.slice(7, 19), theme: c.cookies.theme ?? "light" }
   })

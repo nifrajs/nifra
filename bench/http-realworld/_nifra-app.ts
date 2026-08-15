@@ -23,7 +23,7 @@
  * what a route with auth and middleware actually gets, not the narrow fast-path shape.
  */
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/core/server"
-import { server } from "../../packages/core/dist/server.js"
+import { server, status } from "../../packages/core/dist/server.js"
 import { cors, securityHeaders } from "../../packages/middleware/dist/index.js"
 
 export const ORDERS = Array.from({ length: 25 }, (_, i) => ({
@@ -91,11 +91,10 @@ export function makeNifraApp() {
     })
     .derive((c) => {
       const auth = c.header("authorization")
+      // The guard shape nifra documents: a plain render returned from the derive, not a `Response`
+      // built and thrown. Same 401 on the wire; it skips the object and the rejection lane.
       if (auth === null || !auth.startsWith("Bearer ") || auth.length < 24) {
-        throw new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
-          status: 401,
-          headers: { "content-type": "application/json" },
-        })
+        return status(401, { ok: false, error: "unauthorized" })
       }
       return { userId: auth.slice(7, 19), theme: c.cookies.theme ?? "light" }
     })

@@ -2,9 +2,11 @@
 # CPU-profile the realistic server on the REJECTION path and on the success path, so the two can be
 # diffed frame by frame.
 #
-# The measured gap is the reason: nifra answers an authorized GET at ~62k rps and sheds an
-# unauthorized one at ~39k, while fastify sheds at ~72k against its own ~61k. Rejecting should be
-# cheaper than serving, and here it is dearer, so the frames the 401 adds are the question.
+# It was written to chase a gap that has since been closed: the app's guard used to build and throw
+# a `Response`, and shed an unauthorized GET at ~38k rps against its own ~62k success path - dearer
+# to reject than to serve. The guard now returns the plain render `status(...)` produces and sheds at
+# ~63k, so rejecting is cheaper than serving, as it should be. Keep the script for the next such gap;
+# read a fresh pair of profiles, not the numbers above.
 #
 #   docker run --rm -v "$PWD":/repo:ro -v "$PWD/bench/linux-rig/run-profile-401.sh":/run.sh \
 #     -v "$PWD/bench/linux-rig/prof":/out nifra-bench bash /run.sh nifra ok reject

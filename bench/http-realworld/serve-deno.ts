@@ -21,7 +21,7 @@ import { getCookie } from "hono/cookie"
 import { cors } from "hono/cors"
 import { secureHeaders } from "hono/secure-headers"
 import { validator } from "hono/validator"
-import { server } from "../../packages/core/dist/index.js"
+import { server, status } from "../../packages/core/dist/index.js"
 import type {
   StandardResult,
   StandardSchemaV1,
@@ -155,10 +155,7 @@ if (framework === "nifra" || framework === "nifra-body") {
     .derive((c) => {
       const auth = c.req.headers.get("authorization")
       if (auth === null || !auth.startsWith("Bearer ") || auth.length < 24) {
-        throw new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
-          status: 401,
-          headers: { "content-type": "application/json" },
-        })
+        return status(401, { ok: false, error: "unauthorized" })
       }
       return { userId: auth.slice(7, 19), theme: c.cookies.theme ?? "light" }
     })
