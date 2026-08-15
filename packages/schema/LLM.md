@@ -14,7 +14,7 @@ Built-in schema builder `t` - TypeBox-backed (free JSON Schema + compiled valida
 
 ## Key exports
 
-- **t** _(const)_ - `t: { readonly string: (options?: StringOptions) => NifraSchema<any>; readonly number: (options?: NumberOptions) => NifraSchema<any>; readon…` · from `@nifrajs/schema`
+- **t** _(const)_ - `t: { readonly string: (options?: StringOptions) => NifraSchema<import("@sinclair/typebox").TString>; readonly number: (options?: NumberOpti…` · from `@nifrajs/schema`
 - **decodeCursor** _(function)_ - `decodeCursor: <T = unknown>(cursor: string | null | undefined) => T | undefined` · from `@nifrajs/schema`
 - **encodeCursor** _(function)_ - `encodeCursor: (value: unknown) => string` · from `@nifrajs/schema`
 - **fromTypeBox** _(function)_ - `fromTypeBox: <T extends TSchema>(schema: T, options?: { readonly coerce?: boolean; }) => NifraSchema<T>` · from `@nifrajs/schema`
