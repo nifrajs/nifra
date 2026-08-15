@@ -246,13 +246,19 @@ const scopedContext = (context: BoundaryRequestCtx): BoundaryRequestCtx =>
  * (`window.__NIFRA_BOUNDARIES__`), so the thrown error's own message never crosses: a driver or fetch
  * failure carries hosts, credentials, and query text that a page is not allowed to publish. An `Error`
  * subclass name is withheld for the same reason - it names the internal library. The real error goes to
- * the server console, the same split `deferred.ts` uses for a rejected deferred value.
+ * a generic server-console event, the same split `deferred.ts` uses for a rejected deferred value. The
+ * log deliberately carries only the failure kind: exception messages can contain credentials, query
+ * text, or user data and must not be copied into an operational sink by default.
  *
  * A boundary that wants to show the user something specific catches its own failure inside `load` and
  * returns that as data; the framework never guesses which parts of an exception are publishable.
  */
 const boundaryError = (error: unknown): BoundaryError => {
-  if (error !== undefined) console.error("[nifra/web] boundary load failed:", error)
+  if (error !== undefined) {
+    console.error("[nifra/web] boundary load failed", {
+      kind: error instanceof Error ? "error" : typeof error,
+    })
+  }
   return { name: "Error", message: "Boundary failed" }
 }
 

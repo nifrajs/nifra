@@ -20,7 +20,7 @@ const context = (): BoundaryRequestCtx => ({
   signal: new AbortController().signal,
 })
 
-/** Run `body` with `console.error` captured, so a boundary failure's server-side report is asserted
+/** Run `body` with `console.error` captured, so a boundary failure's safe server-side report is asserted
  * rather than printed into the test output. */
 const captureServerErrors = async (body: () => Promise<void>): Promise<unknown[][]> => {
   const captured: unknown[][] = []
@@ -72,7 +72,7 @@ describe("async boundaries", () => {
     expect(states.right?.status).toBe("ready")
   })
 
-  test("contains one failure without rejecting siblings or exposing raw non-Error values", async () => {
+  test("contains one failure without rejecting siblings or logging raw non-Error values", async () => {
     let states: Awaited<ReturnType<typeof resolveDynamicBoundaries>> = {}
     const reported = await captureServerErrors(async () => {
       states = await resolveDynamicBoundaries(
@@ -95,7 +95,8 @@ describe("async boundaries", () => {
     expect(states.bad?.error?.message).not.toContain("secret")
     expect(states.good).toMatchObject({ status: "ready", data: 7 })
     expect(reported).toHaveLength(1)
-    expect(reported[0]?.[1]).toBe("secret payload")
+    expect(reported[0]).toEqual(["[nifra/web] boundary load failed", { kind: "string" }])
+    expect(JSON.stringify(reported)).not.toContain("secret payload")
   })
 
   test("keeps a thrown Error's own message off the client state and on the server", async () => {
@@ -124,7 +125,8 @@ describe("async boundaries", () => {
     })
     expect(JSON.stringify(states)).not.toContain("hunter2")
     expect(reported).toHaveLength(1)
-    expect((reported[0]?.[1] as Error).message).toBe(secret)
+    expect(reported[0]).toEqual(["[nifra/web] boundary load failed", { kind: "error" }])
+    expect(JSON.stringify(reported)).not.toContain("hunter2")
   })
 
   test("withholds an Error subclass name, which names the failing internal library", async () => {
