@@ -3423,6 +3423,28 @@ app.ws("/chat", {
 })
 ```
 
+### Optional outbound validation
+
+`sendSchema` is type-level by default: it documents and types what the client
+receives with no runtime cost. Set `validateSend: true` to check server-sent JSON
+text and UTF-8 binary frames before the native socket sends them. Invalid frames and async
+validators fail closed and route a diagnostic to `error` when present. This is a
+contract check for your own output, not an inbound security boundary; the flag requires a
+`sendSchema` and is intentionally off by default.
+
+```ts
+// doc-check: skip - illustrative: outbound contract on an existing app.
+import { t } from "@nifrajs/schema"
+
+app.ws("/events", {
+  sendSchema: t.Object({ kind: t.Literal("ready"), id: t.String() }),
+  validateSend: true, // opt in; default remains type-level only
+  open(ws) {
+    ws.send(JSON.stringify({ kind: "ready", id: "evt-1" }))
+  },
+})
+```
+
 ### Pub/sub - app.publish
 
 `ws.subscribe(topic)` joins a topic; `app.publish(topic, data)`
@@ -8552,6 +8574,32 @@ one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
 done-gate, or `nifra mcp` to give the agent live project tools.
+
+## @nifrajs/island-trigger
+
+Framework-neutral, browser-side trigger scheduling shared by Nifra’s two island runtimes:
+`@nifrajs/web/islands` and `@nifrajs/islets`.
+
+It has no DOM or UI-framework dependency. The public contract is the small `scheduleTrigger`
+primitive with these strategies:
+
+```ts
+import { scheduleTrigger } from "@nifrajs/island-trigger"
+
+const dispose = scheduleTrigger({ media: "(min-width: 768px)" }, () => {
+  // Activate the island.
+})
+
+dispose() // cancel before the trigger fires
+```
+
+`load`, `idle`, `visible`, and media-query triggers are one-shot. Idle and visibility strategies
+fall back safely when the browser capability is unavailable; malformed or oversized media queries
+remain inert. The package only schedules the callback—each island runtime owns its own markers,
+registry, signals, and framework integration.
+
+For AI agents, see [`LLM.md`](./LLM.md). The wider reference is in
+[`llms-full.txt`](../../llms-full.txt).
 
 ## @nifrajs/islets
 

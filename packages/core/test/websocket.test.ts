@@ -124,6 +124,35 @@ describe("app.listen() WebSockets", () => {
     ])
   })
 
+  test("opt-in sendSchema validation drops invalid Bun frames", async () => {
+    const sendSchema: StandardSchemaV1<unknown, { text: string }> = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (value) =>
+          typeof value === "object" &&
+          value !== null &&
+          typeof (value as { text?: unknown }).text === "string"
+            ? { value: value as { text: string } }
+            : { issues: [{ message: "expected { text: string }" }] },
+      },
+    }
+    running = server()
+      .use(websocket())
+      .ws("/validated", {
+        sendSchema,
+        validateSend: true,
+        open: (ws) => {
+          ws.send(JSON.stringify({ text: "ok" }))
+          ws.send(JSON.stringify({ text: 42 }))
+        },
+      })
+      .listen(0)
+    expect(await collect(`ws://127.0.0.1:${running.port}/validated`, [], 1)).toEqual([
+      JSON.stringify({ text: "ok" }),
+    ])
+  })
+
   test("guarded: accepts with a valid token, threading data to ws.data", async () => {
     running = makeApp().listen(0)
     expect(await collect(`ws://127.0.0.1:${running.port}/guarded?token=secret`, [], 1)).toEqual([
@@ -308,6 +337,73 @@ describe("attachWebSocket", () => {
     expect(opened).toBe(true)
     expect(socket.binaryType).toBe("arraybuffer")
     expect(socket.sent).toEqual(["hello"])
+  })
+
+  test("opt-in send validation checks JSON text and UTF-8 binary before sending", () => {
+    const socket = new FakeSocket()
+    const errors: unknown[] = []
+    const schema: StandardSchemaV1<unknown, { text: string }> = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (value) =>
+          typeof value === "object" &&
+          value !== null &&
+          typeof (value as { text?: unknown }).text === "string"
+            ? { value: value as { text: string } }
+            : { issues: [{ message: "expected { text: string }" }] },
+      },
+    }
+    const ws = attachWebSocket(
+      socket,
+      {
+        sendSchema: schema,
+        validateSend: true,
+        error: (_ws, error) => {
+          errors.push(error)
+        },
+      },
+      undefined,
+      { openNow: true, pubsub: new TopicRegistry() },
+    )
+    ws.send(JSON.stringify({ text: "ok" }))
+    ws.send(new TextEncoder().encode(JSON.stringify({ text: "binary" })))
+    ws.send(JSON.stringify({ text: 42 }))
+    ws.send("not json")
+    expect(socket.sent).toHaveLength(2)
+    expect(socket.sent[0]).toBe(JSON.stringify({ text: "ok" }))
+    expect(new TextDecoder().decode(socket.sent[1] as Uint8Array)).toBe(
+      JSON.stringify({ text: "binary" }),
+    )
+    expect(errors).toHaveLength(2)
+  })
+
+  test("async send validators fail closed without an unhandled rejection", () => {
+    const socket = new FakeSocket()
+    const errors: unknown[] = []
+    const schema: StandardSchemaV1<unknown, string> = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: async () => ({ value: "ok" }),
+      },
+    }
+    const ws = attachWebSocket(
+      socket,
+      {
+        sendSchema: schema,
+        validateSend: true,
+        error: (_ws, error) => {
+          errors.push(error)
+        },
+      },
+      undefined,
+      { openNow: true, pubsub: new TopicRegistry() },
+    )
+    ws.send(JSON.stringify("ok"))
+    expect(socket.sent).toHaveLength(0)
+    expect(errors).toHaveLength(1)
+    expect(String(errors[0])).toContain("must be synchronous")
   })
 
   test("openNow:false waits for the open event", () => {
@@ -823,6 +919,12 @@ describe("ws runtime gate (.use(websocket()))", () => {
     const proc = Bun.spawn(["bun", "-e", script], { stdout: "pipe", stderr: "pipe" })
     const out = await new Response(proc.stdout).text()
     expect(out.trim()).toBe("GATED")
+  })
+
+  test("validateSend requires a sendSchema at registration", () => {
+    expect(() =>
+      server().use(websocket()).ws("/invalid-send-validation", { validateSend: true }),
+    ).toThrow(/validateSend requires sendSchema/)
   })
 })
 

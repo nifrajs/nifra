@@ -53,6 +53,17 @@ app.ws("/chat", {
   },
 })`
 
+const OUTBOUND = `// doc-check: skip - illustrative: outbound contract on an existing app.
+import { t } from "@nifrajs/schema"
+
+app.ws("/events", {
+  sendSchema: t.Object({ kind: t.Literal("ready"), id: t.String() }),
+  validateSend: true, // opt in; default remains type-level only
+  open(ws) {
+    ws.send(JSON.stringify({ kind: "ready", id: "evt-1" }))
+  },
+})`
+
 const PUBSUB = `// doc-check: skip - illustrative pub/sub on an existing app.
 app.ws("/room/:id", {
   open: (ws) => ws.subscribe("room"),
@@ -161,6 +172,17 @@ export default function WebSockets() {
         frame can never reach your handler).
       </p>
       <CodeBlock code={SCHEMA} />
+
+      <h2>Optional outbound validation</h2>
+      <p>
+        <code>sendSchema</code> is type-level by default: it documents and types what the client
+        receives with no runtime cost. Set <code>validateSend: true</code> to check server-sent JSON
+        text and UTF-8 binary frames before the native socket sends them. Invalid frames and async
+        validators fail closed and route a diagnostic to <code>error</code> when present. This is a
+        contract check for your own output, not an inbound security boundary; the flag requires a{" "}
+        <code>sendSchema</code> and is intentionally off by default.
+      </p>
+      <CodeBlock code={OUTBOUND} />
 
       <h2>Pub/sub - app.publish</h2>
       <p>

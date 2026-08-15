@@ -26,6 +26,7 @@ export type RouteConfigErrorCode =
   | "INVALID_METHOD"
   | "INVALID_ASSURANCE"
   | "INVALID_IDEMPOTENCY"
+  | "INVALID_WS_SEND_VALIDATION"
   | "INVALID_BODY_LIMIT"
 
 /**

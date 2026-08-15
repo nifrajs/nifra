@@ -27,7 +27,7 @@ Bun-native, contract-first HTTP framework - the router, server, and route descri
 - **assure** _(function)_ - `assure: (app: unknown, evidence: AssuranceAttachment | readonly AssuranceAttachment[]) => void` · from `@nifrajs/core/assurance`
 - **attachCapabilityJournal** _(function)_ - `attachCapabilityJournal: (context: object, journal: CapabilityExecutionJournal) => void` · from `@nifrajs/core/capabilities`
 - **attachEffectLedger** _(function)_ - `attachEffectLedger: (context: object, ledger: RequestLedger) => void` · from `@nifrajs/core/ledger`
-- **attachWebSocket** _(function)_ - `attachWebSocket: (socket: StandardWebSocket, handler: WebSocketHandler, data: unknown, options: { openNow: boolean; pubsub: TopicRegistry; …` · from `@nifrajs/core/ws`
+- **attachWebSocket** _(function)_ - `attachWebSocket: <Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | u…` · from `@nifrajs/core/ws`
 
 _…and 613 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 

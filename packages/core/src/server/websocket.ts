@@ -164,10 +164,18 @@ export interface WebSocketHandler<
   /**
    * The **outbound** frame contract (server → client), a Standard Schema. Purely type-level: it types
    * the frames the typed client's `.ws()` handle receives, and documents what this route pushes. The
-   * server does NOT runtime-validate its own sends - the inbound `messageSchema` guards the trust
-   * boundary; outbound honesty is the handler author's code, checked by tests.
+   * server does NOT runtime-validate its own sends by default - the inbound `messageSchema` guards the
+   * trust boundary; outbound honesty is the handler author's code. Set {@link validateSend} to opt into
+   * a synchronous runtime check of JSON text/UTF-8 binary frames.
    */
   sendSchema?: Send
+  /**
+   * Opt-in runtime enforcement for {@link sendSchema}. Invalid JSON, schema failures, and async
+   * validators are dropped before the native socket's `send()` runs and reported to `error()` when it
+   * exists. This is a development/contract check for the server's own output, not an inbound security
+   * boundary. It is off by default and requires `sendSchema` at registration.
+   */
+  validateSend?: boolean
   /** Decode versioned transport frames before inbound schema validation. Omit for legacy JSON. */
   transport?: {
     readonly registry: TransportCodecRegistry
@@ -246,24 +254,19 @@ function toBinary(raw: unknown): Uint8Array {
  * `open` event (Deno). Lifecycle callbacks are error-isolated - a throw (or async rejection) routes to
  * `error()` and never tears the process down; binary frames are normalized to `Uint8Array`.
  */
-export function attachWebSocket(
+export function attachWebSocket<
+  Data = unknown,
+  Env = unknown,
+  Schema extends StandardSchemaV1 | undefined = undefined,
+  Send extends StandardSchemaV1 | undefined = undefined,
+>(
   socket: StandardWebSocket,
-  handler: WebSocketHandler,
+  handler: WebSocketHandler<Data, Env, Schema, Send>,
   data: unknown,
   options: { openNow: boolean; pubsub: TopicRegistry; maxPayloadBytes?: number },
-): NifraWebSocket {
+): NifraWebSocket<Data> {
   const { pubsub } = options
-  const ws: NifraWebSocket = {
-    send: (payload) => socket.send(payload),
-    close: (code, reason) => socket.close(code, reason),
-    get readyState() {
-      return socket.readyState
-    },
-    subscribe: (topic) => pubsub.subscribe(topic, ws),
-    unsubscribe: (topic) => pubsub.unsubscribe(topic, ws),
-    data,
-    raw: socket,
-  }
+  let ws!: NifraWebSocket<Data>
   const reportError = (error: unknown): void => {
     if (handler.error === undefined) return
     try {
@@ -272,6 +275,24 @@ export function attachWebSocket(
     } catch {
       /* the error handler itself failed - last resort, swallow */
     }
+  }
+  const send = createWebSocketSender(
+    (payload) => socket.send(payload),
+    handler.sendSchema,
+    handler.validateSend,
+    handler.transport,
+    reportError,
+  )
+  ws = {
+    send,
+    close: (code, reason) => socket.close(code, reason),
+    get readyState() {
+      return socket.readyState
+    },
+    subscribe: (topic) => pubsub.subscribe(topic, ws),
+    unsubscribe: (topic) => pubsub.unsubscribe(topic, ws),
+    data: data as Data,
+    raw: socket,
   }
   const safe = (call: () => MaybePromise<void>): void => {
     try {
@@ -300,7 +321,13 @@ export function attachWebSocket(
         return
       }
     }
-    safe(() => handler.message?.(ws, payload))
+    safe(() =>
+      (
+        handler.message as
+          | ((socket: NifraWebSocket<Data>, value: WebSocketData) => MaybePromise<void>)
+          | undefined
+      )?.(ws, payload),
+    )
   })
   socket.addEventListener(
     "close",
@@ -320,6 +347,88 @@ export function attachWebSocket(
 
 const WS_MESSAGE_DECODER = new TextDecoder()
 const WS_PAYLOAD_ENCODER = new TextEncoder()
+
+type WebSocketSendPayload = string | ArrayBufferView | ArrayBuffer
+
+const OUTBOUND_VALIDATION_ERROR = "outbound WebSocket frame failed sendSchema validation"
+
+function outboundValueOf(
+  payload: WebSocketSendPayload,
+  transport: WebSocketHandler["transport"],
+): unknown {
+  const text =
+    typeof payload === "string"
+      ? payload
+      : WS_MESSAGE_DECODER.decode(
+          payload instanceof ArrayBuffer
+            ? new Uint8Array(payload)
+            : new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength),
+        )
+  return transport === undefined
+    ? JSON.parse(text)
+    : decodeTransportFrame(text, transport.registry, {
+        ...(transport.maxBytes === undefined ? {} : { maxBytes: transport.maxBytes }),
+      })
+}
+
+/**
+ * Build the socket's send function once. The disabled path returns the native sender directly, so
+ * the default type-only contract adds no per-frame branch or schema work. Runtime validation is
+ * deliberately synchronous: a socket `send()` cannot await an async Standard Schema without changing
+ * the portable API, so an async result fails closed and is never sent.
+ */
+export function createWebSocketSender(
+  send: (payload: WebSocketSendPayload) => void,
+  schema: StandardSchemaV1 | undefined,
+  enabled: boolean | undefined,
+  transport: WebSocketHandler["transport"],
+  onError: (error: unknown) => void,
+): (payload: WebSocketSendPayload) => void {
+  if (enabled !== true || schema === undefined) return send
+  let reporting = false
+  const reportFailure = (error: unknown): void => {
+    // An error handler may try to send a diagnostic. Do not recurse forever when that diagnostic also
+    // violates the same outbound contract.
+    if (reporting) return
+    reporting = true
+    try {
+      onError(error)
+    } finally {
+      reporting = false
+    }
+  }
+  return (payload) => {
+    let value: unknown
+    try {
+      value = outboundValueOf(payload, transport)
+    } catch {
+      reportFailure(new Error(OUTBOUND_VALIDATION_ERROR))
+      return
+    }
+
+    let outcome: ValidationOutcome<unknown> | Promise<ValidationOutcome<unknown>>
+    try {
+      outcome = validateStandard(schema, value) as
+        | ValidationOutcome<unknown>
+        | Promise<ValidationOutcome<unknown>>
+    } catch {
+      reportFailure(new Error(OUTBOUND_VALIDATION_ERROR))
+      return
+    }
+    if (outcome instanceof Promise) {
+      // Do not await or send later: the portable `send()` contract is synchronous. Attach a rejection
+      // handler so a validator that rejects cannot become an unhandled process-level rejection.
+      outcome.catch(() => {})
+      onError(new Error(`${OUTBOUND_VALIDATION_ERROR}; validator must be synchronous`))
+      return
+    }
+    if (!outcome.ok) {
+      onError(new Error(OUTBOUND_VALIDATION_ERROR))
+      return
+    }
+    send(payload)
+  }
+}
 
 /**
  * If the handler declares a `messageSchema`, return a copy whose `message` validates each frame -

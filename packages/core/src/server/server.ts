@@ -1613,6 +1613,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // Boot-time guard: the WS runtime is a subpath (`@nifrajs/core/ws`) so no-WebSocket apps don't
     // bundle it. Registration is the loud, early failure point - never the first connection.
     const runtime = requireWsRuntime(this.wsRuntime)
+    if (handler.validateSend === true && handler.sendSchema === undefined) {
+      throw new RouteConfigError(
+        "INVALID_WS_SEND_VALIDATION",
+        `route WS ${path}: validateSend requires sendSchema`,
+      )
+    }
     this.topics ??= runtime.createTopics()
     // A `messageSchema` wraps `message` with validation once, here - every adapter then dispatches
     // already-validated, typed messages (Bun/Deno/Node/Workers) with no per-adapter code.

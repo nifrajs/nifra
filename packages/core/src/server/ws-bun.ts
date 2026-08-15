@@ -5,7 +5,13 @@
  * (erased). No `Bun.*` calls here - the runtime seam stays in `server.ts` (see runtime-boundary.test).
  */
 
-import type { NifraWebSocket, TopicRegistry, WebSocketData, WebSocketHandler } from "./websocket.ts"
+import {
+  createWebSocketSender,
+  type NifraWebSocket,
+  type TopicRegistry,
+  type WebSocketData,
+  type WebSocketHandler,
+} from "./websocket.ts"
 import type { BunWsHandlers } from "./ws-hook.ts"
 
 /** Per-connection state Bun's `websocket` callbacks read via `ws.data`: the matched handler, the
@@ -33,11 +39,24 @@ function toBinaryData(message: ArrayBuffer | Uint8Array): Uint8Array {
 }
 
 /** Wrap a Bun `ServerWebSocket` as the portable {@link NifraWebSocket} handed to WS callbacks. */
-function wrapBunSocket(raw: BunSocket, topics: TopicRegistry): NifraWebSocket {
-  const ws: NifraWebSocket = {
-    send: (data) => {
+function wrapBunSocket(
+  raw: BunSocket,
+  topics: TopicRegistry,
+  handler: WebSocketHandler,
+): NifraWebSocket {
+  let ws!: NifraWebSocket
+  const reportError = (error: unknown): void => reportWsError(error, ws, handler)
+  const send = createWebSocketSender(
+    (data) => {
       raw.send(data)
     },
+    handler.sendSchema,
+    handler.validateSend,
+    handler.transport,
+    reportError,
+  )
+  ws = {
+    send,
     close: (code, reason) => raw.close(code, reason),
     get readyState() {
       return raw.readyState
@@ -86,19 +105,19 @@ export function createBunWsHandlers(topics: TopicRegistry): BunWsHandlers {
   return {
     open: (raw) => {
       const ws = raw as BunSocket
-      const nifra = wrapBunSocket(ws, topics)
+      const nifra = wrapBunSocket(ws, topics, ws.data.handler)
       ws.data.nifra = nifra
       dispatchWsCallback(() => ws.data.handler.open?.(nifra), nifra, ws.data.handler)
     },
     message: (raw, message) => {
       const ws = raw as BunSocket
-      const nifra = ws.data.nifra ?? wrapBunSocket(ws, topics)
+      const nifra = ws.data.nifra ?? wrapBunSocket(ws, topics, ws.data.handler)
       const data: WebSocketData = typeof message === "string" ? message : toBinaryData(message)
       dispatchWsCallback(() => ws.data.handler.message?.(nifra, data), nifra, ws.data.handler)
     },
     close: (raw, code, reason) => {
       const ws = raw as BunSocket
-      const nifra = ws.data.nifra ?? wrapBunSocket(ws, topics)
+      const nifra = ws.data.nifra ?? wrapBunSocket(ws, topics, ws.data.handler)
       topics.unsubscribeAll(nifra) // drop topic subscriptions so the registry never holds a dead socket
       dispatchWsCallback(() => ws.data.handler.close?.(nifra, code, reason), nifra, ws.data.handler)
     },
