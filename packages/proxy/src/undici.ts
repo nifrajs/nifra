@@ -118,6 +118,8 @@ export function undiciTransport(options: UndiciTransportOptions = {}): ProxyTran
         statusText: "",
         headers: toHeaders(response.headers),
         body: null,
+        // No body to describe, but undici never decodes, so the contract stays consistent.
+        bodyEncoded: true,
       }
     }
 
@@ -129,6 +131,9 @@ export function undiciTransport(options: UndiciTransportOptions = {}): ProxyTran
       // socket (`@nifrajs/node`) can pipe the upstream stream straight through, and anything else
       // reads it as the ordinary Web stream it is.
       body: claimableWebStream(response.body),
+      // undici's `request` does not decode `Content-Encoding`, so the body is the upstream's exact
+      // bytes and its encoding/length headers must survive the relay for the client to decode.
+      bodyEncoded: true,
     }
   }
 }

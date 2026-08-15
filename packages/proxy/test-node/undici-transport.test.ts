@@ -240,4 +240,34 @@ suite("undiciTransport()", () => {
   test("rejects a negative bodyTimeoutMs", () => {
     assert.throws(() => undiciTransport({ bodyTimeoutMs: -1 }), /bodyTimeoutMs/)
   })
+
+  // With no `transport` given, `createProxy` must pick undici on Node (undici is installed here).
+  // The proof is behavioural: undici does not decode `Content-Encoding`, so a compressed upstream
+  // relays with its `content-encoding` and exact bytes intact. Under the old fetch default the
+  // encoding was stripped and the body decoded, so this asserts the selection, not just that a proxy
+  // works.
+  test("the default transport on Node is undici: a compressed body relays with its encoding intact", async () => {
+    const { gzipSync } = await import("node:zlib")
+    const payload = JSON.stringify({ ok: true, pad: "x".repeat(200) })
+    const gz = gzipSync(payload)
+    respond = (_req, res) => {
+      res.writeHead(200, {
+        "content-type": "application/json",
+        "content-encoding": "gzip",
+        "content-length": String(gz.length),
+      })
+      res.end(gz)
+    }
+    // No `transport` - exercise the default selection path.
+    const res = await createProxy({ upstream: origin })(new Request("http://edge.test/x"))
+    assert.equal(res.status, 200)
+    assert.equal(res.headers.get("content-encoding"), "gzip")
+    assert.equal(res.headers.get("content-length"), String(gz.length))
+    // The relayed bytes are the upstream's compressed bytes, unmodified.
+    const bytes = Buffer.from(await res.arrayBuffer())
+    assert.deepEqual(bytes, gz)
+    // And they still decode to the original payload - a fetch-decoded relay would have thrown here.
+    const { gunzipSync } = await import("node:zlib")
+    assert.equal(gunzipSync(bytes).toString(), payload)
+  })
 })

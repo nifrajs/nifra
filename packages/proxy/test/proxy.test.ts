@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { createProxy } from "../src/index.ts"
+import { createProxy, type ProxyTransport } from "../src/index.ts"
 
 interface Seen {
   method: string
@@ -269,6 +269,36 @@ describe("createProxy()", () => {
     expect(res.headers.get("x-from")).toBe("custom")
     expect(res.headers.get("x-leak")).toBeNull()
     expect(await res.text()).toBe("relayed")
+  })
+
+  // A transport that decodes (fetch) hands over identity bytes, so the stored encoding/length no
+  // longer describe them; one that does not (undici) hands over the exact bytes and its headers must
+  // survive. `bodyEncoded` is what tells the two apart - relaying it wrong ships a labelled-identity
+  // body that is really gzip, which no client can read.
+  test("bodyEncoded true relays content-encoding and length; false/omitted strips them", async () => {
+    const encodedTransport =
+      (bodyEncoded: boolean | undefined): ProxyTransport =>
+      async () => ({
+        status: 200,
+        statusText: "",
+        headers: new Headers({ "content-encoding": "gzip", "content-length": "42" }),
+        body: new Response("bytes").body,
+        ...(bodyEncoded === undefined ? {} : { bodyEncoded }),
+      })
+
+    const kept = await createProxy({ upstream: ORIGIN, transport: encodedTransport(true) })(
+      new Request("http://edge.test/x"),
+    )
+    expect(kept.headers.get("content-encoding")).toBe("gzip")
+    expect(kept.headers.get("content-length")).toBe("42")
+
+    for (const flag of [false, undefined] as const) {
+      const stripped = await createProxy({ upstream: ORIGIN, transport: encodedTransport(flag) })(
+        new Request("http://edge.test/x"),
+      )
+      expect(stripped.headers.get("content-encoding")).toBeNull()
+      expect(stripped.headers.get("content-length")).toBeNull()
+    }
   })
 
   test("undiciTransport() refuses to construct under Bun", async () => {

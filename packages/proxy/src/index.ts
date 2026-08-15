@@ -40,19 +40,29 @@ export interface ProxyUpstreamResponse {
   readonly statusText: string
   readonly headers: Headers
   readonly body: ReadableStream<Uint8Array> | null
+  /**
+   * Whether `body` is still exactly the bytes the upstream sent, `Content-Encoding` intact. `fetch`
+   * transparently decodes a compressed response, so its body is identity and the stored
+   * `content-encoding`/`content-length` no longer describe it - both are dropped on relay (the
+   * default when this is omitted). A transport that does NOT decode (undici's `request` does not)
+   * MUST set this `true` so the encoding and length are relayed instead, letting the client decode
+   * the bytes it actually receives. Getting this wrong ships a gzip body labelled identity.
+   */
+  readonly bodyEncoded?: boolean
 }
 
 /**
- * How the forwarded request reaches the upstream. Defaults to `fetch`.
+ * How the forwarded request reaches the upstream. Defaults to the undici transport on Node when
+ * `undici` is installed (substantially faster there), and to `fetch` everywhere else.
  *
  * A transport is a security boundary, and swapping it moves three of this package's guarantees into
  * your implementation. It MUST dial exactly `target` and nothing else, MUST NOT follow redirects
  * (relay the 3xx as-is), and MUST leave TLS verification on. It MUST NOT add, drop, or rewrite the
  * headers it is handed - they have already been sanitised, and re-adding `host` or a forwarding
- * header undoes that work.
+ * header undoes that work. If it does not decode `Content-Encoding`, it MUST set
+ * {@link ProxyUpstreamResponse.bodyEncoded} so the encoding is relayed rather than stripped.
  *
- * `@nifrajs/proxy/undici` ships one that satisfies all of this and is substantially faster than
- * `fetch` on Node.
+ * `@nifrajs/proxy/undici` ships the one selected by default on Node.
  */
 export type ProxyTransport = (
   target: URL,
@@ -88,8 +98,11 @@ export interface ProxyOptions {
   /** Static headers to set on every forwarded request (after hygiene, so they always win). */
   readonly headers?: Readonly<Record<string, string>>
   /**
-   * How to reach the upstream. Defaults to `fetch`. See {@link ProxyTransport} - a transport
-   * carries security obligations. `@nifrajs/proxy/undici` is the fast path on Node.
+   * How to reach the upstream. Omit to use the default: the undici transport on Node when `undici`
+   * is installed (the fast path there, resolved lazily so the base package stays dependency-free),
+   * `fetch` on every other runtime and when `undici` is absent. See {@link ProxyTransport} - a
+   * transport carries security obligations. Pass one explicitly to pin the choice or tune it (e.g.
+   * `undiciTransport({ dispatcher })`).
    */
   readonly transport?: ProxyTransport
 }
@@ -169,14 +182,16 @@ function upstreamRequestHeaders(
   return out
 }
 
-function relayedResponseHeaders(upstreamHeaders: Headers): Headers {
+function relayedResponseHeaders(upstreamHeaders: Headers, bodyEncoded: boolean): Headers {
   const nominated = connectionNominated(upstreamHeaders)
   const out = new Headers()
   for (const [name, value] of upstreamHeaders) {
     if (dropHeader(name, nominated)) continue
-    // fetch() already decoded the body per Content-Encoding, so the stored encoding and length no
-    // longer describe the bytes being relayed. (Re-compression is the compression() middleware's job.)
-    if (name === "content-encoding" || name === "content-length") continue
+    // When the transport decoded the body (fetch), the stored `Content-Encoding` and length describe
+    // the compressed bytes, not what is relayed, so both are dropped (re-compression is the
+    // compression() middleware's job). When the transport passed the bytes through untouched
+    // (undici), those headers still describe them exactly and are relayed so the client can decode.
+    if (!bodyEncoded && (name === "content-encoding" || name === "content-length")) continue
     // Re-added below via getSetCookie() so multiple cookies survive on every runtime.
     if (name === "set-cookie") continue
     out.append(name, value)
@@ -186,9 +201,9 @@ function relayedResponseHeaders(upstreamHeaders: Headers): Headers {
 }
 
 /**
- * Default transport. `redirect: "manual"` is not a preference - following an upstream redirect
- * would let the upstream choose the proxy's next destination, so it is pinned here and a 3xx is
- * relayed to the caller untouched.
+ * Portable transport, and the fallback everywhere the undici default cannot be used. `redirect:
+ * "manual"` is not a preference - following an upstream redirect would let the upstream choose the
+ * proxy's next destination, so it is pinned here and a 3xx is relayed to the caller untouched.
  */
 const fetchTransport: ProxyTransport = async (target, request) => {
   const init: RequestInit & { duplex?: "half" } = {
@@ -207,6 +222,40 @@ const fetchTransport: ProxyTransport = async (target, request) => {
     statusText: response.statusText,
     headers: response.headers,
     body: response.body,
+    // fetch decoded any Content-Encoding, so the relayed body is identity.
+    bodyEncoded: false,
+  }
+}
+
+/**
+ * Pick the transport when the caller named none. On Node, `undici`'s dispatcher is ~2.5x `fetch` on
+ * GET and ~2.2x on POST for this workload, so it is the default there when installed - resolved
+ * lazily through a dynamic `import` so the base package keeps no static dependency on `undici` and
+ * stays loadable on runtimes that do not ship it. Everywhere else `fetch` is both the portable
+ * choice and the fast one: under Bun the `undici` specifier is a shim `undiciTransport` refuses, and
+ * Bun/Deno/edge `fetch` already measures level with a raw client. A Node install without the
+ * optional `undici` peer falls back to `fetch` rather than failing.
+ */
+async function selectDefaultTransport(): Promise<ProxyTransport> {
+  const runtime = globalThis as { readonly Bun?: unknown; readonly Deno?: unknown }
+  const onNode =
+    runtime.Bun === undefined &&
+    runtime.Deno === undefined &&
+    typeof process !== "undefined" &&
+    process.versions?.node !== undefined
+  if (!onNode) return fetchTransport
+  try {
+    // The specifier is a variable, not a literal, on purpose: a bundler targeting an edge runtime
+    // must NOT follow this into `undici` (which pulls `node:*` builtins), and this branch only ever
+    // executes on Node. `import()` of a non-literal is left as a genuine runtime import, so `undici`
+    // enters the graph only for a Node consumer that actually reaches here. The `.js` names the
+    // emitted file directly (tsc does not resolve a variable specifier); the cast restores its type.
+    const undiciModule = "./undici.js"
+    const mod = (await import(undiciModule)) as typeof import("./undici.ts")
+    return mod.undiciTransport()
+  } catch {
+    // `undici` is an optional peer - absent, we simply keep the portable transport.
+    return fetchTransport
   }
 }
 
@@ -258,7 +307,20 @@ export function createProxy(options: ProxyOptions): ProxyHandler {
       throw new TypeError(`[nifra/proxy] static header is not allowed: ${name}`)
     }
   }
-  const transport = options.transport ?? fetchTransport
+  // An explicit transport is used as given. Otherwise the default is resolved lazily on the first
+  // request and memoised: the dynamic `import` of the undici transport cannot run in this synchronous
+  // constructor, and doing it per request would re-pay the resolution every time.
+  const explicitTransport = options.transport
+  let resolvedTransport = explicitTransport
+  let resolving: Promise<ProxyTransport> | undefined
+  const getTransport = (): ProxyTransport | Promise<ProxyTransport> => {
+    if (resolvedTransport !== undefined) return resolvedTransport
+    resolving ??= selectDefaultTransport().then((t) => {
+      resolvedTransport = t
+      return t
+    })
+    return resolving
+  }
 
   return async (input) => {
     const req = input instanceof Request ? input : input.req
@@ -299,6 +361,7 @@ export function createProxy(options: ProxyOptions): ProxyHandler {
       }
     }
 
+    const transport = resolvedTransport ?? (await getTransport())
     let upstream: ProxyUpstreamResponse
     try {
       upstream = await transport(target, {
@@ -317,7 +380,7 @@ export function createProxy(options: ProxyOptions): ProxyHandler {
     return new Response(upstream.body, {
       status: upstream.status,
       statusText: upstream.statusText,
-      headers: relayedResponseHeaders(upstream.headers),
+      headers: relayedResponseHeaders(upstream.headers, upstream.bodyEncoded === true),
     })
   }
 }

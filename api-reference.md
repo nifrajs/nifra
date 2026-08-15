@@ -2517,7 +2517,7 @@ _No named exports (side-effect entrypoint)._
   Forward a request (or a nifra context) to the configured upstream.
 - **ProxyOptions** _(interface)_ - `interface ProxyOptions`
 - **ProxyTransport** _(type)_ - `type ProxyTransport = ( target: URL, request: ProxyUpstreamRequest, ) => Promise<ProxyUpstreamResponse>`
-  How the forwarded request reaches the upstream. Defaults to `fetch`.
+  How the forwarded request reaches the upstream. Defaults to the undici transport on Node when `undici` is installed (substantially faster there), and to `fetch` everywhere else.
 - **ProxyUpstreamRequest** _(interface)_ - `interface ProxyUpstreamRequest`
   The forwarded request, after hygiene, as handed to a {@link ProxyTransport}.
 - **ProxyUpstreamResponse** _(interface)_ - `interface ProxyUpstreamResponse`
