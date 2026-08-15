@@ -51,7 +51,13 @@ authority. If neither option is set, treat the host in `request.url` as client-c
 
 The optional `static` root is served before `app.fetch` for GET and HEAD requests. It is a
 public asset directory and must contain nothing private: no secrets, source maps, build
-metadata, or user uploads.
+metadata, or user uploads. The directory and its ancestor path must be read-only and owned by
+the service (or otherwise protected from untrusted local writers). Nifra resolves and confines
+the file before opening it and refuses symlinked final files, but Node does not expose a native
+per-component `openat` primitive; a process that can mutate the tree concurrently can still
+create a local TOCTOU race. Mutable or attacker-writable static trees are therefore outside the
+adapter's guarantee. Store user-controlled files outside the static root and serve them through
+an application or object-storage path with its own validation policy.
 
 ## Graceful shutdown on signals
 
