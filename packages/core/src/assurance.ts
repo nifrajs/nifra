@@ -36,6 +36,11 @@ import type { NifraManifestSigner } from "./manifest.ts"
 import { type ReflectedRoute, reflectRoutes } from "./reflection.ts"
 import type { Method } from "./router/router.ts"
 
+export {
+  type SecurityBaselineLevel,
+  type SecurityBaselineOptions,
+  securityBaseline,
+} from "./security/baseline.ts"
 export type { AssuranceAttachment, AssuranceDeclaration, AssuranceEvidence, AssuranceScope }
 export { withRouteAssurance }
 
@@ -135,6 +140,20 @@ export interface AssuranceRouteSelector {
   readonly zone?: CapabilityZone
   /** Match routes whose response classification is at least this sensitivity. */
   readonly classificationAtLeast?: DataClassification
+  /**
+   * Match routes by whether they declare a request-body schema. `true` selects routes that parse a
+   * body (the buffered-read surface F-001 is about); `false` selects bodyless routes. Reflection
+   * already carries `schema.body`, so this reads what the route declared, not where it lives.
+   */
+  readonly hasBody?: boolean
+  /**
+   * Match routes by their effective transport body policy. `"unlimited"` is the explicit
+   * streaming/upload exemption; `"bounded"` is any finite cap (an explicit number or the inherited
+   * server default); `"unset"` is a route that declared no `bodyLimit` at all. Lets a baseline say
+   * "a body-schema route may never be unlimited" as a first-class, movable invariant rather than a
+   * path list. A route with no schema reports `"unset"` unless it names a limit.
+   */
+  readonly bodyLimit?: "bounded" | "unlimited" | "unset"
 }
 
 /** Extra inputs an assurance evaluation needs beyond the routes themselves. */
@@ -337,6 +356,8 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
           "capabilities",
           ...CLASS_SELECTOR_KEYS,
           "classificationAtLeast",
+          "hasBody",
+          "bodyLimit",
         ].includes(key),
     )
     if (unknown.length > 0) {
@@ -349,6 +370,21 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
     if (rule.match.tools !== undefined && typeof rule.match.tools !== "boolean") {
       throw new Error(
         `route assurance: rule ${JSON.stringify(name)} tools selector must be boolean`,
+      )
+    }
+    if (rule.match.hasBody !== undefined && typeof rule.match.hasBody !== "boolean") {
+      throw new Error(
+        `route assurance: rule ${JSON.stringify(name)} hasBody selector must be boolean`,
+      )
+    }
+    if (
+      rule.match.bodyLimit !== undefined &&
+      rule.match.bodyLimit !== "bounded" &&
+      rule.match.bodyLimit !== "unlimited" &&
+      rule.match.bodyLimit !== "unset"
+    ) {
+      throw new Error(
+        `route assurance: rule ${JSON.stringify(name)} bodyLimit selector must be "bounded", "unlimited", or "unset"`,
       )
     }
     const methods = rule.match.methods?.map((method) => method.toUpperCase())
@@ -431,6 +467,8 @@ export function defineAssurancePolicy(policy: AssurancePolicy): AssurancePolicy 
         ...(rule.match.classificationAtLeast !== undefined
           ? { classificationAtLeast: rule.match.classificationAtLeast }
           : {}),
+        ...(rule.match.hasBody !== undefined ? { hasBody: rule.match.hasBody } : {}),
+        ...(rule.match.bodyLimit !== undefined ? { bodyLimit: rule.match.bodyLimit } : {}),
       }),
       require: required,
       forbid: forbidden,
@@ -558,16 +596,35 @@ export function defineAssuranceConfig(config: AssuranceConfig): AssuranceConfig 
  * reflection alone. A caller that omits it while the selector needs it gets no match, so callers that
  * accept user policy must reject that combination up front - `defineAssuranceConfig` does.
  */
+/**
+ * The effective transport body policy a `bodyLimit` selector matches on. A route that named no limit
+ * reports `"unset"` (it inherits the server default, which a policy that cares about explicit caps
+ * should treat distinctly); a finite number is `"bounded"`; the streaming/upload exemption is
+ * `"unlimited"`. Kept total so a future `bodyLimit` shape cannot fall through to a silent match.
+ */
+function effectiveBodyLimit(schema: ReflectedRoute["schema"]): "bounded" | "unlimited" | "unset" {
+  const limit = schema?.bodyLimit
+  if (limit === "unlimited") return "unlimited"
+  if (typeof limit === "number") return "bounded"
+  return "unset"
+}
+
 export function matchesAssuranceSelector(
-  route: Pick<ReflectedRoute, "method" | "path" | "tool" | "capabilities" | "classification">,
+  route: Pick<
+    ReflectedRoute,
+    "method" | "path" | "tool" | "capabilities" | "classification" | "schema"
+  >,
   selector: AssuranceRouteSelector,
   definitions?: ReadonlyMap<string, CapabilityDefinition>,
 ): boolean {
   const { methods, paths, tools, capabilities, access, zone, classificationAtLeast } = selector
+  const { hasBody, bodyLimit } = selector
   if (methods !== undefined && !methods.includes(route.method as Method)) return false
   if (paths !== undefined && !paths.some((pattern) => routeGlob(pattern).test(route.path)))
     return false
   if (tools !== undefined && (route.tool !== undefined) !== tools) return false
+  if (hasBody !== undefined && (route.schema?.body !== undefined) !== hasBody) return false
+  if (bodyLimit !== undefined && effectiveBodyLimit(route.schema) !== bodyLimit) return false
   if (
     classificationAtLeast !== undefined &&
     (route.classification === undefined ||

@@ -634,6 +634,10 @@ Every public export of every package and documented subpath - name, kind, signat
   Isolated request executor used by adversarial contract verification.
 - **NIFRA_ASSURANCE** _(const)_ - `NIFRA_ASSURANCE: Readonly<{ readonly AUTHENTICATED: "nifra.authenticated"; readonly BODY_BOUNDED: "nifra.body-bounded"; readonly CSRF: "nifra.csrf"; readonly DURABLE_COMMAND: "nifra.durable-command"; readonly IDEMPOTENC…`
   Canonical evidence ids emitted by Nifra's official middleware modules.
+- **SecurityBaselineLevel** _(type)_ - `type SecurityBaselineLevel = "essential" | "standard" | "strict"`
+  How much a {@link securityBaseline} demands. Each level is a superset of the one before it, so raising the level only ever adds findings.
+- **SecurityBaselineOptions** _(interface)_ - `interface SecurityBaselineOptions`
+  Tuning for {@link securityBaseline}. Every knob only ever tightens the policy.
 - **assure** _(function)_ - `assure: (app: unknown, evidence: AssuranceAttachment | readonly AssuranceAttachment[]) => void`
   Publish enforcement evidence from OUTSIDE the plugin chain - the deployment shell that wraps the app, the mount site, or the call that hands it to `serve`. When the thing doing the enforcing is not a nifra plugin (a gateway, a service mesh, an outer framework), the alternative is switching the affe…
 - **defineAssuranceConfig** _(function)_ - `defineAssuranceConfig: (config: AssuranceConfig) => AssuranceConfig`
@@ -642,8 +646,9 @@ Every public export of every package and documented subpath - name, kind, signat
   Validate and freeze an ordered assurance policy.
 - **evaluateRouteAssurance** _(function)_ - `evaluateRouteAssurance: (source: unknown, policyInput: AssurancePolicy, options?: AssuranceEvaluationOptions) => AssuranceReport`
   Evaluate reflected route evidence against the first matching policy rule.
-- **matchesAssuranceSelector** _(function)_ - `matchesAssuranceSelector: (route: Pick<ReflectedRoute, "method" | "path" | "tool" | "capabilities" | "classification">, selector: AssuranceRouteSelector, definitions?: ReadonlyMap<string, CapabilityDefinition>) => boole…`
-  Shared selector semantics for policy rules and framework adapters.
+- **matchesAssuranceSelector** _(function)_ - `matchesAssuranceSelector: (route: Pick<ReflectedRoute, "method" | "path" | "tool" | "capabilities" | "classification" | "schema">, selector: AssuranceRouteSelector, definitions?: ReadonlyMap<string, CapabilityDefinition…`
+- **securityBaseline** _(function)_ - `securityBaseline: (options?: SecurityBaselineOptions) => AssurancePolicy`
+  A first-match-wins security policy that turns the recurring audit finding classes into machine checked route invariants. Composed only from the public assurance engine, so it inherits its fail-closed evaluation, provenance checks, and selector validation - no bespoke evaluator.
 - **withRouteAssurance** _(function)_ - `withRouteAssurance: <T extends object>(target: T, declaration: AssuranceDeclaration | readonly AssuranceDeclaration[]) => T`
   Attach enforcement evidence to the middleware/plugin that installs it.
 
