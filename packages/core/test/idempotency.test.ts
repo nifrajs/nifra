@@ -540,6 +540,19 @@ describe("server({ idempotency }) - request path", () => {
     expect(() =>
       server()
         .use(idempotency())
+        .post(
+          "/unbounded",
+          {
+            bodyLimit: "unlimited",
+            bodyLimitReason: "streaming integration",
+            idempotency: { scope: "request", namespace: "public:unbounded" },
+          },
+          () => ({}),
+        ),
+    ).toThrow(/cannot be used with idempotency/)
+    expect(() =>
+      server()
+        .use(idempotency())
         .post("/x", { idempotency: { scope: "request" } as never }, () => ({})),
     ).toThrow(/namespace.*required/i)
     expect(() =>

@@ -120,6 +120,20 @@ describe("body validation", () => {
     ).toThrow(RouteConfigError)
   })
 
+  test("unlimited body routes reject buffered schema readers", () => {
+    expect(() =>
+      server().post(
+        "/ingest",
+        {
+          body: userBody,
+          bodyLimit: "unlimited",
+          bodyLimitReason: "upload is bounded by the object-store streaming protocol",
+        },
+        (c) => c.body,
+      ),
+    ).toThrow(/cannot be used with a body schema/)
+  })
+
   test("valid body is typed and passed to the handler", async () => {
     // c.body.name only type-checks because the schema's output is inferred.
     const app = server().post("/users", { body: userBody }, (c) => ({ created: c.body.name }))
@@ -387,30 +401,6 @@ describe("c.boundedBody / c.boundedJson (schema-less body cap)", () => {
     expect(await (await app.fetch(streamRequest("/ingest", "x".repeat(100)))).json()).toEqual({
       len: 100,
     })
-  })
-
-  test("an unlimited route skips the cap on the schema lane too, not just direct reads", async () => {
-    // The schema lane reads the body itself, so it never sees the transport cap. It must still
-    // honour the route's exemption instead of silently falling back to the server default - which
-    // would 413 a body the route explicitly declared it would accept.
-    const app = server({ maxBodyBytes: 10 })
-      .post(
-        "/ingest",
-        {
-          body: userBody,
-          bodyLimit: "unlimited",
-          bodyLimitReason: "upload is bounded by the object-store streaming protocol",
-        },
-        (c) => ({ name: c.body.name }),
-      )
-      .post("/default", { body: userBody }, (c) => ({ name: c.body.name }))
-
-    const name = "x".repeat(100)
-    expect(await (await app.fetch(jsonRequest("POST", "/ingest", { name }))).json()).toEqual({
-      name,
-    })
-    // Control: the same body on a route that never opted out is still refused at the server cap.
-    expect((await app.fetch(jsonRequest("POST", "/default", { name }))).status).toBe(413)
   })
 
   test("an unlimited route's boundedJson/boundedBody default to no cap", async () => {

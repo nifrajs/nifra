@@ -66,13 +66,10 @@ export interface RouteSchema {
    * smaller/larger limit for a specific endpoint. The 'unlimited' value is an explicit
    * streaming/upload exemption and requires a non-empty bodyLimitReason for auditability.
    *
-   * 'unlimited' exempts the TRANSPORT cap only - it does not make a buffered reader streaming. A
-   * route that pairs it with `body` (or with `idempotency`, whose replay record needs the whole
-   * body) still assembles every delivered byte in memory before validation or storage sees a field
-   * of it, so the exemption becomes an unbounded allocation. Read such a route from `c.req.body` as
-   * a stream, and bound it by the protocol it speaks; keep a finite cap wherever a schema parses the
-   * body. `nifra.body-bounded` is deliberately NOT published for an unlimited route, whatever else
-   * it declares. */
+   * 'unlimited' is legal only for schema-less streaming/upload routes. It is rejected with `body` or
+   * `idempotency`, because those lanes buffer the body before user code can apply a protocol-specific
+   * bound. Read an unlimited route from `c.req.body` as a stream and bound it by the protocol it speaks;
+   * `nifra.body-bounded` is deliberately NOT published for an unlimited route. */
   readonly bodyLimit?: number | "unlimited"
   /** Required explanation when bodyLimit is 'unlimited' (for example, a streaming upload is
    * bounded by an upstream object-store protocol). */

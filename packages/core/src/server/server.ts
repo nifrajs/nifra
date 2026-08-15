@@ -1715,6 +1715,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       ) {
         invalidBodyLimit('bodyLimit: "unlimited" requires a non-empty bodyLimitReason')
       }
+      if (schema.body !== undefined) {
+        invalidBodyLimit(
+          'bodyLimit: "unlimited" cannot be used with a body schema; use a finite cap',
+        )
+      }
+      if (schema.idempotency !== undefined) {
+        invalidBodyLimit('bodyLimit: "unlimited" cannot be used with idempotency')
+      }
       bodyLimit = undefined
     } else if (schema?.bodyLimit !== undefined) {
       try {
@@ -1979,12 +1987,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // `schema.body` (the validated read is bounded) and an explicit finite `schema.bodyLimit` (the
     // transport cap shadows every reader, including a raw `c.req.body` stream that a Content-Length
     // middleware cannot bound).
-    // `bodyLimit: "unlimited"` publishes NOTHING, `schema.body` there included. The bound a schema
-    // read carries is the route's byte cap, and on an unlimited route that cap is
-    // `UNLIMITED_BODY_BYTES` - the whole body is still assembled in memory before validation sees a
-    // field of it, so there is no finite bound left to attest. Publishing the id anyway would let a
-    // policy that requires `nifra.body-bounded` pass on the one route with no ceiling at all, which
-    // is worse than the id being absent.
+    // `bodyLimit: "unlimited"` is rejected above for schema and idempotency routes. The remaining
+    // exemption is schema-less streaming/upload work, so it publishes NOTHING: there is no finite
+    // framework byte ceiling for assurance to attest and the application protocol owns that bound.
     // The server-wide `maxBodyBytes` default is not evidence either. It applies to every route
     // whether or not anyone thought about it, so publishing it would make the id pass everywhere and
     // prove nothing; this evidence marks a bound the route chose.
