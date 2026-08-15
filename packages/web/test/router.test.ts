@@ -176,6 +176,33 @@ describe("createClientRouter", () => {
     expect(r.snapshot().routeId).toBe("user")
   })
 
+  test("soft navigation reuses the target loader in an intercept boundary", async () => {
+    const r = createClientRouter({
+      patterns,
+      initial,
+      fetchData: async (_path, target) => ({ authorizedId: target.params.id }),
+      routeHooks: {
+        index: {
+          boundaries: [{ name: "userModal", mode: { intercept: "/users/:id" }, hasLoad: true }],
+        },
+      },
+    })
+
+    await r.navigate("/users/7")
+    expect(r.snapshot()).toMatchObject({
+      routeId: "index", // the underlying page remains mounted
+      path: "/users/7",
+      data: null,
+      boundaries: {
+        userModal: {
+          name: "userModal",
+          status: "ready",
+          data: { authorizedId: "7" },
+        },
+      },
+    })
+  })
+
   test("clientLoader runs after the server loader and memoizes serverLoader()", async () => {
     let serverLoads = 0
     const r = createClientRouter({

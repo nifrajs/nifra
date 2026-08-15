@@ -2283,7 +2283,7 @@
     "name": "ClientRouteHooks",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ClientRouteHooks {\n    readonly clientLoader?: ClientLoader;\n    readonly clientAction?: ClientAction;\n}",
+    "signature": "export interface ClientRouteHooks {\n    readonly clientLoader?: ClientLoader;\n    readonly clientAction?: ClientAction;\n    /** Neutral boundary descriptors needed for soft-navigation interception; no server loader crosses. */\n    readonly boundaries?: readonly BoundaryDescriptor[];\n}",
     "doc": "/** Client hooks populated by the generated route entry after a route chunk loads. */"
   },
   {

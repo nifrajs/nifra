@@ -7,7 +7,7 @@
 import { decodeRouteParams } from "@nifrajs/core/pattern"
 import { Router as CoreRouter } from "@nifrajs/core/router"
 import type { StandardSchemaV1 } from "@nifrajs/core/server"
-import type { BoundaryStates } from "./boundary.ts"
+import type { BoundaryDescriptor, BoundaryStates } from "./boundary.ts"
 import { parseNdjsonData } from "./deferred.ts"
 import type { ClientActionResult, ClientRequestBody, ClientRouteHooks } from "./manifest.ts"
 import { isClientOnlySearchChange } from "./search.ts"
@@ -418,6 +418,43 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   // route navigation reads it after `loadModule` resolves, so an app without hooks pays only a map
   // lookup and keeps the existing route-chunk split.
   const routeHooks = options.routeHooks ?? {}
+  // Intercept patterns are compiled lazily from the already-loaded source route descriptor. Invalid
+  // client metadata is ignored (the server's register-time boundary validation remains authoritative),
+  // so a hand-built client manifest fails closed into an ordinary navigation.
+  const interceptMatchers = new Map<string, ReturnType<typeof createMatcher> | null>()
+  const interceptionFor = (
+    sourceRouteId: string,
+    path: string,
+    target: RouteMatch,
+  ): BoundaryDescriptor | undefined => {
+    const boundaries = routeHooks[sourceRouteId]?.boundaries ?? []
+    const pathname = pathnameOf(path)
+    for (const boundary of boundaries) {
+      if (typeof boundary.mode === "string") continue
+      const pattern = boundary.mode.intercept
+      if (
+        pattern.length === 0 ||
+        pattern.length > 2048 ||
+        !pattern.startsWith("/") ||
+        pattern.startsWith("//")
+      )
+        continue
+      let matcher = interceptMatchers.get(pattern)
+      if (matcher === undefined) {
+        try {
+          matcher = createMatcher([{ routeId: "__nifra_intercept__", pattern }])
+        } catch {
+          matcher = null
+        }
+        interceptMatchers.set(pattern, matcher)
+      }
+      if (matcher?.(pathname)?.routeId === "__nifra_intercept__") return boundary
+    }
+    // Keep `target` in the signature so the caller cannot accidentally install an interceptor for an
+    // unmatched route; the match is intentionally performed before this helper is called.
+    void target
+    return undefined
+  }
   /**
    * Fetch a route's data and normalise it.
    *
@@ -879,6 +916,35 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         if (loaded.terminalRouteId !== undefined) await loadModule?.(loaded.terminalRouteId)
         if (mine !== token) return // a newer navigation superseded this one - drop the stale result
         cachePut(path, loaded) // keep the keyed cache coherent with what we publish
+        const interception =
+          loaded.terminalRouteId === undefined
+            ? interceptionFor(state.routeId, path, matched)
+            : undefined
+        if (interception !== undefined) {
+          // The target's ordinary data request has already completed (including its server authz and
+          // optional client wrapper). Only the presentation route is retained; the current page stays
+          // mounted underneath the named slot. A target that returned a terminal status never reaches
+          // this branch, so an unauthorized/missing target cannot become a modal.
+          state = {
+            ...state,
+            path,
+            boundaries: {
+              ...(state.boundaries ?? {}),
+              [interception.name]: {
+                name: interception.name,
+                mode: interception.mode,
+                status: "ready",
+                data: loaded.data,
+                ...(interception.errorId === undefined ? {} : { errorId: interception.errorId }),
+              },
+            },
+            actionData: undefined,
+            pending: false,
+            pendingPath: undefined,
+          }
+          emit()
+          return
+        }
         state = {
           routeId: loaded.terminalRouteId ?? matched.routeId,
           params: loaded.terminalRouteId === undefined ? matched.params : {},

@@ -2627,7 +2627,12 @@ export function generateClientEntry(
     "    searchClientKeys[id] = mods[mods.length - 1].searchClientKeys ?? []",
     "  }",
     "  const page = errorRouteIds.has(id) ? mods[mods.length - 2] : mods[mods.length - 1]",
-    "  routeHooks[id] = { clientLoader: page.clientLoader, clientAction: page.clientAction }",
+    // Keep interception client-safe: only neutral name/mode metadata crosses into the router. The
+    // server-side boundary load function (which may close over secrets) is never stored in the client
+    // hook table or serialized into a browser bundle by this wiring.
+    "  const boundaryMods = errorRouteIds.has(id) ? mods.slice(0, -1) : mods",
+    "  const boundaries = boundaryMods.flatMap((m) => (m.boundaries ?? []).map((b) => ({ name: b.name, mode: b.mode, hasLoad: b.load !== undefined, ...(b.errorId === undefined ? {} : { errorId: b.errorId }) })))",
+    "  routeHooks[id] = { clientLoader: page.clientLoader, clientAction: page.clientAction, boundaries }",
     "}",
     "const patterns = [",
     ...patternRows,

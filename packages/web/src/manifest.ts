@@ -5,7 +5,7 @@
  * portable (no fs, no DOM) and fully unit-testable. Edge deploys pre-build the manifest.
  */
 import type { StandardSchemaV1 } from "@nifrajs/core/server"
-import type { BoundaryRegistration } from "./boundary.ts"
+import type { BoundaryDescriptor, BoundaryRegistration } from "./boundary.ts"
 
 /** Context passed to a route `loader`. The `api` + `env` are injected by `createWebApp` and typed
  * per-route via `@nifrajs/client`'s `LoaderArgs<Api, Env>` (here they are opaque to the agnostic core). */
@@ -72,6 +72,8 @@ export type ClientAction = (
 export interface ClientRouteHooks {
   readonly clientLoader?: ClientLoader
   readonly clientAction?: ClientAction
+  /** Neutral boundary descriptors needed for soft-navigation interception; no server loader crosses. */
+  readonly boundaries?: readonly BoundaryDescriptor[]
 }
 
 /**
