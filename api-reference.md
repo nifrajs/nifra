@@ -156,9 +156,9 @@ Every public export of every package and documented subpath - name, kind, signat
 - **getSession** _(function)_ - `getSession: <A extends BetterAuthLike>(auth: A, request: Request) => Promise<SessionOf<A> | null>`
   Resolve the better-auth session for a request - a thin, typed wrapper over `auth.api.getSession`. Returns `null` when unauthenticated. Takes the raw `Request` so it works in both server handlers (`c.req`) and web loaders/actions (`request`).
 - **requirePrincipal** _(function)_ - `requirePrincipal: <A extends BetterAuthLike, const RequireTenant extends boolean = false>(auth: A, request: Request, options?: AuthedOptions<SessionUserOf<A>> & { readonly requireTenant?: RequireTenant; }) => Promise<Pr…`
-  Resolve the better-auth session and map it to a {@link Principal}, or **throw a `Response`** so the handler never runs unauthenticated:
+  Resolve the better-auth session and map it to a {@link Principal}, or **throw a Nifra `ResponseResult`** so the handler never runs unauthenticated:
 - **requireSession** _(function)_ - `requireSession: <A extends BetterAuthLike>(auth: A, request: Request, options?: RequireSessionOptions) => Promise<SessionOf<A>>`
-  Require an authenticated better-auth session at the top of a protected handler/loader/action. Returns the (non-null) session when present; otherwise **throws a `Response`** (302/401) - nifra returns a thrown `Response` as-is, short-circuiting the rest of the handler.
+  Require an authenticated better-auth session at the top of a protected handler/loader/action. Returns the (non-null) session when present; otherwise **throws a Nifra `ResponseResult`** (302/401). Nifra handles the thrown control-flow value on the same rendering lane as `@nifrajs/auth`.
 
 ## @nifrajs/cache
 

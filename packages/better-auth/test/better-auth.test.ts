@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { betterAuth, getSession, requireSession } from "@nifrajs/better-auth"
 import { server } from "@nifrajs/core"
+import { isResponseResult, type ResponseResult } from "../../core/src/server/runtime-core.ts"
 
 /**
  * A structural stub of a better-auth instance - `handler` echoes the path/method so we can assert the
@@ -73,31 +74,36 @@ describe("getSession()", () => {
 })
 
 describe("requireSession() guard", () => {
+  const rejectionOf = (thrown: unknown): ResponseResult => {
+    expect(thrown).not.toBeInstanceOf(Response)
+    if (!isResponseResult(thrown)) throw new Error("expected a Nifra ResponseResult")
+    return thrown
+  }
+
   test("returns the session when authenticated", async () => {
     const { user } = await requireSession(stubAuth, authed("/me"))
     expect(user.id).toBe("u1")
   })
 
-  test("throws a 401 JSON Response when unauthenticated and no redirect", async () => {
+  test("throws a 401 Nifra ResponseResult when unauthenticated and no redirect", async () => {
     try {
       await requireSession(stubAuth, new Request("http://x/me"))
       throw new Error("expected requireSession to throw")
     } catch (err) {
-      expect(err).toBeInstanceOf(Response)
-      const res = err as Response
+      const res = rejectionOf(err).toResponse()
       expect(res.status).toBe(401)
       expect(await res.json()).toEqual({ ok: false, error: "unauthorized" })
     }
   })
 
-  test("throws a 302 redirect Response when redirectTo is set", async () => {
+  test("throws a 302 Nifra ResponseResult when redirectTo is set", async () => {
     try {
       await requireSession(stubAuth, new Request("http://x/me"), { redirectTo: "/login" })
       throw new Error("expected requireSession to throw")
     } catch (err) {
-      expect(err).toBeInstanceOf(Response)
-      expect((err as Response).status).toBe(302)
-      expect((err as Response).headers.get("location")).toBe("/login")
+      const rejection = rejectionOf(err)
+      expect(rejection.plain?.status).toBe(302)
+      expect(rejection.toResponse().headers.get("location")).toBe("/login")
     }
   })
 

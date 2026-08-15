@@ -2,7 +2,9 @@ import {
   type AnyServer,
   defineIdentityPlugin,
   isSameOriginPath,
+  type ResponseResult,
   type Server,
+  status,
 } from "@nifrajs/core/server"
 
 /**
@@ -107,9 +109,9 @@ export interface RequireSessionOptions {
   readonly redirectTo?: string
 }
 
-const rejection = (options: RequireSessionOptions): Response => {
+const rejection = (options: RequireSessionOptions): ResponseResult => {
   const to = options.redirectTo
-  if (to === undefined) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 })
+  if (to === undefined) return status(401, { ok: false, error: "unauthorized" })
   // The kernel's same-origin predicate, shared with `@nifrajs/web`'s `redirect` and the
   // `@nifrajs/auth` guards: a single leading "/", never "//host", an absolute URL, or a form a URL
   // parser resolves off-origin. `redirectTo` is dev-authored, so a bad value is a config bug - fail loud.
@@ -118,13 +120,13 @@ const rejection = (options: RequireSessionOptions): Response => {
       `[nifra/better-auth] requireSession redirectTo must be a same-origin path beginning with "/" - never "//", a backslash, or a control character (got ${JSON.stringify(to)})`,
     )
   }
-  return new Response(null, { status: 302, headers: { location: to } })
+  return status(302, undefined, { headers: { location: to } })
 }
 
 /**
  * Require an authenticated better-auth session at the top of a protected handler/loader/action.
- * Returns the (non-null) session when present; otherwise **throws a `Response`** (302/401) - nifra
- * returns a thrown `Response` as-is, short-circuiting the rest of the handler.
+ * Returns the (non-null) session when present; otherwise **throws a Nifra `ResponseResult`** (302/401).
+ * Nifra handles the thrown control-flow value on the same rendering lane as `@nifrajs/auth`.
  *
  * ```ts
  * const { user } = await requireSession(auth, c.req, { redirectTo: "/login" })
@@ -193,17 +195,17 @@ export type PrincipalFor<User, RequireTenant extends boolean> = RequireTenant ex
 export type WithPrincipal<S extends AnyServer, P> =
   S extends Server<infer R, infer C> ? Server<R, C & { principal: P }> : never
 
-const forbidden = (): Response => Response.json({ ok: false, error: "forbidden" }, { status: 403 })
+const forbidden = (): ResponseResult => status(403, { ok: false, error: "forbidden" })
 
 /**
- * Resolve the better-auth session and map it to a {@link Principal}, or **throw a `Response`** so the
+ * Resolve the better-auth session and map it to a {@link Principal}, or **throw a Nifra `ResponseResult`** so the
  * handler never runs unauthenticated:
  *
  * - No/invalid session -> `302` to `options.redirectTo` when set, else `401` JSON (`requireSession`).
  * - `requireTenant: true` and no tenant resolves -> `403` JSON (`{ ok: false, error: "forbidden" }`).
  *
- * nifra returns a thrown `Response` as-is (short-circuit), so this is the fail-closed guard used inline
- * or by {@link authed}. `tenantId` is a non-optional `string` in the return type when `requireTenant`.
+ * nifra handles the thrown control-flow value as a short-circuit, so this is the fail-closed guard used
+ * inline or by {@link authed}. `tenantId` is a non-optional `string` in the return type when `requireTenant`.
  *
  * ```ts
  * const principal = await requirePrincipal(auth, c.req, { requireTenant: true })

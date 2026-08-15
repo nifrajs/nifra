@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { authed, type Principal, requirePrincipal } from "@nifrajs/better-auth"
 import { server } from "@nifrajs/core"
 import { defineContract, implement } from "@nifrajs/core/contract"
+import { isResponseResult } from "../../core/src/server/runtime-core.ts"
 
 /**
  * Structural better-auth stubs - no DB, no better-auth install. Each returns a typed `{ user, session }`
@@ -47,6 +48,11 @@ const orgAuth = {
 const withCookie = (path: string, method = "GET"): Request =>
   new Request(`http://x${path}`, { method, headers: { cookie: "session=valid" } })
 const anon = (path: string): Request => new Request(`http://x${path}`)
+const rejectionOf = (thrown: unknown) => {
+  expect(thrown).not.toBeInstanceOf(Response)
+  if (!isResponseResult(thrown)) throw new Error("expected a Nifra ResponseResult")
+  return thrown
+}
 
 describe("authed() plugin - fail closed", () => {
   test("no session -> 401 and the handler does NOT run", async () => {
@@ -159,9 +165,15 @@ describe("authed() - tenant resolution", () => {
     expect(ran).toBe(false)
 
     // Same for a custom tenantOf that returns an empty string.
-    await expect(
-      requirePrincipal(tenantAuth, withCookie("/x"), { requireTenant: true, tenantOf: () => "" }),
-    ).rejects.toMatchObject({ status: 403 })
+    try {
+      await requirePrincipal(tenantAuth, withCookie("/x"), {
+        requireTenant: true,
+        tenantOf: () => "",
+      })
+      throw new Error("expected requirePrincipal to throw")
+    } catch (err) {
+      expect(rejectionOf(err).plain?.status).toBe(403)
+    }
   })
 })
 
@@ -199,35 +211,34 @@ describe("requirePrincipal() direct guard", () => {
     expect(tenantId).toBe("t-42")
   })
 
-  test("throws a 401 Response when unauthenticated", async () => {
+  test("throws a 401 Nifra ResponseResult when unauthenticated", async () => {
     try {
       await requirePrincipal(plainAuth, anon("/x"))
       throw new Error("expected requirePrincipal to throw")
     } catch (err) {
-      expect(err).toBeInstanceOf(Response)
-      expect((err as Response).status).toBe(401)
+      expect(rejectionOf(err).plain?.status).toBe(401)
     }
   })
 
-  test("throws a 403 Response when requireTenant and no tenant resolves", async () => {
+  test("throws a 403 Nifra ResponseResult when requireTenant and no tenant resolves", async () => {
     try {
       await requirePrincipal(plainAuth, withCookie("/x"), { requireTenant: true })
       throw new Error("expected requirePrincipal to throw")
     } catch (err) {
-      expect(err).toBeInstanceOf(Response)
-      expect((err as Response).status).toBe(403)
-      expect(await (err as Response).json()).toEqual({ ok: false, error: "forbidden" })
+      const rejection = rejectionOf(err)
+      expect(rejection.plain?.status).toBe(403)
+      expect(await rejection.toResponse().json()).toEqual({ ok: false, error: "forbidden" })
     }
   })
 
-  test("throws a 302 redirect when redirectTo is set and unauthenticated", async () => {
+  test("throws a 302 Nifra ResponseResult when redirectTo is set and unauthenticated", async () => {
     try {
       await requirePrincipal(plainAuth, anon("/x"), { redirectTo: "/login" })
       throw new Error("expected requirePrincipal to throw")
     } catch (err) {
-      expect(err).toBeInstanceOf(Response)
-      expect((err as Response).status).toBe(302)
-      expect((err as Response).headers.get("location")).toBe("/login")
+      const rejection = rejectionOf(err)
+      expect(rejection.plain?.status).toBe(302)
+      expect(rejection.toResponse().headers.get("location")).toBe("/login")
     }
   })
 })

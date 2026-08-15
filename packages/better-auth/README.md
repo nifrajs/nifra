@@ -58,8 +58,8 @@ app.get("/me", async (c) => {
 
 ## Protect a route
 
-`requireSession(auth, request, options?)` returns the non-null session or **throws a `Response`** -
-nifra returns a thrown `Response` as-is, short-circuiting the handler:
+`requireSession(auth, request, options?)` returns the non-null session or **throws a Nifra `ResponseResult`** -
+nifra handles the thrown `ResponseResult` as control flow, short-circuiting the handler:
 
 ```ts
 import { requireSession } from "@nifrajs/better-auth"
@@ -83,7 +83,7 @@ export const loader = async ({ request }) => {
 | --- | --- |
 | `betterAuth(auth, options?)` | Plugin that mounts better-auth's handler at `${basePath}/*` for GET + POST. |
 | `getSession(auth, request)` | `Promise<SessionOf<A> \| null>` - typed wrapper over `auth.api.getSession`. |
-| `requireSession(auth, request, options?)` | Returns the session or throws a `Response` (302 `redirectTo` / 401). |
+| `requireSession(auth, request, options?)` | Returns the session or throws a Nifra `ResponseResult` (302 `redirectTo` / 401). |
 | `SessionOf<A>` | The non-null session payload type inferred from your `auth`. |
 | `BetterAuthLike` | The structural contract a better-auth instance satisfies. |
 
