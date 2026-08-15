@@ -2639,7 +2639,7 @@ _No named exports (side-effect entrypoint)._
   Build a page from rows you fetched with `limit + 1`. If the extra row came back there are more pages: drop it and emit a `nextCursor` from the last KEPT row via `cursorOf`; otherwise `nextCursor` is `null`.
 - **registerFormat** _(function)_ - `registerFormat: (name: string, validate: (value: string) => boolean) => void`
   Register (or override) a string format usable as `t.string({ format: name })`.
-- **t** _(const)_ - `t: { readonly string: (options?: StringOptions) => NifraSchema<any>; readonly number: (options?: NumberOptions) => NifraSchema<any>; readonly integer: (options?: IntegerOptions) => NifraSchema<any>; readonly boolean: ()…`
+- **t** _(const)_ - `t: { readonly string: (options?: StringOptions) => NifraSchema<import("@sinclair/typebox").TString>; readonly number: (options?: NumberOptions) => NifraSchema<import("@sinclair/typebox").TNumber>; readonly integer: (opt…`
   The built-in schema builder. Each constructor returns a `NifraSchema` - a Standard Schema whose validated output type flows into `c.body`/`c.query`, and whose `jsonSchema` powers `toOpenAPI`. Options (min/max, length, pattern, …) pass straight through to TypeBox and so become JSON Schema constraint…
 - **toOpenAPI** _(function)_ - `toOpenAPI: (input: ContractShape | Server, options?: ToOpenAPIOptions) => OpenAPIDocument`
   Generate an OpenAPI 3.1 document from a contract or a running app. See the module doc for the detail model.
@@ -3818,7 +3818,7 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(interface)_ - `interface NavigateFunction`
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
-- **SearchContext** _(const)_ - `SearchContext: any`
+- **SearchContext** _(const)_ - `SearchContext: import("preact").Context<Record<string, unknown>>`
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Blocker`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean (`useBlocker(isDirty)`) or a predicate `({ currentLocation, nextLocation }) => boolean`, and get back a {@link Blocker}. When a navigation (an anchor click, `u…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
@@ -3930,13 +3930,13 @@ _No named exports (side-effect entrypoint)._
   Decide whether a navigation should be halted. Receives where the app is (`currentLocation`) and where it's heading (`nextLocation`), so a guard can allow same-section moves and block only real exits. A boolean form (`useBlocker(isDirty)`) is sugar for `() => isDirty`. Runs synchronously at navigati…
 - **BlockerState** _(type)_ - `type BlockerState = "unblocked" | "blocked" | "proceeding"`
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
-- **Link** _(const)_ - `Link: any`
+- **Link** _(const)_ - `Link: import("react").ForwardRefExoticComponent<LinkProps & import("react").RefAttributes<HTMLAnchorElement>>`
   A client-navigating anchor. Renders a real `<a href={to}>` (so it's a working link before hydration and for right-click / open-in-new-tab), and on a plain left-click navigates through the router instead of a full reload. Calling `navigate` + `preventDefault` here means `installHistory`'s document-l…
 - **LinkProps** _(interface)_ - `interface LinkProps`
   {@link Link} props: every `<a>` attribute except `href` (set from `to`), plus `to` + `replace`.
 - **Location** _(interface)_ - `interface Location`
   The parsed current location. `hash` is always `""` - the fragment is client-only and never reaches the router state / server, so exposing a live hash would hydration-mismatch; read `window.location.hash` directly (in an effect) if you truly need it.
-- **NavLink** _(const)_ - `NavLink: any`
+- **NavLink** _(const)_ - `NavLink: import("react").ForwardRefExoticComponent<NavLinkProps & import("react").RefAttributes<HTMLAnchorElement>>`
   A {@link Link} that knows whether it points at the current location. Adds `aria-current="page"` when active and resolves function-form `className`/`style`/`children` with `{ isActive, isPending }`. Default matching is prefix-on-segment-boundary (so `/users` is active on `/users/7`); pass `end` for …
 - **NavLinkProps** _(interface)_ - `interface NavLinkProps`
   {@link NavLink} props - like {@link LinkProps}, but `className`/`style`/`children` may be functions of the active state, and `end`/`caseSensitive` tune matching.
@@ -3950,7 +3950,7 @@ _No named exports (side-effect entrypoint)._
   {@link Navigate} props: the destination `to` and whether to `replace` the history entry.
 - **Navigation** _(interface)_ - `interface Navigation`
   The current navigation state, mirroring the Remix `useNavigation()` shape for familiarity.
-- **RouterContext** _(const)_ - `RouterContext: any`
+- **RouterContext** _(const)_ - `RouterContext: import("react").Context<RouterContextValue>`
 - **RouterContextValue** _(interface)_ - `interface RouterContextValue`
   The current route the routing hooks read. Provided by `compose` on SSR + client mount alike.
 - **SearchParamsInit** _(type)_ - `type SearchParamsInit = URLSearchParams | Record<string, string | readonly string[]> | string`
@@ -4065,7 +4065,7 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(interface)_ - `interface NavigateFunction`
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
-- **SearchContext** _(const)_ - `SearchContext: any`
+- **SearchContext** _(const)_ - `SearchContext: Context<Accessor<Record<string, unknown>> | undefined>`
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Accessor<Blocker>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a reactive {@link Blocker} accessor. When a navigation (an anchor click, `useNavi…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
@@ -4118,7 +4118,7 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-svelte/i18n`
 
-- **I18nProvider** _(const)_ - `I18nProvider: Component<I18nProviderProps>`
+- **I18nProvider** _(const)_ - `I18nProvider: Component<I18nProviderProps, {}, string>`
 - **I18nProviderProps** _(interface)_ - `interface I18nProviderProps`
   Hand-written types for `I18nProvider.svelte` (consumers resolve these via the `./i18n` re-export).
 - **useT** _(function)_ - `useT: () => Formatter`
@@ -4196,7 +4196,7 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-vue/await`
 
-- **Await** _(const)_ - `Await: any`
+- **Await** _(const)_ - `Await: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ resolve: { required: true; }; }>, () => VNode | undefined, {}, {}, {}, import("vue").ComponentOptionsMixin, import("vue").ComponentOptionsMixin, {}, …`
   `<Await :resolve="deferredOrValue">` with scoped slots `default(value)`, `fallback()`, `error(err)`. An already-resolved `resolve` (a plain value, or a client navigation that awaited it) renders `default` immediately. A `Deferred` renders `fallback` until it settles on the client.
 
 ### `@nifrajs/web-vue/client`
@@ -4213,7 +4213,7 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-vue/content`
 
-- **Content** _(const)_ - `Content: any`
+- **Content** _(const)_ - `Content: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ html: { type: StringConstructor; required: true; }; as: { type: StringConstructor; default: string; }; }>, () => import("vue").VNode<import("vue").…`
   Render trusted HTML into a wrapper element. `inheritAttrs: false` + manual attr spread so passthrough (`class`, `id`, `style`, …) lands on the wrapper exactly once.
 
 ### `@nifrajs/web-vue/fetcher`
@@ -4236,14 +4236,14 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-vue/i18n`
 
-- **I18nProvider** _(const)_ - `I18nProvider: any`
+- **I18nProvider** _(const)_ - `I18nProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ locale: { type: StringConstructor; required: true; }; messages: { type: PropType<Messages>; required: true; }; }>, () => import("vue").VNode<i…`
   Provide a {@link Formatter} (built from `locale` + `messages`) to the subtree. Recomputes when `locale`/`messages` change, so a locale switch re-renders consumers. Renders its default slot.
 - **useT** _(function)_ - `useT: () => Formatter`
   Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above.
 
 ### `@nifrajs/web-vue/image`
 
-- **Image** _(const)_ - `Image: any`
+- **Image** _(const)_ - `Image: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ src: { type: StringConstructor; required: true; }; width: { type: NumberConstructor; required: true; }; height: { type: NumberConstructor; required: …`
 
 ### `@nifrajs/web-vue/plugin`
 
@@ -4273,7 +4273,7 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(interface)_ - `interface NavigateFunction`
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
-- **SearchProvider** _(const)_ - `SearchProvider: any`
+- **SearchProvider** _(const)_ - `SearchProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ value: { type: ObjectConstructor; required: true; }; }>, () => import("vue").VNode<import("vue").RendererNode, import("vue").RendererElement…`
   The provider `compose` wraps the layout tree in. It `provide`s a `computed` view of its `value` prop, so as the mount re-renders with each navigation's search the injected ref updates reactively (setup runs once, but the computed keeps tracking the prop). Renders its default slot (the folded chain).
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readonly<ShallowRef<Blocker>>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a reactive {@link Blocker} ref. When a navigation (an anchor click, `useNavigate`…
