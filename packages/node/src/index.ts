@@ -1861,6 +1861,21 @@ function writeNodeResponse(
   // forEach into a fresh plain object plus a second cookie-specific pass. Must run before
   // `writeHead`: headers are already flushed by the time `writeHead` returns.
   nodeRes.setHeaders(response.headers)
+  // The same framing gap the plain lane had, on the lane a hand-rolled `Response` takes: `writeHead`
+  // followed by a bare `end()` leaves Node to pick the framing, so a null-body `Response` goes out
+  // chunked where every Web-native runtime sends `content-length: 0`. Declared before `writeHead`,
+  // which is the last point the header can still be added. HEAD is excluded - its length describes
+  // the GET's body, which this lane does not know - as is a status that cannot carry a body, and a
+  // length the caller set for itself. A non-null body is untouched: this lane streams it, and its
+  // length is not knowable without buffering.
+  if (
+    !isHead &&
+    response.body === null &&
+    !isBodylessStatus(response.status) &&
+    !response.headers.has("content-length")
+  ) {
+    nodeRes.setHeader("content-length", "0")
+  }
   nodeRes.writeHead(response.status)
   if (isHead) {
     nodeRes.end()

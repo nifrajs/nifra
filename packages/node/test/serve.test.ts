@@ -748,6 +748,42 @@ test("a body-less plain render declares content-length: 0 rather than chunking",
   expect(res.headers.get("transfer-encoding")).toBeNull()
 })
 
+test("a null-body Response declares content-length: 0 rather than chunking", async () => {
+  // The same gap on the lane a hand-rolled `Response` takes, which the plain-render fix did not
+  // cover: `new Response(null, ...)` is body-less and its length is knowable, so it is declared.
+  const app = server().get("/go", () => new Response(null, { status: 303 }))
+  running = await serve(app, { port: 0 })
+  const res = await fetch(`http://localhost:${running.port}/go`, { redirect: "manual" })
+  expect(res.status).toBe(303)
+  expect(res.headers.get("content-length")).toBe("0")
+  expect(res.headers.get("transfer-encoding")).toBeNull()
+})
+
+test("a caller-set content-length on a null-body Response is left alone", async () => {
+  // A HEAD-shaped answer built by hand: the length describes a body this response does not carry,
+  // and overwriting it with 0 would lie about the resource. Read off the socket rather than through
+  // `fetch`, which would sit waiting for the 4096 bytes the response deliberately never sends.
+  const app = server().get(
+    "/go",
+    () => new Response(null, { status: 200, headers: { "content-length": "4096" } }),
+  )
+  running = await serve(app, { port: 0 })
+
+  const socket = connect(running.port, "127.0.0.1")
+  socket.on("error", () => {})
+  await new Promise<void>((resolve) => socket.once("connect", () => resolve()))
+  let head = ""
+  socket.on("data", (chunk) => {
+    head += chunk.toString()
+  })
+  socket.write("GET /go HTTP/1.1\r\nHost: x\r\n\r\n")
+  await Bun.sleep(100)
+  socket.destroy()
+
+  expect(head.toLowerCase()).toContain("content-length: 4096")
+  expect(head.toLowerCase()).not.toContain("transfer-encoding")
+})
+
 test("a throwing app yields a flat 500 (no leak)", async () => {
   running = await serve(
     {
