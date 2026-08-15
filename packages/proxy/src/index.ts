@@ -183,9 +183,14 @@ const FORWARDING: ReadonlySet<string> = new Set([
 
 const EMPTY: ReadonlySet<string> = new Set()
 
-/** Header names nominated hop-by-hop by a `Connection` header (lowercased). */
-function connectionNominated(headers: Headers): ReadonlySet<string> {
-  const raw = headers.get("connection")
+/**
+ * Header names nominated hop-by-hop by a `Connection` header value (lowercased).
+ *
+ * Takes the raw value, not a header container, so the Web lane (`Headers`) and the Node-native lane
+ * (a header record) resolve `connection` their own way and share this one parse - the hop-by-hop
+ * decision is security-critical and must not exist in two copies that can drift.
+ */
+function parseConnectionNominated(raw: string | null): ReadonlySet<string> {
   if (raw === null) return EMPTY
   const out = new Set<string>()
   for (const token of raw.split(",")) {
@@ -199,6 +204,50 @@ function dropHeader(name: string, nominated: ReadonlySet<string>): boolean {
   return HOP_BY_HOP.has(name) || nominated.has(name) || name.startsWith("proxy-")
 }
 
+/**
+ * A request header dropped before the hop: it names the proxy (`host`, which the transport derives
+ * from the target), is hop-by-hop / Connection-nominated / `proxy-*`, or is forwarding metadata that
+ * only `forwardClientIp` may reintroduce. The single predicate both lanes filter through.
+ */
+function isDroppedRequestHeader(name: string, nominated: ReadonlySet<string>): boolean {
+  return name === "host" || dropHeader(name, nominated) || FORWARDING.has(name)
+}
+
+/**
+ * A response header kept on relay. Drops hop-by-hop / Connection-nominated, and - only when the
+ * transport decoded the body, so the stored `Content-Encoding` and length describe bytes the client
+ * will never see - drops those two as well. The undici lanes pass bytes through untouched
+ * (`bodyEncoded` true) and keep them; the `fetch` lane decoded and drops them.
+ */
+function isKeptResponseHeader(
+  name: string,
+  nominated: ReadonlySet<string>,
+  bodyEncoded: boolean,
+): boolean {
+  if (dropHeader(name, nominated)) return false
+  if (!bodyEncoded && (name === "content-encoding" || name === "content-length")) return false
+  return true
+}
+
+/**
+ * The `x-forwarded-*` overrides to SET when `forwardClientIp` is on. Shared so the chain math - the
+ * one place inbound `x-forwarded-for` is appended to rather than trusted - cannot diverge between
+ * lanes. `priorXff` is the inbound value (null if absent); `host` rides through only when present.
+ */
+function forwardedClientHeaders(
+  priorXff: string | null,
+  requestUrl: string,
+  host: string | null,
+  clientIp: string,
+): Array<[string, string]> {
+  const overrides: Array<[string, string]> = [
+    ["x-forwarded-for", priorXff !== null ? `${priorXff}, ${clientIp}` : clientIp],
+    ["x-forwarded-proto", new URL(requestUrl).protocol.slice(0, -1)],
+  ]
+  if (host !== null) overrides.push(["x-forwarded-host", host])
+  return overrides
+}
+
 const flatError = (status: number, error: string): Response =>
   new Response(JSON.stringify({ ok: false, error }), {
     status,
@@ -210,21 +259,21 @@ function upstreamRequestHeaders(
   clientIp: string | undefined,
   options: ProxyOptions,
 ): Headers {
-  const nominated = connectionNominated(req.headers)
+  const nominated = parseConnectionNominated(req.headers.get("connection"))
   const out = new Headers()
   for (const [name, value] of req.headers) {
-    // `host` names the proxy, not the upstream - fetch derives the right one from the target URL.
-    if (name === "host" || dropHeader(name, nominated)) continue
-    if (FORWARDING.has(name)) continue
+    if (isDroppedRequestHeader(name, nominated)) continue
     out.append(name, value)
   }
   if (options.forwardClientIp === true && clientIp !== undefined) {
-    const prior = req.headers.get("x-forwarded-for")
-    const chain = prior !== null ? `${prior}, ${clientIp}` : clientIp
-    if (chain !== undefined) out.set("x-forwarded-for", chain)
-    out.set("x-forwarded-proto", new URL(req.url).protocol.slice(0, -1))
-    const host = req.headers.get("host")
-    if (host !== null) out.set("x-forwarded-host", host)
+    for (const [name, value] of forwardedClientHeaders(
+      req.headers.get("x-forwarded-for"),
+      req.url,
+      req.headers.get("host"),
+      clientIp,
+    )) {
+      out.set(name, value)
+    }
   }
   if (options.headers !== undefined) {
     for (const [name, value] of Object.entries(options.headers)) out.set(name, value)
@@ -233,17 +282,13 @@ function upstreamRequestHeaders(
 }
 
 function relayedResponseHeaders(upstreamHeaders: Headers, bodyEncoded: boolean): Headers {
-  const nominated = connectionNominated(upstreamHeaders)
+  const nominated = parseConnectionNominated(upstreamHeaders.get("connection"))
   const out = new Headers()
   for (const [name, value] of upstreamHeaders) {
-    if (dropHeader(name, nominated)) continue
-    // When the transport decoded the body (fetch), the stored `Content-Encoding` and length describe
-    // the compressed bytes, not what is relayed, so both are dropped (re-compression is the
-    // compression() middleware's job). When the transport passed the bytes through untouched
-    // (undici), those headers still describe them exactly and are relayed so the client can decode.
-    if (!bodyEncoded && (name === "content-encoding" || name === "content-length")) continue
-    // Re-added below via getSetCookie() so multiple cookies survive on every runtime.
+    // Re-added below via getSetCookie() so multiple cookies survive on every runtime - a `Headers`
+    // iteration would hand back one comma-joined value that no longer parses as separate cookies.
     if (name === "set-cookie") continue
+    if (!isKeptResponseHeader(name, nominated, bodyEncoded)) continue
     out.append(name, value)
   }
   for (const cookie of upstreamHeaders.getSetCookie()) out.append("set-cookie", cookie)
@@ -529,29 +574,16 @@ function nativeHeaderValues(value: string | readonly string[] | undefined): read
   return typeof value === "string" ? [value] : value
 }
 
-function nativeConnectionNominated(
-  headers: Readonly<Record<string, string | readonly string[] | undefined>>,
-): ReadonlySet<string> {
-  const raw = nativeHeaderValue(headers, "connection")
-  if (raw === null) return EMPTY
-  const out = new Set<string>()
-  for (const token of raw.split(",")) {
-    const name = token.trim().toLowerCase()
-    if (name !== "") out.add(name)
-  }
-  return out
-}
-
 function nativeRequestHeaders(
   request: NodeNativeProxyRequest,
   clientIp: string | undefined,
   options: ProxyOptions,
 ): string[] {
-  const nominated = nativeConnectionNominated(request.headers)
+  const nominated = parseConnectionNominated(nativeHeaderValue(request.headers, "connection"))
   const entries: string[] = []
   for (const [name, raw] of Object.entries(request.headers)) {
     if (raw === undefined) continue
-    if (name === "host" || dropHeader(name, nominated) || FORWARDING.has(name)) continue
+    if (isDroppedRequestHeader(name, nominated)) continue
     for (const value of nativeHeaderValues(raw)) entries.push(name, value)
   }
   const replace = (name: string, value: string): void => {
@@ -561,11 +593,14 @@ function nativeRequestHeaders(
     entries.push(name, value)
   }
   if (options.forwardClientIp === true && clientIp !== undefined) {
-    const prior = nativeHeaderValue(request.headers, "x-forwarded-for")
-    replace("x-forwarded-for", prior === null ? clientIp : `${prior}, ${clientIp}`)
-    replace("x-forwarded-proto", new URL(request.url).protocol.slice(0, -1))
-    const host = nativeHeaderValue(request.headers, "host")
-    if (host !== null) replace("x-forwarded-host", host)
+    for (const [name, value] of forwardedClientHeaders(
+      nativeHeaderValue(request.headers, "x-forwarded-for"),
+      request.url,
+      nativeHeaderValue(request.headers, "host"),
+      clientIp,
+    )) {
+      replace(name, value)
+    }
   }
   if (options.headers !== undefined) {
     for (const [name, value] of Object.entries(options.headers)) replace(name.toLowerCase(), value)
@@ -576,10 +611,12 @@ function nativeRequestHeaders(
 function nativeResponseHeaders(
   headers: Readonly<Record<string, string | readonly string[] | undefined>>,
 ): Array<[string, string | readonly string[]]> {
-  const nominated = nativeConnectionNominated(headers)
+  const nominated = parseConnectionNominated(nativeHeaderValue(headers, "connection"))
   const out: Array<[string, string | readonly string[]]> = []
   for (const [name, value] of Object.entries(headers)) {
-    if (value === undefined || dropHeader(name, nominated)) continue
+    // The native lane is always the undici passthrough transport, which does not decode the body,
+    // so the stored content-encoding/length still describe the relayed bytes: `bodyEncoded` true.
+    if (value === undefined || !isKeptResponseHeader(name, nominated, true)) continue
     out.push([name, value])
   }
   return out
