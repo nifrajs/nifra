@@ -19,6 +19,14 @@
 
 ## 2.12.0
 
+> **Correction (added after release).** This release should have been a `major`. The reserved-segment
+> types it introduced reject a property access that compiled in 2.11 - a consumer with a route segment
+> named `subscribe`, `then`, `index`, or an HTTP verb sees a compile error after `bun update` inside a
+> caret range. "No runtime change" is not the semver test; a type that stops compiling is a breaking
+> change. `nifra fix --code NF-C018` now rewrites the broken call sites (it reads them from the
+> compiler, so it finds every one), and the reserved set is frozen against ever growing again - see
+> `packages/client/src/reserved.ts`.
+
 ### Minor Changes
 
 - 27e06a9: Typed collision escape for reserved-named route segments. The client proxy resolves the seven HTTP verbs (any casing) plus `subscribe`, `ws`, `index`, and `then` before path segments, so a route like `POST /api/delete` cannot be reached by dot access - `api.delete` is the DELETE verb. The typed spelling is now a call on the parent node: `api.api("delete").post()` sends `POST /api/delete`. The call signature accepts exactly the colliding segment names under that node (it is not a general string path builder), coexists with param calls on the same node (an object is a param bag, a string literal the segment), and covers all eleven reserved names including `then`. Purely additive - no runtime change, no existing call site affected.

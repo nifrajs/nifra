@@ -16,6 +16,7 @@ import {
   type TransportCodec,
   type TransportCodecRegistry,
 } from "@nifrajs/core/transport-codec"
+import { RESERVED_VERB_KEYS } from "./reserved.ts"
 import type { ApiError, Result } from "./result.ts"
 import type { Subscription, Treaty, TreatyFromRegistry } from "./treaty.ts"
 import { ResponseContractViolation, withResponseValidation } from "./validate-responses.ts"
@@ -23,22 +24,16 @@ import { NO_SOCKET, openWebSocket } from "./ws.ts"
 
 /**
  * The RESERVED proxy keys, resolved before path segments (see `resolveSegment` and the `then`
- * guard in `createProxy`): these seven verbs (case-insensitive) plus `subscribe`, `ws`, `index`,
- * and `then` (exact). A route path containing a static segment spelling one is unreachable by
- * PROPERTY ACCESS - `treaty.ts` rejects the access at compile time (ReservedSegmentCollision) and
- * types the escape spelling instead: calling the parent node with the segment
- * (`api.api("delete").post()`, the apply trap below) reaches it. `nifra check` reports the
- * collision with the same guidance (NF-C018). Keep the three surfaces in lockstep.
+ * guard in `createProxy`). The closed list and the reasons it can never grow live in
+ * `reserved.ts`; this set is built from it so the runtime cannot drift from what the types
+ * (`treaty.ts`) and the `nifra check` lint (NF-C018) say is reserved.
+ *
+ * A route path containing a static segment spelling one is unreachable by PROPERTY ACCESS -
+ * `treaty.ts` rejects the access at compile time (ReservedSegmentCollision) and types the call
+ * spelling instead: calling the parent node with the segment (`api.api("delete").post()`, the
+ * apply trap below) reaches it.
  */
-const HTTP_VERBS: ReadonlySet<string> = new Set([
-  "get",
-  "post",
-  "put",
-  "patch",
-  "delete",
-  "head",
-  "options",
-])
+const HTTP_VERBS: ReadonlySet<string> = new Set(RESERVED_VERB_KEYS)
 const BODY_VERBS: ReadonlySet<string> = new Set(["post", "put", "patch"])
 
 /** Marks a fetcher whose responses are same-process objects (see {@link inProcessClient}). */

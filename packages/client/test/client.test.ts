@@ -289,4 +289,16 @@ describe("collision escape - reserved-named segments via a call on the parent no
     const verb = await (api.api as unknown as { delete: () => Promise<Result<unknown>> }).delete()
     expect(verb.ok).toBe(false) // no DELETE /api route exists; graceful 404 Result, no throw
   })
+
+  test("a segment that does not collide takes the same call spelling", async () => {
+    // The call form is typed for EVERY static segment, not only reserved-named ones, so a call site
+    // written this way survives the reserved set growing. The runtime never distinguished them.
+    const app = server().post("/api/remove", () => ({ removed: true }))
+    const api = testClient<typeof app>(app)
+
+    const viaCall = await api.api("remove").post()
+    const viaDot = await api.api.remove.post()
+    expect(viaCall.ok && viaCall.data).toEqual({ removed: true })
+    expect(viaDot.ok && viaDot.data).toEqual({ removed: true })
+  })
 })

@@ -6,6 +6,7 @@ import {
   buildRouteGraph,
   buildRouteTable,
   clientCall,
+  clientSpellingFor,
   describeProject,
   describeRoutes,
   type RouteJson,
@@ -145,6 +146,65 @@ describe("clientCall - typed-client call form per route", () => {
     expect(clientCall("GET", "/well-known/info", undefined)).toBe(
       'await api["well-known"].info.get()',
     )
+  })
+
+  test("a reserved-named segment is emitted as a call, never as a property", () => {
+    // `.delete` would resolve the DELETE verb and request `/api` instead - a chain that compiles
+    // nowhere and, through an untyped client, silently hits the wrong path.
+    expect(clientCall("POST", "/api/delete", undefined)).toBe('await api.api("delete").post()')
+    expect(clientCall("GET", "/jobs/subscribe", undefined)).toBe(
+      'await api.jobs("subscribe").get()',
+    )
+  })
+
+  test("a reserved-named segment is not spelled as bracket access either", () => {
+    // Bracket access does not dodge the proxy: the get trap intercepts the key however it is written.
+    expect(clientCall("GET", "/promise/then", undefined)).not.toContain('["then"]')
+  })
+
+  test("casing is preserved, because verbs are intercepted case-insensitively", () => {
+    expect(clientCall("POST", "/api/Delete", undefined)).toBe('await api.api("Delete").post()')
+  })
+})
+
+describe("clientSpellingFor - the `nifra routes` collision annotation", () => {
+  test("names the reserved key and the spelling that reaches the route", () => {
+    expect(clientSpellingFor("/api/delete")).toEqual({
+      spelling: 'api.api("delete")',
+      reserved: "delete",
+    })
+  })
+
+  test("a path with no collision is not annotated", () => {
+    expect(clientSpellingFor("/api/remove")).toBeUndefined()
+    expect(clientSpellingFor("/users/:id")).toBeUndefined()
+  })
+
+  test("a param named like a reserved key does not collide", () => {
+    // Params are never spelled as property accesses, so nothing shadows them.
+    expect(clientSpellingFor("/jobs/:subscribe")).toBeUndefined()
+  })
+
+  test("the route table annotates a colliding row and leaves the rest alone", () => {
+    const text = renderRouteTable([
+      { kind: "api", path: "/api/delete", methods: ["POST"] },
+      { kind: "api", path: "/api/remove", methods: ["POST"] },
+    ])
+    expect(text).toContain("'delete' is a reserved typed-client key")
+    expect(text).toContain('api.api("delete")')
+    expect(text.split("\n").filter((line) => line.includes("reserved"))).toHaveLength(1)
+  })
+
+  test("the JSON rows carry the collision so an agent never has to guess the reserved set", () => {
+    const { routes } = routeTableToJson([
+      { kind: "api", path: "/api/delete", methods: ["POST"] },
+      { kind: "api", path: "/api/remove", methods: ["POST"] },
+    ])
+    expect(routes[0]).toMatchObject({
+      reservedKey: "delete",
+      clientSpelling: 'api.api("delete")',
+    })
+    expect(routes[1]).not.toHaveProperty("reservedKey")
   })
 })
 

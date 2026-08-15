@@ -178,11 +178,11 @@ export type _CleanSibling = Expect<Equal<DataOf<typeof removed>, { removed: bool
 const assetsDeleted = collisionApi.api.assets.delete() // legitimate DELETE verb call still compiles
 export type _VerbCallStillWorks = Expect<Equal<DataOf<typeof assetsDeleted>, { removed: boolean }>>
 
-// --- the collision escape: colliding segments are reachable by CALLING the parent node ---
+// --- the segment call: every static segment is reachable by CALLING the parent node ---
 
-// The runtime's apply trap has always appended a scalar argument as a literal path segment; the
-// escape types that spelling for exactly the colliding segments, so every reserved name -
-// including `then` - has a typed route to it.
+// The runtime's apply trap has always appended a scalar argument as a literal path segment; this
+// types that spelling for every static segment, so every reserved name - including `then` - has a
+// typed route to it.
 const escDelete = collisionApi.api("delete").post()
 export type _EscapeDelete = Expect<Equal<DataOf<typeof escDelete>, { removed: boolean }>>
 const escNested = collisionApi.api.assets("delete").post()
@@ -196,12 +196,17 @@ export type _EscapeIndex = Expect<Equal<DataOf<typeof escIndex>, { ok: boolean }
 const escThen = collisionApi.promise("then").get()
 export type _EscapeThen = Expect<Equal<DataOf<typeof escThen>, { ok: boolean }>>
 
-// The escape accepts ONLY colliding segments - it is not a general string path builder.
-// @ts-expect-error `remove` doesn't collide, so dot access is its only spelling
-collisionApi.api("remove")
-// @ts-expect-error `delete` is not a colliding child of /jobs (only `subscribe` is)
+// A NON-colliding segment takes the call spelling too. This is what makes the call form safe to
+// write everywhere: if `remove` were ever added to the reserved set, this line keeps compiling,
+// where `collisionApi.api.remove` would start failing.
+const callPlain = collisionApi.api("remove").post()
+export type _CallPlainSegment = Expect<Equal<DataOf<typeof callPlain>, { removed: boolean }>>
+
+// It is still not a string path builder: only segments the registry actually declares under this
+// node are accepted.
+// @ts-expect-error `delete` is not a child of /jobs (only `subscribe` is)
 collisionApi.jobs("delete")
-// @ts-expect-error a node with no colliding children (and no params) is not callable
+// @ts-expect-error a leaf node (no static children, no params) is not callable
 collisionApi.api.remove("x")
 
 // A param sibling coexists with the escape on the same node: an object resolves the param

@@ -140,6 +140,7 @@ describe("agent verification surfaces", () => {
       "manifest.sync",
       "contracts.snapshot",
       "workspace-dist.rebuild",
+      "client.reserved-segment",
     ])
   })
 

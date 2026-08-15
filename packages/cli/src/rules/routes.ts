@@ -1,3 +1,4 @@
+import { RESERVED_KEY_READOUT, reservedKeyFor } from "@nifrajs/client"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { commentBlockHasMarker } from "./comment-markers.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
@@ -7,27 +8,18 @@ import type { CheckRule, RuleContext } from "./index.ts"
  * once before the registry runs - no rule re-walks source).
  *
  * NF-C018 exists because the typed client's proxy intercepts a fixed set of property names before
- * path resolution (`resolveSegment` + the thenable guard in @nifrajs/client): the seven HTTP verbs
- * (case-insensitively), `subscribe`, `ws`, `index`, and `then`. A route whose path contains a
- * static segment spelling one of these cannot be reached by DOT ACCESS - `api.delete.post` resolves
- * the DELETE verb, not the path. The typed spelling is a call on the parent node
- * (`api.api("delete").post()`, treaty.ts `CollisionEscape`), and the client type rejects the dot
- * access with the same guidance - so the collision is a warning that teaches the escape spelling,
- * not a blocking error: the route IS reachable, just not by the spelling its name suggests.
+ * path resolution (`resolveSegment` + the thenable guard in @nifrajs/client). A route whose path
+ * contains a static segment spelling one of these cannot be reached by DOT ACCESS -
+ * `api.delete.post` resolves the DELETE verb, not the path. The typed spelling is a call on the
+ * parent node (`api.api("delete").post()`, treaty.ts `SegmentCall`), and the client type rejects
+ * the dot access with the same guidance - so the collision is a warning that teaches the call
+ * spelling, not a blocking error: the route IS reachable, just not by the spelling its name
+ * suggests.
+ *
+ * The set itself is NOT copied here. It comes from `@nifrajs/client`'s `reserved.ts`, which is the
+ * one place it is written down and the one place the freeze policy lives - a lint that carried its
+ * own copy is a lint that can disagree with the compiler it is explaining.
  */
-const RESERVED_VERB_SEGMENTS: ReadonlySet<string> = new Set([
-  "get",
-  "post",
-  "put",
-  "patch",
-  "delete",
-  "head",
-  "options",
-])
-// Intercepted by exact match only (`key === "subscribe"` etc.), unlike the lowercased verbs.
-const RESERVED_EXACT_SEGMENTS: ReadonlySet<string> = new Set(["subscribe", "ws", "index", "then"])
-const RESERVED_READOUT =
-  "get/post/put/patch/delete/head/options (any casing), subscribe, ws, index, then"
 
 /** Opt-out pragma for a route deliberately served only to NON-typed-client consumers. */
 const RESERVED_SEGMENT_PRAGMA = "nifra-expect reserved-segment"
@@ -69,14 +61,6 @@ function routeEscapeHint(path: string, colliding: string): string {
   return `${["api", ...before].join(".")}("${colliding}")`
 }
 
-/** The reserved key a static path segment collides with, or undefined. Params/wildcards never collide. */
-function reservedCollision(segment: string): string | undefined {
-  if (segment.startsWith(":") || segment.startsWith("*")) return undefined
-  if (RESERVED_EXACT_SEGMENTS.has(segment)) return segment
-  const lower = segment.toLowerCase()
-  return RESERVED_VERB_SEGMENTS.has(lower) ? lower : undefined
-}
-
 export const reservedSegmentRule: CheckRule = {
   code: "NF-C018",
   title: "Route segment collides with a reserved client proxy key",
@@ -86,7 +70,7 @@ export const reservedSegmentRule: CheckRule = {
     for (const route of routeFacts(ctx)) {
       for (const segment of route.path.split("/")) {
         if (segment === "") continue
-        const collision = reservedCollision(segment)
+        const collision = reservedKeyFor(segment)
         if (collision === undefined) continue
         let lines = linesByFile.get(route.file)
         if (lines === undefined) {
@@ -100,8 +84,11 @@ export const reservedSegmentRule: CheckRule = {
             severity: "warn",
             file: route.file,
             line: route.line,
-            message: `${route.method} ${route.path} - segment '${segment}' collides with the reserved client proxy key '${collision}' (reserved: ${RESERVED_READOUT}); dot access cannot reach it - call the parent node with the segment instead (\`${routeEscapeHint(route.path, segment)}\`), rename the segment, or mark an intentionally non-typed-client route with \`// ${RESERVED_SEGMENT_PRAGMA}\` above the registration`,
+            message: `${route.method} ${route.path} - segment '${segment}' collides with the reserved client proxy key '${collision}' (reserved: ${RESERVED_KEY_READOUT}); dot access cannot reach it - call the parent node with the segment instead (\`${routeEscapeHint(route.path, segment)}\`), rename the segment, or mark an intentionally non-typed-client route with \`// ${RESERVED_SEGMENT_PRAGMA}\` above the registration. \`nifra fix --code NF-C018\` rewrites the broken call sites for you`,
             evidence: [`${route.method} ${route.path}`, `segment: ${segment}`],
+            // The route is fine; what needs editing is every typed-client call site the collision
+            // broke, which the recipe finds from the compiler rather than from this one finding.
+            fix: { recipe: "client.reserved-segment", command: "nifra fix --code NF-C018" },
             verify: "nifra check --lints-only",
           }),
         )

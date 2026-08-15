@@ -13,19 +13,19 @@ Browser-safe, end-to-end-typed client for @nifrajs/core servers (Eden-style prox
 - **client** _(function)_ - `client: { <App>(baseUrl: string, options?: ClientOptions): Treaty<App>; <const C extends ContractShape>(contract: C, baseUrl: string, optio…`
 - **inProcessClient** _(function)_ - `inProcessClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: InProcessClientOptions) => In…`
 - **testClient** _(const)_ - `testClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: InProcessClientOptions) => InProce…`
+- **reservedKeyFor** _(function)_ - `reservedKeyFor: (segment: string) => string | undefined`
 - **ResponseContractViolation** _(class)_ - `class ResponseContractViolation`
+- **RESERVED_EXACT_KEYS** _(const)_ - `RESERVED_EXACT_KEYS: readonly ["subscribe", "ws", "index", "then"]`
+- **RESERVED_KEY_READOUT** _(const)_ - `RESERVED_KEY_READOUT: string`
+- **RESERVED_VERB_KEYS** _(const)_ - `RESERVED_VERB_KEYS: readonly ["get", "post", "put", "patch", "delete", "head", "options"]`
 - **ApiError** _(interface)_ - `interface ApiError`
 - **ClientOptions** _(interface)_ - `interface ClientOptions`
 - **ClientRetryOptions** _(interface)_ - `interface ClientRetryOptions`
 - **InProcessClientOptions** _(interface)_ - `interface InProcessClientOptions`
 - **LoaderArgs** _(interface)_ - `interface LoaderArgs<Api, Env = unknown, Search = undefined>`
 - **SubscribeOptions** _(interface)_ - `interface SubscribeOptions<I extends RouteInfo>`
-- **Subscription** _(interface)_ - `interface Subscription`
-- **WsCallOptions** _(interface)_ - `interface WsCallOptions`
-- **WsHandle** _(interface)_ - `interface WsHandle<In, Out>`
-- **ActionArgs** _(type)_ - `type ActionArgs<Api, Env = unknown, Search = undefined> = LoaderArgs<Api, Env, Search>`
 
-_…and 10 more - see [`api-reference.md`](../../api-reference.md#nifrajsclient) for the complete list._
+_…and 14 more - see [`api-reference.md`](../../api-reference.md#nifrajsclient) for the complete list._
 
 ## Footguns
 

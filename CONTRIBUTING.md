@@ -136,6 +136,22 @@ bun run changeset
 
 Follow the interactive prompt to select the affected packages, choose a semver bump type (patch, minor, or major), and provide a brief description of the change. Commit the generated markdown file under `.changeset/`.
 
+Name **every** package whose source you changed, not just the one you think of as the headline. `bun run check:changesets` fails a commit that changed a package's `src/` without declaring it, because the release notes are the only place a consumer learns a package moved at all.
+
+### A type that stops compiling is a `major`
+
+**If code that compiled against the previous version no longer compiles against yours, the bump is `major`** - whether or not anything changed at runtime.
+
+TypeScript types are part of the public API surface. A consumer running `bun update` inside a caret range gets the new types, and a build that used to pass now fails; that the runtime behaves identically is no consolation to a broken CI. "Purely additive at runtime" is not the test. The test is: **can a call site that compiled yesterday stop compiling today?**
+
+Concretely, these are `major`, not `minor`:
+
+- Narrowing an exported type, or making an optional property required.
+- Rejecting a previously accepted spelling, even when a working alternative exists and the error message names it (a compile error is still a compile error).
+- Reserving a name the consumer might already be using - which is what a growing reserved set does. `@nifrajs/client`'s reserved proxy keys are frozen for exactly this reason; see `packages/client/src/reserved.ts`.
+
+If you are shipping one of these anyway, ship a **codemod with it**. Hand-editing every broken call site is toil the framework caused, and the framework is the thing that knows the mechanical fix. Register it in `packages/cli/src/fix-recipes.ts` and point the diagnostic's `fix.command` at it, so `nifra fix` performs the migration the release note describes.
+
 ---
 
 ## Authoring Custom Middleware & Plugins

@@ -15,6 +15,12 @@ export {
   testClient,
 } from "./client.ts"
 export type { Jsonify } from "./jsonify.ts"
+export {
+  RESERVED_EXACT_KEYS,
+  RESERVED_KEY_READOUT,
+  RESERVED_VERB_KEYS,
+  reservedKeyFor,
+} from "./reserved.ts"
 export type { ApiError, Result } from "./result.ts"
 export type { ActionArgs, ActionData, ApiProxy, LoaderArgs, LoaderData } from "./routes.ts"
 export type {

@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises"
+import { join } from "node:path"
 import type { Diagnostic } from "./diagnostics.ts"
 import { resolveInsideProject } from "./project-path.ts"
 import { resolveWorkspaceLinkedPackage } from "./workspace-link.ts"
@@ -113,6 +114,89 @@ registerFixRecipe({
       )
     }
     return [diagnostic.evidence?.[1] ?? packageName]
+  },
+})
+
+/**
+ * How many typecheck passes the reserved-segment codemod will run. A nested collision
+ * (`/api/delete/then`) only reveals its second site once the first is rewritten, so one pass is not
+ * always enough - but each pass is a full `tsc`, so this converges or stops rather than looping.
+ */
+const RESERVED_SEGMENT_PASSES = 3
+
+registerFixRecipe({
+  id: "client.reserved-segment",
+  description:
+    "Rewrite typed-client call sites broken by a reserved-named route segment to the call spelling.",
+  verify: "tsc --noEmit",
+  async apply(root) {
+    const { parseCollisionSites, resolveTscBin, rewriteFile } = await import(
+      "./internal/reserved-segment-codemod.ts"
+    )
+    const tsconfig = join(root, "tsconfig.json")
+    if (!(await Bun.file(tsconfig).exists()))
+      throw new Error(
+        "[nifra] no tsconfig.json here - the reserved-segment codemod reads the compiler's own list of broken call sites, so it needs a typecheckable project",
+      )
+    const tscBin = resolveTscBin(root)
+    if (tscBin === undefined)
+      throw new Error(
+        "[nifra] no `typescript` install found from this directory upward - run `bun add -d typescript`, then rerun the fix",
+      )
+
+    const changed = new Set<string>()
+    const skipped: string[] = []
+    for (let pass = 0; pass < RESERVED_SEGMENT_PASSES; pass += 1) {
+      const proc = Bun.spawn(["bun", tscBin, "--noEmit", "--pretty", "false", "-p", tsconfig], {
+        cwd: root,
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const [stdout, stderr] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ])
+      await proc.exited
+      const sites = parseCollisionSites(`${stdout}${stderr}`)
+      if (sites.length === 0) break
+
+      const byFile = new Map<string, (typeof sites)[number][]>()
+      for (const site of sites) {
+        const existing = byFile.get(site.file)
+        if (existing === undefined) byFile.set(site.file, [site])
+        else existing.push(site)
+      }
+
+      let wrote = false
+      skipped.length = 0
+      for (const [file, fileSites] of byFile) {
+        // Resolved through the project boundary: the compiler reports paths from its own rootDir, and
+        // a rewrite must never escape the project it was invoked in.
+        const path = await resolveInsideProject(root, file)
+        if (path === undefined) continue
+        const source = await readFile(path, "utf8")
+        const result = rewriteFile(source, fileSites)
+        for (const site of result.skipped) skipped.push(`${file}:${site.line}:${site.column}`)
+        if (result.source === source) continue
+        await writeFile(path, result.source, "utf8")
+        changed.add(file)
+        wrote = true
+      }
+      // Nothing rewritten this pass means the remaining sites are all shapes the codemod declines to
+      // touch. Another `tsc` would report the same list, so stop instead of burning the budget.
+      if (!wrote) break
+    }
+
+    if (skipped.length > 0) {
+      const rewritten =
+        changed.size === 0
+          ? "no site was rewritten"
+          : `rewrote ${changed.size} file${changed.size === 1 ? "" : "s"}`
+      throw new Error(
+        `[nifra] ${rewritten}; ${skipped.length} reserved-segment site${skipped.length === 1 ? "" : "s"} need${skipped.length === 1 ? "s" : ""} a manual edit (the collision is not reached by a plain \`.segment\` property access there): ${skipped.join(", ")}`,
+      )
+    }
+    return [...changed]
   },
 })
 

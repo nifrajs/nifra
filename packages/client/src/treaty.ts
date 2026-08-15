@@ -147,7 +147,7 @@ type Methods<MethodMap> = {
  * spelling one of these can never be reached by PROPERTY ACCESS: the access resolves to the
  * reserved behavior (verb call, `.subscribe()`, `.ws()`, root `index`, thenable guard) instead of
  * extending the path. The typed spelling for such a segment is a call on the parent node
- * (`CollisionEscape` below). Verbs are intercepted case-insensitively; the rest match exactly.
+ * (`SegmentCall` below). Verbs are intercepted case-insensitively; the rest match exactly.
  * Kept in lockstep with the runtime's `HTTP_VERBS` set.
  */
 type ReservedVerbKey = "get" | "post" | "put" | "patch" | "delete" | "head" | "options"
@@ -157,7 +157,7 @@ type ReservedExactKey = "subscribe" | "ws" | "index" | "then"
  * What a reserved-named segment resolves to instead of a route node, so the collision is a
  * compile error whose message reads out the fix - not a runtime `TypeError` on a path the
  * type system claimed was fine. The typed spelling for the same route is a CALL on the parent
- * node (see `CollisionEscape`); `nifra check` reports the collision at the route definition
+ * node (see `SegmentCall`); `nifra check` reports the collision at the route definition
  * (NF-C018) with the same guidance.
  */
 interface ReservedSegmentCollision<Seg extends string> {
@@ -215,29 +215,30 @@ type ParamChild<R, Prefix extends string> = [ParamSeg<R, Prefix>] extends [never
         ) => TreatyNode<R, `${Prefix}/*${Name}`>
       : unknown
 
-/** The reserved-named child segments under `Prefix`, if any. */
-type CollidingSegs<R, Prefix extends string> = {
-  [S in StaticSegs<R, Prefix> & string]: IsReservedSeg<S> extends true ? S : never
-}[StaticSegs<R, Prefix> & string]
-
 /**
- * The typed spelling for reserved-named segments. Property access can never reach them (the
- * proxy resolves the reserved key first), but the runtime's apply trap has always accepted a
- * scalar argument as one literal path segment - the same call params use. This types that call
- * for EXACTLY the colliding segments, so `api.api("delete").post()` sends `POST /api/delete`
- * while non-colliding segments keep dot access as their only spelling. Placed after `ParamChild`
- * in the node intersection, so on a node with both, an object argument resolves to the param
- * signature and a string literal falls through to this one - matching the runtime, which treats
- * an object as a param bag and a scalar as the segment itself.
+ * The call spelling for a static child segment: `api("users").get()` is `api.users.get()`.
+ *
+ * This is the ONLY spelling that can reach a reserved-named segment - property access resolves the
+ * reserved key first - but it is typed for EVERY static segment, not just the colliding ones. The
+ * runtime has always behaved this way: the apply trap appends any scalar argument as one literal
+ * path segment, the same path params take. Typing it narrowly made the escape itself a moving
+ * target, because which segments collide is decided by the reserved set, and that set can grow. A
+ * call site written as `api("users")` keeps compiling if `users` is ever reserved; the same site
+ * written as `api.users` would not. Widening this costs one call signature and removes a whole
+ * class of future break.
+ *
+ * Placed after `ParamChild` in the node intersection, so on a node with both, an object argument
+ * resolves to the param signature and a string literal falls through to this one - matching the
+ * runtime, which reads an object as a param bag and a scalar as the segment itself.
  */
-type CollisionEscape<R, Prefix extends string> = [CollidingSegs<R, Prefix>] extends [never]
+type SegmentCall<R, Prefix extends string> = [StaticSegs<R, Prefix>] extends [never]
   ? unknown
-  : <S extends CollidingSegs<R, Prefix>>(segment: S) => TreatyNode<R, `${Prefix}/${S}`>
+  : <S extends StaticSegs<R, Prefix> & string>(segment: S) => TreatyNode<R, `${Prefix}/${S}`>
 
 type TreatyNode<R, Prefix extends string> = MethodsAt<R, Prefix> &
   StaticChildren<R, Prefix> &
   ParamChild<R, Prefix> &
-  CollisionEscape<R, Prefix>
+  SegmentCall<R, Prefix>
 
 // The root path "/" is reached as `api.index.get()` (Eden convention).
 type RootIndex<R> = "/" extends keyof R ? { readonly index: Methods<R["/"]> } : unknown

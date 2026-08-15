@@ -5,6 +5,7 @@
  * *this* project's actual surface, not just generic docs.
  */
 
+import { reservedKeyFor } from "@nifrajs/client"
 import {
   type ProjectEvidenceSchema,
   type ProjectEvidenceSchemaPart,
@@ -154,26 +155,40 @@ function schemaLines(schema: ReflectedRoute["schema"]): string[] {
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
 /**
+ * The typed-client proxy chain for a path, without the terminal verb call. Shared by `clientCall`
+ * and the `nifra routes` collision annotation so both teach exactly one spelling.
+ */
+function clientChain(path: string): string {
+  const segs = path.split("/").filter((seg) => seg !== "")
+  if (segs.length === 0) return "api.index"
+  let chain = "api"
+  for (const seg of segs) {
+    if (seg.startsWith(":") || seg.startsWith("*")) {
+      const name = seg.replace(/^[:*]/, "") || "value"
+      chain += `({ ${name} })`
+    } else if (reservedKeyFor(seg) !== undefined) chain += `(${JSON.stringify(seg)})`
+    else chain += IDENT.test(seg) ? `.${seg}` : `[${JSON.stringify(seg)}]`
+  }
+  return chain
+}
+
+/**
  * The typed-client call form for a route - the exact `client<typeof app>` proxy chain an agent should
  * write, derived from the same convention `@nifrajs/client` implements (so it never has to read the
  * client tests to learn it): a static segment is a property (`.users`), a path param/wildcard is a call
  * that appends the value (`({ id })`), the root path is `.index`, and the HTTP verb is the terminal call.
  * Body verbs (POST/PUT/PATCH) take the body first then call-options; other verbs take call-options first -
  * so the `{ query }` argument lands in the right slot for each.
+ *
+ * A segment spelling a reserved proxy key (`delete`, `subscribe`, `then`, ...) is emitted as a call on
+ * the parent node instead - and NOT as bracket access, which does not help: the proxy intercepts the
+ * key however it is spelled. Emitting `.delete` here would hand an agent a chain that resolves the
+ * DELETE verb and silently requests the wrong path.
  */
 export function clientCall(method: string, path: string, schema: unknown): string {
   const s = schema as { body?: unknown; query?: unknown } | undefined
   const verb = method.toLowerCase()
-  const segs = path.split("/").filter((seg) => seg !== "")
-  let chain = "api"
-  if (segs.length === 0) chain += ".index"
-  else
-    for (const seg of segs) {
-      if (seg.startsWith(":") || seg.startsWith("*")) {
-        const name = seg.replace(/^[:*]/, "") || "value"
-        chain += `({ ${name} })`
-      } else chain += IDENT.test(seg) ? `.${seg}` : `[${JSON.stringify(seg)}]`
-    }
+  const chain = clientChain(path)
   const isBodyVerb = verb === "post" || verb === "put" || verb === "patch"
   let call: string
   if (isBodyVerb) {
@@ -460,6 +475,27 @@ export function buildRouteTable(input: RouteTableInput): RouteTableEntry[] {
   )
 }
 
+/**
+ * The typed-client spelling for a route path, and the reserved key it collides with when one of its
+ * static segments cannot be reached by property access.
+ *
+ * This is where a dev meets the reserved set EARLIEST: `nifra routes` is what you run while the
+ * route is being written, long before a typed client call site exists to break. The reserved names
+ * are deliberately unguessable from the outside (`then` and `index` especially - they exist so the
+ * proxy stays await-safe and can address `/`), so the route table names the collision and shows the
+ * spelling that reaches the route, rather than leaving it to be discovered by a failing build.
+ */
+export function clientSpellingFor(
+  path: string,
+): { readonly spelling: string; readonly reserved: string } | undefined {
+  for (const segment of path.split("/")) {
+    if (segment === "") continue
+    const reserved = reservedKeyFor(segment)
+    if (reserved !== undefined) return { spelling: clientChain(path), reserved }
+  }
+  return undefined
+}
+
 /** Render the route table as a terse aligned text table (the `nifra routes` default output). Pure. */
 export function renderRouteTable(rows: readonly RouteTableEntry[]): string {
   if (rows.length === 0)
@@ -468,16 +504,29 @@ export function renderRouteTable(rows: readonly RouteTableEntry[]): string {
     methods: r.methods.join(", "),
     kind: r.kind,
     path: r.kind === "api" && r.autoMounted ? `${r.path}  (auto-mounted)` : r.path,
+    client: clientSpellingFor(r.path),
   }))
   const methodW = Math.max("METHOD".length, ...display.map((d) => d.methods.length))
   const kindW = Math.max("KIND".length, ...display.map((d) => d.kind.length))
   const padEnd = (s: string, w: number): string => s + " ".repeat(Math.max(0, w - s.length))
   const line = (methods: string, kind: string, path: string): string =>
     `${padEnd(methods, methodW)}  ${padEnd(kind, kindW)}  ${path}`
-  return [
+  const table = [
     line("METHOD", "KIND", "PATH"),
-    ...display.map((d) => line(d.methods, d.kind, d.path)),
-  ].join("\n")
+    ...display.flatMap((d) =>
+      d.client === undefined
+        ? [line(d.methods, d.kind, d.path)]
+        : [
+            line(d.methods, d.kind, d.path),
+            line(
+              "",
+              "",
+              `  -> '${d.client.reserved}' is a reserved typed-client key; reach this route as \`${d.client.spelling}\``,
+            ),
+          ],
+    ),
+  ]
+  return table.join("\n")
 }
 
 /** One JSON row for `nifra routes --json` (the agent-facing, stable shape). */
@@ -487,21 +536,33 @@ export interface RouteJsonRow {
   readonly methods: readonly string[]
   readonly file?: string
   readonly autoMounted?: boolean
+  /** The reserved typed-client key a static segment of this path collides with, when one does. */
+  readonly reservedKey?: string
+  /** The typed-client call spelling that reaches this route, present only alongside `reservedKey`. */
+  readonly clientSpelling?: string
 }
 
 /** The route table as a JSON document for `--json` (agents). Stable keys; `file`/`autoMounted` present
- * only where meaningful (file on pages, autoMounted on API routes). */
+ * only where meaningful (file on pages, autoMounted on API routes). A colliding row additionally
+ * carries `reservedKey`/`clientSpelling` so an agent writing client code from this table never has to
+ * infer the closed set of reserved names - the one thing about it nobody can guess. */
 export function routeTableToJson(rows: readonly RouteTableEntry[]): {
   readonly routes: readonly RouteJsonRow[]
 } {
   return {
-    routes: rows.map((r) => ({
-      kind: r.kind,
-      path: r.path,
-      methods: r.methods,
-      ...(r.file !== undefined ? { file: r.file } : {}),
-      ...(r.kind === "api" ? { autoMounted: r.autoMounted === true } : {}),
-    })),
+    routes: rows.map((r) => {
+      const client = clientSpellingFor(r.path)
+      return {
+        kind: r.kind,
+        path: r.path,
+        methods: r.methods,
+        ...(r.file !== undefined ? { file: r.file } : {}),
+        ...(r.kind === "api" ? { autoMounted: r.autoMounted === true } : {}),
+        ...(client === undefined
+          ? {}
+          : { reservedKey: client.reserved, clientSpelling: client.spelling }),
+      }
+    }),
   }
 }
 

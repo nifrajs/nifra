@@ -9962,6 +9962,34 @@
     "doc": "/**\n * Require a specific session key (e.g. the `userId` a login set) to be present. Returns its value\n * (narrowed non-nullish); otherwise throws like {@link requireSession}. The common \"who is the user\"\n * guard: `const userId = requireUser(await sessions.get(c), \"userId\", { redirectTo: \"/login\" })`.\n */"
   },
   {
+    "name": "RESERVED_EXACT_KEYS",
+    "kind": "const",
+    "package": "@nifrajs/client",
+    "signature": "export declare const RESERVED_EXACT_KEYS: readonly [\"subscribe\", \"ws\", \"index\", \"then\"];",
+    "doc": "/** Intercepted by exact match: `subscribe`/`ws` are transports, `index` is `/`, `then` is the await guard. */"
+  },
+  {
+    "name": "RESERVED_KEY_READOUT",
+    "kind": "const",
+    "package": "@nifrajs/client",
+    "signature": "export declare const RESERVED_KEY_READOUT: string;",
+    "doc": "/** Human-readable readout of the closed set, for diagnostics that have to teach it. */"
+  },
+  {
+    "name": "RESERVED_VERB_KEYS",
+    "kind": "const",
+    "package": "@nifrajs/client",
+    "signature": "export declare const RESERVED_VERB_KEYS: readonly [\"get\", \"post\", \"put\", \"patch\", \"delete\", \"head\", \"options\"];",
+    "doc": "/** Intercepted case-insensitively: `/api/Delete` collides just as `/api/delete` does. */"
+  },
+  {
+    "name": "reservedKeyFor",
+    "kind": "function",
+    "package": "@nifrajs/client",
+    "signature": "export declare function reservedKeyFor(segment: string): string | undefined;",
+    "doc": "/**\n * The reserved key a static path segment collides with, or undefined. Params (`:id`) and wildcards\n * (`*rest`) never collide - they are not spelled as property accesses.\n */"
+  },
+  {
     "name": "ResizeInput",
     "kind": "interface",
     "package": "@nifrajs/image",

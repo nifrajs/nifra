@@ -301,6 +301,12 @@ Every public export of every package and documented subpath - name, kind, signat
   Context a route `loader` receives: the route params, the request, a typed in-process `api` (an {@link ApiProxy} for the app contract `Api`), and the platform `env`. Pair with `inProcessClient`.
 - **LoaderData** _(type)_ - `type LoaderData<L> = L extends (...args: never[]) => infer R ? Awaited<R> : never`
   The (awaited) return of a `loader`, for typing a page component's `data` prop.
+- **RESERVED_EXACT_KEYS** _(const)_ - `RESERVED_EXACT_KEYS: readonly ["subscribe", "ws", "index", "then"]`
+  Intercepted by exact match: `subscribe`/`ws` are transports, `index` is `/`, `then` is the await guard.
+- **RESERVED_KEY_READOUT** _(const)_ - `RESERVED_KEY_READOUT: string`
+  Human-readable readout of the closed set, for diagnostics that have to teach it.
+- **RESERVED_VERB_KEYS** _(const)_ - `RESERVED_VERB_KEYS: readonly ["get", "post", "put", "patch", "delete", "head", "options"]`
+  Intercepted case-insensitively: `/api/Delete` collides just as `/api/delete` does.
 - **RegistryOf** _(type)_ - `type RegistryOf<App> = App extends Server<infer R, infer _Ctx> ? R : never`
   Extract the accumulated route registry from a server's type (`typeof app`), ignoring its middleware context.
 - **ResponseContractViolation** _(class)_ - `class ResponseContractViolation`
@@ -319,6 +325,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **client** _(function)_ - `client: { <App>(baseUrl: string, options?: ClientOptions): Treaty<App>; <const C extends ContractShape>(contract: C, baseUrl: string, options?: ClientOptions): TreatyFromRegistry<RegistryFor<C>>; }`
   Create an end-to-end-typed client for a nifra server. Two modes:
 - **inProcessClient** _(function)_ - `inProcessClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: InProcessClientOptions) => InProcessClient<App>`
+- **reservedKeyFor** _(function)_ - `reservedKeyFor: (segment: string) => string | undefined`
+  The reserved key a static path segment collides with, or undefined. Params (`:id`) and wildcards (`*rest`) never collide - they are not spelled as property accesses.
 - **testClient** _(const)_ - `testClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: InProcessClientOptions) => InProcessClient<App>`
   The in-process test client - the Fastify-`inject` / supertest equivalent for nifra. Drives the app's own `fetch` directly: no server, no port, no network, the full real lifecycle (validation, middleware, contracts, auth), and end-to-end types from `App`. Calls never throw - branch on `res.ok`. An a…
 
