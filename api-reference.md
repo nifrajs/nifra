@@ -2906,6 +2906,20 @@ _No named exports (side-effect entrypoint)._
   Pluggable ISR cache backend. **Production deploys MUST use a shared/durable store** (Workers KV, Redis, the platform Cache API) so cached pages *and* revalidation hold across instances; {@link MemoryCacheStore} is dev / single-instance only. Implementations are async so a network store (KV/Redis) f…
 - **CachedResponse** _(interface)_ - `interface CachedResponse`
   A cached SSR response - the bytes + metadata a {@link CacheStore} persists.
+- **ClientAction** _(type)_ - `type ClientAction = ( args: ClientActionArgs, ) => ClientActionResult | void | Promise<ClientActionResult | void>`
+  A client-only action wrapper; it never replaces the server action.
+- **ClientActionArgs** _(interface)_ - `interface ClientActionArgs`
+  Safe, client-visible context for a client action. No secrets or raw request headers cross this seam.
+- **ClientActionResult** _(interface)_ - `interface ClientActionResult`
+  Client action preparation. `body` is sent as untrusted input; `optimisticData` is never sent.
+- **ClientLoader** _(type)_ - `type ClientLoader = (args: ClientLoaderArgs) => unknown | Promise<unknown>`
+  A client-only post-hydration data loader. Its return value replaces the route's rendered data.
+- **ClientLoaderArgs** _(interface)_ - `interface ClientLoaderArgs`
+  Safe, client-visible context for a client loader. It intentionally exposes no Request or headers.
+- **ClientRequestBody** _(type)_ - `type ClientRequestBody = NonNullable<RequestInit["body"]>`
+  The body a client action may prepare for the server action. The server must validate it again.
+- **ClientRouteHooks** _(interface)_ - `interface ClientRouteHooks`
+  Client hooks populated by the generated route entry after a route chunk loads.
 - **ClientRouter** _(interface)_ - `interface ClientRouter`
   The agnostic router store consumed by per-adapter Router bindings.
 - **ClientRouterOptions** _(interface)_ - `interface ClientRouterOptions`

@@ -12,17 +12,40 @@ export const MAX_MEDIA_QUERY_LENGTH = 256
 
 export interface TriggerOptions {
   /** Target used by the `visible` strategy. Missing targets degrade to immediate activation. */
-  readonly target?: Element
+  readonly target?: object
 }
 
 const NOOP = (): void => {}
 
+/** Structural event shape used instead of a DOM lib type so this package stays runtime-neutral. */
+interface MediaQueryChangeEvent {
+  readonly matches: boolean
+}
+
+interface IntersectionEntryLike {
+  readonly isIntersecting: boolean
+}
+
+interface IntersectionObserverLike {
+  observe(target: object): void
+  disconnect(): void
+}
+
+interface BrowserCapabilities {
+  readonly requestIdleCallback?: (callback: () => void) => number
+  readonly cancelIdleCallback?: (handle: number) => void
+  readonly matchMedia?: (query: string) => MediaQueryListLike
+  readonly IntersectionObserver?: new (
+    callback: (entries: readonly IntersectionEntryLike[]) => void,
+  ) => IntersectionObserverLike
+}
+
 type MediaQueryListLike = {
   readonly matches: boolean
-  addEventListener?: (type: "change", listener: (event: MediaQueryListEvent) => void) => void
-  removeEventListener?: (type: "change", listener: (event: MediaQueryListEvent) => void) => void
-  addListener?: (listener: (event: MediaQueryListEvent) => void) => void
-  removeListener?: (listener: (event: MediaQueryListEvent) => void) => void
+  addEventListener?: (type: "change", listener: (event: MediaQueryChangeEvent) => void) => void
+  removeEventListener?: (type: "change", listener: (event: MediaQueryChangeEvent) => void) => void
+  addListener?: (listener: (event: MediaQueryChangeEvent) => void) => void
+  removeListener?: (listener: (event: MediaQueryChangeEvent) => void) => void
 }
 
 const mediaQuery = (strategy: IslandStrategy): string | undefined => {
@@ -41,6 +64,9 @@ export function scheduleTrigger(
   run: () => void,
   options: TriggerOptions = {},
 ): () => void {
+  // Cast through unknown so a consumer's DOM lib cannot merge its stricter Element signatures into
+  // this structural, DOM-free contract.
+  const browser = globalThis as unknown as BrowserCapabilities
   let fired = false
   let disposed = false
   let cleanup: (() => void) | undefined
@@ -59,7 +85,7 @@ export function scheduleTrigger(
   }
 
   if (strategy === "idle") {
-    const ric = globalThis.requestIdleCallback
+    const ric = browser.requestIdleCallback
     if (ric === undefined) {
       const handle = globalThis.setTimeout(fire, 1)
       return () => {
@@ -70,16 +96,17 @@ export function scheduleTrigger(
     const handle = ric(fire)
     return () => {
       disposed = true
-      globalThis.cancelIdleCallback?.(handle)
+      browser.cancelIdleCallback?.(handle)
     }
   }
 
   if (strategy === "visible") {
-    if (options.target === undefined || typeof IntersectionObserver === "undefined") {
+    const Observer = browser.IntersectionObserver
+    if (options.target === undefined || Observer === undefined) {
       fire()
       return NOOP
     }
-    const observer = new IntersectionObserver((entries) => {
+    const observer = new Observer((entries) => {
       if (entries.some((entry) => entry.isIntersecting)) fire()
     })
     observer.observe(options.target)
@@ -92,11 +119,7 @@ export function scheduleTrigger(
   }
 
   const query = mediaQuery(strategy)
-  const matchMedia = (
-    globalThis as typeof globalThis & {
-      matchMedia?: (query: string) => MediaQueryListLike
-    }
-  ).matchMedia
+  const matchMedia = browser.matchMedia
   if (query === undefined) return NOOP
   if (matchMedia === undefined) {
     // No matchMedia means the browser cannot honor a conditional trigger. Immediate activation is
@@ -111,7 +134,7 @@ export function scheduleTrigger(
     return NOOP
   }
 
-  const onChange = (event: MediaQueryListEvent): void => {
+  const onChange = (event: MediaQueryChangeEvent): void => {
     if (event.matches) fire()
   }
   if (list.addEventListener !== undefined) {

@@ -120,6 +120,13 @@ export {
 export {
   type Action,
   buildManifest,
+  type ClientAction,
+  type ClientActionArgs,
+  type ClientActionResult,
+  type ClientLoader,
+  type ClientLoaderArgs,
+  type ClientRequestBody,
+  type ClientRouteHooks,
   enumerateStaticRoutes,
   filePathToPattern,
   filePathToPatterns,
@@ -2496,6 +2503,9 @@ export function generateClientEntry(
     // routeId → the page's client-only search keys (`searchClientKeys`, or `[]`). The router reads this
     // by reference to decide when a same-route search change can skip the loader fetch (re-render only).
     "const searchClientKeys = {}",
+    // routeId → the page's optional post-hydration client loader/action hooks. Hooks are populated only
+    // after the route chunk loads, so routes that do not declare them remain ordinary route modules.
+    "const routeHooks = {}",
     "const loadModule = async (id) => {",
     "  if (chains[id]) return",
     "  const mods = await loaders[id]()",
@@ -2524,6 +2534,8 @@ export function generateClientEntry(
     "    searchSchemas[id] = mods.map((m) => m.searchSchema)",
     "    searchClientKeys[id] = mods[mods.length - 1].searchClientKeys ?? []",
     "  }",
+    "  const page = errorRouteIds.has(id) ? mods[mods.length - 2] : mods[mods.length - 1]",
+    "  routeHooks[id] = { clientLoader: page.clientLoader, clientAction: page.clientAction }",
     "}",
     "const patterns = [",
     ...patternRows,
@@ -2551,7 +2563,7 @@ export function generateClientEntry(
     "  pending: false,",
     "}",
     `const statusRoutes = ${JSON.stringify(statusRoutes)}`,
-    "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys })",
+    "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys, routeHooks })",
     "installHistory(router)",
     "installForms(router)",
     // The container is found in the DOM, not baked in. `rootId` is a per-render option and this entry
@@ -2572,6 +2584,10 @@ export function generateClientEntry(
     // is server-rendered; subsequent navigations update it from the matched route's meta + data.
     "loadModule(initial.routeId).then(() => {",
     "  mountRouter({ router, routes: chains, searchSchemas, container: root })",
+    // Run the optional client loader only after the adapter has mounted the SSR tree. The initial
+    // server data is already in `window.__NIFRA_DATA__`, so `serverLoader()` reuses it and cannot
+    // duplicate the first request.
+    "  router.hydrate().catch((error) => console.error('[nifra/web] clientLoader failed:', error))",
     // Next frame: the adapter has committed its initial hydration, so handlers are attached. Flip the
     // document to interactive (`data-nifra-hydrated` + `nifra:hydrated`) for apps to gate pre-hydration UI.
     "  requestAnimationFrame(signalHydrated)",

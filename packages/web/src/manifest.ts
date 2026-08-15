@@ -36,6 +36,43 @@ export type Loader = (ctx: LoaderContext) => unknown | Promise<unknown>
  */
 export type Action = (ctx: LoaderContext) => unknown | Promise<unknown>
 
+/** The body a client action may prepare for the server action. The server must validate it again. */
+export type ClientRequestBody = NonNullable<RequestInit["body"]>
+
+/** Safe, client-visible context for a client loader. It intentionally exposes no Request or headers. */
+export interface ClientLoaderArgs {
+  readonly url: string
+  readonly params: Readonly<Record<string, string>>
+  readonly signal: AbortSignal
+  /** Lazily obtains the server loader result; repeated calls share one per-navigation request. */
+  readonly serverLoader: () => Promise<unknown>
+}
+
+/** A client-only post-hydration data loader. Its return value replaces the route's rendered data. */
+export type ClientLoader = (args: ClientLoaderArgs) => unknown | Promise<unknown>
+
+/** Safe, client-visible context for a client action. No secrets or raw request headers cross this seam. */
+export interface ClientActionArgs extends ClientLoaderArgs {
+  readonly body: ClientRequestBody
+}
+
+/** Client action preparation. `body` is sent as untrusted input; `optimisticData` is never sent. */
+export interface ClientActionResult {
+  readonly body?: ClientRequestBody
+  readonly optimisticData?: unknown
+}
+
+/** A client-only action wrapper; it never replaces the server action. */
+export type ClientAction = (
+  args: ClientActionArgs,
+) => ClientActionResult | void | Promise<ClientActionResult | void>
+
+/** Client hooks populated by the generated route entry after a route chunk loads. */
+export interface ClientRouteHooks {
+  readonly clientLoader?: ClientLoader
+  readonly clientAction?: ClientAction
+}
+
 /**
  * One `<link>` tag's attributes for a route/layout's `meta.link`. The common HTML `<link>` attributes
  * are spelled out and **optional** so a typed partial like `{ rel, href, hreflang }` is assignable -
@@ -192,6 +229,10 @@ export interface RouteModule {
   readonly default: unknown
   readonly loader?: Loader
   readonly action?: Action
+  /** Optional client-only loader. It runs after hydration and on client navigations. */
+  readonly clientLoader?: ClientLoader
+  /** Optional client-only submit wrapper. The server action remains mandatory for mutations. */
+  readonly clientAction?: ClientAction
   /** A Standard Schema validating this route's URL search params. When present, `ctx.search` is parsed +
    * validated against it (failing closed to the schema's defaults on invalid input); type it into the
    * loader with `LoaderArgs<Api, Env, typeof searchSchema>`. */

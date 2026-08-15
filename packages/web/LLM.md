@@ -29,7 +29,7 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 - **buildServer** _(function)_ - `buildServer: (options: BuildServerOptions) => Promise<ServerBuild>` · from `@nifrajs/web/build`
 - **buildServerVite** _(function)_ - `buildServerVite: (options: BuildServerViteOptions) => Promise<ServerBuild>` · from `@nifrajs/web/build-vite`
 
-_…and 333 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 340 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 

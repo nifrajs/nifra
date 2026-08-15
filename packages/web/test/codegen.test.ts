@@ -77,7 +77,7 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   expect(code).toContain("createMatcher(patterns)(location.pathname)")
   expect(code).toContain('const statusRoutes = {"404":"_404","410":"_410"}')
   expect(code).toContain(
-    "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys })",
+    "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys, routeHooks })",
   )
   expect(code).toContain("installHistory(router)")
   expect(code).toContain("installForms(router)")

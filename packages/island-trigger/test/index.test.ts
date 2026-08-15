@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { type IslandStrategy, MAX_MEDIA_QUERY_LENGTH, scheduleTrigger } from "../src/index.ts"
 
+type MediaQueryChangeEvent = { readonly matches: boolean }
+
 describe("scheduleTrigger", () => {
   test("load fires once", () => {
     let runs = 0
@@ -31,10 +33,10 @@ describe("scheduleTrigger", () => {
   test("media runs immediately when already matching and is one-shot", () => {
     const g = globalThis as typeof globalThis & { matchMedia?: unknown }
     const original = g.matchMedia
-    let listener: ((event: MediaQueryListEvent) => void) | undefined
+    let listener: ((event: MediaQueryChangeEvent) => void) | undefined
     g.matchMedia = (() => ({
       matches: true,
-      addEventListener: (_type: "change", next: (event: MediaQueryListEvent) => void) => {
+      addEventListener: (_type: "change", next: (event: MediaQueryChangeEvent) => void) => {
         listener = next
       },
       removeEventListener: () => {},
@@ -44,7 +46,7 @@ describe("scheduleTrigger", () => {
       scheduleTrigger({ media: "(min-width: 1px)" }, () => {
         runs++
       })
-      listener?.({ matches: true } as MediaQueryListEvent)
+      listener?.({ matches: true })
       expect(runs).toBe(1)
     } finally {
       g.matchMedia = original

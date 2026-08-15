@@ -8,6 +8,7 @@ import { decodeRouteParams } from "@nifrajs/core/pattern"
 import { Router as CoreRouter } from "@nifrajs/core/router"
 import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import { parseNdjsonData } from "./deferred.ts"
+import type { ClientActionResult, ClientRequestBody, ClientRouteHooks } from "./manifest.ts"
 import { isClientOnlySearchChange } from "./search.ts"
 
 /**
@@ -247,6 +248,8 @@ export interface ClientRouter {
     body: NonNullable<RequestInit["body"]>,
     opts?: SubmitOptions,
   ) => Promise<void>
+  /** Run the initial route's client loader after the adapter has hydrated the SSR markup. */
+  hydrate: () => Promise<void>
   /**
    * Mark cached route data stale and refresh the active view. With `paths`, target exactly those
    * (e.g. the routes a mutation changed); without, invalidate the whole cache. The active route
@@ -295,6 +298,8 @@ export interface ClientRouterOptions {
    * entry's `loadModule` (so a route's keys are present once it has been visited, which is exactly when a
    * same-route nav can consult them). Omit ⇒ every search change revalidates (the safe default). */
   readonly searchClientKeys?: Readonly<Record<string, readonly string[]>>
+  /** routeId → client-only loader/action hooks, populated by the generated route entry. */
+  readonly routeHooks?: Readonly<Record<string, ClientRouteHooks | undefined>>
 }
 
 /** Options for a per-adapter `mountRouter` (the Router binding that hydrates + re-renders). */
@@ -393,12 +398,21 @@ const rawSearchOf = (path: string): string => {
   return q === -1 ? "" : path.slice(q)
 }
 
+/** Validate the client-action envelope before reading it. Its `body` is deliberately not treated as
+ * trusted data: it is an opaque RequestInit body that the server action must parse and authorize. */
+const isClientActionResult = (value: unknown): value is ClientActionResult =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
 export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   const match = createMatcher(options.patterns)
   const fetchData = options.fetchData ?? defaultFetchData
   // routeId → the route's client-only search keys. Read by reference (the generated entry keeps writing
   // to it as routes load), so a same-route nav always sees the current route's keys.
   const searchClientKeys = options.searchClientKeys ?? {}
+  // routeId → client hooks. The generated entry mutates this object only while loading a route module;
+  // route navigation reads it after `loadModule` resolves, so an app without hooks pays only a map
+  // lookup and keeps the existing route-chunk split.
+  const routeHooks = options.routeHooks ?? {}
   /**
    * Fetch a route's data and normalise it.
    *
@@ -448,7 +462,95 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     )
     return { data: payload.data, layoutData }
   }
+  /**
+   * Apply a client loader without making the server loader eager. The thunk is memoized per navigation
+   * (or per hydration), so a hook can call it repeatedly without duplicate requests. The returned
+   * client value is never sent back to the server.
+   */
+  const applyClientLoader = async (
+    path: string,
+    route: { routeId: string; params: Record<string, string> },
+    signal: AbortSignal | undefined,
+    serverLoad: () => Promise<LoadedRouteData>,
+    initial?: LoadedRouteData,
+  ): Promise<LoadedRouteData> => {
+    const hook = routeHooks[route.routeId]?.clientLoader
+    if (hook === undefined) return initial ?? serverLoad()
+    let serverResult: Promise<LoadedRouteData> | undefined =
+      initial === undefined ? undefined : Promise.resolve(initial)
+    const serverLoader = async (): Promise<unknown> => {
+      if (signal?.aborted === true)
+        throw new DOMException("The operation was aborted", "AbortError")
+      serverResult ??= serverLoad()
+      return (await serverResult).data
+    }
+    const clientData = await hook({
+      url: path,
+      params: route.params,
+      signal: signal ?? new AbortController().signal,
+      serverLoader,
+    })
+    const loaded = await serverResult
+    if (loaded === undefined) return { data: clientData }
+    // A server terminal status always wins over client-derived data. The client hook can enrich a
+    // normal response, but it cannot turn a server 404/410 into a rendered success route.
+    if (loaded.terminalRouteId !== undefined) return loaded
+    return { ...loaded, data: clientData }
+  }
   const loadModule = options.loadModule
+  const prepareClientAction = async (
+    action: string,
+    body: ClientRequestBody,
+    signal: AbortSignal,
+  ): Promise<{ readonly body: ClientRequestBody; readonly optimisticData?: unknown }> => {
+    const target = match(action)
+    if (target === null) return { body }
+    await loadModule?.(target.routeId)
+    const hook = routeHooks[target.routeId]?.clientAction
+    if (hook === undefined) return { body }
+    const result = await hook({
+      url: action,
+      params: target.params,
+      signal,
+      body,
+      serverLoader: async () => state.data,
+    })
+    if (result === undefined) return { body }
+    if (!isClientActionResult(result)) {
+      throw new TypeError("[nifra/web] clientAction must return an object or undefined")
+    }
+    return {
+      body: result.body ?? body,
+      ...(Object.hasOwn(result, "optimisticData") ? { optimisticData: result.optimisticData } : {}),
+    }
+  }
+  let hydrated = false
+  const hydrate = async (): Promise<void> => {
+    if (hydrated) return
+    hydrated = true
+    const route = { routeId: state.routeId, params: state.params }
+    if (routeHooks[route.routeId]?.clientLoader === undefined) return
+    const mine = ++token
+    navAbort?.abort()
+    const ac = new AbortController()
+    navAbort = ac
+    const initial = { data: state.data, layoutData: state.layoutData }
+    const loaded = await applyClientLoader(
+      state.path,
+      route,
+      ac.signal,
+      () => Promise.resolve(initial),
+      initial,
+    )
+    if (mine !== token) return
+    if (loaded.terminalRouteId !== undefined) {
+      await loadModule?.(loaded.terminalRouteId)
+      state = { ...state, routeId: loaded.terminalRouteId, params: {}, data: null }
+    } else {
+      state = { ...state, data: loaded.data, layoutData: loaded.layoutData }
+    }
+    emit()
+  }
   let state = options.initial
   const listeners = new Set<() => void>()
   let token = 0
@@ -515,10 +617,9 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     state = { ...state, pending: true }
     emit()
     try {
-      const loaded = await loadRouteData(
-        state.path,
-        { routeId: state.routeId, params: state.params },
-        ac.signal,
+      const active = { routeId: state.routeId, params: state.params }
+      const loaded = await applyClientLoader(state.path, active, ac.signal, () =>
+        loadRouteData(state.path, active, ac.signal),
       )
       if (mine !== token) return // superseded - drop the stale result
       cachePut(state.path, loaded)
@@ -702,21 +803,29 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       state = { ...state, pending: true, pendingPath: path }
       emit()
       try {
-        // Use prefetched data when present (one-shot - drop it); else fetch. The chunk is loaded
-        // either way (cached + instant after a prefetch), so pending covers both.
+        // Load the route chunk before invoking a client loader. A route without a client loader still
+        // uses the same server-data path; a route with one gets a lazy `serverLoader()` thunk.
+        await loadModule?.(matched.routeId)
+        // Use prefetched server data when present (one-shot - drop it); clientLoader still runs over
+        // that cached result without causing another network request.
         const hit = prefetched.has(path)
-        const dataPromise = hit
-          ? Promise.resolve(prefetched.get(path) as LoadedRouteData)
-          : loadRouteData(
+        const prefetchedData = hit ? (prefetched.get(path) as LoadedRouteData) : undefined
+        if (hit) prefetched.delete(path)
+        const loaded = await applyClientLoader(
+          path,
+          matched,
+          ac.signal,
+          () =>
+            loadRouteData(
               path,
               matched,
               ac.signal,
               state.layoutData === undefined
                 ? undefined
                 : { path: state.path, layoutData: state.layoutData },
-            )
-        if (hit) prefetched.delete(path)
-        const [, loaded] = await Promise.all([loadModule?.(matched.routeId), dataPromise])
+            ),
+          prefetchedData,
+        )
         if (loaded.terminalRouteId !== undefined) await loadModule?.(loaded.terminalRouteId)
         if (mine !== token) return // a newer navigation superseded this one - drop the stale result
         cachePut(path, loaded) // keep the keyed cache coherent with what we publish
@@ -742,6 +851,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     },
     submit: async (action, body, opts) => {
       const mine = ++token
+      const previousActionData = state.actionData
       // A superseding navigation/submit aborts this submit's FOLLOW-UP reads (revalidation / redirect
       // fetch + their NDJSON drains) - not the mutation POST itself, which should complete.
       // Wire into `navAbort` like `navigate`/`refetchActive`, so a later nav cancels the in-flight read.
@@ -757,7 +867,16 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       }
       emit()
       try {
-        const res = await fetch(action, { method: "POST", body, headers: { [DATA_HEADER]: "1" } })
+        const prepared = await prepareClientAction(action, body, ac.signal)
+        if (Object.hasOwn(prepared, "optimisticData")) {
+          state = { ...state, actionData: prepared.optimisticData }
+          emit()
+        }
+        const res = await fetch(action, {
+          method: "POST",
+          body: prepared.body,
+          headers: { [DATA_HEADER]: "1" },
+        })
         if (!res.ok) throw new Error(`[nifra/web] action failed (${res.status}): ${action}`)
         const redirectTo = res.headers.get(REDIRECT_HEADER)
         if (redirectTo !== null) {
@@ -765,8 +884,8 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           const target = match(redirectTo)
           if (target === null)
             throw new Error(`[nifra/web] action redirect off-route: ${redirectTo}`)
-          const [, loaded] = await Promise.all([
-            loadModule?.(target.routeId),
+          await loadModule?.(target.routeId)
+          const loaded = await applyClientLoader(redirectTo, target, ac.signal, () =>
             loadRouteData(
               redirectTo,
               target,
@@ -775,7 +894,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
                 ? undefined
                 : { path: state.path, layoutData: state.layoutData },
             ),
-          ])
+          )
           if (loaded.terminalRouteId !== undefined) await loadModule?.(loaded.terminalRouteId)
           if (mine !== token) return
           cachePut(redirectTo, loaded)
@@ -802,12 +921,11 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         // out (`revalidate: false`). A server-declared revalidate of the active path overrides the
         // opt-out (the server says it changed, so stale data would be wrong). Default is to revalidate.
         const skipActive = opts?.revalidate === false && !changed.includes(state.path)
+        const active = { routeId: state.routeId, params: state.params }
         const loaded = skipActive
           ? { data: state.data, layoutData: state.layoutData }
-          : await loadRouteData(
-              state.path,
-              { routeId: state.routeId, params: state.params },
-              ac.signal,
+          : await applyClientLoader(state.path, active, ac.signal, () =>
+              loadRouteData(state.path, active, ac.signal),
             )
         if (mine !== token) return
         cachePut(state.path, loaded) // the revalidated (or kept) data is now the cache's truth
@@ -837,7 +955,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
             params: state.params,
             path: state.path,
             data: state.data,
-            actionData: state.actionData,
+            actionData: previousActionData,
             pending: false,
           }
           emit()
@@ -845,6 +963,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         throw err
       }
     },
+    hydrate,
     invalidate: async (paths) => {
       // Mark targeted cache entries stale (all entries when no `paths`) - unmounted ones refetch
       // lazily on next access.

@@ -176,6 +176,114 @@ describe("createClientRouter", () => {
     expect(r.snapshot().routeId).toBe("user")
   })
 
+  test("clientLoader runs after the server loader and memoizes serverLoader()", async () => {
+    let serverLoads = 0
+    const r = createClientRouter({
+      patterns,
+      initial,
+      fetchData: async () => {
+        serverLoads++
+        return { fromServer: true }
+      },
+      routeHooks: {
+        user: {
+          clientLoader: async ({ serverLoader, params }) => ({
+            params,
+            first: await serverLoader(),
+            second: await serverLoader(),
+          }),
+        },
+      },
+    })
+
+    await r.navigate("/users/7")
+    expect(serverLoads).toBe(1)
+    expect(r.snapshot().data).toEqual({
+      params: { id: "7" },
+      first: { fromServer: true },
+      second: { fromServer: true },
+    })
+  })
+
+  test("hydrate runs clientLoader once over the SSR data without refetching", async () => {
+    let hookRuns = 0
+    const r = createClientRouter({
+      patterns: [{ routeId: "index", pattern: "/" }],
+      initial: { ...initial, data: { fromServer: true } },
+      fetchData: async () => {
+        throw new Error("hydration must not fetch")
+      },
+      routeHooks: {
+        index: {
+          clientLoader: async ({ serverLoader }) => {
+            hookRuns++
+            return { hydrated: await serverLoader() }
+          },
+        },
+      },
+    })
+
+    await r.hydrate()
+    await r.hydrate()
+    expect(hookRuns).toBe(1)
+    expect(r.snapshot().data).toEqual({ hydrated: { fromServer: true } })
+  })
+
+  test("clientAction prepares the request and exposes optimistic data, then keeps the server result", async () => {
+    const realFetch = globalThis.fetch
+    const bodies: string[] = []
+    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+      bodies.push(String(init?.body))
+      return new Response(JSON.stringify({ saved: true }), {
+        headers: { "content-type": "application/json" },
+      })
+    }) as typeof globalThis.fetch
+    try {
+      const seen: unknown[] = []
+      const r = createClientRouter({
+        patterns,
+        initial,
+        routeHooks: {
+          index: {
+            clientAction: ({ body }) => ({
+              body: `prepared:${String(body)}`,
+              optimisticData: { pending: true },
+            }),
+          },
+        },
+      })
+      r.subscribe(() => seen.push(r.snapshot().actionData))
+      await r.submit("/", "raw", { revalidate: false })
+      expect(bodies).toEqual(["prepared:raw"])
+      expect(seen).toContainEqual({ pending: true })
+      expect(r.snapshot().actionData).toEqual({ saved: true })
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
+  test("a clientLoader failure publishes no partial data", async () => {
+    const r = createClientRouter({
+      patterns,
+      initial,
+      routeHooks: {
+        user: {
+          clientLoader: async () => {
+            throw new Error("client loader failed")
+          },
+        },
+      },
+      fetchData: async () => ({ fromServer: true }),
+    })
+    await expect(r.navigate("/users/7")).rejects.toThrow("client loader failed")
+    expect(r.snapshot()).toMatchObject({
+      routeId: "index",
+      path: "/",
+      data: null,
+      pending: false,
+    })
+  })
+
   test("a client-only search change re-renders WITHOUT re-running the loader", async () => {
     let fetches = 0
     const seenPending: boolean[] = []
