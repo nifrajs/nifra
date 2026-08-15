@@ -166,7 +166,7 @@ suite("undiciTransport()", () => {
     assert.equal(seen?.headers["x-forwarded-for"], undefined)
     assert.equal(seen?.headers.forwarded, undefined)
 
-    await proxy({ forwardClientIp: true })({
+    await proxy({ forwardClientIp: true, trustForwardedFor: true })({
       req: new Request("http://edge.test/x", { headers: { ...forged, host: "edge.test" } }),
       clientIp: "203.0.113.9",
     })
