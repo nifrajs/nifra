@@ -108,6 +108,26 @@ describe("runRequest", () => {
     expect(r.bodyText?.length).toBe(10)
   })
 
+  test("cancels a response stream at maxBodyChars without parsing a partial JSON body", async () => {
+    let cancelled = false
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(`{"payload":"${"x".repeat(1_000_000)}`))
+      },
+      cancel() {
+        cancelled = true
+      },
+    })
+    const app: AppLike = {
+      fetch: () => new Response(body, { headers: { "content-type": "application/json" } }),
+    }
+    const result = await runRequest(app, { path: "/" }, { maxBodyChars: 32 })
+    expect(result.truncated).toBe(true)
+    expect(result.bodyText?.length).toBe(32)
+    expect(result.body).toBe(result.bodyText)
+    expect(cancelled).toBe(true)
+  })
+
   test("echoes the label", async () => {
     const r = await runRequest(echoApp, { path: "/users/1", label: "fetch user" })
     expect(r.label).toBe("fetch user")

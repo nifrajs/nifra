@@ -9,6 +9,7 @@ import { mcp } from "@nifrajs/core/mcp"
 import type { LoadedApp } from "../src/load.ts"
 import { detectMonorepo, loadMonorepoApps } from "../src/load.ts"
 import {
+  CHILD_OUTPUT_MAX_BYTES,
   createCachedAppLoader,
   extractBackendPrompts,
   extractBackendResources,
@@ -17,6 +18,7 @@ import {
   projectFeatures,
   projectTools,
   readBoundedResponse,
+  readBoundedStream,
   resolveProjectDir,
   validateLocalPort,
   WarmWorker,
@@ -82,6 +84,21 @@ test("local dev-tool reads validate ports and cap response bodies", async () => 
       }),
     ),
   ).rejects.toThrow("size limit")
+})
+
+test("child output is cancelled at its byte budget", async () => {
+  let limited = false
+  const result = await readBoundedStream(
+    new Response("x".repeat(100)).body as ReadableStream<Uint8Array>,
+    10,
+    () => {
+      limited = true
+    },
+  )
+  expect(result.truncated).toBe(true)
+  expect(result.text.length).toBe(10)
+  expect(limited).toBe(true)
+  expect(CHILD_OUTPUT_MAX_BYTES).toBeGreaterThan(0)
 })
 
 describe("handleRpc (MCP protocol)", () => {

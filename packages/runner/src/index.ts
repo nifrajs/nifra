@@ -113,6 +113,58 @@ function headersToObject(headers: Headers): Record<string, string> {
   return out
 }
 
+interface BoundedText {
+  readonly text: string
+  readonly truncated: boolean
+}
+
+/** Read at most the caller's character budget while enforcing a byte budget before decoding more data. */
+async function readBoundedText(response: Response, maxChars: number): Promise<BoundedText> {
+  if (response.body === null || maxChars === 0) {
+    if (response.body !== null && maxChars === 0) await response.body.cancel()
+    return { text: "", truncated: response.body !== null }
+  }
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  const chunks: string[] = []
+  let totalChars = 0
+  let truncated = false
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) {
+        chunks.push(decoder.decode())
+        break
+      }
+      if (value === undefined) continue
+      const remaining = maxChars - totalChars
+      if (remaining <= 0) {
+        truncated = true
+        await reader.cancel()
+        break
+      }
+      // UTF-8 needs at most four bytes per decoded character. This bounds a chunk before decoding,
+      // while the final string slice preserves the public character-count contract.
+      const byteBudget = Math.max(1, Math.min(Number.MAX_SAFE_INTEGER, remaining * 4))
+      const allowed = Math.min(value.byteLength, byteBudget)
+      const chunk = decoder.decode(value.subarray(0, allowed), {
+        stream: allowed < value.byteLength,
+      })
+      chunks.push(chunk)
+      totalChars += chunk.length
+      if (allowed < value.byteLength || chunk.length > remaining) {
+        truncated = true
+        await reader.cancel()
+        break
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  const text = chunks.join("").slice(0, maxChars)
+  return { text, truncated }
+}
+
 /** Drive a single request through the app, capturing the outcome (never throws - a thrown app error
  * becomes `result.error`). */
 export async function runRequest(
@@ -140,16 +192,15 @@ export async function runRequest(
 
   try {
     const res = await app.fetch(request)
-    const text = await res.text()
-    const truncated = text.length > maxBody
-    const bodyText = truncated ? text.slice(0, maxBody) : text
+    const captured = await readBoundedText(res, maxBody)
+    const bodyText = captured.text
     const contentType = res.headers.get("content-type") ?? ""
     let body: unknown = bodyText
-    if (contentType.includes("application/json") && text.length > 0) {
+    if (!captured.truncated && contentType.includes("application/json") && bodyText.length > 0) {
       try {
-        body = JSON.parse(text)
+        body = JSON.parse(bodyText)
       } catch {
-        // Content-Type lied, or the body is partial - keep the text form.
+        // Content-Type lied - keep the text form.
       }
     }
     return {
@@ -160,7 +211,7 @@ export async function runRequest(
       headers: headersToObject(res.headers),
       body,
       bodyText,
-      ...(truncated ? { truncated } : {}),
+      ...(captured.truncated ? { truncated: true } : {}),
       durationMs: now() - start,
     }
   } catch (err) {

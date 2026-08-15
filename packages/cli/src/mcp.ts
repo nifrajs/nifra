@@ -104,6 +104,8 @@ function childPath(name: "mcp-run" | "mcp-render" | "mcp-ws"): string {
  * within one attention span rather than after minutes of polling.
  */
 const CHILD_TIMEOUT_MS = 30_000
+/** Maximum stdout or stderr retained from a project subprocess. The process is killed at the limit. */
+export const CHILD_OUTPUT_MAX_BYTES = 1_048_576
 
 /** Local dev-tool reads are intentionally bounded: MCP runs in an agent process and must not hang on or
  * buffer an unrelated loopback service just because a caller supplied its port. */
@@ -172,6 +174,47 @@ const timeoutMessage = (label: string, ms: number): string =>
   `that keeps the event loop alive (a database pool, a Redis client, an interval) opened during import ` +
   `rather than lazily. Check for top-level connections in the app entry or anything it imports.`
 
+export interface BoundedOutput {
+  readonly text: string
+  readonly truncated: boolean
+}
+
+/** Read child output incrementally and cancel as soon as the byte budget is crossed. */
+export async function readBoundedStream(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes = CHILD_OUTPUT_MAX_BYTES,
+  onLimit?: () => void,
+): Promise<BoundedOutput> {
+  const reader = stream.getReader()
+  const decoder = new TextDecoder()
+  const chunks: string[] = []
+  let totalBytes = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) {
+        chunks.push(decoder.decode())
+        return { text: chunks.join(""), truncated: false }
+      }
+      if (value === undefined) continue
+      const remaining = maxBytes - totalBytes
+      if (remaining <= 0 || value.byteLength > remaining) {
+        if (remaining > 0) {
+          chunks.push(decoder.decode(value.subarray(0, remaining), { stream: true }))
+          chunks.push(decoder.decode())
+        }
+        await reader.cancel()
+        onLimit?.()
+        return { text: chunks.join(""), truncated: true }
+      }
+      totalBytes += value.byteLength
+      chunks.push(decoder.decode(value, { stream: true }))
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
 async function spawnChild(
   child: "mcp-run" | "mcp-render" | "mcp-ws",
   cwd: string,
@@ -185,30 +228,46 @@ async function spawnChild(
     stdout: "pipe",
     stderr: "pipe",
   })
-  const abort = (): void => proc.kill()
+  let killed = false
+  const kill = (): void => {
+    if (killed) return
+    killed = true
+    proc.kill()
+  }
+  const abort = (): void => kill()
   signal?.addEventListener("abort", abort, { once: true })
   let timedOut = false
   const timer = setTimeout(() => {
     timedOut = true
-    proc.kill()
+    kill()
   }, CHILD_TIMEOUT_MS)
+  let outputExceeded = false
   try {
     proc.stdin.write(JSON.stringify(input))
     await proc.stdin.end()
     const [out, err] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
+      readBoundedStream(proc.stdout, CHILD_OUTPUT_MAX_BYTES, () => {
+        outputExceeded = true
+        kill()
+      }),
+      readBoundedStream(proc.stderr, CHILD_OUTPUT_MAX_BYTES, () => {
+        outputExceeded = true
+        kill()
+      }),
     ])
     await proc.exited
     if (signal?.aborted) {
       const reason = typeof signal.reason === "string" ? `: ${signal.reason}` : ""
       return `${label} cancelled${reason}.`
     }
+    if (outputExceeded) {
+      return `${label} output exceeded ${CHILD_OUTPUT_MAX_BYTES} bytes and was terminated.`
+    }
     // A killed child may still have flushed a complete result before the timer fired; prefer real
     // output over the timeout message so a slow-but-successful render is not reported as a failure.
-    const text = out.trim()
+    const text = out.text.trim()
     if (timedOut && text === "") return timeoutMessage(label, CHILD_TIMEOUT_MS)
-    return text || `${label} failed:\n${err.trim() || "(no output)"}`
+    return text || `${label} failed:\n${err.text.trim() || "(no output)"}`
   } finally {
     clearTimeout(timer)
     signal?.removeEventListener("abort", abort)
@@ -345,7 +404,23 @@ export class WarmWorker {
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
+      if (value !== undefined && value.byteLength > CHILD_OUTPUT_MAX_BYTES) {
+        this.stderrBuffer = boundedAppend(
+          this.stderrBuffer,
+          `warm ${this.label} worker stdout exceeded ${CHILD_OUTPUT_MAX_BYTES} bytes\n`,
+        )
+        this.stop()
+        return
+      }
       this.stdoutBuffer += decoder.decode(value, { stream: true })
+      if (this.stdoutBuffer.length > CHILD_OUTPUT_MAX_BYTES) {
+        this.stderrBuffer = boundedAppend(
+          this.stderrBuffer,
+          `warm ${this.label} worker stdout exceeded ${CHILD_OUTPUT_MAX_BYTES} bytes\n`,
+        )
+        this.stop()
+        return
+      }
       let nl = this.stdoutBuffer.indexOf("\n")
       while (nl !== -1) {
         const line = this.stdoutBuffer.slice(0, nl).trim()
