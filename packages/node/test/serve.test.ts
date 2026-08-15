@@ -784,6 +784,61 @@ test("a caller-set content-length on a null-body Response is left alone", async 
   expect(head.toLowerCase()).not.toContain("transfer-encoding")
 })
 
+test("a Response built from a string declares its length instead of chunking", async () => {
+  // `new Response("hi")` hands the bytes over as a stream, same as a live producer, so this lane
+  // used to frame it as chunked. One chunk plus a close inside the same turn says otherwise.
+  const app = server().get("/s", () => new Response("hi", { status: 200 }))
+  running = await serve(app, { port: 0 })
+  const res = await fetch(`http://localhost:${running.port}/s`)
+  expect(res.headers.get("content-length")).toBe("2")
+  expect(res.headers.get("transfer-encoding")).toBeNull()
+  expect(await res.text()).toBe("hi")
+})
+
+test("a Response over an empty stream declares content-length: 0", async () => {
+  const app = server().get(
+    "/empty",
+    () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.close()
+          },
+        }),
+      ),
+  )
+  running = await serve(app, { port: 0 })
+  const res = await fetch(`http://localhost:${running.port}/empty`)
+  expect(res.headers.get("content-length")).toBe("0")
+  expect(await res.text()).toBe("")
+})
+
+test("a genuinely streamed Response still chunks, and is not held for its later chunks", async () => {
+  // The other side of the same probe: a producer that has not finished within the turn keeps the
+  // streaming framing, and the chunk it had ready goes out without waiting for the rest.
+  const encoder = new TextEncoder()
+  const app = server().get(
+    "/stream",
+    () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode("a"))
+            setTimeout(() => {
+              controller.enqueue(encoder.encode("b"))
+              controller.close()
+            }, 60)
+          },
+        }),
+      ),
+  )
+  running = await serve(app, { port: 0 })
+  const res = await fetch(`http://localhost:${running.port}/stream`)
+  expect(res.headers.get("transfer-encoding")).toBe("chunked")
+  expect(res.headers.get("content-length")).toBeNull()
+  expect(await res.text()).toBe("ab")
+})
+
 test("a throwing app yields a flat 500 (no leak)", async () => {
   running = await serve(
     {

@@ -1861,41 +1861,42 @@ function writeNodeResponse(
   // forEach into a fresh plain object plus a second cookie-specific pass. Must run before
   // `writeHead`: headers are already flushed by the time `writeHead` returns.
   nodeRes.setHeaders(response.headers)
-  // The same framing gap the plain lane had, on the lane a hand-rolled `Response` takes: `writeHead`
-  // followed by a bare `end()` leaves Node to pick the framing, so a null-body `Response` goes out
-  // chunked where every Web-native runtime sends `content-length: 0`. Declared before `writeHead`,
-  // which is the last point the header can still be added. HEAD is excluded - its length describes
-  // the GET's body, which this lane does not know - as is a status that cannot carry a body, and a
-  // length the caller set for itself. A non-null body is untouched: this lane streams it, and its
-  // length is not knowable without buffering.
-  if (
-    !isHead &&
-    response.body === null &&
-    !isBodylessStatus(response.status) &&
-    !response.headers.has("content-length")
-  ) {
-    nodeRes.setHeader("content-length", "0")
-  }
-  nodeRes.writeHead(response.status)
   if (isHead) {
+    nodeRes.writeHead(response.status)
     nodeRes.end()
     return
   }
   const directBody = nodeResponseBody(response)
   if (directBody !== undefined) {
+    // Node computes the length itself for `end(data)` while the header is still unflushed, so this
+    // lane already declares one. The three below do not get that for free.
+    nodeRes.writeHead(response.status)
     nodeRes.end(directBody)
     return
   }
+  // `end()` with no data is framed as chunked instead, so a body-less `Response` - a hand-rolled
+  // redirect, above all - went out with a chunk terminator and no length where every Web-native
+  // runtime sends `content-length: 0`. Declared before `writeHead`, the last point a header can
+  // still be added. Excluded: HEAD, whose length describes the GET's body that this lane does not
+  // know; a status that cannot carry a body; and a length the caller set for itself.
+  const canDeclareLength =
+    !isBodylessStatus(response.status) && !response.headers.has("content-length")
   if (response.body === null) {
+    if (canDeclareLength) nodeRes.setHeader("content-length", "0")
+    nodeRes.writeHead(response.status)
     if (!nodeRes.destroyed && !nodeRes.writableEnded && nodeRes.writable) nodeRes.end()
     return
   }
   // A body that is a Web view over a Node stream (an upstream response relayed by
   // `@nifrajs/proxy/undici`, say) goes to the socket as the Node stream it already is, skipping the
-  // per-chunk trip through Web objects that the reader loop below pays for.
+  // per-chunk trip through Web objects that the reader loop below pays for. Length is the upstream's
+  // business: it either forwarded a `content-length` or is genuinely streaming.
   const nodeBody = response.bodyUsed ? null : claimNodeStream(response.body)
-  if (nodeBody !== null) return pipeNodeResponseBody(nodeBody, nodeRes)
-  return writeNodeResponseBody(response, nodeRes)
+  if (nodeBody !== null) {
+    nodeRes.writeHead(response.status)
+    return pipeNodeResponseBody(nodeBody, nodeRes)
+  }
+  return writeNodeResponseBody(response, nodeRes, canDeclareLength)
 }
 
 /**
@@ -1941,13 +1942,89 @@ function pipeNodeResponseBody(body: Readable, nodeRes: ServerResponse): Promise<
   })
 }
 
-async function writeNodeResponseBody(response: Response, nodeRes: ServerResponse): Promise<void> {
+/** The two Web-stream shapes the body lane below needs, named structurally: this package builds
+ * without the DOM lib, so `ReadableStreamReadResult` is not a name it can refer to. */
+type BodyChunk =
+  | { readonly done: false; readonly value: Uint8Array }
+  | { readonly done: true; readonly value?: undefined }
+type BodyReader = { read(): Promise<BodyChunk>; cancel(): Promise<void> }
+
+/**
+ * Send a Web `ReadableStream` body to the socket, declaring a length when the body turns out to be
+ * one already-complete chunk.
+ *
+ * `new Response("hi")` hands its bytes over as a stream, exactly as a live producer does, so the
+ * framing decision looks identical from here and Node picks chunked for both. The two are told apart
+ * by reading one chunk and then giving the stream a microtask to say it is done: a source-backed body
+ * - a string, a `Uint8Array`, a `Blob` - has already enqueued everything and closes inside it, while
+ * a producer still generating does not.
+ *
+ * What is held is one chunk, never the whole body, so a large or endless stream is unaffected in
+ * memory. What is spent is a microtask, and it costs a streaming response no bytes on the wire: Node
+ * does not flush the header until the first write either way, so nothing was going out during it.
+ */
+async function writeNodeResponseBody(
+  response: Response,
+  nodeRes: ServerResponse,
+  canDeclareLength: boolean,
+): Promise<void> {
   const reader = response.body!.getReader()
+  let first: BodyChunk
+  try {
+    first = await reader.read()
+  } catch {
+    await reader.cancel().catch(() => {})
+    if (!nodeRes.headersSent) writeInternalError(nodeRes)
+    else nodeRes.destroy()
+    return
+  }
+  if (first.done) {
+    if (canDeclareLength) nodeRes.setHeader("content-length", "0")
+    nodeRes.writeHead(response.status)
+    if (!nodeRes.destroyed && !nodeRes.writableEnded && nodeRes.writable) nodeRes.end()
+    return
+  }
+  // Attached with `then` rather than awaited: the point is to observe whether it has settled by the
+  // end of this turn, not to wait for it. The rejection handler is only here so a body that fails
+  // between the two reads is not an unhandled rejection - the drain below awaits the same promise
+  // and is where that failure is actually handled.
+  const pending = reader.read()
+  let settled: BodyChunk | undefined
+  pending.then(
+    (value) => {
+      settled = value
+    },
+    () => {},
+  )
+  // A microtask, not a turn of the event loop. It is enough - a source-backed body has already
+  // enqueued everything, so its close is a microtask away on Node and two on Bun, both of which this
+  // covers - and it is short enough to leave the socket's write order alone: yielding a whole turn
+  // here wedged a pipelined keep-alive connection under Bun's `node:http` shim, where the second
+  // response never reached the wire.
+  await new Promise<void>((resolve) => queueMicrotask(resolve))
+  if (settled?.done === true && canDeclareLength && ArrayBuffer.isView(first.value)) {
+    nodeRes.setHeader("content-length", String(first.value.byteLength))
+    nodeRes.writeHead(response.status)
+    if (!nodeRes.destroyed && !nodeRes.writableEnded && nodeRes.writable) nodeRes.end(first.value)
+    return
+  }
+  nodeRes.writeHead(response.status)
+  return drainWebResponseBody(reader, nodeRes, first.value, pending)
+}
+
+/** The streaming half of {@link writeNodeResponseBody}, resumed from the chunk and the outstanding
+ * read the length probe already took off the stream. */
+async function drainWebResponseBody(
+  reader: BodyReader,
+  nodeRes: ServerResponse,
+  firstChunk: Uint8Array,
+  pending: Promise<BodyChunk>,
+): Promise<void> {
+  let chunk: Uint8Array | undefined = firstChunk
+  let outstanding: Promise<BodyChunk> | undefined = pending
   try {
     for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if (!nodeRes.write(value)) {
+      if (!nodeRes.write(chunk)) {
         if (nodeRes.destroyed || nodeRes.writableEnded || !nodeRes.writable) {
           try {
             await reader.cancel()
@@ -1962,6 +2039,10 @@ async function writeNodeResponseBody(response: Response, nodeRes: ServerResponse
           return
         }
       }
+      const result = await (outstanding ?? reader.read())
+      outstanding = undefined
+      if (result.done) break
+      chunk = result.value
     }
   } catch {
     await reader.cancel().catch(() => {})
