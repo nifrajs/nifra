@@ -40,7 +40,7 @@ describe("scheduleTrigger", () => {
         listener = next
       },
       removeEventListener: () => {},
-    })) as typeof g.matchMedia
+    })) as unknown as typeof g.matchMedia
     try {
       let runs = 0
       scheduleTrigger({ media: "(min-width: 1px)" }, () => {
@@ -66,7 +66,7 @@ describe("scheduleTrigger", () => {
       removeEventListener: () => {
         removed++
       },
-    })) as typeof g.matchMedia
+    })) as unknown as typeof g.matchMedia
     try {
       let runs = 0
       const dispose = scheduleTrigger({ media: "(min-width: 1px)" }, () => {
