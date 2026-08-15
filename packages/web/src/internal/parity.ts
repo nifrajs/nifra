@@ -55,6 +55,18 @@ export interface IdentityParityFinding {
   readonly explanation: string
   readonly remediation: string
   /**
+   * Why the copies exist, in install-topology terms: how many physical paths sit under how many
+   * install roots, and whether any of those roots is outside the scanned project.
+   *
+   * A path list alone leaves the reader to reverse-engineer the shape. The two shapes need opposite
+   * fixes: a NESTED install under the scanned root shadows the hoisted copy and one reinstall
+   * collapses it, while a SIBLING install root (a linked checkout, a standalone app beside this one)
+   * owns its own `node_modules` and no reinstall here can touch it.
+   *
+   * Absent on a finding built by hand (a test fixture, an older cached result).
+   */
+  readonly topology?: string
+  /**
    * The copies exist but the app declared this package single-copy, so the resolver collapses them
    * before anything loads. Reported, never fatal - see `SingleCopyCoverage`.
    */
@@ -82,17 +94,32 @@ export interface SingleCopyCoverage {
 }
 
 export interface IdentityParityResult {
+  /**
+   * The governing workspace root: where importer enumeration starts, and how far a copy lookup may
+   * walk up from an importer.
+   *
+   * EVERY caller resolves this the same way. The doctor and the build/dev preflight used to differ
+   * here - one anchored at the workspace, the other at the app directory - so the same project could
+   * be told it had duplicates by one command and a clean bill by the other. Two answers from one
+   * toolchain is worse than either answer, so the basis is now fixed and reported rather than chosen.
+   */
   readonly workspaceRoot: string
+  /** The directory the caller asked about. Differs from `workspaceRoot` when a package subdirectory
+   * is governed by a workspace above it; carried so a report can state the basis it scanned on. */
+  readonly requestedRoot: string
+  /**
+   * Enumeration stopped at `MAX_WORKSPACE_IMPORTERS`, so this scan is PARTIAL.
+   *
+   * An empty `findings` then means "nothing found in the part that was scanned", never "clean" - a
+   * caller that prints a clean bill on a truncated scan is the exact silence this flag exists to
+   * prevent.
+   */
+  readonly truncated: boolean
   /** Findings that no declaration covers - the ones a build must refuse to start on. */
   readonly findings: readonly IdentityParityFinding[]
   /** Duplicates the declaration covers. Worth printing, never worth failing. */
   readonly deduplicated: readonly IdentityParityFinding[]
   readonly singleCopy: SingleCopyCoverage
-}
-
-export interface IdentityParityOptions {
-  /** Scan the governing workspace when the caller is a package subdirectory. */
-  readonly useWorkspaceRoot?: boolean
 }
 
 export interface BuildManifestLike {
@@ -211,6 +238,16 @@ const workspaceContains = async (
   return false
 }
 
+/** The real path, or the input when it cannot be resolved. Roots are compared against each other and
+ * printed side by side, so they have to be normalized the same way (`/var` vs `/private/var`). */
+const realpathOrSelf = (path: string): string => {
+  try {
+    return realpathSync(path)
+  } catch {
+    return path
+  }
+}
+
 /** Resolve the workspace root once, even when the caller starts in a workspace package. */
 export async function resolveParityWorkspaceRoot(
   start: string,
@@ -229,17 +266,33 @@ export async function resolveParityWorkspaceRoot(
   }
 }
 
+/**
+ * Every workspace manifest that can install its own copy of a dependency.
+ *
+ * A pathological workspace must not make the scan unbounded, but it must not make it LIE either: the
+ * cap used to discard everything collected and return an empty list, which reads downstream as "no
+ * duplicates" - a clean bill from a scan that never ran. The bounded prefix is kept and `truncated`
+ * says the rest was not looked at.
+ */
 const workspaceImporters = async (
   root: string,
   rootPackage: Record<string, unknown>,
-): Promise<readonly { root: string; package: Record<string, unknown> }[]> => {
+): Promise<{
+  readonly importers: readonly { root: string; package: Record<string, unknown> }[]
+  readonly truncated: boolean
+}> => {
   const manifests = new Set<string>([join(root, "package.json")])
+  let truncated = false
   for (const pattern of workspacePatterns(rootPackage)) {
+    if (truncated) break
     const packagePattern = `${pattern.replace(/\/$/, "")}/package.json`
     for await (const match of new Bun.Glob(packagePattern).scan({ cwd: root, dot: false })) {
       if (match.split(/[\\/]/).includes("node_modules")) continue
+      if (manifests.size >= MAX_WORKSPACE_IMPORTERS) {
+        truncated = true
+        break
+      }
       manifests.add(join(root, match))
-      if (manifests.size > MAX_WORKSPACE_IMPORTERS) return []
     }
   }
   const importers: { root: string; package: Record<string, unknown> }[] = []
@@ -247,7 +300,7 @@ const workspaceImporters = async (
     const pkg = await readJson(manifest)
     if (pkg !== undefined) importers.push({ root: dirname(manifest), package: pkg })
   }
-  return importers
+  return { importers, truncated }
 }
 
 export const resolvedInstalledCopy = async (
@@ -332,6 +385,58 @@ export const displayPath = (cwd: string, path: string): string => {
   return rel === "" ? "." : rel
 }
 
+/**
+ * The install root a copy belongs to: the directory ABOVE its last `node_modules` segment.
+ *
+ * That directory is what a package manager operates on, so it is the unit a fix is expressed in. A
+ * copy that sits in no `node_modules` at all is a source checkout, which is its own install root.
+ */
+const installRootOf = (path: string): string => {
+  const parts = path.split(sep)
+  const last = parts.lastIndexOf("node_modules")
+  if (last <= 0) return path
+  return parts.slice(0, last).join(sep)
+}
+
+/**
+ * State the SHAPE of a duplicate, not just its paths.
+ *
+ * The failure a developer has to act on is a topology, and the two topologies take opposite fixes.
+ * Copies under one install root (a nested `node_modules` shadowing the hoisted one) collapse with a
+ * single reinstall from that root. Copies under separate roots - a linked checkout, a standalone app
+ * beside this one with its own `node_modules` - do not: that second root belongs to another install,
+ * and nothing this project runs can merge it. Naming which case this is turns a path list into a
+ * decision.
+ */
+const describeTopology = (
+  cwd: string,
+  scanRoot: string,
+  paths: readonly string[],
+): string | undefined => {
+  if (paths.length === 0) return undefined
+  const counts = new Map<string, number>()
+  for (const path of paths) {
+    const root = installRootOf(path)
+    counts.set(root, (counts.get(root) ?? 0) + 1)
+  }
+  const roots = [...counts.entries()].sort(([a], [b]) => a.localeCompare(b))
+  const breakdown = roots
+    .map(([root, count]) => `${count} under ${displayPath(cwd, root)}`)
+    .join(", ")
+  const outside = roots.filter(([root]) => !pathInside(scanRoot, root))
+  const shape =
+    outside.length > 0
+      ? `${outside.length} install root${outside.length === 1 ? " is" : "s are"} outside the scanned root (${outside
+          .map(([root]) => displayPath(cwd, root))
+          .join(
+            ", ",
+          )}), so that copy is installed by another project and reinstalling here cannot remove it`
+      : roots.length > 1
+        ? "all install roots are inside the scanned root, so a nested install is shadowing the hoisted copy and one reinstall from the workspace root collapses it"
+        : "one install root holds every copy, so the split is inside a single install (a nested or stored copy), not across projects"
+  return `${paths.length} paths under ${roots.length} install root${roots.length === 1 ? "" : "s"}: ${breakdown}; ${shape}`
+}
+
 const identityTargets = (pkg: Record<string, unknown>): readonly string[] =>
   dependencyNames(pkg)
     .filter((name) => name.startsWith("@nifrajs/") || IDENTITY_SENSITIVE_PACKAGES.has(name))
@@ -372,17 +477,19 @@ const singleCopyCoverage = (cwd: string, scanRoot: string): SingleCopyCoverage =
 export async function collectIdentityParity(
   cwd: string,
   rootPackage?: Record<string, unknown>,
-  options: IdentityParityOptions = {},
 ): Promise<IdentityParityResult> {
-  const requestedRoot = resolve(cwd)
+  const requestedRoot = realpathOrSelf(resolve(cwd))
   const localPackage = await readJson(join(requestedRoot, "package.json"))
+  // One basis for every caller. A package subdirectory is scanned as the workspace that governs it,
+  // because that workspace is what installed the copies it loads - and because a doctor and a build
+  // that anchor differently answer the same question differently, which is how a guard loses trust.
   const workspace =
-    options.useWorkspaceRoot && localPackage !== undefined
-      ? await resolveParityWorkspaceRoot(requestedRoot)
-      : { root: requestedRoot, package: localPackage ?? rootPackage ?? {} }
+    localPackage === undefined
+      ? { root: requestedRoot, package: rootPackage ?? {} }
+      : await resolveParityWorkspaceRoot(requestedRoot)
   const scanRoot = workspace.root
   const scanPackage = workspace.package
-  const importers = await workspaceImporters(scanRoot, scanPackage)
+  const { importers, truncated } = await workspaceImporters(scanRoot, scanPackage)
   const byPackage = new Map<string, Map<string, { version: string; importers: Set<string> }>>()
   const record = (
     name: string,
@@ -434,6 +541,7 @@ export async function collectIdentityParity(
   const deduplicated: IdentityParityFinding[] = []
   for (const [name, copies] of [...byPackage.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     if (copies.size < 2) continue
+    const absolutePaths = [...copies.keys()].sort()
     const resolvedCopies = [...copies.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([path, copy]) => ({
@@ -441,6 +549,7 @@ export async function collectIdentityParity(
         path: displayPath(cwd, path),
         importers: [...copy.importers].sort(),
       }))
+    const topology = describeTopology(cwd, scanRoot, absolutePaths)
     const versions = [...new Set(resolvedCopies.map((copy) => copy.version))].sort()
     const cause: IdentityParityCause = versions.length > 1 ? "version-skew" : "duplicate-path"
     // A declaration never covers a version skew. Redirecting across versions would hand a package a
@@ -462,14 +571,22 @@ export async function collectIdentityParity(
       remediation: covered
         ? deduplicatedRemediation(singleCopy.registration)
         : identityRemediation(cause, name),
+      ...(topology === undefined ? {} : { topology }),
       deduplicated: covered,
     }
     ;(covered ? deduplicated : findings).push(finding)
   }
-  return { workspaceRoot: scanRoot, findings, deduplicated, singleCopy }
+  return {
+    workspaceRoot: scanRoot,
+    requestedRoot,
+    truncated,
+    findings,
+    deduplicated,
+    singleCopy,
+  }
 }
 
-/** One `- pkg [cause]: ...` line per finding, shared by the hard failure and the dev warning. */
+/** One `- pkg [cause]: ...` block per finding, shared by the hard failure and the dev warning. */
 export function formatIdentityParityFindings(findings: readonly IdentityParityFinding[]): string {
   return findings
     .map(
@@ -477,9 +594,26 @@ export function formatIdentityParityFindings(findings: readonly IdentityParityFi
         `- ${finding.package} [${finding.cause}]: ${finding.explanation}. ${finding.remediation}\n` +
         `  versions: ${finding.versions.join(", ")}; paths: ${finding.copies
           .map((copy) => copy.path)
-          .join(", ")}`,
+          .join(", ")}` +
+        (finding.topology === undefined ? "" : `\n  topology: ${finding.topology}`),
     )
     .join("\n")
+}
+
+/**
+ * The basis a scan ran on, for any surface that reports its result.
+ *
+ * A verdict about installs is only as good as where it looked, and the reader cannot see that from a
+ * list of relative paths. Stating it also makes a truncated scan impossible to read as a clean one.
+ */
+export function identityParityBasis(result: IdentityParityResult): string {
+  const scope =
+    result.workspaceRoot === result.requestedRoot
+      ? `scanned ${result.workspaceRoot}`
+      : `scanned ${result.workspaceRoot} (the workspace governing ${result.requestedRoot})`
+  return result.truncated
+    ? `${scope}; PARTIAL - enumeration stopped at ${MAX_WORKSPACE_IMPORTERS} workspace packages, so packages beyond that were not examined`
+    : scope
 }
 
 /** `2 primary package findings` / `1 primary package finding`. */
@@ -498,12 +632,11 @@ export const identityParityHeadline = (count: number): string =>
 export async function assertIdentityParity(
   cwd: string,
   rootPackage?: Record<string, unknown>,
-  options: IdentityParityOptions = {},
 ): Promise<IdentityParityResult> {
-  const result = await collectIdentityParity(cwd, rootPackage, options)
+  const result = await collectIdentityParity(cwd, rootPackage)
   if (result.findings.length === 0) return result
   throw new Error(
-    `[nifra] identity parity failed (${identityParityHeadline(result.findings.length)}):\n${formatIdentityParityFindings(result.findings)}`,
+    `[nifra] identity parity failed (${identityParityHeadline(result.findings.length)}; ${identityParityBasis(result)}):\n${formatIdentityParityFindings(result.findings)}`,
   )
 }
 

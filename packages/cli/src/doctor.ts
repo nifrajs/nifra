@@ -25,6 +25,7 @@ import {
   displayPath,
   type IdentityParityCopy,
   type IdentityParityFinding,
+  identityParityBasis,
   resolvedInstalledCopy,
 } from "@nifrajs/web/internal/parity"
 import { codePositionMask, type SourceFinding, stripComments, walkSource } from "./check.ts"
@@ -148,6 +149,19 @@ export interface DoctorResult {
    * `ok`: the copies exist on disk but cannot both load. Absent on an older result shape.
    */
   readonly deduplicatedInstalls?: readonly DuplicateInstallFinding[]
+  /**
+   * Which tree the identity scan actually looked at, in the same words the build/dev preflight uses.
+   * Both run the same seam now; printing the basis is what lets a reader confirm that instead of
+   * having to trust it. Absent on an older result shape.
+   */
+  readonly identityBasis?: string
+  /**
+   * The identity scan stopped at the workspace-enumeration cap, so "no duplicates" means "none in the
+   * part that was scanned". Never folded into `ok` - a huge workspace is not a defect - but it is
+   * always printed, because an unqualified clean bill from a partial scan is the failure mode this
+   * whole report exists to avoid.
+   */
+  readonly identityScanTruncated?: boolean
   /** Workspace-linked deps whose `default`-condition artifact lags their `bun`-condition source.
    * Advisory (never folded into `ok`): while actively editing a linked package its dist is always
    * momentarily behind - the finding matters when a dev server starts against it. */
@@ -375,18 +389,30 @@ const asDuplicateInstall = (finding: IdentityParityFinding): DuplicateInstallFin
   copies: finding.copies.map((copy): DuplicateInstallCopy => ({ ...copy })),
 })
 
-/** Both halves of the identity scan: what still breaks, and what a declaration already collapses. */
+/**
+ * Both halves of the identity scan: what still breaks, and what a declaration already collapses -
+ * plus the basis they were decided on.
+ *
+ * The basis travels with the findings because doctor and the build/dev preflight answer the same
+ * question, and a reader who gets two answers needs to see which tree each one looked at. They now
+ * scan identically (one shared seam, one workspace resolution), so the line is corroboration rather
+ * than an excuse - and it is the only way a TRUNCATED scan can be told apart from a clean one.
+ */
 export async function collectAllDuplicateInstalls(
   cwd: string,
   rootPackage: Record<string, unknown>,
 ): Promise<{
   readonly duplicates: DuplicateInstallFinding[]
   readonly deduplicated: DuplicateInstallFinding[]
+  readonly basis: string
+  readonly truncated: boolean
 }> {
-  const result = await collectIdentityParity(cwd, rootPackage, { useWorkspaceRoot: true })
+  const result = await collectIdentityParity(cwd, rootPackage)
   return {
     duplicates: result.findings.map(asDuplicateInstall),
     deduplicated: result.deduplicated.map(asDuplicateInstall),
+    basis: identityParityBasis(result),
+    truncated: result.truncated,
   }
 }
 
@@ -761,6 +787,8 @@ export async function collectDoctorResult(
     findings,
     duplicateInstalls,
     deduplicatedInstalls: identity.deduplicated,
+    identityBasis: identity.basis,
+    ...(identity.truncated ? { identityScanTruncated: true } : {}),
     staleDists,
     readiness,
     ...(toolingDrift !== undefined ? { toolingDrift } : {}),
@@ -943,6 +971,14 @@ export async function runDoctor(
     console.log(
       "✓ every imported package is declared and identity-sensitive installs are deduplicated",
     )
+    if (result.identityBasis !== undefined) console.log(`  identity scan: ${result.identityBasis}`)
+    // A partial scan that prints a bare ✓ is a lie by omission - the packages past the cap were never
+    // looked at, and the reader has no way to know that from the tick alone.
+    if (result.identityScanTruncated === true) {
+      console.log(
+        "  ! the identity scan was truncated, so this is not a clean bill for the whole workspace",
+      )
+    }
     return true
   }
   // Group by package so the fix ("add X to dependencies") is stated once with its import sites.
@@ -963,6 +999,7 @@ export async function runDoctor(
     console.log(
       `${byPkg.size > 0 ? "\n" : ""}✗ identity-sensitive packages resolve to multiple physical copies:\n`,
     )
+    if (result.identityBasis !== undefined) console.log(`  scan: ${result.identityBasis}\n`)
     for (const finding of result.duplicateInstalls) {
       console.log(`  ${finding.package} [${finding.cause}]`)
       console.log(`      versions: ${finding.versions.join(", ")}`)
@@ -970,6 +1007,8 @@ export async function runDoctor(
         console.log(`      ${copy.version} at ${copy.path} ← ${copy.importers.join(", ")}`)
       }
       console.log(`      ${finding.explanation}`)
+      // The shape of the split decides which fix can work, so it is printed above the fix itself.
+      if (finding.topology !== undefined) console.log(`      topology: ${finding.topology}`)
       console.log(`      fix: ${finding.remediation}`)
     }
   }

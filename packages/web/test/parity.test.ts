@@ -7,6 +7,7 @@ import {
   collectDevelopmentParityInput,
   collectIdentityParity,
   formatIdentityParityFindings,
+  identityParityBasis,
   identityParityHeadline,
 } from "../src/internal/parity.ts"
 
@@ -127,7 +128,12 @@ test("shared identity parity resolves a workspace from an app subdirectory", asy
       string,
       unknown
     >
-    const result = await collectIdentityParity(app, appPackage, { useWorkspaceRoot: true })
+    const result = await collectIdentityParity(app, appPackage)
+    // The scan is anchored on the workspace that GOVERNS the requested directory, never on the
+    // directory itself - that single basis is what stops doctor and the build guard from answering
+    // the same question differently.
+    expect(result.requestedRoot).toContain(join("apps", "web"))
+    expect(result.workspaceRoot).not.toBe(result.requestedRoot)
     expect(result.findings).toHaveLength(1)
     expect(result.findings[0]?.package).toBe("react")
     expect(result.findings[0]?.copies).toHaveLength(3)
@@ -139,6 +145,11 @@ test("shared identity parity resolves a workspace from an app subdirectory", asy
     expect(result.findings[0]?.remediation).toContain("single physical path")
     expect(result.findings[0]?.remediation).toContain("singleCopy")
     expect(result.deduplicated).toHaveLength(0)
+    // Every copy sits under an install root the workspace owns, so one reinstall is the whole fix -
+    // and the message has to say that rather than leaving the developer to infer it from paths.
+    expect(result.findings[0]?.topology).toContain("3 paths under 3 install roots")
+    expect(result.findings[0]?.topology).toContain("all install roots are inside the scanned root")
+    expect(identityParityBasis(result)).toContain("the workspace governing")
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -343,6 +354,13 @@ test("a linked sibling repo's second react is fatal when nothing is declared", a
     expect(result.findings.map((finding) => finding.package)).toEqual(["react"])
     expect(result.deduplicated).toHaveLength(0)
     expect(result.singleCopy.declared).toEqual([])
+    // The sibling checkout is a SEPARATE install root: reinstalling here cannot collapse it, and a
+    // message that only listed two paths left that conclusion to be reverse-engineered.
+    const topology = result.findings[0]?.topology ?? ""
+    expect(topology).toContain("2 paths under 2 install roots")
+    expect(topology).toContain("outside the scanned root")
+    expect(topology).toContain("reinstalling here cannot remove it")
+    expect(formatIdentityParityFindings(result.findings)).toContain("topology:")
   } finally {
     await rm(ground, { recursive: true, force: true })
   }

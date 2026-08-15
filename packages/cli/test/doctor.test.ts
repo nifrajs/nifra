@@ -665,6 +665,18 @@ describe("collectDuplicateInstalls - discovery anchored at the workspace root", 
       expect(findings[0]?.deduplicated).toBe(false)
       expect(findings[0]?.remediation).toContain("single physical path")
       expect(findings[0]?.remediation).toContain("singleCopy")
+      // The shape of the split, carried through to doctor unchanged: both copies live under install
+      // roots the workspace owns, so this one collapses with a reinstall.
+      expect(findings[0]?.topology).toContain("2 paths under 2 install roots")
+      expect(findings[0]?.topology).toContain("inside the scanned root")
+
+      // doctor states the basis it answered on. The reported failure mode was doctor saying "none"
+      // while the build guard failed: with the workspace named in both outputs, a disagreement is
+      // legible instead of looking like two tools contradicting each other.
+      const identity = await collectAllDuplicateInstalls(app, appPkg)
+      expect(identity.duplicates).toHaveLength(1)
+      expect(identity.basis).toContain("the workspace governing")
+      expect(identity.truncated).toBe(false)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
