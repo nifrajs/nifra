@@ -30,8 +30,10 @@
 
 import { Readable } from "node:stream"
 import { type Dispatcher, request as undiciRequest } from "undici"
-import type { ProxyTransport, ProxyUpstreamResponse } from "./index.ts"
+import type { NativeProxyTransport, ProxyTransport, ProxyUpstreamResponse } from "./index.ts"
 import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
+
+const NODE_NATIVE_TRANSPORT = Symbol.for("@nifrajs/proxy/node-native-transport")
 
 export interface UndiciTransportOptions {
   /**
@@ -92,7 +94,7 @@ export function undiciTransport(options: UndiciTransportOptions = {}): ProxyTran
   }
   const dispatcher = options.dispatcher
 
-  return async (target, request): Promise<ProxyUpstreamResponse> => {
+  const transport: ProxyTransport = async (target, request): Promise<ProxyUpstreamResponse> => {
     // Flat name/value pairs preserve what `Headers` already merged, without a second object.
     const headers: string[] = []
     for (const [name, value] of request.headers) headers.push(name, value)
@@ -136,4 +138,27 @@ export function undiciTransport(options: UndiciTransportOptions = {}): ProxyTran
       bodyEncoded: true,
     }
   }
+
+  const nativeTransport: NativeProxyTransport = async (target, request) => {
+    const response = await undiciRequest(target, {
+      method: request.method as Dispatcher.HttpMethod,
+      headers: Array.from(request.headers),
+      // This is the original IncomingMessage from @nifrajs/node. Keeping it as a Node stream is
+      // the point of this lane: no Web stream wrapper is constructed on either side of the proxy.
+      body: request.body === null ? null : (request.body as never),
+      signal: request.signal,
+      headersTimeout: request.headersTimeout,
+      bodyTimeout,
+      ...(dispatcher === undefined ? {} : { dispatcher }),
+    })
+    return {
+      status: response.statusCode,
+      headers: response.headers as Readonly<Record<string, string | readonly string[] | undefined>>,
+      body: response.body,
+      dump: () => response.body.dump(),
+    }
+  }
+
+  Object.defineProperty(transport, NODE_NATIVE_TRANSPORT, { value: nativeTransport })
+  return transport
 }

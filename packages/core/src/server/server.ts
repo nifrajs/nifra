@@ -228,6 +228,8 @@ import {
   INSTALL_RESPONSE_CONTRACT,
   INSTALL_SSE,
   INSTALL_WS,
+  NODE_NATIVE_MOUNT,
+  RESOLVE_NODE_MOUNT,
 } from "./install.ts"
 import type { EffectLedgerRuntime, ResolvedEffectLedger } from "./ledger-lane.ts"
 import { jsonLogger, type Logger } from "./logger.ts"
@@ -366,6 +368,22 @@ interface BunUpgradeServer {
 }
 
 type MountedFetchHandler = (request: Request, platform?: Platform) => MaybePromise<Response>
+
+/** Structural native mount contract. The serving adapter owns the concrete Node request/response
+ * types; the kernel only selects a handler after proving that taking this lane cannot skip its
+ * global lifecycle. `false` means the capability was unavailable at runtime, so the adapter must
+ * retry the ordinary Web mount with the same untouched source. */
+type NativeMountHandler = (
+  request: unknown,
+  response: unknown,
+  platform?: Platform,
+) => MaybePromise<undefined | false>
+
+interface NativeMountSelection {
+  readonly handler: NativeMountHandler
+  readonly path: string
+  readonly stripPrefix: boolean
+}
 
 interface FetchMount {
   readonly path: string
@@ -1954,12 +1972,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // Two ways a route proves its body is bounded, both enforced by the core at read time:
     // `schema.body` (the validated read is bounded) and an explicit finite `schema.bodyLimit` (the
     // transport cap shadows every reader, including a raw `c.req.body` stream that a Content-Length
-    // middleware cannot bound). `bodyLimit: "unlimited"` publishes nothing on its own: that route
-    // deliberately opted out, and only a `schema.body` there keeps it bounded.
-    // The server-wide `maxBodyBytes` default is not evidence. It applies to every route whether or
-    // not anyone thought about it, so publishing it would make the id pass everywhere and prove
-    // nothing; this evidence marks a bound the route chose.
-    if (schema?.body !== undefined || typeof schema?.bodyLimit === "number") {
+    // middleware cannot bound).
+    // `bodyLimit: "unlimited"` publishes NOTHING, `schema.body` there included. The bound a schema
+    // read carries is the route's byte cap, and on an unlimited route that cap is
+    // `UNLIMITED_BODY_BYTES` - the whole body is still assembled in memory before validation sees a
+    // field of it, so there is no finite bound left to attest. Publishing the id anyway would let a
+    // policy that requires `nifra.body-bounded` pass on the one route with no ceiling at all, which
+    // is worse than the id being absent.
+    // The server-wide `maxBodyBytes` default is not evidence either. It applies to every route
+    // whether or not anyone thought about it, so publishing it would make the id pass everywhere and
+    // prove nothing; this evidence marks a bound the route chose.
+    const unlimitedBody = schema?.bodyLimit === "unlimited"
+    if (!unlimitedBody && (schema?.body !== undefined || typeof schema?.bodyLimit === "number")) {
       routeAssurance.push(
         Object.freeze({
           id: NIFRA_ASSURANCE_IDS.BODY_BOUNDED,
@@ -2346,6 +2370,45 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     if (outcome instanceof Promise) return outcome.finally(release)
     release()
     return outcome
+  }
+
+  /**
+   * Select a mounted handler's native Node lane without materializing a Web Request. This is an
+   * adapter seam, not a second lifecycle: any app-wide behavior that the ordinary mount path would
+   * run makes the capability ineligible and the caller falls back to `resolveNodeSource`. Typed
+   * routes keep precedence exactly as `routeAndRun` does, including the existing mount behavior for
+   * a path whose registered route rejects this method.
+   */
+  [RESOLVE_NODE_MOUNT](source: RequestSource): NativeMountSelection | undefined {
+    if (
+      this.onRequestHooks.length > 0 ||
+      this.onResponseHooks.length > 0 ||
+      this.onResponseFinalizedHooks.length > 0 ||
+      this.capacityGate !== undefined ||
+      this.staticResponseHeaders !== undefined ||
+      this.requestTimeoutMs !== 0 ||
+      this.acceptInboundDeadlines ||
+      this.clientIpTrust !== undefined
+    ) {
+      return undefined
+    }
+
+    const parts = source.urlParts ?? urlPartsOf(source.url)
+    const match = this.catalog.find(source.method, parts.pathname)
+    if (match.found) return undefined
+
+    for (const mount of this.fetchMounts) {
+      if (!underMountPrefix(parts.pathname, mount.path)) continue
+      const candidate = (mount.handler as unknown as Record<symbol, unknown>)[NODE_NATIVE_MOUNT]
+      return typeof candidate === "function"
+        ? {
+            handler: candidate as NativeMountHandler,
+            path: mount.path,
+            stripPrefix: mount.stripPrefix,
+          }
+        : undefined
+    }
+    return undefined
   }
 
   /**
@@ -3782,7 +3845,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     if (contentType !== "application/json" && !contentType.includes("application/json")) {
       if (isUrlEncodedForm(contentType)) {
         return readBoundedForm(source, maxBodyBytes).then(
-          (form) => (form instanceof Response ? wrapResponse(form) : onParsed(form)),
+          (form) => (isResponseResult(form) ? wrapResponse(form) : onParsed(form)),
           onError,
         ) as Promise<T>
       }
@@ -4870,7 +4933,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       parsed = json
     } else if (isUrlEncodedForm(contentType)) {
       const form = await readBoundedForm(req, entry.bodyLimit ?? UNLIMITED_BODY_BYTES)
-      if (form instanceof Response) return form
+      if (isResponseResult(form)) return form
       parsed = form
     } else {
       // multipart/form-data (file uploads) stays 415 on the schema path by design - files don't

@@ -31,3 +31,9 @@ export const INSTALL_WS: unique symbol = Symbol.for("@nifrajs/core/install-ws")
 export const INSTALL_RESPONSE_CONTRACT: unique symbol = Symbol.for(
   "@nifrajs/core/install-response-contract",
 )
+
+/** @internal Resolve a native mount for an adapter that can keep the request on its own stream lane. */
+export const RESOLVE_NODE_MOUNT: unique symbol = Symbol.for("@nifrajs/core/resolve-node-mount")
+
+/** @internal Marker on a mounted handler that knows how to serve a native Node request/response. */
+export const NODE_NATIVE_MOUNT: unique symbol = Symbol.for("@nifrajs/core/node-native-mount")

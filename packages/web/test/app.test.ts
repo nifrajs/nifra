@@ -876,6 +876,26 @@ test("redirect() rejects off-origin destinations unless { external: true } [AUDI
   expect(r.plain?.headers?.location).toBe("https://example.com/ok")
 })
 
+test("redirect() rejects paths a URL parser resolves off-origin [AUDIT Sec-4]", () => {
+  // Each of these starts with a single "/" - so a leading-"//" test alone lets them through - yet a
+  // WHATWG parser resolves every one to the host after the escape: under a special scheme "\" IS a
+  // path separator, and tab/CR/LF are stripped BEFORE parsing rather than rejected.
+  const escapes = [
+    "/\\evil.example",
+    "/\\\\evil.example/x",
+    "/\t/evil.example",
+    "/\r/evil.example",
+    "/\n/evil.example",
+  ]
+  for (const bad of escapes) {
+    expect(() => redirect(bad)).toThrow(/same-origin/)
+    // The reason they are refused, stated as the browser sees it.
+    expect(new URL(bad, "https://app.example").host).toBe("evil.example")
+  }
+  // Percent-encoded forms are NOT escapes - they stay a literal path segment on this origin.
+  expect(redirect("/%5Cevil.example").plain?.headers?.location).toBe("/%5Cevil.example")
+})
+
 // --- /api/* auto-mount: createWebApp serves the in-process backend over HTTP (dev + prod) ---
 
 // A backend with real routes under /api/* - the same shape an app feeds via `inProcessClient(backend)`.

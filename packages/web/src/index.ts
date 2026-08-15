@@ -14,6 +14,7 @@ import {
   NIFRA_BACKEND_MOUNT,
 } from "@nifrajs/core/mount"
 import {
+  isSameOriginPath,
   type ResponseResult,
   type ServerOptions,
   server,
@@ -845,11 +846,10 @@ export interface RedirectOptions {
 }
 
 /** A same-origin destination is an absolute path: one leading `/`, but NOT `//` (protocol-relative →
- * another origin). Everything else (absolute URL with a scheme, `//host`, `javascript:`, a bare
- * relative `foo`) is treated as off-origin and requires `external: true`. */
-function isSameOriginPath(location: string): boolean {
-  return location.startsWith("/") && !location.startsWith("//")
-}
+ * another origin), and nothing a URL parser resolves off-origin. Everything else (absolute URL with
+ * a scheme, `//host`, `javascript:`, a bare relative `foo`) requires `external: true`. The predicate
+ * lives in the kernel - see `isSameOriginPath` - so this gate and the auth guards' `redirectTo`
+ * cannot drift apart. */
 
 /**
  * Build a redirect - return it from a route `action` for the Post/Redirect/Get pattern (POST
@@ -872,7 +872,7 @@ function isSameOriginPath(location: string): boolean {
 export function redirect(location: string, options: RedirectOptions = {}): ResponseResult {
   if (options.external !== true && !isSameOriginPath(location)) {
     throw new Error(
-      `[nifra/web] redirect(${JSON.stringify(location)}) is not a same-origin path. Use a path beginning with "/" (not "//"), or redirect(location, { external: true }) for a deliberate off-origin redirect. This guards against open redirects from unvalidated input.`,
+      `[nifra/web] redirect(${JSON.stringify(location)}) is not a same-origin path. Use a path beginning with "/" (not "//", no backslash or control character), or redirect(location, { external: true }) for a deliberate off-origin redirect. This guards against open redirects from unvalidated input.`,
     )
   }
   // Reject CR/LF in the Location explicitly - defense-in-depth (response splitting / header

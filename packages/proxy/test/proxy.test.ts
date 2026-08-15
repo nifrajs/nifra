@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { createProxy, type ProxyTransport } from "../src/index.ts"
+import { createProxy, fetchTransport, type ProxyTransport } from "../src/index.ts"
 
 interface Seen {
   method: string
@@ -231,6 +231,68 @@ describe("createProxy()", () => {
     }
     const res = await proxy(new Request("http://edge.test/x"))
     expect(await res.text()).toBe("first,second")
+  })
+
+  test("the portable transport bounds the gap BETWEEN body chunks, not just the headers", async () => {
+    // `timeoutMs` is spent by the time the status is relayed, and a 504 is no longer sendable, so a
+    // body that starts and then stops would otherwise hold the caller's connection open for as long
+    // as the upstream cared to keep it. The relayed stream errors instead.
+    let stalledUpstream: ReadableStreamDefaultController<Uint8Array> | undefined
+    respond = () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            stalledUpstream = controller
+            controller.enqueue(new TextEncoder().encode("first,"))
+          },
+        }),
+        { headers: { "content-type": "text/plain" } },
+      )
+    const proxy = createProxy({
+      upstream: ORIGIN,
+      transport: fetchTransport({ bodyTimeoutMs: 40 }),
+    })
+    const res = await proxy(new Request("http://edge.test/x"))
+    expect(res.status).toBe(200)
+    await expect(res.text()).rejects.toThrow(/stalled/)
+    stalledUpstream?.close()
+    respond = () => new Response("ok")
+  })
+
+  test("fetchTransport rejects a negative bodyTimeoutMs, and 0 disables the bound", async () => {
+    expect(() => fetchTransport({ bodyTimeoutMs: -1 })).toThrow(/non-negative/)
+    expect(() => fetchTransport({ bodyTimeoutMs: Number.NaN })).toThrow(/non-negative/)
+    const proxy = createProxy({ upstream: ORIGIN, transport: fetchTransport({ bodyTimeoutMs: 0 }) })
+    expect(await (await proxy(new Request("http://edge.test/x"))).text()).toBe("ok")
+  })
+
+  test("a caller-supplied signal does not accumulate one listener per request", async () => {
+    // A `Request`'s own signal is collected with the request, but a signal handed in through a
+    // ProxyContext can be shared by every request a process proxies - one listener left behind per
+    // exchange is then unbounded growth. It still has to outlive the headers: a client that
+    // disconnects mid-body must tear the upstream down, so it is dropped when the body settles.
+    const listeners = new Set<() => void>()
+    const signal = {
+      aborted: false,
+      addEventListener: (_type: string, fn: () => void) => {
+        listeners.add(fn)
+      },
+      removeEventListener: (_type: string, fn: () => void) => {
+        listeners.delete(fn)
+      },
+    } as unknown as AbortSignal
+    const proxy = createProxy({ upstream: ORIGIN })
+    for (let i = 0; i < 3; i++) {
+      const res = await proxy({ req: new Request("http://edge.test/x"), signal })
+      expect(listeners.size).toBe(1)
+      expect(await res.text()).toBe("ok")
+      expect(listeners.size).toBe(0)
+    }
+    // Abandoning the body releases it too - the exchange is over either way.
+    const cancelled = await proxy({ req: new Request("http://edge.test/x"), signal })
+    expect(listeners.size).toBe(1)
+    await cancelled.body?.cancel()
+    expect(listeners.size).toBe(0)
   })
 
   // The seam hands over ALREADY-sanitised headers. If hygiene ran after the transport instead, a

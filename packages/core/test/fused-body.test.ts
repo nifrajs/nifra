@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test"
 import { server, silentLogger } from "../src/index.ts"
 import { nodeDirect } from "../src/node-direct.ts"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "../src/schema/standard.ts"
+import { readBoundedForm } from "../src/server/query.ts"
+import { isResponseResult } from "../src/server/runtime-core.ts"
 
 function schema<Output>(
   validate: (value: unknown) => StandardResult<Output> | Promise<StandardResult<Output>>,
@@ -137,5 +139,44 @@ describe("fused body lane", () => {
       }),
     )
     expect(await res.json()).toEqual({ name: "Ada" })
+  })
+
+  test("an over-cap urlencoded form answers 413 on the plain lane, like the JSON cap", async () => {
+    const formBody = schema<{ name: string }>((value) => userBody["~standard"].validate(value))
+    const app = server().post("/users", { body: formBody, bodyLimit: 16 }, (c) => ({
+      name: c.body.name,
+    }))
+    const request = (contentType: string, body: string): Request =>
+      new Request("http://x/users", {
+        method: "POST",
+        headers: { "content-type": contentType },
+        body,
+      })
+    const form = await app.fetch(
+      request("application/x-www-form-urlencoded", `name=${"A".repeat(64)}`),
+    )
+    expect(form.status).toBe(413)
+    expect(await form.json()).toEqual({ ok: false, error: "payload_too_large" })
+    // Same envelope and same lane as the JSON reader's cap - the form path must not fork into a
+    // built `Response`, which the Node adapter cannot recognize and drains through a Web stream.
+    const json = await app.fetch(
+      request("application/json", JSON.stringify({ name: "A".repeat(64) })),
+    )
+    expect(json.status).toBe(413)
+    expect(await json.json()).toEqual({ ok: false, error: "payload_too_large" })
+  })
+
+  test("the form reader rejects with plain data, never a built Response", async () => {
+    const over = await readBoundedForm(
+      new Request("http://x/users", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: `name=${"A".repeat(64)}`,
+      }),
+      16,
+    )
+    expect(over).not.toBeInstanceOf(Response)
+    expect(isResponseResult(over)).toBe(true)
+    expect(isResponseResult(over) ? over.plain?.status : undefined).toBe(413)
   })
 })

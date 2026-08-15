@@ -1,4 +1,9 @@
-import { type AnyServer, defineIdentityPlugin, type Server } from "@nifrajs/core/server"
+import {
+  type AnyServer,
+  defineIdentityPlugin,
+  isSameOriginPath,
+  type Server,
+} from "@nifrajs/core/server"
 
 /**
  * The structural slice of a [better-auth](https://better-auth.com) instance this package needs.
@@ -105,11 +110,12 @@ export interface RequireSessionOptions {
 const rejection = (options: RequireSessionOptions): Response => {
   const to = options.redirectTo
   if (to === undefined) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 })
-  // Same-origin guard (mirrors @nifrajs/web `redirect` + @nifrajs/auth guards): a single leading "/", never
-  // "//host" or an absolute URL. `redirectTo` is dev-authored, so a bad value is a config bug - fail loud.
-  if (!to.startsWith("/") || to.startsWith("//")) {
+  // The kernel's same-origin predicate, shared with `@nifrajs/web`'s `redirect` and the
+  // `@nifrajs/auth` guards: a single leading "/", never "//host", an absolute URL, or a form a URL
+  // parser resolves off-origin. `redirectTo` is dev-authored, so a bad value is a config bug - fail loud.
+  if (!isSameOriginPath(to)) {
     throw new Error(
-      `[nifra/better-auth] requireSession redirectTo must be a same-origin path beginning with "/" (got ${JSON.stringify(to)})`,
+      `[nifra/better-auth] requireSession redirectTo must be a same-origin path beginning with "/" - never "//", a backslash, or a control character (got ${JSON.stringify(to)})`,
     )
   }
   return new Response(null, { status: 302, headers: { location: to } })

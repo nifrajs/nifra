@@ -374,7 +374,7 @@ const linkedPackageRoots = async (
   importerRoots: readonly string[],
   manifests: readonly Record<string, unknown>[],
   scanRoot: string,
-): Promise<readonly string[]> => {
+): Promise<{ readonly roots: readonly string[]; readonly truncated: boolean }> => {
   const realScanRoot = await realpath(scanRoot).catch(() => scanRoot)
   const found = new Map<string, true>()
   let probes = 0
@@ -382,7 +382,11 @@ const linkedPackageRoots = async (
     const pkg = manifests[index]
     if (pkg === undefined) continue
     for (const name of dependencyNames(pkg)) {
-      if (probes++ >= MAX_LINK_PROBES || found.size >= MAX_LINKED_PACKAGES) return [...found.keys()]
+      // Same rule as the importer cap: a bounded scan reports that it stopped. Returning the prefix
+      // silently would let a duplicate sitting past the cap read as a clean bill.
+      if (probes++ >= MAX_LINK_PROBES || found.size >= MAX_LINKED_PACKAGES) {
+        return { roots: [...found.keys()], truncated: true }
+      }
       const candidate = join(importerRoot, "node_modules", ...name.split("/"))
       const link = await lstat(candidate).catch(() => undefined)
       if (link === undefined || !link.isSymbolicLink()) continue
@@ -391,7 +395,7 @@ const linkedPackageRoots = async (
       found.set(resolved, true)
     }
   }
-  return [...found.keys()]
+  return { roots: [...found.keys()], truncated: false }
 }
 
 export const displayPath = (cwd: string, path: string): string => {
@@ -553,12 +557,12 @@ export async function collectIdentityParity(
     if (copy !== undefined) record(name, copy, displayPath(requestedRoot, scanRoot))
   }
 
-  const linkedRoots = await linkedPackageRoots(
+  const linked = await linkedPackageRoots(
     [...importers.map((importer) => importer.root), scanRoot],
     [...importers.map((importer) => importer.package), scanPackage],
     scanRoot,
   )
-  for (const linkedRoot of linkedRoots) {
+  for (const linkedRoot of linked.roots) {
     const linkedPackage = await readJson(join(linkedRoot, "package.json"))
     const boundary = await linkedRepoBoundary(linkedRoot)
     const linkedTargets = new Set([
@@ -617,7 +621,7 @@ export async function collectIdentityParity(
   return {
     workspaceRoot: scanRoot,
     requestedRoot,
-    truncated,
+    truncated: truncated || linked.truncated,
     findings,
     deduplicated,
     singleCopy,
@@ -651,7 +655,7 @@ export function identityParityBasis(result: IdentityParityResult): string {
       ? `scanned ${result.workspaceRoot}`
       : `scanned ${result.workspaceRoot} (the workspace governing ${result.requestedRoot})`
   return result.truncated
-    ? `${scope}; PARTIAL - enumeration stopped at ${MAX_WORKSPACE_IMPORTERS} workspace packages, so packages beyond that were not examined`
+    ? `${scope}; PARTIAL - enumeration stopped at a scan limit (${MAX_WORKSPACE_IMPORTERS} workspace packages, ${MAX_LINKED_PACKAGES} linked packages, or ${MAX_LINK_PROBES} link probes), so installs beyond it were not examined`
     : scope
 }
 
@@ -673,7 +677,19 @@ export async function assertIdentityParity(
   rootPackage?: Record<string, unknown>,
 ): Promise<IdentityParityResult> {
   const result = await collectIdentityParity(cwd, rootPackage)
-  if (result.findings.length === 0) return result
+  if (result.findings.length === 0) {
+    // A bounded scan that found nothing has not shown there is nothing: the duplicate can be sitting
+    // in the part it never reached. `truncated` is exactly that state, so the hard gate refuses to
+    // read it as a pass - a guard that answers "clean" from an incomplete scan is how a guard stops
+    // being worth having. Reporting surfaces (`nifra doctor`, the dev warning) still print the
+    // partial result through `identityParityBasis`; only the gate that must not be wrong stops here.
+    if (result.truncated) {
+      throw new Error(
+        `[nifra] identity parity inconclusive - scan limit reached (${identityParityBasis(result)}). Narrow the scan (run from the app or workspace that governs this install) or reduce the workspace/linked-package topology so the scan can complete.`,
+      )
+    }
+    return result
+  }
   throw new Error(
     `[nifra] identity parity failed (${identityParityHeadline(result.findings.length)}; ${identityParityBasis(result)}):\n${formatIdentityParityFindings(result.findings)}`,
   )

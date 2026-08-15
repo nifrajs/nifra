@@ -118,6 +118,14 @@ export function status(
   body?: unknown,
   init?: { readonly headers?: Readonly<Record<string, string>> },
 ): ResponseResult {
+  // The range `Response` accepts, enforced HERE so the plain lane cannot outrun it. A plain render
+  // is written straight to the socket by the Node adapter, where `writeHead` takes 100-999 - so a
+  // status this rejects would otherwise ship on Node and throw on every Web runtime, from the same
+  // code. One integer comparison against the value already in a register; the divergence it closes
+  // is the kind that only shows up in the runtime an app did not test on.
+  if (!Number.isInteger(code) || code < 200 || code > 599) {
+    throw new RangeError(`[nifra] status(${String(code)}): HTTP status must be an integer 200-599`)
+  }
   const headers = init?.headers
   const plain: PlainRender =
     headers === undefined ? { status: code, body } : { status: code, headers, body }

@@ -117,6 +117,29 @@ test("readSingleCopyRegistration tells the run preload from the test preload", a
   }
 })
 
+test("a preload entry that merely CONTAINS the register specifier is not a registration", async () => {
+  // The old substring test read this as armed. It is not: the app preloads a different module whose
+  // path happens to embed the specifier, so nothing registers and the guarantee would be claimed on
+  // an app that does not have it. Entries are compared whole.
+  const near = await linkedRepos("registration-substring", {
+    bunfig: '[test]\npreload = ["./vendor/@nifrajs/core/single-copy/register-shim.ts"]\n',
+  })
+  try {
+    expect(readSingleCopyRegistration(near.app).test).toBe(false)
+  } finally {
+    await rm(near.ground, { recursive: true, force: true })
+  }
+  // A trailing comment on the array line is still a real registration.
+  const commented = await linkedRepos("registration-comment", {
+    bunfig: '[test]\npreload = ["@nifrajs/core/single-copy/register"] # single-copy\n',
+  })
+  try {
+    expect(readSingleCopyRegistration(commented.app).test).toBe(true)
+  } finally {
+    await rm(commented.ground, { recursive: true, force: true })
+  }
+})
+
 test("planSingleCopy redirects a linked repo's copy at the app's, and refuses across versions", async () => {
   const same = await linkedRepos("plan", { declaration: ["state"] })
   try {

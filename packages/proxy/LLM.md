@@ -15,14 +15,21 @@ Reverse proxy for nifra - stream requests to one fixed upstream origin with hop-
 ## Key exports
 
 - **createProxy** _(function)_ - `createProxy: (options: ProxyOptions) => ProxyHandler` · from `@nifrajs/proxy`
+- **fetchTransport** _(function)_ - `fetchTransport: (options?: FetchTransportOptions) => ProxyTransport` · from `@nifrajs/proxy`
 - **undiciTransport** _(function)_ - `undiciTransport: (options?: UndiciTransportOptions) => ProxyTransport` · from `@nifrajs/proxy/undici`
+- **FetchTransportOptions** _(interface)_ - `interface FetchTransportOptions` · from `@nifrajs/proxy`
+- **NativeProxyTransportRequest** _(interface)_ - `interface NativeProxyTransportRequest` · from `@nifrajs/proxy`
+- **NativeProxyUpstreamResponse** _(interface)_ - `interface NativeProxyUpstreamResponse` · from `@nifrajs/proxy`
+- **NodeNativeProxyRequest** _(interface)_ - `interface NodeNativeProxyRequest` · from `@nifrajs/proxy`
+- **NodeNativeProxyResponse** _(interface)_ - `interface NodeNativeProxyResponse` · from `@nifrajs/proxy`
 - **ProxyContext** _(interface)_ - `interface ProxyContext` · from `@nifrajs/proxy`
 - **ProxyOptions** _(interface)_ - `interface ProxyOptions` · from `@nifrajs/proxy`
 - **ProxyUpstreamRequest** _(interface)_ - `interface ProxyUpstreamRequest` · from `@nifrajs/proxy`
 - **ProxyUpstreamResponse** _(interface)_ - `interface ProxyUpstreamResponse` · from `@nifrajs/proxy`
 - **UndiciTransportOptions** _(interface)_ - `interface UndiciTransportOptions` · from `@nifrajs/proxy/undici`
-- **ProxyHandler** _(type)_ - `type ProxyHandler = (input: Request | ProxyContext) => Promise<Response>` · from `@nifrajs/proxy`
-- **ProxyTransport** _(type)_ - `type ProxyTransport = ( target: URL, request: ProxyUpstreamRequest, ) => Promise<ProxyUpstreamResponse>` · from `@nifrajs/proxy`
+- **NativeProxyTransport** _(type)_ - `type NativeProxyTransport = ( target: URL, request: NativeProxyTransportRequest, ) => Promise<NativeProxyUpstreamResponse>` · from `@nifrajs/proxy`
+
+_…and 2 more - see [`api-reference.md`](../../api-reference.md#nifrajsproxy) for the complete list._
 
 ## Footguns
 

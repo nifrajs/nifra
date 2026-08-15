@@ -185,6 +185,32 @@ const PRELOAD_ASSIGNMENT =
   /^\s*(?:\[(?<section>[^\]]+)\]|preload\s*=\s*(?<value>\[[^\]]*\]|.+))\s*$/
 
 /**
+ * The exact entries of a `preload` assignment: a single-line array, or one quoted string.
+ *
+ * A substring test on the raw assignment is not proof. `preload =
+ * ["@nifrajs/core/single-copy/register-extra"]` contains the specifier and satisfies an
+ * `includes()`, while Bun loads that other module and the registrar never runs - the check then
+ * reports single-copy enforcement as armed on a process that still loads both copies. An entry only
+ * counts when it IS the specifier. Anything this cannot read as a quoted entry (a multi-line array,
+ * an interpolated value) yields nothing, so the caller reports "not registered" rather than proof.
+ */
+function preloadEntries(value: string): readonly string[] {
+  const closing = value.lastIndexOf("]")
+  const inner = value.startsWith("[") && closing !== -1 ? value.slice(1, closing) : value
+  const entries: string[] = []
+  for (const raw of inner.split(",")) {
+    const entry = raw.trim()
+    // A TOML string is quoted at both ends with the same quote; two characters is the shortest one.
+    if (entry.length < 2) continue
+    const quote = entry.charCodeAt(0)
+    if (quote !== 34 && quote !== 39) continue
+    if (entry.charCodeAt(entry.length - 1) !== quote) continue
+    entries.push(entry.slice(1, -1))
+  }
+  return entries
+}
+
+/**
  * Read the runtime proof out of `bunfig.toml`.
  *
  * Line-oriented on purpose: this runs inside `nifra check`, which must not execute or import anything
@@ -211,7 +237,8 @@ export function readSingleCopyRegistration(cwd: string): SingleCopyRegistration 
       section = heading.trim()
       continue
     }
-    if (value === undefined || !value.includes(SINGLE_COPY_REGISTER_SPECIFIER)) continue
+    if (value === undefined || !preloadEntries(value).includes(SINGLE_COPY_REGISTER_SPECIFIER))
+      continue
     if (section === "test") test = true
     else if (section === "") run = true
   }

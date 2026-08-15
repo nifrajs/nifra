@@ -4,7 +4,8 @@
  * and the byte-capped HTML-form reader. Split out of the server kernel so the file stays one domain.
  */
 import { readBoundedBytes } from "./body.ts"
-import { jsonError, urlPartsOf } from "./http.ts"
+import { plainError, urlPartsOf } from "./http.ts"
+import type { ResponseResult } from "./runtime-core.ts"
 import type { RequestSource } from "./server.ts"
 
 // The query string ("?a=1", or "" when absent) - for lazily building `c.query` only when read.
@@ -123,16 +124,21 @@ const FORM_DECODER = new TextDecoder()
  * Read an HTML-form body (urlencoded) into the plain object a body schema validates - same byte
  * cap as the JSON path (a lying/absent Content-Length can't force an oversized buffer), same
  * repeated-key -> `string[]` promotion as query parsing, same `__proto__` guard.
+ *
+ * A rejection is a `ResponseResult`, not a built `Response`, matching the JSON reader: the cap is a
+ * framework render, and answering one on the plain lane costs what a handler's plain return costs
+ * (see `plainError`). The distinction is observable on the Node adapter - a `Response` there is
+ * untagged, so its body drains through a Web stream and the answer goes out chunked.
  */
 export async function readBoundedForm(
   req: RequestSource,
   maxBytes: number,
-): Promise<Record<string, QueryValue> | Response> {
+): Promise<Record<string, QueryValue> | ResponseResult> {
   const read = await readBoundedBytes(req, maxBytes)
   if (!read.ok) {
     return read.status === 413
-      ? jsonError(413, "payload_too_large")
-      : jsonError(400, "invalid_content_length")
+      ? plainError(413, "payload_too_large")
+      : plainError(400, "invalid_content_length")
   }
   const out: Record<string, QueryValue> = Object.create(null) as Record<string, QueryValue>
   // URLSearchParams owns the format's quirks (`+` as space, percent-decoding, empty keys);

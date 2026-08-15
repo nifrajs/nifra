@@ -12,7 +12,7 @@
  *
  * Pairs with `@nifrajs/auth` sessions but only needs the `Session` shape, so it's framework-agnostic.
  */
-import { type ResponseResult, status } from "@nifrajs/core/server"
+import { isSameOriginPath, type ResponseResult, status } from "@nifrajs/core/server"
 import type { Session } from "./session.ts"
 
 /** What a guard does when the check fails: 302 to `redirectTo` (a same-origin path), or - omitted - a
@@ -24,18 +24,20 @@ export interface GuardOptions {
 const rejection = (options: GuardOptions): ResponseResult => {
   const to = options.redirectTo
   if (to === undefined) return status(401, { ok: false, error: "unauthorized" })
-  // Same-origin guard (mirrors @nifrajs/web `redirect`): a single leading "/", never "//host" or an
-  // absolute URL. `redirectTo` is dev-authored, so a bad value is a config bug - fail loud here.
-  if (!to.startsWith("/") || to.startsWith("//")) {
+  // The kernel's same-origin predicate, the one `@nifrajs/web`'s `redirect` uses: a single leading
+  // "/", never "//host", an absolute URL, or a form a URL parser resolves off-origin. `redirectTo`
+  // is dev-authored, so a bad value is a config bug - fail loud here.
+  if (!isSameOriginPath(to)) {
     throw new Error(
-      `[nifra/auth] guard redirectTo must be a same-origin path beginning with "/" (got ${JSON.stringify(to)})`,
+      `[nifra/auth] guard redirectTo must be a same-origin path beginning with "/" - never "//", a backslash, or a control character (got ${JSON.stringify(to)})`,
     )
   }
   return status(302, undefined, { headers: { location: to } })
 }
 
 /**
- * Require a non-empty session. Returns it when present; otherwise throws a `Response` (302/401). Use at
+ * Require a non-empty session. Returns it when present; otherwise throws a `status(...)` render
+ * (302/401) - control flow, not a `Response`; see the module docs above. Use at
  * the top of a protected loader:
  * `const session = requireSession(await sessions.get(c), { redirectTo: "/login" })`.
  */

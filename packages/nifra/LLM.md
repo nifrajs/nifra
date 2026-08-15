@@ -15,6 +15,7 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
 - **defineContextPlugin** _(function)_ - `defineContextPlugin: <D extends object>(name: string, apply: <R extends Registry, Ctx>(app: Server<R, Ctx>) => Server<R, Ctx & D>) => Conte…`
 - **defineIdentityPlugin** _(function)_ - `defineIdentityPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
+- **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
 - **parseCookies** _(function)_ - `parseCookies: (header: string | null | undefined) => Record<string, string>`
@@ -23,9 +24,8 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
 - **signValue** _(function)_ - `signValue: (value: string, secret: CookieSecret) => Promise<string>`
 - **status** _(function)_ - `status: (code: number, body?: unknown, init?: { readonly headers?: Readonly<Record<string, string>>; }) => ResponseResult`
-- **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(…`
 
-_…and 98 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 99 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

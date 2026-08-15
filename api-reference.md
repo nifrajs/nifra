@@ -104,7 +104,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **requireAuthorization** _(function)_ - `requireAuthorization: <Subject, Resource>(authorizer: Authorizer<Subject, Resource>, request: AuthorizationRequest<Subject, Resource>) => Promise<void>`
   Require an application/data-layer policy to allow an action. A denied request throws a plain `status(403)` render - the same control-flow signal a guard throws, on the same rendering lane as a returned one, so the denial never builds a `Response`. Like the guards, it throws because it is called for…
 - **requireSession** _(function)_ - `requireSession: <Data extends Record<string, unknown>>(session: Session<Data>, options?: GuardOptions) => Session<Data>`
-  Require a non-empty session. Returns it when present; otherwise throws a `Response` (302/401). Use at the top of a protected loader: `const session = requireSession(await sessions.get(c), { redirectTo: "/login" })`.
+  Require a non-empty session. Returns it when present; otherwise throws a `status(...)` render (302/401) - control flow, not a `Response`; see the module docs above. Use at the top of a protected loader: `const session = requireSession(await sessions.get(c), { redirectTo: "/login" })`.
 - **requireUser** _(function)_ - `requireUser: <Data extends Record<string, unknown>, K extends keyof Data>(session: Session<Data>, key: K, options?: GuardOptions) => NonNullable<Data[K]>`
   Require a specific session key (e.g. the `userId` a login set) to be present. Returns its value (narrowed non-nullish); otherwise throws like {@link requireSession}. The common "who is the user" guard: `const userId = requireUser(await sessions.get(c), "userId", { redirectTo: "/login" })`.
 
@@ -528,6 +528,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
 - **defineRouterPlugin** _(const)_ - `defineRouterPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
+- **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
+  Is `value` a destination that stays on this origin?
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
   True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
@@ -1513,6 +1515,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
 - **defineRouterPlugin** _(const)_ - `defineRouterPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
+- **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
+  Is `value` a destination that stays on this origin?
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
   True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
@@ -2511,6 +2515,15 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/proxy`
 
+- **FetchTransportOptions** _(interface)_ - `interface FetchTransportOptions`
+  Options for {@link fetchTransport}.
+- **NativeProxyTransport** _(type)_ - `type NativeProxyTransport = ( target: URL, request: NativeProxyTransportRequest, ) => Promise<NativeProxyUpstreamResponse>`
+- **NativeProxyTransportRequest** _(interface)_ - `interface NativeProxyTransportRequest`
+- **NativeProxyUpstreamResponse** _(interface)_ - `interface NativeProxyUpstreamResponse`
+- **NodeNativeProxyRequest** _(interface)_ - `interface NodeNativeProxyRequest`
+  Structural request view used only by the Node-native mount seam. The raw body stays the IncomingMessage; no Web Request, Headers, or Web stream is created before the transport sees it.
+- **NodeNativeProxyResponse** _(interface)_ - `interface NodeNativeProxyResponse`
+  Structural response view used by the Node-native mount seam.
 - **ProxyContext** _(interface)_ - `interface ProxyContext`
   Structural slice of a nifra `Context` the proxy reads - a plain `Request` works too.
 - **ProxyHandler** _(type)_ - `type ProxyHandler = (input: Request | ProxyContext) => Promise<Response>`
@@ -2524,6 +2537,8 @@ _No named exports (side-effect entrypoint)._
   What a {@link ProxyTransport} returns. Header hygiene on the way back is the proxy's job.
 - **createProxy** _(function)_ - `createProxy: (options: ProxyOptions) => ProxyHandler`
   Create a proxy handler bound to one upstream origin.
+- **fetchTransport** _(function)_ - `fetchTransport: (options?: FetchTransportOptions) => ProxyTransport`
+  Create the portable `fetch`-backed {@link ProxyTransport} - the default off Node, and the fallback everywhere the undici transport cannot be used. `redirect: "manual"` is not a preference: following an upstream redirect would let the upstream choose the proxy's next destination, so it is pinned her…
 
 ### `@nifrajs/proxy/undici`
 
@@ -4359,6 +4374,8 @@ _No named exports (side-effect entrypoint)._
   Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
 - **defineRouterPlugin** _(const)_ - `defineRouterPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
+- **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
+  Is `value` a destination that stays on this origin?
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
   True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`

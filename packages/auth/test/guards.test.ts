@@ -69,6 +69,16 @@ describe("requireSession", () => {
       /same-origin path/,
     )
   })
+
+  test("rejects a redirectTo a URL parser resolves off-origin", async () => {
+    const empty = await freshSession()
+    // Single leading "/", so a "//" test alone passes them - but "\" is a path separator under a
+    // special scheme, and tab/CR/LF are stripped before parsing, so each lands on evil.example.
+    for (const bad of ["/\\evil.example", "/\t/evil.example", "/\r\n/evil.example"]) {
+      expect(new URL(bad, "https://app.example").host).toBe("evil.example")
+      expect(() => requireSession(empty, { redirectTo: bad })).toThrow(/same-origin path/)
+    }
+  })
 })
 
 describe("requireUser", () => {

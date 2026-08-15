@@ -853,6 +853,38 @@ test("a throwing app yields a flat 500 (no leak)", async () => {
   expect(await res.json()).toEqual({ ok: false, error: "internal_error" })
 })
 
+test("a plain render Node refuses to write answers 500 - sync and async - and the server survives", async () => {
+  // The plain lane writes straight to the socket, so it never passes through `Headers`, which is
+  // what would have rejected this value. Node rejects it at `writeHead` instead: that throw used to
+  // escape - synchronously out of `handle`, or as an unhandled rejection on the async lane, which
+  // terminates the process by default. Both must answer 500 and leave the server serving.
+  const injected = { headers: { "x-bad": "a\r\nInjected: 1" } }
+  const app = server()
+    .get("/sync", () => status(200, { ok: true }, injected))
+    .get("/async", async () => {
+      await Bun.sleep(1)
+      return status(200, { ok: true }, injected)
+    })
+    .get("/fine", () => ({ ok: true }))
+  running = await serve(app, { port: 0 })
+  for (const path of ["/sync", "/async"]) {
+    const res = await fetch(`http://localhost:${running.port}${path}`)
+    expect(res.status).toBe(500)
+    expect(res.headers.get("x-bad")).toBeNull()
+    expect(await res.json()).toEqual({ ok: false, error: "internal_error" })
+  }
+  expect(await (await fetch(`http://localhost:${running.port}/fine`)).json()).toEqual({ ok: true })
+})
+
+test("status() refuses a code outside 200-599 at the call site", () => {
+  // A plain render carries its status to `writeHead` unexamined, so an out-of-range code would be
+  // a socket-level throw far from the handler that produced it. Fail where it is written instead.
+  for (const bad of [99, 600, 1000, 200.5, Number.NaN]) {
+    expect(() => status(bad, { ok: true })).toThrow(RangeError)
+  }
+  expect(status(204).plain?.status).toBe(204)
+})
+
 test("stop() drains an in-flight request, then is idempotent", async () => {
   const app = server().get("/slow", async () => {
     await Bun.sleep(80)

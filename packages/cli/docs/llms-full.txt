@@ -10070,7 +10070,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/proxy
 
-`createProxy`, `ProxyContext`, `ProxyHandler`, `ProxyOptions`, `ProxyTransport`, `ProxyUpstreamRequest`, `ProxyUpstreamResponse`
+`createProxy`, `fetchTransport`, `FetchTransportOptions`, `NativeProxyTransport`, `NativeProxyTransportRequest`, `NativeProxyUpstreamResponse`, `NodeNativeProxyRequest`, `NodeNativeProxyResponse`, `ProxyContext`, `ProxyHandler`, `ProxyOptions`, `ProxyTransport`, `ProxyUpstreamRequest`, `ProxyUpstreamResponse`
 
 ## @nifrajs/runner
 

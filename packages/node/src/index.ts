@@ -11,6 +11,7 @@
  * `Request`/`Response`, plus a Bun-`listen()`-style graceful `stop()`.
  */
 import { AsyncLocalStorage } from "node:async_hooks"
+import { constants as FS } from "node:fs"
 import { open, realpath } from "node:fs/promises"
 import {
   createServer,
@@ -127,6 +128,27 @@ interface NodeRequestSource {
   rawBodyReaders?(): NodeRawBodyReaders
 }
 
+/** The request/response view handed to a mounted handler's optional native lane. It deliberately
+ * keeps the raw IncomingMessage so an upstream client receives the original Node stream. */
+interface NodeNativeMountRequest {
+  readonly method: string
+  readonly url: string
+  readonly headers: IncomingHttpHeaders
+  readonly raw: IncomingMessage
+}
+
+type NodeNativeMountHandler = (
+  request: NodeNativeMountRequest,
+  response: ServerResponse,
+  platform?: NodePlatform,
+) => undefined | false | Promise<undefined | false>
+
+interface NodeNativeMountSelection {
+  readonly handler: NodeNativeMountHandler
+  readonly path: string
+  readonly stripPrefix: boolean
+}
+
 /**
  * Core's `RawBodyReaders`: the pre-cap reader surface the transport cap buffers through. Mirrored
  * structurally here rather than imported, matching how the rest of this adapter states core's
@@ -169,6 +191,8 @@ interface NodeFastHandler extends FetchHandler {
     runtime: NodeOutcomeRuntime,
   ): NodeServeOutcome | Promise<NodeServeOutcome>
 }
+
+const RESOLVE_NODE_MOUNT = Symbol.for("@nifrajs/core/resolve-node-mount")
 
 /**
  * The `Content-Type` the host runtime's `Response.json` emits - Node's undici uses `application/json`,
@@ -883,18 +907,22 @@ async function readStatic(
 ): Promise<NodeServeOutcome> {
   let handle: Awaited<ReturnType<typeof open>> | undefined
   try {
-    handle = await open(file, "r")
+    // Defense-in-depth: the lexical `..` guard in staticMatch can't catch a symlink INSIDE root that
+    // points outside it. Resolve first, check containment on the RESOLVED name, and open that -
+    // never open the requested path and re-resolve it afterwards. A local attacker who can write
+    // inside the served tree wins that ordering: swap a link between the open and the lookup and the
+    // descriptor already streaming refers to an external file while the lookup answers with a
+    // contained path. `O_NOFOLLOW` closes the remainder on the final component - `realpath` returned
+    // a name with no links left in it, so one appearing before the open is an attack, not a layout.
+    const [realFile, realRoot] = await Promise.all([realpath(file), realpath(state.root)])
+    if (realFile !== realRoot && !realFile.startsWith(realRoot + sep)) {
+      return { kind: "response", response: new Response("Forbidden", { status: 403 }) }
+    }
+    handle = await open(realFile, FS.O_RDONLY | FS.O_NOFOLLOW)
     const stat = await handle.stat()
     if (!stat.isFile()) {
       await handle.close()
       return { kind: "response", response: new Response("Not Found", { status: 404 }) }
-    }
-    // Defense-in-depth: the lexical `..` guard in staticMatch can't catch a symlink INSIDE root that
-    // points outside it. Re-confirm the real path is contained before streaming the bytes.
-    const [realFile, realRoot] = await Promise.all([realpath(file), realpath(state.root)])
-    if (realFile !== realRoot && !realFile.startsWith(realRoot + sep)) {
-      await handle.close()
-      return { kind: "response", response: new Response("Forbidden", { status: 403 }) }
     }
     const headers: Record<string, string> = { ...state.headers }
     headers["content-type"] =
@@ -976,14 +1004,20 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
     try {
       const handled = handle(app, nodeReq, nodeRes, protocol, staticState, hostPolicy)
       if (handled instanceof Promise) {
-        void handled.finally(() => {
-          inFlight -= 1
-        })
+        // `catch` before `finally`: a `finally` alone forwards the rejection to a promise nothing
+        // observes, and Node terminates the process on an unhandled rejection by default. Every
+        // writer already ends its own failures (`failWrite`), so anything arriving here is a fault
+        // no response can still be built from - the connection is the only thing left to end.
+        void handled
+          .catch(() => failWrite(nodeRes))
+          .finally(() => {
+            inFlight -= 1
+          })
         return
       }
       inFlight -= 1
     } catch {
-      writeInternalError(nodeRes)
+      failWrite(nodeRes)
       inFlight -= 1
     }
   })
@@ -1050,6 +1084,66 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
   })
 }
 
+/** Run the existing Node-direct/Web bridge after a native mount either was not selected or declined
+ * because its optional transport was unavailable. Kept as a top-level helper so ordinary requests
+ * do not allocate a per-request closure merely to preserve the fallback. */
+function runNodeSource(
+  app: FetchHandler,
+  source: NodeRequestSource,
+  nodeReq: IncomingMessage,
+  nodeRes: ServerResponse,
+  protocol: RequestProtocol,
+  host: string,
+  platform: NodePlatform | undefined,
+): void | Promise<void> {
+  const resolveNodeSource = (app as Partial<NodeFastHandler>).resolveNodeSource
+  if (typeof resolveNodeSource === "function") {
+    try {
+      const outcome = resolveNodeSource.call(app, source, platform, NODE_OUTCOME_RUNTIME)
+      return outcome instanceof Promise
+        ? outcome.then(
+            (settled) => writeOutcomeSafely(settled, nodeRes, nodeReq.method),
+            () => failWrite(nodeRes),
+          )
+        : writeOutcomeSafely(outcome, nodeRes, nodeReq.method)
+    } catch {
+      failWrite(nodeRes)
+      return
+    }
+  }
+
+  const request = toWebRequest(nodeReq, protocol, host)
+  const resolveNode = (app as Partial<NodeFastHandler>).resolveNode
+  if (typeof resolveNode === "function") {
+    try {
+      const outcome = resolveNode.call(app, request, platform)
+      return outcome instanceof Promise
+        ? outcome.then(
+            (settled) => writeOutcomeSafely(settled, nodeRes, nodeReq.method),
+            () => failWrite(nodeRes),
+          )
+        : writeOutcomeSafely(outcome, nodeRes, nodeReq.method)
+    } catch {
+      failWrite(nodeRes)
+      return
+    }
+  }
+
+  try {
+    const response = app.fetch(request, platform)
+    return response instanceof Promise
+      ? response.then(
+          (settled) => writeResponseSafely(settled, nodeRes, nodeReq.method),
+          () => failWrite(nodeRes),
+        )
+      : writeResponseSafely(response, nodeRes, nodeReq.method)
+  } catch {
+    // The app should never throw (nifra returns a 500), but never leak a stack to the wire.
+    failWrite(nodeRes)
+    return
+  }
+}
+
 function handle(
   app: FetchHandler,
   nodeReq: IncomingMessage,
@@ -1090,38 +1184,65 @@ function handle(
   if (staticState !== undefined && (nodeReq.method === "GET" || nodeReq.method === "HEAD")) {
     const matched = staticMatch(staticState, nodeReq.url ?? "/")
     if (matched !== "pass") {
-      if ("reject" in matched) return writeNodeResponse(matched.reject, nodeRes, nodeReq.method)
+      if ("reject" in matched) return writeResponseSafely(matched.reject, nodeRes, nodeReq.method)
       return readStatic(matched.file, staticState, nodeReq.method ?? "GET").then(
-        (outcome) => writeNodeOutcome(outcome, nodeRes, nodeReq.method),
-        () => writeInternalError(nodeRes),
+        (outcome) => writeOutcomeSafely(outcome, nodeRes, nodeReq.method),
+        () => failWrite(nodeRes),
       )
     }
   }
 
-  // Fast path: a nifra app exposes `resolveNode`, which renders a plain-data result as primitives we
-  // write straight to the socket - skipping the undici `Response` build + body drain (the bulk of the
-  // Web-bridge cost on Node). A handler-returned `Response`/redirect, 404/405, error, timeout, or any
-  // `onResponse` hook comes back as `{ kind: "response" }` and takes the same Web path as before, so
-  // behavior is identical. A plain `{ fetch }` handler (no `resolveNode`) uses the Web path too.
+  // A mounted handler may advertise a native Node lane. Core has already checked route precedence
+  // and every global lifecycle gate before returning this selection. The handler writes directly to
+  // `nodeRes`; `false` means its optional transport was unavailable, so the same untouched source
+  // continues through the ordinary Web/direct path below.
   const resolveNodeSource = (app as Partial<NodeFastHandler>).resolveNodeSource
-  if (typeof resolveNodeSource === "function") {
-    try {
-      const outcome = resolveNodeSource.call(
-        app,
-        toNodeRequestSource(nodeReq, protocol, host),
-        platform,
-        NODE_OUTCOME_RUNTIME,
-      )
-      return outcome instanceof Promise
-        ? outcome.then(
-            (settled) => writeNodeOutcome(settled, nodeRes, nodeReq.method),
-            () => writeInternalError(nodeRes),
-          )
-        : writeNodeOutcome(outcome, nodeRes, nodeReq.method)
-    } catch {
-      writeInternalError(nodeRes)
-      return
+  const resolveNodeMount = (app as unknown as Record<symbol, unknown>)[RESOLVE_NODE_MOUNT]
+  if (typeof resolveNodeSource === "function" || typeof resolveNodeMount === "function") {
+    const nodeSource = toNodeRequestSource(nodeReq, protocol, host)
+
+    if (typeof resolveNodeMount === "function") {
+      let selection: NodeNativeMountSelection | undefined
+      try {
+        selection = (
+          resolveNodeMount as (
+            source: NodeRequestSource,
+            platform?: NodePlatform,
+          ) => NodeNativeMountSelection | undefined
+        ).call(app, nodeSource, platform)
+      } catch {
+        writeInternalError(nodeRes)
+        return
+      }
+      if (selection !== undefined) {
+        const nativeRequest: NodeNativeMountRequest = {
+          method: nodeReq.method ?? "GET",
+          url: selection.stripPrefix
+            ? stripNodeMountPrefix(`${protocol}://${host}${nodeReq.url ?? "/"}`, selection.path)
+            : `${protocol}://${host}${nodeReq.url ?? "/"}`,
+          headers: nodeReq.headers,
+          raw: nodeReq,
+        }
+        try {
+          const outcome = selection.handler(nativeRequest, nodeRes, platform)
+          if (outcome instanceof Promise) {
+            return outcome.then(
+              (handled) =>
+                handled === false
+                  ? runNodeSource(app, nodeSource, nodeReq, nodeRes, protocol, host, platform)
+                  : undefined,
+              () => failWrite(nodeRes),
+            )
+          }
+          if (outcome !== false) return
+        } catch {
+          failWrite(nodeRes)
+          return
+        }
+      }
     }
+
+    return runNodeSource(app, nodeSource, nodeReq, nodeRes, protocol, host, platform)
   }
 
   const request = toWebRequest(nodeReq, protocol, host)
@@ -1131,12 +1252,12 @@ function handle(
       const outcome = resolveNode.call(app, request, platform)
       return outcome instanceof Promise
         ? outcome.then(
-            (settled) => writeNodeOutcome(settled, nodeRes, nodeReq.method),
-            () => writeInternalError(nodeRes),
+            (settled) => writeOutcomeSafely(settled, nodeRes, nodeReq.method),
+            () => failWrite(nodeRes),
           )
-        : writeNodeOutcome(outcome, nodeRes, nodeReq.method)
+        : writeOutcomeSafely(outcome, nodeRes, nodeReq.method)
     } catch {
-      writeInternalError(nodeRes)
+      failWrite(nodeRes)
       return
     }
   }
@@ -1145,13 +1266,13 @@ function handle(
     const response = app.fetch(request, platform)
     return response instanceof Promise
       ? response.then(
-          (settled) => writeNodeResponse(settled, nodeRes, nodeReq.method),
-          () => writeInternalError(nodeRes),
+          (settled) => writeResponseSafely(settled, nodeRes, nodeReq.method),
+          () => failWrite(nodeRes),
         )
-      : writeNodeResponse(response, nodeRes, nodeReq.method)
+      : writeResponseSafely(response, nodeRes, nodeReq.method)
   } catch {
     // The app should never throw (nifra returns a 500), but never leak a stack to the wire.
-    writeInternalError(nodeRes)
+    failWrite(nodeRes)
     return
   }
 }
@@ -1177,6 +1298,62 @@ function writeNodeOutcome(
 function writeInternalError(nodeRes: ServerResponse): void {
   nodeRes.writeHead(500, { "content-type": "application/json" })
   nodeRes.end(INTERNAL_ERROR_BODY)
+}
+
+/**
+ * End a request whose WRITE failed, from anywhere a write can fail.
+ *
+ * `writeHead` throws on an invalid status or a header value carrying CR/LF - reachable whenever an
+ * app reflects request data into `status(...)`/`c.set.headers`, which on the Web lane the `Headers`
+ * constructor rejects instead. It also throws once the head is already out. Both have to end here:
+ * on the async lanes the write runs inside a `.then` callback whose rejection nothing downstream
+ * catches (`serve` only observes `finally`), and Node's default for an unhandled rejection is to
+ * terminate the process - a route-shaped input turning into a server-wide DoS.
+ *
+ * A 500 while the head is unsent, otherwise a destroy: there is no way to correct a response whose
+ * status line already shipped, and a half-written body must not be left for the client to parse.
+ */
+function failWrite(nodeRes: ServerResponse): void {
+  try {
+    if (!nodeRes.headersSent) {
+      writeInternalError(nodeRes)
+      return
+    }
+  } catch {
+    // The socket went away between the check and the write; fall through to the destroy.
+  }
+  nodeRes.destroy()
+}
+
+/** {@link writeNodeOutcome} with {@link failWrite} behind it, sync throw and async rejection alike. */
+function writeOutcomeSafely(
+  outcome: NodeServeOutcome,
+  nodeRes: ServerResponse,
+  method?: string,
+): void | Promise<void> {
+  try {
+    const written = writeNodeOutcome(outcome, nodeRes, method)
+    return written instanceof Promise ? written.catch(() => failWrite(nodeRes)) : written
+  } catch {
+    failWrite(nodeRes)
+    return
+  }
+}
+
+/** {@link writeNodeResponse} with {@link failWrite} behind it - same contract as
+ * {@link writeOutcomeSafely}, for the lanes that carry a `Response`. */
+function writeResponseSafely(
+  response: Response,
+  nodeRes: ServerResponse,
+  method?: string,
+): void | Promise<void> {
+  try {
+    const written = writeNodeResponse(response, nodeRes, method)
+    return written instanceof Promise ? written.catch(() => failWrite(nodeRes)) : written
+  } catch {
+    failWrite(nodeRes)
+    return
+  }
 }
 
 function writeBadRequest(nodeRes: ServerResponse): void {
@@ -1347,6 +1524,14 @@ function toNodeRequestSource(
   return method === "GET" || method === "HEAD"
     ? new LeanNodeGetSource(req, method, protocol, host)
     : new LazyNodeRequestSource(req, method, protocol, host)
+}
+
+function stripNodeMountPrefix(url: string, prefix: string): string {
+  if (prefix === "/") return url
+  const target = new URL(url)
+  const rest = target.pathname.slice(prefix.length)
+  target.pathname = rest === "" ? "/" : rest
+  return target.href
 }
 
 /**

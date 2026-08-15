@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   assertDevelopmentProductionParity,
+  assertIdentityParity,
   collectDevelopmentParityInput,
   collectIdentityParity,
   formatIdentityParityFindings,
@@ -158,6 +159,29 @@ test("shared identity parity resolves a workspace from an app subdirectory", asy
     expect(scope).toContain("fails every build in the workspace")
     expect(scope).toContain("scoping to it would miss the case this check exists for")
     expect(formatIdentityParityFindings(result.findings)).toContain("scope:")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a scan that hit its limit fails the gate instead of passing as clean", async () => {
+  // Enough dependency names to exhaust the link-probe budget before a single one is examined. The
+  // scan therefore finds nothing - and "nothing" from a scan that stopped early is not a clean bill:
+  // the duplicate this gate exists to catch can be sitting in the part it never reached.
+  const root = await mkdtemp(join(tmpdir(), "nifra-parity-truncated-"))
+  try {
+    const dependencies: Record<string, string> = {}
+    for (let i = 0; i < 4_200; i++) dependencies[`pkg-${i}`] = "1.0.0"
+    const manifest = { name: "app", version: "1.0.0", dependencies }
+    await writeFile(join(root, "package.json"), JSON.stringify(manifest))
+    const result = await collectIdentityParity(root, manifest as unknown as Record<string, unknown>)
+    expect(result.truncated).toBe(true)
+    expect(result.findings).toHaveLength(0)
+    // Every reporting surface prints the basis, so the partial scan is visible there too.
+    expect(identityParityBasis(result)).toContain("PARTIAL")
+    await expect(
+      assertIdentityParity(root, manifest as unknown as Record<string, unknown>),
+    ).rejects.toThrow(/identity parity inconclusive - scan limit reached/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
