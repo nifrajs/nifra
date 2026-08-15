@@ -128,6 +128,47 @@ describe("runRequest", () => {
     expect(cancelled).toBe(true)
   })
 
+  test("a zero output cap cancels a response before reading it", async () => {
+    let cancelled = false
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("discarded"))
+      },
+      cancel() {
+        cancelled = true
+      },
+    })
+    const result = await runRequest(
+      { fetch: () => new Response(body) },
+      { path: "/" },
+      { maxBodyChars: 0 },
+    )
+    expect(result.bodyText).toBe("")
+    expect(result.truncated).toBe(true)
+    expect(cancelled).toBe(true)
+  })
+
+  test("cancels when a later chunk arrives after the character cap is full", async () => {
+    let cancelled = false
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("1234"))
+        controller.enqueue(new TextEncoder().encode("5678"))
+      },
+      cancel() {
+        cancelled = true
+      },
+    })
+    const result = await runRequest(
+      { fetch: () => new Response(body) },
+      { path: "/" },
+      { maxBodyChars: 4 },
+    )
+    expect(result.bodyText).toBe("1234")
+    expect(result.truncated).toBe(true)
+    expect(cancelled).toBe(true)
+  })
+
   test("echoes the label", async () => {
     const r = await runRequest(echoApp, { path: "/users/1", label: "fetch user" })
     expect(r.label).toBe("fetch user")
