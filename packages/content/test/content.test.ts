@@ -133,12 +133,13 @@ describe("content indexes", () => {
     if (page.nextCursor === undefined) throw new Error("expected a next cursor")
     // The cursor is a position in one query's order. Replayed against a different filter it addresses
     // a different entry, so it is rejected even when its position is in range for the new result.
-    expect(() => index.query({ where: { section: "news" }, cursor: page.nextCursor })).toThrow(
+    const cursor = page.nextCursor
+    expect(() => index.query({ where: { section: "news" }, cursor })).toThrow(
       /cursor does not match this index query/,
     )
-    expect(() =>
-      index.query({ sort: { field: "score", dir: "asc" }, cursor: page.nextCursor }),
-    ).toThrow(/cursor does not match this index query/)
+    expect(() => index.query({ sort: { field: "score", dir: "asc" }, cursor })).toThrow(
+      /cursor does not match this index query/,
+    )
   })
 
   test("a matching cursor past a shrunken index is an exhausted page, not an error", () => {
