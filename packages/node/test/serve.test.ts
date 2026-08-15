@@ -3,6 +3,7 @@ import { ServerResponse as NodeServerResponse } from "node:http"
 import { connect } from "node:net"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/core"
 import { server } from "@nifrajs/core"
+import { status } from "@nifrajs/core/server"
 import { compression } from "@nifrajs/middleware"
 import { type NodeServer, serve } from "../src/index.ts"
 
@@ -730,6 +731,21 @@ test("normalizes a body-bearing raw 304 before the Node response writer", async 
   expect(res.status).toBe(304)
   expect(res.headers.get("content-length")).not.toBe("12")
   expect(await res.text()).toBe("")
+})
+
+test("a body-less plain render declares content-length: 0 rather than chunking", async () => {
+  // What `redirect()` produces. Node frames `writeHead` + bare `end()` as chunked, so the shortest
+  // response the framework emits went out with a chunk terminator and no length; every Web-native
+  // runtime sends `content-length: 0` for the same value.
+  const app = server().get("/go", () =>
+    status(303, undefined, { headers: { location: "/thanks" } }),
+  )
+  running = await serve(app, { port: 0 })
+  const res = await fetch(`http://localhost:${running.port}/go`, { redirect: "manual" })
+  expect(res.status).toBe(303)
+  expect(res.headers.get("location")).toBe("/thanks")
+  expect(res.headers.get("content-length")).toBe("0")
+  expect(res.headers.get("transfer-encoding")).toBeNull()
 })
 
 test("a throwing app yields a flat 500 (no leak)", async () => {

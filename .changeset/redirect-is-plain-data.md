@@ -1,5 +1,6 @@
 ---
 "@nifrajs/web": major
+"@nifrajs/node": patch
 ---
 
 `redirect()` returns a plain render instead of a `Response`.
@@ -13,5 +14,7 @@ A redirect is a status line and one header - the most body-less response there i
 - Reading it: `redirect("/x").plain` is `{ status, headers, body }`. `toResponse()` builds the `Response` if something genuinely needs one.
 - Adding headers: pass them - `redirect("/x", { headers: { "cache-control": "no-store" } })`. Cookies are unaffected; they still ride `c.set` and apply to a redirect exactly as before.
 - Testing it: assert on `.plain` (or `toResponse()`), not on `.status`.
+
+The Node writer was framing a body-less plain render as chunked: `writeHead` followed by a bare `end()` leaves Node to pick the framing, so the shortest response the framework emits went out with a chunk terminator and no length, where every Web-native runtime sends `content-length: 0`. It now declares the zero length (HEAD excluded - its length describes the GET's body, which that lane does not know).
 
 A hand-rolled `Response` from a loader or action is untouched - still passed through verbatim, still converted the same way on a data request. Only what `redirect()` itself returns changed.
