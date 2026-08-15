@@ -268,15 +268,20 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
 // per-route direct body-read caps both sit in the kernel where any route on any runtime can reach
 // them, so their ~0.35 KB gzip is paid once in `nifra-bare` and inherited. Same rule as before: each
 // ceiling is the measured number plus ~0.2 KB, tight enough that a regression of that size still trips.
+// The roadmap's plain-data response carriers and early-exit handling then added ~0.6 KB gzip to the
+// shared core kernel (bare 25.6 -> 26.2). This is deliberately accepted as a uniform seam cost: the
+// safer status/validation path replaces per-request Response construction and does not make any
+// optional package reachable. The ceilings below retain the same ~0.2 KB headroom over the measured
+// matrix; a further shared-kernel increase still fails all affected rows together.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
-  "nifra-bare": 25.8,
+  "nifra-bare": 26.4,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 28.9,
-  "nifra-effect-ledger": 27.8,
-  "nifra-mcp": 26.1,
-  "nifra-sse": 26.5,
-  "nifra-valibot": 26.8,
-  "nifra-typebox-t": 55.9,
+  "nifra-idempotency": 29.5,
+  "nifra-effect-ledger": 28.3,
+  "nifra-mcp": 26.6,
+  "nifra-sse": 27.1,
+  "nifra-valibot": 27.4,
+  "nifra-typebox-t": 56.4,
 }
 
 const main = async (): Promise<void> => {
