@@ -67,6 +67,20 @@ export interface IdentityParityFinding {
    */
   readonly topology?: string
   /**
+   * Why a copy the invoked directory does not import is still fatal here.
+   *
+   * The gate is workspace-wide on purpose. Scoping it to the invoked app would be more precise and
+   * would also reintroduce the blindness this guard was built for: a copy that arrives through a
+   * workspace-linked dependency is not visible from the app directory, and that case shipped a
+   * broken dev server while the check reported "none". A workspace-wide answer over-reports in
+   * exchange for never under-reporting - and over-reporting is the failure a developer can see and
+   * act on, where under-reporting is the one nobody knows happened.
+   *
+   * Present only when the answer would otherwise look wrong: a subdirectory was scanned as its
+   * workspace, and at least one copy sits outside that subdirectory.
+   */
+  readonly scope?: string
+  /**
    * The copies exist but the app declared this package single-copy, so the resolver collapses them
    * before anything loads. Reported, never fatal - see `SingleCopyCoverage`.
    */
@@ -409,7 +423,7 @@ const installRootOf = (path: string): string => {
  * decision.
  */
 const describeTopology = (
-  cwd: string,
+  base: string,
   scanRoot: string,
   paths: readonly string[],
 ): string | undefined => {
@@ -421,13 +435,13 @@ const describeTopology = (
   }
   const roots = [...counts.entries()].sort(([a], [b]) => a.localeCompare(b))
   const breakdown = roots
-    .map(([root, count]) => `${count} under ${displayPath(cwd, root)}`)
+    .map(([root, count]) => `${count} under ${displayPath(base, root)}`)
     .join(", ")
   const outside = roots.filter(([root]) => !pathInside(scanRoot, root))
   const shape =
     outside.length > 0
       ? `${outside.length} install root${outside.length === 1 ? " is" : "s are"} outside the scanned root (${outside
-          .map(([root]) => displayPath(cwd, root))
+          .map(([root]) => displayPath(base, root))
           .join(
             ", ",
           )}), so that copy is installed by another project and reinstalling here cannot remove it`
@@ -435,6 +449,28 @@ const describeTopology = (
         ? "all install roots are inside the scanned root, so a nested install is shadowing the hoisted copy and one reinstall from the workspace root collapses it"
         : "one install root holds every copy, so the split is inside a single install (a nested or stored copy), not across projects"
   return `${paths.length} paths under ${roots.length} install root${roots.length === 1 ? "" : "s"}: ${breakdown}; ${shape}`
+}
+
+/**
+ * State that the gate is workspace-wide, when that is what makes a finding look wrong.
+ *
+ * Running `nifra build` inside `apps/web` can fail on a copy held by `apps/admin` - a package this
+ * app never imports. That is deliberate, not a miss: the scan is anchored on the workspace because
+ * copies reached through a workspace-linked dependency are invisible from the app directory, and
+ * anchoring on the app is exactly how this guard once reported "none" while dev was already broken.
+ * The trade is over-reporting instead of under-reporting, and the note says so rather than leaving a
+ * developer to conclude the tool is confused about which project it is checking.
+ */
+const describeScope = (
+  requestedRoot: string,
+  scanRoot: string,
+  paths: readonly string[],
+): string | undefined => {
+  if (requestedRoot === scanRoot) return undefined
+  const outside = paths.filter((path) => !pathInside(requestedRoot, path))
+  if (outside.length === 0) return undefined
+  const here = relative(scanRoot, requestedRoot) || "."
+  return `${outside.length} of these copies ${outside.length === 1 ? "is" : "are"} outside ${here}, so this fails every build in the workspace, including apps that never import the package. The scan is anchored on the workspace on purpose: a copy reached through a workspace-linked dependency cannot be seen from ${here} alone, and scoping to it would miss the case this check exists for. Fix the copies where they live, or declare the package single-copy.`
 }
 
 const identityTargets = (pkg: Record<string, unknown>): readonly string[] =>
@@ -509,12 +545,12 @@ export async function collectIdentityParity(
       if (importer.package.name === name) continue
       targets.add(name)
       const copy = await resolvedInstalledCopy(importer.root, scanRoot, name)
-      if (copy !== undefined) record(name, copy, displayPath(cwd, importer.root))
+      if (copy !== undefined) record(name, copy, displayPath(requestedRoot, importer.root))
     }
   }
   for (const name of targets) {
     const copy = await resolvedInstalledCopy(scanRoot, scanRoot, name)
-    if (copy !== undefined) record(name, copy, displayPath(cwd, scanRoot))
+    if (copy !== undefined) record(name, copy, displayPath(requestedRoot, scanRoot))
   }
 
   const linkedRoots = await linkedPackageRoots(
@@ -532,7 +568,7 @@ export async function collectIdentityParity(
     for (const name of linkedTargets) {
       if (linkedPackage?.name === name) continue
       const copy = await resolvedInstalledCopy(linkedRoot, boundary, name)
-      if (copy !== undefined) record(name, copy, displayPath(cwd, linkedRoot))
+      if (copy !== undefined) record(name, copy, displayPath(requestedRoot, linkedRoot))
     }
   }
 
@@ -546,10 +582,11 @@ export async function collectIdentityParity(
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([path, copy]) => ({
         version: copy.version,
-        path: displayPath(cwd, path),
+        path: displayPath(requestedRoot, path),
         importers: [...copy.importers].sort(),
       }))
-    const topology = describeTopology(cwd, scanRoot, absolutePaths)
+    const topology = describeTopology(requestedRoot, scanRoot, absolutePaths)
+    const scope = describeScope(requestedRoot, scanRoot, absolutePaths)
     const versions = [...new Set(resolvedCopies.map((copy) => copy.version))].sort()
     const cause: IdentityParityCause = versions.length > 1 ? "version-skew" : "duplicate-path"
     // A declaration never covers a version skew. Redirecting across versions would hand a package a
@@ -572,6 +609,7 @@ export async function collectIdentityParity(
         ? deduplicatedRemediation(singleCopy.registration)
         : identityRemediation(cause, name),
       ...(topology === undefined ? {} : { topology }),
+      ...(scope === undefined ? {} : { scope }),
       deduplicated: covered,
     }
     ;(covered ? deduplicated : findings).push(finding)
@@ -595,7 +633,8 @@ export function formatIdentityParityFindings(findings: readonly IdentityParityFi
         `  versions: ${finding.versions.join(", ")}; paths: ${finding.copies
           .map((copy) => copy.path)
           .join(", ")}` +
-        (finding.topology === undefined ? "" : `\n  topology: ${finding.topology}`),
+        (finding.topology === undefined ? "" : `\n  topology: ${finding.topology}`) +
+        (finding.scope === undefined ? "" : `\n  scope: ${finding.scope}`),
     )
     .join("\n")
 }

@@ -2585,7 +2585,7 @@ export async function collectCheckResult(
       diagnostics.push({
         rule: "duplicate-install",
         severity: "error",
-        message: `${finding.package} identity preflight found ${finding.cause} (${copies}) - ${finding.explanation}${finding.topology === undefined ? "" : `. Topology: ${finding.topology}`}`,
+        message: `${finding.package} identity preflight found ${finding.cause} (${copies}) - ${finding.explanation}${finding.topology === undefined ? "" : `. Topology: ${finding.topology}`}${finding.scope === undefined ? "" : `. Scope: ${finding.scope}`}`,
         fix: finding.remediation,
         suggestion: {
           kind: "manual",

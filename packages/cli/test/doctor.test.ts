@@ -669,6 +669,9 @@ describe("collectDuplicateInstalls - discovery anchored at the workspace root", 
       // roots the workspace owns, so this one collapses with a reinstall.
       expect(findings[0]?.topology).toContain("2 paths under 2 install roots")
       expect(findings[0]?.topology).toContain("inside the scanned root")
+      // And why a copy held by a package this app does not import still fails its build.
+      expect(findings[0]?.scope).toContain("outside apps/web")
+      expect(findings[0]?.scope).toContain("fails every build in the workspace")
 
       // doctor states the basis it answered on. The reported failure mode was doctor saying "none"
       // while the build guard failed: with the workspace named in both outputs, a disagreement is

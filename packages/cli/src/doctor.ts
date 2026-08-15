@@ -1009,6 +1009,9 @@ export async function runDoctor(
       console.log(`      ${finding.explanation}`)
       // The shape of the split decides which fix can work, so it is printed above the fix itself.
       if (finding.topology !== undefined) console.log(`      topology: ${finding.topology}`)
+      // Why a copy this directory never imports still counts. Without it, a workspace-wide answer
+      // read from inside one app looks like the tool checking the wrong project.
+      if (finding.scope !== undefined) console.log(`      scope: ${finding.scope}`)
       console.log(`      fix: ${finding.remediation}`)
     }
   }

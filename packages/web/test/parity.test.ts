@@ -150,6 +150,14 @@ test("shared identity parity resolves a workspace from an app subdirectory", asy
     expect(result.findings[0]?.topology).toContain("3 paths under 3 install roots")
     expect(result.findings[0]?.topology).toContain("all install roots are inside the scanned root")
     expect(identityParityBasis(result)).toContain("the workspace governing")
+    // Two of the three copies belong to packages `apps/web` does not import. That is the accepted
+    // cost of a workspace-wide gate, and the finding has to say so - otherwise a build failing on a
+    // sibling app's node_modules reads as the tool checking the wrong project.
+    const scope = result.findings[0]?.scope ?? ""
+    expect(scope).toContain("2 of these copies are outside apps/web")
+    expect(scope).toContain("fails every build in the workspace")
+    expect(scope).toContain("scoping to it would miss the case this check exists for")
+    expect(formatIdentityParityFindings(result.findings)).toContain("scope:")
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -361,6 +369,9 @@ test("a linked sibling repo's second react is fatal when nothing is declared", a
     expect(topology).toContain("outside the scanned root")
     expect(topology).toContain("reinstalling here cannot remove it")
     expect(formatIdentityParityFindings(result.findings)).toContain("topology:")
+    // The scanned root IS the requested one here, so there is no scope surprise to explain and the
+    // note stays off. It appears only where the answer would otherwise look like the wrong project.
+    expect(result.findings[0]?.scope).toBeUndefined()
   } finally {
     await rm(ground, { recursive: true, force: true })
   }
