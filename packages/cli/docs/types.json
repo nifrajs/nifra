@@ -4,7 +4,7 @@
     "kind": "type",
     "package": "@nifrajs/web",
     "signature": "export type Action = (ctx: LoaderContext) => unknown | Promise<unknown>;",
-    "doc": "/**\n * A route's optional mutation, run on POST. Shares the loader context (params/request/api);\n * read the form/JSON body off `request`. Returns either a `Response` (e.g. a redirect -\n * passed straight through) or data, surfaced to the page component as `actionData`.\n */"
+    "doc": "/**\n * A route's optional mutation, run on POST. Shares the loader context (params/request/api);\n * read the form/JSON body off `request`. Returns either a control-flow value (a `redirect()`, a\n * `status(...)` render, or a hand-rolled `Response` - all passed straight through) or data,\n * surfaced to the page component as `actionData`.\n */"
   },
   {
     "name": "ACTION_GLOBAL",
@@ -9197,8 +9197,8 @@
     "name": "redirect",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function redirect(location: string, options?: RedirectOptions): Response;",
-    "doc": "/**\n * Build a redirect `Response` - return it from a route `action` for the Post/Redirect/Get\n * pattern (POST mutates, 303 sends the browser to a fresh GET, so a reload doesn't re-submit).\n * Defaults to 303 (See Other); pass `{ status: 307 }` or `{ status: 308 }` to preserve the method.\n *\n * **Secure by default:** `location` must be a same-origin path (begins with `/`, not `//`). An\n * off-origin/absolute destination throws unless you pass `{ external: true }` - this closes the\n * open-redirect footgun of `return redirect(formData.get(\"next\"))` on the no-JS (native-form) path,\n * which returns the action's `Response` verbatim.\n *\n * @param options redirect status and whether an off-origin destination is intentional.\n */"
+    "signature": "export declare function redirect(location: string, options?: RedirectOptions): ResponseResult;",
+    "doc": "/**\n * Build a redirect - return it from a route `action` for the Post/Redirect/Get pattern (POST\n * mutates, 303 sends the browser to a fresh GET, so a reload doesn't re-submit). Defaults to 303\n * (See Other); pass `{ status: 307 }` or `{ status: 308 }` to preserve the method.\n *\n * **Secure by default:** `location` must be a same-origin path (begins with `/`, not `//`). An\n * off-origin/absolute destination throws unless you pass `{ external: true }` - this closes the\n * open-redirect footgun of `return redirect(formData.get(\"next\"))` on the no-JS (native-form) path,\n * which serves the action's control-flow value verbatim.\n *\n * Returns a plain render, not a `Response`. A redirect is a status line and one header - the most\n * body-less response there is - and building a `Response` for it costs the whole Web object plus, on\n * Node, a stream drained back out. As data it renders on the same lane a handler's return takes.\n * `redirect(...)` is still returned or thrown from exactly the same places; only `.status` /\n * `.headers` are gone from the value, replaced by `options.headers` and the request's `c.set`.\n *\n * @param options redirect status, extra headers, and whether an off-origin destination is intentional.\n */"
   },
   {
     "name": "REDIRECT_HEADER",
@@ -9211,7 +9211,7 @@
     "name": "RedirectOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RedirectOptions {\n    /** HTTP status (default 303 See Other; pass 307/308 to preserve the method). */\n    readonly status?: number;\n    /** Allow an off-origin / absolute destination. Off by default: only a same-origin path (a single\n     * leading `/`) is permitted, so an action can't be turned into an open redirect by passing\n     * attacker-controlled input straight through. Set `true` for a deliberate external redirect. */\n    readonly external?: boolean;\n}",
+    "signature": "export interface RedirectOptions {\n    /** HTTP status (default 303 See Other; pass 307/308 to preserve the method). */\n    readonly status?: number;\n    /** Allow an off-origin / absolute destination. Off by default: only a same-origin path (a single\n     * leading `/`) is permitted, so an action can't be turned into an open redirect by passing\n     * attacker-controlled input straight through. Set `true` for a deliberate external redirect. */\n    readonly external?: boolean;\n    /** Extra response headers. A redirect is no longer a `Response`, so there is no `.headers` to\n     * mutate after the fact - name them here. Cookies still ride `c.set`, as on any other response. */\n    readonly headers?: Readonly<Record<string, string>>;\n}",
     "doc": "/** Options for {@link redirect}. */"
   },
   {

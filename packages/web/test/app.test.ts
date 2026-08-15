@@ -743,6 +743,36 @@ test("POST with X-Nifra-Data converts an action redirect into an X-Nifra-Redirec
   expect(res.headers.get("x-nifra-redirect")).toBe("/thanks")
 })
 
+test("a hand-rolled Response from an action still converts on the data path", async () => {
+  // `redirect()` is plain data now, but an action may still build a `Response` itself - a file body,
+  // a stream, or a redirect written by hand. That lane keeps its old conversion, unchanged.
+  const manifest: Manifest = {
+    routes: [
+      {
+        id: "index",
+        pattern: "/",
+        layoutIds: [],
+        file: "index.tsx",
+        load: async () => ({
+          default: "page",
+          action: () => new Response(null, { status: 302, headers: { location: "/hand-rolled" } }),
+        }),
+      },
+    ],
+    layouts: {},
+  }
+  const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js" })
+  const data = await app.fetch(
+    new Request("http://x/", { method: "POST", headers: { "x-nifra-data": "1" } }),
+  )
+  expect(data.status).toBe(204)
+  expect(data.headers.get("x-nifra-redirect")).toBe("/hand-rolled")
+  // A native form POST gets the response itself, untouched.
+  const native = await app.fetch(new Request("http://x/", { method: "POST" }))
+  expect(native.status).toBe(302)
+  expect(native.headers.get("location")).toBe("/hand-rolled")
+})
+
 test("a THROWN action redirect converts exactly like a returned one (throw/return symmetry)", async () => {
   const manifest: Manifest = {
     routes: [
@@ -814,10 +844,25 @@ test("createWebApp modulepreloads the matched route's chunks when routePreload i
 })
 
 test("redirect() allows same-origin paths and status options [AUDIT Sec-4]", () => {
-  expect(redirect("/thanks").status).toBe(303)
-  expect(redirect("/thanks").headers.get("location")).toBe("/thanks")
-  expect(redirect("/x", { status: 307 }).status).toBe(307)
-  expect(redirect("/x", { status: 308 }).status).toBe(308)
+  // A redirect is plain data, not a `Response`: `plain` is the lane every renderer checks first, so
+  // asserting on it is asserting that no `Response` is built for the most body-less response there is.
+  expect(redirect("/thanks")).not.toBeInstanceOf(Response)
+  expect(redirect("/thanks").plain).toEqual({
+    status: 303,
+    headers: { location: "/thanks" },
+    body: undefined,
+  })
+  expect(redirect("/x", { status: 307 }).plain?.status).toBe(307)
+  expect(redirect("/x", { status: 308 }).plain?.status).toBe(308)
+  // Extra headers merge with the location, which always wins its own key.
+  expect(redirect("/x", { headers: { "cache-control": "no-store" } }).plain?.headers).toEqual({
+    "cache-control": "no-store",
+    location: "/x",
+  })
+  // The off-lane fallback still builds the same response bytes for a caller that needs one.
+  const response = redirect("/thanks").toResponse()
+  expect(response.status).toBe(303)
+  expect(response.headers.get("location")).toBe("/thanks")
 })
 
 test("redirect() rejects off-origin destinations unless { external: true } [AUDIT Sec-4]", () => {
@@ -827,8 +872,8 @@ test("redirect() rejects off-origin destinations unless { external: true } [AUDI
   }
   // Explicit opt-in is honored.
   const r = redirect("https://example.com/ok", { external: true })
-  expect(r.status).toBe(303)
-  expect(r.headers.get("location")).toBe("https://example.com/ok")
+  expect(r.plain?.status).toBe(303)
+  expect(r.plain?.headers?.location).toBe("https://example.com/ok")
 })
 
 // --- /api/* auto-mount: createWebApp serves the in-process backend over HTTP (dev + prod) ---

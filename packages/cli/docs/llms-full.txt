@@ -320,7 +320,7 @@ renders in its place, wrapped by the layouts at/above that segment, at status 50
 non-hydrated). On the **client** - a render error during navigation/interaction is caught by
 the nearest boundary, which renders `_error` in place (all five adapters). It
 receives the serialized error as `{ data: { name, message } }` (never the
-stack); a thrown `Response` (e.g. a guard `redirect`) passes through.
+stack); a thrown control-flow value (e.g. a guard `redirect`) passes through.
 
 ```ts
 routes/
@@ -2799,9 +2799,10 @@ createWebApp({ /* … */ api: sessions })                  // inject the manager
 
 ### Guard a route
 
-`requireSession` / `requireUser` throw a `Response` (a 302 to
-`redirectTo`, or a 401) when the session is missing - Nifra returns a thrown Response
-as-is, so the guard short-circuits the loader.
+`requireSession` / `requireUser` throw a `status(...)` render
+(a 302 to `redirectTo`, or a 401) when the session is missing - Nifra renders a
+thrown control-flow value as-is, so the guard short-circuits the loader. It is plain data, not
+a `Response`: same bytes on the wire, on the lane an ordinary return takes.
 
 ```ts
 // doc-check: skip - fragment: `api` is the session manager createWebApp injected (see setup above).
@@ -5403,9 +5404,9 @@ export const hydrate = false   // opt out of full-document hydration (static / i
 export default function User(props) { /* props.data, props.actionData, props.params */ }
 ```
 
-[!NOTE] An `action` may return a `Response` (a `redirect()`,
-say) - it's passed through untouched. Any other return is serialized as
-`actionData`.
+[!NOTE] An `action` may return a control-flow value - a `redirect()` or a
+`status(...)` render, or a hand-rolled `Response` - and it's passed
+through untouched. Any other return is serialized as `actionData`.
 
 ### Two ways to handle a request
 

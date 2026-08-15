@@ -330,9 +330,9 @@ export default function Contract() {
       </p>
       <CodeBlock code={SIGNATURES} />
       <blockquote>
-        [!NOTE] An <code>action</code> may return a <code>Response</code> (a <code>redirect()</code>,
-        say) - it's passed through untouched. Any other return is serialized as{" "}
-        <code>actionData</code>.
+        [!NOTE] An <code>action</code> may return a control-flow value - a <code>redirect()</code> or a{" "}
+        <code>status(...)</code> render, or a hand-rolled <code>Response</code> - and it's passed
+        through untouched. Any other return is serialized as <code>actionData</code>.
       </blockquote>
 
       <h2>Two ways to handle a request</h2>

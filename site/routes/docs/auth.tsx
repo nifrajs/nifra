@@ -121,9 +121,10 @@ export default function Auth() {
 
       <h2>Guard a route</h2>
       <p>
-        <code>requireSession</code> / <code>requireUser</code> throw a <code>Response</code> (a 302 to{" "}
-        <code>redirectTo</code>, or a 401) when the session is missing - Nifra returns a thrown Response
-        as-is, so the guard short-circuits the loader.
+        <code>requireSession</code> / <code>requireUser</code> throw a <code>status(...)</code> render
+        (a 302 to <code>redirectTo</code>, or a 401) when the session is missing - Nifra renders a
+        thrown control-flow value as-is, so the guard short-circuits the loader. It is plain data, not
+        a <code>Response</code>: same bytes on the wire, on the lane an ordinary return takes.
       </p>
       <CodeBlock code={GUARD} />
 

@@ -20,4 +20,14 @@ Measured on the Linux rig (4 server cores, 50 connections, medians of 5 x 2s; a 
 | node | 85904 | 74471 | 80136 |
 | deno | 139477 | 85970 | 90355 |
 
-On Node a throw now lands within the run's own spread of a return. On Deno it does not: a throw still costs ~35%, and it costs the same whether the thrown value is a `status(...)` render or a `Response` - so what remains there is the unwind itself, not the rendering. That one is unexplained and is not claimed as fixed.
+On Node a throw now lands within the run's own spread of a return. On Deno it does not: a throw still costs ~35%, and it costs the same whether the thrown value is a `status(...)` render or a `Response` - so what remains there is the unwind itself, not the rendering.
+
+That remainder is the runtime's, not the framework's. The same arms with no framework at all - a bare `Deno.serve` / `Bun.serve` / `node:http` handler answering identical bytes, one returning its payload and one throwing it - reproduce it, in CPU-microseconds per request:
+
+| | return | throw | throw across await |
+| --- | --- | --- | --- |
+| node | 49.35 | +3.85 | +2.85 |
+| bun | 22.55 | +1.83 | +3.99 |
+| deno | 18.89 | +7.62 | +11.03 |
+
+Against that, nifra's own rejection arms cost +3.35 (node), +3.41 (bun), +15.59 (deno). On node and bun the framework's entire remaining throw penalty *is* the runtime's throw. On deno the runtime's throw-across-await alone accounts for ~70% of it, and the percentage reads worse than the others only because deno's baseline request is the cheapest of the three. Two candidate explanations were tested and ruled out: `Error.stackTraceLimit = 0` changes nothing (so it is not stack capture), and throwing three frames below the handler is no cheaper (so it is not proximity to the runtime boundary).

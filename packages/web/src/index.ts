@@ -13,7 +13,14 @@ import {
   type BackendMountHandler,
   NIFRA_BACKEND_MOUNT,
 } from "@nifrajs/core/mount"
-import { type ServerOptions, server, type UrlParts, urlPartsOf } from "@nifrajs/core/server"
+import {
+  type ResponseResult,
+  type ServerOptions,
+  server,
+  status as statusResult,
+  type UrlParts,
+  urlPartsOf,
+} from "@nifrajs/core/server"
 import {
   DEFERRED_ERROR_CODE,
   DEFERRED_RUNTIME,
@@ -311,6 +318,21 @@ const SCRIPT_ESCAPE_MAP: Readonly<Record<string, string>> = {
 }
 const NODE_RESPONSE_BODY = Symbol.for("nifra.response.body")
 const RESPONSE_RESULT = Symbol.for("nifra.response.result")
+
+/**
+ * A control-flow value that renders as plain data - what `redirect()` returns, and what core's
+ * `status(...)` returns. Recognized here rather than imported: core keeps its own predicate internal,
+ * and the registry symbol is the contract between them (two copies of core must still agree).
+ */
+const isResponseResult = (value: unknown): value is ResponseResult =>
+  typeof value === "object" &&
+  value !== null &&
+  (value as { readonly [RESPONSE_RESULT]?: unknown })[RESPONSE_RESULT] === true &&
+  typeof (value as { readonly toResponse?: unknown }).toResponse === "function"
+
+/** A returned/thrown value that ends the request as-is: either shape of control-flow signal. */
+const isControlFlow = (value: unknown): value is Response | ResponseResult =>
+  value instanceof Response || isResponseResult(value)
 
 export interface RenderedPage {
   readonly [RESPONSE_RESULT]: true
@@ -817,6 +839,9 @@ export interface RedirectOptions {
    * leading `/`) is permitted, so an action can't be turned into an open redirect by passing
    * attacker-controlled input straight through. Set `true` for a deliberate external redirect. */
   readonly external?: boolean
+  /** Extra response headers. A redirect is no longer a `Response`, so there is no `.headers` to
+   * mutate after the fact - name them here. Cookies still ride `c.set`, as on any other response. */
+  readonly headers?: Readonly<Record<string, string>>
 }
 
 /** A same-origin destination is an absolute path: one leading `/`, but NOT `//` (protocol-relative →
@@ -827,18 +852,24 @@ function isSameOriginPath(location: string): boolean {
 }
 
 /**
- * Build a redirect `Response` - return it from a route `action` for the Post/Redirect/Get
- * pattern (POST mutates, 303 sends the browser to a fresh GET, so a reload doesn't re-submit).
- * Defaults to 303 (See Other); pass `{ status: 307 }` or `{ status: 308 }` to preserve the method.
+ * Build a redirect - return it from a route `action` for the Post/Redirect/Get pattern (POST
+ * mutates, 303 sends the browser to a fresh GET, so a reload doesn't re-submit). Defaults to 303
+ * (See Other); pass `{ status: 307 }` or `{ status: 308 }` to preserve the method.
  *
  * **Secure by default:** `location` must be a same-origin path (begins with `/`, not `//`). An
  * off-origin/absolute destination throws unless you pass `{ external: true }` - this closes the
  * open-redirect footgun of `return redirect(formData.get("next"))` on the no-JS (native-form) path,
- * which returns the action's `Response` verbatim.
+ * which serves the action's control-flow value verbatim.
  *
- * @param options redirect status and whether an off-origin destination is intentional.
+ * Returns a plain render, not a `Response`. A redirect is a status line and one header - the most
+ * body-less response there is - and building a `Response` for it costs the whole Web object plus, on
+ * Node, a stream drained back out. As data it renders on the same lane a handler's return takes.
+ * `redirect(...)` is still returned or thrown from exactly the same places; only `.status` /
+ * `.headers` are gone from the value, replaced by `options.headers` and the request's `c.set`.
+ *
+ * @param options redirect status, extra headers, and whether an off-origin destination is intentional.
  */
-export function redirect(location: string, options: RedirectOptions = {}): Response {
+export function redirect(location: string, options: RedirectOptions = {}): ResponseResult {
   if (options.external !== true && !isSameOriginPath(location)) {
     throw new Error(
       `[nifra/web] redirect(${JSON.stringify(location)}) is not a same-origin path. Use a path beginning with "/" (not "//"), or redirect(location, { external: true }) for a deliberate off-origin redirect. This guards against open redirects from unvalidated input.`,
@@ -853,7 +884,9 @@ export function redirect(location: string, options: RedirectOptions = {}): Respo
       `[nifra/web] redirect location contains a CR/LF character - refusing to emit a header-injecting redirect.`,
     )
   }
-  return new Response(null, { status: options.status ?? 303, headers: { location } })
+  return statusResult(options.status ?? 303, undefined, {
+    headers: options.headers === undefined ? { location } : { ...options.headers, location },
+  })
 }
 
 /**
@@ -913,17 +946,34 @@ function withDuplicateInstanceHint(err: unknown): unknown {
 }
 
 /**
- * An action's `Response` passes straight through - except a redirect on a client-submit data
+ * An action's control-flow value passes straight through - except a redirect on a client-submit data
  * request: fetch would follow the 3xx into HTML the client can't use, so the redirect rides the
- * X-Nifra-Redirect header on a 204 and the client navigates. One conversion shared by the
- * returned- and thrown-Response paths, so `return redirect()` and `throw redirect()` agree.
+ * X-Nifra-Redirect header on a 204 and the client navigates. One conversion shared by the returned-
+ * and thrown- paths, so `return redirect()` and `throw redirect()` agree.
+ *
+ * Takes either shape: `redirect()` is a plain render, while a hand-rolled `new Response(...)` from an
+ * action still arrives as a `Response`. The rewrite stays on the lane its input was on - a plain
+ * redirect converts to a plain 204, and never materializes the `Response` it is replacing.
  */
-function actionResponse(response: Response, isDataRequest: boolean): Response {
-  if (isDataRequest && response.status >= 300 && response.status < 400) {
-    const location = response.headers.get("location") ?? "/"
-    return new Response(null, { status: 204, headers: { [REDIRECT_HEADER]: location } })
+function actionResponse(
+  result: Response | ResponseResult,
+  isDataRequest: boolean,
+): Response | ResponseResult {
+  if (!isDataRequest) return result
+  if (isResponseResult(result)) {
+    const plain = result.plain
+    // No `plain` means a carrier that only knows how to build a `Response` (not one of ours) - fall
+    // back rather than guess at its status.
+    if (plain === undefined) return actionResponse(result.toResponse(), isDataRequest)
+    if (plain.status < 300 || plain.status >= 400) return result
+    const location = plain.headers?.location ?? "/"
+    return statusResult(204, undefined, { headers: { [REDIRECT_HEADER]: location } })
   }
-  return response
+  if (result.status >= 300 && result.status < 400) {
+    const location = result.headers.get("location") ?? "/"
+    return statusResult(204, undefined, { headers: { [REDIRECT_HEADER]: location } })
+  }
+  return result
 }
 
 /** A loaded layout module. `loader`/`gate` are the layout-loader surface; `meta` predates it. */
@@ -2079,10 +2129,11 @@ export function createWebApp<Env = unknown>(
         // that status. Checked BEFORE the pass-through below: a signal IS a `Response`, so the order
         // is what keeps a hand-rolled `throw new Response(...)` served verbatim, as it always was.
         if (isStatusSignal(err)) return renderStatusSignal(c.req, err)
-        // A thrown `Response` is a control-flow signal (a guard's `redirect(...)`, an explicit error
-        // response) - let it propagate to core, which returns it as-is. Real errors render the nearest
-        // `_error` boundary, if any; with none, rethrow (unchanged 500 behavior).
-        if (err instanceof Response) throw err
+        // A thrown control-flow signal (a guard's `redirect(...)`, an explicit error response) - let
+        // it propagate to core, which renders it as-is, whether it is a plain render or a
+        // hand-rolled `Response`. Real errors render the nearest `_error` boundary, if any; with
+        // none, rethrow (unchanged 500 behavior).
+        if (isControlFlow(err)) throw err
         // Let reporting plugins observe the data-layer failure before it's rendered/rethrown/500'd.
         if (options.onLoaderError !== undefined) {
           try {
@@ -2104,12 +2155,12 @@ export function createWebApp<Env = unknown>(
         return renderError(route, errorId, withDuplicateInstanceHint(err))
       }
       // A loader may RETURN its control-flow signal instead of throwing it - `return redirect(...)`
-      // reads naturally and must not silently serialize the `Response` as loader data. Mirror the
-      // catch above exactly: a status signal renders its boundary, any other `Response` (a
-      // redirect, a hand-rolled response) passes through to core verbatim - so return and throw
-      // are interchangeable.
+      // reads naturally and must not silently serialize the signal as loader data. Mirror the catch
+      // above exactly: a status signal renders its boundary, any other signal (a redirect, a
+      // hand-rolled response) passes through to core verbatim - so return and throw are
+      // interchangeable.
       if (isStatusSignal(data)) return renderStatusSignal(c.req, data)
-      if (data instanceof Response) return data
+      if (isControlFlow(data)) return data
       // Client-side navigation asks (via the X-Nifra-Data header) for just the loader data - no full
       // document, no layout chain. A route with deferred data streams NDJSON (critical data first,
       // then each deferred value as it settles); otherwise one JSON (the fast path). Same loader,
@@ -2180,7 +2231,7 @@ export function createWebApp<Env = unknown>(
       } catch (err) {
         // Same precedence as the loader catch above - a `meta()` may signal too.
         if (isStatusSignal(err)) return renderStatusSignal(c.req, err)
-        if (err instanceof Response) throw err
+        if (isControlFlow(err)) throw err
         // Let reporting plugins observe the data-layer failure before it's rendered/rethrown/500'd.
         if (options.onLoaderError !== undefined) {
           try {
@@ -2195,7 +2246,7 @@ export function createWebApp<Env = unknown>(
       }
     })
 
-    // POST runs the route's `action` (mutation). A `Response` return (e.g. a `redirect(...)`)
+    // POST runs the route's `action` (mutation). A control-flow return (e.g. a `redirect(...)`)
     // passes straight through; a data return re-renders the page (the loader re-runs for fresh
     // data) with `actionData`. Routes without an action reject POST with 405 - not a stray 404.
     app.register("POST", route.pattern, undefined, async (c: RouteContext) => {
@@ -2225,10 +2276,10 @@ export function createWebApp<Env = unknown>(
         layoutModules = await runLayoutGates(route, actionContext)
         result = await mod.action(actionContext)
       } catch (err) {
-        // A THROWN Response is the same control-flow signal as a returned one (`throw redirect()`
-        // in a gate or an action) - route it through the same conversion as the returned-Response
-        // branch below, so throw and return are interchangeable on the mutation path too.
-        if (err instanceof Response) return actionResponse(err, isDataRequest)
+        // A THROWN signal is the same control flow as a returned one (`throw redirect()` in a gate
+        // or an action) - route it through the same conversion as the returned branch below, so
+        // throw and return are interchangeable on the mutation path too.
+        if (isControlFlow(err)) return actionResponse(err, isDataRequest)
         throw err
       }
       // An action may wrap its data in `revalidate(paths, data)` to declare which routes it changed.
@@ -2240,7 +2291,7 @@ export function createWebApp<Env = unknown>(
       const revalidateHeader: Record<string, string> = isRevalidate
         ? { [REVALIDATE_HEADER]: (result as RevalidateResult<unknown>).__nifraRevalidate.join(",") }
         : {}
-      if (actionResult instanceof Response) return actionResponse(actionResult, isDataRequest)
+      if (isControlFlow(actionResult)) return actionResponse(actionResult, isDataRequest)
       // Client submit wants just the action's data (it revalidates the loader itself); a native
       // form POST re-renders the full page (loader re-runs) with the action data.
       if (isDataRequest) {

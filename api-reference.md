@@ -2861,7 +2861,7 @@ _No named exports (side-effect entrypoint)._
 - **ACTION_GLOBAL** _(const)_ - `ACTION_GLOBAL: "__NIFRA_ACTION__"`
   Global the server serializes an action's data return into (absent on GETs); the client reads it so hydration after a native form POST matches the server-rendered markup.
 - **Action** _(type)_ - `type Action = (ctx: LoaderContext) => unknown | Promise<unknown>`
-  A route's optional mutation, run on POST. Shares the loader context (params/request/api); read the form/JSON body off `request`. Returns either a `Response` (e.g. a redirect - passed straight through) or data, surfaced to the page component as `actionData`.
+  A route's optional mutation, run on POST. Shares the loader context (params/request/api); read the form/JSON body off `request`. Returns either a control-flow value (a `redirect()`, a `status(...)` render, or a hand-rolled `Response` - all passed straight through) or data, surfaced to the page comp…
 - **Blocker** _(interface)_ - `interface Blocker`
   A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The pair is what a boolean `when` can't express - the app shows its OWN async confirmation UI, then cal…
 - **BlockerController** _(interface)_ - `interface BlockerController`
@@ -3122,8 +3122,8 @@ _No named exports (side-effect entrypoint)._
   Build the Open Graph `<meta property="og:*">` entries for a route's `meta.meta`. Returns only the properties you supplied (plus `og:type`, defaulting to `"website"`), so it composes with other meta.
 - **previewEndpoint** _(function)_ - `previewEndpoint: (options: PreviewEndpointOptions) => (request: Request) => Promise<Response>`
   A **preview / draft-mode entry point** - a `fetch` handler that checks a preview token, turns draft mode on, and redirects the editor to the page they wanted. `GET` with `?token=<secret>&to=/some/path`; mount it on a nifra route, e.g. `app.get("/api/preview", (c) => handler(c.req))`.
-- **redirect** _(function)_ - `redirect: (location: string, options?: RedirectOptions) => Response`
-  Build a redirect `Response` - return it from a route `action` for the Post/Redirect/Get pattern (POST mutates, 303 sends the browser to a fresh GET, so a reload doesn't re-submit). Defaults to 303 (See Other); pass `{ status: 307 }` or `{ status: 308 }` to preserve the method.
+- **redirect** _(function)_ - `redirect: (location: string, options?: RedirectOptions) => ResponseResult`
+  Build a redirect - return it from a route `action` for the Post/Redirect/Get pattern (POST mutates, 303 sends the browser to a fresh GET, so a reload doesn't re-submit). Defaults to 303 (See Other); pass `{ status: 307 }` or `{ status: 308 }` to preserve the method.
 - **registerBlocker** _(function)_ - `registerBlocker: (shouldBlock: BlockerFunction, onChange: (blocker: Blocker) => void) => () => void`
   Register a navigation guard, returning an unregister function. `onChange` is called with the current {@link Blocker} whenever its state changes (so the adapter can re-render its confirmation UI). Before `installHistory` has run (SSR, pre-hydration), there's no controller: registration is a no-op an…
 - **renderPage** _(function)_ - `renderPage: (options: RenderPageInput) => MaybePromise<Response>`

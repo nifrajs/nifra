@@ -153,7 +153,11 @@ app =
 if (typeof Bun !== "undefined") {
   app.listen(port)
 } else if (typeof Deno !== "undefined") {
-  const { serve } = await import("../../packages/deno/src/index.ts")
+  // The built `dist`, like every other import here - and load-bearing beyond consistency: the root
+  // tsconfig excludes `packages/deno` (it needs Deno's lib, which this DOM-free program has not
+  // got), but an import of its SOURCE pulls it back into the program through `paths` and fails the
+  // typecheck. The emitted `.d.ts` references no `Deno.*` type, so the dist import does not.
+  const { serve } = await import("../../packages/deno/dist/index.js")
   serve(app, { port })
 } else {
   const { serve } = await import("@nifrajs/node")

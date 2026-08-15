@@ -30,8 +30,9 @@ export type Loader = (ctx: LoaderContext) => unknown | Promise<unknown>
 
 /**
  * A route's optional mutation, run on POST. Shares the loader context (params/request/api);
- * read the form/JSON body off `request`. Returns either a `Response` (e.g. a redirect -
- * passed straight through) or data, surfaced to the page component as `actionData`.
+ * read the form/JSON body off `request`. Returns either a control-flow value (a `redirect()`, a
+ * `status(...)` render, or a hand-rolled `Response` - all passed straight through) or data,
+ * surfaced to the page component as `actionData`.
  */
 export type Action = (ctx: LoaderContext) => unknown | Promise<unknown>
 
