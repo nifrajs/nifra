@@ -15,6 +15,31 @@ bun add @nifrajs/content
 - Reference: <https://nifra.dev/docs>
 - AI-readable: <https://nifra.dev/llms.txt>
 
+## Typed indexes and joins
+
+Build an equality lookup and deterministic query index from a baked collection. `where` is field
+equality, `range` supports typed string/number comparisons, sorting is stable (slug is the tie-breaker),
+and pages use an opaque cursor rather than an offset:
+
+```ts
+const posts = indexCollection(await bakeCollection(blog), {
+  by: "section",
+  sort: { field: "publishedAt", dir: "desc" },
+})
+
+const page = posts.query({ where: { section: "news" }, limit: 20 })
+const next = page.nextCursor === undefined
+  ? undefined
+  : posts.query({ where: { section: "news" }, cursor: page.nextCursor, limit: 20 })
+```
+
+`posts.baked` is JSON-safe and can be serialized into an edge bundle; `fromBakedIndex` rehydrates it
+without filesystem access. `joinCollections(left, right, "id")` gives one-to-many rows by default.
+Pass `{ cardinality: "one-to-one" }` to require unique right-side keys; duplicate right keys fail the
+build loudly. The join key must exist on both frontmatter types with the same TypeScript value type.
+These APIs index only validated local/baked content; credentialed CMS ingestion and tenant data remain
+outside this public package.
+
 MIT
 
 ## For AI agents

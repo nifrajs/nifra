@@ -140,3 +140,628 @@ export function fromBaked<Frontmatter>(
     get: (slug) => Promise.resolve(bySlug.get(slug) ?? null),
   }
 }
+
+/** A string frontmatter field name accepted by the index APIs. */
+export type ContentFieldKey<Frontmatter extends Record<string, unknown>> = Extract<
+  keyof Frontmatter,
+  string
+>
+
+/** A declared sort order. Ties are always broken by slug, then source order. */
+export interface IndexSort<Frontmatter extends Record<string, unknown>> {
+  readonly field: ContentFieldKey<Frontmatter>
+  readonly dir: "asc" | "desc"
+}
+
+/** Field-equality filters. Arbitrary predicates are intentionally not part of baked indexes. */
+export type IndexWhere<Frontmatter extends Record<string, unknown>> = Partial<{
+  [K in ContentFieldKey<Frontmatter>]: Frontmatter[K]
+}>
+
+/** Range operators are available for string and number fields only. */
+export type IndexRange<Value> = [Extract<Value, string | number>] extends [never]
+  ? never
+  : {
+      readonly gt?: Extract<Value, string | number>
+      readonly gte?: Extract<Value, string | number>
+      readonly lt?: Extract<Value, string | number>
+      readonly lte?: Extract<Value, string | number>
+    }
+
+/** Typed range filters derived from the collection's frontmatter. */
+export type IndexRanges<Frontmatter extends Record<string, unknown>> = Partial<{
+  [K in ContentFieldKey<Frontmatter>]: IndexRange<Frontmatter[K]>
+}>
+
+/** A bounded, cursor-based index query. The cursor is opaque and tied to its filter + sort. */
+export interface IndexQueryOptions<Frontmatter extends Record<string, unknown>> {
+  readonly where?: IndexWhere<Frontmatter>
+  readonly range?: IndexRanges<Frontmatter>
+  readonly sort?: IndexSort<Frontmatter>
+  readonly cursor?: string
+  /** Defaults to 20; values above 100 are rejected to bound request-driven work. */
+  readonly limit?: number
+}
+
+/** One page from an indexed collection. `nextCursor` is absent on the final page. */
+export interface IndexPage<Frontmatter extends Record<string, unknown>> {
+  readonly items: ReadonlyArray<Entry<Frontmatter>>
+  readonly nextCursor?: string
+}
+
+/** The JSON-safe lookup bucket stored in a baked index. */
+export interface BakedIndexBucket {
+  readonly key: string
+  readonly entryIndexes: ReadonlyArray<number>
+}
+
+/** JSON-safe index data. It contains no functions, Map, Set, filesystem handle, or request data. */
+export interface BakedCollectionIndex<
+  Frontmatter extends Record<string, unknown>,
+  By extends ContentFieldKey<Frontmatter>,
+> {
+  readonly entries: ReadonlyArray<Entry<Frontmatter>>
+  readonly by: By
+  readonly sort: IndexSort<Frontmatter>
+  /** Entry indexes in the default deterministic order. */
+  readonly order: ReadonlyArray<number>
+  readonly buckets: ReadonlyArray<BakedIndexBucket>
+}
+
+/** A build-time/runtime index over validated, baked entries. */
+export interface IndexedCollection<
+  Frontmatter extends Record<string, unknown>,
+  By extends ContentFieldKey<Frontmatter>,
+> {
+  readonly entries: ReadonlyArray<Entry<Frontmatter>>
+  readonly by: By
+  readonly baked: BakedCollectionIndex<Frontmatter, By>
+  /** O(1) lookup after the build/rehydration map is constructed. Missing keys return no rows. */
+  readonly lookup: (value: Frontmatter[By]) => ReadonlyArray<Entry<Frontmatter>>
+  /** All entries in the index's default stable order. */
+  readonly all: () => ReadonlyArray<Entry<Frontmatter>>
+  readonly query: (options?: IndexQueryOptions<Frontmatter>) => IndexPage<Frontmatter>
+}
+
+/** Keys whose frontmatter value types are identical on both sides of a join. */
+export type SharedKey<
+  Left extends Record<string, unknown>,
+  Right extends Record<string, unknown>,
+> = {
+  [K in ContentFieldKey<Left> & ContentFieldKey<Right>]: [Left[K]] extends [Right[K]]
+    ? [Right[K]] extends [Left[K]]
+      ? K
+      : never
+    : never
+}[ContentFieldKey<Left> & ContentFieldKey<Right>]
+
+export type JoinCardinality = "one-to-many" | "one-to-one"
+
+export type JoinedRow<
+  Left extends Record<string, unknown>,
+  Right extends Record<string, unknown>,
+  Cardinality extends JoinCardinality,
+> = {
+  readonly left: Entry<Left>
+  readonly right: Cardinality extends "one-to-one"
+    ? Entry<Right> | null
+    : ReadonlyArray<Entry<Right>>
+}
+
+/** JSON-safe joined rows, ordered by the left index and then the right index. */
+export interface BakedCollectionJoin<
+  Left extends Record<string, unknown>,
+  Right extends Record<string, unknown>,
+  On extends SharedKey<Left, Right>,
+  Cardinality extends JoinCardinality,
+> {
+  readonly on: On
+  readonly cardinality: Cardinality
+  readonly rows: ReadonlyArray<JoinedRow<Left, Right, Cardinality>>
+}
+
+/** A deterministic cross-collection join. No database or network layer is involved. */
+export interface IndexedJoin<
+  Left extends Record<string, unknown>,
+  Right extends Record<string, unknown>,
+  On extends SharedKey<Left, Right>,
+  Cardinality extends JoinCardinality,
+> {
+  readonly entries: ReadonlyArray<JoinedRow<Left, Right, Cardinality>>
+  readonly baked: BakedCollectionJoin<Left, Right, On, Cardinality>
+}
+
+export interface IndexOptions<
+  Frontmatter extends Record<string, unknown>,
+  By extends ContentFieldKey<Frontmatter>,
+> {
+  readonly by: By
+  readonly sort?: IndexSort<Frontmatter>
+}
+
+const DEFAULT_INDEX_PAGE_SIZE = 20
+const MAX_INDEX_PAGE_SIZE = 100
+const MAX_CURSOR_LENGTH = 4096
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
+/** Stable JSON for frontmatter keys/filter fingerprints. It rejects values JSON cannot preserve. */
+const stableJson = (value: unknown, seen = new Set<object>()): string | undefined => {
+  if (value === undefined) return undefined
+  if (value === null) return "null"
+  if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value)
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError("non-finite number")
+    return JSON.stringify(value)
+  }
+  if (typeof value !== "object") throw new TypeError("non-JSON value")
+  if (seen.has(value)) throw new TypeError("cyclic value")
+  seen.add(value)
+  try {
+    if (Array.isArray(value)) {
+      const items = value.map((item) => {
+        const encoded = stableJson(item, seen)
+        if (encoded === undefined) throw new TypeError("undefined array item")
+        return encoded
+      })
+      return `[${items.join(",")}]`
+    }
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null)
+      throw new TypeError("non-plain object")
+    const fields: string[] = []
+    for (const key of Object.keys(value).sort()) {
+      const encoded = stableJson(Reflect.get(value, key), seen)
+      if (encoded === undefined) throw new TypeError("undefined object field")
+      fields.push(`${JSON.stringify(key)}:${encoded}`)
+    }
+    return `{${fields.join(",")}}`
+  } finally {
+    seen.delete(value)
+  }
+}
+
+const keyFor = (value: unknown, field: string): string | undefined => {
+  try {
+    return stableJson(value)
+  } catch {
+    throw new TypeError(`@nifrajs/content: field "${field}" is not JSON-indexable`)
+  }
+}
+
+const compareValues = (left: unknown, right: unknown): number => {
+  if (left === right) return 0
+  if (left === undefined) return 1
+  if (right === undefined) return -1
+  if (typeof left === "number" && typeof right === "number") return left < right ? -1 : 1
+  if (typeof left === "string" && typeof right === "string") return left < right ? -1 : 1
+  if (typeof left === "boolean" && typeof right === "boolean") return left ? 1 : -1
+  const leftKey = stableJson(left) ?? ""
+  const rightKey = stableJson(right) ?? ""
+  return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0
+}
+
+const compareEntries = <Frontmatter extends Record<string, unknown>>(
+  entries: ReadonlyArray<Entry<Frontmatter>>,
+  leftIndex: number,
+  rightIndex: number,
+  sort: IndexSort<Frontmatter>,
+): number => {
+  const left = entries[leftIndex]
+  const right = entries[rightIndex]
+  if (left === undefined || right === undefined) return left === undefined ? 1 : -1
+  let result = compareValues(left.frontmatter[sort.field], right.frontmatter[sort.field])
+  if (sort.dir === "desc") result = -result
+  if (result !== 0) return result
+  result = left.slug < right.slug ? -1 : left.slug > right.slug ? 1 : 0
+  return result !== 0 ? result : leftIndex - rightIndex
+}
+
+const sortedOrder = <Frontmatter extends Record<string, unknown>>(
+  entries: ReadonlyArray<Entry<Frontmatter>>,
+  sort: IndexSort<Frontmatter>,
+): number[] =>
+  entries.map((_, index) => index).sort((left, right) => compareEntries(entries, left, right, sort))
+
+const assertPageSize = (value: number | undefined): number => {
+  const limit = value ?? DEFAULT_INDEX_PAGE_SIZE
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_INDEX_PAGE_SIZE) {
+    throw new RangeError(
+      `@nifrajs/content: index page limit must be an integer from 1 to ${MAX_INDEX_PAGE_SIZE}`,
+    )
+  }
+  return limit
+}
+
+const filterFingerprint = (where: unknown, range: unknown): string => {
+  try {
+    return stableJson({ where: where ?? null, range: range ?? null }) ?? "null"
+  } catch {
+    throw new TypeError("@nifrajs/content: index filters must contain JSON values")
+  }
+}
+
+interface CursorPayload {
+  readonly v: 1
+  readonly sortField: string
+  readonly dir: "asc" | "desc"
+  readonly filter: string
+  readonly position: number
+}
+
+const encodeCursor = (payload: CursorPayload): string => encodeURIComponent(JSON.stringify(payload))
+
+const decodeCursor = (cursor: string): CursorPayload => {
+  if (cursor.length === 0 || cursor.length > MAX_CURSOR_LENGTH) {
+    throw new TypeError("@nifrajs/content: invalid index cursor")
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(decodeURIComponent(cursor))
+  } catch {
+    throw new TypeError("@nifrajs/content: invalid index cursor")
+  }
+  if (!isRecord(parsed)) throw new TypeError("@nifrajs/content: invalid index cursor")
+  const version = parsed.v
+  const sortField = parsed.sortField
+  const dir = parsed.dir
+  const filter = parsed.filter
+  const position = parsed.position
+  if (
+    version !== 1 ||
+    typeof sortField !== "string" ||
+    (dir !== "asc" && dir !== "desc") ||
+    typeof filter !== "string" ||
+    typeof position !== "number" ||
+    !Number.isSafeInteger(position) ||
+    position < -1
+  ) {
+    throw new TypeError("@nifrajs/content: invalid index cursor")
+  }
+  return { v: 1, sortField, dir, filter, position }
+}
+
+const createIndexedCollection = <
+  Frontmatter extends Record<string, unknown>,
+  By extends ContentFieldKey<Frontmatter>,
+>(
+  baked: BakedCollectionIndex<Frontmatter, By>,
+): IndexedCollection<Frontmatter, By> => {
+  if (
+    typeof baked.by !== "string" ||
+    !isRecord(baked.sort) ||
+    typeof baked.sort.field !== "string" ||
+    (baked.sort.dir !== "asc" && baked.sort.dir !== "desc") ||
+    !Array.isArray(baked.entries) ||
+    !Array.isArray(baked.order) ||
+    !Array.isArray(baked.buckets)
+  ) {
+    throw new TypeError("@nifrajs/content: malformed baked index")
+  }
+  const order = [...baked.order]
+  const seenIndexes = new Set<number>()
+  for (const index of order) {
+    if (
+      !Number.isSafeInteger(index) ||
+      index < 0 ||
+      index >= baked.entries.length ||
+      seenIndexes.has(index)
+    ) {
+      throw new TypeError("@nifrajs/content: malformed baked index order")
+    }
+    seenIndexes.add(index)
+  }
+  if (seenIndexes.size !== baked.entries.length) {
+    throw new TypeError("@nifrajs/content: malformed baked index order")
+  }
+  const lookup = new Map<string, number[]>()
+  const bucketIndexes = new Set<number>()
+  for (const bucket of baked.buckets) {
+    if (
+      !isRecord(bucket) ||
+      typeof bucket.key !== "string" ||
+      !Array.isArray(bucket.entryIndexes)
+    ) {
+      throw new TypeError("@nifrajs/content: malformed baked index bucket")
+    }
+    if (lookup.has(bucket.key))
+      throw new TypeError("@nifrajs/content: duplicate baked index bucket")
+    const indexes: number[] = []
+    for (const index of bucket.entryIndexes) {
+      if (!Number.isSafeInteger(index) || !seenIndexes.has(index)) {
+        throw new TypeError("@nifrajs/content: malformed baked index bucket")
+      }
+      if (bucketIndexes.has(index)) {
+        throw new TypeError("@nifrajs/content: duplicate baked index entry")
+      }
+      bucketIndexes.add(index)
+      indexes.push(index)
+    }
+    lookup.set(bucket.key, indexes)
+  }
+  const entries = baked.entries
+  const orderedEntries = (): ReadonlyArray<Entry<Frontmatter>> =>
+    order.flatMap((index) => {
+      const entry = entries[index]
+      return entry === undefined ? [] : [entry]
+    })
+  const all = (): ReadonlyArray<Entry<Frontmatter>> => orderedEntries()
+  const query = (options: IndexQueryOptions<Frontmatter> = {}): IndexPage<Frontmatter> => {
+    const limit = assertPageSize(options.limit)
+    const where = options.where
+    const range = options.range
+    if (where !== undefined && !isRecord(where)) {
+      throw new TypeError("@nifrajs/content: index where must be an object")
+    }
+    if (range !== undefined && !isRecord(range)) {
+      throw new TypeError("@nifrajs/content: index range must be an object")
+    }
+    const sort = options.sort ?? baked.sort
+    if (
+      !isRecord(sort) ||
+      typeof sort.field !== "string" ||
+      (sort.dir !== "asc" && sort.dir !== "desc")
+    ) {
+      throw new TypeError("@nifrajs/content: malformed index sort")
+    }
+    const filter = filterFingerprint(where, range)
+    const queryOrder =
+      sort.field === baked.sort.field && sort.dir === baked.sort.dir
+        ? order
+        : sortedOrder(entries, sort)
+    const filtered = queryOrder.filter((index) => {
+      const entry = entries[index]
+      if (entry === undefined) return false
+      const frontmatter: Record<string, unknown> = entry.frontmatter
+      if (where !== undefined) {
+        for (const [field, expected] of Object.entries(where)) {
+          if (!Object.hasOwn(frontmatter, field)) return false
+          if (keyFor(frontmatter[field], field) !== keyFor(expected, field)) return false
+        }
+      }
+      if (range !== undefined) {
+        for (const [field, rawRule] of Object.entries(range)) {
+          if (!Object.hasOwn(frontmatter, field) || !isRecord(rawRule)) {
+            throw new TypeError("@nifrajs/content: malformed index range")
+          }
+          const actual = frontmatter[field]
+          if (
+            typeof actual !== "string" &&
+            (typeof actual !== "number" || !Number.isFinite(actual))
+          ) {
+            return false
+          }
+          for (const operator of ["gt", "gte", "lt", "lte"] as const) {
+            if (!Object.hasOwn(rawRule, operator)) continue
+            const expected = rawRule[operator]
+            if (
+              (typeof expected !== "string" &&
+                (typeof expected !== "number" || !Number.isFinite(expected))) ||
+              typeof expected !== typeof actual
+            ) {
+              throw new TypeError("@nifrajs/content: malformed index range")
+            }
+            const comparison = compareValues(actual, expected)
+            if (
+              (operator === "gt" && comparison <= 0) ||
+              (operator === "gte" && comparison < 0) ||
+              (operator === "lt" && comparison >= 0) ||
+              (operator === "lte" && comparison > 0)
+            ) {
+              return false
+            }
+          }
+        }
+      }
+      return true
+    })
+    const cursor = options.cursor === undefined ? undefined : decodeCursor(options.cursor)
+    let start = 0
+    if (cursor !== undefined) {
+      if (
+        cursor.sortField !== String(sort.field) ||
+        cursor.dir !== sort.dir ||
+        cursor.filter !== filter ||
+        cursor.position >= filtered.length
+      ) {
+        if (cursor.position !== filtered.length - 1) {
+          throw new TypeError("@nifrajs/content: cursor does not match this index query")
+        }
+        start = filtered.length
+      } else {
+        start = cursor.position + 1
+      }
+    }
+    const pageIndexes = filtered.slice(start, start + limit)
+    const items = pageIndexes.flatMap((index) => {
+      const entry = entries[index]
+      return entry === undefined ? [] : [entry]
+    })
+    const end = start + items.length
+    return end < filtered.length
+      ? {
+          items,
+          nextCursor: encodeCursor({
+            v: 1,
+            sortField: String(sort.field),
+            dir: sort.dir,
+            filter,
+            position: end - 1,
+          }),
+        }
+      : { items }
+  }
+  return {
+    entries,
+    by: baked.by,
+    baked,
+    lookup: (value) => {
+      const key = keyFor(value, String(baked.by))
+      if (key === undefined) return []
+      return (lookup.get(key) ?? []).flatMap((index) => {
+        const entry = entries[index]
+        return entry === undefined ? [] : [entry]
+      })
+    },
+    all,
+    query,
+  }
+}
+
+/** Build a deterministic typed index from already validated baked entries. */
+export function indexCollection<
+  Frontmatter extends Record<string, unknown>,
+  By extends ContentFieldKey<Frontmatter>,
+>(
+  baked: BakedCollection<Frontmatter>,
+  options: IndexOptions<Frontmatter, By>,
+): IndexedCollection<Frontmatter, By> {
+  const sort = options.sort ?? { field: options.by, dir: "asc" as const }
+  const order = sortedOrder(baked.entries, sort)
+  const buckets = new Map<string, number[]>()
+  for (const index of order) {
+    const entry = baked.entries[index]
+    if (entry === undefined) continue
+    const value = entry.frontmatter[options.by]
+    const key = keyFor(value, String(options.by))
+    if (key === undefined) continue
+    const indexes = buckets.get(key)
+    if (indexes === undefined) buckets.set(key, [index])
+    else indexes.push(index)
+  }
+  const bakedIndex: BakedCollectionIndex<Frontmatter, By> = {
+    entries: baked.entries,
+    by: options.by,
+    sort,
+    order,
+    buckets: [...buckets].map(([key, entryIndexes]) => ({ key, entryIndexes })),
+  }
+  return createIndexedCollection(bakedIndex)
+}
+
+/** Rehydrate a JSON-serialized index at the edge without filesystem access. */
+export function fromBakedIndex<
+  Frontmatter extends Record<string, unknown>,
+  By extends ContentFieldKey<Frontmatter>,
+>(baked: BakedCollectionIndex<Frontmatter, By>): IndexedCollection<Frontmatter, By> {
+  return createIndexedCollection(baked)
+}
+
+const buildJoin = <
+  Left extends Record<string, unknown>,
+  Right extends Record<string, unknown>,
+  LeftBy extends ContentFieldKey<Left>,
+  RightBy extends ContentFieldKey<Right>,
+  On extends SharedKey<Left, Right>,
+  Cardinality extends JoinCardinality,
+>(
+  left: IndexedCollection<Left, LeftBy>,
+  right: IndexedCollection<Right, RightBy>,
+  on: On,
+  cardinality: Cardinality,
+): IndexedJoin<Left, Right, On, Cardinality> => {
+  const rightByKey = new Map<string, Entry<Right>[]>()
+  for (const index of right.baked.order) {
+    const entry = right.entries[index]
+    if (entry === undefined) continue
+    const key = keyFor(entry.frontmatter[on], String(on))
+    if (key === undefined) continue
+    const existing = rightByKey.get(key)
+    if (existing === undefined) rightByKey.set(key, [entry])
+    else {
+      if (cardinality === "one-to-one") {
+        throw new Error(`@nifrajs/content: duplicate right join key for "${String(on)}"`)
+      }
+      existing.push(entry)
+    }
+  }
+  const rows: Array<JoinedRow<Left, Right, Cardinality>> = []
+  for (const index of left.baked.order) {
+    const entry = left.entries[index]
+    if (entry === undefined) continue
+    const key = keyFor(entry.frontmatter[on], String(on))
+    const matches = key === undefined ? undefined : rightByKey.get(key)
+    rows.push({
+      left: entry,
+      right: (cardinality === "one-to-one"
+        ? (matches?.[0] ?? null)
+        : [...(matches ?? [])]) as JoinedRow<Left, Right, Cardinality>["right"],
+    })
+  }
+  const baked: BakedCollectionJoin<Left, Right, On, Cardinality> = {
+    on,
+    cardinality,
+    rows,
+  }
+  return { entries: rows, baked }
+}
+
+/** Join two indexes on a real same-typed frontmatter key. Default cardinality is one-to-many. */
+export function joinCollections<
+  Left extends Record<string, unknown>,
+  Right extends Record<string, unknown>,
+  LeftBy extends ContentFieldKey<Left>,
+  RightBy extends ContentFieldKey<Right>,
+  On extends SharedKey<Left, Right>,
+>(
+  left: IndexedCollection<Left, LeftBy>,
+  right: IndexedCollection<Right, RightBy>,
+  on: On,
+  options?: { readonly cardinality?: "one-to-many" },
+): IndexedJoin<Left, Right, On, "one-to-many">
+export function joinCollections<
+  Left extends Record<string, unknown>,
+  Right extends Record<string, unknown>,
+  LeftBy extends ContentFieldKey<Left>,
+  RightBy extends ContentFieldKey<Right>,
+  On extends SharedKey<Left, Right>,
+>(
+  left: IndexedCollection<Left, LeftBy>,
+  right: IndexedCollection<Right, RightBy>,
+  on: On,
+  options: { readonly cardinality: "one-to-one" },
+): IndexedJoin<Left, Right, On, "one-to-one">
+export function joinCollections<
+  Left extends Record<string, unknown>,
+  Right extends Record<string, unknown>,
+  LeftBy extends ContentFieldKey<Left>,
+  RightBy extends ContentFieldKey<Right>,
+  On extends SharedKey<Left, Right>,
+>(
+  left: IndexedCollection<Left, LeftBy>,
+  right: IndexedCollection<Right, RightBy>,
+  on: On,
+  options?: { readonly cardinality?: JoinCardinality },
+): IndexedJoin<Left, Right, On, JoinCardinality> {
+  const cardinality = options?.cardinality ?? "one-to-many"
+  return buildJoin(left, right, on, cardinality)
+}
+
+/** Rehydrate a deterministic join artifact. */
+export function fromBakedJoin<
+  Left extends Record<string, unknown>,
+  Right extends Record<string, unknown>,
+  On extends SharedKey<Left, Right>,
+  Cardinality extends JoinCardinality,
+>(
+  baked: BakedCollectionJoin<Left, Right, On, Cardinality>,
+): IndexedJoin<Left, Right, On, Cardinality> {
+  if (!isRecord(baked) || !Array.isArray(baked.rows)) {
+    throw new TypeError("@nifrajs/content: malformed baked join")
+  }
+  if (baked.cardinality !== "one-to-many" && baked.cardinality !== "one-to-one") {
+    throw new TypeError("@nifrajs/content: malformed baked join")
+  }
+  for (const row of baked.rows) {
+    if (!isRecord(row) || !isRecord(row.left)) {
+      throw new TypeError("@nifrajs/content: malformed baked join row")
+    }
+    const validRight =
+      baked.cardinality === "one-to-many"
+        ? Array.isArray(row.right)
+        : row.right === null || isRecord(row.right)
+    if (!validRight) throw new TypeError("@nifrajs/content: malformed baked join row")
+  }
+  return { entries: baked.rows, baked }
+}

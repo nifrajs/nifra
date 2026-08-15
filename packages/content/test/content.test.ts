@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
-import { parseEntry, parseFrontmatter, type StandardSchemaV1 } from "../src/index.ts"
+import {
+  type BakedCollection,
+  fromBakedIndex,
+  indexCollection,
+  joinCollections,
+  parseEntry,
+  parseFrontmatter,
+  type StandardSchemaV1,
+} from "../src/index.ts"
 
 const schema = t.object({ title: t.string(), draft: t.boolean() })
 
@@ -59,5 +67,104 @@ describe("parseEntry", () => {
       schema: asyncSchema,
     })
     expect(entry.frontmatter.title).toBe("Async")
+  })
+})
+
+type Post = { id: string; title: string; score: number; section: string }
+type Author = { id: string; name: string }
+
+const posts: BakedCollection<Post> = {
+  entries: [
+    {
+      slug: "b",
+      frontmatter: { id: "2", title: "B", score: 2, section: "news" },
+      html: "",
+      body: "",
+    },
+    {
+      slug: "a",
+      frontmatter: { id: "1", title: "A", score: 3, section: "news" },
+      html: "",
+      body: "",
+    },
+    {
+      slug: "c",
+      frontmatter: { id: "3", title: "C", score: 1, section: "sports" },
+      html: "",
+      body: "",
+    },
+  ],
+}
+
+describe("content indexes", () => {
+  test("builds deterministic lookup, stable sort, filters, ranges, and cursor pages", () => {
+    const index = indexCollection(posts, { by: "section", sort: { field: "score", dir: "desc" } })
+    expect(index.lookup("news").map((entry) => entry.slug)).toEqual(["a", "b"])
+    expect(index.all().map((entry) => entry.slug)).toEqual(["a", "b", "c"])
+
+    const first = index.query({ range: { score: { gte: 2 } }, limit: 1 })
+    expect(first.items.map((entry) => entry.slug)).toEqual(["a"])
+    expect(first.nextCursor).toBeString()
+    if (first.nextCursor === undefined) throw new Error("expected a next cursor")
+    const second = index.query({ range: { score: { gte: 2 } }, limit: 1, cursor: first.nextCursor })
+    expect(second.items.map((entry) => entry.slug)).toEqual(["b"])
+    expect(second.nextCursor).toBeUndefined()
+    expect(index.query({ where: { section: "sports" } }).items.map((entry) => entry.slug)).toEqual([
+      "c",
+    ])
+
+    const restored = fromBakedIndex(structuredClone(index.baked))
+    expect(JSON.stringify(restored.baked)).toBe(JSON.stringify(index.baked))
+    expect(restored.query({ limit: 10 }).items.map((entry) => entry.slug)).toEqual(["a", "b", "c"])
+  })
+
+  test("rejects unsupported indexed values and malformed cursors", () => {
+    const unsupported: BakedCollection<{ value: Date }> = {
+      entries: [{ slug: "x", frontmatter: { value: new Date(0) }, html: "", body: "" }],
+    }
+    expect(() => indexCollection(unsupported, { by: "value" })).toThrow(/not JSON-indexable/)
+    const index = indexCollection(posts, { by: "section" })
+    expect(() => index.query({ cursor: "not-a-cursor" })).toThrow(/invalid index cursor/)
+  })
+
+  test("joins one-to-many by a same-typed key and rejects duplicate one-to-one rights", () => {
+    const left = indexCollection(posts, { by: "id" })
+    const authors: BakedCollection<Author> = {
+      entries: [
+        { slug: "ada", frontmatter: { id: "1", name: "Ada" }, html: "", body: "" },
+        { slug: "grace", frontmatter: { id: "1", name: "Grace" }, html: "", body: "" },
+        { slug: "linus", frontmatter: { id: "9", name: "Linus" }, html: "", body: "" },
+      ],
+    }
+    const right = indexCollection(authors, { by: "id" })
+    const joined = joinCollections(left, right, "id")
+    expect(joined.entries[0]?.right.map((entry) => entry.slug)).toEqual(["ada", "grace"])
+    expect(joined.entries[1]?.right).toEqual([])
+    expect(() => joinCollections(left, right, "id", { cardinality: "one-to-one" })).toThrow(
+      /duplicate right join key/,
+    )
+
+    const unique = joinCollections(
+      left,
+      indexCollection({ entries: [authors.entries[0]!] }, { by: "id" }),
+      "id",
+      { cardinality: "one-to-one" },
+    )
+    expect(unique.entries[0]?.right?.slug).toBe("ada")
+    expect(unique.entries[1]?.right).toBeNull()
+  })
+
+  test("same-value-type join keys are enforced by TypeScript", () => {
+    type Bad = { id: number }
+    const bad = indexCollection<Bad, "id">(
+      { entries: [{ slug: "bad", frontmatter: { id: 1 }, html: "", body: "" }] },
+      { by: "id" },
+    )
+    const left = indexCollection(posts, { by: "id" })
+    const compileOnly = (): void => {
+      // @ts-expect-error string and number join keys must not silently join
+      joinCollections(left, bad, "id")
+    }
+    void compileOnly
   })
 })

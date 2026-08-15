@@ -328,11 +328,40 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **BakedCollection** _(interface)_ - `interface BakedCollection<Frontmatter>`
   A content collection baked to plain data - fs-free, so it works at the **edge** (Workers request-time) where `defineCollection`'s `node:fs` reader can't run. Produce one at build/server time with `bakeCollection`, JSON-serialize + ship it in the bundle, then rehydrate with `fromBaked`.
+- **BakedCollectionIndex** _(interface)_ - `interface BakedCollectionIndex<Frontmatter extends Record<string, unknown>, By extends ContentFieldKey<Frontmatter>>`
+  JSON-safe index data. It contains no functions, Map, Set, filesystem handle, or request data.
+- **BakedCollectionJoin** _(interface)_ - `interface BakedCollectionJoin<Left extends Record<string, unknown>, Right extends Record<string, unknown>, On extends SharedKey<Left, Right>, Cardinality extends JoinCardinality>`
+  JSON-safe joined rows, ordered by the left index and then the right index.
+- **BakedIndexBucket** _(interface)_ - `interface BakedIndexBucket`
+  The JSON-safe lookup bucket stored in a baked index.
+- **ContentFieldKey** _(type)_ - `type ContentFieldKey<Frontmatter extends Record<string, unknown>> = Extract< keyof Frontmatter, string >`
+  A string frontmatter field name accepted by the index APIs.
 - **Entry** _(interface)_ - `interface Entry<Frontmatter>`
   A parsed content entry: its slug, validated frontmatter, rendered HTML, and the raw Markdown body.
+- **IndexOptions** _(interface)_ - `interface IndexOptions<Frontmatter extends Record<string, unknown>, By extends ContentFieldKey<Frontmatter>>`
+- **IndexPage** _(interface)_ - `interface IndexPage<Frontmatter extends Record<string, unknown>>`
+  One page from an indexed collection. `nextCursor` is absent on the final page.
+- **IndexQueryOptions** _(interface)_ - `interface IndexQueryOptions<Frontmatter extends Record<string, unknown>>`
+  A bounded, cursor-based index query. The cursor is opaque and tied to its filter + sort.
+- **IndexRange** _(type)_ - `type IndexRange<Value>`
+  Range operators are available for string and number fields only.
+- **IndexRanges** _(type)_ - `type IndexRanges<Frontmatter extends Record<string, unknown>> = Partial<{ [K in ContentFieldKey<Frontmatter>]: IndexRange<Frontmatter[K]> }>`
+  Typed range filters derived from the collection's frontmatter.
+- **IndexSort** _(interface)_ - `interface IndexSort<Frontmatter extends Record<string, unknown>>`
+  A declared sort order. Ties are always broken by slug, then source order.
+- **IndexWhere** _(type)_ - `type IndexWhere<Frontmatter extends Record<string, unknown>> = Partial<{ [K in ContentFieldKey<Frontmatter>]: Frontmatter[K] }>`
+  Field-equality filters. Arbitrary predicates are intentionally not part of baked indexes.
+- **IndexedCollection** _(interface)_ - `interface IndexedCollection<Frontmatter extends Record<string, unknown>, By extends ContentFieldKey<Frontmatter>>`
+  A build-time/runtime index over validated, baked entries.
+- **IndexedJoin** _(interface)_ - `interface IndexedJoin<Left extends Record<string, unknown>, Right extends Record<string, unknown>, On extends SharedKey<Left, Right>, Cardinality extends JoinCardinality>`
+  A deterministic cross-collection join. No database or network layer is involved.
 - **InferSchema** _(type)_ - `type InferSchema<S> = S extends StandardSchemaV1<infer Output> ? Output : never`
   The validated output type of a schema.
+- **JoinCardinality** _(type)_ - `type JoinCardinality = "one-to-many" | "one-to-one"`
+- **JoinedRow** _(type)_ - `type JoinedRow<Left extends Record<string, unknown>, Right extends Record<string, unknown>, Cardinality extends JoinCardinality> = { readonly left: Entry<Left> readonly right: Cardinality extends "one-to-one" ? Entry<Ri…`
 - **ParseEntryOptions** _(interface)_ - `interface ParseEntryOptions<S extends StandardSchemaV1>`
+- **SharedKey** _(type)_ - `type SharedKey<Left extends Record<string, unknown>, Right extends Record<string, unknown>> = { [K in ContentFieldKey<Left> & ContentFieldKey<Right>]: [Left[K]] extends [Right[K]] ? [Right[K]] extends [Left[K]] ? K : ne…`
+  Keys whose frontmatter value types are identical on both sides of a join.
 - **StandardSchemaV1** _(interface)_ - `interface StandardSchemaV1<Output = unknown>`
   Minimal [Standard Schema](https://standardschema.dev) shape - lets frontmatter validate against any compliant validator (`@nifrajs/schema`'s `t`, zod, valibot, …) without coupling `@nifrajs/content` to one.
 - **StaticCollection** _(interface)_ - `interface StaticCollection<Frontmatter>`
@@ -341,6 +370,14 @@ Every public export of every package and documented subpath - name, kind, signat
   Bake a collection's entries to serializable data at build/server time. The collection does the filesystem read + validation (via `all()`); this just collects the already-parsed result so it can be JSON-serialized into the edge bundle. Pure - safe to import anywhere.
 - **fromBaked** _(function)_ - `fromBaked: <Frontmatter>(baked: BakedCollection<Frontmatter>) => StaticCollection<Frontmatter>`
   Rehydrate a baked collection into a read-only `all()`/`get()` collection - fs-free, edge-safe. The entries were validated when baked (build output, trusted), so they're served as-is. `get` is O(1).
+- **fromBakedIndex** _(function)_ - `fromBakedIndex: <Frontmatter extends Record<string, unknown>, By extends ContentFieldKey<Frontmatter>>(baked: BakedCollectionIndex<Frontmatter, By>) => IndexedCollection<Frontmatter, By>`
+  Rehydrate a JSON-serialized index at the edge without filesystem access.
+- **fromBakedJoin** _(function)_ - `fromBakedJoin: <Left extends Record<string, unknown>, Right extends Record<string, unknown>, On extends SharedKey<Left, Right>, Cardinality extends JoinCardinality>(baked: BakedCollectionJoin<Left, Right, On, Cardinalit…`
+  Rehydrate a deterministic join artifact.
+- **indexCollection** _(function)_ - `indexCollection: <Frontmatter extends Record<string, unknown>, By extends ContentFieldKey<Frontmatter>>(baked: BakedCollection<Frontmatter>, options: IndexOptions<Frontmatter, By>) => IndexedCollection<Frontmatter, By>`
+  Build a deterministic typed index from already validated baked entries.
+- **joinCollections** _(function)_ - `joinCollections: { <Left extends Record<string, unknown>, Right extends Record<string, unknown>, LeftBy extends ContentFieldKey<Left>, RightBy extends ContentFieldKey<Right>, On extends SharedKey<Left, Right>>(left: Ind…`
+  Join two indexes on a real same-typed frontmatter key. Default cardinality is one-to-many.
 - **parseEntry** _(function)_ - `parseEntry: <S extends StandardSchemaV1>(options: ParseEntryOptions<S>) => Promise<Entry<InferSchema<S>>>`
   Parse one content file: split + validate its frontmatter against `schema`, render its Markdown body to HTML. Throws a descriptive error (naming the slug + the issues) when the frontmatter is invalid - surface it at build/load time rather than shipping a malformed entry. Pure + edge-safe.
 - **parseFrontmatter** _(function)_ - `parseFrontmatter: (raw: string) => { data: unknown; body: string; }`

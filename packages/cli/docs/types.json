@@ -844,6 +844,27 @@
     "doc": "/**\n * A content collection baked to plain data - fs-free, so it works at the **edge** (Workers\n * request-time) where `defineCollection`'s `node:fs` reader can't run. Produce one at build/server time\n * with `bakeCollection`, JSON-serialize + ship it in the bundle, then rehydrate with `fromBaked`.\n */"
   },
   {
+    "name": "BakedCollectionIndex",
+    "kind": "interface",
+    "package": "@nifrajs/content",
+    "signature": "export interface BakedCollectionIndex<Frontmatter extends Record<string, unknown>, By extends ContentFieldKey<Frontmatter>> {\n    readonly entries: ReadonlyArray<Entry<Frontmatter>>;\n    readonly by: By;\n    readonly sort: IndexSort<Frontmatter>;\n    /** Entry indexes in the default deterministic order. */\n    readonly order: ReadonlyArray<number>;\n    readonly buckets: ReadonlyArray<BakedIndexBucket>;\n}",
+    "doc": "/** JSON-safe index data. It contains no functions, Map, Set, filesystem handle, or request data. */"
+  },
+  {
+    "name": "BakedCollectionJoin",
+    "kind": "interface",
+    "package": "@nifrajs/content",
+    "signature": "export interface BakedCollectionJoin<Left extends Record<string, unknown>, Right extends Record<string, unknown>, On extends SharedKey<Left, Right>, Cardinality extends JoinCardinality> {\n    readonly on: On;\n    readonly cardinality: Cardinality;\n    readonly rows: ReadonlyArray<JoinedRow<Left, Right, Cardinality>>;\n}",
+    "doc": "/** JSON-safe joined rows, ordered by the left index and then the right index. */"
+  },
+  {
+    "name": "BakedIndexBucket",
+    "kind": "interface",
+    "package": "@nifrajs/content",
+    "signature": "export interface BakedIndexBucket {\n    readonly key: string;\n    readonly entryIndexes: ReadonlyArray<number>;\n}",
+    "doc": "/** The JSON-safe lookup bucket stored in a baked index. */"
+  },
+  {
     "name": "basicAuth",
     "kind": "function",
     "package": "@nifrajs/middleware",
@@ -2473,6 +2494,13 @@
     "kind": "const",
     "package": "@nifrajs/image",
     "signature": "export declare const CONTENT_TYPE: Record<OutputFormat, string>;"
+  },
+  {
+    "name": "ContentFieldKey",
+    "kind": "type",
+    "package": "@nifrajs/content",
+    "signature": "export type ContentFieldKey<Frontmatter extends Record<string, unknown>> = Extract<keyof Frontmatter, string>;",
+    "doc": "/** A string frontmatter field name accepted by the index APIs. */"
   },
   {
     "name": "ContentPreference",
@@ -4982,6 +5010,20 @@
     "doc": "/**\n * Rehydrate a baked collection into a read-only `all()`/`get()` collection - fs-free, edge-safe. The\n * entries were validated when baked (build output, trusted), so they're served as-is. `get` is O(1).\n */"
   },
   {
+    "name": "fromBakedIndex",
+    "kind": "function",
+    "package": "@nifrajs/content",
+    "signature": "export declare function fromBakedIndex<Frontmatter extends Record<string, unknown>, By extends ContentFieldKey<Frontmatter>>(baked: BakedCollectionIndex<Frontmatter, By>): IndexedCollection<Frontmatter, By>;",
+    "doc": "/** Rehydrate a JSON-serialized index at the edge without filesystem access. */"
+  },
+  {
+    "name": "fromBakedJoin",
+    "kind": "function",
+    "package": "@nifrajs/content",
+    "signature": "export declare function fromBakedJoin<Left extends Record<string, unknown>, Right extends Record<string, unknown>, On extends SharedKey<Left, Right>, Cardinality extends JoinCardinality>(baked: BakedCollectionJoin<Left, Right, On, Cardinality>): IndexedJoin<Left, Right, On, Cardinality>;",
+    "doc": "/** Rehydrate a deterministic join artifact. */"
+  },
+  {
     "name": "fromTypeBox",
     "kind": "function",
     "package": "@nifrajs/schema",
@@ -5716,6 +5758,75 @@
     "signature": "export interface IncidentReplayResult {\n    readonly reproduced: boolean;\n    readonly status: number;\n    readonly expectedStatus: number;\n    readonly statusMatches: boolean;\n    /** null when shape was not checked. */\n    readonly shapeMatches: boolean | null;\n}"
   },
   {
+    "name": "indexCollection",
+    "kind": "function",
+    "package": "@nifrajs/content",
+    "signature": "export declare function indexCollection<Frontmatter extends Record<string, unknown>, By extends ContentFieldKey<Frontmatter>>(baked: BakedCollection<Frontmatter>, options: IndexOptions<Frontmatter, By>): IndexedCollection<Frontmatter, By>;",
+    "doc": "/** Build a deterministic typed index from already validated baked entries. */"
+  },
+  {
+    "name": "IndexedCollection",
+    "kind": "interface",
+    "package": "@nifrajs/content",
+    "signature": "export interface IndexedCollection<Frontmatter extends Record<string, unknown>, By extends ContentFieldKey<Frontmatter>> {\n    readonly entries: ReadonlyArray<Entry<Frontmatter>>;\n    readonly by: By;\n    readonly baked: BakedCollectionIndex<Frontmatter, By>;\n    /** O(1) lookup after the build/rehydration map is constructed. Missing keys return no rows. */\n    readonly lookup: (value: Frontmatter[By]) => ReadonlyArray<Entry<Frontmatter>>;\n    /** All entries in the index's default stable order. */\n    readonly all: () => ReadonlyArray<Entry<Frontmatter>>;\n    readonly query: (options?: IndexQueryOptions<Frontmatter>) => IndexPage<Frontmatter>;\n}",
+    "doc": "/** A build-time/runtime index over validated, baked entries. */"
+  },
+  {
+    "name": "IndexedJoin",
+    "kind": "interface",
+    "package": "@nifrajs/content",
+    "signature": "export interface IndexedJoin<Left extends Record<string, unknown>, Right extends Record<string, unknown>, On extends SharedKey<Left, Right>, Cardinality extends JoinCardinality> {\n    readonly entries: ReadonlyArray<JoinedRow<Left, Right, Cardinality>>;\n    readonly baked: BakedCollectionJoin<Left, Right, On, Cardinality>;\n}",
+    "doc": "/** A deterministic cross-collection join. No database or network layer is involved. */"
+  },
+  {
+    "name": "IndexOptions",
+    "kind": "interface",
+    "package": "@nifrajs/content",
+    "signature": "export interface IndexOptions<Frontmatter extends Record<string, unknown>, By extends ContentFieldKey<Frontmatter>> {\n    readonly by: By;\n    readonly sort?: IndexSort<Frontmatter>;\n}"
+  },
+  {
+    "name": "IndexPage",
+    "kind": "interface",
+    "package": "@nifrajs/content",
+    "signature": "export interface IndexPage<Frontmatter extends Record<string, unknown>> {\n    readonly items: ReadonlyArray<Entry<Frontmatter>>;\n    readonly nextCursor?: string;\n}",
+    "doc": "/** One page from an indexed collection. `nextCursor` is absent on the final page. */"
+  },
+  {
+    "name": "IndexQueryOptions",
+    "kind": "interface",
+    "package": "@nifrajs/content",
+    "signature": "export interface IndexQueryOptions<Frontmatter extends Record<string, unknown>> {\n    readonly where?: IndexWhere<Frontmatter>;\n    readonly range?: IndexRanges<Frontmatter>;\n    readonly sort?: IndexSort<Frontmatter>;\n    readonly cursor?: string;\n    /** Defaults to 20; values above 100 are rejected to bound request-driven work. */\n    readonly limit?: number;\n}",
+    "doc": "/** A bounded, cursor-based index query. The cursor is opaque and tied to its filter + sort. */"
+  },
+  {
+    "name": "IndexRange",
+    "kind": "type",
+    "package": "@nifrajs/content",
+    "signature": "export type IndexRange<Value> = [Extract<Value, string | number>] extends [never] ? never : {\n    readonly gt?: Extract<Value, string | number>;\n    readonly gte?: Extract<Value, string | number>;\n    readonly lt?: Extract<Value, string | number>;\n    readonly lte?: Extract<Value, string | number>;\n};",
+    "doc": "/** Range operators are available for string and number fields only. */"
+  },
+  {
+    "name": "IndexRanges",
+    "kind": "type",
+    "package": "@nifrajs/content",
+    "signature": "export type IndexRanges<Frontmatter extends Record<string, unknown>> = Partial<{\n    [K in ContentFieldKey<Frontmatter>]: IndexRange<Frontmatter[K]>;\n}>;",
+    "doc": "/** Typed range filters derived from the collection's frontmatter. */"
+  },
+  {
+    "name": "IndexSort",
+    "kind": "interface",
+    "package": "@nifrajs/content",
+    "signature": "export interface IndexSort<Frontmatter extends Record<string, unknown>> {\n    readonly field: ContentFieldKey<Frontmatter>;\n    readonly dir: \"asc\" | \"desc\";\n}",
+    "doc": "/** A declared sort order. Ties are always broken by slug, then source order. */"
+  },
+  {
+    "name": "IndexWhere",
+    "kind": "type",
+    "package": "@nifrajs/content",
+    "signature": "export type IndexWhere<Frontmatter extends Record<string, unknown>> = Partial<{\n    [K in ContentFieldKey<Frontmatter>]: Frontmatter[K];\n}>;",
+    "doc": "/** Field-equality filters. Arbitrary predicates are intentionally not part of baked indexes. */"
+  },
+  {
     "name": "InertScriptType",
     "kind": "type",
     "package": "@nifrajs/web",
@@ -6132,11 +6243,29 @@
     "doc": "/** Thrown by `enqueue` when the payload fails the job's `input` schema (validation at the trust boundary). */"
   },
   {
+    "name": "JoinCardinality",
+    "kind": "type",
+    "package": "@nifrajs/content",
+    "signature": "export type JoinCardinality = \"one-to-many\" | \"one-to-one\";"
+  },
+  {
     "name": "joinCausality",
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function joinCausality(parents: readonly CausalityContext[], nodeKind: CausalityKind, id: string, options?: ContinueCausalityOptions): CausalityStep;",
     "doc": "/** Join several immediate parents. Cross-execution joins fail closed. */"
+  },
+  {
+    "name": "joinCollections",
+    "kind": "function",
+    "package": "@nifrajs/content",
+    "signature": "export declare function joinCollections<Left extends Record<string, unknown>, Right extends Record<string, unknown>, LeftBy extends ContentFieldKey<Left>, RightBy extends ContentFieldKey<Right>, On extends SharedKey<Left, Right>>(left: IndexedCollection<Left, LeftBy>, right: IndexedCollection<Right, RightBy>, on: On, options: {\n    readonly cardinality: \"one-to-one\";\n}): IndexedJoin<Left, Right, On, \"one-to-one\">;"
+  },
+  {
+    "name": "JoinedRow",
+    "kind": "type",
+    "package": "@nifrajs/content",
+    "signature": "export type JoinedRow<Left extends Record<string, unknown>, Right extends Record<string, unknown>, Cardinality extends JoinCardinality> = {\n    readonly left: Entry<Left>;\n    readonly right: Cardinality extends \"one-to-one\" ? Entry<Right> | null : ReadonlyArray<Entry<Right>>;\n};"
   },
   {
     "name": "Jsonify",
@@ -11371,6 +11500,13 @@
     "package": "@nifrajs/testing",
     "signature": "export declare function shapeOf(value: unknown): unknown;",
     "doc": "/** A stable structural fingerprint: keys + value *types*, not values. Used for the optional shape check. */"
+  },
+  {
+    "name": "SharedKey",
+    "kind": "type",
+    "package": "@nifrajs/content",
+    "signature": "export type SharedKey<Left extends Record<string, unknown>, Right extends Record<string, unknown>> = {\n    [K in ContentFieldKey<Left> & ContentFieldKey<Right>]: [Left[K]] extends [Right[K]] ? [Right[K]] extends [Left[K]] ? K : never : never;\n}[ContentFieldKey<Left> & ContentFieldKey<Right>];",
+    "doc": "/** Keys whose frontmatter value types are identical on both sides of a join. */"
   },
   {
     "name": "sharpImageBackend",

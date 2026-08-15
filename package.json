@@ -35,6 +35,7 @@
     "bench:http:quick": "bun run bench/http/quick.ts",
     "bench:http:update": "bun run bench/http/aggregate.ts --runs 3 --write",
     "bench:ssr": "bun run bench/ssr/run.ts",
+    "bench:content": "bun bench/content-index.ts",
     "bench:prerender": "bun run bench/ssr/prerender-ttfb.ts",
     "bench:size": "bun run bench/size/run.ts",
     "gen:llms": "bun run scripts/gen-llms.ts && bun run gen:cards",
