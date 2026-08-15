@@ -16,7 +16,7 @@ import {
 import type { Platform } from "./context.ts"
 import { type CookieOptions, cookieNamePrefix, parseCookies, serializeCookie } from "./cookies.ts"
 import { headerObjectOf } from "./headers.ts"
-import { jsonError } from "./http.ts"
+import { plainError } from "./http.ts"
 import { guardParsedValue, type ProtoPoisoning, parseJsonGuarded } from "./proto-guard.ts"
 import { searchOf } from "./query.ts"
 import { responseJsonContentType } from "./respond.ts"
@@ -27,8 +27,10 @@ import {
   getNeverAbortSignal,
   getUnboundedRequestBudget,
   headerOf,
+  isResponseResult,
   PRE_DECODED_BODY,
   type PreDecodedBody,
+  type ResponseResult,
   requestOf,
   TEXT_DECODER,
 } from "./runtime-core.ts"
@@ -390,7 +392,7 @@ export class RequestContext implements RawContext {
   }
 }
 
-/** Backs `c.boundedBody`: bounded byte read that throws a flat 413/400 `Response` (caught by
+/** Backs `c.boundedBody`: bounded byte read that throws a flat 413/400 plain render (caught by
  * `runLifecycle` as control flow, like `throw redirect(...)`), so a handler can't ignore the cap.
  * The byte-cap itself lives in `./body.ts` (shared with the schema path and `verifyWebhook`). */
 async function readBoundedBodyOrThrow(
@@ -401,8 +403,8 @@ async function readBoundedBodyOrThrow(
   const r = await readBoundedBytes(req, maxBytes ?? maxBodyBytes)
   if (r.ok) return r.bytes
   throw r.status === 413
-    ? jsonError(413, "payload_too_large")
-    : jsonError(400, "invalid_content_length")
+    ? plainError(413, "payload_too_large")
+    : plainError(400, "invalid_content_length")
 }
 
 /** Backs `c.boundedJson`: `readBoundedJsonSource`, throwing its flat 400/413 on failure. */
@@ -413,7 +415,9 @@ async function readBoundedJsonBodyOrThrow<T>(
   maxBytes?: number,
 ): Promise<T> {
   const parsed = await readBoundedJsonSource(req, maxBytes ?? maxBodyBytes, protoPoisoning)
-  if (parsed instanceof Response) throw parsed
+  // The lane's own failures are the only branded values it can produce: a parsed JSON body is
+  // `JSON.parse` output, which carries string keys only and so can never answer to a symbol brand.
+  if (isResponseResult(parsed)) throw parsed
   return parsed as T
 }
 
@@ -431,7 +435,7 @@ async function readBoundedJsonBodyOrThrow<T>(
  * own promise chain instead, and only the streaming fallback - which is already doing IO in a loop
  * - runs as an async function. Callers that `await` the result are unaffected.
  */
-type JsonResultContinuation<T> = (result: unknown | Response) => T | Promise<T>
+type JsonResultContinuation<T> = (result: unknown | ResponseResult) => T | Promise<T>
 type JsonErrorContinuation<T> = (error: unknown) => T | Promise<T>
 type FramedJsonSource = RequestSource & {
   readonly bytes?: () => Promise<Uint8Array>
@@ -445,7 +449,7 @@ export function readBoundedJsonSource(
   req: RequestSource,
   maxBytes: number,
   protoPoisoning?: ProtoPoisoning,
-): Promise<unknown | Response>
+): Promise<unknown | ResponseResult>
 export function readBoundedJsonSource<T>(
   req: RequestSource,
   maxBytes: number,
@@ -459,7 +463,7 @@ export function readBoundedJsonSource<T>(
   protoPoisoning: ProtoPoisoning = "reject",
   onResult?: JsonResultContinuation<T>,
   onError?: JsonErrorContinuation<T>,
-): Promise<unknown | Response | T> {
+): Promise<unknown | ResponseResult | T> {
   // A pre-parsing hook (the transport-codec lane) may have decoded the body already - its stash
   // is taken verbatim: the stasher enforced its own byte cap and poisoning policy on text this
   // lane never sees. One symbol read; a miss on ordinary requests costs a cache-line, not a parse.
@@ -493,12 +497,12 @@ export function readBoundedJsonSource<T>(
     const length = parseContentLength(declared)
     if (length === undefined)
       return onResult === undefined
-        ? Promise.resolve(jsonError(400, "invalid_content_length"))
-        : Promise.resolve(jsonError(400, "invalid_content_length")).then(onResult)
+        ? Promise.resolve(plainError(400, "invalid_content_length"))
+        : Promise.resolve(plainError(400, "invalid_content_length")).then(onResult)
     if (length > maxBytes)
       return onResult === undefined
-        ? Promise.resolve(jsonError(413, "payload_too_large"))
-        : Promise.resolve(jsonError(413, "payload_too_large")).then(onResult)
+        ? Promise.resolve(plainError(413, "payload_too_large"))
+        : Promise.resolve(plainError(413, "payload_too_large")).then(onResult)
     // Trusted framing (Bun's native route table, Deno.serve): the runtime's HTTP parser already
     // delimited the bytes, so the declared length IS the transport frame and chunked routing is
     // moot - the over-cap 413 above already enforced the byte cap. Take the runtime's fused
@@ -514,8 +518,8 @@ export function readBoundedJsonSource<T>(
             guarded = guardParsedValue(parsed, protoPoisoning)
           } catch {
             return onResult === undefined
-              ? jsonError(400, "invalid_json")
-              : onResult(jsonError(400, "invalid_json"))
+              ? plainError(400, "invalid_json")
+              : onResult(plainError(400, "invalid_json"))
           }
           return onResult === undefined ? guarded : onResult(guarded)
         },
@@ -533,16 +537,16 @@ export function readBoundedJsonSource<T>(
           ({ value, byteLength }) => {
             if (byteLength > length || byteLength > maxBytes) {
               return onResult === undefined
-                ? jsonError(413, "payload_too_large")
-                : onResult(jsonError(413, "payload_too_large"))
+                ? plainError(413, "payload_too_large")
+                : onResult(plainError(413, "payload_too_large"))
             }
             let guarded: unknown
             try {
               guarded = guardParsedValue(value, protoPoisoning)
             } catch {
               return onResult === undefined
-                ? jsonError(400, "invalid_json")
-                : onResult(jsonError(400, "invalid_json"))
+                ? plainError(400, "invalid_json")
+                : onResult(plainError(400, "invalid_json"))
             }
             return onResult === undefined ? guarded : onResult(guarded)
           },
@@ -555,16 +559,16 @@ export function readBoundedJsonSource<T>(
           (bytes) => {
             if (bytes.byteLength > length || bytes.byteLength > maxBytes) {
               return onResult === undefined
-                ? jsonError(413, "payload_too_large")
-                : onResult(jsonError(413, "payload_too_large"))
+                ? plainError(413, "payload_too_large")
+                : onResult(plainError(413, "payload_too_large"))
             }
             try {
               const parsed = parseJsonGuarded(TEXT_DECODER.decode(bytes), protoPoisoning)
               return onResult === undefined ? parsed : onResult(parsed)
             } catch {
               return onResult === undefined
-                ? jsonError(400, "invalid_json")
-                : onResult(jsonError(400, "invalid_json"))
+                ? plainError(400, "invalid_json")
+                : onResult(plainError(400, "invalid_json"))
             }
           },
           () => (onResult === undefined ? INVALID_JSON() : onResult(INVALID_JSON())),
@@ -581,16 +585,16 @@ export function readBoundedJsonSource<T>(
           const bytes = new Uint8Array(buffer)
           if (bytes.byteLength > length || bytes.byteLength > maxBytes) {
             return onResult === undefined
-              ? jsonError(413, "payload_too_large")
-              : onResult(jsonError(413, "payload_too_large"))
+              ? plainError(413, "payload_too_large")
+              : onResult(plainError(413, "payload_too_large"))
           }
           let parsed: unknown
           try {
             parsed = parseJsonGuarded(TEXT_DECODER.decode(bytes), protoPoisoning)
           } catch {
             return onResult === undefined
-              ? jsonError(400, "invalid_json")
-              : onResult(jsonError(400, "invalid_json"))
+              ? plainError(400, "invalid_json")
+              : onResult(plainError(400, "invalid_json"))
           }
           return onResult === undefined ? parsed : onResult(parsed)
         },
@@ -605,21 +609,21 @@ export function readBoundedJsonSource<T>(
 /** The shared rejection handler for a body read that never completed (client abort, socket error,
  * malformed framing): the same flat 400 a syntactically invalid body gets. Hoisted so the framed
  * lane allocates no per-request closure for it. */
-const INVALID_JSON = (): Response => jsonError(400, "invalid_json")
+const INVALID_JSON = (): ResponseResult => plainError(400, "invalid_json")
 
 /** The chunked / length-less fallback: drain under the streaming byte cap, then parse guarded. */
 async function readStreamedJsonSource(
   raw: RequestSource,
   maxBytes: number,
   protoPoisoning: ProtoPoisoning,
-): Promise<unknown | Response> {
+): Promise<unknown | ResponseResult> {
   const body = raw.body
-  if (body === null) return jsonError(400, "invalid_json")
+  if (body === null) return plainError(400, "invalid_json")
   const drained = await drainCapped(body, maxBytes)
-  if (!drained.ok) return jsonError(413, "payload_too_large")
+  if (!drained.ok) return plainError(413, "payload_too_large")
   try {
     return parseJsonGuarded(TEXT_DECODER.decode(drained.bytes), protoPoisoning)
   } catch {
-    return jsonError(400, "invalid_json")
+    return plainError(400, "invalid_json")
   }
 }

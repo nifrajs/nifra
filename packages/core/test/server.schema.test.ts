@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { RouteConfigError, server } from "../src/index.ts"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "../src/schema/standard.ts"
+import { isResponseResult, type ResponseResult } from "../src/server/runtime-core.ts"
 
 /**
  * A minimal Standard Schema, hand-rolled so these tests exercise the framework
@@ -319,6 +320,37 @@ describe("c.boundedBody / c.boundedJson (schema-less body cap)", () => {
       len: (await c.boundedBody()).byteLength,
     }))
     expect((await app.fetch(lengthedRequest("/raw", "x".repeat(100)))).status).toBe(413)
+  })
+
+  test("an over-cap read throws a plain render, not a Response", async () => {
+    let thrown: unknown
+    const app = server({ maxBodyBytes: 10 }).post("/raw", async (c) => {
+      try {
+        await c.boundedBody()
+      } catch (err) {
+        thrown = err
+        throw err
+      }
+      return { ok: true }
+    })
+    const res = await app.fetch(lengthedRequest("/raw", "x".repeat(100)))
+    expect(res.status).toBe(413)
+    expect(thrown).not.toBeInstanceOf(Response)
+    expect(isResponseResult(thrown)).toBe(true)
+    expect((thrown as ResponseResult).plain).toEqual({
+      status: 413,
+      body: { ok: false, error: "payload_too_large" },
+    })
+  })
+
+  test("a JSON body that spells the plain-render brand as a string key stays data", async () => {
+    // The lane tells its own failures from a parsed body by a symbol brand. `JSON.parse` only ever
+    // produces string keys, so a body that writes the brand out longhand is still just an object.
+    const app = server().post("/raw", async (c) => ({ got: await c.boundedJson() }))
+    const body = { "Symbol(nifra.response.result)": true, plain: { status: 413 } }
+    const res = await app.fetch(jsonRequest("POST", "/raw", body))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ got: body })
   })
 
   test("boundedJson rejects invalid JSON with 400", async () => {

@@ -3796,7 +3796,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       return this.readBoundedJson(
         source,
         maxBodyBytes,
-        (parsed) => (parsed instanceof Response ? wrapResponse(parsed) : onParsed(parsed)),
+        (parsed) => (isResponseResult(parsed) ? wrapResponse(parsed) : onParsed(parsed)),
         onError,
       )
     } catch (err) {
@@ -4866,7 +4866,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     let parsed: unknown
     if (contentType === "application/json" || contentType.includes("application/json")) {
       const json = await this.readBoundedJson(req, entry.bodyLimit ?? UNLIMITED_BODY_BYTES)
-      if (json instanceof Response) return json
+      if (isResponseResult(json)) return json
       parsed = json
     } else if (isUrlEncodedForm(contentType)) {
       const form = await readBoundedForm(req, entry.bodyLimit ?? UNLIMITED_BODY_BYTES)
@@ -4948,19 +4948,22 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * length-less body mid-stream once the running byte count exceeds the cap - so a lying
    * or absent length can't force us to buffer an oversized payload.
    */
-  private readBoundedJson(req: RequestSource, maxBodyBytes?: number): Promise<unknown | Response>
+  private readBoundedJson(
+    req: RequestSource,
+    maxBodyBytes?: number,
+  ): Promise<unknown | ResponseResult>
   private readBoundedJson<T>(
     req: RequestSource,
     maxBodyBytes: number,
-    onResult: (parsed: unknown | Response) => T | Promise<T>,
+    onResult: (parsed: unknown | ResponseResult) => T | Promise<T>,
     onError: (error: unknown) => T | Promise<T>,
   ): Promise<T>
   private readBoundedJson<T>(
     req: RequestSource,
     maxBodyBytes = this.maxBodyBytes,
-    onResult?: (parsed: unknown | Response) => T | Promise<T>,
+    onResult?: (parsed: unknown | ResponseResult) => T | Promise<T>,
     onError?: (error: unknown) => T | Promise<T>,
-  ): Promise<unknown | Response | T> {
+  ): Promise<unknown | ResponseResult | T> {
     // Not `async`: this is a pass-through, and wrapping the lane's own promise in a coroutine
     // frame costs an extra microtask hop on every JSON body.
     return onResult === undefined
