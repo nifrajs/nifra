@@ -3,9 +3,13 @@ import { type IslandEnhancer, mountIslands } from "../src/islands.ts"
 
 // mountIslands only reads `.dataset` off each element and iterates `root.querySelectorAll(...)`, so a
 // minimal stub stands in for the DOM (Bun's test env has no `document`). Casts are test-only.
-function island(id: string, opts: { strategy?: string; props?: string } = {}): HTMLElement {
+function island(
+  id: string,
+  opts: { strategy?: string; media?: string; props?: string } = {},
+): HTMLElement {
   const dataset: Record<string, string> = { id }
   if (opts.strategy !== undefined) dataset.strategy = opts.strategy
+  if (opts.media !== undefined) dataset.media = opts.media
   if (opts.props !== undefined) dataset.props = opts.props
   return { dataset } as unknown as HTMLElement
 }
@@ -206,6 +210,73 @@ describe("mountIslands", () => {
       expect(ran).toBe(true) // no IntersectionObserver → run now, never skip the island
     } finally {
       g.IntersectionObserver = original
+    }
+  })
+
+  test("media: waits for the first match, then runs once and removes its listener", () => {
+    const g = globalThis as typeof globalThis & { matchMedia?: unknown }
+    const original = g.matchMedia
+    let change: ((event: MediaQueryListEvent) => void) | undefined
+    let removed = 0
+    g.matchMedia = (() => ({
+      matches: false,
+      addEventListener: (_type: "change", listener: (event: MediaQueryListEvent) => void) => {
+        change = listener
+      },
+      removeEventListener: () => {
+        removed++
+      },
+    })) as unknown as typeof g.matchMedia
+    try {
+      let runs = 0
+      const dispose = mountIslands(
+        {
+          c: (() => {
+            runs++
+          }) as IslandEnhancer,
+        },
+        { root: rootOf([island("c", { strategy: "media", media: "(min-width: 800px)" })]) },
+      )
+      expect(runs).toBe(0)
+      change?.({ matches: true } as MediaQueryListEvent)
+      change?.({ matches: true } as MediaQueryListEvent)
+      expect(runs).toBe(1)
+      dispose()
+      expect(removed).toBe(1)
+    } finally {
+      g.matchMedia = original
+    }
+  })
+
+  test("media: already matching runs immediately; malformed markers stay inert", () => {
+    const g = globalThis as typeof globalThis & { matchMedia?: unknown }
+    const original = g.matchMedia
+    g.matchMedia = (() => ({ matches: true })) as unknown as typeof g.matchMedia
+    try {
+      let runs = 0
+      mountIslands(
+        {
+          good: (() => {
+            runs++
+          }) as IslandEnhancer,
+          missing: (() => {
+            runs += 100
+          }) as IslandEnhancer,
+          long: (() => {
+            runs += 1000
+          }) as IslandEnhancer,
+        },
+        {
+          root: rootOf([
+            island("good", { strategy: "media", media: "(min-width: 1px)" }),
+            island("missing", { strategy: "media" }),
+            island("long", { strategy: "media", media: "x".repeat(257) }),
+          ]),
+        },
+      )
+      expect(runs).toBe(1)
+    } finally {
+      g.matchMedia = original
     }
   })
 

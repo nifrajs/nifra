@@ -10032,9 +10032,13 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 `cloudflareLoader`, `CloudflareLoaderOptions`, `createPngRasterizer`, `createResvgRasterizer`, `HtmlImageAttrs`, `identityLoader`, `imageDimensions`, `ImageFormat`, `ImageInfo`, `ImageLoader`, `ImageProps`, `OgImageOptions`, `OgImageRasterized`, `OgImageRasterizer`, `ogImageResponse`, `PngRenderer`, `readImageDimensions`, `renderOgImage`, `ResolvedImage`, `resolveImage`, `ResvgConstructor`, `ResvgRenderer`, `selfHostedLoader`, `SelfHostedLoaderOptions`, `signImageUrl`, `SignImageUrlOptions`, `toHtmlAttrs`
 
+## @nifrajs/island-trigger
+
+`IslandStrategy`, `MAX_MEDIA_QUERY_LENGTH`, `scheduleTrigger`, `TriggerOptions`
+
 ## @nifrajs/islets
 
-`batch`, `BindableElement`, `BindableRoot`, `bindScope`, `computed`, `effect`, `island`, `IslandContext`, `IslandHost`, `IslandScope`, `IslandSetup`, `islandState`, `mountIslands`, `signal`, `Signal`
+`batch`, `BindableElement`, `BindableRoot`, `bindScope`, `computed`, `effect`, `island`, `IslandContext`, `IslandHost`, `IslandScope`, `IslandSetup`, `islandState`, `IslandStrategy`, `MountIslandOptions`, `mountIslands`, `signal`, `Signal`
 
 ## @nifrajs/jobs
 

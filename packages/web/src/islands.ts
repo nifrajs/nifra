@@ -15,8 +15,13 @@
  * the route's `islandScripts`.
  */
 
-/** When an island's enhancer runs. Default `load`. */
-export type IslandStrategy = "load" | "idle" | "visible"
+import {
+  type IslandStrategy,
+  MAX_MEDIA_QUERY_LENGTH,
+  scheduleTrigger,
+} from "@nifrajs/island-trigger"
+
+export { type IslandStrategy, MAX_MEDIA_QUERY_LENGTH, scheduleTrigger }
 
 /** Optional teardown an enhancer returns (remove listeners/observers); run on `dispose()`. */
 export type IslandCleanup = () => void
@@ -29,8 +34,6 @@ export type IslandCleanup = () => void
 // biome-ignore lint/suspicious/noConfusingVoidType: `void` = "no cleanup returned", like React's EffectCallback - cleanup is optional.
 export type IslandEnhancer<P = unknown> = (el: HTMLElement, props: P) => IslandCleanup | void
 
-const NOOP = (): void => {}
-
 /** Parse an island's inline `data-props` JSON; malformed/absent → `undefined` (never throws). */
 function readProps(el: HTMLElement): unknown {
   const raw = el.dataset.props
@@ -40,40 +43,6 @@ function readProps(el: HTMLElement): unknown {
   } catch {
     return undefined
   }
-}
-
-/** Run `run` per the island's strategy; returns a disposer that cancels a not-yet-fired trigger. */
-function whenStrategy(el: HTMLElement, strategy: IslandStrategy, run: () => void): () => void {
-  if (strategy === "idle") {
-    const ric = globalThis.requestIdleCallback
-    if (ric === undefined) {
-      const t = setTimeout(run, 1)
-      return () => clearTimeout(t)
-    }
-    const handle = ric(run)
-    return () => globalThis.cancelIdleCallback?.(handle)
-  }
-  if (strategy === "visible") {
-    // No IntersectionObserver (old engine / SSR smoke) → degrade to immediate, never skip the island.
-    if (typeof IntersectionObserver === "undefined") {
-      run()
-      return NOOP
-    }
-    const io = new IntersectionObserver((entries, obs) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting) {
-          obs.disconnect()
-          run()
-          return
-        }
-      }
-    })
-    io.observe(el)
-    return () => io.disconnect()
-  }
-  // "load" (and any unknown value) → run immediately on mount.
-  run()
-  return NOOP
 }
 
 /**
@@ -96,8 +65,20 @@ export function mountIslands(
     if (enhancer === undefined) continue // no enhancer for this id → leave it as inert SSR markup
     const props = readProps(el)
     const strategyAttr = el.dataset.strategy
-    const strategy: IslandStrategy =
-      strategyAttr === "idle" || strategyAttr === "visible" ? strategyAttr : "load"
+    const strategy: IslandStrategy | undefined =
+      strategyAttr === "idle" || strategyAttr === "visible" || strategyAttr === "load"
+        ? strategyAttr
+        : strategyAttr === "media" &&
+            el.dataset.media !== undefined &&
+            el.dataset.media.length > 0 &&
+            el.dataset.media.length <= MAX_MEDIA_QUERY_LENGTH
+          ? { media: el.dataset.media }
+          : strategyAttr === undefined
+            ? "load"
+            : undefined
+    // Invalid media markers remain inert rather than silently becoming eager. Their SSR content stays
+    // usable, and untrusted HTML cannot turn an oversized query into an unexpected trigger.
+    if (strategy === undefined) continue
     const run = (): void => {
       try {
         const cleanup = enhancer(el, props)
@@ -107,7 +88,7 @@ export function mountIslands(
         console.error(`[nifra/islands] enhancer "${id}" failed:`, err)
       }
     }
-    disposers.push(whenStrategy(el, strategy, run))
+    disposers.push(scheduleTrigger(strategy, run, { target: el }))
   }
   return () => {
     for (const dispose of disposers) {

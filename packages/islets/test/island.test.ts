@@ -87,4 +87,77 @@ describe("islands", () => {
     const unescaped = escaped.replace(/&quot;/g, '"').replace(/&amp;/g, "&")
     expect(JSON.parse(unescaped)).toEqual(state)
   })
+
+  test("media trigger waits for a match and disposes the listener", () => {
+    const g = globalThis as typeof globalThis & { matchMedia?: unknown }
+    const original = g.matchMedia
+    let change: ((event: MediaQueryListEvent) => void) | undefined
+    let removed = 0
+    g.matchMedia = (() => ({
+      matches: false,
+      addEventListener: (_type: "change", listener: (event: MediaQueryListEvent) => void) => {
+        change = listener
+      },
+      removeEventListener: () => {
+        removed++
+      },
+    })) as unknown as typeof g.matchMedia
+    try {
+      const name = uniqueName()
+      let mounts = 0
+      island(name, () => {
+        mounts++
+        return undefined
+      })
+      const dispose = mountIslands(
+        new FakeRoot([
+          new FakeHost(
+            {
+              "data-island": name,
+              "data-island-strategy": "media",
+              "data-island-media": "(min-width: 800px)",
+            },
+            [],
+          ),
+        ]),
+      )
+      expect(mounts).toBe(0)
+      change?.({ matches: true } as MediaQueryListEvent)
+      change?.({ matches: true } as MediaQueryListEvent)
+      expect(mounts).toBe(1)
+      dispose()
+      expect(removed).toBe(1)
+    } finally {
+      g.matchMedia = original
+    }
+  })
+
+  test("invalid media markers remain inert", () => {
+    const g = globalThis as typeof globalThis & { matchMedia?: unknown }
+    const original = g.matchMedia
+    g.matchMedia = (() => ({ matches: true })) as unknown as typeof g.matchMedia
+    try {
+      const name = uniqueName()
+      let mounts = 0
+      island(name, () => {
+        mounts++
+        return undefined
+      })
+      mountIslands(
+        new FakeRoot([
+          new FakeHost(
+            {
+              "data-island": name,
+              "data-island-strategy": "media",
+              "data-island-media": "x".repeat(257),
+            },
+            [],
+          ),
+        ]),
+      )
+      expect(mounts).toBe(0)
+    } finally {
+      g.matchMedia = original
+    }
+  })
 })

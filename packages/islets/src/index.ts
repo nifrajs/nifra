@@ -31,8 +31,10 @@ export {
   type IslandContext,
   type IslandHost,
   type IslandSetup,
+  type IslandStrategy,
   island,
   islandState,
+  type MountIslandOptions,
   mountIslands,
 } from "./island.ts"
 export { batch, computed, effect, type Signal, signal } from "./signals.ts"

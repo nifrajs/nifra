@@ -1976,6 +1976,16 @@ _No named exports (side-effect entrypoint)._
 - **wasmImageBackend** _(function)_ - `wasmImageBackend: (codecs: WasmImageCodecs) => ImageBackend`
   {@link ImageBackend} backed by injected WASM codecs - the only backend that runs on the **edge** (Workers / Vercel-Edge / Deno-Deploy), where neither `Bun.Image` nor sharp exists. `probe` reads the source header via nifra's dependency-free reader (so decompression bombs are rejected before any deco…
 
+## @nifrajs/island-trigger
+
+- **IslandStrategy** _(type)_ - `type IslandStrategy = "load" | "idle" | "visible" | { readonly media: string }`
+  When an island's enhancer runs. An object strategy is intentionally limited to media queries.
+- **MAX_MEDIA_QUERY_LENGTH** _(const)_ - `MAX_MEDIA_QUERY_LENGTH: 256`
+  The maximum media-query length accepted from an HTML data attribute.
+- **TriggerOptions** _(interface)_ - `interface TriggerOptions`
+- **scheduleTrigger** _(function)_ - `scheduleTrigger: (strategy: IslandStrategy, run: () => void, options?: TriggerOptions) => () => void`
+  Schedule an island trigger and return a disposer. Every successful trigger is one-shot: a late media/visibility/idle event cannot run an enhancer twice. Invalid media strategies remain inert, which keeps malformed untrusted HTML fail-closed while leaving its server-rendered content usable.
+
 ## @nifrajs/islets
 
 - **BindableElement** _(interface)_ - `interface BindableElement`
@@ -1987,6 +1997,9 @@ _No named exports (side-effect entrypoint)._
 - **IslandScope** _(type)_ - `type IslandScope = { readonly signals: Readonly<Record<string, Signal<unknown>>> readonly handlers: Readonly<Record<string, (event: Event) => void>> }`
 - **IslandSetup** _(type)_ - `type IslandSetup = (ctx: IslandContext) => Record<string, (event: Event) => void> | undefined`
   An island's setup function: read/seed state, return the event handlers the markup names.
+- **IslandStrategy** _(type)_ - `type IslandStrategy = "load" | "idle" | "visible" | { readonly media: string; }`
+  When an island's enhancer runs. An object strategy is intentionally limited to media queries.
+- **MountIslandOptions** _(interface)_ - `interface MountIslandOptions`
 - **Signal** _(type)_ - `type Signal<T> = { (): T set(next: T | ((prev: T) => T)): void }`
   A readable/writable reactive value: call it to read (tracking), `.set` to write.
 - **batch** _(function)_ - `batch: <T>(fn: () => T) => T`
@@ -2001,7 +2014,7 @@ _No named exports (side-effect entrypoint)._
   Register an island's behavior by name (the markup's `data-island` value).
 - **islandState** _(function)_ - `islandState: (state: Record<string, unknown>) => string`
   Server-side helper: the value for a host's `data-island-state` attribute. Plain JSON - emit it through an escaping renderer (`@nifrajs/web-vanilla`'s `html` escapes quotes in attributes), e.g. `html\`<div data-island="compare" data-island-state="${islandState({ count })}">…\``.
-- **mountIslands** _(function)_ - `mountIslands: (root?: BindableRoot) => void`
+- **mountIslands** _(function)_ - `mountIslands: (rootOrOptions?: BindableRoot | MountIslandOptions) => () => void`
   Mount every registered island under `root` (default: the document). Idempotent - a host is marked once mounted, so calling again (e.g. after a soft navigation swapped content in) only mounts new hosts. Unregistered island names are skipped silently: markup may ship ahead of its script, and progress…
 - **signal** _(function)_ - `signal: <T>(initial: T) => Signal<T>`
   Create a signal. Reads inside an {@link effect} (or {@link computed}) subscribe automatically.
@@ -3468,10 +3481,14 @@ _No named exports (side-effect entrypoint)._
   Optional teardown an enhancer returns (remove listeners/observers); run on `dispose()`.
 - **IslandEnhancer** _(type)_ - `type IslandEnhancer<P = unknown> = (el: HTMLElement, props: P) => IslandCleanup | void`
   Enhances one island element with its (typed) props. Return a cleanup function to tear down on `dispose()` (listeners, observers) - optional; an enhancer with nothing to clean up returns nothing. The `void` member is the no-cleanup case, the same shape as React's `EffectCallback`.
-- **IslandStrategy** _(type)_ - `type IslandStrategy = "load" | "idle" | "visible"`
-  When an island's enhancer runs. Default `load`.
+- **IslandStrategy** _(type)_ - `type IslandStrategy = "load" | "idle" | "visible" | { readonly media: string; }`
+  When an island's enhancer runs. An object strategy is intentionally limited to media queries.
+- **MAX_MEDIA_QUERY_LENGTH** _(const)_ - `MAX_MEDIA_QUERY_LENGTH: 256`
+  The maximum media-query length accepted from an HTML data attribute.
 - **mountIslands** _(function)_ - `mountIslands: (enhancers: Readonly<Record<string, IslandEnhancer>>, options?: { readonly root?: ParentNode; }) => () => void`
   Find every `<nifra-island data-id>` under `root` (default `document`) and enhance each with the matching enhancer, honoring its `data-strategy`. An island whose `id` has no enhancer is left as inert SSR HTML (forward-compatible). An enhancer that throws is isolated - it never blocks the others (eac…
+- **scheduleTrigger** _(function)_ - `scheduleTrigger: (strategy: IslandStrategy, run: () => void, options?: TriggerOptions) => () => void`
+  Schedule an island trigger and return a disposer. Every successful trigger is one-shot: a late media/visibility/idle event cannot run an enhancer twice. Invalid media strategies remain inert, which keeps malformed untrusted HTML fail-closed while leaving its server-rendered content usable.
 
 ### `@nifrajs/web/plugins/css-modules`
 

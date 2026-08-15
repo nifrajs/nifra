@@ -176,7 +176,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@nifrajs/core": "workspace:*"
+    "@nifrajs/core": "workspace:*",
+    "@nifrajs/island-trigger": "workspace:*"
   },
   "peerDependencies": {
     "sass": "^1.0.0",

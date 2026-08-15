@@ -12,6 +12,7 @@
         "@elysiajs/node": "^1.4.5",
         "@mdx-js/mdx": "^3",
         "@mdx-js/rollup": "^3",
+        "@nifrajs/island-trigger": "workspace:*",
         "@types/bun": "^1.3.14",
         "@types/express": "^5.0.6",
         "@upstash/context7-mcp": "3.2.2",
@@ -295,9 +296,16 @@
       "name": "@nifrajs/image",
       "version": "2.14.1",
     },
+    "packages/island-trigger": {
+      "name": "@nifrajs/island-trigger",
+      "version": "2.14.1",
+    },
     "packages/islets": {
       "name": "@nifrajs/islets",
       "version": "2.14.1",
+      "dependencies": {
+        "@nifrajs/island-trigger": "workspace:*",
+      },
     },
     "packages/jobs": {
       "name": "@nifrajs/jobs",
@@ -476,6 +484,7 @@
       "version": "2.14.1",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
+        "@nifrajs/island-trigger": "workspace:*",
       },
       "devDependencies": {
         "@nifrajs/client": "workspace:*",
@@ -928,6 +937,8 @@
     "@nifrajs/i18n": ["@nifrajs/i18n@workspace:packages/i18n"],
 
     "@nifrajs/image": ["@nifrajs/image@workspace:packages/image"],
+
+    "@nifrajs/island-trigger": ["@nifrajs/island-trigger@workspace:packages/island-trigger"],
 
     "@nifrajs/islets": ["@nifrajs/islets@workspace:packages/islets"],
 

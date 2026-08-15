@@ -1,27 +1,22 @@
 {
-  "name": "@nifrajs/islets",
+  "name": "@nifrajs/island-trigger",
   "version": "2.14.1",
-  "description": "Fine-grained signals + declarative DOM bindings for nifra islands - interactivity in ~1 KB, no framework runtime. The client companion to @nifrajs/web-vanilla.",
+  "description": "Tiny, framework-neutral island trigger scheduler for nifra.",
   "keywords": [
-    "bun",
-    "typescript",
     "nifra",
     "islands",
-    "signals",
-    "reactivity",
-    "dom-bindings",
-    "hydration",
-    "web"
+    "triggers",
+    "browser"
   ],
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "types": "./src/index.ts",
   "exports": {
     ".": {
       "bun": "./src/index.ts",
       "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "default": "./src/index.ts"
     }
   },
   "files": [
@@ -41,13 +36,10 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/nifrajs/nifra.git",
-    "directory": "packages/islets"
+    "directory": "packages/island-trigger"
   },
   "bugs": {
     "url": "https://github.com/nifrajs/nifra/issues"
   },
-  "homepage": "https://github.com/nifrajs/nifra#readme",
-  "dependencies": {
-    "@nifrajs/island-trigger": "workspace:*"
-  }
+  "homepage": "https://github.com/nifrajs/nifra#readme"
 }

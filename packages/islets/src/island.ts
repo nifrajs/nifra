@@ -12,9 +12,16 @@
  * escaping makes it safe to emit).
  */
 
+import {
+  type IslandStrategy,
+  MAX_MEDIA_QUERY_LENGTH,
+  scheduleTrigger,
+} from "@nifrajs/island-trigger"
 import { type BindableElement, type BindableRoot, bindScope, type IslandScope } from "./bind.ts"
 import type { Signal } from "./signals.ts"
 import { signal } from "./signals.ts"
+
+export { type IslandStrategy, MAX_MEDIA_QUERY_LENGTH }
 
 export interface IslandContext {
   /** The island's host element. */
@@ -41,19 +48,45 @@ export interface IslandHost extends BindableElement, BindableRoot {
   setAttribute(name: string, value: string): void
 }
 
+export interface MountIslandOptions {
+  readonly root?: BindableRoot
+}
+
 /**
  * Mount every registered island under `root` (default: the document). Idempotent - a host is
  * marked once mounted, so calling again (e.g. after a soft navigation swapped content in) only
  * mounts new hosts. Unregistered island names are skipped silently: markup may ship ahead of
  * its script, and progressive enhancement means the static content is already correct.
  */
-export function mountIslands(root: BindableRoot = document as unknown as BindableRoot): void {
+export function mountIslands(
+  rootOrOptions: BindableRoot | MountIslandOptions = document as unknown as BindableRoot,
+): () => void {
+  const root =
+    "querySelectorAll" in rootOrOptions
+      ? rootOrOptions
+      : (rootOrOptions.root ?? (document as unknown as BindableRoot))
+  const disposers: Array<() => void> = []
   for (const host of root.querySelectorAll("[data-island]") as Iterable<IslandHost>) {
     if (host.getAttribute("data-island-mounted") !== null) continue
     const name = host.getAttribute("data-island") ?? ""
     const setup = registry.get(name)
     if (setup === undefined) continue
     host.setAttribute("data-island-mounted", "")
+
+    const strategyAttr = host.getAttribute("data-island-strategy")
+    const media = host.getAttribute("data-island-media")
+    const strategy: IslandStrategy | undefined =
+      strategyAttr === "idle" || strategyAttr === "visible" || strategyAttr === "load"
+        ? strategyAttr
+        : strategyAttr === "media" &&
+            media !== null &&
+            media.length > 0 &&
+            media.length <= MAX_MEDIA_QUERY_LENGTH
+          ? { media }
+          : strategyAttr === null
+            ? "load"
+            : undefined
+    if (strategy === undefined) continue
 
     // Seed state from the host's JSON attribute. Malformed JSON is a server bug - fail loud in
     // the console, mount with fallbacks only (the static markup stays usable).
@@ -72,21 +105,31 @@ export function mountIslands(root: BindableRoot = document as unknown as Bindabl
       }
     }
 
-    const signals: Record<string, Signal<unknown>> = {}
-    const ctx: IslandContext = {
-      root: host,
-      state<T>(key: string, fallback: T): Signal<T> {
-        const existing = signals[key]
-        if (existing !== undefined) return existing as Signal<T>
-        const initial = Object.hasOwn(seeded, key) ? (seeded[key] as T) : fallback
-        const s = signal<T>(initial)
-        signals[key] = s as Signal<unknown>
-        return s
-      },
+    const run = (): void => {
+      const signals: Record<string, Signal<unknown>> = {}
+      const ctx: IslandContext = {
+        root: host,
+        state<T>(key: string, fallback: T): Signal<T> {
+          const existing = signals[key]
+          if (existing !== undefined) return existing as Signal<T>
+          const initial = Object.hasOwn(seeded, key) ? (seeded[key] as T) : fallback
+          const s = signal<T>(initial)
+          signals[key] = s as Signal<unknown>
+          return s
+        },
+      }
+      const handlers = setup(ctx) ?? {}
+      const scope: IslandScope = { signals, handlers }
+      disposers.push(...bindScope(host, scope))
     }
-    const handlers = setup(ctx) ?? {}
-    const scope: IslandScope = { signals, handlers }
-    bindScope(host, scope)
+    disposers.push(
+      scheduleTrigger(strategy, run, {
+        target: host as unknown as Element,
+      }),
+    )
+  }
+  return () => {
+    for (const dispose of disposers) dispose()
   }
 }
 

@@ -5927,9 +5927,23 @@
   {
     "name": "IslandStrategy",
     "kind": "type",
+    "package": "@nifrajs/island-trigger",
+    "signature": "export type IslandStrategy = \"load\" | \"idle\" | \"visible\" | {\n    readonly media: string;\n};",
+    "doc": "/** When an island's enhancer runs. An object strategy is intentionally limited to media queries. */"
+  },
+  {
+    "name": "IslandStrategy",
+    "kind": "type",
+    "package": "@nifrajs/islets",
+    "signature": "export type IslandStrategy = \"load\" | \"idle\" | \"visible\" | {\n    readonly media: string;\n};",
+    "doc": "/** When an island's enhancer runs. An object strategy is intentionally limited to media queries. */"
+  },
+  {
+    "name": "IslandStrategy",
+    "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type IslandStrategy = \"load\" | \"idle\" | \"visible\";",
-    "doc": "/** When an island's enhancer runs. Default `load`. */"
+    "signature": "export type IslandStrategy = \"load\" | \"idle\" | \"visible\" | {\n    readonly media: string;\n};",
+    "doc": "/** When an island's enhancer runs. An object strategy is intentionally limited to media queries. */"
   },
   {
     "name": "isManifestInSync",
@@ -6684,6 +6698,20 @@
     "doc": "/** Most cost axes one entry may carry. */"
   },
   {
+    "name": "MAX_MEDIA_QUERY_LENGTH",
+    "kind": "const",
+    "package": "@nifrajs/island-trigger",
+    "signature": "export declare const MAX_MEDIA_QUERY_LENGTH = 256;",
+    "doc": "/** The maximum media-query length accepted from an HTML data attribute. */"
+  },
+  {
+    "name": "MAX_MEDIA_QUERY_LENGTH",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const MAX_MEDIA_QUERY_LENGTH = 256;",
+    "doc": "/** The maximum media-query length accepted from an HTML data attribute. */"
+  },
+  {
     "name": "maxClassification",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -7305,10 +7333,16 @@
     "doc": "/** The protocol version a modern (2026-07-28+) request declares in `_meta`, or `undefined` for a legacy\n * request. Its presence is what puts the dispatch in modern mode for that one request. */"
   },
   {
+    "name": "MountIslandOptions",
+    "kind": "interface",
+    "package": "@nifrajs/islets",
+    "signature": "export interface MountIslandOptions {\n    readonly root?: BindableRoot;\n}"
+  },
+  {
     "name": "mountIslands",
     "kind": "function",
     "package": "@nifrajs/islets",
-    "signature": "export declare function mountIslands(root?: BindableRoot): void;",
+    "signature": "export declare function mountIslands(rootOrOptions?: BindableRoot | MountIslandOptions): () => void;",
     "doc": "/**\n * Mount every registered island under `root` (default: the document). Idempotent - a host is\n * marked once mounted, so calling again (e.g. after a soft navigation swapped content in) only\n * mounts new hosts. Unregistered island names are skipped silently: markup may ship ahead of\n * its script, and progressive enhancement means the static content is already correct.\n */"
   },
   {
@@ -10629,6 +10663,20 @@
     "signature": "export interface SchedulerOptions {\n    /** Called when a job handler throws/rejects. Default: `console.error`. A throwing onError is swallowed. */\n    readonly onError?: (error: unknown, jobName: string) => void;\n    /** Injectable clock (tests). Default `() => new Date()`. */\n    readonly now?: () => Date;\n}"
   },
   {
+    "name": "scheduleTrigger",
+    "kind": "function",
+    "package": "@nifrajs/island-trigger",
+    "signature": "export declare function scheduleTrigger(strategy: IslandStrategy, run: () => void, options?: TriggerOptions): () => void;",
+    "doc": "/**\n * Schedule an island trigger and return a disposer. Every successful trigger is one-shot: a late\n * media/visibility/idle event cannot run an enhancer twice. Invalid media strategies remain inert,\n * which keeps malformed untrusted HTML fail-closed while leaving its server-rendered content usable.\n */"
+  },
+  {
+    "name": "scheduleTrigger",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function scheduleTrigger(strategy: IslandStrategy, run: () => void, options?: TriggerOptions): () => void;",
+    "doc": "/**\n * Schedule an island trigger and return a disposer. Every successful trigger is one-shot: a late\n * media/visibility/idle event cannot run an enhancer twice. Invalid media strategies remain inert,\n * which keeps malformed untrusted HTML fail-closed while leaving its server-rendered content usable.\n */"
+  },
+  {
     "name": "SchemaReflection",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -12705,6 +12753,12 @@
     "package": "@nifrajs/client",
     "signature": "export type TreatyFromRegistry<R> = TreatyNode<R, \"\"> & RootIndex<R>;",
     "doc": "/**\n * The Eden-style proxy type for a route registry - the shared core used by both\n * `Treaty<App>` (coupled, from `typeof app`) and `client(contract, url)`\n * (decoupled, from a contract's `RegistryFor`).\n */"
+  },
+  {
+    "name": "TriggerOptions",
+    "kind": "interface",
+    "package": "@nifrajs/island-trigger",
+    "signature": "export interface TriggerOptions {\n    /** Target used by the `visible` strategy. Missing targets degrade to immediate activation. */\n    readonly target?: Element;\n}"
   },
   {
     "name": "trimTrailingSlash",
