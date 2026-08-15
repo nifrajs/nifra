@@ -130,7 +130,7 @@ describe("createProxy()", () => {
     expect(res.headers.get("x-public")).toBe("stays")
   })
 
-  test("forwarding metadata is stripped by default, appended truthfully on opt-in", async () => {
+  test("forwarding metadata is stripped by default, replaced safely on opt-in", async () => {
     respond = () => new Response("ok")
     const forged = {
       "x-forwarded-for": "1.2.3.4",
@@ -148,15 +148,29 @@ describe("createProxy()", () => {
       }),
       clientIp: "203.0.113.9",
     })
-    expect(seen?.headers["x-forwarded-for"]).toBe("1.2.3.4, 203.0.113.9")
+    expect(seen?.headers["x-forwarded-for"]).toBe("203.0.113.9")
     expect(seen?.headers["x-forwarded-proto"]).toBe("http")
     expect(seen?.headers["x-forwarded-host"]).toBe("edge.test")
+
+    await createProxy({ upstream: ORIGIN, forwardClientIp: true, trustForwardedFor: true })({
+      req: new Request("http://edge.test/x", {
+        headers: { ...forged, host: "edge.test" },
+      }),
+      clientIp: "203.0.113.9",
+    })
+    expect(seen?.headers["x-forwarded-for"]).toBe("1.2.3.4, 203.0.113.9")
 
     await createProxy({ upstream: ORIGIN, forwardClientIp: true })(
       new Request("http://edge.test/x", { headers: forged }),
     )
     expect(seen?.headers["x-forwarded-for"]).toBeUndefined()
     expect(seen?.headers["x-forwarded-host"]).toBeUndefined()
+  })
+
+  test("requires an explicit caller-IP forwarding opt-in before trusting an inbound chain", () => {
+    expect(() => createProxy({ upstream: ORIGIN, trustForwardedFor: true })).toThrow(
+      /requires forwardClientIp/,
+    )
   })
 
   test("static headers override after hygiene", async () => {

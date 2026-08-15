@@ -10,7 +10,8 @@
  * by a `Connection` header, and `Proxy-*` headers are dropped from the forwarded request and from
  * the relayed response (the Connection-nominated leak is the @fastify/http-proxy CVE-2026-33805 /
  * Hono proxy CVE-2026-71849 class). Forwarding metadata (`Forwarded`, `X-Forwarded-*`) is stripped
- * unless `forwardClientIp: true`, in which case the caller chain is appended truthfully. Upstream
+ * unless `forwardClientIp: true`, in which case only the observed caller IP is emitted by default.
+ * An inbound chain is preserved only with the explicit `trustForwardedFor: true` declaration. Upstream
  * redirects are never followed (`redirect: "manual"`) - following one would let the upstream steer
  * the proxy anywhere. TLS verification is always on; there is no knob to disable it.
  */
@@ -129,12 +130,18 @@ export interface ProxyOptions {
   readonly stripPrefix?: string
   /**
    * Forward caller metadata upstream. Default **false**: `Forwarded` and `X-Forwarded-*` headers
-   * are stripped, so a client-forged chain never reaches the upstream. When true, the inbound
-   * `X-Forwarded-For` is kept with the observed caller IP appended (pass a `ProxyContext` so
-   * `c.clientIp` - already filtered by the app's trust declaration - is what gets appended). With a
-   * bare `Request`, forwarding metadata is suppressed rather than passed through.
+   * are stripped, so a client-forged chain never reaches the upstream. When true, the observed caller
+   * IP replaces inbound `X-Forwarded-For` by default (pass a `ProxyContext` so `c.clientIp` - already
+   * filtered by the app's trust declaration - is the value emitted). With a bare `Request`, forwarding
+   * metadata is suppressed rather than passed through.
    */
   readonly forwardClientIp?: boolean
+  /**
+   * Preserve an inbound `X-Forwarded-For` chain before appending the observed caller IP. Set this only
+   * when a proxy you operate has already stripped and rebuilt the inbound chain; otherwise a directly
+   * reachable caller can forge the leading entries. Requires `forwardClientIp: true`.
+   */
+  readonly trustForwardedFor?: boolean
   /**
    * Deadline in milliseconds for the upstream to *begin* answering. Default `30_000`; expiry
    * answers `504`. It covers up to the response headers, which is the only window in which a `504`
@@ -230,18 +237,19 @@ function isKeptResponseHeader(
 }
 
 /**
- * The `x-forwarded-*` overrides to SET when `forwardClientIp` is on. Shared so the chain math - the
- * one place inbound `x-forwarded-for` is appended to rather than trusted - cannot diverge between
- * lanes. `priorXff` is the inbound value (null if absent); `host` rides through only when present.
+ * The `x-forwarded-*` overrides to SET when `forwardClientIp` is on. Shared so the trust decision - the
+ * one place that may preserve inbound `x-forwarded-for` - cannot diverge between lanes. `priorXff` is
+ * the inbound value (null if absent); `host` rides through only when present.
  */
 function forwardedClientHeaders(
   priorXff: string | null,
   requestUrl: string,
   host: string | null,
   clientIp: string,
+  trustInbound: boolean,
 ): Array<[string, string]> {
   const overrides: Array<[string, string]> = [
-    ["x-forwarded-for", priorXff !== null ? `${priorXff}, ${clientIp}` : clientIp],
+    ["x-forwarded-for", trustInbound && priorXff !== null ? `${priorXff}, ${clientIp}` : clientIp],
     ["x-forwarded-proto", new URL(requestUrl).protocol.slice(0, -1)],
   ]
   if (host !== null) overrides.push(["x-forwarded-host", host])
@@ -271,6 +279,7 @@ function upstreamRequestHeaders(
       req.url,
       req.headers.get("host"),
       clientIp,
+      options.trustForwardedFor === true,
     )) {
       out.set(name, value)
     }
@@ -598,6 +607,7 @@ function nativeRequestHeaders(
       request.url,
       nativeHeaderValue(request.headers, "host"),
       clientIp,
+      options.trustForwardedFor === true,
     )) {
       replace(name, value)
     }
@@ -720,6 +730,9 @@ export function createProxy(options: ProxyOptions): ProxyHandler {
   const stripPrefix = options.stripPrefix
   if (stripPrefix !== undefined && (!stripPrefix.startsWith("/") || stripPrefix.endsWith("/"))) {
     throw new Error('[nifra/proxy] stripPrefix must start with "/" and not end with one')
+  }
+  if (options.trustForwardedFor === true && options.forwardClientIp !== true) {
+    throw new Error("[nifra/proxy] trustForwardedFor requires forwardClientIp: true")
   }
   const timeoutMs = options.timeoutMs ?? 30_000
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
