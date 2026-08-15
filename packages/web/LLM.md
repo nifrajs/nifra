@@ -19,6 +19,7 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 - **applyHead** _(function)_ - `applyHead: (head: Meta) => void` · from `@nifrajs/web/client`
 - **applyResponseHeaders** _(function)_ - `applyResponseHeaders: (headers: Headers, res: NodeHeaderSink) => void` · from `@nifrajs/web/vite`
 - **assertRenderAdapterConformance** _(function)_ - `assertRenderAdapterConformance: (adapter: RenderAdapter, fixture: RenderAdapterConformanceFixture) => Promise<void>` · from `@nifrajs/web`
+- **assertStaticBoundaryImports** _(function)_ - `assertStaticBoundaryImports: (roots: readonly StaticBoundaryRoot[], edges: readonly StaticBoundaryImportEdge[], requestScopedModules: Reado…` · from `@nifrajs/web`
 - **boundaryDescriptors** _(function)_ - `boundaryDescriptors: (boundaries: readonly BoundaryRegistration[]) => ReadonlyArray<BoundaryDescriptor>` · from `@nifrajs/web`
 - **boundaryModeKey** _(function)_ - `boundaryModeKey: (mode: BoundaryMode) => string` · from `@nifrajs/web`
 - **buildClient** _(function)_ - `buildClient: (options: BuildClientOptions) => Promise<BuildManifest>` · from `@nifrajs/web/build`
@@ -27,9 +28,8 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 - **buildDiagnostic** _(function)_ - `buildDiagnostic: (err: unknown, options?: BuildDiagnosticOptions) => Diagnostic` · from `@nifrajs/web/diagnostic`
 - **buildFailureDetail** _(function)_ - `buildFailureDetail: (err: unknown) => string` · from `@nifrajs/web/dev`
 - **buildManifest** _(function)_ - `buildManifest: (files: readonly string[], importer: (file: string) => () => Promise<RouteModule>) => Manifest` · from `@nifrajs/web`
-- **buildRouteManifest** _(function)_ - `buildRouteManifest: (manifest: Manifest, options?: { readonly target?: string; readonly prerendered?: Readonly<Record<string, readonly stri…` · from `@nifrajs/web/route-manifest`
 
-_…and 360 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 366 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 

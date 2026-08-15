@@ -122,6 +122,73 @@ export interface DynamicBoundaryBatch {
   readonly complete: Promise<BoundaryStates>
 }
 
+/** Public in-memory reference cache for build-safe static boundary values. It holds no payload outside
+ * the process and is intentionally not a durable or tenant-aware cache implementation. */
+export interface StaticBoundaryCache {
+  get(boundary: BoundaryRegistration): Promise<unknown> | undefined
+  set(boundary: BoundaryRegistration, value: Promise<unknown>): void
+}
+
+export class MemoryStaticBoundaryCache implements StaticBoundaryCache {
+  readonly #values = new WeakMap<object, Promise<unknown>>()
+
+  get(boundary: BoundaryRegistration): Promise<unknown> | undefined {
+    return this.#values.get(boundary as object)
+  }
+
+  set(boundary: BoundaryRegistration, value: Promise<unknown>): void {
+    this.#values.set(boundary as object, value)
+  }
+}
+
+export interface StaticBoundaryImportEdge {
+  readonly from: string
+  readonly to: string
+}
+
+export interface StaticBoundaryRoot {
+  readonly name: string
+  readonly module: string
+}
+
+/**
+ * Enforce the second half of the static-boundary safety boundary. A build adapter supplies the
+ * transitive module graph and the modules it has classified as request-scoped; a static root that
+ * reaches one fails before any shared shell is emitted. Keeping this check graph-shaped makes it
+ * usable by Bun/Vite without making the neutral web runtime depend on either bundler.
+ */
+export function assertStaticBoundaryImports(
+  roots: readonly StaticBoundaryRoot[],
+  edges: readonly StaticBoundaryImportEdge[],
+  requestScopedModules: ReadonlySet<string>,
+): void {
+  const next = new Map<string, string[]>()
+  for (const edge of edges) {
+    const children = next.get(edge.from)
+    if (children === undefined) next.set(edge.from, [edge.to])
+    else children.push(edge.to)
+  }
+  for (const root of roots) {
+    const seen = new Set<string>([root.module])
+    const queue = [root.module]
+    for (let cursor = 0; cursor < queue.length; cursor++) {
+      const module = queue[cursor]
+      if (module === undefined) continue
+      if (requestScopedModules.has(module)) {
+        throw new TypeError(
+          `[nifra/web] static boundary "${root.name}" reaches request-scoped module "${module}"`,
+        )
+      }
+      for (const child of next.get(module) ?? []) {
+        if (!seen.has(child)) {
+          seen.add(child)
+          queue.push(child)
+        }
+      }
+    }
+  }
+}
+
 const BOUNDARY_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/
 const MAX_INTERCEPT_PATH = 2048
 
@@ -255,6 +322,66 @@ export function startDynamicBoundaries(
 
   return { initial, pending, complete }
 }
+
+/**
+ * Resolve only explicitly annotated static boundaries with a request-free build context. Dynamic
+ * and intercepting boundaries remain unresolved. Values are cached by boundary object identity in
+ * the supplied in-memory cache, so a worker instance does not repeat a build-safe computation per
+ * request. A rejected static load becomes that slot's error state; it never fabricates shared data.
+ */
+export async function resolveStaticBoundaries(
+  boundaries: readonly BoundaryRegistration[],
+  context: StaticCtx,
+  cache: StaticBoundaryCache = DEFAULT_STATIC_CACHE,
+): Promise<BoundaryStates> {
+  const descriptors = boundaryDescriptors(boundaries)
+  const states = await Promise.all(
+    boundaries.map(async (boundary, index) => {
+      if (descriptors[index] === undefined || boundary.mode !== "static") {
+        return {
+          name: boundary.name,
+          mode: boundary.mode,
+          status: "unresolved" as const,
+          ...(boundary.errorId !== undefined ? { errorId: boundary.errorId } : {}),
+        }
+      }
+      if (boundary.load === undefined) {
+        return {
+          name: boundary.name,
+          mode: boundary.mode,
+          status: "ready" as const,
+          ...(boundary.errorId !== undefined ? { errorId: boundary.errorId } : {}),
+        }
+      }
+      let value = cache.get(boundary)
+      if (value === undefined) {
+        value = Promise.resolve().then(() => boundary.load?.(context))
+        cache.set(boundary, value)
+      }
+      try {
+        const data = await value
+        return {
+          name: boundary.name,
+          mode: boundary.mode,
+          status: "ready" as const,
+          ...(data !== undefined ? { data } : {}),
+          ...(boundary.errorId !== undefined ? { errorId: boundary.errorId } : {}),
+        }
+      } catch (error) {
+        return {
+          name: boundary.name,
+          mode: boundary.mode,
+          status: "error" as const,
+          error: boundaryError(error),
+          ...(boundary.errorId !== undefined ? { errorId: boundary.errorId } : {}),
+        }
+      }
+    }),
+  )
+  return Object.fromEntries(states.map((state) => [state.name, state]))
+}
+
+const DEFAULT_STATIC_CACHE = new MemoryStaticBoundaryCache()
 
 /** Stable mode label for adapter registries and diagnostics. */
 export function boundaryModeKey(mode: BoundaryMode): string {

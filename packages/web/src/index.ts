@@ -27,6 +27,7 @@ import {
   type BoundaryRequestCtx,
   type BoundaryStates,
   boundaryDescriptors,
+  resolveStaticBoundaries,
   startDynamicBoundaries,
 } from "./boundary.ts"
 import {
@@ -86,6 +87,7 @@ import { searchOf, searchOfChain } from "./search.ts"
 
 // Draft / preview mode - a signed cookie that flips `ctx.draft` for loaders + bypasses ISR for editors.
 export {
+  assertStaticBoundaryImports,
   type Boundary,
   type BoundaryDescriptor,
   type BoundaryError,
@@ -100,9 +102,14 @@ export {
   type DynamicBoundary,
   type DynamicBoundaryBatch,
   type InterceptBoundary,
+  MemoryStaticBoundaryCache,
   type PendingBoundary,
   resolveDynamicBoundaries,
+  resolveStaticBoundaries,
   type StaticBoundary,
+  type StaticBoundaryCache,
+  type StaticBoundaryImportEdge,
+  type StaticBoundaryRoot,
   type StaticCtx,
   startDynamicBoundaries,
 } from "./boundary.ts"
@@ -1557,6 +1564,9 @@ export interface CreateWebAppOptions<Env = unknown> {
    * `prerenderedPaths` with the 404 page - the unlisted path simply doesn't exist. `"ssr"` (the
    * default for unmapped routes) renders unlisted paths on-demand. */
   readonly staticFallbacks?: Readonly<Record<string, "ssr" | "404">>
+  /** In-memory reference cache for explicitly `static` boundary values. It never persists payloads
+   * across processes; operated/durable cache implementations stay outside the public framework. */
+  readonly staticBoundaryCache?: import("./boundary.ts").StaticBoundaryCache
   /** Observe every loader/action failure - for error-reporting plugins (Sentry-style). Called for
    * real throws (not control-flow `Response`s like `redirect`), **before** the nearest `_error`
    * boundary renders / a soft-nav 500 / a rethrow - so it sees errors that the boundary would
@@ -2193,26 +2203,37 @@ export function createWebApp<Env = unknown>(
                 search: effectiveSearch,
                 signal: c.req.signal,
               } satisfies BoundaryRequestCtx)
+        const staticBoundaryPromise =
+          boundaryDefinitions.length === 0
+            ? Promise.resolve(undefined)
+            : resolveStaticBoundaries(
+                boundaryDefinitions,
+                { phase: "build", origin: originOf(c.req) },
+                options.staticBoundaryCache,
+              )
         // Boundary data is attached as one Deferred marker per slot. The shell can render
         // immediately with each slot pending, while the existing deferred protocol emits the first
         // completed sibling independently instead of waiting for the slowest boundary.
+        // The page loader gets the EFFECTIVE search (layout chain + page, page-wins), now that the layout
+        // modules are loaded - so `ctx.search` includes a layout's shared keys (`?org`), matching `useSearch`.
+        const [pageData, , staticBoundaries] = await Promise.all([
+          mod.loader ? mod.loader({ ...ctx, search: effectiveSearch }) : null,
+          run.pending, // a non-gate layout loader that rejects must still surface, not go unhandled
+          staticBoundaryPromise,
+        ])
+        data = pageData
+        layoutData = run.layoutData
         if (boundaryBatch !== undefined) {
-          const streamed = { ...boundaryBatch.initial }
+          const streamed = { ...boundaryBatch.initial, ...(staticBoundaries ?? {}) }
           for (const entry of boundaryBatch.pending) {
             const initial = streamed[entry.name]
             if (initial !== undefined)
               streamed[entry.name] = { ...initial, data: defer(entry.promise) }
           }
           boundaryStates = streamed
+        } else if (staticBoundaries !== undefined) {
+          boundaryStates = staticBoundaries
         }
-        // The page loader gets the EFFECTIVE search (layout chain + page, page-wins), now that the layout
-        // modules are loaded - so `ctx.search` includes a layout's shared keys (`?org`), matching `useSearch`.
-        const [pageData] = await Promise.all([
-          mod.loader ? mod.loader({ ...ctx, search: effectiveSearch }) : null,
-          run.pending, // a non-gate layout loader that rejects must still surface, not go unhandled
-        ])
-        data = pageData
-        layoutData = run.layoutData
       } catch (err) {
         // A terminal-status signal (`notFound()` / `gone()` / `statusPage(n)`) renders a boundary at
         // that status. Checked BEFORE the pass-through below: a signal IS a `Response`, so the order

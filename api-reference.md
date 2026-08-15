@@ -3060,6 +3060,7 @@ _No named exports (side-effect entrypoint)._
 - **MemoryCacheStore** _(class)_ - `class MemoryCacheStore`
   In-process ISR cache. Refuses to run in production unless explicitly allowed (mirrors the rate-limit `MemoryStore` - a per-instance cache is unsafe across instances). Bounded **LRU**: a read or write bumps the entry, so the least-recently-used evicts past `max` (a hot, frequently-read page survives…
 - **MemoryCacheStoreOptions** _(interface)_ - `interface MemoryCacheStoreOptions`
+- **MemoryStaticBoundaryCache** _(class)_ - `class MemoryStaticBoundaryCache`
 - **Meta** _(interface)_ - `interface Meta`
   The document head a route contributes - title + `<meta>`/`<link>`/`<script>` tag sets. Returned by a route/layout `meta` (statically, or from a {@link MetaArgs} function). Every value is serialized into managed (`data-nifra`) head tags: tag-specific attribute allowlists reject event handlers and ac…
 - **MetaArgs** _(interface)_ - `interface MetaArgs<Data = unknown>`
@@ -3165,6 +3166,10 @@ _No named exports (side-effect entrypoint)._
 - **SsrModuleLoader** _(type)_ - `type SsrModuleLoader = (id: string) => Promise<unknown>`
   Loads a module through the dev server's module graph rather than the runtime's resolver.
 - **StaticBoundary** _(type)_ - `type StaticBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "static" readonly load?: (ctx: StaticCtx) => Data | Promise<Data> }`
+- **StaticBoundaryCache** _(interface)_ - `interface StaticBoundaryCache`
+  Public in-memory reference cache for build-safe static boundary values. It holds no payload outside the process and is intentionally not a durable or tenant-aware cache implementation.
+- **StaticBoundaryImportEdge** _(interface)_ - `interface StaticBoundaryImportEdge`
+- **StaticBoundaryRoot** _(interface)_ - `interface StaticBoundaryRoot`
 - **StaticCtx** _(interface)_ - `interface StaticCtx`
   Build-safe inputs available to a static boundary. It intentionally has no request/session/params API.
 - **StaticPath** _(interface)_ - `interface StaticPath`
@@ -3183,6 +3188,8 @@ _No named exports (side-effect entrypoint)._
   Explicit escape hatch for executable inline code. A CSP nonce is mandatory.
 - **assertRenderAdapterConformance** _(function)_ - `assertRenderAdapterConformance: (adapter: RenderAdapter, fixture: RenderAdapterConformanceFixture) => Promise<void>`
   Execute the observable {@link RenderAdapter} interface against a framework-specific fixture.
+- **assertStaticBoundaryImports** _(function)_ - `assertStaticBoundaryImports: (roots: readonly StaticBoundaryRoot[], edges: readonly StaticBoundaryImportEdge[], requestScopedModules: ReadonlySet<string>) => void`
+  Enforce the second half of the static-boundary safety boundary. A build adapter supplies the transitive module graph and the modules it has classified as request-scoped; a static root that reaches one fails before any shared shell is emitted. Keeping this check graph-shaped makes it usable by Bun/V…
 - **boundaryDescriptors** _(function)_ - `boundaryDescriptors: (boundaries: readonly BoundaryRegistration[]) => ReadonlyArray<BoundaryDescriptor>`
   Validate and serialize the neutral boundary manifest. Duplicate names fail closed at startup.
 - **boundaryModeKey** _(function)_ - `boundaryModeKey: (mode: BoundaryMode) => string`
@@ -3252,6 +3259,8 @@ _No named exports (side-effect entrypoint)._
   Normalize a navigate argument to the bridge's `(to, options)`: a string path or history-delta passes through; an object target has its `search` serialized onto `to` and its `replace` folded into the options. The one place the object form becomes a URL, so every adapter's `navigate` resolves it iden…
 - **resolvePublicPath** _(function)_ - `resolvePublicPath: (root: string, pathname: string) => string | undefined`
   Resolve a URL pathname to an absolute path **confined** to `root`, or `undefined` if it escapes.
+- **resolveStaticBoundaries** _(function)_ - `resolveStaticBoundaries: (boundaries: readonly BoundaryRegistration[], context: StaticCtx, cache?: StaticBoundaryCache) => Promise<BoundaryStates>`
+  Resolve only explicitly annotated static boundaries with a request-free build context. Dynamic and intercepting boundaries remain unresolved. Values are cached by boundary object identity in the supplied in-memory cache, so a worker instance does not repeat a build-safe computation per request. A r…
 - **revalidate** _(function)_ - `revalidate: <T>(paths: readonly string[], data: T) => RevalidateResult<T>`
   Return this from an action to declare which routes the mutation changed (alongside the action's `data`). `createWebApp` sets the `X-Nifra-Revalidate` response header; after the submit the client marks those cached routes stale - refetching the active one and any mounted fetcher showing them - so a …
 - **revalidateEndpoint** _(function)_ - `revalidateEndpoint: (options: RevalidateEndpointOptions) => (req: Request) => Promise<Response>`

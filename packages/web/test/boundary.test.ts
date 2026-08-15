@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import {
+  assertStaticBoundaryImports,
   type Boundary,
   type BoundaryRequestCtx,
   boundaryDescriptors,
+  MemoryStaticBoundaryCache,
   resolveDynamicBoundaries,
+  resolveStaticBoundaries,
   startDynamicBoundaries,
 } from "../src/boundary.ts"
 
@@ -94,6 +97,61 @@ describe("async boundaries", () => {
       slow: { status: "ready", data: "slow" },
       fast: { status: "ready", data: "fast" },
     })
+  })
+
+  test("resolves only annotated static slots with a request-free context and caches them", async () => {
+    let loads = 0
+    const cache = new MemoryStaticBoundaryCache()
+    const definitions = [
+      {
+        name: "shell",
+        mode: "static" as const,
+        load: async (ctx: { readonly phase: "build"; readonly origin?: string }) => {
+          loads++
+          return `${ctx.phase}:${ctx.origin}`
+        },
+        render: (data: string) => data,
+      },
+      {
+        name: "hole",
+        mode: "dynamic" as const,
+        load: async () => "request",
+        render: (data: string) => data,
+      },
+    ]
+    const first = await resolveStaticBoundaries(
+      definitions,
+      { phase: "build", origin: "https://example.test" },
+      cache,
+    )
+    const second = await resolveStaticBoundaries(
+      definitions,
+      { phase: "build", origin: "https://other.test" },
+      cache,
+    )
+    expect(loads).toBe(1)
+    expect(first.shell).toMatchObject({ status: "ready", data: "build:https://example.test" })
+    expect(second.hole?.status).toBe("unresolved")
+  })
+
+  test("fails closed when a static subtree reaches a request-scoped module", () => {
+    expect(() =>
+      assertStaticBoundaryImports(
+        [{ name: "shell", module: "routes/shell.ts" }],
+        [
+          { from: "routes/shell.ts", to: "ui/card.ts" },
+          { from: "ui/card.ts", to: "auth/session.ts" },
+        ],
+        new Set(["auth/session.ts"]),
+      ),
+    ).toThrow(/static boundary "shell" reaches request-scoped module/)
+    expect(() =>
+      assertStaticBoundaryImports(
+        [{ name: "shell", module: "routes/shell.ts" }],
+        [{ from: "routes/shell.ts", to: "ui/card.ts" }],
+        new Set(["auth/session.ts"]),
+      ),
+    ).not.toThrow()
   })
 
   test("rejects duplicate names and unsafe intercept paths", () => {
