@@ -53,6 +53,7 @@ const LIBRARIES = [
   "web-preact",
   "web-vanilla",
   "islets",
+  "island-trigger",
 ] as const
 
 let failures = 0

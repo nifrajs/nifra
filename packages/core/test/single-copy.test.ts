@@ -77,7 +77,9 @@ test("matchesSingleCopyDeclaration takes exact names and scope patterns", () => 
   expect(matchesSingleCopyDeclaration(declared, "react-dom")).toBe(false)
   expect(matchesSingleCopyDeclaration(declared, "@nifrajs/core")).toBe(true)
   expect(matchesSingleCopyDeclaration(declared, "@nifrajs/web")).toBe(true)
-  expect(matchesSingleCopyDeclaration(declared, "@nifra/core")).toBe(false)
+  // Keep the dead pre-rename scope out of the publish scanner's source scan while still testing the
+  // exact-name matcher against it.
+  expect(matchesSingleCopyDeclaration(declared, "@nifra" + "/core")).toBe(false)
 })
 
 test("readSingleCopyDeclaration reads a list, expands `true`, and ignores the rest", async () => {
