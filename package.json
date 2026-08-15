@@ -29,6 +29,7 @@
     "check:cold-start": "bun run scripts/check-cold-start.ts",
     "check:size": "bun run bench/size/run.ts --check",
     "check:pipeline-parity": "bun scripts/check-pipeline-parity.ts",
+    "check:changesets": "bun run scripts/check-changeset-coverage.ts",
     "smoke": "bun run scripts/smoke.ts",
     "bench": "bun run bench/index.ts",
     "bench:http": "bun run bench/http/run.ts",

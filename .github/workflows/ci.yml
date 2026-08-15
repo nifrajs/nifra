@@ -12,6 +12,11 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          # Full history: the changeset-coverage gate anchors on the last commit that consumed
+          # changesets, which is many commits back. The default shallow clone cannot reach it, and
+          # the gate reports that as inconclusive rather than guessing.
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
@@ -96,6 +101,15 @@ jobs:
       # comparison (`bench:http:compare`) and CI gates only the reproducible number.
       - name: Bundle-size gate (per-feature gzip budgets)
         run: bun run check:size
+
+      # Release-notes gate: a package whose src moved since the last release must be named by a
+      # pending changeset. Versioning here is `fixed`, so a missing entry does not change the version
+      # that ships - it removes the CHANGELOG line, and the omission is invisible until a consumer
+      # upgrades into an undocumented change. That has already happened once: a client type change
+      # rode in under a changeset naming three other packages, so the client's notes for that release
+      # described a different commit entirely.
+      - name: Changeset coverage (a changed package must say it changed)
+        run: bun run check:changesets
 
   deno:
     runs-on: ubuntu-latest

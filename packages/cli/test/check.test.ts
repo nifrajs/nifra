@@ -62,6 +62,7 @@ describe("release verification", () => {
         "sitemap",
         "public-boundary",
         "size",
+        "changesets",
       ])
       expect(calls.every((call) => call.cwd === root)).toBe(true)
       expect(new Set(calls.map((call) => call.env.NIFRA_VERIFY_GATE)).size).toBe(calls.length)

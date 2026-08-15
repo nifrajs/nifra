@@ -103,6 +103,14 @@ const DEFAULT_GATES: readonly ReleaseGateSpec[] = [
     remediation:
       "Run `bun run check:size` and either reduce the bundle or update the reviewed budget.",
   },
+  // Appended, not inserted: RELEASE_GATES below composes this list BY INDEX
+  // (`slice(0, 3)`, `[3]`), so a gate added in the middle would silently re-point those.
+  {
+    id: "changesets",
+    commands: [["run", "check:changesets"]],
+    remediation:
+      "Run `bun run changeset` and name every package whose source changed, so the release documents it.",
+  },
 ]
 
 const RELEASE_GATES: readonly ReleaseGateSpec[] = [
@@ -182,6 +190,15 @@ const RELEASE_GATES: readonly ReleaseGateSpec[] = [
     commands: [["run", "check:pipeline-parity"]],
     remediation:
       "Run `bun run check:pipeline-parity` and fix the development and production manifest drift.",
+  },
+  // Last in release mode on purpose: this is the gate on what the release SAYS, and it is the only
+  // one whose failure is invisible afterwards - a shipped version cannot grow the changelog line it
+  // never had.
+  {
+    id: "changesets",
+    commands: [["run", "check:changesets"]],
+    remediation:
+      "Run `bun run changeset` and name every package whose source changed, so the release documents it.",
   },
 ]
 
