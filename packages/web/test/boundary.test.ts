@@ -20,6 +20,22 @@ const context = (): BoundaryRequestCtx => ({
   signal: new AbortController().signal,
 })
 
+/** Run `body` with `console.error` captured, so a boundary failure's server-side report is asserted
+ * rather than printed into the test output. */
+const captureServerErrors = async (body: () => Promise<void>): Promise<unknown[][]> => {
+  const captured: unknown[][] = []
+  const original = console.error
+  console.error = (...args: unknown[]): void => {
+    captured.push(args)
+  }
+  try {
+    await body()
+  } finally {
+    console.error = original
+  }
+  return captured
+}
+
 describe("async boundaries", () => {
   test("describes modes without importing a UI framework", () => {
     const definitions: [Boundary<string, string>, Boundary<number, string>] = [
@@ -57,24 +73,105 @@ describe("async boundaries", () => {
   })
 
   test("contains one failure without rejecting siblings or exposing raw non-Error values", async () => {
-    const states = await resolveDynamicBoundaries(
-      [
-        {
-          name: "bad",
-          mode: "dynamic",
-          load: () => Promise.reject("secret payload"),
-          render: (data: unknown) => data,
-        },
-        { name: "good", mode: "dynamic", load: async () => 7, render: (data) => data },
-      ],
-      context(),
-    )
+    let states: Awaited<ReturnType<typeof resolveDynamicBoundaries>> = {}
+    const reported = await captureServerErrors(async () => {
+      states = await resolveDynamicBoundaries(
+        [
+          {
+            name: "bad",
+            mode: "dynamic",
+            load: () => Promise.reject("secret payload"),
+            render: (data: unknown) => data,
+          },
+          { name: "good", mode: "dynamic", load: async () => 7, render: (data) => data },
+        ],
+        context(),
+      )
+    })
     expect(states.bad).toMatchObject({
       status: "error",
       error: { name: "Error", message: "Boundary failed" },
     })
     expect(states.bad?.error?.message).not.toContain("secret")
     expect(states.good).toMatchObject({ status: "ready", data: 7 })
+    expect(reported).toHaveLength(1)
+    expect(reported[0]?.[1]).toBe("secret payload")
+  })
+
+  test("keeps a thrown Error's own message off the client state and on the server", async () => {
+    // Boundary states are serialized into the document, so this message would otherwise be published
+    // to every visitor who loads the page while the dependency is down.
+    const secret = "connect ECONNREFUSED 10.0.0.5:5432 user=admin password=hunter2"
+    let states: Awaited<ReturnType<typeof resolveDynamicBoundaries>> = {}
+    const reported = await captureServerErrors(async () => {
+      states = await resolveDynamicBoundaries(
+        [
+          {
+            name: "feed",
+            mode: "dynamic",
+            load: () => {
+              throw new Error(secret)
+            },
+            render: (data: unknown) => data,
+          },
+        ],
+        context(),
+      )
+    })
+    expect(states.feed).toMatchObject({
+      status: "error",
+      error: { name: "Error", message: "Boundary failed" },
+    })
+    expect(JSON.stringify(states)).not.toContain("hunter2")
+    expect(reported).toHaveLength(1)
+    expect((reported[0]?.[1] as Error).message).toBe(secret)
+  })
+
+  test("withholds an Error subclass name, which names the failing internal library", async () => {
+    class SequelizeConnectionRefusedError extends Error {
+      override readonly name = "SequelizeConnectionRefusedError"
+    }
+    let states: Awaited<ReturnType<typeof resolveDynamicBoundaries>> = {}
+    await captureServerErrors(async () => {
+      states = await resolveDynamicBoundaries(
+        [
+          {
+            name: "feed",
+            mode: "dynamic",
+            load: () => Promise.reject(new SequelizeConnectionRefusedError("down")),
+            render: (data: unknown) => data,
+          },
+        ],
+        context(),
+      )
+    })
+    expect(states.feed?.error).toEqual({ name: "Error", message: "Boundary failed" })
+  })
+
+  test("a failed static boundary is redacted the same way", async () => {
+    let states: Awaited<ReturnType<typeof resolveStaticBoundaries>> = {}
+    const reported = await captureServerErrors(async () => {
+      states = await resolveStaticBoundaries(
+        [
+          {
+            name: "shell",
+            mode: "static",
+            load: () => {
+              throw new Error("/Users/build/secrets.json is unreadable")
+            },
+            render: (data: unknown) => data,
+          },
+        ],
+        { phase: "build" },
+        new MemoryStaticBoundaryCache(),
+      )
+    })
+    expect(states.shell).toMatchObject({
+      status: "error",
+      error: { name: "Error", message: "Boundary failed" },
+    })
+    expect(JSON.stringify(states)).not.toContain("secrets.json")
+    expect(reported).toHaveLength(1)
   })
 
   test("publishes pending slots immediately and settles each slot independently", async () => {

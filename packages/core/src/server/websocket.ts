@@ -388,7 +388,8 @@ export function createWebSocketSender(
   let reporting = false
   const reportFailure = (error: unknown): void => {
     // An error handler may try to send a diagnostic. Do not recurse forever when that diagnostic also
-    // violates the same outbound contract.
+    // violates the same outbound contract. EVERY failure path reports through here - a path that calls
+    // `onError` directly reopens that recursion for the one rejection shape it happens to cover.
     if (reporting) return
     reporting = true
     try {
@@ -419,11 +420,11 @@ export function createWebSocketSender(
       // Do not await or send later: the portable `send()` contract is synchronous. Attach a rejection
       // handler so a validator that rejects cannot become an unhandled process-level rejection.
       outcome.catch(() => {})
-      onError(new Error(`${OUTBOUND_VALIDATION_ERROR}; validator must be synchronous`))
+      reportFailure(new Error(`${OUTBOUND_VALIDATION_ERROR}; validator must be synchronous`))
       return
     }
     if (!outcome.ok) {
-      onError(new Error(OUTBOUND_VALIDATION_ERROR))
+      reportFailure(new Error(OUTBOUND_VALIDATION_ERROR))
       return
     }
     send(payload)

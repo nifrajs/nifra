@@ -406,6 +406,71 @@ describe("attachWebSocket", () => {
     expect(String(errors[0])).toContain("must be synchronous")
   })
 
+  test("an error handler that sends a rejected diagnostic reports once instead of recursing", () => {
+    const socket = new FakeSocket()
+    const errors: unknown[] = []
+    const schema: StandardSchemaV1<unknown, { text: string }> = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (value) =>
+          typeof value === "object" &&
+          value !== null &&
+          typeof (value as { text?: unknown }).text === "string"
+            ? { value: value as { text: string } }
+            : { issues: [{ message: "expected { text: string }" }] },
+      },
+    }
+    let ws!: ReturnType<typeof attachWebSocket>
+    ws = attachWebSocket(
+      socket,
+      {
+        sendSchema: schema,
+        validateSend: true,
+        error: (_socket, error) => {
+          errors.push(error)
+          // The diagnostic itself violates the same contract. Reporting it must not re-enter the
+          // handler; without the re-entrancy guard this recurses until the stack is exhausted.
+          ws.send(JSON.stringify({ text: 42 }))
+        },
+      },
+      undefined,
+      { openNow: true, pubsub: new TopicRegistry() },
+    )
+    expect(() => ws.send(JSON.stringify({ text: 42 }))).not.toThrow()
+    expect(errors).toHaveLength(1)
+    expect(socket.sent).toHaveLength(0)
+  })
+
+  test("a rejected async validator is contained by the same re-entrancy guard", () => {
+    const socket = new FakeSocket()
+    const errors: unknown[] = []
+    const schema: StandardSchemaV1<unknown, string> = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: async () => ({ value: "ok" }),
+      },
+    }
+    let ws!: ReturnType<typeof attachWebSocket>
+    ws = attachWebSocket(
+      socket,
+      {
+        sendSchema: schema,
+        validateSend: true,
+        error: (_socket, error) => {
+          errors.push(error)
+          ws.send(JSON.stringify("again"))
+        },
+      },
+      undefined,
+      { openNow: true, pubsub: new TopicRegistry() },
+    )
+    expect(() => ws.send(JSON.stringify("ok"))).not.toThrow()
+    expect(errors).toHaveLength(1)
+    expect(socket.sent).toHaveLength(0)
+  })
+
   test("openNow:false waits for the open event", () => {
     const socket = new FakeSocket()
     let opened = false

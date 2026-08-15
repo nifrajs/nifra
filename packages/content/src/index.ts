@@ -559,19 +559,18 @@ const createIndexedCollection = <
     const cursor = options.cursor === undefined ? undefined : decodeCursor(options.cursor)
     let start = 0
     if (cursor !== undefined) {
+      // A cursor is a position in ONE query's result order, so it is only meaningful against the query
+      // that issued it - a different sort or filter makes the same number address a different entry.
+      // That check is separate from running off the end: an index that shrank between pages leaves a
+      // matching cursor pointing past the last row, which is an exhausted page, not a bad cursor.
       if (
         cursor.sortField !== String(sort.field) ||
         cursor.dir !== sort.dir ||
-        cursor.filter !== filter ||
-        cursor.position >= filtered.length
+        cursor.filter !== filter
       ) {
-        if (cursor.position !== filtered.length - 1) {
-          throw new TypeError("@nifrajs/content: cursor does not match this index query")
-        }
-        start = filtered.length
-      } else {
-        start = cursor.position + 1
+        throw new TypeError("@nifrajs/content: cursor does not match this index query")
       }
+      start = Math.min(cursor.position + 1, filtered.length)
     }
     const pageIndexes = filtered.slice(start, start + limit)
     const items = pageIndexes.flatMap((index) => {

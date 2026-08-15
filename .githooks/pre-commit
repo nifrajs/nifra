@@ -39,6 +39,11 @@ STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
 # gen-llm-cards' import of the CLI command catalog - resolve inside it. `node_modules` is symlinked in
 # for third-party types; workspace `@nifrajs/*` imports resolve through the snapshot's own tsconfig
 # `paths` (which point at `./packages/*/src`), so cross-package types come from the index too.
+#
+# EVERY `node_modules` is linked in, root AND per-package. A bun workspace installs a dependency that
+# only one package declares into that package's own `node_modules`, so a snapshot carrying only the
+# root one cannot resolve typebox, preact, react or solid-js - and the extractor degrades those
+# signatures to `any` instead of failing, silently rewriting the committed docs.
 if grep -qE '^(packages/[^/]+/src/.*\.ts|scripts/gen-(api-reference|llm-cards)\.ts)$' <<< "$STAGED"; then
   echo "pre-commit: package source staged - refreshing api-reference.md + LLM.md cards from the index…"
   REPO_ROOT=$(git rev-parse --show-toplevel)
@@ -46,6 +51,11 @@ if grep -qE '^(packages/[^/]+/src/.*\.ts|scripts/gen-(api-reference|llm-cards)\.
   trap 'rm -rf "$SNAPSHOT"' EXIT
   git checkout-index -a -f --prefix="$SNAPSHOT/"
   ln -s "$REPO_ROOT/node_modules" "$SNAPSHOT/node_modules"
+  for PKG_MODULES in "$REPO_ROOT"/packages/*/node_modules; do
+    [ -d "$PKG_MODULES" ] || continue
+    PKG_DIR="$SNAPSHOT/packages/$(basename "$(dirname "$PKG_MODULES")")"
+    [ -d "$PKG_DIR" ] && ln -s "$PKG_MODULES" "$PKG_DIR/node_modules"
+  done
 
   # Both generators self-check their output (a resolution failure empties the export lists and they
   # exit non-zero), so a snapshot that cannot resolve fails the commit loudly instead of writing stubs.

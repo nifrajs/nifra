@@ -241,8 +241,18 @@ const scopedContext = (context: BoundaryRequestCtx): BoundaryRequestCtx =>
     signal: context.signal,
   })
 
+/**
+ * Redact a failed load into the client-visible slot. Boundary states are serialized into the document
+ * (`window.__NIFRA_BOUNDARIES__`), so the thrown error's own message never crosses: a driver or fetch
+ * failure carries hosts, credentials, and query text that a page is not allowed to publish. An `Error`
+ * subclass name is withheld for the same reason - it names the internal library. The real error goes to
+ * the server console, the same split `deferred.ts` uses for a rejected deferred value.
+ *
+ * A boundary that wants to show the user something specific catches its own failure inside `load` and
+ * returns that as data; the framework never guesses which parts of an exception are publishable.
+ */
 const boundaryError = (error: unknown): BoundaryError => {
-  if (error instanceof Error) return { name: error.name, message: error.message }
+  if (error !== undefined) console.error("[nifra/web] boundary load failed:", error)
   return { name: "Error", message: "Boundary failed" }
 }
 
@@ -268,12 +278,13 @@ export function startDynamicBoundaries(
   boundaries: readonly BoundaryRegistration[],
   context: BoundaryRequestCtx,
 ): DynamicBoundaryBatch {
-  const descriptors = boundaryDescriptors(boundaries)
+  // Validation only: a bad name, a duplicate, or a malformed intercept path throws here rather than
+  // producing a half-registered batch. It cannot return holes, so no slot below tests for one.
+  boundaryDescriptors(boundaries)
   const initial: Record<string, BoundaryState> = {}
   const pending: PendingBoundary[] = []
 
-  for (const [index, boundary] of boundaries.entries()) {
-    if (descriptors[index] === undefined) continue
+  for (const boundary of boundaries) {
     const base = {
       name: boundary.name,
       mode: boundary.mode,
@@ -334,10 +345,11 @@ export async function resolveStaticBoundaries(
   context: StaticCtx,
   cache: StaticBoundaryCache = DEFAULT_STATIC_CACHE,
 ): Promise<BoundaryStates> {
-  const descriptors = boundaryDescriptors(boundaries)
+  // Validation only - see `startDynamicBoundaries`; the descriptor list has no holes to test for.
+  boundaryDescriptors(boundaries)
   const states = await Promise.all(
-    boundaries.map(async (boundary, index) => {
-      if (descriptors[index] === undefined || boundary.mode !== "static") {
+    boundaries.map(async (boundary) => {
+      if (boundary.mode !== "static") {
         return {
           name: boundary.name,
           mode: boundary.mode,

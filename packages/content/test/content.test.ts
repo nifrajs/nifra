@@ -127,6 +127,34 @@ describe("content indexes", () => {
     expect(() => index.query({ cursor: "not-a-cursor" })).toThrow(/invalid index cursor/)
   })
 
+  test("rejects a cursor issued by a different query, whatever position it holds", () => {
+    const index = indexCollection(posts, { by: "section", sort: { field: "score", dir: "desc" } })
+    const page = index.query({ limit: 2 })
+    if (page.nextCursor === undefined) throw new Error("expected a next cursor")
+    // The cursor is a position in one query's order. Replayed against a different filter it addresses
+    // a different entry, so it is rejected even when its position is in range for the new result.
+    expect(() => index.query({ where: { section: "news" }, cursor: page.nextCursor })).toThrow(
+      /cursor does not match this index query/,
+    )
+    expect(() =>
+      index.query({ sort: { field: "score", dir: "asc" }, cursor: page.nextCursor }),
+    ).toThrow(/cursor does not match this index query/)
+  })
+
+  test("a matching cursor past a shrunken index is an exhausted page, not an error", () => {
+    const index = indexCollection(posts, { by: "section", sort: { field: "score", dir: "desc" } })
+    const page = index.query({ limit: 2 })
+    if (page.nextCursor === undefined) throw new Error("expected a next cursor")
+    // Same query, but the index rebuilt smaller between pages. The reader has simply run off the end.
+    const shrunk = indexCollection(
+      { entries: posts.entries.slice(0, 1) },
+      { by: "section", sort: { field: "score", dir: "desc" } },
+    )
+    const next = shrunk.query({ cursor: page.nextCursor })
+    expect(next.items).toEqual([])
+    expect(next.nextCursor).toBeUndefined()
+  })
+
   test("joins one-to-many by a same-typed key and rejects duplicate one-to-one rights", () => {
     const left = indexCollection(posts, { by: "id" })
     const authors: BakedCollection<Author> = {
