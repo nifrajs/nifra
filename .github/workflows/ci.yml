@@ -203,3 +203,14 @@ jobs:
 
       - name: Compare Bun and Vite production pipelines on the fixture app
         run: bun run check:pipeline-parity
+
+  # Scan Bun's lockfile as part of the release-gated CI workflow. This job is deliberately a
+  # reusable OSV workflow so a known advisory cannot pass CI and still reach the release workflow.
+  osv:
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@8deb546fdb875b9996d27d4950be7312dac076a1
+    with:
+      scan-args: |-
+        --lockfile=./bun.lock
+    permissions:
+      contents: read
+      security-events: write
