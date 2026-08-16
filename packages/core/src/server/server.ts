@@ -50,6 +50,7 @@ import type {
   StandardResult,
   StandardSchemaV1,
 } from "../schema/standard.ts"
+import { emitRequestErrorLog, renderBareError } from "./bare-error-lane.ts"
 import {
   assertByteLimit,
   markTransportCap,
@@ -3706,12 +3707,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     finalize: (result: unknown, set: CtxSet, ctx: RawContext) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): T {
-    if (err instanceof Response) return wrapResponse(err)
-    // A thrown `status(...)` is control flow, and it is still plain data: rendered through the same
-    // `finalize` a returned one takes, with the request's `c.set`, so it costs what the return costs.
-    if (isResponseResult(err)) return finalize(err, responseSet(ctx), ctx)
-    this.logRequestError(err, ctx)
-    return wrapResponse(plainError(500, "internal_error"))
+    // The thrown-value contract lives in `bare-error-lane.ts`, one source of truth for both this
+    // lane and the fused body runner. `responseSet` and the logger are injected because they reach
+    // into class state; the closure is allocated only on the throw path, never on the hot lane.
+    return renderBareError(err, ctx, finalize, wrapResponse, responseSet, (e, c) =>
+      this.logRequestError(e, c),
+    )
   }
 
   // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
@@ -4841,21 +4842,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   /** Log an unhandled request error to the (redacting) logger - shared by {@link runLifecycle} and the
    * bare fast path ({@link bareError}) so both record the same fields. Never throws; never leaks. */
   private logRequestError(err: unknown, ctx: RawContext): void {
-    // An error's own text can quote the input that produced it, so how much of it reaches the sink is
-    // the app's call (`errorLogDetail`). The default keeps it: a 500 with no message and no stack is
-    // an incident nobody can diagnose, and the framework already ships the narrower instrument for
-    // the leak - a redacting logger with `valuePatterns`. `"none"` is there for an untrusted sink.
-    const detail = this.errorLogDetail
-    this.logger.error("unhandled request error", {
-      method: ctx.req.method,
-      path: pathnameOf(ctx.req.url),
-      name: err instanceof Error ? err.name : "Error",
-      // `detail`, not `message`: the logger uses `message` for its own first argument, so a field of
-      // that name is silently overwritten and the thrown error's own text never reaches the sink. It
-      // survived only incidentally inside `stack`, and was lost outright for a non-Error throw.
-      ...(detail === "none" ? {} : { detail: err instanceof Error ? err.message : String(err) }),
-      ...(detail === "full" && err instanceof Error ? { stack: err.stack } : {}),
-    })
+    emitRequestErrorLog(this.logger, this.errorLogDetail, err, ctx)
   }
 
   private async readAndValidateBody(
