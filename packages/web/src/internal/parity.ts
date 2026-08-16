@@ -17,6 +17,7 @@ import {
   type SingleCopyRegistration,
 } from "@nifrajs/core/single-copy"
 import { discoverRoutes } from "../fs.ts"
+import { isIdentitySensitivePackage } from "./identity-policy.ts"
 
 const DEPENDENCY_FIELDS = [
   "dependencies",
@@ -24,15 +25,6 @@ const DEPENDENCY_FIELDS = [
   "peerDependencies",
   "optionalDependencies",
 ] as const
-const IDENTITY_SENSITIVE_PACKAGES = new Set([
-  "@nifrajs/core",
-  "react",
-  "react-dom",
-  "preact",
-  "svelte",
-  "solid-js",
-  "vue",
-])
 const MAX_WORKSPACE_IMPORTERS = 2_048
 const MAX_LINKED_PACKAGES = 64
 const MAX_LINK_PROBES = 4_096
@@ -478,9 +470,7 @@ const describeScope = (
 }
 
 const identityTargets = (pkg: Record<string, unknown>): readonly string[] =>
-  dependencyNames(pkg)
-    .filter((name) => name.startsWith("@nifrajs/") || IDENTITY_SENSITIVE_PACKAGES.has(name))
-    .sort()
+  dependencyNames(pkg).filter(isIdentitySensitivePackage).sort()
 
 /** version-skew is a range problem: one reinstall from the root collapses it. */
 const VERSION_SKEW_REMEDIATION =

@@ -16,6 +16,7 @@ import { type BunPlugin, Glob } from "bun"
 import { sanitizeOutputNames } from "./chunk-names.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
+import { dedupePolicyFor } from "./internal/identity-policy.ts"
 import {
   assertDevelopmentProductionParity,
   assertIdentityParity,
@@ -1254,7 +1255,7 @@ const reactDomEdgePlugin = (from: string): BunPlugin => ({
  * condition-agnostic, so pinning it doesn't disturb the edge/browser/server conditions that select
  * react-dom's build.
  */
-const REACT_DEDUPE_SPECS = ["react", "react/jsx-runtime", "react/jsx-dev-runtime"] as const
+const REACT_DEDUPE_SPECS = dedupePolicyFor("react").bunSpecs ?? []
 export const reactDedupePlugin = (from: string): BunPlugin => ({
   name: "nifra-react-dedupe",
   setup(build) {
@@ -1282,13 +1283,7 @@ export const reactDedupePlugin = (from: string): BunPlugin => ({
  * skipped). Preact core is condition-agnostic, so pinning it doesn't disturb any condition selection - and
  * unlike react-dom there is no edge-vs-server build to preserve, so pinning the subpaths is safe.
  */
-const PREACT_DEDUPE_SPECS = [
-  "preact",
-  "preact/hooks",
-  "preact/compat",
-  "preact/jsx-runtime",
-  "preact/jsx-dev-runtime",
-] as const
+const PREACT_DEDUPE_SPECS = dedupePolicyFor("preact").bunSpecs ?? []
 export const preactDedupePlugin = (from: string): BunPlugin => ({
   name: "nifra-preact-dedupe",
   setup(build) {
@@ -1305,6 +1300,7 @@ export const preactDedupePlugin = (from: string): BunPlugin => ({
   },
 })
 
+const SVELTE_DEDUPE_PATTERN = dedupePolicyFor("svelte").bunPattern ?? /^svelte($|\/internal\/)/
 /**
  * Dedupe Svelte to a single copy - the Svelte analogue of `reactDedupePlugin`/`preactDedupePlugin`, closing
  * the same class of bug for Svelte (which had NO build-time dedup before). A workspace- or file-linked
@@ -1323,7 +1319,7 @@ export const preactDedupePlugin = (from: string): BunPlugin => ({
 export const svelteDedupePlugin = (from: string): BunPlugin => ({
   name: "nifra-svelte-dedupe",
   setup(build) {
-    build.onResolve({ filter: /^svelte($|\/internal\/)/ }, (args) => {
+    build.onResolve({ filter: SVELTE_DEDUPE_PATTERN }, (args) => {
       try {
         return { path: Bun.resolveSync(args.path, from) }
       } catch {

@@ -21,6 +21,7 @@ import { createDevDiagnostics } from "./dev-diagnostics.ts"
 import { listenOrExplain } from "./dev-port.ts"
 import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry, setSsrModuleLoader } from "./index.ts"
+import { viteDedupePackages } from "./internal/identity-policy.ts"
 import {
   assertIdentityParity,
   collectIdentityParity,
@@ -467,12 +468,13 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     plugins: [viteServerFnStub(), viteServerOnlyEmpty(), ...plugins],
     resolve: {
       conditions: resolveConditions,
-      // Dedupe React to ONE copy. In a multi-root workspace a shared package can pull react/react-dom
-      // from a SIBLING app's node_modules, so the dev server loads two React cores → a second hook
-      // dispatcher → `resolveDispatcher().useState` null on any hook-using route (the error points at the
-      // component, not the resolution - brutal to diagnose). Mirrors the build-time reactDedupePlugin so
-      // dev matches prod. No-op for non-React apps (the package simply isn't present to dedupe).
-      dedupe: ["react", "react-dom"],
+      // Dedupe each framework runtime to ONE copy. In a multi-root workspace a shared package can pull
+      // react/react-dom (or preact, or svelte) from a SIBLING app's node_modules, so the dev server
+      // loads two cores → a second hook dispatcher/options global → `resolveDispatcher().useState` null
+      // on any hook-using route (the error points at the component, not the resolution - brutal to
+      // diagnose). Same policy table the production builds read, so dev matches prod. No-op per
+      // framework the app does not use (the package simply isn't present to dedupe).
+      dedupe: [...viteDedupePackages()],
     },
     ssr: {
       // Explicit listing forces external even for workspace-LINKED packages (Vite's default keeps

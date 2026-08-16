@@ -33,6 +33,7 @@ import {
 } from "./build.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
+import { viteDedupePackages } from "./internal/identity-policy.ts"
 import {
   assertDevelopmentProductionParity,
   assertIdentityParity,
@@ -201,9 +202,10 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
           ...(options.define ?? {}),
         },
         resolve: {
-          // Mirror the Bun build's reactDedupePlugin: one physical react/react-dom, or a hook-using route
-          // gets a second dispatcher. No-op when the app isn't React.
-          dedupe: ["react", "react-dom"],
+          // Same framework coverage as the Bun build's dedupe plugins, from the one policy table: one
+          // physical copy of react/react-dom, preact, and svelte, or a hook-using route gets a second
+          // dispatcher/options global. No-op per framework the app does not use.
+          dedupe: [...viteDedupePackages()],
           ...(options.conditions ? { conditions: [...options.conditions] } : {}),
         },
         css: {
