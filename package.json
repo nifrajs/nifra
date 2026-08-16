@@ -39,6 +39,7 @@
     "bench:content": "bun bench/content-index.ts",
     "bench:prerender": "bun run bench/ssr/prerender-ttfb.ts",
     "bench:size": "bun run bench/size/run.ts",
+    "bench:workers": "bun run bench/workers/run.ts",
     "gen:llms": "bun run scripts/gen-llms.ts && bun run gen:cards",
     "gen:api": "bun run scripts/gen-api-reference.ts",
     "gen:cards": "bun run scripts/gen-llm-cards.ts",
