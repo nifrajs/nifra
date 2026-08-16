@@ -1,5 +1,145 @@
 # @nifrajs/core
 
+## 3.0.0
+
+### Minor Changes
+
+- f0fd370: The same-origin check behind `redirect()` and the guards' `redirectTo` now rejects the paths a URL parser resolves onto another origin, and lives in one place.
+
+  A leading `/` that is not `//` is not sufficient to keep a destination on this origin. Under a special scheme a backslash parses as a path separator, and tab, CR and LF are stripped from the input before parsing, so `/\evil.example` and `/<TAB>/evil.example` both pass a `//` test and then resolve to the host `evil.example` - an open redirect reachable from any unvalidated `?next=` parameter. Both forms are now refused: `redirect()` throws as it already did for `//host`, and an auth guard falls back to its configured destination instead of honouring the value.
+
+  New export `isSameOriginPath` from `@nifrajs/core/server`, which is the single implementation the three gates now share - a security predicate kept in three copies is three chances for one of them to be hardened alone. It answers about a path, so an absolute URL is false even when it names the current origin: the point of the gate is that the value never got to name a host at all.
+
+  A percent-encoded backslash (`/%5Cevil.example`) is still a same-origin path, because that is what it resolves to.
+
+- 381bbf3: Route assurance gains a tiered `securityBaseline()` policy preset and two route selectors, `hasBody` and `bodyLimit`.
+
+  `securityBaseline({ level })` returns an `AssurancePolicy` built entirely from the public assurance engine, so it inherits fail-closed evaluation, evidence provenance, and selector validation. Its rules are ordered most-specific-first because evaluation is first-match-wins: each route is owned by one rule that carries the full requirement bundle for its class. Three levels, each a superset of the last:
+
+  - `"essential"` - never false-positives on a reasonable app: a body read must be bounded, an `unlimited` body may never claim `nifra.body-bounded`, an agent tool ingress must be bounded, and an authenticated state change must prove CSRF. Every requirement is either core-published from the route schema or demanded only where the route already opted into the risk.
+  - `"standard"` (default) - essential plus: a route the app classified `pii` or higher must be authenticated, read or write.
+  - `"strict"` - standard plus the opinionated requirements that need installed middleware: every route carries a response contract, every read carries security headers, every mutation is rate limited.
+
+  `unmatched` defaults to `"ignore"` for additive adoption; set `"error"` to close it into an allow-list. `requireRuntimeProvenance` defaults to `true` - an author label is not proof.
+
+  The new selectors let any policy match on body shape: `hasBody` matches routes that declare (or omit) a body schema, and `bodyLimit` distinguishes `"bounded"`, `"unlimited"`, and `"unset"`. Both are validated at `defineAssurancePolicy` time and refuse unknown values, so a typo cannot open a policy hole.
+
+  Drop the preset into a `nifra.assurance.ts` `policy`, or spread it and append project-specific rules ahead of the baseline so they own their routes first.
+
+- 36801ae: New: a static `singleCopy` declaration that collapses an identity-sensitive package to one physical copy, for the duplicate no install can remove.
+
+  An app that consumes a package by `link:` from a **separate checkout** cannot deduplicate React (or `@nifrajs/*`) by installing differently. The linked files live in the other repo, so their imports resolve from that repo's real path, and that repo's install owns its `node_modules`: peer dependencies are already satisfied there, `overrides` govern the consuming install only, and a deleted nested copy returns on the sibling's next install. The build's existing per-framework dedupe covers bundled output, but nothing covered `bun test`, `bun run`, or a preloaded script - and `nifra check` failed the app with remediation ("deduplicate the install") that the topology makes impossible.
+
+  An app now declares the packages in its own `package.json`:
+
+  ```json
+  { "nifra": { "singleCopy": ["react", "react-dom", "@nifrajs/*"] } }
+  ```
+
+  Entries are exact names or `@scope/*` patterns; `true` expands to the built-in identity-sensitive set (`@nifrajs/*`, `react`, `react-dom`, `preact`, `solid-js`, `svelte`, `vue`). `@nifrajs/*` is in that set because two copies of `@nifrajs/core` are two distinct `Server` classes, so `.merge()` stops accepting an app built against the other one. The declaration is static so `nifra check` can read it without importing the app's config, which would mean executing app code inside a preflight.
+
+  `buildClient` and `buildServer` inject the resolver from the declaration, so bundled output needs no wiring. Unbundled phases are not covered automatically - Bun's runtime resolver never offers a bare specifier to a plugin - so an app preloads `@nifrajs/core/single-copy/register` from `bunfig.toml` (`preload` for `bun run`, `[test].preload` for `bun test`). `nifra check` now names the phase that is left uncovered when the declaration exists without the preload.
+
+  The redirect refuses to cross versions: two copies at different versions are skipped as `version-skew` and stay fatal, because collapsing them would turn a loud install problem into a quiet behavioural one. A declared duplicate is reported, not suppressed - `nifra check` keeps printing the copies as a warning and `nifra doctor` lists them under `deduplicatedInstalls` - so the topology stays visible without failing the gate.
+
+  New exports: `@nifrajs/core/single-copy` (`singleCopyPlugin`, `registerSingleCopy`, `planSingleCopy`, `readSingleCopyDeclaration`, `readSingleCopyRegistration`, `matchesSingleCopyDeclaration`, `IDENTITY_SENSITIVE_PACKAGES`) and the side-effect entry `@nifrajs/core/single-copy/register`.
+
+  The registration proof reads `preload` as entries rather than as text: an entry counts only when it **is** the register specifier, not when it merely contains it. A neighbouring path such as `"./vendor/@nifrajs/core/single-copy/register-shim.ts"` used to satisfy the check while Bun loaded that other module and the registrar never ran, so enforcement was reported as armed on a process still loading both copies. A `preload` this cannot read as quoted entries - a multi-line array, an interpolated value - now reports "not registered" instead of standing in for proof.
+
+- 9acadba: New `status(code, body?, init?)`: end a request from anywhere in the lifecycle without building a `Response`. Every error the framework renders itself now takes the same lane.
+
+  ```ts
+  import { server, status } from "@nifrajs/core";
+
+  app.derive((c) => {
+    const user = sessionOf(c);
+    if (user === undefined)
+      return status(401, { ok: false, error: "unauthorized" });
+    return { user };
+  });
+  ```
+
+  A `beforeHandle` could always short-circuit by returning a value, but a `derive`'s return **is** the context extension, so its only early exit was `throw new Response(...)` - the most expensive way to say 401. It is three costs stacked: constructing a Web `Response`, throwing it, and unwinding a lifecycle stage. On Node there is a fourth, because a `Response` built outside the handler is opaque to the adapter, so its body is drained back out through a Web stream and the reply goes out chunked instead of with a `content-length`.
+
+  `status(...)` is plain data - a status, optional headers, and a body the rendering lane serializes exactly like a handler's plain return - so a rejection now costs what an accepted request costs. It can be returned (preferred) or thrown, so a guard helper called for effect (`requireSession(c)`) can still end the request from inside a call it makes.
+
+  Measured on the Linux rig (4 server cores, 50 connections, medians; a rejecting `derive` vs the same `derive` returning `status(...)`, so both exit at the same point in the lifecycle):
+
+  | runtime | `throw new Response` | `status(...)` |
+  | ------- | -------------------- | ------------- |
+  | node    | 39974                | 68577         |
+  | deno    | 58403                | 89742         |
+  | bun     | 79757                | 109328        |
+
+  The gap is largest on Node because of the drain, but the lifecycle cost was never runtime-specific: throwing to leave a `derive` cost every runtime real throughput.
+
+  The same render now serves the errors an application cannot move onto a faster lane itself - 404, 405, 400 on a malformed path, 415, 422 on a validation failure, 500, 504, and the admission rejections. Bytes are unchanged on every lane, and the Node lane gains a `content-length` it did not have. `Response` stays exactly what it was for everything that genuinely needs one: redirects, streams, and any handler that returns or throws one.
+
+### Patch Changes
+
+- f3d2a35: The body cap's 413/400 rejections are plain renders instead of `Response` objects.
+
+  `c.boundedBody()` and `c.boundedJson()` throw on an over-cap or malformed body, and the lifecycle catches that throw as control flow - the same contract as `throw redirect(...)`. What they threw was a built `Response`; it is now the same plain-data value `status(...)` produces, so a rejected request no longer pays for a `Response` on the way out. Identical on the wire: same status, same `{ ok: false, error }` body, same `content-type`.
+
+  The schema lane's own body read goes the same way, so a route with a `body` schema answers its 413/400 from plain data too.
+
+  The distinction is invisible to a handler that lets the throw propagate, which is the documented use. Code that catches it and inspects the value is affected: it is no longer a `Response`, so `.status` and `instanceof Response` are gone. Read `.plain` (`{ status, headers, body }`) or call `toResponse()`.
+
+  The urlencoded form reader takes the same lane, so a route whose schema parses a form answers its 413 and its 400 from plain data too, with the same envelope and the same bytes as the JSON reader's.
+
+  `jsonError` is unchanged and still exported - the surfaces that genuinely need a `Response` object keep it.
+
+- 6e43c15: A failed boundary load no longer publishes the thrown error's own message. Boundary states are serialized into the document, so a driver or fetch failure was putting hosts, credentials, and query text on the page for every visitor who loaded it while the dependency was down. The client slot is now always `Boundary failed`, an `Error` subclass name is withheld for the same reason it names the failing internal library, and the real error is reported to the server console - the split already used for a rejected deferred value. A boundary that wants to show the user something specific catches its own failure inside `load` and returns that as data.
+
+  Opt-in outbound WebSocket validation (`validateSend`) contains a rejected diagnostic instead of recursing. An `error()` handler that answers a dropped frame by sending one of its own re-entered the reporter through the two paths that bypassed its guard - schema rejection and an async validator - and unwound only when the stack was exhausted, silently. Every failure path now reports through the guard.
+
+  A content index cursor is checked for the query that issued it separately from running off the end: a cursor from a different sort or filter is rejected at any position, and a matching cursor left past the last row by an index that shrank between pages returns an exhausted page rather than throwing.
+
+- f0fd370: A plain render that Node refuses to write now answers 500 and leaves the server serving, and `status()` rejects an out-of-range code where it is written.
+
+  The plain lane goes straight to the socket, so a header value never passes through the `Headers` constructor that rejects CR/LF on the Web lane. Node rejects it at `writeHead` instead - as it does an invalid status, or any write after the head is already out. On the synchronous lane that throw escaped the request; on the asynchronous ones it surfaced as an unhandled rejection, which by Node's default terminates the process, so an application reflecting request data into `c.set.headers` or `status(...)` had a route-shaped input that could take the server down. Every write is now contained: an unsent head becomes the ordinary flat 500, and a head already on the wire ends the connection, because a status line cannot be recalled and a half-written body must not be left for the client to parse.
+
+  `status(code, ...)` now throws a `RangeError` for a code outside 200-599 or a non-integer. A plain render carries its status to `writeHead` unexamined, so an out-of-range value used to fail at the socket, far from the handler that produced it.
+
+- 86a555b: The roadmap contract surfaces are now shipped across the public packages: shared island triggers,
+  typed content indexes and joins, client loader/action hooks, and unified static, dynamic, and
+  intercepting boundary modes. WebSocket routes also support opt-in synchronous outbound validation
+  through `sendSchema` + `validateSend`; invalid or asynchronous outbound frames fail closed while the
+  default remains type-level only.
+- 8c5f4cf: A route that declares an explicit finite `schema.bodyLimit` now publishes `nifra.body-bounded` route assurance evidence (source `route-schema`), the same as a route with a `schema.body`. Before this, the per-route transport cap bounded a body more strongly than the Content-Length `bodyLimit()` middleware - it also binds a raw `c.req.body` stream, which a Content-Length gate cannot - yet published nothing, so adopting the per-route cap could lower an app's L1 assurance level. `bodyLimit: "unlimited"` still publishes nothing, and the server-wide `maxBodyBytes` default is deliberately not evidence: it applies to every route whether or not anyone chose it.
+- 99fc683: A thrown `status(...)` now costs close to what a returned one costs, and the guards throw one.
+
+  `status(...)` is meant to be **returned** - from a `beforeHandle`, from a `derive`, from the handler. The one place a return cannot work is a helper called for effect: `requireSession(c)` decides the request is over from inside a call the handler makes, and only unwinding gets out of a half-finished handler. That is the whole remaining use of `throw`, and it now runs on the same lane as the return:
+
+  - The lifecycle error path is synchronous again. It was `async`, so a thrown `status(...)` - which needs no `await` at all - still allocated a promise and resumed a microtask later. The `onError` hook loop moved to its own async method, so only routes that registered a hook pay for one.
+  - The two remaining sites that turned a thrown `status(...)` into a `Response` before rendering it (the bare and contextless fast paths) now render it as the plain data it is, through the request's own finalizer.
+  - `requireSession` / `requireUser` / `requireAuthorization` throw a `status(...)` render instead of building a `Response`. The bytes on the wire are unchanged - a 401 JSON envelope, or a 302 with a `location` - and on Node they now carry a `content-length` instead of being drained back out as a stream.
+
+  **Behavior change:** what the guards throw is a `status(...)` render, not a `Response`. Code that catches a guard and tests `err instanceof Response` needs to stop doing that; nifra itself treats the two identically as control flow, so a guard thrown through a route behaves exactly as before.
+
+  Measured on the Linux rig (4 server cores, 50 connections, medians of 5 x 2s; a `derive` that rejects, returning vs throwing the same `status(401, ...)`). Only within-runtime deltas are readable - the host was under other load, and the return arm is included in both columns as the control:
+
+  | runtime | return | throw, before | throw, after |
+  | ------- | ------ | ------------- | ------------ |
+  | node    | 85904  | 74471         | 80136        |
+  | deno    | 139477 | 85970         | 90355        |
+
+  On Node a throw now lands within the run's own spread of a return. On Deno it does not: a throw still costs ~35%, and it costs the same whether the thrown value is a `status(...)` render or a `Response` - so what remains there is the unwind itself, not the rendering.
+
+  That remainder is the runtime's, not the framework's. The same arms with no framework at all - a bare `Deno.serve` / `Bun.serve` / `node:http` handler answering identical bytes, one returning its payload and one throwing it - reproduce it, in CPU-microseconds per request:
+
+  |      | return | throw | throw across await |
+  | ---- | ------ | ----- | ------------------ |
+  | node | 49.35  | +3.85 | +2.85              |
+  | bun  | 22.55  | +1.83 | +3.99              |
+  | deno | 18.89  | +7.62 | +11.03             |
+
+  Against that, nifra's own rejection arms cost +3.35 (node), +3.41 (bun), +15.59 (deno). On node and bun the framework's entire remaining throw penalty _is_ the runtime's throw. On deno the runtime's throw-across-await alone accounts for ~70% of it, and the percentage reads worse than the others only because deno's baseline request is the cheapest of the three. Two candidate explanations were tested and ruled out: `Error.stackTraceLimit = 0` changes nothing (so it is not stack capture), and throwing three frames below the handler is no cheaper (so it is not proximity to the runtime boundary).
+
+- 73d894d: `bodyLimit: "unlimited"` now actually skips the cap on every read path, not only on direct `c.req` reads. A route that declared the exemption alongside a `schema.body` (or that called `c.boundedJson()` / `c.boundedBody()` with no explicit cap) silently fell back to the server-wide `maxBodyBytes` and answered 413 at a bound the route had explicitly opted out of. The resolved route limit is now read through `UNLIMITED_BODY_BYTES` instead of `?? maxBodyBytes`, so `undefined` keeps meaning "the route opted out" everywhere rather than flipping to "use the default" at the reader. Routes that never declared `bodyLimit` are unaffected: their limit is resolved to `maxBodyBytes` at registration, exactly as before.
+
+  An unlimited route no longer publishes the `nifra.body-bounded` assurance id. It used to earn the id from its `body` schema or from a declared numeric limit that `"unlimited"` then overrode, so the one route in an application with no ceiling at all was the one certifying that its body was bounded - and a policy built on that id passed exactly where it should have failed. The exemption is documented as covering the transport cap only: a route that pairs it with a `body` schema, or with `idempotency`, still assembles every delivered byte in memory before anything examines them, so an unlimited body belongs on `c.req.body` as a stream, bounded by the protocol it speaks.
+
 ## 2.14.1
 
 ### Patch Changes

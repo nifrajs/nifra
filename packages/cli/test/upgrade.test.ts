@@ -31,6 +31,13 @@ describe("published upgrade recipes", () => {
     expect(listRecipeVersions()).toContain("2.0.0")
   })
 
+  test("offers the 3.0.0 GA migration target that pins the fixed group", () => {
+    expect(listRecipeVersions()).toContain("3.0.0")
+    const recipe = getRecipe("3.0.0")
+    expect(recipe?.pins).toContainEqual({ match: "@nifrajs/", to: "3.0.0" })
+    expect(recipe?.importMoves).toEqual([])
+  })
+
   test("2.0 migrates the fixed group and removed budget package without touching lookalikes", async () => {
     const root = join(FIXTURES, "v2-repo")
     await mkdir(join(root, "src"), { recursive: true })

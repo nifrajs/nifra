@@ -1,5 +1,101 @@
 # @nifrajs/web
 
+## 3.0.0
+
+### Major Changes
+
+- 004deee: `redirect()` returns a plain render instead of a `Response`.
+
+  A redirect is a status line and one header - the most body-less response there is - and building a Web `Response` for it costs the whole object, plus a stream drained back out on Node. It is now the same plain-data value `status(...)` produces, rendered on the lane an ordinary return takes: same bytes on the wire, now with a `content-length` on Node rather than a chunked empty body.
+
+  `redirect(...)` is still returned or thrown from exactly the same places - loader, action, layout gate - and `return redirect()` / `throw redirect()` stay interchangeable, including the client-submit conversion to a 204 + `X-Nifra-Redirect`.
+
+  **Breaking:** the returned value is no longer a `Response`, so `.status`, `.headers`, and `instanceof Response` are gone from it.
+
+  - Reading it: `redirect("/x").plain` is `{ status, headers, body }`. `toResponse()` builds the `Response` if something genuinely needs one.
+  - Adding headers: pass them - `redirect("/x", { headers: { "cache-control": "no-store" } })`. Cookies are unaffected; they still ride `c.set` and apply to a redirect exactly as before.
+  - Testing it: assert on `.plain` (or `toResponse()`), not on `.status`.
+
+  The Node writer was framing a body-less response as chunked: `writeHead` followed by a bare `end()` leaves Node to pick the framing, so the shortest response the framework emits went out with a chunk terminator and no length, where every Web-native runtime sends `content-length: 0`. It now declares the zero length on both lanes - a plain render, and a hand-rolled `Response` whose body is `null`.
+
+  A `Response` built from bytes - `new Response("hi")`, a `Uint8Array`, a `Blob` - now declares its length too. It hands those bytes over as a stream, exactly as a live producer does, so the writer could not tell the two apart and framed both as chunked. It now reads one chunk and gives the stream a microtask to say it is done: a source-backed body has already enqueued everything and closes inside it, a producer still generating does not. At most one chunk is held, never the whole body, so a large or endless stream is unaffected - and the microtask costs a streaming response no bytes on the wire, since Node does not flush the header until the first write either way.
+
+  Excluded throughout: HEAD, whose length describes the GET's body that neither lane knows; a status that cannot carry a body; and a length the caller set for itself. A relayed upstream body is also left alone - its length is the upstream's business.
+
+  A hand-rolled `Response` from a loader or action is untouched - still passed through verbatim, still converted the same way on a data request. Only what `redirect()` itself returns changed.
+
+### Patch Changes
+
+- 6e43c15: A failed boundary load no longer publishes the thrown error's own message. Boundary states are serialized into the document, so a driver or fetch failure was putting hosts, credentials, and query text on the page for every visitor who loaded it while the dependency was down. The client slot is now always `Boundary failed`, an `Error` subclass name is withheld for the same reason it names the failing internal library, and the real error is reported to the server console - the split already used for a rejected deferred value. A boundary that wants to show the user something specific catches its own failure inside `load` and returns that as data.
+
+  Opt-in outbound WebSocket validation (`validateSend`) contains a rejected diagnostic instead of recursing. An `error()` handler that answers a dropped frame by sending one of its own re-entered the reporter through the two paths that bypassed its guard - schema rejection and an async validator - and unwound only when the stack was exhausted, silently. Every failure path now reports through the guard.
+
+  A content index cursor is checked for the query that issued it separately from running off the end: a cursor from a different sort or filter is rejected at any position, and a matching cursor left past the last row by an index that shrank between pages returns an exhausted page rather than throwing.
+
+- 293a7fe: Identity-parity findings now state the install topology, and `nifra doctor` and the build guard now answer on the same basis.
+
+  Both tools already shared one walker, but they anchored it differently: doctor scanned the workspace that governs the project while the build guard scanned the app directory it was invoked in, so a duplicate that lives in a sibling workspace package could show up in one output and not the other. Since neither printed which directory it had scanned, that read as two tools contradicting each other about the same invariant. The scan is now always anchored on the governing workspace, both tools name the root they answered on, and a scan that stopped at the workspace-enumeration cap reports itself as partial instead of returning "no duplicates".
+
+  A finding whose copies lie outside the directory the command was run in now says why it is still fatal there: the gate is workspace-wide deliberately, because a copy reached through a workspace-linked dependency is not visible from the app directory - the exact case that once had the check report "none" against an already-broken dev server. Running a build inside one app can therefore fail on a copy held by a sibling app, and the message states that trade rather than leaving it to look like the tool checking the wrong project.
+
+  Each finding also carries a topology line: how many physical paths, how many install roots they fall under, and whether any of those roots sits outside the scanned root. That distinction is the whole fix decision - copies under one workspace collapse with a single reinstall from the root, while a copy under a linked checkout or a standalone sibling install belongs to another project and no reinstall here can remove it. Previously the error listed paths only, leaving that to be reverse-engineered.
+
+  The hard gate now fails closed on a truncated scan. A scan that stopped at any of its caps - workspace packages, linked packages, or link probes - and then found no duplicates has not shown there is none; the duplicate can be sitting in the part it never reached. `assertIdentityParity` treats that state as inconclusive and throws, rather than reading an incomplete scan as a pass. The reporting surfaces (`nifra doctor`, the dev warning) still print the partial result and name the limit that was hit.
+
+- 485ae60: `nifra build` no longer fails when a route imports a non-JS asset. The development/production manifest parity check compared a source-derived expectation against the build output; its module-graph section held every emitted asset, so any emitted non-JS file (an `import logo from "./logo.svg"`, a font) was a set difference no application could close. The module-graph contract is now the JavaScript module graph only - emitted assets are an output detail, served from source in development and hashed in production, with no dev/prod claim to compare.
+
+  The stylesheet check is now directional instead of an equality. The development-side scanner is sound but incomplete by construction - it cannot see a dynamic `import()`, a `require()`, or a bare package `exports` subpath - so a production stylesheet the scanner missed passes, while the load-bearing direction (development found styles the build does not ship, so the page renders unstyled) still fails. The scanner also now recognizes `import(...)` and `require(...)` of a literal stylesheet path.
+
+  `manifest.css` now means the same thing on both bundlers: the union of every emitted stylesheet, bootstrap aggregate first. The Bun pipeline previously kept only the aggregate, so a route-scoped stylesheet landed in `assets` but not `css` and normalized to a spurious asset difference.
+
+  Parity failures now name the offending files - the production stylesheet URLs and the scanned source root for a css mismatch, the symmetric difference for a module-graph mismatch - and the identity-parity remediation is cause-specific: a version skew says reinstall, a duplicate path across a linked sibling repo says a reinstall will not collapse it and one tree must resolve into the other.
+
+- 627b0ba: Duplicate-install detection (`NF-C009` / `NF-D001`) no longer sweeps an unrelated sibling repository.
+
+  A dependency symlinked into another project's package store (bun's `node_modules/.bun/<pkg>@<version>`, an `npm link` target, a shared global store) was treated as a linked source checkout, so the scan walked up to that project's `.git` and reported its whole dependency tree as duplicates of the project being checked - findings in a repo the developer is not working in, that no change in their own project could ever clear. A linked root that resolves inside a `node_modules` directory is now clamped to itself: only its own nested `node_modules` is scanned, which is exactly the set of modules it can load. The store copy itself is still reported, because it is genuinely what the project resolves; a real linked source checkout (`link:../../pkg`) still has its whole repo scanned, because its imports really do resolve there.
+
+- f0fd370: The same-origin check behind `redirect()` and the guards' `redirectTo` now rejects the paths a URL parser resolves onto another origin, and lives in one place.
+
+  A leading `/` that is not `//` is not sufficient to keep a destination on this origin. Under a special scheme a backslash parses as a path separator, and tab, CR and LF are stripped from the input before parsing, so `/\evil.example` and `/<TAB>/evil.example` both pass a `//` test and then resolve to the host `evil.example` - an open redirect reachable from any unvalidated `?next=` parameter. Both forms are now refused: `redirect()` throws as it already did for `//host`, and an auth guard falls back to its configured destination instead of honouring the value.
+
+  New export `isSameOriginPath` from `@nifrajs/core/server`, which is the single implementation the three gates now share - a security predicate kept in three copies is three chances for one of them to be hardened alone. It answers about a path, so an absolute URL is false even when it names the current origin: the point of the gate is that the value never got to name a host at all.
+
+  A percent-encoded backslash (`/%5Cevil.example`) is still a same-origin path, because that is what it resolves to.
+
+- 36801ae: New: a static `singleCopy` declaration that collapses an identity-sensitive package to one physical copy, for the duplicate no install can remove.
+
+  An app that consumes a package by `link:` from a **separate checkout** cannot deduplicate React (or `@nifrajs/*`) by installing differently. The linked files live in the other repo, so their imports resolve from that repo's real path, and that repo's install owns its `node_modules`: peer dependencies are already satisfied there, `overrides` govern the consuming install only, and a deleted nested copy returns on the sibling's next install. The build's existing per-framework dedupe covers bundled output, but nothing covered `bun test`, `bun run`, or a preloaded script - and `nifra check` failed the app with remediation ("deduplicate the install") that the topology makes impossible.
+
+  An app now declares the packages in its own `package.json`:
+
+  ```json
+  { "nifra": { "singleCopy": ["react", "react-dom", "@nifrajs/*"] } }
+  ```
+
+  Entries are exact names or `@scope/*` patterns; `true` expands to the built-in identity-sensitive set (`@nifrajs/*`, `react`, `react-dom`, `preact`, `solid-js`, `svelte`, `vue`). `@nifrajs/*` is in that set because two copies of `@nifrajs/core` are two distinct `Server` classes, so `.merge()` stops accepting an app built against the other one. The declaration is static so `nifra check` can read it without importing the app's config, which would mean executing app code inside a preflight.
+
+  `buildClient` and `buildServer` inject the resolver from the declaration, so bundled output needs no wiring. Unbundled phases are not covered automatically - Bun's runtime resolver never offers a bare specifier to a plugin - so an app preloads `@nifrajs/core/single-copy/register` from `bunfig.toml` (`preload` for `bun run`, `[test].preload` for `bun test`). `nifra check` now names the phase that is left uncovered when the declaration exists without the preload.
+
+  The redirect refuses to cross versions: two copies at different versions are skipped as `version-skew` and stay fatal, because collapsing them would turn a loud install problem into a quiet behavioural one. A declared duplicate is reported, not suppressed - `nifra check` keeps printing the copies as a warning and `nifra doctor` lists them under `deduplicatedInstalls` - so the topology stays visible without failing the gate.
+
+  New exports: `@nifrajs/core/single-copy` (`singleCopyPlugin`, `registerSingleCopy`, `planSingleCopy`, `readSingleCopyDeclaration`, `readSingleCopyRegistration`, `matchesSingleCopyDeclaration`, `IDENTITY_SENSITIVE_PACKAGES`) and the side-effect entry `@nifrajs/core/single-copy/register`.
+
+  The registration proof reads `preload` as entries rather than as text: an entry counts only when it **is** the register specifier, not when it merely contains it. A neighbouring path such as `"./vendor/@nifrajs/core/single-copy/register-shim.ts"` used to satisfy the check while Bun loaded that other module and the registrar never ran, so enforcement was reported as armed on a process still loading both copies. A `preload` this cannot read as quoted entries - a multi-line array, an interpolated value - now reports "not registered" instead of standing in for proof.
+
+- Updated dependencies [f3d2a35]
+- Updated dependencies [6e43c15]
+- Updated dependencies [f0fd370]
+- Updated dependencies [86a555b]
+- Updated dependencies [8c5f4cf]
+- Updated dependencies [f0fd370]
+- Updated dependencies [381bbf3]
+- Updated dependencies [36801ae]
+- Updated dependencies [9acadba]
+- Updated dependencies [99fc683]
+- Updated dependencies [73d894d]
+  - @nifrajs/core@3.0.0
+  - @nifrajs/island-trigger@3.0.0
+
 ## 2.14.1
 
 ### Patch Changes

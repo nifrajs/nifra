@@ -1,5 +1,34 @@
 # @nifrajs/web-react
 
+## 3.0.0
+
+### Patch Changes
+
+- 86a555b: The roadmap contract surfaces are now shipped across the public packages: shared island triggers,
+  typed content indexes and joins, client loader/action hooks, and unified static, dynamic, and
+  intercepting boundary modes. WebSocket routes also support opt-in synchronous outbound validation
+  through `sendSchema` + `validateSend`; invalid or asynchronous outbound frames fail closed while the
+  default remains type-level only.
+- Updated dependencies [f3d2a35]
+- Updated dependencies [6e43c15]
+- Updated dependencies [293a7fe]
+- Updated dependencies [485ae60]
+- Updated dependencies [627b0ba]
+- Updated dependencies [f0fd370]
+- Updated dependencies [004deee]
+- Updated dependencies [86a555b]
+- Updated dependencies [8c5f4cf]
+- Updated dependencies [f0fd370]
+- Updated dependencies [381bbf3]
+- Updated dependencies [36801ae]
+- Updated dependencies [9acadba]
+- Updated dependencies [99fc683]
+- Updated dependencies [73d894d]
+  - @nifrajs/core@3.0.0
+  - @nifrajs/web@3.0.0
+  - @nifrajs/i18n@3.0.0
+  - @nifrajs/image@3.0.0
+
 ## 2.14.1
 
 ### Patch Changes

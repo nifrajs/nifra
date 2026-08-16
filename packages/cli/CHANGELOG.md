@@ -1,5 +1,104 @@
 # @nifrajs/cli
 
+## 3.0.0
+
+### Minor Changes
+
+- 5a94db4: The reserved typed-client proxy keys are now a frozen, published contract with a migration path.
+
+  `nifra fix --code NF-C018` rewrites the call sites a reserved-named route segment breaks. It reads the sites from the compiler rather than from a text search, so it finds every one and never mistakes a real `.delete` verb call for a path segment; a site it cannot rewrite confidently (bracket access, a node held in a variable) is reported and left alone rather than guessed at.
+
+  `nifra routes` now annotates a colliding route with the reserved key and the spelling that reaches it, in both the table and `--json`, so the closed set is visible while the route is being written instead of when a build breaks. The typed-client call form printed by `nifra context` and the `nifra_routes` MCP tool is corrected for these routes too: a reserved segment is emitted as a call on the parent node, never as a property or bracket access, both of which the proxy intercepts.
+
+  `@nifrajs/client` exports the set itself - `RESERVED_VERB_KEYS`, `RESERVED_EXACT_KEYS`, `RESERVED_KEY_READOUT`, and `reservedKeyFor(segment)` - as the one place it is written down. The list is frozen: no name is ever added to it, because adding one breaks, at compile time, every consumer that happens to have a route segment with that name. Anything the client gains from here on is reached through a namespaced or symbol key, which no URL path segment can spell.
+
+  Client 2.12.0 should have been a major release: its reserved-segment types reject a property access that compiled in 2.11. Its changelog entry now says so, and `CONTRIBUTING.md` states the rule - a type that stops compiling is a breaking change, runtime behavior notwithstanding, and ships with a codemod.
+
+### Patch Changes
+
+- 5948f24: A new `check:changesets` gate fails when a package's source changed since the last release without a changeset naming it. Versioning is fixed across the workspace, so an undeclared package still bumps - it just ships with a changelog that says nothing about what moved, which is how a consumer upgrades into a change no release note mentions. The gate anchors on the last release commit in git history, so it needs no tag, base ref, or network, and it runs in `nifra check` release mode as well as CI.
+- 627b0ba: `nifra` now accepts `--env-file <path>` on every command, repeatable, with later files winning and a variable already set in the process environment never overwritten.
+
+  Commands that reflect a project (`check`, `assure`, `levels`, `routes`, `capabilities`, `manifest`, `contracts`, `openapi`, `types`) do so by importing it, and a production-grade app validates its environment at module scope. Without that environment the app aborted the process before nifra reached its first check, so the entire output was the app's own `FATAL: invalid environment` with nothing tying it to the command that was run - an app whose environment lives in an uncommitted `.env.local` simply could not be checked. A missing `--env-file` is a hard error rather than a silent no-op, so a command never looks like it verified an environment it did not load.
+
+  When a reflected import kills the process anyway, the CLI now names the cause on the way out instead of leaving the app's bare abort as the only output.
+
+- 293a7fe: Identity-parity findings now state the install topology, and `nifra doctor` and the build guard now answer on the same basis.
+
+  Both tools already shared one walker, but they anchored it differently: doctor scanned the workspace that governs the project while the build guard scanned the app directory it was invoked in, so a duplicate that lives in a sibling workspace package could show up in one output and not the other. Since neither printed which directory it had scanned, that read as two tools contradicting each other about the same invariant. The scan is now always anchored on the governing workspace, both tools name the root they answered on, and a scan that stopped at the workspace-enumeration cap reports itself as partial instead of returning "no duplicates".
+
+  A finding whose copies lie outside the directory the command was run in now says why it is still fatal there: the gate is workspace-wide deliberately, because a copy reached through a workspace-linked dependency is not visible from the app directory - the exact case that once had the check report "none" against an already-broken dev server. Running a build inside one app can therefore fail on a copy held by a sibling app, and the message states that trade rather than leaving it to look like the tool checking the wrong project.
+
+  Each finding also carries a topology line: how many physical paths, how many install roots they fall under, and whether any of those roots sits outside the scanned root. That distinction is the whole fix decision - copies under one workspace collapse with a single reinstall from the root, while a copy under a linked checkout or a standalone sibling install belongs to another project and no reinstall here can remove it. Previously the error listed paths only, leaving that to be reverse-engineered.
+
+  The hard gate now fails closed on a truncated scan. A scan that stopped at any of its caps - workspace packages, linked packages, or link probes - and then found no duplicates has not shown there is none; the duplicate can be sitting in the part it never reached. `assertIdentityParity` treats that state as inconclusive and throws, rather than reading an incomplete scan as a pass. The reporting surfaces (`nifra doctor`, the dev warning) still print the partial result and name the limit that was hit.
+
+- 36801ae: New: a static `singleCopy` declaration that collapses an identity-sensitive package to one physical copy, for the duplicate no install can remove.
+
+  An app that consumes a package by `link:` from a **separate checkout** cannot deduplicate React (or `@nifrajs/*`) by installing differently. The linked files live in the other repo, so their imports resolve from that repo's real path, and that repo's install owns its `node_modules`: peer dependencies are already satisfied there, `overrides` govern the consuming install only, and a deleted nested copy returns on the sibling's next install. The build's existing per-framework dedupe covers bundled output, but nothing covered `bun test`, `bun run`, or a preloaded script - and `nifra check` failed the app with remediation ("deduplicate the install") that the topology makes impossible.
+
+  An app now declares the packages in its own `package.json`:
+
+  ```json
+  { "nifra": { "singleCopy": ["react", "react-dom", "@nifrajs/*"] } }
+  ```
+
+  Entries are exact names or `@scope/*` patterns; `true` expands to the built-in identity-sensitive set (`@nifrajs/*`, `react`, `react-dom`, `preact`, `solid-js`, `svelte`, `vue`). `@nifrajs/*` is in that set because two copies of `@nifrajs/core` are two distinct `Server` classes, so `.merge()` stops accepting an app built against the other one. The declaration is static so `nifra check` can read it without importing the app's config, which would mean executing app code inside a preflight.
+
+  `buildClient` and `buildServer` inject the resolver from the declaration, so bundled output needs no wiring. Unbundled phases are not covered automatically - Bun's runtime resolver never offers a bare specifier to a plugin - so an app preloads `@nifrajs/core/single-copy/register` from `bunfig.toml` (`preload` for `bun run`, `[test].preload` for `bun test`). `nifra check` now names the phase that is left uncovered when the declaration exists without the preload.
+
+  The redirect refuses to cross versions: two copies at different versions are skipped as `version-skew` and stay fatal, because collapsing them would turn a loud install problem into a quiet behavioural one. A declared duplicate is reported, not suppressed - `nifra check` keeps printing the copies as a warning and `nifra doctor` lists them under `deduplicatedInstalls` - so the topology stays visible without failing the gate.
+
+  New exports: `@nifrajs/core/single-copy` (`singleCopyPlugin`, `registerSingleCopy`, `planSingleCopy`, `readSingleCopyDeclaration`, `readSingleCopyRegistration`, `matchesSingleCopyDeclaration`, `IDENTITY_SENSITIVE_PACKAGES`) and the side-effect entry `@nifrajs/core/single-copy/register`.
+
+  The registration proof reads `preload` as entries rather than as text: an entry counts only when it **is** the register specifier, not when it merely contains it. A neighbouring path such as `"./vendor/@nifrajs/core/single-copy/register-shim.ts"` used to satisfy the check while Bun loaded that other module and the registrar never ran, so enforcement was reported as armed on a process still loading both copies. A `preload` this cannot read as quoted entries - a multi-line array, an interpolated value - now reports "not registered" instead of standing in for proof.
+
+- 8895dca: `nifra check` picks up a TypeScript install that lands while a long-lived process is running, and refuses a "typescript" that is not the compiler.
+
+  The rule that parses source with the project's TypeScript resolved it through a resolver that memoizes a specifier for the life of the process and, when the project has none installed, falls back to the global download cache. In a long-lived process - the MCP server - the first lookup before `bun install` pinned that cache entry, so every later check in the same session kept using it: the typecheck went phantom until the server was restarted. Resolution is now a filesystem probe for `node_modules/typescript` from the project root upward, the same walk the typecheck gate uses to find `tsc`, so an install that lands mid-session is seen on the next run.
+
+  The cache entry it resolved to was also not a compiler, only a version stub, which crashed the scan with `undefined is not an object (evaluating 'ts.ScriptKind.TSX')` - a Nifra-looking stack trace for "no compiler is installed here". A module that does not expose the compiler API is now treated as a resolution miss, so the CLI falls back to its own copy or reports TypeScript as missing.
+
+- 53fd454: Make `NF-C010` (workspace-linked dist older than its source) actually fixable.
+
+  The `workspace-dist.rebuild` recipe resolved the package through the project-contained path check, but a
+  workspace link points outside the project by definition - the only kind of install that can go stale - so
+  the check rejected every package the diagnostic can name and `nifra fix --code NF-C010` was a silent
+  no-op. Resolution now goes through the same lookup the staleness scan uses (package name -> the project's
+  own `node_modules` chain -> realpath), refuses with a stated reason (registry install, no `build` script,
+  not installed) instead of reporting nothing, and surfaces the package's own build failure.
+
+  `nifra check` now names the directory and script in the warning (`cd ../pkg && bun run build`) instead of
+  "usually `bun run build` in its directory", and `doctor --json` gained `packageDir` and `buildScript` on
+  each stale-dist finding. `nifra fix` gained a `failed` array so one recipe that cannot act reports why
+  without cancelling the rest of the run.
+
+- Updated dependencies [f3d2a35]
+- Updated dependencies [6e43c15]
+- Updated dependencies [293a7fe]
+- Updated dependencies [485ae60]
+- Updated dependencies [627b0ba]
+- Updated dependencies [f0fd370]
+- Updated dependencies [004deee]
+- Updated dependencies [5a94db4]
+- Updated dependencies [86a555b]
+- Updated dependencies [8c5f4cf]
+- Updated dependencies [ee2744c]
+- Updated dependencies [f0fd370]
+- Updated dependencies [381bbf3]
+- Updated dependencies [36801ae]
+- Updated dependencies [9acadba]
+- Updated dependencies [99fc683]
+- Updated dependencies [73d894d]
+  - @nifrajs/core@3.0.0
+  - @nifrajs/web@3.0.0
+  - @nifrajs/client@3.0.0
+  - @nifrajs/runner@3.0.0
+  - @nifrajs/mcp@3.0.0
+  - @nifrajs/schema@3.0.0
+  - @nifrajs/testing@3.0.0
+  - create-nifra@3.0.0
+
 ## 2.14.1
 
 ### Patch Changes

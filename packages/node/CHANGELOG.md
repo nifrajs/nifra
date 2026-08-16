@@ -1,5 +1,82 @@
 # @nifrajs/node
 
+## 3.0.0
+
+### Patch Changes
+
+- 0b84557: Proxying on Node no longer repackages request and response bodies through Web streams when both sides of the hop are Node-native.
+
+  `@nifrajs/node` receives a Node `IncomingMessage` and must present a Web `Request`; `@nifrajs/proxy/undici` receives that `Request` and must hand undici a Node stream again. Nothing observable came of that round trip, but it was the bulk of the remaining distance to `@fastify/reply-from`, which never leaves Node streams. Measured on a pinned-core Linux rig against a local origin at 50 connections, as a share of what the origin serves unproxied: GET went from 22.3% to 25.7% (fastify 24.1%) and POST from 21.0% to 26.4% (fastify 26.8%).
+
+  Nothing changes for callers. The Web view is still a real `ReadableStream` and is what any other consumer gets; the hand-off happens only when the receiving layer is going to write those bytes to a Node stream anyway, and only while the Web view is untouched. A body that has been read, is held by a reader, or has already been handed over takes the ordinary conversion instead, so a body can never be split between the two views.
+
+  Also fixed on the way: an upstream body destroyed for a client that disconnected mid-request could raise an unhandled stream error and terminate the process.
+
+- f0fd370: A plain render that Node refuses to write now answers 500 and leaves the server serving, and `status()` rejects an out-of-range code where it is written.
+
+  The plain lane goes straight to the socket, so a header value never passes through the `Headers` constructor that rejects CR/LF on the Web lane. Node rejects it at `writeHead` instead - as it does an invalid status, or any write after the head is already out. On the synchronous lane that throw escaped the request; on the asynchronous ones it surfaced as an unhandled rejection, which by Node's default terminates the process, so an application reflecting request data into `c.set.headers` or `status(...)` had a route-shaped input that could take the server down. Every write is now contained: an unsent head becomes the ordinary flat 500, and a head already on the wire ends the connection, because a status line cannot be recalled and a half-written body must not be left for the client to parse.
+
+  `status(code, ...)` now throws a `RangeError` for a code outside 200-599 or a non-integer. A plain render carries its status to `writeHead` unexamined, so an out-of-range value used to fail at the socket, far from the handler that produced it.
+
+- 004deee: `redirect()` returns a plain render instead of a `Response`.
+
+  A redirect is a status line and one header - the most body-less response there is - and building a Web `Response` for it costs the whole object, plus a stream drained back out on Node. It is now the same plain-data value `status(...)` produces, rendered on the lane an ordinary return takes: same bytes on the wire, now with a `content-length` on Node rather than a chunked empty body.
+
+  `redirect(...)` is still returned or thrown from exactly the same places - loader, action, layout gate - and `return redirect()` / `throw redirect()` stay interchangeable, including the client-submit conversion to a 204 + `X-Nifra-Redirect`.
+
+  **Breaking:** the returned value is no longer a `Response`, so `.status`, `.headers`, and `instanceof Response` are gone from it.
+
+  - Reading it: `redirect("/x").plain` is `{ status, headers, body }`. `toResponse()` builds the `Response` if something genuinely needs one.
+  - Adding headers: pass them - `redirect("/x", { headers: { "cache-control": "no-store" } })`. Cookies are unaffected; they still ride `c.set` and apply to a redirect exactly as before.
+  - Testing it: assert on `.plain` (or `toResponse()`), not on `.status`.
+
+  The Node writer was framing a body-less response as chunked: `writeHead` followed by a bare `end()` leaves Node to pick the framing, so the shortest response the framework emits went out with a chunk terminator and no length, where every Web-native runtime sends `content-length: 0`. It now declares the zero length on both lanes - a plain render, and a hand-rolled `Response` whose body is `null`.
+
+  A `Response` built from bytes - `new Response("hi")`, a `Uint8Array`, a `Blob` - now declares its length too. It hands those bytes over as a stream, exactly as a live producer does, so the writer could not tell the two apart and framed both as chunked. It now reads one chunk and gives the stream a microtask to say it is done: a source-backed body has already enqueued everything and closes inside it, a producer still generating does not. At most one chunk is held, never the whole body, so a large or endless stream is unaffected - and the microtask costs a streaming response no bytes on the wire, since Node does not flush the header until the first write either way.
+
+  Excluded throughout: HEAD, whose length describes the GET's body that neither lane knows; a status that cannot carry a body; and a length the caller set for itself. A relayed upstream body is also left alone - its length is the upstream's business.
+
+  A hand-rolled `Response` from a loader or action is untouched - still passed through verbatim, still converted the same way on a data request. Only what `redirect()` itself returns changed.
+
+- 6a5dff3: Static files are handed to the socket as the file stream they already are, instead of being repackaged through a Web stream first.
+
+  Same hand-off the proxy path uses: the response body is still a real `ReadableStream` and is what any middleware or other consumer gets, and anything that touches it first takes the ordinary conversion instead. On a pinned-core Linux rig at 50 connections this is worth about 2% on a 64 KB asset (8618 to 8809 req/s, every sample separated); on a 1 KB asset the difference sits inside run-to-run noise. Static serving is dominated by filesystem work rather than by the conversion, so the gain is small by nature.
+
+  The file descriptor behind a served file is closed on the new path whether the response completes or the client leaves mid-body.
+
+- f0fd370: A static file is resolved, containment-checked, and opened as one step that a symlink swap cannot race.
+
+  The lexical `..` guard on the requested path cannot see a symlink inside the served tree that points outside it, and the follow-up defence resolved the path, checked it, and then opened the original name - a window a local attacker who can write inside the tree wins by swapping a link between the check and the open, so the descriptor streams an external file while the check answered on a contained path. The served path is now resolved with `realpath`, the containment check runs on that resolved name, and the resolved name is opened with `O_NOFOLLOW`, so a link appearing on the final component after the resolve is refused rather than followed. A non-regular file (a directory, a device) still answers 404 from its opened descriptor's own stat, not from a separate lookup.
+
+- 9acadba: New `status(code, body?, init?)`: end a request from anywhere in the lifecycle without building a `Response`. Every error the framework renders itself now takes the same lane.
+
+  ```ts
+  import { server, status } from "@nifrajs/core";
+
+  app.derive((c) => {
+    const user = sessionOf(c);
+    if (user === undefined)
+      return status(401, { ok: false, error: "unauthorized" });
+    return { user };
+  });
+  ```
+
+  A `beforeHandle` could always short-circuit by returning a value, but a `derive`'s return **is** the context extension, so its only early exit was `throw new Response(...)` - the most expensive way to say 401. It is three costs stacked: constructing a Web `Response`, throwing it, and unwinding a lifecycle stage. On Node there is a fourth, because a `Response` built outside the handler is opaque to the adapter, so its body is drained back out through a Web stream and the reply goes out chunked instead of with a `content-length`.
+
+  `status(...)` is plain data - a status, optional headers, and a body the rendering lane serializes exactly like a handler's plain return - so a rejection now costs what an accepted request costs. It can be returned (preferred) or thrown, so a guard helper called for effect (`requireSession(c)`) can still end the request from inside a call it makes.
+
+  Measured on the Linux rig (4 server cores, 50 connections, medians; a rejecting `derive` vs the same `derive` returning `status(...)`, so both exit at the same point in the lifecycle):
+
+  | runtime | `throw new Response` | `status(...)` |
+  | ------- | -------------------- | ------------- |
+  | node    | 39974                | 68577         |
+  | deno    | 58403                | 89742         |
+  | bun     | 79757                | 109328        |
+
+  The gap is largest on Node because of the drain, but the lifecycle cost was never runtime-specific: throwing to leave a `derive` cost every runtime real throughput.
+
+  The same render now serves the errors an application cannot move onto a faster lane itself - 404, 405, 400 on a malformed path, 415, 422 on a validation failure, 500, 504, and the admission rejections. Bytes are unchanged on every lane, and the Node lane gains a `content-length` it did not have. `Response` stays exactly what it was for everything that genuinely needs one: redirects, streams, and any handler that returns or throws one.
+
 ## 2.14.1
 
 ## 2.14.0

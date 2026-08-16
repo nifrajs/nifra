@@ -6521,6 +6521,94 @@ If capabilities are configured, review a new snapshot and run
 Exercise authentication, redirects, backend mounting, SSE/WebSocket routes, and each deploy
 adapter the application uses.
 
+## Nifra 3.0 migration guide - upgrade from 2.x
+
+> Upgrade a Nifra 2.x application to 3.0: automated dependency pins, the plain-data redirect return value, the frozen reserved typed-client segment keys and their codemod, the Node proxy transport default, and the release gates.
+
+Nifra 3.0 makes a redirect the same plain-data value an ordinary return is, and freezes the
+reserved typed-client segment keys into a published contract. The upgrade command handles the
+deterministic dependency pins; this guide covers the two structural changes it deliberately
+cannot guess, plus the Node proxy transport default.
+
+### 1. Run the executable upgrade
+
+```ts
+
+```
+
+The command pins every matching `@nifrajs/*`, `Nifra`, and
+`create-nifra` dependency to `3.0.0` while preserving
+caret/tilde/exact style. No package is removed and no import specifier moves this release, so
+the runner only pins. Dry-run is the default; `--write` applies and verifies with
+`nifra check`.
+
+### 2. Read redirects as plain data
+
+`redirect(...)` now returns the same plain render value `status(...)`
+produces, not a Web `Response`. Same bytes on the wire, now with a
+`content-length` on Node instead of a chunked empty body. It is still returned or
+thrown from the same places - loader, action, layout gate - and `return redirect()`
+/ `throw redirect()` stay interchangeable, including the client-submit conversion to
+a 204 with `X-Nifra-Redirect`.
+
+**Breaking:** the value is no longer a `Response`, so
+`.status`, `.headers`, and `instanceof Response` are gone from
+it. Read `.plain`, build one with `toResponse()` when needed, pass headers
+through the second argument, and assert on `.plain` in tests. A hand-rolled
+`Response` from a loader or action is untouched - only what `redirect()`
+itself returns changed.
+
+```ts
+
+```
+
+### 3. Fix reserved typed-client segments
+
+The reserved proxy keys are now a frozen, published contract. A route whose static path
+segment spells one of them - an HTTP verb in any casing, or `subscribe`,
+`ws`, `index`, `then` - is unreachable by property access,
+because the proxy resolves the reserved key before a path segment. The types now reject that
+access at compile time instead of silently reaching the wrong node.
+
+```ts
+
+```
+
+Run `nifra fix --code NF-C018` to rewrite the affected call sites. It reads them
+from the compiler rather than a text search, so it finds every one and never mistakes a real
+`.delete` verb call for a path segment; a site it cannot rewrite confidently
+(bracket access, a node held in a variable) is reported and left alone.
+`nifra routes` annotates a colliding route with the spelling that reaches it, in
+both the table and `--json`. The set is exported as the one place it is written down.
+
+```ts
+
+```
+
+### 4. Review the Node proxy transport (only if you use it)
+
+On Node, `@nifrajs/proxy` now defaults to the undici transport, shipped from the new
+`@nifrajs/proxy/undici` subpath. Pass an explicit `transport` to
+`createProxy` to override it.
+
+```ts
+
+```
+
+### 5. Run the release gates
+
+-
+Run `nifra check --json` and fix every error, including any remaining NF-C018.
+
+-
+If the project has `nifra.assurance.ts`, run `nifra assure --json`.
+
+- Run the application test suite and a production build.
+
+-
+Exercise every redirect path - loader, action, and layout gate - and, if the app proxies,
+each deploy adapter it uses.
+
 ## Nifra - Migrating from Express, Hono, Fastify & Elysia
 
 > Move a backend to Nifra: routing, middleware, validation, and body parsing map directly from Express, Hono, Fastify, and Elysia - and you gain a typed client, multi-runtime deploy, and optional SSR.

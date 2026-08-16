@@ -87,6 +87,7 @@ export const DOCS_GROUPS: readonly DocsGroup[] = [
   {
     title: "Migrate",
     links: [
+      { href: "/docs/migrate-3", label: "Upgrade from Nifra 2.x" },
       { href: "/docs/migrate-2", label: "Upgrade from Nifra 1.x" },
       { href: "/docs/migrate-frontend", label: "From Next, Nuxt, SvelteKit" },
       { href: "/docs/migrate-backend", label: "From Express, Hono, Fastify" },

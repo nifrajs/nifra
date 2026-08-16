@@ -1,7 +1,0 @@
----
-"@nifrajs/core": patch
----
-
-`bodyLimit: "unlimited"` now actually skips the cap on every read path, not only on direct `c.req` reads. A route that declared the exemption alongside a `schema.body` (or that called `c.boundedJson()` / `c.boundedBody()` with no explicit cap) silently fell back to the server-wide `maxBodyBytes` and answered 413 at a bound the route had explicitly opted out of. The resolved route limit is now read through `UNLIMITED_BODY_BYTES` instead of `?? maxBodyBytes`, so `undefined` keeps meaning "the route opted out" everywhere rather than flipping to "use the default" at the reader. Routes that never declared `bodyLimit` are unaffected: their limit is resolved to `maxBodyBytes` at registration, exactly as before.
-
-An unlimited route no longer publishes the `nifra.body-bounded` assurance id. It used to earn the id from its `body` schema or from a declared numeric limit that `"unlimited"` then overrode, so the one route in an application with no ceiling at all was the one certifying that its body was bounded - and a policy built on that id passed exactly where it should have failed. The exemption is documented as covering the transport cap only: a route that pairs it with a `body` schema, or with `idempotency`, still assembles every delivered byte in memory before anything examines them, so an unlimited body belongs on `c.req.body` as a stream, bounded by the protocol it speaks.

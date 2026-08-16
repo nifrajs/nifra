@@ -1,5 +1,11 @@
 # @nifrajs/runner
 
+## 3.0.0
+
+### Patch Changes
+
+- ee2744c: Runner command responses are now read incrementally and canceled at the configured output limit, so an oversized or non-terminating response cannot be fully buffered before truncation.
+
 ## 2.14.1
 
 ## 2.14.0
