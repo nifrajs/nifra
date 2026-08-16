@@ -1,0 +1,62 @@
+rules:
+  - id: nifra-untrusted-forwarded-ip
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >
+      Reading cf-connecting-ip / x-forwarded-for in application code trusts a client-settable header.
+      The caller IP must come from the trusted proxy layer, never from request headers directly.
+    metadata:
+      references:
+        - https://owasp.org/www-community/attacks/IP_Address_Spoofing
+    patterns:
+      - pattern-either:
+          - pattern: $REQ.headers.get("x-forwarded-for")
+          - pattern: $REQ.headers.get("cf-connecting-ip")
+          - pattern: $H["x-forwarded-for"]
+          - pattern: $H["cf-connecting-ip"]
+
+  - id: nifra-non-constant-time-secret-compare
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >
+      Comparing a secret/token with === leaks length and content via timing. Use timingSafeEqual.
+    metadata:
+      references:
+        - https://codahale.com/a-lesson-in-timing-attacks/
+    patterns:
+      - pattern-either:
+          - pattern: $SECRET === $OTHER
+          - pattern: $OTHER === $SECRET
+      - metavariable-regex:
+          metavariable: $SECRET
+          regex: (?i).*(token|secret|apikey|api_key|password|signature|hmac).*
+
+  - id: nifra-unbounded-body-read
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: >
+      Reading the full request body without a bound (req.text()/req.json()/req.arrayBuffer()) can
+      exhaust memory. Use a bounded reader or declare a body schema / bodyLimit.
+    patterns:
+      - pattern-either:
+          - pattern: await $REQ.text()
+          - pattern: await $REQ.json()
+          - pattern: await $REQ.arrayBuffer()
+
+  - id: nifra-child-process-shell-true
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >
+      Spawning with shell:true on interpolated input invites command injection. Pass an argv array
+      with shell disabled.
+    patterns:
+      - pattern: $SPAWN(..., { ..., shell: true, ... })
+
+  - id: nifra-eval-on-input
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: eval / new Function on runtime data is remote code execution surface.
+    patterns:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: new Function(...)
