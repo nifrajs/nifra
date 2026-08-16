@@ -1,4 +1,12 @@
 import type { ClientRouter, Fetcher, FetcherState } from "@nifrajs/web"
+import {
+  createMountedRouterRef,
+  IDLE_FETCHER_STATE,
+  idleFetcherSnapshot,
+  noFetchers,
+  noopAsync,
+  noopSubscribe,
+} from "@nifrajs/web/internal/fetcher-runtime"
 /**
  * `@nifrajs/web-react/fetcher` - React bindings for concurrent fetchers. `useFetcher(key)` subscribes a
  * component to an independent {@link Fetcher} (via `useSyncExternalStore`) and returns its reactive
@@ -13,21 +21,15 @@ import type { ClientRouter, Fetcher, FetcherState } from "@nifrajs/web"
  */
 import { useSyncExternalStore } from "react"
 
-// The active client router (set by `mountRouter`). Module-scoped: the browser mounts one app per
-// page, and fetchers never exist on the server. Shared with `client.ts`'s `mountRouter`.
-let mountedRouter: ClientRouter | undefined
+const mountedRouter = createMountedRouterRef()
 
 /** Register (or clear) the router that owns fetchers - called by `mountRouter`. Not for app use. */
 export function setMountedRouter(router: ClientRouter | undefined): void {
-  mountedRouter = router
+  mountedRouter.set(router)
 }
 
 // Stable idle values for the server / pre-mount snapshot (stable refs → no `useSyncExternalStore`
 // loop, no hydration mismatch).
-const IDLE: FetcherState = { pending: false, data: undefined }
-const NO_FETCHERS: readonly Fetcher[] = []
-const noopSubscribe = (): (() => void) => () => {}
-const noopAsync = async (): Promise<void> => {}
 
 /** A fetcher's reactive {@link FetcherState} plus its imperative `load`/`submit`. */
 export interface FetcherHandle extends FetcherState {
@@ -43,11 +45,11 @@ export interface FetcherHandle extends FetcherState {
  * with different keys run concurrently without disturbing the active route or each other.
  */
 export function useFetcher(key: string): FetcherHandle {
-  const fetcher = mountedRouter?.fetcher(key)
+  const fetcher = mountedRouter.get()?.fetcher(key)
   const state = useSyncExternalStore(
     fetcher?.subscribe ?? noopSubscribe,
-    fetcher?.snapshot ?? (() => IDLE),
-    () => IDLE, // server: fetchers are client-only → idle (matches the first client render)
+    fetcher?.snapshot ?? idleFetcherSnapshot,
+    () => IDLE_FETCHER_STATE, // server: fetchers are client-only → idle (matches the first client render)
   )
   return { ...state, load: fetcher?.load ?? noopAsync, submit: fetcher?.submit ?? noopAsync }
 }
@@ -58,9 +60,10 @@ export function useFetcher(key: string): FetcherHandle {
  * is created.
  */
 export function useFetchers(): readonly Fetcher[] {
+  const router = mountedRouter.get()
   return useSyncExternalStore(
-    mountedRouter?.subscribeFetchers ?? noopSubscribe,
-    mountedRouter?.fetchers ?? (() => NO_FETCHERS),
-    () => NO_FETCHERS,
+    router?.subscribeFetchers ?? noopSubscribe,
+    router?.fetchers ?? noFetchers,
+    noFetchers,
   )
 }

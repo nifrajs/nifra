@@ -1,7 +1,9 @@
 import type { QueryClient, QueryHandle, QueryState } from "@nifrajs/web"
-// `/client`, not the root - these are DOM values, and the root's graph carries the
-// server, which Vite's dev server evaluates rather than tree-shakes.
-import { createQueryClient } from "@nifrajs/web/client"
+import {
+  createNoClientRefetch,
+  getQueryClientSingleton,
+  IDLE_QUERY_STATE,
+} from "@nifrajs/web/internal/query-runtime"
 /**
  * `@nifrajs/web-preact/query` - Preact bindings for the keyed query-cache. `useQuery(key, fn)` subscribes a
  * component to a query (via `useSyncExternalStore` from preact/compat) and fetches on mount / key change;
@@ -15,31 +17,15 @@ import { createQueryClient } from "@nifrajs/web/client"
 import { useSyncExternalStore } from "preact/compat"
 import { useEffect } from "preact/hooks"
 
-let client: QueryClient | undefined
-function getClient(): QueryClient | undefined {
-  if (typeof window === "undefined") return undefined // SSR → no client (queries render idle)
-  if (client === undefined) client = createQueryClient({ now: () => Date.now() })
-  return client
-}
-
 /** Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation). */
 export function useQueryClient(): Pick<QueryClient, "invalidateQueries"> {
-  return getClient() ?? { invalidateQueries: () => {} }
+  return getQueryClientSingleton() ?? { invalidateQueries: () => {} }
 }
 
 // Stable idle snapshot for the server / pre-fetch render (stable ref → no loop, no hydration mismatch).
-const IDLE: QueryState<never> = Object.freeze({
-  status: "pending",
-  data: undefined,
-  error: undefined,
-  isFetching: false,
-  updatedAt: Number.NEGATIVE_INFINITY,
-})
-const idleSnapshot = (): QueryState<never> => IDLE
+const idleSnapshot = (): QueryState<never> => IDLE_QUERY_STATE
 const noopSubscribe = (): (() => void) => () => {}
-const noopAsync = async (): Promise<never> => {
-  throw new Error("[nifra/web-preact] useQuery.refetch called with no query client (server?)")
-}
+const noopAsync = createNoClientRefetch<never>("[nifra/web-preact]", "useQuery.refetch")
 
 /** A query's reactive {@link QueryState} plus `isPending` + `refetch`. */
 export interface UseQueryResult<T> extends QueryState<T> {
@@ -55,7 +41,7 @@ export interface UseQueryResult<T> extends QueryState<T> {
  * one in-flight fetch (dedup). Refetches on mount and when the key changes; SSR-idle.
  */
 export function useQuery<T>(key: unknown, fn: () => Promise<T>): UseQueryResult<T> {
-  const handle: QueryHandle<T> | undefined = getClient()?.query<T>(key, fn)
+  const handle: QueryHandle<T> | undefined = getQueryClientSingleton()?.query<T>(key, fn)
   const state = useSyncExternalStore<QueryState<T>>(
     handle?.subscribe ?? noopSubscribe,
     handle ? handle.snapshot : idleSnapshot,

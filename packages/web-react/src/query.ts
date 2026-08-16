@@ -24,7 +24,12 @@ import type {
 } from "@nifrajs/web"
 // `/client`, not the root - these are DOM values, and the root's graph carries the
 // server, which Vite's dev server evaluates rather than tree-shakes.
-import { createMutation, createQueryClient } from "@nifrajs/web/client"
+import { createMutation } from "@nifrajs/web/client"
+import {
+  createNoClientRefetch,
+  getQueryClientSingleton,
+  IDLE_QUERY_STATE,
+} from "@nifrajs/web/internal/query-runtime"
 import {
   createContext,
   createElement,
@@ -38,15 +43,6 @@ import {
 
 // See the note in router.ts: the `export type { … } from` form would keep a side-effect import.
 export type { DehydratedState }
-
-// The lazily-created client-side singleton (used when no QueryClientProvider is present). SSR-guarded:
-// the server has no singleton, so provider-less hooks render idle there.
-let singleton: QueryClient | undefined
-function getSingleton(): QueryClient | undefined {
-  if (typeof window === "undefined") return undefined
-  if (singleton === undefined) singleton = createQueryClient({ now: () => Date.now() })
-  return singleton
-}
 
 // A no-op client for the server / pre-hydration (all reads empty, all writes ignored). Stable ref so a
 // hook's `useSyncExternalStore` server snapshot is consistent.
@@ -76,26 +72,17 @@ export function QueryClientProvider(props: {
  * else a no-op (server / pre-hydration). Use it to `invalidateQueries`/`setQueryData`/`prefetchQuery`. */
 export function useQueryClient(): QueryClient {
   const provided = useContext(QueryClientContext)
-  return provided ?? getSingleton() ?? NOOP_CLIENT
+  return provided ?? getQueryClientSingleton() ?? NOOP_CLIENT
 }
 
 // Stable idle snapshots + handles for the server / pre-fetch render (stable refs → no loop, no mismatch).
-const IDLE: QueryState<never> = Object.freeze({
-  status: "pending",
-  data: undefined,
-  error: undefined,
-  isFetching: false,
-  updatedAt: Number.NEGATIVE_INFINITY,
-})
-const idleSnapshot = (): QueryState<never> => IDLE
-const IDLE_INFINITE: QueryState<InfiniteData<never, never>> = IDLE as QueryState<
+const idleSnapshot = (): QueryState<never> => IDLE_QUERY_STATE
+const IDLE_INFINITE: QueryState<InfiniteData<never, never>> = IDLE_QUERY_STATE as QueryState<
   InfiniteData<never, never>
 >
 const idleInfiniteSnapshot = (): QueryState<InfiniteData<never, never>> => IDLE_INFINITE
 const noopSubscribe = (): (() => void) => () => {}
-const noopAsync = async (): Promise<never> => {
-  throw new Error("[nifra/web-react] query action called with no query client (server?)")
-}
+const noopAsync = createNoClientRefetch<never>("[nifra/web-react]", "query action")
 const IDLE_HANDLE: QueryHandle<never> = {
   snapshot: idleSnapshot,
   subscribe: noopSubscribe,

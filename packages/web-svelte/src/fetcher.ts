@@ -1,4 +1,9 @@
 import type { ClientRouter, Fetcher, FetcherState } from "@nifrajs/web"
+import {
+  createMountedRouterRef,
+  IDLE_FETCHER_STATE,
+  noopAsync,
+} from "@nifrajs/web/internal/fetcher-runtime"
 /**
  * `@nifrajs/web-svelte/fetcher` - Svelte bindings for concurrent fetchers, as **Svelte stores** (plain
  * `.ts`, no runes/compiler needed). `useFetcher(key)` returns a `Readable<FetcherState>` augmented with
@@ -13,17 +18,12 @@ import type { ClientRouter, Fetcher, FetcherState } from "@nifrajs/web"
  */
 import { type Readable, readable } from "svelte/store"
 
-// The active client router (set by `mountRouter`). Module-scoped: the browser mounts one app per
-// page, and fetchers never exist on the server. Shared with `client.ts`'s `mountRouter`.
-let mountedRouter: ClientRouter | undefined
+const mountedRouter = createMountedRouterRef()
 
 /** Register (or clear) the router that owns fetchers - called by `mountRouter`. Not for app use. */
 export function setMountedRouter(router: ClientRouter | undefined): void {
-  mountedRouter = router
+  mountedRouter.set(router)
 }
-
-const IDLE: FetcherState = { pending: false, data: undefined }
-const noopAsync = async (): Promise<void> => {}
 
 /** A fetcher store: a `Readable<FetcherState>` (read via `$`) plus imperative `load`/`submit`. */
 export type FetcherStore = Readable<FetcherState> & {
@@ -39,8 +39,8 @@ export type FetcherStore = Readable<FetcherState> & {
  * Multiple `useFetcher` calls with different keys run concurrently without disturbing the active route.
  */
 export function useFetcher(key: string): FetcherStore {
-  const fetcher = mountedRouter?.fetcher(key)
-  const store = readable<FetcherState>(fetcher ? fetcher.snapshot() : IDLE, (set) => {
+  const fetcher = mountedRouter.get()?.fetcher(key)
+  const store = readable<FetcherState>(fetcher ? fetcher.snapshot() : IDLE_FETCHER_STATE, (set) => {
     if (fetcher === undefined) return
     set(fetcher.snapshot())
     return fetcher.subscribe(() => set(fetcher.snapshot()))
@@ -57,7 +57,7 @@ export function useFetcher(key: string): FetcherStore {
  * new one is created.
  */
 export function useFetchers(): Readable<readonly Fetcher[]> {
-  const router = mountedRouter
+  const router = mountedRouter.get()
   return readable<readonly Fetcher[]>(router ? router.fetchers() : [], (set) => {
     if (router === undefined) return
     set(router.fetchers())

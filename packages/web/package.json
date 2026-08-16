@@ -159,6 +159,16 @@
       "bun": "./src/internal/parity.ts",
       "types": "./dist/internal/parity.d.ts",
       "default": "./dist/internal/parity.js"
+    },
+    "./internal/query-runtime": {
+      "bun": "./src/internal/query-runtime.ts",
+      "types": "./dist/internal/query-runtime.d.ts",
+      "default": "./dist/internal/query-runtime.js"
+    },
+    "./internal/fetcher-runtime": {
+      "bun": "./src/internal/fetcher-runtime.ts",
+      "types": "./dist/internal/fetcher-runtime.d.ts",
+      "default": "./dist/internal/fetcher-runtime.js"
     }
   },
   "files": [

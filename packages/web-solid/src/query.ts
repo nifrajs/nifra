@@ -1,7 +1,9 @@
 import type { QueryClient, QueryState } from "@nifrajs/web"
-// `/client`, not the root - these are DOM values, and the root's graph carries the
-// server, which Vite's dev server evaluates rather than tree-shakes.
-import { createQueryClient } from "@nifrajs/web/client"
+import {
+  createNoClientRefetch,
+  getQueryClientSingleton,
+  IDLE_QUERY_STATE,
+} from "@nifrajs/web/internal/query-runtime"
 /**
  * `@nifrajs/web-solid/query` - Solid bindings for the keyed query-cache. `createQuery(key, fn)` bridges a
  * query's `subscribe`/`snapshot` store into a Solid signal and fetches on mount; `useQueryClient`
@@ -14,25 +16,10 @@ import { createQueryClient } from "@nifrajs/web/client"
  */
 import { type Accessor, createSignal, onCleanup, onMount } from "solid-js"
 
-let client: QueryClient | undefined
-function getClient(): QueryClient | undefined {
-  if (typeof window === "undefined") return undefined // SSR → no client (queries render idle)
-  if (client === undefined) client = createQueryClient({ now: () => Date.now() })
-  return client
-}
-
 /** Access the query client to imperatively `invalidateQueries(keyOrPrefix)` (e.g. after a mutation). */
 export function useQueryClient(): Pick<QueryClient, "invalidateQueries"> {
-  return getClient() ?? { invalidateQueries: () => {} }
+  return getQueryClientSingleton() ?? { invalidateQueries: () => {} }
 }
-
-const IDLE: QueryState<never> = Object.freeze({
-  status: "pending",
-  data: undefined,
-  error: undefined,
-  isFetching: false,
-  updatedAt: Number.NEGATIVE_INFINITY,
-})
 
 /** A query's reactive state accessor plus `refetch`. */
 export interface CreateQueryResult<T> {
@@ -48,8 +35,10 @@ export interface CreateQueryResult<T> {
  * Fetches on mount; SSR-idle. Call inside a component (owns the subscription).
  */
 export function createQuery<T>(key: unknown, fn: () => Promise<T>): CreateQueryResult<T> {
-  const handle = getClient()?.query<T>(key, fn)
-  const [state, setState] = createSignal<QueryState<T>>(handle ? handle.snapshot() : IDLE)
+  const handle = getQueryClientSingleton()?.query<T>(key, fn)
+  const [state, setState] = createSignal<QueryState<T>>(
+    handle ? handle.snapshot() : IDLE_QUERY_STATE,
+  )
   if (handle !== undefined) {
     onCleanup(handle.subscribe(() => setState(() => handle.snapshot())))
     onMount(() => {
@@ -59,8 +48,6 @@ export function createQuery<T>(key: unknown, fn: () => Promise<T>): CreateQueryR
   }
   return {
     state,
-    refetch: async () => {
-      throw new Error("[nifra/web-solid] createQuery.refetch called with no query client (server?)")
-    },
+    refetch: createNoClientRefetch<T>("[nifra/web-solid]", "createQuery.refetch"),
   }
 }

@@ -1,4 +1,10 @@
 import type { ClientRouter, Fetcher, FetcherState } from "@nifrajs/web"
+import {
+  createMountedRouterRef,
+  IDLE_FETCHER_STATE,
+  NO_FETCHERS,
+  noopAsync,
+} from "@nifrajs/web/internal/fetcher-runtime"
 /**
  * `@nifrajs/web-vue/fetcher` - Vue bindings for concurrent fetchers. `useFetcher(key)` subscribes a
  * component to an independent {@link Fetcher} (a `shallowRef` fed by `fetcher.subscribe`, cleaned up via
@@ -12,18 +18,12 @@ import type { ClientRouter, Fetcher, FetcherState } from "@nifrajs/web"
  */
 import { onScopeDispose, type ShallowRef, shallowRef } from "vue"
 
-// The active client router (set by `mountRouter`). Module-scoped: the browser mounts one app per
-// page, and fetchers never exist on the server. Shared with `client.ts`'s `mountRouter`.
-let mountedRouter: ClientRouter | undefined
+const mountedRouter = createMountedRouterRef()
 
 /** Register (or clear) the router that owns fetchers - called by `mountRouter`. Not for app use. */
 export function setMountedRouter(router: ClientRouter | undefined): void {
-  mountedRouter = router
+  mountedRouter.set(router)
 }
-
-const IDLE: FetcherState = { pending: false, data: undefined }
-const NO_FETCHERS: readonly Fetcher[] = []
-const noopAsync = async (): Promise<void> => {}
 
 /** A fetcher's reactive {@link FetcherState} (read `.value`) plus its imperative `load`/`submit`. */
 export interface FetcherHandle {
@@ -40,8 +40,8 @@ export interface FetcherHandle {
  * `useFetcher` calls with different keys run concurrently without disturbing the active route.
  */
 export function useFetcher(key: string): FetcherHandle {
-  const fetcher = mountedRouter?.fetcher(key)
-  const state = shallowRef<FetcherState>(fetcher ? fetcher.snapshot() : IDLE)
+  const fetcher = mountedRouter.get()?.fetcher(key)
+  const state = shallowRef<FetcherState>(fetcher ? fetcher.snapshot() : IDLE_FETCHER_STATE)
   if (fetcher) {
     const unsubscribe = fetcher.subscribe(() => {
       state.value = fetcher.snapshot()
@@ -57,7 +57,7 @@ export function useFetcher(key: string): FetcherHandle {
  * one is created.
  */
 export function useFetchers(): Readonly<ShallowRef<readonly Fetcher[]>> {
-  const router = mountedRouter
+  const router = mountedRouter.get()
   const state = shallowRef<readonly Fetcher[]>(router ? router.fetchers() : NO_FETCHERS)
   if (router) {
     const unsubscribe = router.subscribeFetchers(() => {

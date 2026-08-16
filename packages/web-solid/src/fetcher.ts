@@ -1,4 +1,9 @@
 import type { ClientRouter, Fetcher, FetcherState } from "@nifrajs/web"
+import {
+  createMountedRouterRef,
+  IDLE_FETCHER_STATE,
+  noopAsync,
+} from "@nifrajs/web/internal/fetcher-runtime"
 /**
  * `@nifrajs/web-solid/fetcher` - Solid bindings for concurrent fetchers. `createFetcher(key)` bridges an
  * independent {@link Fetcher}'s `subscribe`/`snapshot` store into a Solid signal (the pattern the F16
@@ -13,16 +18,12 @@ import type { ClientRouter, Fetcher, FetcherState } from "@nifrajs/web"
  */
 import { type Accessor, createSignal, onCleanup } from "solid-js"
 
-// The active client router (set by `mountRouter`). Module-scoped: one app per page, client-only.
-let mountedRouter: ClientRouter | undefined
+const mountedRouter = createMountedRouterRef()
 
 /** Register (or clear) the router that owns fetchers - called by `mountRouter`. Not for app use. */
 export function setMountedRouter(router: ClientRouter | undefined): void {
-  mountedRouter = router
+  mountedRouter.set(router)
 }
-
-const IDLE: FetcherState = { pending: false, data: undefined }
-const noopAsync = async (): Promise<void> => {}
 
 /** A fetcher's reactive state accessor plus its imperative `load`/`submit`. */
 export interface FetcherHandle {
@@ -40,8 +41,10 @@ export interface FetcherHandle {
  * without disturbing the active route or each other. Call inside a component (owns the subscription).
  */
 export function createFetcher(key: string): FetcherHandle {
-  const fetcher = mountedRouter?.fetcher(key)
-  const [state, setState] = createSignal<FetcherState>(fetcher ? fetcher.snapshot() : IDLE)
+  const fetcher = mountedRouter.get()?.fetcher(key)
+  const [state, setState] = createSignal<FetcherState>(
+    fetcher ? fetcher.snapshot() : IDLE_FETCHER_STATE,
+  )
   if (fetcher !== undefined) {
     onCleanup(fetcher.subscribe(() => setState(fetcher.snapshot())))
     return { state, load: fetcher.load, submit: fetcher.submit }
@@ -54,7 +57,7 @@ export function createFetcher(key: string): FetcherHandle {
  * each entry's `.snapshot()` for its state. Updates whenever any fetcher transitions or one is created.
  */
 export function useFetchers(): Accessor<readonly Fetcher[]> {
-  const router = mountedRouter
+  const router = mountedRouter.get()
   const [list, setList] = createSignal<readonly Fetcher[]>(router ? router.fetchers() : [])
   if (router !== undefined) {
     onCleanup(router.subscribeFetchers(() => setList(router.fetchers())))
