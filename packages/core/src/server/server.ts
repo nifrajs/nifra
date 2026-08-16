@@ -86,7 +86,7 @@ import {
   readBoundedForm,
   searchOf,
 } from "./query.ts"
-import { RequestContext, readBoundedJsonSource } from "./request-context.ts"
+import { RequestContext, readBodyFramed, readBoundedJsonSource } from "./request-context.ts"
 import {
   applyStaticResponseHeaders,
   buildStaticResponseHeaders,
@@ -3585,8 +3585,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           )
       const finish = (value: unknown): MaybePromise<T> =>
         runParsed(value, ctx, finalize, wrapResponse)
-      return this.readBodyInput(source, maxBodyBytes, finish, wrapResponse, (err) =>
-        logError(err, ctx, finalize, wrapResponse),
+      return readBodyFramed(
+        source,
+        maxBodyBytes,
+        this.protoPoisoning,
+        finish,
+        wrapResponse,
+        (err) => logError(err, ctx, finalize, wrapResponse),
       )
     }
   }
@@ -3762,48 +3767,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     finalize: (result: unknown, set: CtxSet) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): Promise<T> {
-    return this.readBodyInput(
+    return readBodyFramed(
       source,
       entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
+      this.protoPoisoning,
       (parsed) => this.finishBodyOnly(entry, parsed, ctx, finalize, wrapResponse),
       wrapResponse,
       (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
     )
-  }
-
-  /** Shared bounded body framing/parser. Both body lanes use the same trust-boundary checks; only
-   * the validation + handler continuation differs. */
-  private readBodyInput<T>(
-    source: RequestSource,
-    maxBodyBytes: number,
-    onParsed: (parsed: unknown) => MaybePromise<T>,
-    wrapResponse: (response: Response | ResponseResult) => T,
-    onError: (err: unknown) => MaybePromise<T>,
-  ): Promise<T> {
-    const contentType = headerOf(source, "content-type") ?? ""
-    if (contentType !== "application/json" && !contentType.includes("application/json")) {
-      if (isUrlEncodedForm(contentType)) {
-        return readBoundedForm(source, maxBodyBytes).then(
-          (form) => (isResponseResult(form) ? wrapResponse(form) : onParsed(form)),
-          onError,
-        ) as Promise<T>
-      }
-      return Promise.resolve(wrapResponse(plainError(415, "unsupported_media_type")))
-    }
-
-    // All JSON bodies go through readBoundedJson - the single enforcement point for the framed
-    // fast path (post-read byte re-check), the streaming cap, and the prototype-poisoning guard.
-    // A separate inlined native-json() fast path here would fork the trust boundary in two.
-    try {
-      return this.readBoundedJson(
-        source,
-        maxBodyBytes,
-        (parsed) => (isResponseResult(parsed) ? wrapResponse(parsed) : onParsed(parsed)),
-        onError,
-      )
-    } catch (err) {
-      return Promise.resolve(onError(err))
-    }
   }
 
   /** Validate + run the handler for the bodyOnly path - shared by the inline fast path and the

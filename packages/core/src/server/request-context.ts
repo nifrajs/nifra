@@ -18,7 +18,7 @@ import { type CookieOptions, cookieNamePrefix, parseCookies, serializeCookie } f
 import { headerObjectOf } from "./headers.ts"
 import { plainError } from "./http.ts"
 import { guardParsedValue, type ProtoPoisoning, parseJsonGuarded } from "./proto-guard.ts"
-import { searchOf } from "./query.ts"
+import { isUrlEncodedForm, readBoundedForm, searchOf } from "./query.ts"
 import { responseJsonContentType } from "./respond.ts"
 import {
   CONTEXT_SEARCH,
@@ -34,7 +34,7 @@ import {
   requestOf,
   TEXT_DECODER,
 } from "./runtime-core.ts"
-import type { CtxSet, RawContext, RequestSource } from "./server.ts"
+import type { CtxSet, MaybePromise, RawContext, RequestSource } from "./server.ts"
 
 /** A fixed past instant for cookie deletion (`Expires`). A literal epoch - deterministic, unlike an
  * argless `new Date()`. */
@@ -625,5 +625,53 @@ async function readStreamedJsonSource(
     return parseJsonGuarded(TEXT_DECODER.decode(drained.bytes), protoPoisoning)
   } catch {
     return plainError(400, "invalid_json")
+  }
+}
+
+/**
+ * The shared bounded body framing/parser: the single trust-boundary enforcement point every body
+ * lane routes through. Content-type dispatch, the urlencoded-form cap, and the JSON path
+ * (`Content-Length` pre-reject -> streaming cap -> prototype-poisoning guard, all inside
+ * `readBoundedJsonSource`) live here so the fused body runner, the generic body-only lane, and a
+ * compact edge entrypoint all enforce the same boundary from one definition. `protoPoisoning` is a
+ * parameter, not read off a server instance, so this stays free of any dependency on the class.
+ *
+ * `onParsed` receives the decoded, guard-screened value; a framing rejection (`Content-Length` over
+ * the cap, a lying length caught mid-stream, malformed JSON, an unsupported media type) is rendered
+ * through `wrapResponse`; a read that never completed (client abort, socket error) reaches `onError`.
+ */
+export function readBodyFramed<T>(
+  source: RequestSource,
+  maxBodyBytes: number,
+  protoPoisoning: ProtoPoisoning,
+  onParsed: (parsed: unknown) => MaybePromise<T>,
+  wrapResponse: (response: Response | ResponseResult) => T,
+  onError: (err: unknown) => MaybePromise<T>,
+): Promise<T> {
+  const contentType = headerOf(source, "content-type") ?? ""
+  if (contentType !== "application/json" && !contentType.includes("application/json")) {
+    if (isUrlEncodedForm(contentType)) {
+      return readBoundedForm(source, maxBodyBytes).then(
+        (form) => (isResponseResult(form) ? wrapResponse(form) : onParsed(form)),
+        onError,
+      ) as Promise<T>
+    }
+    // multipart/form-data (file uploads) stays 415 on the schema path by design - files don't fit a
+    // value schema; use a schema-less route + @nifrajs/uploads helpers for those.
+    return Promise.resolve(wrapResponse(plainError(415, "unsupported_media_type")))
+  }
+  // All JSON bodies go through readBoundedJsonSource - the single enforcement point for the framed
+  // fast path (post-read byte re-check), the streaming cap, and the prototype-poisoning guard. A
+  // separate inlined native-json() fast path here would fork the trust boundary in two.
+  try {
+    return readBoundedJsonSource(
+      source,
+      maxBodyBytes,
+      protoPoisoning,
+      (parsed) => (isResponseResult(parsed) ? wrapResponse(parsed) : onParsed(parsed)),
+      onError,
+    )
+  } catch (err) {
+    return Promise.resolve(onError(err))
   }
 }
