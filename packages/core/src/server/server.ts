@@ -3345,15 +3345,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     contextless: boolean,
     maxBodyBytes: number,
   ): FusedWebRunner {
-    // The fused lanes return to the runtime directly, so the framework's own error renders fold in
-    // static headers here rather than through the shared `wrapResponse` seam.
-    const logError = (err: unknown, ctx: RawContext): Response => {
-      if (err instanceof Response) return this.wrapWebResponse(err)
-      // A thrown `status(...)`: control flow, rendered as the plain data it is.
-      if (isResponseResult(err)) return this.wrapWebResponse(toResponse(err, responseSet(ctx)))
-      this.logRequestError(err, ctx)
-      return this.wrapWebResponse(plainError(500, "internal_error"))
-    }
+    // Same thrown-value contract as the generic lane (`bare-error-lane.ts` via `bareError`); the fused
+    // lane only injects its renderer, so a thrown `status(...)` and the flat 500 fold in static headers
+    // through `wrapWebResponse`. One source of truth for the error surface, no per-lane copy to drift.
+    const logError = (err: unknown, ctx: RawContext): Response =>
+      this.bareError(
+        err,
+        ctx,
+        (result, set) => this.wrapWebResponse(toResponse(result, set)),
+        this.wrapWebResponse,
+      )
     if (contextless && decorations === undefined) {
       // `() => ...` can't observe the context - skip allocating one entirely (errors still build
       // one for the structured log, exactly like runContextlessBare).
@@ -3633,15 +3634,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     querySchema: StandardSchemaV1,
     maxBodyBytes: number,
   ): FusedWebRunner {
-    // The fused lanes return to the runtime directly, so the framework's own error renders fold in
-    // static headers here rather than through the shared `wrapResponse` seam.
-    const logError = (err: unknown, ctx: RawContext): Response => {
-      if (err instanceof Response) return this.wrapWebResponse(err)
-      // A thrown `status(...)`: control flow, rendered as the plain data it is.
-      if (isResponseResult(err)) return this.wrapWebResponse(toResponse(err, responseSet(ctx)))
-      this.logRequestError(err, ctx)
-      return this.wrapWebResponse(plainError(500, "internal_error"))
-    }
+    // Same thrown-value contract as the generic lane (`bare-error-lane.ts` via `bareError`); the fused
+    // lane only injects its renderer, so a thrown `status(...)` and the flat 500 fold in static headers
+    // through `wrapWebResponse`. One source of truth for the error surface, no per-lane copy to drift.
+    const logError = (err: unknown, ctx: RawContext): Response =>
+      this.bareError(
+        err,
+        ctx,
+        (result, set) => this.wrapWebResponse(toResponse(result, set)),
+        this.wrapWebResponse,
+      )
     const runHandler = (ctx: RawContext, value: unknown): MaybePromise<Response> => {
       ctx.query = value
       let result: unknown
