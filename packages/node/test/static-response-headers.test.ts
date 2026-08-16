@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
 import { server, silentLogger } from "@nifrajs/core"
+import { responseObserver } from "@nifrajs/core/response-observer"
 import type { ResponseHeadersView } from "@nifrajs/core/server"
 import { securityHeaders } from "@nifrajs/middleware"
 import { type NodeServer, serve } from "../src/index.ts"
@@ -94,7 +95,9 @@ test("declared headers are byte-identical to the equivalent hook on every Node w
     routes(server({ logger: silentLogger })).responseHeaders(DECLARED),
   )
   const viaHook = await dumpAll(
-    routes(server({ logger: silentLogger })).onResponseHeaders(declaredAsHook),
+    routes(server({ logger: silentLogger }))
+      .use(responseObserver())
+      .onResponseHeaders(declaredAsHook),
   )
   expect(viaStatic).toEqual(viaHook)
   // Not vacuous: the headers really shipped on each response.

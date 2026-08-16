@@ -1,3 +1,4 @@
+import { withResponseObserver } from "@nifrajs/core/response-observer"
 import type { Middleware } from "@nifrajs/core/server"
 
 export interface CorsOptions {
@@ -58,7 +59,7 @@ export function cors(options: CorsOptions = {}): Middleware {
   const exposedHeaders = options.exposedHeaders?.join(", ")
   const maxAge = options.maxAge
 
-  return {
+  return withResponseObserver({
     name: "cors",
     onRequest(req) {
       const isPreflight =
@@ -95,5 +96,5 @@ export function cors(options: CorsOptions = {}): Middleware {
       if (credentials) headers.set("access-control-allow-credentials", "true")
       if (exposedHeaders !== undefined) headers.set("access-control-expose-headers", exposedHeaders)
     },
-  }
+  })
 }

@@ -1607,6 +1607,8 @@ Node against the outcome's plain header record on the **direct socket writer**, 
 ever materializing Web `Request`/`Response` objects:
 
 ```ts
+import { responseObserver } from "@nifrajs/core/response-observer"
+import { server } from "@nifrajs/core/server"
 import type { Middleware } from "@nifrajs/core/server"
 
 // ONE implementation, fast on every runtime: on Bun/Deno it mutates the
@@ -1619,6 +1621,8 @@ export function serverName(value: string): Middleware {
     },
   }
 }
+
+const app = server().use(responseObserver()).use(serverName("nifra"))
 ```
 
 Why this matters on Node: a full `onResponse(res: Response)` hook needs real Web
@@ -8269,6 +8273,10 @@ import { defineChannel, memoryChannelHub } from "@nifrajs/core/channel"
 - **Lifecycle middleware.** `derive`/`decorate` extend the typed context;
   `onRequest`/`beforeHandle`/`afterHandle`/`onResponse`/`onError` run around handlers;
   `use(middleware)` applies a bundle.
+- **Portable response observation.** The header/body/raw observer methods are opt-in so ordinary
+  servers stay lean: add `responseObserver()` from `@nifrajs/core/response-observer` before calling
+  `onResponseHeaders`, `onResponseBody`, or `onResponseRaw`. Official middleware that uses these
+  tiers installs the compatibility runtime automatically.
 - **Hardening built in.** `stop({ drainMs })` graceful shutdown (+ opt-in SIGTERM/
   SIGINT), `requestTimeoutMs` (+ `ctx.signal` and `ctx.budget`), a streaming body-size cap, and a
   redacting structured `Logger`.
@@ -9005,7 +9013,9 @@ Bun GET, byte-identical on the wire). They are defaults - anything the request p
 `securityHeaders` and the default `poweredBy` ship this way.
 
 A middleware whose response hook only reads/writes **headers** but needs the request should use the
-portable `onResponseHeaders` hook - one implementation, fast on every runtime: it mutates the
+portable `onResponseHeaders` hook - enable the observer surface with
+`app.use(responseObserver())` from `@nifrajs/core/response-observer` before registering a custom
+hook. It remains one implementation, fast on every runtime: it mutates the
 response's own `Headers` on Bun/Deno and the outcome record on Node's direct socket writer, never
 materializing Web `Request`/`Response` objects. `cors` (origin reflection), static `cacheControl`,
 `language`, and `poweredBy({ respectExisting: false })` are built on it. Stateful middleware (`rateLimit` with the built-in key derivation,

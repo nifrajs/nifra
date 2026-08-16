@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { cacheControl } from "@nifrajs/middleware"
 import { server, silentLogger } from "../src/index.ts"
 import { nodeDirect } from "../src/node-direct.ts"
+import { responseObserver } from "../src/response-observer.ts"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "../src/schema/standard.ts"
 import { nodeOutcomeToResponse } from "../src/server/node-outcome.ts"
 
@@ -551,6 +552,7 @@ describe("resolveNode - portable onResponseHeaders", () => {
   test("native response hook failures are promise rejections", async () => {
     const app = server({ logger: silentLogger })
       .use(nodeDirect())
+      .use(responseObserver())
       .onResponseHeaders(() => {
         throw new TypeError("native hook failure")
       })
@@ -566,6 +568,7 @@ describe("resolveNode - portable onResponseHeaders", () => {
   test("one hook implementation runs on the native Node lane AND the Web walk", async () => {
     const app = server({ logger: silentLogger })
       .use(nodeDirect())
+      .use(responseObserver())
       .onResponseHeaders((headers, req, status) => {
         headers.set("x-portable", `${req.method}:${status}`)
         if (!headers.has("x-existing")) headers.append("x-multi", "a")
@@ -593,6 +596,7 @@ describe("resolveNode - portable onResponseHeaders", () => {
   test("view ops resolve the record's initial mixed-case names through the prepared index", async () => {
     const app = server({ logger: silentLogger })
       .use(nodeDirect())
+      .use(responseObserver())
       .onResponseHeaders((headers) => {
         // Reads are case-insensitive over whatever casing the handler stored ...
         expect(headers.get("x-frame-options")).toBe("DENY")
@@ -626,6 +630,7 @@ describe("resolveNode - portable onResponseBody", () => {
     const seen: string[] = []
     const app = server({ logger: silentLogger })
       .use(nodeDirect())
+      .use(responseObserver())
       .onResponseBody((body, headers, req, status) => {
         const text = typeof body === "string" ? body : new TextDecoder().decode(body)
         seen.push(`${req.method}:${status}`)
@@ -653,6 +658,7 @@ describe("resolveNode - portable onResponseBody", () => {
     let called = 0
     const app = server({ logger: silentLogger })
       .use(nodeDirect())
+      .use(responseObserver())
       .onResponseBody((body) => {
         called++
         return body
@@ -668,6 +674,7 @@ describe("resolveNode - portable onResponseBody", () => {
     for (const status of [204, 205, 304]) {
       const app = server({ logger: silentLogger })
         .use(nodeDirect())
+        .use(responseObserver())
         .onResponseBody(() => ({ status }))
         .get("/data", () => ({ still: "not sent" }))
 
@@ -685,6 +692,7 @@ describe("resolveNode - portable onResponseBody", () => {
   test("native header views treat prototype names as ordinary Web header names", async () => {
     const app = server({ logger: silentLogger })
       .use(nodeDirect())
+      .use(responseObserver())
       .onResponseHeaders((headers) => {
         headers.append("toString", "one")
         headers.append("toString", "two")

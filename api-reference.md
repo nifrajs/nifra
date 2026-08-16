@@ -455,7 +455,7 @@ Every public export of every package and documented subpath - name, kind, signat
   An app-declared MCP resource - read-only data an agent can fetch through `nifra mcp`.
 - **Method** _(type)_ - `type Method = (typeof METHODS)[number]`
 - **Middleware** _(interface)_ - `interface Middleware`
-  A bundle of lifecycle hooks applied together via {@link Server.use} - the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging - th…
+  A bundle of lifecycle hooks applied together via {@link Server.use} - the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware carrying a portable response tier must be marked with `withResponseObserver()` from `@…
 - **NetlifyEvent** _(interface)_ - `interface NetlifyEvent`
 - **NetlifyHandler** _(type)_ - `type NetlifyHandler = (event: NetlifyEvent) => Promise<PlatformResponse>`
 - **NifraFeatureVersion** _(type)_ - `type NifraFeatureVersion = FeatureVersionOf<Version>`
@@ -1360,6 +1360,23 @@ Every public export of every package and documented subpath - name, kind, signat
 - **responseContract** _(function)_ - `responseContract: (mode?: ResponseContractMode) => IdentityPlugin`
   Hold every route's declared `response` schema to what the handler actually returned.
 
+### `@nifrajs/core/response-observer`
+
+- **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
+  A portable post-serialization body hook - the Fastify-`onSend`-shaped tier. The hook receives the FINAL framework-serialized bytes plus the header view, and may return replacement bytes (`undefined` keeps the body unchanged). It runs at the framework's cheapest point on every runtime: the bytes are…
+- **ResponseHeadersHook** _(type)_ - `type ResponseHeadersHook = ( headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<void>`
+  A portable header-only response hook - the recommended shape for response middleware that only reads or writes headers (security headers, CORS reflection, cache directives, negotiation). It runs on every runtime from one implementation: the server adapts it into the Web `onResponse` walk AND the No…
+- **ResponseObserverMethods** _(interface)_ - `interface ResponseObserverMethods`
+- **ResponseObserverPlugin** _(type)_ - `type ResponseObserverPlugin = (<S extends AnyServer>( app: S, ) => ResponseObserverServer<S>) & { readonly pluginName?: string }`
+  A plugin that enables response header, body, and raw-response observation methods.
+- **ResponseObserverRuntime** _(interface)_ - `interface ResponseObserverRuntime`
+- **ResponseObserverServer** _(type)_ - `type ResponseObserverServer<S extends AnyServer> = S & import("./server/response-observer-runtime.ts").ResponseObserverMethods`
+  A server shape with the opt-in response observation methods installed.
+- **responseObserver** _(function)_ - `responseObserver: () => ResponseObserverPlugin`
+  Enable the response observation methods on a server.
+- **withResponseObserver** _(function)_ - `withResponseObserver: <T extends object>(middleware: T) => T`
+  Attach the opt-in observer runtime to a middleware bundle that uses response observation.
+
 ### `@nifrajs/core/router`
 
 - **EMPTY_PARAMS** _(const)_ - `EMPTY_PARAMS: Record<string, string>`
@@ -1450,7 +1467,7 @@ Every public export of every package and documented subpath - name, kind, signat
   An app-declared MCP resource - read-only data an agent can fetch through `nifra mcp`.
 - **Method** _(type)_ - `type Method = (typeof METHODS)[number]`
 - **Middleware** _(interface)_ - `interface Middleware`
-  A bundle of lifecycle hooks applied together via {@link Server.use} - the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging - th…
+  A bundle of lifecycle hooks applied together via {@link Server.use} - the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware carrying a portable response tier must be marked with `withResponseObserver()` from `@…
 - **NetlifyEvent** _(interface)_ - `interface NetlifyEvent`
 - **NetlifyHandler** _(type)_ - `type NetlifyHandler = (event: NetlifyEvent) => Promise<PlatformResponse>`
 - **NifraFeatureVersion** _(type)_ - `type NifraFeatureVersion = FeatureVersionOf<Version>`
@@ -4378,7 +4395,7 @@ _No named exports (side-effect entrypoint)._
   An app-declared MCP resource - read-only data an agent can fetch through `nifra mcp`.
 - **Method** _(type)_ - `type Method = (typeof METHODS)[number]`
 - **Middleware** _(interface)_ - `interface Middleware`
-  A bundle of lifecycle hooks applied together via {@link Server.use} - the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware is context-agnostic (sees the base `Context`); `use` does no context-type merging - th…
+  A bundle of lifecycle hooks applied together via {@link Server.use} - the unit `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is optional and wired to its lifecycle point. Middleware carrying a portable response tier must be marked with `withResponseObserver()` from `@…
 - **NetlifyEvent** _(interface)_ - `interface NetlifyEvent`
 - **NetlifyHandler** _(type)_ - `type NetlifyHandler = (event: NetlifyEvent) => Promise<PlatformResponse>`
 - **NifraFeatureVersion** _(type)_ - `type NifraFeatureVersion = FeatureVersionOf<Version>`

@@ -253,11 +253,11 @@
   "bundle": [
     {
       "name": "Hono",
-      "kb": 8.1
+      "kb": 8.2
     },
     {
       "name": "Nifra",
-      "kb": 25.6,
+      "kb": 25.5,
       "you": true
     },
     {

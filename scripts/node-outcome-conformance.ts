@@ -1,5 +1,6 @@
 import { connect } from "node:net"
 import { nodeDirect } from "../packages/core/src/node-direct.ts"
+import { responseObserver } from "../packages/core/src/response-observer.ts"
 import { nodeOutcomeToResponse } from "../packages/core/src/server/node-outcome.ts"
 import { server } from "../packages/core/src/server.ts"
 import { type NodeServer, serve } from "../packages/node/src/index.ts"
@@ -36,6 +37,7 @@ function assertBytes(actual: Uint8Array, expected: string, message: string): voi
 function conformanceApp() {
   return server()
     .use(nodeDirect())
+    .use(responseObserver())
     .onResponseHeaders((headers) => {
       headers.append("X-Merged", "first")
       headers.append("x-merged", "second")

@@ -1,4 +1,9 @@
-import { defineRouterPlugin, type ResponseBodyReplacement } from "@nifrajs/core/server"
+import { withResponseObserver } from "@nifrajs/core/response-observer"
+import {
+  defineRouterPlugin,
+  type Middleware,
+  type ResponseBodyReplacement,
+} from "@nifrajs/core/server"
 
 /** 32-bit FNV-1a over bytes → hex. A fast, dependency-free content fingerprint for ETags - not crypto. */
 function fnv1a(bytes: Uint8Array): string {
@@ -107,37 +112,43 @@ export function etag(options: ETagOptions = {}) {
     throw new Error("etag: maxBytes must be a non-negative safe integer")
   }
   return defineRouterPlugin("etag", (app) =>
-    app.use({
-      onResponseBody(body, headers, req, status) {
-        if (req.method !== "GET" || status !== 200) return undefined
-        const bytes = typeof body === "string" ? ETAG_ENCODER.encode(body) : body
-        if (bytes.byteLength > maxBytes) return undefined
-        const finish = (fingerprint: string): ResponseBodyReplacement | undefined => {
-          const tag = prefix + String.fromCharCode(34) + fingerprint + String.fromCharCode(34)
-          headers.set("etag", tag)
-          if (matchesIfNoneMatch(req.header("if-none-match"), tag)) {
-            // A 304 carries no body - drop the body-describing headers so strict intermediaries
-            // do not see a null body with a non-zero Content-Length.
-            headers.delete("content-length")
-            headers.delete("content-type")
-            return { body: null, status: 304 }
+    app.use(
+      withResponseObserver<Middleware>({
+        onResponseBody(body, headers, req, status) {
+          if (req.method !== "GET" || status !== 200) return undefined
+          const bytes = typeof body === "string" ? ETAG_ENCODER.encode(body) : body
+          if (bytes.byteLength > maxBytes) return undefined
+          const finish = (fingerprint: string): ResponseBodyReplacement | undefined => {
+            const tag = prefix + String.fromCharCode(34) + fingerprint + String.fromCharCode(34)
+            headers.set("etag", tag)
+            if (matchesIfNoneMatch(req.header("if-none-match"), tag)) {
+              // A 304 carries no body - drop the body-describing headers so strict intermediaries
+              // do not see a null body with a non-zero Content-Length.
+              headers.delete("content-length")
+              headers.delete("content-type")
+              return { body: null, status: 304 }
+            }
+            return undefined
           }
-          return undefined
-        }
-        if (weak) return finish(fnv1a(bytes))
-        return sha256Tag(bytes).then(finish)
-      },
-      onResponseRaw(response, req) {
-        if (req.method !== "GET" || response.status !== 200 || response.body === null) {
-          return response
-        }
-        const declared = response.headers.get("content-length")
-        if (declared !== null && /^(?:0|[1-9]\d*)$/.test(declared) && Number(declared) > maxBytes) {
-          return response
-        }
-        return etagRawResponse(response, req, weak, prefix, maxBytes)
-      },
-    }),
+          if (weak) return finish(fnv1a(bytes))
+          return sha256Tag(bytes).then(finish)
+        },
+        onResponseRaw(response, req) {
+          if (req.method !== "GET" || response.status !== 200 || response.body === null) {
+            return response
+          }
+          const declared = response.headers.get("content-length")
+          if (
+            declared !== null &&
+            /^(?:0|[1-9]\d*)$/.test(declared) &&
+            Number(declared) > maxBytes
+          ) {
+            return response
+          }
+          return etagRawResponse(response, req, weak, prefix, maxBytes)
+        },
+      }),
+    ),
   )
 }
 

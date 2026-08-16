@@ -41,6 +41,7 @@ import {
   type RouteEntry,
 } from "../internal/route-execution.ts"
 import { isSameOriginRequest } from "../internal/same-origin.ts"
+import type { ResponseObserverPlugin } from "../response-observer.ts"
 import { compileRoutePattern, decodeRouteParams } from "../router/pattern.ts"
 import { EMPTY_PARAMS, type Method, Router } from "../router/router.ts"
 import type {
@@ -66,17 +67,16 @@ import {
 import { headerObjectOf } from "./headers.ts"
 import { jsonError, pathnameOf, plainError, type UrlParts, urlPartsOf } from "./http.ts"
 import { type NodeServeOutcome, withStaticNodeHeaders } from "./node-outcome.ts"
-import {
-  type NodeOutcomeRuntime,
-  type NodeRequestContext,
-  type NodeRequestHook,
-  type NodeResponseContext,
-  type NodeResponseHook,
-  type ResponseBodyHook,
-  type ResponseBodyReplacement,
-  type ResponseHeadersHook,
-  type ResponseHeadersView,
-  recordHeadersView,
+import type {
+  NodeOutcomeRuntime,
+  NodeRequestContext,
+  NodeRequestHook,
+  NodeResponseContext,
+  NodeResponseHook,
+  ResponseBodyHook,
+  ResponseBodyReplacement,
+  ResponseHeadersHook,
+  ResponseHeadersView,
 } from "./node-outcome-hook.ts"
 import {
   isUrlEncodedForm,
@@ -91,15 +91,15 @@ import {
   buildStaticResponseHeaders,
   fusedRespond,
   fusedRespondNoSet,
-  knownMutableHeaders,
-  rememberMutableHeaders,
-  taggedResponseBody,
   toResponse,
 } from "./respond.ts"
 // Type-only: erased, so the kernel never pulls the lane's implementation into a bundle that does not
 // install the plugin. The value side arrives through the symbol-keyed install seam.
 import type { ResponseContractRuntime } from "./response-contract-lane.ts"
-import { applyBodyReplacement, withReplacedBody } from "./response-hooks.ts"
+import type {
+  ResponseObserverMethods,
+  ResponseObserverRuntime,
+} from "./response-observer-runtime.ts"
 import {
   CONTEXT_SEARCH,
   CONTEXT_SET,
@@ -129,96 +129,6 @@ export type {
   ResponseHeadersView,
 }
 
-const HEADER_MUTABILITY_PROBE = "x-nifra-header-probe"
-const GUARDED_RESPONSE_HEADERS = new WeakSet<Headers>()
-
-/**
- * Detect a guarded Web Headers object before invoking user code. Retrying after catching any
- * TypeError is observably wrong: user hooks are allowed to throw TypeError themselves, and a retry
- * runs those hooks twice. The hot path never reaches the probe: every framework-constructed
- * Response stamps its headers as known-mutable at construction (see respond.ts), so only a
- * handler-returned foreign `Response` - the case that can actually be guarded - pays it, once per
- * headers object. The probe uses a valid private header name and restores a pre-existing value, so
- * the fallback is limited to the actual immutable/guarded-header case.
- */
-function hasMutableResponseHeaders(headers: Headers): boolean {
-  if (knownMutableHeaders(headers)) return true
-  if (GUARDED_RESPONSE_HEADERS.has(headers)) return false
-  let previous: string | null = null
-  try {
-    previous = headers.get(HEADER_MUTABILITY_PROBE)
-    headers.set(HEADER_MUTABILITY_PROBE, "1")
-    if (previous === null) headers.delete(HEADER_MUTABILITY_PROBE)
-    else headers.set(HEADER_MUTABILITY_PROBE, previous)
-    rememberMutableHeaders(headers)
-    return true
-  } catch {
-    try {
-      if (previous === null) headers.delete(HEADER_MUTABILITY_PROBE)
-      else headers.set(HEADER_MUTABILITY_PROBE, previous)
-    } catch {
-      // The guarded object rejected the cleanup too; the clone below is authoritative.
-    }
-    GUARDED_RESPONSE_HEADERS.add(headers)
-    return false
-  }
-}
-
-/** Adapt a portable {@link ResponseBodyHook} into the Web `onResponse` walk. Only a Response
- * carrying the framework-buffered body tag participates - a raw or streamed Response is skipped by
- * contract, never drained. */
-function webResponseBodyHook(
-  fn: ResponseBodyHook,
-  owners: ReadonlySet<object>,
-): (response: Response, req: Request) => MaybePromise<Response> {
-  return (response, req) => {
-    const body = taggedResponseBody(response, owners)
-    if (body === undefined) return response
-    const out = fn(body, response.headers, webRequestView(req), response.status)
-    if (out instanceof Promise) return out.then((replaced) => withReplacedBody(response, replaced))
-    return withReplacedBody(response, out)
-  }
-}
-
-/** Minimal request view over a Web `Request` for portable header hooks on the Web serving paths. */
-function webRequestView(req: Request): NodeRequestContext {
-  return { method: req.method, url: req.url, header: (name) => req.headers.get(name) }
-}
-
-/**
- * Adapt a portable {@link ResponseHeadersHook} into the Web `onResponse` walk: run it against the
- * response's own `Headers` in place (no clone). A response whose headers are GUARDED (a raw
- * `fetch()`ed Response returned by a handler) throws on the FIRST mutation, so nothing was applied
- * yet - rerun once against a mutable copy. Async hooks should perform their mutations before their
- * first await for the guard fallback to cover them.
- */
-function webResponseHeadersHook(
-  fn: ResponseHeadersHook,
-): (response: Response, req: Request) => MaybePromise<Response> {
-  return (response, req) => {
-    const view = webRequestView(req)
-    if (!hasMutableResponseHeaders(response.headers)) {
-      const clone = new Response(response.body, response)
-      const out = fn(clone.headers, view, clone.status)
-      return out instanceof Promise ? out.then(() => clone) : clone
-    }
-    const out = fn(response.headers, view, response.status)
-    return out instanceof Promise ? out.then(() => response) : response
-  }
-}
-
-/** Adapt a raw-response fallback hook. Tagged framework payloads already ran through the body tier,
- * while untagged Responses include streams, proxied fetches, and framework-generated error responses. */
-function webResponseRawHook(
-  fn: (response: Response, req: Request) => MaybePromise<Response>,
-  owners: ReadonlySet<object>,
-): (response: Response, req: Request) => MaybePromise<Response> {
-  return (response, req) => {
-    if (taggedResponseBody(response, owners) !== undefined) return response
-    return fn(response, req)
-  }
-}
-
 import type { IdempotencyRuntime } from "./idempotency-lane.ts"
 import {
   INSTALL_EFFECT_LEDGER,
@@ -226,6 +136,7 @@ import {
   INSTALL_MCP,
   INSTALL_NODE_DIRECT,
   INSTALL_RESPONSE_CONTRACT,
+  INSTALL_RESPONSE_OBSERVER,
   INSTALL_SSE,
   INSTALL_WS,
   NODE_NATIVE_MOUNT,
@@ -1154,11 +1065,31 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * hook owns part of the header state - into a hook that runs in the right order. */
   private addStaticResponseHeaders(record: Record<string, string>): this {
     if (this.onResponseHooks.length > 0) {
-      return this.onResponseHeaders((headers) => {
+      const observerHeaders = (
+        this as unknown as Pick<ResponseObserverMethods, "onResponseHeaders">
+      ).onResponseHeaders
+      if (observerHeaders !== undefined) {
+        observerHeaders.call(this, (headers) => {
+          for (const name of Object.keys(record)) {
+            if (!headers.has(name)) headers.set(name, record[name] as string)
+          }
+        })
+        return this
+      }
+      this.onResponseHooks.push((response) => {
+        const headers = new Headers(response.headers)
         for (const name of Object.keys(record)) {
           if (!headers.has(name)) headers.set(name, record[name] as string)
         }
+        return new Response(response.body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers,
+        })
       })
+      this.onNodeResponseHooks.push(undefined)
+      this.nodeResponseHooksComplete = false
+      return this
     }
     const merged =
       this.staticResponseHeaders === undefined
@@ -1180,61 +1111,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return this.responseBodyTag
   }
 
-  /**
-   * Register a response transform for raw/streamed Responses. Framework-serialized payloads stay on
-   * the body tier; this hook is only entered for untagged Responses (streams, proxied fetches, and
-   * framework-generated error responses). A no-op native twin keeps buffered JSON on the direct lane.
-   */
-  onResponseRaw(fn: (response: Response, req: Request) => MaybePromise<Response>): this {
-    this.assertConfigurable("onResponseRaw()")
-    this.enableResponseBodyTagging()
-    this.onResponseHooks.push(webResponseRawHook(fn, this.responseBodyOwners))
-    this.onNodeResponseHooks.push(() => undefined)
-    return this
-  }
-
-  /**
-   * Register a PORTABLE header-only response hook - one implementation, fast on every runtime.
-   *
-   * The hook receives a mutable case-insensitive header view, a minimal request view, and the
-   * status. On the Web serving paths it runs inside the normal `onResponse` walk against the
-   * response's own `Headers` (mutating in place - no clone). On Node it self-pairs as a native
-   * response hook against the outcome's plain header record, so registering one NEVER forces the
-   * Node adapter off its direct socket writer the way a full `onResponse(res: Response)` hook does.
-   * Prefer this over `onResponse` whenever the middleware only reads/writes headers.
-   */
-  onResponseHeaders(fn: ResponseHeadersHook): this {
-    this.assertConfigurable("onResponseHeaders()")
-    this.onResponseHooks.push(webResponseHeadersHook(fn))
-    this.onNodeResponseHooks.push((response, req) =>
-      fn(recordHeadersView(response), req, response.status),
-    )
-    return this
-  }
-
-  /**
-   * Register a PORTABLE post-serialization body hook - the payload tier. The hook receives the
-   * FINAL framework-serialized bytes (plus the mutable header view and status) and may return
-   * replacement bytes; `undefined` keeps the body. On the Node direct writer the bytes come
-   * straight off the outcome record; on the Web serving paths they ride the framework-built
-   * Response as a tag, so no body stream is ever drained on any runtime. A handler-returned raw
-   * `Response` (proxied fetch, SSE, streamed SSR) is skipped by contract - transforming those is
-   * what the full `onResponse` hook is for.
-   */
-  onResponseBody(fn: ResponseBodyHook): this {
-    this.assertConfigurable("onResponseBody()")
-    this.enableResponseBodyTagging()
-    this.onResponseHooks.push(webResponseBodyHook(fn, this.responseBodyOwners))
-    this.onNodeResponseHooks.push((response, req) => {
-      const body = response.body
-      if (body === null) return undefined
-      const out = fn(body, recordHeadersView(response), req, response.status)
-      if (out instanceof Promise)
-        return out.then((replaced) => applyBodyReplacement(response, replaced))
-      applyBodyReplacement(response, out)
-      return undefined
-    })
-    return this
+  private responseObserverMethods(): ResponseObserverMethods {
+    const methods = this as unknown as Partial<ResponseObserverMethods>
+    if (
+      typeof methods.onResponseHeaders !== "function" ||
+      typeof methods.onResponseBody !== "function" ||
+      typeof methods.onResponseRaw !== "function"
+    ) {
+      throw new TypeError(
+        "response observation requires `.use(responseObserver())` or an observer-enabled middleware",
+      )
+    }
+    return methods as ResponseObserverMethods
   }
 
   /** Observe the terminal response after all transformations. Observers are ordered and fail-open. */
@@ -1246,10 +1134,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     return this
   }
 
+  /** Enable the opt-in portable response observer methods. */
+  use(plugin: ResponseObserverPlugin): this & ResponseObserverMethods
   /**
    * Apply a type-**identity** plugin ({@link IdentityPlugin}, from {@link defineIdentityPlugin}) - it
    * registers routes/hooks but doesn't change the types, so this returns `this` with the route registry
-   * and context fully intact. This overload exists specifically so a *named* identity plugin (e.g.
+   * and context fully intact. This overload exists specifically so a named identity plugin (e.g.
    * `@nifrajs/better-auth`) threads the registry: its `& { pluginName }` intersection would otherwise
    * defeat the generic inference of the transforming overload below and collapse the result to `any`.
    */
@@ -1320,6 +1210,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     }
     this.globalAssurance.push(...evidence.filter((item) => item.scope === "global"))
     this.activeAssurance.push(...evidence.filter((item) => item.scope === "subsequent"))
+    const responseObserver = (arg as unknown as Record<symbol, unknown>)[INSTALL_RESPONSE_OBSERVER]
+    if (responseObserver !== undefined) {
+      if (
+        typeof responseObserver !== "object" ||
+        responseObserver === null ||
+        typeof (responseObserver as { install?: unknown }).install !== "function"
+      ) {
+        throw new TypeError("response observer middleware has an invalid runtime")
+      }
+      this[INSTALL_RESPONSE_OBSERVER](responseObserver as ResponseObserverRuntime)
+    }
     if (arg.onRequest !== undefined) {
       this.assertConfigurable("onRequest()")
       this.onRequestHooks.push(arg.onRequest as RawOnRequest)
@@ -1343,9 +1244,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // Before the bundle's own hooks: a bundle declaring both means its static values are the
     // defaults its hook may then override, which is the order a single bundle reads in.
     if (arg.responseHeaders !== undefined) this.responseHeaders(arg.responseHeaders)
-    if (arg.onResponseHeaders !== undefined) this.onResponseHeaders(arg.onResponseHeaders)
-    if (arg.onResponseBody !== undefined) this.onResponseBody(arg.onResponseBody)
-    if (arg.onResponseRaw !== undefined) this.onResponseRaw(arg.onResponseRaw)
+    if (arg.onResponseHeaders !== undefined)
+      this.responseObserverMethods().onResponseHeaders(arg.onResponseHeaders)
+    if (arg.onResponseBody !== undefined)
+      this.responseObserverMethods().onResponseBody(arg.onResponseBody)
+    if (arg.onResponseRaw !== undefined)
+      this.responseObserverMethods().onResponseRaw(arg.onResponseRaw)
     if (arg.onResponseFinalized !== undefined) this.onResponseFinalized(arg.onResponseFinalized)
     if (arg.onError !== undefined) this.onError(arg.onError)
     return this
@@ -2052,6 +1956,29 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   [INSTALL_RESPONSE_CONTRACT](runtime: ResponseContractRuntime): void {
     this.assertConfigurable("responseContract()")
     this.responseContractRuntime = runtime
+  }
+
+  /** @internal Symbol-keyed install seam for the response observer plugin. */
+  [INSTALL_RESPONSE_OBSERVER](runtime: ResponseObserverRuntime): ResponseObserverMethods {
+    this.assertConfigurable("responseObserver()")
+    const methods = runtime.install({
+      assertConfigurable: (operation) => this.assertConfigurable(operation),
+      addResponseHook: (web, node) => {
+        this.onResponseHooks.push(web)
+        this.onNodeResponseHooks.push(node)
+        if (node === undefined) this.nodeResponseHooksComplete = false
+      },
+      enableResponseBodyTagging: () => {
+        if (this.responseBodyTag === undefined) {
+          this.responseBodyTag = Object.freeze({})
+          this.responseBodyOwners.add(this.responseBodyTag)
+        }
+        return this.responseBodyTag
+      },
+      responseBodyOwners: () => this.responseBodyOwners,
+    })
+    Object.assign(this, methods)
+    return methods
   }
 
   /** @internal Symbol-keyed install seam for the `idempotency()` plugin. Off the public typed surface. */

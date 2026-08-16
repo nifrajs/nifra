@@ -1,3 +1,4 @@
+import { withResponseObserver } from "@nifrajs/core/response-observer"
 import type { Middleware } from "@nifrajs/core/server"
 
 export interface PoweredByOptions {
@@ -26,10 +27,10 @@ export function poweredBy(options: PoweredByOptions = {}): Middleware {
   if (respectExisting) {
     return { name: "powered-by", responseHeaders: { [header]: value } }
   }
-  return {
+  return withResponseObserver({
     name: "powered-by",
     onResponseHeaders(headers) {
       headers.set(header, value)
     },
-  }
+  })
 }

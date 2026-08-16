@@ -226,12 +226,11 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
 // validation + handler continuation (shared by Web and Node-direct) adds ~0.2 KB gzip across the
 // matrix; the bounded parser and framing checks remain shared with the generic lane, so this is the
 // price of making the safe fast path available by default without weakening the trust boundary.
-// The portable response tiers moved every core row together by ~5.1 KB gzip: the onResponseHeaders
-// hook with its Node-direct header view, the onResponseBody payload tier, the raw-response tier
-// with per-app body tagging, the static response-header tier, and the registration-selected
-// lifecycle stages all live in the kernel so their dispatch is reachable from any route. The
-// middleware that USES the tiers stays out of these rows - this is the price of the seams
-// themselves being available by default on every runtime.
+// The static response-header tier remains in the default kernel because it folds into response
+// construction without a per-request observer walk. The portable header/body/raw observer adapters
+// are installed from `@nifrajs/core/response-observer`; the minimal server measured 26.2 -> 25.5 KB
+// gzip after the adapters moved behind that seam. Middleware using those tiers carries the opt-in
+// runtime marker, so ordinary core bundles do not reach the observer implementation.
 // The RFC 9110 HEAD fallback (router resolves HEAD to the GET handler, and the Bun native table
 // aliases it) costs a few bytes in the kernel, so every core-based row moved a little. Two were
 // sitting within ~15 B of their ceiling and crossed it; the rest still clear.

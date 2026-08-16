@@ -22,6 +22,7 @@ import { cors } from "hono/cors"
 import { secureHeaders } from "hono/secure-headers"
 import { validator } from "hono/validator"
 import { server, status } from "../../packages/core/dist/index.js"
+import { responseObserver } from "../../packages/core/dist/response-observer.js"
 import type {
   StandardResult,
   StandardSchemaV1,
@@ -174,15 +175,15 @@ if (framework === "nifra" || framework === "nifra-body") {
     }))
   if (framework === "nifra-body") {
     // nifra's payload tier: onResponseBody receives the FINAL framework-serialized bytes.
-    app.onResponseBody(
-      (body: string | Uint8Array, headers: { set(n: string, v: string): void }) => {
+    app
+      .use(responseObserver())
+      .onResponseBody((body: string | Uint8Array, headers: { set(n: string, v: string): void }) => {
         headers.set(
           "x-body-hash",
           hash(typeof body === "string" ? body : new TextDecoder().decode(body)),
         )
         return undefined
-      },
-    )
+      })
   }
   await serve(app, { port })
 } else if (framework === "hono") {

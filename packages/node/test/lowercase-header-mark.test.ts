@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
 import { connect } from "node:net"
 import { server, silentLogger } from "@nifrajs/core"
+import { responseObserver } from "@nifrajs/core/response-observer"
 import type { NodeResponseContext } from "@nifrajs/core/server"
 import { type NodeServer, serve } from "../src/index.ts"
 
@@ -52,6 +53,7 @@ async function wireNames(app: ReturnType<typeof server>): Promise<string[]> {
 test("a marked all-lowercase record ships exactly its own names, and no symbol leaks", async () => {
   const names = await wireNames(
     server({ logger: silentLogger })
+      .use(responseObserver())
       .onResponseHeaders((headers) => {
         headers.set("x-portable", "1")
       })
@@ -68,6 +70,7 @@ test("a marked all-lowercase record ships exactly its own names, and no symbol l
 test("a mixed-case name is still lowercased on the wire when a portable hook is installed", async () => {
   const names = await wireNames(
     server({ logger: silentLogger })
+      .use(responseObserver())
       .onResponseHeaders((headers) => {
         headers.set("x-portable", "1")
       })

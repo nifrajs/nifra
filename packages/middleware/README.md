@@ -89,7 +89,9 @@ Bun GET, byte-identical on the wire). They are defaults - anything the request p
 `securityHeaders` and the default `poweredBy` ship this way.
 
 A middleware whose response hook only reads/writes **headers** but needs the request should use the
-portable `onResponseHeaders` hook - one implementation, fast on every runtime: it mutates the
+portable `onResponseHeaders` hook - enable the observer surface with
+`app.use(responseObserver())` from `@nifrajs/core/response-observer` before registering a custom
+hook. It remains one implementation, fast on every runtime: it mutates the
 response's own `Headers` on Bun/Deno and the outcome record on Node's direct socket writer, never
 materializing Web `Request`/`Response` objects. `cors` (origin reflection), static `cacheControl`,
 `language`, and `poweredBy({ respectExisting: false })` are built on it. Stateful middleware (`rateLimit` with the built-in key derivation,

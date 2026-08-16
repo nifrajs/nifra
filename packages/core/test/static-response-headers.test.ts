@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { server, silentLogger } from "../src/index.ts"
 import { nodeDirect } from "../src/node-direct.ts"
+import { responseObserver } from "../src/response-observer.ts"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "../src/schema/standard.ts"
 import type { ResponseHeadersView } from "../src/server/server.ts"
 
@@ -103,7 +104,10 @@ function staticApp() {
 
 function hookApp() {
   return withRoutes(
-    server({ logger: silentLogger }).use(nodeDirect()).onResponseHeaders(declaredAsHook),
+    server({ logger: silentLogger })
+      .use(nodeDirect())
+      .use(responseObserver())
+      .onResponseHeaders(declaredAsHook),
   ) as ReturnType<typeof server>
 }
 
@@ -192,9 +196,9 @@ describe("responseHeaders() - wire parity with the equivalent hook", () => {
       DECLARED,
     )
     slow(withStatic as unknown as ReturnType<typeof server>)
-    const withHook = server({ requestTimeoutMs: 5, logger: silentLogger }).onResponseHeaders(
-      declaredAsHook,
-    )
+    const withHook = server({ requestTimeoutMs: 5, logger: silentLogger })
+      .use(responseObserver())
+      .onResponseHeaders(declaredAsHook)
     slow(withHook as unknown as ReturnType<typeof server>)
 
     const viaStatic = await dumpResponse(await withStatic.fetch(new Request("http://x/slow")))
@@ -214,7 +218,9 @@ describe("responseHeaders() - wire parity with the equivalent hook", () => {
       )
     const withStatic = server({ logger: silentLogger }).responseHeaders(DECLARED)
     blocked(withStatic as unknown as ReturnType<typeof server>)
-    const withHook = server({ logger: silentLogger }).onResponseHeaders(declaredAsHook)
+    const withHook = server({ logger: silentLogger })
+      .use(responseObserver())
+      .onResponseHeaders(declaredAsHook)
     blocked(withHook as unknown as ReturnType<typeof server>)
 
     expect(await dumpResponse(await withStatic.fetch(new Request("http://x/any")))).toEqual(
@@ -345,6 +351,7 @@ describe("responseHeaders() - semantics", () => {
 
   test("a later response hook overrides a declared value", async () => {
     const app = server()
+      .use(responseObserver())
       .responseHeaders(DECLARED)
       .onResponseHeaders((headers) => headers.set("x-frame-options", "SAMEORIGIN"))
       .get("/", () => ({ ok: true }))
@@ -355,6 +362,7 @@ describe("responseHeaders() - semantics", () => {
   test("response hooks see declared values through their view on both lanes", async () => {
     const seen: string[] = []
     const app = server()
+      .use(responseObserver())
       .use(nodeDirect())
       .responseHeaders(DECLARED)
       .onResponseHeaders((headers) => {
@@ -369,6 +377,7 @@ describe("responseHeaders() - semantics", () => {
   test("a body hook sees declared values and keeps the direct lane", async () => {
     const seen: (string | null)[] = []
     const app = server()
+      .use(responseObserver())
       .use(nodeDirect())
       .responseHeaders(DECLARED)
       .onResponseBody((body, headers) => {
@@ -402,6 +411,7 @@ describe("responseHeaders() - semantics", () => {
 
   test("a declaration made AFTER a response hook keeps registration order", async () => {
     const app = server()
+      .use(responseObserver())
       .onResponseHeaders((headers) => headers.set("x-order", "hook"))
       .responseHeaders({ "x-order": "static" })
       .get("/", () => ({ ok: true }))
@@ -413,6 +423,7 @@ describe("responseHeaders() - semantics", () => {
 
   test("a declaration after a hook still applies to names the hook left alone", async () => {
     const app = server()
+      .use(responseObserver())
       .onResponseHeaders((headers) => headers.set("x-hook", "1"))
       .responseHeaders({ "x-late": "1" })
       .get("/", () => ({ ok: true }))

@@ -63,7 +63,9 @@ if (framework === "nifra") {
 } else if (framework === "nifra-body") {
   // nifra's payload tier: onResponseBody receives the FINAL framework-serialized bytes.
   const { makeNifraApp } = await import("./_nifra-app.ts")
+  const { responseObserver } = await import("../../packages/core/dist/response-observer.js")
   makeNifraApp()
+    .use(responseObserver())
     .onResponseBody((body, headers) => {
       headers.set(
         "x-body-hash",

@@ -33,6 +33,11 @@ export const INSTALL_RESPONSE_CONTRACT: unique symbol = Symbol.for(
   "@nifrajs/core/install-response-contract",
 )
 
+/** @internal Install the response-observer adapters on a server. */
+export const INSTALL_RESPONSE_OBSERVER: unique symbol = Symbol.for(
+  "@nifrajs/core/install-response-observer",
+)
+
 /** @internal Resolve a native mount for an adapter that can keep the request on its own stream lane. */
 export const RESOLVE_NODE_MOUNT: unique symbol = Symbol.for(
   NODE_BRIDGE_MARKER_KEYS.resolveNodeMount,

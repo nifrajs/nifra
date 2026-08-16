@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { type Middleware, server, silentLogger } from "../src/index.ts"
+import { responseObserver, withResponseObserver } from "../src/response-observer.ts"
 import { taggedResponseBody } from "../src/server/respond.ts"
 
 /** Return a copy of `res` with an `x-app` header - onResponse can't mutate in place. */
@@ -70,6 +71,7 @@ describe("onResponse", () => {
   test("a user-thrown TypeError in a header hook is not retried", async () => {
     let calls = 0
     const app = server()
+      .use(responseObserver())
       .onResponseHeaders(() => {
         calls++
         throw new TypeError("user hook failure")
@@ -82,6 +84,7 @@ describe("onResponse", () => {
 
   test("body tagging is isolated per app", async () => {
     const taggedApp = server()
+      .use(responseObserver())
       .onResponseBody((body) => body)
       .get("/", () => ({ app: "tagged" }))
     const plainApp = server().get("/", () => ({ app: "plain" }))
@@ -94,6 +97,7 @@ describe("onResponse", () => {
 
   test("preserves body hooks when routes are merged into another app", async () => {
     const group = server()
+      .use(responseObserver())
       .onResponseBody((body) => `${body}!`)
       .get("/merged", () => ({ ok: true }))
     const app = server().merge(group)
@@ -104,10 +108,12 @@ describe("onResponse", () => {
 
   test("does not treat another app's tagged response as a local framework body", async () => {
     const sourceApp = server()
+      .use(responseObserver())
       .onResponseBody((body) => `${body}A`)
       .get("/", () => ({ source: true }))
     const foreignResponse = await sourceApp.fetch(new Request("http://x/"))
     const app = server()
+      .use(responseObserver())
       .onResponseBody((body) => `${body}B`)
       .get("/", () => foreignResponse)
 
@@ -121,6 +127,7 @@ describe("onResponse", () => {
       value: '{"source":true}',
     })
     const app = server()
+      .use(responseObserver())
       .onResponseBody((body) => `${body}B`)
       .get("/", () => response)
 
@@ -218,7 +225,8 @@ describe("use(middleware)", () => {
   // one JSON-building branch that has to add the content-type to a Headers it did not build.
   test("a body hook plus queued cookies still yields JSON with a content-type", async () => {
     const app = server()
-      .use({ onResponseBody: (body) => body })
+      .use(responseObserver())
+      .use(withResponseObserver<Middleware>({ onResponseBody: (body) => body }))
       .get("/", (c) => {
         c.set.cookie("sid", "abc")
         c.set.cookie("csrf", "xyz")
@@ -233,7 +241,8 @@ describe("use(middleware)", () => {
 
   test("a body hook plus queued cookies preserves an explicit content-type", async () => {
     const app = server()
-      .use({ onResponseBody: (body) => body })
+      .use(responseObserver())
+      .use(withResponseObserver<Middleware>({ onResponseBody: (body) => body }))
       .get("/", (c) => {
         c.set.cookie("sid", "abc")
         c.set.headers["content-type"] = "application/vnd.api+json"

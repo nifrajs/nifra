@@ -1,4 +1,5 @@
-import { defineRouterPlugin, type NodeRequestContext } from "@nifrajs/core/server"
+import { withResponseObserver } from "@nifrajs/core/response-observer"
+import { defineRouterPlugin, type Middleware, type NodeRequestContext } from "@nifrajs/core/server"
 
 export interface PrettyJsonOptions {
   /** JSON indentation spaces. Default `2`. */
@@ -114,45 +115,52 @@ export function prettyJson(options: PrettyJsonOptions = {}) {
   const decoder = new TextDecoder()
   const encoder = new TextEncoder()
   return defineRouterPlugin("prettyJson", (app) =>
-    app.use({
-      onResponseBody(body, headers, req) {
-        if (!isEnabled(req)) return undefined
-        if (query !== false && !new URL(req.url).searchParams.has(query)) return undefined
-        if (headers.has("content-encoding")) return undefined
-        if (!isJson(headers.get("content-type") ?? "")) return undefined
-        const text = typeof body === "string" ? body : decoder.decode(body)
-        if (
-          (typeof body === "string" ? encoder.encode(body).byteLength : body.byteLength) > maxBytes
-        ) {
-          return undefined
-        }
-        let parsed: unknown
-        try {
-          parsed = JSON.parse(text)
-        } catch {
-          return undefined
-        }
-        return `${JSON.stringify(parsed, null, spaces)}${newline ? "\n" : ""}`
-      },
-      onResponseRaw(response, req) {
-        if (!isEnabled(requestView(req))) return response
-        if (query !== false && !new URL(req.url).searchParams.has(query)) return response
-        if (
-          response.body === null ||
-          response.status === 204 ||
-          response.status === 205 ||
-          response.status === 304 ||
-          response.headers.has("content-encoding")
-        )
-          return response
-        if (!isJson(response.headers.get("content-type") ?? "")) return response
-        const declared = response.headers.get("content-length")
-        if (declared !== null && /^(?:0|[1-9]\d*)$/.test(declared) && Number(declared) > maxBytes) {
-          return response
-        }
-        return prettyRawResponse(response, maxBytes, spaces, newline)
-      },
-    }),
+    app.use(
+      withResponseObserver<Middleware>({
+        onResponseBody(body, headers, req) {
+          if (!isEnabled(req)) return undefined
+          if (query !== false && !new URL(req.url).searchParams.has(query)) return undefined
+          if (headers.has("content-encoding")) return undefined
+          if (!isJson(headers.get("content-type") ?? "")) return undefined
+          const text = typeof body === "string" ? body : decoder.decode(body)
+          if (
+            (typeof body === "string" ? encoder.encode(body).byteLength : body.byteLength) >
+            maxBytes
+          ) {
+            return undefined
+          }
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(text)
+          } catch {
+            return undefined
+          }
+          return `${JSON.stringify(parsed, null, spaces)}${newline ? "\n" : ""}`
+        },
+        onResponseRaw(response, req) {
+          if (!isEnabled(requestView(req))) return response
+          if (query !== false && !new URL(req.url).searchParams.has(query)) return response
+          if (
+            response.body === null ||
+            response.status === 204 ||
+            response.status === 205 ||
+            response.status === 304 ||
+            response.headers.has("content-encoding")
+          )
+            return response
+          if (!isJson(response.headers.get("content-type") ?? "")) return response
+          const declared = response.headers.get("content-length")
+          if (
+            declared !== null &&
+            /^(?:0|[1-9]\d*)$/.test(declared) &&
+            Number(declared) > maxBytes
+          ) {
+            return response
+          }
+          return prettyRawResponse(response, maxBytes, spaces, newline)
+        },
+      }),
+    ),
   )
 }
 

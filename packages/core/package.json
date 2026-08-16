@@ -237,6 +237,11 @@
       "types": "./dist/server/response-contract-lane.d.ts",
       "default": "./dist/server/response-contract-lane.js"
     },
+    "./response-observer": {
+      "bun": "./src/response-observer.ts",
+      "types": "./dist/response-observer.d.ts",
+      "default": "./dist/response-observer.js"
+    },
     "./tool-contract": {
       "bun": "./src/tool-contract.ts",
       "types": "./dist/tool-contract.d.ts",

@@ -17,7 +17,14 @@
  * can only select one of the app's own supported locales. A `__Secure-`/`__Host-` cookie name
  * opts into the prefix contract, and `Secure` is applied automatically.
  */
-import { cookieNamePrefix, defineContextPlugin, serializeCookie } from "@nifrajs/core/server"
+
+import { withResponseObserver } from "@nifrajs/core/response-observer"
+import {
+  cookieNamePrefix,
+  defineContextPlugin,
+  type Middleware,
+  serializeCookie,
+} from "@nifrajs/core/server"
 import {
   type Locale,
   type LocaleSource,
@@ -98,22 +105,27 @@ export function localeDetector(options: LocaleDetectorOptions) {
         )
         return { locale: resolved.locale, localeSource: resolved.source }
       })
-      .use({
-        onResponseHeaders(headers, req) {
-          // Pure recompute from (url, request headers) - the same trick as middleware's
-          // `language()`: no WeakMap pairing, so the Node direct-writer lane stays available.
-          const resolved = resolveLocale(
-            { header: (name) => req.header(name), url: req.url },
-            options,
-          )
-          if (emitHeader && !headers.has("content-language")) {
-            headers.set("content-language", resolved.locale)
-          }
-          if (persistCookie === undefined) return
-          if (resolved.source !== "query") return
-          if (resolved.cookie === resolved.locale) return
-          headers.append("set-cookie", serializeCookie(persistCookie, resolved.locale, cookieAttrs))
-        },
-      }),
+      .use(
+        withResponseObserver<Middleware>({
+          onResponseHeaders(headers, req) {
+            // Pure recompute from (url, request headers) - the same trick as middleware's
+            // `language()`: no WeakMap pairing, so the Node direct-writer lane stays available.
+            const resolved = resolveLocale(
+              { header: (name) => req.header(name), url: req.url },
+              options,
+            )
+            if (emitHeader && !headers.has("content-language")) {
+              headers.set("content-language", resolved.locale)
+            }
+            if (persistCookie === undefined) return
+            if (resolved.source !== "query") return
+            if (resolved.cookie === resolved.locale) return
+            headers.append(
+              "set-cookie",
+              serializeCookie(persistCookie, resolved.locale, cookieAttrs),
+            )
+          },
+        }),
+      ),
   )
 }

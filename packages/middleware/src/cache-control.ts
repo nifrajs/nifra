@@ -1,3 +1,4 @@
+import { withResponseObserver } from "@nifrajs/core/response-observer"
 import { defineRouterPlugin, type Middleware } from "@nifrajs/core/server"
 import { withHeaders } from "./_utils.ts"
 
@@ -36,13 +37,13 @@ export function cacheControl(
     // Web response walk carries - it keeps the full `onResponse` contract (and its cost).
     const middleware: Middleware =
       typeof value === "string"
-        ? {
+        ? withResponseObserver<Middleware>({
             onResponseHeaders(headers, req, status) {
               if (!methods.has(req.method) || !statusOk(status)) return
               if (respectExisting && headers.has("cache-control")) return
               headers.set("cache-control", value)
             },
-          }
+          })
         : {
             onResponse(res, req) {
               if (!methods.has(req.method)) return res

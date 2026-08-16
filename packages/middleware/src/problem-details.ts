@@ -1,4 +1,5 @@
-import { defineRouterPlugin, pathnameOf } from "@nifrajs/core/server"
+import { withResponseObserver } from "@nifrajs/core/response-observer"
+import { defineRouterPlugin, type Middleware, pathnameOf } from "@nifrajs/core/server"
 
 const JSON_TYPE = /^(?:application\/json|[^/]+\/[^;]+\+json)(?:\s*;|$)/i
 const DEFAULT_MAX_BYTES = 64 * 1024
@@ -151,64 +152,66 @@ export function problemDetails(options: ProblemDetailsOptions = {}) {
   const typeBase = options.typeBase
 
   return defineRouterPlugin("problemDetails", (app) =>
-    app.use({
-      onResponseBody(body, headers, req, status) {
-        if (
-          status < 400 ||
-          status >= 600 ||
-          headers.has("content-encoding") ||
-          isAlreadyProblemDetails(headers.get("content-type"))
-        ) {
-          return undefined
-        }
-        const envelope = readEnvelope(body, headers.get("content-type"), maxBytes)
-        if (envelope === undefined) return undefined
-        const document = problemDocument(
-          status,
-          envelope,
-          typeBase,
-          instance ? pathnameOf(req.url) : undefined,
-        )
-        headers.set("content-type", "application/problem+json")
-        headers.delete("content-length")
-        return JSON.stringify(document)
-      },
-      async onResponseRaw(response, req) {
-        if (
-          response.status < 400 ||
-          response.status >= 600 ||
-          response.body === null ||
-          response.headers.has("content-encoding") ||
-          isAlreadyProblemDetails(response.headers.get("content-type"))
-        ) {
-          return response
-        }
-        let bytes: Uint8Array | undefined
-        try {
-          const clone = response.clone()
-          if (clone.body === null) return response
-          bytes = await readCappedBody(clone.body, maxBytes)
-        } catch {
-          return response
-        }
-        if (bytes === undefined) return response
-        const envelope = readEnvelope(bytes, response.headers.get("content-type"), maxBytes)
-        if (envelope === undefined) return response
-        const headers = new Headers(response.headers)
-        headers.set("content-type", "application/problem+json")
-        headers.delete("content-length")
-        return new Response(
-          JSON.stringify(
-            problemDocument(
-              response.status,
-              envelope,
-              typeBase,
-              instance ? pathnameOf(req.url) : undefined,
+    app.use(
+      withResponseObserver<Middleware>({
+        onResponseBody(body, headers, req, status) {
+          if (
+            status < 400 ||
+            status >= 600 ||
+            headers.has("content-encoding") ||
+            isAlreadyProblemDetails(headers.get("content-type"))
+          ) {
+            return undefined
+          }
+          const envelope = readEnvelope(body, headers.get("content-type"), maxBytes)
+          if (envelope === undefined) return undefined
+          const document = problemDocument(
+            status,
+            envelope,
+            typeBase,
+            instance ? pathnameOf(req.url) : undefined,
+          )
+          headers.set("content-type", "application/problem+json")
+          headers.delete("content-length")
+          return JSON.stringify(document)
+        },
+        async onResponseRaw(response, req) {
+          if (
+            response.status < 400 ||
+            response.status >= 600 ||
+            response.body === null ||
+            response.headers.has("content-encoding") ||
+            isAlreadyProblemDetails(response.headers.get("content-type"))
+          ) {
+            return response
+          }
+          let bytes: Uint8Array | undefined
+          try {
+            const clone = response.clone()
+            if (clone.body === null) return response
+            bytes = await readCappedBody(clone.body, maxBytes)
+          } catch {
+            return response
+          }
+          if (bytes === undefined) return response
+          const envelope = readEnvelope(bytes, response.headers.get("content-type"), maxBytes)
+          if (envelope === undefined) return response
+          const headers = new Headers(response.headers)
+          headers.set("content-type", "application/problem+json")
+          headers.delete("content-length")
+          return new Response(
+            JSON.stringify(
+              problemDocument(
+                response.status,
+                envelope,
+                typeBase,
+                instance ? pathnameOf(req.url) : undefined,
+              ),
             ),
-          ),
-          { status: response.status, statusText: response.statusText, headers },
-        )
-      },
-    }),
+            { status: response.status, statusText: response.statusText, headers },
+          )
+        },
+      }),
+    ),
   )
 }

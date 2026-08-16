@@ -3,6 +3,7 @@ import { ServerResponse as NodeServerResponse } from "node:http"
 import { connect } from "node:net"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/core"
 import { server } from "@nifrajs/core"
+import { responseObserver } from "@nifrajs/core/response-observer"
 import { status } from "@nifrajs/core/server"
 import { compression } from "@nifrajs/middleware"
 import { type NodeServer, serve } from "../src/index.ts"
@@ -668,6 +669,7 @@ test("passes a 204 (no body) through to Node correctly", async () => {
 
 test("normalizes a body-hook 304 before the Node direct writer", async () => {
   const app = server()
+    .use(responseObserver())
     .onResponseBody(() => ({ status: 304 }))
     .get("/doc", () => ({ body: "must not ship" }))
   running = await serve(app, { port: 0 })
@@ -683,6 +685,7 @@ test("normalizes a body-hook 304 before the Node direct writer", async () => {
 
 test("bodyless native JSON responses discard a hook-supplied content length", async () => {
   const app = server()
+    .use(responseObserver())
     .onResponseBody((_body, headers) => {
       headers.set("content-length", "999")
       return { status: 304 }

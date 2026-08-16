@@ -1,4 +1,5 @@
 import { server } from "@nifrajs/core"
+import { responseObserver } from "@nifrajs/core/response-observer"
 import { websocket } from "@nifrajs/core/ws"
 import { serve } from "../src/index.ts"
 
@@ -14,6 +15,7 @@ function assert(cond: boolean, msg: string): void {
 
 Deno.test("serves GET (JSON) + POST (body), resolves the bound port", async () => {
   const app = server()
+    .use(responseObserver())
     .get("/users/:id", (c) => ({ id: c.params.id }))
     .post("/echo", (c) => c.req.json())
   const running = await serve(app, { port: 0 })
@@ -308,13 +310,13 @@ Deno.test("statically declared response headers match the equivalent hook on the
     ),
   )
   const viaHook = await dumpAll(
-    routes(server({ logger: { error() {}, warn() {}, info() {} } as never })).onResponseHeaders(
-      (headers) => {
+    routes(server({ logger: { error() {}, warn() {}, info() {} } as never }))
+      .use(responseObserver())
+      .onResponseHeaders((headers) => {
         for (const [name, value] of Object.entries(declared)) {
           if (!headers.has(name)) headers.set(name, value)
         }
-      },
-    ),
+      }),
   )
   assertEquals(viaStatic, viaHook)
   for (const entry of viaStatic as Array<{ headers: string[][] }>) {

@@ -10,6 +10,7 @@
  *   node <bundled serve-node-nifra.js> <port> [body]
  */
 import { serve } from "@nifrajs/node"
+import { responseObserver } from "../../packages/core/dist/response-observer.js"
 import { makeNifraApp } from "./_nifra-app.ts"
 
 const port = Number(process.argv[2])
@@ -27,7 +28,7 @@ function hash(s: string): string {
 
 const app = makeNifraApp()
 if (process.argv[3] === "body") {
-  app.onResponseBody((body, headers) => {
+  app.use(responseObserver()).onResponseBody((body, headers) => {
     headers.set(
       "x-body-hash",
       hash(typeof body === "string" ? body : new TextDecoder().decode(body)),

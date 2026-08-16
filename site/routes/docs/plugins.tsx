@@ -37,7 +37,9 @@ const app = server()
   // MemoryStore is dev/single-instance only - use a shared store (Redis, etc.) in production.
   .use(rateLimit({ store: new MemoryStore(), max: 100, windowMs: 60_000 }))`
 
-const PORTABLE_HOOK = `import type { Middleware } from "@nifrajs/core/server"
+const PORTABLE_HOOK = `import { responseObserver } from "@nifrajs/core/response-observer"
+import { server } from "@nifrajs/core/server"
+import type { Middleware } from "@nifrajs/core/server"
 
 // ONE implementation, fast on every runtime: on Bun/Deno it mutates the
 // response's own Headers in place; on Node it writes the outcome record on the
@@ -48,7 +50,9 @@ export function serverName(value: string): Middleware {
       if (status < 500) headers.set("server", value)
     },
   }
-}`
+}
+
+const app = server().use(responseObserver()).use(serverName("nifra"))`
 
 const STATIC_HEADERS = `// doc-check: skip - fragment: \`app\` is your application's server instance.
 // No hook is registered, so a bare route still takes Bun's fused native lane.

@@ -5,6 +5,7 @@
  *   deno run --allow-net --allow-env --no-check bench/http/serve-deno-static-headers.ts <static|hook> <port>
  */
 import { server } from "../../packages/core/dist/index.js"
+import { responseObserver } from "../../packages/core/dist/response-observer.js"
 import { serve } from "../../packages/deno/src/index.ts"
 import { securityHeaders } from "../../packages/middleware/dist/index.js"
 
@@ -36,9 +37,11 @@ if (variant === "static") {
     }),
   )
 } else {
-  app.onResponseHeaders((headers: { set: (name: string, value: string) => void }) => {
-    for (const [name, value] of HEADERS) headers.set(name, value)
-  })
+  app
+    .use(responseObserver())
+    .onResponseHeaders((headers: { set: (name: string, value: string) => void }) => {
+      for (const [name, value] of HEADERS) headers.set(name, value)
+    })
 }
 app
   .get("/", () => ({ hello: "world" }))

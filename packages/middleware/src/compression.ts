@@ -1,4 +1,5 @@
-import { defineRouterPlugin, type ResponseHeadersView } from "@nifrajs/core/server"
+import { withResponseObserver } from "@nifrajs/core/response-observer"
+import { defineRouterPlugin, type Middleware, type ResponseHeadersView } from "@nifrajs/core/server"
 
 export interface CompressionOptions {
   /** Don't compress bodies smaller than this many bytes. Default `1024`. Enforced by peeking the body
@@ -235,24 +236,26 @@ export function compression(options: CompressionOptions = {}) {
   }
   const isCompressible = options.compressible ?? defaultCompressible
   return defineRouterPlugin("compression", (app) =>
-    app.use({
-      onResponseBody(body, headers, req, status) {
-        if (!acceptsGzip(req.header("accept-encoding"))) return undefined
-        if (headers.has("content-encoding")) return undefined
-        if (status === 206 || headers.has("content-range")) return undefined
-        if (hasNoTransform(headers.get("cache-control"))) return undefined
-        if (!isCompressible(headers.get("content-type") ?? "")) return undefined
-        const bytes = typeof body === "string" ? GZIP_ENCODER.encode(body) : body
-        if (bytes.byteLength < threshold) return undefined
-        return gzipBytes(bytes).then((compressed) => {
-          headers.set("content-encoding", "gzip")
-          headers.delete("content-length")
-          addGzipVary(headers)
-          return compressed
-        })
-      },
-      onResponseRaw: (response, req) =>
-        compressRawResponse(response, req, threshold, isCompressible),
-    }),
+    app.use(
+      withResponseObserver<Middleware>({
+        onResponseBody(body, headers, req, status) {
+          if (!acceptsGzip(req.header("accept-encoding"))) return undefined
+          if (headers.has("content-encoding")) return undefined
+          if (status === 206 || headers.has("content-range")) return undefined
+          if (hasNoTransform(headers.get("cache-control"))) return undefined
+          if (!isCompressible(headers.get("content-type") ?? "")) return undefined
+          const bytes = typeof body === "string" ? GZIP_ENCODER.encode(body) : body
+          if (bytes.byteLength < threshold) return undefined
+          return gzipBytes(bytes).then((compressed) => {
+            headers.set("content-encoding", "gzip")
+            headers.delete("content-length")
+            addGzipVary(headers)
+            return compressed
+          })
+        },
+        onResponseRaw: (response, req) =>
+          compressRawResponse(response, req, threshold, isCompressible),
+      }),
+    ),
   )
 }

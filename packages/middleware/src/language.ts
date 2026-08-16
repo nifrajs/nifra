@@ -1,4 +1,5 @@
-import { type ContextPlugin, defineContextPlugin } from "@nifrajs/core/server"
+import { withResponseObserver } from "@nifrajs/core/response-observer"
+import { type ContextPlugin, defineContextPlugin, type Middleware } from "@nifrajs/core/server"
 
 export interface LanguageMatch {
   readonly language: string
@@ -106,13 +107,15 @@ export function language<const L extends readonly string[]>(
           // narrower literal union is the honest type for handlers to switch on.
           return { language: match.language as L[number], languageMatch: match }
         })
-        .use({
-          onResponseHeaders(headers, req) {
-            if (!emitHeader) return
-            if (headers.has("content-language")) return
-            const match = pickLanguage(req.header("accept-language"), supported, defaultLanguage)
-            headers.set("content-language", match.language)
-          },
-        }),
+        .use(
+          withResponseObserver<Middleware>({
+            onResponseHeaders(headers, req) {
+              if (!emitHeader) return
+              if (headers.has("content-language")) return
+              const match = pickLanguage(req.header("accept-language"), supported, defaultLanguage)
+              headers.set("content-language", match.language)
+            },
+          }),
+        ),
   )
 }

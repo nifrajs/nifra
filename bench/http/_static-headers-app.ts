@@ -15,6 +15,7 @@
  * resolves to `src/*.ts`, and this bench has to measure the artifact a real install runs (see
  * _nifra-app.ts for the measured source-vs-dist difference).
  */
+import { responseObserver } from "../../packages/core/dist/response-observer.js"
 import { server } from "../../packages/core/dist/server.js"
 import { securityHeaders } from "../../packages/middleware/dist/index.js"
 
@@ -38,7 +39,7 @@ export function makeStaticHeadersApp(variant: Variant) {
   if (variant === "static") {
     app.use(securityHeaders(OPTIONS))
   } else {
-    app.onResponseHeaders((headers) => {
+    app.use(responseObserver()).onResponseHeaders((headers) => {
       for (const [name, value] of HEADERS) headers.set(name, value)
     })
   }

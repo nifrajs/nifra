@@ -44,6 +44,10 @@ import { defineChannel, memoryChannelHub } from "@nifrajs/core/channel"
 - **Lifecycle middleware.** `derive`/`decorate` extend the typed context;
   `onRequest`/`beforeHandle`/`afterHandle`/`onResponse`/`onError` run around handlers;
   `use(middleware)` applies a bundle.
+- **Portable response observation.** The header/body/raw observer methods are opt-in so ordinary
+  servers stay lean: add `responseObserver()` from `@nifrajs/core/response-observer` before calling
+  `onResponseHeaders`, `onResponseBody`, or `onResponseRaw`. Official middleware that uses these
+  tiers installs the compatibility runtime automatically.
 - **Hardening built in.** `stop({ drainMs })` graceful shutdown (+ opt-in SIGTERM/
   SIGINT), `requestTimeoutMs` (+ `ctx.signal` and `ctx.budget`), a streaming body-size cap, and a
   redacting structured `Logger`.

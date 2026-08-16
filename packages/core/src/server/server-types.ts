@@ -261,7 +261,9 @@ export interface RunningServer {
 /**
  * A bundle of lifecycle hooks applied together via {@link Server.use} - the unit
  * `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is
- * optional and wired to its lifecycle point. Middleware is context-agnostic (sees
+ * optional and wired to its lifecycle point. Middleware carrying a portable response tier must be
+ * marked with `withResponseObserver()` from `@nifrajs/core/response-observer`, or the server must
+ * install `responseObserver()` before the bundle is applied. Middleware is context-agnostic (sees
  * the base `Context`); `use` does no context-type merging - the full type-merging
  * plugin system is deferred, and `.use` is reserved as its future entry point.
  */

@@ -13,6 +13,7 @@
 import { expect, test } from "bun:test"
 import { server, silentLogger } from "../src/index.ts"
 import { nodeDirect } from "../src/node-direct.ts"
+import { responseObserver } from "../src/response-observer.ts"
 
 function req(path: string): Request {
   return new Request(`http://localhost${path}`)
@@ -21,6 +22,7 @@ function req(path: string): Request {
 test("__proto__ through the portable header view: stored as data, never pollutes", async () => {
   const app = server({ logger: silentLogger })
     .use(nodeDirect())
+    .use(responseObserver())
     .onResponseHeaders((headers) => {
       headers.set("__proto__", "boom")
       headers.set("x-ok", "1")
