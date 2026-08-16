@@ -212,5 +212,9 @@ jobs:
       scan-args: |-
         --lockfile=./bun.lock
     permissions:
+      # The reusable osv-scan job requests actions:read as well. A caller permissions block sets every
+      # unlisted scope to `none`, and a reusable job requesting more than the caller granted fails the
+      # whole workflow at validation time (startup_failure), so this must mirror the callee exactly.
+      actions: read
       contents: read
       security-events: write
