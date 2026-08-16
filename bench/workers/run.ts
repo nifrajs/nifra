@@ -35,14 +35,16 @@ const envInt = (name: string, dflt: number, min = 1): number => {
 }
 const COLD_RUNS = envInt("BENCH_COLD_RUNS", 7)
 
-// Two nifra rows below the full server scope the compact-edge refactor:
+// Three nifra rows below the full server scope the compact-edge refactor, heaviest to lightest:
+//   nifra-dx     - SHELL (worker-nifra-dx.ts + _edge-server.ts): the moat AND the real
+//                  `server().get().post()` builder DX. Prices what keeping the API costs over the
+//                  hand-wired kernel - the number Phase-1's decision gate turns on.
+//   nifra-kernel - PROTOTYPE (worker-nifra-kernel.ts): the same moat, but dispatch hand-wired against
+//                  the raw router - so it does NOT charge for the builder API.
 //   nifra-edge   - SPIKE (worker-nifra-edge.ts): the real router, NO Server class, NO defaults. The
 //                  absolute floor - upper bound on savings, lower bound on cold time.
-//   nifra-kernel - PROTOTYPE (worker-nifra-kernel.ts): the same router PLUS the must-keep
-//                  secure-by-default surface (body cap, proto guard, schema validation, structured
-//                  errors). The faithful lower bound a lane-registry refactor could ship WITH the moat.
-// Ordered full -> kernel -> spike so the gap each step closes against `nifra` is visible in one glance.
-const FRAMEWORKS = ["nifra", "nifra-kernel", "nifra-edge", "hono", "raw"] as const
+// Ordered full -> dx -> kernel -> spike so each step's gap against `nifra` is visible in one glance.
+const FRAMEWORKS = ["nifra", "nifra-dx", "nifra-kernel", "nifra-edge", "hono", "raw"] as const
 type Framework = (typeof FRAMEWORKS)[number]
 
 interface ColdSample {
