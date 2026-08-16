@@ -111,6 +111,34 @@ export function claimableWebStream(
           source.destroy(error)
           return
         }
+        // Drain policy: let the source run to its end so the socket closes on a clean FIN, never the
+        // RST that destroying a half-read upload sends. The early response (a 413 cap rejection) has to
+        // reach the client, and on Linux an RST discards it from the client's receive buffer before it
+        // is read - so a body rejected by the cap arrives as a connection reset instead of the 413 that
+        // explains it. Draining also relieves the read-side backpressure that otherwise pins the socket
+        // at exactly the cap: the response can then flush, the client reads the 413, abandons its
+        // upload, and closes - which ends the drain a little past the cap rather than at the full body.
+        const finish = (): void => {
+          if (!source.destroyed) source.destroy()
+        }
+        // A source that is already being async-iterated cannot be drained with `resume()`: the iterator
+        // holds a `readable` listener, and while one is attached `resume()` is a no-op (as is Node's own
+        // post-response `_dump()`). That is the trap this path fell into - the socket never drained, the
+        // 413 never flushed, and the connection deadlocked until it reset. Such a source is drained by
+        // pumping its own iterator; one never read (no listener yet) takes the plain `resume()`.
+        if (iterator !== undefined) {
+          const it = iterator
+          const pump = (): void => {
+            it.next().then((step) => {
+              if (step.done === true) finish()
+              else pump()
+            }, finish)
+          }
+          // The client abandoning its upload (or any socket teardown) ends the drain even mid-pull.
+          source.once("close", finish)
+          pump()
+          return
+        }
         // The source stays live after this returns, so it keeps the right to emit `error` - and an
         // unhandled `error` on a Node stream terminates the process. A client that resets the
         // connection mid-drain is an ordinary event here, not a fault worth propagating: the read
