@@ -5,12 +5,13 @@
  * its values) so `request-context`, `respond`, `node-outcome`, and the kernel form a cycle-free graph.
  */
 import { createUnboundedRequestBudget, type RequestBudget } from "../budget.ts"
+import { NODE_BRIDGE_MARKER_KEYS } from "./bridge-markers.ts"
 import type { CtxSet, RequestSource } from "./server.ts"
 
 /** A handler returns a `Response` (used as-is) or any value (serialized to JSON). */
 export type HandlerResult = Response | unknown
 
-export const RESPONSE_RESULT = Symbol.for("nifra.response.result")
+export const RESPONSE_RESULT = Symbol.for(NODE_BRIDGE_MARKER_KEYS.responseResult)
 export const CONTEXT_SET = Symbol("nifra.context.set")
 export const CONTEXT_SEARCH = Symbol("nifra.context.search")
 

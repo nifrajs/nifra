@@ -24,6 +24,7 @@ import type { Duplex, Readable } from "node:stream"
 import { fileURLToPath } from "node:url"
 // srvx's lazy spec-shaped Response - see nodeOutcomeToResponse for why the bridge uses it.
 import { FastResponse } from "srvx/node"
+import { NODE_BRIDGE_MARKER_KEYS } from "./generated/bridge-markers.ts"
 import type { NodeServeOutcome } from "./generated/node-outcome.ts"
 import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
 
@@ -192,7 +193,7 @@ interface NodeFastHandler extends FetchHandler {
   ): NodeServeOutcome | Promise<NodeServeOutcome>
 }
 
-const RESOLVE_NODE_MOUNT = Symbol.for("@nifrajs/core/resolve-node-mount")
+const RESOLVE_NODE_MOUNT = Symbol.for(NODE_BRIDGE_MARKER_KEYS.resolveNodeMount)
 
 /**
  * The `Content-Type` the host runtime's `Response.json` emits - Node's undici uses `application/json`,
@@ -203,12 +204,12 @@ const JSON_CONTENT_TYPE = Response.json(0).headers.get("content-type") ?? "appli
 
 const INTERNAL_ERROR_BODY = '{"ok":false,"error":"internal_error"}'
 const EMPTY_BUFFER = Buffer.alloc(0)
-const NODE_RESPONSE_BODY = Symbol.for("nifra.response.body")
-const RESPONSE_RESULT = Symbol.for("nifra.response.result")
+const NODE_RESPONSE_BODY = Symbol.for(NODE_BRIDGE_MARKER_KEYS.responseBody)
+const RESPONSE_RESULT = Symbol.for(NODE_BRIDGE_MARKER_KEYS.responseResult)
 /** Core's proof that a header record's names are already the lowercase wire spelling - set once per
  * request by the native response walk, which had to look at the same keys anyway. Declared by key
  * rather than imported: the same cross-package convention as the two marks above. */
-const LOWERCASE_HEADER_KEYS = Symbol.for("nifra.headers.lowercase")
+const LOWERCASE_HEADER_KEYS = Symbol.for(NODE_BRIDGE_MARKER_KEYS.lowercaseHeaderKeys)
 
 function isBodylessStatus(status: number): boolean {
   return status === 204 || status === 205 || status === 304

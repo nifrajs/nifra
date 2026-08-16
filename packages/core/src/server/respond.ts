@@ -4,6 +4,7 @@
  * spine types, so the wire-response format lives in one module distinct from the request engine.
  */
 
+import { NODE_BRIDGE_MARKER_KEYS } from "./bridge-markers.ts"
 import {
   CONTEXT_SET,
   EMPTY_RESPONSE_CONTROLS,
@@ -190,7 +191,7 @@ function denoResponseWithJsonBody(
 // The framework-buffered-body marker shared with the Node adapter: a Response carrying it exposes
 // its already-serialized bytes without draining. On the Web serving paths it exists ONLY when a
 // registered body/raw hook needs it, so hook-less apps pay nothing.
-const RESPONSE_BODY = Symbol.for("nifra.response.body")
+const RESPONSE_BODY = Symbol.for(NODE_BRIDGE_MARKER_KEYS.responseBody)
 
 /**
  * Headers objects the framework itself constructed - guaranteed mutable, no guard. Response

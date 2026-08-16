@@ -1,3 +1,5 @@
+import { NODE_BRIDGE_MARKER_KEYS } from "./bridge-markers.ts"
+
 /**
  * The all-lowercase header-name proof: one answer, computed once per request, read by everyone who
  * would otherwise re-derive it.
@@ -23,7 +25,7 @@
  * Declared with `Symbol.for` so the `@nifrajs/node` adapter can read it by key rather than importing
  * across the package boundary - the same cross-package convention as the body and result marks.
  */
-const LOWERCASE_HEADER_KEYS = Symbol.for("nifra.headers.lowercase")
+const LOWERCASE_HEADER_KEYS = Symbol.for(NODE_BRIDGE_MARKER_KEYS.lowercaseHeaderKeys)
 
 /** True when the name contains an ASCII `A`-`Z`, i.e. is not already the wire spelling. */
 export function hasUpperAscii(name: string): boolean {

@@ -6,6 +6,7 @@
  *   - the seam stays off the server's public typed surface (symbol-keyed methods are not part of it).
  * Both sides reference the SAME registered symbol, so no module has to import the other.
  */
+import { NODE_BRIDGE_MARKER_KEYS } from "./bridge-markers.ts"
 
 /** @internal Install the idempotency runtime on a server (called by the `idempotency()` plugin). */
 export const INSTALL_IDEMPOTENCY: unique symbol = Symbol.for("@nifrajs/core/install-idempotency")
@@ -33,7 +34,9 @@ export const INSTALL_RESPONSE_CONTRACT: unique symbol = Symbol.for(
 )
 
 /** @internal Resolve a native mount for an adapter that can keep the request on its own stream lane. */
-export const RESOLVE_NODE_MOUNT: unique symbol = Symbol.for("@nifrajs/core/resolve-node-mount")
+export const RESOLVE_NODE_MOUNT: unique symbol = Symbol.for(
+  NODE_BRIDGE_MARKER_KEYS.resolveNodeMount,
+)
 
 /** @internal Marker on a mounted handler that knows how to serve a native Node request/response. */
 export const NODE_NATIVE_MOUNT: unique symbol = Symbol.for("@nifrajs/core/node-native-mount")
