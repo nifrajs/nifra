@@ -269,3 +269,47 @@ export async function detectToolingDrift(
   }
   return undefined
 }
+
+/** Tool names served from the bundled corpus; they do not depend on the project root. */
+const PROJECT_FREE_TOOLS = new Set(["nifra_docs", "nifra_example", "nifra_types", "nifra_learn"])
+
+/**
+ * Wrap project-scoped tools with root trust. A bad root refuses in-band; a good root stamps every
+ * result so the agent can see which project answered. Docs tools pass through untouched.
+ */
+export function guardTools(
+  tools: import("./mcp-protocol.ts").McpTool[],
+  verdict: McpRootVerdict,
+): import("./mcp-protocol.ts").McpTool[] {
+  return tools.map((tool) => {
+    if (PROJECT_FREE_TOOLS.has(tool.name)) return tool
+    return {
+      ...tool,
+      handler: async (
+        args: Record<string, unknown>,
+        context: import("./mcp-protocol.ts").McpToolContext,
+      ): Promise<import("./mcp-protocol.ts").McpToolResult> => {
+        if (verdict.blocked !== undefined) {
+          return { content: [{ type: "text", text: verdict.blocked }], isError: true }
+        }
+        const result = await tool.handler(args, context)
+        const note: import("./mcp-protocol.ts").McpContentBlock = {
+          type: "text",
+          text: verdict.note,
+        }
+        if (typeof result === "string") {
+          return { content: [{ type: "text", text: result }, note] }
+        }
+        return { ...result, content: [...(result.content ?? []), note] }
+      },
+    }
+  })
+}
+
+/** Whether the client's initialize params declare the roots capability. */
+export function clientSupportsRoots(params: Record<string, unknown> | undefined): boolean {
+  const capabilities = params?.capabilities
+  if (typeof capabilities !== "object" || capabilities === null) return false
+  const roots = (capabilities as { roots?: unknown }).roots
+  return typeof roots === "object" && roots !== null
+}

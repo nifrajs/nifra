@@ -12,18 +12,33 @@ afterAll(async () => {
 })
 
 /** A minimal project whose ladder climbs as far as the pieces we write for it. */
-async function project(name: string, options: { assurance?: boolean } = {}): Promise<string> {
+async function project(
+  name: string,
+  options: { assurance?: boolean; shellEvidence?: boolean } = {},
+): Promise<string> {
   const cwd = createFixtureProject(FIXTURES, `${name}-`)
   await mkdir(cwd, { recursive: true })
   await writeFile(
     join(cwd, "backend.ts"),
     [
       `import { server } from "@nifrajs/core"`,
+      ...(options.shellEvidence === true
+        ? [`import { assure, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"`]
+        : []),
       `const okBody = {`,
       `  "~standard": { version: 1, vendor: "levels-test", validate: (value) => (typeof value?.amount === "number" ? { value } : { issues: [{ message: "amount" }] }) },`,
       `  jsonSchema: { type: "object", properties: { amount: { type: "number", minimum: 1, maximum: 9 } }, required: ["amount"] },`,
       `}`,
       `export const backend = server().post("/pay", { body: okBody }, () => ({ ok: true }))`,
+      // A route with an options object that reflects to NO schema parts. The two manifest input
+      // paths canonicalize this differently (evidence keeps an empty `schema: {}`, a source
+      // reflection omits the key), which is exactly what made the recomputed hash diverge.
+      ...(options.shellEvidence === true ? [`backend.get("/ping", {}, () => ({ ok: true }))`] : []),
+      // Evidence published from OUTSIDE the `.use()` chain - the deployment-shell case `assure()`
+      // exists for, and the one where the manifest built from `source` alone stops matching.
+      ...(options.shellEvidence === true
+        ? [`assure(backend, { id: NIFRA_ASSURANCE.SECURITY_HEADERS, source: "levels-test-shell" })`]
+        : []),
       "",
     ].join("\n"),
   )
@@ -73,6 +88,18 @@ describe("nifra levels", () => {
     expect(result.levels[3]?.ok).toBe(true) // rung itself holds…
     expect(result.levels[2]?.ok).toBe(false) // …but the rung below it does not
     expect(result.achieved).toBe(1) // so the achieved level stays below the gap
+  })
+
+  test("a freshly emitted manifest is not stale when the app carries shell-published evidence", async () => {
+    // Regression: L3 recomputed the manifest from `source` alone while `manifest emit` (and the
+    // `versioned trust manifest drift` rule in `nifra check`) hash it WITH the project evidence
+    // snapshot. Any app using `assure()` from outside its plugin chain therefore emitted a manifest
+    // that `nifra levels` immediately called stale, capping it at L2 with nothing to fix.
+    const cwd = await project("shell-evidence", { shellEvidence: true })
+    expect(await runManifestEmit(cwd)).toBe(true)
+    const result = await collectVerificationLevels(cwd)
+    expect(result.levels[3]?.reasons).toEqual([])
+    expect(result.levels[3]?.ok).toBe(true)
   })
 
   test("L4 runs contract invariants only through the configured isolated executor", async () => {

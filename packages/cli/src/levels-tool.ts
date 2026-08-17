@@ -132,6 +132,12 @@ export async function collectVerificationLevels(
       if (assurance.ok && (capabilityReport === undefined || capabilityReport.ok)) {
         const current = await buildNifraManifest({
           source: config.source,
+          // `evidence` is NOT optional detail here - it is what `nifra manifest emit` and the
+          // `versioned trust manifest drift` check in `nifra check` both hash. Omitting it made
+          // this recompute a manifest nothing else ever emits, so every app that publishes
+          // assurance evidence from outside its `.use()` chain (the `assure()` seam) reported a
+          // freshly emitted manifest as stale and could never reach L3.
+          ...(verification.evidence !== undefined ? { evidence: verification.evidence } : {}),
           assurance,
           ...(capabilityReport !== undefined ? { capabilities: capabilityReport } : {}),
         })
