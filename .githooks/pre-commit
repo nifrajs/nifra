@@ -121,13 +121,22 @@ if [ -n "$LINTABLE" ]; then
 fi
 
 # ---- 3. llms-corpus tripwire -------------------------------------------------------------------
-# A docs edit that touches only a fenced code sample regenerates to a byte-identical llms-full.txt,
-# so the file can never be staged and the tripwire would be unsatisfiable. `NIFRA_LLMS_OK=1` is the
-# same escape hatch gate 1b uses: set it only after `bun run build && bun run gen:llms` left the
-# corpora clean (`bun run check:llms` confirms).
-if grep -qE '^site/routes/docs/.*\.(tsx|mdx)$' <<< "$STAGED" && [ "${NIFRA_LLMS_OK:-0}" != 1 ]; then
+# llms-full.txt inlines two prose sources gen-llms.ts reads verbatim: every `site/routes/docs/*.tsx`
+# page AND every package `README.md` (see the "Package reference (READMEs)" section it emits). A
+# staged edit to either leaves the corpus stale, and CI's check:llms rebuilds and diffs it - so both
+# inputs must trip this gate, not just docs pages. (A README prose edit is what slipped a stale
+# corpus onto main before this arm existed.) The corpus is NOT regenerated here: gen-llms.ts needs a
+# fresh declaration build first, and a stale dist would silently gut types.json - so the hook refuses
+# and says exactly what to run, the same contract as gate 1b.
+#
+# A docs edit that touches only a fenced code sample regenerates to a byte-identical llms-full.txt, so
+# the file can never be staged and the tripwire would be unsatisfiable; `NIFRA_LLMS_OK=1` is the same
+# escape hatch gate 1b uses: set it only after `bun run build && bun run gen:llms` left the corpora
+# clean (`bun run check:llms` confirms).
+if grep -qE '^(site/routes/docs/.*\.(tsx|mdx)|packages/[^/]+/README\.md)$' <<< "$STAGED" \
+  && [ "${NIFRA_LLMS_OK:-0}" != 1 ]; then
   if ! git diff --cached --name-only | grep -q '^llms-full.txt$'; then
-    echo "pre-commit: a docs page is staged but llms-full.txt is not - the llms corpora are stale." >&2
+    echo "pre-commit: a docs page or package README is staged but llms-full.txt is not - the llms corpora are stale." >&2
     echo "pre-commit: run 'bun run build && bun run gen:llms', stage the regenerated files, and commit again." >&2
     echo "pre-commit: if that provably changes nothing, re-run the commit with NIFRA_LLMS_OK=1." >&2
     exit 1
