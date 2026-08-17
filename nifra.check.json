@@ -1,0 +1,13 @@
+{
+  "rules": {
+    "NF-C008": {
+      "ignore": ["**/test/**", "**/test-node/**", "bench/**", "packages/create-nifra/template-*/**"]
+    },
+    "NF-C019": {
+      "ignore": ["bench/**", "**/test/**"]
+    },
+    "NF-S001": {
+      "ignore": ["scripts/**", "bench/**"]
+    }
+  }
+}
