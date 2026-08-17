@@ -264,6 +264,16 @@
         "@nifrajs/core": "workspace:^",
       },
     },
+    "packages/edge": {
+      "name": "@nifrajs/edge",
+      "version": "3.0.0",
+      "devDependencies": {
+        "@nifrajs/core": "workspace:*",
+      },
+      "peerDependencies": {
+        "@nifrajs/core": "workspace:^",
+      },
+    },
     "packages/env": {
       "name": "@nifrajs/env",
       "version": "3.0.0",
@@ -937,6 +947,8 @@
     "@nifrajs/deno": ["@nifrajs/deno@workspace:packages/deno"],
 
     "@nifrajs/devtools": ["@nifrajs/devtools@workspace:packages/devtools"],
+
+    "@nifrajs/edge": ["@nifrajs/edge@workspace:packages/edge"],
 
     "@nifrajs/env": ["@nifrajs/env@workspace:packages/env"],
 

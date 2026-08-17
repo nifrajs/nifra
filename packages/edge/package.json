@@ -1,0 +1,55 @@
+{
+  "name": "@nifrajs/edge",
+  "version": "3.0.0",
+  "description": "Compact fetch-handler server for edge and serverless runtimes (Cloudflare Workers, Vercel Edge, Deno Deploy, Bun). Keeps the server().get().post() DX and the full request trust boundary - bounded body read, Content-Length pre-reject, prototype-pollution guard, JSON/urlencoded framing - in a fraction of the bundle.",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "edge",
+    "serverless",
+    "cloudflare-workers",
+    "vercel-edge",
+    "deno-deploy",
+    "fetch",
+    "router"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "peerDependencies": {
+    "@nifrajs/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@nifrajs/core": "workspace:*"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/edge"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

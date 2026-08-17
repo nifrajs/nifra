@@ -4168,6 +4168,33 @@
     "doc": "/** Runtime handles for a concurrent boundary batch. `initial` is renderable immediately. */"
   },
   {
+    "name": "EdgeContext",
+    "kind": "interface",
+    "package": "@nifrajs/edge",
+    "signature": "export interface EdgeContext<Path extends string = string, Body = unknown> {\n    /** The raw `Request`. */\n    readonly request: Request;\n    /** Path parameters, typed from the route pattern (`/users/:id` -> `{ id: string }`). */\n    readonly params: Params<Path>;\n    /** The parsed, schema-validated body, or `undefined` on a route with no body schema. */\n    readonly body: Body;\n    /** The query string parsed to an object, computed on demand. */\n    query(): Record<string, QueryValue>;\n    /** Read a request header (case-insensitive), or `null`. */\n    header(name: string): string | null;\n}",
+    "doc": "/** The request handed to a route. Compact by design: no cookies, no response builder - return a\n * value (rendered as JSON) or a `Response` for full control. */"
+  },
+  {
+    "name": "EdgeHandler",
+    "kind": "type",
+    "package": "@nifrajs/edge",
+    "signature": "export type EdgeHandler<Path extends string = string, Body = unknown> = (c: EdgeContext<Path, Body>) => unknown | Promise<unknown>;",
+    "doc": "/** A route handler: returns a value (rendered as JSON), a `Response`, or a promise of either. A\n * thrown `Response` is sent as-is; any other throw becomes a `500`. */"
+  },
+  {
+    "name": "EdgeOptions",
+    "kind": "interface",
+    "package": "@nifrajs/edge",
+    "signature": "export interface EdgeOptions {\n    /** Maximum request body size in bytes before a `413`. Defaults to 1 MB. */\n    readonly maxBodyBytes?: number;\n    /** Prototype-poisoning policy for JSON bodies. Defaults to `\"reject\"`. */\n    readonly protoPoisoning?: ProtoPoisoning;\n}",
+    "doc": "/** Construction-time options. Both mirror `@nifrajs/core`'s `ServerOptions` defaults. */"
+  },
+  {
+    "name": "EdgeServer",
+    "kind": "class",
+    "package": "@nifrajs/edge",
+    "signature": "export declare class EdgeServer {\n    #private;\n    constructor(options?: EdgeOptions);\n    get<const Path extends string>(path: Path, handler: EdgeHandler<Path>): this;\n    head<const Path extends string>(path: Path, handler: EdgeHandler<Path>): this;\n    options<const Path extends string>(path: Path, handler: EdgeHandler<Path>): this;\n    post<const Path extends string, Body>(path: Path, schema: BodySchema<Body>, handler: EdgeHandler<Path, Body>): this;\n    post<const Path extends string>(path: Path, handler: EdgeHandler<Path>): this;\n    put<const Path extends string, Body>(path: Path, schema: BodySchema<Body>, handler: EdgeHandler<Path, Body>): this;\n    put<const Path extends string>(path: Path, handler: EdgeHandler<Path>): this;\n    patch<const Path extends string, Body>(path: Path, schema: BodySchema<Body>, handler: EdgeHandler<Path, Body>): this;\n    patch<const Path extends string>(path: Path, handler: EdgeHandler<Path>): this;\n    delete<const Path extends string, Body>(path: Path, schema: BodySchema<Body>, handler: EdgeHandler<Path, Body>): this;\n    delete<const Path extends string>(path: Path, handler: EdgeHandler<Path>): this;\n    /** The fetch handler. Not bound - use {@link toFetchHandler} (re-exported) or wrap it yourself. */\n    fetch: (request: Request) => Promise<Response>;\n}"
+  },
+  {
     "name": "effect",
     "kind": "function",
     "package": "@nifrajs/islets",
@@ -7514,6 +7541,12 @@
   {
     "name": "Method",
     "kind": "type",
+    "package": "@nifrajs/edge",
+    "signature": "export type Method = (typeof METHODS)[number];"
+  },
+  {
+    "name": "Method",
+    "kind": "type",
     "package": "nifra",
     "signature": "export type Method = (typeof METHODS)[number];"
   },
@@ -8471,6 +8504,12 @@
   {
     "name": "Params",
     "kind": "type",
+    "package": "@nifrajs/edge",
+    "signature": "export type Params<Path extends string> = Prettify<RawParams<Path>>;"
+  },
+  {
+    "name": "Params",
+    "kind": "type",
     "package": "nifra",
     "signature": "export type Params<Path extends string> = Prettify<RawParams<Path>>;"
   },
@@ -8719,6 +8758,13 @@
     "package": "nifra",
     "signature": "export interface PlainRender {\n    readonly status: number;\n    /** Headers belonging to this render. They win over anything the request left in `c.set.headers`. */\n    readonly headers?: Readonly<Record<string, string>>;\n    /** The body as a value, serialized by the lane that renders it. `undefined` means no body. */\n    readonly body: unknown;\n}",
     "doc": "/**\n * A response described as plain data - the status, any headers of its own, and a body still in value\n * form. A `ResponseResult` carrying one is rendered on the SAME lane a handler's plain return takes:\n * `JSON.stringify` straight into the node writer's `kind: \"json\"` outcome, or the web lane's prebuilt\n * JSON init. No `Response` is constructed anywhere on the node path.\n *\n * That matters because building one is the dominant cost of answering early. Measured on the rig, one\n * server per shape, all five answering the same 401: `c.set.status` + a plain object 82802 req/s,\n * `beforeHandle` returning that same object 81819, `return new Response(...)` 49668, `throw new\n * Response(...)` 47505, the same throw from a `derive` 48746. The `Response` costs 40%; the throw\n * around it costs another 4%; unwinding a lifecycle stage instead of a handler costs nothing\n * measurable. So the fix for a slow rejection is not a faster throw - it is not allocating the\n * `Response`.\n */"
+  },
+  {
+    "name": "plainValidationError",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function plainValidationError(issues: ReadonlyArray<StandardIssue>): ResponseResult;",
+    "doc": "/** The 422 as plain data - the shape every lane's response wrapper takes, so a rejected body costs\n * what an accepted one costs: on Node it is written straight to the socket with a `content-length`\n * instead of being built as a `Response` and drained back out. */"
   },
   {
     "name": "planProofs",
@@ -9331,6 +9377,13 @@
     "name": "QueryValue",
     "kind": "type",
     "package": "@nifrajs/core",
+    "signature": "export type QueryValue = string | string[];",
+    "doc": "/** A query value: a single occurrence is a string; a repeated key promotes to a string[] so an\n * array query schema (`t.array(t.string())`) can validate `?tag=a&tag=b` - last-wins silently\n * dropped values before (audit 2026-06). Single-occurrence keys stay plain strings, so existing\n * `t.string()` schemas are untouched; a repeated key against a string schema now FAILS validation\n * (an explicit 400 beats silently picking one). */"
+  },
+  {
+    "name": "QueryValue",
+    "kind": "type",
+    "package": "@nifrajs/edge",
     "signature": "export type QueryValue = string | string[];",
     "doc": "/** A query value: a single occurrence is a string; a repeated key promotes to a string[] so an\n * array query schema (`t.array(t.string())`) can validate `?tag=a&tag=b` - last-wins silently\n * dropped values before (audit 2026-06). Single-occurrence keys stay plain strings, so existing\n * `t.string()` schemas are untouched; a repeated key against a string schema now FAILS validation\n * (an explicit 400 beats silently picking one). */"
   },
@@ -11384,6 +11437,13 @@
   {
     "name": "server",
     "kind": "function",
+    "package": "@nifrajs/edge",
+    "signature": "export declare function server(options?: EdgeOptions): EdgeServer;",
+    "doc": "/** Create a compact edge server. */"
+  },
+  {
+    "name": "server",
+    "kind": "function",
     "package": "nifra",
     "signature": "export declare function server<Env = unknown>(options?: ServerOptions): Server<EmptyRegistry, {\n    readonly env: Env;\n}>;",
     "doc": "/**\n * Create a new {@link Server}. Pass an `Env` to type the platform bindings - `server<Env>()` makes\n * `c.env: Env` in every handler + middleware, and types the `env` argument of `app.fetch` /\n * `toFetchHandler`. Omit it and `c.env` is `unknown` (validate/cast before use).\n */"
@@ -12293,6 +12353,13 @@
   {
     "name": "StandardSchemaV1",
     "kind": "interface",
+    "package": "@nifrajs/edge",
+    "signature": "export interface StandardSchemaV1<Input = unknown, Output = Input> {\n    readonly \"~standard\": StandardSchemaProps<Input, Output>;\n}",
+    "doc": "/**\n * The Standard Schema v1 interface (https://standardschema.dev), vendored as\n * types + a tiny runtime helper so any compliant validator - zod, valibot,\n * arktype, … - validates requests without coupling the framework to one lib.\n * The spec is MIT-licensed and explicitly designed to be copied.\n */"
+  },
+  {
+    "name": "StandardSchemaV1",
+    "kind": "interface",
     "package": "@nifrajs/env",
     "signature": "export interface StandardSchemaV1<Output = unknown> {\n    readonly \"~standard\": {\n        readonly version: 1;\n        readonly vendor: string;\n        readonly validate: (value: unknown) => StandardResult<Output> | Promise<StandardResult<Output>>;\n        readonly types?: {\n            readonly output: Output;\n        };\n    };\n}"
   },
@@ -12866,6 +12933,13 @@
     "name": "toFetchHandler",
     "kind": "function",
     "package": "@nifrajs/core",
+    "signature": "export declare function toFetchHandler<Env = unknown>(app: {\n    fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>;\n    resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcome>;\n}, options?: {\n    scheduled?: ScheduledHandler<Env>;\n    /**\n     * Route WebSocket upgrades to a Durable Object that holds the connections and runs the app's\n     * pub/sub - enabling cross-connection broadcast (`app.publish`) on Cloudflare Workers, where a\n     * stateless isolate can't. Pass the DO namespace binding from `env`; pair with `@nifrajs/workers`'\n     * `createWebSocketHub(app)` (the DO class) + a `wrangler.toml` binding. Without this, WS upgrades use\n     * a per-connection `WebSocketPair` (no broadcast).\n     */\n    webSocketHub?: (env: Env) => DurableObjectNamespaceLike;\n}): {\n    fetch(request: Request, env: Env, ctx: ExecutionContext): MaybePromise<Response>;\n    scheduled?(controller: ScheduledController, env: Env, ctx: ExecutionContext): MaybePromise<void>;\n};",
+    "doc": "/**\n * Adapt a nifra app to an edge \"ExportedHandler\" - use it as a Cloudflare Workers (or any\n * `fetch(request, env, ctx)` runtime) default export. It threads `env` + `ctx.waitUntil` into the\n * nifra Context, so handlers read `c.env` and schedule background work via `c.waitUntil`:\n *\n *   export default toFetchHandler(app)\n *\n * Pass `{ scheduled }` to also export a Workers cron handler (for a `[triggers]` schedule) - it\n * receives the platform controller plus the same typed `env`/`waitUntil`:\n *\n *   export default toFetchHandler(app, {\n *     scheduled: (controller, { env, waitUntil }) =>\n *       waitUntil(env.KV.put(\"last-run\", String(controller.scheduledTime))),\n *   })\n *\n * No Workers-only deps - `app.fetch` stays a portable Web-standard handler; this is the thin\n * shim from the platform's 3-arg `fetch`/`scheduled` to it.\n */"
+  },
+  {
+    "name": "toFetchHandler",
+    "kind": "function",
+    "package": "@nifrajs/edge",
     "signature": "export declare function toFetchHandler<Env = unknown>(app: {\n    fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>;\n    resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcome>;\n}, options?: {\n    scheduled?: ScheduledHandler<Env>;\n    /**\n     * Route WebSocket upgrades to a Durable Object that holds the connections and runs the app's\n     * pub/sub - enabling cross-connection broadcast (`app.publish`) on Cloudflare Workers, where a\n     * stateless isolate can't. Pass the DO namespace binding from `env`; pair with `@nifrajs/workers`'\n     * `createWebSocketHub(app)` (the DO class) + a `wrangler.toml` binding. Without this, WS upgrades use\n     * a per-connection `WebSocketPair` (no broadcast).\n     */\n    webSocketHub?: (env: Env) => DurableObjectNamespaceLike;\n}): {\n    fetch(request: Request, env: Env, ctx: ExecutionContext): MaybePromise<Response>;\n    scheduled?(controller: ScheduledController, env: Env, ctx: ExecutionContext): MaybePromise<void>;\n};",
     "doc": "/**\n * Adapt a nifra app to an edge \"ExportedHandler\" - use it as a Cloudflare Workers (or any\n * `fetch(request, env, ctx)` runtime) default export. It threads `env` + `ctx.waitUntil` into the\n * nifra Context, so handlers read `c.env` and schedule background work via `c.waitUntil`:\n *\n *   export default toFetchHandler(app)\n *\n * Pass `{ scheduled }` to also export a Workers cron handler (for a `[triggers]` schedule) - it\n * receives the platform controller plus the same typed `env`/`waitUntil`:\n *\n *   export default toFetchHandler(app, {\n *     scheduled: (controller, { env, waitUntil }) =>\n *       waitUntil(env.KV.put(\"last-run\", String(controller.scheduledTime))),\n *   })\n *\n * No Workers-only deps - `app.fetch` stays a portable Web-standard handler; this is the thin\n * shim from the platform's 3-arg `fetch`/`scheduled` to it.\n */"
   },

@@ -33,6 +33,9 @@ const LIBRARIES = [
   // `dist/*.js` + `.d.ts` behind an `exports` map - so the same publint/attw model applies. They were
   // publishable without being listed here, which meant they shipped without either check ever running.
   "aws-lambda",
+  // The compact edge/serverless server - a built `dist/*.js` + `.d.ts` behind an `exports` map, same
+  // as every library above, so the same publint/attw model applies.
+  "edge",
   "proxy",
   "runner",
   "env",

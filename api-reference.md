@@ -1058,6 +1058,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ResponseResult** _(interface)_ - `interface ResponseResult`
 - **plainError** _(function)_ - `plainError: (status: number, error: string, headers?: Record<string, string>) => ResponseResult`
   The same envelope as {@link jsonError}, as plain data rather than a built `Response`.
+- **plainValidationError** _(function)_ - `plainValidationError: (issues: ReadonlyArray<StandardIssue>) => ResponseResult`
+  The 422 as plain data - the shape every lane's response wrapper takes, so a rejected body costs what an accepted one costs: on Node it is written straight to the socket with a `content-length` instead of being built as a `Response` and drained back out.
 - **queryObjectOf** _(function)_ - `queryObjectOf: (search: string) => Record<string, QueryValue>`
 - **readBodyFramed** _(function)_ - `readBodyFramed: <T>(source: RequestSource, maxBodyBytes: number, protoPoisoning: ProtoPoisoning, onParsed: (parsed: unknown) => MaybePromise<T>, wrapResponse: (response: Response | ResponseResult) => T, onError: (err: u…`
   The shared bounded body framing/parser: the single trust-boundary enforcement point every body lane routes through. Content-type dispatch, the urlencoded-form cap, and the JSON path (`Content-Length` pre-reject -> streaming cap -> prototype-poisoning guard, all inside `readBoundedJsonSource`) live …
@@ -1864,6 +1866,26 @@ _No named exports (side-effect entrypoint)._
 
 - **devtoolsClientScript** _(function)_ - `devtoolsClientScript: (options?: DevToolsClientOptions) => string`
   Returns a self-contained JavaScript string that creates a floating DevTools overlay in the browser. Inject via `<script>` tag in dev mode.
+
+## @nifrajs/edge
+
+- **EdgeContext** _(interface)_ - `interface EdgeContext<Path extends string = string, Body = unknown>`
+  The request handed to a route. Compact by design: no cookies, no response builder - return a value (rendered as JSON) or a `Response` for full control.
+- **EdgeHandler** _(type)_ - `type EdgeHandler<Path extends string = string, Body = unknown> = ( c: EdgeContext<Path, Body>, ) => unknown | Promise<unknown>`
+  A route handler: returns a value (rendered as JSON), a `Response`, or a promise of either. A thrown `Response` is sent as-is; any other throw becomes a `500`.
+- **EdgeOptions** _(interface)_ - `interface EdgeOptions`
+  Construction-time options. Both mirror `@nifrajs/core`'s `ServerOptions` defaults.
+- **EdgeServer** _(class)_ - `class EdgeServer`
+- **Method** _(type)_ - `type Method = (typeof METHODS)[number]`
+- **Params** _(type)_ - `type Params<Path extends string> = Prettify<RawParams<Path>>`
+- **QueryValue** _(type)_ - `type QueryValue = string | string[]`
+  A query value: a single occurrence is a string; a repeated key promotes to a string[] so an array query schema (`t.array(t.string())`) can validate `?tag=a&tag=b` - last-wins silently dropped values before (audit 2026-06). Single-occurrence keys stay plain strings, so existing `t.string()` schemas …
+- **StandardSchemaV1** _(interface)_ - `interface StandardSchemaV1<Input = unknown, Output = Input>`
+  The Standard Schema v1 interface (https://standardschema.dev), vendored as types + a tiny runtime helper so any compliant validator - zod, valibot, arktype, … - validates requests without coupling the framework to one lib. The spec is MIT-licensed and explicitly designed to be copied.
+- **server** _(function)_ - `server: (options?: EdgeOptions) => EdgeServer`
+  Create a compact edge server.
+- **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
+  Adapt a nifra app to an edge "ExportedHandler" - use it as a Cloudflare Workers (or any `fetch(request, env, ctx)` runtime) default export. It threads `env` + `ctx.waitUntil` into the nifra Context, so handlers read `c.env` and schedule background work via `c.waitUntil`:
 
 ## @nifrajs/env
 

@@ -447,7 +447,7 @@ function validationIssues(issues: ReadonlyArray<StandardIssue>): {
 /** The 422 as plain data - the shape every lane's response wrapper takes, so a rejected body costs
  * what an accepted one costs: on Node it is written straight to the socket with a `content-length`
  * instead of being built as a `Response` and drained back out. */
-function plainValidationError(issues: ReadonlyArray<StandardIssue>): ResponseResult {
+export function plainValidationError(issues: ReadonlyArray<StandardIssue>): ResponseResult {
   return status(422, validationIssues(issues))
 }
 

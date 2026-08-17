@@ -65,6 +65,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - `@nifrajs/cron` - Runtime-agnostic in-process cron for nifra - standard 5-field expressions + @macros, overlap-safe, error-isolated, graceful stop. For long-running servers (Bun/Node/Deno); Workers use the platform scheduled trigger. Dependency-free.
 - `@nifrajs/deno` - Run a nifra app on Deno via Deno.serve - graceful stop() + opt-in signals.
 - `@nifrajs/devtools` - Interactive DevTools overlay for nifra dev - loader traces, ISR status, route metadata.
+- `@nifrajs/edge` - Compact fetch-handler server for edge and serverless runtimes (Cloudflare Workers, Vercel Edge, Deno Deploy, Bun). Keeps the server().get().post() DX and the full request trust boundary - bounded body read, Content-Length pre-reject, prototype-pollution guard, JSON/urlencoded framing - in a fraction of the bundle.
 - `@nifrajs/env` - Typed, validated environment variables for nifra - define a schema, get a frozen typed object, fail loud at boot listing every problem. Coercing helpers (number/port/boolean/url/enum) + any Standard Schema. Dependency-free, edge-safe.
 - `@nifrajs/events` - Portable, versioned event contracts - a typed, transport-agnostic event envelope validated by any Standard Schema.
 - `@nifrajs/i18n` - Framework-agnostic i18n for nifra - locale negotiation + a tiny ICU message formatter on the platform Intl. Dependency-free.
