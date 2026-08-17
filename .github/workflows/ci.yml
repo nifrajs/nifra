@@ -50,6 +50,14 @@ jobs:
       - name: Test (scoped to the library test dirs; pass/fail only - coverage is the ratchet step below)
         run: bun run test
 
+      # Fixture roots are unique, but shared state can still hide an order dependency. Bun prints the
+      # seed on failure; deriving it from the run number makes each CI run explore a different order
+      # while keeping a failing run exactly reproducible (`--seed=<run number>`).
+      - name: CLI fixture isolation (randomized test order)
+        run: bun test packages/cli/test --randomize --seed="$NIFRA_TEST_SEED"
+        env:
+          NIFRA_TEST_SEED: ${{ github.run_number }}
+
       # The floor in bunfig says "≥90%". This says "not less than last time". A file at 99% can shed
       # coverage indefinitely without tripping a floor, and the drop only surfaces years later as
       # somebody else's failing build - so the erosion is caught where it happens.
