@@ -52,6 +52,10 @@ import { prerenderRoutes } from "./prerender.ts"
 export * from "./build-plan.ts"
 
 const basename = (path: string): string => path.slice(path.lastIndexOf("/") + 1)
+// The lazy shape declares `const loaders`, the eager shape `const modules`. Anchored at a line start,
+// NOT `.includes("const loaders =")`: the real emit is `const loaders: Record<...> = {`, whose `:` type
+// annotation sits between the name and the `=`, so the ` =` substring never matched and every lazy
+// manifest was re-synced as eager (silently converting `import()` splitting into a single eager bundle).
 const MANIFEST_IS_LAZY = /^const loaders\b/m
 const entryName = (file: string): string => {
   const base = basename(file)
@@ -59,6 +63,9 @@ const entryName = (file: string): string => {
   return dot === -1 ? base : base.slice(0, dot)
 }
 
+/** The slice of Bun's build metafile this build path reads: per JS OUTPUT, its source `entryPoint` and
+ * the `cssBundle` Bun emitted for that entry. The guard-facing import graph is adapted separately by
+ * `fromBunMetafile`; this smaller view is only for the per-route stylesheet map. */
 interface BunMetafile {
   readonly outputs?: Readonly<
     Record<string, { readonly entryPoint?: string; readonly cssBundle?: string }>
