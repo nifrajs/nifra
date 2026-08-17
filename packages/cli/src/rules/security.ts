@@ -62,8 +62,28 @@ function nameOf(ts: typeof TSApi, node: TSApi.Node): string | undefined {
 }
 
 /**
+ * The operand name to match secret-like patterns against for NF-S002, or undefined when the operand
+ * cannot hold runtime secret material. A property access to an uppercase-initial member
+ * (`ts.SyntaxKind.PlusToken`, `MediaKind.Audio`) reads an enum/type-constant discriminant, never a
+ * secret string or byte buffer, so comparing against it is a kind check a timing oracle does not
+ * apply to. Runtime secret fields follow the camelCase convention (`apiToken`, `signature`), so an
+ * uppercase-initial member is a safe exclusion. Identifiers stay matched in every case, so an
+ * `UPPER_SNAKE` secret constant still surfaces.
+ */
+function secretName(ts: typeof TSApi, node: TSApi.Node): string | undefined {
+  if (ts.isPropertyAccessExpression(node)) {
+    const member = node.name.text
+    return /^[A-Z]/.test(member) ? undefined : member
+  }
+  return nameOf(ts, node)
+}
+
+/**
  * Presence checks (`token === undefined`, `secret == null`, `apiKey !== ""`) and `typeof` guards are
  * not equality over secret material - rewriting them to a timing-safe comparison would break the code.
+ * A comparison against a numeric literal (`signature !== 1`, `signatureLength !== 64`) is a
+ * length/version/discriminant check, never a secret: secrets are strings or bytes, so a number on
+ * either side proves this is not the compare a timing oracle applies to.
  */
 function isPresenceComparison(ts: typeof TSApi, node: TSApi.BinaryExpression): boolean {
   for (const side of [node.left, node.right]) {
@@ -72,6 +92,8 @@ function isPresenceComparison(ts: typeof TSApi, node: TSApi.BinaryExpression): b
     if (ts.isStringLiteralLike(side) && side.text === "") return true
     if (ts.isTypeOfExpression(side)) return true
     if (ts.isVoidExpression(side)) return true
+    if (ts.isNumericLiteral(side)) return true
+    if (ts.isPrefixUnaryExpression(side) && ts.isNumericLiteral(side.operand)) return true
   }
   return false
 }
@@ -123,8 +145,8 @@ export const secretComparisonRule: CheckRule = {
           ].includes(node.operatorToken.kind) &&
           !isPresenceComparison(ts, node)
         ) {
-          const left = nameOf(ts, node.left)
-          const right = nameOf(ts, node.right)
+          const left = secretName(ts, node.left)
+          const right = secretName(ts, node.right)
           if (
             (left !== undefined && SECRET.test(left)) ||
             (right !== undefined && SECRET.test(right))
@@ -229,9 +251,23 @@ export const failOpenGateRule: CheckRule = {
             ts.isFunctionLike(parent) && parent.name && ts.isIdentifier(parent.name)
               ? parent.name.text
               : undefined
-          if (name !== undefined && /^(?:require|assert|can|authorize)/i.test(name)) {
+          // `can` only names a gate in camelCase (`canEdit`, `canAccess`) - matching it
+          // case-insensitively swept in `canonicalize…`, `cancel…`, `candidate…`, none of them
+          // authorization decisions. The other roots stay case-insensitive.
+          const gateName =
+            name !== undefined &&
+            (/^(?:require|assert|authorize)/i.test(name) || /^can[A-Z]/.test(name))
+          if (name !== undefined && gateName) {
             const text = node.block.getText(tree)
-            if (!/\b(?:throw|return\s+(?:false|new\s+Response|deny))/s.test(text)) {
+            // A catch fails closed when it rethrows, returns an explicit denial, or hands the failure
+            // to a helper whose whole job is to fail (`fail(…)`, `deny(…)`, `reject(…)`, …). The last
+            // form is why conformance/invariant asserts that funnel every error through a
+            // `never`-returning `fail()` are not fail-open - the scanner reads no types, so it trusts
+            // the helper by name, the same trade the SQL and gate-name heuristics already make.
+            if (
+              !/\b(?:throw|return\s+(?:false|new\s+Response|deny))/s.test(text) &&
+              !/(?:^|[^.\w])(?:fail|deny|reject|forbid|unauthorized|abort)\s*\(/s.test(text)
+            ) {
               const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
               const reviewed = hasReview(lines, line)
               findings.push(

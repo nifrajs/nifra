@@ -59,6 +59,55 @@ describe("built-in security rules", () => {
       true,
     )
   })
+
+  test("NF-S001 gate-name: `can` needs camelCase, so canonical/cancel are not gates", async () => {
+    const findings = await scan(
+      "routes/names.server.ts",
+      [
+        "function canonicalizeBody() { try { parse() } catch { return raw } }",
+        "function canEdit() { try { check() } catch { return } }",
+      ].join("\n"),
+    )
+    expect(findings.map((finding) => `${finding.code}:${finding.line}`)).toEqual(["NF-S001:2"])
+  })
+
+  test("NF-S001 delegated denial: a catch that calls fail() is not fail-open", async () => {
+    const findings = await scan(
+      "routes/assert.server.ts",
+      [
+        "function assertConformance() { try { render() } catch (e) { fail('render', e) } }",
+        "function requireAuth() { try { check() } catch { logger.warn('oops') } }",
+      ].join("\n"),
+    )
+    // fail() delegates the denial; the plain logger.warn catch is still fail-open.
+    expect(findings.map((finding) => `${finding.code}:${finding.line}`)).toEqual(["NF-S001:2"])
+  })
+
+  test("NF-S002 skips enum-member accesses (ts.SyntaxKind.PlusToken is a kind, not a secret)", async () => {
+    const findings = await scan(
+      "scanner.server.ts",
+      [
+        "if (node.operator === ts.SyntaxKind.PlusPlusToken) bump()",
+        "if (node.operatorToken.kind === ts.SyntaxKind.PlusToken) fold()",
+        "if (token === expected) load()",
+      ].join("\n"),
+    )
+    // Only the camelCase secret compare on line 3 survives; the enum discriminants do not.
+    expect(findings.filter((finding) => finding.code === "NF-S002").map((f) => f.line)).toEqual([3])
+  })
+
+  test("NF-S002 skips comparisons against a numeric literal (length/version, not a secret)", async () => {
+    const findings = await scan(
+      "manifest.server.ts",
+      [
+        "if (candidate.signature !== 1) return false",
+        "if (signatureLength !== 64) return false",
+        "if (token === expected) load()",
+      ].join("\n"),
+    )
+    // Only the string-vs-string secret compare on line 3 survives.
+    expect(findings.filter((finding) => finding.code === "NF-S002").map((f) => f.line)).toEqual([3])
+  })
 })
 
 describe("configuration audit rules (NF-S004..007)", () => {
