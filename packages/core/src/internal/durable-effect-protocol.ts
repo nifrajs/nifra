@@ -1,4 +1,4 @@
-import type { DurableEffectRecord, DurableEffectState } from "../durable-execution.ts"
+import type { DurableEffectRecord, DurableEffectState } from "./durable-types.ts"
 
 export interface DurableEffectTransitionInput {
   readonly effectId: string

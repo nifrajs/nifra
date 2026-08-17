@@ -1,4 +1,4 @@
-import type { SagaRecord, SagaState, SagaStepRecord, SagaStore } from "../durable-execution.ts"
+import type { SagaRecord, SagaState, SagaStepRecord, SagaStore } from "./durable-types.ts"
 
 export type DurableSagaTransitionInput = Parameters<SagaStore["compareAndSet"]>[0]
 

@@ -1007,6 +1007,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **DurableEffectJournalOptions** _(interface)_ - `interface DurableEffectJournalOptions`
 - **DurableEffectRecord** _(interface)_ - `interface DurableEffectRecord`
 - **DurableEffectState** _(type)_ - `type DurableEffectState = "admission" | "executing" | "committed" | "failed" | "unknown"`
+  Type-only records and transition contracts shared by durable execution domains.
 - **DurableEffectStore** _(interface)_ - `interface DurableEffectStore`
 - **DurableEffectTransitionError** _(class)_ - `class DurableEffectTransitionError`
 - **EffectReconciliationFinding** _(interface)_ - `interface EffectReconciliationFinding`

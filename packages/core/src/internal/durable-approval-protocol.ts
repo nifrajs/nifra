@@ -1,4 +1,4 @@
-import type { ApprovalConsumeResult, ApprovalRecord, ApprovalStore } from "../durable-execution.ts"
+import type { ApprovalConsumeResult, ApprovalRecord, ApprovalStore } from "./durable-types.ts"
 import { safeEqual } from "./safe-equal.ts"
 
 export type DurableApprovalDecisionInput = Parameters<ApprovalStore["decide"]>[0]
