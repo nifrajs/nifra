@@ -1,13 +1,11 @@
 import type { CapabilityProjectReport } from "./capabilities-tool.ts"
+import type { CheckAssuranceContext, CheckConfig, CheckDiagnostic } from "./check-diagnostics.ts"
 import type {
-  CheckAssuranceContext,
-  CheckConfig,
-  CheckDiagnostic,
   ManifestDriftFinding,
   SourceFinding,
   StaticRouteFinding,
   TransitiveServerImportFinding,
-} from "./check.ts"
+} from "./check-scan.ts"
 import type { DoctorResult } from "./doctor.ts"
 import type { PipelineReport } from "./pipeline-report.ts"
 import type { RulePack, SourceIndex } from "./rules/index.ts"

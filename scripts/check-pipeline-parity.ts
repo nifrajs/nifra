@@ -9,8 +9,8 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import type { BuildManifest } from "../packages/web/src/build.ts"
 import { buildClient } from "../packages/web/src/build.ts"
+import type { BuildManifest } from "../packages/web/src/build-plan.ts"
 import { buildClientVite } from "../packages/web/src/build-vite.ts"
 import { discoverRoutes } from "../packages/web/src/fs.ts"
 import {
