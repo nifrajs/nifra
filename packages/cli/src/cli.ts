@@ -481,6 +481,8 @@ async function assertFreshWorkspaceDists(cwd: string): Promise<void> {
   let rootPackage: Record<string, unknown>
   try {
     rootPackage = JSON.parse(readFileSync(pkgPath, "utf8")) as Record<string, unknown>
+    // @nifra-gate-reviewed: not a security gate. An unreadable/non-JSON package.json is a separate
+    // build problem; returning here skips the freshness check rather than masking a denial.
   } catch {
     return // an unreadable/!JSON package.json is a separate problem; don't mask it as a stale-dist failure
   }

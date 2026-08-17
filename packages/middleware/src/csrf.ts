@@ -76,6 +76,9 @@ export async function createCsrfToken(secret: CsrfSecret, nonce?: string): Promi
 export async function verifyCsrfToken(token: string, secret: CsrfSecret): Promise<boolean> {
   const keys = csrfKeys(secret)
   const parts = token.split(".")
+  // @nifra-gate-reviewed: TOKEN_PREFIX is a public, non-secret format tag; this equality is a shape
+  // check that short-circuits malformed input. The secret comparison is the constant-time
+  // verifyHmacSha256 over the signature below.
   if (parts.length !== 3 || parts[0] !== TOKEN_PREFIX || parts[1] === "" || parts[2] === "") {
     return false
   }

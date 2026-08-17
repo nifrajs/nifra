@@ -121,6 +121,8 @@ export function assertSingleReactCore(
     rendererReact = realpath(resolve("react", dirnamePortable(reactDomServerPath)))
     // The `react` the app's route components import - the core they call hooks on.
     componentsReact = realpath(resolve("react", appRoot()))
+    // @nifra-gate-reviewed: not a security gate. If either `react` cannot be resolved we cannot prove
+    // a duplicate exists, so we skip the assertion rather than block a valid render.
   } catch {
     return
   }
