@@ -565,6 +565,7 @@ export function serveDatabaseAsMcp(
     description: "List the tables this server exposes, with row counts.",
     handler: () => {
       const rows = options.tables.map((table) => {
+        // nifra-expect sql-dynamic: table name from the operator-configured allowlist, escaped by sqlIdentifier; SQL cannot bind an identifier as a parameter
         const [count] = db
           .prepare(sqlIdentifiers`SELECT count(*) AS n FROM "${table}"`)
           .all() as Array<{
@@ -687,6 +688,7 @@ export function serveDatabaseAsMcp(
           try {
             // Fetch at most one row beyond the advertised cap. This keeps the database driver's
             // materialization bounded even when the caller submits `SELECT * FROM a_huge_table`.
+            // nifra-expect sql-dynamic: wraps the caller's already-allowlisted read-only query (guarded above) in a bounding subselect; the query text is the tool's input, run on a read-only session
             limitedRows = await session.run(
               `SELECT * FROM (${query}) AS "__nifra_result" LIMIT ${maxRows + 1}`,
               deadline,
@@ -700,6 +702,7 @@ export function serveDatabaseAsMcp(
           let total: number | null = limitedRows.length
           if (wasLimited && options.runQuery?.exactTotal === true) {
             try {
+              // nifra-expect sql-dynamic: wraps the caller's already-allowlisted read-only query (guarded above) in a counting subselect; the query text is the tool's input, run on a read-only session
               const countRows = (await session.run(
                 `SELECT count(*) AS "__nifra_total" FROM (${query}) AS "__nifra_count"`,
                 deadline,

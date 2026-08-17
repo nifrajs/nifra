@@ -480,12 +480,15 @@ export class PostgresDurableRecordBackend implements DurableRecordBackend {
   }
 
   async migrate(): Promise<void> {
+    // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name, which SQL cannot bind as a parameter
     await this.client.query(
       sqlIdentifiers`CREATE TABLE IF NOT EXISTS ${this.recordsTable} (kind TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL, updated_at BIGINT NOT NULL, version BIGINT NOT NULL, payload JSONB NOT NULL, PRIMARY KEY (kind, id))`,
     )
+    // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name, which SQL cannot bind as a parameter
     await this.client.query(
       sqlIdentifiers`CREATE INDEX IF NOT EXISTS ${this.recordsTable}_reconcile ON ${this.recordsTable} (kind, state, updated_at, id)`,
     )
+    // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name, which SQL cannot bind as a parameter
     await this.client.query(
       sqlIdentifiers`CREATE TABLE IF NOT EXISTS ${this.leasesTable} (name TEXT PRIMARY KEY, owner TEXT, token TEXT, expires_at BIGINT NOT NULL DEFAULT 0, cursor TEXT)`,
     )
@@ -496,6 +499,7 @@ export class PostgresDurableRecordBackend implements DurableRecordBackend {
     id: string,
     record: { readonly version: number; readonly state?: string; readonly updatedAt?: number },
   ): Promise<boolean> {
+    // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name, which SQL cannot bind as a parameter
     const result = await this.client.query(
       sqlIdentifiers`INSERT INTO ${this.recordsTable} (kind,id,state,updated_at,version,payload) VALUES ($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT DO NOTHING RETURNING id`,
       [
@@ -513,6 +517,7 @@ export class PostgresDurableRecordBackend implements DurableRecordBackend {
     kind: DurableRecordKind,
     id: string,
   ): Promise<T | undefined> {
+    // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name, which SQL cannot bind as a parameter
     const result = await this.client.query(
       sqlIdentifiers`SELECT payload FROM ${this.recordsTable} WHERE kind=$1 AND id=$2`,
       [kind, id],
@@ -526,6 +531,7 @@ export class PostgresDurableRecordBackend implements DurableRecordBackend {
     record: { readonly version: number; readonly state?: string; readonly updatedAt?: number },
   ): Promise<boolean> {
     if (record.version !== expectedVersion + 1) return false
+    // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name, which SQL cannot bind as a parameter
     const result = await this.client.query(
       sqlIdentifiers`UPDATE ${this.recordsTable} SET state=$4,updated_at=$5,version=$6,payload=$7::jsonb WHERE kind=$1 AND id=$2 AND version=$3 RETURNING id`,
       [
@@ -544,6 +550,7 @@ export class PostgresDurableRecordBackend implements DurableRecordBackend {
     kind: DurableRecordKind,
     input: ReconciliationScanOptions<string>,
   ): Promise<ReconciliationScanPage<T>> {
+    // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name, which SQL cannot bind as a parameter
     const result = await this.client.query(
       sqlIdentifiers`SELECT id,payload FROM ${this.recordsTable} WHERE kind=$1 AND state = ANY($2::text[]) AND ($3::bigint IS NULL OR updated_at <= $3) AND ($4::text IS NULL OR id > $4) ORDER BY id LIMIT $5`,
       [kind, input.states, input.updatedBefore ?? null, input.cursor ?? null, input.limit + 1],
@@ -560,6 +567,7 @@ export class PostgresDurableRecordBackend implements DurableRecordBackend {
   ): Promise<ReconciliationLease | undefined> {
     const token = crypto.randomUUID()
     const expiresAt = input.now + input.leaseMs
+    // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name, which SQL cannot bind as a parameter
     const result = await this.client.query(
       sqlIdentifiers`INSERT INTO ${this.leasesTable} (name,owner,token,expires_at) VALUES ($1,$2,$3,$4) ON CONFLICT (name) DO UPDATE SET owner=EXCLUDED.owner,token=EXCLUDED.token,expires_at=EXCLUDED.expires_at WHERE ${this.leasesTable}.expires_at <= $5 RETURNING name,owner,token,expires_at,cursor`,
       [input.name, input.owner, token, expiresAt, input.now],
@@ -575,6 +583,7 @@ export class PostgresDurableRecordBackend implements DurableRecordBackend {
     })
   }
   async renewLease(input: Parameters<DurableRecordBackend["renewLease"]>[0]): Promise<boolean> {
+    // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name, which SQL cannot bind as a parameter
     const result = await this.client.query(
       sqlIdentifiers`UPDATE ${this.leasesTable} SET expires_at=$4 WHERE name=$1 AND owner=$2 AND token=$3 AND expires_at>$5 RETURNING name`,
       [input.name, input.owner, input.token, input.now + input.leaseMs, input.now],
@@ -584,6 +593,7 @@ export class PostgresDurableRecordBackend implements DurableRecordBackend {
   async checkpointLease(
     input: Parameters<DurableRecordBackend["checkpointLease"]>[0],
   ): Promise<boolean> {
+    // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name, which SQL cannot bind as a parameter
     const result = await this.client.query(
       sqlIdentifiers`UPDATE ${this.leasesTable} SET cursor=$4 WHERE name=$1 AND owner=$2 AND token=$3 RETURNING name`,
       [input.name, input.owner, input.token, input.cursor ?? null],
@@ -591,6 +601,7 @@ export class PostgresDurableRecordBackend implements DurableRecordBackend {
     return result.rows.length === 1
   }
   async releaseLease(input: Parameters<DurableRecordBackend["releaseLease"]>[0]): Promise<boolean> {
+    // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name, which SQL cannot bind as a parameter
     const result = await this.client.query(
       sqlIdentifiers`UPDATE ${this.leasesTable} SET owner=NULL,token=NULL,expires_at=0 WHERE name=$1 AND owner=$2 AND token=$3 RETURNING name`,
       [input.name, input.owner, input.token],
@@ -646,6 +657,7 @@ export class SQLiteDurableRecordBackend implements DurableRecordBackend {
     this.leasesTable = `${prefix}_leases`
   }
   migrate(): void {
+    // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name, which SQL cannot bind as a parameter
     this.client.exec(
       sqlIdentifiers`CREATE TABLE IF NOT EXISTS ${this.recordsTable} (kind TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL, updated_at INTEGER NOT NULL, version INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY (kind,id));CREATE INDEX IF NOT EXISTS ${this.recordsTable}_reconcile ON ${this.recordsTable} (kind,state,updated_at,id);CREATE TABLE IF NOT EXISTS ${this.leasesTable} (name TEXT PRIMARY KEY, owner TEXT, token TEXT, expires_at INTEGER NOT NULL DEFAULT 0, cursor TEXT);`,
     )
@@ -655,6 +667,7 @@ export class SQLiteDurableRecordBackend implements DurableRecordBackend {
     id: string,
     record: { readonly version: number; readonly state?: string; readonly updatedAt?: number },
   ): Promise<boolean> {
+    // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name, which SQL cannot bind as a parameter
     const result = this.client
       .query(
         sqlIdentifiers`INSERT OR IGNORE INTO ${this.recordsTable} (kind,id,state,updated_at,version,payload) VALUES (?,?,?,?,?,?)`,
@@ -673,6 +686,7 @@ export class SQLiteDurableRecordBackend implements DurableRecordBackend {
     kind: DurableRecordKind,
     id: string,
   ): Promise<T | undefined> {
+    // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name, which SQL cannot bind as a parameter
     const row = this.client
       .query(sqlIdentifiers`SELECT payload FROM ${this.recordsTable} WHERE kind=? AND id=?`)
       .get(kind, id)
@@ -685,6 +699,7 @@ export class SQLiteDurableRecordBackend implements DurableRecordBackend {
     record: { readonly version: number; readonly state?: string; readonly updatedAt?: number },
   ): Promise<boolean> {
     if (record.version !== expectedVersion + 1) return false
+    // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name, which SQL cannot bind as a parameter
     const result = this.client
       .query(
         sqlIdentifiers`UPDATE ${this.recordsTable} SET state=?,updated_at=?,version=?,payload=? WHERE kind=? AND id=? AND version=?`,
@@ -706,6 +721,7 @@ export class SQLiteDurableRecordBackend implements DurableRecordBackend {
   ): Promise<ReconciliationScanPage<T>> {
     if (input.states.length === 0) return { records: [] }
     const placeholders = sqlPlaceholders(input.states.length)
+    // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name (and static ?-placeholders), which SQL cannot bind as a parameter
     const rows = this.client
       .query(
         sqlIdentifiers`SELECT id,payload FROM ${this.recordsTable} WHERE kind=? AND state IN (${placeholders}) AND (? IS NULL OR updated_at <= ?) AND (? IS NULL OR id > ?) ORDER BY id LIMIT ?`,
@@ -732,6 +748,7 @@ export class SQLiteDurableRecordBackend implements DurableRecordBackend {
   ): Promise<ReconciliationLease | undefined> {
     const token = crypto.randomUUID()
     const expiresAt = input.now + input.leaseMs
+    // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name, which SQL cannot bind as a parameter
     const row = this.client
       .query(
         sqlIdentifiers`INSERT INTO ${this.leasesTable} (name,owner,token,expires_at) VALUES (?,?,?,?) ON CONFLICT(name) DO UPDATE SET owner=excluded.owner,token=excluded.token,expires_at=excluded.expires_at WHERE ${this.leasesTable}.expires_at <= ? RETURNING name,owner,token,expires_at,cursor`,
@@ -748,6 +765,7 @@ export class SQLiteDurableRecordBackend implements DurableRecordBackend {
   }
   async renewLease(input: Parameters<DurableRecordBackend["renewLease"]>[0]): Promise<boolean> {
     return (
+      // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name, which SQL cannot bind as a parameter
       this.client
         .query(
           sqlIdentifiers`UPDATE ${this.leasesTable} SET expires_at=? WHERE name=? AND owner=? AND token=? AND expires_at>?`,
@@ -760,6 +778,7 @@ export class SQLiteDurableRecordBackend implements DurableRecordBackend {
     input: Parameters<DurableRecordBackend["checkpointLease"]>[0],
   ): Promise<boolean> {
     return (
+      // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name, which SQL cannot bind as a parameter
       this.client
         .query(
           sqlIdentifiers`UPDATE ${this.leasesTable} SET cursor=? WHERE name=? AND owner=? AND token=?`,
@@ -769,6 +788,7 @@ export class SQLiteDurableRecordBackend implements DurableRecordBackend {
   }
   async releaseLease(input: Parameters<DurableRecordBackend["releaseLease"]>[0]): Promise<boolean> {
     return (
+      // nifra-expect sql-dynamic: interpolates a validated sqlIdentifier table name, which SQL cannot bind as a parameter
       this.client
         .query(
           sqlIdentifiers`UPDATE ${this.leasesTable} SET owner=NULL,token=NULL,expires_at=0 WHERE name=? AND owner=? AND token=?`,
