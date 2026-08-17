@@ -8,8 +8,13 @@
 import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, relative, resolve, sep } from "node:path"
+import {
+  type VerificationGateSpec,
+  type VerificationPlanMode,
+  verificationPlan,
+} from "./verification-plan.ts"
 
-export type ReleaseVerificationMode = "default" | "release"
+export type ReleaseVerificationMode = VerificationPlanMode
 export type ReleaseGateStatus = "pass" | "fail" | "skipped"
 
 export interface ReleaseGateResult {
@@ -43,164 +48,6 @@ export interface ReleaseVerificationOptions {
   readonly mode?: ReleaseVerificationMode
   readonly runCommand?: (spec: ReleaseCommandSpec) => Promise<ReleaseCommandResult>
 }
-
-interface ReleaseGateSpec {
-  readonly id: string
-  readonly commands: readonly (readonly string[])[]
-  readonly remediation: string
-}
-
-const DEFAULT_GATES: readonly ReleaseGateSpec[] = [
-  {
-    id: "lint",
-    commands: [["run", "lint"]],
-    remediation: "Run `bun run lint` and fix the reported lint findings.",
-  },
-  {
-    id: "typecheck",
-    commands: [["run", "typecheck"]],
-    remediation: "Run `bun run typecheck` and fix the reported TypeScript errors.",
-  },
-  {
-    id: "tests",
-    commands: [["run", "test"]],
-    remediation: "Run `bun run test` and fix the first failing test.",
-  },
-  {
-    id: "docs",
-    commands: [["run", "check:docs"]],
-    remediation: "Run `bun run check:docs` and update the failing documentation example.",
-  },
-  {
-    id: "api-corpus",
-    commands: [["run", "check:api"]],
-    remediation: "Run `bun run gen:api` and review the generated API reference.",
-  },
-  {
-    id: "cards-corpus",
-    commands: [["run", "check:cards"]],
-    remediation: "Run `bun run gen:cards` and review the generated package cards.",
-  },
-  {
-    id: "node-outcome-corpus",
-    commands: [["run", "check:node-outcome"]],
-    remediation: "Run `bun run gen:node-outcome` and review the generated Node outcome contract.",
-  },
-  {
-    id: "sitemap",
-    commands: [["run", "check:sitemap"]],
-    remediation: "Run `bun run gen:sitemap` and review the generated sitemap.",
-  },
-  {
-    id: "public-boundary",
-    commands: [["run", "check:public-boundary"]],
-    remediation:
-      "Run `bun run check:public-boundary` and remove the reported public-boundary violation.",
-  },
-  {
-    id: "size",
-    commands: [["run", "check:size"]],
-    remediation:
-      "Run `bun run check:size` and either reduce the bundle or update the reviewed budget.",
-  },
-  // Appended, not inserted: RELEASE_GATES below composes this list BY INDEX
-  // (`slice(0, 3)`, `[3]`), so a gate added in the middle would silently re-point those.
-  {
-    id: "changesets",
-    commands: [["run", "check:changesets"]],
-    remediation:
-      "Run `bun run changeset` and name every package whose source changed, so the release documents it.",
-  },
-]
-
-const RELEASE_GATES: readonly ReleaseGateSpec[] = [
-  {
-    id: "build",
-    commands: [["run", "build"]],
-    remediation: "Run `bun run build` and fix the first package build failure.",
-  },
-  ...DEFAULT_GATES.slice(0, 3),
-  {
-    id: "coverage",
-    commands: [
-      ["run", "test:coverage"],
-      ["run", "check:coverage"],
-    ],
-    remediation:
-      "Run `bun run test:coverage` first, then `bun run check:coverage`, and fix the reported coverage regression.",
-  },
-  {
-    id: "corpus",
-    commands: [["run", "check:corpus"]],
-    remediation:
-      "Run `bun run gen:llms`, `bun run gen:api`, and `bun run gen:cards`, then rerun the corpus gate.",
-  },
-  DEFAULT_GATES[3] as ReleaseGateSpec,
-  {
-    id: "public-boundary",
-    commands: [["run", "check:public-boundary"]],
-    remediation:
-      "Run `bun run check:public-boundary` and remove the reported public-boundary violation.",
-  },
-  {
-    id: "size",
-    commands: [["run", "check:size"]],
-    remediation:
-      "Run `bun run check:size` and either reduce the bundle or update the reviewed budget.",
-  },
-  {
-    id: "core-performance",
-    commands: [["run", "check:core-performance"]],
-    remediation:
-      "Run `bun run check:core-performance` and investigate the measured performance regression.",
-  },
-  {
-    id: "publish",
-    commands: [["run", "check:publish"]],
-    remediation:
-      "Run `bun run check:publish` and fix the publish-consumer metadata or type-surface failure.",
-  },
-  {
-    id: "consumer",
-    commands: [["run", "check:consumers"]],
-    remediation: "Run `bun run check:consumers` and fix the isolated consumer failure.",
-  },
-  {
-    id: "cold-start",
-    commands: [["run", "check:cold-start"]],
-    remediation:
-      "Run `bun run check:cold-start` and fix the fresh scaffold install or build failure.",
-  },
-  {
-    id: "cross-runtime-deno",
-    commands: [
-      ["run", "test:deno"],
-      ["run", "check:deno-tarball"],
-    ],
-    remediation:
-      "Run `bun run test:deno` and `bun run check:deno-tarball`, then fix the first Deno compatibility failure.",
-  },
-  {
-    id: "cross-runtime-node",
-    commands: [["run", "test:node"]],
-    remediation: "Run `bun run test:node` and fix the Node runtime adapter failure.",
-  },
-  {
-    id: "pipeline-parity",
-    commands: [["run", "check:pipeline-parity"]],
-    remediation:
-      "Run `bun run check:pipeline-parity` and fix the development and production manifest drift.",
-  },
-  // Last in release mode on purpose: this is the gate on what the release SAYS, and it is the only
-  // one whose failure is invisible afterwards - a shipped version cannot grow the changelog line it
-  // never had.
-  {
-    id: "changesets",
-    commands: [["run", "check:changesets"]],
-    remediation:
-      "Run `bun run changeset` and name every package whose source changed, so the release documents it.",
-  },
-]
 
 const runBunCommand = async (spec: ReleaseCommandSpec): Promise<ReleaseCommandResult> => {
   const child = Bun.spawn([process.execPath, ...spec.args], {
@@ -278,14 +125,14 @@ export async function resolveVerificationRoot(start: string): Promise<string> {
   }
 }
 
-const gatePlan = (mode: ReleaseVerificationMode): readonly ReleaseGateSpec[] =>
-  mode === "release" ? RELEASE_GATES : DEFAULT_GATES
+const gatePlan = (mode: ReleaseVerificationMode): readonly VerificationGateSpec[] =>
+  verificationPlan(mode)
 
 const commandLabel = (args: readonly string[]): string => `bun ${args.join(" ")}`
 
 const runGate = async (
   root: string,
-  gate: ReleaseGateSpec,
+  gate: VerificationGateSpec,
   runCommand: (spec: ReleaseCommandSpec) => Promise<ReleaseCommandResult>,
   fixtureRoot: string,
 ): Promise<ReleaseGateResult> => {
@@ -322,7 +169,7 @@ const runGate = async (
   }
 }
 
-const skippedGate = (gate: ReleaseGateSpec, failedId: string): ReleaseGateResult => ({
+const skippedGate = (gate: VerificationGateSpec, failedId: string): ReleaseGateResult => ({
   id: gate.id,
   status: "skipped",
   commands: gate.commands.map(commandLabel),

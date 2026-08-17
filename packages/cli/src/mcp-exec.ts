@@ -119,6 +119,44 @@ export function projectTools(
   const catalogTools = catalogProjectTools(cwd, () => loadAppCached())
   const legacyTools: McpTool[] = [
     {
+      name: "nifra_verify",
+      description:
+        "Run the shared repository verification plan. Set release=true for the full release plan; the response preserves the declarative gate order and each gate's remediation.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          release: {
+            type: "boolean",
+            description: "Run the full release plan instead of the default plan.",
+          },
+          dir: {
+            type: "string",
+            description: "Project subdirectory to resolve the repository from.",
+          },
+        },
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const raw = args as { release?: unknown; dir?: unknown }
+        if (raw.release !== undefined && typeof raw.release !== "boolean") {
+          return JSON.stringify({ ok: false, error: "release must be a boolean" }, null, 2)
+        }
+        if (raw.dir !== undefined && typeof raw.dir !== "string") {
+          return JSON.stringify({ ok: false, error: "dir must be a string" }, null, 2)
+        }
+        const target = resolveProjectDir(cwd, raw.dir as string | undefined)
+        if (target === null) return dirError(raw.dir as string | undefined)
+        const { collectReleaseVerification } = await import("./release-verification.ts")
+        return JSON.stringify(
+          await collectReleaseVerification(target, {
+            mode: raw.release === true ? "release" : "default",
+          }),
+          null,
+          2,
+        )
+      },
+    },
+    {
       name: "nifra_contract_proof",
       description:
         "Compare the current route contract with its snapshot and join each changed route to its route-assurance and capability evidence. Returns hasBreaking as the gate. The typed-contract check is lazy and runs only when check is true.",

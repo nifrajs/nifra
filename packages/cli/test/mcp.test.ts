@@ -665,6 +665,20 @@ describe("monorepo detection + tool namespacing", () => {
     })
   })
 
+  test("projectTools exposes the shared repository verification plan", async () => {
+    const verify = projectTools("/fake").find((tool) => tool.name === "nifra_verify")
+    expect(verify).toBeDefined()
+    expect(verify?.inputSchema).toMatchObject({
+      properties: { release: { type: "boolean" }, dir: { type: "string" } },
+    })
+    const invalid = JSON.parse(
+      (await verify?.handler({ release: "yes" }, {
+        signal: new AbortController().signal,
+      } as never)) as string,
+    )
+    expect(invalid).toEqual({ ok: false, error: "release must be a boolean" })
+  })
+
   test("projectTools exposes route assurance as a structured project gate", async () => {
     const assure = projectTools("/fake").find((tool) => tool.name === "nifra_assure")
     expect(assure).toBeDefined()

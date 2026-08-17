@@ -30,9 +30,56 @@ import {
   type ReleaseCommandSpec,
   resolveVerificationRoot,
 } from "../src/release-verification.ts"
+import {
+  renderVerificationPlan,
+  verificationPlan,
+  verificationPlanIds,
+} from "../src/verification-plan.ts"
 import { createFixtureProject, createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
 describe("release verification", () => {
+  test("uses explicit gate IDs so default-plan edits cannot re-point the release plan", () => {
+    expect(verificationPlanIds()).toEqual([
+      "lint",
+      "typecheck",
+      "tests",
+      "docs",
+      "api-corpus",
+      "cards-corpus",
+      "node-outcome-corpus",
+      "sitemap",
+      "public-boundary",
+      "size",
+      "changesets",
+    ])
+    expect(verificationPlanIds("release")).toEqual([
+      "build",
+      "lint",
+      "typecheck",
+      "tests",
+      "coverage",
+      "corpus",
+      "docs",
+      "public-boundary",
+      "size",
+      "core-performance",
+      "publish",
+      "consumer",
+      "cold-start",
+      "cross-runtime-deno",
+      "cross-runtime-node",
+      "pipeline-parity",
+      "changesets",
+    ])
+    const release = verificationPlan("release")
+    expect(release.find((gate) => gate.id === "docs")?.commands).toEqual([["run", "check:docs"]])
+    expect(release.find((gate) => gate.id === "corpus")?.commands).toEqual([
+      ["run", "check:corpus"],
+    ])
+    expect(renderVerificationPlan("release")).toContain("6. corpus: bun run check:corpus")
+    expect(Object.isFrozen(release)).toBe(true)
+  })
+
   test("uses the workspace root when invoked from a subdirectory and runs the default plan", async () => {
     const root = createFixtureRoot("verify-root")
     try {
