@@ -59,7 +59,7 @@ export interface FrameworkSpec {
  * ships templates installing the PREVIOUS release. `scaffold-version.test.ts` now fails when this
  * drifts from what core is publishing, so the footgun is a red test rather than a silent regression.
  */
-export const NIFRA_DEP_RANGE = "^3.0.0"
+export const NIFRA_DEP_RANGE = "^3.1.0"
 
 /**
  * React is first because it is the default (`--framework` omitted scaffolds it), and because the

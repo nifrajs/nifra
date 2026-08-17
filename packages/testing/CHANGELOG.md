@@ -1,5 +1,18 @@
 # @nifrajs/testing
 
+## 3.1.0
+
+### Patch Changes
+
+- Updated dependencies [5b78473]
+- Updated dependencies [1400f6c]
+- Updated dependencies [a7db515]
+  - @nifrajs/core@3.1.0
+  - @nifrajs/agent@3.1.0
+  - @nifrajs/client@3.1.0
+  - @nifrajs/mcp@3.1.0
+  - @nifrajs/mock@3.1.0
+
 ## 3.0.0
 
 ### Patch Changes

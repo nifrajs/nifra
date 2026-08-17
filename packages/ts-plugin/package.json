@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/ts-plugin",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "TypeScript language-service plugin for nifra - go-to-definition from a route-path string literal to the routes/ file that serves it.",
   "keywords": [
     "bun",
