@@ -201,6 +201,7 @@ Deno.test("portable response tiers serve end to end on the fetch path", async ()
   // Pins the portable tiers' wire behavior on a non-Bun runtime: header tier (set/append/get),
   // body tier (observe + conditional 304), queued cookies, and handler-returned raw Responses.
   const app = server()
+    .use(responseObserver())
     .onResponseHeaders((headers, _req, status) => {
       headers.set("x-sec", "nosniff")
       headers.set("x-status-seen", String(status))
