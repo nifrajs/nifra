@@ -43,8 +43,19 @@ const COLD_RUNS = envInt("BENCH_COLD_RUNS", 7)
 //                  the raw router - so it does NOT charge for the builder API.
 //   nifra-edge   - SPIKE (worker-nifra-edge.ts): the real router, NO Server class, NO defaults. The
 //                  absolute floor - upper bound on savings, lower bound on cold time.
-// Ordered full -> dx -> kernel -> spike so each step's gap against `nifra` is visible in one glance.
-const FRAMEWORKS = ["nifra", "nifra-dx", "nifra-kernel", "nifra-edge", "hono", "raw"] as const
+//   nifra-edge-pkg - SHIPPED (worker-nifra-edge-pkg.ts): the real published `@nifrajs/edge` package.
+//                  What the compact server actually costs once it keeps the full trust boundary
+//                  (bounded body, proto-guard, byte-parity envelopes) the spike row dropped.
+// Ordered full -> dx -> kernel -> spike -> shipped so each step's gap against `nifra` is visible.
+const FRAMEWORKS = [
+  "nifra",
+  "nifra-dx",
+  "nifra-kernel",
+  "nifra-edge",
+  "nifra-edge-pkg",
+  "hono",
+  "raw",
+] as const
 type Framework = (typeof FRAMEWORKS)[number]
 
 interface ColdSample {
@@ -147,14 +158,14 @@ async function main(): Promise<void> {
     `\n### Workers cold start   (median of ${COLD_RUNS} fresh V8 processes, this box - NOT Cloudflare)\n`,
   )
   console.log(
-    `  ${pad("worker", 13)}${pad("bundle gz", 12)}${pad("compile ms", 12)}${pad("init ms", 10)}${pad("1st req ms", 12)}${pad("cold ms", 10)}vs raw`,
+    `  ${pad("worker", 16)}${pad("bundle gz", 12)}${pad("compile ms", 12)}${pad("init ms", 10)}${pad("1st req ms", 12)}${pad("cold ms", 10)}vs raw`,
   )
-  console.log("  " + "-".repeat(78))
+  console.log("  " + "-".repeat(81))
   for (const f of FRAMEWORKS) {
     const c = medianOf(f, "coldMs")
     const delta = f === "raw" ? "+0.00 ms" : `+${(c - rawCold).toFixed(2)} ms`
     console.log(
-      `  ${pad(f, 13)}${pad(kb(gz[f] ?? 0), 12)}${pad(ms(medianOf(f, "compileMs")), 12)}${pad(ms(medianOf(f, "initMs")), 10)}${pad(ms(medianOf(f, "firstFetchMs")), 12)}${pad(ms(c), 10)}${delta}`,
+      `  ${pad(f, 16)}${pad(kb(gz[f] ?? 0), 12)}${pad(ms(medianOf(f, "compileMs")), 12)}${pad(ms(medianOf(f, "initMs")), 10)}${pad(ms(medianOf(f, "firstFetchMs")), 12)}${pad(ms(c), 10)}${delta}`,
     )
   }
   console.log(
