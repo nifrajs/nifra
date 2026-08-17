@@ -3281,6 +3281,13 @@
     "doc": "/**\n * The CSS Modules Bun plugin. `\"dom\"` → the `.module.css` import becomes the class map AND emits the\n * scoped stylesheet as a virtual `?nifra-css-module` module that `Bun.build`'s CSS bundler folds into\n * the app stylesheet. `\"ssr\"` → the class map only (no CSS; the scoped names match the client build).\n * Tolerates a trailing `?query` on the path (dev servers append one to bust Bun's import cache).\n */"
   },
   {
+    "name": "CtxSet",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type CtxSet = ResponseControls & {\n    _headers?: Record<string, string>;\n    /** Accumulated `Set-Cookie` values - a list, since a `Record` would collapse multiple cookies. */\n    _cookies?: string[];\n};",
+    "doc": "/** `ctx.set` carrying the lazy backings (`_headers`, `_cookies`) so `toResponse` can skip allocating\n * anything when no handler touched `c.set.*`. Server-internal. */"
+  },
+  {
     "name": "CURSOR_MCP_JSON_PATH",
     "kind": "const",
     "package": "create-nifra",
@@ -4357,6 +4364,12 @@
     "kind": "const",
     "package": "@nifrajs/core",
     "signature": "export declare const EMPTY_PARAMS: Record<string, string>;"
+  },
+  {
+    "name": "EMPTY_RESPONSE_CONTROLS",
+    "kind": "const",
+    "package": "@nifrajs/core",
+    "signature": "export declare const EMPTY_RESPONSE_CONTROLS: CtxSet;"
   },
   {
     "name": "enableDraft",
@@ -7001,6 +7014,12 @@
     "doc": "/** The most sensitive classification among the inputs; `\"public\"` when none are given. */"
   },
   {
+    "name": "MaybePromise",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type MaybePromise<T> = T | Promise<T>;"
+  },
+  {
     "name": "mcp",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -8675,6 +8694,13 @@
     "doc": "/**\n * Stream a Web `Response` body to a Node response chunk-by-chunk. Buffering the whole body (e.g.\n * `arrayBuffer()`) waits for the stream to END - which an open-ended SSE (`text/event-stream`) body never\n * does, so it hung `nifra dev` (the Bun production server streamed it fine). This flushes each chunk as it\n * arrives and cancels the reader if the client disconnects; a finite body just streams its chunk(s) + ends.\n */"
   },
   {
+    "name": "plainError",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function plainError(status: number, error: string, headers?: Record<string, string>): ResponseResult;",
+    "doc": "/**\n * The same envelope as {@link jsonError}, as plain data rather than a built `Response`.\n *\n * This is what the framework's own renders - 404, 405, 422, the body caps, the timeouts, 500 - answer\n * with wherever the value flows into a lane's response wrapper, so an error costs what a handler's\n * plain return costs. Building the `Response` was measured as the dominant cost of answering early\n * (see `PlainRender`), and on the Node lane an error `Response` is worse still: it is untagged, so\n * the adapter cannot recognize its body and drains it through a Web stream, which is also why an\n * error answered chunked while an ordinary return carries a `content-length`.\n *\n * `jsonError` stays for the callers that genuinely need a `Response` object (mount bridges, the\n * lanes' own typed returns).\n */"
+  },
+  {
     "name": "plainJsonCodec",
     "kind": "const",
     "package": "@nifrajs/core",
@@ -9153,6 +9179,13 @@
     "doc": "/** The protocol revision this server advertises by default. A handshake-era version - the HTTP transport\n * still uses `initialize`; current clients reach it through their backward-compatibility fallback.\n * `initialize` echoes the client's own requested version instead when it's one this server also speaks\n * ({@link SUPPORTED_PROTOCOL_VERSIONS}). */"
   },
   {
+    "name": "ProtoPoisoning",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type ProtoPoisoning = \"reject\" | \"strip\" | \"ignore\";",
+    "doc": "/**\n * Prototype-poisoning guard for the JSON body lane - the check behind `c.boundedJson` and the\n * schema path. A single walk of the parsed value, never a reviver (a reviver taxes every key of\n * every parse, including the parses that carry no object at all).\n *\n * No raw-text pre-scan: the Fastify-style `text.includes('\"__proto__\"')` filter is a pessimization\n * on 2026 engines. A quoted-name search runs a general substring algorithm over the whole body,\n * while the walk only touches the nodes the parse already built. Measured on Node 26 and Bun 1.3,\n * three `includes()` calls cost 2-4x the walk on every body shape an API actually receives\n * (records, strings, nested objects); the scan only wins on a body that is mostly a flat array of\n * numbers, where it saves ~1.5us on a 9KB payload that spends 20us in `JSON.parse` regardless.\n * Dropping the tier also removes an escape-analysis obligation - the scan had to route every `\\u`\n * to the walk, because `_` spells `_`.\n */"
+  },
+  {
     "name": "proveIdempotency",
     "kind": "function",
     "package": "@nifrajs/testing",
@@ -9261,6 +9294,12 @@
     "signature": "export declare function queryImpact(graph: WorkGraph, changedFiles: readonly string[]): ImpactReport;"
   },
   {
+    "name": "queryObjectOf",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function queryObjectOf(search: string): Record<string, QueryValue>;"
+  },
+  {
     "name": "QueryOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -9287,6 +9326,13 @@
     "package": "@nifrajs/web-svelte",
     "signature": "export type QueryStore<T> = Readable<QueryState<T>> & {\n    /** Force a refetch (ignores `staleTime`). */\n    readonly refetch: () => Promise<T>;\n};",
     "doc": "/** A query store: a `Readable<QueryState<T>>` (read via `$`) plus `refetch`. */"
+  },
+  {
+    "name": "QueryValue",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type QueryValue = string | string[];",
+    "doc": "/** A query value: a single occurrence is a string; a repeated key promotes to a string[] so an\n * array query schema (`t.array(t.string())`) can validate `?tag=a&tag=b` - last-wins silently\n * dropped values before (audit 2026-06). Single-occurrence keys stay plain strings, so existing\n * `t.string()` schemas are untouched; a repeated key against a string schema now FAILS validation\n * (an explicit 400 beats silently picking one). */"
   },
   {
     "name": "Queue",
@@ -9419,6 +9465,13 @@
     "kind": "interface",
     "package": "@nifrajs/mcp",
     "signature": "export interface ReactWidgetOptions {\n    /** The widget's `ui://` resource URI, e.g. `ui://orders/table`. */\n    readonly uri: string;\n    readonly name: string;\n    readonly description?: string;\n    readonly title?: string;\n    /** Absolute path to a `.tsx`/`.jsx` module whose DEFAULT export is a React component. It receives the\n     * tool's `structuredContent` as props. */\n    readonly component: string;\n    /** Extra `<head>` content (styles, fonts). The bridge + component bundle are injected for you. */\n    readonly head?: string;\n    /** Minify the client bundle (default true). */\n    readonly minify?: boolean;\n}"
+  },
+  {
+    "name": "readBodyFramed",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function readBodyFramed<T>(source: RequestSource, maxBodyBytes: number, protoPoisoning: ProtoPoisoning, onParsed: (parsed: unknown) => MaybePromise<T>, wrapResponse: (response: Response | ResponseResult) => T, onError: (err: unknown) => MaybePromise<T>): Promise<T>;",
+    "doc": "/**\n * The shared bounded body framing/parser: the single trust-boundary enforcement point every body\n * lane routes through. Content-type dispatch, the urlencoded-form cap, and the JSON path\n * (`Content-Length` pre-reject -> streaming cap -> prototype-poisoning guard, all inside\n * `readBoundedJsonSource`) live here so the fused body runner, the generic body-only lane, and a\n * compact edge entrypoint all enforce the same boundary from one definition. `protoPoisoning` is a\n * parameter, not read off a server instance, so this stays free of any dependency on the class.\n *\n * `onParsed` receives the decoded, guard-screened value; a framing rejection (`Content-Length` over\n * the cap, a lying length caught mid-stream, malformed JSON, an unsupported media type) is rendered\n * through `wrapResponse`; a read that never completed (client abort, socket error) reaches `onError`.\n */"
   },
   {
     "name": "readBoundedBytes",
@@ -9916,6 +9969,13 @@
     "kind": "type",
     "package": "@nifrajs/node",
     "signature": "export type RequestProtocolOption = RequestProtocol | ((request: IncomingMessage) => RequestProtocol);"
+  },
+  {
+    "name": "RequestSource",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface RequestSource {\n    readonly method: string;\n    readonly url: string;\n    readonly headers: Headers;\n    header?(name: string): string | null;\n    /** Pre-split pathname/search, when the source already had the origin-form target (the Node lazy\n     * sources do) - saves synthesizing an absolute URL only to scan it apart again. */\n    readonly urlParts?: UrlParts;\n    readonly body: ReadableStream<Uint8Array> | null;\n    arrayBuffer(): Promise<ArrayBuffer>;\n    json(): Promise<unknown>;\n    /** Optional runtime-native exact-byte reader (Bun's Request.bytes, when available). */\n    bytes?(): Promise<Uint8Array>;\n    /** Present only when materializing a `Request` is non-trivial (the Node lazy source); for a real\n     * `Request` passed as the source it's absent and {@link requestOf} returns the source itself. */\n    readonly request?: Request;\n    /** Optional pre-`Request` reader surface for the transport cap. A source that reads its own\n     * transport bytes (the Node lazy source reads the socket) exposes them here so a capped direct\n     * read (`c.req.json()`) buffers off the transport instead of routing through the deferred\n     * `Request`. `body` must stay the live stream - the cap still guards a chunked body mid-flight. */\n    rawBodyReaders?(): RawBodyReaders;\n}",
+    "doc": "/**\n * Internal request view. A real Web `Request` already satisfies this shape, so Web/edge runtimes pass\n * their `Request` **directly** (zero wrapper allocation on the hot path - `request` is simply absent and\n * {@link requestOf} returns the source itself). Node's adapter passes a *lazy* source whose `request`\n * getter builds an undici `Request` only when user code reads `c.req`, an onRequest/onResponse hook\n * needs it, or a body helper consumes it - so the common Node request never pays for a `Request` build.\n */"
   },
   {
     "name": "RequestSpec",
@@ -11104,6 +11164,12 @@
     "kind": "const",
     "package": "@nifrajs/web-solid",
     "signature": "export declare const SearchContext: Context<Accessor<Record<string, unknown>> | undefined>;"
+  },
+  {
+    "name": "searchOf",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function searchOf(url: string): string;"
   },
   {
     "name": "searchOf",
@@ -13049,6 +13115,12 @@
     "package": "@nifrajs/web",
     "signature": "export declare function topUserFrame(frames: readonly DiagnosticFrame[], root: string | undefined): DiagnosticFrame | undefined;",
     "doc": "/** The first frame that points at the user's own source - what the codeframe should show. */"
+  },
+  {
+    "name": "toResponse",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function toResponse(result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders): Response;"
   },
   {
     "name": "toVercelHandler",

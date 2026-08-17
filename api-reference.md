@@ -1043,6 +1043,27 @@ Every public export of every package and documented subpath - name, kind, signat
 - **reconcileSagas** _(function)_ - `reconcileSagas: (store: SagaStore, options: { readonly staleBefore: number; }) => Promise<readonly SagaReconciliationFinding[]>`
 - **reconcileSagasPage** _(function)_ - `reconcileSagasPage: (store: SagaStore, options: { readonly staleBefore: number; readonly cursor?: string; readonly limit?: number; }) => Promise<ReconciliationPage<SagaReconciliationFinding>>`
 
+### `@nifrajs/core/edge-kit`
+
+- **CtxSet** _(type)_ - `type CtxSet = ResponseControls & { _headers?: Record<string, string> /** Accumulated `Set-Cookie` values - a list, since a `Record` would collapse multiple cookies. */ _cookies?: string[] }`
+  `ctx.set` carrying the lazy backings (`_headers`, `_cookies`) so `toResponse` can skip allocating anything when no handler touched `c.set.*`. Server-internal.
+- **EMPTY_RESPONSE_CONTROLS** _(const)_ - `EMPTY_RESPONSE_CONTROLS: CtxSet`
+- **MaybePromise** _(type)_ - `type MaybePromise<T> = T | Promise<T>`
+- **ProtoPoisoning** _(type)_ - `type ProtoPoisoning = "reject" | "strip" | "ignore"`
+  Prototype-poisoning guard for the JSON body lane - the check behind `c.boundedJson` and the schema path. A single walk of the parsed value, never a reviver (a reviver taxes every key of every parse, including the parses that carry no object at all).
+- **QueryValue** _(type)_ - `type QueryValue = string | string[]`
+  A query value: a single occurrence is a string; a repeated key promotes to a string[] so an array query schema (`t.array(t.string())`) can validate `?tag=a&tag=b` - last-wins silently dropped values before (audit 2026-06). Single-occurrence keys stay plain strings, so existing `t.string()` schemas …
+- **RequestSource** _(interface)_ - `interface RequestSource`
+  Internal request view. A real Web `Request` already satisfies this shape, so Web/edge runtimes pass their `Request` **directly** (zero wrapper allocation on the hot path - `request` is simply absent and {@link requestOf} returns the source itself). Node's adapter passes a *lazy* source whose `reque…
+- **ResponseResult** _(interface)_ - `interface ResponseResult`
+- **plainError** _(function)_ - `plainError: (status: number, error: string, headers?: Record<string, string>) => ResponseResult`
+  The same envelope as {@link jsonError}, as plain data rather than a built `Response`.
+- **queryObjectOf** _(function)_ - `queryObjectOf: (search: string) => Record<string, QueryValue>`
+- **readBodyFramed** _(function)_ - `readBodyFramed: <T>(source: RequestSource, maxBodyBytes: number, protoPoisoning: ProtoPoisoning, onParsed: (parsed: unknown) => MaybePromise<T>, wrapResponse: (response: Response | ResponseResult) => T, onError: (err: u…`
+  The shared bounded body framing/parser: the single trust-boundary enforcement point every body lane routes through. Content-type dispatch, the urlencoded-form cap, and the JSON path (`Content-Length` pre-reject -> streaming cap -> prototype-poisoning guard, all inside `readBoundedJsonSource`) live …
+- **searchOf** _(function)_ - `searchOf: (url: string) => string`
+- **toResponse** _(function)_ - `toResponse: (result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders) => Response`
+
 ### `@nifrajs/core/effect-ledger`
 
 - **EffectLedgerOptions** _(interface)_ - `interface EffectLedgerOptions`
