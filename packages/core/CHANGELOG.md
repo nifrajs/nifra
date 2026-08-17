@@ -1,5 +1,16 @@
 # @nifrajs/core
 
+## 3.1.0
+
+### Minor Changes
+
+- 1400f6c: Portable response header, body, and raw-response observation is now enabled explicitly with `responseObserver()` from `@nifrajs/core/response-observer`. Official middleware that uses these tiers remains compatible and enables the runtime automatically.
+
+### Patch Changes
+
+- 5b78473: New package `@nifrajs/edge`: a compact fetch-handler server for edge and serverless runtimes (Cloudflare Workers, Vercel Edge, Deno Deploy, Bun). It keeps the `server().get().post()` DX and the full request trust boundary - bounded body read, Content-Length pre-reject, prototype-pollution guard, JSON / urlencoded framing - in a fraction of the bundle, and its rejection envelopes are byte-for-byte the full server's, so an app can graduate to `@nifrajs/core`'s `server()` without its clients noticing.
+- a7db515: Frontend framework deduplication is now applied consistently across the Bun build, the Vite build, and the Vite dev server, so React, Preact, and Svelte each load a single copy in every client bundling path.
+
 ## 3.0.0
 
 ### Minor Changes

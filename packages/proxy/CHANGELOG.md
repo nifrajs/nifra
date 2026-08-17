@@ -1,5 +1,11 @@
 # @nifrajs/proxy
 
+## 3.1.0
+
+### Patch Changes
+
+- 5b78473: The post-cancel request-body drain is now capped at 8 MiB. Once an early response (such as a `413`) has left, an over-cap trickle is discarded at the ceiling rather than holding the connection open.
+
 ## 3.0.0
 
 ### Minor Changes

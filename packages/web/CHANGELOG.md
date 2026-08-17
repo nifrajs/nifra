@@ -1,5 +1,17 @@
 # @nifrajs/web
 
+## 3.1.0
+
+### Patch Changes
+
+- 8b136ee: Framework bindings now share consistent query and fetcher idle behavior while keeping mounted-router state isolated per adapter.
+- a7db515: Frontend framework deduplication is now applied consistently across the Bun build, the Vite build, and the Vite dev server, so React, Preact, and Svelte each load a single copy in every client bundling path.
+- Updated dependencies [5b78473]
+- Updated dependencies [1400f6c]
+- Updated dependencies [a7db515]
+  - @nifrajs/core@3.1.0
+  - @nifrajs/island-trigger@3.1.0
+
 ## 3.0.0
 
 ### Major Changes

@@ -1,5 +1,12 @@
 # @nifrajs/middleware
 
+## 3.1.0
+
+### Patch Changes
+
+- 1400f6c: Portable response header, body, and raw-response observation is now enabled explicitly with `responseObserver()` from `@nifrajs/core/response-observer`. Official middleware that uses these tiers remains compatible and enables the runtime automatically.
+  - @nifrajs/schema@3.1.0
+
 ## 3.0.0
 
 ### Patch Changes
