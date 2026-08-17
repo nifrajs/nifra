@@ -133,9 +133,18 @@ export function createBunWsHandlers(topics: TopicRegistry, nativePubsub = false)
     },
     message: (raw, message) => {
       const ws = raw as BunSocket
-      const nifra = ws.data.nifra ?? wrapBunSocket(ws, topics, ws.data.handler, nativePubsub)
+      const handler = ws.data.handler
+      const nifra = ws.data.nifra ?? wrapBunSocket(ws, topics, handler, nativePubsub)
       const data: WebSocketData = typeof message === "string" ? message : toBinaryData(message)
-      dispatchWsCallback(() => ws.data.handler.message?.(nifra, data), nifra, ws.data.handler)
+      // Hottest WS path - dispatch inline rather than through `dispatchWsCallback` so no per-frame
+      // closure is allocated. Same contract: a sync throw or async rejection routes to `handler.error`.
+      try {
+        const result = handler.message?.(nifra, data)
+        if (result instanceof Promise)
+          result.catch((e: unknown) => reportWsError(e, nifra, handler))
+      } catch (error) {
+        reportWsError(error, nifra, handler)
+      }
     },
     close: (raw, code, reason) => {
       const ws = raw as BunSocket
