@@ -334,7 +334,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function aggregateSizeReport(chunks: readonly ChunkSize[]): SizeReport;",
-    "doc": "/**\n * Aggregate a list of measured chunks into a {@link SizeReport}: sort biggest-gzip-first (ties broken\n * by raw bytes, then name for stable output) and sum the totals. Pure - the measurement (reading the\n * file + `Bun.gzipSync`) happens in the orchestrator; this is the deterministic, unit-testable core.\n */"
+    "doc": "/**\n * Aggregate a list of measured chunks into a {@link SizeReport}: sort biggest-gzip-first (ties broken\n * by raw bytes, then name for stable output) and sum the totals. Pure - the measurement (reading the\n * file + gzipping it) happens in the orchestrator; this is the deterministic, unit-testable core.\n */"
   },
   {
     "name": "AnyServer",

@@ -21,16 +21,13 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { dirname, join, relative, resolve as resolvePath } from "node:path"
 import {
   type BuildClientOptions,
-  type BuildManifest,
-  type BuildTarget,
   type BuildTargetOptions,
   type BuildTargetResult,
-  type Bundler,
   buildTargetWith,
   copyPublicDir,
   publicEnvDefines,
-  type ServerBuild,
 } from "./build.ts"
+import type { BuildManifest, BuildTarget, Bundler, ServerBuild } from "./build-plan.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
 import { viteDedupePackages } from "./internal/identity-policy.ts"

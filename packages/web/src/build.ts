@@ -13,6 +13,22 @@ import {
   readSingleCopyDeclaration,
 } from "@nifrajs/core/single-copy"
 import { type BunPlugin, Glob } from "bun"
+import {
+  aggregateSizeReport,
+  type BuildManifest,
+  type BuildTarget,
+  type Bundler,
+  type ChunkSize,
+  detectNodeBuiltinsInClient,
+  detectServerOnlyInClient,
+  formatNodeBuiltinLeak,
+  formatServerOnlyLeak,
+  parseManifestClientEntry,
+  parseManifestRouteStyles,
+  parseManifestStyles,
+  type ServerBuild,
+  type SizeReport,
+} from "./build-plan.ts"
 import { sanitizeOutputNames } from "./chunk-names.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
@@ -30,8 +46,24 @@ import {
   serverFnNamespace,
 } from "./internal/server-boundary.ts"
 // `buildTarget(static)` drives the SSG prerender engine directly (it's also re-exported below).
-import { type ClientModuleGraph, fromBunMetafile } from "./module-graph.ts"
+import { fromBunMetafile } from "./module-graph.ts"
 import { prerenderRoutes } from "./prerender.ts"
+
+export * from "./build-plan.ts"
+
+const basename = (path: string): string => path.slice(path.lastIndexOf("/") + 1)
+const MANIFEST_IS_LAZY = /^const loaders\b/m
+const entryName = (file: string): string => {
+  const base = basename(file)
+  const dot = base.lastIndexOf(".")
+  return dot === -1 ? base : base.slice(0, dot)
+}
+
+interface BunMetafile {
+  readonly outputs?: Readonly<
+    Record<string, { readonly entryPoint?: string; readonly cssBundle?: string }>
+  >
+}
 
 // Build-time SSG: prerender opted-in static + dynamic routes to `index.html` (+ static `_data.json`),
 // run after `buildClient`.
@@ -290,596 +322,6 @@ export async function copyPublicDir(from: string, to: string): Promise<string[]>
   return copied.sort()
 }
 
-export interface BuildManifest {
-  /** URL of the client entry module (content-hashed). */
-  readonly entry: string
-  /** URLs of every emitted asset (entry + chunks) - for serving + preloading. */
-  readonly assets: readonly string[]
-  /** `routeId → [layout chunk URLs…, own chunk URL]` - the chunks a route needs, for `createWebApp`'s
-   * `routePreload` (`<link rel="modulepreload">` the matched route alongside the entry). Each route +
-   * layout is also a build entrypoint, so it gets a named chunk the bootstrap's lazy import dedupes to. */
-  readonly routes: Readonly<Record<string, readonly string[]>>
-  /** URL paths copied from `publicDir`, sorted. Lets the server entry serve them without scanning a
-   * directory per request, and lets an adapter that needs a file list (CDN upload, platform static
-   * assets) consume one. Omitted when there is no `public/`. */
-  readonly publicFiles?: readonly string[]
-  /** The app's bundled, content-hashed stylesheet(s) - the bootstrap's **aggregate** CSS (every
-   * `import './x.css'` reachable from the app). The complete stylesheet regardless of which file
-   * imported the CSS; the always-safe fallback `createWebApp` links when a route has no per-route entry
-   * in {@link routeStyles}. Omitted when the app imports no CSS. */
-  readonly css?: readonly string[]
-  /** `routeId → [chain CSS URLs]` - only the stylesheets the matched route's layout chain + own file
-   * actually use (Bun emits a per-entrypoint CSS bundle per route/layout, with shared-component CSS
-   * inlined into each consumer). `createWebApp` links these instead of the aggregate, so a page ships
-   * only its own CSS. A route is omitted (→ aggregate fallback) when its `[name]` collides with another
-   * route's basename (ambiguous CSS↔route) or the build emitted orphan shared-chunk CSS - correctness
-   * over minimality. Absent entirely when the app imports no CSS. */
-  readonly routeStyles?: Readonly<Record<string, readonly string[]>>
-}
-
-/** One edge in the metafile's import graph: the resolved `path` + the `original` specifier as written
- * (so `import "node:crypto"` records `original: "node:crypto"` even after Bun resolves it to a
- * polyfill path). Other Bun fields (`kind`, `external`) are ignored here. */
-interface BunMetafileImport {
-  readonly path?: string
-  readonly original?: string
-}
-/** The slice of Bun's build metafile nifra reads: per INPUT module, the specifiers it `imports`
- * (for the `node:` guard); per JS OUTPUT, its source `entryPoint`, the `cssBundle` Bun emitted for
- * that entry, and the `inputs` (graph keys) that landed in it (for the per-route CSS map + locating
- * which chunk a flagged builtin reached). Not yet in `@types/bun`; shape per the Bun bundler docs. */
-interface BunMetafileOutput {
-  readonly entryPoint?: string
-  readonly cssBundle?: string
-  readonly inputs?: Readonly<Record<string, unknown>>
-}
-interface BunMetafile {
-  readonly inputs?: Readonly<Record<string, { readonly imports?: readonly BunMetafileImport[] }>>
-  readonly outputs: Readonly<Record<string, BunMetafileOutput>>
-}
-
-/** The `node:` specifier of an import edge, or undefined if it isn't a Node built-in. Reads the
- * `original` (as-written) specifier first, falling back to the resolved `path` (an `external` node:
- * import keeps `node:` in its path). */
-const nodeBuiltinOf = (im: BunMetafileImport): string | undefined => {
-  if (im.original?.startsWith("node:")) return im.original
-  if (im.path?.startsWith("node:")) return im.path
-  return undefined
-}
-
-/** One `node:`-builtin-in-the-client finding: the offending builtin, the emitted chunk it landed in,
- * and the shortest USER-module import chain that pulled it there (entry → … → builtin). */
-export interface NodeBuiltinFinding {
-  readonly builtin: string
-  readonly chunk: string
-  /** The shortest import path from a user entry to the builtin, as a list of display labels:
-   * `[entryFile, ...as-written specifiers along the way, builtin]`, e.g.
-   * `["routes/article/[slug].tsx", "../data.ts", "../db/client.ts", "postgres", "node:tls"]`. The
-   * entry is its graph key (the route file); each hop is the import's *as-written* specifier; the tail
-   * is the builtin. Empty only if the builtin module isn't reachable from any traced input (it always
-   * is when flagged). */
-  readonly chain: readonly string[]
-}
-
-/**
- * BFS the metafile import graph for the SHORTEST user-module path that pulls `builtin` into the
- * bundle, returning it as display labels `[entryFile, …as-written specifiers…, builtin]`. The frontier
- * starts at every `entryInput` (the route/user entrypoints) so the reported chain begins where the dev
- * actually wrote `import` - the actionable root, not an arbitrary internal module. Traversal crosses
- * only NON-`node:` edges (so Bun's polyfill chain never extends the path) and stops at the first edge
- * whose target is the builtin. Returns `[builtin]` if no entry reaches it (defensive; a flagged builtin
- * is reachable by construction). Pure - operates on the graph, never the emitted text.
- */
-function shortestBuiltinChain(
-  inputs: Readonly<Record<string, { readonly imports?: readonly BunMetafileImport[] }>>,
-  entryInputs: readonly string[],
-  builtin: string,
-): string[] {
-  // Each queue item carries the resolved-path node + the display chain to reach it (entry + the
-  // as-written specifier of every hop crossed so far). `seen` dedupes nodes so the BFS is linear and
-  // the first time we touch the builtin's importer is via a shortest path.
-  const seen = new Set<string>(entryInputs)
-  let frontier: Array<{ node: string; chain: string[] }> = entryInputs.map((node) => ({
-    node,
-    chain: [node],
-  }))
-  while (frontier.length > 0) {
-    const next: Array<{ node: string; chain: string[] }> = []
-    for (const { node, chain } of frontier) {
-      for (const im of inputs[node]?.imports ?? []) {
-        // The builtin reached via THIS edge → the chain ends here (append the builtin label). Match on
-        // the same `node:` detection the finding used (`original` first, then resolved `path`).
-        if (nodeBuiltinOf(im) === builtin) return [...chain, builtin]
-        const target = im.path
-        // Only follow edges into user (non-`node:`) modules that exist in the input graph and haven't
-        // been visited - so the polyfill subtree can't lengthen the path and there are no cycles.
-        if (
-          target === undefined ||
-          target.startsWith("node:") ||
-          inputs[target] === undefined ||
-          seen.has(target)
-        ) {
-          continue
-        }
-        seen.add(target)
-        // Display the hop by its as-written specifier (`../db/client.ts`, `postgres`), falling back to
-        // the resolved path - that's what the dev recognizes in their source, not the resolved path.
-        next.push({ node: target, chain: [...chain, im.original ?? target] })
-      }
-    }
-    frontier = next
-  }
-  return [builtin] // unreachable from any entry - degrade to just the builtin (shouldn't happen)
-}
-
-/**
- * Scan a build's metafile for any `node:` builtin that a USER module pulled into a CLIENT output
- * chunk, returning a sorted, deduped list of {@link NodeBuiltinFinding}s. Three graph facts combine so
- * the report is precise AND actionable:
- *  1. **What the user wrote** - only builtins imported by a NON-`node:` input count, so Bun's own
- *     polyfill chain (`node:crypto` → `node:buffer`/`node:stream`/…) doesn't bury the real cause.
- *  2. **Where it landed** - the chunk is read from the per-output `inputs`, so the error names the
- *     emitted file to look at.
- *  3. **How it got there** - the shortest import chain from a user entry to the builtin
- *     (`shortestBuiltinChain`), so the error points straight at the offending `import` line instead of
- *     leaving the dev to grep the dependency tree (the DX gap this closes).
- * Graph-based (never the emitted text), so it survives minification and can't be fooled by a string
- * literal that merely contains `"node:crypto"`. Pure + exported for unit testing. Empty ⇒ clean.
- */
-export function detectNodeBuiltinsInClient(
-  graph: ClientModuleGraph,
-): ReadonlyArray<NodeBuiltinFinding> {
-  const inputs = graph.modules
-  // (1) The builtins a user (non-polyfill) module imports directly - the ones the author controls.
-  const userImported = new Set<string>()
-  for (const [inputKey, input] of Object.entries(inputs)) {
-    if (inputKey.startsWith("node:")) continue // a polyfill importing another builtin - not the cause
-    for (const im of input.imports ?? []) {
-      const builtin = nodeBuiltinOf(im)
-      if (builtin !== undefined) userImported.add(builtin)
-    }
-  }
-  // The entry inputs (route/user entrypoints) - the chain BFS starts here so the reported path begins
-  // at the file the dev wrote an `import` in. Each output's `entryPoint` is one such input.
-  const entryInputs = [
-    ...new Set(
-      Object.values(graph.chunks)
-        .map((o) => o.entryPoint)
-        .filter((e): e is string => e !== undefined && !e.startsWith("node:")),
-    ),
-  ]
-  // The chain per builtin is independent of the chunk, so compute it once per builtin (memoized).
-  const chainCache = new Map<string, readonly string[]>()
-  const chainFor = (builtin: string): readonly string[] => {
-    const cached = chainCache.get(builtin)
-    if (cached !== undefined) return cached
-    const chain = shortestBuiltinChain(inputs, entryInputs, builtin)
-    chainCache.set(builtin, chain)
-    return chain
-  }
-  // (2) Locate which emitted chunk each user-imported builtin reached, via the per-output `inputs`.
-  const findings = new Map<string, NodeBuiltinFinding>()
-  for (const [outPath, out] of Object.entries(graph.chunks)) {
-    for (const inputKey of out.modules) {
-      if (userImported.has(inputKey)) {
-        const chunk = basename(outPath)
-        findings.set(`${inputKey}\0${chunk}`, {
-          builtin: inputKey,
-          chunk,
-          chain: chainFor(inputKey),
-        })
-      }
-    }
-  }
-  return [...findings.values()].sort((a, b) =>
-    a.builtin === b.builtin ? a.chunk.localeCompare(b.chunk) : a.builtin.localeCompare(b.builtin),
-  )
-}
-
-// ---------------------------------------------------------------------------------------------------
-// `server-only` poison-import guard (§3.3/§5.1). The complement to the `.server` convention + the
-// node-builtin guard: a module of PURE server logic with NO `node:` import (a secret-bearing constant,
-// a server-only API call) that an author wants to FAIL LOUD if it reaches the client opts in with a
-// side-effect `import "@nifrajs/web/server-only"` (Next's `import "server-only"`). On the SERVER build
-// the marker is an empty no-op; the CLIENT build detects - via the SAME Bun metafile graph the
-// node-builtin guard walks - any module that imports the marker AND lands in a client chunk, and fails
-// the build with the import chain. Graph-based (never the emitted text), so it survives minification.
-// ---------------------------------------------------------------------------------------------------
-
-/** The marker specifier an author imports to opt a module into the client-leak guard. Matched on the
- * import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed,
- * before Bun resolves it to `src/server-only.ts` / `dist/server-only.js`). */
-export const SERVER_ONLY_MARKER = "@nifrajs/web/server-only"
-
-/** True when an import edge is the `server-only` marker import. Reads the as-written `original` (the
- * specifier the author typed); falls back to the resolved `path`'s basename so a pre-resolved edge
- * (no `original`) - or a workspace-relative resolution - is still recognised. */
-const isServerOnlyMarkerImport = (im: BunMetafileImport): boolean => {
-  if (im.original === SERVER_ONLY_MARKER) return true
-  // Defensive fallback: an edge that lost its `original` but resolved to the marker module file. The
-  // marker is the only `server-only.{ts,js}` under `@nifrajs/web`, so the basename is unambiguous.
-  const path = im.path
-  return path !== undefined && /(^|\/)server-only\.[cm]?[jt]s$/.test(path)
-}
-
-/** One `server-only`-module-in-the-client finding: the offending module (the as-written marker-import
- * chain's tail before the marker), the emitted chunk it landed in, and the shortest USER-module import
- * chain that pulled it there (entry → … → the server-only module). */
-export interface ServerOnlyFinding {
-  /** The emitted client chunk the server-only module landed in (basename). */
-  readonly chunk: string
-  /** The shortest import path from a user entry to the server-only module, as display labels:
-   * `[entryFile, ...as-written specifiers…, "<module> (marked server-only)"]`. Mirrors
-   * {@link NodeBuiltinFinding.chain}; the tail names the marked module so the message reads
-   * `routes/x.tsx → ../secrets.ts (marked server-only)`. */
-  readonly chain: readonly string[]
-}
-
-/**
- * BFS the metafile import graph for the SHORTEST user-module path that reaches a module which imports
- * the `server-only` marker, returning it as display labels `[entryFile, …as-written specifiers…,
- * "<module> (marked server-only)"]`. Mirrors {@link shortestBuiltinChain}: the frontier starts at
- * every `entryInput` so the chain begins at the file the dev wrote an `import` in; traversal crosses
- * only NON-`node:` user edges (no cycles via `seen`); it stops at the first node whose import set
- * contains the marker (the marked module - the actionable tail), labelling that node by the as-written
- * specifier the previous hop used to reach it. Pure - operates on the graph, never the emitted text.
- */
-function shortestServerOnlyChain(
-  inputs: Readonly<Record<string, { readonly imports?: readonly BunMetafileImport[] }>>,
-  entryInputs: readonly string[],
-  markedModule: string,
-  resolveTarget: (im: BunMetafileImport) => string | undefined,
-): string[] {
-  // The label for the marked module's tail: its as-written specifier (filled when we cross the edge
-  // that reaches it) suffixed with `(marked server-only)`; the entry case uses the entry key itself.
-  const tail = (label: string): string => `${label} (marked server-only)`
-  // An entry that is ITSELF the marked module - the chain is just that one node.
-  if (entryInputs.includes(markedModule)) return [tail(markedModule)]
-  const seen = new Set<string>(entryInputs)
-  let frontier: Array<{ node: string; chain: string[] }> = entryInputs.map((node) => ({
-    node,
-    chain: [node],
-  }))
-  while (frontier.length > 0) {
-    const next: Array<{ node: string; chain: string[] }> = []
-    for (const { node, chain } of frontier) {
-      for (const im of inputs[node]?.imports ?? []) {
-        // Resolve the edge's `path` to the matching INPUT-GRAPH KEY - in a real build the edge `path`
-        // is absolute while the input keys are cwd-relative, so a raw equality/lookup would miss every
-        // multi-hop user edge (and the chain would degrade to just the tail). The resolver maps both.
-        const target = resolveTarget(im)
-        if (target === undefined || target.startsWith("node:")) continue
-        // The marked module reached via THIS edge → the chain ends here (label it as the marked tail
-        // using the as-written specifier the author wrote, falling back to the resolved key).
-        if (target === markedModule) return [...chain, tail(im.original ?? target)]
-        if (seen.has(target)) continue
-        seen.add(target)
-        next.push({ node: target, chain: [...chain, im.original ?? target] })
-      }
-    }
-    frontier = next
-  }
-  return [tail(markedModule)] // unreachable from any entry (defensive; a flagged module is reachable)
-}
-
-/**
- * Build a resolver from an import EDGE to its INPUT-GRAPH KEY. Bun's metafile records edge `path`s as
- * ABSOLUTE paths but keys `inputs` by CWD-RELATIVE paths, so a raw `inputs[im.path]` lookup misses
- * every user edge in a real build. The resolver: (1) an exact key match (the synthetic-metafile / unit
- * case); else (2) the input key the absolute path ends with (`…/secrets.ts` → `packages/web/.../secrets.ts`).
- * The longest-suffix match is taken so a shorter key can't shadow a more specific one. Pure.
- */
-function inputKeyResolver(
-  inputs: Readonly<Record<string, unknown>>,
-): (im: BunMetafileImport) => string | undefined {
-  const keys = Object.keys(inputs)
-  return (im) => {
-    const path = im.path
-    if (path === undefined) return undefined
-    if (inputs[path] !== undefined) return path // exact (synthetic keys, or already-relative paths)
-    let best: string | undefined
-    for (const key of keys) {
-      // `/<key>` so a suffix match aligns on a path boundary (never a partial segment), and the longest
-      // such key wins (the most specific file).
-      if (path.endsWith(`/${key}`) && (best === undefined || key.length > best.length)) best = key
-    }
-    return best
-  }
-}
-
-/**
- * Scan a build's metafile for any module that opts into the `server-only` marker (a side-effect
- * `import "@nifrajs/web/server-only"`) yet landed in a CLIENT output chunk, returning a sorted, deduped
- * list of {@link ServerOnlyFinding}s. Mirrors {@link detectNodeBuiltinsInClient}: it reads the SAME
- * graph facts - which inputs import the marker (the "marked" modules), which chunk each landed in (the
- * per-output `inputs`), and the shortest import chain from a user entry to it. The marker module ITSELF
- * (which imports nothing) is excluded - only the modules that *opt in* are flagged. Pure + exported for
- * unit testing. Empty ⇒ clean.
- */
-export function detectServerOnlyInClient(
-  graph: ClientModuleGraph,
-): ReadonlyArray<ServerOnlyFinding> {
-  const inputs = graph.modules
-  // (1) The modules that import the marker - the ones the author opted into the guard. The marker
-  // module itself is skipped: it's the import TARGET, not an opt-in (it imports nothing of its own).
-  const marked = new Set<string>()
-  for (const [inputKey, input] of Object.entries(inputs)) {
-    if (isServerOnlyMarkerModule(inputKey)) continue
-    if ((input.imports ?? []).some(isServerOnlyMarkerImport)) marked.add(inputKey)
-  }
-  if (marked.size === 0) return []
-  // The entry inputs - the chain BFS starts here, so the reported path begins at the file the dev
-  // wrote an `import` in. Same derivation as the node-builtin guard.
-  const entryInputs = [
-    ...new Set(
-      Object.values(graph.chunks)
-        .map((o) => o.entryPoint)
-        .filter((e): e is string => e !== undefined && !e.startsWith("node:")),
-    ),
-  ]
-  const resolveTarget = inputKeyResolver(inputs)
-  const chainCache = new Map<string, readonly string[]>()
-  const chainFor = (markedModule: string): readonly string[] => {
-    const cached = chainCache.get(markedModule)
-    if (cached !== undefined) return cached
-    const chain = shortestServerOnlyChain(inputs, entryInputs, markedModule, resolveTarget)
-    chainCache.set(markedModule, chain)
-    return chain
-  }
-  // (2) Locate which emitted chunk each marked module reached, via the per-output `inputs`.
-  const findings = new Map<string, ServerOnlyFinding>()
-  for (const [outPath, out] of Object.entries(graph.chunks)) {
-    for (const inputKey of out.modules) {
-      if (marked.has(inputKey)) {
-        const chunk = basename(outPath)
-        findings.set(`${inputKey}\0${chunk}`, { chunk, chain: chainFor(inputKey) })
-      }
-    }
-  }
-  return [...findings.values()].sort((a, b) => {
-    const am = a.chain[a.chain.length - 1] ?? ""
-    const bm = b.chain[b.chain.length - 1] ?? ""
-    return am === bm ? a.chunk.localeCompare(b.chunk) : am.localeCompare(bm)
-  })
-}
-
-/** True when an INPUT graph key is the marker module file itself (`…/server-only.{ts,js}` under web).
- * Excluded from the "marked" set - the marker is the import target, not an opt-in module. */
-const isServerOnlyMarkerModule = (inputKey: string): boolean =>
-  /(^|\/)server-only\.[cm]?[jt]s$/.test(inputKey)
-
-// ---------------------------------------------------------------------------------------------------
-// Guard MESSAGES - one owner for both production pipelines. The Bun build (below) and the Vite/Rollup
-// leak-guard plugin (plugins/vite-leak-guard.ts) both call these, so a leak reads IDENTICALLY whichever
-// bundler produced it. A second bundler must not grow a second, subtly-different wording of a security
-// error; that is exactly the "mostly ported" outcome the neutral graph seam exists to prevent.
-// ---------------------------------------------------------------------------------------------------
-
-/** The build-failing message for `node:` builtins that reached the client bundle. `undefined` ⇒ clean. */
-export function formatNodeBuiltinLeak(
-  findings: ReadonlyArray<NodeBuiltinFinding>,
-): string | undefined {
-  if (findings.length === 0) return undefined
-  const lines = findings.map((f) =>
-    f.chain.length > 1
-      ? `  - ${f.builtin} reached the client bundle via ${f.chain.join(" → ")} (chunk: ${f.chunk})`
-      : `  - ${f.builtin} reached the client bundle via ${f.chunk}`,
-  )
-  return (
-    `[nifra/web] Node built-in(s) in the client bundle - move them behind a server-only path ` +
-    `(a loader/action runs on the server; import the \`node:\` module there, not at a route's ` +
-    `top level):\n${lines.join("\n")}`
-  )
-}
-
-/** The build-failing message for `server-only`-marked modules that reached the client. `undefined` ⇒ clean. */
-export function formatServerOnlyLeak(
-  findings: ReadonlyArray<ServerOnlyFinding>,
-): string | undefined {
-  if (findings.length === 0) return undefined
-  const lines = findings.map((f) =>
-    f.chain.length > 1
-      ? `  - server-only module reached the client bundle via ${f.chain.join(" → ")} (chunk: ${f.chunk})`
-      : `  - server-only module reached the client bundle via ${f.chunk}`,
-  )
-  return (
-    `[nifra/web] server-only module(s) in the client bundle - a module marked ` +
-    `\`import "${SERVER_ONLY_MARKER}"\` reached the browser. Move it behind a server-only path ` +
-    `(reach it via a loader/action, or rename it \`*.server.ts\`), so its server logic never ships ` +
-    `to the client:\n${lines.join("\n")}`
-  )
-}
-
-const basename = (path: string): string => path.slice(path.lastIndexOf("/") + 1)
-/** `[name]` Bun derives for an entrypoint: basename without extension (`users/[id].tsx` → `[id]`). */
-const entryName = (file: string): string => {
-  const base = basename(file)
-  const dot = base.lastIndexOf(".")
-  return dot === -1 ? base : base.slice(0, dot)
-}
-
-// ---------------------------------------------------------------------------------------------------
-// Bundle-size report (`nifra build --report`). The raw byte + gzip size of each emitted chunk lets a
-// dev catch a bundle regression at build time. Pure aggregation/formatting helpers (no fs, no Bun
-// build) so they're unit-testable in isolation; the orchestrator below wires them to real outputs.
-// ---------------------------------------------------------------------------------------------------
-
-/** One emitted chunk's measured size, in raw bytes + gzipped bytes (over-the-wire weight). */
-export interface ChunkSize {
-  /** The emitted file's basename (e.g. `index-abc123.js`). */
-  readonly name: string
-  /** Raw byte length of the file. */
-  readonly bytes: number
-  /** Gzipped byte length (what the client actually downloads, modulo brotli). */
-  readonly gzip: number
-}
-
-/** A whole build's size report - every chunk (largest first) + the totals. */
-export interface SizeReport {
-  /** Per-chunk sizes, sorted biggest gzip first (the regression you want to see at the top). */
-  readonly chunks: readonly ChunkSize[]
-  /** Sum of every chunk's raw bytes. */
-  readonly totalBytes: number
-  /** Sum of every chunk's gzip bytes. */
-  readonly totalGzip: number
-}
-
-/**
- * Aggregate a list of measured chunks into a {@link SizeReport}: sort biggest-gzip-first (ties broken
- * by raw bytes, then name for stable output) and sum the totals. Pure - the measurement (reading the
- * file + `Bun.gzipSync`) happens in the orchestrator; this is the deterministic, unit-testable core.
- */
-export function aggregateSizeReport(chunks: readonly ChunkSize[]): SizeReport {
-  const sorted = [...chunks].sort(
-    (a, b) => b.gzip - a.gzip || b.bytes - a.bytes || a.name.localeCompare(b.name),
-  )
-  let totalBytes = 0
-  let totalGzip = 0
-  for (const c of sorted) {
-    totalBytes += c.bytes
-    totalGzip += c.gzip
-  }
-  return { chunks: sorted, totalBytes, totalGzip }
-}
-
-/** Human-readable byte count: `B`/`KB`/`MB` with one decimal above 1 KB (e.g. `12.3 KB`). Pure. */
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
-/**
- * Render a {@link SizeReport} as a terse aligned table (biggest first) with a totals row - the text
- * `nifra build --report` prints. Pure (string in, string out) so the formatting is unit-testable.
- */
-export function renderSizeReport(report: SizeReport): string {
-  const rows = report.chunks.map((c) => ({
-    name: c.name,
-    raw: formatBytes(c.bytes),
-    gz: formatBytes(c.gzip),
-  }))
-  // Column widths from the header + every row + the totals label, so the table never clips a value.
-  const nameW = Math.max(5, ...rows.map((r) => r.name.length), "Total".length)
-  const rawW = Math.max(3, ...rows.map((r) => r.raw.length), formatBytes(report.totalBytes).length)
-  const gzW = Math.max(4, ...rows.map((r) => r.gz.length), formatBytes(report.totalGzip).length)
-  const padEnd = (s: string, w: number): string => s + " ".repeat(Math.max(0, w - s.length))
-  const padStart = (s: string, w: number): string => " ".repeat(Math.max(0, w - s.length)) + s
-  const line = (name: string, raw: string, gz: string): string =>
-    `  ${padEnd(name, nameW)}  ${padStart(raw, rawW)}  ${padStart(gz, gzW)}`
-  const out = [
-    line("Chunk", "Raw", "Gzip"),
-    line("-".repeat(nameW), "-".repeat(rawW), "-".repeat(gzW)),
-    ...rows.map((r) => line(r.name, r.raw, r.gz)),
-    line("Total", formatBytes(report.totalBytes), formatBytes(report.totalGzip)),
-  ]
-  return out.join("\n")
-}
-
-// ---------------------------------------------------------------------------------------------------
-// Server-manifest drift detection (#7). `server-manifest.ts` is a committed generated file: it bakes
-// the route list + the client-entry hash for a disk-less worker (`generateServerManifest`). If `routes/`
-// changes but the manifest isn't regenerated, the worker serves a stale route table - a silent edge
-// break. These pure helpers diff the COMMITTED manifest source against the freshly-discovered routes so
-// `nifra check` (and `buildServer`) can fail with a named, actionable error before the drift ships.
-// ---------------------------------------------------------------------------------------------------
-
-/** A drift finding between a committed server-manifest and the live `routes/` tree. */
-export interface ManifestDrift {
-  /** Route files present in `routes/` but ABSENT from the committed manifest (the manifest is stale -
-   * the new route won't be served by the worker). */
-  readonly missing: readonly string[]
-  /** Route files the committed manifest imports that no longer exist in `routes/` (a deleted/renamed
-   * route still wired into the worker - a build/runtime break). */
-  readonly extra: readonly string[]
-}
-
-// The route-relative file keys the generated manifest's route map declares. Both shapes are matched by
-// their VALUE: eager `  "routes/x.tsx": m0,` and lazy `  "routes/x.tsx": () => import("./routes/x"),`.
-// The KEY (not the import specifier) is the route identity `discoverRoutes` produces, extension and all;
-// the import specifier is emitted extensionless (so a bare `tsc` compiles the manifest) and could not be
-// mapped back to the exact `.tsx`/`.ts` key. The baked `routeStyles` JSON is a single line, so its keys
-// are never at an indented line start and never match. `[ \t]+` (not `\s+`) so the `m` anchor stays on
-// the same line and one route-map entry cannot span two lines of source.
-const MANIFEST_ROUTE_ENTRY = /^[ \t]+(["'])([^"'\n]+)\1\s*:\s*(?:m\d+\b|\(\s*\)\s*=>\s*import\b)/gm
-// The lazy shape declares `const loaders`, the eager shape `const modules`. Anchored at a line start,
-// NOT `.includes("const loaders =")`: the real emit is `const loaders: Record<...> = {`, whose `:` type
-// annotation sits between the name and the `=`, so the ` =` substring never matched and every lazy
-// manifest was re-synced as eager (silently converting `import()` splitting into a single eager bundle).
-const MANIFEST_IS_LAZY = /^const loaders\b/m
-// The baked client-entry line: `export const clientEntry = "…"`.
-const MANIFEST_CLIENT_ENTRY = /export\s+const\s+clientEntry\s*=\s*["']([^"']+)["']/
-
-/**
- * Extract the route-relative file list a committed server-manifest declares, as the same
- * `routes/`-relative keys `discoverRoutes` produces (e.g. `docs/index.tsx`). Reads the route map's KEYS,
- * which carry the file extension and no directory prefix - exactly discovery's shape - so the result is
- * independent of the specifier prefix the manifest happened to import with. The `@nifrajs/web` import and
- * the baked `clientEntry`/`styles`/`routeStyles` lines carry no route-map entry and are ignored.
- *
- * `_routesPrefix` is accepted for call-site compatibility but no longer needed: the keys are already
- * prefix-free. Pure - operates on source text.
- */
-export function parseManifestRouteFiles(source: string, _routesPrefix?: string): string[] {
-  const files = new Set<string>()
-  for (const match of source.matchAll(MANIFEST_ROUTE_ENTRY)) {
-    if (match[2] !== undefined) files.add(match[2])
-  }
-  return [...files].sort()
-}
-
-/** The baked `clientEntry` URL in a committed server-manifest, or `undefined` if absent. Pure. */
-export function parseManifestClientEntry(source: string): string | undefined {
-  return MANIFEST_CLIENT_ENTRY.exec(source)?.[1]
-}
-
-// The baked asset lines `generateServerManifest` emits: `export const styles = […]` then
-// `export const routeStyles = {…}`, each a JSON literal running to the next `export const`. Extracted
-// with `indexOf` slicing rather than a lazy `[\s\S]*?` regex: the slice is multi-line by nature (a
-// formatter can wrap a long `routeStyles` map, and missing it would silently DROP every baked
-// stylesheet on re-sync), and a lazy scan re-walks the file per unterminated opener - quadratic.
-function bakedManifestLiteral(source: string, name: string): string | undefined {
-  const opener = `export const ${name} = `
-  const start = source.indexOf(opener)
-  if (start === -1) return undefined
-  const from = start + opener.length
-  const end = source.indexOf("\nexport const ", from)
-  return end === -1 ? undefined : source.slice(from, end)
-}
-
-/** Parse a baked JSON literal captured from a committed manifest, tolerating a formatter's TRAILING COMMAS
- * (biome/prettier add one when wrapping a multi-line array/object; strict `JSON.parse` would reject it).
- * Only a comma immediately before a closing `]`/`}` is stripped, so commas inside string values are safe. */
-function parseManifestLiteral(raw: string): unknown {
-  return JSON.parse(raw.replace(/,(\s*[\]}])/g, "$1"))
-}
-
-/** The baked top-level `styles` array in a committed server-manifest (empty if absent/unparseable). Pure. */
-export function parseManifestStyles(source: string): string[] {
-  const raw = bakedManifestLiteral(source, "styles")
-  if (raw === undefined) return []
-  try {
-    const value = parseManifestLiteral(raw)
-    return Array.isArray(value) ? (value as string[]) : []
-  } catch {
-    return []
-  }
-}
-
-/** The baked per-route `routeStyles` map in a committed server-manifest (empty if absent/unparseable). Pure. */
-export function parseManifestRouteStyles(source: string): Record<string, string[]> {
-  const raw = bakedManifestLiteral(source, "routeStyles")
-  if (raw === undefined) return {}
-  try {
-    const value = parseManifestLiteral(raw)
-    return value !== null && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, string[]>)
-      : {}
-  } catch {
-    return {}
-  }
-}
-
 /**
  * Re-emit a committed server-manifest from a freshly-discovered route tree, PRESERVING its baked
  * client-asset references (`clientEntry` / `styles` / `routeStyles`) and its eager-vs-lazy shape. This is
@@ -909,49 +351,6 @@ export function resyncServerManifestSource(
  * supplies both file lists (the committed source is parsed via {@link parseManifestRouteFiles}; the
  * fresh list comes from `discoverRoutes`). Lists need not be pre-sorted; the result is sorted.
  */
-export function diffManifestRoutes(
-  manifestFiles: readonly string[],
-  discoveredFiles: readonly string[],
-): ManifestDrift {
-  const inManifest = new Set(manifestFiles)
-  const inRoutes = new Set(discoveredFiles)
-  const missing = discoveredFiles.filter((f) => !inManifest.has(f)).sort()
-  const extra = manifestFiles.filter((f) => !inRoutes.has(f)).sort()
-  return { missing, extra }
-}
-
-/** True when a drift report is clean (no missing + no extra routes). */
-export function isManifestInSync(drift: ManifestDrift): boolean {
-  return drift.missing.length === 0 && drift.extra.length === 0
-}
-
-/**
- * Format a {@link ManifestDrift} as a named, actionable error message, or `undefined` when in sync.
- * Names the exact missing/extra routes + the one fix (regenerate the manifest by re-running the build).
- * `manifestPath` is shown for the dev to locate the stale file. Pure.
- */
-export function formatManifestDrift(
-  drift: ManifestDrift,
-  manifestPath = "server-manifest.ts",
-): string | undefined {
-  if (isManifestInSync(drift)) return undefined
-  const lines: string[] = [
-    `[nifra/web] server-manifest drift - \`${manifestPath}\` is out of sync with routes/.`,
-  ]
-  if (drift.missing.length > 0) {
-    lines.push(
-      `  Missing (in routes/, not in the manifest - these routes won't be served): ${drift.missing.join(", ")}`,
-    )
-  }
-  if (drift.extra.length > 0) {
-    lines.push(
-      `  Extra (imported by the manifest, gone from routes/ - a dangling import): ${drift.extra.join(", ")}`,
-    )
-  }
-  lines.push("  Fix: re-run the build to regenerate the server manifest, then commit it.")
-  return lines.join("\n")
-}
-
 /**
  * Build the client bundle for a file-routed app. Writes the hashed assets + `manifest.json` to
  * `outDir` and returns the manifest. Throws (with the bundler logs) on build failure - never
@@ -963,6 +362,24 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   await assertIdentityParity(root)
   const resolve = options.resolve ?? ((file: string) => `${routesDir}/${file}`)
   const publicPath = options.publicPath ?? "/assets/"
+
+  // outDir inside publicDir folds the build output back into the public copy on the next run (the
+  // bundle lands at public/assets/assets/*), and the dev/prod parity assert then throws on paths no
+  // one authored. Reject the overlap up front - no copy behavior is correct for this layout, and the
+  // parity symptom names neither option so the cause is unrecoverable from the message.
+  const publicRoot = options.publicDir === false ? undefined : (options.publicDir ?? "public")
+  if (publicRoot !== undefined) {
+    const publicResolved = resolvePath(publicRoot)
+    const outResolved = resolvePath(outDir)
+    if (outResolved === publicResolved || outResolved.startsWith(publicResolved + sep)) {
+      throw new Error(
+        `[nifra/web] outDir (${outResolved}) is inside publicDir (${publicResolved}). The public ` +
+          `copy would fold the build output back into itself. Move outDir outside publicDir, or ` +
+          `pass publicDir: false if the app has no hand-authored static files.`,
+      )
+    }
+  }
+
   mkdirSync(outDir, { recursive: true })
 
   const routeManifest = discoverRoutes(routesDir)
@@ -1221,13 +638,6 @@ export interface BuildServerOptions {
 }
 
 /** The built worker bundle - point your `wrangler.toml`'s `main` at `worker`. */
-export interface ServerBuild {
-  /** Path to the bundled, self-contained worker entry. */
-  readonly worker: string
-  /** Paths of every emitted output (entry + any code-split chunks) - what to ship to the platform. */
-  readonly outputs: readonly string[]
-}
-
 /**
  * react-dom's `exports["./server"]` maps the `bun` condition to a Bun-API server build that crashes
  * on workerd, and `Bun.build` always applies the `bun` condition (it wins over `workerd`/`edge-light`),
@@ -1487,15 +897,6 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
 // The ONLY thing apps used to hand-write per target was the server entry (`_worker.ts`, `server-bun.ts`,
 // …) - so we GENERATE it here (per target) instead of asking each app to ship five near-identical files.
 // ===================================================================================================
-
-/** A deploy target `nifra build --target <t>` can emit. `static` is pure SSG (no server). */
-export const BUILD_TARGETS = ["bun", "node", "deno", "cf-pages", "vercel", "static"] as const
-export type BuildTarget = (typeof BUILD_TARGETS)[number]
-
-/** A type guard narrowing an arbitrary string to a {@link BuildTarget}. */
-export function isBuildTarget(value: string): value is BuildTarget {
-  return (BUILD_TARGETS as readonly string[]).includes(value)
-}
 
 /**
  * Codegen the per-target **server entry** module (source text) for `buildServer` to bundle. It imports
@@ -1784,41 +1185,6 @@ export interface BuildTargetResult {
  * Note: the heavier platform wrappers (`.vercel/output` v3 layout, wrangler ISR `find_additional_modules`)
  * remain app-owned scripts; this command targets the common single-bundle deploys. See the CLI docs.
  */
-/**
- * A build-tool STRATEGY for {@link buildTargetWith} - the two bundling steps, and nothing else. Everything
- * around them (server-entry codegen, deploy assembly, prerender, size report) is bundler-agnostic and
- * lives in `buildTargetWith`, so a second bundler (Vite) is this interface, not a second orchestrator.
- *
- * Plugin lists are `readonly unknown[]` because a Bun plugin and a Vite plugin are different types; each
- * strategy casts to its own. `buildTargetWith` only forwards them.
- */
-export interface Bundler {
-  /** Build the client bundle → the shared {@link BuildManifest}. */
-  buildClient(input: {
-    readonly routesDir: string
-    readonly outDir: string
-    readonly clientModule: string
-    readonly plugins?: readonly unknown[]
-    readonly conditions?: readonly string[]
-    readonly define?: Readonly<Record<string, string>>
-    readonly publicDir?: string | false
-    readonly publicEnvPrefix?: string
-    /** Project root (Vite needs it; the Bun strategy ignores it). */
-    readonly root?: string
-  }): Promise<BuildManifest>
-  /** Build the server worker → the shared {@link ServerBuild}. */
-  buildServer(input: {
-    readonly routesDir: string
-    readonly serverEntry: string
-    readonly outDir: string
-    readonly clientEntry: string
-    readonly target: "browser" | "node" | "bun"
-    readonly plugins?: readonly unknown[]
-    readonly define?: Readonly<Record<string, string>>
-    readonly root?: string
-  }): Promise<ServerBuild>
-}
-
 /** The default (Bun) strategy - `buildClient`/`buildServer` from this module. */
 export const bunBundler: Bundler = {
   buildClient: (input) =>

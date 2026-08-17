@@ -3397,7 +3397,7 @@ _No named exports (side-effect entrypoint)._
 - **SizeReport** _(interface)_ - `interface SizeReport`
   A whole build's size report - every chunk (largest first) + the totals.
 - **aggregateSizeReport** _(function)_ - `aggregateSizeReport: (chunks: readonly ChunkSize[]) => SizeReport`
-  Aggregate a list of measured chunks into a {@link SizeReport}: sort biggest-gzip-first (ties broken by raw bytes, then name for stable output) and sum the totals. Pure - the measurement (reading the file + `Bun.gzipSync`) happens in the orchestrator; this is the deterministic, unit-testable core.
+  Aggregate a list of measured chunks into a {@link SizeReport}: sort biggest-gzip-first (ties broken by raw bytes, then name for stable output) and sum the totals. Pure - the measurement (reading the file + gzipping it) happens in the orchestrator; this is the deterministic, unit-testable core.
 - **buildClient** _(function)_ - `buildClient: (options: BuildClientOptions) => Promise<BuildManifest>`
   Build the client bundle for a file-routed app. Writes the hashed assets + `manifest.json` to `outDir` and returns the manifest. Throws (with the bundler logs) on build failure - never silently ships a broken bundle.
 - **buildServer** _(function)_ - `buildServer: (options: BuildServerOptions) => Promise<ServerBuild>`
