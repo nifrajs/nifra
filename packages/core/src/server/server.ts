@@ -676,6 +676,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * Created by the first `app.ws()` via the `@nifrajs/core/ws` runtime - `undefined` until then, so a
    * no-WebSocket app never constructs (or bundles) it. */
   private topics: TopicRegistry | undefined
+  /** True once any `app.ws()` route sets `validateSend: true` - the one case where a broadcast frame
+   * is validated (and possibly dropped) per socket, so `app.publish` must stay on the JS registry loop
+   * rather than delegate to Bun's native `server.publish`. */
+  private wsHasValidatedSend = false
+  /** Bun's native topic broadcast, bound by `listen()` in native-pubsub mode; `app.publish` uses it
+   * instead of the JS registry. `undefined` off Bun, before `listen()`, or with a validated-send route. */
+  private nativePublish:
+    | ((topic: string, data: string | ArrayBufferView | ArrayBuffer) => void)
+    | undefined
   private readonly maxBodyBytes: number
   private readonly protoPoisoning: "reject" | "strip" | "ignore"
   /** `trustBodyFraming`: mark every `app.fetch` request as runtime-framed (see ServerOptions). */
@@ -1520,6 +1529,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         `route WS ${path}: validateSend requires sendSchema`,
       )
     }
+    // A validated-send route makes broadcast bytes route-dependent (drop-on-invalid per socket), so the
+    // whole app forgoes native pub/sub and keeps the JS registry loop that runs each send through the sender.
+    if (handler.validateSend === true) this.wsHasValidatedSend = true
     this.topics ??= runtime.createTopics()
     // A `messageSchema` wraps `message` with validation once, here - every adapter then dispatches
     // already-validated, typed messages (Bun/Deno/Node/Workers) with no per-adapter code.
@@ -1536,6 +1548,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * an external fan-out (Redis, a Durable Object) to this. A no-op when nobody is subscribed.
    */
   publish(topic: string, data: string | ArrayBufferView | ArrayBuffer): void {
+    // Native-pubsub mode (Bun, no validated-send route): one native broadcast to every subscriber, no
+    // per-connection JS loop. Bound only after `listen()`; before that (or off Bun) the registry runs.
+    if (this.nativePublish !== undefined) {
+      this.nativePublish(topic, data)
+      return
+    }
     // No `app.ws()` yet ⇒ no registry and necessarily no subscribers - a publish is a no-op anyway.
     this.topics?.publish(topic, data)
   }
@@ -5115,10 +5133,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     // matched route's handler, set by `server.upgrade`.
     // With WS routes, the dispatcher comes from the installed `.use(websocket())` runtime - non-null
     // because wsRouteCount > 0 means ws() ran, and ws() requires the runtime at registration.
+    // Native pub/sub when the app has WS routes and none validate outbound frames: `ws.subscribe` and
+    // `app.publish` go through Bun's own (uWebSockets) broadcast instead of the JS registry loop.
+    const nativePubsub = this.wsRouteCount > 0 && !this.wsHasValidatedSend
     const wsHandlers =
       this.wsRouteCount === 0
         ? undefined
-        : (this.wsRuntime as WsRuntime).bunHandlers(this.topics as TopicRegistry)
+        : (this.wsRuntime as WsRuntime).bunHandlers(this.topics as TopicRegistry, nativePubsub)
     const reusePort = options?.reusePort === true
     // Spread rather than pass `hostname: undefined` - Bun treats an explicit undefined as a value
     // on some option paths, and omitting is what selects its 0.0.0.0 default.
@@ -5156,6 +5177,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           },
         })) as unknown as RunningServer
     this.bunServer = running
+    // Bind `app.publish` to Bun's native broadcast now that the server handle exists. Guarded on the
+    // method's presence so a runtime whose handle lacks it simply keeps the registry path.
+    if (nativePubsub && typeof running.publish === "function") {
+      const native = running.publish.bind(running)
+      this.nativePublish = (topic, data) => {
+        native(topic, data)
+      }
+    }
     this.sealed = true
     if (this.gracefulSignals) this.installSignalHandlers()
     return running

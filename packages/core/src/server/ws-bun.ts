@@ -28,6 +28,10 @@ export interface BunSocket {
   send(data: string | ArrayBufferView | ArrayBuffer, compress?: boolean): number
   close(code?: number, reason?: string): void
   readonly readyState: number
+  // Bun's native (uWebSockets) topic pub/sub - used only in native-pubsub mode (no per-socket
+  // outbound validation), where `app.publish` routes through the Bun server's `publish`.
+  subscribe(topic: string): void
+  unsubscribe(topic: string): void
   // readonly: we never reassign `ws.data` wholesale, only mutate its fields (`.nifra`, `.data`).
   readonly data: BunWsData
 }
@@ -38,11 +42,19 @@ function toBinaryData(message: ArrayBuffer | Uint8Array): Uint8Array {
   return message instanceof Uint8Array ? message : new Uint8Array(message)
 }
 
-/** Wrap a Bun `ServerWebSocket` as the portable {@link NifraWebSocket} handed to WS callbacks. */
+/**
+ * Wrap a Bun `ServerWebSocket` as the portable {@link NifraWebSocket} handed to WS callbacks.
+ *
+ * `nativePubsub` selects the topic backend: in native mode `subscribe`/`unsubscribe` go straight to
+ * Bun's own (uWebSockets) pub/sub so a broadcast via the Bun server's `publish` reaches this socket
+ * with no per-connection JS loop; otherwise they use the runtime-neutral {@link TopicRegistry}. Native
+ * mode is used only when no route validates outbound frames, so raw and validated sends are identical.
+ */
 function wrapBunSocket(
   raw: BunSocket,
   topics: TopicRegistry,
   handler: WebSocketHandler,
+  nativePubsub: boolean,
 ): NifraWebSocket {
   let ws!: NifraWebSocket
   const reportError = (error: unknown): void => reportWsError(error, ws, handler)
@@ -61,8 +73,12 @@ function wrapBunSocket(
     get readyState() {
       return raw.readyState
     },
-    subscribe: (topic) => topics.subscribe(topic, ws),
-    unsubscribe: (topic) => topics.unsubscribe(topic, ws),
+    subscribe: nativePubsub
+      ? (topic) => raw.subscribe(topic)
+      : (topic) => topics.subscribe(topic, ws),
+    unsubscribe: nativePubsub
+      ? (topic) => raw.unsubscribe(topic)
+      : (topic) => topics.unsubscribe(topic, ws),
     get data() {
       return raw.data.data
     },
@@ -99,26 +115,34 @@ function dispatchWsCallback(
   }
 }
 
-/** The shared Bun `websocket` dispatcher config for one app - each connection's
- * `ws.data.handler` is the matched route's handler, set by `server.upgrade`. */
-export function createBunWsHandlers(topics: TopicRegistry): BunWsHandlers {
+/**
+ * The shared Bun `websocket` dispatcher config for one app - each connection's `ws.data.handler` is
+ * the matched route's handler, set by `server.upgrade`.
+ *
+ * `nativePubsub` (set by `listen()` when the app has no validated-send route) makes subscriptions use
+ * Bun's own pub/sub; there the registry holds nothing and Bun auto-drops native subscriptions on
+ * close, so the `unsubscribeAll` sweep is skipped.
+ */
+export function createBunWsHandlers(topics: TopicRegistry, nativePubsub = false): BunWsHandlers {
   return {
     open: (raw) => {
       const ws = raw as BunSocket
-      const nifra = wrapBunSocket(ws, topics, ws.data.handler)
+      const nifra = wrapBunSocket(ws, topics, ws.data.handler, nativePubsub)
       ws.data.nifra = nifra
       dispatchWsCallback(() => ws.data.handler.open?.(nifra), nifra, ws.data.handler)
     },
     message: (raw, message) => {
       const ws = raw as BunSocket
-      const nifra = ws.data.nifra ?? wrapBunSocket(ws, topics, ws.data.handler)
+      const nifra = ws.data.nifra ?? wrapBunSocket(ws, topics, ws.data.handler, nativePubsub)
       const data: WebSocketData = typeof message === "string" ? message : toBinaryData(message)
       dispatchWsCallback(() => ws.data.handler.message?.(nifra, data), nifra, ws.data.handler)
     },
     close: (raw, code, reason) => {
       const ws = raw as BunSocket
-      const nifra = ws.data.nifra ?? wrapBunSocket(ws, topics, ws.data.handler)
-      topics.unsubscribeAll(nifra) // drop topic subscriptions so the registry never holds a dead socket
+      const nifra = ws.data.nifra ?? wrapBunSocket(ws, topics, ws.data.handler, nativePubsub)
+      // Registry mode: drop topic subscriptions so it never holds a dead socket. Native mode: Bun
+      // unsubscribes the socket from every topic on close, so there is nothing to sweep here.
+      if (!nativePubsub) topics.unsubscribeAll(nifra)
       dispatchWsCallback(() => ws.data.handler.close?.(nifra, code, reason), nifra, ws.data.handler)
     },
   }

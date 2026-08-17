@@ -30,8 +30,9 @@ export interface WsRuntime {
   wrapHandler(handler: WebSocketHandler): WebSocketHandler
   /** One in-process pub/sub registry per app (backs `ws.subscribe` + `app.publish`). */
   createTopics(): TopicRegistry
-  /** The Bun `websocket` config for `listen()` when the app has WS routes. */
-  bunHandlers(topics: TopicRegistry): BunWsHandlers
+  /** The Bun `websocket` config for `listen()` when the app has WS routes. `nativePubsub` routes
+   * `ws.subscribe` through Bun's own pub/sub (set when no route validates outbound frames). */
+  bunHandlers(topics: TopicRegistry, nativePubsub?: boolean): BunWsHandlers
   /** `attachWebSocket` - wires a standard server socket (Workers `WebSocketPair`) to a handler. */
   attach(
     socket: StandardWebSocket,

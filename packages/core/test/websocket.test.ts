@@ -294,6 +294,48 @@ describe("app.listen() WebSockets", () => {
     a.close()
     b.close()
   })
+
+  // A validateSend route makes broadcast bytes route-dependent (validated + dropped per socket), so
+  // the app must keep the JS registry publish path - never Bun's native topic broadcast, which would
+  // deliver raw frames unchecked. This locks that: a valid broadcast lands, an invalid one is dropped.
+  test("pub/sub with validateSend keeps registry validation (no native broadcast bypass)", async () => {
+    const sendSchema: StandardSchemaV1<unknown, { text: string }> = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (value) =>
+          typeof value === "object" &&
+          value !== null &&
+          typeof (value as { text?: unknown }).text === "string"
+            ? { value: value as { text: string } }
+            : { issues: [{ message: "expected { text: string }" }] },
+      },
+    }
+    const app = server()
+      .use(websocket())
+      .ws("/room", {
+        sendSchema,
+        validateSend: true,
+        open: (ws) => ws.subscribe("lobby"),
+      })
+    running = app.listen(0)
+    const c = new WebSocket(`ws://127.0.0.1:${running.port}/room`)
+    const msgs: string[] = []
+    c.addEventListener("message", (e) => msgs.push(String(e.data)))
+    await new Promise<void>((resolve, reject) => {
+      c.addEventListener("open", () => resolve())
+      c.addEventListener("error", () => reject(new Error("open failed")))
+    })
+    const waitFor = async (cond: () => boolean) => {
+      for (let i = 0; i < 200 && !cond(); i++) await Bun.sleep(10)
+    }
+    app.publish("lobby", JSON.stringify({ text: "ok" })) // valid -> delivered
+    app.publish("lobby", JSON.stringify({ text: 42 })) // invalid -> dropped per socket
+    await waitFor(() => msgs.length === 1)
+    await Bun.sleep(50) // give any (wrongly) undropped invalid frame time to arrive
+    expect(msgs).toEqual([JSON.stringify({ text: "ok" })])
+    c.close()
+  })
 })
 
 // attachWebSocket - the shared bridge the @nifrajs/deno + Workers (toFetchHandler) adapters use over a
