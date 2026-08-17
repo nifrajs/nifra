@@ -28,6 +28,11 @@
       "types": "./dist/certification.d.ts",
       "default": "./dist/certification.js"
     },
+    "./contract-lab": {
+      "bun": "./src/contract-lab.ts",
+      "types": "./dist/contract-lab.d.ts",
+      "default": "./dist/contract-lab.js"
+    },
     "./zod": {
       "bun": "./src/zod.ts",
       "types": "./dist/zod.d.ts",

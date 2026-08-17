@@ -51,6 +51,13 @@ export {
   storageAdapterCertificationProfile,
   verifyAdapterCertification,
 } from "./certification.ts"
+export {
+  type ContractLabHandler,
+  type ContractLabWitness,
+  contractLabWitnesses,
+  createReferenceContractLabHandler,
+  runContractLab,
+} from "./contract-lab.ts"
 export { type CookieJar, cookieJar } from "./cookies.ts"
 export {
   createFailureLab,

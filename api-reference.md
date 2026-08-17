@@ -2811,6 +2811,9 @@ _No named exports (side-effect entrypoint)._
 - **ContractCaseKind** _(type)_ - `type ContractCaseKind = "input-rejection" | "response-conformance"`
 - **ContractCoverageGap** _(interface)_ - `interface ContractCoverageGap`
 - **ContractCoverageGapCode** _(type)_ - `type ContractCoverageGapCode`
+- **ContractLabHandler** _(interface)_ - `interface ContractLabHandler`
+  Runtime-neutral HTTP contract witnesses.
+- **ContractLabWitness** _(interface)_ - `interface ContractLabWitness`
 - **ContractReplay** _(interface)_ - `interface ContractReplay`
 - **ContractRuntime** _(interface)_ - `interface ContractRuntime`
   A runtime target for the same generated contract cases (for example Bun, Node, and Workers).
@@ -2868,10 +2871,14 @@ _No named exports (side-effect entrypoint)._
   Build a capsule from a real `Request`+`Response`, or from plain captured fields.
 - **certifyAdapter** _(function)_ - `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly createAdapter: () => Adapter | Promise<Adapter>; readonly cleanup?: (adapter: Adapter) =>…`
 - **checkTrajectoryInvariants** _(function)_ - `checkTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => readonly TrajectoryInvariantResult[]`
+- **contractLabWitnesses** _(const)_ - `contractLabWitnesses: readonly ContractLabWitness[]`
+  The shared cross-runtime wire contract. Keep this list small and stable: it is evidence, not a load test.
 - **cookieJar** _(function)_ - `cookieJar: () => CookieJar`
   Create an empty cookie jar.
 - **createFailureLab** _(function)_ - `createFailureLab: (options: FailureLabOptions) => FailureLab`
   Build one isolated deterministic controller. Construct a fresh lab for every replay.
+- **createReferenceContractLabHandler** _(function)_ - `createReferenceContractLabHandler: () => ContractLabHandler`
+  A reference Web handler for adapter-only suites. Core and edge suites use their real routers instead.
 - **createTrajectoryTranscript** _(function)_ - `createTrajectoryTranscript: (transcript: AgentTranscript, options?: CreateTrajectoryTranscriptOptions) => Promise<TrajectoryTranscript>`
   Record the transcript emitted by a turn without adding a second execution recording path.
 - **defineCertificationProfile** _(function)_ - `defineCertificationProfile: <Adapter>(profile: AdapterCertificationProfile<Adapter>) => AdapterCertificationProfile<Adapter>`
@@ -2900,6 +2907,8 @@ _No named exports (side-effect entrypoint)._
   Replay a recorded run with local model decisions and dry-run tools. The supplied model port is never called. Fault schedules use the existing deterministic failure-lab controller.
 - **runAdversarialContract** _(function)_ - `runAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>`
   Execute contract-derived hostile inputs and declared-response conformance against a runtime matrix. Runtime/request failures are captured in the report; inspect `report.ok`, `failures`, and `gaps` (or use {@link assertAdversarialContract} for a throwing test assertion).
+- **runContractLab** _(function)_ - `runContractLab: (handler: ContractLabHandler, origin?: string) => Promise<void>`
+  Execute every witness against one runtime and throw a bounded, replayable mismatch.
 - **runFailureScenario** _(function)_ - `runFailureScenario: <Output>(scenario: FailureScenario<Output>, options: FailureLabOptions) => Promise<FailureScenarioReport>`
   Run one scenario and evaluate its post-failure invariant without leaking its result or error text.
 - **runFaultProfile** _(function)_ - `runFaultProfile: (profile: FaultProfile, options?: RunFaultProfileOptions) => Promise<FaultProfileReport>`
@@ -2948,6 +2957,18 @@ _No named exports (side-effect entrypoint)._
 - **storageAdapterCertificationProfile** _(function)_ - `storageAdapterCertificationProfile: (options?: { readonly paging?: boolean; readonly presign?: boolean; readonly move?: boolean; }) => AdapterCertificationProfile<CertifiableStorageAdapter>`
 - **verifyAdapterCertification** _(function)_ - `verifyAdapterCertification: (report: AdapterCertificationReport) => Promise<boolean>`
   Recompute the portable evidence hash. Consumers should verify before trusting a stored report.
+
+### `@nifrajs/testing/contract-lab`
+
+- **ContractLabHandler** _(interface)_ - `interface ContractLabHandler`
+  Runtime-neutral HTTP contract witnesses.
+- **ContractLabWitness** _(interface)_ - `interface ContractLabWitness`
+- **contractLabWitnesses** _(const)_ - `contractLabWitnesses: readonly ContractLabWitness[]`
+  The shared cross-runtime wire contract. Keep this list small and stable: it is evidence, not a load test.
+- **createReferenceContractLabHandler** _(function)_ - `createReferenceContractLabHandler: () => ContractLabHandler`
+  A reference Web handler for adapter-only suites. Core and edge suites use their real routers instead.
+- **runContractLab** _(function)_ - `runContractLab: (handler: ContractLabHandler, origin?: string) => Promise<void>`
+  Execute every witness against one runtime and throw a bounded, replayable mismatch.
 
 ### `@nifrajs/testing/zod`
 

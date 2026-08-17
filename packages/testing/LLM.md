@@ -10,7 +10,7 @@ Contract-derived adversarial tests, runtime-matrix response conformance, and coo
 
 ## Public entrypoints
 
-`@nifrajs/testing` · `@nifrajs/testing/certification` · `@nifrajs/testing/zod`
+`@nifrajs/testing` · `@nifrajs/testing/certification` · `@nifrajs/testing/contract-lab` · `@nifrajs/testing/zod`
 
 ## Key exports
 
@@ -24,12 +24,12 @@ Contract-derived adversarial tests, runtime-matrix response conformance, and coo
 - **checkTrajectoryInvariants** _(function)_ - `checkTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => readonly TrajectoryInvariantResult[]` · from `@nifrajs/testing`
 - **cookieJar** _(function)_ - `cookieJar: () => CookieJar` · from `@nifrajs/testing`
 - **createFailureLab** _(function)_ - `createFailureLab: (options: FailureLabOptions) => FailureLab` · from `@nifrajs/testing`
+- **createReferenceContractLabHandler** _(function)_ - `createReferenceContractLabHandler: () => ContractLabHandler` · from `@nifrajs/testing`
 - **createTrajectoryTranscript** _(function)_ - `createTrajectoryTranscript: (transcript: AgentTranscript, options?: CreateTrajectoryTranscriptOptions) => Promise<TrajectoryTranscript>` · from `@nifrajs/testing`
 - **defineCertificationProfile** _(function)_ - `defineCertificationProfile: <Adapter>(profile: AdapterCertificationProfile<Adapter>) => AdapterCertificationProfile<Adapter>` · from `@nifrajs/testing`
 - **defineFaultProfile** _(function)_ - `defineFaultProfile: (profile: FaultProfile) => FaultProfile` · from `@nifrajs/testing`
-- **eventDeliveryCertificationProfile** _(function)_ - `eventDeliveryCertificationProfile: () => AdapterCertificationProfile<CertifiableEventDeliveryAdapter>` · from `@nifrajs/testing`
 
-_…and 93 more - see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
+_…and 98 more - see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
 
 ## Footguns
 

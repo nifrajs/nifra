@@ -2700,6 +2700,26 @@
     "signature": "export type ContractCoverageGapCode = \"NO_CONTRACT_TARGETS\" | \"NO_VALIDATOR\" | \"NO_WITNESS\" | \"INVALID_WITNESS\" | \"WITNESS_TOO_LARGE\" | \"UNSUPPORTED_BODY_METHOD\" | \"NO_REJECTED_MUTATION\" | \"NO_RUNTIME\" | \"INVALID_RUNTIME\" | \"CASE_NOT_FOUND\";"
   },
   {
+    "name": "ContractLabHandler",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface ContractLabHandler {\n    fetch(request: Request): Response | Promise<Response>;\n}",
+    "doc": "/**\n * Runtime-neutral HTTP contract witnesses.\n *\n * The witness set is deliberately made only of Web `Request`/`Response` values. Runtime suites provide\n * the handler under test - the full Bun server, the compact edge server, or a native Node/Deno adapter -\n * and this module compares the wire contract without importing any runtime-specific implementation.\n */"
+  },
+  {
+    "name": "ContractLabWitness",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface ContractLabWitness {\n    readonly id: string;\n    readonly request: {\n        readonly method: string;\n        readonly path: string;\n        readonly headers?: Readonly<Record<string, string>>;\n        readonly body?: string;\n    };\n    readonly expected: {\n        readonly status: number;\n        readonly contentType: \"json\" | \"text\";\n        readonly headers?: Readonly<Record<string, string>>;\n        readonly body: unknown;\n    };\n}"
+  },
+  {
+    "name": "contractLabWitnesses",
+    "kind": "const",
+    "package": "@nifrajs/testing",
+    "signature": "export declare const contractLabWitnesses: readonly ContractLabWitness[];",
+    "doc": "/** The shared cross-runtime wire contract. Keep this list small and stable: it is evidence, not a load test. */"
+  },
+  {
     "name": "ContractReplay",
     "kind": "interface",
     "package": "@nifrajs/testing",
@@ -3081,6 +3101,13 @@
     "package": "@nifrajs/jobs",
     "signature": "export declare function createQueue(options?: QueueOptions): Queue;",
     "doc": "/** Create a job queue. Define jobs, enqueue payloads, and `start()` a worker (or `drain()` once). */"
+  },
+  {
+    "name": "createReferenceContractLabHandler",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function createReferenceContractLabHandler(): ContractLabHandler;",
+    "doc": "/** A reference Web handler for adapter-only suites. Core and edge suites use their real routers instead. */"
   },
   {
     "name": "createRequestBudget",
@@ -10873,6 +10900,13 @@
     "kind": "function",
     "package": "@nifrajs/cli",
     "signature": "export declare function runAssurance(cwd: string, options?: {\n    readonly json?: boolean;\n    readonly config?: string;\n    readonly bundle?: boolean;\n    readonly strict?: boolean;\n    readonly out?: string;\n    readonly hydration?: boolean;\n    readonly interact?: boolean;\n}): Promise<boolean>;"
+  },
+  {
+    "name": "runContractLab",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function runContractLab(handler: ContractLabHandler, origin?: string): Promise<void>;",
+    "doc": "/** Execute every witness against one runtime and throw a bounded, replayable mismatch. */"
   },
   {
     "name": "runDurableExecutionAdapterConformance",

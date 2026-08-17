@@ -17,6 +17,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { serve } from "@nifrajs/node"
 import { certifyAdapter, runtimeAdapterCertificationProfile } from "@nifrajs/testing/certification"
+import { createReferenceContractLabHandler, runContractLab } from "@nifrajs/testing/contract-lab"
 
 test("the Node HTTP adapter satisfies the portable runtime certification profile on Node", async () => {
   const report = await certifyAdapter({
@@ -37,4 +38,16 @@ test("the Node HTTP adapter satisfies the portable runtime certification profile
     report.capabilities.map((capability) => capability.capability),
     ["request-bridge", "response-bridge", "lifecycle"],
   )
+})
+
+test("the Node adapter satisfies the shared cross-runtime contract lab", async () => {
+  const server = await serve(createReferenceContractLabHandler(), {
+    port: 0,
+    hostname: "127.0.0.1",
+  })
+  try {
+    await runContractLab({ fetch: (request) => fetch(request) }, `http://127.0.0.1:${server.port}`)
+  } finally {
+    await server.stop()
+  }
 })
