@@ -3070,7 +3070,7 @@ _No named exports (side-effect entrypoint)._
 - **FetchRouteData** _(type)_ - `type FetchRouteData = ( path: string, match: RouteMatch, signal?: AbortSignal, navigation?: { readonly from: string readonly retain: readonly number[] }, ) => Promise<unknown>`
   How a router fetches a route's loader data on navigation. `signal` aborts a superseded fetch (and its deferred stream).
 - **Fetcher** _(interface)_ - `interface Fetcher`
-  An independent load/submit state machine, retrieved by `router.fetcher(key)`. Runs **concurrently** with the main router and with other fetchers - each is single-flight against *itself* (its own monotonic token), so N row-level mutations / side-channel loads can be in flight at once without disturb…
+  An independent load/submit state machine, retrieved by `router.fetcher(key)`. Runs **concurrently** with the main router and with other fetchers - each is single-flight against *itself* (its own monotonic generation), so N row-level mutations / side-channel loads can be in flight at once without di…
 - **FetcherState** _(interface)_ - `interface FetcherState`
   A fetcher's observable state - independent of the main router. `pending` covers its in-flight load/submit; `data` is its last `load()` result; `actionData` its last `submit()` result; `submission` the in-flight submit (for optimistic UI). Client-only (never SSR'd).
 - **FontDisplay** _(type)_ - `type FontDisplay = "auto" | "block" | "swap" | "fallback" | "optional"`

@@ -68,8 +68,8 @@ export function takeEnvFileFlags(argv: readonly string[]): {
   const rest: string[] = []
   const files: string[] = []
   for (let index = 0; index < argv.length; index++) {
-    const token = argv[index] as string
-    if (token === ENV_FILE_FLAG) {
+    const arg = argv[index] as string
+    if (arg === ENV_FILE_FLAG) {
       const value = argv[index + 1]
       if (value === undefined || value.startsWith("-")) {
         throw new Error(`[nifra] ${ENV_FILE_FLAG} needs a path, e.g. ${ENV_FILE_FLAG} .env.local`)
@@ -78,15 +78,15 @@ export function takeEnvFileFlags(argv: readonly string[]): {
       index++
       continue
     }
-    if (token.startsWith(`${ENV_FILE_FLAG}=`)) {
-      const value = token.slice(ENV_FILE_FLAG.length + 1)
+    if (arg.startsWith(`${ENV_FILE_FLAG}=`)) {
+      const value = arg.slice(ENV_FILE_FLAG.length + 1)
       if (value === "") {
         throw new Error(`[nifra] ${ENV_FILE_FLAG} needs a path, e.g. ${ENV_FILE_FLAG}=.env.local`)
       }
       files.push(value)
       continue
     }
-    rest.push(token)
+    rest.push(arg)
   }
   return { argv: rest, files }
 }

@@ -62,10 +62,14 @@ export function queryTermGroups(query: string): SearchTermGroup[] {
     }))
 }
 
-function tokenMatches(term: string, token: string): boolean {
-  if (term === token) return true
+function tokenMatches(term: string, candidate: string): boolean {
+  if (term === candidate) return true
   // Prefix matching catches plural/stem variants without letting very short terms get noisy.
-  return term.length >= 4 && token.length >= 4 && (term.startsWith(token) || token.startsWith(term))
+  return (
+    term.length >= 4 &&
+    candidate.length >= 4 &&
+    (term.startsWith(candidate) || candidate.startsWith(term))
+  )
 }
 
 export function tokenSetHas(tokens: ReadonlySet<string>, group: SearchTermGroup): boolean {

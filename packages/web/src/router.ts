@@ -215,7 +215,7 @@ export interface FetcherState {
 /**
  * An independent load/submit state machine, retrieved by `router.fetcher(key)`. Runs **concurrently**
  * with the main router and with other fetchers - each is single-flight against *itself* (its own
- * monotonic token), so N row-level mutations / side-channel loads can be in flight at once without
+ * monotonic generation), so N row-level mutations / side-channel loads can be in flight at once without
  * disturbing the active view. Loads/submits write the shared cache and honor `X-Nifra-Revalidate`.
  */
 export interface Fetcher {
@@ -388,7 +388,7 @@ const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation
 }
 
 /**
- * Create the agnostic router store. `navigate` is guarded by a monotonic token so that when
+ * Create the agnostic router store. `navigate` is guarded by a monotonic generation so that when
  * navigations overlap, only the latest result is applied (rapid clicks don't flash stale data).
  * A failed fetch clears `pending` and rethrows so the caller can fall back to a full-page load.
  */
@@ -581,7 +581,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     hydrated = true
     const route = { routeId: state.routeId, params: state.params }
     if (routeHooks[route.routeId]?.clientLoader === undefined) return
-    const mine = ++token
+    const mine = ++generation
     navAbort?.abort()
     const ac = new AbortController()
     navAbort = ac
@@ -597,7 +597,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       () => Promise.resolve(initial),
       initial,
     )
-    if (mine !== token) return
+    if (mine !== generation) return
     if (loaded.terminalRouteId !== undefined) {
       await loadModule?.(loaded.terminalRouteId)
       state = { ...state, routeId: loaded.terminalRouteId, params: {}, data: null }
@@ -613,7 +613,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   }
   let state = options.initial
   const listeners = new Set<() => void>()
-  let token = 0
+  let generation = 0
   // Snapshot listeners to defend against accidental un/subscribe during notification. The adapters
   // don't do this (un/subscribe runs in effect/cleanup ticks), so the overhead is negligible
   // (5-20 listeners typically), and the defensiveness is valuable.
@@ -684,10 +684,10 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   // (so a superseded route's NDJSON stream stops reading instead of draining in the background).
   let navAbort: AbortController | undefined
 
-  // Refetch the active route + republish, single-flight via the shared `token`. Shared by `invalidate`
+  // Refetch the active route + republish, single-flight via the shared `generation`. Shared by `invalidate`
   // and targeted revalidation. Rejects if the fetch fails (clearing its own `pending` first).
   const refetchActive = async (): Promise<void> => {
-    const mine = ++token
+    const mine = ++generation
     navAbort?.abort()
     const ac = new AbortController()
     navAbort = ac
@@ -698,7 +698,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       const loaded = await applyClientLoader(state.path, active, ac.signal, () =>
         loadRouteData(state.path, active, ac.signal),
       )
-      if (mine !== token) return // superseded - drop the stale result
+      if (mine !== generation) return // superseded - drop the stale result
       cachePut(state.path, loaded)
       state = {
         ...state,
@@ -709,7 +709,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       }
       emit()
     } catch (err) {
-      if (mine === token) {
+      if (mine === generation) {
         state = { ...state, pending: false }
         emit()
       }
@@ -748,7 +748,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
 
   const createFetcher = (): FetcherEntry => {
     let fState: FetcherState = { pending: false, data: undefined }
-    let fToken = 0
+    let fGeneration = 0
     let fAbort: AbortController | undefined
     let loadedPath: string | undefined
     const fListeners = new Set<() => void>()
@@ -759,7 +759,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     const runLoad = async (path: string): Promise<void> => {
       const matched = match(path)
       if (matched === null) return // unmatched path → no-op
-      const mine = ++fToken
+      const mine = ++fGeneration
       fAbort?.abort()
       const ac = new AbortController()
       fAbort = ac
@@ -770,7 +770,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           loadModule?.(matched.routeId),
           loadRouteData(path, matched, ac.signal),
         ])
-        if (mine !== fToken) return // a newer load/submit on THIS fetcher superseded us
+        if (mine !== fGeneration) return // a newer load/submit on THIS fetcher superseded us
         // Record the loaded path only on SUCCESS - a thrown or superseded load must not
         // leave `loadedPath` pointing at a path this fetcher never actually showed, or a later
         // `X-Nifra-Revalidate` for it would spuriously refetch onto unexpected data.
@@ -779,7 +779,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         fState = { ...fState, data: loaded.data, pending: false }
         fEmit()
       } catch (err) {
-        if (mine === fToken) {
+        if (mine === fGeneration) {
           fState = { ...fState, pending: false }
           fEmit()
         }
@@ -796,7 +796,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       },
       load: runLoad,
       submit: async (action, body) => {
-        const mine = ++fToken
+        const mine = ++fGeneration
         // Abort any prior in-flight load/submit on THIS fetcher (its fetch + NDJSON drain) - like
         // `runLoad` does for a superseding load. The mutation POST is left to complete; the
         // signal cancels the follow-up data drain if a newer op supersedes this one.
@@ -817,7 +817,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
             throw new Error(`[nifra/web] fetcher action failed (${res.status}): ${action}`)
           const actionData = res.status === 204 ? undefined : await readResponseData(res, ac.signal)
           const changed = parseRevalidate(res.headers.get(REVALIDATE_HEADER))
-          if (mine !== fToken) return
+          if (mine !== fGeneration) return
           // Publish the fetcher's actionData; clear `submission` (the optimistic window is over).
           fState = { pending: false, data: fState.data, actionData }
           fEmit()
@@ -828,7 +828,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
             await refreshMounted(changed, false)
           }
         } catch (err) {
-          if (mine === fToken) {
+          if (mine === fGeneration) {
             fState = { pending: false, data: fState.data }
             fEmit()
           }
@@ -872,7 +872,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           searchClientKeys[state.routeId] ?? [],
         )
       ) {
-        ++token // supersede any in-flight navigation so its late result is dropped
+        ++generation // supersede any in-flight navigation so its late result is dropped
         navAbort?.abort()
         cachePut(path, {
           data: state.data,
@@ -883,7 +883,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         emit()
         return
       }
-      const mine = ++token
+      const mine = ++generation
       navAbort?.abort() // abandon any in-flight navigation's stream
       const ac = new AbortController()
       navAbort = ac
@@ -914,7 +914,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           prefetchedData,
         )
         if (loaded.terminalRouteId !== undefined) await loadModule?.(loaded.terminalRouteId)
-        if (mine !== token) return // a newer navigation superseded this one - drop the stale result
+        if (mine !== generation) return // a newer navigation superseded this one - drop the stale result
         cachePut(path, loaded) // keep the keyed cache coherent with what we publish
         const interception =
           loaded.terminalRouteId === undefined
@@ -959,7 +959,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       } catch (err) {
         // Clear our pending flag + target (only if still current) and rethrow - the caller decides how
         // to recover (the history layer falls back to a full-page navigation).
-        if (mine === token) {
+        if (mine === generation) {
           state = { ...state, pending: false, pendingPath: undefined }
           emit()
         }
@@ -967,7 +967,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       }
     },
     submit: async (action, body, opts) => {
-      const mine = ++token
+      const mine = ++generation
       const previousActionData = state.actionData
       // A superseding navigation/submit aborts this submit's FOLLOW-UP reads (revalidation / redirect
       // fetch + their NDJSON drains) - not the mutation POST itself, which should complete.
@@ -1013,7 +1013,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
             ),
           )
           if (loaded.terminalRouteId !== undefined) await loadModule?.(loaded.terminalRouteId)
-          if (mine !== token) return
+          if (mine !== generation) return
           cachePut(redirectTo, loaded)
           state = {
             routeId: loaded.terminalRouteId ?? target.routeId,
@@ -1049,7 +1049,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           : await applyClientLoader(state.path, active, ac.signal, () =>
               loadRouteData(state.path, active, ac.signal),
             )
-        if (mine !== token) return
+        if (mine !== generation) return
         cachePut(state.path, loaded) // the revalidated (or kept) data is now the cache's truth
         // Mark the OTHER changed routes stale so the next access refetches.
         markStale(changed.filter((p) => p !== state.path))
@@ -1070,7 +1070,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         // revalidated inline above, so skip it here). Best-effort - never rejects the submit.
         await refreshMounted(changed, true)
       } catch (err) {
-        if (mine === token) {
+        if (mine === generation) {
           // Revert: clear `submission` (the optimistic view vanishes) leaving `data` untouched, so the
           // pre-submit data shows through.
           state = {

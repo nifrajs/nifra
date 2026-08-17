@@ -59,7 +59,7 @@ interface CachedEntry<Frontmatter> {
 }
 
 interface CollectionSnapshot<Frontmatter> {
-  readonly signature: string
+  readonly fingerprint: string
   readonly entries: Array<Entry<Frontmatter>>
 }
 
@@ -108,14 +108,14 @@ export function defineCollection<S extends StandardSchemaV1>(
   return {
     async all() {
       const files = listFiles()
-      const signature = files.map((file) => `${file.file}\0${file.stamp}`).join("\0")
-      if (collectionCache?.signature === signature) return [...collectionCache.entries]
+      const fingerprint = files.map((file) => `${file.file}\0${file.stamp}`).join("\0")
+      if (collectionCache?.fingerprint === fingerprint) return [...collectionCache.entries]
 
       const entries = await Promise.all(
         files.map((file) => readEntry(file.path, slugOf(file.file), file.stamp)),
       )
       collectionCache = {
-        signature,
+        fingerprint,
         entries,
       }
       return [...entries]
