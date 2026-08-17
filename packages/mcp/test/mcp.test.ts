@@ -34,6 +34,15 @@ const ordersTool = defineMcpTool({
   }),
 })
 
+const progressTool = defineMcpTool({
+  name: "progress",
+  description: "Report progress",
+  handler: async (_args, context) => {
+    context.reportProgress(0.5, 1)
+    return "complete"
+  },
+})
+
 describe("defineMcpWidget", () => {
   test("rejects a non-ui:// uri", () => {
     expect(() => defineMcpWidget({ uri: "https://x", name: "x", html: "" })).toThrow(/ui:\/\//)
@@ -432,13 +441,51 @@ describe("respondMcpHttp - transport hardening", () => {
     expect(await res.text()).toBe("")
   })
 
-  test("GET probing the removed SSE stream is 405; a plain GET is the health page", async () => {
+  test("GET opens a cancellable SSE stream; a plain GET is the health page", async () => {
     const sse = await serve(
       new Request("http://x/mcp", { headers: { accept: "text/event-stream" } }),
     )
-    expect(sse.status).toBe(405)
+    expect(sse.status).toBe(200)
+    expect(sse.headers.get("content-type")).toContain("text/event-stream")
+    const reader = sse.body?.getReader()
+    expect(reader).toBeDefined()
+    const first = await reader?.read()
+    expect(new TextDecoder().decode(first?.value ?? new Uint8Array())).toBe(": connected\n\n")
+    await reader?.cancel()
     const health = await serve(new Request("http://x/mcp"))
     expect(health.status).toBe(200)
+  })
+
+  test("POST streams progress notifications before the final JSON-RPC response", async () => {
+    const res = await respondMcpHttp(
+      new Request("http://x/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 21,
+          method: "tools/call",
+          params: { name: "progress", _meta: { progressToken: "job-21" } },
+        }),
+      }),
+      [progressTool],
+      INFO,
+    )
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toContain("text/event-stream")
+    expect(res.headers.get("cache-control")).toContain("no-cache")
+    const text = await res.text()
+    const messages = text
+      .split("\n")
+      .filter((line) => line.startsWith("data: "))
+      .map((line) => JSON.parse(line.slice("data: ".length)) as Record<string, unknown>)
+    expect(
+      messages.slice(0, 3).map((message) => (message.params as { progress: number }).progress),
+    ).toEqual([0, 0.5, 1])
+    expect(messages[3]).toMatchObject({ id: 21, result: { content: [{ text: "complete" }] } })
   })
 
   test("with an allowlist, a foreign Origin is rejected 403 before the body is read", async () => {

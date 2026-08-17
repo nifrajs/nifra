@@ -2236,7 +2236,7 @@ _No named exports (side-effect entrypoint)._
 - **modernVersionOf** _(function)_ - `modernVersionOf: (params: Record<string, unknown> | undefined) => string | undefined`
   The protocol version a modern (2026-07-28+) request declares in `_meta`, or `undefined` for a legacy request. Its presence is what puts the dispatch in modern mode for that one request.
 - **respondMcpHttp** _(function)_ - `respondMcpHttp: (request: Request, tools: McpTool[], serverInfo: { name: string; version: string; }, options?: McpHttpOptions) => Promise<Response>`
-  Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → JSON-RPC response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws - a bad body becomes a JSON-RPC parse error. Dual-era: a modern (2026-07-28) POST that mirrors its method/name/vers…
+  Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → a JSON-RPC response, or an SSE stream carrying progress notifications and the final response when the client accepts `text/event-stream`; GET → a health page or a cancellable SSE stream; OPTIONS → CORS pre…
 - **rpcError** _(const)_ - `rpcError: (id: JsonRpcId, code: number, message: string, data?: unknown) => JsonRpcResponse`
 - **rpcResult** _(const)_ - `rpcResult: (id: JsonRpcId, value: unknown) => JsonRpcResponse`
 - **uiResourceMeta** _(function)_ - `uiResourceMeta: (uri: string) => Record<string, unknown>`
@@ -2248,7 +2248,7 @@ _No named exports (side-effect entrypoint)._
 
 - **McpHttpOptions** _(interface)_ - `interface McpHttpOptions`
 - **respondMcpHttp** _(function)_ - `respondMcpHttp: (request: Request, tools: McpTool[], serverInfo: { name: string; version: string; }, options?: McpHttpOptions) => Promise<Response>`
-  Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → JSON-RPC response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws - a bad body becomes a JSON-RPC parse error. Dual-era: a modern (2026-07-28) POST that mirrors its method/name/vers…
+  Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → a JSON-RPC response, or an SSE stream carrying progress notifications and the final response when the client accepts `text/event-stream`; GET → a health page or a cancellable SSE stream; OPTIONS → CORS pre…
 
 ### `@nifrajs/mcp/protocol`
 

@@ -8976,6 +8976,10 @@ Mount `mcp.fetch` at `POST /mcp`. The package also exposes the JSON-RPC protocol
 layers directly, plus `defineMcpWidget` and the React adapter for tool results that render UI in MCP
 hosts.
 
+Clients that include `text/event-stream` in `Accept` receive progress notifications as they happen,
+followed by the final JSON-RPC response in the same stream. An SSE `GET /mcp` opens a cancellable
+server-message connection; a plain `GET /mcp` remains a health page.
+
 ## For AI agents
 
 Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),

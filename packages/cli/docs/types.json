@@ -10234,7 +10234,7 @@
     "kind": "function",
     "package": "@nifrajs/mcp",
     "signature": "export declare function respondMcpHttp(request: Request, tools: McpTool[], serverInfo: {\n    name: string;\n    version: string;\n}, options?: McpHttpOptions): Promise<Response>;",
-    "doc": "/**\n * Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → JSON-RPC\n * response; GET → a plain-text health page; OPTIONS → CORS preflight. Never throws - a bad body becomes a\n * JSON-RPC parse error. Dual-era: a modern (2026-07-28) POST that mirrors its method/name/version into\n * headers is validated against the body before dispatch and gets spec HTTP statuses; legacy requests are\n * served unchanged. The dispatch is the shared, transport-agnostic {@link handleRpc}.\n */"
+    "doc": "/**\n * Handle one MCP request over HTTP against the given `tools`/`features`. POST a JSON-RPC body → a JSON-RPC\n * response, or an SSE stream carrying progress notifications and the final response when the client\n * accepts `text/event-stream`; GET → a health page or a cancellable SSE stream; OPTIONS → CORS preflight.\n * Never throws - a bad body becomes a JSON-RPC parse error. Dual-era: a modern (2026-07-28) POST that\n * mirrors its method/name/version into headers is validated against the body before dispatch and gets spec\n * HTTP statuses; legacy requests are served unchanged. The dispatch is the shared, transport-agnostic\n * {@link handleRpc}.\n */"
   },
   {
     "name": "ResponseBodyHook",
