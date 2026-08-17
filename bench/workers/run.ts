@@ -54,6 +54,8 @@ const FRAMEWORKS = [
   "nifra-edge",
   "nifra-edge-pkg",
   "hono",
+  "hono-quick",
+  "hono-tiny",
   "raw",
 ] as const
 type Framework = (typeof FRAMEWORKS)[number]
