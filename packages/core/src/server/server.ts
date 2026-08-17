@@ -1077,17 +1077,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         })
         return this
       }
-      this.onResponseHooks.push((response) => {
-        const headers = new Headers(response.headers)
-        for (const name of Object.keys(record)) {
-          if (!headers.has(name)) headers.set(name, record[name] as string)
-        }
-        return new Response(response.body, {
-          status: response.status,
-          statusText: response.statusText,
-          headers,
-        })
-      })
+      // Route the hook through the same seam the static tier uses. On a framework response (headers
+      // stamped mutable) it applies the defaults in place and returns the SAME object, so the
+      // serialized-body marker survives for later `onResponseBody`/`onResponseRaw` observers and the
+      // Node writer; reconstructing a `Response` here would strip that marker and reclassify the Node
+      // outcome from `json` to a generic `response`. A guarded foreign response takes its clone path.
+      const statics = buildStaticResponseHeaders(record)
+      this.onResponseHooks.push((response) => applyStaticResponseHeaders(response, statics))
       this.onNodeResponseHooks.push(undefined)
       this.nodeResponseHooksComplete = false
       return this

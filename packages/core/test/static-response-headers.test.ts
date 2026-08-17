@@ -390,6 +390,37 @@ describe("responseHeaders() - semantics", () => {
     expect(seen).toEqual(["no-referrer"])
   })
 
+  test("the fallback hook (declared after a plain onResponse) preserves the body marker", async () => {
+    // Reaching the raw-hook fallback needs `onResponseHooks.length > 0` while the observer methods
+    // are NOT yet installed: a plain `.onResponse()` first, then `.responseHeaders()`, then the
+    // observer + a body hook. The fallback must add its defaults in place, not reconstruct the
+    // Response - reconstructing strips the serialized-body marker, which silently blinds the body
+    // hook and reclassifies the Node outcome from `json` to a generic `response`.
+    let bodyHookFired = false
+    const app = server()
+      .onResponse((r) => r)
+      .responseHeaders(DECLARED)
+      .use(responseObserver())
+      .use(nodeDirect())
+      .onResponseBody((body, headers) => {
+        // Only reached when the framework body marker is still on the response; a stripped marker
+        // makes `taggedResponseBody` return undefined and this hook is skipped entirely.
+        bodyHookFired = true
+        expect(headers.get("x-frame-options")).toBe("DENY")
+        return body
+      })
+      .get("/", () => ({ ok: true }))
+    // Web lane: the fallback added the declared header AND left the body marker intact, so the body
+    // hook ran. With the old reconstruct-a-Response fallback the marker was lost and it was skipped.
+    const res = await app.fetch(new Request("http://x/"))
+    expect(res.headers.get("x-frame-options")).toBe("DENY")
+    expect(bodyHookFired).toBe(true)
+    // Node lane: the surviving marker classifies as the observed-body `kind: "body"`; a stripped
+    // marker would instead fall through to a generic `kind: "response"`.
+    const outcome = await app.resolveNode(new Request("http://x/"))
+    expect(outcome.kind).toBe("body")
+  })
+
   test("declarations merge in order; the last one wins a repeated name", async () => {
     const app = server()
       .responseHeaders({ "x-a": "1", "x-b": "1" })

@@ -58,6 +58,16 @@ type ClaimableStream = ReadableStream<Uint8Array> & {
 export type CancelPolicy = "destroy" | "drain"
 
 /**
+ * Hard ceiling on a post-cancel drain. Draining exists only to let the early response (a 413 cap
+ * rejection) flush on a clean FIN; it is never meant to read a hostile upload to its end. Node
+ * normally tears the socket down once that response completes, which ends the drain well before this
+ * - but a slow client that keeps both directions alive could otherwise trickle bytes forever and
+ * pin the connection. Past this many drained bytes the response has long since left, so destroying
+ * (an RST) no longer risks discarding it; the ceiling just caps the pathological case.
+ */
+const DRAIN_BYTE_CAP = 8 * 1024 * 1024
+
+/**
  * A Web view of `source` that defers to it lazily and can be traded back in for it.
  *
  * `highWaterMark: 0` keeps construction free of a speculative pull - a stream that is going to be
@@ -128,10 +138,21 @@ export function claimableWebStream(
         // pumping its own iterator; one never read (no listener yet) takes the plain `resume()`.
         if (iterator !== undefined) {
           const it = iterator
+          let drained = 0
           const pump = (): void => {
             it.next().then((step) => {
-              if (step.done === true) finish()
-              else pump()
+              if (step.done === true) {
+                finish()
+                return
+              }
+              // Bounded drain: past DRAIN_BYTE_CAP stop pulling and destroy, so a slow client cannot
+              // hold the socket open by trickling an over-cap body forever.
+              drained += (step.value as Uint8Array).byteLength
+              if (drained > DRAIN_BYTE_CAP) {
+                finish()
+                return
+              }
+              pump()
             }, finish)
           }
           // The client abandoning its upload (or any socket teardown) ends the drain even mid-pull.
@@ -150,7 +171,14 @@ export function claimableWebStream(
         // socket is torn down by the completed response closes without ending.
         source.once("end", () => source.destroy())
         source.once("close", () => source.destroy())
-        source.resume()
+        // Bounded drain (see the pump above): a `data` listener flows the source to discard it, the
+        // same as `resume()`, but also counts bytes so an over-cap trickle is destroyed at the cap
+        // instead of held open indefinitely.
+        let drained = 0
+        source.on("data", (chunk: Buffer) => {
+          drained += chunk.byteLength
+          if (drained > DRAIN_BYTE_CAP && !source.destroyed) source.destroy()
+        })
       },
     },
     { highWaterMark: 0 },

@@ -14,7 +14,11 @@ let singleton: QueryClient | undefined
 
 /** Return the client-side query singleton, or undefined during SSR. */
 export function getQueryClientSingleton(): QueryClient | undefined {
-  if (!("window" in globalThis)) return undefined
+  // `typeof globalThis.window`, not `"window" in globalThis`: an SSR shim that assigns
+  // `globalThis.window = undefined` still satisfies the `in` check (the key exists), which would
+  // build a process-global cache on the server and leak state across requests. A real DOM window is
+  // a defined object; a shimmed-undefined one reads as `"undefined"` here and stays server-side.
+  if (typeof (globalThis as { window?: unknown }).window === "undefined") return undefined
   if (singleton === undefined) singleton = createQueryClient({ now: () => Date.now() })
   return singleton
 }

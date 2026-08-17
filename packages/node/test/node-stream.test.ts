@@ -12,6 +12,20 @@ function sourceOf(...chunks: string[]): Readable {
   return Readable.from(chunks.map((c) => Buffer.from(c)))
 }
 
+/** A `Readable` that never ends, emitting `chunkSize`-byte buffers, so only a bounded drain stops it. */
+function endlessSource(chunkSize = 1024 * 1024): Readable {
+  return new Readable({
+    read() {
+      this.push(Buffer.alloc(chunkSize))
+    },
+  })
+}
+
+/** Spin macrotasks until the source is destroyed, or give up so a broken bound fails instead of hanging. */
+async function waitDestroyed(source: Readable, maxTicks = 500): Promise<void> {
+  for (let i = 0; i < maxTicks && !source.destroyed; i++) await tick()
+}
+
 test("reads a Node source through the Web view, chunk for chunk", async () => {
   const web = claimableWebStream(sourceOf("ab", "cd"))
   const reader = web.getReader()
@@ -58,6 +72,26 @@ test("drain policy, source already iterated: cancel pumps the iterator to the en
   await reader.cancel()
   await tick()
   await tick()
+  expect(source.destroyed).toBe(true)
+})
+
+test("drain is bounded (pump path): an endless iterated source is destroyed at the cap", async () => {
+  const source = endlessSource()
+  const web = claimableWebStream(source, "drain")
+  const reader = web.getReader()
+  await reader.read() // attach the iterator -> pump path
+  await reader.cancel()
+  // Without the byte cap the pump would follow this source forever; the cap must destroy it.
+  await waitDestroyed(source)
+  expect(source.destroyed).toBe(true)
+})
+
+test("drain is bounded (resume path): an endless untouched source is destroyed at the cap", async () => {
+  const source = endlessSource()
+  const web = claimableWebStream(source, "drain")
+  // No read: the `data`-listener drain applies. Its byte counter must stop the endless flow.
+  await web.cancel()
+  await waitDestroyed(source)
   expect(source.destroyed).toBe(true)
 })
 
