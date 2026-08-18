@@ -40,6 +40,7 @@ import {
   type RawErrorHandler,
   type RouteEntry,
 } from "../internal/route-execution.ts"
+import { selectRouteLanes } from "../internal/route-lanes.ts"
 import { isSameOriginRequest } from "../internal/same-origin.ts"
 import type { ResponseObserverPlugin } from "../response-observer.ts"
 import { compileRoutePattern, decodeRouteParams } from "../router/pattern.ts"
@@ -1710,65 +1711,31 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       runtime !== undefined && schema?.response !== undefined
         ? { runtime, schema: schema.response }
         : undefined
-    const bare =
-      schema?.params === undefined &&
-      schema?.headers === undefined &&
-      schema?.body === undefined &&
-      schema?.query === undefined &&
-      idempotent === undefined &&
-      ledgered === undefined &&
-      contracted === undefined &&
-      this.derives.length === 0 &&
-      this.beforeHandleHooks.length === 0 &&
-      this.afterHandleHooks.length === 0 &&
-      this.onErrorHooks.length === 0
-    // A route whose ONLY lifecycle step is a query schema can fuse too: the parse + validate +
-    // handler + respond collapse into one closure with no lifecycle promise on the sync path. The
-    // guards mirror the `query` lane below PLUS everything the fused dispatch skips: around hooks,
-    // the idempotency/ledger wrappers, and validation-error recovery (schema or server default) -
-    // the fused invalid path is exactly `validationError(issues)`, so any recovery semantics keep
-    // the generic lane.
-    const fusedQuery =
-      !bare &&
-      contracted === undefined &&
-      schema?.query !== undefined &&
-      schema.body === undefined &&
-      schema.params === undefined &&
-      schema.headers === undefined &&
-      schema.onValidationError === undefined &&
-      this.defaultOnValidationError === undefined &&
-      idempotent === undefined &&
-      ledgered === undefined &&
-      this.derives.length === 0 &&
-      this.beforeHandleHooks.length === 0 &&
-      this.afterHandleHooks.length === 0 &&
-      this.onErrorHooks.length === 0 &&
-      this.aroundHooks.length === 0
-    const bodyOnly =
-      contracted === undefined &&
-      schema?.body !== undefined &&
-      schema.query === undefined &&
-      schema.params === undefined &&
-      schema.headers === undefined &&
-      this.derives.length === 0 &&
-      this.beforeHandleHooks.length === 0 &&
-      this.afterHandleHooks.length === 0 &&
-      this.onErrorHooks.length === 0
-    const fusedBody =
-      !bare &&
-      bodyOnly &&
-      schema.onValidationError === undefined &&
-      this.defaultOnValidationError === undefined &&
-      idempotent === undefined &&
-      ledgered === undefined &&
-      this.aroundHooks.length === 0
+    const lanes = selectRouteLanes({
+      schema,
+      hasIdempotency: idempotent !== undefined,
+      hasLedger: ledgered !== undefined,
+      hasResponseContract: contracted !== undefined,
+      hasDecorations,
+      derives: this.derives.length,
+      beforeHandle: this.beforeHandleHooks.length,
+      afterHandle: this.afterHandleHooks.length,
+      onError: this.onErrorHooks.length,
+      around: this.aroundHooks.length,
+      defaultOnValidationError: this.defaultOnValidationError !== undefined,
+    })
+    const bare = lanes.bare
+    const fusedQuery = lanes.fusedQuery
+    const fusedBody = lanes.fusedBody
     // Body-only routes still need an async body read, but eligible routes can compile the validation +
     // handler continuation once. The runner keeps the bounded parser and all error semantics while
     // avoiding the generic entry/schema/lifecycle dispatch on Bun, Deno, and Node-direct.
     const fusedBodyRunner = fusedBody
       ? this.buildFusedBodyRunner(
           handler as unknown as InternalHandler,
-          schema.body as StandardSchemaV1,
+          // `fusedBody` is selected only when this schema member is present; the selection module
+          // owns that invariant now that the predicate is no longer local for TypeScript to narrow.
+          schema?.body as StandardSchemaV1,
           hasDecorations ? routeDecorations : undefined,
           bodyLimit ?? UNLIMITED_BODY_BYTES,
         )
@@ -1785,58 +1752,27 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
           ? this.buildFusedQueryWeb(
               handler as unknown as InternalHandler,
               hasDecorations ? routeDecorations : undefined,
-              schema.query as StandardSchemaV1,
+              schema?.query as StandardSchemaV1,
               bodyLimit ?? UNLIMITED_BODY_BYTES,
             )
           : fusedBody
             ? this.buildFusedBodyWeb(fusedBodyRunner as FusedBodyRunner)
             : undefined
-    const contextless = bare && this.aroundHooks.length === 0 && isContextlessNoArgArrow(handler)
+    const contextless =
+      lanes.bare && this.aroundHooks.length === 0 && isContextlessNoArgArrow(handler)
     // The body and query lanes finalize the handler's result themselves, so a contracted route takes
     // the general lifecycle lane instead - one place owns the check rather than three.
-    const lane = bare
-      ? "bare"
-      : bodyOnly
-        ? "body"
-        : contracted === undefined &&
-            schema?.body === undefined &&
-            schema?.query !== undefined &&
-            schema.params === undefined &&
-            schema.headers === undefined &&
-            this.derives.length === 0 &&
-            this.beforeHandleHooks.length === 0 &&
-            this.afterHandleHooks.length === 0 &&
-            this.onErrorHooks.length === 0
-          ? "query"
-          : "lifecycle"
+    const lane = lanes.lane
     // Lifecycle routes with no params schema are the common middleware shape: a derive/before hook
     // plus an optional query or body schema. Select their complete validation stage at registration
     // so the request path never re-checks params/body presence. Parameter-schema routes retain the
     // generic lifecycle runner until their more involved recovery matrix is selected explicitly.
-    const lifecycleLane =
-      lane !== "lifecycle" || schema?.params !== undefined || schema?.headers !== undefined
-        ? undefined
-        : schema?.body !== undefined
-          ? schema.query !== undefined
-            ? "body-query"
-            : "body"
-          : schema?.query !== undefined
-            ? "query"
-            : "hooks"
+    const lifecycleLane = lanes.lifecycleLane
     // The realistic middleware shape is commonly exactly one synchronous-or-async derive followed
     // by one before hook. Keep the generic runner for every route that can observe decorations,
     // after hooks, error hooks, or response contracts; this lane only removes the two per-request
     // hook-loop dispatches and preserves the same async continuations and error handling.
-    const lifecycleHookLane =
-      lane === "lifecycle" &&
-      contracted === undefined &&
-      !hasDecorations &&
-      this.derives.length === 1 &&
-      this.beforeHandleHooks.length === 1 &&
-      this.afterHandleHooks.length === 0 &&
-      this.onErrorHooks.length === 0
-        ? "derive-before"
-        : undefined
+    const lifecycleHookLane = lanes.lifecycleHookLane
     const execution = compileRouteExecutionPlan({
       lane,
       contextless,
@@ -1845,8 +1781,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       lifecycleLane,
       fusedWeb,
       fusedBody: fusedBodyRunner,
-      fusedLane:
-        fusedWeb === undefined ? undefined : fusedQuery ? "query" : fusedBody ? "body" : "bare",
+      fusedLane: lanes.fusedLane,
     })
     const registeredEntry: RouteEntry = {
       // (context: never) => unknown -> InternalHandler: the framework invokes it
