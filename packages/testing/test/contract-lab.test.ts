@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import {
   createReferenceContractLabHandler,
   runContractLab,
+  runContractLabOverHttp,
   runContractLabThroughAdapter,
 } from "../src/contract-lab.ts"
 
@@ -15,6 +16,19 @@ test("a witness mismatch names the replayable case", async () => {
       fetch: () => Response.json({ wrong: true }),
     }),
   ).rejects.toThrow("contract witness params-query-header")
+})
+
+test("the over-HTTP runner uses the same witness contract", async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async (input) => {
+    const request = input instanceof Request ? input : new Request(String(input))
+    return createReferenceContractLabHandler().fetch(request)
+  }) as typeof fetch
+  try {
+    await runContractLabOverHttp("http://nifra-contract-lab.invalid")
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })
 
 test("the adapter runner stops a server when a witness fails", async () => {

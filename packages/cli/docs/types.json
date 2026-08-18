@@ -10934,6 +10934,13 @@
     "doc": "/** Execute every witness against one runtime and throw a bounded, replayable mismatch. */"
   },
   {
+    "name": "runContractLabOverHttp",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function runContractLabOverHttp(origin: string, fetcher?: typeof fetch): Promise<void>;",
+    "doc": "/** Execute the same shared witnesses through a real HTTP origin. */"
+  },
+  {
     "name": "runContractLabThroughAdapter",
     "kind": "function",
     "package": "@nifrajs/testing",

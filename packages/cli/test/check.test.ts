@@ -73,6 +73,7 @@ describe("release verification", () => {
       "cold-start",
       "cross-runtime-deno",
       "cross-runtime-node",
+      "workerd",
       "pipeline-parity",
       "verification-parity",
       "changesets",

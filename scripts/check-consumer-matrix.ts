@@ -45,6 +45,10 @@ interface Target {
   entries: readonly string[]
   consumerDependencies?: Readonly<Record<string, string>>
   typeProbe?: string
+  tsconfig?: {
+    lib?: readonly string[]
+    types?: readonly string[]
+  }
 }
 
 const TARGETS: readonly Target[] = [
@@ -89,7 +93,82 @@ const TARGETS: readonly Target[] = [
     },
     typeProbe: "type RouterSearchProbe = ReturnType<typeof entry1.useSearch>",
   },
+  {
+    name: "@nifrajs/node",
+    entries: ["@nifrajs/node"],
+    consumerDependencies: { "@types/node": "^25.0.0", ws: "^8.21.0" },
+    typeProbe: "type RouterSearchProbe = Parameters<typeof entry0.serve>[1]",
+    tsconfig: { types: ["node"] },
+  },
+  {
+    name: "@nifrajs/edge",
+    entries: ["@nifrajs/edge"],
+    typeProbe: "type RouterSearchProbe = Parameters<typeof entry0.server>[0]",
+  },
+  {
+    name: "@nifrajs/aws-lambda",
+    entries: ["@nifrajs/aws-lambda"],
+    typeProbe: "type RouterSearchProbe = ReturnType<typeof entry0.handle>",
+  },
+  {
+    name: "@nifrajs/proxy",
+    entries: ["@nifrajs/proxy", "@nifrajs/proxy/undici"],
+    consumerDependencies: { "@types/node": "^25.0.0", undici: "^8.10.0" },
+    typeProbe: "type RouterSearchProbe = Parameters<typeof entry0.createProxy>[0]",
+    tsconfig: { types: ["node"] },
+  },
+  {
+    name: "@nifrajs/workers",
+    entries: ["@nifrajs/workers"],
+    consumerDependencies: { "@cloudflare/workers-types": "^5.20260818.1" },
+    typeProbe:
+      'type RouterSearchProbe = ReturnType<typeof entry0.createWebSocketHub<import("@cloudflare/workers-types").DurableObjectNamespace>>',
+    tsconfig: { lib: ["ES2022"], types: ["@cloudflare/workers-types"] },
+  },
 ] as const
+
+/**
+ * Public packages without a useful isolated consumer probe yet. Keeping this explicit makes a newly
+ * published package fail the matrix until somebody chooses: add a target, or document why this package
+ * is proven by another gate / has no library consumer surface.
+ */
+const SKIPS: Readonly<Record<string, string>> = Object.freeze({
+  "@nifrajs/agent-telemetry":
+    "agent-facing telemetry tooling; covered by package tests and corpus gates",
+  "@nifrajs/agent": "agent runtime with provider-specific setup; covered by package tests",
+  "@nifrajs/auth": "auth integration package; covered by package and contract tests",
+  "@nifrajs/better-auth": "Better Auth integration package; covered by package tests",
+  "@nifrajs/cache": "storage-backed cache implementations; covered by certification profiles",
+  "@nifrajs/cli": "CLI/MCP tooling, not a library consumer seam",
+  "@nifrajs/content": "content indexing package; covered by package tests and content benchmarks",
+  "create-nifra": "scaffolding executable; covered by the cold-start gate",
+  "@nifrajs/cron": "cron scheduling helpers; covered by package tests",
+  "@nifrajs/deno": "proven on the real Deno runtime by test:deno and check:deno-tarball",
+  "@nifrajs/devtools": "development tooling; covered by package tests",
+  "@nifrajs/env": "environment helpers; covered by package tests",
+  "@nifrajs/events": "event delivery abstractions; covered by certification profiles",
+  "@nifrajs/i18n": "i18n integration package; covered by package tests",
+  "@nifrajs/image": "image helpers; covered by package tests",
+  "@nifrajs/island-trigger": "browser build integration; covered by adapter typecheck and build",
+  "@nifrajs/islets": "browser build integration; covered by adapter typecheck and build",
+  "@nifrajs/jobs": "job-store abstractions; covered by certification profiles",
+  "@nifrajs/mcp-db": "MCP database tooling; covered by package tests",
+  "@nifrajs/mcp": "MCP server tooling; covered by package tests and corpus gates",
+  "@nifrajs/middleware": "middleware package; covered by package and contract tests",
+  "@nifrajs/mock": "test-only mock adapter; covered by package tests",
+  nifra: "unscoped convenience re-export; publication gate covers its manifest",
+  "@nifrajs/otel": "OpenTelemetry integration package; covered by package tests",
+  "@nifrajs/prompt": "prompt tooling; covered by package tests and corpus gates",
+  "@nifrajs/runner": "development runner; covered by package tests",
+  "@nifrajs/schema": "schema package; covered by package and documentation tests",
+  "@nifrajs/skills": "agent skill assets; no runtime library consumer seam",
+  "@nifrajs/storage": "storage adapter abstractions; covered by certification profiles",
+  "@nifrajs/testing": "test helper package; covered by its own contract and certification tests",
+  "@nifrajs/ts-plugin": "TypeScript compiler plugin; covered by plugin build and tests",
+  "@nifrajs/uploads": "upload helpers; covered by package tests",
+  "@nifrajs/web-vanilla":
+    "browser adapter with no additional declaration seam beyond build/typecheck",
+})
 
 function readManifest(path: string): Manifest {
   return JSON.parse(readFileSync(path, "utf8")) as Manifest
@@ -170,6 +249,24 @@ for (const entry of readdirSync(PACKAGES, { withFileTypes: true })) {
   }
 }
 
+const targetNames = new Set(TARGETS.map((target) => target.name))
+const skipNames = new Set(Object.keys(SKIPS))
+const unclassified = [...packageByName.keys()].filter(
+  (name) => !targetNames.has(name) && !skipNames.has(name),
+)
+const staleSkips = [...skipNames].filter(
+  (name) => !packageByName.has(name) || targetNames.has(name),
+)
+if (unclassified.length > 0 || staleSkips.length > 0) {
+  if (unclassified.length > 0)
+    console.error(`✗ public packages missing from consumer matrix: ${unclassified.join(", ")}`)
+  if (staleSkips.length > 0)
+    console.error(
+      `✗ consumer matrix skips no longer match public packages: ${staleSkips.join(", ")}`,
+    )
+  process.exit(1)
+}
+
 // Pack only the internal dependency closure needed by the matrix. Traversing source manifests decides
 // what exists; the later nested install decides what each target is actually allowed to resolve.
 const needed = new Set(TARGETS.map(({ name }) => name))
@@ -247,6 +344,7 @@ if (!existsSync(TSC)) {
 }
 
 let failures = 0
+const NEGATIVE_TARGET = "@nifrajs/workers"
 // This MUST be outside the checkout. A consumer below ROOT can climb to the workspace's hoisted
 // node_modules and recreate the false green this gate exists to prevent.
 const work = mkdtempSync(join(realpathSync(tmpdir()), "nifra-consumer-matrix-"))
@@ -282,7 +380,7 @@ try {
   // core dependency. It keeps web (and therefore web's transitive core) so only a truly isolated consumer
   // fails. The normal matrix must pass; this one mutation must fail at tsc, not install time.
   let negativeAdapterFilename: string | undefined
-  const adapterFilename = filenameByName.get("@nifrajs/web-react")
+  const adapterFilename = filenameByName.get(NEGATIVE_TARGET)
   if (adapterFilename !== undefined) {
     const stage = join(work, "negative-stage")
     await $`mkdir -p ${stage}`.quiet()
@@ -291,7 +389,7 @@ try {
       .quiet()
     if (extracted.exitCode !== 0) {
       failures += 1
-      console.error("✗ negative control: could not extract @nifrajs/web-react")
+      console.error(`✗ negative control: could not extract ${NEGATIVE_TARGET}`)
     } else {
       const manifestPath = join(stage, "package", "package.json")
       const manifest = readManifest(manifestPath)
@@ -420,14 +518,14 @@ try {
         `${JSON.stringify(
           {
             compilerOptions: {
-              lib: ["ES2022", "DOM", "DOM.Iterable"],
+              lib: target.tsconfig?.lib ?? ["ES2022", "DOM", "DOM.Iterable"],
               module: "NodeNext",
               moduleResolution: "NodeNext",
               noEmit: true,
               skipLibCheck: false,
               strict: true,
               target: "ES2022",
-              types: [],
+              types: target.tsconfig?.types ?? [],
             },
             include: ["consumer.ts"],
           },
@@ -476,7 +574,7 @@ try {
         )
         // Install and typecheck the mutation artifact separately. A failure to install is not accepted as
         // proof: the intended signal is the unresolved core/server declaration at the consumer boundary.
-        if (target.name === "@nifrajs/web-react") {
+        if (target.name === NEGATIVE_TARGET) {
           if (negativeAdapterFilename === undefined) {
             failures += 1
             console.error("✗ negative control: mutated adapter artifact is absent")
@@ -527,10 +625,12 @@ try {
               ) {
                 failures += 1
                 console.error(
-                  `✗ negative control did not report the missing @nifrajs/core/server declaration${diagnostics === "" ? "" : `:\n${diagnostics}`}`,
+                  `✗ negative control did not report the missing @nifrajs/core declaration${diagnostics === "" ? "" : `:\n${diagnostics}`}`,
                 )
               } else {
-                console.log("✓ negative control: omitted direct core fails external typecheck")
+                console.log(
+                  `✓ negative control: omitted direct core fails ${NEGATIVE_TARGET} external typecheck`,
+                )
               }
             }
           }

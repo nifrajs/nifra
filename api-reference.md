@@ -2911,6 +2911,8 @@ _No named exports (side-effect entrypoint)._
   Execute contract-derived hostile inputs and declared-response conformance against a runtime matrix. Runtime/request failures are captured in the report; inspect `report.ok`, `failures`, and `gaps` (or use {@link assertAdversarialContract} for a throwing test assertion).
 - **runContractLab** _(function)_ - `runContractLab: (handler: ContractLabHandler, origin?: string) => Promise<void>`
   Execute every witness against one runtime and throw a bounded, replayable mismatch.
+- **runContractLabOverHttp** _(function)_ - `runContractLabOverHttp: (origin: string, fetcher?: typeof fetch) => Promise<void>`
+  Execute the same shared witnesses through a real HTTP origin.
 - **runContractLabThroughAdapter** _(function)_ - `runContractLabThroughAdapter: (adapter: ContractLabRuntimeAdapter, app?: ContractLabHandler) => Promise<void>`
   Run the shared witnesses through a real HTTP adapter and always release its server.
 - **runFailureScenario** _(function)_ - `runFailureScenario: <Output>(scenario: FailureScenario<Output>, options: FailureLabOptions) => Promise<FailureScenarioReport>`
@@ -2975,6 +2977,8 @@ _No named exports (side-effect entrypoint)._
   A reference Web handler for adapter-only suites. Core and edge suites use their real routers instead.
 - **runContractLab** _(function)_ - `runContractLab: (handler: ContractLabHandler, origin?: string) => Promise<void>`
   Execute every witness against one runtime and throw a bounded, replayable mismatch.
+- **runContractLabOverHttp** _(function)_ - `runContractLabOverHttp: (origin: string, fetcher?: typeof fetch) => Promise<void>`
+  Execute the same shared witnesses through a real HTTP origin.
 - **runContractLabThroughAdapter** _(function)_ - `runContractLabThroughAdapter: (adapter: ContractLabRuntimeAdapter, app?: ContractLabHandler) => Promise<void>`
   Run the shared witnesses through a real HTTP adapter and always release its server.
 

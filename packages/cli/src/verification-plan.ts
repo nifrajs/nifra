@@ -131,6 +131,11 @@ const GATES = Object.freeze([
     "Run `bun run test:node` and fix the Node runtime adapter failure.",
   ),
   gate(
+    "workerd",
+    [["run", "check:workerd"]],
+    "Run `bun run check:workerd` and fix the real Workers runtime contract failure.",
+  ),
+  gate(
     "pipeline-parity",
     [["run", "check:pipeline-parity"]],
     "Run `bun run check:pipeline-parity` and fix the development and production manifest drift.",
@@ -180,6 +185,7 @@ const RELEASE_PLAN = Object.freeze([
   "cold-start",
   "cross-runtime-deno",
   "cross-runtime-node",
+  "workerd",
   "pipeline-parity",
   "verification-parity",
   "changesets",

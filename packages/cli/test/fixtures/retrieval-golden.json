@@ -1,0 +1,121 @@
+[
+  { "query": "validate request body", "kind": "docs", "accept": ["@nifrajs/schema"], "within": 3 },
+  {
+    "query": "publish to websocket topic",
+    "kind": "docs",
+    "accept": ["Nifra - WebSockets"],
+    "within": 3
+  },
+  { "query": "set cookie", "kind": "docs", "accept": ["Nifra - Auth & sessions"], "within": 3 },
+  {
+    "query": "openapi generation",
+    "kind": "docs",
+    "accept": ["@nifrajs/schema", "Nifra - Plugins & middleware"],
+    "within": 3
+  },
+  {
+    "query": "typed search params",
+    "kind": "docs",
+    "accept": ["Nifra - API & typed client"],
+    "within": 3
+  },
+  { "query": "sse stream", "kind": "docs", "accept": ["Nifra - Streaming"], "within": 3 },
+  {
+    "query": "middleware order",
+    "kind": "docs",
+    "accept": ["Nifra - Plugins & middleware"],
+    "within": 3
+  },
+  { "query": "route params", "kind": "docs", "accept": ["Nifra - Routing"], "within": 3 },
+  { "query": "mcp tool", "kind": "docs", "accept": ["@nifrajs/mcp"], "within": 3 },
+  {
+    "query": "auth session",
+    "kind": "docs",
+    "accept": ["Nifra - Auth & sessions", "@nifrajs/auth"],
+    "within": 3
+  },
+  {
+    "query": "request deadline",
+    "kind": "docs",
+    "accept": ["Nifra - Request budgets"],
+    "within": 3
+  },
+  {
+    "query": "durable object websocket",
+    "kind": "docs",
+    "accept": ["Nifra - WebSockets"],
+    "within": 3
+  },
+  { "query": "lambda handler", "kind": "docs", "accept": ["@nifrajs/aws-lambda"], "within": 3 },
+  { "query": "proxy upstream", "kind": "docs", "accept": ["@nifrajs/proxy"], "within": 3 },
+  {
+    "query": "typed client",
+    "kind": "docs",
+    "accept": ["Nifra - API & typed client"],
+    "within": 3
+  },
+  {
+    "query": "validate request body",
+    "kind": "types",
+    "accept": ["RequestSpec", "RequestSource"],
+    "within": 3
+  },
+  {
+    "query": "publish to websocket topic",
+    "kind": "types",
+    "accept": ["TopicRegistry", "WebSocketHandler"],
+    "within": 3
+  },
+  { "query": "set cookie", "kind": "types", "accept": ["CookieJar", "CookieOptions"], "within": 3 },
+  {
+    "query": "openapi generation",
+    "kind": "types",
+    "accept": ["OpenAPIDocument", "OpenApiOptions", "openapi"],
+    "within": 3
+  },
+  {
+    "query": "typed search params",
+    "kind": "types",
+    "accept": ["SearchParamsInit", "SearchOf", "ClientRouterOptions"],
+    "within": 3
+  },
+  { "query": "sse stream", "kind": "types", "accept": ["streamHandle", "streaming"], "within": 3 },
+  { "query": "middleware order", "kind": "types", "accept": ["Middleware"], "within": 3 },
+  {
+    "query": "route params",
+    "kind": "types",
+    "accept": ["RouteSchema", "RouteEntry", "RouteModule"],
+    "within": 3
+  },
+  { "query": "mcp tool", "kind": "types", "accept": ["ToolAnnotations", "mcp"], "within": 3 },
+  {
+    "query": "auth session",
+    "kind": "types",
+    "accept": ["Session", "SessionManager", "AuthPlugin"],
+    "within": 3
+  },
+  {
+    "query": "request deadline",
+    "kind": "types",
+    "accept": ["RequestBudget", "DeadlineAdmission"],
+    "within": 3
+  },
+  {
+    "query": "lambda handler",
+    "kind": "types",
+    "accept": ["handle", "LambdaHandler"],
+    "within": 3
+  },
+  {
+    "query": "proxy upstream",
+    "kind": "types",
+    "accept": ["ProxyOptions", "ProxyTransport"],
+    "within": 3
+  },
+  {
+    "query": "typed client",
+    "kind": "types",
+    "accept": ["ClientRouterOptions", "ClientAction", "CLIENT_ENTRY_PATH"],
+    "within": 3
+  }
+]

@@ -98,38 +98,57 @@ function canonical(value: unknown): string {
   return JSON.stringify(value)
 }
 
+function witnessRequest(origin: string, witness: ContractLabWitness): Request {
+  return new Request(`${origin}${witness.request.path}`, {
+    method: witness.request.method,
+    headers: witness.request.headers,
+    ...(witness.request.body === undefined ? {} : { body: witness.request.body }),
+  })
+}
+
+async function assertWitnessResponse(
+  witness: ContractLabWitness,
+  response: Response,
+): Promise<void> {
+  const contentType = response.headers.get("content-type")?.split(";", 1)[0] ?? ""
+  const actual =
+    witness.expected.contentType === "json" ? await response.json() : await response.text()
+  const expectedContentType =
+    witness.expected.contentType === "json" ? "application/json" : "text/plain"
+  const headersMatch = Object.entries(witness.expected.headers ?? {}).every(
+    ([name, value]) => response.headers.get(name) === value,
+  )
+  if (
+    response.status !== witness.expected.status ||
+    contentType !== expectedContentType ||
+    !headersMatch ||
+    canonical(actual) !== canonical(witness.expected.body)
+  ) {
+    throw new Error(
+      `contract witness ${witness.id} failed: expected ${witness.expected.status} ` +
+        `${expectedContentType} ${canonical(witness.expected.body)}, got ${response.status} ` +
+        `${contentType || "(missing content type)"} ${canonical(actual)}`,
+    )
+  }
+}
+
 /** Execute every witness against one runtime and throw a bounded, replayable mismatch. */
 export async function runContractLab(
   handler: ContractLabHandler,
   origin = "http://nifra-contract-lab.invalid",
 ): Promise<void> {
   for (const witness of contractLabWitnesses) {
-    const init: RequestInit = {
-      method: witness.request.method,
-      headers: witness.request.headers,
-      ...(witness.request.body === undefined ? {} : { body: witness.request.body }),
-    }
-    const response = await handler.fetch(new Request(`${origin}${witness.request.path}`, init))
-    const contentType = response.headers.get("content-type")?.split(";", 1)[0] ?? ""
-    const actual =
-      witness.expected.contentType === "json" ? await response.json() : await response.text()
-    const expectedContentType =
-      witness.expected.contentType === "json" ? "application/json" : "text/plain"
-    const headersMatch = Object.entries(witness.expected.headers ?? {}).every(
-      ([name, value]) => response.headers.get(name) === value,
-    )
-    if (
-      response.status !== witness.expected.status ||
-      contentType !== expectedContentType ||
-      !headersMatch ||
-      canonical(actual) !== canonical(witness.expected.body)
-    ) {
-      throw new Error(
-        `contract witness ${witness.id} failed: expected ${witness.expected.status} ` +
-          `${expectedContentType} ${canonical(witness.expected.body)}, got ${response.status} ` +
-          `${contentType || "(missing content type)"} ${canonical(actual)}`,
-      )
-    }
+    await assertWitnessResponse(witness, await handler.fetch(witnessRequest(origin, witness)))
+  }
+}
+
+/** Execute the same shared witnesses through a real HTTP origin. */
+export async function runContractLabOverHttp(
+  origin: string,
+  fetcher: typeof fetch = globalThis.fetch,
+): Promise<void> {
+  for (const witness of contractLabWitnesses) {
+    await assertWitnessResponse(witness, await fetcher(witnessRequest(origin, witness)))
   }
 }
 
@@ -140,7 +159,7 @@ export async function runContractLabThroughAdapter(
 ): Promise<void> {
   const server = await adapter.start(app)
   try {
-    await runContractLab({ fetch: (request) => fetch(request) }, server.origin)
+    await runContractLabOverHttp(server.origin)
   } finally {
     await server.stop()
   }

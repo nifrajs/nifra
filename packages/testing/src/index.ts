@@ -59,6 +59,7 @@ export {
   contractLabWitnesses,
   createReferenceContractLabHandler,
   runContractLab,
+  runContractLabOverHttp,
   runContractLabThroughAdapter,
 } from "./contract-lab.ts"
 export { type CookieJar, cookieJar } from "./cookies.ts"
