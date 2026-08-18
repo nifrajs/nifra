@@ -244,6 +244,7 @@ for (const dir of ALL_DIRS) {
     peerDependencies?: Record<string, string>
     optionalDependencies?: Record<string, string>
     exports?: Record<string, Record<string, string> | string>
+    sideEffects?: boolean | string[]
   }
   const packedEntries = new Set(
     (await $`tar -tzf ${tmp}/${tgz}`.text())
@@ -276,6 +277,22 @@ for (const dir of ALL_DIRS) {
     failures += 1
     console.error(
       `✗ ${manifest.name}: exports point outside the tarball → ${unreachable.join(", ")}`,
+    )
+  }
+  // `sideEffects` entries are bundler-facing facts, not resolved imports, so nothing at build or
+  // install time notices when one goes stale (core shipped a `./src/mcp-runtime.ts` entry after the
+  // module was deleted). A stale path is harmless today but masks the day a REAL side-effectful
+  // module is renamed and silently falls out of the allowlist - then bundlers tree-shake its
+  // registration away. Same packed-entries model as the exports gate; globs would need minimatch,
+  // and no package uses them, so a glob fails loudly here until someone teaches the gate to expand it.
+  const sideEffects = Array.isArray(manifest.sideEffects) ? manifest.sideEffects : []
+  const staleSideEffects = sideEffects.filter(
+    (entry) => entry.includes("*") || !packedEntries.has(entry.replace(/^\.\//, "")),
+  )
+  if (staleSideEffects.length > 0) {
+    failures += 1
+    console.error(
+      `✗ ${manifest.name}: sideEffects entries point outside the tarball → ${staleSideEffects.join(", ")}`,
     )
   }
   const leaks: string[] = []

@@ -284,8 +284,6 @@
     "./dist/server/sse.js",
     "./src/node-direct.ts",
     "./dist/node-direct.js",
-    "./src/mcp-runtime.ts",
-    "./dist/mcp-runtime.js",
     "./src/single-copy-register.ts",
     "./dist/single-copy-register.js"
   ],
