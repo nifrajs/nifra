@@ -12,22 +12,18 @@ import { FrameworkError, RouteConfigError } from "../errors.ts"
 import type { Version } from "../index.ts"
 import {
   type AroundCapabilityOptions,
-  CAPABILITY_GUARD,
   type CapabilityInterceptor,
   type CapabilityUseEvent,
-  createCapabilityGuard,
   DEFAULT_CAPABILITY_INTERCEPTOR_TIMEOUT_MS,
-  normalizeRouteCapabilities,
   type RegisteredCapabilityInterceptor,
 } from "../internal/capability-runtime.ts"
 import {
   type AssuranceDeclaration,
   assuranceDeclarationsOf,
   assuranceEvidenceFor,
-  NIFRA_ASSURANCE_IDS,
-  validEvidenceId,
 } from "../internal/route-assurance.ts"
 import { type CatalogRoute, RouteCatalog } from "../internal/route-catalog.ts"
+import { compileRouteOptions } from "../internal/route-compiler.ts"
 import {
   compileRouteExecutionPlan,
   type FusedBodyRunner,
@@ -40,10 +36,9 @@ import {
   type RawErrorHandler,
   type RouteEntry,
 } from "../internal/route-execution.ts"
-import { selectRouteLanes } from "../internal/route-lanes.ts"
 import { isSameOriginRequest } from "../internal/same-origin.ts"
 import type { ResponseObserverPlugin } from "../response-observer.ts"
-import { compileRoutePattern, decodeRouteParams } from "../router/pattern.ts"
+import { decodeRouteParams } from "../router/pattern.ts"
 import { EMPTY_PARAMS, type Method, Router } from "../router/router.ts"
 import type {
   InferOutput,
@@ -144,7 +139,7 @@ import {
   NODE_NATIVE_MOUNT,
   RESOLVE_NODE_MOUNT,
 } from "./install.ts"
-import type { EffectLedgerRuntime, ResolvedEffectLedger } from "./ledger-lane.ts"
+import type { EffectLedgerRuntime } from "./ledger-lane.ts"
 import { jsonLogger, type Logger } from "./logger.ts"
 import type { McpRuntime } from "./mcp-hook.ts"
 import type {
@@ -1618,123 +1613,46 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     schema: RouteSchema | undefined,
     handler: (context: never) => unknown,
   ): CatalogRoute {
-    const pattern = compileRoutePattern(path)
-    // Resolved here, once: `undefined` past this point means the route declared `"unlimited"`, NOT
-    // "nothing declared". Readers fall back to UNLIMITED_BODY_BYTES accordingly.
-    let bodyLimit: number | undefined = this.maxBodyBytes
-    const invalidBodyLimit = (message: string): never => {
-      throw new RouteConfigError("INVALID_BODY_LIMIT", `route ${method} ${path}: ${message}`)
-    }
-    if (schema?.bodyLimitReason !== undefined && schema.bodyLimit !== "unlimited") {
-      invalidBodyLimit('bodyLimitReason is only valid with bodyLimit: "unlimited"')
-    }
-    if (schema?.bodyLimit === "unlimited") {
-      if (
-        typeof schema.bodyLimitReason !== "string" ||
-        schema.bodyLimitReason.trim().length === 0
-      ) {
-        invalidBodyLimit('bodyLimit: "unlimited" requires a non-empty bodyLimitReason')
-      }
-      if (schema.body !== undefined) {
-        invalidBodyLimit(
-          'bodyLimit: "unlimited" cannot be used with a body schema; use a finite cap',
-        )
-      }
-      if (schema.idempotency !== undefined) {
-        invalidBodyLimit('bodyLimit: "unlimited" cannot be used with idempotency')
-      }
-      bodyLimit = undefined
-    } else if (schema?.bodyLimit !== undefined) {
-      try {
-        assertByteLimit(schema.bodyLimit, "route bodyLimit")
-      } catch {
-        invalidBodyLimit('bodyLimit must be a non-negative safe integer or "unlimited"')
-      }
-      bodyLimit = schema.bodyLimit
-    }
-    const capabilities = normalizeRouteCapabilities(schema?.capabilities)
-    const handlerAssurance = assuranceDeclarationsOf(handler as unknown as object)
-    const invalidHandlerScope = handlerAssurance.find(
-      (declaration) => declaration.scope !== "plugin",
-    )
-    if (invalidHandlerScope !== undefined) {
-      throw new RouteConfigError(
-        "INVALID_ASSURANCE",
-        `route handler assurance must use plugin scope (received ${invalidHandlerScope.scope})`,
-      )
-    }
-    const authenticated = assuranceEvidenceFor(
-      [...this.activeAssurance, ...handlerAssurance, ...this.globalAssurance],
+    const compiled = compileRouteOptions(
+      {
+        maxBodyBytes: this.maxBodyBytes,
+        activeAssurance: this.activeAssurance,
+        globalAssurance: this.globalAssurance,
+        decorations: this.decorations,
+        onCapabilityUse: this.onCapabilityUse,
+        capabilityInterceptors: this.capabilityInterceptors,
+        capabilityObservers: this.capabilityObservers,
+        effectLedgerRuntime: this.effectLedgerRuntime,
+        idempotencyRuntime: this.idempotencyRuntime,
+        responseContractRuntime: this.responseContractRuntime,
+        derives: this.derives,
+        beforeHandleHooks: this.beforeHandleHooks,
+        afterHandleHooks: this.afterHandleHooks,
+        onErrorHooks: this.onErrorHooks,
+        aroundHooks: this.aroundHooks,
+        defaultOnValidationError: this.defaultOnValidationError,
+      },
       method,
       path,
-    ).some((evidence) => evidence.id === NIFRA_ASSURANCE_IDS.AUTHENTICATED)
-    const routeDecorations: Record<PropertyKey, unknown> = { ...this.decorations }
-    if (capabilities.length > 0) {
-      routeDecorations[CAPABILITY_GUARD] = createCapabilityGuard(
-        capabilities,
-        method,
-        path,
-        this.onCapabilityUse,
-        this.idempotencyRuntime?.trackEffect,
-        Object.freeze([...this.capabilityInterceptors]),
-        Object.freeze([...this.capabilityObservers]),
-      )
-    }
-    const hasDecorations = Reflect.ownKeys(routeDecorations).length > 0
-    // An idempotency route runs a dedupe lane that must buffer the body and capture the response, so it
-    // never takes the fused/native fast path - force it onto the portable matched lane (which routes
-    // through `fetchMatched`, where the dedupe wrapper lives). Fail closed: a route may not declare
-    // idempotency unless the idempotency runtime is installed, so the safety gate can never be silently
-    // dropped by a missing plugin.
-    if (schema?.idempotency !== undefined && this.idempotencyRuntime === undefined) {
-      throw new RouteConfigError(
-        "INVALID_IDEMPOTENCY",
-        "route declares idempotency but the idempotency plugin is not installed; add .use(idempotency())",
-      )
-    }
-    const idempotent = this.idempotencyRuntime?.resolve(schema, authenticated, this.maxBodyBytes)
-    // A ledgered route (capabilities declared + `.use(effectLedger())`) needs a per-request
-    // context to carry the ledger and a settle step to seal + sink it, so it too leaves the
-    // fused/contextless fast path. Resolved per route, at registration - like the capability guard.
-    const ledgered: ResolvedEffectLedger | undefined = this.effectLedgerRuntime?.resolve(
-      capabilities,
-      method,
-      path,
-    )
-    // A checked response schema needs the handler's VALUE before it becomes bytes, and the fused and
-    // native lanes exist precisely to skip that step. So a contracted route leaves them - the same
-    // structural trade an idempotent route makes above. The check itself is not the cost: a compiled
-    // validator measures ~100ns/response, within benchmark noise on any route these lanes already
-    // exclude (middleware, derives, lifecycle hooks).
-    const runtime = this.responseContractRuntime
-    const contracted =
-      runtime !== undefined && schema?.response !== undefined
-        ? { runtime, schema: schema.response }
-        : undefined
-    const lanes = selectRouteLanes({
       schema,
-      hasIdempotency: idempotent !== undefined,
-      hasLedger: ledgered !== undefined,
-      hasResponseContract: contracted !== undefined,
+      handler,
+    )
+    const {
+      pattern,
+      bodyLimit,
+      capabilities,
+      routeDecorations,
       hasDecorations,
-      derives: this.derives.length,
-      beforeHandle: this.beforeHandleHooks.length,
-      afterHandle: this.afterHandleHooks.length,
-      onError: this.onErrorHooks.length,
-      around: this.aroundHooks.length,
-      defaultOnValidationError: this.defaultOnValidationError !== undefined,
-    })
-    const bare = lanes.bare
-    const fusedQuery = lanes.fusedQuery
-    const fusedBody = lanes.fusedBody
-    // Body-only routes still need an async body read, but eligible routes can compile the validation +
-    // handler continuation once. The runner keeps the bounded parser and all error semantics while
-    // avoiding the generic entry/schema/lifecycle dispatch on Bun, Deno, and Node-direct.
+      idempotent,
+      ledgered,
+      responseContract,
+      lanes,
+      routeAssurance,
+    } = compiled
+    const { bare, fusedQuery, fusedBody } = lanes
     const fusedBodyRunner = fusedBody
       ? this.buildFusedBodyRunner(
           handler as unknown as InternalHandler,
-          // `fusedBody` is selected only when this schema member is present; the selection module
-          // owns that invariant now that the predicate is no longer local for TypeScript to narrow.
           schema?.body as StandardSchemaV1,
           hasDecorations ? routeDecorations : undefined,
           bodyLimit ?? UNLIMITED_BODY_BYTES,
@@ -1760,45 +1678,30 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
             : undefined
     const contextless =
       lanes.bare && this.aroundHooks.length === 0 && isContextlessNoArgArrow(handler)
-    // The body and query lanes finalize the handler's result themselves, so a contracted route takes
-    // the general lifecycle lane instead - one place owns the check rather than three.
-    const lane = lanes.lane
-    // Lifecycle routes with no params schema are the common middleware shape: a derive/before hook
-    // plus an optional query or body schema. Select their complete validation stage at registration
-    // so the request path never re-checks params/body presence. Parameter-schema routes retain the
-    // generic lifecycle runner until their more involved recovery matrix is selected explicitly.
-    const lifecycleLane = lanes.lifecycleLane
-    // The realistic middleware shape is commonly exactly one synchronous-or-async derive followed
-    // by one before hook. Keep the generic runner for every route that can observe decorations,
-    // after hooks, error hooks, or response contracts; this lane only removes the two per-request
-    // hook-loop dispatches and preserves the same async continuations and error handling.
-    const lifecycleHookLane = lanes.lifecycleHookLane
     const execution = compileRouteExecutionPlan({
-      lane,
+      lane: lanes.lane,
       contextless,
       hasAround: this.aroundHooks.length > 0,
       hasLedger: ledgered !== undefined,
-      lifecycleLane,
+      lifecycleLane: lanes.lifecycleLane,
       fusedWeb,
       fusedBody: fusedBodyRunner,
       fusedLane: lanes.fusedLane,
     })
     const registeredEntry: RouteEntry = {
-      // (context: never) => unknown -> InternalHandler: the framework invokes it
-      // with the concrete RawContext the typed handler expects, so this is sound.
       handler: handler as unknown as InternalHandler,
       schema,
       bodyLimit,
       idempotent,
       ledgered,
-      responseContract: contracted,
+      responseContract,
       derives: [...this.derives],
       decorations: routeDecorations,
       hasDecorations,
       beforeHandle: [...this.beforeHandleHooks],
       afterHandle: [...this.afterHandleHooks],
       onError: [...this.onErrorHooks],
-      lifecycleHookLane,
+      lifecycleHookLane: lanes.lifecycleHookLane,
       around: [...this.aroundHooks],
       execution,
     }
@@ -1809,72 +1712,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       ...(capabilities.length > 0 ? { capabilities } : {}),
       ...(schema?.family === true ? { family: true } : {}),
     }
-    const routeAssurance: AssuranceDeclaration[] = [...this.activeAssurance, ...handlerAssurance]
-    if (contracted?.runtime.mode === "enforce" && schema?.response !== undefined) {
-      routeAssurance.push(
-        Object.freeze({
-          id: NIFRA_ASSURANCE_IDS.RESPONSE_CONTRACT,
-          source: "response-contract",
-          scope: "plugin",
-        }),
-      )
-    }
-    // Inline `schema.assurance`: the route DECLARES its enforcement evidence adjacent to the handler, so an
-    // in-handler-guarded route satisfies a policy `require:` clause without a `withRouteAssurance` middleware
-    // rewrite. Each id becomes route-scoped `declared` evidence (invalid ids fail closed at registration).
-    for (const id of schema?.assurance ?? []) {
-      if (!validEvidenceId(id)) {
-        throw new Error(
-          `route assurance: invalid evidence id ${JSON.stringify(id)} on ${method} ${path} (use lowercase dot/dash segments)`,
-        )
-      }
-      const declared = { id, source: "declared", scope: "plugin" } as AssuranceDeclaration
-      Object.defineProperty(declared, "provenance", {
-        value: "declared",
-        enumerable: false,
-        configurable: false,
-        writable: false,
-      })
-      routeAssurance.push(Object.freeze(declared))
-    }
-    // Two ways a route proves its body is bounded, both enforced by the core at read time:
-    // `schema.body` (the validated read is bounded) and an explicit finite `schema.bodyLimit` (the
-    // transport cap shadows every reader, including a raw `c.req.body` stream that a Content-Length
-    // middleware cannot bound).
-    // `bodyLimit: "unlimited"` is rejected above for schema and idempotency routes. The remaining
-    // exemption is schema-less streaming/upload work, so it publishes NOTHING: there is no finite
-    // framework byte ceiling for assurance to attest and the application protocol owns that bound.
-    // The server-wide `maxBodyBytes` default is not evidence either. It applies to every route
-    // whether or not anyone thought about it, so publishing it would make the id pass everywhere and
-    // prove nothing; this evidence marks a bound the route chose.
-    const unlimitedBody = schema?.bodyLimit === "unlimited"
-    if (!unlimitedBody && (schema?.body !== undefined || typeof schema?.bodyLimit === "number")) {
-      routeAssurance.push(
-        Object.freeze({
-          id: NIFRA_ASSURANCE_IDS.BODY_BOUNDED,
-          source: "route-schema",
-          scope: "plugin",
-        }),
-      )
-    }
-    // Declaring `schema.idempotency` is evidence for request replay only. It deliberately never proves
-    // durable command execution; that stronger evidence belongs to a command/outbox adapter.
-    if (schema?.idempotency !== undefined) {
-      routeAssurance.push(
-        Object.freeze({
-          id: NIFRA_ASSURANCE_IDS.IDEMPOTENCY_KEY,
-          source: "route-schema",
-          scope: "plugin",
-        }),
-      )
-    }
     return {
       method,
       path,
       pattern,
       entry: registeredEntry,
       descriptor,
-      assurance: Object.freeze(routeAssurance),
+      assurance: routeAssurance,
     }
   }
 
@@ -3172,7 +3016,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   /** The narrowest bare route: a syntactic `() => ...` handler cannot observe the context argument, so
    * successful requests can skip allocating `RequestContext`. Errors still allocate one for logging. */
   // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
-  // biome-ignore lint/correctness/noUnusedPrivateClassMembers: invoked structurally by compiled plans (internal/route-execution.ts)
   private runContextlessBare<T>(
     entry: RouteEntry,
     source: RequestSource,
@@ -3255,7 +3098,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * the per-request async-frame tax - the same win codegen routers get, but without `eval`.
    */
   // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
-  // biome-ignore lint/correctness/noUnusedPrivateClassMembers: invoked structurally by compiled plans (internal/route-execution.ts)
   private runBare<T>(
     entry: RouteEntry,
     ctx: RawContext,
@@ -3672,7 +3514,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
-  // biome-ignore lint/correctness/noUnusedPrivateClassMembers: invoked structurally by compiled plans (internal/route-execution.ts)
   private runWithAround<T>(
     entry: RouteEntry,
     ctx: RawContext,
@@ -3710,7 +3551,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
-  // biome-ignore lint/correctness/noUnusedPrivateClassMembers: invoked structurally by compiled plans (internal/route-execution.ts)
   private runBodyOnly<T>(
     entry: RouteEntry,
     source: RequestSource,
@@ -3880,7 +3720,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   }
 
   // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
-  // biome-ignore lint/correctness/noUnusedPrivateClassMembers: invoked structurally by compiled plans (internal/route-execution.ts)
   private runQueryOnly<T>(
     entry: RouteEntry,
     ctx: RawContext,
@@ -4088,7 +3927,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    */
   /** Synchronous until a validator, lifecycle hook, handler, or contract check actually returns a Promise. */
   // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
-  // biome-ignore lint/correctness/noUnusedPrivateClassMembers: invoked structurally by compiled plans (internal/route-execution.ts)
   private runLifecycle<T>(
     entry: RouteEntry,
     source: RequestSource,
@@ -4253,7 +4091,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
 
   /** Registration-specialized body lifecycle: bounded body validation (including recovery) → hooks. */
   // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
-  // biome-ignore lint/correctness/noUnusedPrivateClassMembers: invoked structurally by compiled plans (internal/route-execution.ts)
   private runLifecycleBody<T>(
     entry: RouteEntry,
     source: RequestSource,
@@ -4272,7 +4109,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
 
   /** Registration-specialized body + query lifecycle: bounded body validation → query validation → hooks. */
   // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
-  // biome-ignore lint/correctness/noUnusedPrivateClassMembers: invoked structurally by compiled plans (internal/route-execution.ts)
   private runLifecycleBodyQuery<T>(
     entry: RouteEntry,
     source: RequestSource,

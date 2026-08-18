@@ -2,10 +2,7 @@ import {
   certifyAdapter,
   runtimeAdapterCertificationProfile,
 } from "../../testing/src/certification.ts"
-import {
-  createReferenceContractLabHandler,
-  runContractLab,
-} from "../../testing/src/contract-lab.ts"
+import { runContractLabThroughAdapter } from "../../testing/src/contract-lab.ts"
 import { serve } from "../src/index.ts"
 
 Deno.test("the Deno HTTP adapter satisfies the portable runtime certification profile", async () => {
@@ -26,13 +23,13 @@ Deno.test("the Deno HTTP adapter satisfies the portable runtime certification pr
 })
 
 Deno.test("the Deno adapter satisfies the shared cross-runtime contract lab", async () => {
-  const server = await serve(createReferenceContractLabHandler(), {
-    port: 0,
-    hostname: "127.0.0.1",
+  await runContractLabThroughAdapter({
+    start: async (app) => {
+      const server = await serve(app, { port: 0, hostname: "127.0.0.1" })
+      return {
+        origin: `http://127.0.0.1:${server.port}`,
+        stop: () => server.stop(),
+      }
+    },
   })
-  try {
-    await runContractLab({ fetch: (request) => fetch(request) }, `http://127.0.0.1:${server.port}`)
-  } finally {
-    await server.stop()
-  }
 })

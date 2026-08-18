@@ -29,7 +29,7 @@ Contract-derived adversarial tests, runtime-matrix response conformance, and coo
 - **defineCertificationProfile** _(function)_ - `defineCertificationProfile: <Adapter>(profile: AdapterCertificationProfile<Adapter>) => AdapterCertificationProfile<Adapter>` · from `@nifrajs/testing`
 - **defineFaultProfile** _(function)_ - `defineFaultProfile: (profile: FaultProfile) => FaultProfile` · from `@nifrajs/testing`
 
-_…and 98 more - see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
+_…and 101 more - see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
 
 ## Footguns
 

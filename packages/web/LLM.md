@@ -29,7 +29,7 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 - **buildFailureDetail** _(function)_ - `buildFailureDetail: (err: unknown) => string` · from `@nifrajs/web/dev`
 - **buildManifest** _(function)_ - `buildManifest: (files: readonly string[], importer: (file: string) => () => Promise<RouteModule>) => Manifest` · from `@nifrajs/web`
 
-_…and 366 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 371 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 

@@ -1403,6 +1403,12 @@
     "signature": "export interface BuildTargetOptions {\n    /** The `routes/` directory to discover (absolute path). */\n    readonly routesDir: string;\n    /** Output directory for the assembled deploy dir (absolute path). Cleared and recreated. */\n    readonly outDir: string;\n    /** A scratch directory for intermediate codegen (the generated server entry + manifest) and the\n     * server bundle, cleaned up after. Absolute path. */\n    readonly workDir: string;\n    /** The adapter's client runtime module (exports `mountRouter`), e.g. `\"@nifrajs/web-react/client\"`. */\n    readonly clientModule: string;\n    /** Import specifier (resolvable from `workDir`) of the module exporting `adapter`. */\n    readonly adapterImport: string;\n    /** Import specifier (resolvable from `workDir`) of the module exporting `backend`, or `undefined`. */\n    readonly backendImport?: string;\n    /** Import specifier (resolvable from `workDir`) of the module exporting `use` (app-level middleware\n     * applied before page routes are declared), or `undefined`. Must resolve to the same edge-safe\n     * module as `adapterImport`. */\n    readonly useImport?: string;\n    /** Factory that builds the app for `static` prerendering, GIVEN the client build's manifest - so the\n     * emitted hydration `<script src>` uses the REAL content-hashed entry (`client.entry`) plus the same\n     * styles/route-preload the server targets use. A pre-built instance can't work here: the hash isn't known\n     * until `buildClient` runs inside `buildTarget`, so a hardcoded entry 404s → pages render but never\n     * hydrate. Required for `target: \"static\"` (SSG drives `app.fetch`); ignored otherwise. */\n    readonly prerenderApp?: (client: BuildManifest) => PrerenderAppLike | Promise<PrerenderAppLike>;\n    /** Client-build plugins (e.g. the MDX/Vue/Solid Bun plugins). */\n    readonly clientPlugins?: readonly BunPlugin[];\n    /** Server-build plugins (e.g. the SSR variants). */\n    readonly serverPlugins?: readonly BunPlugin[];\n    /** Extra Bun.build resolve conditions for the CLIENT build. */\n    readonly conditions?: readonly string[];\n    /** Compile-time `define` replacements layered onto both builds. */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Project-root static directory copied to deploy root. `false` disables it. */\n    readonly publicDir?: string | false;\n    /** Prefix of environment variables allowed into the client bundle (default `\"PUBLIC_\"`). */\n    readonly publicEnvPrefix?: string;\n    /** Document `<title>` for the generated server entry. */\n    readonly title?: string;\n}"
   },
   {
+    "name": "BuildTargetPlan",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type BuildTargetPlan = StaticBuildTargetPlan | ServerBuildTargetPlan;"
+  },
+  {
     "name": "BuildTargetResult",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -2705,6 +2711,18 @@
     "package": "@nifrajs/testing",
     "signature": "export interface ContractLabHandler {\n    fetch(request: Request): Response | Promise<Response>;\n}",
     "doc": "/**\n * Runtime-neutral HTTP contract witnesses.\n *\n * The witness set is deliberately made only of Web `Request`/`Response` values. Runtime suites provide\n * the handler under test - the full Bun server, the compact edge server, or a native Node/Deno adapter -\n * and this module compares the wire contract without importing any runtime-specific implementation.\n */"
+  },
+  {
+    "name": "ContractLabRuntimeAdapter",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface ContractLabRuntimeAdapter {\n    start(app: ContractLabHandler): ContractLabServer | Promise<ContractLabServer>;\n}"
+  },
+  {
+    "name": "ContractLabServer",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface ContractLabServer {\n    readonly origin: string;\n    stop(): void | Promise<void>;\n}"
   },
   {
     "name": "ContractLabWitness",
@@ -8795,6 +8813,13 @@
     "doc": "/** The 422 as plain data - the shape every lane's response wrapper takes, so a rejected body costs\n * what an accepted one costs: on Node it is written straight to the socket with a `content-length`\n * instead of being built as a `Response` and drained back out. */"
   },
   {
+    "name": "planBuildTarget",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function planBuildTarget(target: BuildTarget, outDir: string): BuildTargetPlan;",
+    "doc": "/**\n * Resolve the target-specific deploy shape before any bundling starts. Keeping this decision pure\n * means Bun and Vite strategies share the same output filename, server target, and hand-off text;\n * the filesystem emitter only has to execute the plan.\n */"
+  },
+  {
     "name": "planProofs",
     "kind": "function",
     "package": "@nifrajs/cli",
@@ -10909,6 +10934,13 @@
     "doc": "/** Execute every witness against one runtime and throw a bounded, replayable mismatch. */"
   },
   {
+    "name": "runContractLabThroughAdapter",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function runContractLabThroughAdapter(adapter: ContractLabRuntimeAdapter, app?: ContractLabHandler): Promise<void>;",
+    "doc": "/** Run the shared witnesses through a real HTTP adapter and always release its server. */"
+  },
+  {
     "name": "runDurableExecutionAdapterConformance",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -11545,6 +11577,18 @@
     "package": "@nifrajs/web",
     "signature": "export interface ServerBuild {\n    /** Path to the bundled, self-contained worker entry. */\n    readonly worker: string;\n    /** Paths of every emitted output (entry + any code-split chunks) - what to ship to the platform. */\n    readonly outputs: readonly string[];\n}",
     "doc": "/** The built worker bundle - point your `wrangler.toml`'s `main` at `worker`. */"
+  },
+  {
+    "name": "ServerBuildTarget",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type ServerBuildTarget = \"browser\" | \"node\" | \"bun\";"
+  },
+  {
+    "name": "ServerBuildTargetPlan",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ServerBuildTargetPlan {\n    readonly target: Exclude<BuildTarget, \"static\">;\n    readonly kind: \"server\";\n    readonly serverTarget: ServerBuildTarget;\n    /** The worker's final filename inside the assembled deploy directory. */\n    readonly outputFile: \"_worker.js\" | \"index.js\" | \"server.js\";\n    readonly run: string;\n}"
   },
   {
     "name": "serverFn",
@@ -12501,6 +12545,12 @@
     "kind": "interface",
     "package": "@nifrajs/web",
     "signature": "export interface StaticBoundaryRoot {\n    readonly name: string;\n    readonly module: string;\n}"
+  },
+  {
+    "name": "StaticBuildTargetPlan",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface StaticBuildTargetPlan {\n    readonly target: \"static\";\n    readonly kind: \"static\";\n    readonly serverTarget: undefined;\n    readonly outputFile: undefined;\n    readonly run: string;\n}"
   },
   {
     "name": "StaticCollection",

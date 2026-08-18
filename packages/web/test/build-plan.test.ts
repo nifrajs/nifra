@@ -5,6 +5,7 @@ import {
   formatBytes,
   isManifestInSync,
   parseManifestRouteFiles,
+  planBuildTarget,
 } from "../src/build-plan.ts"
 
 describe("build-plan contract", () => {
@@ -44,5 +45,23 @@ describe("build-plan contract", () => {
     expect(report.totalGzip).toBe(500)
     expect(report.chunks[0]?.name).toBe("large.js")
     expect(formatBytes(1536)).toBe("1.5 KB")
+  })
+
+  test("plans target output shape before the bundler runs", () => {
+    expect(planBuildTarget("cf-pages", "/tmp/dist/site")).toMatchObject({
+      kind: "server",
+      serverTarget: "browser",
+      outputFile: "_worker.js",
+    })
+    expect(planBuildTarget("node", "C:\\tmp\\dist\\site")).toMatchObject({
+      serverTarget: "node",
+      outputFile: "server.js",
+      run: "node server → C:\\tmp\\dist\\site (run: node site/server.js)",
+    })
+    expect(planBuildTarget("static", "/tmp/dist/site")).toMatchObject({
+      kind: "static",
+      serverTarget: undefined,
+      outputFile: undefined,
+    })
   })
 })

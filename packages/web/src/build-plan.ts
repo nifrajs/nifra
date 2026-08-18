@@ -53,6 +53,75 @@ export function isBuildTarget(value: string): value is BuildTarget {
   return (BUILD_TARGETS as readonly string[]).includes(value)
 }
 
+export type ServerBuildTarget = "browser" | "node" | "bun"
+
+export interface StaticBuildTargetPlan {
+  readonly target: "static"
+  readonly kind: "static"
+  readonly serverTarget: undefined
+  readonly outputFile: undefined
+  readonly run: string
+}
+
+export interface ServerBuildTargetPlan {
+  readonly target: Exclude<BuildTarget, "static">
+  readonly kind: "server"
+  readonly serverTarget: ServerBuildTarget
+  /** The worker's final filename inside the assembled deploy directory. */
+  readonly outputFile: "_worker.js" | "index.js" | "server.js"
+  readonly run: string
+}
+
+export type BuildTargetPlan = StaticBuildTargetPlan | ServerBuildTargetPlan
+
+const finalPathSegment = (path: string): string => {
+  const trimmed = path.replace(/[\\/]+$/, "")
+  const slash = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"))
+  return slash === -1 ? trimmed : trimmed.slice(slash + 1)
+}
+
+/**
+ * Resolve the target-specific deploy shape before any bundling starts. Keeping this decision pure
+ * means Bun and Vite strategies share the same output filename, server target, and hand-off text;
+ * the filesystem emitter only has to execute the plan.
+ */
+export function planBuildTarget(target: BuildTarget, outDir: string): BuildTargetPlan {
+  if (target === "static") {
+    return {
+      target,
+      kind: "static",
+      serverTarget: undefined,
+      outputFile: undefined,
+      run: `static site → ${outDir} (serve the directory with any static host)`,
+    }
+  }
+  if (target === "cf-pages") {
+    return {
+      target,
+      kind: "server",
+      serverTarget: "browser",
+      outputFile: "_worker.js",
+      run: `Cloudflare Pages → ${outDir} (deploy: wrangler pages deploy ${finalPathSegment(outDir)})`,
+    }
+  }
+  if (target === "vercel") {
+    return {
+      target,
+      kind: "server",
+      serverTarget: "browser",
+      outputFile: "index.js",
+      run: `Vercel edge function → ${outDir}/index.js (wrap with your vercel.json or Build Output API)`,
+    }
+  }
+  return {
+    target,
+    kind: "server",
+    serverTarget: target === "node" ? "node" : target === "bun" ? "bun" : "browser",
+    outputFile: "server.js",
+    run: `${target} server → ${outDir} (run: ${target === "node" ? "node" : target} ${finalPathSegment(outDir)}/server.js)`,
+  }
+}
+
 /**
  * A build-tool STRATEGY for {@link buildTargetWith} - the two bundling steps, and nothing else. Everything
  * around them (server-entry codegen, deploy assembly, prerender, size report) is bundler-agnostic and

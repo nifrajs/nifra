@@ -2813,6 +2813,8 @@ _No named exports (side-effect entrypoint)._
 - **ContractCoverageGapCode** _(type)_ - `type ContractCoverageGapCode`
 - **ContractLabHandler** _(interface)_ - `interface ContractLabHandler`
   Runtime-neutral HTTP contract witnesses.
+- **ContractLabRuntimeAdapter** _(interface)_ - `interface ContractLabRuntimeAdapter`
+- **ContractLabServer** _(interface)_ - `interface ContractLabServer`
 - **ContractLabWitness** _(interface)_ - `interface ContractLabWitness`
 - **ContractReplay** _(interface)_ - `interface ContractReplay`
 - **ContractRuntime** _(interface)_ - `interface ContractRuntime`
@@ -2909,6 +2911,8 @@ _No named exports (side-effect entrypoint)._
   Execute contract-derived hostile inputs and declared-response conformance against a runtime matrix. Runtime/request failures are captured in the report; inspect `report.ok`, `failures`, and `gaps` (or use {@link assertAdversarialContract} for a throwing test assertion).
 - **runContractLab** _(function)_ - `runContractLab: (handler: ContractLabHandler, origin?: string) => Promise<void>`
   Execute every witness against one runtime and throw a bounded, replayable mismatch.
+- **runContractLabThroughAdapter** _(function)_ - `runContractLabThroughAdapter: (adapter: ContractLabRuntimeAdapter, app?: ContractLabHandler) => Promise<void>`
+  Run the shared witnesses through a real HTTP adapter and always release its server.
 - **runFailureScenario** _(function)_ - `runFailureScenario: <Output>(scenario: FailureScenario<Output>, options: FailureLabOptions) => Promise<FailureScenarioReport>`
   Run one scenario and evaluate its post-failure invariant without leaking its result or error text.
 - **runFaultProfile** _(function)_ - `runFaultProfile: (profile: FaultProfile, options?: RunFaultProfileOptions) => Promise<FaultProfileReport>`
@@ -2962,6 +2966,8 @@ _No named exports (side-effect entrypoint)._
 
 - **ContractLabHandler** _(interface)_ - `interface ContractLabHandler`
   Runtime-neutral HTTP contract witnesses.
+- **ContractLabRuntimeAdapter** _(interface)_ - `interface ContractLabRuntimeAdapter`
+- **ContractLabServer** _(interface)_ - `interface ContractLabServer`
 - **ContractLabWitness** _(interface)_ - `interface ContractLabWitness`
 - **contractLabWitnesses** _(const)_ - `contractLabWitnesses: readonly ContractLabWitness[]`
   The shared cross-runtime wire contract. Keep this list small and stable: it is evidence, not a load test.
@@ -2969,6 +2975,8 @@ _No named exports (side-effect entrypoint)._
   A reference Web handler for adapter-only suites. Core and edge suites use their real routers instead.
 - **runContractLab** _(function)_ - `runContractLab: (handler: ContractLabHandler, origin?: string) => Promise<void>`
   Execute every witness against one runtime and throw a bounded, replayable mismatch.
+- **runContractLabThroughAdapter** _(function)_ - `runContractLabThroughAdapter: (adapter: ContractLabRuntimeAdapter, app?: ContractLabHandler) => Promise<void>`
+  Run the shared witnesses through a real HTTP adapter and always release its server.
 
 ### `@nifrajs/testing/zod`
 
@@ -3388,6 +3396,7 @@ _No named exports (side-effect entrypoint)._
 - **BuildServerOptions** _(interface)_ - `interface BuildServerOptions`
 - **BuildTarget** _(type)_ - `type BuildTarget = (typeof BUILD_TARGETS)[number]`
 - **BuildTargetOptions** _(interface)_ - `interface BuildTargetOptions`
+- **BuildTargetPlan** _(type)_ - `type BuildTargetPlan = StaticBuildTargetPlan | ServerBuildTargetPlan`
 - **BuildTargetResult** _(interface)_ - `interface BuildTargetResult`
   The result of a target build - the deploy dir + the client manifest + an optional size report.
 - **Bundler** _(interface)_ - `interface Bundler`
@@ -3413,10 +3422,13 @@ _No named exports (side-effect entrypoint)._
   The marker specifier an author imports to opt a module into the client-leak guard. Matched on the import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed, before Bun resolves it to `src/server-only.ts` / `dist/server-only.js`).
 - **ServerBuild** _(interface)_ - `interface ServerBuild`
   The built worker bundle - point your `wrangler.toml`'s `main` at `worker`.
+- **ServerBuildTarget** _(type)_ - `type ServerBuildTarget = "browser" | "node" | "bun"`
+- **ServerBuildTargetPlan** _(interface)_ - `interface ServerBuildTargetPlan`
 - **ServerOnlyFinding** _(interface)_ - `interface ServerOnlyFinding`
   One `server-only`-module-in-the-client finding: the offending module (the as-written marker-import chain's tail before the marker), the emitted chunk it landed in, and the shortest USER-module import chain that pulled it there (entry → … → the server-only module).
 - **SizeReport** _(interface)_ - `interface SizeReport`
   A whole build's size report - every chunk (largest first) + the totals.
+- **StaticBuildTargetPlan** _(interface)_ - `interface StaticBuildTargetPlan`
 - **aggregateSizeReport** _(function)_ - `aggregateSizeReport: (chunks: readonly ChunkSize[]) => SizeReport`
   Aggregate a list of measured chunks into a {@link SizeReport}: sort biggest-gzip-first (ties broken by raw bytes, then name for stable output) and sum the totals. Pure - the measurement (reading the file + gzipping it) happens in the orchestrator; this is the deterministic, unit-testable core.
 - **buildClient** _(function)_ - `buildClient: (options: BuildClientOptions) => Promise<BuildManifest>`
@@ -3467,6 +3479,8 @@ _No named exports (side-effect entrypoint)._
   The baked per-route `routeStyles` map in a committed server-manifest (empty if absent/unparseable). Pure.
 - **parseManifestStyles** _(function)_ - `parseManifestStyles: (source: string) => string[]`
   The baked top-level `styles` array in a committed server-manifest (empty if absent/unparseable). Pure.
+- **planBuildTarget** _(function)_ - `planBuildTarget: (target: BuildTarget, outDir: string) => BuildTargetPlan`
+  Resolve the target-specific deploy shape before any bundling starts. Keeping this decision pure means Bun and Vite strategies share the same output filename, server target, and hand-off text; the filesystem emitter only has to execute the plan.
 - **preactDedupePlugin** _(const)_ - `preactDedupePlugin: (from: string) => BunPlugin`
 - **prerenderRoutes** _(function)_ - `prerenderRoutes: (options: PrerenderOptions) => Promise<PrerenderResult>`
   Render every opted-in static route to a static `index.html` under `outDir`. Run AFTER `buildClient` (so the app references the hashed client entry). Returns a report of what was emitted vs skipped - the caller can use `prerendered` to wire a hybrid deploy (e.g. exclude those paths from the SSR work…

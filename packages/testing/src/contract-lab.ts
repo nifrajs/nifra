@@ -10,6 +10,15 @@ export interface ContractLabHandler {
   fetch(request: Request): Response | Promise<Response>
 }
 
+export interface ContractLabServer {
+  readonly origin: string
+  stop(): void | Promise<void>
+}
+
+export interface ContractLabRuntimeAdapter {
+  start(app: ContractLabHandler): ContractLabServer | Promise<ContractLabServer>
+}
+
 export interface ContractLabWitness {
   readonly id: string
   readonly request: {
@@ -121,6 +130,19 @@ export async function runContractLab(
           `${contentType || "(missing content type)"} ${canonical(actual)}`,
       )
     }
+  }
+}
+
+/** Run the shared witnesses through a real HTTP adapter and always release its server. */
+export async function runContractLabThroughAdapter(
+  adapter: ContractLabRuntimeAdapter,
+  app: ContractLabHandler = createReferenceContractLabHandler(),
+): Promise<void> {
+  const server = await adapter.start(app)
+  try {
+    await runContractLab({ fetch: (request) => fetch(request) }, server.origin)
+  } finally {
+    await server.stop()
   }
 }
 

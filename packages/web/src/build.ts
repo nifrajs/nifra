@@ -26,6 +26,7 @@ import {
   parseManifestClientEntry,
   parseManifestRouteStyles,
   parseManifestStyles,
+  planBuildTarget,
   type ServerBuild,
   type SizeReport,
 } from "./build-plan.ts"
@@ -1092,15 +1093,6 @@ export function generateServerEntry(options: {
   return `${lines.join("\n")}\n`
 }
 
-/** The Bun.build `target` each deploy target compiles its server with (mirrors `buildServer`'s docs). */
-const SERVER_BUILD_TARGET: Record<Exclude<BuildTarget, "static">, "browser" | "node" | "bun"> = {
-  "cf-pages": "browser", // edge conditions (workerd/edge-light)
-  vercel: "browser", // Vercel Edge runtime
-  deno: "browser", // Deno's Web-standard runtime runs the edge bundle
-  node: "node", // node:* external; react-dom → its Node SSR build
-  bun: "bun", // Bun's flagship runtime
-}
-
 /** Measure each emitted output file's raw + gzip size. Reads the file off disk and gzips it with
  * `Bun.gzipSync` (the over-the-wire weight). Async only because it reads files; the aggregation is the
  * pure {@link aggregateSizeReport}. */
@@ -1237,6 +1229,7 @@ export async function buildTargetWith(
   bundler: Bundler,
 ): Promise<BuildTargetResult> {
   const { routesDir, outDir, workDir } = options
+  const targetPlan = planBuildTarget(target, outDir)
   const { rmSync } = await import("node:fs")
   rmSync(outDir, { recursive: true, force: true })
   rmSync(workDir, { recursive: true, force: true })
@@ -1267,7 +1260,7 @@ export async function buildTargetWith(
     writeFileSync(`${assetsDir}/manifest.json`, JSON.stringify(client, null, 2))
   }
 
-  if (target === "static") {
+  if (targetPlan.kind === "static") {
     if (options.prerenderApp === undefined) {
       throw new Error(
         "[nifra/web] buildTarget(static) requires `prerenderApp` (a factory `(client) => createWebApp`)",
@@ -1299,7 +1292,7 @@ export async function buildTargetWith(
       target,
       outDir,
       client,
-      run: `static site → ${outDir} (serve the directory with any static host)`,
+      run: targetPlan.run,
       size,
     }
   }
@@ -1319,13 +1312,12 @@ export async function buildTargetWith(
       ...(publicFiles.length > 0 ? { publicFiles } : {}),
     }),
   )
-  const serverTarget = SERVER_BUILD_TARGET[target]
   const { worker } = await bundler.buildServer({
     routesDir,
     serverEntry: serverEntryPath,
     outDir: `${workDir}/server`,
     clientEntry: client.entry,
-    target: serverTarget,
+    target: targetPlan.serverTarget,
     ...(options.serverPlugins ? { plugins: options.serverPlugins } : {}),
     define: { "process.env.NODE_ENV": '"production"', ...(options.define ?? {}) },
     root: resolvePath(dirname(routesDir)),
@@ -1333,9 +1325,8 @@ export async function buildTargetWith(
 
   // (3) Assemble the deploy dir for the target.
   const { cpSync } = await import("node:fs")
-  let run: string
-  if (target === "cf-pages") {
-    cpSync(worker, `${outDir}/_worker.js`)
+  if (targetPlan.target === "cf-pages") {
+    cpSync(worker, `${outDir}/${targetPlan.outputFile}`)
     // The app's real patterns, so a directory is only collapsed into a glob once the route table
     // proves nothing can be served beneath it.
     const rules = cloudflareRouteRules(
@@ -1355,26 +1346,18 @@ export async function buildTargetWith(
           "worker via ASSETS instead of the CDN directly - correct, just one invocation each.",
       )
     }
-    run = `Cloudflare Pages → ${outDir} (deploy: wrangler pages deploy ${basename(outDir)})`
-  } else if (target === "vercel") {
-    cpSync(worker, `${outDir}/index.js`)
-    run = `Vercel edge function → ${outDir}/index.js (wrap with your vercel.json or Build Output API)`
+  } else if (targetPlan.target === "vercel") {
+    cpSync(worker, `${outDir}/${targetPlan.outputFile}`)
   } else {
-    // bun / node / deno: the runnable server bundle next to its /assets.
-    cpSync(worker, `${outDir}/server.js`)
-    const cmd =
-      target === "node"
-        ? `node ${basename(outDir)}/server.js`
-        : `${target} ${basename(outDir)}/server.js`
-    run = `${target} server → ${outDir} (run: ${cmd})`
+    cpSync(worker, `${outDir}/${targetPlan.outputFile}`)
   }
   rmSync(workDir, { recursive: true, force: true })
 
   // Size report over the client assets + the server bundle (its parse cost matters on the edge).
   const clientPaths = client.assets.map((u) => assetUrlToPath(u, assetsDir))
-  const serverPath = `${outDir}/${target === "cf-pages" ? "_worker.js" : target === "vercel" ? "index.js" : "server.js"}`
+  const serverPath = `${outDir}/${targetPlan.outputFile}`
   const size = aggregateSizeReport(await measureOutputs([...clientPaths, serverPath]))
-  return { target, outDir, client, run, size }
+  return { target, outDir, client, run: targetPlan.run, size }
 }
 
 /** Map a client asset URL (`/assets/x-hash.js`) back to its on-disk path under `assetsDir`. The

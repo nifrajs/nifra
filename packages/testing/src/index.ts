@@ -53,10 +53,13 @@ export {
 } from "./certification.ts"
 export {
   type ContractLabHandler,
+  type ContractLabRuntimeAdapter,
+  type ContractLabServer,
   type ContractLabWitness,
   contractLabWitnesses,
   createReferenceContractLabHandler,
   runContractLab,
+  runContractLabThroughAdapter,
 } from "./contract-lab.ts"
 export { type CookieJar, cookieJar } from "./cookies.ts"
 export {
