@@ -54,7 +54,7 @@ jobs:
       # seed on failure; deriving it from the run number makes each CI run explore a different order
       # while keeping a failing run exactly reproducible (`--seed=<run number>`).
       - name: CLI fixture isolation (randomized test order)
-        run: bun test packages/cli/test --randomize --seed="$NIFRA_TEST_SEED"
+        run: bun run check:cli-isolation
         env:
           NIFRA_TEST_SEED: ${{ github.run_number }}
 
@@ -68,12 +68,13 @@ jobs:
       # typecheck against the live API, and api-reference.md + the per-package LLM.md cards must be
       # regenerated - so docs/example drift can't merge. Needs the build above (snippets resolve
       # @nifrajs/* subpaths via the built dist types).
-      # `check:llms` covers the four agent-facing corpora (llms.txt, llms-full.txt, examples.json,
-      # types.json). They were the only generated artifacts with no gate, so they were as fresh as
-      # whoever last remembered to run `gen:llms` - and `types.json` is what the `nifra_types` MCP tool
-      # answers from, so stale is not cosmetic: it hands an agent a signature the code no longer has.
+      # `check:corpus` covers the four agent-facing corpora (llms.txt, llms-full.txt, examples.json,
+      # types.json), API reference, package cards, and the Node outcome contract. They were the only
+      # generated artifacts with no gate, so they were as fresh as whoever last remembered to run
+      # `gen:llms` - and `types.json` is what the `nifra_types` MCP tool answers from, so stale is not
+      # cosmetic: it hands an agent a signature the code no longer has.
       - name: Doc gates (samples typecheck, api-reference + LLM cards + llms corpora fresh)
-        run: bun run check:docs && bun run check:api && bun run check:cards && bun run check:llms
+        run: bun run check:docs && bun run check:corpus
 
       - name: Build + publish-readiness (publint + arethetypeswrong)
         run: bun run check:publish
@@ -121,6 +122,37 @@ jobs:
       # described a different commit entirely.
       - name: Changeset coverage (a changed package must say it changed)
         run: bun run check:changesets
+
+      # Keep the declarative release plan and this hand-authored workflow from drifting in either
+      # direction. Shared-runner performance is the one explicit plan exception: it remains a local
+      # release gate because request throughput is too noisy to require on CI.
+      - name: Verification plan / CI parity
+        run: bun run check:verification-parity
+
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.14
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      # Exercise the same published build, type surface, and test suite on Windows. This catches
+      # path separators, shell assumptions, and platform-specific stream behavior that Ubuntu cannot.
+      - name: Build
+        run: bun run build
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun run test
 
   deno:
     runs-on: ubuntu-latest

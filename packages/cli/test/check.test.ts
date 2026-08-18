@@ -28,9 +28,11 @@ import {
   collectReleaseVerification,
   type ReleaseCommandResult,
   type ReleaseCommandSpec,
+  renderReleaseVerification,
   resolveVerificationRoot,
 } from "../src/release-verification.ts"
 import {
+  omittedVerificationGateIds,
   renderVerificationPlan,
   verificationPlan,
   verificationPlanIds,
@@ -49,6 +51,7 @@ describe("release verification", () => {
       "node-outcome-corpus",
       "sitemap",
       "public-boundary",
+      "public-manifest",
       "size",
       "changesets",
     ])
@@ -57,10 +60,12 @@ describe("release verification", () => {
       "lint",
       "typecheck",
       "tests",
+      "cli-isolation",
       "coverage",
       "corpus",
       "docs",
       "public-boundary",
+      "public-manifest",
       "size",
       "core-performance",
       "publish",
@@ -69,6 +74,7 @@ describe("release verification", () => {
       "cross-runtime-deno",
       "cross-runtime-node",
       "pipeline-parity",
+      "verification-parity",
       "changesets",
     ])
     const release = verificationPlan("release")
@@ -76,8 +82,28 @@ describe("release verification", () => {
     expect(release.find((gate) => gate.id === "corpus")?.commands).toEqual([
       ["run", "check:corpus"],
     ])
-    expect(renderVerificationPlan("release")).toContain("6. corpus: bun run check:corpus")
+    expect(renderVerificationPlan("release")).toContain("7. corpus: bun run check:corpus")
     expect(Object.isFrozen(release)).toBe(true)
+    expect(release.find((gate) => gate.id === "core-performance")?.workflowRequired).toBe(false)
+    expect(release.find((gate) => gate.id === "tests")?.workflowRequired).toBe(true)
+    expect(omittedVerificationGateIds()).toContain("core-performance")
+    expect(omittedVerificationGateIds()).not.toContain("public-manifest")
+  })
+
+  test("reports omitted release gates for the default plan", async () => {
+    const root = createFixtureRoot("verify-omissions")
+    try {
+      await Bun.write(join(root, "package.json"), JSON.stringify({ private: true, workspaces: [] }))
+      const result = await collectReleaseVerification(root, {
+        runCommand: async () => ({ exitCode: 0 }),
+      })
+      expect(result.omittedReleaseGateIds).toEqual(omittedVerificationGateIds())
+      expect(renderReleaseVerification(result)).toContain(
+        "run `bun run check:release` for the full release gate.",
+      )
+    } finally {
+      removeFixtureRoot(root)
+    }
   })
 
   test("uses the workspace root when invoked from a subdirectory and runs the default plan", async () => {
@@ -108,6 +134,7 @@ describe("release verification", () => {
         "node-outcome-corpus",
         "sitemap",
         "public-boundary",
+        "public-manifest",
         "size",
         "changesets",
       ])

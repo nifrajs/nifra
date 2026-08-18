@@ -12,17 +12,21 @@ export interface VerificationGateSpec {
   readonly id: string
   readonly commands: readonly (readonly string[])[]
   readonly remediation: string
+  /** Whether the gate must be represented by a command in `.github/workflows/ci.yml`. */
+  readonly workflowRequired: boolean
 }
 
 const gate = (
   id: string,
   commands: readonly (readonly string[])[],
   remediation: string,
+  options: { readonly workflowRequired?: boolean } = {},
 ): VerificationGateSpec =>
   Object.freeze({
     id,
     commands: Object.freeze(commands.map((args) => Object.freeze([...args]))),
     remediation,
+    workflowRequired: options.workflowRequired ?? true,
   })
 
 const GATES = Object.freeze([
@@ -59,6 +63,11 @@ const GATES = Object.freeze([
     "Run `bun run gen:sitemap` and review the generated sitemap.",
   ),
   gate(
+    "public-manifest",
+    [["run", "check:public-manifest"]],
+    "Run `bun run gen:public` and review the generated public product manifest.",
+  ),
+  gate(
     "public-boundary",
     [["run", "check:public-boundary"]],
     "Run `bun run check:public-boundary` and remove the reported public-boundary violation.",
@@ -91,6 +100,7 @@ const GATES = Object.freeze([
     "core-performance",
     [["run", "check:core-performance"]],
     "Run `bun run check:core-performance` and investigate the measured performance regression.",
+    { workflowRequired: false },
   ),
   gate(
     "publish",
@@ -125,6 +135,16 @@ const GATES = Object.freeze([
     [["run", "check:pipeline-parity"]],
     "Run `bun run check:pipeline-parity` and fix the development and production manifest drift.",
   ),
+  gate(
+    "cli-isolation",
+    [["run", "check:cli-isolation"]],
+    "Run `bun run check:cli-isolation` and fix the first order-dependent CLI test failure.",
+  ),
+  gate(
+    "verification-parity",
+    [["run", "check:verification-parity"]],
+    "Run `bun run check:verification-parity` and reconcile the release plan with CI.",
+  ),
 ])
 
 const DEFAULT_PLAN = Object.freeze([
@@ -137,6 +157,7 @@ const DEFAULT_PLAN = Object.freeze([
   "node-outcome-corpus",
   "sitemap",
   "public-boundary",
+  "public-manifest",
   "size",
   "changesets",
 ] as const)
@@ -146,10 +167,12 @@ const RELEASE_PLAN = Object.freeze([
   "lint",
   "typecheck",
   "tests",
+  "cli-isolation",
   "coverage",
   "corpus",
   "docs",
   "public-boundary",
+  "public-manifest",
   "size",
   "core-performance",
   "publish",
@@ -158,6 +181,7 @@ const RELEASE_PLAN = Object.freeze([
   "cross-runtime-deno",
   "cross-runtime-node",
   "pipeline-parity",
+  "verification-parity",
   "changesets",
 ] as const)
 
@@ -182,6 +206,15 @@ export function verificationPlan(
 /** Stable IDs are useful to CI and tests that need to compare plans without parsing prose. */
 export function verificationPlanIds(mode: VerificationPlanMode = "default"): readonly string[] {
   return planIds(mode)
+}
+
+/** Stable IDs in the full plan that are not part of a shorter plan. */
+export function omittedVerificationGateIds(
+  mode: VerificationPlanMode = "default",
+  fullMode: VerificationPlanMode = "release",
+): readonly string[] {
+  const included = new Set(planIds(mode))
+  return Object.freeze(planIds(fullMode).filter((id) => !included.has(id)))
 }
 
 const commandLabel = (args: readonly string[]): string => `bun ${args.join(" ")}`

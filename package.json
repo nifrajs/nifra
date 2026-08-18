@@ -29,6 +29,8 @@
     "check:cold-start": "bun run scripts/check-cold-start.ts",
     "check:size": "bun run bench/size/run.ts --check",
     "check:pipeline-parity": "bun scripts/check-pipeline-parity.ts",
+    "check:cli-isolation": "bun test packages/cli/test --randomize --seed=\"${NIFRA_TEST_SEED:-0}\"",
+    "check:verification-parity": "bun run scripts/check-verification-parity.ts",
     "check:changesets": "bun run scripts/check-changeset-coverage.ts",
     "smoke": "bun run scripts/smoke.ts",
     "bench": "bun run bench/index.ts",

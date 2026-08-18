@@ -9,6 +9,7 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, relative, resolve, sep } from "node:path"
 import {
+  omittedVerificationGateIds,
   type VerificationGateSpec,
   type VerificationPlanMode,
   verificationPlan,
@@ -30,6 +31,8 @@ export interface ReleaseVerificationResult {
   readonly ok: boolean
   readonly mode: ReleaseVerificationMode
   readonly gates: readonly ReleaseGateResult[]
+  /** Release gates intentionally absent from the selected shorter plan. */
+  readonly omittedReleaseGateIds: readonly string[]
 }
 
 export interface ReleaseCommandResult {
@@ -205,6 +208,7 @@ export async function collectReleaseVerification(
     ok: gates.every((gate) => gate.status === "pass"),
     mode,
     gates,
+    omittedReleaseGateIds: omittedVerificationGateIds(mode),
   }
 }
 
@@ -215,6 +219,13 @@ export function renderReleaseVerification(result: ReleaseVerificationResult): st
     lines.push(`${marker} ${gate.id}: ${gate.status}`)
     if (gate.message !== undefined) lines.push(`  ${gate.message}`)
     if (gate.status !== "pass") lines.push(`  fix: ${gate.remediation}`)
+  }
+  if (result.omittedReleaseGateIds.length > 0) {
+    lines.push(
+      "",
+      `note: default verification omits release gates: ${result.omittedReleaseGateIds.join(", ")}`,
+      "      run `bun run check:release` for the full release gate.",
+    )
   }
   lines.push("", result.ok ? "✓ verification passed" : "✗ verification failed")
   return lines.join("\n")
