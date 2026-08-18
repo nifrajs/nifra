@@ -38,6 +38,27 @@ import { defineChannel, memoryChannelHub } from "@nifrajs/core/channel"
 - **Inline or contract-first.** Write routes inline (types inferred from the
   builder), or `defineContract(...)` + `implement(...)` for a decoupled, versionable
   surface - handlers lift over unchanged.
+
+### Scaling route tables
+
+Fluent chains are the best fit for a small route surface. TypeScript's type-instantiation budget
+usually becomes the limiting factor around 95-100 chained routes because every call both infers its
+handler context and re-threads the growing typed registry. The runtime router is not the limit, and
+the routes remain fully typed when you compose them as short domain groups:
+
+```ts
+const listings = server()
+  .get("/listings", () => ({ ok: true }))
+  .get("/listings/:id", (c) => ({ id: c.params.id }))
+const agents = server().get("/agents/:id", (c) => ({ id: c.params.id }))
+
+const app = server().get("/health", () => ({ ok: true })).merge(listings).merge(agents)
+```
+
+Each group's routes keep the middleware and assurance captured when that group was defined. For a
+contract-owned surface, `defineContract(...)` + `implement(...)` is the other escape hatch: the
+registry is declared as one object type, so it does not grow one fluent-instantiation level per
+route. Split groups before the compiler reports `TS2589`, rather than weakening the route types.
 - **Validation at the boundary.** Per-route `body`/`query` is any
   [Standard Schema](https://standardschema.dev) (zod/valibot/arktype, or `@nifrajs/schema`'s
   `t`); invalid input is rejected with a structured `422` before the handler runs.
