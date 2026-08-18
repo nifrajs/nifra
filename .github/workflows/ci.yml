@@ -86,6 +86,9 @@ jobs:
         env:
           PRIVATE_MARKERS: ${{ secrets.PRIVATE_MARKERS }}
 
+      - name: Public product manifest (README package map is generated)
+        run: bun run check:public-manifest
+
       # attw and the workspace can resolve undeclared internal packages through hoisted siblings. Pack
       # selected public packages, install each one with npm's nested strategy, and typecheck its public
       # entry from a three-line external consumer so only declared dependencies are visible.

@@ -12,15 +12,11 @@
  * nowhere. With the variable unset the marker scan is skipped and the structural checks still run.
  */
 
-const failures: string[] = []
-const publicPackageDirs: string[] = []
-const SKIP = /(?:^|\/)(?:dist|node_modules|coverage)\//
+import { publishedPackages } from "./public-package-manifest.ts"
 
-for (const packageJson of new Bun.Glob("packages/*/package.json").scanSync(".")) {
-  const manifest = JSON.parse(await Bun.file(packageJson).text()) as { private?: boolean }
-  if (manifest.private === true) continue
-  publicPackageDirs.push(packageJson.slice(0, -"/package.json".length))
-}
+const failures: string[] = []
+const publicPackageDirs = publishedPackages().map((pkg) => `packages/${pkg.dir}`)
+const SKIP = /(?:^|\/)(?:dist|node_modules|coverage)\//
 
 const markers = (process.env.PRIVATE_MARKERS ?? "")
   .split(",")

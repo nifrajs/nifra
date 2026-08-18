@@ -28,6 +28,10 @@
  */
 import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
+import {
+  type PublishedPackage,
+  publishedPackages as readPublishedPackages,
+} from "./public-package-manifest.ts"
 
 const ROOT = join(import.meta.dir, "..")
 
@@ -73,26 +77,12 @@ export const changedFiles = (base: string, root: string = ROOT): readonly string
   return [...new Set([...committed, ...working])].filter((path) => path !== "")
 }
 
-export interface PackageInfo {
-  readonly dir: string
-  readonly name: string
-}
+export type PackageInfo = PublishedPackage
 
 /** Published workspace packages, keyed by directory name under `packages/`. */
 export const publishedPackages = (root: string = ROOT): ReadonlyMap<string, PackageInfo> => {
   const out = new Map<string, PackageInfo>()
-  for (const dir of readdirSync(join(root, "packages"), { withFileTypes: true })) {
-    if (!dir.isDirectory()) continue
-    let manifest: Record<string, unknown>
-    try {
-      manifest = JSON.parse(readFileSync(join(root, "packages", dir.name, "package.json"), "utf8"))
-    } catch {
-      continue
-    }
-    if (manifest.private === true) continue
-    if (typeof manifest.name !== "string") continue
-    out.set(dir.name, { dir: dir.name, name: manifest.name })
-  }
+  for (const pkg of readPublishedPackages(root)) out.set(pkg.dir, pkg)
   return out
 }
 
