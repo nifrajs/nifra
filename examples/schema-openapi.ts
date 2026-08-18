@@ -25,7 +25,7 @@ const ok = await app.fetch(post({ name: "Ada", age: 36 }))
 console.log("valid   ->", ok.status, await ok.json()) // 200 { id, name, age }
 
 const bad = await app.fetch(post({ name: "Ada", age: "old" }))
-console.log("invalid ->", bad.status, await bad.json()) // 400 { ok: false, error: "validation", ... }
+console.log("invalid ->", bad.status, await bad.json()) // 422 { ok: false, error: "validation", ... }
 
 console.log("\nOpenAPI 3.1:")
 console.log(JSON.stringify(toOpenAPI(app, { title: "Users API", version: "1.0.0" }), null, 2))

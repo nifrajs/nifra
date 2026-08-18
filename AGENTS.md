@@ -17,7 +17,7 @@ export const app = server()
 
 Return a value → serialized to JSON. Return a `Response` → used as-is.
 
-## 2 · Validate a body/query at the trust boundary (auto-400)
+## 2 · Validate a body/query at the trust boundary (auto-422)
 
 ```ts
 import { t } from "@nifrajs/schema"
@@ -29,7 +29,7 @@ app.post(
 )
 ```
 
-`t.object` rejects unknown fields by default (`additionalProperties: false`) → a `400 { path: [...] }`
+`t.object` rejects unknown fields by default (`additionalProperties: false`) → a structured `422` with `{ path: [...] }` issues
 **before** the handler runs. Need to allow extras? `t.looseObject`. Query schema: `{ query: t.object({…}) }` → `c.query`.
 
 ## 3 · Read platform env (KV / D1 / secrets)
