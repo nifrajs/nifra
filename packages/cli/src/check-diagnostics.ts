@@ -9,6 +9,7 @@ import { existsSync } from "node:fs"
 import { join, resolve } from "node:path"
 import type { AssuranceConfig, AssuranceReport } from "@nifrajs/core/assurance"
 import { type ProjectEvidenceSnapshot, snapshotProjectEvidence } from "@nifrajs/core/evidence"
+import { SINGLE_COPY_REGISTER_SPECIFIER } from "@nifrajs/core/single-copy"
 import { Glob } from "bun"
 import type { CapabilityProjectReport } from "./capabilities-tool.ts"
 import type { SourceFinding, StaticRouteFinding } from "./check-scan.ts"
@@ -19,6 +20,7 @@ import {
   SIMPLE_REWRITE_METHODS,
 } from "./check-scan.ts"
 import { type Diagnostic, diagnostic } from "./diagnostics.ts"
+import type { DuplicateInstallFinding } from "./doctor.ts"
 import type { TypeScriptApi } from "./internal/typescript-import.ts"
 import type { PipelineReport } from "./pipeline-report.ts"
 import { freezeProjectFacts, type ProjectFactsSeed } from "./project-facts.ts"
@@ -102,6 +104,26 @@ export interface CheckResult {
    * first `shown` of `total`. It caps the serialized size so the `nifra_check` MCP tool can't emit a
    * message large enough to break the stdio transport; fix the shown diagnostics and re-run for the rest. */
   readonly truncated?: { readonly shown: number; readonly total: number }
+  /**
+   * The identity preflight's machine-readable result: every duplicate physical install of an
+   * identity-sensitive package, with each copy's resolved absolute path, version, and the importers
+   * that pulled it in. Present whenever the dependency scan ran - including when it found nothing, so
+   * tooling can distinguish "clean" from "did not look". The human rendering of the same data lives in
+   * the `duplicate-install` diagnostics; this field is what `--json` consumers parse instead.
+   */
+  readonly identityPreflight?: IdentityPreflightResult
+}
+
+/** The `identityPreflight` slice of {@link CheckResult}. */
+export interface IdentityPreflightResult {
+  /** Which tree the scan looked at, in the same words the build/dev preflight uses. */
+  readonly basis?: string
+  /** The scan stopped at the workspace-enumeration cap - "no duplicates" covers only the scanned part. */
+  readonly truncated?: boolean
+  /** Duplicates that fail the gate. Empty means the scanned tree is clean. */
+  readonly duplicates: readonly DuplicateInstallFinding[]
+  /** Duplicates covered by a `"nifra": { "singleCopy": [...] }` declaration - reported, never fatal. */
+  readonly deduplicated: readonly DuplicateInstallFinding[]
 }
 
 /**
@@ -533,20 +555,37 @@ export async function collectCheckDiagnostics(
       })
     }
     for (const finding of dr.duplicateInstalls) {
-      const copies = finding.copies.map((copy) => `${copy.version} at ${copy.path}`).join("; ")
+      // One line per physical copy: version, resolved absolute path, and who pulled it in. The
+      // absolute path is what a reader pastes into an editor or `rm -rf`; the importer list is what
+      // tells them WHICH package.json to fix - a relative path alone answers neither.
+      const copyLines = finding.copies.map(
+        (copy) =>
+          `${finding.package}@${copy.version} at ${copy.absolutePath ?? copy.path} - pulled in by ${copy.importers.join(", ")}`,
+      )
       diagnostics.push({
         rule: "duplicate-install",
         severity: "error",
-        message: `${finding.package} identity preflight found ${finding.cause} (${copies}) - ${finding.explanation}${finding.topology === undefined ? "" : `. Topology: ${finding.topology}`}${finding.scope === undefined ? "" : `. Scope: ${finding.scope}`}`,
+        message: `${finding.package} identity preflight found ${finding.cause} - ${finding.explanation}${finding.topology === undefined ? "" : `. Topology: ${finding.topology}`}${finding.scope === undefined ? "" : `. Scope: ${finding.scope}`}`,
         fix: finding.remediation,
+        evidence: copyLines,
         suggestion: {
           kind: "manual",
-          title: `Deduplicate ${finding.package}`,
+          title: `Resolve ${finding.package} to one loaded copy`,
+          // The renderer prints this block verbatim before the steps: the exact config for fix 2, so
+          // the reader pastes instead of transcribing prose into JSON and TOML.
+          diff: [
+            "package.json:",
+            `  "nifra": { "singleCopy": ["${finding.package}"] }`,
+            "bunfig.toml:",
+            `  preload = ["${SINGLE_COPY_REGISTER_SPECIFIER}"]`,
+            "  [test]",
+            `  preload = ["${SINGLE_COPY_REGISTER_SPECIFIER}"]`,
+          ].join("\n"),
           steps: [
-            "Align workspace dependency and peer ranges on one compatible version.",
-            "Remove stale nested installs and run the package manager from the workspace root.",
-            'If the copies come from a linked sibling repository and collapsing them is not an option, declare the package: "nifra": { "singleCopy": ["<package>"] } in package.json, plus the bunfig.toml preload.',
-            "Run `nifra doctor` again; do not suppress an undeclared same-version duplicate path.",
+            ...copyLines.map((line) => `Copy: ${line}`),
+            "Fix 1 - deduplicate: align workspace dependency and peer ranges on one compatible version, remove stale nested installs, and reinstall from the workspace root so every importer resolves one physical copy.",
+            `Fix 2 - declare single-copy: apply the package.json and bunfig.toml config printed above; nifra then rewrites every duplicate to this app's copy.${finding.cause === "version-skew" ? " A declaration only covers same-version duplicates, so fix 1's range alignment must land first." : ""}`,
+            "Re-run `nifra check`; the gate stays failing until one fix lands.",
           ],
         },
       })
@@ -973,6 +1012,16 @@ export async function collectCheckDiagnostics(
     ...(!tc.ran && tc.note !== undefined ? { typecheckNote: tc.note } : {}),
     diagnostics: shown,
     ...(dr.pipeline !== undefined ? { pipeline: dr.pipeline } : {}),
+    ...(dr.ran
+      ? {
+          identityPreflight: {
+            ...(dr.identityBasis !== undefined ? { basis: dr.identityBasis } : {}),
+            ...(dr.identityScanTruncated === true ? { truncated: true } : {}),
+            duplicates: dr.duplicateInstalls,
+            deduplicated: dr.deduplicatedInstalls ?? [],
+          },
+        }
+      : {}),
     ...(checkConfig.externalMounts.length > 0
       ? { externalMounts: checkConfig.externalMounts }
       : {}),

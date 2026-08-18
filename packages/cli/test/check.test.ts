@@ -1,8 +1,8 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: SQL scanner fixtures intentionally contain literal interpolation syntax.
 import { describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { isAbsolute, join } from "node:path"
 import ts from "typescript"
 import {
   collectCheckResult,
@@ -463,6 +463,74 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
     expect(diagnostic?.suggestion?.diff).toBeUndefined()
 
     await rm(dir, { recursive: true, force: true })
+  })
+
+  test("duplicate-install names each copy's absolute path, version, and importers, and prints both fixes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-dup-"))
+    try {
+      const app = join(dir, "packages", "app")
+      await mkdir(join(app, "src"), { recursive: true })
+      await mkdir(join(dir, "node_modules", "@nifrajs", "core"), { recursive: true })
+      await mkdir(join(app, "node_modules", "@nifrajs", "core"), { recursive: true })
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({
+          name: "workspace",
+          private: true,
+          workspaces: ["packages/*"],
+          dependencies: { "@nifrajs/core": "1.12.0" },
+        }),
+      )
+      await writeFile(
+        join(app, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "1.12.0" } }),
+      )
+      await writeFile(join(app, "src", "x.ts"), 'import { server } from "@nifrajs/core"')
+      for (const copy of [dir, app]) {
+        await writeFile(
+          join(copy, "node_modules", "@nifrajs", "core", "package.json"),
+          JSON.stringify({ name: "@nifrajs/core", version: "1.12.0" }),
+        )
+      }
+
+      const result = await collectCheckResult(dir, { lintsOnly: true })
+      const diagnostic = result.diagnostics.find((d) => d.rule === "duplicate-install")
+      expect(diagnostic?.severity).toBe("error")
+      expect(result.ok).toBe(false)
+
+      // Each physical copy is named with its resolved absolute path, version, and importers.
+      const real = await realpath(dir)
+      const steps = diagnostic?.suggestion?.steps?.join("\n") ?? ""
+      expect(steps).toContain(
+        `@nifrajs/core@1.12.0 at ${join(real, "node_modules", "@nifrajs", "core")}`,
+      )
+      expect(steps).toContain(
+        `@nifrajs/core@1.12.0 at ${join(real, "packages", "app", "node_modules", "@nifrajs", "core")}`,
+      )
+      expect(steps).toContain("pulled in by")
+      // Both supported fixes, with the exact single-copy config printed verbatim.
+      expect(steps).toContain("Fix 1 - deduplicate")
+      expect(steps).toContain("Fix 2 - declare single-copy")
+      const diff = diagnostic?.suggestion?.diff ?? ""
+      expect(diff).toContain('"nifra": { "singleCopy": ["@nifrajs/core"] }')
+      expect(diff).toContain('preload = ["@nifrajs/core/single-copy/register"]')
+      expect(diff).toContain("[test]")
+
+      // The machine-readable slice for `--json` consumers.
+      const preflight = result.identityPreflight
+      expect(preflight).toBeDefined()
+      expect(preflight?.duplicates).toHaveLength(1)
+      expect(preflight?.deduplicated).toEqual([])
+      const copies = preflight?.duplicates[0]?.copies ?? []
+      expect(copies).toHaveLength(2)
+      for (const copy of copies) {
+        expect(copy.version).toBe("1.12.0")
+        expect(copy.absolutePath !== undefined && isAbsolute(copy.absolutePath)).toBe(true)
+        expect(copy.importers.length).toBeGreaterThan(0)
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })
 

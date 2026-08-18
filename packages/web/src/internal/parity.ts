@@ -32,6 +32,12 @@ const MAX_LINK_PROBES = 4_096
 export interface IdentityParityCopy {
   readonly version: string
   readonly path: string
+  /**
+   * The resolved realpath of the copy. `path` is display-relative to the invoked directory, which
+   * reads well in a report but cannot be pasted into a resolver or an editor from anywhere else.
+   * Absent on a finding built by hand (a test fixture, an older cached result).
+   */
+  readonly absolutePath?: string
   readonly importers: readonly string[]
 }
 
@@ -577,6 +583,7 @@ export async function collectIdentityParity(
       .map(([path, copy]) => ({
         version: copy.version,
         path: displayPath(requestedRoot, path),
+        absolutePath: path,
         importers: [...copy.importers].sort(),
       }))
     const topology = describeTopology(requestedRoot, scanRoot, absolutePaths)
