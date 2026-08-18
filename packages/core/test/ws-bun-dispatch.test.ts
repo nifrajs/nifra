@@ -62,7 +62,7 @@ describe("createBunWsHandlers", () => {
     expect(seen[1]).toBe(seen[2])
   })
 
-  test("a throwing callback is routed to handler.error, not out of the socket loop", () => {
+  test("a throwing callback is routed to handler.error, not out of the socket loop", async () => {
     const errors: unknown[] = []
     const handler: WebSocketHandler = {
       open: () => {
@@ -78,7 +78,47 @@ describe("createBunWsHandlers", () => {
 
     expect(() => handlers.open(socket as never)).not.toThrow()
     expect(() => handlers.message(socket as never, "x")).not.toThrow()
+    await Promise.resolve()
     expect(errors).toContain("open exploded")
+    expect(errors).toContain("message exploded")
+  })
+
+  test("a synchronous message throw is routed to handler.error", () => {
+    const errors: unknown[] = []
+    const handler: WebSocketHandler = {
+      message: () => {
+        throw new Error("message exploded")
+      },
+      error: (_ws, error) => {
+        errors.push(error)
+      },
+    }
+    const socket = fakeSocket(handler)
+    const handlers = createBunWsHandlers(new TopicRegistry())
+
+    handlers.open(socket as never)
+    expect(() => handlers.message(socket as never, "x")).not.toThrow()
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toBeInstanceOf(Error)
+  })
+
+  test("an asynchronous lifecycle failure is routed to handler.error", async () => {
+    const errors: unknown[] = []
+    const handler: WebSocketHandler = {
+      open: async () => {
+        throw new Error("async open exploded")
+      },
+      error: (_ws, error) => {
+        errors.push(error)
+      },
+    }
+    const socket = fakeSocket(handler)
+    const handlers = createBunWsHandlers(new TopicRegistry())
+
+    handlers.open(socket as never)
+    await Promise.resolve()
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toBeInstanceOf(Error)
   })
 
   test("an error handler that itself throws is the end of the line", () => {
@@ -131,6 +171,26 @@ describe("createBunWsHandlers", () => {
     // Left the topic, still connected - so it misses the broadcast but the socket is untouched.
     expect(socket.sent).toEqual(["first"])
     expect(socket.closedWith).toBeUndefined()
+  })
+
+  test("native pub/sub delegates subscribe and unsubscribe to Bun", () => {
+    const subscribed: string[] = []
+    const unsubscribed: string[] = []
+    const handler: WebSocketHandler = {
+      open: (ws) => {
+        ws.subscribe("room")
+        ws.unsubscribe("room")
+      },
+    }
+    const socket = fakeSocket(handler)
+    socket.subscribe = (topic) => subscribed.push(topic)
+    socket.unsubscribe = (topic) => unsubscribed.push(topic)
+    const handlers = createBunWsHandlers(new TopicRegistry(), true)
+
+    handlers.open(socket as never)
+
+    expect(subscribed).toEqual(["room"])
+    expect(unsubscribed).toEqual(["room"])
   })
 
   test("the wrapper exposes readyState and per-connection data by reference", () => {

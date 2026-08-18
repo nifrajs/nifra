@@ -456,6 +456,64 @@ describe("respondMcpHttp - transport hardening", () => {
     expect(health.status).toBe(200)
   })
 
+  test("an already-aborted SSE request closes before running the stream", async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const res = await serve(
+      new Request("http://x/mcp", {
+        signal: controller.signal,
+        headers: { accept: "text/event-stream" },
+      }),
+    )
+    const reader = res.body?.getReader()
+    expect(reader).toBeDefined()
+    expect(await reader?.read()).toMatchObject({ done: true })
+  })
+
+  test("aborting an active SSE request closes the stream", async () => {
+    const controller = new AbortController()
+    const res = await serve(
+      new Request("http://x/mcp", {
+        signal: controller.signal,
+        headers: { accept: "text/event-stream" },
+      }),
+    )
+    const reader = res.body?.getReader()
+    if (reader === undefined) throw new Error("SSE response has no body")
+    expect(new TextDecoder().decode((await reader.read()).value ?? new Uint8Array())).toBe(
+      ": connected\n\n",
+    )
+    controller.abort()
+    expect(await reader.read()).toMatchObject({ done: true })
+  })
+
+  test("a non-POST, non-GET method is rejected with Allow", async () => {
+    const res = await serve(new Request("http://x/mcp", { method: "PUT" }))
+    expect(res.status).toBe(405)
+    expect(res.headers.get("allow")).toBe("POST, GET")
+  })
+
+  test("malformed and oversized declared bodies are rejected before dispatch", async () => {
+    const malformed = await serve(
+      new Request("http://x/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json", "content-length": "not-a-number" },
+        body: "{}",
+      }),
+    )
+    expect(malformed.status).toBe(400)
+
+    const oversized = await serve(
+      new Request("http://x/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json", "content-length": "100" },
+        body: "{}",
+      }),
+      { maxBodyBytes: 2 },
+    )
+    expect(oversized.status).toBe(413)
+  })
+
   test("POST streams progress notifications before the final JSON-RPC response", async () => {
     const res = await respondMcpHttp(
       new Request("http://x/mcp", {
@@ -486,6 +544,26 @@ describe("respondMcpHttp - transport hardening", () => {
       messages.slice(0, 3).map((message) => (message.params as { progress: number }).progress),
     ).toEqual([0, 0.5, 1])
     expect(messages[3]).toMatchObject({ id: 21, result: { content: [{ text: "complete" }] } })
+  })
+
+  test("an unexpected dispatch failure errors the SSE stream", async () => {
+    const res = await respondMcpHttp(
+      new Request("http://x/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "text/event-stream" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 22,
+          method: "tools/call",
+          params: { name: "missing" },
+        }),
+      }),
+      [undefined as never],
+      INFO,
+    )
+    const reader = res.body?.getReader()
+    expect(reader).toBeDefined()
+    await expect(reader?.read()).rejects.toBeInstanceOf(Error)
   })
 
   test("with an allowlist, a foreign Origin is rejected 403 before the body is read", async () => {
@@ -663,6 +741,32 @@ describe("2026-07-28 modern transport (dual-era)", () => {
     )
     expect(res.status).toBe(400)
     expect(((await res.json()) as RpcErr).error.code).toBe(MCP_ERROR.HEADER_MISMATCH)
+  })
+
+  test("modern requests reject a missing protocol header and malformed name sentinel", async () => {
+    const missingVersion = await respondMcpHttp(
+      new Request("http://x/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json", "mcp-method": "tools/list" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 14,
+          method: "tools/list",
+          params: { _meta: { [VERSION_KEY]: MODERN } },
+        }),
+      }),
+      [ordersTool],
+      INFO,
+    )
+    expect(missingVersion.status).toBe(400)
+    expect(((await missingVersion.json()) as RpcErr).error.code).toBe(MCP_ERROR.HEADER_MISMATCH)
+
+    const malformedName = await modernPost(
+      { id: 15, method: "tools/call", params: { name: "list_orders" } },
+      { "mcp-method": "tools/call", "mcp-name": "=?base64?not-valid?=" },
+    )
+    expect(malformedName.status).toBe(400)
+    expect(((await malformedName.json()) as RpcErr).error.code).toBe(MCP_ERROR.HEADER_MISMATCH)
   })
 
   test("a modern unknown method is 404 + -32601", async () => {
