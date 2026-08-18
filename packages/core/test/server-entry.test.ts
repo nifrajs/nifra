@@ -15,6 +15,19 @@ describe("@nifrajs/core/server", () => {
     expect(await response.json()).toEqual({ ok: true })
   })
 
+  test("the root exports every runtime binding the lean entry exports", async () => {
+    // The root lists its re-exports explicitly, one hop from each defining module, instead of
+    // `export * from "./server.ts"` - so the two surfaces can drift. They must not: the root is the
+    // documented superset of the lean entry (plus VERSION), nothing more, nothing less.
+    const root: Record<string, unknown> = await import("@nifrajs/core")
+    const entry: Record<string, unknown> = await import("@nifrajs/core/server")
+
+    const rootKeys = Object.keys(root).sort()
+    const entryKeys = Object.keys(entry).sort()
+    expect(rootKeys).toEqual([...new Set([...entryKeys, "VERSION"])].sort())
+    for (const key of entryKeys) expect(root[key]).toBe(entry[key])
+  })
+
   test("does not expose opt-in runtime systems", async () => {
     const root: Record<string, unknown> = await import("@nifrajs/core")
     const entry: Record<string, unknown> = await import("@nifrajs/core/server")

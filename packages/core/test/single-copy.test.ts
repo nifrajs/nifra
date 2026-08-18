@@ -220,6 +220,168 @@ test("the plugin collapses two copies into one module instance at RUNTIME", asyn
   }
 })
 
+test("a deep subpath import of a scope-declared package pins to the app's copy in a BUNDLE", async () => {
+  // Nested install, no symlink: the consumer package carries its own physical copy in its own
+  // node_modules, so the redirect planner (which only sees linked-out repos) finds nothing and the
+  // `onResolve` pin is the only defense. The root specifier and the `/sub` subpath must both pin,
+  // or a deep import quietly bundles the second copy and module state splits.
+  const ground = await realpath(await mkdtemp(join(tmpdir(), "nifra-single-copy-subpath-")))
+  try {
+    const app = ground
+    const ours = join(app, "node_modules", "@example", "state")
+    const consumer = join(app, "node_modules", "consumer")
+    const theirs = join(consumer, "node_modules", "@example", "state")
+    await mkdir(join(app, ".git"), { recursive: true })
+    for (const dir of [ours, theirs, join(app, "src")]) await mkdir(dir, { recursive: true })
+    await writeFile(
+      join(app, "package.json"),
+      JSON.stringify({ name: "app", nifra: { singleCopy: ["@example/*"] } }),
+    )
+    for (const dir of [ours, theirs]) {
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({
+          name: "@example/state",
+          version: "1.0.0",
+          exports: { ".": "./index.js", "./sub": "./sub.js" },
+        }),
+      )
+      await writeFile(
+        join(dir, "index.js"),
+        "export const seenBy = new Set();\nexport const mark = (who) => seenBy.add(who);\n",
+      )
+      await writeFile(
+        join(dir, "sub.js"),
+        'import { seenBy } from "./index.js";\nexport const seen = () => [...seenBy];\n',
+      )
+    }
+    await writeFile(
+      join(consumer, "package.json"),
+      JSON.stringify({ name: "consumer", version: "1.0.0", main: "index.js", type: "module" }),
+    )
+    await writeFile(
+      join(consumer, "index.js"),
+      'import { seen } from "@example/state/sub";\nexport const consumerSeen = seen;\n',
+    )
+    await writeFile(
+      join(app, "src", "main.ts"),
+      'import { mark } from "@example/state"\n' +
+        'import { consumerSeen } from "consumer"\n' +
+        'mark("app")\nconsole.log(JSON.stringify(consumerSeen()))\n',
+    )
+    const result = await Bun.build({
+      entrypoints: [join(app, "src", "main.ts")],
+      outdir: join(app, "out"),
+      target: "bun",
+      plugins: [singleCopyPlugin({ cwd: app })],
+    })
+    expect(result.success).toBe(true)
+    const probe = Bun.spawnSync({
+      cmd: ["bun", join(app, "out", "main.js")],
+      cwd: app,
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    expect(probe.stderr.toString()).toBe("")
+    // One Set across the root import and the consumer's deep import - the mark is visible.
+    expect(JSON.parse(probe.stdout.toString())).toEqual(["app"])
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("a bundled app's root import of METHODS survives single-copy enforcement, executed", async () => {
+  // The consumer topology: the app resolves @nifrajs/core through its own node_modules, a linked
+  // sibling repo carries a second physical copy at the same version, and the app bundles with
+  // `bun build` while `nifra.singleCopy` is on. The assertion is on the EXECUTED bundle - an import
+  // test cannot see a binding the bundler dropped, only running the output can.
+  const core = await realpath(join(import.meta.dir, ".."))
+  const meta = JSON.parse(await Bun.file(join(core, "package.json")).text()) as {
+    readonly version: string
+  }
+  const ground = await realpath(await mkdtemp(join(tmpdir(), "nifra-single-copy-bundle-")))
+  try {
+    const app = join(ground, "app")
+    const sibling = join(ground, "sibling")
+    const ui = join(sibling, "packages", "ui")
+    const theirs = join(sibling, "node_modules", "@nifrajs", "core")
+    await mkdir(join(app, ".git"), { recursive: true })
+    await mkdir(join(app, "node_modules", "@nifrajs"), { recursive: true })
+    await mkdir(join(app, "node_modules", "@example"), { recursive: true })
+    await mkdir(join(app, "src"), { recursive: true })
+    await mkdir(join(sibling, ".git"), { recursive: true })
+    await mkdir(join(theirs, "src"), { recursive: true })
+    await mkdir(ui, { recursive: true })
+    await writeFile(
+      join(app, "package.json"),
+      JSON.stringify({
+        name: "app",
+        nifra: { singleCopy: ["@nifrajs/*"] },
+        dependencies: {
+          "@nifrajs/core": meta.version,
+          "@example/ui": "link:../sibling/packages/ui",
+        },
+      }),
+    )
+    // The app's copy is the real checkout; the sibling's is a distinct physical copy at the same
+    // version whose files fail loudly if anything ever loads them instead of the app's.
+    await symlink(core, join(app, "node_modules", "@nifrajs", "core"))
+    await writeFile(join(theirs, "package.json"), await Bun.file(join(core, "package.json")).text())
+    for (const file of ["index.ts", "server.ts"]) {
+      await writeFile(
+        join(theirs, "src", file),
+        'throw new Error("foreign @nifrajs/core copy loaded")\n',
+      )
+    }
+    await writeFile(
+      join(ui, "package.json"),
+      JSON.stringify({
+        name: "@example/ui",
+        version: "1.0.0",
+        main: "index.js",
+        type: "module",
+        peerDependencies: { "@nifrajs/core": "*" },
+      }),
+    )
+    await writeFile(join(ui, "index.js"), 'export { METHODS as libMethods } from "@nifrajs/core"\n')
+    await symlink(ui, join(app, "node_modules", "@example", "ui"))
+    await writeFile(
+      join(app, "src", "main.ts"),
+      'import { METHODS } from "@nifrajs/core"\n' +
+        'import { libMethods } from "@example/ui"\n' +
+        "console.log(JSON.stringify({ methods: METHODS, shared: METHODS === libMethods }))\n",
+    )
+    const plugin = singleCopyPlugin({ cwd: app })
+    expect(plugin.plan.redirects.map((redirect) => redirect.package)).toEqual(["@nifrajs/core"])
+    const result = await Bun.build({
+      entrypoints: [join(app, "src", "main.ts")],
+      outdir: join(app, "out"),
+      target: "bun",
+      plugins: [plugin],
+    })
+    expect(result.success).toBe(true)
+    const probe = Bun.spawnSync({
+      cmd: ["bun", join(app, "out", "main.js")],
+      cwd: app,
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    expect(probe.stderr.toString()).toBe("")
+    const output = JSON.parse(probe.stdout.toString()) as {
+      readonly methods: readonly string[]
+      readonly shared: boolean
+    }
+    // The binding must exist in the executed output, hold the documented set, and be the SAME
+    // module instance for the app and the linked package.
+    expect(output.methods).toContain("GET")
+    expect(output.methods).toContain("OPTIONS")
+    expect(output.methods.length).toBeGreaterThanOrEqual(7)
+    expect(output.shared).toBe(true)
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
 test("the plugin builds even when the app has no duplicates to collapse", async () => {
   const ground = await mkdtemp(join(tmpdir(), "nifra-single-copy-clean-"))
   try {

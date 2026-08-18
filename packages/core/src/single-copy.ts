@@ -472,7 +472,9 @@ export function singleCopyPlugin(options: SingleCopyOptions = {}): SingleCopyPlu
         const scopes = declared
           .filter((entry) => entry.endsWith("/*"))
           .map((entry) => `${escapeRegExp(entry.slice(0, -1))}[^/]+`)
-        const alternatives = [...exact.map((name) => `${name}(?:/.*)?`), ...scopes]
+        // Subpaths pin too, for exact names and scope patterns alike: `@nifrajs/core/server` must
+        // resolve to the same copy as `@nifrajs/core`, or a deep import quietly splits the package.
+        const alternatives = [...exact, ...scopes].map((name) => `${name}(?:/.*)?`)
         if (alternatives.length > 0) {
           const filter = new RegExp(`^(?:${alternatives.join("|")})$`)
           build.onResolve({ filter }, (args) => {
