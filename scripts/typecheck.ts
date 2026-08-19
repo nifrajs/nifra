@@ -19,7 +19,9 @@ const ROOT = resolve(import.meta.dir, "..")
 
 /**
  * Every project `tsc --noEmit` runs against, in order: the root corpus first, then each DOM/JSX package's
- * own checker. Kept in sync with the on-disk package tsconfigs by {@link uncoveredTypecheckConfigs}.
+ * own checker, then standalone apps outside the root corpus (`apps/*`, which the root `include` does not
+ * cover). Package tsconfigs are kept in sync with disk by {@link uncoveredTypecheckConfigs}; app entries
+ * are asserted to exist by typecheck.test.ts.
  */
 export const TYPECHECK_PROJECTS: readonly string[] = [
   "tsconfig.json",
@@ -32,6 +34,7 @@ export const TYPECHECK_PROJECTS: readonly string[] = [
   "packages/web-vanilla/tsconfig.json",
   "packages/islets/tsconfig.json",
   "packages/island-trigger/tsconfig.json",
+  "apps/workbench/tsconfig.json",
 ]
 
 /**

@@ -72,7 +72,7 @@ async function reload() {
   const response = await call("session.reload")
   if (!response.ok) return fail(new Error(await response.text()))
   const result = await response.json()
-  addEvent({ type: "extension.reloaded", seq: "—", ...result })
+  addEvent({ type: "extension.reloaded", seq: "-", ...result })
   status.textContent = result.rolledBack ? "Reload rolled back" : "Ready"
   await refreshSurfaces()
 }
@@ -173,7 +173,7 @@ async function runWorkflow(name) {
   const response = await call("workflow.run", { name })
   if (!response.ok) return fail(new Error(await response.text()))
   const result = await response.json()
-  addEvent({ type: result.ok ? "workflow.completed" : "workflow.failed", seq: "—", name, ...result })
+  addEvent({ type: result.ok ? "workflow.completed" : "workflow.failed", seq: "-", name, ...result })
   status.textContent = result.ok ? `${name} complete` : `${name} failed`
   await refreshHistory()
 }
@@ -188,7 +188,7 @@ async function reloadUi() {
   if (!response.ok) return fail(new Error(await response.text()))
   const reloaded = await response.json()
   renderUiExtensions(reloaded.active ?? [], reloaded.revision)
-  addEvent({ type: "ui.reloaded", seq: "—", revision: reloaded.revision, rolledBack: reloaded.rolledBack })
+  addEvent({ type: "ui.reloaded", seq: "-", revision: reloaded.revision, rolledBack: reloaded.rolledBack })
   status.textContent = reloaded.rolledBack ? "UI graph rolled back" : "UI graph verified"
 }
 
@@ -202,7 +202,7 @@ async function previewUi() {
   if (!response.ok) return fail(new Error(await response.text()))
   const preview = await response.json()
   renderUiExtensions(preview.active ?? [], preview.revision)
-  addEvent({ type: "ui.preview", seq: "—", revision: preview.revision, rolledBack: preview.rolledBack })
+  addEvent({ type: "ui.preview", seq: "-", revision: preview.revision, rolledBack: preview.rolledBack })
   status.textContent = preview.rolledBack ? "UI preview rejected" : "UI preview ready"
 }
 
@@ -211,7 +211,7 @@ async function compact() {
   const response = await call("session.compact")
   if (!response.ok) return fail(new Error(await response.text()))
   const result = await response.json()
-  addEvent({ type: "memory.compacted", seq: "—", ...result })
+  addEvent({ type: "memory.compacted", seq: "-", ...result })
   await refreshHistory()
 }
 
@@ -220,7 +220,7 @@ async function checkpoint() {
   status.textContent = "Saving checkpoint…"
   const response = await call("session.checkpoint")
   if (!response.ok) return fail(new Error(await response.text()))
-  addEvent({ type: "session.checkpoint", seq: "—" })
+  addEvent({ type: "session.checkpoint", seq: "-" })
   status.textContent = "Checkpoint saved"
   await refreshHistory()
 }
@@ -232,7 +232,7 @@ async function fork() {
   const response = await call("session.fork", targetSessionId ? { targetSessionId } : undefined)
   if (!response.ok) return fail(new Error(await response.text()))
   const result = await response.json()
-  addEvent({ type: "session.forked", seq: "—", ...result })
+  addEvent({ type: "session.forked", seq: "-", ...result })
   session.textContent = `${session.textContent} · fork ${result.sessionId}`
   status.textContent = "Fork created"
   await refreshHistory()
@@ -248,7 +248,7 @@ async function showDiff() {
   const visible = output.length > 200_000 ? `${output.slice(0, 200_000)}\n…[Workbench display limit]` : output
   $("diff-output").textContent = visible || "No tracked changes"
   $("diff-status").textContent = `${result.ok ? "git diff completed" : "git diff failed"} · ${output.length} chars${result.truncated ? " · bounded" : ""}`
-  addEvent({ type: "project.diff", seq: "—", ok: result.ok, truncated: result.truncated === true })
+  addEvent({ type: "project.diff", seq: "-", ok: result.ok, truncated: result.truncated === true })
   status.textContent = "Ready"
 }
 
@@ -286,7 +286,7 @@ async function verify(name) {
   if (!response.ok) return fail(new Error(await response.text()))
   const result = await response.json()
   verification.textContent = `${name}: ${result.ok ? "passed" : "failed"}${result.status === null ? "" : ` · exit ${result.status}`}`
-  addEvent({ type: "verification.completed", seq: "—", name, ...result })
+  addEvent({ type: "verification.completed", seq: "-", name, ...result })
   status.textContent = "Ready"
 }
 
@@ -331,7 +331,7 @@ async function resolveApproval(approvalId, approved) {
     fail(new Error(await response.text()))
     return
   }
-  addEvent({ type: "approval.resolved", seq: "—", approvalId, approved })
+  addEvent({ type: "approval.resolved", seq: "-", approvalId, approved })
   await refreshApprovals()
 }
 

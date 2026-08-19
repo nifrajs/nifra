@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Resolve the workspace dependency to source so a coding-agent API change that breaks the
+    // Workbench server surfaces here, not only at runtime. Kept minimal: server.ts imports only
+    // this one package. app.js is browser JS and is not part of the TS program.
+    "paths": {
+      "@nifrajs/coding-agent": ["../../packages/coding-agent/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*"]
+}
