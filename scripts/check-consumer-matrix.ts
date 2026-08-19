@@ -29,6 +29,18 @@ const ROOT = resolve(import.meta.dir, "..")
 const PACKAGES = join(ROOT, "packages")
 const BUN_STORE = join(ROOT, "node_modules", ".bun")
 const TSC = join(ROOT, "node_modules", "typescript", "bin", "tsc")
+const AGENT_PRODUCT_PACKAGES = [
+  "@nifrajs/agent-protocol",
+  "@nifrajs/pi",
+  "@nifrajs/coding-agent",
+  "@nifrajs/workbench",
+] as const
+const BARE_FRAMEWORK_TARGETS = new Set([
+  "@nifrajs/core",
+  "@nifrajs/client",
+  "@nifrajs/web",
+  "@nifrajs/schema",
+])
 
 interface Manifest {
   name: string
@@ -52,6 +64,36 @@ interface Target {
 }
 
 const TARGETS: readonly Target[] = [
+  {
+    name: "@nifrajs/agent-protocol",
+    entries: ["@nifrajs/agent-protocol"],
+    tsconfig: { lib: ["ES2022", "DOM", "DOM.Iterable"] },
+  },
+  {
+    name: "@nifrajs/pi",
+    entries: ["@nifrajs/pi"],
+    consumerDependencies: {
+      "@types/bun": "^1.3.0",
+      "@types/node": "^25.0.0",
+      "undici-types": "^7.0.0",
+    },
+    tsconfig: { lib: ["ES2022", "DOM", "DOM.Iterable"], types: ["bun", "node"] },
+  },
+  {
+    name: "@nifrajs/coding-agent",
+    entries: [
+      "@nifrajs/coding-agent",
+      "@nifrajs/coding-agent/extensions",
+      "@nifrajs/coding-agent/verification",
+      "@nifrajs/coding-agent/rpc",
+    ],
+    consumerDependencies: {
+      "@types/bun": "^1.3.0",
+      "@types/node": "^25.0.0",
+      "undici-types": "^7.0.0",
+    },
+    tsconfig: { lib: ["ES2022", "DOM", "DOM.Iterable"], types: ["bun", "node"] },
+  },
   { name: "@nifrajs/core", entries: ["@nifrajs/core", "@nifrajs/core/server"] },
   { name: "@nifrajs/client", entries: ["@nifrajs/client"] },
   { name: "@nifrajs/web", entries: ["@nifrajs/web", "@nifrajs/web/client"] },
@@ -547,6 +589,18 @@ try {
       }
 
       const installedTarget = packageInstallPath(consumer, target.name)
+      if (BARE_FRAMEWORK_TARGETS.has(target.name)) {
+        const unexpected = AGENT_PRODUCT_PACKAGES.filter((name) =>
+          existsSync(packageInstallPath(consumer, name)),
+        )
+        if (unexpected.length > 0) {
+          failures += 1
+          console.error(
+            `✗ ${target.name}: bare consumer unexpectedly includes ${unexpected.join(", ")}`,
+          )
+          continue
+        }
+      }
       const declaredInternal = Object.keys(packedPkg.dependencies ?? {}).filter((name) =>
         packageByName.has(name),
       )

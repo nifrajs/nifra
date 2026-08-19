@@ -1,0 +1,18 @@
+[package]
+name = "nifra-workbench"
+version = "3.1.0"
+description = "Lightweight native shell for Nifra Workbench"
+authors = ["Nifra maintainers"]
+license = "MIT"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow = "1"
+tauri = { version = "2", features = [] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

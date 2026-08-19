@@ -12,6 +12,7 @@
  * nowhere. With the variable unset the marker scan is skipped and the structural checks still run.
  */
 
+import { findAgentBoundaryFailures } from "./check-agent-boundary.ts"
 import { publishedPackages } from "./public-package-manifest.ts"
 
 const failures: string[] = []
@@ -65,6 +66,8 @@ for (const file of [
     failures.push(`${file}: edge seam imports a runtime-specific builtin`)
   }
 }
+
+for (const failure of await findAgentBoundaryFailures()) failures.push(failure)
 
 if (failures.length > 0) {
   for (const failure of failures) console.error(`✗ ${failure}`)

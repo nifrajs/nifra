@@ -128,7 +128,7 @@ Measured, published, reproducible ([methodology + every row, including the ones 
 
 Run it yourself: `bun run bench:http` · `bun run bench:ssr`
 
-## Batteries (46 packages, all typed, all optional)
+## Batteries (49 packages, all typed, all optional)
 
 | | |
 |---|---|

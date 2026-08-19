@@ -37,6 +37,13 @@
         "zod": "^4.4.3",
       },
     },
+    "apps/workbench": {
+      "name": "@nifrajs/workbench",
+      "version": "3.1.0",
+      "dependencies": {
+        "@nifrajs/coding-agent": "workspace:*",
+      },
+    },
     "bench": {
       "name": "@nifrajs/bench",
       "version": "3.1.0",
@@ -123,6 +130,10 @@
       "dependencies": {
         "@nifrajs/core": "workspace:*",
       },
+    },
+    "packages/agent-protocol": {
+      "name": "@nifrajs/agent-protocol",
+      "version": "3.1.0",
     },
     "packages/agent-telemetry": {
       "name": "@nifrajs/agent-telemetry",
@@ -212,6 +223,17 @@
       },
       "peerDependencies": {
         "@nifrajs/core": "workspace:^",
+      },
+    },
+    "packages/coding-agent": {
+      "name": "@nifrajs/coding-agent",
+      "version": "3.1.0",
+      "bin": {
+        "nifra-agent": "./dist/cli.js",
+      },
+      "dependencies": {
+        "@nifrajs/agent-protocol": "workspace:*",
+        "@nifrajs/pi": "workspace:*",
       },
     },
     "packages/content": {
@@ -404,6 +426,13 @@
       },
       "peerDependencies": {
         "@nifrajs/core": "workspace:^",
+      },
+    },
+    "packages/pi": {
+      "name": "@nifrajs/pi",
+      "version": "3.1.0",
+      "dependencies": {
+        "@nifrajs/agent-protocol": "workspace:*",
       },
     },
     "packages/prompt": {
@@ -999,6 +1028,8 @@
 
     "@nifrajs/agent": ["@nifrajs/agent@workspace:packages/agent"],
 
+    "@nifrajs/agent-protocol": ["@nifrajs/agent-protocol@workspace:packages/agent-protocol"],
+
     "@nifrajs/agent-telemetry": ["@nifrajs/agent-telemetry@workspace:packages/agent-telemetry"],
 
     "@nifrajs/auth": ["@nifrajs/auth@workspace:packages/auth"],
@@ -1014,6 +1045,8 @@
     "@nifrajs/cli": ["@nifrajs/cli@workspace:packages/cli"],
 
     "@nifrajs/client": ["@nifrajs/client@workspace:packages/client"],
+
+    "@nifrajs/coding-agent": ["@nifrajs/coding-agent@workspace:packages/coding-agent"],
 
     "@nifrajs/content": ["@nifrajs/content@workspace:packages/content"],
 
@@ -1055,6 +1088,8 @@
 
     "@nifrajs/otel": ["@nifrajs/otel@workspace:packages/otel"],
 
+    "@nifrajs/pi": ["@nifrajs/pi@workspace:packages/pi"],
+
     "@nifrajs/prompt": ["@nifrajs/prompt@workspace:packages/prompt"],
 
     "@nifrajs/proxy": ["@nifrajs/proxy@workspace:packages/proxy"],
@@ -1090,6 +1125,8 @@
     "@nifrajs/web-vanilla": ["@nifrajs/web-vanilla@workspace:packages/web-vanilla"],
 
     "@nifrajs/web-vue": ["@nifrajs/web-vue@workspace:packages/web-vue"],
+
+    "@nifrajs/workbench": ["@nifrajs/workbench@workspace:apps/workbench"],
 
     "@nifrajs/workers": ["@nifrajs/workers@workspace:packages/workers"],
 

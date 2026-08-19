@@ -62,6 +62,51 @@ Every public export of every package and documented subpath - name, kind, signat
 - **createAgentEvidenceStream** _(function)_ - `createAgentEvidenceStream: (options?: AgentEvidenceStreamOptions) => AgentEvidenceStream`
   Create an async iterable that yields the exact evidence values received by `step`.
 
+## @nifrajs/agent-protocol
+
+- **AGENT_PROTOCOL_VERSION** _(const)_ - `AGENT_PROTOCOL_VERSION: 1`
+  Backend-neutral protocol for local coding-agent hosts.
+- **AgentApprovalRequiredEvent** _(interface)_ - `interface AgentApprovalRequiredEvent`
+- **AgentApprovalResolvedEvent** _(interface)_ - `interface AgentApprovalResolvedEvent`
+- **AgentAssistantDeltaEvent** _(interface)_ - `interface AgentAssistantDeltaEvent`
+- **AgentAssistantMessageEvent** _(interface)_ - `interface AgentAssistantMessageEvent`
+- **AgentBackend** _(interface)_ - `interface AgentBackend`
+- **AgentBackendInfo** _(interface)_ - `interface AgentBackendInfo`
+- **AgentError** _(interface)_ - `interface AgentError`
+- **AgentEvent** _(type)_ - `type AgentEvent`
+- **AgentEventPayload** _(type)_ - `type AgentEventPayload`
+  Event payload before the transport adds protocol version, session id, sequence, and timestamp.
+- **AgentEventSink** _(interface)_ - `interface AgentEventSink`
+- **AgentEventStream** _(interface)_ - `interface AgentEventStream`
+- **AgentEventType** _(type)_ - `type AgentEventType`
+- **AgentExtensionReloadedEvent** _(interface)_ - `interface AgentExtensionReloadedEvent`
+- **AgentMemoryCompactedEvent** _(interface)_ - `interface AgentMemoryCompactedEvent`
+- **AgentRepairRequiredEvent** _(interface)_ - `interface AgentRepairRequiredEvent`
+- **AgentRepairTask** _(interface)_ - `interface AgentRepairTask`
+- **AgentSessionCheckpoint** _(interface)_ - `interface AgentSessionCheckpoint`
+- **AgentSessionCompletedEvent** _(interface)_ - `interface AgentSessionCompletedEvent`
+- **AgentSessionEventBase** _(interface)_ - `interface AgentSessionEventBase`
+- **AgentSessionFailedEvent** _(interface)_ - `interface AgentSessionFailedEvent`
+- **AgentSessionSnapshot** _(interface)_ - `interface AgentSessionSnapshot`
+- **AgentSessionStartedEvent** _(interface)_ - `interface AgentSessionStartedEvent`
+- **AgentSessionStatus** _(type)_ - `type AgentSessionStatus = "idle" | "running" | "waiting" | "completed" | "failed" | "stopped"`
+- **AgentSessionStoppedEvent** _(interface)_ - `interface AgentSessionStoppedEvent`
+- **AgentSessionUpdatedEvent** _(interface)_ - `interface AgentSessionUpdatedEvent`
+- **AgentToolCompletedEvent** _(interface)_ - `interface AgentToolCompletedEvent`
+- **AgentToolDeltaEvent** _(interface)_ - `interface AgentToolDeltaEvent`
+- **AgentToolStartedEvent** _(interface)_ - `interface AgentToolStartedEvent`
+- **AgentTurnStartedEvent** _(interface)_ - `interface AgentTurnStartedEvent`
+- **AgentVerificationCompletedEvent** _(interface)_ - `interface AgentVerificationCompletedEvent`
+- **CreateSessionInput** _(interface)_ - `interface CreateSessionInput`
+- **ForkSessionInput** _(interface)_ - `interface ForkSessionInput`
+- **ForkSessionResult** _(interface)_ - `interface ForkSessionResult`
+- **ReloadResult** _(interface)_ - `interface ReloadResult`
+- **SendMessageInput** _(interface)_ - `interface SendMessageInput`
+- **agentError** _(function)_ - `agentError: (code: string, message: string, details?: unknown) => AgentError`
+- **createAgentEventStream** _(function)_ - `createAgentEventStream: (maxQueueSize?: number) => AgentEventStream`
+  Small bounded event stream for RPC clients and UIs. The authoritative event history belongs to the backend/session store; this live view may drop old transient events if a consumer falls behind.
+- **isAgentEvent** _(function)_ - `isAgentEvent: (value: unknown) => value is AgentEvent`
+
 ## @nifrajs/agent-telemetry
 
 - **AgentTelemetryOptions** _(interface)_ - `interface AgentTelemetryOptions`
@@ -329,6 +374,178 @@ Every public export of every package and documented subpath - name, kind, signat
   The reserved key a static path segment collides with, or undefined. Params (`:id`) and wildcards (`*rest`) never collide - they are not spelled as property accesses.
 - **testClient** _(const)_ - `testClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: InProcessClientOptions) => InProcessClient<App>`
   The in-process test client - the Fastify-`inject` / supertest equivalent for nifra. Drives the app's own `fetch` directly: no server, no port, no network, the full real lifecycle (validation, middleware, contracts, auth), and end-to-end types from `App`. Calls never throw - branch on `res.ok`. An a…
+
+## @nifrajs/coding-agent
+
+### `@nifrajs/coding-agent`
+
+- **AGENT_CAPABILITY_MANIFEST_VERSION** _(const)_ - `AGENT_CAPABILITY_MANIFEST_VERSION: 1`
+  Small, backend-neutral capability manifest.
+- **AGENT_PRESETS** _(const)_ - `AGENT_PRESETS: Readonly<Record<AgentPresetName, AgentPreset>>`
+- **AgentCapability** _(type)_ - `type AgentCapability = | "filesystem.read" | "filesystem.write" | "process.exec" | "network.request" | "credentials.read"`
+- **AgentCapabilityManifest** _(interface)_ - `interface AgentCapabilityManifest`
+- **AgentPlan** _(interface)_ - `interface AgentPlan`
+- **AgentPreset** _(interface)_ - `interface AgentPreset`
+- **AgentPresetName** _(type)_ - `type AgentPresetName = | "planner" | "implementer" | "test-fixer" | "reviewer" | "security-reviewer" | "final-verifier"`
+- **ApprovalDecision** _(interface)_ - `interface ApprovalDecision`
+- **ApprovalManager** _(class)_ - `class ApprovalManager`
+  Small approval broker shared by RPC, Workbench, and workflow extensions.
+- **ApprovalManagerOptions** _(interface)_ - `interface ApprovalManagerOptions`
+- **ApprovalRequest** _(interface)_ - `interface ApprovalRequest`
+- **BoundedSubagentRunner** _(class)_ - `class BoundedSubagentRunner`
+  Explicitly bounded child execution. Recursive fan-out is impossible without a caller budget.
+- **BoundedText** _(interface)_ - `interface BoundedText`
+- **CodingAgentExtension** _(interface)_ - `interface CodingAgentExtension`
+- **CodingAgentHost** _(class)_ - `class CodingAgentHost`
+  Small lifecycle host shared by the CLI, RPC server, and future Workbench.
+- **CodingAgentHostOptions** _(interface)_ - `interface CodingAgentHostOptions`
+- **CodingAgentRpcServer** _(class)_ - `class CodingAgentRpcServer`
+  Minimal loopback RPC surface for the CLI, Workbench, CI clients, and a future mobile companion. Turn output is SSE so clients do not need a WebSocket dependency; every event is still a versioned protocol event from the backend.
+- **CodingAgentRpcServerHandle** _(interface)_ - `interface CodingAgentRpcServerHandle`
+- **CodingAgentRpcServerOptions** _(interface)_ - `interface CodingAgentRpcServerOptions`
+- **CompactionReport** _(interface)_ - `interface CompactionReport`
+- **ContextRecord** _(interface)_ - `interface ContextRecord`
+- **ContextWindow** _(class)_ - `class ContextWindow`
+  In-memory prompt window with automatic, deterministic compaction and a hard size ceiling.
+- **ContextWindowOptions** _(interface)_ - `interface ContextWindowOptions`
+- **ExtensionCommand** _(type)_ - `type ExtensionCommand = ( args: string, context: ExtensionContext, ) => unknown | PromiseLike<unknown>`
+- **ExtensionContext** _(interface)_ - `interface ExtensionContext`
+- **ExtensionEventHandler** _(type)_ - `type ExtensionEventHandler = ( payload: unknown, context: ExtensionContext, ) => unknown | PromiseLike<unknown>`
+- **ExtensionHost** _(class)_ - `class ExtensionHost`
+  Transactional TypeScript extension loader for the Nifra-native backend.
+- **ExtensionHostOptions** _(interface)_ - `interface ExtensionHostOptions`
+- **ExtensionProvider** _(interface)_ - `interface ExtensionProvider`
+- **ExtensionReloadResult** _(interface)_ - `interface ExtensionReloadResult`
+- **ExtensionSubagent** _(interface)_ - `interface ExtensionSubagent`
+- **ExtensionTool** _(interface)_ - `interface ExtensionTool`
+- **FileSessionStore** _(class)_ - `class FileSessionStore`
+  Small append-only JSONL store. It stores redacted, bounded event evidence rather than raw model transcripts, so session recovery is useful without turning the agent into a memory sink.
+- **FileSessionStoreOptions** _(interface)_ - `interface FileSessionStoreOptions`
+- **HealingEvent** _(type)_ - `type HealingEvent`
+- **HealingOptions** _(interface)_ - `interface HealingOptions`
+- **HealingResult** _(interface)_ - `interface HealingResult`
+- **IsolatedExtensionSnapshot** _(interface)_ - `interface IsolatedExtensionSnapshot`
+- **IsolatedExtensionTool** _(interface)_ - `interface IsolatedExtensionTool`
+- **IsolatedExtensionWorker** _(class)_ - `class IsolatedExtensionWorker`
+  Optional process-backed extension runner. A worker crash rejects callers instead of taking down the host. It is intentionally not advertised as a hostile-code sandbox: use an OS sandbox and a capability decision before loading code you do not trust.
+- **IsolatedExtensionWorkerOptions** _(interface)_ - `interface IsolatedExtensionWorkerOptions`
+- **NIFRA_AGENT_INSTRUCTIONS** _(const)_ - `NIFRA_AGENT_INSTRUCTIONS: string`
+  Short, provider-neutral instructions injected into Pi only when the optional agent is used.
+- **NativeApprovalPort** _(interface)_ - `interface NativeApprovalPort`
+- **NativeMessage** _(interface)_ - `interface NativeMessage`
+- **NativeModelChunk** _(type)_ - `type NativeModelChunk = | { readonly type: "text_delta"; readonly text: string } | { readonly type: "response"; readonly response: NativeModelResponse }`
+- **NativeModelPort** _(interface)_ - `interface NativeModelPort`
+- **NativeModelRequest** _(interface)_ - `interface NativeModelRequest`
+- **NativeModelResponse** _(type)_ - `type NativeModelResponse = | { readonly type: "text"; readonly text: string } | { readonly type: "tool"; readonly name: string; readonly input: unknown }`
+- **NativeTool** _(interface)_ - `interface NativeTool`
+- **NifraAgentTool** _(interface)_ - `interface NifraAgentTool`
+- **NifraBackend** _(class)_ - `class NifraBackend`
+  Small provider port for a future Nifra-native backend.
+- **NifraBackendOptions** _(interface)_ - `interface NifraBackendOptions`
+- **NifraContextOptions** _(interface)_ - `interface NifraContextOptions`
+- **NifraContextResult** _(interface)_ - `interface NifraContextResult`
+- **PiBackend** _(class)_ - `class PiBackend`
+  Spawn Pi in its documented JSONL RPC mode and translate its events into the Nifra protocol.
+- **PiBackendOptions** _(interface)_ - `interface PiBackendOptions`
+- **PlanEvent** _(interface)_ - `interface PlanEvent`
+- **PlanPhase** _(interface)_ - `interface PlanPhase`
+- **PlanResult** _(interface)_ - `interface PlanResult`
+- **PlanRunner** _(class)_ - `class PlanRunner`
+  First-party plan mode built on the bounded workflow primitives; no model or UI dependency.
+- **PlanRunnerOptions** _(interface)_ - `interface PlanRunnerOptions`
+- **ProjectDiffOptions** _(interface)_ - `interface ProjectDiffOptions`
+- **ProjectDiffResult** _(interface)_ - `interface ProjectDiffResult`
+- **RepairProposal** _(interface)_ - `interface RepairProposal<State = unknown>`
+- **ReplayBackend** _(class)_ - `class ReplayBackend`
+  Deterministic protocol backend for demos, CI, and UI regression tests.
+- **ReplayBackendOptions** _(interface)_ - `interface ReplayBackendOptions`
+- **SelfHealingController** _(class)_ - `class SelfHealingController`
+  Staged repair loop for extensions, tools, and workflows. It never activates an unverified change.
+- **SessionLogEntry** _(interface)_ - `interface SessionLogEntry`
+- **SessionStore** _(interface)_ - `interface SessionStore`
+- **SubagentExecutor** _(interface)_ - `interface SubagentExecutor`
+- **SubagentResult** _(interface)_ - `interface SubagentResult`
+- **SubagentRunnerOptions** _(interface)_ - `interface SubagentRunnerOptions`
+- **SubagentSpec** _(interface)_ - `interface SubagentSpec`
+- **UiExtensionHost** _(class)_ - `class UiExtensionHost`
+  Data-only UI extension registry. The stable Workbench shell owns rendering and approval UX.
+- **UiExtensionHostOptions** _(interface)_ - `interface UiExtensionHostOptions`
+- **UiExtensionManifest** _(interface)_ - `interface UiExtensionManifest`
+- **UiExtensionSlot** _(type)_ - `type UiExtensionSlot = "sidebar" | "main" | "timeline" | "diff" | "workflow" | "status"`
+- **UiReloadResult** _(interface)_ - `interface UiReloadResult`
+- **UiStatusWidget** _(interface)_ - `interface UiStatusWidget`
+- **UiThemeDescriptor** _(interface)_ - `interface UiThemeDescriptor`
+- **VerificationOptions** _(interface)_ - `interface VerificationOptions`
+- **VerificationRepairTask** _(interface)_ - `interface VerificationRepairTask`
+- **VerificationResult** _(interface)_ - `interface VerificationResult`
+- **WorkflowContext** _(interface)_ - `interface WorkflowContext`
+- **WorkflowEvent** _(type)_ - `type WorkflowEvent`
+- **WorkflowResult** _(interface)_ - `interface WorkflowResult`
+- **WorkflowRunner** _(class)_ - `class WorkflowRunner`
+  Bounded orchestration primitives. The kernel knows no provider, UI, or framework package.
+- **WorkflowRunnerOptions** _(interface)_ - `interface WorkflowRunnerOptions`
+- **WorkflowStep** _(type)_ - `type WorkflowStep`
+- **approvalRequestFromEvent** _(function)_ - `approvalRequestFromEvent: (event: AgentApprovalRequiredEvent) => ApprovalRequest`
+- **approvalResolvedEvent** _(function)_ - `approvalResolvedEvent: (sessionId: string, seq: number, decision: ApprovalDecision, turnId?: string) => AgentApprovalResolvedEvent`
+- **createCapabilityManifest** _(function)_ - `createCapabilityManifest: (requested: readonly AgentCapability[], trusted?: readonly AgentCapability[], reason?: string) => AgentCapabilityManifest`
+- **createNifraTools** _(function)_ - `createNifraTools: (options: NifraContextOptions & Pick<VerificationOptions, "command">) => readonly NifraAgentTool[]`
+  Optional first-party tool descriptors. The Pi adapter can register these through an extension.
+- **createPresetSpec** _(function)_ - `createPresetSpec: (name: AgentPresetName, prompt: string, id?: string) => SubagentSpec`
+- **createVerificationRepairTask** _(function)_ - `createVerificationRepairTask: (result: VerificationResult, cwd: string) => VerificationRepairTask | undefined`
+  Turn a failed gate into a bounded, auditable repair task for the agent loop.
+- **deniedCapabilities** _(function)_ - `deniedCapabilities: (manifest: AgentCapabilityManifest) => readonly AgentCapability[]`
+- **discoverExtensions** _(function)_ - `discoverExtensions: (cwd: string) => Promise<readonly string[]>`
+  Discover only project-local extension files; no home-directory or dependency scan is implicit.
+- **getAgentPreset** _(function)_ - `getAgentPreset: (name: AgentPresetName) => AgentPreset`
+- **parseCapabilityManifest** _(function)_ - `parseCapabilityManifest: (value: unknown) => AgentCapabilityManifest`
+- **readBoundedText** _(function)_ - `readBoundedText: (stream: ReadableStream<Uint8Array> | null | undefined | number, maxBytes: number) => Promise<BoundedText>`
+- **readProjectDiff** _(function)_ - `readProjectDiff: (options: ProjectDiffOptions) => Promise<ProjectDiffResult>`
+  Read a bounded, non-interactive git diff for review surfaces. No user-supplied git arguments are accepted.
+- **readReplayEvents** _(function)_ - `readReplayEvents: (path: string) => Promise<readonly AgentEvent[]>`
+- **runNifraContext** _(function)_ - `runNifraContext: (options: NifraContextOptions) => Promise<NifraContextResult>`
+  Project discovery kept outside the framework runtime; it is only spawned when an agent asks for it.
+- **runNifraVerification** _(function)_ - `runNifraVerification: (name: "check" | "assure" | "test", options: VerificationOptions) => Promise<VerificationResult>`
+  Run an existing Nifra gate without importing the large framework CLI into the agent runtime.
+- **validateExtensionModule** _(function)_ - `validateExtensionModule: (path: string) => Promise<void>`
+  Parse an extension without activating it. This is a fast syntax gate before staging.
+
+### `@nifrajs/coding-agent/extensions`
+
+- **CodingAgentExtension** _(interface)_ - `interface CodingAgentExtension`
+- **ExtensionCommand** _(type)_ - `type ExtensionCommand = ( args: string, context: ExtensionContext, ) => unknown | PromiseLike<unknown>`
+- **ExtensionContext** _(interface)_ - `interface ExtensionContext`
+- **ExtensionEventHandler** _(type)_ - `type ExtensionEventHandler = ( payload: unknown, context: ExtensionContext, ) => unknown | PromiseLike<unknown>`
+- **ExtensionHost** _(class)_ - `class ExtensionHost`
+  Transactional TypeScript extension loader for the Nifra-native backend.
+- **ExtensionHostOptions** _(interface)_ - `interface ExtensionHostOptions`
+- **ExtensionProvider** _(interface)_ - `interface ExtensionProvider`
+- **ExtensionReloadResult** _(interface)_ - `interface ExtensionReloadResult`
+- **ExtensionSubagent** _(interface)_ - `interface ExtensionSubagent`
+- **ExtensionTool** _(interface)_ - `interface ExtensionTool`
+- **ExtensionWorkflow** _(type)_ - `type ExtensionWorkflow = ( context: ExtensionContext, ) => WorkflowStep | PromiseLike<WorkflowStep>`
+  A workflow factory keeps orchestration lazy and lets every extension fully customize its steps.
+- **WorkflowRunOptions** _(interface)_ - `interface WorkflowRunOptions`
+- **discoverExtensions** _(function)_ - `discoverExtensions: (cwd: string) => Promise<readonly string[]>`
+  Discover only project-local extension files; no home-directory or dependency scan is implicit.
+- **validateExtensionModule** _(function)_ - `validateExtensionModule: (path: string) => Promise<void>`
+  Parse an extension without activating it. This is a fast syntax gate before staging.
+
+### `@nifrajs/coding-agent/rpc`
+
+- **CodingAgentRpcServer** _(class)_ - `class CodingAgentRpcServer`
+  Minimal loopback RPC surface for the CLI, Workbench, CI clients, and a future mobile companion. Turn output is SSE so clients do not need a WebSocket dependency; every event is still a versioned protocol event from the backend.
+- **CodingAgentRpcServerHandle** _(interface)_ - `interface CodingAgentRpcServerHandle`
+- **CodingAgentRpcServerOptions** _(interface)_ - `interface CodingAgentRpcServerOptions`
+
+### `@nifrajs/coding-agent/verification`
+
+- **VerificationOptions** _(interface)_ - `interface VerificationOptions`
+- **VerificationRepairTask** _(interface)_ - `interface VerificationRepairTask`
+- **VerificationResult** _(interface)_ - `interface VerificationResult`
+- **createVerificationRepairTask** _(function)_ - `createVerificationRepairTask: (result: VerificationResult, cwd: string) => VerificationRepairTask | undefined`
+  Turn a failed gate into a bounded, auditable repair task for the agent loop.
+- **runNifraVerification** _(function)_ - `runNifraVerification: (name: "check" | "assure" | "test", options: VerificationOptions) => Promise<VerificationResult>`
+  Run an existing Nifra gate without importing the large framework CLI into the agent runtime.
 
 ## @nifrajs/content
 
@@ -2617,6 +2834,12 @@ _No named exports (side-effect entrypoint)._
   Create a standalone registry to register custom app metrics on, shared into `metrics({ registry })`.
 - **metrics** _(function)_ - `metrics: (options?: MetricsOptions) => IdentityPlugin`
   Enable RED metrics + a `/metrics` Prometheus endpoint. Records `nifra_http_requests_total`, `nifra_http_request_duration_seconds`, and `nifra_http_requests_in_flight`, labeled by method, matched route template, and status. Apply once (named-plugin dedupe).
+
+## @nifrajs/pi
+
+- **PiBackend** _(class)_ - `class PiBackend`
+  Spawn Pi in its documented JSONL RPC mode and translate its events into the Nifra protocol.
+- **PiBackendOptions** _(interface)_ - `interface PiBackendOptions`
 
 ## @nifrajs/prompt
 

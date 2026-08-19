@@ -7701,6 +7701,28 @@ security boundary. Without OS-level sandboxing it contains crashes and accidents
 For the compact agent contract, see [`LLM.md`](./LLM.md). The full machine-readable corpus is
 [`../../llms-full.txt`](../../llms-full.txt).
 
+## @nifrajs/agent-protocol
+
+Small, backend-neutral contracts for local coding-agent sessions.
+
+The package contains versioned session snapshots, streamed assistant/tool/approval
+events, bounded live event streams, and backend interfaces. It has no runtime
+dependencies and does not import Nifra framework packages, model SDKs, or UI code.
+
+```ts
+import { createAgentEventStream } from "@nifrajs/agent-protocol"
+
+const events = createAgentEventStream(256)
+events.push(/* a versioned AgentEvent */)
+```
+
+Use `@nifrajs/pi` for the Pi backend or implement `AgentBackend` for another
+runtime. The protocol is intentionally small so CLI, desktop, mobile, and CI
+clients can share it without pulling in the Nifra application framework.
+
+For AI agents, see [`LLM.md`](./LLM.md) and the full corpus
+[`../../llms-full.txt`](../../llms-full.txt).
+
 ## @nifrajs/agent-telemetry
 
 Child-span telemetry for AI tool calls made through Nifra tool and MCP endpoints.
@@ -8174,6 +8196,44 @@ one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
 done-gate, or `nifra mcp` to give the agent live project tools.
+
+## @nifrajs/coding-agent
+
+Standalone, extensible Nifra coding-agent host and CLI.
+
+The package provides `nifra-agent` in interactive, one-shot, JSON, and local
+loopback RPC modes. It adds sessions, checkpoints, bounded compaction,
+transactional TypeScript extensions, self-healing repair stages, workflows,
+bounded subagents, and Nifra verification descriptors without changing Nifra's
+framework runtime.
+
+Extensions can register bounded workflows that are listed and run through the
+authenticated RPC surface. Capability manifests, project workspace policies,
+optional isolated-worktree leases, and a pre-activation syntax gate keep those
+customizations explicit and replaceable.
+
+```sh
+bunx nifra-agent --backend pi
+bunx nifra-agent --backend pi --message "run the checks and explain failures"
+bunx nifra-agent --backend replay --replay ./session-events.jsonl --json
+```
+
+For embedding, use `CodingAgentHost` or `CodingAgentRpcServer`. The host keeps
+live event queues bounded, filters verification subprocess environments, and
+requires explicit local RPC authorization. Install this package only when an
+application wants the agent product.
+
+`IsolatedExtensionWorker` is an opt-in process-backed crash-containment seam for
+extensions. It is not a hostile-code sandbox; use OS-level isolation before
+loading code you do not trust.
+
+`NifraBackend` is a small provider port for a future native backend. It accepts
+an injected model implementation and bounded tools without importing a provider
+SDK. `ReplayBackend` and `readReplayEvents` provide deterministic protocol
+replays for CI and Workbench regression tests.
+
+For AI agents, see [`LLM.md`](./LLM.md) and the full corpus
+[`../../llms-full.txt`](../../llms-full.txt).
 
 ## @nifrajs/content
 
@@ -9382,6 +9442,43 @@ one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
 done-gate, or `nifra mcp` to give the agent live project tools.
 
+## @nifrajs/pi
+
+Lightweight Pi JSONL/RPC adapter for the Nifra agent protocol.
+
+It starts Pi in headless RPC mode, maps Pi lifecycle, assistant, tool,
+compaction, extension, and error events into `@nifrajs/agent-protocol`, and
+supports cancellation, reload, session identity, and bounded event buffering.
+
+Reload defaults to a process restart with the same Pi session ID. This is the
+reliable reload primitive in Pi's documented RPC protocol: the transcript stays
+in Pi's session store while the new process loads changed extensions. The tiny
+public-API bridge is still loaded for interactive Pi use. Set
+`reloadCommand: "prompt"` only for an RPC implementation that dispatches slash
+commands, or `reloadCommand: "rpc"` for one that provides a top-level reload
+command. Set `enableReloadBridge: false` when supplying a custom bridge.
+
+Set `enableNifraTools: true` to load the separately packaged Pi extension with
+`nifra_context`, `nifra_check`, `nifra_assure`, and `nifra_test` tools. The
+default is off so embedding Pi stays minimal.
+
+```ts
+import { PiBackend } from "@nifrajs/pi"
+
+const backend = new PiBackend()
+const session = await backend.createSession({ cwd: process.cwd() })
+for await (const event of backend.send({ sessionId: session.id, message: "inspect this project" })) {
+  console.log(event.type)
+}
+```
+
+Pi stays an optional dependency of the agent product. Nothing in this package is
+reachable from `@nifrajs/core`, `@nifrajs/client`, `@nifrajs/web`, or
+`@nifrajs/schema`.
+
+For AI agents, see [`LLM.md`](./LLM.md) and the full corpus
+[`../../llms-full.txt`](../../llms-full.txt).
+
 ## @nifrajs/prompt
 
 Provider-neutral, type-safe prompts with Standard Schema input and validated structured output.
@@ -10274,6 +10371,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 `AgentApprovalPort`, `AgentApprovalResult`, `AgentDefinition`, `AgentModelPort`, `AgentModelRequest`, `AgentModelResponse`, `AgentPendingContinuation`, `AgentPendingKind`, `AgentPorts`, `AgentRunResult`, `AgentStateStore`, `AgentStatus`, `AgentStepEvidence`, `AgentTelemetryPort`, `AgentToolContract`, `AgentToolDescriptor`, `AgentToolResult`, `AgentTranscript`, `AgentTurnBaseResult`, `AgentTurnError`, `AgentTurnInput`, `AgentTurnResult`, `AgentTurnState`, `createAgentState`, `createLocalProcessAdapter`, `ExecutionPolicy`, `ExecutionPolicyAdapter`, `LOCAL_PROCESS_LIMITATION`, `LocalProcessAdapter`, `LocalProcessAdapterOptions`, `LocalProcessPolicyError`, `LocalProcessRequest`, `LocalProcessResult`, `MemoryAgentStateStore`, `replayAgent`, `resumeAgent`, `runAgent`, `RunAgentOptions`, `turn`
 
+## @nifrajs/agent-protocol
+
+`AGENT_PROTOCOL_VERSION`, `AgentApprovalRequiredEvent`, `AgentApprovalResolvedEvent`, `AgentAssistantDeltaEvent`, `AgentAssistantMessageEvent`, `AgentBackend`, `AgentBackendInfo`, `agentError`, `AgentError`, `AgentEvent`, `AgentEventPayload`, `AgentEventSink`, `AgentEventStream`, `AgentEventType`, `AgentExtensionReloadedEvent`, `AgentMemoryCompactedEvent`, `AgentRepairRequiredEvent`, `AgentRepairTask`, `AgentSessionCheckpoint`, `AgentSessionCompletedEvent`, `AgentSessionEventBase`, `AgentSessionFailedEvent`, `AgentSessionSnapshot`, `AgentSessionStartedEvent`, `AgentSessionStatus`, `AgentSessionStoppedEvent`, `AgentSessionUpdatedEvent`, `AgentToolCompletedEvent`, `AgentToolDeltaEvent`, `AgentToolStartedEvent`, `AgentTurnStartedEvent`, `AgentVerificationCompletedEvent`, `createAgentEventStream`, `CreateSessionInput`, `ForkSessionInput`, `ForkSessionResult`, `isAgentEvent`, `ReloadResult`, `SendMessageInput`
+
 ## @nifrajs/agent-telemetry
 
 `agentTelemetry`, `AgentTelemetryOptions`, `consoleAgentExporter`
@@ -10297,6 +10398,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 ## @nifrajs/client
 
 `ActionArgs`, `ActionData`, `ApiError`, `ApiProxy`, `client`, `ClientOptions`, `ClientRetryOptions`, `FetchFn`, `inProcessClient`, `InProcessClient`, `InProcessClientOptions`, `Jsonify`, `LoaderArgs`, `LoaderData`, `RegistryOf`, `RESERVED_EXACT_KEYS`, `RESERVED_KEY_READOUT`, `RESERVED_VERB_KEYS`, `reservedKeyFor`, `ResponseContractViolation`, `Result`, `SubscribeOptions`, `Subscription`, `testClient`, `Treaty`, `TreatyFromRegistry`, `WsCallOptions`, `WsHandle`
+
+## @nifrajs/coding-agent
+
+`AGENT_CAPABILITY_MANIFEST_VERSION`, `AGENT_PRESETS`, `AgentCapability`, `AgentCapabilityManifest`, `AgentPlan`, `AgentPreset`, `AgentPresetName`, `ApprovalDecision`, `ApprovalManager`, `ApprovalManagerOptions`, `ApprovalRequest`, `approvalRequestFromEvent`, `approvalResolvedEvent`, `BoundedSubagentRunner`, `BoundedText`, `CodingAgentExtension`, `CodingAgentHost`, `CodingAgentHostOptions`, `CodingAgentRpcServer`, `CodingAgentRpcServerHandle`, `CodingAgentRpcServerOptions`, `CompactionReport`, `ContextRecord`, `ContextWindow`, `ContextWindowOptions`, `createCapabilityManifest`, `createNifraTools`, `createPresetSpec`, `createVerificationRepairTask`, `deniedCapabilities`, `discoverExtensions`, `ExtensionCommand`, `ExtensionContext`, `ExtensionEventHandler`, `ExtensionHost`, `ExtensionHostOptions`, `ExtensionProvider`, `ExtensionReloadResult`, `ExtensionSubagent`, `ExtensionTool`, `FileSessionStore`, `FileSessionStoreOptions`, `getAgentPreset`, `HealingEvent`, `HealingOptions`, `HealingResult`, `IsolatedExtensionSnapshot`, `IsolatedExtensionTool`, `IsolatedExtensionWorker`, `IsolatedExtensionWorkerOptions`, `NativeApprovalPort`, `NativeMessage`, `NativeModelChunk`, `NativeModelPort`, `NativeModelRequest`, `NativeModelResponse`, `NativeTool`, `NIFRA_AGENT_INSTRUCTIONS`, `NifraAgentTool`, `NifraBackend`, `NifraBackendOptions`, `NifraContextOptions`, `NifraContextResult`, `parseCapabilityManifest`, `PiBackend`, `PiBackendOptions`, `PlanEvent`, `PlanPhase`, `PlanResult`, `PlanRunner`, `PlanRunnerOptions`, `ProjectDiffOptions`, `ProjectDiffResult`, `readBoundedText`, `readProjectDiff`, `readReplayEvents`, `RepairProposal`, `ReplayBackend`, `ReplayBackendOptions`, `runNifraContext`, `runNifraVerification`, `SelfHealingController`, `SessionLogEntry`, `SessionStore`, `SubagentExecutor`, `SubagentResult`, `SubagentRunnerOptions`, `SubagentSpec`, `UiExtensionHost`, `UiExtensionHostOptions`, `UiExtensionManifest`, `UiExtensionSlot`, `UiReloadResult`, `UiStatusWidget`, `UiThemeDescriptor`, `validateExtensionModule`, `VerificationOptions`, `VerificationRepairTask`, `VerificationResult`, `WorkflowContext`, `WorkflowEvent`, `WorkflowResult`, `WorkflowRunner`, `WorkflowRunnerOptions`, `WorkflowStep`
 
 ## @nifrajs/content
 
@@ -10373,6 +10478,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 ## @nifrajs/otel
 
 `ActiveObservation`, `AttributeValue`, `causalitySpanLink`, `combineObservationAdapters`, `consoleSpanExporter`, `createObservationLifecycle`, `effectTracing`, `EffectTracingOptions`, `EffectTracingPlugin`, `EndObservation`, `formatTraceparent`, `generateSpanId`, `generateTraceId`, `NifraSpan`, `ObservationAdapter`, `ObservationClock`, `ObservationContext`, `ObservationLifecycle`, `ObservationLifecycleOptions`, `ObservationLink`, `ObservationParent`, `otlpExporter`, `OtlpExporter`, `OtlpExporterOptions`, `ParsedTraceparent`, `parseTraceparent`, `SpanStatus`, `StartObservation`, `TraceContext`, `traceHeaders`, `tracing`, `TracingOptions`
+
+## @nifrajs/pi
+
+`PiBackend`, `PiBackendOptions`
 
 ## @nifrajs/prompt
 

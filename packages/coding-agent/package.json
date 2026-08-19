@@ -1,0 +1,72 @@
+{
+  "name": "@nifrajs/coding-agent",
+  "version": "3.1.0",
+  "description": "Standalone, extensible Nifra coding-agent host and CLI.",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "agent",
+    "coding-agent",
+    "cli",
+    "workflows"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "nifra-agent": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./extensions": {
+      "bun": "./src/extensions.ts",
+      "types": "./dist/extensions.d.ts",
+      "default": "./dist/extensions.js"
+    },
+    "./verification": {
+      "bun": "./src/verification.ts",
+      "types": "./dist/verification.d.ts",
+      "default": "./dist/verification.js"
+    },
+    "./rpc": {
+      "bun": "./src/rpc.ts",
+      "types": "./dist/rpc.d.ts",
+      "default": "./dist/rpc.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "EXTENSIONS.md",
+    "PERFORMANCE.md",
+    "REGISTRY.md",
+    "SECURITY.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@nifrajs/agent-protocol": "workspace:*",
+    "@nifrajs/pi": "workspace:*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/coding-agent"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Nifra Workbench",
+  "version": "3.1.0",
+  "identifier": "com.nifra.workbench",
+  "build": {
+    "beforeDevCommand": "bun run apps/workbench/src/server.ts --cwd . --ui-port 62419 --rpc-port 62418",
+    "devUrl": "http://127.0.0.1:62419",
+    "frontendDist": "../public"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Nifra Workbench",
+        "width": 1440,
+        "height": 960,
+        "minWidth": 960,
+        "minHeight": 640,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src http://127.0.0.1:* http://localhost:*; script-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "Fast local coding-agent Workbench",
+    "longDescription": "A local-first, Pi-backed coding-agent Workbench with approvals, verification, and safe extension reload.",
+    "copyright": "Nifra maintainers"
+  }
+}
