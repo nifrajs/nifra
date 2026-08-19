@@ -70,7 +70,7 @@ const GATES = Object.freeze([
   gate(
     "public-boundary",
     [["run", "check:public-boundary"]],
-    "Run `bun run check:public-boundary` and remove the reported public-boundary violation.",
+    "Run `bun run check:public-boundary` (which includes the agent-boundary scan) and remove the reported boundary violation.",
   ),
   gate(
     "size",
@@ -146,6 +146,11 @@ const GATES = Object.freeze([
     "Run `bun run check:cli-isolation` and fix the first order-dependent CLI test failure.",
   ),
   gate(
+    "plugin-manifest",
+    [["run", "check:plugin"]],
+    "Run `bun run check:plugin` and reconcile the skills package, plugin, and marketplace manifests.",
+  ),
+  gate(
     "verification-parity",
     [["run", "check:verification-parity"]],
     "Run `bun run check:verification-parity` and reconcile the release plan with CI.",
@@ -163,6 +168,7 @@ const DEFAULT_PLAN = Object.freeze([
   "sitemap",
   "public-boundary",
   "public-manifest",
+  "plugin-manifest",
   "size",
   "changesets",
 ] as const)
@@ -178,6 +184,7 @@ const RELEASE_PLAN = Object.freeze([
   "docs",
   "public-boundary",
   "public-manifest",
+  "plugin-manifest",
   "size",
   "core-performance",
   "publish",

@@ -90,6 +90,11 @@ jobs:
       - name: Public product manifest (README package map is generated)
         run: bun run check:public-manifest
 
+      # The skills bundle ships as an npm package, a Pi skills dir, and a Claude Code plugin, each read
+      # through a different manifest. Nothing links them, so the plugin version drifted a major behind.
+      - name: Agent surface manifests (skills package, plugin, marketplace)
+        run: bun run check:plugin
+
       # attw and the workspace can resolve undeclared internal packages through hoisted siblings. Pack
       # selected public packages, install each one with npm's nested strategy, and typecheck its public
       # entry from a three-line external consumer so only declared dependencies are visible.

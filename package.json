@@ -57,6 +57,7 @@
     "check:sitemap": "bun run scripts/gen-sitemap.ts --check",
     "check:corpus": "bun run check:llms && bun run check:api && bun run check:cards && bun run check:node-outcome",
     "check:public-manifest": "bun run scripts/gen-public-product-manifest.ts --check",
+    "check:plugin": "bun run scripts/check-plugin-manifest.ts",
     "verify": "bun packages/cli/src/release-verification.ts",
     "verify:release": "bun packages/cli/src/release-verification.ts --release",
     "check:release": "bun run verify:release",

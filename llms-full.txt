@@ -9597,6 +9597,11 @@ pi install npm:@nifrajs/skills
 /plugin install nifra@nifra
 ```
 
+The plugin registers the Nifra MCP server as well as the skills, so a fresh install has the live tools
+the skills tell it to prefer. Its launch spec is deliberately unpinned - a plugin is installed once and
+opened against many projects, so the CLI resolves per project and the server reports version skew
+itself rather than freezing one version across all of them.
+
 **Anything that reads a skills directory** (Cursor, `.agents/skills`, a project `.pi/skills`)
 
 ```sh
@@ -9612,6 +9617,9 @@ against the version installed in the project being edited:
 ```sh
 bunx @nifrajs/cli init-agents      # register the MCP server in an existing app
 ```
+
+The Claude Code plugin brings its own copy of that server, so `init-agents` is for the other surfaces -
+and for committing a version-pinned `.mcp.json` that every contributor on the project shares.
 
 Not in a Nifra project? The docs tools are hosted at `https://mcp.nifra.dev`.
 

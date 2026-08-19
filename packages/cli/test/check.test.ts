@@ -52,6 +52,7 @@ describe("release verification", () => {
       "sitemap",
       "public-boundary",
       "public-manifest",
+      "plugin-manifest",
       "size",
       "changesets",
     ])
@@ -66,6 +67,7 @@ describe("release verification", () => {
       "docs",
       "public-boundary",
       "public-manifest",
+      "plugin-manifest",
       "size",
       "core-performance",
       "publish",
@@ -136,6 +138,7 @@ describe("release verification", () => {
         "sitemap",
         "public-boundary",
         "public-manifest",
+        "plugin-manifest",
         "size",
         "changesets",
       ])
