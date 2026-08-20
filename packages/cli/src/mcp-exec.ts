@@ -558,24 +558,35 @@ export function projectTools(
             description:
               "When true, create the file if a verified ready-to-write stub exists. Refuses overwrite.",
           },
+          variant: {
+            type: "string",
+            enum: ["default", "stateful"],
+            description:
+              'Stub flavour. "default" is the plain page stub. "stateful" (vanilla only) emits the golden nano pattern - explicit reactivity (signal + computed(fn,[deps]) + keyed bindList + collected cleanups) whose three mistakes NF-C021/C022/C023 catch statically. Use it for a small app with local state (a list a human edits) instead of reaching for a framework.',
+          },
         },
         required: ["path"],
         additionalProperties: false,
       },
       handler: async (args) => {
-        const { path, write } = args as { path?: string; write?: boolean }
+        const { path, write, variant } = args as {
+          path?: string
+          write?: boolean
+          variant?: "default" | "stateful"
+        }
         if (typeof path !== "string" || path.length === 0) return "scaffold: `path` is required."
+        const flavour = variant === "stateful" ? "stateful" : "default"
         const { frameworkFromClientModule, renderScaffold, writeScaffoldRoute } = await import(
           "./scaffold.ts"
         )
         const app = await loadAppCached()
         const framework = frameworkFromClientModule(app.framework.clientModule)
-        if (write !== true) return renderScaffold(path, framework)
-        const result = await writeScaffoldRoute(cwd, path, framework)
+        if (write !== true) return renderScaffold(path, framework, flavour)
+        const result = await writeScaffoldRoute(cwd, path, framework, flavour)
         const status = result.written
           ? `Written: \`${result.file}\``
           : `Not written: ${result.reason ?? "no write performed"}`
-        return `${status}\n\n${renderScaffold(path, framework)}`
+        return `${status}\n\n${renderScaffold(path, framework, flavour)}`
       },
     },
     {

@@ -60,6 +60,25 @@ describe("scaffoldRoute", () => {
     expect(r.content).toContain("return () =>") // cleanup pattern NF-C020 enforces
     expect(r.note).toContain("islands")
   })
+
+  test("vanilla + variant stateful emits the golden nano pattern", () => {
+    const r = scaffoldRoute("/todos", "vanilla", "stateful")
+    expect(r.file).toBe("routes/todos.ts")
+    expect(r.content).toContain("export const hydrate = false") // still zero-runtime, no hydration
+    expect(r.content).toContain(
+      'import { signal, computed, bind, bindList } from "@nifrajs/web/nano"',
+    )
+    expect(r.content).toContain("[items])") // computed declares its deps (NF-C023 shape)
+    expect(r.content).toContain("key: (t) => t.id") // stable key, not index (NF-C022 shape)
+    expect(r.content).toContain("cleanups.push(bind") // disposers collected (NF-C021 shape)
+    expect(r.note).toContain("nano")
+  })
+
+  test("variant stateful is a no-op flavour on JSX frameworks", () => {
+    const plain = scaffoldRoute("/users/:id", "react")
+    const stateful = scaffoldRoute("/users/:id", "react", "stateful")
+    expect(stateful.content).toBe(plain.content) // nano is vanilla-only; JSX falls back to its own stub
+  })
 })
 
 describe("renderScaffold", () => {
@@ -86,6 +105,17 @@ describe("writeScaffoldRoute", () => {
       const second = await writeScaffoldRoute(dir, "/users/:id", "react")
       expect(second.written).toBe(false)
       expect(second.reason).toContain("already exists")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("writes the nano stub for vanilla + variant stateful", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-scaffold-"))
+    try {
+      const r = await writeScaffoldRoute(dir, "/todos", "vanilla", "stateful")
+      expect(r.written).toBe(true)
+      expect(await readFile(join(dir, "routes/todos.ts"), "utf8")).toContain('@nifrajs/web/nano"')
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

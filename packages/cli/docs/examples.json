@@ -276,6 +276,12 @@
     "code": "import { Hono } from \"hono\"\nimport { server } from \"@nifrajs/core/server\"\nimport { t } from \"@nifrajs/schema\"\n\nconst legacy = new Hono()\nlegacy.get(\"/users\", (c) => c.json({ source: \"hono\", users: [] }))\nlegacy.post(\"/users\", async (c) => c.json(await c.req.json()))\n\nexport const app = server()\n  // The wildcard is a literal mount prefix, not a typed Nifra route.\n  .mountFetch(\"/legacy/*\", legacy.fetch, { stripPrefix: true })\n  // Typed routes take precedence, so move one route out of Hono at a time.\n  .get(\"/legacy/users/:id\", (c) => ({ id: c.params.id, source: \"nifra\" }))\n  .post(\n    \"/users\",\n    { body: t.object({ name: t.string() }) },\n    (c) => ({ id: crypto.randomUUID(), name: c.body.name }),\n  )"
   },
   {
+    "name": "CORE",
+    "topic": "Nifra - nano: explicit reactivity for small apps",
+    "slug": "nano",
+    "code": "import { signal, computed } from \"@nifrajs/web/nano\"\n\n// State is a signal: reads are .get(), writes are .set(...). Every edge is a call you can see.\nconst count = signal(0)\n\n// Derived state declares its dependencies EXPLICITLY - the array is the whole contract. It\n// recomputes when (and only when) a listed source changes. Object.is-deduped, like signal.\nconst doubled = computed(() => count.get() * 2, [count])\n\nconst off = doubled.subscribe((v) => console.log(\"doubled is now\", v))\ncount.set(5) // logs: doubled is now 10\noff()        // unsubscribe"
+  },
+  {
     "name": "CACHING",
     "topic": "Nifra - Plugins & middleware",
     "slug": "plugins",

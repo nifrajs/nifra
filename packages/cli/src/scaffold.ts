@@ -15,6 +15,12 @@ import { dirname, resolve, sep } from "node:path"
 
 export type Framework = "react" | "preact" | "solid" | "vue" | "svelte" | "vanilla"
 
+/** A scaffold flavour on top of the framework. `default` is the plain page stub; `stateful` only
+ * applies to vanilla and emits the golden **nano** pattern (explicit reactivity: `signal` +
+ * `computed(fn, [deps])` + keyed `bindList` + collected cleanups) instead of the static island stub -
+ * the AI-safe small-app lane whose three mistakes NF-C021/C022/C023 catch statically. */
+export type ScaffoldVariant = "default" | "stateful"
+
 const EXT: Record<Framework, string> = {
   react: "tsx",
   preact: "tsx",
@@ -122,6 +128,88 @@ export default function Page() {
 `
 }
 
+/**
+ * The nano golden stub (`nifra scaffold --variant stateful`, vanilla only): a zero-runtime `html`
+ * page that renders a `<nifra-island>` marker, plus the companion `<name>.client.ts` shown as the
+ * copy-paste block. The client is the AI-safe small-app lane - explicit reactivity, no VDOM, no
+ * auto-tracking - and every reactive edge is a visible call, which is what makes the three nano
+ * mistakes STATICALLY catchable:
+ *   - a `bind`/`bindList` whose disposer is discarded  -> NF-C021 (the block collects every disposer)
+ *   - a `bindList` keyed by array index                -> NF-C022 (the block keys by `item.id`)
+ *   - a `computed` reading a signal its `[deps]` omits  -> NF-C023 (the block declares `[todos]`)
+ * The page body is a valid, typecheckable static document; interactivity is added by writing the
+ * companion client shown, never by turning on hydration.
+ */
+function nanoStub(file: string, params: string[]): string {
+  const paramsNote =
+    params.length > 0 ? `params.${params.join(", params.")}` : "no path params on this route"
+  const loaderLine =
+    params.length > 0
+      ? `// export async function loader({ params, api }: LoaderArgs<typeof backend>) { return { /* seed by ${params[0]} */ } }`
+      : `// export async function loader({ api }: LoaderArgs<typeof backend>) { return {} }`
+  return `// ${file} - @nifrajs/web-vanilla route + a nano island (explicit reactivity, zero VDOM).
+// Available here: ${paramsNote}. Seed data in a loader via the typed \`api\`; see nifra_example("loader").
+import { html } from "@nifrajs/web-vanilla"
+
+// The document is static; the nano client below owns all interactivity. No hydration.
+export const hydrate = false
+
+${loaderLine}
+
+export default function Page() {
+  // The island marker: data-props is the initial state the client reads on mount.
+  return html\`<main>
+    <h1>Todos</h1>
+    <nifra-island data-id="todos" data-props=\${JSON.stringify({ items: [] })}></nifra-island>
+  </main>\`
+}
+
+// Wire the route to the built URL of ./todos.client.ts (the nano enhancer below).
+// export const islandScripts = [/* built URL of ./todos.client.ts */]
+
+// --- ./todos.client.ts - the golden nano pattern (write this as a companion file) -----------------
+//
+//   import { defineIsland, mountIslands } from "@nifrajs/web/islands"
+//   import { signal, computed, bind, bindList } from "@nifrajs/web/nano"
+//
+//   interface Todo { id: string; text: string; done: boolean }
+//
+//   const todos = defineIsland<{ items: Todo[] }>((el, props) => {
+//     // 1. State is a signal. Reads are \`.get()\`, writes are \`.set(...)\` - every edge is visible.
+//     const items = signal<Todo[]>(props.items)
+//
+//     // 2. Derived state declares its deps EXPLICITLY. Omitting \`todos\`/\`items\` here is NF-C023.
+//     const remaining = computed(() => items.get().filter((t) => !t.done).length, [items])
+//
+//     // 3. Collect EVERY disposer. A bare \`bind(...)\`/\`bindList(...)\` that drops it is NF-C021.
+//     const cleanups: Array<() => void> = []
+//     const count = el.querySelector("[data-count]")!
+//     cleanups.push(bind(count, remaining, (node, n) => { node.textContent = String(n) + " left" }))
+//
+//     // 4. Keyed list. Key by a STABLE id on the item, never the array index (NF-C022) - or
+//     //    add/remove/reorder reuses the wrong DOM node.
+//     const list = el.querySelector("[data-list]")!
+//     cleanups.push(bindList(items, list, {
+//       key: (t) => t.id,
+//       create: (t) => { const li = document.createElement("li"); li.dataset.id = t.id; return li },
+//       update: (li, t) => { li.textContent = t.text; li.classList.toggle("done", t.done) },
+//     }))
+//
+//     // Mutations replace the value (Object.is-deduped); subscribers run synchronously.
+//     const add = (text: string) => items.set([...items.get(), { id: crypto.randomUUID(), text, done: false }])
+//     void add
+//
+//     // 5. Return the teardown - islands call it on soft-nav. This is what NF-C021 protects.
+//     return () => { for (const off of cleanups) off() }
+//   })
+//
+//   mountIslands({ todos })
+//
+// Cross-island coordination: one createIslandBus() closed over in each enhancer. nifra_docs("nano")
+// has the full cookbook; \`nifra check\` runs NF-C021/C022/C023 over the client you write.
+`
+}
+
 /** Param names a route file declares, for the stub's notes. */
 function paramsOf(file: string): string[] {
   const out: string[] = []
@@ -143,10 +231,23 @@ export interface ScaffoldWriteResult extends ScaffoldResult {
 
 /** Scaffold a page route for `urlPath` under the project's `framework`. Returns the correct file path
  * always; a ready-to-write stub for the JSX family, contract guidance otherwise. */
-export function scaffoldRoute(urlPath: string, framework: Framework): ScaffoldResult {
+export function scaffoldRoute(
+  urlPath: string,
+  framework: Framework,
+  variant: ScaffoldVariant = "default",
+): ScaffoldResult {
   const ext = EXT[framework]
   const file = routePathToFile(urlPath, ext)
   const params = paramsOf(file)
+  // `stateful` is vanilla-only: it swaps the static island stub for the nano golden pattern. Asking
+  // for it on a JSX/SFC framework is a no-op on the flavour (those lanes have their own reactivity).
+  if (framework === "vanilla" && variant === "stateful") {
+    return {
+      file,
+      content: nanoStub(file, params),
+      note: `Create ${file} as a zero-runtime @nifrajs/web-vanilla route with a nano island. ${ROUTE_CONTRACT}\nThe stub embeds the golden nano client (signal + computed(fn,[deps]) + keyed bindList + collected cleanups); write it as the companion .client.ts. \`nifra check\` runs NF-C021/C022/C023 over it; nifra_docs("nano") is the full cookbook.`,
+    }
+  }
   if (framework === "react" || framework === "preact" || framework === "solid") {
     return {
       file,
@@ -158,7 +259,7 @@ export function scaffoldRoute(urlPath: string, framework: Framework): ScaffoldRe
     return {
       file,
       content: vanillaStub(file, params),
-      note: `Create ${file} as a zero-runtime @nifrajs/web-vanilla route. ${ROUTE_CONTRACT}\nInteractivity comes from islands (imperative enhancers), never hydration - the stub embeds the golden pattern; nifra_example("islands") has the full cookbook.`,
+      note: `Create ${file} as a zero-runtime @nifrajs/web-vanilla route. ${ROUTE_CONTRACT}\nInteractivity comes from islands (imperative enhancers), never hydration - the stub embeds the golden pattern; nifra_example("islands") has the full cookbook. For explicit local state (a list a human edits), scaffold with variant "stateful" to get the nano pattern instead.`,
     }
   }
   return {
@@ -214,8 +315,9 @@ export async function writeScaffoldRoute(
   cwd: string,
   urlPath: string,
   framework: Framework,
+  variant: ScaffoldVariant = "default",
 ): Promise<ScaffoldWriteResult> {
-  const result = scaffoldRoute(urlPath, framework)
+  const result = scaffoldRoute(urlPath, framework, variant)
   if (result.content === undefined) {
     return {
       ...result,
@@ -239,10 +341,14 @@ export async function writeScaffoldRoute(
 }
 
 /** Render the tool result as markdown - the file path, the stub (if any), and the contract note. */
-export function renderScaffold(urlPath: string, framework: Framework): string {
+export function renderScaffold(
+  urlPath: string,
+  framework: Framework,
+  variant: ScaffoldVariant = "default",
+): string {
   let r: ScaffoldResult
   try {
-    r = scaffoldRoute(urlPath, framework)
+    r = scaffoldRoute(urlPath, framework, variant)
   } catch (err) {
     return `Cannot scaffold ${JSON.stringify(urlPath)}: ${err instanceof Error ? err.message : String(err)}`
   }

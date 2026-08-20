@@ -53,6 +53,20 @@ const TOPICS: readonly TopicAnswer[] = [
   },
   {
     triggers: [
+      "nano",
+      "signal",
+      "signals",
+      "computed",
+      "reactive",
+      "small app",
+      "state",
+      "bindlist",
+    ],
+    answer:
+      "Feature: nano is the small-app lane - explicit reactivity (signal, computed with a deps array, and a keyed bindList) with no virtual DOM or auto-tracking. How to use: put nano state inside an island for a page with local state a human edits; because every reactive edge is a visible call, its three mistakes are static checks (NF-C021/C022/C023). Reach for a framework adapter once you need client routing or nested views.",
+  },
+  {
+    triggers: [
       "runtime",
       "runtimes",
       "deploy",
