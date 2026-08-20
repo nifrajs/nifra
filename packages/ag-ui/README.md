@@ -62,6 +62,22 @@ A suspended run emits its pending continuation in `CUSTOM { name: "nifra.pending
 }
 ```
 
+## Resumable streams
+
+Pass an `evidenceLog` to make a dropped SSE connection resumable. Evidence-derived frames then
+carry SSE `id: <seq>`; a client reconnects by re-POSTing the same body with a `Last-Event-ID`
+header and receives the missed events, rejoining a still-running turn live or replaying the stored
+terminal events - the run is never re-executed.
+
+```ts
+import { createMemoryAgentEvidenceLog } from "@nifrajs/agent/events"
+
+mountAgUI(app, { agent, ports, evidenceLog: createMemoryAgentEvidenceLog() })
+```
+
+The in-memory log is the single-process dev/test reference; a durable, multi-process log is an
+adapter implementing the same `AgentEvidenceLog` interface.
+
 The seam performs no authentication or authorization - wrap it with your app's route guards and scope every port in `ports(c)` to the caller.
 
 ## Docs

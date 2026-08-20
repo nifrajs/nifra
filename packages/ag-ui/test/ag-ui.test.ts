@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { AgentDefinition, AgentModelPort, AgentPorts } from "@nifrajs/agent"
 import { MemoryAgentStateStore } from "@nifrajs/agent"
+import { createMemoryAgentEvidenceLog } from "@nifrajs/agent/events"
 import { defineTool } from "@nifrajs/core/tool-contract"
 import { t } from "@nifrajs/schema"
 import { type AgUIMountableApp, type AgUIRouteContext, mountAgUI } from "../src/index.ts"
@@ -246,5 +247,70 @@ describe("mountAgUI", () => {
     expect((await res.json()) as Record<string, unknown>).toEqual({
       error: "invalid_run_agent_input",
     })
+  })
+})
+
+describe("mountAgUI resumable streams", () => {
+  function replayInput(headers: Record<string, string>): Request {
+    return new Request("http://local/agui", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify({
+        threadId: "thread-1",
+        runId: "run-1",
+        forwardedProps: { input: { prompt: "hey" } },
+      }),
+    })
+  }
+
+  function framed(text: string): { ids: string[]; types: string[] } {
+    const ids: string[] = []
+    const eventTypes: string[] = []
+    for (const chunk of text.split("\n\n")) {
+      const id = chunk.match(/^id: (\d+)$/m)
+      if (id?.[1] !== undefined) ids.push(id[1])
+      const data = chunk.match(/^data: (.+)$/m)
+      if (data?.[1] !== undefined)
+        eventTypes.push((JSON.parse(data[1]) as Record<string, unknown>).type as string)
+    }
+    return { ids, types: eventTypes }
+  }
+
+  test("stamps evidence frames with ids and replays a finished run from Last-Event-ID", async () => {
+    const { app, call } = captureApp()
+    mountAgUI(app, {
+      agent: definition(),
+      ports: ports(),
+      evidenceLog: createMemoryAgentEvidenceLog(),
+    })
+
+    const first = framed(await (await call(replayInput({}))).text())
+    expect(first.ids.length).toBeGreaterThan(0)
+    expect(first.types).toContain("RUN_FINISHED")
+
+    const replay = await call(replayInput({ "last-event-id": "0" }))
+    expect(replay.headers.get("content-type")).toContain("text/event-stream")
+    const replayed = framed(await replay.text())
+    expect(replayed.types[0]).toBe("RUN_STARTED")
+    expect(replayed.types).toContain("TEXT_MESSAGE_CONTENT")
+    expect(replayed.types[replayed.types.length - 1]).toBe("RUN_FINISHED")
+  })
+
+  test("rejects an unknown replay and a malformed Last-Event-ID", async () => {
+    const { app, call } = captureApp()
+    mountAgUI(app, {
+      agent: definition(),
+      ports: ports(),
+      evidenceLog: createMemoryAgentEvidenceLog(),
+    })
+
+    const unknown = await call(replayInput({ "last-event-id": "5" }))
+    expect(unknown.status).toBe(409)
+    expect((await unknown.json()) as Record<string, unknown>).toEqual({
+      error: "replay_unavailable",
+    })
+
+    const malformed = await call(replayInput({ "last-event-id": "nope" }))
+    expect(malformed.status).toBe(400)
   })
 })

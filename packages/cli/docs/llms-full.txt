@@ -8185,6 +8185,22 @@ A suspended run emits its pending continuation in `CUSTOM { name: "nifra.pending
 }
 ```
 
+## Resumable streams
+
+Pass an `evidenceLog` to make a dropped SSE connection resumable. Evidence-derived frames then
+carry SSE `id: <seq>`; a client reconnects by re-POSTing the same body with a `Last-Event-ID`
+header and receives the missed events, rejoining a still-running turn live or replaying the stored
+terminal events - the run is never re-executed.
+
+```ts
+import { createMemoryAgentEvidenceLog } from "@nifrajs/agent/events"
+
+mountAgUI(app, { agent, ports, evidenceLog: createMemoryAgentEvidenceLog() })
+```
+
+The in-memory log is the single-process dev/test reference; a durable, multi-process log is an
+adapter implementing the same `AgentEvidenceLog` interface.
+
 The seam performs no authentication or authorization - wrap it with your app's route guards and scope every port in `ports(c)` to the caller.
 
 ## Docs
@@ -8216,6 +8232,14 @@ evidence out to every port in order, so an SSE evidence stream and an exporter (
 `@nifrajs/agent-telemetry`'s `traceAgentRun`) compose instead of displacing each other. The HTTP
 seams (`mountAgent`, `@nifrajs/a2a`, `@nifrajs/ag-ui`) compose their streaming evidence with any
 telemetry port supplied through `ports`.
+
+SSE streams are resumable: give `mountAgent` (or `@nifrajs/ag-ui`'s `mountAgUI`) an `evidenceLog`
+and `step` frames carry `id: <seq>`. A client that loses the connection re-POSTs the same `turnId`
+with a `Last-Event-ID` header and receives the missed evidence, rejoining a still-running turn live
+or replaying the stored terminal frame - the run is never re-executed.
+`createMemoryAgentEvidenceLog` (from `@nifrajs/agent/events`) is the single-process dev/test
+reference; a durable, multi-process log is an adapter implementing the same `AgentEvidenceLog`
+interface.
 
 Execution policies can be required by a tool contract. `createLocalProcessAdapter` applies cwd and
 environment filtering, timeouts, and cancellation to child processes. The local adapter is NOT a

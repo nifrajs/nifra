@@ -336,6 +336,20 @@
     "signature": "export type AgentEventType = \"session.started\" | \"session.updated\" | \"turn.started\" | \"assistant.delta\" | \"assistant.message\" | \"tool.started\" | \"tool.delta\" | \"tool.completed\" | \"approval.required\" | \"approval.resolved\" | \"repair.required\" | \"verification.completed\" | \"memory.compacted\" | \"extension.reloaded\" | \"session.completed\" | \"session.failed\" | \"session.stopped\";"
   },
   {
+    "name": "AgentEvidenceLog",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentEvidenceLog {\n    /**\n     * Telemetry port recording one turn's evidence - combine it into `ports.telemetry` with\n     * `combineAgentTelemetry`. Opening a finished turn reopens it (a resume of a suspended run):\n     * evidence keeps appending and late replays await the new result.\n     */\n    open(turnId: string): AgentTelemetryPort;\n    /** Mark the turn finished: live replays complete and `result` is stored for late reconnects. */\n    finish(turnId: string, result: unknown): void | Promise<void>;\n    /** The turn's evidence after `afterSeq`, or `undefined` for an unknown turn. */\n    replay(turnId: string, afterSeq: number): AgentEvidenceReplay | undefined | Promise<AgentEvidenceReplay | undefined>;\n}",
+    "doc": "/**\n * Seam for resumable evidence streams. An HTTP seam records one turn's step evidence through\n * `open`, stores the terminal wire frame through `finish`, and serves SSE reconnects through\n * `replay` (`Last-Event-ID` maps to evidence `seq`). The stored result value is opaque to the log -\n * each seam stores whatever it needs to re-emit its own terminal frames.\n *\n * {@link createMemoryAgentEvidenceLog} is the single-process dev/test reference; a durable,\n * multi-process log is an adapter concern behind the same interface.\n */"
+  },
+  {
+    "name": "AgentEvidenceReplay",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentEvidenceReplay {\n    /** Evidence already recorded with `seq` greater than the requested cursor, in order. */\n    readonly evidence: readonly AgentStepEvidence[];\n    /** Live continuation while the turn is still running; `undefined` once it has finished. */\n    readonly live: AgentEvidenceStream | undefined;\n    /** Resolves with the value passed to {@link AgentEvidenceLog.finish} when the turn ends. */\n    readonly result: Promise<unknown>;\n}",
+    "doc": "/** One turn's replayable evidence view - see {@link AgentEvidenceLog.replay}. */"
+  },
+  {
     "name": "AgentEvidenceStream",
     "kind": "interface",
     "package": "@nifrajs/agent",
@@ -3561,6 +3575,13 @@
     "kind": "interface",
     "package": "@nifrajs/mcp",
     "signature": "export interface CreateMcpServerOptions {\n    readonly name: string;\n    readonly version: string;\n    readonly tools?: readonly McpTool[];\n    /** MCP Apps widgets - their resources are registered and the UI capability is advertised. */\n    readonly widgets?: readonly McpWidget[];\n    /** Extra (non-widget) resources to expose. */\n    readonly resources?: readonly McpResource[];\n    readonly prompts?: readonly McpPrompt[];\n    /** GET health-page text. */\n    readonly health?: string;\n    /** Max JSON-RPC body size in bytes (default 1 MB). */\n    readonly maxBodyBytes?: number;\n    /** Natural-language guidance for LLMs, surfaced in the modern `server/discover` result (2026-07-28). */\n    readonly instructions?: string;\n    /** Origin allowlist for the DNS-rebinding guard. Omit to allow any origin; set it to reject other\n     * browser origins with 403 (e.g. a hardened, non-public mount). */\n    readonly allowedOrigins?: readonly string[];\n    /**\n     * Per-message authorization, applied after the message parses and before any tool runs. Return\n     * `false` to answer 403 with a JSON-RPC `unauthorized` error (`MCP_ERROR.UNAUTHORIZED`) and no result.\n     *\n     * This is the seam for \"this caller may list tools but may not call the write ones\" - the HTTP\n     * layer above only sees one opaque POST, so a route guard cannot make that distinction.\n     * `fetch(request, { authorizeMessage })` overrides it per request when the decision depends on\n     * something the surrounding handler resolved (a session, a tenant).\n     */\n    readonly authorizeMessage?: (message: JsonRpcRequest, request: Request) => boolean | Promise<boolean>;\n}"
+  },
+  {
+    "name": "createMemoryAgentEvidenceLog",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function createMemoryAgentEvidenceLog(options?: MemoryAgentEvidenceLogOptions): AgentEvidenceLog;",
+    "doc": "/**\n * In-memory {@link AgentEvidenceLog} reference for local development and tests. Single-process by\n * construction: replay only sees runs recorded by this instance. Retention is bounded by\n * `maxTurns` with oldest-first eviction, so a reconnect to an evicted turn reports\n * replay-unavailable rather than growing memory without bound.\n */"
   },
   {
     "name": "createMemoryAssureSink",
@@ -8123,6 +8144,12 @@
     "signature": "export interface MdxPluginOptions {\n    /** JSX runtime source the compiled MDX imports from - `\"react\"` (default), `\"preact\"`, `\"solid-js\"`. */\n    readonly jsxImportSource?: string;\n    /** Emit development JSX (line numbers, `jsxDEV`). Default `false`. */\n    readonly development?: boolean;\n    /** Extra `@mdx-js/mdx` `compile` options - e.g. `remarkPlugins`/`rehypePlugins` (GFM, slugs, …). */\n    readonly compileOptions?: Record<string, unknown>;\n    /** Advanced: override the compiler module specifier (default `\"@mdx-js/mdx\"`) - e.g. to use a fork. */\n    readonly moduleName?: string;\n}"
   },
   {
+    "name": "MemoryAgentEvidenceLogOptions",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface MemoryAgentEvidenceLogOptions {\n    /** Maximum retained turns; the oldest turn is evicted when a new one opens. Default 256. */\n    readonly maxTurns?: number;\n}"
+  },
+  {
     "name": "MemoryAgentStateStore",
     "kind": "class",
     "package": "@nifrajs/agent",
@@ -8522,7 +8549,7 @@
     "name": "MountAgentOptions",
     "kind": "interface",
     "package": "@nifrajs/agent",
-    "signature": "export interface MountAgentOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1> {\n    readonly agent: AgentDefinition<InputSchema, OutputSchema>;\n    /** Endpoint path. Default `/agent`. */\n    readonly path?: string;\n    /** Bounded run length passed to {@link runAgent}. */\n    readonly maxTurns?: number;\n    /** Maximum request body size in bytes. Default 1_000_000. */\n    readonly maxBodyBytes?: number;\n    /** Prototype-poisoning policy for the framing lane. Default `\"reject\"`. */\n    readonly protoPoisoning?: ProtoPoisoning;\n    /**\n     * Build the ports for one request - the model, durable state store, approval transport, capabilities,\n     * and budgets. Receives the route context so the caller can scope every port to the request subject.\n     */\n    readonly ports: (c: AgentRouteContext) => AgentPorts | Promise<AgentPorts>;\n}"
+    "signature": "export interface MountAgentOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1> {\n    readonly agent: AgentDefinition<InputSchema, OutputSchema>;\n    /** Endpoint path. Default `/agent`. */\n    readonly path?: string;\n    /** Bounded run length passed to {@link runAgent}. */\n    readonly maxTurns?: number;\n    /** Maximum request body size in bytes. Default 1_000_000. */\n    readonly maxBodyBytes?: number;\n    /** Prototype-poisoning policy for the framing lane. Default `\"reject\"`. */\n    readonly protoPoisoning?: ProtoPoisoning;\n    /**\n     * Build the ports for one request - the model, durable state store, approval transport, capabilities,\n     * and budgets. Receives the route context so the caller can scope every port to the request subject.\n     */\n    readonly ports: (c: AgentRouteContext) => AgentPorts | Promise<AgentPorts>;\n    /**\n     * Evidence log making the SSE stream resumable via `Last-Event-ID`. The in-memory reference\n     * (`createMemoryAgentEvidenceLog`) is single-process; a durable log is an adapter concern.\n     */\n    readonly evidenceLog?: AgentEvidenceLog;\n}"
   },
   {
     "name": "mountAgUI",
@@ -8535,7 +8562,7 @@
     "name": "MountAgUIOptions",
     "kind": "interface",
     "package": "@nifrajs/ag-ui",
-    "signature": "export interface MountAgUIOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1> {\n    readonly agent: AgentDefinition<InputSchema, OutputSchema>;\n    /** Endpoint path. Default `/agui`. */\n    readonly path?: string;\n    /** Bounded run length passed to the runner. */\n    readonly maxTurns?: number;\n    /** Maximum request body size in bytes. Default 1_000_000. */\n    readonly maxBodyBytes?: number;\n    /** Prototype-poisoning policy for the framing lane. Default `\"reject\"`. */\n    readonly protoPoisoning?: ProtoPoisoning;\n    /**\n     * Build the ports for one request - the model, durable state store, approval transport,\n     * capabilities, and budgets. Receives the route context so the caller can scope every port to the\n     * request subject.\n     */\n    readonly ports: (c: AgUIRouteContext) => AgentPorts | Promise<AgentPorts>;\n}"
+    "signature": "export interface MountAgUIOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1> {\n    readonly agent: AgentDefinition<InputSchema, OutputSchema>;\n    /** Endpoint path. Default `/agui`. */\n    readonly path?: string;\n    /** Bounded run length passed to the runner. */\n    readonly maxTurns?: number;\n    /** Maximum request body size in bytes. Default 1_000_000. */\n    readonly maxBodyBytes?: number;\n    /** Prototype-poisoning policy for the framing lane. Default `\"reject\"`. */\n    readonly protoPoisoning?: ProtoPoisoning;\n    /**\n     * Build the ports for one request - the model, durable state store, approval transport,\n     * capabilities, and budgets. Receives the route context so the caller can scope every port to the\n     * request subject.\n     */\n    readonly ports: (c: AgUIRouteContext) => AgentPorts | Promise<AgentPorts>;\n    /**\n     * Evidence log making the SSE stream resumable via `Last-Event-ID`. The in-memory reference\n     * (`createMemoryAgentEvidenceLog`) is single-process; a durable log is an adapter concern.\n     */\n    readonly evidenceLog?: AgentEvidenceLog;\n}"
   },
   {
     "name": "mountGraphql",

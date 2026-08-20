@@ -24,6 +24,14 @@ evidence out to every port in order, so an SSE evidence stream and an exporter (
 seams (`mountAgent`, `@nifrajs/a2a`, `@nifrajs/ag-ui`) compose their streaming evidence with any
 telemetry port supplied through `ports`.
 
+SSE streams are resumable: give `mountAgent` (or `@nifrajs/ag-ui`'s `mountAgUI`) an `evidenceLog`
+and `step` frames carry `id: <seq>`. A client that loses the connection re-POSTs the same `turnId`
+with a `Last-Event-ID` header and receives the missed evidence, rejoining a still-running turn live
+or replaying the stored terminal frame - the run is never re-executed.
+`createMemoryAgentEvidenceLog` (from `@nifrajs/agent/events`) is the single-process dev/test
+reference; a durable, multi-process log is an adapter implementing the same `AgentEvidenceLog`
+interface.
+
 Execution policies can be required by a tool contract. `createLocalProcessAdapter` applies cwd and
 environment filtering, timeouts, and cancellation to child processes. The local adapter is NOT a
 security boundary. Without OS-level sandboxing it contains crashes and accidents, not hostile code.

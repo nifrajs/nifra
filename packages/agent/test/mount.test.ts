@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
+import { createMemoryAgentEvidenceLog } from "../src/events.ts"
 import type { AgentModelPort, AgentPorts } from "../src/index.ts"
 import { type AgentMountableApp, type AgentRouteContext, mountAgent } from "../src/mount.ts"
 
@@ -130,5 +131,99 @@ describe("mountAgent", () => {
     const res = await call(post({ input: { prompt: "hey" }, turnId: "has spaces and is way too" }))
     expect(res.status).toBe(400)
     expect((await res.json()) as Record<string, unknown>).toEqual({ error: "invalid_turn_id" })
+  })
+})
+
+describe("mountAgent resumable streams", () => {
+  test("stamps step frames with ids and replays a finished turn from Last-Event-ID", async () => {
+    const { app, call } = captureApp()
+    mountAgent(app, {
+      agent: definition,
+      ports: ports(outputModel({ answer: "kept" })),
+      evidenceLog: createMemoryAgentEvidenceLog(),
+    })
+
+    const first = await call(
+      post({ input: { prompt: "hey" }, turnId: "run-replay" }, { accept: "text/event-stream" }),
+    )
+    const firstText = await first.text()
+    expect(firstText).toContain("id: ")
+    expect(firstText).toContain("event: result")
+
+    const replay = await call(
+      post(
+        { input: { prompt: "hey" }, turnId: "run-replay" },
+        { accept: "text/event-stream", "last-event-id": "0" },
+      ),
+    )
+    expect(replay.headers.get("content-type")).toContain("text/event-stream")
+    const replayText = await replay.text()
+    expect(replayText).toContain("event: result")
+    expect(replayText).toContain("kept")
+  })
+
+  test("a reconnect rejoins a still-running turn without starting a second run", async () => {
+    const { app, call } = captureApp()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let completions = 0
+    const model: AgentModelPort = {
+      complete: async () => {
+        await gate
+        completions += 1
+        return { kind: "output", value: { answer: "late" } }
+      },
+    }
+    mountAgent(app, {
+      agent: definition,
+      ports: ports(model),
+      evidenceLog: createMemoryAgentEvidenceLog(),
+    })
+
+    const first = await call(
+      post({ input: { prompt: "hey" }, turnId: "run-live" }, { accept: "text/event-stream" }),
+    )
+    const rejoin = await call(
+      post(
+        { input: { prompt: "hey" }, turnId: "run-live" },
+        { accept: "text/event-stream", "last-event-id": "0" },
+      ),
+    )
+    release()
+    const [firstText, rejoinText] = await Promise.all([first.text(), rejoin.text()])
+    expect(firstText).toContain("late")
+    expect(rejoinText).toContain("event: result")
+    expect(rejoinText).toContain("late")
+    expect(completions).toBe(1)
+  })
+
+  test("rejects an unknown replay and a malformed Last-Event-ID", async () => {
+    const { app, call } = captureApp()
+    mountAgent(app, {
+      agent: definition,
+      ports: ports(outputModel({ answer: "hi" })),
+      evidenceLog: createMemoryAgentEvidenceLog(),
+    })
+
+    const unknown = await call(
+      post(
+        { input: { prompt: "hey" }, turnId: "never-ran" },
+        { accept: "text/event-stream", "last-event-id": "3" },
+      ),
+    )
+    expect(unknown.status).toBe(409)
+    expect((await unknown.json()) as Record<string, unknown>).toEqual({
+      error: "replay_unavailable",
+    })
+
+    const malformed = await call(
+      post(
+        { input: { prompt: "hey" }, turnId: "never-ran" },
+        { accept: "text/event-stream", "last-event-id": "not-a-seq" },
+      ),
+    )
+    expect(malformed.status).toBe(400)
   })
 })

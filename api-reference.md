@@ -87,12 +87,19 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ### `@nifrajs/agent/events`
 
+- **AgentEvidenceLog** _(interface)_ - `interface AgentEvidenceLog`
+  Seam for resumable evidence streams. An HTTP seam records one turn's step evidence through `open`, stores the terminal wire frame through `finish`, and serves SSE reconnects through `replay` (`Last-Event-ID` maps to evidence `seq`). The stored result value is opaque to the log - each seam stores wh…
+- **AgentEvidenceReplay** _(interface)_ - `interface AgentEvidenceReplay`
+  One turn's replayable evidence view - see {@link AgentEvidenceLog.replay}.
 - **AgentEvidenceStream** _(interface)_ - `interface AgentEvidenceStream`
   The existing step evidence as an async iterable. No second event vocabulary is introduced.
 - **AgentEvidenceStreamOptions** _(interface)_ - `interface AgentEvidenceStreamOptions`
   Options for the lifecycle evidence stream.
+- **MemoryAgentEvidenceLogOptions** _(interface)_ - `interface MemoryAgentEvidenceLogOptions`
 - **createAgentEvidenceStream** _(function)_ - `createAgentEvidenceStream: (options?: AgentEvidenceStreamOptions) => AgentEvidenceStream`
   Create an async iterable that yields the exact evidence values received by `step`.
+- **createMemoryAgentEvidenceLog** _(function)_ - `createMemoryAgentEvidenceLog: (options?: MemoryAgentEvidenceLogOptions) => AgentEvidenceLog`
+  In-memory {@link AgentEvidenceLog} reference for local development and tests. Single-process by construction: replay only sees runs recorded by this instance. Retention is bounded by `maxTurns` with oldest-first eviction, so a reconnect to an evicted turn reports replay-unavailable rather than grow…
 
 ### `@nifrajs/agent/mount`
 

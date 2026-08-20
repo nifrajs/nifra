@@ -25,6 +25,10 @@
  *     `continuation.input`.
  * - Agent input is `forwardedProps.input` when present, otherwise the content of the last
  *   `role: "user"` message.
+ * - With an `evidenceLog` configured, evidence-derived frames carry SSE `id: <seq>` and a dropped
+ *   connection is resumable: re-POST the same body with a `Last-Event-ID` header to replay the
+ *   missed events and rejoin the still-running turn - the run is never re-executed. Without the
+ *   log the header is ignored and every POST starts a run.
  * - The seam performs no authentication or authorization. Wrap it with the app's own route guards,
  *   and scope the store/model returned by `ports` to the caller.
  */
@@ -41,7 +45,11 @@ import {
   resumeAgent,
   runAgent,
 } from "@nifrajs/agent"
-import { createAgentEvidenceStream } from "@nifrajs/agent/events"
+import {
+  type AgentEvidenceLog,
+  type AgentEvidenceReplay,
+  createAgentEvidenceStream,
+} from "@nifrajs/agent/events"
 import {
   EMPTY_RESPONSE_CONTROLS,
   type ProtoPoisoning,
@@ -56,6 +64,7 @@ const DEFAULT_PATH = "/agui"
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
 const PENDING_KINDS: readonly AgentPendingKind[] = ["approval", "budget", "model", "cancelled"]
 const TURN_ID_PATTERN = /^[a-zA-Z0-9._:-]{1,128}$/
+const LAST_EVENT_ID_PATTERN = /^\d{1,15}$/
 
 /** The structural slice of a route context the seam needs. */
 export interface AgUIRouteContext {
@@ -86,6 +95,11 @@ export interface MountAgUIOptions<
    * request subject.
    */
   readonly ports: (c: AgUIRouteContext) => AgentPorts | Promise<AgentPorts>
+  /**
+   * Evidence log making the SSE stream resumable via `Last-Event-ID`. The in-memory reference
+   * (`createMemoryAgentEvidenceLog`) is single-process; a durable log is an adapter concern.
+   */
+  readonly evidenceLog?: AgentEvidenceLog
 }
 
 /** Mount a single agent as an AG-UI `POST {path}` SSE endpoint. */
@@ -130,12 +144,25 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
 
   const input = Object.hasOwn(forwarded, "input") ? forwarded.input : lastUserMessage(body.messages)
   const resume = parseResume(forwarded.resume)
+  const log = options.evidenceLog
+  const identity: RunIdentity = { threadId, runId, turnId }
+
+  // A reconnect replays recorded evidence and rejoins the turn; it never starts a second run.
+  const lastEventId = c.req.headers.get("last-event-id")
+  if (log !== undefined && lastEventId !== null) {
+    if (!LAST_EVENT_ID_PATTERN.test(lastEventId))
+      return jsonResponse(400, { error: "invalid_last_event_id" })
+    const replay = await log.replay(turnId, Number(lastEventId))
+    if (replay === undefined) return jsonResponse(409, { error: "replay_unavailable" })
+    return sseReplayResponse(identity, replay)
+  }
+
   const basePorts = await options.ports(c)
 
   const start = (telemetry?: AgentPorts["telemetry"]): Promise<AgentRunResult<unknown>> => {
     // Compose rather than replace: the SSE evidence stream must not displace a telemetry port the
     // caller injected through `ports`.
-    const combined = combineAgentTelemetry(basePorts.telemetry, telemetry)
+    const combined = combineAgentTelemetry(basePorts.telemetry, log?.open(turnId), telemetry)
     const ports = combined === undefined ? basePorts : { ...basePorts, telemetry: combined }
     if (resume !== undefined) {
       return resumeAgent(options.agent, turnId, { value: input, resume }, ports, runOptions)
@@ -145,7 +172,7 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
       state: createAgentState(turnId),
     })
   }
-  return sseResponse({ threadId, runId, turnId }, start)
+  return sseResponse(identity, start, log)
 }
 
 interface RunIdentity {
@@ -157,14 +184,14 @@ interface RunIdentity {
 function sseResponse(
   identity: RunIdentity,
   start: (telemetry: AgentPorts["telemetry"]) => Promise<AgentRunResult<unknown>>,
+  log: AgentEvidenceLog | undefined,
 ): Response {
   const stream = createAgentEvidenceStream()
+  // `id:` frames are only meaningful when a log can serve the reconnect they invite.
+  const withIds = log !== undefined
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const encoder = new TextEncoder()
-      const send = (event: Record<string, unknown>): void => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
-      }
+      const send = sseSender(controller)
       const run = start(stream)
       // The evidence stream must terminate whether the run resolves or throws, or the `for await`
       // below would hang; the run result (or the error) is still reported in-band after it drains.
@@ -177,41 +204,36 @@ function sseResponse(
       send({ type: "RUN_STARTED", threadId: identity.threadId, runId: identity.runId })
       send({ type: "CUSTOM", name: "nifra.turn", value: { turnId: identity.turnId } })
       try {
-        for await (const evidence of stream) {
-          for (const event of evidenceEvents(evidence)) send(event)
-        }
-        const result = await run
-        if (result.status === "completed") {
-          if (result.error !== undefined) {
-            send({ type: "RUN_ERROR", message: result.error.code })
-            return
-          }
-          const messageId = `${identity.turnId}:output`
-          const delta =
-            typeof result.output === "string" ? result.output : JSON.stringify(result.output)
-          send({ type: "TEXT_MESSAGE_START", messageId, role: "assistant" })
-          send({ type: "TEXT_MESSAGE_CONTENT", messageId, delta })
-          send({ type: "TEXT_MESSAGE_END", messageId })
-          send({
-            type: "RUN_FINISHED",
-            threadId: identity.threadId,
-            runId: identity.runId,
-            result: result.output,
-          })
-          return
-        }
-        if (result.status === "suspended") {
-          send({
-            type: "CUSTOM",
-            name: "nifra.pending",
-            value: {
-              turnId: identity.turnId,
-              reason: result.reason,
-              continuation: result.pending,
-            },
-          })
-        }
-        send({ type: "RUN_FINISHED", threadId: identity.threadId, runId: identity.runId })
+        for await (const evidence of stream) sendEvidence(send, evidence, withIds)
+        const events = terminalEvents(identity, await run)
+        // Store the terminal events before delivering them, so a client that misses them can replay.
+        await finishQuietly(log, identity.turnId, { events })
+        for (const event of events) send(event)
+      } catch {
+        const events = [{ type: "RUN_ERROR", message: "run_failed" }]
+        await finishQuietly(log, identity.turnId, { events })
+        for (const event of events) send(event)
+      } finally {
+        controller.close()
+      }
+    },
+  })
+  return sseHeaders(body)
+}
+
+function sseReplayResponse(identity: RunIdentity, replay: AgentEvidenceReplay): Response {
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = sseSender(controller)
+      send({ type: "RUN_STARTED", threadId: identity.threadId, runId: identity.runId })
+      send({ type: "CUSTOM", name: "nifra.turn", value: { turnId: identity.turnId } })
+      try {
+        for (const evidence of replay.evidence) sendEvidence(send, evidence, true)
+        if (replay.live !== undefined)
+          for await (const evidence of replay.live) sendEvidence(send, evidence, true)
+        const events = asTerminalEvents(await replay.result)
+        if (events === undefined) send({ type: "RUN_ERROR", message: "run_failed" })
+        else for (const event of events) send(event)
       } catch {
         send({ type: "RUN_ERROR", message: "run_failed" })
       } finally {
@@ -219,6 +241,34 @@ function sseResponse(
       }
     },
   })
+  return sseHeaders(body)
+}
+
+type SseSend = (event: Record<string, unknown>, id?: number) => void
+
+function sseSender(controller: ReadableStreamDefaultController<Uint8Array>): SseSend {
+  const encoder = new TextEncoder()
+  return (event, id) => {
+    const head = id === undefined ? "" : `id: ${id}\n`
+    controller.enqueue(encoder.encode(`${head}data: ${JSON.stringify(event)}\n\n`))
+  }
+}
+
+/**
+ * Emit one evidence item's events, stamping the `seq` only on the item's LAST frame: SSE
+ * `Last-Event-ID` points at the last frame received, so a partially delivered multi-event item
+ * (a TOOL_CALL_START without its END) is replayed whole on reconnect instead of losing its tail.
+ */
+function sendEvidence(send: SseSend, evidence: AgentStepEvidence, withIds: boolean): void {
+  const events = evidenceEvents(evidence)
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index] as Record<string, unknown>
+    if (withIds && index === events.length - 1) send(event, evidence.seq)
+    else send(event)
+  }
+}
+
+function sseHeaders(body: ReadableStream<Uint8Array>): Response {
   return new Response(body, {
     status: 200,
     headers: {
@@ -227,6 +277,68 @@ function sseResponse(
       connection: "keep-alive",
     },
   })
+}
+
+/** The events that close a run, derived once so live delivery and replay stay identical. */
+function terminalEvents(
+  identity: RunIdentity,
+  result: AgentRunResult<unknown>,
+): readonly Record<string, unknown>[] {
+  if (result.status === "completed") {
+    if (result.error !== undefined) return [{ type: "RUN_ERROR", message: result.error.code }]
+    const messageId = `${identity.turnId}:output`
+    const delta = typeof result.output === "string" ? result.output : JSON.stringify(result.output)
+    return [
+      { type: "TEXT_MESSAGE_START", messageId, role: "assistant" },
+      { type: "TEXT_MESSAGE_CONTENT", messageId, delta },
+      { type: "TEXT_MESSAGE_END", messageId },
+      {
+        type: "RUN_FINISHED",
+        threadId: identity.threadId,
+        runId: identity.runId,
+        result: result.output,
+      },
+    ]
+  }
+  const finished = { type: "RUN_FINISHED", threadId: identity.threadId, runId: identity.runId }
+  if (result.status === "suspended") {
+    return [
+      {
+        type: "CUSTOM",
+        name: "nifra.pending",
+        value: { turnId: identity.turnId, reason: result.reason, continuation: result.pending },
+      },
+      finished,
+    ]
+  }
+  return [finished]
+}
+
+/** Parse the stored terminal value - a durable log adapter may hand back anything. */
+function asTerminalEvents(value: unknown): readonly Record<string, unknown>[] | undefined {
+  const record = asRecord(value)
+  if (record === undefined || !Array.isArray(record.events)) return undefined
+  const events: Record<string, unknown>[] = []
+  for (const event of record.events) {
+    const parsed = asRecord(event)
+    if (parsed === undefined) return undefined
+    events.push(parsed)
+  }
+  return events
+}
+
+/** Telemetry-grade storage: a failing log must not fail the turn or mask its result. */
+async function finishQuietly(
+  log: AgentEvidenceLog | undefined,
+  turnId: string,
+  result: unknown,
+): Promise<void> {
+  if (log === undefined) return
+  try {
+    await log.finish(turnId, result)
+  } catch {
+    // Replay degrades to unavailable; the in-band response is unaffected.
+  }
 }
 
 /** Map one step-evidence item onto AG-UI events. Evidence is token-only by design. */
