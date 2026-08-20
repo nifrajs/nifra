@@ -150,7 +150,7 @@ describe("createProxy()", () => {
     })
     expect(seen?.headers["x-forwarded-for"]).toBe("203.0.113.9")
     expect(seen?.headers["x-forwarded-proto"]).toBe("http")
-    expect(seen?.headers["x-forwarded-host"]).toBe("edge.test")
+    expect(seen?.headers["x-forwarded-host"]).toBeUndefined()
 
     await createProxy({ upstream: ORIGIN, forwardClientIp: true, trustForwardedFor: true })({
       req: new Request("http://edge.test/x", {
@@ -159,6 +159,13 @@ describe("createProxy()", () => {
       clientIp: "203.0.113.9",
     })
     expect(seen?.headers["x-forwarded-for"]).toBe("1.2.3.4, 203.0.113.9")
+    expect(seen?.headers["x-forwarded-host"]).toBeUndefined()
+
+    await createProxy({ upstream: ORIGIN, forwardedHost: "public.example:8443" })(
+      new Request("http://edge.test/x", { headers: forged }),
+    )
+    expect(seen?.headers["x-forwarded-for"]).toBeUndefined()
+    expect(seen?.headers["x-forwarded-host"]).toBe("public.example:8443")
 
     await createProxy({ upstream: ORIGIN, forwardClientIp: true })(
       new Request("http://edge.test/x", { headers: forged }),
@@ -171,6 +178,12 @@ describe("createProxy()", () => {
     expect(() => createProxy({ upstream: ORIGIN, trustForwardedFor: true })).toThrow(
       /requires forwardClientIp/,
     )
+  })
+
+  test("rejects a malformed fixed forwarded host", () => {
+    for (const forwardedHost of ["", "user@host", "host/path", "host\r\nx: y"]) {
+      expect(() => createProxy({ upstream: ORIGIN, forwardedHost })).toThrow(/forwardedHost/)
+    }
   })
 
   test("static headers override after hygiene", async () => {

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { getEventListeners } from "node:events"
 import { createLocalProcessAdapter, LOCAL_PROCESS_LIMITATION } from "../src/execution-policy.ts"
 
 describe("local execution policy adapter", () => {
@@ -94,5 +95,25 @@ describe("local execution policy adapter", () => {
         },
       }),
     ).rejects.toMatchObject({ code: "policy_unsatisfied" })
+  })
+
+  test("successful runs do not retain listeners on a shared abort signal", async () => {
+    const adapter = createLocalProcessAdapter()
+    const controller = new AbortController()
+    for (let i = 0; i < 12; i++) {
+      const result = await adapter.run({
+        command: process.execPath,
+        args: ["-e", ""],
+        signal: controller.signal,
+        policy: {
+          filesystem: "cwd",
+          network: "allow",
+          timeMs: 1_000,
+          capabilityCeiling: ["process.run"],
+        },
+      })
+      expect(result.ok).toBe(true)
+    }
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0)
   })
 })

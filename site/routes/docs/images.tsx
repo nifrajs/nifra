@@ -97,6 +97,7 @@ const image = createImageHandler({
   root: "./public",                          // local sources resolve under here (traversal+symlink guarded)
   allowedOrigins: ["https://cdn.example"],   // remote sources: allowlist only (omit ⇒ none)
   // maxWidth, maxSourceBytes, maxSourcePixels, concurrency, cacheMaxAge - all tunable
+  // immutable: true, // only for content-versioned source URLs
 })
 
 // mount it in your router:
@@ -176,9 +177,10 @@ export default function Images() {
         </li>
         <li>
           <b>Correct + cacheable.</b> Never upscales past the intrinsic width; negotiates WebP via{" "}
-          <code>Accept</code> (with <code>Vary: Accept</code>); serves{" "}
-          <code>Cache-Control: …, immutable</code> + a strong <code>ETag</code> computed <i>before</i> any
-          decode, so a conditional <code>If-None-Match</code> short-circuits the whole pipeline.
+          <code>Accept</code> (with <code>Vary: Accept</code>); and hashes the emitted bytes for a strong{" "}
+          <code>ETag</code>, so a changed source at the same URL cannot receive a false <code>304</code>.
+          The mutable-safe default is a one-hour <code>max-age</code>; opt into <code>immutable</code> only
+          when every source URL is content-versioned.
         </li>
       </ul>
       <p>

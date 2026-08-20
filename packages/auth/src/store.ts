@@ -114,9 +114,11 @@ const isSessionRecord = (value: unknown): value is SessionRecord => {
  */
 export class KVSessionStore implements SessionStore {
   private readonly kv: KVNamespaceLike
+  private readonly now: () => number
 
-  constructor(kv: KVNamespaceLike) {
+  constructor(kv: KVNamespaceLike, options: { readonly now?: () => number } = {}) {
     this.kv = kv
+    this.now = options.now ?? (() => Date.now())
   }
 
   async get(id: string): Promise<SessionRecord | undefined> {
@@ -132,11 +134,13 @@ export class KVSessionStore implements SessionStore {
   }
 
   async set(id: string, record: SessionRecord): Promise<void> {
-    // Absolute KV expiry (unix seconds) as a GC backstop. Cloudflare requires it be ≥ 60s out; session
-    // `maxAge` is realistically minutes+, so a real deploy satisfies that (the manager enforces the
-    // exact expiry regardless).
+    // Cloudflare requires absolute expiration to be at least 60 seconds in the future. Clamp only the
+    // KV garbage-collection backstop; the session manager still rejects at the exact `expiresAt`, so a
+    // one-second session cannot remain valid for the platform's extra retention window.
+    const platformFloor = Math.ceil(this.now() / 1000) + 60
+    const expiration = Math.max(Math.floor(record.expiresAt / 1000), platformFloor)
     await this.kv.put(id, JSON.stringify(record), {
-      expiration: Math.floor(record.expiresAt / 1000),
+      expiration,
     })
   }
 

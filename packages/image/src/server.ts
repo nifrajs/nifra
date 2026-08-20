@@ -11,7 +11,8 @@
  * from `@nifrajs/image` instead. The dependency-free core (`@nifrajs/image`) never imports this module.
  */
 
-import { readFile, realpath, stat } from "node:fs/promises"
+import { constants as FS } from "node:fs"
+import { open, realpath } from "node:fs/promises"
 import { resolve as resolvePath, sep } from "node:path"
 
 import {
@@ -57,8 +58,11 @@ export interface ImageHandlerOptions {
   readonly sourceConcurrency?: number
   /** Maximum queued image requests beyond the admission width. Default `concurrency * 16`. */
   readonly maxQueue?: number
-  /** `Cache-Control: public, max-age=<n>, immutable` seconds. Default 1 year. */
+  /** `Cache-Control: public, max-age=<n>` seconds. Default 1 hour. */
   readonly cacheMaxAge?: number
+  /** Add `immutable` to Cache-Control. Off by default: enable only when every source URL changes with
+   * its content, otherwise browsers are allowed to retain a changed image until the full max-age. */
+  readonly immutable?: boolean
   /** Quality used when `?q` is absent. Default 75. */
   readonly defaultQuality?: number
   /** Remote-fetch timeout (ms). Default 10 000. */
@@ -94,6 +98,7 @@ interface ResolvedConfig {
   readonly maxSourcePixels: number
   readonly maxWidth: number
   readonly cacheMaxAge: number
+  readonly immutable: boolean
   readonly defaultQuality: number
   readonly fetchTimeoutMs: number
   readonly fetchImpl: typeof fetch
@@ -125,11 +130,23 @@ function resolveConfig(options: ImageHandlerOptions): ResolvedConfig {
   const concurrency = options.concurrency ?? 4
   const sourceConcurrency = options.sourceConcurrency ?? concurrency * 2
   const maxQueue = options.maxQueue ?? concurrency * 16
+  const maxWidth = options.maxWidth ?? 3840
+  const cacheMaxAge = options.cacheMaxAge ?? 3_600
+  const defaultQuality = options.defaultQuality ?? 75
+  const fetchTimeoutMs = options.fetchTimeoutMs ?? 10_000
+  const immutable = options.immutable ?? false
   assertNonNegativeSafeInteger(maxSourceBytes, "maxSourceBytes")
   assertPositiveSafeInteger(maxSourcePixels, "maxSourcePixels")
   assertPositiveSafeInteger(concurrency, "concurrency")
   assertPositiveSafeInteger(sourceConcurrency, "sourceConcurrency")
   assertNonNegativeSafeInteger(maxQueue, "maxQueue")
+  assertPositiveSafeInteger(maxWidth, "maxWidth")
+  assertNonNegativeSafeInteger(cacheMaxAge, "cacheMaxAge")
+  assertPositiveSafeInteger(fetchTimeoutMs, "fetchTimeoutMs")
+  if (!Number.isSafeInteger(defaultQuality) || defaultQuality < 1 || defaultQuality > 100) {
+    throw new RangeError("image: defaultQuality must be a safe integer from 1 to 100")
+  }
+  if (typeof immutable !== "boolean") throw new TypeError("image: immutable must be a boolean")
   if (sourceConcurrency < concurrency) {
     // Otherwise the codec lane can never fill, and `concurrency` silently means something narrower.
     throw new RangeError("image: sourceConcurrency must be >= concurrency")
@@ -140,10 +157,11 @@ function resolveConfig(options: ImageHandlerOptions): ResolvedConfig {
     allowedOrigins: new Set(options.allowedOrigins ?? []),
     maxSourceBytes,
     maxSourcePixels,
-    maxWidth: options.maxWidth ?? 3840,
-    cacheMaxAge: options.cacheMaxAge ?? 31_536_000,
-    defaultQuality: options.defaultQuality ?? 75,
-    fetchTimeoutMs: options.fetchTimeoutMs ?? 10_000,
+    maxWidth,
+    cacheMaxAge,
+    immutable,
+    defaultQuality,
+    fetchTimeoutMs,
     fetchImpl: options.fetch ?? globalThis.fetch,
     signing: options.signing ?? null,
     admit: createSemaphore(sourceConcurrency, maxQueue),
@@ -198,29 +216,20 @@ async function handle(req: Request, cfg: ResolvedConfig): Promise<Response> {
     if (!ok) return errorResponse(403, "invalid_signature")
   }
 
-  // 3. Strong validator from the request-deterministic inputs, computed BEFORE any fetch/decode so a
-  //    conditional request short-circuits all expensive work. The clamped width is a pure function of
-  //    (src, requestedWidth), so (src, requestedWidth, quality, wantsWebp) fully keys the response.
-  const etag = `"${fnv1a(`${src}|${requestedWidth}|${quality}|${wantsWebp ? 1 : 0}`)}"`
-  const cacheHeaders: Record<string, string> = {
-    "Cache-Control": `public, max-age=${cfg.cacheMaxAge}, immutable`,
-    ETag: etag,
-    Vary: "Accept",
-  }
-  if (ifNoneMatch(req, etag)) {
-    return new Response(null, { status: 304, headers: cacheHeaders })
-  }
-
-  // 4/5. Admission precedes source reads so queued requests do not retain large buffers. It is a
+  // 3/4. Admission precedes source reads so queued requests do not retain large buffers. It is a
   //      separate, wider lane from the codec one below: a remote source is a network wait, and letting
   //      it hold a codec slot would let `concurrency` slow origins stall every transform on the box.
-  if (!(await cfg.admit.acquire())) return errorResponse(503, "image_queue_full")
+  const admission = await cfg.admit.acquire(req.signal)
+  if (admission === "full") return errorResponse(503, "image_queue_full")
+  if (admission === "aborted") return errorResponse(499, "request_cancelled")
   try {
-    const source = await readSource(src, cfg)
+    const source = await readSource(src, cfg, req.signal)
     if (!source.ok) return errorResponse(source.status, source.code)
     // The bytes are in hand; now queue for CPU. This semaphore never refuses - its waiter bound is the
     // admission width - so a wait here is a wait, not a 503.
-    await cfg.codec.acquire()
+    const codecAdmission = await cfg.codec.acquire(req.signal)
+    if (codecAdmission === "full") return errorResponse(503, "image_queue_full")
+    if (codecAdmission === "aborted") return errorResponse(499, "request_cancelled")
     let out: Awaited<ReturnType<ImageBackend["transform"]>>
     try {
       // Probe → enforce the portable pixel cap → clamp to intrinsic (never upscale) → transform.
@@ -228,6 +237,7 @@ async function handle(req: Request, cfg: ResolvedConfig): Promise<Response> {
       if (probe.width * probe.height > cfg.maxSourcePixels) {
         return errorResponse(413, "source_too_large")
       }
+      if (req.signal.aborted) return errorResponse(499, "request_cancelled")
       const targetWidth = Math.max(1, Math.min(width, probe.width))
       const format = negotiateFormat(probe.format, wantsWebp)
       out = await cfg.backend.transform({
@@ -236,14 +246,23 @@ async function handle(req: Request, cfg: ResolvedConfig): Promise<Response> {
         quality,
         format,
       })
+      if (req.signal.aborted) return errorResponse(499, "request_cancelled")
     } finally {
       cfg.codec.release()
     }
 
-    const headers = new Headers(cacheHeaders)
+    // A strong validator describes the bytes actually emitted. Hashing request parameters here would
+    // falsely return 304 when a mutable local/remote source changes at the same URL.
+    const etag = `"${await sha256(out.bytes)}"`
+    const headers = new Headers({
+      "Cache-Control": `public, max-age=${cfg.cacheMaxAge}${cfg.immutable ? ", immutable" : ""}`,
+      ETag: etag,
+      Vary: "Accept",
+    })
     headers.set("Content-Type", out.contentType)
     headers.set("Content-Length", String(out.bytes.byteLength))
     headers.set("X-Content-Type-Options", "nosniff") // never let a client sniff the re-encoded bytes
+    if (ifNoneMatch(req, etag)) return new Response(null, { status: 304, headers })
     // HEAD: identical headers, no body.
     if (req.method === "HEAD") return new Response(null, { status: 200, headers })
     return new Response(out.bytes, { status: 200, headers })
@@ -268,7 +287,12 @@ type SourceResult =
  * must be `http(s)` **and** on the `allowedOrigins` allowlist; anything else is a local path resolved
  * under `root` with traversal + symlink containment checks. Both branches fail closed.
  */
-async function readSource(src: string, cfg: ResolvedConfig): Promise<SourceResult> {
+async function readSource(
+  src: string,
+  cfg: ResolvedConfig,
+  signal: AbortSignal,
+): Promise<SourceResult> {
+  if (signal.aborted) return { ok: false, status: 499, code: "request_cancelled" }
   const asUrl = tryParseUrl(src)
   if (asUrl !== null) {
     if (asUrl.protocol !== "http:" && asUrl.protocol !== "https:") {
@@ -277,32 +301,55 @@ async function readSource(src: string, cfg: ResolvedConfig): Promise<SourceResul
     if (!cfg.allowedOrigins.has(asUrl.origin)) {
       return { ok: false, status: 403, code: "source_not_allowed" }
     }
-    return fetchRemote(asUrl, cfg)
+    return fetchRemote(asUrl, cfg, signal)
   }
-  return readLocal(src, cfg)
+  return readLocal(src, cfg, signal)
 }
 
-async function fetchRemote(url: URL, cfg: ResolvedConfig): Promise<SourceResult> {
-  let res: Response
+async function fetchRemote(
+  url: URL,
+  cfg: ResolvedConfig,
+  requestSignal: AbortSignal,
+): Promise<SourceResult> {
+  const controller = new AbortController()
+  let timedOut = false
+  const onRequestAbort = (): void => controller.abort(requestSignal.reason)
+  requestSignal.addEventListener("abort", onRequestAbort, { once: true })
+  // Close the add/check race: a signal that aborted immediately before listener registration still
+  // cancels the fetch rather than running an abandoned request to completion.
+  if (requestSignal.aborted) onRequestAbort()
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, cfg.fetchTimeoutMs)
   try {
-    res = await cfg.fetchImpl(url, {
+    const res = await cfg.fetchImpl(url, {
       redirect: "error", // a redirect could bounce to a disallowed origin - refuse it.
-      signal: AbortSignal.timeout(cfg.fetchTimeoutMs),
+      signal: controller.signal,
       headers: { Accept: "image/*" },
     })
+    if (!res.ok) return { ok: false, status: 502, code: "upstream_error" }
+    const bytes = await readBoundedBytes(res, cfg.maxSourceBytes)
+    if (bytes === null) return { ok: false, status: 413, code: "source_too_large" }
+    if (requestSignal.aborted) return { ok: false, status: 499, code: "request_cancelled" }
+    return { ok: true, bytes }
   } catch (err) {
     const name = err instanceof Error ? err.name : ""
-    return name === "TimeoutError"
+    if (requestSignal.aborted) return { ok: false, status: 499, code: "request_cancelled" }
+    return timedOut || name === "TimeoutError"
       ? { ok: false, status: 504, code: "upstream_timeout" }
       : { ok: false, status: 502, code: "upstream_unreachable" }
+  } finally {
+    clearTimeout(timer)
+    requestSignal.removeEventListener("abort", onRequestAbort)
   }
-  if (!res.ok) return { ok: false, status: 502, code: "upstream_error" }
-  const bytes = await readBoundedBytes(res, cfg.maxSourceBytes)
-  if (bytes === null) return { ok: false, status: 413, code: "source_too_large" }
-  return { ok: true, bytes }
 }
 
-async function readLocal(src: string, cfg: ResolvedConfig): Promise<SourceResult> {
+async function readLocal(
+  src: string,
+  cfg: ResolvedConfig,
+  signal: AbortSignal,
+): Promise<SourceResult> {
   if (cfg.root === null) return { ok: false, status: 403, code: "source_not_allowed" }
   // `src` is already percent-decoded by URLSearchParams - do NOT decode again (double-decode bypass).
   if (src.includes("\0")) return { ok: false, status: 400, code: "invalid_src" }
@@ -313,17 +360,11 @@ async function readLocal(src: string, cfg: ResolvedConfig): Promise<SourceResult
   if (resolved !== cfg.root && !resolved.startsWith(cfg.root + sep)) {
     return { ok: false, status: 403, code: "source_not_allowed" }
   }
-  let info: Awaited<ReturnType<typeof stat>>
+  // Resolve containment, then open that verified name exactly once. Reopening `resolved` after these
+  // checks would let a writable source tree swap a symlink between verification and read.
+  let real: string
   try {
-    info = await stat(resolved)
-  } catch {
-    return { ok: false, status: 404, code: "source_not_found" }
-  }
-  if (!info.isFile()) return { ok: false, status: 404, code: "source_not_found" }
-  if (info.size > cfg.maxSourceBytes) return { ok: false, status: 413, code: "source_too_large" }
-  // Defense-in-depth: a symlink inside root could point outside it - re-check the real path.
-  try {
-    const real = await realpath(resolved)
+    real = await realpath(resolved)
     const realRoot = await realpath(cfg.root)
     if (real !== realRoot && !real.startsWith(realRoot + sep)) {
       return { ok: false, status: 403, code: "source_not_allowed" }
@@ -331,7 +372,37 @@ async function readLocal(src: string, cfg: ResolvedConfig): Promise<SourceResult
   } catch {
     return { ok: false, status: 404, code: "source_not_found" }
   }
-  return { ok: true, bytes: new Uint8Array(await readFile(resolved)) }
+  let handle: Awaited<ReturnType<typeof open>> | undefined
+  try {
+    handle = await open(real, FS.O_RDONLY | FS.O_NOFOLLOW)
+    const info = await handle.stat()
+    if (!info.isFile()) return { ok: false, status: 404, code: "source_not_found" }
+    if (info.size > cfg.maxSourceBytes) {
+      return { ok: false, status: 413, code: "source_too_large" }
+    }
+    // Read no more than the descriptor size that passed the cap. If the file grows concurrently, the
+    // appended bytes are deliberately ignored; if it shrinks, return only the bytes actually read.
+    const bytes = new Uint8Array(info.size)
+    let offset = 0
+    while (offset < bytes.byteLength) {
+      if (signal.aborted) return { ok: false, status: 499, code: "request_cancelled" }
+      const { bytesRead } = await handle.read(bytes, offset, bytes.byteLength - offset, offset)
+      if (bytesRead === 0) break
+      offset += bytesRead
+    }
+    if (signal.aborted) return { ok: false, status: 499, code: "request_cancelled" }
+    return { ok: true, bytes: offset === bytes.byteLength ? bytes : bytes.slice(0, offset) }
+  } catch {
+    return { ok: false, status: 404, code: "source_not_found" }
+  } finally {
+    if (handle !== undefined) {
+      try {
+        await handle.close()
+      } catch {
+        // The response has already been decided; descriptor-close failure cannot change it.
+      }
+    }
+  }
 }
 
 /** Read a response body, aborting (→ null) once `limit` bytes are exceeded. Trusts neither the
@@ -397,14 +468,13 @@ function ifNoneMatch(req: Request, etag: string): boolean {
   return header.split(",").some((t) => t.trim() === etag)
 }
 
-/** 32-bit FNV-1a over a short key string → hex. Used only as a cache validator (ETag), not security. */
-function fnv1a(input: string): string {
-  let h = 0x811c9dc5
-  for (let i = 0; i < input.length; i++) {
-    h ^= input.charCodeAt(i)
-    h = Math.imul(h, 0x01000193)
-  }
-  return (h >>> 0).toString(16)
+/** Collision-resistant content digest for a strong representation validator. */
+async function sha256(bytes: Uint8Array): Promise<string> {
+  // Copy so a backend-owned mutable buffer cannot change while Web Crypto is reading it.
+  const stable = new Uint8Array(bytes.byteLength)
+  stable.set(bytes)
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", stable))
+  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")
 }
 
 function errorResponse(
@@ -424,26 +494,47 @@ function errorResponse(
  * past the limit in the microtask gap. Bounds concurrent codec work.
  */
 interface Semaphore {
-  acquire(): Promise<boolean>
+  acquire(signal?: AbortSignal): Promise<"acquired" | "full" | "aborted">
   release(): void
 }
 
 function createSemaphore(max: number, maxWaiters: number): Semaphore {
   let active = 0
-  const waiters: Array<() => void> = []
-  const acquire = async (): Promise<boolean> => {
+  interface Waiter {
+    readonly grant: () => void
+  }
+  const waiters: Waiter[] = []
+  const acquire = async (signal?: AbortSignal): Promise<"acquired" | "full" | "aborted"> => {
+    if (signal?.aborted === true) return "aborted"
     if (active < max) {
       active++
-      return true
+      return "acquired"
     }
-    if (waiters.length >= maxWaiters) return false
-    await new Promise<void>((res) => waiters.push(res)) // slot handed over by release(), active unchanged
-    return true
+    if (waiters.length >= maxWaiters) return "full"
+    return new Promise((resolve) => {
+      const cleanup = (): void => signal?.removeEventListener("abort", onAbort)
+      const waiter: Waiter = {
+        grant: () => {
+          cleanup()
+          resolve("acquired") // slot handed over by release(); active remains unchanged
+        },
+      }
+      const onAbort = (): void => {
+        const index = waiters.indexOf(waiter)
+        if (index === -1) return // already granted synchronously by release()
+        waiters.splice(index, 1)
+        cleanup()
+        resolve("aborted")
+      }
+      waiters.push(waiter)
+      signal?.addEventListener("abort", onAbort, { once: true })
+      if (signal?.aborted === true) onAbort() // close the add/check race
+    })
   }
   const release = (): void => {
     const next = waiters.shift()
     if (next !== undefined) {
-      next() // hand the slot to the waiter without touching `active`
+      next.grant() // hand the slot to the waiter without touching `active`
     } else {
       active--
     }

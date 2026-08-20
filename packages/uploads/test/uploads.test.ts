@@ -57,6 +57,12 @@ describe("detectFileType", () => {
 })
 
 describe("validateUpload", () => {
+  test("rejects non-finite, fractional, or negative byte limits", async () => {
+    for (const maxBytes of [Number.NaN, Number.POSITIVE_INFINITY, -1, 1.5]) {
+      await expect(validateUpload(PNG, { maxBytes })).rejects.toThrow(/maxBytes/)
+    }
+  })
+
   test("accepts a recognized type under the cap", async () => {
     const r = await validateUpload(PNG, { maxBytes: 1000, accept: ["image/*"] })
     expect(r).toMatchObject({ ok: true, mime: "image/png", ext: "png" })

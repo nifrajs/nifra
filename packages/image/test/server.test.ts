@@ -139,6 +139,15 @@ describe("request validation", () => {
       /maxSourcePixels/,
     )
     expect(() => createImageHandler({ concurrency: Number.NaN })).toThrow(/concurrency/)
+    expect(() => createImageHandler({ maxWidth: Number.NaN })).toThrow(/maxWidth/)
+    expect(() => createImageHandler({ cacheMaxAge: Number.POSITIVE_INFINITY })).toThrow(
+      /cacheMaxAge/,
+    )
+    expect(() => createImageHandler({ defaultQuality: 101 })).toThrow(/defaultQuality/)
+    expect(() => createImageHandler({ fetchTimeoutMs: -1 })).toThrow(/fetchTimeoutMs/)
+    expect(() => createImageHandler({ immutable: "yes" as unknown as boolean })).toThrow(
+      /immutable/,
+    )
   })
 
   test("non-GET/HEAD → 405 with Allow", async () => {
@@ -321,6 +330,29 @@ describe("remote source SSRF guards", () => {
     expect((await mk(refused)(get("src=https%3A%2F%2Fcdn.example%2Fa.png&w=10"))).status).toBe(502)
   })
 
+  test("the configured fetch deadline aborts an active source request", async () => {
+    let fetchSignal: AbortSignal | undefined
+    const waiting = ((_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      fetchSignal = init?.signal as AbortSignal
+      return new Promise<Response>((_resolve, reject) => {
+        fetchSignal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("aborted", "AbortError")),
+          { once: true },
+        )
+      })
+    }) as typeof fetch
+    const h = createImageHandler({
+      backend: makeStub().backend,
+      allowedOrigins: ["https://cdn.example"],
+      fetch: waiting,
+      fetchTimeoutMs: 1,
+    })
+    const res = await h(get("src=https%3A%2F%2Fcdn.example%2Fa.png&w=10"))
+    expect(res.status).toBe(504)
+    expect(fetchSignal?.aborted).toBe(true)
+  })
+
   test("remote body over cap → 413 (declared Content-Length AND streamed-without-CL)", async () => {
     const declared = (async () =>
       new Response(new Uint8Array(10), {
@@ -346,6 +378,35 @@ describe("remote source SSRF guards", () => {
       })
     expect((await mk(declared)(get("src=https%3A%2F%2Fcdn.example%2Fa.png&w=10"))).status).toBe(413)
     expect((await mk(streamed)(get("src=https%3A%2F%2Fcdn.example%2Fa.png&w=10"))).status).toBe(413)
+  })
+
+  test("client cancellation aborts an active source fetch and skips the codec", async () => {
+    let fetchSignal: AbortSignal | undefined
+    const waiting = ((_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      fetchSignal = init?.signal as AbortSignal
+      return new Promise<Response>((_resolve, reject) => {
+        fetchSignal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("aborted", "AbortError")),
+          { once: true },
+        )
+      })
+    }) as typeof fetch
+    const stub = makeStub()
+    const h = createImageHandler({
+      backend: stub.backend,
+      allowedOrigins: ["https://cdn.example"],
+      fetch: waiting,
+    })
+    const controller = new AbortController()
+    const response = h(
+      get("src=https%3A%2F%2Fcdn.example%2Fa.png&w=10", { signal: controller.signal }),
+    )
+    await Bun.sleep(1)
+    controller.abort()
+    expect((await response).status).toBe(499)
+    expect(fetchSignal?.aborted).toBe(true)
+    expect(stub.transformCalls.length).toBe(0)
   })
 })
 
@@ -421,7 +482,7 @@ describe("caching", () => {
     return r
   }
 
-  test("200 sets immutable Cache-Control + Vary + ETag + Content-Type/Length", async () => {
+  test("200 sets mutable-safe Cache-Control + a content ETag + response headers", async () => {
     const h = createImageHandler({
       backend: makeStub().backend,
       root: await root(),
@@ -429,15 +490,26 @@ describe("caching", () => {
     })
     const res = await h(get("src=/a.png&w=10", { headers: { accept: "image/webp" } }))
     expect(res.status).toBe(200)
-    expect(res.headers.get("Cache-Control")).toBe("public, max-age=600, immutable")
+    expect(res.headers.get("Cache-Control")).toBe("public, max-age=600")
     expect(res.headers.get("Vary")).toBe("Accept")
     expect(res.headers.get("Content-Type")).toBe("image/webp")
     expect(res.headers.get("Content-Length")).toBe("3")
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff")
-    expect(res.headers.get("ETag")).toMatch(/^"[0-9a-f]+"$/)
+    expect(res.headers.get("ETag")).toMatch(/^"[0-9a-f]{64}"$/)
   })
 
-  test("If-None-Match with the ETag → 304 and short-circuits the backend (no transform)", async () => {
+  test("immutable caching is explicit for content-versioned source URLs", async () => {
+    const h = createImageHandler({
+      backend: makeStub().backend,
+      root: await root(),
+      cacheMaxAge: 31_536_000,
+      immutable: true,
+    })
+    const res = await h(get("src=/a.png&w=10"))
+    expect(res.headers.get("Cache-Control")).toBe("public, max-age=31536000, immutable")
+  })
+
+  test("If-None-Match with the content ETag → 304 after representation validation", async () => {
     const stub = makeStub()
     const h = createImageHandler({ backend: stub.backend, root: await root() })
     const first = await h(get("src=/a.png&w=10"))
@@ -447,18 +519,40 @@ describe("caching", () => {
     expect(res.status).toBe(304)
     expect(res.headers.get("ETag")).toBe(etag)
     expect(await res.text()).toBe("")
-    expect(stub.transformCalls.length).toBe(1) // unchanged - no second transform
+    expect(stub.transformCalls.length).toBe(2) // no output cache: correctness requires revalidation
   })
 
-  test("ETag varies by Accept (webp vs not), width, and quality", async () => {
-    const h = createImageHandler({ backend: makeStub().backend, root: await root() })
-    const e = async (qs: string, accept?: string) =>
-      (await h(get(qs, accept ? { headers: { accept } } : {}))).headers.get("ETag")
-    const webp = await e("src=/a.png&w=10", "image/webp")
-    const noWebp = await e("src=/a.png&w=10", "image/png")
-    const wideW = await e("src=/a.png&w=20", "image/webp")
-    const lowQ = await e("src=/a.png&w=10&q=40", "image/webp")
-    expect(new Set([webp, noWebp, wideW, lowQ]).size).toBe(4)
+  test("a changed source at the same URL never receives a false 304", async () => {
+    let sourceByte = 1
+    let fetches = 0
+    const fetchImpl = (async () => {
+      fetches++
+      return new Response(new Uint8Array([sourceByte]))
+    }) as unknown as typeof fetch
+    const backend: ImageBackend = {
+      probe: async () => ({ width: 10, height: 10, format: "png" }),
+      transform: async ({ bytes }) => ({
+        bytes: new Uint8Array([bytes[0] as number]),
+        contentType: "image/png",
+        format: "png",
+      }),
+    }
+    const h = createImageHandler({
+      backend,
+      allowedOrigins: ["https://cdn.example"],
+      fetch: fetchImpl,
+    })
+    const url = "src=https%3A%2F%2Fcdn.example%2Fa.png&w=10"
+    const first = await h(get(url))
+    const firstEtag = first.headers.get("ETag") as string
+    expect(new Uint8Array(await first.arrayBuffer())).toEqual(new Uint8Array([1]))
+
+    sourceByte = 2
+    const second = await h(get(url, { headers: { "if-none-match": firstEtag } }))
+    expect(second.status).toBe(200)
+    expect(second.headers.get("ETag")).not.toBe(firstEtag)
+    expect(new Uint8Array(await second.arrayBuffer())).toEqual(new Uint8Array([2]))
+    expect(fetches).toBe(2)
   })
 
   test("HEAD → 200 with headers, empty body", async () => {
@@ -487,6 +581,29 @@ describe("concurrency", () => {
     expect(all.every((r) => r.status === 200)).toBe(true)
     expect(stub.transformCalls.length).toBe(5)
     expect(stub.peak).toBe(2)
+  })
+
+  test("an aborted queued request is removed and never consumes a later slot", async () => {
+    const gate = deferred()
+    const stub = makeStub({ gate: gate.promise })
+    const root = await tempRoot()
+    await writeFile(join(root, "a.png"), makePng(4, 4))
+    const h = createImageHandler({
+      backend: stub.backend,
+      root,
+      concurrency: 1,
+      sourceConcurrency: 1,
+      maxQueue: 2,
+    })
+    const first = h(get("src=/a.png&w=10"))
+    await Bun.sleep(1)
+    const controller = new AbortController()
+    const queued = h(get("src=/a.png&w=11", { signal: controller.signal }))
+    controller.abort()
+    expect((await queued).status).toBe(499)
+    gate.resolve()
+    expect((await first).status).toBe(200)
+    expect(stub.transformCalls.length).toBe(1)
   })
 
   // Reading a source is a network wait, not CPU. Charging it to the codec lane meant `concurrency`

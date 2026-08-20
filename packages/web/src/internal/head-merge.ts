@@ -21,10 +21,28 @@ import type {
   UnsafeScriptDescriptor,
 } from "../manifest.ts"
 
+// Server head serialization may memoize only objects that came exclusively from a static meta export.
+// A dynamic function is allowed to reuse and mutate one object, including an object another route also
+// exports statically, so identity alone does not prove cacheability. Once observed dynamically, an
+// object stays uncacheable: losing a small static optimization is safer than cross-request stale data.
+const STATIC_META = new WeakSet<Meta>()
+const DYNAMIC_META = new WeakSet<Meta>()
+
+/** @internal Whether `resolveMeta` observed this object as a static export. */
+export function isStaticMeta(meta: Meta): boolean {
+  return STATIC_META.has(meta) && !DYNAMIC_META.has(meta)
+}
+
 /** Resolve a route's `meta` export - a static object, or a function of the route's data/params. */
 export function resolveMeta(meta: MetaInput | undefined, args: MetaArgs): Meta {
   if (meta === undefined) return {}
-  return typeof meta === "function" ? meta(args) : meta
+  if (typeof meta === "function") {
+    const resolved = meta(args)
+    DYNAMIC_META.add(resolved)
+    return resolved
+  }
+  STATIC_META.add(meta)
+  return meta
 }
 
 /**

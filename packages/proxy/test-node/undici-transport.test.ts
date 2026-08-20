@@ -166,12 +166,16 @@ suite("undiciTransport()", () => {
     assert.equal(seen?.headers["x-forwarded-for"], undefined)
     assert.equal(seen?.headers.forwarded, undefined)
 
-    await proxy({ forwardClientIp: true, trustForwardedFor: true })({
+    await proxy({
+      forwardClientIp: true,
+      trustForwardedFor: true,
+      forwardedHost: "public.example",
+    })({
       req: new Request("http://edge.test/x", { headers: { ...forged, host: "edge.test" } }),
       clientIp: "203.0.113.9",
     })
     assert.equal(seen?.headers["x-forwarded-for"], "1.2.3.4, 203.0.113.9")
-    assert.equal(seen?.headers["x-forwarded-host"], "edge.test")
+    assert.equal(seen?.headers["x-forwarded-host"], "public.example")
   })
 
   test("static headers override after hygiene", async () => {

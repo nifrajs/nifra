@@ -20,7 +20,7 @@ const upstream = createProxy({ upstream: "http://127.0.0.1:8081" })
 const app = server().mountFetch("/api", upstream, { stripPrefix: true })
 ```
 
-The upstream is a **bare origin** fixed at construction - the forwarded URL is built by mutating a clone of that origin, never by resolving request-derived strings, so no request input can change which host is dialed. Hop-by-hop and `Connection`-nominated headers are stripped in both directions, forwarding metadata (`X-Forwarded-*`) is dropped unless `forwardClientIp: true`, upstream redirects are never followed, and TLS verification has no off switch. Unreachable upstreams answer a flat `502`; the deadline (`timeoutMs`, default 30s) answers `504`.
+The upstream is a **bare origin** fixed at construction - the forwarded URL is built by mutating a clone of that origin, never by resolving request-derived strings, so no request input can change which host is dialed. Hop-by-hop and `Connection`-nominated headers are stripped in both directions. Caller IP/protocol metadata is dropped unless `forwardClientIp: true`; the inbound Host is never trusted, and `X-Forwarded-Host` is emitted only from a fixed `forwardedHost`. Upstream redirects are never followed, and TLS verification has no off switch. Unreachable upstreams answer a flat `502`; the deadline (`timeoutMs`, default 30s) answers `504`.
 
 ## Docs
 

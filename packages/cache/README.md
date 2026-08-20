@@ -36,8 +36,9 @@ await cache.invalidateTag(`user:${id}`)
 
 ## Stores
 
-The default `MemoryCache` is in-process with lazy expiry, a tag index, and an optional LRU cap
-(`new MemoryCache({ maxEntries: 10_000 })`). For a cache shared across instances, implement `CacheStore`
+The default `MemoryCache` is in-process with incremental expiry, a tag index, and a 10,000-entry LRU
+cap. Tune it with `new MemoryCache({ maxEntries: 2_000 })`; `maxEntries: 0` is the explicit unbounded
+opt-in. For a cache shared across instances, implement `CacheStore`
 (`get` / `set` / `delete` / `invalidateTag` / `clear`) over CF KV, Redis, etc.:
 
 ```ts

@@ -3115,6 +3115,7 @@ const image = createImageHandler({
   root: "./public",                          // local sources resolve under here (traversal+symlink guarded)
   allowedOrigins: ["https://cdn.example"],   // remote sources: allowlist only (omit ⇒ none)
   // maxWidth, maxSourceBytes, maxSourcePixels, concurrency, cacheMaxAge - all tunable
+  // immutable: true, // only for content-versioned source URLs
 })
 
 // mount it in your router:
@@ -3137,9 +3138,10 @@ probe), and a concurrency semaphore bounding the CPU-heavy codec work.
 
 -
 **Correct + cacheable.** Never upscales past the intrinsic width; negotiates WebP via
-`Accept` (with `Vary: Accept`); serves
-`Cache-Control: …, immutable` + a strong `ETag` computed _before_ any
-decode, so a conditional `If-None-Match` short-circuits the whole pipeline.
+`Accept` (with `Vary: Accept`); and hashes the emitted bytes for a strong
+`ETag`, so a changed source at the same URL cannot receive a false `304`.
+The mutable-safe default is a one-hour `max-age`; opt into `immutable` only
+when every source URL is content-versioned.
 
 The handler reads the filesystem, so its _local-source_ path targets **Node/Bun servers**
 - but the codec itself is a pluggable `ImageBackend`, so it runs anywhere (see below).
@@ -8119,8 +8121,9 @@ await cache.invalidateTag(`user:${id}`)
 
 ## Stores
 
-The default `MemoryCache` is in-process with lazy expiry, a tag index, and an optional LRU cap
-(`new MemoryCache({ maxEntries: 10_000 })`). For a cache shared across instances, implement `CacheStore`
+The default `MemoryCache` is in-process with incremental expiry, a tag index, and a 10,000-entry LRU
+cap. Tune it with `new MemoryCache({ maxEntries: 2_000 })`; `maxEntries: 0` is the explicit unbounded
+opt-in. For a cache shared across instances, implement `CacheStore`
 (`get` / `set` / `delete` / `invalidateTag` / `clear`) over CF KV, Redis, etc.:
 
 ```ts
@@ -9680,7 +9683,7 @@ const upstream = createProxy({ upstream: "http://127.0.0.1:8081" })
 const app = server().mountFetch("/api", upstream, { stripPrefix: true })
 ```
 
-The upstream is a **bare origin** fixed at construction - the forwarded URL is built by mutating a clone of that origin, never by resolving request-derived strings, so no request input can change which host is dialed. Hop-by-hop and `Connection`-nominated headers are stripped in both directions, forwarding metadata (`X-Forwarded-*`) is dropped unless `forwardClientIp: true`, upstream redirects are never followed, and TLS verification has no off switch. Unreachable upstreams answer a flat `502`; the deadline (`timeoutMs`, default 30s) answers `504`.
+The upstream is a **bare origin** fixed at construction - the forwarded URL is built by mutating a clone of that origin, never by resolving request-derived strings, so no request input can change which host is dialed. Hop-by-hop and `Connection`-nominated headers are stripped in both directions. Caller IP/protocol metadata is dropped unless `forwardClientIp: true`; the inbound Host is never trusted, and `X-Forwarded-Host` is emitted only from a fixed `forwardedHost`. Upstream redirects are never followed, and TLS verification has no off switch. Unreachable upstreams answer a flat `502`; the deadline (`timeoutMs`, default 30s) answers `504`.
 
 ## Docs
 

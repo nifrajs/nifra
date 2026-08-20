@@ -199,19 +199,21 @@ function spawnProcess(input: SpawnInput): Promise<LocalProcessResult> {
       cancelled = true
       terminate()
     }
-    input.signal?.addEventListener("abort", cancel, { once: true })
+    const cleanup = (): void => {
+      clearTimeout(timer)
+      if (killTimer !== undefined) clearTimeout(killTimer)
+      input.signal?.removeEventListener("abort", cancel)
+    }
     child.once("error", () => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
-      if (killTimer !== undefined) clearTimeout(killTimer)
+      cleanup()
       reject(new LocalProcessPolicyError("invalid_request"))
     })
     child.once("close", (exitCode, signal) => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
-      if (killTimer !== undefined) clearTimeout(killTimer)
+      cleanup()
       resolve({
         ok: !timedOut && !cancelled && exitCode === 0,
         exitCode,
@@ -223,6 +225,8 @@ function spawnProcess(input: SpawnInput): Promise<LocalProcessResult> {
         limitations: input.limitations,
       })
     })
+    input.signal?.addEventListener("abort", cancel, { once: true })
+    if (input.signal?.aborted === true) cancel() // close the precheck/listener-registration race
   })
 }
 

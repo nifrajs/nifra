@@ -23,7 +23,7 @@ import {
 } from "../render-seam.ts"
 import { PRERENDERED_GLOBAL, REDIRECT_HEADER } from "../router.ts"
 import { trustedHeadAttributes } from "./head-attributes.ts"
-import { mergeHeads } from "./head-merge.ts"
+import { isStaticMeta, mergeHeads } from "./head-merge.ts"
 import { PRE_HYDRATION_GUARD } from "./runtime-contract.ts"
 import { EXECUTABLE_SCRIPT_TYPES, INERT_SCRIPT_TYPES } from "./script-types.ts"
 
@@ -960,9 +960,9 @@ function tagAttrs(tag: "meta" | "link", attrs: Readonly<object>): string | null 
 
 // Memoize the serialized head-tag string by the resolved `Meta` object's identity. A STATIC route
 // `meta` is returned by-reference from resolveMeta, so the same object recurs every request → cache
-// hit, and the invariant string is serialized once per route, not per request. A FUNCTION `meta`
-// builds a fresh object each request (new identity) → miss → recompute, exactly as needed (its
-// content can vary). WeakMap so a route module that's GC'd takes its entry with it.
+// hit, and the invariant string is serialized once per route, not per request. Function results are
+// never cached, even when a function deliberately reuses one mutable object across requests. WeakMap
+// so a route module that's GC'd takes its entry with it.
 const headTagsCache = new WeakMap<Meta, string>()
 
 function assertExecutableScriptType(type: string): void {
@@ -979,11 +979,14 @@ function assertExecutableScriptType(type: string): void {
  * (breakout-escaped) - so loader-derived strings (LLM-authored `og:*`, user content) can't inject markup
  * or close the tag early. String concatenation (no intermediate `.map()` arrays + spread) - parity with
  * the already concat-based preloadLinks/styleLinks/islandPreloads loops; byte-identical output. Result
- * is memoized per resolved-`Meta` identity (static meta → serialized once per route). */
+ * is memoized only for objects observed as static meta exports (serialized once per route). */
 function headTags(head: Meta | undefined): string {
   if (head === undefined) return ""
-  const cached = headTagsCache.get(head)
-  if (cached !== undefined) return cached
+  const cacheable = isStaticMeta(head)
+  if (cacheable) {
+    const cached = headTagsCache.get(head)
+    if (cached !== undefined) return cached
+  }
   let out = ""
   if (head.meta !== undefined)
     for (const m of head.meta) {
@@ -1022,7 +1025,7 @@ function headTags(head: Meta | undefined): string {
       assertExecutableScriptType(s.type)
       out += `<script type="${s.type}" nonce="${escapeAttr(s.nonce)}" data-nifra>${escapeScriptContent(s.content)}</script>`
     }
-  headTagsCache.set(head, out)
+  if (cacheable) headTagsCache.set(head, out)
   return out
 }
 

@@ -30,6 +30,9 @@ export async function validateUpload(
   input: Uint8Array | ArrayBuffer | Blob,
   options: ValidateUploadOptions,
 ): Promise<UploadResult> {
+  if (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 0) {
+    throw new RangeError("validateUpload: maxBytes must be a non-negative safe integer")
+  }
   // Reject an oversized Blob by its declared size before buffering it into memory.
   if (input instanceof Blob && input.size > options.maxBytes)
     return { ok: false, reason: "too_large" }

@@ -33,6 +33,31 @@ describe("MemoryCache", () => {
     expect(c.get("c")?.value).toBe(3)
   })
 
+  test("the default cache is bounded; zero is the explicit unbounded opt-in", () => {
+    const bounded = new MemoryCache()
+    for (let i = 0; i < 10_001; i++) {
+      bounded.set(String(i), entry(i, Number.MAX_SAFE_INTEGER), [])
+    }
+    expect(bounded.size()).toBe(10_000)
+    expect(bounded.get("0")).toBeUndefined()
+
+    const unbounded = new MemoryCache({ maxEntries: 0 })
+    for (let i = 0; i < 10_001; i++) {
+      unbounded.set(String(i), entry(i, Number.MAX_SAFE_INTEGER), [])
+    }
+    expect(unbounded.size()).toBe(10_001)
+  })
+
+  test("writes incrementally reclaim expired keys that are never read again", () => {
+    const clock = { ms: 0 }
+    const c = new MemoryCache({ now: () => clock.ms })
+    for (let i = 0; i < 24; i++) c.set(`expired-${i}`, entry(i, 10), [])
+    clock.ms = 10
+    // Three fixed-size sweep batches are enough to visit all 24 cold rows.
+    for (let i = 0; i < 4; i++) c.set(`live-${i}`, entry(i, 100), [])
+    expect(c.size()).toBe(4)
+  })
+
   test("invalidateTag removes tagged keys and cleans the tag index", () => {
     const c = new MemoryCache()
     c.set("a", entry(1, Number.MAX_SAFE_INTEGER), ["t1"])

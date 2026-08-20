@@ -4,6 +4,7 @@ import {
   DATA_GLOBAL,
   defer,
   jsonLd,
+  type Meta,
   mergeHeads,
   openGraph,
   type RenderAdapter,
@@ -714,6 +715,33 @@ test("MetaArgs.origin: a STATIC meta is origin-independent and serializes once (
   expect(await render("https://b.example")).toContain(
     '<link rel="canonical" href="https://site.com/about" data-nifra>',
   )
+})
+
+test("a dynamic meta function may reuse one object without serving stale cross-request tags", async () => {
+  const shared = { meta: [{ name: "description", content: "first" }] }
+  const dynamic = () => shared
+  const args = { data: null, params: {}, origin: "https://site.example" }
+  const render = async (head: Meta): Promise<string> => {
+    const page = await renderPageResult({
+      adapter: stub,
+      chain: ["page"],
+      data: null,
+      clientEntry: "/c.js",
+      head,
+    })
+    return page.toResponse().text()
+  }
+
+  // Seed the identity cache through a static export first. A different route may legitimately reuse
+  // that object from a function, so observing it dynamically must override the earlier static mark.
+  expect(await render(resolveMeta(shared, args))).toContain('content="first"')
+  shared.meta[0]!.content = "second"
+  const second = await render(resolveMeta(dynamic, args))
+  expect(second).toContain('content="second"')
+  expect(second).not.toContain('content="first"')
+
+  shared.meta[0]!.content = "third"
+  expect(await render(resolveMeta(dynamic, args))).toContain('content="third"')
 })
 
 test("mergeHeads: title nearest-wins, meta/link concatenated outermost→page", () => {

@@ -10,8 +10,9 @@
  * by a `Connection` header, and `Proxy-*` headers are dropped from the forwarded request and from
  * the relayed response (the Connection-nominated leak is the @fastify/http-proxy CVE-2026-33805 /
  * Hono proxy CVE-2026-71849 class). Forwarding metadata (`Forwarded`, `X-Forwarded-*`) is stripped
- * unless `forwardClientIp: true`, in which case only the observed caller IP is emitted by default.
- * An inbound chain is preserved only with the explicit `trustForwardedFor: true` declaration. Upstream
+ * unless explicitly configured. `forwardClientIp: true` emits caller IP/protocol, while
+ * `forwardedHost` emits only its fixed authority and never the inbound Host. An inbound IP chain is
+ * preserved only with the explicit `trustForwardedFor: true` declaration. Upstream
  * redirects are never followed (`redirect: "manual"`) - following one would let the upstream steer
  * the proxy anywhere. TLS verification is always on; there is no knob to disable it.
  */
@@ -136,6 +137,9 @@ export interface ProxyOptions {
    * metadata is suppressed rather than passed through.
    */
   readonly forwardClientIp?: boolean
+  /** Emit a fixed, trusted `X-Forwarded-Host`. The inbound Host is never forwarded: it is
+   * attacker-controlled unless an outer adapter has already applied a host policy. */
+  readonly forwardedHost?: string
   /**
    * Preserve an inbound `X-Forwarded-For` chain before appending the observed caller IP. Set this only
    * when a proxy you operate has already stripped and rebuilt the inbound chain; otherwise a directly
@@ -180,7 +184,7 @@ const HOP_BY_HOP: ReadonlySet<string> = new Set([
   "upgrade",
 ])
 
-/** Forwarding metadata is an explicit opt-in (`forwardClientIp`), never a passthrough. */
+/** Forwarding metadata is an explicit opt-in (`forwardClientIp` / `forwardedHost`), never passthrough. */
 const FORWARDING: ReadonlySet<string> = new Set([
   "forwarded",
   "x-forwarded-for",
@@ -214,7 +218,7 @@ function dropHeader(name: string, nominated: ReadonlySet<string>): boolean {
 /**
  * A request header dropped before the hop: it names the proxy (`host`, which the transport derives
  * from the target), is hop-by-hop / Connection-nominated / `proxy-*`, or is forwarding metadata that
- * only `forwardClientIp` may reintroduce. The single predicate both lanes filter through.
+ * only explicit proxy options may reintroduce. The single predicate both lanes filter through.
  */
 function isDroppedRequestHeader(name: string, nominated: ReadonlySet<string>): boolean {
   return name === "host" || dropHeader(name, nominated) || FORWARDING.has(name)
@@ -237,23 +241,20 @@ function isKeptResponseHeader(
 }
 
 /**
- * The `x-forwarded-*` overrides to SET when `forwardClientIp` is on. Shared so the trust decision - the
- * one place that may preserve inbound `x-forwarded-for` - cannot diverge between lanes. `priorXff` is
- * the inbound value (null if absent); `host` rides through only when present.
+ * The caller-IP `x-forwarded-*` overrides to SET when `forwardClientIp` is on. Shared so the trust
+ * decision - the one place that may preserve inbound `x-forwarded-for` - cannot diverge between lanes.
+ * Host is intentionally absent: only the fixed `forwardedHost` option may emit it.
  */
 function forwardedClientHeaders(
   priorXff: string | null,
   requestUrl: string,
-  host: string | null,
   clientIp: string,
   trustInbound: boolean,
 ): Array<[string, string]> {
-  const overrides: Array<[string, string]> = [
+  return [
     ["x-forwarded-for", trustInbound && priorXff !== null ? `${priorXff}, ${clientIp}` : clientIp],
     ["x-forwarded-proto", new URL(requestUrl).protocol.slice(0, -1)],
   ]
-  if (host !== null) overrides.push(["x-forwarded-host", host])
-  return overrides
 }
 
 const flatError = (status: number, error: string): Response =>
@@ -277,13 +278,13 @@ function upstreamRequestHeaders(
     for (const [name, value] of forwardedClientHeaders(
       req.headers.get("x-forwarded-for"),
       req.url,
-      req.headers.get("host"),
       clientIp,
       options.trustForwardedFor === true,
     )) {
       out.set(name, value)
     }
   }
+  if (options.forwardedHost !== undefined) out.set("x-forwarded-host", options.forwardedHost)
   if (options.headers !== undefined) {
     for (const [name, value] of Object.entries(options.headers)) out.set(name, value)
   }
@@ -605,13 +606,13 @@ function nativeRequestHeaders(
     for (const [name, value] of forwardedClientHeaders(
       nativeHeaderValue(request.headers, "x-forwarded-for"),
       request.url,
-      nativeHeaderValue(request.headers, "host"),
       clientIp,
       options.trustForwardedFor === true,
     )) {
       replace(name, value)
     }
   }
+  if (options.forwardedHost !== undefined) replace("x-forwarded-host", options.forwardedHost)
   if (options.headers !== undefined) {
     for (const [name, value] of Object.entries(options.headers)) replace(name.toLowerCase(), value)
   }
@@ -733,6 +734,26 @@ export function createProxy(options: ProxyOptions): ProxyHandler {
   }
   if (options.trustForwardedFor === true && options.forwardClientIp !== true) {
     throw new Error("[nifra/proxy] trustForwardedFor requires forwardClientIp: true")
+  }
+  if (options.forwardedHost !== undefined) {
+    let parsed: URL
+    try {
+      parsed = new URL(`http://${options.forwardedHost}`)
+    } catch {
+      throw new TypeError("[nifra/proxy] forwardedHost must be a bare host authority")
+    }
+    if (
+      options.forwardedHost === "" ||
+      parsed.host === "" ||
+      parsed.username !== "" ||
+      parsed.password !== "" ||
+      parsed.pathname !== "/" ||
+      parsed.search !== "" ||
+      parsed.hash !== "" ||
+      /[\r\n\s]/.test(options.forwardedHost)
+    ) {
+      throw new TypeError("[nifra/proxy] forwardedHost must be a bare host authority")
+    }
   }
   const timeoutMs = options.timeoutMs ?? 30_000
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {

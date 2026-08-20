@@ -77,10 +77,19 @@ class FakeKV implements KVNamespaceLike {
 describe("KVSessionStore", () => {
   test("set/get round-trip; KV expiration set from expiresAt (absolute unix seconds)", async () => {
     const kv = new FakeKV()
-    const store = new KVSessionStore(kv)
+    const store = new KVSessionStore(kv, { now: () => 0 })
     await store.set("a", rec({ u: 7 }, 90_000)) // expiresAt 90_000ms → expiration 90s
     expect(kv.puts.at(-1)?.expiration).toBe(90)
     expect(await store.get("a")).toEqual({ data: { u: 7 }, expiresAt: 90_000 })
+  })
+
+  test("short records clamp only the KV GC backstop to its 60-second platform floor", async () => {
+    const kv = new FakeKV()
+    const store = new KVSessionStore(kv, { now: () => 1_000 })
+    await store.set("short", rec({ u: 1 }, 2_000))
+    expect(kv.puts.at(-1)?.expiration).toBe(61)
+    // The authoritative expiry remains unchanged in the value; the manager still rejects it at 2s.
+    expect(await store.get("short")).toEqual({ data: { u: 1 }, expiresAt: 2_000 })
   })
 
   test("miss → undefined; delete drops the key", async () => {
