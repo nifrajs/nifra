@@ -252,7 +252,7 @@ export function scaffoldRoute(
     return {
       file,
       content: jsxStub(file, params),
-      note: `Create ${file}. ${ROUTE_CONTRACT}`,
+      note: `Create ${file}. ${ROUTE_CONTRACT}\nIf the rendered page misbehaves (hydration warning, a value that stops updating), call nifra_frontend { adapter: "${framework}" } for the cause + fix.`,
     }
   }
   if (framework === "vanilla") {
@@ -264,7 +264,7 @@ export function scaffoldRoute(
   }
   return {
     file,
-    note: `Create ${file} as a ${framework} route module. ${ROUTE_CONTRACT}\nFor the ${framework} page body, call nifra_example (it ships verified ${framework} snippets) rather than guessing the SFC shape.`,
+    note: `Create ${file} as a ${framework} route module. ${ROUTE_CONTRACT}\nFor the ${framework} page body, call nifra_example (it ships verified ${framework} snippets) rather than guessing the SFC shape. If a value stops updating the template, call nifra_frontend { adapter: "${framework}" } for the ${framework} reactivity-loss fix.`,
   }
 }
 

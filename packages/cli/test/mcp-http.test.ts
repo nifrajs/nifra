@@ -14,7 +14,14 @@ describe("publicDocsTools", () => {
       publicDocsTools()
         .map((t) => t.name)
         .sort(),
-    ).toEqual(["nifra_docs", "nifra_example", "nifra_gallery", "nifra_learn", "nifra_types"])
+    ).toEqual([
+      "nifra_docs",
+      "nifra_example",
+      "nifra_frontend",
+      "nifra_gallery",
+      "nifra_learn",
+      "nifra_types",
+    ])
   })
 })
 
@@ -45,6 +52,7 @@ describe("handleMcpHttp", () => {
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
       "nifra_docs",
       "nifra_example",
+      "nifra_frontend",
       "nifra_gallery",
       "nifra_learn",
       "nifra_types",

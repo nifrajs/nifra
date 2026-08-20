@@ -9,6 +9,7 @@
 
 import { renderDocsResult } from "./docs-search.ts"
 import { type Example, renderExamplesResult } from "./examples.ts"
+import { renderFrontendResult } from "./frontend-guidance.ts"
 import { renderLearnResult } from "./learn.ts"
 import type { McpTool } from "./mcp-protocol.ts"
 import { renderTypesResult, type TypeEntry } from "./types-search.ts"
@@ -146,6 +147,42 @@ export function docsTools(
         additionalProperties: false,
       },
       handler: async (args) => renderLearnResult((args as { step?: number }).step),
+    },
+    {
+      name: "nifra_frontend",
+      annotations: {
+        title: "Frontend footgun guidance",
+        readOnlyHint: true,
+        openWorldHint: false,
+      },
+      description:
+        'Diagnose a CLIENT-SIDE nifra problem by symptom, across every adapter (React/Preact/Solid/Vue/Svelte/vanilla). Returns the cause, the concrete fix, and how to verify it. Covers the nifra SEAM (a server-only import leaking into a client component, a hydration mismatch, a duplicated framework runtime, loader-data typing) - where it points at the nifra_* tool that fixes and checks it - and the per-framework reactivity-loss idioms (Vue ref, Solid props, Svelte runes, React effect deps), where it points at that framework\'s own ESLint plugin. Call with no args for the index; pass `symptom` (e.g. "hydration mismatch", "value stopped updating") and/or `adapter` to filter. Use this when a rendered page misbehaves and nifra_check is green (check owns the static seam; this owns the rest).',
+      inputSchema: {
+        type: "object",
+        properties: {
+          symptom: {
+            type: "string",
+            maxLength: 256,
+            description: "What you observe (omit for the index).",
+          },
+          adapter: {
+            type: "string",
+            enum: ["react", "preact", "solid", "vue", "svelte", "vanilla"],
+            description:
+              "Filter to one adapter's entries (plus the adapter-independent seam entries).",
+          },
+          limit: { type: "number", description: "Max entries to return (default 3, max 5)." },
+        },
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const { symptom, adapter, limit } = args as {
+          symptom?: string
+          adapter?: string
+          limit?: number
+        }
+        return renderFrontendResult({ symptom, adapter, limit: clamp(limit, 1, 5, 3) })
+      },
     },
   ]
 }
