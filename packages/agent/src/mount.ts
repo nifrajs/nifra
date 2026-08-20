@@ -34,6 +34,7 @@ import {
   type AgentPorts,
   type AgentRunResult,
   type AgentTurnInput,
+  combineAgentTelemetry,
   createAgentState,
   resumeAgent,
   runAgent,
@@ -113,7 +114,10 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
   const start = (
     telemetry?: AgentPorts["telemetry"],
   ): Promise<AgentRunResult<NonNullable<OutputSchema["~standard"]["types"]>["output"]>> => {
-    const ports = telemetry === undefined ? basePorts : { ...basePorts, telemetry }
+    // Compose rather than replace: an SSE evidence stream must not displace a telemetry port the
+    // caller injected through `ports` (an exporter, a durable evidence log).
+    const combined = combineAgentTelemetry(basePorts.telemetry, telemetry)
+    const ports = combined === undefined ? basePorts : { ...basePorts, telemetry: combined }
     if (resume !== undefined) {
       return resumeAgent(options.agent, turnId, { value: body.input, resume }, ports, runOptions)
     }

@@ -74,6 +74,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **LocalProcessResult** _(interface)_ - `interface LocalProcessResult`
 - **MemoryAgentStateStore** _(class)_ - `class MemoryAgentStateStore`
 - **RunAgentOptions** _(interface)_ - `interface RunAgentOptions`
+- **combineAgentTelemetry** _(function)_ - `combineAgentTelemetry: (...ports: readonly (AgentTelemetryPort | undefined)[]) => AgentTelemetryPort | undefined`
+  Fan one run's step evidence out to several telemetry ports - an SSE evidence stream and an exporter can observe the same turn. Ports are awaited in argument order; `undefined` entries are skipped, and the combined port is `undefined` when none remain.
 - **createAgentState** _(function)_ - `createAgentState: (turnId: string) => AgentTurnState`
 - **createLocalProcessAdapter** _(function)_ - `createLocalProcessAdapter: (options?: LocalProcessAdapterOptions) => LocalProcessAdapter`
   Run a command with the host controls available to a normal child process. The local adapter is NOT a security boundary. Without OS-level sandboxing it contains crashes and accidents, not hostile code.
@@ -149,11 +151,19 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ## @nifrajs/agent-telemetry
 
+- **AgentRunEvidence** _(interface)_ - `interface AgentRunEvidence`
+  Structural twin of `@nifrajs/agent`'s `AgentStepEvidence`.
+- **AgentRunOutcome** _(interface)_ - `interface AgentRunOutcome`
+  Structural slice of the runner's `AgentRunResult` that `end()` reads.
+- **AgentRunTrace** _(interface)_ - `interface AgentRunTrace`
 - **AgentTelemetryOptions** _(interface)_ - `interface AgentTelemetryOptions`
+- **TraceAgentRunOptions** _(interface)_ - `interface TraceAgentRunOptions`
 - **agentTelemetry** _(function)_ - `agentTelemetry: (options: AgentTelemetryOptions) => { name: string; beforeHandle(context: HookContext): undefined; onError(error: unknown, context: HookContext): undefined; onResponse(response: Response, request: Reques…`
   Agent telemetry middleware. Register via `app.use(agentTelemetry({ exporter }))`.
 - **consoleAgentExporter** _(function)_ - `consoleAgentExporter: (log?: (line: string) => void) => ObservationAdapter`
   Pretty-prints agent tool call traces to the terminal.
+- **traceAgentRun** _(function)_ - `traceAgentRun: (options: TraceAgentRunOptions) => AgentRunTrace`
+  Open a run span and adapt the runner's step evidence into child spans.
 
 ## @nifrajs/auth
 

@@ -83,6 +83,29 @@ describe("mountAgent", () => {
     expect(text).toContain("streamed")
   })
 
+  test("streaming composes with a caller-injected telemetry port instead of replacing it", async () => {
+    const { app, call } = captureApp()
+    const seen: string[] = []
+    mountAgent(app, {
+      agent: definition,
+      ports: () => ({
+        model: outputModel({ answer: "hi" }),
+        capabilities: [],
+        telemetry: {
+          step: (evidence) => {
+            seen.push(`${evidence.kind}:${evidence.outcome}`)
+          },
+        },
+      }),
+    })
+
+    const res = await call(post({ input: { prompt: "hey" } }, { accept: "text/event-stream" }))
+    const text = await res.text()
+    expect(text).toContain("event: step")
+    expect(seen).toContain("model:started")
+    expect(seen).toContain("model:passed")
+  })
+
   test("rejects a non-object body", async () => {
     const { app, call } = captureApp()
     mountAgent(app, { agent: definition, ports: ports(outputModel({ answer: "hi" })) })

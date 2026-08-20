@@ -9,6 +9,8 @@ import { t } from "@nifrajs/schema"
 import {
   type AgentDefinition,
   type AgentModelPort,
+  type AgentStepEvidence,
+  combineAgentTelemetry,
   createAgentState,
   MemoryAgentStateStore,
   replayAgent,
@@ -569,5 +571,26 @@ describe("agent turns", () => {
     )
     expect(resumed.status).toBe("completed")
     expect(executions).toBe(1)
+  })
+})
+
+describe("combineAgentTelemetry", () => {
+  test("awaits every port in argument order and skips undefined entries", async () => {
+    const calls: string[] = []
+    const port = (label: string) => ({
+      step: (evidence: AgentStepEvidence) => {
+        calls.push(`${label}:${evidence.seq}`)
+      },
+    })
+    const combined = combineAgentTelemetry(undefined, port("a"), undefined, port("b"))
+    expect(combined).toBeDefined()
+    await combined?.step({ seq: 7, at: 0, kind: "model", outcome: "started" })
+    expect(calls).toEqual(["a:7", "b:7"])
+  })
+
+  test("collapses to the single live port and to undefined when none remain", () => {
+    const only = { step: () => {} }
+    expect(combineAgentTelemetry(undefined, only)).toBe(only)
+    expect(combineAgentTelemetry(undefined, undefined)).toBeUndefined()
   })
 })

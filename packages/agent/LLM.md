@@ -14,6 +14,7 @@ Provider-neutral, typed, resumable agent turns built on Nifra tool contracts.
 
 ## Key exports
 
+- **combineAgentTelemetry** _(function)_ - `combineAgentTelemetry: (...ports: readonly (AgentTelemetryPort | undefined)[]) => AgentTelemetryPort | undefined` · from `@nifrajs/agent`
 - **createAgentEvidenceStream** _(function)_ - `createAgentEvidenceStream: (options?: AgentEvidenceStreamOptions) => AgentEvidenceStream` · from `@nifrajs/agent/events`
 - **createAgentState** _(function)_ - `createAgentState: (turnId: string) => AgentTurnState` · from `@nifrajs/agent`
 - **createLocalProcessAdapter** _(function)_ - `createLocalProcessAdapter: (options?: LocalProcessAdapterOptions) => LocalProcessAdapter` · from `@nifrajs/agent`
@@ -27,9 +28,8 @@ Provider-neutral, typed, resumable agent turns built on Nifra tool contracts.
 - **LOCAL_PROCESS_LIMITATION** _(const)_ - `LOCAL_PROCESS_LIMITATION: "The local adapter is NOT a security boundary."` · from `@nifrajs/agent`
 - **AgentApprovalPort** _(interface)_ - `interface AgentApprovalPort` · from `@nifrajs/agent`
 - **AgentDefinition** _(interface)_ - `interface AgentDefinition<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>` · from `@nifrajs/agent`
-- **AgentEvidenceStream** _(interface)_ - `interface AgentEvidenceStream` · from `@nifrajs/agent/events`
 
-_…and 32 more - see [`api-reference.md`](../../api-reference.md#nifrajsagent) for the complete list._
+_…and 33 more - see [`api-reference.md`](../../api-reference.md#nifrajsagent) for the complete list._
 
 ## Footguns
 

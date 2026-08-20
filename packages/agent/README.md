@@ -18,6 +18,12 @@ const result = await runAgent(definition, { value: input }, ports, {
 The public in-memory adapters are for local development and tests. Durable state, provider
 credentials, and operated policy remain adapter concerns.
 
+Several telemetry consumers can observe the same run: `combineAgentTelemetry(a, b, ...)` fans step
+evidence out to every port in order, so an SSE evidence stream and an exporter (for example
+`@nifrajs/agent-telemetry`'s `traceAgentRun`) compose instead of displacing each other. The HTTP
+seams (`mountAgent`, `@nifrajs/a2a`, `@nifrajs/ag-ui`) compose their streaming evidence with any
+telemetry port supplied through `ports`.
+
 Execution policies can be required by a tool contract. `createLocalProcessAdapter` applies cwd and
 environment filtering, timeouts, and cancellation to child processes. The local adapter is NOT a
 security boundary. Without OS-level sandboxing it contains crashes and accidents, not hostile code.

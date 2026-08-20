@@ -156,6 +156,24 @@ export interface AgentTelemetryPort {
   step(evidence: AgentStepEvidence): void | PromiseLike<void>
 }
 
+/**
+ * Fan one run's step evidence out to several telemetry ports - an SSE evidence stream and an
+ * exporter can observe the same turn. Ports are awaited in argument order; `undefined` entries are
+ * skipped, and the combined port is `undefined` when none remain.
+ */
+export function combineAgentTelemetry(
+  ...ports: readonly (AgentTelemetryPort | undefined)[]
+): AgentTelemetryPort | undefined {
+  const live = ports.filter((port): port is AgentTelemetryPort => port !== undefined)
+  if (live.length === 0) return undefined
+  if (live.length === 1) return live[0]
+  return {
+    async step(evidence) {
+      for (const port of live) await port.step(evidence)
+    },
+  }
+}
+
 export interface AgentPorts {
   readonly model: AgentModelPort
   readonly capabilities: readonly string[]

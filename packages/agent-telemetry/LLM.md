@@ -12,7 +12,12 @@ Agent telemetry plugin - child spans for AI tool calls on /_nifra/tool/* and MCP
 
 - **agentTelemetry** _(function)_ - `agentTelemetry: (options: AgentTelemetryOptions) => { name: string; beforeHandle(context: HookContext): undefined; onError(error: unknown, …`
 - **consoleAgentExporter** _(function)_ - `consoleAgentExporter: (log?: (line: string) => void) => ObservationAdapter`
+- **traceAgentRun** _(function)_ - `traceAgentRun: (options: TraceAgentRunOptions) => AgentRunTrace`
+- **AgentRunEvidence** _(interface)_ - `interface AgentRunEvidence`
+- **AgentRunOutcome** _(interface)_ - `interface AgentRunOutcome`
+- **AgentRunTrace** _(interface)_ - `interface AgentRunTrace`
 - **AgentTelemetryOptions** _(interface)_ - `interface AgentTelemetryOptions`
+- **TraceAgentRunOptions** _(interface)_ - `interface TraceAgentRunOptions`
 
 ## Footguns
 

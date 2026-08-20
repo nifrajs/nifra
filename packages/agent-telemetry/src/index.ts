@@ -15,6 +15,14 @@ import {
   type ObservationAdapter,
 } from "@nifrajs/otel"
 
+export {
+  type AgentRunEvidence,
+  type AgentRunOutcome,
+  type AgentRunTrace,
+  type TraceAgentRunOptions,
+  traceAgentRun,
+} from "./run.ts"
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------

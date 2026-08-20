@@ -36,6 +36,7 @@ import {
   type AgentRunResult,
   type AgentTurnInput,
   type AgentTurnState,
+  combineAgentTelemetry,
   createAgentState,
   resumeAgent,
   runAgent,
@@ -217,7 +218,10 @@ async function dispatch<
       if ("error" in turn) return rpcErrorResponse(id, turn.error.code, turn.error.message)
       const basePorts = await options.ports(c)
       const start: RunStart = (telemetry) => {
-        const ports = telemetry === undefined ? basePorts : { ...basePorts, telemetry }
+        // Compose rather than replace: the SSE evidence stream must not displace a telemetry
+        // port the caller injected through `ports`.
+        const combined = combineAgentTelemetry(basePorts.telemetry, telemetry)
+        const ports = combined === undefined ? basePorts : { ...basePorts, telemetry: combined }
         if (turn.resume !== undefined) {
           return resumeAgent(
             options.agent,

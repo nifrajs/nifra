@@ -449,10 +449,30 @@
     "doc": "/** The structural slice of a route context the seam needs. Kept loose so core stays a peer dependency. */"
   },
   {
+    "name": "AgentRunEvidence",
+    "kind": "interface",
+    "package": "@nifrajs/agent-telemetry",
+    "signature": "export interface AgentRunEvidence {\n    readonly seq: number;\n    readonly at: number;\n    readonly kind: \"model\" | \"tool\" | \"approval\" | \"budget\" | \"state\";\n    readonly outcome: \"started\" | \"passed\" | \"failed\" | \"denied\" | \"suspended\" | \"committed\";\n    readonly name?: string;\n    readonly effectId?: string;\n    readonly code?: string;\n    readonly ledgerHead?: string;\n}",
+    "doc": "/** Structural twin of `@nifrajs/agent`'s `AgentStepEvidence`. */"
+  },
+  {
+    "name": "AgentRunOutcome",
+    "kind": "interface",
+    "package": "@nifrajs/agent-telemetry",
+    "signature": "export interface AgentRunOutcome {\n    readonly status: \"completed\" | \"suspended\" | \"continue\";\n    readonly error?: {\n        readonly code: string;\n    };\n    readonly reason?: string;\n}",
+    "doc": "/** Structural slice of the runner's `AgentRunResult` that `end()` reads. */"
+  },
+  {
     "name": "AgentRunResult",
     "kind": "type",
     "package": "@nifrajs/agent",
     "signature": "export type AgentRunResult<Output> = AgentTurnResult<Output> | (AgentTurnBaseResult & {\n    readonly status: \"suspended\";\n    readonly pending: AgentPendingContinuation;\n    readonly reason: \"max_turns\";\n});"
+  },
+  {
+    "name": "AgentRunTrace",
+    "kind": "interface",
+    "package": "@nifrajs/agent-telemetry",
+    "signature": "export interface AgentRunTrace {\n    /** Pass as (or combine into) `ports.telemetry`. Never throws; a failing adapter cannot fail the turn. */\n    readonly telemetry: {\n        step(evidence: AgentRunEvidence): void;\n    };\n    /** The run span's trace identity, forwardable with `traceHeaders`. */\n    readonly context: ObservationContext;\n    /**\n     * End the run span. Pass the runner's result to record the final status\n     * (`nifra.agent.status`, pending reason, error code); omit it when the run threw.\n     * Exactly-once: repeated calls are ignored.\n     */\n    end(result?: AgentRunOutcome): void;\n}"
   },
   {
     "name": "AGENTS_MD_PATH",
@@ -2868,6 +2888,13 @@
     "package": "@nifrajs/middleware",
     "signature": "export declare function combine(...items: readonly Composable[]): IdentityPlugin;",
     "doc": "/**\n * Compose middleware/plugins into one reusable bundle. Individual named plugins still dedupe.\n *\n * The bundle is a type **identity**: everything it contains runs, but context a member adds via\n * `derive`/`decorate` is not threaded to the caller's handler types (there is no way to sum unknown\n * members' context at the type level). Apply such a member with its own `.use(...)` instead.\n */"
+  },
+  {
+    "name": "combineAgentTelemetry",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function combineAgentTelemetry(...ports: readonly (AgentTelemetryPort | undefined)[]): AgentTelemetryPort | undefined;",
+    "doc": "/**\n * Fan one run's step evidence out to several telemetry ports - an SSE evidence stream and an\n * exporter can observe the same turn. Ports are awaited in argument order; `undefined` entries are\n * skipped, and the combined port is `undefined` when none remain.\n */"
   },
   {
     "name": "combineObservationAdapters",
@@ -14424,6 +14451,19 @@
     "package": "nifra",
     "signature": "export declare function toVercelHandler<Env = unknown>(app: FetchApp<Env>): VercelHandler;",
     "doc": "/** Adapt a Web-standard app to a Vercel Edge Function default export. */"
+  },
+  {
+    "name": "traceAgentRun",
+    "kind": "function",
+    "package": "@nifrajs/agent-telemetry",
+    "signature": "export declare function traceAgentRun(options: TraceAgentRunOptions): AgentRunTrace;",
+    "doc": "/**\n * Open a run span and adapt the runner's step evidence into child spans.\n *\n *   const trace = traceAgentRun({ agent: agent.name, turnId, exporter, parent: c.observation?.context })\n *   const result = await runAgent(agent, input, { ...ports, telemetry: trace.telemetry }, options)\n *   trace.end(result)\n *\n * Model evidence arrives as a started/terminal pair and becomes one timed `nifra.agent.model`\n * span; every other evidence item is terminal-only and becomes an instant child span.\n */"
+  },
+  {
+    "name": "TraceAgentRunOptions",
+    "kind": "interface",
+    "package": "@nifrajs/agent-telemetry",
+    "signature": "export interface TraceAgentRunOptions {\n    /** Agent name, recorded as `nifra.agent.name`. */\n    readonly agent: string;\n    /** Turn id, recorded as `nifra.agent.turn_id`. */\n    readonly turnId: string;\n    /** Exporter that receives the run span and its evidence child spans. */\n    readonly exporter?: ObservationAdapter;\n    readonly adapters?: readonly ObservationAdapter[];\n    /**\n     * Parent span for the run - pass the enclosing request observation's `context` to nest agent\n     * runs under the HTTP span. `null` forces a root span; `undefined` falls back to `traceparent`.\n     */\n    readonly parent?: ObservationParent | null;\n    /** Inbound W3C header used when `parent` is undefined. */\n    readonly traceparent?: string | null;\n}"
   },
   {
     "name": "TraceContext",

@@ -8211,6 +8211,12 @@ const result = await runAgent(definition, { value: input }, ports, {
 The public in-memory adapters are for local development and tests. Durable state, provider
 credentials, and operated policy remain adapter concerns.
 
+Several telemetry consumers can observe the same run: `combineAgentTelemetry(a, b, ...)` fans step
+evidence out to every port in order, so an SSE evidence stream and an exporter (for example
+`@nifrajs/agent-telemetry`'s `traceAgentRun`) compose instead of displacing each other. The HTTP
+seams (`mountAgent`, `@nifrajs/a2a`, `@nifrajs/ag-ui`) compose their streaming evidence with any
+telemetry port supplied through `ports`.
+
 Execution policies can be required by a tool contract. `createLocalProcessAdapter` applies cwd and
 environment filtering, timeouts, and cancellation to child processes. The local adapter is NOT a
 security boundary. Without OS-level sandboxing it contains crashes and accidents, not hostile code.
@@ -8257,6 +8263,31 @@ app.use(agentTelemetry({ exporter: consoleAgentExporter() }))
 Requests under `/_nifra/tool/*` and requests to `/mcp` receive tool-name, input-size, output-size,
 duration, and status observations. When `@nifrajs/otel` owns the request observation, tool spans are
 attached as children; otherwise the plugin creates a standalone observation. Other routes pass through.
+
+## Tracing agent runs
+
+`traceAgentRun` turns a `@nifrajs/agent` run's step evidence into an OpenTelemetry trace: one
+`nifra.agent.run` span per run, one child span per evidence item, with tool names, effect ids, error
+codes, and effect-ledger heads carried as span attributes. Only the runner's constrained evidence
+fields are exported - prompts, tool inputs, and outputs cannot enter a trace.
+
+```ts
+import { traceAgentRun } from "@nifrajs/agent-telemetry"
+import { combineAgentTelemetry, runAgent } from "@nifrajs/agent"
+
+const trace = traceAgentRun({ agent: agent.name, turnId, exporter })
+const result = await runAgent(agent, input, {
+  ...ports,
+  telemetry: combineAgentTelemetry(ports.telemetry, trace.telemetry),
+})
+trace.end(result)
+```
+
+Model evidence arrives as a started/terminal pair and becomes one timed `nifra.agent.model` span;
+tool, approval, budget, and state evidence are terminal-only and become instant children. Pass
+`parent` (for example the enclosing request observation's `context`) to nest runs under the HTTP
+span, or `traceparent` to continue an inbound W3C trace; `trace.context` is the run span's identity,
+forwardable with `traceHeaders`. Telemetry is fail-open: a throwing exporter never fails the turn.
 
 ## For AI agents
 
@@ -11023,7 +11054,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/agent
 
-`AgentApprovalPort`, `AgentApprovalResult`, `AgentDefinition`, `AgentModelPort`, `AgentModelRequest`, `AgentModelResponse`, `AgentPendingContinuation`, `AgentPendingKind`, `AgentPorts`, `AgentRunResult`, `AgentStateStore`, `AgentStatus`, `AgentStepEvidence`, `AgentTelemetryPort`, `AgentToolContract`, `AgentToolDescriptor`, `AgentToolResult`, `AgentTranscript`, `AgentTurnBaseResult`, `AgentTurnError`, `AgentTurnInput`, `AgentTurnResult`, `AgentTurnState`, `createAgentState`, `createLocalProcessAdapter`, `ExecutionPolicy`, `ExecutionPolicyAdapter`, `LOCAL_PROCESS_LIMITATION`, `LocalProcessAdapter`, `LocalProcessAdapterOptions`, `LocalProcessPolicyError`, `LocalProcessRequest`, `LocalProcessResult`, `MemoryAgentStateStore`, `replayAgent`, `resumeAgent`, `runAgent`, `RunAgentOptions`, `turn`
+`AgentApprovalPort`, `AgentApprovalResult`, `AgentDefinition`, `AgentModelPort`, `AgentModelRequest`, `AgentModelResponse`, `AgentPendingContinuation`, `AgentPendingKind`, `AgentPorts`, `AgentRunResult`, `AgentStateStore`, `AgentStatus`, `AgentStepEvidence`, `AgentTelemetryPort`, `AgentToolContract`, `AgentToolDescriptor`, `AgentToolResult`, `AgentTranscript`, `AgentTurnBaseResult`, `AgentTurnError`, `AgentTurnInput`, `AgentTurnResult`, `AgentTurnState`, `combineAgentTelemetry`, `createAgentState`, `createLocalProcessAdapter`, `ExecutionPolicy`, `ExecutionPolicyAdapter`, `LOCAL_PROCESS_LIMITATION`, `LocalProcessAdapter`, `LocalProcessAdapterOptions`, `LocalProcessPolicyError`, `LocalProcessRequest`, `LocalProcessResult`, `MemoryAgentStateStore`, `replayAgent`, `resumeAgent`, `runAgent`, `RunAgentOptions`, `turn`
 
 ## @nifrajs/agent-protocol
 
@@ -11031,7 +11062,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/agent-telemetry
 
-`agentTelemetry`, `AgentTelemetryOptions`, `consoleAgentExporter`
+`AgentRunEvidence`, `AgentRunOutcome`, `AgentRunTrace`, `agentTelemetry`, `AgentTelemetryOptions`, `consoleAgentExporter`, `traceAgentRun`, `TraceAgentRunOptions`
 
 ## @nifrajs/auth
 
