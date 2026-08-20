@@ -323,6 +323,13 @@
     "signature": "export type AgentModelResponse = {\n    readonly kind: \"output\";\n    readonly value: unknown;\n} | {\n    readonly kind: \"tool\";\n    readonly name: string;\n    readonly input: unknown;\n};"
   },
   {
+    "name": "AgentMountableApp",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentMountableApp {\n    post(path: string, handler: (c: AgentRouteContext) => Response | Promise<Response>): unknown;\n}",
+    "doc": "/** The structural slice of a nifra server `mountAgent` needs. */"
+  },
+  {
     "name": "AgentPendingContinuation",
     "kind": "interface",
     "package": "@nifrajs/agent",
@@ -369,6 +376,13 @@
     "kind": "interface",
     "package": "@nifrajs/agent-protocol",
     "signature": "export interface AgentRepairTask {\n    readonly id: string;\n    readonly verification: \"check\" | \"assure\" | \"test\";\n    readonly cwd: string;\n    readonly reason: string;\n    readonly capabilities: readonly string[];\n    readonly output?: string;\n    readonly report?: unknown;\n}"
+  },
+  {
+    "name": "AgentRouteContext",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentRouteContext {\n    readonly req: Request;\n}",
+    "doc": "/** The structural slice of a route context the seam needs. Kept loose so core stays a peer dependency. */"
   },
   {
     "name": "AgentRunResult",
@@ -8378,6 +8392,19 @@
     "package": "@nifrajs/mcp",
     "signature": "export declare function modernVersionOf(params: Record<string, unknown> | undefined): string | undefined;",
     "doc": "/** The protocol version a modern (2026-07-28+) request declares in `_meta`, or `undefined` for a legacy\n * request. Its presence is what puts the dispatch in modern mode for that one request. */"
+  },
+  {
+    "name": "mountAgent",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function mountAgent<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(app: AgentMountableApp, options: MountAgentOptions<InputSchema, OutputSchema>): void;",
+    "doc": "/** Mount a single agent as `POST {path}`, negotiating an SSE evidence stream on `Accept`. */"
+  },
+  {
+    "name": "MountAgentOptions",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface MountAgentOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1> {\n    readonly agent: AgentDefinition<InputSchema, OutputSchema>;\n    /** Endpoint path. Default `/agent`. */\n    readonly path?: string;\n    /** Bounded run length passed to {@link runAgent}. */\n    readonly maxTurns?: number;\n    /** Maximum request body size in bytes. Default 1_000_000. */\n    readonly maxBodyBytes?: number;\n    /** Prototype-poisoning policy for the framing lane. Default `\"reject\"`. */\n    readonly protoPoisoning?: ProtoPoisoning;\n    /**\n     * Build the ports for one request - the model, durable state store, approval transport, capabilities,\n     * and budgets. Receives the route context so the caller can scope every port to the request subject.\n     */\n    readonly ports: (c: AgentRouteContext) => AgentPorts | Promise<AgentPorts>;\n}"
   },
   {
     "name": "mountGraphql",

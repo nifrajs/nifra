@@ -10,13 +10,14 @@ Provider-neutral, typed, resumable agent turns built on Nifra tool contracts.
 
 ## Public entrypoints
 
-`@nifrajs/agent` · `@nifrajs/agent/events`
+`@nifrajs/agent` · `@nifrajs/agent/events` · `@nifrajs/agent/mount`
 
 ## Key exports
 
 - **createAgentEvidenceStream** _(function)_ - `createAgentEvidenceStream: (options?: AgentEvidenceStreamOptions) => AgentEvidenceStream` · from `@nifrajs/agent/events`
 - **createAgentState** _(function)_ - `createAgentState: (turnId: string) => AgentTurnState` · from `@nifrajs/agent`
 - **createLocalProcessAdapter** _(function)_ - `createLocalProcessAdapter: (options?: LocalProcessAdapterOptions) => LocalProcessAdapter` · from `@nifrajs/agent`
+- **mountAgent** _(function)_ - `mountAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(app: AgentMountableApp, options: MountAgentOption…` · from `@nifrajs/agent/mount`
 - **replayAgent** _(function)_ - `replayAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputS…` · from `@nifrajs/agent`
 - **resumeAgent** _(function)_ - `resumeAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputS…` · from `@nifrajs/agent`
 - **runAgent** _(function)_ - `runAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSche…` · from `@nifrajs/agent`
@@ -27,9 +28,8 @@ Provider-neutral, typed, resumable agent turns built on Nifra tool contracts.
 - **AgentApprovalPort** _(interface)_ - `interface AgentApprovalPort` · from `@nifrajs/agent`
 - **AgentDefinition** _(interface)_ - `interface AgentDefinition<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>` · from `@nifrajs/agent`
 - **AgentEvidenceStream** _(interface)_ - `interface AgentEvidenceStream` · from `@nifrajs/agent/events`
-- **AgentEvidenceStreamOptions** _(interface)_ - `interface AgentEvidenceStreamOptions` · from `@nifrajs/agent/events`
 
-_…and 28 more - see [`api-reference.md`](../../api-reference.md#nifrajsagent) for the complete list._
+_…and 32 more - see [`api-reference.md`](../../api-reference.md#nifrajsagent) for the complete list._
 
 ## Footguns
 

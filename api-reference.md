@@ -62,6 +62,16 @@ Every public export of every package and documented subpath - name, kind, signat
 - **createAgentEvidenceStream** _(function)_ - `createAgentEvidenceStream: (options?: AgentEvidenceStreamOptions) => AgentEvidenceStream`
   Create an async iterable that yields the exact evidence values received by `step`.
 
+### `@nifrajs/agent/mount`
+
+- **AgentMountableApp** _(interface)_ - `interface AgentMountableApp`
+  The structural slice of a nifra server `mountAgent` needs.
+- **AgentRouteContext** _(interface)_ - `interface AgentRouteContext`
+  The structural slice of a route context the seam needs. Kept loose so core stays a peer dependency.
+- **MountAgentOptions** _(interface)_ - `interface MountAgentOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>`
+- **mountAgent** _(function)_ - `mountAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(app: AgentMountableApp, options: MountAgentOptions<InputSchema, OutputSchema>) => void`
+  Mount a single agent as `POST {path}`, negotiating an SSE evidence stream on `Accept`.
+
 ## @nifrajs/agent-protocol
 
 - **AGENT_PROTOCOL_VERSION** _(const)_ - `AGENT_PROTOCOL_VERSION: 1`

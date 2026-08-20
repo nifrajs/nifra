@@ -25,6 +25,11 @@
       "bun": "./src/events.ts",
       "types": "./dist/events.d.ts",
       "default": "./dist/events.js"
+    },
+    "./mount": {
+      "bun": "./src/mount.ts",
+      "types": "./dist/mount.d.ts",
+      "default": "./dist/mount.js"
     }
   },
   "files": [
