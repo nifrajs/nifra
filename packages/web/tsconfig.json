@@ -16,7 +16,9 @@
   "include": [
     "src/client.ts",
     "src/islands.ts",
+    "src/nano.ts",
     "test/islands.test.ts",
+    "test/nano.test.ts",
     "test/apply-head.test.ts",
     "test/client-browser.test.ts"
   ]

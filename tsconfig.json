@@ -109,7 +109,9 @@
     "packages/deno",
     "packages/web/src/client.ts",
     "packages/web/src/islands.ts",
+    "packages/web/src/nano.ts",
     "packages/web/test/islands.test.ts",
+    "packages/web/test/nano.test.ts",
     "packages/web/test/apply-head.test.ts",
     "packages/web/test/client-browser.test.ts",
     // Cross-adapter dev-SSR integration test: it statically imports @nifrajs/web-react (a frontend
