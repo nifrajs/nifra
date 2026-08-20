@@ -25,6 +25,7 @@ import type { TypeScriptApi } from "./internal/typescript-import.ts"
 import type { PipelineReport } from "./pipeline-report.ts"
 import { freezeProjectFacts, type ProjectFactsSeed } from "./project-facts.ts"
 import { parseRulePacks, type RuleContext, runRuleRegistry } from "./rules/index.ts"
+import { islandRules } from "./rules/islands.ts"
 import { LEGACY_RULE_CODES, legacyRules } from "./rules/legacy.ts"
 import { routeRules } from "./rules/routes.ts"
 import { securityRules } from "./rules/security.ts"
@@ -929,7 +930,7 @@ export async function collectCheckDiagnostics(
   try {
     registryDiagnostics = await runRuleRegistry(
       ruleContext,
-      [...legacyRules, ...securityRules, ...routeRules],
+      [...legacyRules, ...securityRules, ...routeRules, ...islandRules],
       projectFacts.policies.rulePacks,
     )
     structuredDiagnostics.push(...registryDiagnostics)

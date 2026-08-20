@@ -3356,6 +3356,13 @@
     "doc": "/**\n * Build the resize request handler. Mount its return value at the `selfHostedLoader` endpoint:\n *\n * ```ts\n * const image = createImageHandler({ root: \"./public\", allowedOrigins: [\"https://cdn.example\"] })\n * // inside your router: if (url.pathname === \"/_image\") return image(req)\n * ```\n */"
   },
   {
+    "name": "createIslandBus",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function createIslandBus<Events extends Record<string, unknown> = Record<string, unknown>>(): {\n    emit<K extends keyof Events>(type: K, detail: Events[K]): void;\n    on<K extends keyof Events>(type: K, handler: (detail: Events[K]) => void): IslandBusUnsubscribe;\n};",
+    "doc": "/**\n * A typed publish/subscribe channel for coordinating islands that must talk to each other without a\n * shared reactive store - a cart badge reacting to an \"add to cart\" island, a filter island driving\n * a results island. Create ONE bus in your mount entry and close over it in each enhancer; there is\n * no implicit global, so concurrent renders and tests never cross-talk.\n *\n *   type Events = { \"cart:add\": { sku: string }; \"cart:count\": number }\n *   const bus = createIslandBus<Events>()\n *   mountIslands({\n *     addBtn: defineIsland((el) => {\n *       const onClick = () => bus.emit(\"cart:add\", { sku: el.dataset.sku! })\n *       el.addEventListener(\"click\", onClick)\n *       return () => el.removeEventListener(\"click\", onClick)\n *     }),\n *     badge: defineIsland((el) => bus.on(\"cart:count\", (n) => { el.textContent = String(n) })),\n *   })\n *\n * `on` returns its own unsubscribe, so an enhancer whose only job is to listen can `return bus.on(...)`\n * directly as its cleanup. A handler that throws is isolated - it never blocks the other subscribers\n * or the `emit` caller. Synchronous, in-memory, no DOM dependency (safe to construct under SSR); it\n * carries no history, so a subscriber only sees events emitted after it subscribed.\n */"
+  },
+  {
     "name": "createLocalProcessAdapter",
     "kind": "function",
     "package": "@nifrajs/agent",
@@ -4138,6 +4145,13 @@
     "package": "nifra",
     "signature": "export declare function defineIdentityPlugin(name: string, apply: <S extends AnyServer>(app: S) => S): IdentityPlugin;",
     "doc": "/**\n * Define a type-**identity** plugin: it registers routes/hooks as a side effect but returns the app with\n * its `Registry` + `Context` UNCHANGED. Use this (not {@link definePlugin}) for any plugin that doesn't\n * add context types - e.g. one mounting an auth handler. It threads the caller's *concrete* server type\n * through `use`, so routes declared after `app.use(plugin)` keep their types.\n *\n * Why a dedicated helper: `definePlugin((app) => app)` infers `app: Server<any, any>`, so `use` returns\n * `Server<any, any>` and the whole typed client collapses to `any`. The explicit generic return type here\n * (which a plain `Object.assign` can't preserve) is what keeps `use` returning the precise server type.\n *\n * ```ts\n * export const audit = defineIdentityPlugin(\"audit\", (app) => app.onResponse(logResponse))\n * const api = server().get(\"/a\", h).use(audit).get(\"/b\", h) // /a AND /b stay typed\n * ```\n */"
+  },
+  {
+    "name": "defineIsland",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function defineIsland<P = unknown>(enhancer: IslandEnhancer<P>): IslandEnhancer<P>;",
+    "doc": "/**\n * Author a typed enhancer. Pure identity at runtime (zero cost, tree-shaken away) - its only job is\n * to pin the `data-props` shape so `el` and `props` are typed inside the body and the enhancer is\n * assignable to `mountIslands`. Prefer this over an inline arrow whenever an island reads props:\n *\n *   const counter = defineIsland<{ start: number }>((el, props) => {\n *     let n = props.start                       // props typed, no cast\n *     const out = el.querySelector(\"output\")!\n *     const onClick = () => { out.textContent = String(++n) }\n *     el.querySelector(\"button\")?.addEventListener(\"click\", onClick)\n *     return () => el.querySelector(\"button\")?.removeEventListener(\"click\", onClick)\n *   })\n *   mountIslands({ counter })\n *\n * The props type is a contract, not a validator - `data-props` is JSON authored by your own SSR, so\n * it is trusted framing, not user input. Keep the enhancer body imperative: read the DOM, wire\n * listeners, return cleanup. No hidden reactivity to get wrong.\n */"
   },
   {
     "name": "defineMcpTool",
@@ -6740,6 +6754,13 @@
     "package": "@nifrajs/web-react",
     "signature": "export declare function Island({ id, props, strategy, children }: IslandProps): ReactNode;",
     "doc": "/** Render a `<nifra-island>` marker around server-rendered `children`. The client enhancer mounts the\n * interactivity (see `mountIslands`). Props are JSON-encoded into `data-props`; React escapes the\n * attribute value and the client reads the decoded `dataset.props`. */"
+  },
+  {
+    "name": "IslandBusUnsubscribe",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type IslandBusUnsubscribe = () => void;",
+    "doc": "/** Unsubscribe one bus handler; calling twice is a no-op. Also returned so an enhancer can hand it\n * straight back as its `IslandCleanup`. */"
   },
   {
     "name": "IslandCleanup",

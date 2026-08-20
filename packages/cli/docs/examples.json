@@ -264,6 +264,12 @@
     "code": "import { server } from \"@nifrajs/core/server\"\n\nserver()\n  .get(\"/\", () => ({ hello: \"world\" }))\n  .get(\"/users/:id\", (c) => ({ id: c.params.id }))\n  .listen(3000)"
   },
   {
+    "name": "BUS_PATTERN",
+    "topic": "Nifra - Islands: the AI-safe interactivity lane",
+    "slug": "islands",
+    "code": "import { createIslandBus } from \"@nifrajs/web/islands\"\n\n// One typed channel, created once and closed over by every enhancer that needs it.\ntype CartEvents = { \"cart:add\": { sku: string }; \"cart:count\": number }\nconst bus = createIslandBus<CartEvents>()\n\nconst off = bus.on(\"cart:count\", (n) => console.log(\"cart now has\", n, \"items\"))\nbus.emit(\"cart:add\", { sku: \"ABC-1\" })\noff() // unsubscribe - also usable directly as an island's cleanup"
+  },
+  {
     "name": "HONO",
     "topic": "Nifra - Migrate route by route",
     "slug": "migrate-route-by-route",

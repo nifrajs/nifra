@@ -1225,6 +1225,154 @@ if (document.documentElement.hasAttribute("data-nifra-hydrated")) start()
 else document.addEventListener("nifra:hydrated", start, { once: true })
 ```
 
+## Nifra - Islands: the AI-safe interactivity lane
+
+> Add interactivity to a zero-runtime vanilla page with islands - imperative DOM enhancers, no framework runtime, no hydration. Explicit code an AI (or a human) gets right first try: mount, coordinate over a typed bus, always return cleanup.
+
+A `@nifrajs/web-vanilla` page ships zero framework runtime. When one corner needs
+to be interactive, you don&apos;t turn on hydration - you mount an **island**: a
+small, plain-DOM enhancer over a server-rendered element. Explicit imperative code with no
+hidden reactivity - the shape an AI agent (or a human) gets right on the first try.
+
+### Why islands, not hydration
+
+Vanilla routes set `export const hydrate = false` - there is no client framework
+to hydrate with, and that is the point. The five framework adapters give you a reactive
+runtime and pay for it in client JS and in the subtle failure modes (stale closures,
+hydration mismatch, what-re-runs-when) that trip up generated code. Islands take the other
+trade: no runtime, no reactivity to get wrong. You wire the DOM by hand and hand back a
+teardown. Reach for a framework adapter when you genuinely need a stateful app UI; reach for
+islands for widgets on an otherwise-static page.
+
+### Mount an island
+
+Render a `<nifra-island>` marker in your page (props are inline JSON), then
+bundle one entry that calls `mountIslands`. Load it via the route&apos;s
+`islandScripts`.
+
+```ts
+// doc-check: skip - server-rendered island marker (HTML, not a checkable module).
+// In your @nifrajs/web-vanilla page, render the host element with inline JSON props:
+html`<nifra-island data-id="counter" data-props=${JSON.stringify({ start: 0 })}>
+  <output>0</output>
+  <button type="button">+1</button>
+</nifra-island>`
+```
+
+```ts
+// doc-check: skip - browser DOM enhancer, typechecked in @nifrajs/web under its DOM lib.
+import { defineIsland, mountIslands } from "@nifrajs/web/islands"
+
+// defineIsland pins the data-props type; the body is plain imperative DOM. ALWAYS return the
+// teardown for anything you wire - mountIslands calls it on soft-nav (NF-C020 warns if you forget).
+const counter = defineIsland<{ start: number }>((el, props) => {
+  let n = props.start
+  const out = el.querySelector("output")!
+  const onClick = () => { out.textContent = String(++n) }
+  el.querySelector("button")?.addEventListener("click", onClick)
+  return () => el.querySelector("button")?.removeEventListener("click", onClick)
+})
+
+// One bundle entry, loaded via the route's `islandScripts`.
+mountIslands({ counter })
+```
+
+`defineIsland<Props>` is a zero-cost identity helper - its only job is to
+type `props` and `el` so the body needs no cast. Keep the body
+imperative: read the DOM, add listeners, **return the cleanup**. The returned
+function runs on soft-nav teardown; forget it and every navigation leaks the listener -
+`nifra check` flags exactly that as `NF-C020`.
+
+### Coordinate islands with a typed bus
+
+Islands are isolated by design - each enhances one element and shares no state. When two must
+talk (an &ldquo;add to cart&rdquo; button and a cart badge), use a
+`createIslandBus`: one typed channel, created once and closed over by each
+enhancer. No implicit global, so concurrent renders and tests never cross-talk.
+
+```ts
+import { createIslandBus } from "@nifrajs/web/islands"
+
+// One typed channel, created once and closed over by every enhancer that needs it.
+type CartEvents = { "cart:add": { sku: string }; "cart:count": number }
+const bus = createIslandBus<CartEvents>()
+
+const off = bus.on("cart:count", (n) => console.log("cart now has", n, "items"))
+bus.emit("cart:add", { sku: "ABC-1" })
+off() // unsubscribe - also usable directly as an island's cleanup
+```
+
+The bus is synchronous, in-memory, and carries no history - a subscriber sees only events
+emitted after it subscribes. A throwing handler is isolated from the others. Because
+`on()` returns its own unsubscribe, an enhancer whose only job is to listen can
+return it directly as its cleanup:
+
+```ts
+// doc-check: skip - browser DOM enhancer, typechecked in @nifrajs/web under its DOM lib.
+import { createIslandBus, defineIsland, mountIslands } from "@nifrajs/web/islands"
+
+type CartEvents = { "cart:add": { sku: string }; "cart:count": number }
+const bus = createIslandBus<CartEvents>()
+
+// Two islands that never import each other - they meet only on the bus.
+const addButton = defineIsland<{ sku: string }>((el, props) => {
+  const onClick = () => bus.emit("cart:add", { sku: props.sku })
+  el.addEventListener("click", onClick)
+  return () => el.removeEventListener("click", onClick)
+})
+
+let count = 0
+const badge = defineIsland((el) => {
+  const unsubscribe = bus.on("cart:add", () => {
+    count += 1
+    el.textContent = String(count)
+    bus.emit("cart:count", count)
+  })
+  return unsubscribe // the on() unsubscribe IS the cleanup
+})
+
+mountIslands({ addButton, badge })
+```
+
+### Pattern: filter drives results
+
+The same shape scales to any &ldquo;one island changes, another reacts&rdquo; case. Each
+island owns only its own DOM; they meet on the channel, never in a shared store.
+
+```ts
+// doc-check: skip - browser DOM enhancer, typechecked in @nifrajs/web under its DOM lib.
+import { createIslandBus, defineIsland, mountIslands } from "@nifrajs/web/islands"
+
+// filter -> results, one directional channel. The results island owns its own DOM; the filter
+// island owns none of it. No shared store, no reactive tree - a message and two enhancers.
+const bus = createIslandBus<{ "filter:set": string }>()
+
+const filter = defineIsland((el) => {
+  const input = el.querySelector("input")!
+  const onInput = () => bus.emit("filter:set", input.value.toLowerCase())
+  input.addEventListener("input", onInput)
+  return () => input.removeEventListener("input", onInput)
+})
+
+const results = defineIsland((el) =>
+  bus.on("filter:set", (q) => {
+    for (const row of el.querySelectorAll<HTMLElement>("[data-name]")) {
+      const name = row.dataset.name ?? ""
+      row.hidden = q !== "" && !name.toLowerCase().includes(q)
+    }
+  }),
+)
+
+mountIslands({ filter, results })
+```
+
+### Load strategies
+
+A marker&apos;s `data-strategy` defers its enhancer: `load` (default),
+`idle`, `visible` (mount when it scrolls into view), or a
+`media` query. An island with no matching enhancer, or an invalid strategy, stays
+inert server-rendered HTML - forward-compatible, never a runtime error.
+
 ## Nifra - Streaming
 
 > Streaming SSR, Suspense, and defer() in Nifra - on every runtime including the edge.
@@ -10206,6 +10354,14 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 Zero-framework render adapter for @nifrajs/web - auto-escaping tagged-template HTML, ~0 KB client JS, interactivity via @nifrajs/web/islands.
 
 Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one core, five UI libraries, every runtime. Scaffold a new app with `bun create nifra`.
+
+## The AI-safe lane
+
+Vanilla is the render adapter an agent gets right on the first try. It ships no framework runtime, so there is no hydration, no reactivity, and none of the failure modes (stale closures, hydration mismatch, what-re-runs-when) that trip up generated code. You get true SSR plus every server feature - loaders, actions, ISR/SSG, streaming, head management - unchanged from `@nifrajs/web`; those live in the core, not the view layer.
+
+Interactivity is added with **islands**, not hydration: small imperative DOM enhancers over server-rendered elements. `defineIsland` types the props, `createIslandBus` coordinates islands over a typed channel, and every enhancer returns its cleanup - the one rule `nifra check` enforces (`NF-C020`). See the [islands cookbook](https://nifra.dev/docs/islands) for the counter, cart-badge, and filter patterns, or run `nifra scaffold` on a vanilla route for the golden stub.
+
+Need a stateful app UI with reactive components? That is what the five framework adapters are for - reach for `@nifrajs/web-preact` or `@nifrajs/web-solid` when you want a small reactive runtime.
 
 ## Install
 

@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test"
-import { type IslandEnhancer, mountIslands } from "../src/islands.ts"
+import { createIslandBus, defineIsland, type IslandEnhancer, mountIslands } from "../src/islands.ts"
 
 // mountIslands only reads `.dataset` off each element and iterates `root.querySelectorAll(...)`, so a
 // minimal stub stands in for the DOM (Bun's test env has no `document`). Casts are test-only.
@@ -361,4 +361,96 @@ test("idle without requestIdleCallback: the fallback timer is cancellable", asyn
     if (original === undefined) delete g.requestIdleCallback
     else g.requestIdleCallback = original
   }
+})
+
+describe("defineIsland", () => {
+  test("is identity at runtime and stays assignable to mountIslands", () => {
+    const enhancer = defineIsland<{ start: number }>((_el, props) => {
+      seen.push(props.start)
+    })
+    const seen: number[] = []
+    mountIslands(
+      { counter: enhancer as IslandEnhancer },
+      { root: rootOf([island("counter", { props: '{"start":7}' })]) },
+    )
+    expect(seen).toEqual([7])
+  })
+})
+
+describe("createIslandBus", () => {
+  test("delivers an emit to every subscriber of that type only", () => {
+    type Events = { "cart:add": { sku: string }; "cart:count": number }
+    const bus = createIslandBus<Events>()
+    const adds: string[] = []
+    const counts: number[] = []
+    bus.on("cart:add", (d) => adds.push(d.sku))
+    bus.on("cart:count", (n) => counts.push(n))
+
+    bus.emit("cart:add", { sku: "abc" })
+    bus.emit("cart:count", 3)
+
+    expect(adds).toEqual(["abc"])
+    expect(counts).toEqual([3])
+  })
+
+  test("emit with no subscribers is a silent no-op", () => {
+    const bus = createIslandBus<{ ping: undefined }>()
+    expect(() => bus.emit("ping", undefined)).not.toThrow()
+  })
+
+  test("unsubscribe stops delivery; double-unsubscribe is a no-op", () => {
+    const bus = createIslandBus<{ tick: number }>()
+    const got: number[] = []
+    const off = bus.on("tick", (n) => got.push(n))
+    bus.emit("tick", 1)
+    off()
+    bus.emit("tick", 2)
+    off() // idempotent
+    expect(got).toEqual([1])
+  })
+
+  test("a throwing handler is isolated - other subscribers and emit still complete", () => {
+    const bus = createIslandBus<{ go: number }>()
+    const err = mock(() => {})
+    const original = console.error
+    console.error = err
+    const got: number[] = []
+    bus.on("go", () => {
+      throw new Error("boom")
+    })
+    bus.on("go", (n) => got.push(n))
+    try {
+      expect(() => bus.emit("go", 9)).not.toThrow()
+    } finally {
+      console.error = original
+    }
+    expect(got).toEqual([9]) // second handler still ran
+    expect(err).toHaveBeenCalledTimes(1)
+  })
+
+  test("subscribing during dispatch does not fire the new handler for the in-flight emit", () => {
+    const bus = createIslandBus<{ go: number }>()
+    const late: number[] = []
+    bus.on("go", () => {
+      bus.on("go", (n) => late.push(n)) // added mid-dispatch
+    })
+    bus.emit("go", 1) // snapshot taken before the new handler existed
+    expect(late).toEqual([]) // only sees events after this emit
+    bus.emit("go", 2)
+    expect(late).toEqual([2])
+  })
+
+  test("on() returns an unsubscribe usable as an island cleanup", () => {
+    const bus = createIslandBus<{ n: number }>()
+    const seen: number[] = []
+    const enhancer = defineIsland((_el) => bus.on("n", (v) => seen.push(v)))
+    const dispose = mountIslands(
+      { badge: enhancer as IslandEnhancer },
+      { root: rootOf([island("badge")]) },
+    )
+    bus.emit("n", 1)
+    dispose() // runs the unsubscribe the enhancer returned
+    bus.emit("n", 2)
+    expect(seen).toEqual([1])
+  })
 })

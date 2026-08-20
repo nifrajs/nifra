@@ -4,9 +4,10 @@
  * `filePathToPatterns`: `:id`/`[id]` → `[id]`, `*rest`/`[...rest]` → `[...rest]`, `[[lang]]` optional,
  * `/` → `index`. The framework (→ file extension) comes from the project's `clientModule`.
  *
- * Page stubs are emitted only for the JSX family (react/preact/solid - one shared, verified shape);
- * for vue/svelte/vanilla we return the correct PATH + the route-module contract and point at
- * `nifra_example` for the body, rather than hand-writing an SFC we can't typecheck here.
+ * Page stubs are emitted for the JSX family (react/preact/solid - one shared, verified shape) and
+ * for vanilla (a zero-runtime `html` page carrying the golden island pattern); for vue/svelte we
+ * return the correct PATH + the route-module contract and point at `nifra_example` for the body,
+ * rather than hand-writing an SFC we can't typecheck here.
  */
 
 import { lstat, mkdir, realpath, writeFile } from "node:fs/promises"
@@ -75,6 +76,52 @@ export default function Page() {
 `
 }
 
+/**
+ * The @nifrajs/web-vanilla golden stub: a zero-runtime `html` page (`hydrate = false`), plus the
+ * copy-paste island path as guidance. The uncommented body is a valid, typecheckable static page;
+ * the commented block is the AI-safe interactivity pattern - an imperative enhancer that ALWAYS
+ * returns its cleanup (the one thing NF-C020 checks), wired through `mountIslands`. Interactivity is
+ * added by uncommenting and writing the companion `<name>.client.ts`, never by turning on hydration.
+ */
+function vanillaStub(file: string, params: string[]): string {
+  const paramsNote =
+    params.length > 0 ? `params.${params.join(", params.")}` : "no path params on this route"
+  const loaderLine =
+    params.length > 0
+      ? `// export async function loader({ params, api }: LoaderArgs<typeof backend>) { return { /* fetch by ${params[0]} */ } }`
+      : `// export async function loader({ api }: LoaderArgs<typeof backend>) { return {} }`
+  return `// ${file} - @nifrajs/web-vanilla route. Server-rendered HTML, ZERO framework runtime.
+// Available here: ${paramsNote}. Fetch data in a loader via the typed \`api\`; see nifra_example("loader").
+import { html } from "@nifrajs/web-vanilla"
+
+// No client framework to hydrate with - vanilla routes are documents, not hydrated apps.
+export const hydrate = false
+
+${loaderLine}
+
+export default function Page() {
+  return html\`<main><h1>TODO: ${file}</h1></main>\`
+}
+
+// --- Add interactivity the AI-safe way (islands), NOT hydration ---------------------------------
+// 1. Render a marker in the page above:  html\`<nifra-island data-id="counter" data-props=\${JSON.stringify({ start: 0 })}></nifra-island>\`
+// 2. Wire the route to its enhancer bundle:  export const islandScripts = [/* built URL of ./counter.client.ts */]
+// 3. Write ./counter.client.ts as an imperative enhancer that ALWAYS returns its cleanup:
+//
+//    import { defineIsland, mountIslands } from "@nifrajs/web/islands"
+//    const counter = defineIsland<{ start: number }>((el, props) => {
+//      let n = props.start
+//      const out = el.querySelector("output")!
+//      const onClick = () => { out.textContent = String(++n) }
+//      el.querySelector("button")?.addEventListener("click", onClick)
+//      return () => el.querySelector("button")?.removeEventListener("click", onClick) // cleanup - NF-C020
+//    })
+//    mountIslands({ counter })
+//
+// Cross-island coordination: create ONE createIslandBus() and close over it in each enhancer.
+`
+}
+
 /** Param names a route file declares, for the stub's notes. */
 function paramsOf(file: string): string[] {
   const out: string[] = []
@@ -105,6 +152,13 @@ export function scaffoldRoute(urlPath: string, framework: Framework): ScaffoldRe
       file,
       content: jsxStub(file, params),
       note: `Create ${file}. ${ROUTE_CONTRACT}`,
+    }
+  }
+  if (framework === "vanilla") {
+    return {
+      file,
+      content: vanillaStub(file, params),
+      note: `Create ${file} as a zero-runtime @nifrajs/web-vanilla route. ${ROUTE_CONTRACT}\nInteractivity comes from islands (imperative enhancers), never hydration - the stub embeds the golden pattern; nifra_example("islands") has the full cookbook.`,
     }
   }
   return {

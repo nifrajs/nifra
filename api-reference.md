@@ -3905,6 +3905,8 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web/islands`
 
+- **IslandBusUnsubscribe** _(type)_ - `type IslandBusUnsubscribe = () => void`
+  Unsubscribe one bus handler; calling twice is a no-op. Also returned so an enhancer can hand it straight back as its `IslandCleanup`.
 - **IslandCleanup** _(type)_ - `type IslandCleanup = () => void`
   Optional teardown an enhancer returns (remove listeners/observers); run on `dispose()`.
 - **IslandEnhancer** _(type)_ - `type IslandEnhancer<P = unknown> = (el: HTMLElement, props: P) => IslandCleanup | void`
@@ -3913,6 +3915,10 @@ _No named exports (side-effect entrypoint)._
   When an island's enhancer runs. An object strategy is intentionally limited to media queries.
 - **MAX_MEDIA_QUERY_LENGTH** _(const)_ - `MAX_MEDIA_QUERY_LENGTH: 256`
   The maximum media-query length accepted from an HTML data attribute.
+- **createIslandBus** _(function)_ - `createIslandBus: <Events extends Record<string, unknown> = Record<string, unknown>>() => { emit<K extends keyof Events>(type: K, detail: Events[K]): void; on<K extends keyof Events>(type: K, handler: (detail: Events[K])…`
+  A typed publish/subscribe channel for coordinating islands that must talk to each other without a shared reactive store - a cart badge reacting to an "add to cart" island, a filter island driving a results island. Create ONE bus in your mount entry and close over it in each enhancer; there is no im…
+- **defineIsland** _(function)_ - `defineIsland: <P = unknown>(enhancer: IslandEnhancer<P>) => IslandEnhancer<P>`
+  Author a typed enhancer. Pure identity at runtime (zero cost, tree-shaken away) - its only job is to pin the `data-props` shape so `el` and `props` are typed inside the body and the enhancer is assignable to `mountIslands`. Prefer this over an inline arrow whenever an island reads props:
 - **mountIslands** _(function)_ - `mountIslands: (enhancers: Readonly<Record<string, IslandEnhancer>>, options?: { readonly root?: ParentNode; }) => () => void`
   Find every `<nifra-island data-id>` under `root` (default `document`) and enhance each with the matching enhancer, honoring its `data-strategy`. An island whose `id` has no enhancer is left as inert SSR HTML (forward-compatible). An enhancer that throws is isolated - it never blocks the others (eac…
 - **scheduleTrigger** _(function)_ - `scheduleTrigger: (strategy: IslandStrategy, run: () => void, options?: TriggerOptions) => () => void`

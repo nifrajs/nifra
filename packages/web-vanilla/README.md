@@ -4,6 +4,14 @@ Zero-framework render adapter for @nifrajs/web - auto-escaping tagged-template H
 
 Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one core, five UI libraries, every runtime. Scaffold a new app with `bun create nifra`.
 
+## The AI-safe lane
+
+Vanilla is the render adapter an agent gets right on the first try. It ships no framework runtime, so there is no hydration, no reactivity, and none of the failure modes (stale closures, hydration mismatch, what-re-runs-when) that trip up generated code. You get true SSR plus every server feature - loaders, actions, ISR/SSG, streaming, head management - unchanged from `@nifrajs/web`; those live in the core, not the view layer.
+
+Interactivity is added with **islands**, not hydration: small imperative DOM enhancers over server-rendered elements. `defineIsland` types the props, `createIslandBus` coordinates islands over a typed channel, and every enhancer returns its cleanup - the one rule `nifra check` enforces (`NF-C020`). See the [islands cookbook](https://nifra.dev/docs/islands) for the counter, cart-badge, and filter patterns, or run `nifra scaffold` on a vanilla route for the golden stub.
+
+Need a stateful app UI with reactive components? That is what the five framework adapters are for - reach for `@nifrajs/web-preact` or `@nifrajs/web-solid` when you want a small reactive runtime.
+
 ## Install
 
 ```sh

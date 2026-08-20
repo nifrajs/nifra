@@ -44,11 +44,21 @@ describe("scaffoldRoute", () => {
     expect(r.note).toContain("loader")
   })
 
-  test("vue/svelte/vanilla get path + contract, no hallucinated SFC", () => {
+  test("vue/svelte get path + contract, no hallucinated SFC", () => {
     const r = scaffoldRoute("/about", "svelte")
     expect(r.file).toBe("routes/about.svelte")
     expect(r.content).toBeUndefined() // no guessed SFC body
     expect(r.note).toContain("nifra_example")
+  })
+
+  test("vanilla gets a zero-runtime stub carrying the golden island pattern", () => {
+    const r = scaffoldRoute("/hotels", "vanilla")
+    expect(r.file).toBe("routes/hotels.ts")
+    expect(r.content).toContain('import { html } from "@nifrajs/web-vanilla"')
+    expect(r.content).toContain("export const hydrate = false") // no hydration, ever
+    expect(r.content).toContain("defineIsland") // the AI-safe interactivity path
+    expect(r.content).toContain("return () =>") // cleanup pattern NF-C020 enforces
+    expect(r.note).toContain("islands")
   })
 })
 

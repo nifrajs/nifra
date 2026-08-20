@@ -34,6 +34,28 @@ export type IslandCleanup = () => void
 // biome-ignore lint/suspicious/noConfusingVoidType: `void` = "no cleanup returned", like React's EffectCallback - cleanup is optional.
 export type IslandEnhancer<P = unknown> = (el: HTMLElement, props: P) => IslandCleanup | void
 
+/**
+ * Author a typed enhancer. Pure identity at runtime (zero cost, tree-shaken away) - its only job is
+ * to pin the `data-props` shape so `el` and `props` are typed inside the body and the enhancer is
+ * assignable to `mountIslands`. Prefer this over an inline arrow whenever an island reads props:
+ *
+ *   const counter = defineIsland<{ start: number }>((el, props) => {
+ *     let n = props.start                       // props typed, no cast
+ *     const out = el.querySelector("output")!
+ *     const onClick = () => { out.textContent = String(++n) }
+ *     el.querySelector("button")?.addEventListener("click", onClick)
+ *     return () => el.querySelector("button")?.removeEventListener("click", onClick)
+ *   })
+ *   mountIslands({ counter })
+ *
+ * The props type is a contract, not a validator - `data-props` is JSON authored by your own SSR, so
+ * it is trusted framing, not user input. Keep the enhancer body imperative: read the DOM, wire
+ * listeners, return cleanup. No hidden reactivity to get wrong.
+ */
+export function defineIsland<P = unknown>(enhancer: IslandEnhancer<P>): IslandEnhancer<P> {
+  return enhancer
+}
+
 /** Parse an island's inline `data-props` JSON; malformed/absent → `undefined` (never throws). */
 function readProps(el: HTMLElement): unknown {
   const raw = el.dataset.props
@@ -98,5 +120,68 @@ export function mountIslands(
         // best-effort teardown - a failing cleanup must not block the rest
       }
     }
+  }
+}
+
+/** Unsubscribe one bus handler; calling twice is a no-op. Also returned so an enhancer can hand it
+ * straight back as its `IslandCleanup`. */
+export type IslandBusUnsubscribe = () => void
+
+/**
+ * A typed publish/subscribe channel for coordinating islands that must talk to each other without a
+ * shared reactive store - a cart badge reacting to an "add to cart" island, a filter island driving
+ * a results island. Create ONE bus in your mount entry and close over it in each enhancer; there is
+ * no implicit global, so concurrent renders and tests never cross-talk.
+ *
+ *   type Events = { "cart:add": { sku: string }; "cart:count": number }
+ *   const bus = createIslandBus<Events>()
+ *   mountIslands({
+ *     addBtn: defineIsland((el) => {
+ *       const onClick = () => bus.emit("cart:add", { sku: el.dataset.sku! })
+ *       el.addEventListener("click", onClick)
+ *       return () => el.removeEventListener("click", onClick)
+ *     }),
+ *     badge: defineIsland((el) => bus.on("cart:count", (n) => { el.textContent = String(n) })),
+ *   })
+ *
+ * `on` returns its own unsubscribe, so an enhancer whose only job is to listen can `return bus.on(...)`
+ * directly as its cleanup. A handler that throws is isolated - it never blocks the other subscribers
+ * or the `emit` caller. Synchronous, in-memory, no DOM dependency (safe to construct under SSR); it
+ * carries no history, so a subscriber only sees events emitted after it subscribed.
+ */
+export function createIslandBus<
+  Events extends Record<string, unknown> = Record<string, unknown>,
+>(): {
+  emit<K extends keyof Events>(type: K, detail: Events[K]): void
+  on<K extends keyof Events>(type: K, handler: (detail: Events[K]) => void): IslandBusUnsubscribe
+} {
+  const channels = new Map<keyof Events, Set<(detail: never) => void>>()
+  return {
+    emit(type, detail) {
+      const handlers = channels.get(type)
+      if (handlers === undefined) return
+      // Snapshot so a handler that (un)subscribes mid-dispatch cannot corrupt this iteration.
+      for (const handler of [...handlers]) {
+        try {
+          ;(handler as (d: Events[typeof type]) => void)(detail)
+        } catch (err) {
+          console.error(`[nifra/islands] bus handler for "${String(type)}" failed:`, err)
+        }
+      }
+    },
+    on(type, handler) {
+      let handlers = channels.get(type)
+      if (handlers === undefined) {
+        handlers = new Set()
+        channels.set(type, handlers)
+      }
+      handlers.add(handler as (detail: never) => void)
+      return () => {
+        const set = channels.get(type)
+        if (set === undefined) return
+        set.delete(handler as (detail: never) => void)
+        if (set.size === 0) channels.delete(type)
+      }
+    },
   }
 }
