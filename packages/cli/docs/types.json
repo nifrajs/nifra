@@ -1231,6 +1231,13 @@
     "doc": "/** A `Response` a route declared as binary. `Jsonify` maps this to `Blob`. */"
   },
   {
+    "name": "bind",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function bind<T>(el: HTMLElement, source: Readable<T>, apply: (el: HTMLElement, value: T) => void): () => void;",
+    "doc": "/**\n * Bind one element to a source: `apply(el, value)` runs once immediately and again on every change.\n * Returns the unsubscribe - hand it back as the island's cleanup (or collect several).\n *\n *   bind(count, remaining, (el, n) => { el.textContent = String(n) })\n */"
+  },
+  {
     "name": "BindableElement",
     "kind": "interface",
     "package": "@nifrajs/islets",
@@ -1242,6 +1249,20 @@
     "kind": "interface",
     "package": "@nifrajs/islets",
     "signature": "export interface BindableRoot {\n    querySelectorAll(selector: string): Iterable<BindableElement>;\n}"
+  },
+  {
+    "name": "bindList",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function bindList<T>(source: Readable<readonly T[]>, container: HTMLElement, options: BindListOptions<T>): () => void;",
+    "doc": "/**\n * Bind a list signal to a container with keyed reconciliation: new items are `create`d, surviving\n * items are `update`d in place (keeping focus, scroll, and selection), removed items are detached,\n * and the children are ordered to match the array. Returns the unsubscribe.\n *\n * This is the one imperative task too error-prone to hand-write each time - it is why nano exists on\n * top of islands rather than leaving you to rebuild the container on every change.\n */"
+  },
+  {
+    "name": "BindListOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface BindListOptions<T> {\n    key(item: T): string | number;\n    create(item: T): HTMLElement;\n    update?(el: HTMLElement, item: T): void;\n}",
+    "doc": "/** How a `bindList` turns items into keyed DOM. `key` MUST be stable and unique per item (never the\n * array index) - it is what lets add/remove/reorder touch only the changed rows. */"
   },
   {
     "name": "bindScope",
@@ -2842,6 +2863,13 @@
     "package": "@nifrajs/islets",
     "signature": "export declare function computed<T>(fn: () => T): () => T;",
     "doc": "/** Derived value, cached into a signal - recomputes when its tracked inputs change. */"
+  },
+  {
+    "name": "computed",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function computed<T>(compute: () => T, deps: readonly Readable<unknown>[]): Readable<T>;",
+    "doc": "/**\n * A derived cell. `computed(() => a.get() + b.get(), [a, b])` recomputes whenever a declared\n * dependency changes and notifies its own subscribers when the derived value changes.\n *\n * The `deps` array is mandatory and explicit ON PURPOSE - it is the contract a linter checks against\n * the signals the body reads (`NF-C023`). Auto-tracking would remove the array but reintroduce the\n * exact \"why didn't this update\" bug that makes framework reactivity hard to get right.\n */"
   },
   {
     "name": "computeEffectDigest",
@@ -6396,7 +6424,7 @@
     "name": "ImageHandlerOptions",
     "kind": "interface",
     "package": "@nifrajs/image",
-    "signature": "export interface ImageHandlerOptions {\n    /** Codec backend. Default: {@link bunImageBackend} (requires the Bun runtime). */\n    readonly backend?: ImageBackend;\n    /** Absolute directory that local (path) sources resolve under. Path-traversal- and symlink-guarded.\n     * Omit to **disable local sources** (every path source → 403). */\n    readonly root?: string;\n    /** Exact origins (`https://cdn.example`) allowed for remote sources. Omitted/empty ⇒ **no remote\n     * sources** (fail-closed against SSRF). Only `http:`/`https:` URLs are ever considered. */\n    readonly allowedOrigins?: readonly string[];\n    /** Max bytes read from a source before rejecting (413). Default 20 MiB. */\n    readonly maxSourceBytes?: number;\n    /** Max source pixels (w×h) before rejecting (413) - decompression-bomb guard. Default 40 MP. */\n    readonly maxSourcePixels?: number;\n    /** Hard cap on the requested width; larger `?w` is clamped down. Default 3840. */\n    readonly maxWidth?: number;\n    /** Max concurrent transforms (codec work is CPU/memory-heavy). Excess requests queue. Default 4. */\n    readonly concurrency?: number;\n    /**\n     * Max requests reading a source at once - the admission width. Sized above `concurrency` on purpose:\n     * a remote source is network-bound, and holding a codec slot across a 10s fetch would let a handful\n     * of slow origins idle the CPU lane out entirely. Default `concurrency * 2`.\n     *\n     * This is also the memory bound: at most this many source buffers exist at once, so the ceiling is\n     * `sourceConcurrency * maxSourceBytes` (default 8 x 20 MiB = 160 MiB) plus the codec's own working\n     * set. Lower it, or `maxSourceBytes`, on a small instance.\n     */\n    readonly sourceConcurrency?: number;\n    /** Maximum queued image requests beyond the admission width. Default `concurrency * 16`. */\n    readonly maxQueue?: number;\n    /** `Cache-Control: public, max-age=<n>, immutable` seconds. Default 1 year. */\n    readonly cacheMaxAge?: number;\n    /** Quality used when `?q` is absent. Default 75. */\n    readonly defaultQuality?: number;\n    /** Remote-fetch timeout (ms). Default 10 000. */\n    readonly fetchTimeoutMs?: number;\n    /** `fetch` implementation for remote sources (injectable for custom timeouts/proxy and for tests).\n     * Default: the global `fetch`. */\n    readonly fetch?: typeof fetch;\n    /** Require **signed URLs**: every request must carry a valid `&s=` HMAC over `(src, w, q[, exp])` or\n     * it's rejected with `403`. Use the SAME `secret` as your `selfHostedLoader`/`signImageUrl`. This\n     * locks the endpoint to URLs your app minted - the defense against resize-bombing. */\n    readonly signing?: {\n        readonly secret: string;\n    };\n}"
+    "signature": "export interface ImageHandlerOptions {\n    /** Codec backend. Default: {@link bunImageBackend} (requires the Bun runtime). */\n    readonly backend?: ImageBackend;\n    /** Absolute directory that local (path) sources resolve under. Path-traversal- and symlink-guarded.\n     * Omit to **disable local sources** (every path source → 403). */\n    readonly root?: string;\n    /** Exact origins (`https://cdn.example`) allowed for remote sources. Omitted/empty ⇒ **no remote\n     * sources** (fail-closed against SSRF). Only `http:`/`https:` URLs are ever considered. */\n    readonly allowedOrigins?: readonly string[];\n    /** Max bytes read from a source before rejecting (413). Default 20 MiB. */\n    readonly maxSourceBytes?: number;\n    /** Max source pixels (w×h) before rejecting (413) - decompression-bomb guard. Default 40 MP. */\n    readonly maxSourcePixels?: number;\n    /** Hard cap on the requested width; larger `?w` is clamped down. Default 3840. */\n    readonly maxWidth?: number;\n    /** Max concurrent transforms (codec work is CPU/memory-heavy). Excess requests queue. Default 4. */\n    readonly concurrency?: number;\n    /**\n     * Max requests reading a source at once - the admission width. Sized above `concurrency` on purpose:\n     * a remote source is network-bound, and holding a codec slot across a 10s fetch would let a handful\n     * of slow origins idle the CPU lane out entirely. Default `concurrency * 2`.\n     *\n     * This is also the memory bound: at most this many source buffers exist at once, so the ceiling is\n     * `sourceConcurrency * maxSourceBytes` (default 8 x 20 MiB = 160 MiB) plus the codec's own working\n     * set. Lower it, or `maxSourceBytes`, on a small instance.\n     */\n    readonly sourceConcurrency?: number;\n    /** Maximum queued image requests beyond the admission width. Default `concurrency * 16`. */\n    readonly maxQueue?: number;\n    /** `Cache-Control: public, max-age=<n>` seconds. Default 1 hour. */\n    readonly cacheMaxAge?: number;\n    /** Add `immutable` to Cache-Control. Off by default: enable only when every source URL changes with\n     * its content, otherwise browsers are allowed to retain a changed image until the full max-age. */\n    readonly immutable?: boolean;\n    /** Quality used when `?q` is absent. Default 75. */\n    readonly defaultQuality?: number;\n    /** Remote-fetch timeout (ms). Default 10 000. */\n    readonly fetchTimeoutMs?: number;\n    /** `fetch` implementation for remote sources (injectable for custom timeouts/proxy and for tests).\n     * Default: the global `fetch`. */\n    readonly fetch?: typeof fetch;\n    /** Require **signed URLs**: every request must carry a valid `&s=` HMAC over `(src, w, q[, exp])` or\n     * it's rejected with `403`. Use the SAME `secret` as your `selfHostedLoader`/`signImageUrl`. This\n     * locks the endpoint to URLs your app minted - the defense against resize-bombing. */\n    readonly signing?: {\n        readonly secret: string;\n    };\n}"
   },
   {
     "name": "ImageInfo",
@@ -7179,7 +7207,7 @@
     "name": "KVSessionStore",
     "kind": "class",
     "package": "@nifrajs/auth",
-    "signature": "export declare class KVSessionStore implements SessionStore {\n    private readonly kv;\n    constructor(kv: KVNamespaceLike);\n    get(id: string): Promise<SessionRecord | undefined>;\n    set(id: string, record: SessionRecord): Promise<void>;\n    delete(id: string): Promise<void>;\n}",
+    "signature": "export declare class KVSessionStore implements SessionStore {\n    private readonly kv;\n    private readonly now;\n    constructor(kv: KVNamespaceLike, options?: {\n        readonly now?: () => number;\n    });\n    get(id: string): Promise<SessionRecord | undefined>;\n    set(id: string, record: SessionRecord): Promise<void>;\n    delete(id: string): Promise<void>;\n}",
     "doc": "/**\n * A {@link SessionStore} backed by a **Cloudflare Workers KV** namespace (or any {@link KVNamespaceLike})\n * - the durable, shared production store: sessions hold across worker instances and survive restarts.\n * Records serialize to JSON; the entry's KV `expiration` is set from the record's `expiresAt` so KV\n * auto-evicts the session (a GC backstop - the manager still authoritatively checks expiry on read).\n * Every read is validated, so a corrupt/skewed entry reads as no session.\n */"
   },
   {
@@ -7929,13 +7957,13 @@
     "name": "MemoryCache",
     "kind": "class",
     "package": "@nifrajs/cache",
-    "signature": "export declare class MemoryCache implements CacheStore {\n    private readonly rows;\n    private readonly tagIndex;\n    private readonly maxEntries;\n    private readonly now;\n    constructor(options?: MemoryCacheOptions);\n    get(key: string): StoredEntry | undefined;\n    set(key: string, entry: StoredEntry, tags: readonly string[]): void;\n    delete(key: string): void;\n    invalidateTag(tag: string): void;\n    clear(): void;\n    /** Live entry count (for observability/tests). */\n    size(): number;\n    /** Remove a key and unlink it from every tag set it belonged to. */\n    private evict;\n}"
+    "signature": "export declare class MemoryCache implements CacheStore {\n    private readonly rows;\n    private readonly tagIndex;\n    private expirySweep;\n    private readonly maxEntries;\n    private readonly now;\n    constructor(options?: MemoryCacheOptions);\n    get(key: string): StoredEntry | undefined;\n    set(key: string, entry: StoredEntry, tags: readonly string[]): void;\n    delete(key: string): void;\n    invalidateTag(tag: string): void;\n    clear(): void;\n    /** Live entry count (for observability/tests). */\n    size(): number;\n    /** Remove a key and unlink it from every tag set it belonged to. */\n    private evict;\n    private sweepExpired;\n}"
   },
   {
     "name": "MemoryCacheOptions",
     "kind": "interface",
     "package": "@nifrajs/cache",
-    "signature": "export interface MemoryCacheOptions {\n    /** Evict the least-recently-used entry once the count exceeds this. `0` (default) = unbounded. */\n    readonly maxEntries?: number;\n    /** Injectable clock (tests). Default `() => Date.now()`. */\n    readonly now?: () => number;\n}"
+    "signature": "export interface MemoryCacheOptions {\n    /** Evict the least-recently-used entry once the count exceeds this. Default 10,000; `0` explicitly\n     * opts into an unbounded cache. */\n    readonly maxEntries?: number;\n    /** Injectable clock (tests). Default `() => Date.now()`. */\n    readonly now?: () => number;\n}"
   },
   {
     "name": "MemoryCacheStore",
@@ -10029,7 +10057,7 @@
     "name": "ProxyOptions",
     "kind": "interface",
     "package": "@nifrajs/proxy",
-    "signature": "export interface ProxyOptions {\n    /**\n     * The upstream to forward every request to, as a **bare origin** (`https://api.internal:8443`).\n     * A path, query, fragment, or credentials in the URL throws at construction; only `http:` and\n     * `https:` are accepted. The forwarded URL is this origin + the incoming path and query.\n     */\n    readonly upstream: string;\n    /** Mount prefix to remove from the incoming path before forwarding (`/api` + request\n     * `/api/users` → upstream `/users`). A path outside the prefix is forwarded unchanged. */\n    readonly stripPrefix?: string;\n    /**\n     * Forward caller metadata upstream. Default **false**: `Forwarded` and `X-Forwarded-*` headers\n     * are stripped, so a client-forged chain never reaches the upstream. When true, the observed caller\n     * IP replaces inbound `X-Forwarded-For` by default (pass a `ProxyContext` so `c.clientIp` - already\n     * filtered by the app's trust declaration - is the value emitted). With a bare `Request`, forwarding\n     * metadata is suppressed rather than passed through.\n     */\n    readonly forwardClientIp?: boolean;\n    /**\n     * Preserve an inbound `X-Forwarded-For` chain before appending the observed caller IP. Set this only\n     * when a proxy you operate has already stripped and rebuilt the inbound chain; otherwise a directly\n     * reachable caller can forge the leading entries. Requires `forwardClientIp: true`.\n     */\n    readonly trustForwardedFor?: boolean;\n    /**\n     * Deadline in milliseconds for the upstream to *begin* answering. Default `30_000`; expiry\n     * answers `504`. It covers up to the response headers, which is the only window in which a `504`\n     * is still sendable - once the status has been relayed the exchange cannot be turned into one. A\n     * body that starts and then stalls is the transport's timeout to enforce; both built-in transports\n     * cap the idle gap between chunks at 30s (undici's `bodyTimeout`, and an equivalent per-chunk timer\n     * on the portable one) and error the relayed stream past it. A custom transport owes the same\n     * bound. Caller disconnect still tears the upstream down at any point.\n     */\n    readonly timeoutMs?: number;\n    /** Static headers to set on every forwarded request (after hygiene, so they always win). */\n    readonly headers?: Readonly<Record<string, string>>;\n    /**\n     * How to reach the upstream. Omit to use the default: the undici transport on Node when `undici`\n     * is installed (the fast path there, resolved lazily so the base package stays dependency-free),\n     * `fetch` on every other runtime and when `undici` is absent. See {@link ProxyTransport} - a\n     * transport carries security obligations. Pass one explicitly to pin the choice or tune it (e.g.\n     * `undiciTransport({ dispatcher })`).\n     */\n    readonly transport?: ProxyTransport;\n}"
+    "signature": "export interface ProxyOptions {\n    /**\n     * The upstream to forward every request to, as a **bare origin** (`https://api.internal:8443`).\n     * A path, query, fragment, or credentials in the URL throws at construction; only `http:` and\n     * `https:` are accepted. The forwarded URL is this origin + the incoming path and query.\n     */\n    readonly upstream: string;\n    /** Mount prefix to remove from the incoming path before forwarding (`/api` + request\n     * `/api/users` → upstream `/users`). A path outside the prefix is forwarded unchanged. */\n    readonly stripPrefix?: string;\n    /**\n     * Forward caller metadata upstream. Default **false**: `Forwarded` and `X-Forwarded-*` headers\n     * are stripped, so a client-forged chain never reaches the upstream. When true, the observed caller\n     * IP replaces inbound `X-Forwarded-For` by default (pass a `ProxyContext` so `c.clientIp` - already\n     * filtered by the app's trust declaration - is the value emitted). With a bare `Request`, forwarding\n     * metadata is suppressed rather than passed through.\n     */\n    readonly forwardClientIp?: boolean;\n    /** Emit a fixed, trusted `X-Forwarded-Host`. The inbound Host is never forwarded: it is\n     * attacker-controlled unless an outer adapter has already applied a host policy. */\n    readonly forwardedHost?: string;\n    /**\n     * Preserve an inbound `X-Forwarded-For` chain before appending the observed caller IP. Set this only\n     * when a proxy you operate has already stripped and rebuilt the inbound chain; otherwise a directly\n     * reachable caller can forge the leading entries. Requires `forwardClientIp: true`.\n     */\n    readonly trustForwardedFor?: boolean;\n    /**\n     * Deadline in milliseconds for the upstream to *begin* answering. Default `30_000`; expiry\n     * answers `504`. It covers up to the response headers, which is the only window in which a `504`\n     * is still sendable - once the status has been relayed the exchange cannot be turned into one. A\n     * body that starts and then stalls is the transport's timeout to enforce; both built-in transports\n     * cap the idle gap between chunks at 30s (undici's `bodyTimeout`, and an equivalent per-chunk timer\n     * on the portable one) and error the relayed stream past it. A custom transport owes the same\n     * bound. Caller disconnect still tears the upstream down at any point.\n     */\n    readonly timeoutMs?: number;\n    /** Static headers to set on every forwarded request (after hygiene, so they always win). */\n    readonly headers?: Readonly<Record<string, string>>;\n    /**\n     * How to reach the upstream. Omit to use the default: the undici transport on Node when `undici`\n     * is installed (the fast path there, resolved lazily so the base package stays dependency-free),\n     * `fetch` on every other runtime and when `undici` is absent. See {@link ProxyTransport} - a\n     * transport carries security obligations. Pass one explicitly to pin the choice or tune it (e.g.\n     * `undiciTransport({ dispatcher })`).\n     */\n    readonly transport?: ProxyTransport;\n}"
   },
   {
     "name": "ProxyTransport",
@@ -10291,6 +10319,13 @@
     "kind": "interface",
     "package": "@nifrajs/mcp",
     "signature": "export interface ReactWidgetOptions {\n    /** The widget's `ui://` resource URI, e.g. `ui://orders/table`. */\n    readonly uri: string;\n    readonly name: string;\n    readonly description?: string;\n    readonly title?: string;\n    /** Absolute path to a `.tsx`/`.jsx` module whose DEFAULT export is a React component. It receives the\n     * tool's `structuredContent` as props. */\n    readonly component: string;\n    /** Extra `<head>` content (styles, fonts). The bridge + component bundle are injected for you. */\n    readonly head?: string;\n    /** Minify the client bundle (default true). */\n    readonly minify?: boolean;\n}"
+  },
+  {
+    "name": "Readable",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface Readable<T> {\n    get(): T;\n    subscribe(listener: (value: T) => void): () => void;\n}",
+    "doc": "/** A value you can read now and be told about later. Both `signal` and `computed` are `Readable`, so\n * `bind`/`bindList` accept either. */"
   },
   {
     "name": "readBodyFramed",
@@ -12765,11 +12800,25 @@
     "doc": "/** Create a signal. Reads inside an {@link effect} (or {@link computed}) subscribe automatically. */"
   },
   {
+    "name": "signal",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function signal<T>(initial: T): Signal<T>;",
+    "doc": "/** A current-value cell. `signal(0)` -> `.get()` reads, `.set(1)` writes and notifies. */"
+  },
+  {
     "name": "Signal",
     "kind": "type",
     "package": "@nifrajs/islets",
     "signature": "export type Signal<T> = {\n    (): T;\n    set(next: T | ((prev: T) => T)): void;\n};",
     "doc": "/** A readable/writable reactive value: call it to read (tracking), `.set` to write. */"
+  },
+  {
+    "name": "Signal",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface Signal<T> extends Readable<T> {\n    set(value: T): void;\n}",
+    "doc": "/** A writable cell. `set` notifies subscribers only when the value actually changes (`Object.is`), so\n * a redundant write costs nothing. */"
   },
   {
     "name": "signalHydrated",

@@ -3924,6 +3924,23 @@ _No named exports (side-effect entrypoint)._
 - **scheduleTrigger** _(function)_ - `scheduleTrigger: (strategy: IslandStrategy, run: () => void, options?: TriggerOptions) => () => void`
   Schedule an island trigger and return a disposer. Every successful trigger is one-shot: a late media/visibility/idle event cannot run an enhancer twice. Invalid media strategies remain inert, which keeps malformed untrusted HTML fail-closed while leaving its server-rendered content usable.
 
+### `@nifrajs/web/nano`
+
+- **BindListOptions** _(interface)_ - `interface BindListOptions<T>`
+  How a `bindList` turns items into keyed DOM. `key` MUST be stable and unique per item (never the array index) - it is what lets add/remove/reorder touch only the changed rows.
+- **Readable** _(interface)_ - `interface Readable<T>`
+  A value you can read now and be told about later. Both `signal` and `computed` are `Readable`, so `bind`/`bindList` accept either.
+- **Signal** _(interface)_ - `interface Signal<T>`
+  A writable cell. `set` notifies subscribers only when the value actually changes (`Object.is`), so a redundant write costs nothing.
+- **bind** _(function)_ - `bind: <T>(el: HTMLElement, source: Readable<T>, apply: (el: HTMLElement, value: T) => void) => () => void`
+  Bind one element to a source: `apply(el, value)` runs once immediately and again on every change. Returns the unsubscribe - hand it back as the island's cleanup (or collect several).
+- **bindList** _(function)_ - `bindList: <T>(source: Readable<readonly T[]>, container: HTMLElement, options: BindListOptions<T>) => () => void`
+  Bind a list signal to a container with keyed reconciliation: new items are `create`d, surviving items are `update`d in place (keeping focus, scroll, and selection), removed items are detached, and the children are ordered to match the array. Returns the unsubscribe.
+- **computed** _(function)_ - `computed: <T>(compute: () => T, deps: readonly Readable<unknown>[]) => Readable<T>`
+  A derived cell. `computed(() => a.get() + b.get(), [a, b])` recomputes whenever a declared dependency changes and notifies its own subscribers when the derived value changes.
+- **signal** _(function)_ - `signal: <T>(initial: T) => Signal<T>`
+  A current-value cell. `signal(0)` -> `.get()` reads, `.set(1)` writes and notifies.
+
 ### `@nifrajs/web/plugins/css-modules`
 
 - **CssModuleResult** _(interface)_ - `interface CssModuleResult`
