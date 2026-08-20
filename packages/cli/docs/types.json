@@ -1265,6 +1265,20 @@
     "doc": "/** How a `bindList` turns items into keyed DOM. `key` MUST be stable and unique per item (never the\n * array index) - it is what lets add/remove/reorder touch only the changed rows. */"
   },
   {
+    "name": "bindResource",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function bindResource<T>(el: HTMLElement, source: Readable<ResourceState<T>>, handlers: BindResourceHandlers<T>): () => void;",
+    "doc": "/**\n * Bind an element to a `resource`, dispatching on `status`. Like `bind`, it applies immediately and\n * on every change and returns the unsubscribe - collect it (a discarded disposer is `NF-C021`).\n *\n *   bindResource(el, user, {\n *     pending: (n) => { n.textContent = \"Loading…\" },\n *     ready: (n, u) => { n.textContent = u.name },\n *     error: (n) => { n.textContent = \"Failed to load\" },\n *   })\n */"
+  },
+  {
+    "name": "BindResourceHandlers",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface BindResourceHandlers<T> {\n    ready(el: HTMLElement, value: T): void;\n    pending?(el: HTMLElement): void;\n    error?(el: HTMLElement, error: unknown): void;\n}",
+    "doc": "/** How a `bindResource` maps each async state to the DOM. `ready` is required (there is always a\n * success shape to render); `pending`/`error` are optional. Every branch is explicit - no hidden\n * \"still loading\" state can slip through as a rendered `undefined`. */"
+  },
+  {
     "name": "bindScope",
     "kind": "function",
     "package": "@nifrajs/islets",
@@ -11045,6 +11059,27 @@
     "package": "@nifrajs/web",
     "signature": "export declare function resolveStaticBoundaries(boundaries: readonly BoundaryRegistration[], context: StaticCtx, cache?: StaticBoundaryCache): Promise<BoundaryStates>;",
     "doc": "/**\n * Resolve only explicitly annotated static boundaries with a request-free build context. Dynamic\n * and intercepting boundaries remain unresolved. Values are cached by boundary object identity in\n * the supplied in-memory cache, so a worker instance does not repeat a build-safe computation per\n * request. A rejected static load becomes that slot's error state; it never fabricates shared data.\n */"
+  },
+  {
+    "name": "resource",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function resource<T>(fetcher: (signal: AbortSignal) => Promise<T>, deps?: readonly Readable<unknown>[]): Resource<T>;",
+    "doc": "/**\n * An async derived cell. `resource(fetcher, [deps])` runs `fetcher` immediately and again whenever a\n * declared dependency changes, exposing the result as an explicit `{ status, value, error }`.\n *\n * Two footguns are handled here so they cannot be got wrong by hand:\n *   - Races: each run holds a token; a stale run's resolution is dropped, and its `AbortSignal` is\n *     aborted, so an earlier-started-later-finishing fetch never overwrites a newer one.\n *   - Deps: like `computed`, dependencies are DECLARED (`NF-C023` checks the fetcher's `.get()` reads\n *     against the array). A `resource` that reads a signal its deps omit won't refetch when it changes.\n */"
+  },
+  {
+    "name": "Resource",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface Resource<T> extends Readable<ResourceState<T>> {\n    refetch(): void;\n}",
+    "doc": "/** An async cell: a `Readable` of `ResourceState<T>` plus `refetch()`. This is nano's answer to\n * \"suspense\" - an explicit pending/error/ready value, never a thrown promise or a magic boundary. */"
+  },
+  {
+    "name": "ResourceState",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type ResourceState<T> = {\n    readonly status: \"pending\";\n    readonly value: undefined;\n    readonly error: undefined;\n} | {\n    readonly status: \"ready\";\n    readonly value: T;\n    readonly error: undefined;\n} | {\n    readonly status: \"error\";\n    readonly value: undefined;\n    readonly error: unknown;\n};",
+    "doc": "/** The three states of an async cell. A discriminated union on `status` so a consumer must handle\n * every branch - there is no \"value that might secretly be loading\", the failure mode of ad-hoc\n * `isLoading` booleans. `value`/`error` are narrowed by `status`. */"
   },
   {
     "name": "respondMcpHttp",

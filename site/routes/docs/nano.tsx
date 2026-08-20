@@ -54,6 +54,44 @@ const off = bindList(todos, document.querySelector("ul")!, {
 todos.set([...todos.get(), { id: crypto.randomUUID(), text: "buy milk", done: false }])
 // ...on teardown: off()`
 
+// DOM-free, so it is a checked example (nifra_example nano): the async cell by itself.
+const RESOURCE = `import { signal, resource } from "@nifrajs/web/nano"
+
+const userId = signal(1)
+
+// resource(fetcher, [deps]) is an async cell: it fetches immediately and again whenever a declared
+// dep changes. The fetcher gets an AbortSignal; a superseded fetch is aborted and its late result
+// dropped, so the newest request always wins - no stale-response flicker to hand-guard.
+const user = resource(async (sig) => {
+  const res = await fetch(\`/api/users/\${userId.get()}\`, { signal: sig })
+  return (await res.json()) as { name: string }
+}, [userId])
+
+// The value is an explicit union - status is "pending" | "error" | "ready", never a secret undefined.
+const off = user.subscribe((s) => {
+  if (s.status === "ready") console.log("got", s.value.name)
+})
+userId.set(2) // refetches; the deps array is what NF-C023 checks against the fetcher's .get() reads
+// ...on teardown: off()`
+
+const BIND_RESOURCE = `// doc-check: skip - browser DOM enhancer, typechecked in @nifrajs/web under its DOM lib.
+import { signal, resource, bindResource } from "@nifrajs/web/nano"
+
+const userId = signal(1)
+const user = resource(async (sig) => {
+  const res = await fetch(\`/api/users/\${userId.get()}\`, { signal: sig })
+  return (await res.json()) as { name: string }
+}, [userId])
+
+// bindResource dispatches on status - one handler per state, ready required. Like bind it returns a
+// disposer (a bare bindResource(...) that drops it is NF-C021).
+const off = bindResource(document.querySelector("[data-user]")!, user, {
+  pending: (el) => { el.textContent = "Loading…" },
+  ready: (el, u) => { el.textContent = u.name },
+  error: (el) => { el.textContent = "Could not load user" },
+})
+// ...on teardown: off()`
+
 const ISLAND = `// doc-check: skip - browser DOM enhancer, typechecked in @nifrajs/web under its DOM lib.
 import { defineIsland, mountIslands } from "@nifrajs/web/islands"
 import { signal, computed, bind, bindList } from "@nifrajs/web/nano"
@@ -146,6 +184,27 @@ export default function Nano() {
         node on reorder, and <code>nifra check</code> flags it as <code>NF-C022</code>.
       </p>
       <CodeBlock code={LIST} />
+
+      <h2>Async state with resource</h2>
+      <p>
+        <code>resource(fetcher, [deps])</code> is nano&apos;s answer to &ldquo;suspense&rdquo; - an
+        async cell whose value is an explicit <code>&#123; status, value, error &#125;</code> union.
+        It runs the fetcher immediately and again whenever a declared dep changes, and it handles the
+        two things people get wrong by hand: the fetcher receives an <code>AbortSignal</code>, and a
+        superseded request is aborted with its late result dropped, so the newest fetch always wins -
+        no stale-response flicker. There is no thrown promise and no magic boundary; it is a value you
+        read or bind like any other.
+      </p>
+      <CodeBlock code={RESOURCE} />
+      <p>
+        The deps array is checked exactly like <code>computed</code>: a <code>resource</code> whose
+        fetcher reads a signal the array omits won&apos;t refetch when it changes, and{" "}
+        <code>nifra check</code> flags it as <code>NF-C023</code>. Bind it to the DOM with{" "}
+        <code>bindResource</code>, which dispatches on <code>status</code> - one handler per state,{" "}
+        <code>ready</code> required, so a still-loading value can never render as a stray{" "}
+        <code>undefined</code>.
+      </p>
+      <CodeBlock code={BIND_RESOURCE} />
 
       <h2>nano inside an island</h2>
       <p>

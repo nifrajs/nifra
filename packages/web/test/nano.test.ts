@@ -1,5 +1,16 @@
 import { describe, expect, test } from "bun:test"
-import { bind, bindList, computed, signal } from "../src/nano.ts"
+import { bind, bindList, bindResource, computed, resource, signal } from "../src/nano.ts"
+
+const tick = () => new Promise<void>((r) => setTimeout(r, 0))
+const deferred = <T>() => {
+  let resolve!: (v: T) => void
+  let reject!: (e: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
 
 // Bun's test env has no `document`, and nano's list code only ever calls `appendChild`/`remove` and
 // reads nothing else off a node, so a minimal parent/children stub with real move semantics stands in
@@ -98,6 +109,108 @@ describe("computed", () => {
     n.set(7) // now odd -> notify once
     expect(seen).toEqual([false])
     expect(isEven.get()).toBe(false)
+  })
+})
+
+describe("resource", () => {
+  test("starts pending, then ready with the resolved value", async () => {
+    const res = resource(async () => 42)
+    expect(res.get().status).toBe("pending")
+    await tick()
+    expect(res.get()).toEqual({ status: "ready", value: 42, error: undefined })
+  })
+
+  test("a rejected fetch lands in the error state", async () => {
+    const boom = new Error("boom")
+    const res = resource(async () => {
+      throw boom
+    })
+    await tick()
+    expect(res.get().status).toBe("error")
+    expect(res.get().error).toBe(boom)
+  })
+
+  test("refetches when a declared dep changes", async () => {
+    const id = signal(1)
+    let calls = 0
+    const res = resource(async () => {
+      calls++
+      return id.get() * 10
+    }, [id])
+    await tick()
+    expect(res.get().value).toBe(10)
+    id.set(2)
+    await tick()
+    expect(res.get().value).toBe(20)
+    expect(calls).toBe(2)
+  })
+
+  test("drops a stale in-flight result when superseded (last write wins)", async () => {
+    const id = signal(1)
+    const first = deferred<number>()
+    const second = deferred<number>()
+    const res = resource(() => (id.get() === 1 ? first.promise : second.promise), [id])
+    id.set(2) // supersede before the first resolves
+    second.resolve(200)
+    await tick()
+    first.resolve(100) // stale - must be ignored
+    await tick()
+    expect(res.get().value).toBe(200)
+  })
+
+  test("aborts the superseded fetch via its AbortSignal", async () => {
+    const id = signal(1)
+    let firstAborted = false
+    const res = resource(
+      (sig) => {
+        const mine = id.get()
+        if (mine === 1) sig.addEventListener("abort", () => (firstAborted = true))
+        return Promise.resolve(mine)
+      },
+      [id],
+    )
+    id.set(2)
+    await tick()
+    expect(firstAborted).toBe(true)
+    expect(res.get().value).toBe(2)
+  })
+
+  test("refetch() re-runs the fetcher on demand", async () => {
+    let calls = 0
+    const res = resource(async () => ++calls)
+    await tick()
+    expect(res.get().value).toBe(1)
+    res.refetch()
+    await tick()
+    expect(res.get().value).toBe(2)
+  })
+})
+
+describe("bindResource", () => {
+  test("dispatches pending -> ready onto the element and returns a disposer", async () => {
+    const d = deferred<string>()
+    const res = resource(() => d.promise)
+    const node = el()
+    const log: string[] = []
+    const off = bindResource(asEl(node), res, {
+      pending: () => log.push("pending"),
+      ready: (_, v) => log.push(`ready:${v}`),
+      error: () => log.push("error"),
+    })
+    expect(log).toEqual(["pending"]) // applied immediately
+    d.resolve("hi")
+    await tick()
+    expect(log).toEqual(["pending", "ready:hi"])
+    off()
+  })
+
+  test("a missing pending handler is simply skipped (ready still fires)", async () => {
+    const res = resource(async () => 7)
+    const node = el()
+    let readied = 0
+    bindResource(asEl(node), res, { ready: () => readied++ })
+    await tick()
+    expect(readied).toBe(1)
   })
 })
 

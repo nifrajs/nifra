@@ -282,6 +282,12 @@
     "code": "import { signal, computed } from \"@nifrajs/web/nano\"\n\n// State is a signal: reads are .get(), writes are .set(...). Every edge is a call you can see.\nconst count = signal(0)\n\n// Derived state declares its dependencies EXPLICITLY - the array is the whole contract. It\n// recomputes when (and only when) a listed source changes. Object.is-deduped, like signal.\nconst doubled = computed(() => count.get() * 2, [count])\n\nconst off = doubled.subscribe((v) => console.log(\"doubled is now\", v))\ncount.set(5) // logs: doubled is now 10\noff()        // unsubscribe"
   },
   {
+    "name": "RESOURCE",
+    "topic": "Nifra - nano: explicit reactivity for small apps",
+    "slug": "nano",
+    "code": "import { signal, resource } from \"@nifrajs/web/nano\"\n\nconst userId = signal(1)\n\n// resource(fetcher, [deps]) is an async cell: it fetches immediately and again whenever a declared\n// dep changes. The fetcher gets an AbortSignal; a superseded fetch is aborted and its late result\n// dropped, so the newest request always wins - no stale-response flicker to hand-guard.\nconst user = resource(async (sig) => {\n  const res = await fetch(`/api/users/${userId.get()}`, { signal: sig })\n  return (await res.json()) as { name: string }\n}, [userId])\n\n// The value is an explicit union - status is \"pending\" | \"error\" | \"ready\", never a secret undefined.\nconst off = user.subscribe((s) => {\n  if (s.status === \"ready\") console.log(\"got\", s.value.name)\n})\nuserId.set(2) // refetches; the deps array is what NF-C023 checks against the fetcher's .get() reads\n// ...on teardown: off()"
+  },
+  {
     "name": "CACHING",
     "topic": "Nifra - Plugins & middleware",
     "slug": "plugins",

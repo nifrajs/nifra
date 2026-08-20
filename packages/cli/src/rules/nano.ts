@@ -8,9 +8,9 @@ import type { CheckRule, SourceIndex } from "./index.ts"
  * `bind`/`bindList` call or a `computed(fn, [deps])` - and that is exactly what makes its three
  * mistakes STATICALLY catchable, the property a framework's auto-tracked reactivity cannot offer:
  *
- *   NF-C021  a `bind(...)`/`bindList(...)` whose disposer is discarded (leaks on teardown)
+ *   NF-C021  a `bind`/`bindList`/`bindResource` whose disposer is discarded (leaks on teardown)
  *   NF-C022  a `bindList` keyed by the array index (breaks add/remove/reorder)
- *   NF-C023  a `computed(fn, [deps])` that reads a signal its `deps` array omits (won't recompute)
+ *   NF-C023  a `computed`/`resource` `(fn, [deps])` reading a signal its `deps` omit (won't recompute/refetch)
  *
  * All three warn (never block): a false positive must never fail a build, and each maps to a fix
  * recipe (`nano.*`). Deliberately conservative - only the unambiguous authoring shapes are inspected.
@@ -59,7 +59,9 @@ function reactiveBindings(ts: typeof TSApi, tree: TSApi.SourceFile): Set<string>
       n.initializer !== undefined &&
       ts.isCallExpression(n.initializer) &&
       ts.isIdentifier(n.initializer.expression) &&
-      (n.initializer.expression.text === "signal" || n.initializer.expression.text === "computed")
+      (n.initializer.expression.text === "signal" ||
+        n.initializer.expression.text === "computed" ||
+        n.initializer.expression.text === "resource")
     ) {
       names.add(n.name.text)
     }
@@ -173,7 +175,9 @@ export const nanoBindCleanupRule: CheckRule = {
         if (
           ts.isCallExpression(n) &&
           ts.isIdentifier(n.expression) &&
-          (n.expression.text === "bind" || n.expression.text === "bindList") &&
+          (n.expression.text === "bind" ||
+            n.expression.text === "bindList" ||
+            n.expression.text === "bindResource") &&
           isDiscarded(ts, n)
         ) {
           findings.push(
@@ -253,10 +257,10 @@ export const nanoComputedDepsRule: CheckRule = {
       const visit = (n: TSApi.Node): void => {
         const fnArg = ts.isCallExpression(n) ? n.arguments[0] : undefined
         const depsArg = ts.isCallExpression(n) ? n.arguments[1] : undefined
+        const callName =
+          ts.isCallExpression(n) && ts.isIdentifier(n.expression) ? n.expression.text : undefined
         if (
-          ts.isCallExpression(n) &&
-          ts.isIdentifier(n.expression) &&
-          n.expression.text === "computed" &&
+          (callName === "computed" || callName === "resource") &&
           fnArg !== undefined &&
           depsArg !== undefined &&
           isFn(ts, fnArg)
@@ -265,13 +269,14 @@ export const nanoComputedDepsRule: CheckRule = {
           const deps = declaredDeps(ts, depsArg)
           const missing = [...reads].filter((r) => !deps.has(r))
           if (missing.length > 0) {
+            const verb = callName === "resource" ? "refetch" : "recompute"
             findings.push(
               diagnostic({
                 code: "NF-C023",
                 severity: "warn",
                 file,
                 line: lineOf(tree, n),
-                message: `computed reads ${JSON.stringify([...reads])} but its deps declare ${JSON.stringify([...deps])} - it will not recompute when ${missing.join(", ")} changes. Add ${missing.join(", ")} to the deps array`,
+                message: `${callName} reads ${JSON.stringify([...reads])} but its deps declare ${JSON.stringify([...deps])} - it will not ${verb} when ${missing.join(", ")} changes. Add ${missing.join(", ")} to the deps array`,
                 evidence: [`missing dep: ${missing.join(", ")}`],
                 fix: { recipe: "nano.declare-deps", command: "nifra_docs nano" },
                 verify: "nifra check --lints-only",

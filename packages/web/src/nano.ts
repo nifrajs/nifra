@@ -3,11 +3,14 @@
  *
  * The islands lane (`@nifrajs/web/islands`) is imperative and correct-by-construction, but it has no
  * state primitive: every DOM update is hand-written, and a list means rebuilding the whole container.
- * nano adds exactly three things and stops:
+ * nano adds a small, closed set of primitives and stops:
  *
  *   - `signal(v)`  - a current-value cell you read with `.get()` and write with `.set()`.
  *   - `computed(fn, [deps])` - a derived cell. Its dependencies are DECLARED, never auto-tracked.
- *   - `bind` / `bindList` - explicit, one-directional DOM bindings that each return their teardown.
+ *   - `resource(fetcher, [deps])` - an async cell with an explicit pending/error/ready value. This is
+ *     nano's answer to "suspense": no thrown promise, no magic boundary, just a value you can bind.
+ *   - `bind` / `bindList` / `bindResource` - explicit, one-directional DOM bindings that each return
+ *     their teardown.
  *
  * The design rule is the whole point: every reactive edge is a call you can see - a `bind(...)` or a
  * `computed(fn, [deps])`. There is no re-render scope, no VDOM, no template compiler, and no effect
@@ -17,8 +20,9 @@
  * detectable: a missing dep is `[deps]` that doesn't list a signal the body reads; a leak is a `bind`
  * whose cleanup isn't returned. A framework's reactivity can't be linted like that; nano's can.
  *
- * Where nano stops: no client router, no nested view state, no suspense. When an app needs those, it
- * has outgrown a vanilla page - reach for a framework adapter (`@nifrajs/web-preact`), not more nano.
+ * Where nano stops: no client router and no nested/composable view state (a component tree that mounts
+ * and unmounts its own children). When an app needs those, it has outgrown a vanilla page - reach for
+ * a framework adapter (`@nifrajs/web-preact`), not more nano.
  *
  * Browser code: it touches the DOM and is meant to run in an island enhancer, never under SSR.
  */
@@ -99,6 +103,63 @@ export function computed<T>(compute: () => T, deps: readonly Readable<unknown>[]
   }
 }
 
+/** The three states of an async cell. A discriminated union on `status` so a consumer must handle
+ * every branch - there is no "value that might secretly be loading", the failure mode of ad-hoc
+ * `isLoading` booleans. `value`/`error` are narrowed by `status`. */
+export type ResourceState<T> =
+  | { readonly status: "pending"; readonly value: undefined; readonly error: undefined }
+  | { readonly status: "ready"; readonly value: T; readonly error: undefined }
+  | { readonly status: "error"; readonly value: undefined; readonly error: unknown }
+
+/** An async cell: a `Readable` of `ResourceState<T>` plus `refetch()`. This is nano's answer to
+ * "suspense" - an explicit pending/error/ready value, never a thrown promise or a magic boundary. */
+export interface Resource<T> extends Readable<ResourceState<T>> {
+  refetch(): void
+}
+
+/**
+ * An async derived cell. `resource(fetcher, [deps])` runs `fetcher` immediately and again whenever a
+ * declared dependency changes, exposing the result as an explicit `{ status, value, error }`.
+ *
+ * Two footguns are handled here so they cannot be got wrong by hand:
+ *   - Races: each run holds a token; a stale run's resolution is dropped, and its `AbortSignal` is
+ *     aborted, so an earlier-started-later-finishing fetch never overwrites a newer one.
+ *   - Deps: like `computed`, dependencies are DECLARED (`NF-C023` checks the fetcher's `.get()` reads
+ *     against the array). A `resource` that reads a signal its deps omit won't refetch when it changes.
+ */
+export function resource<T>(
+  fetcher: (signal: AbortSignal) => Promise<T>,
+  deps: readonly Readable<unknown>[] = [],
+): Resource<T> {
+  const state = signal<ResourceState<T>>({ status: "pending", value: undefined, error: undefined })
+  let token = 0
+  let controller: AbortController | undefined
+  const run = (): void => {
+    const mine = ++token
+    controller?.abort()
+    controller = new AbortController()
+    const active = controller
+    state.set({ status: "pending", value: undefined, error: undefined })
+    fetcher(active.signal).then(
+      (value) => {
+        if (mine === token) state.set({ status: "ready", value, error: undefined })
+      },
+      (error) => {
+        // A stale run (superseded) or one we aborted must not surface as an error state.
+        if (mine === token && !active.signal.aborted)
+          state.set({ status: "error", value: undefined, error })
+      },
+    )
+  }
+  for (const dep of deps) dep.subscribe(run)
+  run()
+  return {
+    get: () => state.get(),
+    subscribe: (listener) => state.subscribe(listener),
+    refetch: run,
+  }
+}
+
 /**
  * Bind one element to a source: `apply(el, value)` runs once immediately and again on every change.
  * Returns the unsubscribe - hand it back as the island's cleanup (or collect several).
@@ -151,4 +212,35 @@ export function bindList<T>(
   }
   render(source.get())
   return source.subscribe(render)
+}
+
+/** How a `bindResource` maps each async state to the DOM. `ready` is required (there is always a
+ * success shape to render); `pending`/`error` are optional. Every branch is explicit - no hidden
+ * "still loading" state can slip through as a rendered `undefined`. */
+export interface BindResourceHandlers<T> {
+  ready(el: HTMLElement, value: T): void
+  pending?(el: HTMLElement): void
+  error?(el: HTMLElement, error: unknown): void
+}
+
+/**
+ * Bind an element to a `resource`, dispatching on `status`. Like `bind`, it applies immediately and
+ * on every change and returns the unsubscribe - collect it (a discarded disposer is `NF-C021`).
+ *
+ *   bindResource(el, user, {
+ *     pending: (n) => { n.textContent = "Loading…" },
+ *     ready: (n, u) => { n.textContent = u.name },
+ *     error: (n) => { n.textContent = "Failed to load" },
+ *   })
+ */
+export function bindResource<T>(
+  el: HTMLElement,
+  source: Readable<ResourceState<T>>,
+  handlers: BindResourceHandlers<T>,
+): () => void {
+  return bind(el, source, (node, state) => {
+    if (state.status === "pending") handlers.pending?.(node)
+    else if (state.status === "error") handlers.error?.(node, state.error)
+    else handlers.ready(node, state.value)
+  })
 }

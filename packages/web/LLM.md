@@ -22,14 +22,14 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 - **assertStaticBoundaryImports** _(function)_ - `assertStaticBoundaryImports: (roots: readonly StaticBoundaryRoot[], edges: readonly StaticBoundaryImportEdge[], requestScopedModules: Reado…` · from `@nifrajs/web`
 - **bind** _(function)_ - `bind: <T>(el: HTMLElement, source: Readable<T>, apply: (el: HTMLElement, value: T) => void) => () => void` · from `@nifrajs/web/nano`
 - **bindList** _(function)_ - `bindList: <T>(source: Readable<readonly T[]>, container: HTMLElement, options: BindListOptions<T>) => () => void` · from `@nifrajs/web/nano`
+- **bindResource** _(function)_ - `bindResource: <T>(el: HTMLElement, source: Readable<ResourceState<T>>, handlers: BindResourceHandlers<T>) => () => void` · from `@nifrajs/web/nano`
 - **boundaryDescriptors** _(function)_ - `boundaryDescriptors: (boundaries: readonly BoundaryRegistration[]) => ReadonlyArray<BoundaryDescriptor>` · from `@nifrajs/web`
 - **boundaryModeKey** _(function)_ - `boundaryModeKey: (mode: BoundaryMode) => string` · from `@nifrajs/web`
 - **buildClient** _(function)_ - `buildClient: (options: BuildClientOptions) => Promise<BuildManifest>` · from `@nifrajs/web/build`
 - **buildClientVite** _(function)_ - `buildClientVite: (options: BuildClientViteOptions) => Promise<BuildManifest>` · from `@nifrajs/web/build-vite`
 - **buildCodeframe** _(function)_ - `buildCodeframe: (file: string, line: number, column: number | undefined, read?: SourceReader, radius?: number) => Codeframe | undefined` · from `@nifrajs/web/diagnostic`
-- **buildDiagnostic** _(function)_ - `buildDiagnostic: (err: unknown, options?: BuildDiagnosticOptions) => Diagnostic` · from `@nifrajs/web/diagnostic`
 
-_…and 381 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 386 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 

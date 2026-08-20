@@ -24,6 +24,18 @@ describe("NF-C021 nano binding cleanup", () => {
     expect(findings[0]?.severity).toBe("warn")
   })
 
+  test("flags a bare bindResource(...)", async () => {
+    const findings = await scan(
+      "app/user.client.ts",
+      [
+        'import { bindResource, resource } from "@nifrajs/web/nano"',
+        "const user = resource(async () => ({ name: 'a' }))",
+        "bindResource(document.body, user, { ready: (e, u) => { e.textContent = u.name } })",
+      ].join("\n"),
+    )
+    expect(codes(findings)).toEqual(["NF-C021"])
+  })
+
   test("flags a bare bindList(...)", async () => {
     const findings = await scan(
       "app/todo.client.ts",
@@ -133,6 +145,32 @@ describe("NF-C023 nano computed deps", () => {
         'import { computed, signal } from "@nifrajs/web/nano"',
         "const n = signal(0)",
         "const c = computed(() => 42, [])",
+      ].join("\n"),
+    )
+    expect(codes(findings)).toEqual([])
+  })
+
+  test("flags a resource whose fetcher reads a signal its deps omit", async () => {
+    const findings = await scan(
+      "app/user.client.ts",
+      [
+        'import { resource, signal } from "@nifrajs/web/nano"',
+        "const id = signal(1)",
+        "const user = resource(async () => fetch('/u/' + id.get()), [])",
+      ].join("\n"),
+    )
+    expect(codes(findings)).toEqual(["NF-C023"])
+    expect(findings[0]?.message).toContain("refetch") // resource-flavoured wording
+    expect(findings[0]?.message).toContain("id")
+  })
+
+  test("does NOT flag a resource that declares its dep", async () => {
+    const findings = await scan(
+      "app/user.client.ts",
+      [
+        'import { resource, signal } from "@nifrajs/web/nano"',
+        "const id = signal(1)",
+        "const user = resource(async () => fetch('/u/' + id.get()), [id])",
       ].join("\n"),
     )
     expect(codes(findings)).toEqual([])

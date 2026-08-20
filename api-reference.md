@@ -3928,16 +3928,26 @@ _No named exports (side-effect entrypoint)._
 
 - **BindListOptions** _(interface)_ - `interface BindListOptions<T>`
   How a `bindList` turns items into keyed DOM. `key` MUST be stable and unique per item (never the array index) - it is what lets add/remove/reorder touch only the changed rows.
+- **BindResourceHandlers** _(interface)_ - `interface BindResourceHandlers<T>`
+  How a `bindResource` maps each async state to the DOM. `ready` is required (there is always a success shape to render); `pending`/`error` are optional. Every branch is explicit - no hidden "still loading" state can slip through as a rendered `undefined`.
 - **Readable** _(interface)_ - `interface Readable<T>`
   A value you can read now and be told about later. Both `signal` and `computed` are `Readable`, so `bind`/`bindList` accept either.
+- **Resource** _(interface)_ - `interface Resource<T>`
+  An async cell: a `Readable` of `ResourceState<T>` plus `refetch()`. This is nano's answer to "suspense" - an explicit pending/error/ready value, never a thrown promise or a magic boundary.
+- **ResourceState** _(type)_ - `type ResourceState<T>`
+  The three states of an async cell. A discriminated union on `status` so a consumer must handle every branch - there is no "value that might secretly be loading", the failure mode of ad-hoc `isLoading` booleans. `value`/`error` are narrowed by `status`.
 - **Signal** _(interface)_ - `interface Signal<T>`
   A writable cell. `set` notifies subscribers only when the value actually changes (`Object.is`), so a redundant write costs nothing.
 - **bind** _(function)_ - `bind: <T>(el: HTMLElement, source: Readable<T>, apply: (el: HTMLElement, value: T) => void) => () => void`
   Bind one element to a source: `apply(el, value)` runs once immediately and again on every change. Returns the unsubscribe - hand it back as the island's cleanup (or collect several).
 - **bindList** _(function)_ - `bindList: <T>(source: Readable<readonly T[]>, container: HTMLElement, options: BindListOptions<T>) => () => void`
   Bind a list signal to a container with keyed reconciliation: new items are `create`d, surviving items are `update`d in place (keeping focus, scroll, and selection), removed items are detached, and the children are ordered to match the array. Returns the unsubscribe.
+- **bindResource** _(function)_ - `bindResource: <T>(el: HTMLElement, source: Readable<ResourceState<T>>, handlers: BindResourceHandlers<T>) => () => void`
+  Bind an element to a `resource`, dispatching on `status`. Like `bind`, it applies immediately and on every change and returns the unsubscribe - collect it (a discarded disposer is `NF-C021`).
 - **computed** _(function)_ - `computed: <T>(compute: () => T, deps: readonly Readable<unknown>[]) => Readable<T>`
   A derived cell. `computed(() => a.get() + b.get(), [a, b])` recomputes whenever a declared dependency changes and notifies its own subscribers when the derived value changes.
+- **resource** _(function)_ - `resource: <T>(fetcher: (signal: AbortSignal) => Promise<T>, deps?: readonly Readable<unknown>[]) => Resource<T>`
+  An async derived cell. `resource(fetcher, [deps])` runs `fetcher` immediately and again whenever a declared dependency changes, exposing the result as an explicit `{ status, value, error }`.
 - **signal** _(function)_ - `signal: <T>(initial: T) => Signal<T>`
   A current-value cell. `signal(0)` -> `.get()` reads, `.set(1)` writes and notifies.
 

@@ -1472,6 +1472,64 @@ todos.set([...todos.get(), { id: crypto.randomUUID(), text: "buy milk", done: fa
 // ...on teardown: off()
 ```
 
+### Async state with resource
+
+`resource(fetcher, [deps])` is nano&apos;s answer to &ldquo;suspense&rdquo; - an
+async cell whose value is an explicit `&#123; status, value, error &#125;` union.
+It runs the fetcher immediately and again whenever a declared dep changes, and it handles the
+two things people get wrong by hand: the fetcher receives an `AbortSignal`, and a
+superseded request is aborted with its late result dropped, so the newest fetch always wins -
+no stale-response flicker. There is no thrown promise and no magic boundary; it is a value you
+read or bind like any other.
+
+```ts
+import { signal, resource } from "@nifrajs/web/nano"
+
+const userId = signal(1)
+
+// resource(fetcher, [deps]) is an async cell: it fetches immediately and again whenever a declared
+// dep changes. The fetcher gets an AbortSignal; a superseded fetch is aborted and its late result
+// dropped, so the newest request always wins - no stale-response flicker to hand-guard.
+const user = resource(async (sig) => {
+  const res = await fetch(`/api/users/${userId.get()}`, { signal: sig })
+  return (await res.json()) as { name: string }
+}, [userId])
+
+// The value is an explicit union - status is "pending" | "error" | "ready", never a secret undefined.
+const off = user.subscribe((s) => {
+  if (s.status === "ready") console.log("got", s.value.name)
+})
+userId.set(2) // refetches; the deps array is what NF-C023 checks against the fetcher's .get() reads
+// ...on teardown: off()
+```
+
+The deps array is checked exactly like `computed`: a `resource` whose
+fetcher reads a signal the array omits won&apos;t refetch when it changes, and
+`nifra check` flags it as `NF-C023`. Bind it to the DOM with
+`bindResource`, which dispatches on `status` - one handler per state,
+`ready` required, so a still-loading value can never render as a stray
+`undefined`.
+
+```ts
+// doc-check: skip - browser DOM enhancer, typechecked in @nifrajs/web under its DOM lib.
+import { signal, resource, bindResource } from "@nifrajs/web/nano"
+
+const userId = signal(1)
+const user = resource(async (sig) => {
+  const res = await fetch(`/api/users/${userId.get()}`, { signal: sig })
+  return (await res.json()) as { name: string }
+}, [userId])
+
+// bindResource dispatches on status - one handler per state, ready required. Like bind it returns a
+// disposer (a bare bindResource(...) that drops it is NF-C021).
+const off = bindResource(document.querySelector("[data-user]")!, user, {
+  pending: (el) => { el.textContent = "Loading…" },
+  ready: (el, u) => { el.textContent = u.name },
+  error: (el) => { el.textContent = "Could not load user" },
+})
+// ...on teardown: off()
+```
+
 ### nano inside an island
 
 nano owns state and DOM edges; an [island](/docs/islands) owns mount and teardown.
