@@ -1,0 +1,62 @@
+{
+  "name": "@nifrajs/ag-ui",
+  "version": "0.1.0",
+  "description": "Mount a nifra agent as an AG-UI (Agent-User Interaction protocol) endpoint - one POST accepting RunAgentInput, a stream of AG-UI events out over SSE: run lifecycle, step and tool-call events from the runner's step evidence, text message events for the output, and a typed continuation for human-in-the-loop resume. A protocol bridge over @nifrajs/agent; the model, state store, and approval transport stay injected per request.",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "ag-ui",
+    "agents",
+    "sse",
+    "copilot",
+    "chat-ui",
+    "human-in-the-loop"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "peerDependencies": {
+    "@nifrajs/agent": "workspace:^",
+    "@nifrajs/core": "workspace:^"
+  },
+  "peerDependenciesMeta": {
+    "@nifrajs/core": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@nifrajs/agent": "workspace:*",
+    "@nifrajs/core": "workspace:*",
+    "@nifrajs/schema": "workspace:*"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/ag-ui"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

@@ -2,6 +2,36 @@
 
 Every public export of every package and documented subpath - name, kind, signature, and doc summary - extracted from each package's `exports` map with the TypeScript compiler API, so it cannot drift from the code. For HTTP route shapes (request/response bodies), see the OpenAPI + Scalar reference your app serves at `/reference`. For prose guides, see `llms-full.txt`.
 
+## @nifrajs/a2a
+
+- **A2AAgentCard** _(interface)_ - `interface A2AAgentCard`
+- **A2AAgentSkill** _(interface)_ - `interface A2AAgentSkill`
+- **A2ACardInfo** _(interface)_ - `interface A2ACardInfo`
+  Caller-supplied card identity; everything else derives from the agent definition.
+- **A2AMountableApp** _(interface)_ - `interface A2AMountableApp`
+  The structural slice of a nifra server `mountA2A` needs.
+- **A2ARouteContext** _(interface)_ - `interface A2ARouteContext`
+  The structural slice of a route context the seam needs.
+- **A2ATaskState** _(type)_ - `type A2ATaskState = | "TASK_STATE_SUBMITTED" | "TASK_STATE_WORKING" | "TASK_STATE_INPUT_REQUIRED" | "TASK_STATE_COMPLETED" | "TASK_STATE_FAILED" | "TASK_STATE_CANCELED"`
+- **A2A_ERROR_CODES** _(const)_ - `A2A_ERROR_CODES: { readonly parseError: -32700; readonly invalidRequest: -32600; readonly methodNotFound: -32601; readonly invalidParams: -32602; readonly internalError: -32603; readonly taskNotFound: -32001; readonly u…`
+- **A2A_PROTOCOL_VERSION** _(const)_ - `A2A_PROTOCOL_VERSION: "1.0"`
+- **AGENT_CARD_WELL_KNOWN_PATH** _(const)_ - `AGENT_CARD_WELL_KNOWN_PATH: "/.well-known/agent-card.json"`
+- **MountA2AOptions** _(interface)_ - `interface MountA2AOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>`
+- **agentCard** _(function)_ - `agentCard: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(agent: AgentDefinition<InputSchema, OutputSchema>, info: A2ACardInfo) => A2AAgentCard`
+  Derive a spec-shaped agent card from the agent definition plus the caller's identity fields.
+- **mountA2A** _(function)_ - `mountA2A: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(app: A2AMountableApp, options: MountA2AOptions<InputSchema, OutputSchema>) => void`
+  Mount an agent as an A2A server: the agent card on GET, the JSON-RPC binding on POST.
+
+## @nifrajs/ag-ui
+
+- **AgUIMountableApp** _(interface)_ - `interface AgUIMountableApp`
+  The structural slice of a nifra server `mountAgUI` needs.
+- **AgUIRouteContext** _(interface)_ - `interface AgUIRouteContext`
+  The structural slice of a route context the seam needs.
+- **MountAgUIOptions** _(interface)_ - `interface MountAgUIOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>`
+- **mountAgUI** _(function)_ - `mountAgUI: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(app: AgUIMountableApp, options: MountAgUIOptions<InputSchema, OutputSchema>) => void`
+  Mount a single agent as an AG-UI `POST {path}` SSE endpoint.
+
 ## @nifrajs/agent
 
 ### `@nifrajs/agent`

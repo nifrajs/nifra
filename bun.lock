@@ -124,6 +124,38 @@
       "name": "@nifrajs/test-utils",
       "version": "3.1.0",
     },
+    "packages/a2a": {
+      "name": "@nifrajs/a2a",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@nifrajs/agent": "workspace:*",
+        "@nifrajs/core": "workspace:*",
+        "@nifrajs/schema": "workspace:*",
+      },
+      "peerDependencies": {
+        "@nifrajs/agent": "workspace:^",
+        "@nifrajs/core": "workspace:^",
+      },
+      "optionalPeers": [
+        "@nifrajs/core",
+      ],
+    },
+    "packages/ag-ui": {
+      "name": "@nifrajs/ag-ui",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@nifrajs/agent": "workspace:*",
+        "@nifrajs/core": "workspace:*",
+        "@nifrajs/schema": "workspace:*",
+      },
+      "peerDependencies": {
+        "@nifrajs/agent": "workspace:^",
+        "@nifrajs/core": "workspace:^",
+      },
+      "optionalPeers": [
+        "@nifrajs/core",
+      ],
+    },
     "packages/agent": {
       "name": "@nifrajs/agent",
       "version": "3.1.0",
@@ -1043,6 +1075,10 @@
     "@modelcontextprotocol/node": ["@modelcontextprotocol/node@2.0.0", "", { "dependencies": { "@hono/node-server": "^1.19.9" }, "peerDependencies": { "@modelcontextprotocol/server": "^2.0.0", "hono": "^4.11.4" }, "optionalPeers": ["hono"] }, "sha512-Y4hAC2XdGDUdDOCbLDOCA4+aL3NUldjsOWlDL/YwpAxrPhRm1xHd7lZ+mLacvZ9t3PaH28wgNoaLQGrIk1P2pg=="],
 
     "@modelcontextprotocol/server": ["@modelcontextprotocol/server@2.0.0", "", { "dependencies": { "@modelcontextprotocol/core": "2.0.0", "zod": "^4.2.0" } }, "sha512-YhHWdHfpFMQfd0prsEnxKeS3Qz3ytIGmsS0sth4KDjnacIT7hxk6hXHkJ9KysxlkvTM+WZAtQbbcUhdoP4Hvtw=="],
+
+    "@nifrajs/a2a": ["@nifrajs/a2a@workspace:packages/a2a"],
+
+    "@nifrajs/ag-ui": ["@nifrajs/ag-ui@workspace:packages/ag-ui"],
 
     "@nifrajs/agent": ["@nifrajs/agent@workspace:packages/agent"],
 

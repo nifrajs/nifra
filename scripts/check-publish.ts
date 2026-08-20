@@ -62,6 +62,9 @@ const LIBRARIES = [
   "island-trigger",
   // The GraphQL endpoint package - a built `dist/*.js` + `.d.ts` behind an `exports` map, same model.
   "graphql",
+  // The agent protocol adapters (A2A JSON-RPC, AG-UI SSE) - same built-dist model.
+  "a2a",
+  "ag-ui",
 ] as const
 
 let failures = 0

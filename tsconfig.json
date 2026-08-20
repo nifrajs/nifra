@@ -46,6 +46,8 @@
       "@nifrajs/graphql": ["./packages/graphql/src/index.ts"],
       "@nifrajs/graphql/http": ["./packages/graphql/src/http.ts"],
       "@nifrajs/graphql/ws": ["./packages/graphql/src/ws.ts"],
+      "@nifrajs/a2a": ["./packages/a2a/src/index.ts"],
+      "@nifrajs/ag-ui": ["./packages/ag-ui/src/index.ts"],
       "@nifrajs/schema": ["./packages/schema/src/index.ts"],
       "@nifrajs/schema/openapi": ["./packages/schema/src/openapi.ts"],
       "@nifrajs/mcp": ["./packages/mcp/src/index.ts"],

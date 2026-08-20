@@ -1,5 +1,56 @@
 [
   {
+    "name": "A2A_ERROR_CODES",
+    "kind": "const",
+    "package": "@nifrajs/a2a",
+    "signature": "export declare const A2A_ERROR_CODES: {\n    readonly parseError: -32700;\n    readonly invalidRequest: -32600;\n    readonly methodNotFound: -32601;\n    readonly invalidParams: -32602;\n    readonly internalError: -32603;\n    readonly taskNotFound: -32001;\n    readonly unsupportedOperation: -32004;\n};"
+  },
+  {
+    "name": "A2A_PROTOCOL_VERSION",
+    "kind": "const",
+    "package": "@nifrajs/a2a",
+    "signature": "export declare const A2A_PROTOCOL_VERSION = \"1.0\";"
+  },
+  {
+    "name": "A2AAgentCard",
+    "kind": "interface",
+    "package": "@nifrajs/a2a",
+    "signature": "export interface A2AAgentCard {\n    readonly protocolVersion: string;\n    readonly name: string;\n    readonly description: string;\n    readonly url: string;\n    readonly version: string;\n    readonly capabilities: {\n        readonly streaming: boolean;\n    };\n    readonly defaultInputModes: readonly string[];\n    readonly defaultOutputModes: readonly string[];\n    readonly skills: readonly A2AAgentSkill[];\n}"
+  },
+  {
+    "name": "A2AAgentSkill",
+    "kind": "interface",
+    "package": "@nifrajs/a2a",
+    "signature": "export interface A2AAgentSkill {\n    readonly id: string;\n    readonly name: string;\n    readonly description: string;\n    readonly tags: readonly string[];\n}"
+  },
+  {
+    "name": "A2ACardInfo",
+    "kind": "interface",
+    "package": "@nifrajs/a2a",
+    "signature": "export interface A2ACardInfo {\n    /** Public URL of the JSON-RPC endpoint, as advertised to A2A clients. */\n    readonly url: string;\n    /** Version of the exposed agent (the deployment's, not the protocol's). */\n    readonly version: string;\n    readonly name?: string;\n    readonly description?: string;\n}",
+    "doc": "/** Caller-supplied card identity; everything else derives from the agent definition. */"
+  },
+  {
+    "name": "A2AMountableApp",
+    "kind": "interface",
+    "package": "@nifrajs/a2a",
+    "signature": "export interface A2AMountableApp {\n    get(path: string, handler: (c: A2ARouteContext) => Response | Promise<Response>): unknown;\n    post(path: string, handler: (c: A2ARouteContext) => Response | Promise<Response>): unknown;\n}",
+    "doc": "/** The structural slice of a nifra server `mountA2A` needs. */"
+  },
+  {
+    "name": "A2ARouteContext",
+    "kind": "interface",
+    "package": "@nifrajs/a2a",
+    "signature": "export interface A2ARouteContext {\n    readonly req: Request;\n}",
+    "doc": "/** The structural slice of a route context the seam needs. */"
+  },
+  {
+    "name": "A2ATaskState",
+    "kind": "type",
+    "package": "@nifrajs/a2a",
+    "signature": "export type A2ATaskState = \"TASK_STATE_SUBMITTED\" | \"TASK_STATE_WORKING\" | \"TASK_STATE_INPUT_REQUIRED\" | \"TASK_STATE_COMPLETED\" | \"TASK_STATE_FAILED\" | \"TASK_STATE_CANCELED\";"
+  },
+  {
     "name": "Action",
     "kind": "type",
     "package": "@nifrajs/web",
@@ -150,6 +201,12 @@
     "doc": "/**\n * Small, backend-neutral capability manifest.\n *\n * The manifest is deliberately descriptive: an operator still decides which capabilities are\n * trusted, and implementations remain free to enforce them with a sandbox, OS policy, or approval\n * broker. Keeping this seam in the optional agent package avoids putting process/filesystem policy\n * into Nifra's framework runtime.\n */"
   },
   {
+    "name": "AGENT_CARD_WELL_KNOWN_PATH",
+    "kind": "const",
+    "package": "@nifrajs/a2a",
+    "signature": "export declare const AGENT_CARD_WELL_KNOWN_PATH = \"/.well-known/agent-card.json\";"
+  },
+  {
     "name": "AGENT_PRESETS",
     "kind": "const",
     "package": "@nifrajs/coding-agent",
@@ -221,6 +278,13 @@
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
     "signature": "export interface AgentCapabilityManifest {\n    readonly version: typeof AGENT_CAPABILITY_MANIFEST_VERSION;\n    readonly requested: readonly AgentCapability[];\n    readonly trusted: readonly AgentCapability[];\n    readonly reason?: string;\n}"
+  },
+  {
+    "name": "agentCard",
+    "kind": "function",
+    "package": "@nifrajs/a2a",
+    "signature": "export declare function agentCard<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(agent: AgentDefinition<InputSchema, OutputSchema>, info: A2ACardInfo): A2AAgentCard;",
+    "doc": "/** Derive a spec-shaped agent card from the agent definition plus the caller's identity fields. */"
   },
   {
     "name": "AgentDefinition",
@@ -586,6 +650,20 @@
     "package": "@nifrajs/web",
     "signature": "export declare function aggregateSizeReport(chunks: readonly ChunkSize[]): SizeReport;",
     "doc": "/**\n * Aggregate a list of measured chunks into a {@link SizeReport}: sort biggest-gzip-first (ties broken\n * by raw bytes, then name for stable output) and sum the totals. Pure - the measurement (reading the\n * file + gzipping it) happens in the orchestrator; this is the deterministic, unit-testable core.\n */"
+  },
+  {
+    "name": "AgUIMountableApp",
+    "kind": "interface",
+    "package": "@nifrajs/ag-ui",
+    "signature": "export interface AgUIMountableApp {\n    post(path: string, handler: (c: AgUIRouteContext) => Response | Promise<Response>): unknown;\n}",
+    "doc": "/** The structural slice of a nifra server `mountAgUI` needs. */"
+  },
+  {
+    "name": "AgUIRouteContext",
+    "kind": "interface",
+    "package": "@nifrajs/ag-ui",
+    "signature": "export interface AgUIRouteContext {\n    readonly req: Request;\n}",
+    "doc": "/** The structural slice of a route context the seam needs. */"
   },
   {
     "name": "AnyServer",
@@ -8394,6 +8472,19 @@
     "doc": "/** The protocol version a modern (2026-07-28+) request declares in `_meta`, or `undefined` for a legacy\n * request. Its presence is what puts the dispatch in modern mode for that one request. */"
   },
   {
+    "name": "mountA2A",
+    "kind": "function",
+    "package": "@nifrajs/a2a",
+    "signature": "export declare function mountA2A<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(app: A2AMountableApp, options: MountA2AOptions<InputSchema, OutputSchema>): void;",
+    "doc": "/** Mount an agent as an A2A server: the agent card on GET, the JSON-RPC binding on POST. */"
+  },
+  {
+    "name": "MountA2AOptions",
+    "kind": "interface",
+    "package": "@nifrajs/a2a",
+    "signature": "export interface MountA2AOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1> {\n    readonly agent: AgentDefinition<InputSchema, OutputSchema>;\n    readonly card: A2ACardInfo;\n    /** JSON-RPC endpoint path. Default `/a2a`. */\n    readonly path?: string;\n    /** Agent card path. Default `/.well-known/agent-card.json`. */\n    readonly cardPath?: string;\n    /** Bounded run length passed to the runner. */\n    readonly maxTurns?: number;\n    /** Maximum request body size in bytes. Default 1_000_000. */\n    readonly maxBodyBytes?: number;\n    /** Prototype-poisoning policy for the framing lane. Default `\"reject\"`. */\n    readonly protoPoisoning?: ProtoPoisoning;\n    /**\n     * Build the ports for one request - the model, durable state store, approval transport,\n     * capabilities, and budgets. Receives the route context so the caller can scope every port to the\n     * request subject.\n     */\n    readonly ports: (c: A2ARouteContext) => AgentPorts | Promise<AgentPorts>;\n}"
+  },
+  {
     "name": "mountAgent",
     "kind": "function",
     "package": "@nifrajs/agent",
@@ -8405,6 +8496,19 @@
     "kind": "interface",
     "package": "@nifrajs/agent",
     "signature": "export interface MountAgentOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1> {\n    readonly agent: AgentDefinition<InputSchema, OutputSchema>;\n    /** Endpoint path. Default `/agent`. */\n    readonly path?: string;\n    /** Bounded run length passed to {@link runAgent}. */\n    readonly maxTurns?: number;\n    /** Maximum request body size in bytes. Default 1_000_000. */\n    readonly maxBodyBytes?: number;\n    /** Prototype-poisoning policy for the framing lane. Default `\"reject\"`. */\n    readonly protoPoisoning?: ProtoPoisoning;\n    /**\n     * Build the ports for one request - the model, durable state store, approval transport, capabilities,\n     * and budgets. Receives the route context so the caller can scope every port to the request subject.\n     */\n    readonly ports: (c: AgentRouteContext) => AgentPorts | Promise<AgentPorts>;\n}"
+  },
+  {
+    "name": "mountAgUI",
+    "kind": "function",
+    "package": "@nifrajs/ag-ui",
+    "signature": "export declare function mountAgUI<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(app: AgUIMountableApp, options: MountAgUIOptions<InputSchema, OutputSchema>): void;",
+    "doc": "/** Mount a single agent as an AG-UI `POST {path}` SSE endpoint. */"
+  },
+  {
+    "name": "MountAgUIOptions",
+    "kind": "interface",
+    "package": "@nifrajs/ag-ui",
+    "signature": "export interface MountAgUIOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1> {\n    readonly agent: AgentDefinition<InputSchema, OutputSchema>;\n    /** Endpoint path. Default `/agui`. */\n    readonly path?: string;\n    /** Bounded run length passed to the runner. */\n    readonly maxTurns?: number;\n    /** Maximum request body size in bytes. Default 1_000_000. */\n    readonly maxBodyBytes?: number;\n    /** Prototype-poisoning policy for the framing lane. Default `\"reject\"`. */\n    readonly protoPoisoning?: ProtoPoisoning;\n    /**\n     * Build the ports for one request - the model, durable state store, approval transport,\n     * capabilities, and budgets. Receives the route context so the caller can scope every port to the\n     * request subject.\n     */\n    readonly ports: (c: AgUIRouteContext) => AgentPorts | Promise<AgentPorts>;\n}"
   },
   {
     "name": "mountGraphql",
