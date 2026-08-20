@@ -1607,6 +1607,13 @@
     "doc": "/**\n * Build a source codeframe: `radius` lines either side of `line`, each tagged with its 1-based number\n * and whether it is the offending line. Returns undefined if the source can't be read or the line is\n * out of range - a diagnostic without a codeframe is still useful, so this never throws.\n */"
   },
   {
+    "name": "buildContext",
+    "kind": "function",
+    "package": "@nifrajs/graphql",
+    "signature": "export declare function buildContext<Context, Env>(builder: GraphqlContextBuilder<Context, Env> | undefined, input: GraphqlContextInput<Env>): Promise<Context>;",
+    "doc": "/** Resolve a context builder to a concrete value, defaulting to an empty object. */"
+  },
+  {
     "name": "buildDiagnostic",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -3517,6 +3524,13 @@
     "package": "@nifrajs/proxy",
     "signature": "export declare function createProxy(options: ProxyOptions): ProxyHandler;",
     "doc": "/**\n * Create a proxy handler bound to one upstream origin.\n *\n * ```ts\n * const upstream = createProxy({ upstream: \"http://127.0.0.1:8081\" })\n * app.mountFetch(\"/api\", upstream, { stripPrefix: true })\n * ```\n *\n * Streams both directions, preserves method/path/query/status, strips hop-by-hop and\n * Connection-nominated headers both ways, never follows upstream redirects, and answers flat\n * errors: `502 bad_gateway` when the upstream is unreachable, `504 gateway_timeout` on deadline.\n * WebSocket upgrade is not proxied.\n */"
+  },
+  {
+    "name": "createPubSub",
+    "kind": "function",
+    "package": "@nifrajs/graphql",
+    "signature": "export declare function createPubSub<Event = unknown>(): GraphqlPubSub<Event>;",
+    "doc": "/** Create an in-memory {@link GraphqlPubSub}. */"
   },
   {
     "name": "createQuery",
@@ -5919,6 +5933,46 @@
     "package": "@nifrajs/web",
     "signature": "export declare function googleFontsCssUrl(options: GoogleFontOptions): string;",
     "doc": "/** Build the Google Fonts CSS2 request URL. Pure + fully validated, so it's safe to feed a dynamic\n * family/weights/text. Exported for advanced callers who fetch + parse the stylesheet themselves. */"
+  },
+  {
+    "name": "GraphqlContextBuilder",
+    "kind": "type",
+    "package": "@nifrajs/graphql",
+    "signature": "export type GraphqlContextBuilder<Context = unknown, Env = unknown> = (input: GraphqlContextInput<Env>) => Context | Promise<Context>;",
+    "doc": "/**\n * Build the resolver `contextValue` for one operation. Sync or async; a throw is reported as a GraphQL\n * error envelope rather than crashing the transport. Omit it and resolvers get `contextValue: {}`.\n */"
+  },
+  {
+    "name": "GraphqlContextInput",
+    "kind": "interface",
+    "package": "@nifrajs/graphql",
+    "signature": "export interface GraphqlContextInput<Env = unknown> {\n    readonly request: Request;\n    /**\n     * The nifra route context (`c`) when the endpoint was mounted via `mountGraphql`, otherwise\n     * `undefined` (e.g. `respondGraphql` called standalone, or the WS transport before a route context\n     * exists). Typed loosely on purpose so this package never imports core's context type at the value\n     * level - keeping the peer dependency truly optional.\n     */\n    readonly nifra?: NifraContextLike<Env>;\n}",
+    "doc": "/** What the builder is handed. `request` is always present; `nifra` is the route context when known. */"
+  },
+  {
+    "name": "GraphqlHttpOptions",
+    "kind": "interface",
+    "package": "@nifrajs/graphql",
+    "signature": "export interface GraphqlHttpOptions<Context = unknown, Env = unknown> {\n    /** The executable schema (types + resolvers), e.g. from `graphql`'s `buildSchema` or a schema builder. */\n    readonly schema: GraphQLSchema;\n    /** Build the resolver `contextValue` from the request (and nifra context when mounted). */\n    readonly context?: GraphqlContextBuilder<Context, Env>;\n    /** The nifra route context, when the caller has one (supplied by `mountGraphql`). */\n    readonly nifra?: NifraContextLike<Env>;\n    /** Maximum request body size in bytes. Default 1 MB. Rejected bodies answer 413. */\n    readonly maxBodyBytes?: number;\n    /** Prototype-pollution policy for the parsed JSON body. Default `\"reject\"`. */\n    readonly protoPoisoning?: ProtoPoisoning;\n    /** Optional root value passed to the executor. */\n    readonly rootValue?: unknown;\n    /**\n     * Origin allowlist for the CORS `access-control-allow-origin` header. Omit to reflect any origin\n     * (`*`) - correct for a public API; set it to lock the browser callers down.\n     */\n    readonly allowedOrigins?: readonly string[];\n    /**\n     * Per-request authorization, run after the body parses and before execution. Return `false` to answer\n     * `401` with a GraphQL error envelope and skip execution entirely.\n     */\n    readonly authorize?: (request: Request) => boolean | Promise<boolean>;\n    /** Emit the legacy always-200 `application/json` response shape instead of `application/graphql-response+json`. */\n    readonly legacyJsonResponse?: boolean;\n}"
+  },
+  {
+    "name": "GraphqlPubSub",
+    "kind": "interface",
+    "package": "@nifrajs/graphql",
+    "signature": "export interface GraphqlPubSub<Event = unknown> {\n    /** Push `payload` to every open iterator on `topic`. */\n    publish(topic: string, payload: Event): void;\n    /** An async iterator that yields each future `publish(topic, ...)` until it is returned/closed. */\n    subscribe(topic: string): AsyncIterableIterator<Event>;\n}",
+    "doc": "/** The subscription source shape a resolver's `subscribe` consumes. Swap the impl for a durable bus. */"
+  },
+  {
+    "name": "graphqlWebSocket",
+    "kind": "function",
+    "package": "@nifrajs/graphql",
+    "signature": "export declare function graphqlWebSocket<Context extends Record<string, unknown> = Record<string, unknown>>(options: GraphqlWsOptions<Context>): WebSocketHandler<GraphqlWsConnection>;",
+    "doc": "/**\n * Build a nifra {@link WebSocketHandler} that terminates the `graphql-transport-ws` protocol. Register\n * it on a route enabled with `.use(websocket())`:\n *\n * ```ts\n * import { websocket } from \"@nifrajs/core/ws\"\n * import { graphqlWebSocket } from \"@nifrajs/graphql/ws\"\n *\n * const app = server().use(websocket()).ws(\"/graphql\", graphqlWebSocket({ schema, context }))\n * ```\n *\n * The route MUST negotiate the `graphql-transport-ws` subprotocol at the WebSocket layer for a browser\n * `graphql-ws` client to connect.\n */"
+  },
+  {
+    "name": "GraphqlWsOptions",
+    "kind": "interface",
+    "package": "@nifrajs/graphql",
+    "signature": "export interface GraphqlWsOptions<Context extends Record<string, unknown> = Record<string, unknown>> {\n    /** The executable schema. */\n    readonly schema: GraphQLSchema;\n    /** Build the resolver `contextValue` from the upgrade request. Shared with the HTTP transport. */\n    readonly context?: GraphqlContextBuilder<Context>;\n    /**\n     * Called once per connection with the client's `connection_init` payload; return `false` (or throw)\n     * to reject the connection. The seam for authenticating a socket from an init token.\n     */\n    readonly onConnect?: (payload: ConnectionInitMessage[\"payload\"], request: Request) => boolean | Promise<boolean>;\n    /** Additional raw `graphql-ws` server options merged last (advanced escape hatch). */\n    readonly serverOptions?: Partial<ServerOptions>;\n}"
   },
   {
     "name": "GuardOptions",
@@ -8326,6 +8380,19 @@
     "doc": "/** The protocol version a modern (2026-07-28+) request declares in `_meta`, or `undefined` for a legacy\n * request. Its presence is what puts the dispatch in modern mode for that one request. */"
   },
   {
+    "name": "mountGraphql",
+    "kind": "function",
+    "package": "@nifrajs/graphql",
+    "signature": "export declare function mountGraphql<Context = unknown, Env = unknown>(app: MountableApp<Env>, options: MountGraphqlOptions<Context, Env>): void;",
+    "doc": "/**\n * Mount a GraphQL endpoint. Wires `POST` (and `GET`, unless disabled) on `path`, injecting the nifra\n * route context into your resolver context, and - when `subscriptions` is set - a `graphql-ws` WebSocket\n * on the same path.\n *\n * ```ts\n * import { server } from \"@nifrajs/core\"\n * import { websocket } from \"@nifrajs/core/ws\"\n * import { mountGraphql, createPubSub } from \"@nifrajs/graphql\"\n *\n * const pubsub = createPubSub()\n * const app = server().use(websocket())\n * mountGraphql(app, {\n *   schema,\n *   context: ({ nifra }) => ({ user: nifra?.env, pubsub }),\n *   subscriptions: true,\n * })\n * ```\n */"
+  },
+  {
+    "name": "MountGraphqlOptions",
+    "kind": "interface",
+    "package": "@nifrajs/graphql",
+    "signature": "export interface MountGraphqlOptions<Context = unknown, Env = unknown> extends Omit<GraphqlHttpOptions<Context, Env>, \"nifra\"> {\n    /** Endpoint path. Default `/graphql`. */\n    readonly path?: string;\n    /** Enable `GET /graphql` (queries only). Default `true`. */\n    readonly enableGet?: boolean;\n    /**\n     * Enable `graphql-transport-ws` subscriptions on the same path. Pass the WS options (or `true` to\n     * reuse `schema`/`context`). Requires the app to have `.use(websocket())` and `graphql-ws` installed.\n     */\n    readonly subscriptions?: boolean | GraphqlWsOptions<Record<string, unknown>>;\n}"
+  },
+  {
     "name": "MountIslandOptions",
     "kind": "interface",
     "package": "@nifrajs/islets",
@@ -8736,6 +8803,13 @@
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
     "signature": "export interface NifraBackendOptions {\n    readonly model: NativeModelPort;\n    readonly tools?: readonly NativeTool[];\n    readonly approval?: NativeApprovalPort;\n    readonly maxSteps?: number;\n    readonly maxMessageChars?: number;\n    readonly now?: () => number;\n}"
+  },
+  {
+    "name": "NifraContextLike",
+    "kind": "interface",
+    "package": "@nifrajs/graphql",
+    "signature": "export interface NifraContextLike<Env = unknown> {\n    readonly req: Request;\n    readonly params: Record<string, string>;\n    readonly env: Env;\n    readonly signal: AbortSignal;\n    readonly waitUntil: (promise: Promise<unknown>) => void;\n}",
+    "doc": "/**\n * The subset of a nifra route context this package surfaces to a resolver-context builder. Structural,\n * so the real `c` satisfies it without a nominal import. Kept to the non-body accessors a resolver\n * legitimately needs; the raw body belongs to the GraphQL executor, not the builder.\n */"
   },
   {
     "name": "NifraContextOptions",
@@ -11080,6 +11154,13 @@
     "package": "@nifrajs/web",
     "signature": "export type ResourceState<T> = {\n    readonly status: \"pending\";\n    readonly value: undefined;\n    readonly error: undefined;\n} | {\n    readonly status: \"ready\";\n    readonly value: T;\n    readonly error: undefined;\n} | {\n    readonly status: \"error\";\n    readonly value: undefined;\n    readonly error: unknown;\n};",
     "doc": "/** The three states of an async cell. A discriminated union on `status` so a consumer must handle\n * every branch - there is no \"value that might secretly be loading\", the failure mode of ad-hoc\n * `isLoading` booleans. `value`/`error` are narrowed by `status`. */"
+  },
+  {
+    "name": "respondGraphql",
+    "kind": "function",
+    "package": "@nifrajs/graphql",
+    "signature": "export declare function respondGraphql<Context = unknown, Env = unknown>(request: Request, options: GraphqlHttpOptions<Context, Env>): Promise<Response>;",
+    "doc": "/**\n * Handle one GraphQL HTTP request. Never throws - a malformed request becomes a GraphQL error envelope.\n * Mount it directly (`app.all('/graphql', (c) => respondGraphql(c.req, { schema }))`) or via\n * {@link mountGraphql}, which also wires the nifra context in.\n */"
   },
   {
     "name": "respondMcpHttp",

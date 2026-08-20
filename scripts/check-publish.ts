@@ -60,6 +60,8 @@ const LIBRARIES = [
   "web-vanilla",
   "islets",
   "island-trigger",
+  // The GraphQL endpoint package - a built `dist/*.js` + `.d.ts` behind an `exports` map, same model.
+  "graphql",
 ] as const
 
 let failures = 0

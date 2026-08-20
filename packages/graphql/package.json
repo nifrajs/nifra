@@ -1,0 +1,76 @@
+{
+  "name": "@nifrajs/graphql",
+  "version": "0.1.0",
+  "description": "Mount a GraphQL endpoint on a nifra app - a spec-compliant GraphQL-over-HTTP handler you mount at POST /graphql, graphql-ws subscriptions over nifra's native WebSocket lane, and typed nifra context piped straight into your resolvers. Uses graphql's own execute/subscribe; no server framework re-bundled.",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "graphql",
+    "graphql-http",
+    "graphql-ws",
+    "subscriptions",
+    "resolvers",
+    "api"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./http": {
+      "bun": "./src/http.ts",
+      "types": "./dist/http.d.ts",
+      "default": "./dist/http.js"
+    },
+    "./ws": {
+      "bun": "./src/ws.ts",
+      "types": "./dist/ws.d.ts",
+      "default": "./dist/ws.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "peerDependencies": {
+    "@nifrajs/core": "workspace:^",
+    "graphql": "^17.0.0",
+    "graphql-ws": "^6.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@nifrajs/core": {
+      "optional": true
+    },
+    "graphql-ws": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@nifrajs/core": "workspace:*",
+    "graphql": "17.0.2",
+    "graphql-ws": "6.2.1"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/graphql"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

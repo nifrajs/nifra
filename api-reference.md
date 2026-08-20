@@ -2148,6 +2148,44 @@ _No named exports (side-effect entrypoint)._
 - **defineEventContract** _(function)_ - `defineEventContract: <Schema extends StandardSchemaV1>(spec: { type: string; version: number; payload: Schema; }) => EventContract<Schema>`
   Define a portable, versioned event contract.
 
+## @nifrajs/graphql
+
+### `@nifrajs/graphql`
+
+- **GraphqlContextBuilder** _(type)_ - `type GraphqlContextBuilder<Context = unknown, Env = unknown> = ( input: GraphqlContextInput<Env>, ) => Context | Promise<Context>`
+  Build the resolver `contextValue` for one operation. Sync or async; a throw is reported as a GraphQL error envelope rather than crashing the transport. Omit it and resolvers get `contextValue: {}`.
+- **GraphqlContextInput** _(interface)_ - `interface GraphqlContextInput<Env = unknown>`
+  What the builder is handed. `request` is always present; `nifra` is the route context when known.
+- **GraphqlHttpOptions** _(interface)_ - `interface GraphqlHttpOptions<Context = unknown, Env = unknown>`
+- **GraphqlPubSub** _(interface)_ - `interface GraphqlPubSub<Event = unknown>`
+  The subscription source shape a resolver's `subscribe` consumes. Swap the impl for a durable bus.
+- **GraphqlWsOptions** _(interface)_ - `interface GraphqlWsOptions<Context extends Record<string, unknown> = Record<string, unknown>>`
+- **MountGraphqlOptions** _(interface)_ - `interface MountGraphqlOptions<Context = unknown, Env = unknown>`
+- **NifraContextLike** _(interface)_ - `interface NifraContextLike<Env = unknown>`
+  The subset of a nifra route context this package surfaces to a resolver-context builder. Structural, so the real `c` satisfies it without a nominal import. Kept to the non-body accessors a resolver legitimately needs; the raw body belongs to the GraphQL executor, not the builder.
+- **buildContext** _(function)_ - `buildContext: <Context, Env>(builder: GraphqlContextBuilder<Context, Env> | undefined, input: GraphqlContextInput<Env>) => Promise<Context>`
+  Resolve a context builder to a concrete value, defaulting to an empty object.
+- **createPubSub** _(function)_ - `createPubSub: <Event = unknown>() => GraphqlPubSub<Event>`
+  Create an in-memory {@link GraphqlPubSub}.
+- **graphqlWebSocket** _(function)_ - `graphqlWebSocket: <Context extends Record<string, unknown> = Record<string, unknown>>(options: GraphqlWsOptions<Context>) => WebSocketHandler<GraphqlWsConnection>`
+  Build a nifra {@link WebSocketHandler} that terminates the `graphql-transport-ws` protocol. Register it on a route enabled with `.use(websocket())`:
+- **mountGraphql** _(function)_ - `mountGraphql: <Context = unknown, Env = unknown>(app: MountableApp<Env>, options: MountGraphqlOptions<Context, Env>) => void`
+  Mount a GraphQL endpoint. Wires `POST` (and `GET`, unless disabled) on `path`, injecting the nifra route context into your resolver context, and - when `subscriptions` is set - a `graphql-ws` WebSocket on the same path.
+- **respondGraphql** _(function)_ - `respondGraphql: <Context = unknown, Env = unknown>(request: Request, options: GraphqlHttpOptions<Context, Env>) => Promise<Response>`
+  Handle one GraphQL HTTP request. Never throws - a malformed request becomes a GraphQL error envelope. Mount it directly (`app.all('/graphql', (c) => respondGraphql(c.req, { schema }))`) or via {@link mountGraphql}, which also wires the nifra context in.
+
+### `@nifrajs/graphql/http`
+
+- **GraphqlHttpOptions** _(interface)_ - `interface GraphqlHttpOptions<Context = unknown, Env = unknown>`
+- **respondGraphql** _(function)_ - `respondGraphql: <Context = unknown, Env = unknown>(request: Request, options: GraphqlHttpOptions<Context, Env>) => Promise<Response>`
+  Handle one GraphQL HTTP request. Never throws - a malformed request becomes a GraphQL error envelope. Mount it directly (`app.all('/graphql', (c) => respondGraphql(c.req, { schema }))`) or via {@link mountGraphql}, which also wires the nifra context in.
+
+### `@nifrajs/graphql/ws`
+
+- **GraphqlWsOptions** _(interface)_ - `interface GraphqlWsOptions<Context extends Record<string, unknown> = Record<string, unknown>>`
+- **graphqlWebSocket** _(function)_ - `graphqlWebSocket: <Context extends Record<string, unknown> = Record<string, unknown>>(options: GraphqlWsOptions<Context>) => WebSocketHandler<GraphqlWsConnection>`
+  Build a nifra {@link WebSocketHandler} that terminates the `graphql-transport-ws` protocol. Register it on a route enabled with `.use(websocket())`:
+
 ## @nifrajs/i18n
 
 ### `@nifrajs/i18n`
