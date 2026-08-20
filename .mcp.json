@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "nifra": {
+      "command": "bash",
+      "args": ["-c", "exec bun run \"${CLAUDE_PROJECT_DIR:-.}/packages/cli/src/cli.ts\" mcp"]
+    }
+  }
+}
