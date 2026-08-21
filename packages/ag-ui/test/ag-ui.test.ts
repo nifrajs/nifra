@@ -515,3 +515,194 @@ describe("mountAgUI resumable streams", () => {
     expect(malformed.status).toBe(400)
   })
 })
+
+describe("mountAgUI model deltas", () => {
+  test("streams text deltas live and suppresses the duplicate terminal text block", async () => {
+    const { app, call } = captureApp()
+    const model: AgentModelPort = {
+      complete: (request) => {
+        request.onDelta?.({ kind: "text", text: "he" })
+        request.onDelta?.({ kind: "text", text: "llo" })
+        return { kind: "output", value: { answer: "hello" } }
+      },
+    }
+    mountAgUI(app, { agent: definition(), ports: ports({ model }) })
+
+    const list = await events(await call(runInput({ forwardedProps: { input: { prompt: "x" } } })))
+    const sequence = types(list)
+    const starts = list.filter((e) => e.type === "TEXT_MESSAGE_START")
+    expect(starts).toHaveLength(1)
+    expect((starts[0] as { messageId: string }).messageId).toBe("run-1:stream:0")
+    expect((starts[0] as { role: string }).role).toBe("assistant")
+    const contents = list.filter((e) => e.type === "TEXT_MESSAGE_CONTENT") as {
+      messageId: string
+      delta: string
+    }[]
+    expect(contents.map((e) => e.delta)).toEqual(["he", "llo"])
+    expect(contents.every((e) => e.messageId === "run-1:stream:0")).toBe(true)
+    expect(sequence.filter((type) => type === "TEXT_MESSAGE_END")).toHaveLength(1)
+    expect(sequence.indexOf("TEXT_MESSAGE_END")).toBeLessThan(sequence.indexOf("RUN_FINISHED"))
+    const finished = list.at(-1) as { type: string; result: unknown }
+    expect(finished.type).toBe("RUN_FINISHED")
+    expect(finished.result).toEqual({ answer: "hello" })
+  })
+
+  test("streams reasoning deltas as a REASONING message and keeps the terminal text block", async () => {
+    const { app, call } = captureApp()
+    const model: AgentModelPort = {
+      complete: (request) => {
+        request.onDelta?.({ kind: "reasoning", text: "thinking " })
+        request.onDelta?.({ kind: "reasoning", text: "hard" })
+        return { kind: "output", value: { answer: "done" } }
+      },
+    }
+    mountAgUI(app, { agent: definition(), ports: ports({ model }) })
+
+    const list = await events(await call(runInput({ forwardedProps: { input: { prompt: "x" } } })))
+    const sequence = types(list)
+    for (const type of [
+      "REASONING_START",
+      "REASONING_MESSAGE_START",
+      "REASONING_MESSAGE_CONTENT",
+      "REASONING_MESSAGE_END",
+      "REASONING_END",
+    ])
+      expect(sequence).toContain(type)
+    const messageStart = list.find((e) => e.type === "REASONING_MESSAGE_START") as {
+      messageId: string
+      role: string
+    }
+    expect(messageStart.role).toBe("reasoning")
+    const contents = list.filter((e) => e.type === "REASONING_MESSAGE_CONTENT") as {
+      delta: string
+    }[]
+    expect(contents.map((e) => e.delta)).toEqual(["thinking ", "hard"])
+    // No text was streamed, so the terminal TEXT_MESSAGE block still carries the output.
+    expect(sequence).toContain("TEXT_MESSAGE_CONTENT")
+    expect(sequence.at(-1)).toBe("RUN_FINISHED")
+  })
+
+  test("streams tool args on a provisional call that the tool evidence closes", async () => {
+    const { app, call } = captureApp()
+    let calls = 0
+    const model: AgentModelPort = {
+      complete: (request) => {
+        calls += 1
+        if (calls === 1) {
+          request.onDelta?.({ kind: "tool-args", name: "reference.echo", argsText: '{"value"' })
+          request.onDelta?.({ kind: "tool-args", argsText: ':"x"}' })
+          return { kind: "tool", name: "reference.echo", input: { value: "x" } }
+        }
+        return { kind: "output", value: { answer: "done" } }
+      },
+    }
+    mountAgUI(app, {
+      agent: definition([echoTool]),
+      ports: ports({ model, capabilities: ["reference.echo"] }),
+    })
+
+    const list = await events(await call(runInput({ forwardedProps: { input: { prompt: "x" } } })))
+    const starts = list.filter((e) => e.type === "TOOL_CALL_START") as {
+      toolCallId: string
+      toolCallName: string
+    }[]
+    expect(starts).toHaveLength(1)
+    expect(starts[0]?.toolCallId).toBe("run-1:call:0")
+    expect(starts[0]?.toolCallName).toBe("reference.echo")
+    const args = list.filter((e) => e.type === "TOOL_CALL_ARGS") as {
+      toolCallId: string
+      delta: string
+    }[]
+    expect(args.map((e) => e.delta)).toEqual(['{"value"', ':"x"}'])
+    expect(args.every((e) => e.toolCallId === "run-1:call:0")).toBe(true)
+    const ends = list.filter((e) => e.type === "TOOL_CALL_END") as { toolCallId: string }[]
+    expect(ends).toHaveLength(1)
+    expect(ends[0]?.toolCallId).toBe("run-1:call:0")
+    const result = list.find((e) => e.type === "TOOL_CALL_RESULT") as {
+      toolCallId: string
+      content: string
+    }
+    expect(result.toolCallId).toBe("run-1:call:0")
+    expect(JSON.parse(result.content)).toEqual({ outcome: "committed" })
+    // Only tool args were streamed; the terminal text block still carries the output.
+    expect(types(list)).toContain("TEXT_MESSAGE_CONTENT")
+  })
+})
+
+describe("mountAgUI shared state", () => {
+  test("announces body.state upfront and streams patches as STATE_DELTA", async () => {
+    const { app, call } = captureApp()
+    mountAgUI(app, {
+      agent: definition(),
+      ports: (_c, run) => ({
+        capabilities: [],
+        model: {
+          complete: () => {
+            run.sharedState.patch([{ op: "add", path: "/progress", value: 1 }])
+            return { kind: "output", value: { answer: "hi" } }
+          },
+        },
+      }),
+    })
+
+    const list = await events(
+      await call(runInput({ state: { progress: 0 }, forwardedProps: { input: { prompt: "x" } } })),
+    )
+    const sequence = types(list)
+    const snapshots = list.filter((e) => e.type === "STATE_SNAPSHOT") as { snapshot: unknown }[]
+    expect(snapshots).toHaveLength(1)
+    expect(snapshots[0]?.snapshot).toEqual({ progress: 0 })
+    expect(sequence.indexOf("STATE_SNAPSHOT")).toBeGreaterThan(sequence.indexOf("CUSTOM"))
+    const delta = list.find((e) => e.type === "STATE_DELTA") as { delta: unknown[] }
+    expect(delta.delta).toEqual([{ op: "add", path: "/progress", value: 1 }])
+  })
+
+  test("announces a first patch on an unseeded document as a STATE_SNAPSHOT", async () => {
+    const { app, call } = captureApp()
+    mountAgUI(app, {
+      agent: definition(),
+      ports: (_c, run) => ({
+        capabilities: [],
+        model: {
+          complete: () => {
+            run.sharedState.patch([{ op: "add", path: "/step", value: "a" }])
+            run.sharedState.patch([{ op: "replace", path: "/step", value: "b" }])
+            return { kind: "output", value: { answer: "hi" } }
+          },
+        },
+      }),
+    })
+
+    const list = await events(await call(runInput({ forwardedProps: { input: { prompt: "x" } } })))
+    const snapshots = list.filter((e) => e.type === "STATE_SNAPSHOT") as { snapshot: unknown }[]
+    expect(snapshots).toHaveLength(1)
+    expect(snapshots[0]?.snapshot).toEqual({ step: "a" })
+    const deltas = list.filter((e) => e.type === "STATE_DELTA") as { delta: unknown[] }[]
+    expect(deltas).toHaveLength(1)
+    expect(deltas[0]?.delta).toEqual([{ op: "replace", path: "/step", value: "b" }])
+  })
+
+  test("emits no state events when nothing touches the channel", async () => {
+    const { app, call } = captureApp()
+    mountAgUI(app, { agent: definition(), ports: ports() })
+
+    const list = await events(await call(runInput({ forwardedProps: { input: { prompt: "x" } } })))
+    expect(types(list)).not.toContain("STATE_SNAPSHOT")
+    expect(types(list)).not.toContain("STATE_DELTA")
+  })
+
+  test("hands the ports factory the resolved turn id", async () => {
+    const { app, call } = captureApp()
+    let seenTurnId: string | undefined
+    mountAgUI(app, {
+      agent: definition(),
+      ports: (_c, run) => {
+        seenTurnId = run.turnId
+        return { capabilities: [], model: outputModel({ answer: "hi" }) }
+      },
+    })
+
+    await events(await call(runInput({ forwardedProps: { input: { prompt: "x" } } })))
+    expect(seenTurnId).toBe("run-1")
+  })
+})

@@ -24,6 +24,21 @@ evidence out to every port in order, so an SSE evidence stream and an exporter (
 seams (`mountAgent`, `@nifrajs/a2a`, `@nifrajs/ag-ui`) compose their streaming evidence with any
 telemetry port supplied through `ports`.
 
+A model port can stream: when the caller wires an `AgentDeltaSink` into `ports.deltas`, every model
+request carries an optional `onDelta` callback the port may call per chunk - user-visible text,
+reasoning text, or the raw argument text of the tool call being formed. Deltas are transient
+observer data for live UIs (`@nifrajs/ag-ui` projects them onto `TEXT_MESSAGE_*`, `REASONING_*`,
+and `TOOL_CALL_ARGS` frames): they are never validated, persisted, or replayed, and a failing sink
+never fails the model step. `combineAgentDeltaSinks(a, b, ...)` fans deltas out the way
+`combineAgentTelemetry` fans evidence.
+
+`createAgentSharedState(initial)` is the run's shared UI state channel: a JSON document any port or
+tool executor patches with RFC 6902 operations (`add`, `replace`, `remove`), with subscribers
+observing every applied batch. Patches apply atomically - an invalid op rejects the whole batch -
+and prototype-grafting pointer segments are refused. The document is per-run observer data, not
+turn state: nothing in it is persisted by the runtime. `@nifrajs/ag-ui` projects the channel onto
+AG-UI `STATE_SNAPSHOT`/`STATE_DELTA` events.
+
 SSE streams are resumable: give `mountAgent` (or `@nifrajs/ag-ui`'s `mountAgUI`) an `evidenceLog`
 and `step` frames carry `id: <seq>`. A client that loses the connection re-POSTs the same `turnId`
 with a `Last-Event-ID` header and receives the missed evidence, rejoining a still-running turn live

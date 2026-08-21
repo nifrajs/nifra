@@ -28,6 +28,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The structural slice of a nifra server `mountAgUI` needs.
 - **AgUIRouteContext** _(interface)_ - `interface AgUIRouteContext`
   The structural slice of a route context the seam needs.
+- **AgUIRunContext** _(interface)_ - `interface AgUIRunContext`
+  Per-run context handed to the `ports` factory alongside the route context.
 - **MountAgUIOptions** _(interface)_ - `interface MountAgUIOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>`
 - **mountAgUI** _(function)_ - `mountAgUI: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(app: AgUIMountableApp, options: MountAgUIOptions<InputSchema, OutputSchema>) => void`
   Mount a single agent as an AG-UI `POST {path}` SSE endpoint.
@@ -39,6 +41,10 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentApprovalPort** _(interface)_ - `interface AgentApprovalPort`
 - **AgentApprovalResult** _(type)_ - `type AgentApprovalResult = | { readonly status: "approved"; readonly approval: ToolApproval } | { readonly status: "denied"; readonly reason?: string } | { readonly status: "pending"; readonly effectId: string }`
 - **AgentDefinition** _(interface)_ - `interface AgentDefinition<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>`
+- **AgentDeltaSink** _(interface)_ - `interface AgentDeltaSink`
+  A transient observer of model deltas - an SSE bridge, a live console, a progress meter.
+- **AgentModelDelta** _(type)_ - `type AgentModelDelta = | { readonly kind: "text"; readonly text: string } | { readonly kind: "reasoning"; readonly text: string } | { readonly kind: "tool-args"; readonly name?: string; readonly argsText: string }`
+  One progressive chunk of a model decision in flight: user-visible text, reasoning text, or the raw argument text of the tool call being formed (`name` on the first chunk when the provider announces it). Chunks are provider output surface, not evidence - the runtime never stores them.
 - **AgentModelPort** _(interface)_ - `interface AgentModelPort`
 - **AgentModelRequest** _(interface)_ - `interface AgentModelRequest`
 - **AgentModelResponse** _(type)_ - `type AgentModelResponse = | { readonly kind: "output"; readonly value: unknown } | { readonly kind: "tool"; readonly name: string; readonly input: unknown }`
@@ -46,6 +52,10 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentPendingKind** _(type)_ - `type AgentPendingKind = "approval" | "budget" | "model" | "cancelled"`
 - **AgentPorts** _(interface)_ - `interface AgentPorts`
 - **AgentRunResult** _(type)_ - `type AgentRunResult<Output> = | AgentTurnResult<Output> | (AgentTurnBaseResult & { readonly status: "suspended" readonly pending: AgentPendingContinuation readonly reason: "max_turns" })`
+- **AgentSharedState** _(interface)_ - `interface AgentSharedState<State = unknown>`
+  A shared, observable state document for one run - the state a live UI mirrors while the agent works. App code (a model port, a tool executor) calls `patch` with RFC 6902 operations; every subscriber sees the applied ops, and protocol bridges project them onto their wire (AG-UI `STATE_SNAPSHOT`/`STA…
+- **AgentStatePatchOp** _(type)_ - `type AgentStatePatchOp = | { readonly op: "add" | "replace"; readonly path: string; readonly value: unknown } | { readonly op: "remove"; readonly path: string }`
+  One RFC 6902 operation from the applied subset: `add`, `replace`, `remove`.
 - **AgentStateStore** _(interface)_ - `interface AgentStateStore`
 - **AgentStatus** _(type)_ - `type AgentStatus = "continue" | "completed" | "suspended"`
 - **AgentStepEvidence** _(interface)_ - `interface AgentStepEvidence`
@@ -74,8 +84,11 @@ Every public export of every package and documented subpath - name, kind, signat
 - **LocalProcessResult** _(interface)_ - `interface LocalProcessResult`
 - **MemoryAgentStateStore** _(class)_ - `class MemoryAgentStateStore`
 - **RunAgentOptions** _(interface)_ - `interface RunAgentOptions`
+- **combineAgentDeltaSinks** _(function)_ - `combineAgentDeltaSinks: (...sinks: readonly (AgentDeltaSink | undefined)[]) => AgentDeltaSink | undefined`
+  Fan model deltas out to several sinks - a protocol bridge and a logger can watch the same run. `undefined` entries are skipped, and the combined sink is `undefined` when none remain. Each sink is isolated: one sink throwing never starves the others.
 - **combineAgentTelemetry** _(function)_ - `combineAgentTelemetry: (...ports: readonly (AgentTelemetryPort | undefined)[]) => AgentTelemetryPort | undefined`
   Fan one run's step evidence out to several telemetry ports - an SSE evidence stream and an exporter can observe the same turn. Ports are awaited in argument order; `undefined` entries are skipped, and the combined port is `undefined` when none remain.
+- **createAgentSharedState** _(function)_ - `createAgentSharedState: <State>(initial: State) => AgentSharedState<State>`
 - **createAgentState** _(function)_ - `createAgentState: (turnId: string) => AgentTurnState`
 - **createLocalProcessAdapter** _(function)_ - `createLocalProcessAdapter: (options?: LocalProcessAdapterOptions) => LocalProcessAdapter`
   Run a command with the host controls available to a normal child process. The local adapter is NOT a security boundary. Without OS-level sandboxing it contains crashes and accidents, not hostile code.

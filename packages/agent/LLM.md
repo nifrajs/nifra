@@ -14,8 +14,10 @@ Provider-neutral, typed, resumable agent turns built on Nifra tool contracts.
 
 ## Key exports
 
+- **combineAgentDeltaSinks** _(function)_ - `combineAgentDeltaSinks: (...sinks: readonly (AgentDeltaSink | undefined)[]) => AgentDeltaSink | undefined` · from `@nifrajs/agent`
 - **combineAgentTelemetry** _(function)_ - `combineAgentTelemetry: (...ports: readonly (AgentTelemetryPort | undefined)[]) => AgentTelemetryPort | undefined` · from `@nifrajs/agent`
 - **createAgentEvidenceStream** _(function)_ - `createAgentEvidenceStream: (options?: AgentEvidenceStreamOptions) => AgentEvidenceStream` · from `@nifrajs/agent/events`
+- **createAgentSharedState** _(function)_ - `createAgentSharedState: <State>(initial: State) => AgentSharedState<State>` · from `@nifrajs/agent`
 - **createAgentState** _(function)_ - `createAgentState: (turnId: string) => AgentTurnState` · from `@nifrajs/agent`
 - **createLocalProcessAdapter** _(function)_ - `createLocalProcessAdapter: (options?: LocalProcessAdapterOptions) => LocalProcessAdapter` · from `@nifrajs/agent`
 - **createMemoryAgentEvidenceLog** _(function)_ - `createMemoryAgentEvidenceLog: (options?: MemoryAgentEvidenceLogOptions) => AgentEvidenceLog` · from `@nifrajs/agent/events`
@@ -26,10 +28,8 @@ Provider-neutral, typed, resumable agent turns built on Nifra tool contracts.
 - **turn** _(function)_ - `turn: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>,…` · from `@nifrajs/agent`
 - **LocalProcessPolicyError** _(class)_ - `class LocalProcessPolicyError` · from `@nifrajs/agent`
 - **MemoryAgentStateStore** _(class)_ - `class MemoryAgentStateStore` · from `@nifrajs/agent`
-- **LOCAL_PROCESS_LIMITATION** _(const)_ - `LOCAL_PROCESS_LIMITATION: "The local adapter is NOT a security boundary."` · from `@nifrajs/agent`
-- **AgentApprovalPort** _(interface)_ - `interface AgentApprovalPort` · from `@nifrajs/agent`
 
-_…and 37 more - see [`api-reference.md`](../../api-reference.md#nifrajsagent) for the complete list._
+_…and 43 more - see [`api-reference.md`](../../api-reference.md#nifrajsagent) for the complete list._
 
 ## Footguns
 

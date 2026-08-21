@@ -3,7 +3,10 @@
  *
  * One turn makes one model decision and may execute one {@link ToolContract}. The multi-turn runner
  * is intentionally bounded. The state adapter stores token-only evidence and cursor metadata; model
- * input, tool input, and tool output remain transient caller data.
+ * input, tool input, and tool output remain transient caller data. A model port may additionally
+ * stream progressive output (text, reasoning, tool-call arguments) through the request's optional
+ * `onDelta` callback when the caller wires an {@link AgentDeltaSink} into the ports - deltas are
+ * transient observer data for live UIs, never evidence, and are never persisted by the runtime.
  */
 
 import { canAttempt, type RequestBudget } from "@nifrajs/core/budget"
@@ -91,6 +94,14 @@ export interface AgentModelRequest {
   readonly signal: AbortSignal
   /** Wall-clock budget shared with the parent request. Use withDeadlineHeader for outbound requests. */
   readonly deadline?: RequestBudget
+  /**
+   * Present when an observer asked for progressive output (see {@link AgentPorts.deltas}). A
+   * streaming port calls it per chunk while producing the decision; emitting is optional and
+   * best-effort - a port that returns only complete responses ignores it, and callback failures
+   * never reach the port. Deltas are transient observer data, not evidence: they are not
+   * validated, not persisted, and not replayed.
+   */
+  readonly onDelta?: (delta: AgentModelDelta) => void
 }
 
 export type AgentModelResponse =
@@ -100,6 +111,45 @@ export type AgentModelResponse =
 export interface AgentModelPort {
   /** Provider output is unknown until the response parser accepts it. */
   complete(request: AgentModelRequest): unknown | PromiseLike<unknown>
+}
+
+/**
+ * One progressive chunk of a model decision in flight: user-visible text, reasoning text, or the
+ * raw argument text of the tool call being formed (`name` on the first chunk when the provider
+ * announces it). Chunks are provider output surface, not evidence - the runtime never stores them.
+ */
+export type AgentModelDelta =
+  | { readonly kind: "text"; readonly text: string }
+  | { readonly kind: "reasoning"; readonly text: string }
+  | { readonly kind: "tool-args"; readonly name?: string; readonly argsText: string }
+
+/** A transient observer of model deltas - an SSE bridge, a live console, a progress meter. */
+export interface AgentDeltaSink {
+  delta(delta: AgentModelDelta): void
+}
+
+/**
+ * Fan model deltas out to several sinks - a protocol bridge and a logger can watch the same run.
+ * `undefined` entries are skipped, and the combined sink is `undefined` when none remain. Each
+ * sink is isolated: one sink throwing never starves the others.
+ */
+export function combineAgentDeltaSinks(
+  ...sinks: readonly (AgentDeltaSink | undefined)[]
+): AgentDeltaSink | undefined {
+  const live = sinks.filter((sink): sink is AgentDeltaSink => sink !== undefined)
+  if (live.length === 0) return undefined
+  if (live.length === 1) return live[0]
+  return {
+    delta(delta) {
+      for (const sink of live) {
+        try {
+          sink.delta(delta)
+        } catch {
+          // Deltas are best-effort observability; a failing sink must not affect its peers.
+        }
+      }
+    },
+  }
 }
 
 export interface AgentToolResult {
@@ -174,6 +224,134 @@ export function combineAgentTelemetry(
   }
 }
 
+/** One RFC 6902 operation from the applied subset: `add`, `replace`, `remove`. */
+export type AgentStatePatchOp =
+  | { readonly op: "add" | "replace"; readonly path: string; readonly value: unknown }
+  | { readonly op: "remove"; readonly path: string }
+
+/**
+ * A shared, observable state document for one run - the state a live UI mirrors while the agent
+ * works. App code (a model port, a tool executor) calls `patch` with RFC 6902 operations; every
+ * subscriber sees the applied ops, and protocol bridges project them onto their wire (AG-UI
+ * `STATE_SNAPSHOT`/`STATE_DELTA`). The document is transient per-run observer data - it is not
+ * turn state, not evidence, and never persisted by the runtime.
+ */
+export interface AgentSharedState<State = unknown> {
+  /** A defensive deep copy of the current document. */
+  snapshot(): State
+  /** Apply ops atomically - on an invalid op the whole batch is rejected with a TypeError. */
+  patch(ops: readonly AgentStatePatchOp[]): void
+  /** Observe applied patches. Returns the unsubscribe function. Listener failures are isolated. */
+  subscribe(listener: (ops: readonly AgentStatePatchOp[]) => void): () => void
+}
+
+export function createAgentSharedState<State>(initial: State): AgentSharedState<State> {
+  let document: unknown = structuredClone(initial)
+  const listeners = new Set<(ops: readonly AgentStatePatchOp[]) => void>()
+  return {
+    snapshot() {
+      return structuredClone(document) as State
+    },
+    patch(ops) {
+      // Validate-then-apply on a copy so a mid-batch failure never leaves a half-patched document.
+      let next = structuredClone(document)
+      for (const op of ops) next = applyStatePatchOp(next, op)
+      document = next
+      const applied = Object.freeze([...ops])
+      for (const listener of listeners) {
+        try {
+          listener(applied)
+        } catch {
+          // Observer failures must not affect the document or the other observers.
+        }
+      }
+    },
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+  }
+}
+
+/** JSON Pointer segments that would graft onto the prototype chain are rejected outright. */
+const FORBIDDEN_STATE_KEYS = new Set(["__proto__", "constructor", "prototype"])
+
+function applyStatePatchOp(document: unknown, op: AgentStatePatchOp): unknown {
+  if (op === null || typeof op !== "object" || typeof op.path !== "string")
+    throw new TypeError("agent: invalid patch op")
+  if (op.op !== "add" && op.op !== "replace" && op.op !== "remove")
+    throw new TypeError("agent: unsupported patch op")
+  if (op.path === "") {
+    if (op.op === "remove") throw new TypeError("agent: cannot remove the document root")
+    return op.value
+  }
+  if (!op.path.startsWith("/")) throw new TypeError("agent: patch path must be a JSON Pointer")
+  const segments = op.path
+    .slice(1)
+    .split("/")
+    .map((segment) => segment.replaceAll("~1", "/").replaceAll("~0", "~"))
+  let parent: unknown = document
+  for (let index = 0; index < segments.length - 1; index += 1)
+    parent = stateChild(parent, segments[index] as string)
+  const key = segments[segments.length - 1] as string
+  if (Array.isArray(parent)) {
+    if (op.op === "add" && key === "-") {
+      parent.push(op.value)
+      return document
+    }
+    const index = asStateIndex(key, parent.length + (op.op === "add" ? 1 : 0))
+    if (op.op === "add") parent.splice(index, 0, op.value)
+    else if (op.op === "replace") parent[index] = op.value
+    else parent.splice(index, 1)
+    return document
+  }
+  const record = asStateRecord(parent)
+  if (FORBIDDEN_STATE_KEYS.has(key)) throw new TypeError("agent: forbidden patch path segment")
+  if (op.op === "remove") {
+    if (!Object.hasOwn(record, key)) throw new TypeError("agent: patch path does not exist")
+    delete record[key]
+    return document
+  }
+  if (op.op === "replace" && !Object.hasOwn(record, key))
+    throw new TypeError("agent: patch path does not exist")
+  record[key] = op.value
+  return document
+}
+
+function stateChild(parent: unknown, segment: string): unknown {
+  if (Array.isArray(parent)) return parent[asStateIndex(segment, parent.length)]
+  const record = asStateRecord(parent)
+  if (FORBIDDEN_STATE_KEYS.has(segment) || !Object.hasOwn(record, segment))
+    throw new TypeError("agent: patch path does not exist")
+  return record[segment]
+}
+
+function asStateIndex(segment: string, bound: number): number {
+  if (!/^(0|[1-9]\d{0,9})$/.test(segment)) throw new TypeError("agent: invalid array index")
+  const index = Number(segment)
+  if (index >= bound) throw new TypeError("agent: array index out of bounds")
+  return index
+}
+
+function asStateRecord(value: unknown): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    throw new TypeError("agent: patch path does not exist")
+  return value as Record<string, unknown>
+}
+
+/** A sink failure must surface as neither a model failure nor a dropped run. */
+function guardedDelta(sink: AgentDeltaSink): (delta: AgentModelDelta) => void {
+  return (delta) => {
+    try {
+      sink.delta(delta)
+    } catch {
+      // Deltas are best-effort observability.
+    }
+  }
+}
+
 export interface AgentPorts {
   readonly model: AgentModelPort
   readonly capabilities: readonly string[]
@@ -184,6 +362,8 @@ export interface AgentPorts {
   readonly state?: AgentStateStore
   readonly approval?: AgentApprovalPort
   readonly telemetry?: AgentTelemetryPort
+  /** Receives model deltas when the model port streams. Transient - nothing here is persisted. */
+  readonly deltas?: AgentDeltaSink
   readonly clock?: () => number
   /** Adapter used to satisfy execution policies declared by tool contracts. */
   readonly executionPolicy?: ExecutionPolicyAdapter
@@ -400,6 +580,7 @@ export async function turn<
       ...(ports.deadline === undefined
         ? {}
         : { deadline: ports.deadline.child(AGENT_SETTLE_RESERVE_MS) }),
+      ...(ports.deltas === undefined ? {} : { onDelta: guardedDelta(ports.deltas) }),
     })
     response = parseModelResponse(rawResponse)
   } catch {

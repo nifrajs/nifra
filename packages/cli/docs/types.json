@@ -293,6 +293,13 @@
     "signature": "export interface AgentDefinition<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1> {\n    readonly name: string;\n    readonly instruction: string;\n    readonly input: InputSchema;\n    readonly output: OutputSchema;\n    readonly tools: readonly AgentToolContract[];\n    /** Dimensionless counters charged once per model decision. */\n    readonly modelCost?: EffectCost;\n}"
   },
   {
+    "name": "AgentDeltaSink",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentDeltaSink {\n    delta(delta: AgentModelDelta): void;\n}",
+    "doc": "/** A transient observer of model deltas - an SSE bridge, a live console, a progress meter. */"
+  },
+  {
     "name": "agentError",
     "kind": "function",
     "package": "@nifrajs/agent-protocol",
@@ -383,6 +390,13 @@
     "signature": "export interface AgentMemoryCompactedEvent extends AgentSessionEventBase {\n    readonly type: \"memory.compacted\";\n    readonly before: number;\n    readonly after: number;\n    readonly reason: \"manual\" | \"threshold\" | \"overflow\" | \"workflow\";\n}"
   },
   {
+    "name": "AgentModelDelta",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type AgentModelDelta = {\n    readonly kind: \"text\";\n    readonly text: string;\n} | {\n    readonly kind: \"reasoning\";\n    readonly text: string;\n} | {\n    readonly kind: \"tool-args\";\n    readonly name?: string;\n    readonly argsText: string;\n};",
+    "doc": "/**\n * One progressive chunk of a model decision in flight: user-visible text, reasoning text, or the\n * raw argument text of the tool call being formed (`name` on the first chunk when the provider\n * announces it). Chunks are provider output surface, not evidence - the runtime never stores them.\n */"
+  },
+  {
     "name": "AgentModelPort",
     "kind": "interface",
     "package": "@nifrajs/agent",
@@ -392,7 +406,7 @@
     "name": "AgentModelRequest",
     "kind": "interface",
     "package": "@nifrajs/agent",
-    "signature": "export interface AgentModelRequest {\n    readonly agent: string;\n    readonly instruction: string;\n    readonly input: unknown;\n    readonly state: AgentTurnState;\n    readonly tools: readonly AgentToolDescriptor[];\n    readonly toolResult?: AgentToolResult;\n    readonly previousOutput?: unknown;\n    readonly signal: AbortSignal;\n    /** Wall-clock budget shared with the parent request. Use withDeadlineHeader for outbound requests. */\n    readonly deadline?: RequestBudget;\n}"
+    "signature": "export interface AgentModelRequest {\n    readonly agent: string;\n    readonly instruction: string;\n    readonly input: unknown;\n    readonly state: AgentTurnState;\n    readonly tools: readonly AgentToolDescriptor[];\n    readonly toolResult?: AgentToolResult;\n    readonly previousOutput?: unknown;\n    readonly signal: AbortSignal;\n    /** Wall-clock budget shared with the parent request. Use withDeadlineHeader for outbound requests. */\n    readonly deadline?: RequestBudget;\n    /**\n     * Present when an observer asked for progressive output (see {@link AgentPorts.deltas}). A\n     * streaming port calls it per chunk while producing the decision; emitting is optional and\n     * best-effort - a port that returns only complete responses ignores it, and callback failures\n     * never reach the port. Deltas are transient observer data, not evidence: they are not\n     * validated, not persisted, and not replayed.\n     */\n    readonly onDelta?: (delta: AgentModelDelta) => void;\n}"
   },
   {
     "name": "AgentModelResponse",
@@ -429,7 +443,7 @@
     "name": "AgentPorts",
     "kind": "interface",
     "package": "@nifrajs/agent",
-    "signature": "export interface AgentPorts {\n    readonly model: AgentModelPort;\n    readonly capabilities: readonly string[];\n    readonly budget?: ToolBudget;\n    /** Wall-clock budget shared with the parent request. Distinct from `budget`, which is cost. */\n    readonly deadline?: RequestBudget;\n    readonly idempotency?: ToolIdempotencyStore;\n    readonly state?: AgentStateStore;\n    readonly approval?: AgentApprovalPort;\n    readonly telemetry?: AgentTelemetryPort;\n    readonly clock?: () => number;\n    /** Adapter used to satisfy execution policies declared by tool contracts. */\n    readonly executionPolicy?: ExecutionPolicyAdapter;\n    /** Injectable token generator for deterministic replay and tests. */\n    readonly idFactory?: () => string;\n    readonly signal?: AbortSignal;\n    /** Replay mode skips every tool executor and marks the call dry-run. */\n    readonly dryRun?: boolean;\n}"
+    "signature": "export interface AgentPorts {\n    readonly model: AgentModelPort;\n    readonly capabilities: readonly string[];\n    readonly budget?: ToolBudget;\n    /** Wall-clock budget shared with the parent request. Distinct from `budget`, which is cost. */\n    readonly deadline?: RequestBudget;\n    readonly idempotency?: ToolIdempotencyStore;\n    readonly state?: AgentStateStore;\n    readonly approval?: AgentApprovalPort;\n    readonly telemetry?: AgentTelemetryPort;\n    /** Receives model deltas when the model port streams. Transient - nothing here is persisted. */\n    readonly deltas?: AgentDeltaSink;\n    readonly clock?: () => number;\n    /** Adapter used to satisfy execution policies declared by tool contracts. */\n    readonly executionPolicy?: ExecutionPolicyAdapter;\n    /** Injectable token generator for deterministic replay and tests. */\n    readonly idFactory?: () => string;\n    readonly signal?: AbortSignal;\n    /** Replay mode skips every tool executor and marks the call dry-run. */\n    readonly dryRun?: boolean;\n}"
   },
   {
     "name": "AgentPreset",
@@ -549,11 +563,25 @@
     "signature": "export interface AgentSessionUpdatedEvent extends AgentSessionEventBase {\n    readonly type: \"session.updated\";\n    readonly snapshot: AgentSessionSnapshot;\n}"
   },
   {
+    "name": "AgentSharedState",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentSharedState<State = unknown> {\n    /** A defensive deep copy of the current document. */\n    snapshot(): State;\n    /** Apply ops atomically - on an invalid op the whole batch is rejected with a TypeError. */\n    patch(ops: readonly AgentStatePatchOp[]): void;\n    /** Observe applied patches. Returns the unsubscribe function. Listener failures are isolated. */\n    subscribe(listener: (ops: readonly AgentStatePatchOp[]) => void): () => void;\n}",
+    "doc": "/**\n * A shared, observable state document for one run - the state a live UI mirrors while the agent\n * works. App code (a model port, a tool executor) calls `patch` with RFC 6902 operations; every\n * subscriber sees the applied ops, and protocol bridges project them onto their wire (AG-UI\n * `STATE_SNAPSHOT`/`STATE_DELTA`). The document is transient per-run observer data - it is not\n * turn state, not evidence, and never persisted by the runtime.\n */"
+  },
+  {
     "name": "agentsMcpSection",
     "kind": "function",
     "package": "create-nifra",
     "signature": "export declare function agentsMcpSection(): string;",
     "doc": "/**\n * The \"## MCP server\" section appended to a scaffolded (or retrofitted) `AGENTS.md`, so non-Claude\n * agents (Cursor, and anything that reads `AGENTS.md`) also learn the MCP exists and what to prefer.\n * Mirrors the CLAUDE.md preamble's guidance without the Claude-specific `@import`.\n */"
+  },
+  {
+    "name": "AgentStatePatchOp",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type AgentStatePatchOp = {\n    readonly op: \"add\" | \"replace\";\n    readonly path: string;\n    readonly value: unknown;\n} | {\n    readonly op: \"remove\";\n    readonly path: string;\n};",
+    "doc": "/** One RFC 6902 operation from the applied subset: `add`, `replace`, `remove`. */"
   },
   {
     "name": "AgentStateStore",
@@ -698,6 +726,13 @@
     "package": "@nifrajs/ag-ui",
     "signature": "export interface AgUIRouteContext {\n    readonly req: Request;\n}",
     "doc": "/** The structural slice of a route context the seam needs. */"
+  },
+  {
+    "name": "AgUIRunContext",
+    "kind": "interface",
+    "package": "@nifrajs/ag-ui",
+    "signature": "export interface AgUIRunContext {\n    /** The runner turn id this request resolves to (fresh run or resume target). */\n    readonly turnId: string;\n    /**\n     * The run's shared UI state channel. `body.state` seeds the document; patches applied by any\n     * port stream to the client as `STATE_SNAPSHOT`/`STATE_DELTA`. Transient - never persisted.\n     */\n    readonly sharedState: AgentSharedState;\n}",
+    "doc": "/** Per-run context handed to the `ports` factory alongside the route context. */"
   },
   {
     "name": "AnyServer",
@@ -2904,6 +2939,13 @@
     "doc": "/**\n * Compose middleware/plugins into one reusable bundle. Individual named plugins still dedupe.\n *\n * The bundle is a type **identity**: everything it contains runs, but context a member adds via\n * `derive`/`decorate` is not threaded to the caller's handler types (there is no way to sum unknown\n * members' context at the type level). Apply such a member with its own `.use(...)` instead.\n */"
   },
   {
+    "name": "combineAgentDeltaSinks",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function combineAgentDeltaSinks(...sinks: readonly (AgentDeltaSink | undefined)[]): AgentDeltaSink | undefined;",
+    "doc": "/**\n * Fan model deltas out to several sinks - a protocol bridge and a logger can watch the same run.\n * `undefined` entries are skipped, and the combined sink is `undefined` when none remain. Each\n * sink is isolated: one sink throwing never starves the others.\n */"
+  },
+  {
     "name": "combineAgentTelemetry",
     "kind": "function",
     "package": "@nifrajs/agent",
@@ -3412,6 +3454,12 @@
     "package": "@nifrajs/agent",
     "signature": "export declare function createAgentEvidenceStream(options?: AgentEvidenceStreamOptions): AgentEvidenceStream;",
     "doc": "/** Create an async iterable that yields the exact evidence values received by `step`. */"
+  },
+  {
+    "name": "createAgentSharedState",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function createAgentSharedState<State>(initial: State): AgentSharedState<State>;"
   },
   {
     "name": "createAgentState",
@@ -8562,7 +8610,7 @@
     "name": "MountAgUIOptions",
     "kind": "interface",
     "package": "@nifrajs/ag-ui",
-    "signature": "export interface MountAgUIOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1> {\n    readonly agent: AgentDefinition<InputSchema, OutputSchema>;\n    /** Endpoint path. Default `/agui`. */\n    readonly path?: string;\n    /** Bounded run length passed to the runner. */\n    readonly maxTurns?: number;\n    /** Maximum request body size in bytes. Default 1_000_000. */\n    readonly maxBodyBytes?: number;\n    /** Prototype-poisoning policy for the framing lane. Default `\"reject\"`. */\n    readonly protoPoisoning?: ProtoPoisoning;\n    /**\n     * Build the ports for one request - the model, durable state store, approval transport,\n     * capabilities, and budgets. Receives the route context so the caller can scope every port to the\n     * request subject.\n     */\n    readonly ports: (c: AgUIRouteContext) => AgentPorts | Promise<AgentPorts>;\n    /**\n     * Evidence log making the SSE stream resumable via `Last-Event-ID`. The in-memory reference\n     * (`createMemoryAgentEvidenceLog`) is single-process; a durable log is an adapter concern.\n     */\n    readonly evidenceLog?: AgentEvidenceLog;\n    /**\n     * Emit a `MESSAGES_SNAPSHOT` (the request's `messages` plus the assistant output message)\n     * before `RUN_FINISHED` on a successful completion. Default `false`: the snapshot echoes\n     * client-sent message payloads, and terminal events are persisted to the evidence log when one\n     * is configured - leave it off unless the client relies on an authoritative snapshot.\n     */\n    readonly emitMessagesSnapshot?: boolean;\n}"
+    "signature": "export interface MountAgUIOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1> {\n    readonly agent: AgentDefinition<InputSchema, OutputSchema>;\n    /** Endpoint path. Default `/agui`. */\n    readonly path?: string;\n    /** Bounded run length passed to the runner. */\n    readonly maxTurns?: number;\n    /** Maximum request body size in bytes. Default 1_000_000. */\n    readonly maxBodyBytes?: number;\n    /** Prototype-poisoning policy for the framing lane. Default `\"reject\"`. */\n    readonly protoPoisoning?: ProtoPoisoning;\n    /**\n     * Build the ports for one request - the model, durable state store, approval transport,\n     * capabilities, and budgets. Receives the route context so the caller can scope every port to\n     * the request subject, and the run context carrying the turn id and the shared UI state channel.\n     */\n    readonly ports: (c: AgUIRouteContext, run: AgUIRunContext) => AgentPorts | Promise<AgentPorts>;\n    /**\n     * Evidence log making the SSE stream resumable via `Last-Event-ID`. The in-memory reference\n     * (`createMemoryAgentEvidenceLog`) is single-process; a durable log is an adapter concern.\n     */\n    readonly evidenceLog?: AgentEvidenceLog;\n    /**\n     * Emit a `MESSAGES_SNAPSHOT` (the request's `messages` plus the assistant output message)\n     * before `RUN_FINISHED` on a successful completion. Default `false`: the snapshot echoes\n     * client-sent message payloads, and terminal events are persisted to the evidence log when one\n     * is configured - leave it off unless the client relies on an authoritative snapshot.\n     */\n    readonly emitMessagesSnapshot?: boolean;\n}"
   },
   {
     "name": "mountGraphql",

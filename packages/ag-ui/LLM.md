@@ -13,6 +13,7 @@ Mount a nifra agent as an AG-UI (Agent-User Interaction protocol) endpoint - one
 - **mountAgUI** _(function)_ - `mountAgUI: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(app: AgUIMountableApp, options: MountAgUIOptions<I…`
 - **AgUIMountableApp** _(interface)_ - `interface AgUIMountableApp`
 - **AgUIRouteContext** _(interface)_ - `interface AgUIRouteContext`
+- **AgUIRunContext** _(interface)_ - `interface AgUIRunContext`
 - **MountAgUIOptions** _(interface)_ - `interface MountAgUIOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>`
 
 ## Footguns

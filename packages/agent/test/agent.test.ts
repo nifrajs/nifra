@@ -8,9 +8,14 @@ import {
 import { t } from "@nifrajs/schema"
 import {
   type AgentDefinition,
+  type AgentDeltaSink,
+  type AgentModelDelta,
   type AgentModelPort,
+  type AgentStatePatchOp,
   type AgentStepEvidence,
+  combineAgentDeltaSinks,
   combineAgentTelemetry,
+  createAgentSharedState,
   createAgentState,
   MemoryAgentStateStore,
   replayAgent,
@@ -592,5 +597,149 @@ describe("combineAgentTelemetry", () => {
     const only = { step: () => {} }
     expect(combineAgentTelemetry(undefined, only)).toBe(only)
     expect(combineAgentTelemetry(undefined, undefined)).toBeUndefined()
+  })
+})
+
+describe("model deltas", () => {
+  test("plumbs the delta sink into the model request and never persists deltas", async () => {
+    const seen: AgentModelDelta[] = []
+    const result = await runAgent(
+      definition(),
+      { value: { prompt: "stream" } },
+      {
+        model: {
+          complete: (request) => {
+            request.onDelta?.({ kind: "text", text: "he" })
+            request.onDelta?.({ kind: "text", text: "llo" })
+            return { kind: "output", value: { answer: "hello" } }
+          },
+        },
+        capabilities: [],
+        deltas: { delta: (delta) => seen.push(delta) },
+      },
+      { state: createAgentState("delta-run") },
+    )
+    expect(result.status).toBe("completed")
+    expect(seen).toEqual([
+      { kind: "text", text: "he" },
+      { kind: "text", text: "llo" },
+    ])
+    expect(JSON.stringify(result.evidence)).not.toContain("hello")
+  })
+
+  test("omits onDelta when no sink is wired", async () => {
+    let sawCallback: boolean | undefined
+    const result = await runAgent(
+      definition(),
+      { value: { prompt: "plain" } },
+      {
+        model: {
+          complete: (request) => {
+            sawCallback = request.onDelta !== undefined
+            return { kind: "output", value: { answer: "plain" } }
+          },
+        },
+        capabilities: [],
+      },
+      { state: createAgentState("no-delta-run") },
+    )
+    expect(result.status).toBe("completed")
+    expect(sawCallback).toBe(false)
+  })
+
+  test("a throwing sink never fails the model step", async () => {
+    const result = await runAgent(
+      definition(),
+      { value: { prompt: "boom" } },
+      {
+        model: {
+          complete: (request) => {
+            request.onDelta?.({ kind: "text", text: "x" })
+            return { kind: "output", value: { answer: "boom" } }
+          },
+        },
+        capabilities: [],
+        deltas: {
+          delta: () => {
+            throw new Error("sink down")
+          },
+        },
+      },
+      { state: createAgentState("delta-throw") },
+    )
+    expect(result.status).toBe("completed")
+  })
+})
+
+describe("combineAgentDeltaSinks", () => {
+  test("fans out in order, isolates a throwing sink, and collapses like telemetry", () => {
+    const calls: string[] = []
+    const sink = (label: string, fail = false): AgentDeltaSink => ({
+      delta: (delta) => {
+        if (fail) throw new Error("down")
+        calls.push(`${label}:${delta.kind}`)
+      },
+    })
+    const combined = combineAgentDeltaSinks(undefined, sink("a", true), sink("b"))
+    combined?.delta({ kind: "reasoning", text: "t" })
+    expect(calls).toEqual(["b:reasoning"])
+    const only = sink("solo")
+    expect(combineAgentDeltaSinks(undefined, only)).toBe(only)
+    expect(combineAgentDeltaSinks(undefined, undefined)).toBeUndefined()
+  })
+})
+
+describe("createAgentSharedState", () => {
+  test("applies the RFC 6902 subset and snapshots defensively", () => {
+    const state = createAgentSharedState<Record<string, unknown>>({ items: ["a"], keep: 1 })
+    state.patch([
+      { op: "add", path: "/items/-", value: "b" },
+      { op: "add", path: "/items/0", value: "z" },
+      { op: "replace", path: "/keep", value: 2 },
+      { op: "add", path: "/x~1y", value: true },
+      { op: "remove", path: "/items/1" },
+    ])
+    const snapshot = state.snapshot()
+    expect(snapshot).toEqual({ items: ["z", "b"], keep: 2, "x/y": true })
+    ;(snapshot.items as string[]).push("mutated")
+    expect(state.snapshot().items).toEqual(["z", "b"])
+  })
+
+  test("rejects a bad batch atomically and guards prototype paths", () => {
+    const state = createAgentSharedState<Record<string, unknown>>({ a: 1 })
+    expect(() =>
+      state.patch([
+        { op: "replace", path: "/a", value: 2 },
+        { op: "replace", path: "/missing", value: 3 },
+      ]),
+    ).toThrow(TypeError)
+    expect(state.snapshot()).toEqual({ a: 1 })
+    expect(() => state.patch([{ op: "add", path: "/__proto__/polluted", value: 1 }])).toThrow(
+      TypeError,
+    )
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+    expect(() => state.patch([{ op: "remove", path: "" }])).toThrow(TypeError)
+    expect(() => state.patch([{ op: "add", path: "no-slash", value: 1 }])).toThrow(TypeError)
+  })
+
+  test("notifies subscribers with the applied ops and isolates listener failures", () => {
+    const state = createAgentSharedState<Record<string, unknown>>({})
+    const seen: (readonly AgentStatePatchOp[])[] = []
+    state.subscribe(() => {
+      throw new Error("listener down")
+    })
+    const unsubscribe = state.subscribe((ops) => seen.push(ops))
+    state.patch([{ op: "add", path: "/a", value: 1 }])
+    expect(seen).toEqual([[{ op: "add", path: "/a", value: 1 }]])
+    unsubscribe()
+    state.patch([{ op: "replace", path: "/a", value: 2 }])
+    expect(seen).toHaveLength(1)
+    expect(state.snapshot()).toEqual({ a: 2 })
+  })
+
+  test("replaces the whole document through the root path", () => {
+    const state = createAgentSharedState<unknown>({ old: true })
+    state.patch([{ op: "replace", path: "", value: { fresh: true } }])
+    expect(state.snapshot()).toEqual({ fresh: true })
   })
 })

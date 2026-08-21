@@ -15,9 +15,20 @@
  *   - Step evidence maps to `TOOL_CALL_START`/`TOOL_CALL_END` for tool effects, followed by a
  *     `TOOL_CALL_RESULT` whose `content` is the token-only outcome (`{ outcome, code? }` - the
  *     runtime never carries tool payloads), and `STEP_STARTED`/`STEP_FINISHED` for everything
- *     else. The runner's model port returns complete responses, so text arrives as a single
- *     `TEXT_MESSAGE_START`/`_CONTENT`/`_END` sequence, not token deltas. Evidence-derived events
- *     carry the evidence `timestamp`.
+ *     else. Evidence-derived events carry the evidence `timestamp`.
+ *   - A model port that streams (`request.onDelta`) turns into live token frames:
+ *     `TEXT_MESSAGE_START`/`_CONTENT` for text deltas, `REASONING_*` for reasoning deltas, and
+ *     `TOOL_CALL_START` + `TOOL_CALL_ARGS` for the tool call being formed - the following tool
+ *     evidence closes that same call (`TOOL_CALL_END` + `TOOL_CALL_RESULT`) instead of opening a
+ *     second one. When any text was streamed, the terminal `TEXT_MESSAGE_*` block is suppressed -
+ *     the streamed text IS the assistant message, so a streaming port must stream all
+ *     user-visible text. A non-streaming port keeps the single terminal
+ *     `TEXT_MESSAGE_START`/`_CONTENT`/`_END` block. Deltas are transient: a `Last-Event-ID`
+ *     replay carries evidence frames and the stored (unsuppressed) terminal events only.
+ *   - The `ports` factory receives `(c, run)` where `run.sharedState` is the run's
+ *     `AgentSharedState` channel: `body.state` seeds the document (announced as an upfront
+ *     `STATE_SNAPSHOT` when present), every `patch` streams as `STATE_DELTA` (RFC 6902 ops), and
+ *     a first patch without a seeded document announces itself as a `STATE_SNAPSHOT`.
  *   - A completed run ends `RUN_FINISHED` with `result` and `outcome: { type: "success" }`, after
  *     an optional `MESSAGES_SNAPSHOT` (see `emitMessagesSnapshot`); a failed one ends `RUN_ERROR`.
  *   - A suspended run (approval, budget, model retry, max turns) emits
@@ -44,12 +55,17 @@
 
 import {
   type AgentDefinition,
+  type AgentDeltaSink,
+  type AgentModelDelta,
   type AgentPendingKind,
   type AgentPorts,
   type AgentRunResult,
+  type AgentSharedState,
   type AgentStepEvidence,
   type AgentTurnInput,
+  combineAgentDeltaSinks,
   combineAgentTelemetry,
+  createAgentSharedState,
   createAgentState,
   resumeAgent,
   runAgent,
@@ -85,6 +101,17 @@ export interface AgUIMountableApp {
   post(path: string, handler: (c: AgUIRouteContext) => Response | Promise<Response>): unknown
 }
 
+/** Per-run context handed to the `ports` factory alongside the route context. */
+export interface AgUIRunContext {
+  /** The runner turn id this request resolves to (fresh run or resume target). */
+  readonly turnId: string
+  /**
+   * The run's shared UI state channel. `body.state` seeds the document; patches applied by any
+   * port stream to the client as `STATE_SNAPSHOT`/`STATE_DELTA`. Transient - never persisted.
+   */
+  readonly sharedState: AgentSharedState
+}
+
 export interface MountAgUIOptions<
   InputSchema extends StandardSchemaV1,
   OutputSchema extends StandardSchemaV1,
@@ -100,10 +127,10 @@ export interface MountAgUIOptions<
   readonly protoPoisoning?: ProtoPoisoning
   /**
    * Build the ports for one request - the model, durable state store, approval transport,
-   * capabilities, and budgets. Receives the route context so the caller can scope every port to the
-   * request subject.
+   * capabilities, and budgets. Receives the route context so the caller can scope every port to
+   * the request subject, and the run context carrying the turn id and the shared UI state channel.
    */
-  readonly ports: (c: AgUIRouteContext) => AgentPorts | Promise<AgentPorts>
+  readonly ports: (c: AgUIRouteContext, run: AgUIRunContext) => AgentPorts | Promise<AgentPorts>
   /**
    * Evidence log making the SSE stream resumable via `Last-Event-ID`. The in-memory reference
    * (`createMemoryAgentEvidenceLog`) is single-process; a durable log is an adapter concern.
@@ -176,13 +203,23 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
     return sseReplayResponse(identity, replay)
   }
 
-  const basePorts = await options.ports(c)
+  // `body.state` seeds the run's shared UI state document; patches stream as STATE_DELTA.
+  const sharedState = createAgentSharedState<unknown>(body.state === undefined ? {} : body.state)
+  const basePorts = await options.ports(c, { turnId, sharedState })
 
-  const start = (telemetry?: AgentPorts["telemetry"]): Promise<AgentRunResult<unknown>> => {
-    // Compose rather than replace: the SSE evidence stream must not displace a telemetry port the
-    // caller injected through `ports`.
+  const start = (
+    telemetry: AgentPorts["telemetry"],
+    deltas: AgentDeltaSink,
+  ): Promise<AgentRunResult<unknown>> => {
+    // Compose rather than replace: the SSE evidence stream must not displace a telemetry port or
+    // delta sink the caller injected through `ports`.
     const combined = combineAgentTelemetry(basePorts.telemetry, log?.open(turnId), telemetry)
-    const ports = combined === undefined ? basePorts : { ...basePorts, telemetry: combined }
+    const sinks = combineAgentDeltaSinks(basePorts.deltas, deltas)
+    const ports = {
+      ...basePorts,
+      ...(combined === undefined ? {} : { telemetry: combined }),
+      ...(sinks === undefined ? {} : { deltas: sinks }),
+    }
     if (resume !== undefined) {
       return resumeAgent(options.agent, turnId, { value: input, resume }, ports, runOptions)
     }
@@ -192,7 +229,10 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
     })
   }
   const snapshotMessages = options.emitMessagesSnapshot === true ? body.messages : undefined
-  return sseResponse(identity, start, log, snapshotMessages)
+  return sseResponse(identity, start, log, snapshotMessages, {
+    channel: sharedState,
+    announced: body.state !== undefined,
+  })
 }
 
 interface RunIdentity {
@@ -203,9 +243,13 @@ interface RunIdentity {
 
 function sseResponse(
   identity: RunIdentity,
-  start: (telemetry: AgentPorts["telemetry"]) => Promise<AgentRunResult<unknown>>,
+  start: (
+    telemetry: AgentPorts["telemetry"],
+    deltas: AgentDeltaSink,
+  ) => Promise<AgentRunResult<unknown>>,
   log: AgentEvidenceLog | undefined,
   snapshotMessages: unknown,
+  state: { readonly channel: AgentSharedState; readonly announced: boolean },
 ): Response {
   const stream = createAgentEvidenceStream()
   // `id:` frames are only meaningful when a log can serve the reconnect they invite.
@@ -213,7 +257,8 @@ function sseResponse(
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
       const send = sseSender(controller)
-      const run = start(stream)
+      const projector = createDeltaProjector(send, identity.turnId)
+      const run = start(stream, projector.sink)
       // The evidence stream must terminate whether the run resolves or throws, or the `for await`
       // below would hang; the run result (or the error) is still reported in-band after it drains.
       run
@@ -224,17 +269,47 @@ function sseResponse(
         .finally(() => stream.complete())
       send({ type: "RUN_STARTED", threadId: identity.threadId, runId: identity.runId })
       send({ type: "CUSTOM", name: "nifra.turn", value: { turnId: identity.turnId } })
+      let announced = state.announced
+      if (announced)
+        send({ type: "STATE_SNAPSHOT", snapshot: state.channel.snapshot(), timestamp: Date.now() })
+      // A first patch on an unseeded document announces the whole document instead of a delta
+      // against a base the client never saw.
+      const unsubscribe = state.channel.subscribe((ops) => {
+        if (!announced) {
+          announced = true
+          send({
+            type: "STATE_SNAPSHOT",
+            snapshot: state.channel.snapshot(),
+            timestamp: Date.now(),
+          })
+          return
+        }
+        send({ type: "STATE_DELTA", delta: ops, timestamp: Date.now() })
+      })
       try {
-        for await (const evidence of stream) sendEvidence(send, evidence, identity.turnId, withIds)
+        for await (const evidence of stream) {
+          const openToolCallId = projector.adopt(evidence)
+          sendEvidence(send, evidence, identity.turnId, withIds, openToolCallId)
+        }
+        const streamedText = projector.finish()
         const events = terminalEvents(identity, await run, snapshotMessages)
-        // Store the terminal events before delivering them, so a client that misses them can replay.
+        // Store the terminal events before delivering them, so a client that misses them can
+        // replay. The stored form is always the unsuppressed one - a replayed stream saw no
+        // deltas, so it needs the full terminal text block.
         await finishQuietly(log, identity.turnId, { events })
-        for (const event of events) send(event)
+        for (const event of events) {
+          // Streamed text IS the assistant message; re-sending it as a terminal block would
+          // duplicate it on the live client.
+          if (streamedText && String(event.type).startsWith("TEXT_MESSAGE_")) continue
+          send(event)
+        }
       } catch {
+        projector.finish()
         const events = [{ type: "RUN_ERROR", message: "run_failed", timestamp: Date.now() }]
         await finishQuietly(log, identity.turnId, { events })
         for (const event of events) send(event)
       } finally {
+        unsubscribe()
         controller.close()
       }
     },
@@ -286,8 +361,9 @@ function sendEvidence(
   evidence: AgentStepEvidence,
   turnId: string,
   withIds: boolean,
+  openToolCallId?: string,
 ): void {
-  const events = evidenceEvents(evidence, turnId)
+  const events = evidenceEvents(evidence, turnId, openToolCallId)
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index] as Record<string, unknown>
     if (withIds && index === events.length - 1) send(event, evidence.seq)
@@ -304,6 +380,119 @@ function sseHeaders(body: ReadableStream<Uint8Array>): Response {
       connection: "keep-alive",
     },
   })
+}
+
+interface DeltaProjector {
+  readonly sink: AgentDeltaSink
+  /**
+   * Called per evidence item before its events go out. Terminal tool evidence adopts the open
+   * provisional tool call (its START/ARGS already streamed) - the returned id replaces the
+   * effect id so the evidence closes the same call the client is watching.
+   */
+  adopt(evidence: AgentStepEvidence): string | undefined
+  /** Close every open stream. Returns whether any text was streamed during the run. */
+  finish(): boolean
+}
+
+/**
+ * Project model deltas onto live AG-UI frames. Text deltas open a `TEXT_MESSAGE`, reasoning
+ * deltas a `REASONING` message, tool-args deltas a provisional `TOOL_CALL` - each stream closes
+ * when a different delta kind starts, when tool evidence lands, or at the end of the run. Deltas
+ * are transient observer data: none of this is persisted or replayed.
+ */
+function createDeltaProjector(send: SseSend, turnId: string): DeltaProjector {
+  let counter = 0
+  let textId: string | undefined
+  let reasoningId: string | undefined
+  let callId: string | undefined
+  let streamedText = false
+  const closeText = (): void => {
+    if (textId === undefined) return
+    send({ type: "TEXT_MESSAGE_END", messageId: textId, timestamp: Date.now() })
+    textId = undefined
+  }
+  const closeReasoning = (): void => {
+    if (reasoningId === undefined) return
+    const timestamp = Date.now()
+    send({ type: "REASONING_MESSAGE_END", messageId: reasoningId, timestamp })
+    send({ type: "REASONING_END", messageId: reasoningId, timestamp })
+    reasoningId = undefined
+  }
+  const closeCall = (): void => {
+    if (callId === undefined) return
+    send({ type: "TOOL_CALL_END", toolCallId: callId, timestamp: Date.now() })
+    callId = undefined
+  }
+  const sink: AgentDeltaSink = {
+    delta(delta: AgentModelDelta) {
+      const timestamp = Date.now()
+      if (delta.kind === "text") {
+        closeReasoning()
+        closeCall()
+        if (textId === undefined) {
+          textId = `${turnId}:stream:${counter}`
+          counter += 1
+          send({ type: "TEXT_MESSAGE_START", messageId: textId, role: "assistant", timestamp })
+        }
+        send({ type: "TEXT_MESSAGE_CONTENT", messageId: textId, delta: delta.text, timestamp })
+        streamedText = true
+        return
+      }
+      if (delta.kind === "reasoning") {
+        closeText()
+        closeCall()
+        if (reasoningId === undefined) {
+          reasoningId = `${turnId}:reasoning:${counter}`
+          counter += 1
+          send({ type: "REASONING_START", messageId: reasoningId, timestamp })
+          send({
+            type: "REASONING_MESSAGE_START",
+            messageId: reasoningId,
+            role: "reasoning",
+            timestamp,
+          })
+        }
+        send({
+          type: "REASONING_MESSAGE_CONTENT",
+          messageId: reasoningId,
+          delta: delta.text,
+          timestamp,
+        })
+        return
+      }
+      closeText()
+      closeReasoning()
+      if (callId === undefined) {
+        callId = `${turnId}:call:${counter}`
+        counter += 1
+        send({
+          type: "TOOL_CALL_START",
+          toolCallId: callId,
+          toolCallName: delta.name ?? "tool",
+          timestamp,
+        })
+      }
+      send({ type: "TOOL_CALL_ARGS", toolCallId: callId, delta: delta.argsText, timestamp })
+    },
+  }
+  return {
+    sink,
+    adopt(evidence) {
+      if (evidence.kind !== "tool" || evidence.outcome === "started") return undefined
+      closeText()
+      closeReasoning()
+      if (callId === undefined) return undefined
+      const adopted = callId
+      callId = undefined
+      return adopted
+    },
+    finish() {
+      closeCall()
+      closeReasoning()
+      closeText()
+      return streamedText
+    },
+  }
 }
 
 /** JSON Schema for the payload a spec `resume` entry must carry back. */
@@ -432,10 +621,14 @@ async function finishQuietly(
 function evidenceEvents(
   evidence: AgentStepEvidence,
   turnId: string,
+  openToolCallId?: string,
 ): readonly Record<string, unknown>[] {
   const timestamp = evidence.at
   if (evidence.kind === "tool") {
-    const toolCallId = evidence.effectId ?? `${evidence.kind}:${evidence.seq}`
+    // When the model streamed this call's arguments, its TOOL_CALL_START (with TOOL_CALL_ARGS)
+    // already went out under the projector's provisional id - close that call instead of
+    // opening a second one under the effect id.
+    const toolCallId = openToolCallId ?? evidence.effectId ?? `${evidence.kind}:${evidence.seq}`
     const start = {
       type: "TOOL_CALL_START",
       toolCallId,
@@ -445,9 +638,9 @@ function evidenceEvents(
     // The runner records one terminal evidence item per tool effect (committed/failed/denied),
     // so a single item expands to the START/END/RESULT triple AG-UI clients expect. The RESULT
     // content is the token-only outcome - the runtime never carries tool payloads.
-    if (evidence.outcome === "started") return [start]
+    if (evidence.outcome === "started") return openToolCallId === undefined ? [start] : []
     return [
-      start,
+      ...(openToolCallId === undefined ? [start] : []),
       { type: "TOOL_CALL_END", toolCallId, timestamp },
       {
         type: "TOOL_CALL_RESULT",
