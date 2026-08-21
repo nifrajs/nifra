@@ -38,6 +38,11 @@
       "bun": "./src/rpc.ts",
       "types": "./dist/rpc.d.ts",
       "default": "./dist/rpc.js"
+    },
+    "./orchestration": {
+      "bun": "./src/orchestration/index.ts",
+      "types": "./dist/orchestration/index.d.ts",
+      "default": "./dist/orchestration/index.js"
     }
   },
   "files": [

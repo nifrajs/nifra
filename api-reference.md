@@ -161,15 +161,48 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentToolStartedEvent** _(interface)_ - `interface AgentToolStartedEvent`
 - **AgentTurnStartedEvent** _(interface)_ - `interface AgentTurnStartedEvent`
 - **AgentVerificationCompletedEvent** _(interface)_ - `interface AgentVerificationCompletedEvent`
+- **ArtifactContext** _(interface)_ - `interface ArtifactContext`
+  What a payload is and where it came from, handed to the port at `put` time.
+- **ArtifactPort** _(interface)_ - `interface ArtifactPort`
+  Caller-owned sink for raw payloads - the ONLY place payload bytes leave transient execution. The public repo ships only a discarding no-op and a disposable in-memory test port. No public implementation persists.
+- **ArtifactRef** _(interface)_ - `interface ArtifactRef`
+  A content-free pointer to a payload the caller chose to retain out of band.
 - **CreateSessionInput** _(interface)_ - `interface CreateSessionInput`
+- **EVIDENCE_MAX_BYTES** _(const)_ - `EVIDENCE_MAX_BYTES: 4096`
+  Hard cap on a single serialized evidence record. A content-free record never approaches this.
+- **FORBIDDEN_CONTENT_KEYS** _(const)_ - `FORBIDDEN_CONTENT_KEYS: readonly string[]`
+  Keys that would carry payload content. They are never valid on evidence or artifact records and are rejected by the strict parsers even if they would otherwise fit the size cap.
 - **ForkSessionInput** _(interface)_ - `interface ForkSessionInput`
 - **ForkSessionResult** _(interface)_ - `interface ForkSessionResult`
+- **NodeEffectKey** _(interface)_ - `interface NodeEffectKey`
+  The stable, content-free identity of one side-effecting node attempt-boundary.
+- **RUN_PLAN_VERSION** _(const)_ - `RUN_PLAN_VERSION: 1`
+  Orchestration contract version. Additive to the session `AGENT_PROTOCOL_VERSION`.
 - **ReloadResult** _(interface)_ - `interface ReloadResult`
+- **RunContractError** _(class)_ - `class RunContractError`
+  Thrown by every parser in this module on malformed or content-bearing input. Fails closed.
+- **RunEvidence** _(interface)_ - `interface RunEvidence`
+  The content-free projection of one run transition. Every field is id/hash/counter/status/timing.
+- **RunEvidenceStatus** _(type)_ - `type RunEvidenceStatus = "started" | "completed" | "failed"`
+- **RunNode** _(interface)_ - `interface RunNode`
+  A serializable plan node. `step` names a handler resolved locally through a StepCatalog.
+- **RunNodeKind** _(type)_ - `type RunNodeKind = "task" | "verify" | "approve" | "checkpoint" | "handoff"`
+  Declarative node kinds. Each maps to an existing workflow primitive at compile time.
+- **RunPlan** _(interface)_ - `interface RunPlan`
+  A serializable, closure-free run plan.
 - **SendMessageInput** _(interface)_ - `interface SendMessageInput`
 - **agentError** _(function)_ - `agentError: (code: string, message: string, details?: unknown) => AgentError`
+- **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void`
+  Assert a record serializes within the hard cap. Public reference records are content-free.
 - **createAgentEventStream** _(function)_ - `createAgentEventStream: (maxQueueSize?: number) => AgentEventStream`
   Small bounded event stream for RPC clients and UIs. The authoritative event history belongs to the backend/session store; this live view may drop old transient events if a consumer falls behind.
 - **isAgentEvent** _(function)_ - `isAgentEvent: (value: unknown) => value is AgentEvent`
+- **parseArtifactRef** _(function)_ - `parseArtifactRef: (value: unknown) => ArtifactRef`
+  Parse a content-free artifact reference. Rejects any non-schema or content key.
+- **parseRunEvidence** _(function)_ - `parseRunEvidence: (value: unknown) => RunEvidence`
+  Parse a content-free evidence record. Rejects content keys and any record over the size cap.
+- **parseRunPlan** _(function)_ - `parseRunPlan: (value: unknown) => RunPlan`
+  Parse a declarative run plan. Rejects closures, unknown keys, and structural errors.
 
 ## @nifrajs/agent-telemetry
 
@@ -601,6 +634,80 @@ Every public export of every package and documented subpath - name, kind, signat
   Discover only project-local extension files; no home-directory or dependency scan is implicit.
 - **validateExtensionModule** _(function)_ - `validateExtensionModule: (path: string) => Promise<void>`
   Parse an extension without activating it. This is a fast syntax gate before staging.
+
+### `@nifrajs/coding-agent/orchestration`
+
+- **ArtifactContext** _(interface)_ - `interface ArtifactContext`
+  What a payload is and where it came from, handed to the port at `put` time.
+- **ArtifactPort** _(interface)_ - `interface ArtifactPort`
+  Caller-owned sink for raw payloads - the ONLY place payload bytes leave transient execution. The public repo ships only a discarding no-op and a disposable in-memory test port. No public implementation persists.
+- **ArtifactRef** _(interface)_ - `interface ArtifactRef`
+  A content-free pointer to a payload the caller chose to retain out of band.
+- **CatalogStep** _(interface)_ - `interface CatalogStep`
+  One catalog handler. `kind` must match the plan node's kind at compile time. `selectEffect`, when present, marks the step idempotent and projects its identity-bearing input into content-free bytes for {@link deriveNodeEffectKey}. It MUST be pure and read-only.
+- **CompileError** _(class)_ - `class CompileError`
+  Thrown when a plan cannot be lowered: unknown step, kind mismatch, or a dependency cycle.
+- **CompileOptions** _(interface)_ - `interface CompileOptions`
+  Wiring the compiler injects into every node closure.
+- **EVIDENCE_MAX_BYTES** _(const)_ - `EVIDENCE_MAX_BYTES: 4096`
+  Hard cap on a single serialized evidence record. A content-free record never approaches this.
+- **EffectKeyMaterial** _(interface)_ - `interface EffectKeyMaterial`
+  Inputs to the effect-key derivation. `selector` is the step's content-free identity projection.
+- **FORBIDDEN_CONTENT_KEYS** _(const)_ - `FORBIDDEN_CONTENT_KEYS: readonly string[]`
+  Keys that would carry payload content. They are never valid on evidence or artifact records and are rejected by the strict parsers even if they would otherwise fit the size cap.
+- **MemoryArtifactPort** _(interface)_ - `interface MemoryArtifactPort`
+  A memory port that additionally exposes stored bytes for assertions. Test-only.
+- **NodeEffectKey** _(interface)_ - `interface NodeEffectKey`
+  The stable, content-free identity of one side-effecting node attempt-boundary.
+- **RUN_PLAN_VERSION** _(const)_ - `RUN_PLAN_VERSION: 1`
+  Orchestration contract version. Additive to the session `AGENT_PROTOCOL_VERSION`.
+- **RunContractError** _(class)_ - `class RunContractError`
+  Thrown by every parser in this module on malformed or content-bearing input. Fails closed.
+- **RunEvidence** _(interface)_ - `interface RunEvidence`
+  The content-free projection of one run transition. Every field is id/hash/counter/status/timing.
+- **RunEvidenceStatus** _(type)_ - `type RunEvidenceStatus = "started" | "completed" | "failed"`
+- **RunNode** _(interface)_ - `interface RunNode`
+  A serializable plan node. `step` names a handler resolved locally through a StepCatalog.
+- **RunNodeKind** _(type)_ - `type RunNodeKind = "task" | "verify" | "approve" | "checkpoint" | "handoff"`
+  Declarative node kinds. Each maps to an existing workflow primitive at compile time.
+- **RunPlan** _(interface)_ - `interface RunPlan`
+  A serializable, closure-free run plan.
+- **RunTraceOptions** _(interface)_ - `interface RunTraceOptions`
+- **RunTraceResult** _(interface)_ - `interface RunTraceResult`
+- **StepCatalog** _(interface)_ - `interface StepCatalog`
+  Resolves step names to handlers. Immutable after construction.
+- **StepEffectContext** _(interface)_ - `interface StepEffectContext`
+  Read-only view handed to a step's pure effect selector. No port, no mutation.
+- **StepRunContext** _(interface)_ - `interface StepRunContext`
+  Runtime context handed to a step body. Payloads leave only through {@link StepRunContext.artifact}.
+- **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void`
+  Assert a record serializes within the hard cap. Public reference records are content-free.
+- **canonicalJson** _(function)_ - `canonicalJson: (value: unknown) => string`
+  Deterministic JSON with recursively sorted object keys. Arrays keep order. Rejects non-finite numbers.
+- **compileRunPlan** _(function)_ - `compileRunPlan: (source: RunPlan | unknown, options: CompileOptions) => WorkflowStep`
+  Compile `source` (a RunPlan or its serialized form) into a single WorkflowStep. The input is always re-parsed through {@link parseRunPlan}, so a malformed or content-bearing plan fails closed.
+- **createStepCatalog** _(function)_ - `createStepCatalog: (entries: Readonly<Record<string, CatalogStep>>) => StepCatalog`
+  Build a StepCatalog from a name -> handler map.
+- **deriveNodeEffectKey** _(function)_ - `deriveNodeEffectKey: (material: EffectKeyMaterial) => Promise<NodeEffectKey>`
+  Derive the stable, content-free key for a node attempt. The returned digest is safe to log and to cross a boundary; two attempts with the same identity converge, distinct identities diverge.
+- **digestRunPlan** _(function)_ - `digestRunPlan: (plan: RunPlan) => Promise<string>`
+  Stable digest of a plan's canonical form. Structural identity that node effect keys hang from.
+- **memoryArtifactPort** _(function)_ - `memoryArtifactPort: (options?: { readonly maxBytes?: number; }) => MemoryArtifactPort`
+  A disposable in-memory port for tests. Retains payloads up to a small byte budget and throws past it, refusing any load that resembles durable use. NEVER use outside tests - it has no persistence, no tenancy, and no eviction beyond the hard cap.
+- **noopArtifactPort** _(function)_ - `noopArtifactPort: () => ArtifactPort`
+  Hashes the payload for a content-free {@link ArtifactRef}, then discards the bytes. The default port: public code sees only the digest, size, and coordinates - never the payload.
+- **parseArtifactRef** _(function)_ - `parseArtifactRef: (value: unknown) => ArtifactRef`
+  Parse a content-free artifact reference. Rejects any non-schema or content key.
+- **parseRunEvidence** _(function)_ - `parseRunEvidence: (value: unknown) => RunEvidence`
+  Parse a content-free evidence record. Rejects content keys and any record over the size cap.
+- **parseRunPlan** _(function)_ - `parseRunPlan: (value: unknown) => RunPlan`
+  Parse a declarative run plan. Rejects closures, unknown keys, and structural errors.
+- **runTrace** _(function)_ - `runTrace: (source: RunPlan | unknown, options: RunTraceOptions) => Promise<RunTraceResult>`
+  Run a plan and return its content-free evidence stream plus a deterministic terminal digest.
+- **sha256Hex** _(function)_ - `sha256Hex: (bytes: Uint8Array) => Promise<string>`
+  SHA-256 of `bytes` as lowercase hex. Collision-resistant so a digest cannot be forged from content.
+- **sha256HexOf** _(function)_ - `sha256HexOf: (text: string) => Promise<string>`
+  SHA-256 hex of a UTF-8 string.
 
 ### `@nifrajs/coding-agent/rpc`
 

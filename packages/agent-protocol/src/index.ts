@@ -377,6 +377,12 @@ export function agentError(code: string, message: string, details?: unknown): Ag
   return details === undefined ? { code, message } : { code, message, details }
 }
 
+/**
+ * Orchestration value contracts (run plans, content-free evidence, artifact refs, effect keys).
+ * Additive to the session protocol; carries no behavior and no payload content.
+ */
+export * from "./orchestration.ts"
+
 export function isAgentEvent(value: unknown): value is AgentEvent {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false
   const record = value as Record<string, unknown>

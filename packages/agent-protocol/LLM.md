@@ -11,21 +11,21 @@ Small backend-neutral session and event protocol for Nifra coding agents.
 ## Key exports
 
 - **agentError** _(function)_ - `agentError: (code: string, message: string, details?: unknown) => AgentError`
+- **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void`
 - **createAgentEventStream** _(function)_ - `createAgentEventStream: (maxQueueSize?: number) => AgentEventStream`
 - **isAgentEvent** _(function)_ - `isAgentEvent: (value: unknown) => value is AgentEvent`
+- **parseArtifactRef** _(function)_ - `parseArtifactRef: (value: unknown) => ArtifactRef`
+- **parseRunEvidence** _(function)_ - `parseRunEvidence: (value: unknown) => RunEvidence`
+- **parseRunPlan** _(function)_ - `parseRunPlan: (value: unknown) => RunPlan`
+- **RunContractError** _(class)_ - `class RunContractError`
 - **AGENT_PROTOCOL_VERSION** _(const)_ - `AGENT_PROTOCOL_VERSION: 1`
+- **EVIDENCE_MAX_BYTES** _(const)_ - `EVIDENCE_MAX_BYTES: 4096`
+- **FORBIDDEN_CONTENT_KEYS** _(const)_ - `FORBIDDEN_CONTENT_KEYS: readonly string[]`
+- **RUN_PLAN_VERSION** _(const)_ - `RUN_PLAN_VERSION: 1`
 - **AgentApprovalRequiredEvent** _(interface)_ - `interface AgentApprovalRequiredEvent`
 - **AgentApprovalResolvedEvent** _(interface)_ - `interface AgentApprovalResolvedEvent`
-- **AgentAssistantDeltaEvent** _(interface)_ - `interface AgentAssistantDeltaEvent`
-- **AgentAssistantMessageEvent** _(interface)_ - `interface AgentAssistantMessageEvent`
-- **AgentBackend** _(interface)_ - `interface AgentBackend`
-- **AgentBackendInfo** _(interface)_ - `interface AgentBackendInfo`
-- **AgentError** _(interface)_ - `interface AgentError`
-- **AgentEventSink** _(interface)_ - `interface AgentEventSink`
-- **AgentEventStream** _(interface)_ - `interface AgentEventStream`
-- **AgentExtensionReloadedEvent** _(interface)_ - `interface AgentExtensionReloadedEvent`
 
-_…and 25 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentprotocol) for the complete list._
+_…and 42 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentprotocol) for the complete list._
 
 ## Footguns
 

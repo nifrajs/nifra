@@ -10,26 +10,26 @@ Standalone, extensible Nifra coding-agent host and CLI.
 
 ## Public entrypoints
 
-`@nifrajs/coding-agent` · `@nifrajs/coding-agent/extensions` · `@nifrajs/coding-agent/rpc` · `@nifrajs/coding-agent/verification`
+`@nifrajs/coding-agent` · `@nifrajs/coding-agent/extensions` · `@nifrajs/coding-agent/orchestration` · `@nifrajs/coding-agent/rpc` · `@nifrajs/coding-agent/verification`
 
 ## Key exports
 
 - **approvalRequestFromEvent** _(function)_ - `approvalRequestFromEvent: (event: AgentApprovalRequiredEvent) => ApprovalRequest` · from `@nifrajs/coding-agent`
 - **approvalResolvedEvent** _(function)_ - `approvalResolvedEvent: (sessionId: string, seq: number, decision: ApprovalDecision, turnId?: string) => AgentApprovalResolvedEvent` · from `@nifrajs/coding-agent`
+- **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void` · from `@nifrajs/coding-agent/orchestration`
+- **canonicalJson** _(function)_ - `canonicalJson: (value: unknown) => string` · from `@nifrajs/coding-agent/orchestration`
+- **compileRunPlan** _(function)_ - `compileRunPlan: (source: RunPlan | unknown, options: CompileOptions) => WorkflowStep` · from `@nifrajs/coding-agent/orchestration`
 - **createCapabilityManifest** _(function)_ - `createCapabilityManifest: (requested: readonly AgentCapability[], trusted?: readonly AgentCapability[], reason?: string) => AgentCapability…` · from `@nifrajs/coding-agent`
 - **createNifraTools** _(function)_ - `createNifraTools: (options: NifraContextOptions & Pick<VerificationOptions, "command">) => readonly NifraAgentTool[]` · from `@nifrajs/coding-agent`
 - **createPresetSpec** _(function)_ - `createPresetSpec: (name: AgentPresetName, prompt: string, id?: string) => SubagentSpec` · from `@nifrajs/coding-agent`
+- **createStepCatalog** _(function)_ - `createStepCatalog: (entries: Readonly<Record<string, CatalogStep>>) => StepCatalog` · from `@nifrajs/coding-agent/orchestration`
 - **createVerificationRepairTask** _(function)_ - `createVerificationRepairTask: (result: VerificationResult, cwd: string) => VerificationRepairTask | undefined` · from `@nifrajs/coding-agent`
 - **deniedCapabilities** _(function)_ - `deniedCapabilities: (manifest: AgentCapabilityManifest) => readonly AgentCapability[]` · from `@nifrajs/coding-agent`
+- **deriveNodeEffectKey** _(function)_ - `deriveNodeEffectKey: (material: EffectKeyMaterial) => Promise<NodeEffectKey>` · from `@nifrajs/coding-agent/orchestration`
+- **digestRunPlan** _(function)_ - `digestRunPlan: (plan: RunPlan) => Promise<string>` · from `@nifrajs/coding-agent/orchestration`
 - **discoverExtensions** _(function)_ - `discoverExtensions: (cwd: string) => Promise<readonly string[]>` · from `@nifrajs/coding-agent`
-- **getAgentPreset** _(function)_ - `getAgentPreset: (name: AgentPresetName) => AgentPreset` · from `@nifrajs/coding-agent`
-- **parseCapabilityManifest** _(function)_ - `parseCapabilityManifest: (value: unknown) => AgentCapabilityManifest` · from `@nifrajs/coding-agent`
-- **readBoundedText** _(function)_ - `readBoundedText: (stream: ReadableStream<Uint8Array> | null | undefined | number, maxBytes: number) => Promise<BoundedText>` · from `@nifrajs/coding-agent`
-- **readProjectDiff** _(function)_ - `readProjectDiff: (options: ProjectDiffOptions) => Promise<ProjectDiffResult>` · from `@nifrajs/coding-agent`
-- **readReplayEvents** _(function)_ - `readReplayEvents: (path: string) => Promise<readonly AgentEvent[]>` · from `@nifrajs/coding-agent`
-- **runNifraContext** _(function)_ - `runNifraContext: (options: NifraContextOptions) => Promise<NifraContextResult>` · from `@nifrajs/coding-agent`
 
-_…and 93 more - see [`api-reference.md`](../../api-reference.md#nifrajscodingagent) for the complete list._
+_…and 130 more - see [`api-reference.md`](../../api-reference.md#nifrajscodingagent) for the complete list._
 
 ## Footguns
 

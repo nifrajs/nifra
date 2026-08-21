@@ -948,6 +948,48 @@
     "signature": "export interface AroundCapabilityOptions {\n    /** Maximum admission time in milliseconds. Default 30_000. */\n    readonly timeoutMs?: number;\n}"
   },
   {
+    "name": "ArtifactContext",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface ArtifactContext {\n    readonly planDigest: string;\n    readonly nodeId: string;\n    /** e.g. \"prompt\" | \"model_output\" | \"tool_input\" | \"tool_output\". */\n    readonly kind: string;\n}",
+    "doc": "/** What a payload is and where it came from, handed to the port at `put` time. */"
+  },
+  {
+    "name": "ArtifactContext",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface ArtifactContext {\n    readonly planDigest: string;\n    readonly nodeId: string;\n    /** e.g. \"prompt\" | \"model_output\" | \"tool_input\" | \"tool_output\". */\n    readonly kind: string;\n}",
+    "doc": "/** What a payload is and where it came from, handed to the port at `put` time. */"
+  },
+  {
+    "name": "ArtifactPort",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface ArtifactPort {\n    put(payload: Uint8Array, ctx: ArtifactContext): ArtifactRef | Promise<ArtifactRef>;\n}",
+    "doc": "/**\n * Caller-owned sink for raw payloads - the ONLY place payload bytes leave transient execution.\n * The public repo ships only a discarding no-op and a disposable in-memory test port. No public\n * implementation persists.\n */"
+  },
+  {
+    "name": "ArtifactPort",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface ArtifactPort {\n    put(payload: Uint8Array, ctx: ArtifactContext): ArtifactRef | Promise<ArtifactRef>;\n}",
+    "doc": "/**\n * Caller-owned sink for raw payloads - the ONLY place payload bytes leave transient execution.\n * The public repo ships only a discarding no-op and a disposable in-memory test port. No public\n * implementation persists.\n */"
+  },
+  {
+    "name": "ArtifactRef",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface ArtifactRef {\n    /** Caller-namespaced id. Opaque to nifra. */\n    readonly id: string;\n    /** SHA-256 hex of the payload, for integrity and correlation. Content-free. */\n    readonly digest: string;\n    readonly bytes: number;\n    readonly mediaType: string;\n    /** Optional caller-opaque locator (e.g. a private URI). nifra never dereferences it. */\n    readonly locator?: string;\n}",
+    "doc": "/** A content-free pointer to a payload the caller chose to retain out of band. */"
+  },
+  {
+    "name": "ArtifactRef",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface ArtifactRef {\n    /** Caller-namespaced id. Opaque to nifra. */\n    readonly id: string;\n    /** SHA-256 hex of the payload, for integrity and correlation. Content-free. */\n    readonly digest: string;\n    readonly bytes: number;\n    readonly mediaType: string;\n    /** Optional caller-opaque locator (e.g. a private URI). nifra never dereferences it. */\n    readonly locator?: string;\n}",
+    "doc": "/** A content-free pointer to a payload the caller chose to retain out of band. */"
+  },
+  {
     "name": "assertAdapterCertification",
     "kind": "function",
     "package": "@nifrajs/testing",
@@ -966,6 +1008,20 @@
     "package": "@nifrajs/core",
     "signature": "export declare function assertBudgetRemaining(budget: RequestBudget, requiredMs?: number): void;",
     "doc": "/** Fail before starting work that cannot fit inside the remaining time. */"
+  },
+  {
+    "name": "assertEvidenceSize",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function assertEvidenceSize(evidence: RunEvidence): void;",
+    "doc": "/** Assert a record serializes within the hard cap. Public reference records are content-free. */"
+  },
+  {
+    "name": "assertEvidenceSize",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function assertEvidenceSize(evidence: RunEvidence): void;",
+    "doc": "/** Assert a record serializes within the hard cap. Public reference records are content-free. */"
   },
   {
     "name": "assertIncidentReplays",
@@ -2091,6 +2147,13 @@
     "doc": "/** Canonicalize JSON bodies so whitespace/property-order retries bind to the same semantic request. */"
   },
   {
+    "name": "canonicalJson",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function canonicalJson(value: unknown): string;",
+    "doc": "/** Deterministic JSON with recursively sorted object keys. Arrays keep order. Rejects non-finite numbers. */"
+  },
+  {
     "name": "canonicalManifest",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -2365,6 +2428,13 @@
     "kind": "interface",
     "package": "@nifrajs/testing",
     "signature": "export interface CaptureIncidentOptions {\n    readonly id?: string;\n    readonly capturedAt?: string;\n    /** Header names to keep on the capsule (lowercased match). Default: only `content-type`. */\n    readonly headerAllowList?: readonly string[];\n    readonly note?: string;\n}"
+  },
+  {
+    "name": "CatalogStep",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface CatalogStep {\n    readonly kind: RunNodeKind;\n    run(context: StepRunContext): unknown | PromiseLike<unknown>;\n    selectEffect?(context: StepEffectContext): Uint8Array;\n}",
+    "doc": "/**\n * One catalog handler. `kind` must match the plan node's kind at compile time. `selectEffect`, when\n * present, marks the step idempotent and projects its identity-bearing input into content-free bytes\n * for {@link deriveNodeEffectKey}. It MUST be pure and read-only.\n */"
   },
   {
     "name": "CAUSALITY_EXECUTION_HEADER",
@@ -3014,11 +3084,32 @@
     "doc": "/**\n * Compiled route grammar shared by runtime routers, browser navigation, mocks, and adapters.\n *\n * The result, its two arrays, and every segment are frozen because consumers share one instance. In\n * particular, a segment must not diverge from the lazily cached regex after first match. The measured\n * sub-microsecond cost per route is paid only at registration and preserves that runtime invariant.\n */"
   },
   {
+    "name": "CompileError",
+    "kind": "class",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare class CompileError extends Error {\n    constructor(reason: string);\n}",
+    "doc": "/** Thrown when a plan cannot be lowered: unknown step, kind mismatch, or a dependency cycle. */"
+  },
+  {
+    "name": "CompileOptions",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface CompileOptions {\n    readonly catalog: StepCatalog;\n    readonly planDigest: string;\n    readonly artifactPort: ArtifactPort;\n    /** Called once a node's content-free effect key is derived (idempotent steps only). */\n    onNodeEffect?(nodeId: string, key: NodeEffectKey): void;\n    /** Called for each artifact ref a node produces through its port. */\n    collectArtifact?(nodeId: string, ref: ArtifactRef): void;\n}",
+    "doc": "/** Wiring the compiler injects into every node closure. */"
+  },
+  {
     "name": "compileRoutePattern",
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function compileRoutePattern(pattern: string): CompiledRoutePattern;",
     "doc": "/** Parse and validate Nifra's strict route grammar once. Trailing slashes remain significant. */"
+  },
+  {
+    "name": "compileRunPlan",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function compileRunPlan(source: RunPlan | unknown, options: CompileOptions): WorkflowStep;",
+    "doc": "/**\n * Compile `source` (a RunPlan or its serialized form) into a single WorkflowStep. The input is\n * always re-parsed through {@link parseRunPlan}, so a malformed or content-bearing plan fails closed.\n */"
   },
   {
     "name": "compileVue",
@@ -3827,6 +3918,13 @@
     "signature": "export declare function createSessions<Data extends Record<string, unknown> = Record<string, unknown>>(options: SessionOptions): SessionManager<Data>;"
   },
   {
+    "name": "createStepCatalog",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function createStepCatalog(entries: Readonly<Record<string, CatalogStep>>): StepCatalog;",
+    "doc": "/** Build a StepCatalog from a name -> handler map. */"
+  },
+  {
     "name": "createStylesheetEmitter",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -4513,6 +4611,13 @@
     "signature": "export interface DenoServer {\n    /** The bound port (resolved when `port: 0` is requested). */\n    readonly port: number;\n    /**\n     * Stop accepting connections, let in-flight requests drain (up to `drainMs`), then\n     * force-close stragglers. Mirrors nifra's Bun `stop()`.\n     */\n    stop(options?: {\n        drainMs?: number;\n    }): Promise<void>;\n}"
   },
   {
+    "name": "deriveNodeEffectKey",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function deriveNodeEffectKey(material: EffectKeyMaterial): Promise<NodeEffectKey>;",
+    "doc": "/**\n * Derive the stable, content-free key for a node attempt. The returned digest is safe to log and to\n * cross a boundary; two attempts with the same identity converge, distinct identities diverge.\n */"
+  },
+  {
     "name": "deriveRouteEntry",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -4711,6 +4816,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function digestProjectEvidence(snapshot: ProjectEvidenceSnapshot): Promise<string>;",
     "doc": "/** SHA-256 of the canonical snapshot, useful as a cheap freshness/reference token. */"
+  },
+  {
+    "name": "digestRunPlan",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function digestRunPlan(plan: RunPlan): Promise<string>;",
+    "doc": "/** Stable digest of a plan's canonical form. Structural identity that node effect keys hang from. */"
   },
   {
     "name": "disableDraft",
@@ -4947,6 +5059,13 @@
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface EffectEvidenceScope {\n    evidence(): EffectScopeEvidence;\n    /** Legacy/manual effects cannot prove a terminal outcome and therefore become ambiguous. */\n    markBegan(): void;\n    /** Pair a prior manual `markBegan()` with a proven commit. */\n    markCommitted(): void;\n    /** Preserve uncertainty when a caller loses the terminal outcome. */\n    markAmbiguous(): void;\n    /** Settle one begun effect as a proven terminal failure without claiming it committed. */\n    markFailed(): void;\n    /**\n     * Declare that the enclosing request may release its idempotency reservation if it returns a\n     * server error before any owned effect begins.\n     */\n    markSafeToRetry(): void;\n    /** True only while the retry declaration remains backed by evidence that no effect began. */\n    safeToRetry(): boolean;\n}"
+  },
+  {
+    "name": "EffectKeyMaterial",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface EffectKeyMaterial {\n    readonly planDigest: string;\n    readonly nodeId: string;\n    /** Identity-bearing bytes chosen by the step. Consumed into the hash, never retained. */\n    readonly selector: Uint8Array;\n}",
+    "doc": "/** Inputs to the effect-key derivation. `selector` is the step's content-free identity projection. */"
   },
   {
     "name": "effectLedger",
@@ -5309,6 +5428,20 @@
     "kind": "interface",
     "package": "@nifrajs/events",
     "signature": "export interface EventRegistry {\n    readonly contracts: readonly EventContract[];\n    /** Look up a contract by type + version (defaults to version 0). */\n    get(type: string, version?: number): EventContract | undefined;\n    /** Dispatch untrusted input to its contract by `type`/`version` and parse. Never throws. */\n    parse(input: unknown): RegistryParseResult;\n}"
+  },
+  {
+    "name": "EVIDENCE_MAX_BYTES",
+    "kind": "const",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare const EVIDENCE_MAX_BYTES = 4096;",
+    "doc": "/** Hard cap on a single serialized evidence record. A content-free record never approaches this. */"
+  },
+  {
+    "name": "EVIDENCE_MAX_BYTES",
+    "kind": "const",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare const EVIDENCE_MAX_BYTES = 4096;",
+    "doc": "/** Hard cap on a single serialized evidence record. A content-free record never approaches this. */"
   },
   {
     "name": "EvidenceBundle",
@@ -5815,6 +5948,20 @@
     "kind": "interface",
     "package": "@nifrajs/web",
     "signature": "export interface FontSource {\n    /** URL of the self-hosted font file. */\n    readonly url: string;\n    /** `format()` hint (`woff2`, `woff`, `truetype`, …). Inferred from the URL extension when omitted. */\n    readonly format?: string;\n}"
+  },
+  {
+    "name": "FORBIDDEN_CONTENT_KEYS",
+    "kind": "const",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare const FORBIDDEN_CONTENT_KEYS: readonly string[];",
+    "doc": "/**\n * Keys that would carry payload content. They are never valid on evidence or artifact records and\n * are rejected by the strict parsers even if they would otherwise fit the size cap.\n */"
+  },
+  {
+    "name": "FORBIDDEN_CONTENT_KEYS",
+    "kind": "const",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare const FORBIDDEN_CONTENT_KEYS: readonly string[];",
+    "doc": "/**\n * Keys that would carry payload content. They are never valid on evidence or artifact records and\n * are rejected by the strict parsers even if they would otherwise fit the size cap.\n */"
   },
   {
     "name": "ForbiddenCapabilityImport",
@@ -8217,6 +8364,20 @@
     "signature": "export declare class MemoryApprovalStore implements ApprovalStore {\n    readonly durability: \"memory\";\n    private readonly records;\n    create(record: ApprovalRecord): boolean;\n    get(approvalId: string): ApprovalRecord | undefined;\n    decide(input: Parameters<ApprovalStore[\"decide\"]>[0]): boolean;\n    consume(input: Parameters<ApprovalStore[\"consume\"]>[0]): ApprovalConsumeResult;\n    list(): readonly ApprovalRecord[];\n}"
   },
   {
+    "name": "memoryArtifactPort",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function memoryArtifactPort(options?: {\n    readonly maxBytes?: number;\n}): MemoryArtifactPort;",
+    "doc": "/**\n * A disposable in-memory port for tests. Retains payloads up to a small byte budget and throws past\n * it, refusing any load that resembles durable use. NEVER use outside tests - it has no persistence,\n * no tenancy, and no eviction beyond the hard cap.\n */"
+  },
+  {
+    "name": "MemoryArtifactPort",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface MemoryArtifactPort extends ArtifactPort {\n    /** Return the retained bytes for an id, or undefined. Test assertions only. */\n    get(id: string): Uint8Array | undefined;\n    /** Number of retained payloads. */\n    readonly count: number;\n}",
+    "doc": "/** A memory port that additionally exposes stored bytes for assertions. Test-only. */"
+  },
+  {
     "name": "MemoryAssureSink",
     "kind": "interface",
     "package": "@nifrajs/cli",
@@ -9189,6 +9350,20 @@
     "doc": "/** Enable `app.resolveNode()` for direct callers. Applying it twice is a no-op (named plugin dedupe). */"
   },
   {
+    "name": "NodeEffectKey",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface NodeEffectKey {\n    /** SHA-256 hex over the canonical effect material. 64 lowercase hex chars. */\n    readonly digest: string;\n    /** Non-secret structural coordinates, safe to log. */\n    readonly planDigest: string;\n    readonly nodeId: string;\n}",
+    "doc": "/** The stable, content-free identity of one side-effecting node attempt-boundary. */"
+  },
+  {
+    "name": "NodeEffectKey",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface NodeEffectKey {\n    /** SHA-256 hex over the canonical effect material. 64 lowercase hex chars. */\n    readonly digest: string;\n    /** Non-secret structural coordinates, safe to log. */\n    readonly planDigest: string;\n    readonly nodeId: string;\n}",
+    "doc": "/** The stable, content-free identity of one side-effecting node attempt-boundary. */"
+  },
+  {
     "name": "NodeNativeProxyRequest",
     "kind": "interface",
     "package": "@nifrajs/proxy",
@@ -9277,6 +9452,13 @@
     "kind": "interface",
     "package": "@nifrajs/node",
     "signature": "export interface NodeServer {\n    /** The bound port (resolved when `port: 0` is requested). */\n    readonly port: number;\n    /**\n     * Stop accepting connections, let in-flight requests drain (up to `drainMs`), then\n     * force-close stragglers + idle keep-alives. Mirrors nifra's Bun `stop()`.\n     */\n    stop(options?: {\n        drainMs?: number;\n    }): Promise<void>;\n}"
+  },
+  {
+    "name": "noopArtifactPort",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function noopArtifactPort(): ArtifactPort;",
+    "doc": "/**\n * Hashes the payload for a content-free {@link ArtifactRef}, then discards the bytes. The default\n * port: public code sees only the digest, size, and coordinates - never the payload.\n */"
   },
   {
     "name": "normalizeEffectMetadata",
@@ -9575,6 +9757,20 @@
     "doc": "/** Parse an `Accept` header, preserving quality and wildcard specificity. */"
   },
   {
+    "name": "parseArtifactRef",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function parseArtifactRef(value: unknown): ArtifactRef;",
+    "doc": "/** Parse a content-free artifact reference. Rejects any non-schema or content key. */"
+  },
+  {
+    "name": "parseArtifactRef",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function parseArtifactRef(value: unknown): ArtifactRef;",
+    "doc": "/** Parse a content-free artifact reference. Rejects any non-schema or content key. */"
+  },
+  {
     "name": "parseByteRange",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -9744,6 +9940,34 @@
     "kind": "function",
     "package": "@nifrajs/cli",
     "signature": "export declare function parseRulePacks(value: unknown): readonly RulePack[];"
+  },
+  {
+    "name": "parseRunEvidence",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function parseRunEvidence(value: unknown): RunEvidence;",
+    "doc": "/** Parse a content-free evidence record. Rejects content keys and any record over the size cap. */"
+  },
+  {
+    "name": "parseRunEvidence",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function parseRunEvidence(value: unknown): RunEvidence;",
+    "doc": "/** Parse a content-free evidence record. Rejects content keys and any record over the size cap. */"
+  },
+  {
+    "name": "parseRunPlan",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function parseRunPlan(value: unknown): RunPlan;",
+    "doc": "/** Parse a declarative run plan. Rejects closures, unknown keys, and structural errors. */"
+  },
+  {
+    "name": "parseRunPlan",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function parseRunPlan(value: unknown): RunPlan;",
+    "doc": "/** Parse a declarative run plan. Rejects closures, unknown keys, and structural errors. */"
   },
   {
     "name": "parseTraceparent",
@@ -12050,6 +12274,20 @@
     "signature": "export interface RulePack {\n    readonly name: string;\n    readonly rules: readonly CheckRule[];\n}"
   },
   {
+    "name": "RUN_PLAN_VERSION",
+    "kind": "const",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare const RUN_PLAN_VERSION: 1;",
+    "doc": "/** Orchestration contract version. Additive to the session `AGENT_PROTOCOL_VERSION`. */"
+  },
+  {
+    "name": "RUN_PLAN_VERSION",
+    "kind": "const",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare const RUN_PLAN_VERSION: 1;",
+    "doc": "/** Orchestration contract version. Additive to the session `AGENT_PROTOCOL_VERSION`. */"
+  },
+  {
     "name": "runAdversarialContract",
     "kind": "function",
     "package": "@nifrajs/testing",
@@ -12080,6 +12318,20 @@
     "kind": "function",
     "package": "@nifrajs/cli",
     "signature": "export declare function runAssurance(cwd: string, options?: {\n    readonly json?: boolean;\n    readonly config?: string;\n    readonly bundle?: boolean;\n    readonly strict?: boolean;\n    readonly out?: string;\n    readonly hydration?: boolean;\n    readonly interact?: boolean;\n}): Promise<boolean>;"
+  },
+  {
+    "name": "RunContractError",
+    "kind": "class",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare class RunContractError extends Error {\n    readonly reason: string;\n    constructor(reason: string);\n}",
+    "doc": "/** Thrown by every parser in this module on malformed or content-bearing input. Fails closed. */"
+  },
+  {
+    "name": "RunContractError",
+    "kind": "class",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare class RunContractError extends Error {\n    readonly reason: string;\n    constructor(reason: string);\n}",
+    "doc": "/** Thrown by every parser in this module on malformed or content-bearing input. Fails closed. */"
   },
   {
     "name": "runContractLab",
@@ -12114,6 +12366,32 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function runEffectReconciliationWorker(store: DurableEffectStore, options: SpecializedWorkerOptions<EffectReconciliationFinding>): Promise<ReconciliationWorkerResult>;"
+  },
+  {
+    "name": "RunEvidence",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface RunEvidence {\n    readonly version: typeof RUN_PLAN_VERSION;\n    readonly runId: string;\n    readonly planDigest: string;\n    readonly nodeId: string;\n    readonly status: RunEvidenceStatus;\n    readonly seq: number;\n    /** NodeEffectKey.digest when the node declared an effect selector; absent otherwise. */\n    readonly effectKey?: string;\n    /** Whether the step declared an idempotency selector. */\n    readonly idempotent: boolean;\n    readonly artifacts?: readonly ArtifactRef[];\n    readonly errorCode?: string;\n    readonly durationMs?: number;\n}",
+    "doc": "/** The content-free projection of one run transition. Every field is id/hash/counter/status/timing. */"
+  },
+  {
+    "name": "RunEvidence",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RunEvidence {\n    readonly version: typeof RUN_PLAN_VERSION;\n    readonly runId: string;\n    readonly planDigest: string;\n    readonly nodeId: string;\n    readonly status: RunEvidenceStatus;\n    readonly seq: number;\n    /** NodeEffectKey.digest when the node declared an effect selector; absent otherwise. */\n    readonly effectKey?: string;\n    /** Whether the step declared an idempotency selector. */\n    readonly idempotent: boolean;\n    readonly artifacts?: readonly ArtifactRef[];\n    readonly errorCode?: string;\n    readonly durationMs?: number;\n}",
+    "doc": "/** The content-free projection of one run transition. Every field is id/hash/counter/status/timing. */"
+  },
+  {
+    "name": "RunEvidenceStatus",
+    "kind": "type",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export type RunEvidenceStatus = \"started\" | \"completed\" | \"failed\";"
+  },
+  {
+    "name": "RunEvidenceStatus",
+    "kind": "type",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export type RunEvidenceStatus = \"started\" | \"completed\" | \"failed\";"
   },
   {
     "name": "runFailureScenario",
@@ -12164,6 +12442,34 @@
     "doc": "/**\n * The handle `listen()` returns - the slice of Bun's server nifra holds and exposes.\n * Declared explicitly (rather than `ReturnType<typeof Bun.serve>`) so the public type\n * surface doesn't leak the ambient `Bun` global into consumers' `.d.ts` resolution.\n */"
   },
   {
+    "name": "RunNode",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface RunNode {\n    readonly id: string;\n    readonly kind: RunNodeKind;\n    /** StepCatalog key. The handler is registered locally and never persisted in the plan. */\n    readonly step: string;\n    readonly dependsOn?: readonly string[];\n    /** Required for `approve`; ignored otherwise. */\n    readonly reason?: string;\n}",
+    "doc": "/** A serializable plan node. `step` names a handler resolved locally through a StepCatalog. */"
+  },
+  {
+    "name": "RunNode",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RunNode {\n    readonly id: string;\n    readonly kind: RunNodeKind;\n    /** StepCatalog key. The handler is registered locally and never persisted in the plan. */\n    readonly step: string;\n    readonly dependsOn?: readonly string[];\n    /** Required for `approve`; ignored otherwise. */\n    readonly reason?: string;\n}",
+    "doc": "/** A serializable plan node. `step` names a handler resolved locally through a StepCatalog. */"
+  },
+  {
+    "name": "RunNodeKind",
+    "kind": "type",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export type RunNodeKind = \"task\" | \"verify\" | \"approve\" | \"checkpoint\" | \"handoff\";",
+    "doc": "/** Declarative node kinds. Each maps to an existing workflow primitive at compile time. */"
+  },
+  {
+    "name": "RunNodeKind",
+    "kind": "type",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export type RunNodeKind = \"task\" | \"verify\" | \"approve\" | \"checkpoint\" | \"handoff\";",
+    "doc": "/** Declarative node kinds. Each maps to an existing workflow primitive at compile time. */"
+  },
+  {
     "name": "RunOptions",
     "kind": "interface",
     "package": "@nifrajs/prompt",
@@ -12174,6 +12480,20 @@
     "kind": "interface",
     "package": "@nifrajs/runner",
     "signature": "export interface RunOptions {\n    /** Origin used to resolve relative paths. Default `\"http://nifra.local\"`. */\n    readonly origin?: string;\n    /** Cap on captured body text, in characters. Default 65536. */\n    readonly maxBodyChars?: number;\n}"
+  },
+  {
+    "name": "RunPlan",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface RunPlan {\n    readonly version: typeof RUN_PLAN_VERSION;\n    readonly id: string;\n    readonly nodes: readonly RunNode[];\n}",
+    "doc": "/** A serializable, closure-free run plan. */"
+  },
+  {
+    "name": "RunPlan",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RunPlan {\n    readonly version: typeof RUN_PLAN_VERSION;\n    readonly id: string;\n    readonly nodes: readonly RunNode[];\n}",
+    "doc": "/** A serializable, closure-free run plan. */"
   },
   {
     "name": "RunQueryOptions",
@@ -12225,6 +12545,25 @@
     "package": "@nifrajs/core",
     "signature": "export declare function runToolContractConformance(adapter: ToolAdapter, options: {\n    readonly input: unknown;\n    readonly capability: string;\n    readonly approval: ToolApproval;\n    readonly dryRun: ToolCallOptions;\n}): Promise<ToolConformanceResult>;",
     "doc": "/** Shared conformance assertions for adapters. It intentionally checks only public, token-only behavior. */"
+  },
+  {
+    "name": "runTrace",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function runTrace(source: RunPlan | unknown, options: RunTraceOptions): Promise<RunTraceResult>;",
+    "doc": "/** Run a plan and return its content-free evidence stream plus a deterministic terminal digest. */"
+  },
+  {
+    "name": "RunTraceOptions",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RunTraceOptions {\n    /** Caller-supplied, so a trace is fully reproducible. No clock or randomness is read here. */\n    readonly runId: string;\n    readonly catalog: StepCatalog;\n    /** Defaults to {@link noopArtifactPort} (hash-and-discard). */\n    readonly artifactPort?: ArtifactPort;\n    readonly signal?: AbortSignal;\n    readonly maxSteps?: number;\n    readonly maxDepth?: number;\n}"
+  },
+  {
+    "name": "RunTraceResult",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RunTraceResult {\n    readonly ok: boolean;\n    readonly runId: string;\n    readonly planDigest: string;\n    readonly evidence: readonly RunEvidence[];\n    /** SHA-256 hex of the canonical evidence stream. Deterministic across identical runs. */\n    readonly terminalDigest: string;\n    readonly error?: string;\n}"
   },
   {
     "name": "runTrajectory",
@@ -13114,6 +13453,20 @@
     "signature": "export declare function severityFails(severity: Severity, strict?: boolean): boolean;"
   },
   {
+    "name": "sha256Hex",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function sha256Hex(bytes: Uint8Array): Promise<string>;",
+    "doc": "/** SHA-256 of `bytes` as lowercase hex. Collision-resistant so a digest cannot be forged from content. */"
+  },
+  {
+    "name": "sha256HexOf",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function sha256HexOf(text: string): Promise<string>;",
+    "doc": "/** SHA-256 hex of a UTF-8 string. */"
+  },
+  {
     "name": "shapeOf",
     "kind": "function",
     "package": "@nifrajs/testing",
@@ -13836,6 +14189,27 @@
     "package": "@nifrajs/web",
     "signature": "export interface StatusPageOptions {\n    /**\n     * Extra headers for the rendered response - `cache-control` above all.\n     *\n     * The defaults differ by status for a reason: a 404 may be a race with publication, so it wants a\n     * short TTL, while a 410 is a promise that the URL is permanently gone and can be cached hard.\n     * Getting this wrong is the difference between a crawler dropping a dead URL and re-fetching it\n     * for weeks.\n     */\n    readonly headers?: HeadersLike;\n}",
     "doc": "/** Options shared by {@link notFound}, {@link gone}, and {@link statusPage}. */"
+  },
+  {
+    "name": "StepCatalog",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface StepCatalog {\n    get(step: string): CatalogStep | undefined;\n    has(step: string): boolean;\n    readonly keys: readonly string[];\n}",
+    "doc": "/** Resolves step names to handlers. Immutable after construction. */"
+  },
+  {
+    "name": "StepEffectContext",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface StepEffectContext {\n    readonly nodeId: string;\n    readonly planDigest: string;\n    readonly values: ReadonlyMap<string, unknown>;\n}",
+    "doc": "/** Read-only view handed to a step's pure effect selector. No port, no mutation. */"
+  },
+  {
+    "name": "StepRunContext",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface StepRunContext {\n    readonly nodeId: string;\n    readonly planDigest: string;\n    readonly signal: AbortSignal;\n    /** Caller-owned artifact sink. The step routes any raw payload here to get a content-free ref. */\n    readonly artifact: ArtifactPort;\n    readonly values: ReadonlyMap<string, unknown>;\n    set(name: string, value: unknown): void;\n}",
+    "doc": "/** Runtime context handed to a step body. Payloads leave only through {@link StepRunContext.artifact}. */"
   },
   {
     "name": "StorageAdapter",
