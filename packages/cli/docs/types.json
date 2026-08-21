@@ -916,6 +916,13 @@
     "signature": "export declare class ApprovalBindingError extends Error {\n    constructor();\n}"
   },
   {
+    "name": "ApprovalClass",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type ApprovalClass = {\n    readonly kind: \"none\";\n} | {\n    readonly kind: \"required\";\n} | {\n    readonly kind: \"threshold\";\n    readonly level: number;\n};",
+    "doc": "/** Host approval requirement. Mirrors the core tool approval policy; a numeric level is not content. */"
+  },
+  {
     "name": "ApprovalConsumeResult",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -2288,6 +2295,12 @@
     "doc": "/** Canonical bytes are stable across runtime, object-key order, and route registration order. */"
   },
   {
+    "name": "CAPABILITY_DESCRIPTOR_VERSION",
+    "kind": "const",
+    "package": "@nifrajs/agent",
+    "signature": "export declare const CAPABILITY_DESCRIPTOR_VERSION: 1;"
+  },
+  {
     "name": "CapabilityAccess",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -2351,6 +2364,24 @@
     "package": "@nifrajs/core",
     "signature": "export declare class CapabilityDeniedError extends Error {\n    readonly capability: string;\n    readonly effectId: string;\n    constructor(capability: string, effectId: string);\n}",
     "doc": "/** A capability admission policy returned without calling `next()`. */"
+  },
+  {
+    "name": "CapabilityDescriptor",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface CapabilityDescriptor {\n    readonly descriptorVersion: typeof CAPABILITY_DESCRIPTOR_VERSION;\n    readonly kind: CapabilityKind;\n    readonly name: string;\n    readonly version: string;\n    /** SHA-256 hex over the canonical input JSON schema. Identity without exposing a request body. */\n    readonly schemaDigest: string;\n    readonly requiredCapabilities: readonly string[];\n    readonly approval: ApprovalClass;\n    readonly retry: RetryClass;\n    readonly idempotency: IdempotencyClass;\n    readonly isolation: IsolationClass;\n}"
+  },
+  {
+    "name": "CapabilityDescriptor",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface CapabilityDescriptor {\n    readonly descriptorVersion: typeof CAPABILITY_DESCRIPTOR_VERSION;\n    readonly kind: CapabilityKind;\n    readonly name: string;\n    readonly version: string;\n    /** SHA-256 hex over the canonical input JSON schema. Identity without exposing a request body. */\n    readonly schemaDigest: string;\n    readonly requiredCapabilities: readonly string[];\n    readonly approval: ApprovalClass;\n    readonly retry: RetryClass;\n    readonly idempotency: IdempotencyClass;\n    readonly isolation: IsolationClass;\n}"
+  },
+  {
+    "name": "CapabilityDescriptor",
+    "kind": "interface",
+    "package": "@nifrajs/mcp",
+    "signature": "export interface CapabilityDescriptor {\n    readonly descriptorVersion: typeof CAPABILITY_DESCRIPTOR_VERSION;\n    readonly kind: CapabilityKind;\n    readonly name: string;\n    readonly version: string;\n    /** SHA-256 hex over the canonical input JSON schema. Identity without exposing a request body. */\n    readonly schemaDigest: string;\n    readonly requiredCapabilities: readonly string[];\n    readonly approval: ApprovalClass;\n    readonly retry: RetryClass;\n    readonly idempotency: IdempotencyClass;\n    readonly isolation: IsolationClass;\n}"
   },
   {
     "name": "CapabilityEvidence",
@@ -2476,6 +2507,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare class CapabilityJournalTransitionError extends Error {\n    readonly capability: string;\n    readonly effectId: string;\n    readonly transition: \"committed\";\n    constructor(capability: string, effectId: string, transition: \"committed\");\n}",
     "doc": "/** The effect may have committed, but its durable terminal transition could not be recorded. */"
+  },
+  {
+    "name": "CapabilityKind",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type CapabilityKind = \"tool\" | \"mcp-tool\" | \"extension\" | \"model-adapter\" | \"deployment-adapter\";",
+    "doc": "/** Producer families a descriptor can describe. A value outside this set fails `unsupported_kind`. */"
   },
   {
     "name": "CapabilityOutcomeOptions",
@@ -2734,6 +2772,13 @@
     "kind": "interface",
     "package": "@nifrajs/testing",
     "signature": "export interface CertifiableCacheStore {\n    get(key: string): CertifiableCacheEntry | undefined | Promise<CertifiableCacheEntry | undefined>;\n    set(key: string, entry: CertifiableCacheEntry, tags: readonly string[]): void | Promise<void>;\n    delete(key: string): void | Promise<void>;\n    invalidateTag(tag: string): void | Promise<void>;\n    clear(): void | Promise<void>;\n}"
+  },
+  {
+    "name": "CertifiableDescriptorAdapter",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface CertifiableDescriptorAdapter {\n    describe(): CapabilityDescriptor | Promise<CapabilityDescriptor>;\n    describeDrift(): CapabilityDescriptor | Promise<CapabilityDescriptor>;\n}",
+    "doc": "/**\n * The test-only surface a descriptor adapter exposes for certification. `describe` yields the\n * adapter's representative descriptor; `describeDrift` yields a descriptor with the SAME identity\n * (kind and name) but a DIFFERENT schema digest, so the drift check can prove the adapter's identity\n * is stable across a schema change instead of colliding into it.\n */"
   },
   {
     "name": "CertifiableDomainEvent",
@@ -3310,6 +3355,20 @@
     "package": "@nifrajs/web-vanilla",
     "signature": "export declare function compose(chain: readonly unknown[], props: RenderProps): Template;",
     "doc": "/**\n * Fold a layout chain (outermost layout → page) into one {@link Template}: render the page with\n * the loader props, then wrap upward, each layout receiving the inner fragment as `children`.\n */"
+  },
+  {
+    "name": "composeDescriptor",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function composeDescriptor(input: DescriptorInput): Promise<CapabilityDescriptor>;",
+    "doc": "/**\n * Build a validated descriptor from adapter fields, digesting the input schema. Two adapters that\n * describe the same capability (same kind, name, version, schema, and classes) produce byte-identical\n * descriptors and therefore the same digest, which is what makes cross-package parity checkable.\n */"
+  },
+  {
+    "name": "composeRegistrySnapshot",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function composeRegistrySnapshot(descriptors: readonly CapabilityDescriptor[]): Promise<RegistrySnapshot>;",
+    "doc": "/**\n * Compose a deterministic registry snapshot. Descriptors are validated, checked for identity\n * collisions, canonically ordered, and digested. Two descriptors that share a (kind, name) identity\n * fail `descriptor_collision` when their schema digests agree and `schema_drift` when they differ -\n * a drifted schema is a distinct, addressable failure from a duplicate registration. Because the set\n * is sorted before it is digested, the snapshot digest is independent of the input order.\n */"
   },
   {
     "name": "compression",
@@ -4844,6 +4903,20 @@
     "doc": "/**\n * Derive one route's behaviour from its module exports.\n *\n * `prerender`/`getStaticPaths` win over `revalidate`: a page rendered at build time is not revalidated at\n * runtime, so if a route declares both, the build-time answer is the one that describes what ships. That\n * combination is worth surfacing rather than silently resolving, which is what `conflicts` is for once a\n * target is known.\n */"
   },
   {
+    "name": "descriptorFromTool",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function descriptorFromTool(tool: ToolContract, options?: ToolDescriptorOptions): Promise<CapabilityDescriptor>;",
+    "doc": "/**\n * Adapt a Nifra core {@link ToolContract} into a descriptor without touching its execution contract.\n * The schema digest is taken over the tool's own input JSON schema, retry follows idempotency, and\n * the approval policy is carried through unchanged, so the descriptor is a faithful, content-free\n * projection of the contract the runtime already enforces.\n */"
+  },
+  {
+    "name": "DescriptorInput",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface DescriptorInput {\n    readonly kind: CapabilityKind;\n    readonly name: string;\n    readonly version?: string;\n    /** The capability's input JSON schema. Digested for identity; the schema itself is not stored. */\n    readonly inputSchema: Record<string, unknown>;\n    readonly requiredCapabilities?: readonly string[];\n    readonly approval?: ApprovalClass;\n    readonly retry?: RetryClass;\n    readonly idempotency?: IdempotencyClass;\n    readonly isolation?: IsolationClass;\n}",
+    "doc": "/** The fields an adapter supplies. The schema digest is derived from `inputSchema`, never passed in. */"
+  },
+  {
     "name": "detectFileType",
     "kind": "function",
     "package": "@nifrajs/uploads",
@@ -5810,6 +5883,33 @@
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
     "signature": "export interface ExtensionContext {\n    readonly cwd: string;\n    readonly registerCommand: (name: string, handler: ExtensionCommand) => void;\n    readonly registerTool: (tool: ExtensionTool) => void;\n    readonly registerWorkflow: (name: string, workflow: ExtensionWorkflow) => void;\n    readonly registerSubagent: (role: ExtensionSubagent) => void;\n    readonly registerProvider: (provider: ExtensionProvider) => void;\n    readonly on: (event: string, handler: ExtensionEventHandler) => void;\n}"
+  },
+  {
+    "name": "extensionDescriptor",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function extensionDescriptor(extension: ExtensionDescriptorSource, options: ExtensionDescriptorOptions): Promise<CapabilityDescriptor>;",
+    "doc": "/**\n * Project one extension into an `extension` capability descriptor, enforcing the grant. The declared\n * capabilities become the descriptor's required capabilities only after every one is confirmed\n * trusted; an undeclared grant or an escalated capability throws before any descriptor is built.\n * Approval defaults to required and isolation to process, matching how untyped host code is admitted.\n */"
+  },
+  {
+    "name": "ExtensionDescriptorOptions",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface ExtensionDescriptorOptions {\n    /** The host's trusted capability allowlist. A declared capability outside it fails closed. */\n    readonly trustedCapabilities: readonly string[];\n    readonly version?: string;\n    readonly approval?: ApprovalClass;\n    readonly isolation?: IsolationClass;\n}"
+  },
+  {
+    "name": "extensionDescriptors",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function extensionDescriptors(extensions: readonly ExtensionDescriptorSource[], options: ExtensionDescriptorOptions): Promise<readonly CapabilityDescriptor[]>;",
+    "doc": "/** Project a set of extensions under a single trusted allowlist, preserving order. */"
+  },
+  {
+    "name": "ExtensionDescriptorSource",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface ExtensionDescriptorSource {\n    readonly name: string;\n    readonly capabilities?: readonly string[];\n}",
+    "doc": "/** The minimal shape an extension exposes for projection: an identity and an explicit capability grant. */"
   },
   {
     "name": "ExtensionEventHandler",
@@ -6939,6 +7039,13 @@
     "signature": "export type IdempotencyClaim = {\n    readonly state: \"new\";\n} | {\n    readonly state: \"in_flight\";\n} | {\n    readonly state: \"replay\";\n    readonly record: IdempotencyRecord;\n};"
   },
   {
+    "name": "IdempotencyClass",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type IdempotencyClass = \"none\" | \"request\" | \"durable\";",
+    "doc": "/** Idempotency guarantee a capability declares, mirroring the tool idempotency scope. */"
+  },
+  {
     "name": "IdempotencyCompletionInput",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -7612,6 +7719,20 @@
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
     "signature": "export interface IsolatedExtensionWorkerOptions {\n    readonly modulePath: string;\n    readonly cwd: string;\n    readonly timeoutMs?: number;\n    readonly maxMessageBytes?: number;\n    readonly trustedCapabilities?: readonly string[];\n}"
+  },
+  {
+    "name": "IsolationClass",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type IsolationClass = \"inherit\" | \"process\" | \"sandbox\";",
+    "doc": "/** Isolation the host must provide to invoke the capability. */"
+  },
+  {
+    "name": "IsolationClass",
+    "kind": "type",
+    "package": "@nifrajs/mcp",
+    "signature": "export type IsolationClass = \"inherit\" | \"process\" | \"sandbox\";",
+    "doc": "/** Isolation the host must provide to invoke the capability. */"
   },
   {
     "name": "ISR_REVALIDATE_HEADER",
@@ -8485,6 +8606,12 @@
     "signature": "export declare class McpDbConfigError extends Error {\n    constructor(message: string);\n}"
   },
   {
+    "name": "McpDescriptorOptions",
+    "kind": "interface",
+    "package": "@nifrajs/mcp",
+    "signature": "export interface McpDescriptorOptions {\n    readonly version?: string;\n    readonly isolation?: IsolationClass;\n}"
+  },
+  {
     "name": "McpHttpOptions",
     "kind": "interface",
     "package": "@nifrajs/cli",
@@ -8610,6 +8737,20 @@
     "kind": "interface",
     "package": "@nifrajs/mcp",
     "signature": "export interface McpToolContractOptions extends Omit<ToolCallOptions, \"signal\" | \"ledger\"> {\n    readonly capabilities?: readonly string[];\n}"
+  },
+  {
+    "name": "mcpToolDescriptor",
+    "kind": "function",
+    "package": "@nifrajs/mcp",
+    "signature": "export declare function mcpToolDescriptor(tool: ToolContract, options?: McpDescriptorOptions): Promise<CapabilityDescriptor>;",
+    "doc": "/**\n * Project one MCP-facing tool contract into a `mcp-tool` capability descriptor. The digest is taken\n * over the tool's own input schema, so it matches the core tool descriptor for the same contract.\n */"
+  },
+  {
+    "name": "mcpToolDescriptors",
+    "kind": "function",
+    "package": "@nifrajs/mcp",
+    "signature": "export declare function mcpToolDescriptors(tools: readonly ToolContract[], options?: McpDescriptorOptions): Promise<readonly CapabilityDescriptor[]>;",
+    "doc": "/** Project a set of MCP tool contracts, preserving order. Compose the result into a snapshot to dedupe. */"
   },
   {
     "name": "McpToolHandlerResult",
@@ -10159,6 +10300,13 @@
     "doc": "/**\n * Parse an HTTP `Range: bytes=...` header against a known representation size.\n *\n * Three outcomes, and the distinction matters to the caller's status code: `none` means the header\n * was absent or syntactically invalid and must be ignored (200), `unsatisfiable` means a well-formed\n * range-set selected nothing (416), `satisfiable` carries the coalesced ranges (206).\n */"
   },
   {
+    "name": "parseCapabilityDescriptor",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function parseCapabilityDescriptor(value: unknown): CapabilityDescriptor;",
+    "doc": "/**\n * Validate an untrusted value as a {@link CapabilityDescriptor}, normalizing capability order. Missing,\n * unknown, or content-bearing fields are rejected with a stable code. This is the single admission\n * point: every adapter output and every wire value passes through it before it enters a snapshot.\n */"
+  },
+  {
     "name": "parseCapabilityManifest",
     "kind": "function",
     "package": "@nifrajs/coding-agent",
@@ -11599,6 +11747,32 @@
     "doc": "/** The accumulated, type-level map of every route on a Server: path → method → RouteInfo. */"
   },
   {
+    "name": "REGISTRY_SNAPSHOT_VERSION",
+    "kind": "const",
+    "package": "@nifrajs/agent",
+    "signature": "export declare const REGISTRY_SNAPSHOT_VERSION: 1;"
+  },
+  {
+    "name": "registryCertificationProfile",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function registryCertificationProfile(): AdapterCertificationProfile<CertifiableDescriptorAdapter>;",
+    "doc": "/**\n * Build the descriptor-adapter certification profile. Every check runs against a fresh adapter, so a\n * failure never leaks into the next capability's evidence.\n */"
+  },
+  {
+    "name": "RegistryError",
+    "kind": "class",
+    "package": "@nifrajs/agent",
+    "signature": "export declare class RegistryError extends Error {\n    readonly code: RegistryErrorCode;\n    constructor(code: RegistryErrorCode, message?: RegistryErrorCode);\n}",
+    "doc": "/** A stable, content-free failure. `code` is the machine-addressable reason; the message is generic. */"
+  },
+  {
+    "name": "RegistryErrorCode",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type RegistryErrorCode = \"invalid_descriptor\" | \"unsupported_kind\" | \"missing_version\" | \"invalid_name\" | \"invalid_capability\" | \"content_field\" | \"invalid_schema_digest\" | \"invalid_approval\" | \"descriptor_collision\" | \"schema_drift\" | \"capability_escalation\";"
+  },
+  {
     "name": "RegistryFor",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -11624,6 +11798,12 @@
     "kind": "type",
     "package": "@nifrajs/events",
     "signature": "export type RegistryParseResult = {\n    readonly success: true;\n    readonly envelope: EventEnvelope;\n    readonly contract: EventContract;\n} | {\n    readonly success: false;\n    readonly reason: \"not-an-object\" | \"unknown-contract\" | \"invalid-payload\";\n    readonly message: string;\n};"
+  },
+  {
+    "name": "RegistrySnapshot",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface RegistrySnapshot {\n    readonly version: typeof REGISTRY_SNAPSHOT_VERSION;\n    /** SHA-256 hex over the canonically ordered descriptor set. Independent of input order. */\n    readonly digest: string;\n    readonly descriptors: readonly CapabilityDescriptor[];\n}"
   },
   {
     "name": "ReloadResult",
@@ -12343,6 +12523,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare const RETAIN_HEADER = \"x-nifra-retain\";",
     "doc": "/**\n * Layout indices a client navigation is asking the server NOT to re-run, comma separated.\n *\n * The client owns the decision because it holds both the old and new match plus each layout's scoped\n * params. The server treats it as a hint and refuses to skip a `gate` regardless - a guard that runs\n * only when the client says so is not a guard.\n */"
+  },
+  {
+    "name": "RetryClass",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type RetryClass = \"none\" | \"idempotent\";",
+    "doc": "/** Whether a failed invocation may be retried. A capability is retry-eligible only when idempotent. */"
   },
   {
     "name": "RetryPolicy",
@@ -15512,6 +15699,12 @@
     "kind": "interface",
     "package": "@nifrajs/agent-app",
     "signature": "export interface ToolDeltaView extends EventViewBase {\n    readonly kind: \"tool.delta\";\n    readonly turnId: string;\n    readonly callId: string;\n    readonly chars: number;\n}"
+  },
+  {
+    "name": "ToolDescriptorOptions",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ToolDescriptorOptions {\n    /** Kind to record. Defaults to `tool`; the MCP adapter passes `mcp-tool` for the same contract. */\n    readonly kind?: CapabilityKind;\n    readonly version?: string;\n    readonly isolation?: IsolationClass;\n}"
   },
   {
     "name": "ToolError",

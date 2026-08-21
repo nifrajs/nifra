@@ -73,10 +73,22 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentTurnInput** _(interface)_ - `interface AgentTurnInput`
 - **AgentTurnResult** _(type)_ - `type AgentTurnResult<Output>`
 - **AgentTurnState** _(interface)_ - `interface AgentTurnState`
+- **ApprovalClass** _(type)_ - `type ApprovalClass = | { readonly kind: "none" } | { readonly kind: "required" } | { readonly kind: "threshold"; readonly level: number }`
+  Host approval requirement. Mirrors the core tool approval policy; a numeric level is not content.
+- **CAPABILITY_DESCRIPTOR_VERSION** _(const)_ - `CAPABILITY_DESCRIPTOR_VERSION: 1`
+- **CapabilityDescriptor** _(interface)_ - `interface CapabilityDescriptor`
+- **CapabilityKind** _(type)_ - `type CapabilityKind = | "tool" | "mcp-tool" | "extension" | "model-adapter" | "deployment-adapter"`
+  Producer families a descriptor can describe. A value outside this set fails `unsupported_kind`.
+- **DescriptorInput** _(interface)_ - `interface DescriptorInput`
+  The fields an adapter supplies. The schema digest is derived from `inputSchema`, never passed in.
 - **ExecutionPolicy** _(interface)_ - `interface ExecutionPolicy`
   A public, token-only execution policy. It describes a required capability; it is not an isolation mechanism by itself.
 - **ExecutionPolicyAdapter** _(interface)_ - `interface ExecutionPolicyAdapter`
   An adapter that can prove whether it satisfies a contract's execution policy.
+- **IdempotencyClass** _(type)_ - `type IdempotencyClass = "none" | "request" | "durable"`
+  Idempotency guarantee a capability declares, mirroring the tool idempotency scope.
+- **IsolationClass** _(type)_ - `type IsolationClass = "inherit" | "process" | "sandbox"`
+  Isolation the host must provide to invoke the capability.
 - **LOCAL_PROCESS_LIMITATION** _(const)_ - `LOCAL_PROCESS_LIMITATION: "The local adapter is NOT a security boundary."`
   This statement is intentionally repeated in the API and runtime result.
 - **LocalProcessAdapter** _(interface)_ - `interface LocalProcessAdapter`
@@ -85,15 +97,31 @@ Every public export of every package and documented subpath - name, kind, signat
 - **LocalProcessRequest** _(interface)_ - `interface LocalProcessRequest`
 - **LocalProcessResult** _(interface)_ - `interface LocalProcessResult`
 - **MemoryAgentStateStore** _(class)_ - `class MemoryAgentStateStore`
+- **REGISTRY_SNAPSHOT_VERSION** _(const)_ - `REGISTRY_SNAPSHOT_VERSION: 1`
+- **RegistryError** _(class)_ - `class RegistryError`
+  A stable, content-free failure. `code` is the machine-addressable reason; the message is generic.
+- **RegistryErrorCode** _(type)_ - `type RegistryErrorCode`
+- **RegistrySnapshot** _(interface)_ - `interface RegistrySnapshot`
+- **RetryClass** _(type)_ - `type RetryClass = "none" | "idempotent"`
+  Whether a failed invocation may be retried. A capability is retry-eligible only when idempotent.
 - **RunAgentOptions** _(interface)_ - `interface RunAgentOptions`
+- **ToolDescriptorOptions** _(interface)_ - `interface ToolDescriptorOptions`
 - **combineAgentDeltaSinks** _(function)_ - `combineAgentDeltaSinks: (...sinks: readonly (AgentDeltaSink | undefined)[]) => AgentDeltaSink | undefined`
   Fan model deltas out to several sinks - a protocol bridge and a logger can watch the same run. `undefined` entries are skipped, and the combined sink is `undefined` when none remain. Each sink is isolated: one sink throwing never starves the others.
 - **combineAgentTelemetry** _(function)_ - `combineAgentTelemetry: (...ports: readonly (AgentTelemetryPort | undefined)[]) => AgentTelemetryPort | undefined`
   Fan one run's step evidence out to several telemetry ports - an SSE evidence stream and an exporter can observe the same turn. Ports are awaited in argument order; `undefined` entries are skipped, and the combined port is `undefined` when none remain.
+- **composeDescriptor** _(function)_ - `composeDescriptor: (input: DescriptorInput) => Promise<CapabilityDescriptor>`
+  Build a validated descriptor from adapter fields, digesting the input schema. Two adapters that describe the same capability (same kind, name, version, schema, and classes) produce byte-identical descriptors and therefore the same digest, which is what makes cross-package parity checkable.
+- **composeRegistrySnapshot** _(function)_ - `composeRegistrySnapshot: (descriptors: readonly CapabilityDescriptor[]) => Promise<RegistrySnapshot>`
+  Compose a deterministic registry snapshot. Descriptors are validated, checked for identity collisions, canonically ordered, and digested. Two descriptors that share a (kind, name) identity fail `descriptor_collision` when their schema digests agree and `schema_drift` when they differ - a drifted sc…
 - **createAgentSharedState** _(function)_ - `createAgentSharedState: <State>(initial: State) => AgentSharedState<State>`
 - **createAgentState** _(function)_ - `createAgentState: (turnId: string) => AgentTurnState`
 - **createLocalProcessAdapter** _(function)_ - `createLocalProcessAdapter: (options?: LocalProcessAdapterOptions) => LocalProcessAdapter`
   Run a command with the host controls available to a normal child process. The local adapter is NOT a security boundary. Without OS-level sandboxing it contains crashes and accidents, not hostile code.
+- **descriptorFromTool** _(function)_ - `descriptorFromTool: (tool: ToolContract, options?: ToolDescriptorOptions) => Promise<CapabilityDescriptor>`
+  Adapt a Nifra core {@link ToolContract} into a descriptor without touching its execution contract. The schema digest is taken over the tool's own input JSON schema, retry follows idempotency, and the approval policy is carried through unchanged, so the descriptor is a faithful, content-free project…
+- **parseCapabilityDescriptor** _(function)_ - `parseCapabilityDescriptor: (value: unknown) => CapabilityDescriptor`
+  Validate an untrusted value as a {@link CapabilityDescriptor}, normalizing capability order. Missing, unknown, or content-bearing fields are rejected with a stable code. This is the single admission point: every adapter output and every wire value passes through it before it enters a snapshot.
 - **replayAgent** _(function)_ - `replayAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, input: AgentTurnInput, ports: Omit<AgentPorts, "model">, transcript: Age…`
 - **resumeAgent** _(function)_ - `resumeAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, turnId: string, input: AgentTurnInput, ports: AgentPorts, options?: Omit…`
   Load a saved token-only state record and continue a bounded run.
@@ -125,6 +153,37 @@ Every public export of every package and documented subpath - name, kind, signat
 - **MountAgentOptions** _(interface)_ - `interface MountAgentOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>`
 - **mountAgent** _(function)_ - `mountAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(app: AgentMountableApp, options: MountAgentOptions<InputSchema, OutputSchema>) => void`
   Mount a single agent as `POST {path}`, negotiating an SSE evidence stream on `Accept`.
+
+### `@nifrajs/agent/registry`
+
+- **ApprovalClass** _(type)_ - `type ApprovalClass = | { readonly kind: "none" } | { readonly kind: "required" } | { readonly kind: "threshold"; readonly level: number }`
+  Host approval requirement. Mirrors the core tool approval policy; a numeric level is not content.
+- **CAPABILITY_DESCRIPTOR_VERSION** _(const)_ - `CAPABILITY_DESCRIPTOR_VERSION: 1`
+- **CapabilityDescriptor** _(interface)_ - `interface CapabilityDescriptor`
+- **CapabilityKind** _(type)_ - `type CapabilityKind = | "tool" | "mcp-tool" | "extension" | "model-adapter" | "deployment-adapter"`
+  Producer families a descriptor can describe. A value outside this set fails `unsupported_kind`.
+- **DescriptorInput** _(interface)_ - `interface DescriptorInput`
+  The fields an adapter supplies. The schema digest is derived from `inputSchema`, never passed in.
+- **IdempotencyClass** _(type)_ - `type IdempotencyClass = "none" | "request" | "durable"`
+  Idempotency guarantee a capability declares, mirroring the tool idempotency scope.
+- **IsolationClass** _(type)_ - `type IsolationClass = "inherit" | "process" | "sandbox"`
+  Isolation the host must provide to invoke the capability.
+- **REGISTRY_SNAPSHOT_VERSION** _(const)_ - `REGISTRY_SNAPSHOT_VERSION: 1`
+- **RegistryError** _(class)_ - `class RegistryError`
+  A stable, content-free failure. `code` is the machine-addressable reason; the message is generic.
+- **RegistryErrorCode** _(type)_ - `type RegistryErrorCode`
+- **RegistrySnapshot** _(interface)_ - `interface RegistrySnapshot`
+- **RetryClass** _(type)_ - `type RetryClass = "none" | "idempotent"`
+  Whether a failed invocation may be retried. A capability is retry-eligible only when idempotent.
+- **ToolDescriptorOptions** _(interface)_ - `interface ToolDescriptorOptions`
+- **composeDescriptor** _(function)_ - `composeDescriptor: (input: DescriptorInput) => Promise<CapabilityDescriptor>`
+  Build a validated descriptor from adapter fields, digesting the input schema. Two adapters that describe the same capability (same kind, name, version, schema, and classes) produce byte-identical descriptors and therefore the same digest, which is what makes cross-package parity checkable.
+- **composeRegistrySnapshot** _(function)_ - `composeRegistrySnapshot: (descriptors: readonly CapabilityDescriptor[]) => Promise<RegistrySnapshot>`
+  Compose a deterministic registry snapshot. Descriptors are validated, checked for identity collisions, canonically ordered, and digested. Two descriptors that share a (kind, name) identity fail `descriptor_collision` when their schema digests agree and `schema_drift` when they differ - a drifted sc…
+- **descriptorFromTool** _(function)_ - `descriptorFromTool: (tool: ToolContract, options?: ToolDescriptorOptions) => Promise<CapabilityDescriptor>`
+  Adapt a Nifra core {@link ToolContract} into a descriptor without touching its execution contract. The schema digest is taken over the tool's own input JSON schema, retry follows idempotency, and the approval policy is carried through unchanged, so the descriptor is a faithful, content-free project…
+- **parseCapabilityDescriptor** _(function)_ - `parseCapabilityDescriptor: (value: unknown) => CapabilityDescriptor`
+  Validate an untrusted value as a {@link CapabilityDescriptor}, normalizing capability order. Missing, unknown, or content-bearing fields are rejected with a stable code. This is the single admission point: every adapter output and every wire value passes through it before it enters a snapshot.
 
 ## @nifrajs/agent-app
 
@@ -614,6 +673,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **BoundedSubagentRunner** _(class)_ - `class BoundedSubagentRunner`
   Explicitly bounded child execution. Recursive fan-out is impossible without a caller budget.
 - **BoundedText** _(interface)_ - `interface BoundedText`
+- **CapabilityDescriptor** _(interface)_ - `interface CapabilityDescriptor`
 - **CodingAgentExtension** _(interface)_ - `interface CodingAgentExtension`
 - **CodingAgentHost** _(class)_ - `class CodingAgentHost`
   Small lifecycle host shared by the CLI, RPC server, and future Workbench.
@@ -629,6 +689,9 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ContextWindowOptions** _(interface)_ - `interface ContextWindowOptions`
 - **ExtensionCommand** _(type)_ - `type ExtensionCommand = ( args: string, context: ExtensionContext, ) => unknown | PromiseLike<unknown>`
 - **ExtensionContext** _(interface)_ - `interface ExtensionContext`
+- **ExtensionDescriptorOptions** _(interface)_ - `interface ExtensionDescriptorOptions`
+- **ExtensionDescriptorSource** _(interface)_ - `interface ExtensionDescriptorSource`
+  The minimal shape an extension exposes for projection: an identity and an explicit capability grant.
 - **ExtensionEventHandler** _(type)_ - `type ExtensionEventHandler = ( payload: unknown, context: ExtensionContext, ) => unknown | PromiseLike<unknown>`
 - **ExtensionHost** _(class)_ - `class ExtensionHost`
   Transactional TypeScript extension loader for the Nifra-native backend.
@@ -715,6 +778,10 @@ Every public export of every package and documented subpath - name, kind, signat
 - **deniedCapabilities** _(function)_ - `deniedCapabilities: (manifest: AgentCapabilityManifest) => readonly AgentCapability[]`
 - **discoverExtensions** _(function)_ - `discoverExtensions: (cwd: string) => Promise<readonly string[]>`
   Discover only project-local extension files; no home-directory or dependency scan is implicit.
+- **extensionDescriptor** _(function)_ - `extensionDescriptor: (extension: ExtensionDescriptorSource, options: ExtensionDescriptorOptions) => Promise<CapabilityDescriptor>`
+  Project one extension into an `extension` capability descriptor, enforcing the grant. The declared capabilities become the descriptor's required capabilities only after every one is confirmed trusted; an undeclared grant or an escalated capability throws before any descriptor is built. Approval def…
+- **extensionDescriptors** _(function)_ - `extensionDescriptors: (extensions: readonly ExtensionDescriptorSource[], options: ExtensionDescriptorOptions) => Promise<readonly CapabilityDescriptor[]>`
+  Project a set of extensions under a single trusted allowlist, preserving order.
 - **getAgentPreset** _(function)_ - `getAgentPreset: (name: AgentPresetName) => AgentPreset`
 - **parseCapabilityManifest** _(function)_ - `parseCapabilityManifest: (value: unknown) => AgentCapabilityManifest`
 - **readBoundedText** _(function)_ - `readBoundedText: (stream: ReadableStream<Uint8Array> | null | undefined | number, maxBytes: number) => Promise<BoundedText>`
@@ -868,6 +935,17 @@ Every public export of every package and documented subpath - name, kind, signat
   SHA-256 hex of a UTF-8 string.
 - **stepVersion** _(function)_ - `stepVersion: (step: CatalogStep) => number`
   The effective version of a step (defaults to 1).
+
+### `@nifrajs/coding-agent/registry`
+
+- **CapabilityDescriptor** _(interface)_ - `interface CapabilityDescriptor`
+- **ExtensionDescriptorOptions** _(interface)_ - `interface ExtensionDescriptorOptions`
+- **ExtensionDescriptorSource** _(interface)_ - `interface ExtensionDescriptorSource`
+  The minimal shape an extension exposes for projection: an identity and an explicit capability grant.
+- **extensionDescriptor** _(function)_ - `extensionDescriptor: (extension: ExtensionDescriptorSource, options: ExtensionDescriptorOptions) => Promise<CapabilityDescriptor>`
+  Project one extension into an `extension` capability descriptor, enforcing the grant. The declared capabilities become the descriptor's required capabilities only after every one is confirmed trusted; an undeclared grant or an escalated capability throws before any descriptor is built. Approval def…
+- **extensionDescriptors** _(function)_ - `extensionDescriptors: (extensions: readonly ExtensionDescriptorSource[], options: ExtensionDescriptorOptions) => Promise<readonly CapabilityDescriptor[]>`
+  Project a set of extensions under a single trusted allowlist, preserving order.
 
 ### `@nifrajs/coding-agent/rpc`
 
@@ -2838,6 +2916,17 @@ _No named exports (side-effect entrypoint)._
 - **widgetDocument** _(function)_ - `widgetDocument: (opts: DefineMcpWidgetOptions) => string`
   Assemble the full self-contained widget document (bridge inlined in `<head>` so body scripts can use `mcpApp` immediately).
 
+### `@nifrajs/mcp/agent-descriptor`
+
+- **CapabilityDescriptor** _(interface)_ - `interface CapabilityDescriptor`
+- **IsolationClass** _(type)_ - `type IsolationClass = "inherit" | "process" | "sandbox"`
+  Isolation the host must provide to invoke the capability.
+- **McpDescriptorOptions** _(interface)_ - `interface McpDescriptorOptions`
+- **mcpToolDescriptor** _(function)_ - `mcpToolDescriptor: (tool: ToolContract, options?: McpDescriptorOptions) => Promise<CapabilityDescriptor>`
+  Project one MCP-facing tool contract into a `mcp-tool` capability descriptor. The digest is taken over the tool's own input schema, so it matches the core tool descriptor for the same contract.
+- **mcpToolDescriptors** _(function)_ - `mcpToolDescriptors: (tools: readonly ToolContract[], options?: McpDescriptorOptions) => Promise<readonly CapabilityDescriptor[]>`
+  Project a set of MCP tool contracts, preserving order. Compose the result into a snapshot to dedupe.
+
 ### `@nifrajs/mcp/http`
 
 - **McpHttpOptions** _(interface)_ - `interface McpHttpOptions`
@@ -3407,6 +3496,8 @@ _No named exports (side-effect entrypoint)._
 - **CaseResult** _(interface)_ - `interface CaseResult`
 - **CertifiableCacheEntry** _(interface)_ - `interface CertifiableCacheEntry`
 - **CertifiableCacheStore** _(interface)_ - `interface CertifiableCacheStore`
+- **CertifiableDescriptorAdapter** _(interface)_ - `interface CertifiableDescriptorAdapter`
+  The test-only surface a descriptor adapter exposes for certification. `describe` yields the adapter's representative descriptor; `describeDrift` yields a descriptor with the SAME identity (kind and name) but a DIFFERENT schema digest, so the drift check can prove the adapter's identity is stable ac…
 - **CertifiableDomainEvent** _(interface)_ - `interface CertifiableDomainEvent`
 - **CertifiableEventDeliveryAdapter** _(interface)_ - `interface CertifiableEventDeliveryAdapter`
 - **CertifiableEventRecord** _(interface)_ - `interface CertifiableEventRecord`
@@ -3531,6 +3622,8 @@ _No named exports (side-effect entrypoint)._
   Redact leaf string values by default (unless the dotted key path is allow-listed). Non-strings are kept - they carry the structure that makes the fixture reproduce - so review the emitted file. This is intentionally aggressive: a committed fixture must not leak PII/secrets.
 - **referenceFaultProfile** _(const)_ - `referenceFaultProfile: FaultProfile`
   A small smoke profile for consumers that only need to verify the harness wiring.
+- **registryCertificationProfile** _(function)_ - `registryCertificationProfile: () => AdapterCertificationProfile<CertifiableDescriptorAdapter>`
+  Build the descriptor-adapter certification profile. Every check runs against a fresh adapter, so a failure never leaks into the next capability's evidence.
 - **replayIncident** _(function)_ - `replayIncident: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<IncidentReplayResult>`
   Replay a captured incident against the current app and report whether it reproduces.
 - **replayTrajectory** _(function)_ - `replayTrajectory: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, input: AgentTurnInput, ports: Omit<AgentPorts, "model">, transcript…`

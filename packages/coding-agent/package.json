@@ -43,6 +43,11 @@
       "bun": "./src/orchestration/index.ts",
       "types": "./dist/orchestration/index.d.ts",
       "default": "./dist/orchestration/index.js"
+    },
+    "./registry": {
+      "bun": "./src/registry.ts",
+      "types": "./dist/registry.d.ts",
+      "default": "./dist/registry.js"
     }
   },
   "files": [
@@ -62,6 +67,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@nifrajs/agent": "workspace:*",
     "@nifrajs/agent-protocol": "workspace:*",
     "@nifrajs/pi": "workspace:*"
   },

@@ -1012,3 +1012,27 @@ function freezeState(state: AgentTurnState): AgentTurnState {
     ...(state.pending === undefined ? {} : { pending: Object.freeze({ ...state.pending }) }),
   })
 }
+
+// Unified capability descriptor registry. Re-exported at the root and via the `./registry` subpath so
+// the MCP and coding-agent adapters can consume the descriptor contracts through the one declared edge.
+export type {
+  ApprovalClass,
+  CapabilityDescriptor,
+  CapabilityKind,
+  DescriptorInput,
+  IdempotencyClass,
+  IsolationClass,
+  RegistryErrorCode,
+  RegistrySnapshot,
+  RetryClass,
+  ToolDescriptorOptions,
+} from "./registry"
+export {
+  CAPABILITY_DESCRIPTOR_VERSION,
+  composeDescriptor,
+  composeRegistrySnapshot,
+  descriptorFromTool,
+  parseCapabilityDescriptor,
+  REGISTRY_SNAPSHOT_VERSION,
+  RegistryError,
+} from "./registry"

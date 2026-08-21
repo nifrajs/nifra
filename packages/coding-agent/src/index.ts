@@ -76,6 +76,13 @@ export {
   getAgentPreset,
 } from "./presets.ts"
 export { type BoundedText, readBoundedText } from "./process.ts"
+export {
+  type CapabilityDescriptor,
+  type ExtensionDescriptorOptions,
+  type ExtensionDescriptorSource,
+  extensionDescriptor,
+  extensionDescriptors,
+} from "./registry.ts"
 export { ReplayBackend, type ReplayBackendOptions, readReplayEvents } from "./replay.ts"
 export {
   CodingAgentRpcServer,

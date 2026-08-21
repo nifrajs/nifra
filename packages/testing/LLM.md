@@ -29,7 +29,7 @@ Contract-derived adversarial tests, runtime-matrix response conformance, and coo
 - **createReferenceContractLabHandler** _(function)_ - `createReferenceContractLabHandler: () => ContractLabHandler` · from `@nifrajs/testing`
 - **createTrajectoryTranscript** _(function)_ - `createTrajectoryTranscript: (transcript: AgentTranscript, options?: CreateTrajectoryTranscriptOptions) => Promise<TrajectoryTranscript>` · from `@nifrajs/testing`
 
-_…and 120 more - see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
+_…and 122 more - see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
 
 ## Footguns
 

@@ -30,6 +30,11 @@
       "bun": "./src/mount.ts",
       "types": "./dist/mount.d.ts",
       "default": "./dist/mount.js"
+    },
+    "./registry": {
+      "bun": "./src/registry.ts",
+      "types": "./dist/registry.d.ts",
+      "default": "./dist/registry.js"
     }
   },
   "files": [

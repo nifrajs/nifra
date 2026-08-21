@@ -38,6 +38,58 @@ function isAgentAppForbidden(specifier: string): boolean {
   )
 }
 
+/**
+ * The descriptor registry adds exactly two edges: `mcp -> agent` and `coding-agent -> agent`. The
+ * reverse must never form. `@nifrajs/agent` and `@nifrajs/agent-protocol` sit below the host layer, so
+ * a specifier reaching up into the MCP transport or the coding-agent host would invert the direction
+ * and pull a host engine into the descriptor contracts. Any such import or dependency fails the gate.
+ */
+const REVERSE_GUARDED = ["agent", "agent-protocol"] as const
+const REVERSE_FORBIDDEN = ["@nifrajs/mcp", "@nifrajs/coding-agent"] as const
+
+function isReverseForbidden(specifier: string): boolean {
+  return REVERSE_FORBIDDEN.some((name) => specifier === name || specifier.startsWith(`${name}/`))
+}
+
+async function findReverseEdgeFailures(root: string): Promise<readonly string[]> {
+  const failures: string[] = []
+  for (const packageName of REVERSE_GUARDED) {
+    const packageRoot = `${root}/packages/${packageName}`
+    if (!existsSync(packageRoot)) continue
+    for await (const relative of new Bun.Glob("src/**/*").scan({ cwd: packageRoot, dot: false })) {
+      if (!/\.(?:ts|tsx|js|jsx)$/.test(relative)) continue
+      const path = `${packageRoot}/${relative}`
+      const source = await Bun.file(path).text()
+      for (const match of source.matchAll(IMPORT_RE)) {
+        if (isReverseForbidden(match[1]!))
+          failures.push(`${path}: ${packageName} must not import host package ${match[1]}`)
+      }
+    }
+    const manifestPath = `${packageRoot}/package.json`
+    if (existsSync(manifestPath)) {
+      const manifest = JSON.parse(await Bun.file(manifestPath).text()) as Record<string, unknown>
+      for (const field of [
+        "dependencies",
+        "devDependencies",
+        "optionalDependencies",
+        "peerDependencies",
+      ] as const) {
+        const dependencies = manifest[field]
+        if (
+          dependencies === null ||
+          typeof dependencies !== "object" ||
+          Array.isArray(dependencies)
+        )
+          continue
+        for (const dependency of Object.keys(dependencies))
+          if (isReverseForbidden(dependency))
+            failures.push(`${manifestPath}: ${packageName} declares host dependency ${dependency}`)
+      }
+    }
+  }
+  return failures
+}
+
 async function findAgentAppFailures(root: string): Promise<readonly string[]> {
   const failures: string[] = []
   const packageRoot = `${root}/packages/agent-app`
@@ -104,6 +156,7 @@ export async function findAgentBoundaryFailures(
     }
   }
   failures.push(...(await findAgentAppFailures(root)))
+  failures.push(...(await findReverseEdgeFailures(root)))
   return failures
 }
 

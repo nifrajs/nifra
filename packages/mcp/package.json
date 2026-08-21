@@ -44,6 +44,11 @@
       "bun": "./src/react.ts",
       "types": "./dist/react.d.ts",
       "default": "./dist/react.js"
+    },
+    "./agent-descriptor": {
+      "bun": "./src/agent-descriptor.ts",
+      "types": "./dist/agent-descriptor.d.ts",
+      "default": "./dist/agent-descriptor.js"
     }
   },
   "files": [
@@ -59,14 +64,19 @@
     "access": "public"
   },
   "peerDependencies": {
+    "@nifrajs/agent": "workspace:^",
     "@nifrajs/core": "workspace:^"
   },
   "peerDependenciesMeta": {
+    "@nifrajs/agent": {
+      "optional": true
+    },
     "@nifrajs/core": {
       "optional": true
     }
   },
   "devDependencies": {
+    "@nifrajs/agent": "workspace:*",
     "@nifrajs/core": "workspace:*",
     "react": "19.2.7"
   },

@@ -10,26 +10,26 @@ Provider-neutral, typed, resumable agent turns built on Nifra tool contracts.
 
 ## Public entrypoints
 
-`@nifrajs/agent` · `@nifrajs/agent/events` · `@nifrajs/agent/mount`
+`@nifrajs/agent` · `@nifrajs/agent/events` · `@nifrajs/agent/mount` · `@nifrajs/agent/registry`
 
 ## Key exports
 
 - **combineAgentDeltaSinks** _(function)_ - `combineAgentDeltaSinks: (...sinks: readonly (AgentDeltaSink | undefined)[]) => AgentDeltaSink | undefined` · from `@nifrajs/agent`
 - **combineAgentTelemetry** _(function)_ - `combineAgentTelemetry: (...ports: readonly (AgentTelemetryPort | undefined)[]) => AgentTelemetryPort | undefined` · from `@nifrajs/agent`
+- **composeDescriptor** _(function)_ - `composeDescriptor: (input: DescriptorInput) => Promise<CapabilityDescriptor>` · from `@nifrajs/agent`
+- **composeRegistrySnapshot** _(function)_ - `composeRegistrySnapshot: (descriptors: readonly CapabilityDescriptor[]) => Promise<RegistrySnapshot>` · from `@nifrajs/agent`
 - **createAgentEvidenceStream** _(function)_ - `createAgentEvidenceStream: (options?: AgentEvidenceStreamOptions) => AgentEvidenceStream` · from `@nifrajs/agent/events`
 - **createAgentSharedState** _(function)_ - `createAgentSharedState: <State>(initial: State) => AgentSharedState<State>` · from `@nifrajs/agent`
 - **createAgentState** _(function)_ - `createAgentState: (turnId: string) => AgentTurnState` · from `@nifrajs/agent`
 - **createLocalProcessAdapter** _(function)_ - `createLocalProcessAdapter: (options?: LocalProcessAdapterOptions) => LocalProcessAdapter` · from `@nifrajs/agent`
 - **createMemoryAgentEvidenceLog** _(function)_ - `createMemoryAgentEvidenceLog: (options?: MemoryAgentEvidenceLogOptions) => AgentEvidenceLog` · from `@nifrajs/agent/events`
+- **descriptorFromTool** _(function)_ - `descriptorFromTool: (tool: ToolContract, options?: ToolDescriptorOptions) => Promise<CapabilityDescriptor>` · from `@nifrajs/agent`
 - **mountAgent** _(function)_ - `mountAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(app: AgentMountableApp, options: MountAgentOption…` · from `@nifrajs/agent/mount`
+- **parseCapabilityDescriptor** _(function)_ - `parseCapabilityDescriptor: (value: unknown) => CapabilityDescriptor` · from `@nifrajs/agent`
 - **replayAgent** _(function)_ - `replayAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputS…` · from `@nifrajs/agent`
 - **resumeAgent** _(function)_ - `resumeAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputS…` · from `@nifrajs/agent`
-- **runAgent** _(function)_ - `runAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSche…` · from `@nifrajs/agent`
-- **turn** _(function)_ - `turn: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>,…` · from `@nifrajs/agent`
-- **LocalProcessPolicyError** _(class)_ - `class LocalProcessPolicyError` · from `@nifrajs/agent`
-- **MemoryAgentStateStore** _(class)_ - `class MemoryAgentStateStore` · from `@nifrajs/agent`
 
-_…and 43 more - see [`api-reference.md`](../../api-reference.md#nifrajsagent) for the complete list._
+_…and 60 more - see [`api-reference.md`](../../api-reference.md#nifrajsagent) for the complete list._
 
 ## Footguns
 

@@ -10,7 +10,7 @@ Standalone, extensible Nifra coding-agent host and CLI.
 
 ## Public entrypoints
 
-`@nifrajs/coding-agent` · `@nifrajs/coding-agent/extensions` · `@nifrajs/coding-agent/orchestration` · `@nifrajs/coding-agent/rpc` · `@nifrajs/coding-agent/verification`
+`@nifrajs/coding-agent` · `@nifrajs/coding-agent/extensions` · `@nifrajs/coding-agent/orchestration` · `@nifrajs/coding-agent/registry` · `@nifrajs/coding-agent/rpc` · `@nifrajs/coding-agent/verification`
 
 ## Key exports
 
@@ -29,7 +29,7 @@ Standalone, extensible Nifra coding-agent host and CLI.
 - **deriveNodeEffectKey** _(function)_ - `deriveNodeEffectKey: (material: EffectKeyMaterial) => Promise<NodeEffectKey>` · from `@nifrajs/coding-agent/orchestration`
 - **digestRunPlan** _(function)_ - `digestRunPlan: (plan: RunPlan) => Promise<string>` · from `@nifrajs/coding-agent/orchestration`
 
-_…and 156 more - see [`api-reference.md`](../../api-reference.md#nifrajscodingagent) for the complete list._
+_…and 161 more - see [`api-reference.md`](../../api-reference.md#nifrajscodingagent) for the complete list._
 
 ## Footguns
 

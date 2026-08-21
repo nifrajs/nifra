@@ -26,6 +26,10 @@ export {
   runAdversarialContract,
 } from "./adversarial.ts"
 export {
+  type CertifiableDescriptorAdapter,
+  registryCertificationProfile,
+} from "./agent-certification.ts"
+export {
   type AgentEvalCase,
   AgentEvalRegressionError,
   type AgentEvalReport,
