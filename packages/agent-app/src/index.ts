@@ -1,0 +1,56 @@
+/**
+ * `@nifrajs/agent-app` - a presentation-safe browser SDK for Nifra agent hosts.
+ *
+ * This package depends only on `@nifrajs/agent-protocol`. It has no backend, provider, storage, model,
+ * or UI-framework dependency, so it can be bundled into browser-facing code without dragging a private
+ * engine or payload content across the boundary. Everything it surfaces upward is a content-free view
+ * model: identifiers, lifecycle statuses, counters, and opaque references.
+ */
+
+export {
+  AGENT_APP_FEATURES,
+  AgentAppClient,
+  type AgentAppClientOptions,
+  AgentAppError,
+  type CreateSessionInput,
+  type PendingApprovalView,
+  type ReplayEntryView,
+  type ReplayResult,
+  type ResolveHandoffInput,
+  type ResumeInput,
+} from "./client.ts"
+export {
+  type AgentTransport,
+  AgentTransportError,
+  type AgentTransportRequest,
+  type AuthProvider,
+  type CommandOutcome,
+  HttpAgentTransport,
+  type HttpAgentTransportOptions,
+  parseEventStream,
+} from "./transport.ts"
+export {
+  type AgentEventView,
+  type ApprovalRequiredView,
+  type ApprovalResolvedView,
+  type AssistantChunkView,
+  type ExtensionReloadedView,
+  type HandoffView,
+  type MemoryCompactedView,
+  OrderedEventBuffer,
+  type RepairRequiredView,
+  type RunView,
+  type SessionFailedView,
+  type SessionLifecycleView,
+  type SessionStoppedView,
+  type SessionView,
+  type ToolCompletedView,
+  type ToolDeltaView,
+  type ToolStartedView,
+  type TurnStartedView,
+  toEventView,
+  toHandoffView,
+  toRunView,
+  toSessionView,
+  type VerificationCompletedView,
+} from "./view-models.ts"

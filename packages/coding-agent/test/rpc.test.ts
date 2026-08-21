@@ -84,10 +84,64 @@ describe("coding agent RPC", () => {
         headers,
         body: JSON.stringify({ method: "session.events", params: { limit: 10 } }),
       })
-      const historyEntries = ((await history.json()) as { entries: Array<{ type: string }> })
-        .entries
+      const historyEntries = (
+        (await history.json()) as { entries: Array<{ type: string; seq: number }> }
+      ).entries
       expect(historyEntries.length).toBeGreaterThan(0)
       expect(historyEntries.some((entry) => entry.type === "session.checkpoint")).toBe(true)
+      // A cursor opts into the bounded snapshot + resume view. -1 replays the whole window.
+      const resumeAll = await fetch(`${handle.url}/rpc`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ method: "session.events", params: { limit: 10, cursor: -1 } }),
+      })
+      const resumeAllBody = (await resumeAll.json()) as {
+        snapshot: { id: string; lastSeq: number }
+        resume: { status: string; events: Array<{ seq: number }>; nextCursor: number }
+      }
+      const tailSeq = Math.max(...historyEntries.map((entry) => entry.seq))
+      expect(resumeAllBody.snapshot.id.length).toBeGreaterThan(0)
+      expect(resumeAllBody.resume.status).toBe("ok")
+      expect(resumeAllBody.resume.events.length).toBe(historyEntries.length)
+      expect(resumeAllBody.resume.nextCursor).toBe(tailSeq)
+      // Resuming past the last delivered seq yields nothing new and holds the cursor.
+      const resumeTip = await fetch(`${handle.url}/rpc`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          method: "session.events",
+          params: { limit: 10, cursor: resumeAllBody.resume.nextCursor },
+        }),
+      })
+      const resumeTipBody = (await resumeTip.json()) as {
+        resume: { status: string; events: unknown[]; nextCursor: number }
+      }
+      expect(resumeTipBody.resume.status).toBe("ok")
+      expect(resumeTipBody.resume.events.length).toBe(0)
+      expect(resumeTipBody.resume.nextCursor).toBe(resumeAllBody.resume.nextCursor)
+      // Grow the log so a limit-1 window's earliest seq sits well past an old cursor.
+      for (let i = 0; i < 3; i++)
+        await fetch(`${handle.url}/rpc`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ method: "session.checkpoint", params: { payload: { i } } }),
+        })
+      // A bounded window (limit 1) that no longer contains the record after the cursor forces resync.
+      const stale = await fetch(`${handle.url}/rpc`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ method: "session.events", params: { limit: 1, cursor: 0 } }),
+      })
+      const staleBody = (await stale.json()) as { resume: { status: string; reason?: string } }
+      expect(staleBody.resume.status).toBe("resync_required")
+      expect(staleBody.resume.reason).toBe("stale_cursor")
+      // An out-of-range cursor is rejected.
+      const badCursor = await fetch(`${handle.url}/rpc`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ method: "session.events", params: { cursor: -2 } }),
+      })
+      expect(badCursor.status).toBe(422)
       const diff = await fetch(`${handle.url}/rpc`, {
         method: "POST",
         headers,

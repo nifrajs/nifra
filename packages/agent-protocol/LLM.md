@@ -13,19 +13,19 @@ Small backend-neutral session and event protocol for Nifra coding agents.
 - **agentError** _(function)_ - `agentError: (code: string, message: string, details?: unknown) => AgentError`
 - **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void`
 - **createAgentEventStream** _(function)_ - `createAgentEventStream: (maxQueueSize?: number) => AgentEventStream`
+- **evidenceEventId** _(function)_ - `evidenceEventId: (runId: string, seq: number) => string`
 - **isAgentEvent** _(function)_ - `isAgentEvent: (value: unknown) => value is AgentEvent`
+- **negotiateFeatures** _(function)_ - `negotiateFeatures: (offered: readonly string[], requested: readonly string[]) => FeatureNegotiation`
 - **parseArtifactRef** _(function)_ - `parseArtifactRef: (value: unknown) => ArtifactRef`
+- **parseHandoffSnapshot** _(function)_ - `parseHandoffSnapshot: (value: unknown) => HandoffSnapshot`
 - **parseRunEvidence** _(function)_ - `parseRunEvidence: (value: unknown) => RunEvidence`
+- **parseRunEvidenceEvent** _(function)_ - `parseRunEvidenceEvent: (value: unknown) => RunEvidenceEvent`
 - **parseRunPlan** _(function)_ - `parseRunPlan: (value: unknown) => RunPlan`
-- **RunContractError** _(class)_ - `class RunContractError`
-- **AGENT_PROTOCOL_VERSION** _(const)_ - `AGENT_PROTOCOL_VERSION: 1`
-- **EVIDENCE_MAX_BYTES** _(const)_ - `EVIDENCE_MAX_BYTES: 4096`
-- **FORBIDDEN_CONTENT_KEYS** _(const)_ - `FORBIDDEN_CONTENT_KEYS: readonly string[]`
-- **RUN_PLAN_VERSION** _(const)_ - `RUN_PLAN_VERSION: 1`
-- **AgentApprovalRequiredEvent** _(interface)_ - `interface AgentApprovalRequiredEvent`
-- **AgentApprovalResolvedEvent** _(interface)_ - `interface AgentApprovalResolvedEvent`
+- **parseRunPlanRef** _(function)_ - `parseRunPlanRef: (value: unknown) => RunPlanRef`
+- **parseRunSnapshot** _(function)_ - `parseRunSnapshot: (value: unknown) => RunSnapshot`
+- **resumeFromCursor** _(function)_ - `resumeFromCursor: <T extends { readonly seq: number; }>(window: readonly T[], cursor?: number) => CursorResume<T>`
 
-_…and 50 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentprotocol) for the complete list._
+_…and 72 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentprotocol) for the complete list._
 
 ## Footguns
 

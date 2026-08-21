@@ -383,6 +383,12 @@ export function agentError(code: string, message: string, details?: unknown): Ag
  */
 export * from "./orchestration.ts"
 
+/**
+ * Additive run-lifecycle contracts (run snapshots, evidence-event envelopes, handoff snapshots,
+ * feature negotiation, cursor resume). Additive to the session protocol; carries no payload content.
+ */
+export * from "./run-lifecycle.ts"
+
 export function isAgentEvent(value: unknown): value is AgentEvent {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false
   const record = value as Record<string, unknown>

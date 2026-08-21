@@ -1,4 +1,9 @@
-import type { AgentBackend, AgentSessionSnapshot, ReloadResult } from "@nifrajs/agent-protocol"
+import {
+  type AgentBackend,
+  type AgentSessionSnapshot,
+  type ReloadResult,
+  resumeFromCursor,
+} from "@nifrajs/agent-protocol"
 import { readProjectDiff } from "./diff.ts"
 import type { ExtensionHost } from "./extensions.ts"
 import { CodingAgentHost, type CodingAgentHostOptions } from "./host.ts"
@@ -194,7 +199,7 @@ export class CodingAgentRpcServer {
         return json(snapshot, 200, cors)
       }
       case "session.events": {
-        this.requireSnapshot()
+        const snapshot = this.requireSnapshot()
         const params = record(request.params)
         const limit = params.limit === undefined ? 512 : Number(params.limit)
         if (!Number.isSafeInteger(limit) || limit < 1 || limit > 4096)
@@ -205,7 +210,17 @@ export class CodingAgentRpcServer {
             422,
             cors,
           )
-        return json({ entries: await this.host.history(limit) }, 200, cors)
+        const window = await this.host.history(limit)
+        // Legacy shape when no cursor is requested; a cursor opts into bounded snapshot + resume.
+        if (params.cursor === undefined) return json({ entries: window }, 200, cors)
+        const cursor = Number(params.cursor)
+        if (!Number.isSafeInteger(cursor) || cursor < -1)
+          return json(
+            { error: { code: "invalid_cursor", message: "cursor must be a safe integer >= -1" } },
+            422,
+            cors,
+          )
+        return json({ snapshot, resume: resumeFromCursor(window, cursor) }, 200, cors)
       }
       case "session.checkpoint": {
         this.requireSnapshot()

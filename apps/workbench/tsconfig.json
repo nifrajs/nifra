@@ -1,12 +1,16 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    // Resolve the workspace dependency to source so a coding-agent API change that breaks the
-    // Workbench server surfaces here, not only at runtime. Kept minimal: server.ts imports only
-    // this one package. app.js is browser JS and is not part of the TS program.
+    // src/server.ts is a Bun process; src/browser.ts is the browser bundle and needs DOM types.
+    // Both are checked in one pass; DOM lib is harmless for the server module.
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    // Resolve workspace dependencies to source so an upstream API change that breaks the Workbench
+    // surfaces here, not only at runtime. The browser bundle imports only @nifrajs/agent-app.
     "paths": {
+      "@nifrajs/agent-app": ["../../packages/agent-app/src/index.ts"],
+      "@nifrajs/agent-protocol": ["../../packages/agent-protocol/src/index.ts"],
       "@nifrajs/coding-agent": ["../../packages/coding-agent/src/index.ts"]
     }
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*", "scripts/**/*", "test/**/*"]
 }

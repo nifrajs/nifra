@@ -126,6 +126,63 @@ Every public export of every package and documented subpath - name, kind, signat
 - **mountAgent** _(function)_ - `mountAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(app: AgentMountableApp, options: MountAgentOptions<InputSchema, OutputSchema>) => void`
   Mount a single agent as `POST {path}`, negotiating an SSE evidence stream on `Accept`.
 
+## @nifrajs/agent-app
+
+- **AGENT_APP_FEATURES** _(const)_ - `AGENT_APP_FEATURES: readonly ["approvals", "checkpoint", "fork", "handoff", "reload", "resume", "workflows"]`
+  Interaction features the client knows how to drive. A host grants the subset it supports.
+- **AgentAppClient** _(class)_ - `class AgentAppClient`
+- **AgentAppClientOptions** _(interface)_ - `interface AgentAppClientOptions`
+- **AgentAppError** _(class)_ - `class AgentAppError`
+- **AgentEventView** _(type)_ - `type AgentEventView`
+- **AgentTransport** _(interface)_ - `interface AgentTransport`
+- **AgentTransportError** _(class)_ - `class AgentTransportError`
+  Thrown only for transport-level faults (network, malformed body). Carries no credential.
+- **AgentTransportRequest** _(interface)_ - `interface AgentTransportRequest`
+  One RPC-style call. `params` is JSON-serializable; `signal` cancels the in-flight request.
+- **ApprovalRequiredView** _(interface)_ - `interface ApprovalRequiredView`
+- **ApprovalResolvedView** _(interface)_ - `interface ApprovalResolvedView`
+- **AssistantChunkView** _(interface)_ - `interface AssistantChunkView`
+- **AuthProvider** _(type)_ - `type AuthProvider = () => string | undefined | Promise<string | undefined>`
+  Returns a bearer token for the next request, or `undefined` for an unauthenticated call.
+- **CommandOutcome** _(type)_ - `type CommandOutcome<T> = | { readonly ok: true; readonly status: number; readonly value: T } | { readonly ok: false; readonly status: number; readonly error: string }`
+  The outcome of a command. Non-ok responses never throw here so a caller can render a bounded state instead of unwinding; `error` carries only the server's status text, never a credential.
+- **CreateSessionInput** _(interface)_ - `interface CreateSessionInput`
+- **ExtensionReloadedView** _(interface)_ - `interface ExtensionReloadedView`
+- **HandoffView** _(interface)_ - `interface HandoffView`
+  A handoff reduced to routing identifiers and status - the reason string is content and is dropped.
+- **HttpAgentTransport** _(class)_ - `class HttpAgentTransport`
+  Web `fetch` + SSE transport. Browser- and Bun-compatible; depends on no Node or framework code.
+- **HttpAgentTransportOptions** _(interface)_ - `interface HttpAgentTransportOptions`
+- **MemoryCompactedView** _(interface)_ - `interface MemoryCompactedView`
+- **OrderedEventBuffer** _(class)_ - `class OrderedEventBuffer`
+  Orders events by their sequence number and suppresses duplicates before they reach the UI.
+- **PendingApprovalView** _(interface)_ - `interface PendingApprovalView`
+- **RepairRequiredView** _(interface)_ - `interface RepairRequiredView`
+- **ReplayEntryView** _(interface)_ - `interface ReplayEntryView`
+  One persisted log record reduced to ordering and a type label - never its payload.
+- **ReplayResult** _(type)_ - `type ReplayResult`
+- **ResolveHandoffInput** _(interface)_ - `interface ResolveHandoffInput`
+- **ResumeInput** _(interface)_ - `interface ResumeInput`
+- **RunView** _(interface)_ - `interface RunView`
+  A run reduced to plan reference, lifecycle state, and progress counters - no node payloads.
+- **SessionFailedView** _(interface)_ - `interface SessionFailedView`
+- **SessionLifecycleView** _(interface)_ - `interface SessionLifecycleView`
+- **SessionStoppedView** _(interface)_ - `interface SessionStoppedView`
+- **SessionView** _(interface)_ - `interface SessionView`
+  A session reduced to lifecycle and capability facts. The working directory is deliberately omitted.
+- **ToolCompletedView** _(interface)_ - `interface ToolCompletedView`
+- **ToolDeltaView** _(interface)_ - `interface ToolDeltaView`
+- **ToolStartedView** _(interface)_ - `interface ToolStartedView`
+- **TurnStartedView** _(interface)_ - `interface TurnStartedView`
+- **VerificationCompletedView** _(interface)_ - `interface VerificationCompletedView`
+- **parseEventStream** _(function)_ - `parseEventStream: (body: ReadableStream<Uint8Array>, method: string) => AsyncIterable<AgentEvent>`
+  Parse an SSE body into protocol events, skipping any frame whose data is not a valid event.
+- **toEventView** _(function)_ - `toEventView: (event: AgentEvent) => AgentEventView`
+  Project one protocol event to its content-free view. Total over the event union - never returns undefined.
+- **toHandoffView** _(function)_ - `toHandoffView: (snapshot: HandoffSnapshot) => HandoffView`
+- **toRunView** _(function)_ - `toRunView: (snapshot: RunSnapshot) => RunView`
+- **toSessionView** _(function)_ - `toSessionView: (snapshot: AgentSessionSnapshot) => SessionView`
+
 ## @nifrajs/agent-protocol
 
 - **AGENT_PROTOCOL_VERSION** _(const)_ - `AGENT_PROTOCOL_VERSION: 1`
@@ -167,15 +224,33 @@ Every public export of every package and documented subpath - name, kind, signat
   Caller-owned sink for raw payloads - the ONLY place payload bytes leave transient execution. The public repo ships only a discarding no-op and a disposable in-memory test port. No public implementation persists.
 - **ArtifactRef** _(interface)_ - `interface ArtifactRef`
   A content-free pointer to a payload the caller chose to retain out of band.
+- **CURSOR_BEFORE_ALL** _(const)_ - `CURSOR_BEFORE_ALL: -1`
+  Sentinel cursor meaning "before any record". A fresh subscription passes this or `undefined`.
 - **CreateSessionInput** _(interface)_ - `interface CreateSessionInput`
+- **CursorResume** _(type)_ - `type CursorResume<T> = CursorResumeOk<T> | CursorResyncRequired`
+- **CursorResumeOk** _(interface)_ - `interface CursorResumeOk<T>`
+  Events after the cursor were retained; deliver them and advance.
+- **CursorResyncReason** _(type)_ - `type CursorResyncReason = "stale_cursor"`
+- **CursorResyncRequired** _(interface)_ - `interface CursorResyncRequired`
+  The bounded window no longer contains the record after the cursor; a full resync is required.
 - **EVIDENCE_MAX_BYTES** _(const)_ - `EVIDENCE_MAX_BYTES: 4096`
   Hard cap on a single serialized evidence record. A content-free record never approaches this.
+- **EvidenceRef** _(interface)_ - `interface EvidenceRef`
+  A content-free pointer to one evidence record, with the stable dedupe identity.
 - **FORBIDDEN_CONTENT_KEYS** _(const)_ - `FORBIDDEN_CONTENT_KEYS: readonly string[]`
   Keys that would carry payload content. They are never valid on evidence or artifact records and are rejected by the strict parsers even if they would otherwise fit the size cap.
+- **FeatureNegotiation** _(interface)_ - `interface FeatureNegotiation`
+  The result of reconciling a client's requested features against a host's offered set.
 - **ForkSessionInput** _(interface)_ - `interface ForkSessionInput`
 - **ForkSessionResult** _(interface)_ - `interface ForkSessionResult`
+- **HandoffSnapshot** _(interface)_ - `interface HandoffSnapshot`
+  A content-free snapshot of one handoff between roles/agents within a run.
+- **HandoffStatus** _(type)_ - `type HandoffStatus = "pending" | "accepted" | "declined"`
+  Handoff resolution state, surfaced content-free.
 - **NodeEffectKey** _(interface)_ - `interface NodeEffectKey`
   The stable, content-free identity of one side-effecting node attempt-boundary.
+- **RUN_LIFECYCLE_VERSION** _(const)_ - `RUN_LIFECYCLE_VERSION: 1`
+  Run-lifecycle contract version. Additive to the session `AGENT_PROTOCOL_VERSION`.
 - **RUN_PLAN_VERSION** _(const)_ - `RUN_PLAN_VERSION: 1`
   Orchestration contract version. Additive to the session `AGENT_PROTOCOL_VERSION`.
 - **ReloadResult** _(interface)_ - `interface ReloadResult`
@@ -183,13 +258,19 @@ Every public export of every package and documented subpath - name, kind, signat
   A conditional. `step` names a predicate catalog handler selecting `then` or `otherwise`.
 - **RunContractError** _(class)_ - `class RunContractError`
   Thrown by every parser in this module on malformed or content-bearing input. Fails closed.
+- **RunCounters** _(interface)_ - `interface RunCounters`
+  Running tallies over a run's evidence stream.
 - **RunEvidence** _(interface)_ - `interface RunEvidence`
   The content-free projection of one run transition. Every field is id/hash/counter/status/timing.
+- **RunEvidenceEvent** _(interface)_ - `interface RunEvidenceEvent`
+  A transport envelope wrapping one strict evidence record with its stable dedupe identity.
 - **RunEvidenceStatus** _(type)_ - `type RunEvidenceStatus = "started" | "completed" | "failed"`
 - **RunLeafKind** _(type)_ - `type RunLeafKind = "task" | "verify" | "approve" | "checkpoint" | "handoff" | "subagent"`
   Leaf kinds resolve a StepCatalog handler; structural kinds compose child nodes.
 - **RunLeafNode** _(interface)_ - `interface RunLeafNode`
   A leaf plan node. `step` names a handler resolved locally through a StepCatalog.
+- **RunLifecycleState** _(type)_ - `type RunLifecycleState = | "submitted" | "running" | "paused" | "succeeded" | "failed" | "cancelled"`
+  Terminal-or-transient state of a run as observed through evidence.
 - **RunNode** _(type)_ - `type RunNode = RunLeafNode | RunSequenceNode | RunParallelNode | RunRetryNode | RunBranchNode`
   A serializable, closure-free plan node. Structural kinds nest into a tree.
 - **RunNodeKind** _(type)_ - `type RunNodeKind = RunLeafKind | RunStructuralKind`
@@ -198,12 +279,16 @@ Every public export of every package and documented subpath - name, kind, signat
   A bounded fan-out. Effective concurrency is the lower of this, the host, and the child count.
 - **RunPlan** _(interface)_ - `interface RunPlan`
   A serializable, closure-free run plan. Top-level nodes form a DAG; each node may nest a tree.
+- **RunPlanRef** _(interface)_ - `interface RunPlanRef`
+  A content-free pointer to the plan a run is executing.
 - **RunRetryNode** _(interface)_ - `interface RunRetryNode`
   A bounded retry wrapping a single child node.
 - **RunRetryPolicy** _(interface)_ - `interface RunRetryPolicy`
   Bounded retry policy for a leaf node. Attempts map to the kernel's retry step.
 - **RunSequenceNode** _(interface)_ - `interface RunSequenceNode`
   An ordered composite. Children run in declaration order.
+- **RunSnapshot** _(interface)_ - `interface RunSnapshot`
+  The bounded current view of a run: its plan pointer, lifecycle state, resume cursor, and counters. `cursor` is the highest evidence `seq` reflected here; a client resumes with everything after it.
 - **RunStructuralKind** _(type)_ - `type RunStructuralKind = "sequence" | "parallel" | "retry" | "branch"`
 - **SendMessageInput** _(interface)_ - `interface SendMessageInput`
 - **agentError** _(function)_ - `agentError: (code: string, message: string, details?: unknown) => AgentError`
@@ -211,13 +296,27 @@ Every public export of every package and documented subpath - name, kind, signat
   Assert a record serializes within the hard cap. Public reference records are content-free.
 - **createAgentEventStream** _(function)_ - `createAgentEventStream: (maxQueueSize?: number) => AgentEventStream`
   Small bounded event stream for RPC clients and UIs. The authoritative event history belongs to the backend/session store; this live view may drop old transient events if a consumer falls behind.
+- **evidenceEventId** _(function)_ - `evidenceEventId: (runId: string, seq: number) => string`
+  The stable dedupe identity for an evidence record.
 - **isAgentEvent** _(function)_ - `isAgentEvent: (value: unknown) => value is AgentEvent`
+- **negotiateFeatures** _(function)_ - `negotiateFeatures: (offered: readonly string[], requested: readonly string[]) => FeatureNegotiation`
+  Reconcile requested features against the offered set. A requested feature the host does not offer is reported as unsupported rather than silently dropped, so a client can degrade deliberately.
 - **parseArtifactRef** _(function)_ - `parseArtifactRef: (value: unknown) => ArtifactRef`
   Parse a content-free artifact reference. Rejects any non-schema or content key.
+- **parseHandoffSnapshot** _(function)_ - `parseHandoffSnapshot: (value: unknown) => HandoffSnapshot`
+  Decode a handoff snapshot. Forward-compatible about unknown additive fields; forbidden content keys are rejected.
 - **parseRunEvidence** _(function)_ - `parseRunEvidence: (value: unknown) => RunEvidence`
   Parse a content-free evidence record. Rejects content keys and any record over the size cap.
+- **parseRunEvidenceEvent** _(function)_ - `parseRunEvidenceEvent: (value: unknown) => RunEvidenceEvent`
+  Decode an evidence-event envelope. The envelope is forward-compatible, but the inner record is validated strictly by {@link parseRunEvidence}, and its identity must match `${runId}:${seq}`.
 - **parseRunPlan** _(function)_ - `parseRunPlan: (value: unknown) => RunPlan`
   Parse a declarative run plan. Rejects closures, unknown keys, and structural errors.
+- **parseRunPlanRef** _(function)_ - `parseRunPlanRef: (value: unknown) => RunPlanRef`
+  Decode a content-free plan reference. Lenient about unknown additive keys, never content.
+- **parseRunSnapshot** _(function)_ - `parseRunSnapshot: (value: unknown) => RunSnapshot`
+  Decode a bounded run snapshot. Forward-compatible: unknown additive fields are ignored so an older client tolerates a newer host. Forbidden content keys are still rejected.
+- **resumeFromCursor** _(function)_ - `resumeFromCursor: <T extends { readonly seq: number; }>(window: readonly T[], cursor?: number) => CursorResume<T>`
+  Resume an ordered, seq-keyed window from a cursor.
 
 ## @nifrajs/agent-telemetry
 

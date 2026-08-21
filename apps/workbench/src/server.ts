@@ -1,46 +1,39 @@
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
+import type { AgentBackend, AgentEvent } from "@nifrajs/agent-protocol"
 import {
   CodingAgentRpcServer,
+  type CodingAgentRpcServerOptions,
   discoverExtensions,
   ExtensionHost,
   FileSessionStore,
   NIFRA_AGENT_INSTRUCTIONS,
   PiBackend,
+  ReplayBackend,
   UiExtensionHost,
   validateExtensionModule,
 } from "@nifrajs/coding-agent"
+
+type BackendMode = "pi" | "replay"
 
 interface WorkbenchOptions {
   readonly cwd: string
   readonly uiPort: number
   readonly rpcPort: number
   readonly piCommand: string
+  readonly backend: BackendMode
 }
 
 const options = parseArgs(Bun.argv.slice(2))
-const extensionRoots = await discoverExtensions(options.cwd)
-const rpc = new CodingAgentRpcServer({
-  backend: new PiBackend({
-    command: options.piCommand,
-    noSession: false,
-    appendSystemPrompt: NIFRA_AGENT_INSTRUCTIONS,
-    enableNifraTools: true,
-  }),
-  cwd: options.cwd,
-  hostname: "127.0.0.1",
-  port: options.rpcPort,
-  extensions: new ExtensionHost({
-    cwd: options.cwd,
-    roots: extensionRoots,
-    validate: validateExtensionModule,
-  }),
-  ui: new UiExtensionHost(),
-  sessionStore: new FileSessionStore({ root: join(options.cwd, ".nifra/agent-sessions") }),
-})
+const rpc = await buildRpcServer(options)
 const rpcHandle = await rpc.start()
-const htmlPath = join(import.meta.dir, "../public/index.html")
-const scriptPath = join(import.meta.dir, "../public/app.js")
+
+// Assets ship from dist/public so the same origin serves the built browser bundle in dev and prod.
+// packageRoot resolves to the workbench package whether this module runs from src/ or the built dist/.
+const packageRoot = join(import.meta.dir, "..")
+const htmlPath = join(packageRoot, "dist/public/index.html")
+const scriptPath = join(packageRoot, "dist/public/app.js")
+
 const ui = Bun.serve({
   hostname: "127.0.0.1",
   port: options.uiPort,
@@ -60,6 +53,7 @@ const ui = Bun.serve({
 const workbenchUrl = `${ui.url.toString().replace(/\/$/, "")}/?rpc=${encodeURIComponent(rpcHandle.url)}&token=${encodeURIComponent(rpcHandle.token)}`
 console.log(`Nifra Workbench: ${workbenchUrl}`)
 console.log(`Project: ${options.cwd}`)
+console.log(`Backend: ${options.backend}`)
 
 const stop = async (code: number): Promise<void> => {
   ui.stop(true)
@@ -70,25 +64,96 @@ process.once("SIGINT", () => void stop(130))
 process.once("SIGTERM", () => void stop(143))
 await new Promise<void>(() => {})
 
+/** Assemble the RPC server for the selected backend. The replay backend needs no Pi process, so it
+ * boots CI and demo sessions from a fixed fixture without touching the filesystem or a model. */
+async function buildRpcServer(opts: WorkbenchOptions): Promise<CodingAgentRpcServer> {
+  const base: CodingAgentRpcServerOptions = {
+    backend: opts.backend === "replay" ? replayBackend() : piBackend(opts),
+    cwd: opts.cwd,
+    hostname: "127.0.0.1",
+    port: opts.rpcPort,
+  }
+  if (opts.backend === "replay") return new CodingAgentRpcServer(base)
+  const extensionRoots = await discoverExtensions(opts.cwd)
+  return new CodingAgentRpcServer({
+    ...base,
+    extensions: new ExtensionHost({
+      cwd: opts.cwd,
+      roots: extensionRoots,
+      validate: validateExtensionModule,
+    }),
+    ui: new UiExtensionHost(),
+    sessionStore: new FileSessionStore({ root: join(opts.cwd, ".nifra/agent-sessions") }),
+  })
+}
+
+function piBackend(opts: WorkbenchOptions): AgentBackend {
+  return new PiBackend({
+    command: opts.piCommand,
+    noSession: false,
+    appendSystemPrompt: NIFRA_AGENT_INSTRUCTIONS,
+    enableNifraTools: true,
+  })
+}
+
+function replayBackend(): AgentBackend {
+  const sessionId = "replay-demo"
+  const turnId = "turn-1"
+  const base = { version: 1, sessionId } as const
+  const events: readonly AgentEvent[] = [
+    { ...base, seq: 1, at: 1, type: "turn.started", turnId, prompt: "inspect the project" },
+    { ...base, seq: 2, at: 2, type: "assistant.delta", turnId, text: "Inspecting the project" },
+    {
+      ...base,
+      seq: 3,
+      at: 3,
+      type: "tool.started",
+      turnId,
+      callId: "call-1",
+      name: "read_file",
+      input: { path: "README.md" },
+    },
+    {
+      ...base,
+      seq: 4,
+      at: 4,
+      type: "tool.completed",
+      turnId,
+      callId: "call-1",
+      name: "read_file",
+      ok: true,
+    },
+    { ...base, seq: 5, at: 5, type: "assistant.message", turnId, text: "Done. No changes needed." },
+  ]
+  return new ReplayBackend({ events, delayMs: 10 })
+}
+
 function parseArgs(args: readonly string[]): WorkbenchOptions {
   let cwd = process.cwd()
   let uiPort = 0
   let rpcPort = 0
   let piCommand = "pi"
+  let backend: BackendMode = "pi"
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]
     if (arg === "--cwd") cwd = resolvePath(args[++index] ?? cwd)
     else if (arg === "--ui-port") uiPort = parsePort(args[++index], "--ui-port")
     else if (arg === "--rpc-port") rpcPort = parsePort(args[++index], "--rpc-port")
     else if (arg === "--pi") piCommand = args[++index] ?? piCommand
+    else if (arg === "--backend") backend = parseBackend(args[++index])
     else if (arg === "--help" || arg === "-h") {
       console.log(
-        "nifra-workbench [--cwd <dir>] [--ui-port <port>] [--rpc-port <port>] [--pi <command>]",
+        "nifra-workbench [--cwd <dir>] [--ui-port <port>] [--rpc-port <port>] [--pi <command>] [--backend pi|replay]",
       )
       process.exit(0)
     } else throw new Error(`unknown argument: ${arg}`)
   }
-  return { cwd, uiPort, rpcPort, piCommand }
+  return { cwd, uiPort, rpcPort, piCommand, backend }
+}
+
+function parseBackend(value: string | undefined): BackendMode {
+  if (value === "pi" || value === "replay") return value
+  throw new Error("--backend must be pi or replay")
 }
 
 function parsePort(value: string | undefined, name: string): number {

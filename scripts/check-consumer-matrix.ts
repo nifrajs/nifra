@@ -31,6 +31,7 @@ const BUN_STORE = join(ROOT, "node_modules", ".bun")
 const TSC = join(ROOT, "node_modules", "typescript", "bin", "tsc")
 const AGENT_PRODUCT_PACKAGES = [
   "@nifrajs/agent-protocol",
+  "@nifrajs/agent-app",
   "@nifrajs/pi",
   "@nifrajs/coding-agent",
   "@nifrajs/workbench",
@@ -67,6 +68,13 @@ const TARGETS: readonly Target[] = [
   {
     name: "@nifrajs/agent-protocol",
     entries: ["@nifrajs/agent-protocol"],
+    tsconfig: { lib: ["ES2022", "DOM", "DOM.Iterable"] },
+  },
+  {
+    // The presentation SDK is a browser seam: it uses the Web fetch/SSE globals a DOM lib supplies and
+    // resolves its only internal dependency (the protocol) transitively from its own declaration.
+    name: "@nifrajs/agent-app",
+    entries: ["@nifrajs/agent-app"],
     tsconfig: { lib: ["ES2022", "DOM", "DOM.Iterable"] },
   },
   {
@@ -175,6 +183,8 @@ const TARGETS: readonly Target[] = [
  * is proven by another gate / has no library consumer surface.
  */
 const SKIPS: Readonly<Record<string, string>> = Object.freeze({
+  "@nifrajs/a2a": "A2A protocol adapter; covered by package and conformance tests",
+  "@nifrajs/ag-ui": "AG-UI protocol adapter; covered by package and conformance tests",
   "@nifrajs/agent-telemetry":
     "agent-facing telemetry tooling; covered by package tests and corpus gates",
   "@nifrajs/agent": "agent runtime with provider-specific setup; covered by package tests",
@@ -189,6 +199,8 @@ const SKIPS: Readonly<Record<string, string>> = Object.freeze({
   "@nifrajs/devtools": "development tooling; covered by package tests",
   "@nifrajs/env": "environment helpers; covered by package tests",
   "@nifrajs/events": "event delivery abstractions; covered by certification profiles",
+  "@nifrajs/graphql":
+    "GraphQL-over-HTTP and graphql-ws subscription integration; covered by package tests",
   "@nifrajs/i18n": "i18n integration package; covered by package tests",
   "@nifrajs/image": "image helpers; covered by package tests",
   "@nifrajs/island-trigger": "browser build integration; covered by adapter typecheck and build",

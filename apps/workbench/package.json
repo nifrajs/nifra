@@ -5,13 +5,17 @@
   "description": "Lightweight local Workbench client for nifra-agent.",
   "type": "module",
   "scripts": {
-    "dev": "bun run src/server.ts",
+    "dev": "bun run build:browser && bun run src/server.ts",
     "start": "bun run src/server.ts",
-    "build": "bun build src/server.ts --target bun --outfile dist/server.js",
+    "build:browser": "bun build src/browser.ts --target browser --format esm --outfile dist/public/app.js && bun run scripts/build-assets.ts",
+    "build:server": "bun build src/server.ts --target bun --outfile dist/server.js",
+    "build": "bun run build:browser && bun run build:server",
     "desktop:dev": "cargo tauri dev --manifest-path src-tauri/Cargo.toml",
     "desktop:build": "cargo tauri build --manifest-path src-tauri/Cargo.toml"
   },
   "dependencies": {
+    "@nifrajs/agent-app": "workspace:*",
+    "@nifrajs/agent-protocol": "workspace:*",
     "@nifrajs/coding-agent": "workspace:*"
   }
 }

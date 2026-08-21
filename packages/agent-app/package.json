@@ -1,0 +1,49 @@
+{
+  "name": "@nifrajs/agent-app",
+  "version": "3.1.0",
+  "description": "Presentation-safe browser SDK for Nifra agent hosts: negotiated commands, ordered event streaming, and content-free view models over the agent protocol.",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "agent",
+    "sdk",
+    "browser",
+    "sse"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "dependencies": {
+    "@nifrajs/agent-protocol": "workspace:*"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/agent-app"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}
