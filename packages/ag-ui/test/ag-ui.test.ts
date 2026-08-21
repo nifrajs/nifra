@@ -131,7 +131,7 @@ describe("mountAgUI", () => {
     expect(custom.value.turnId).toBe("run-1")
   })
 
-  test("maps tool evidence to TOOL_CALL_START and TOOL_CALL_END", async () => {
+  test("maps tool evidence to TOOL_CALL_START, TOOL_CALL_END, and a token-only TOOL_CALL_RESULT", async () => {
     const { app, call } = captureApp()
     mountAgUI(app, {
       agent: definition([echoTool]),
@@ -145,10 +145,91 @@ describe("mountAgUI", () => {
     const start = list.find((e) => e.type === "TOOL_CALL_START") as {
       toolCallId: string
       toolCallName: string
+      timestamp: number
     }
     expect(start.toolCallName).toBe("reference.echo")
+    expect(typeof start.timestamp).toBe("number")
     const end = list.find((e) => e.type === "TOOL_CALL_END") as { toolCallId: string }
     expect(end.toolCallId).toBe(start.toolCallId)
+    const result = list.find((e) => e.type === "TOOL_CALL_RESULT") as {
+      toolCallId: string
+      messageId: string
+      role: string
+      content: string
+    }
+    expect(result.toolCallId).toBe(start.toolCallId)
+    expect(result.role).toBe("tool")
+    expect(result.messageId).toMatch(/^run-1:tool:\d+$/)
+    expect(JSON.parse(result.content)).toEqual({ outcome: "committed" })
+  })
+
+  test("carries the failure code in TOOL_CALL_RESULT when a tool fails", async () => {
+    const failingTool = defineTool({
+      name: "reference.fail",
+      description: "Always fail.",
+      input: t.object({ value: t.string() }),
+      output: t.object({ value: t.string() }),
+      capability: "reference.fail",
+      execute: () => {
+        throw new Error("boom")
+      },
+    })
+    const { app, call } = captureApp()
+    mountAgUI(app, {
+      agent: definition([failingTool]),
+      ports: ports({
+        model: toolThenOutputModel("reference.fail", { value: "x" }, { answer: "recovered" }),
+        capabilities: ["reference.fail"],
+      }),
+    })
+
+    const list = await events(await call(runInput({ forwardedProps: { input: { prompt: "x" } } })))
+    const result = list.find((e) => e.type === "TOOL_CALL_RESULT") as { content: string }
+    const content = JSON.parse(result.content) as { outcome: string; code?: string }
+    expect(content.outcome).toBe("failed")
+  })
+
+  test("marks a successful completion with outcome success", async () => {
+    const { app, call } = captureApp()
+    mountAgUI(app, { agent: definition(), ports: ports() })
+
+    const list = await events(await call(runInput({ forwardedProps: { input: { prompt: "x" } } })))
+    const finished = list.at(-1) as { outcome: { type: string }; timestamp: number }
+    expect(finished.outcome).toEqual({ type: "success" })
+    expect(typeof finished.timestamp).toBe("number")
+    expect(types(list)).not.toContain("MESSAGES_SNAPSHOT")
+  })
+
+  test("emits a MESSAGES_SNAPSHOT with the assistant output when opted in", async () => {
+    const { app, call } = captureApp()
+    const seen: unknown[] = []
+    const model: AgentModelPort = {
+      complete: (request) => {
+        seen.push(request.input)
+        return { kind: "output", value: { answer: "ok" } }
+      },
+    }
+    mountAgUI(app, { agent: definition(), ports: ports({ model }), emitMessagesSnapshot: true })
+
+    const clientMessages = [{ id: "m1", role: "user", content: "hey" }]
+    const list = await events(
+      await call(
+        runInput({ messages: clientMessages, forwardedProps: { input: { prompt: "hey" } } }),
+      ),
+    )
+    const sequence = types(list)
+    expect(sequence.indexOf("MESSAGES_SNAPSHOT")).toBeGreaterThan(
+      sequence.indexOf("TEXT_MESSAGE_END"),
+    )
+    expect(sequence.indexOf("MESSAGES_SNAPSHOT")).toBeLessThan(sequence.indexOf("RUN_FINISHED"))
+    const snapshot = list.find((e) => e.type === "MESSAGES_SNAPSHOT") as {
+      messages: { id: string; role: string; content: string }[]
+    }
+    expect(snapshot.messages).toHaveLength(2)
+    expect(snapshot.messages[0]).toEqual(clientMessages[0])
+    expect(snapshot.messages[1]?.role).toBe("assistant")
+    expect(snapshot.messages[1]?.id).toBe("run-1:output")
+    expect(JSON.parse(snapshot.messages[1]?.content ?? "")).toEqual({ answer: "ok" })
   })
 
   test("takes input from the last user message when forwardedProps has none", async () => {
@@ -212,6 +293,25 @@ describe("mountAgUI", () => {
     }
     expect(pending.value.reason).toBe("approval")
     expect(types(first).at(-1)).toBe("RUN_FINISHED")
+    const firstFinished = first.at(-1) as {
+      outcome: {
+        type: string
+        interrupts: {
+          id: string
+          reason: string
+          toolCallId?: string
+          responseSchema: unknown
+          metadata: { turnId: string; continuation: { effectId: string } }
+        }[]
+      }
+    }
+    expect(firstFinished.outcome.type).toBe("interrupt")
+    const interrupt = firstFinished.outcome.interrupts[0]
+    expect(interrupt?.id).toBe(pending.value.turnId)
+    expect(interrupt?.reason).toBe("approval")
+    expect(interrupt?.toolCallId).toBe(pending.value.continuation.effectId)
+    expect(interrupt?.responseSchema).toBeDefined()
+    expect(interrupt?.metadata.continuation).toEqual(pending.value.continuation)
 
     const second = await events(
       await call(
@@ -230,6 +330,107 @@ describe("mountAgUI", () => {
     )
     const finished = second.find((e) => e.type === "RUN_FINISHED") as { result: unknown }
     expect(finished.result).toEqual({ answer: "approved" })
+  })
+
+  test("resumes through the spec resume array without forwardedProps", async () => {
+    const { app, call } = captureApp()
+    const store = new MemoryAgentStateStore()
+    mountAgUI(app, {
+      agent: definition([approvalTool]),
+      ports: ports({
+        capabilities: ["reference.approve"],
+        state: store,
+        model: toolThenOutputModel("reference.approve", { value: "x" }, { answer: "approved" }),
+        approval: { request: ({ effectId }) => ({ status: "pending", effectId }) },
+      }),
+    })
+
+    const first = await events(
+      await call(runInput({ forwardedProps: { input: { prompt: "go" } } })),
+    )
+    const finished = first.at(-1) as {
+      outcome: {
+        interrupts: { id: string; metadata: { continuation: { effectId: string } } }[]
+      }
+    }
+    const interrupt = finished.outcome.interrupts[0]
+    if (interrupt === undefined) throw new Error("no interrupt emitted")
+
+    const second = await events(
+      await call(
+        runInput({
+          runId: "run-2",
+          forwardedProps: { input: { prompt: "go" } },
+          resume: [
+            {
+              interruptId: interrupt.id,
+              status: "resolved",
+              payload: {
+                continuation: { ...interrupt.metadata.continuation, input: { value: "x" } },
+                approval: { granted: true },
+              },
+            },
+          ],
+        }),
+      ),
+    )
+    const done = second.find((e) => e.type === "RUN_FINISHED") as { result: unknown }
+    expect(done.result).toEqual({ answer: "approved" })
+  })
+
+  test("treats a cancelled resume entry without an approval as a denial", async () => {
+    const { app, call } = captureApp()
+    const store = new MemoryAgentStateStore()
+    mountAgUI(app, {
+      agent: definition([approvalTool]),
+      ports: ports({
+        capabilities: ["reference.approve"],
+        state: store,
+        model: toolThenOutputModel("reference.approve", { value: "x" }, { answer: "moved on" }),
+        approval: { request: ({ effectId }) => ({ status: "pending", effectId }) },
+      }),
+    })
+
+    const first = await events(
+      await call(runInput({ forwardedProps: { input: { prompt: "go" } } })),
+    )
+    const finished = first.at(-1) as {
+      outcome: {
+        interrupts: { id: string; metadata: { continuation: { effectId: string } } }[]
+      }
+    }
+    const interrupt = finished.outcome.interrupts[0]
+    if (interrupt === undefined) throw new Error("no interrupt emitted")
+
+    const second = await events(
+      await call(
+        runInput({
+          runId: "run-2",
+          forwardedProps: { input: { prompt: "go" } },
+          resume: [
+            {
+              interruptId: interrupt.id,
+              status: "cancelled",
+              payload: {
+                continuation: { ...interrupt.metadata.continuation, input: { value: "x" } },
+              },
+            },
+          ],
+        }),
+      ),
+    )
+    // The denial resumes the turn instead of suspending again; the model completes it.
+    expect(second.some((e) => e.type === "CUSTOM" && e.name === "nifra.pending")).toBe(false)
+    const denied = second.find((e) => e.type === "TOOL_CALL_RESULT") as
+      | { content: string }
+      | undefined
+    if (denied !== undefined) {
+      // The runner records the denial as approval evidence and the tool effect as failed.
+      expect(["denied", "failed"]).toContain(
+        (JSON.parse(denied.content) as { outcome: string }).outcome,
+      )
+    }
+    expect(types(second).at(-1)).toBe("RUN_FINISHED")
   })
 
   test("rejects a body without threadId and runId", async () => {

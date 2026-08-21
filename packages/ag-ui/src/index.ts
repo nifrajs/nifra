@@ -12,17 +12,26 @@
  *   field is one AG-UI event:
  *   - `RUN_STARTED`, then `CUSTOM { name: "nifra.turn", value: { turnId } }` announcing the
  *     runner's turn id.
- *   - Step evidence maps to `TOOL_CALL_START`/`TOOL_CALL_END` for tool effects and
- *     `STEP_STARTED`/`STEP_FINISHED` for everything else. The runner's model port returns complete
- *     responses, so text arrives as a single `TEXT_MESSAGE_START`/`_CONTENT`/`_END` sequence, not
- *     token deltas.
- *   - A completed run ends `RUN_FINISHED` with `result`; a failed one ends `RUN_ERROR`.
+ *   - Step evidence maps to `TOOL_CALL_START`/`TOOL_CALL_END` for tool effects, followed by a
+ *     `TOOL_CALL_RESULT` whose `content` is the token-only outcome (`{ outcome, code? }` - the
+ *     runtime never carries tool payloads), and `STEP_STARTED`/`STEP_FINISHED` for everything
+ *     else. The runner's model port returns complete responses, so text arrives as a single
+ *     `TEXT_MESSAGE_START`/`_CONTENT`/`_END` sequence, not token deltas. Evidence-derived events
+ *     carry the evidence `timestamp`.
+ *   - A completed run ends `RUN_FINISHED` with `result` and `outcome: { type: "success" }`, after
+ *     an optional `MESSAGES_SNAPSHOT` (see `emitMessagesSnapshot`); a failed one ends `RUN_ERROR`.
  *   - A suspended run (approval, budget, model retry, max turns) emits
  *     `CUSTOM { name: "nifra.pending", value: { turnId, reason, continuation } }` and then
- *     `RUN_FINISHED`. Resume by sending the continuation back in
- *     `forwardedProps.resume` (`{ continuation, approval? }`) with `forwardedProps.turnId`; the
- *     runtime keeps state token-only, so a suspended tool's input must be replayed in
- *     `continuation.input`.
+ *     `RUN_FINISHED` with `outcome: { type: "interrupt", interrupts: [{ id: turnId, reason,
+ *     toolCallId?, responseSchema, metadata: { turnId, continuation } }] }`. Resume with the
+ *     spec `resume` array - `[{ interruptId: turnId, status, payload: { continuation,
+ *     approval? } }]` where `payload.continuation` echoes `metadata.continuation` (the runtime is
+ *     stateless, so the client must send it back) - or with the legacy
+ *     `forwardedProps.resume` (`{ continuation, approval? }`) plus `forwardedProps.turnId`. A
+ *     `status: "cancelled"` entry without an explicit approval resumes as a denial. The runtime
+ *     keeps state token-only, so a suspended tool's input must be replayed in
+ *     `continuation.input`. A resume that fails validation is ignored and the POST starts a
+ *     fresh run.
  * - Agent input is `forwardedProps.input` when present, otherwise the content of the last
  *   `role: "user"` message.
  * - With an `evidenceLog` configured, evidence-derived frames carry SSE `id: <seq>` and a dropped
@@ -100,6 +109,13 @@ export interface MountAgUIOptions<
    * (`createMemoryAgentEvidenceLog`) is single-process; a durable log is an adapter concern.
    */
   readonly evidenceLog?: AgentEvidenceLog
+  /**
+   * Emit a `MESSAGES_SNAPSHOT` (the request's `messages` plus the assistant output message)
+   * before `RUN_FINISHED` on a successful completion. Default `false`: the snapshot echoes
+   * client-sent message payloads, and terminal events are persisted to the evidence log when one
+   * is configured - leave it off unless the client relies on an authoritative snapshot.
+   */
+  readonly emitMessagesSnapshot?: boolean
 }
 
 /** Mount a single agent as an AG-UI `POST {path}` SSE endpoint. */
@@ -140,10 +156,13 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
   const forwardedTurnId = typeof forwarded.turnId === "string" ? forwarded.turnId : undefined
   if (forwardedTurnId !== undefined && !TURN_ID_PATTERN.test(forwardedTurnId))
     return jsonResponse(400, { error: "invalid_turn_id" })
-  const turnId = forwardedTurnId ?? (TURN_ID_PATTERN.test(runId) ? runId : crypto.randomUUID())
+  // Legacy resume names the turn in forwardedProps; spec resume names it via the interrupt id.
+  const entry = parseResumeEntry(body.resume)
+  const turnId =
+    forwardedTurnId ?? entry?.turnId ?? (TURN_ID_PATTERN.test(runId) ? runId : crypto.randomUUID())
 
   const input = Object.hasOwn(forwarded, "input") ? forwarded.input : lastUserMessage(body.messages)
-  const resume = parseResume(forwarded.resume)
+  const resume = parseResume(forwarded.resume) ?? entry?.resume
   const log = options.evidenceLog
   const identity: RunIdentity = { threadId, runId, turnId }
 
@@ -172,7 +191,8 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
       state: createAgentState(turnId),
     })
   }
-  return sseResponse(identity, start, log)
+  const snapshotMessages = options.emitMessagesSnapshot === true ? body.messages : undefined
+  return sseResponse(identity, start, log, snapshotMessages)
 }
 
 interface RunIdentity {
@@ -185,6 +205,7 @@ function sseResponse(
   identity: RunIdentity,
   start: (telemetry: AgentPorts["telemetry"]) => Promise<AgentRunResult<unknown>>,
   log: AgentEvidenceLog | undefined,
+  snapshotMessages: unknown,
 ): Response {
   const stream = createAgentEvidenceStream()
   // `id:` frames are only meaningful when a log can serve the reconnect they invite.
@@ -204,13 +225,13 @@ function sseResponse(
       send({ type: "RUN_STARTED", threadId: identity.threadId, runId: identity.runId })
       send({ type: "CUSTOM", name: "nifra.turn", value: { turnId: identity.turnId } })
       try {
-        for await (const evidence of stream) sendEvidence(send, evidence, withIds)
-        const events = terminalEvents(identity, await run)
+        for await (const evidence of stream) sendEvidence(send, evidence, identity.turnId, withIds)
+        const events = terminalEvents(identity, await run, snapshotMessages)
         // Store the terminal events before delivering them, so a client that misses them can replay.
         await finishQuietly(log, identity.turnId, { events })
         for (const event of events) send(event)
       } catch {
-        const events = [{ type: "RUN_ERROR", message: "run_failed" }]
+        const events = [{ type: "RUN_ERROR", message: "run_failed", timestamp: Date.now() }]
         await finishQuietly(log, identity.turnId, { events })
         for (const event of events) send(event)
       } finally {
@@ -228,9 +249,10 @@ function sseReplayResponse(identity: RunIdentity, replay: AgentEvidenceReplay): 
       send({ type: "RUN_STARTED", threadId: identity.threadId, runId: identity.runId })
       send({ type: "CUSTOM", name: "nifra.turn", value: { turnId: identity.turnId } })
       try {
-        for (const evidence of replay.evidence) sendEvidence(send, evidence, true)
+        for (const evidence of replay.evidence) sendEvidence(send, evidence, identity.turnId, true)
         if (replay.live !== undefined)
-          for await (const evidence of replay.live) sendEvidence(send, evidence, true)
+          for await (const evidence of replay.live)
+            sendEvidence(send, evidence, identity.turnId, true)
         const events = asTerminalEvents(await replay.result)
         if (events === undefined) send({ type: "RUN_ERROR", message: "run_failed" })
         else for (const event of events) send(event)
@@ -259,8 +281,13 @@ function sseSender(controller: ReadableStreamDefaultController<Uint8Array>): Sse
  * `Last-Event-ID` points at the last frame received, so a partially delivered multi-event item
  * (a TOOL_CALL_START without its END) is replayed whole on reconnect instead of losing its tail.
  */
-function sendEvidence(send: SseSend, evidence: AgentStepEvidence, withIds: boolean): void {
-  const events = evidenceEvents(evidence)
+function sendEvidence(
+  send: SseSend,
+  evidence: AgentStepEvidence,
+  turnId: string,
+  withIds: boolean,
+): void {
+  const events = evidenceEvents(evidence, turnId)
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index] as Record<string, unknown>
     if (withIds && index === events.length - 1) send(event, evidence.seq)
@@ -279,39 +306,99 @@ function sseHeaders(body: ReadableStream<Uint8Array>): Response {
   })
 }
 
+/** JSON Schema for the payload a spec `resume` entry must carry back. */
+const RESUME_RESPONSE_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  required: ["continuation"],
+  properties: {
+    continuation: {
+      type: "object",
+      description: "Echo of the interrupt's metadata.continuation, with the tool input replayed.",
+    },
+    approval: {
+      type: "object",
+      properties: { granted: { type: "boolean" }, reason: { type: "string" } },
+    },
+  },
+}
+
 /** The events that close a run, derived once so live delivery and replay stay identical. */
 function terminalEvents(
   identity: RunIdentity,
   result: AgentRunResult<unknown>,
+  snapshotMessages: unknown,
 ): readonly Record<string, unknown>[] {
+  const timestamp = Date.now()
   if (result.status === "completed") {
-    if (result.error !== undefined) return [{ type: "RUN_ERROR", message: result.error.code }]
+    if (result.error !== undefined)
+      return [{ type: "RUN_ERROR", message: result.error.code, timestamp }]
     const messageId = `${identity.turnId}:output`
     const delta = typeof result.output === "string" ? result.output : JSON.stringify(result.output)
     return [
-      { type: "TEXT_MESSAGE_START", messageId, role: "assistant" },
-      { type: "TEXT_MESSAGE_CONTENT", messageId, delta },
-      { type: "TEXT_MESSAGE_END", messageId },
+      { type: "TEXT_MESSAGE_START", messageId, role: "assistant", timestamp },
+      { type: "TEXT_MESSAGE_CONTENT", messageId, delta, timestamp },
+      { type: "TEXT_MESSAGE_END", messageId, timestamp },
+      ...messagesSnapshot(snapshotMessages, messageId, delta, timestamp),
       {
         type: "RUN_FINISHED",
         threadId: identity.threadId,
         runId: identity.runId,
         result: result.output,
+        outcome: { type: "success" },
+        timestamp,
       },
     ]
   }
-  const finished = { type: "RUN_FINISHED", threadId: identity.threadId, runId: identity.runId }
   if (result.status === "suspended") {
     return [
       {
         type: "CUSTOM",
         name: "nifra.pending",
         value: { turnId: identity.turnId, reason: result.reason, continuation: result.pending },
+        timestamp,
       },
-      finished,
+      {
+        type: "RUN_FINISHED",
+        threadId: identity.threadId,
+        runId: identity.runId,
+        outcome: {
+          type: "interrupt",
+          interrupts: [
+            {
+              id: identity.turnId,
+              reason: result.reason,
+              ...(result.pending.tool === undefined ? {} : { toolCallId: result.pending.effectId }),
+              responseSchema: RESUME_RESPONSE_SCHEMA,
+              metadata: { turnId: identity.turnId, continuation: result.pending },
+            },
+          ],
+        },
+        timestamp,
+      },
     ]
   }
-  return [finished]
+  return [{ type: "RUN_FINISHED", threadId: identity.threadId, runId: identity.runId, timestamp }]
+}
+
+/**
+ * The optional authoritative message list: the client-sent messages echoed back with the
+ * assistant output appended. Emitted only when `emitMessagesSnapshot` is on.
+ */
+function messagesSnapshot(
+  messages: unknown,
+  messageId: string,
+  content: string,
+  timestamp: number,
+): readonly Record<string, unknown>[] {
+  if (messages === undefined) return []
+  const echoed = Array.isArray(messages) ? messages : []
+  return [
+    {
+      type: "MESSAGES_SNAPSHOT",
+      messages: [...echoed, { id: messageId, role: "assistant", content }],
+      timestamp,
+    },
+  ]
 }
 
 /** Parse the stored terminal value - a durable log adapter may hand back anything. */
@@ -342,18 +429,42 @@ async function finishQuietly(
 }
 
 /** Map one step-evidence item onto AG-UI events. Evidence is token-only by design. */
-function evidenceEvents(evidence: AgentStepEvidence): readonly Record<string, unknown>[] {
+function evidenceEvents(
+  evidence: AgentStepEvidence,
+  turnId: string,
+): readonly Record<string, unknown>[] {
+  const timestamp = evidence.at
   if (evidence.kind === "tool") {
     const toolCallId = evidence.effectId ?? `${evidence.kind}:${evidence.seq}`
-    const start = { type: "TOOL_CALL_START", toolCallId, toolCallName: evidence.name ?? "tool" }
+    const start = {
+      type: "TOOL_CALL_START",
+      toolCallId,
+      toolCallName: evidence.name ?? "tool",
+      timestamp,
+    }
     // The runner records one terminal evidence item per tool effect (committed/failed/denied),
-    // so a single item expands to the START/END pair AG-UI clients expect.
+    // so a single item expands to the START/END/RESULT triple AG-UI clients expect. The RESULT
+    // content is the token-only outcome - the runtime never carries tool payloads.
     if (evidence.outcome === "started") return [start]
-    return [start, { type: "TOOL_CALL_END", toolCallId }]
+    return [
+      start,
+      { type: "TOOL_CALL_END", toolCallId, timestamp },
+      {
+        type: "TOOL_CALL_RESULT",
+        messageId: `${turnId}:tool:${evidence.seq}`,
+        toolCallId,
+        role: "tool",
+        content: JSON.stringify({
+          outcome: evidence.outcome,
+          ...(evidence.code === undefined ? {} : { code: evidence.code }),
+        }),
+        timestamp,
+      },
+    ]
   }
   const stepName = evidence.name === undefined ? evidence.kind : `${evidence.kind}:${evidence.name}`
-  if (evidence.outcome === "started") return [{ type: "STEP_STARTED", stepName }]
-  return [{ type: "STEP_FINISHED", stepName }]
+  if (evidence.outcome === "started") return [{ type: "STEP_STARTED", stepName, timestamp }]
+  return [{ type: "STEP_FINISHED", stepName, timestamp }]
 }
 
 function lastUserMessage(messages: unknown): unknown {
@@ -392,6 +503,32 @@ function parseResume(raw: unknown): AgentTurnInput["resume"] | undefined {
         }
       : {}),
   }
+}
+
+/**
+ * Parse the spec `RunAgentInput.resume` array. The runtime holds no interrupt registry - the
+ * interrupt id IS the turn id, and the entry's `payload` must echo the interrupt's
+ * `metadata.continuation`. A single pending suspension means a single entry; extras are ignored.
+ */
+function parseResumeEntry(
+  raw: unknown,
+): { readonly turnId: string; readonly resume: AgentTurnInput["resume"] } | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined
+  const entry = asRecord(raw[0])
+  if (entry === undefined) return undefined
+  const interruptId = entry.interruptId
+  if (typeof interruptId !== "string" || !TURN_ID_PATTERN.test(interruptId)) return undefined
+  const status = entry.status
+  if (status !== "resolved" && status !== "cancelled") return undefined
+  const payload = asRecord(entry.payload) ?? {}
+  const approval = asRecord(payload.approval)
+  const resume = parseResume({
+    continuation: payload.continuation,
+    // A cancelled entry without an explicit approval decision resumes as a denial.
+    approval: approval ?? (status === "cancelled" ? { granted: false } : undefined),
+  })
+  if (resume === undefined) return undefined
+  return { turnId: interruptId, resume }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
