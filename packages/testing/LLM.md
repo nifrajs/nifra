@@ -16,20 +16,20 @@ Contract-derived adversarial tests, runtime-matrix response conformance, and coo
 
 - **assertAdapterCertification** _(function)_ - `assertAdapterCertification: (report: AdapterCertificationReport) => void` · from `@nifrajs/testing`
 - **assertAdversarialContract** _(function)_ - `assertAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>` · from `@nifrajs/testing`
+- **assertAgentEvalBaseline** _(function)_ - `assertAgentEvalBaseline: (baseline: AgentEvalReport, current: AgentEvalReport, options?: BaselineOptions) => Promise<BaselineComparison>` · from `@nifrajs/testing`
 - **assertIncidentReplays** _(function)_ - `assertIncidentReplays: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<void>` · from `@nifrajs/testing`
 - **assertTrajectoryInvariants** _(function)_ - `assertTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => void` · from `@nifrajs/testing`
 - **cacheStoreCertificationProfile** _(function)_ - `cacheStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableCacheStore>` · from `@nifrajs/testing`
 - **captureIncident** _(function)_ - `captureIncident: (request: Request | CapturedRequestInput, response: Response | { status: number; body?: unknown; }, options?: CaptureIncid…` · from `@nifrajs/testing`
 - **certifyAdapter** _(function)_ - `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly createAda…` · from `@nifrajs/testing`
 - **checkTrajectoryInvariants** _(function)_ - `checkTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => readonly TrajectoryInvariantResult[]` · from `@nifrajs/testing`
+- **compareAgentEvalBaseline** _(function)_ - `compareAgentEvalBaseline: (baseline: AgentEvalReport, current: AgentEvalReport, options?: BaselineOptions) => Promise<BaselineComparison>` · from `@nifrajs/testing`
 - **cookieJar** _(function)_ - `cookieJar: () => CookieJar` · from `@nifrajs/testing`
 - **createFailureLab** _(function)_ - `createFailureLab: (options: FailureLabOptions) => FailureLab` · from `@nifrajs/testing`
 - **createReferenceContractLabHandler** _(function)_ - `createReferenceContractLabHandler: () => ContractLabHandler` · from `@nifrajs/testing`
 - **createTrajectoryTranscript** _(function)_ - `createTrajectoryTranscript: (transcript: AgentTranscript, options?: CreateTrajectoryTranscriptOptions) => Promise<TrajectoryTranscript>` · from `@nifrajs/testing`
-- **defineCertificationProfile** _(function)_ - `defineCertificationProfile: <Adapter>(profile: AdapterCertificationProfile<Adapter>) => AdapterCertificationProfile<Adapter>` · from `@nifrajs/testing`
-- **defineFaultProfile** _(function)_ - `defineFaultProfile: (profile: FaultProfile) => FaultProfile` · from `@nifrajs/testing`
 
-_…and 102 more - see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
+_…and 120 more - see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
 
 ## Footguns
 

@@ -30,6 +30,7 @@
     "bench:agent:reload": "bun run scripts/bench-extension-reload.ts",
     "demo:agent-extension": "bun run scripts/demo-self-extension.ts",
     "bench:pi": "bun run scripts/bench-pi-adapter.ts",
+    "bench:agent-platform": "bun run scripts/bench-agent-platform.ts",
     "workbench:dev": "bun run --filter '@nifrajs/workbench' dev",
     "check:deno-tarball": "bun run scripts/check-deno-tarball.ts --require-deno",
     "check:consumers": "bun run scripts/check-consumer-matrix.ts",

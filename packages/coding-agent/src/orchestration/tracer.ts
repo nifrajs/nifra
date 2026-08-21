@@ -11,6 +11,7 @@ import type {
   ArtifactRef,
   NodeEffectKey,
   RunEvidence,
+  RunNode,
   RunNodeKind,
   RunPlan,
 } from "@nifrajs/agent-protocol"
@@ -70,11 +71,26 @@ export async function runTrace(
   const idempotent = new Map<string, boolean>()
   const kindById = new Map<string, RunNodeKind>()
   const nodeIds = new Set<string>()
-  for (const node of plan.nodes) {
+  const walk = (node: RunNode): void => {
     nodeIds.add(node.id)
     kindById.set(node.id, node.kind)
-    idempotent.set(node.id, options.catalog.get(node.step)?.selectEffect !== undefined)
+    const step = "step" in node ? options.catalog.get(node.step) : undefined
+    idempotent.set(node.id, step?.selectEffect !== undefined)
+    switch (node.kind) {
+      case "sequence":
+      case "parallel":
+        for (const child of node.children) walk(child)
+        break
+      case "retry":
+        walk(node.child)
+        break
+      case "branch":
+        walk(node.then)
+        if (node.otherwise !== undefined) walk(node.otherwise)
+        break
+    }
   }
+  for (const node of plan.nodes) walk(node)
 
   const step = compileRunPlan(plan, {
     catalog: options.catalog,

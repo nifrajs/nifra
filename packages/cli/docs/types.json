@@ -312,6 +312,38 @@
     "signature": "export interface AgentError {\n    readonly code: string;\n    readonly message: string;\n    readonly details?: unknown;\n}"
   },
   {
+    "name": "AgentEvalCase",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface AgentEvalCase {\n    readonly id: string;\n    evaluate(): readonly RubricVerdict[] | PromiseLike<readonly RubricVerdict[]>;\n}",
+    "doc": "/** One eval case. `evaluate` is a deterministic producer of rubric verdicts - evidence, not a run. */"
+  },
+  {
+    "name": "AgentEvalRegressionError",
+    "kind": "class",
+    "package": "@nifrajs/testing",
+    "signature": "export declare class AgentEvalRegressionError extends Error {\n    readonly comparison: BaselineComparison;\n    constructor(comparison: BaselineComparison);\n}",
+    "doc": "/** Thrown by {@link assertAgentEvalBaseline} when a comparison contains a failing code. */"
+  },
+  {
+    "name": "AgentEvalReport",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface AgentEvalReport {\n    readonly version: 1;\n    readonly suiteId: string;\n    readonly suiteVersion: number;\n    readonly rubricShapes: readonly RubricShape[];\n    readonly cases: readonly CaseResult[];\n    readonly digest: string;\n}"
+  },
+  {
+    "name": "AgentEvalSuite",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface AgentEvalSuite {\n    readonly id: string;\n    readonly version: number;\n    readonly caseIds: readonly string[];\n    readonly rubricIds: readonly string[];\n    run(): Promise<AgentEvalReport>;\n}"
+  },
+  {
+    "name": "AgentEvalSuiteSpec",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface AgentEvalSuiteSpec {\n    readonly id: string;\n    readonly version?: number;\n    readonly rubrics: readonly RubricSpec[];\n    readonly cases: readonly AgentEvalCase[];\n}"
+  },
+  {
     "name": "AgentEvent",
     "kind": "type",
     "package": "@nifrajs/agent-protocol",
@@ -1003,6 +1035,13 @@
     "doc": "/** Run the contract laboratory and throw an {@link AdversarialContractError} unless it is fully green. */"
   },
   {
+    "name": "assertAgentEvalBaseline",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function assertAgentEvalBaseline(baseline: AgentEvalReport, current: AgentEvalReport, options?: BaselineOptions): Promise<BaselineComparison>;",
+    "doc": "/** Assert no failing comparison. Throws {@link AgentEvalRegressionError} with the stable ids. */"
+  },
+  {
     "name": "assertBudgetRemaining",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -1368,6 +1407,18 @@
     "package": "@nifrajs/content",
     "signature": "export interface BakedIndexBucket {\n    readonly key: string;\n    readonly entryIndexes: ReadonlyArray<number>;\n}",
     "doc": "/** The JSON-safe lookup bucket stored in a baked index. */"
+  },
+  {
+    "name": "BaselineComparison",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface BaselineComparison {\n    readonly suiteId: string;\n    readonly comparisons: readonly CaseComparison[];\n    readonly regressions: readonly string[];\n    readonly digest: string;\n}"
+  },
+  {
+    "name": "BaselineOptions",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface BaselineOptions {\n    readonly tolerances?: readonly ScoreTolerance[];\n    /** Comparison codes that fail the assertion. Default `[\"regressed\"]`. */\n    readonly failOn?: readonly ComparisonCode[];\n}"
   },
   {
     "name": "basicAuth",
@@ -2430,11 +2481,30 @@
     "signature": "export interface CaptureIncidentOptions {\n    readonly id?: string;\n    readonly capturedAt?: string;\n    /** Header names to keep on the capsule (lowercased match). Default: only `content-type`. */\n    readonly headerAllowList?: readonly string[];\n    readonly note?: string;\n}"
   },
   {
+    "name": "CaseComparison",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface CaseComparison {\n    readonly caseId: string;\n    readonly rubricId: string;\n    readonly code: ComparisonCode;\n    readonly regressionId: string;\n    readonly baselineScore?: number;\n    readonly currentScore?: number;\n}"
+  },
+  {
+    "name": "CaseResult",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface CaseResult {\n    readonly caseId: string;\n    readonly verdicts: readonly RubricVerdict[];\n    readonly digest: string;\n}"
+  },
+  {
+    "name": "CatalogError",
+    "kind": "class",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare class CatalogError extends Error {\n    readonly reason: string;\n    constructor(reason: string);\n}",
+    "doc": "/** Thrown on a catalog construction fault: a key collision across merged catalogs. */"
+  },
+  {
     "name": "CatalogStep",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface CatalogStep {\n    readonly kind: RunNodeKind;\n    run(context: StepRunContext): unknown | PromiseLike<unknown>;\n    selectEffect?(context: StepEffectContext): Uint8Array;\n}",
-    "doc": "/**\n * One catalog handler. `kind` must match the plan node's kind at compile time. `selectEffect`, when\n * present, marks the step idempotent and projects its identity-bearing input into content-free bytes\n * for {@link deriveNodeEffectKey}. It MUST be pure and read-only.\n */"
+    "signature": "export interface CatalogStep {\n    readonly kind: RunNodeKind;\n    /** Positive step version. Defaults to 1 when omitted. A node may pin an exact version. */\n    readonly version?: number;\n    /** Capabilities this step needs. The host's allow-list is the ceiling; a superset fails closed. */\n    readonly capabilities?: readonly string[];\n    run?(context: StepRunContext): unknown | PromiseLike<unknown>;\n    selectEffect?(context: StepEffectContext): Uint8Array;\n    /** `subagent` kind: the bounded child executor and the content-free spec projection. */\n    readonly executor?: SubagentExecutor;\n    spec?(context: StepRunContext): SubagentSpec | PromiseLike<SubagentSpec>;\n    /** `branch` kind: a content-free predicate selecting `then` or `otherwise`. */\n    when?(context: StepRunContext): boolean | PromiseLike<boolean>;\n}",
+    "doc": "/**\n * One catalog handler. `kind` must match the plan node's kind at compile time.\n *\n * - Leaf kinds `task`/`verify`/`approve`/`checkpoint`/`handoff` implement {@link CatalogStep.run}.\n * - `subagent` implements {@link CatalogStep.spec} and supplies an {@link CatalogStep.executor};\n *   the compiler drives it through a {@link BoundedSubagentRunner} (never a private copy).\n * - `branch` implements {@link CatalogStep.when}, a content-free predicate.\n *\n * `selectEffect`, when present, marks the step idempotent and projects its identity-bearing input\n * into content-free bytes for `deriveNodeEffectKey`. It MUST be pure and read-only.\n */"
   },
   {
     "name": "CAUSALITY_EXECUTION_HEADER",
@@ -3057,6 +3127,13 @@
     "signature": "export interface CompactionReport {\n    readonly before: number;\n    readonly after: number;\n    readonly removed: number;\n    readonly reason: \"manual\" | \"threshold\" | \"overflow\" | \"workflow\";\n}"
   },
   {
+    "name": "compareAgentEvalBaseline",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function compareAgentEvalBaseline(baseline: AgentEvalReport, current: AgentEvalReport, options?: BaselineOptions): Promise<BaselineComparison>;",
+    "doc": "/** Compare a fresh report against a baseline report. Every (case, rubric) gets a stable id. */"
+  },
+  {
     "name": "compareMixedPartsSpecificity",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -3069,6 +3146,12 @@
     "package": "@nifrajs/core",
     "signature": "export declare function compareRoutePatternSpecificity(left: CompiledRoutePattern, right: CompiledRoutePattern): number;",
     "doc": "/** Core precedence: static > mixed > param > wildcard at the first differing segment, independent of\n * registration order. */"
+  },
+  {
+    "name": "ComparisonCode",
+    "kind": "type",
+    "package": "@nifrajs/testing",
+    "signature": "export type ComparisonCode = \"equal\" | \"improved\" | \"tolerated\" | \"regressed\" | \"missing\" | \"incomparable\";"
   },
   {
     "name": "CompatibleReplayFile",
@@ -3087,14 +3170,14 @@
     "name": "CompileError",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
-    "signature": "export declare class CompileError extends Error {\n    constructor(reason: string);\n}",
-    "doc": "/** Thrown when a plan cannot be lowered: unknown step, kind mismatch, or a dependency cycle. */"
+    "signature": "export declare class CompileError extends Error {\n    readonly code: string;\n    constructor(reason: string, code: string);\n}",
+    "doc": "/** Thrown when a plan cannot be lowered. `code` is a stable evidence code. */"
   },
   {
     "name": "CompileOptions",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface CompileOptions {\n    readonly catalog: StepCatalog;\n    readonly planDigest: string;\n    readonly artifactPort: ArtifactPort;\n    /** Called once a node's content-free effect key is derived (idempotent steps only). */\n    onNodeEffect?(nodeId: string, key: NodeEffectKey): void;\n    /** Called for each artifact ref a node produces through its port. */\n    collectArtifact?(nodeId: string, ref: ArtifactRef): void;\n}",
+    "signature": "export interface CompileOptions {\n    readonly catalog: StepCatalog;\n    readonly planDigest: string;\n    readonly artifactPort: ArtifactPort;\n    readonly limits?: OrchestrationLimits;\n    /** Called once a node's content-free effect key is derived (idempotent steps only). */\n    onNodeEffect?(nodeId: string, key: NodeEffectKey): void;\n    /** Called for each artifact ref a node produces through its port. */\n    collectArtifact?(nodeId: string, ref: ArtifactRef): void;\n}",
     "doc": "/** Wiring the compiler injects into every node closure. */"
   },
   {
@@ -3110,6 +3193,13 @@
     "package": "@nifrajs/coding-agent",
     "signature": "export declare function compileRunPlan(source: RunPlan | unknown, options: CompileOptions): WorkflowStep;",
     "doc": "/**\n * Compile `source` (a RunPlan or its serialized form) into a single WorkflowStep. The input is\n * always re-parsed through {@link parseRunPlan}, so a malformed or content-bearing plan fails closed.\n */"
+  },
+  {
+    "name": "compileRunPlanLayers",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function compileRunPlanLayers(source: RunPlan | unknown, options: CompileOptions): readonly WorkflowStep[];",
+    "doc": "/**\n * Compile `source` into one {@link WorkflowStep} per top-level DAG layer, preserving the same\n * ceilings and lowering as {@link compileRunPlan}. A driver can run the layers in order and hold at\n * a layer boundary (a safe-pause point) without a second scheduler: each layer is still executed by\n * the kernel {@link WorkflowRunner}, and the layer split is the very partition compileRunPlan folds\n * into a single `sequence`.\n */"
   },
   {
     "name": "compileVue",
@@ -4379,6 +4469,13 @@
     "doc": "/**\n * A loader value marked to stream in after the shell. The component consumes it with the adapter's\n * `<Await resolve={...}>`; until the promise settles the shell shows the `<Suspense>` fallback.\n * `id` is assigned by the server at serialization time - the streamed resolve script keys off it.\n */"
   },
   {
+    "name": "defineAgentEvalSuite",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function defineAgentEvalSuite(spec: AgentEvalSuiteSpec): AgentEvalSuite;",
+    "doc": "/** Declare a bounded, deterministic eval suite. Duplicate case or rubric ids fail closed. */"
+  },
+  {
     "name": "defineAssuranceConfig",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -5450,6 +5547,20 @@
     "signature": "export interface EvidenceBundle {\n    readonly version: 1;\n    readonly graphDigest: string;\n    readonly changedFiles: readonly string[];\n    readonly targetLevel: number;\n    readonly plan: ProofPlan;\n    readonly proofs: readonly ProofEvidence[];\n    readonly stop: {\n        readonly done: boolean;\n        readonly missing: readonly string[];\n        readonly next?: ProofStep;\n    };\n}"
   },
   {
+    "name": "EvidenceCounters",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface EvidenceCounters {\n    readonly total: number;\n    readonly started: number;\n    readonly completed: number;\n    readonly failed: number;\n}",
+    "doc": "/** Terminal tally of a run's evidence stream. Counts only; no payloads. */"
+  },
+  {
+    "name": "EvidenceStore",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface EvidenceStore {\n    /** Parse, tally, and persist one record. Throws on a payload-bearing or oversized record. */\n    append(record: RunEvidence): Promise<void>;\n    /** Total records appended (not the live-window size). */\n    readonly count: number;\n    /** The most recent records, oldest first, capped at the configured window. */\n    live(): readonly RunEvidence[];\n    counters(): EvidenceCounters;\n    /** Distinct node ids that reached `completed`, sorted for determinism. */\n    completedNodeIds(): readonly string[];\n    /** Every artifact ref referenced by the stream, in append order. */\n    artifacts(): readonly ArtifactRef[];\n    /** Order-independent SHA-256 of the run's outcome multiset (parallel order cannot change it). */\n    digest(): Promise<string>;\n}",
+    "doc": "/** A bounded, evidence-only run store. Append is fail-closed; reads are content-free aggregates. */"
+  },
+  {
     "name": "Example",
     "kind": "interface",
     "package": "@nifrajs/cli",
@@ -5829,6 +5940,19 @@
     "package": "@nifrajs/web",
     "signature": "export type FieldProps = Record<string, unknown>;",
     "doc": "/** Extra attributes merged into the returned input props (id, type, defaultValue, placeholder, …). */"
+  },
+  {
+    "name": "FileEvidenceStore",
+    "kind": "class",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare class FileEvidenceStore implements EvidenceStore {\n    private readonly accumulator;\n    private readonly path;\n    constructor(options: FileEvidenceStoreOptions);\n    append(record: RunEvidence): Promise<void>;\n    get count(): number;\n    live(): readonly RunEvidence[];\n    counters(): EvidenceCounters;\n    completedNodeIds(): readonly string[];\n    artifacts(): readonly ArtifactRef[];\n    digest(): Promise<string>;\n}",
+    "doc": "/**\n * A bounded store that also appends each parsed record as one canonical-JSON line to a file, in\n * deterministic append order. The record is normalized (and so a forbidden-content record is\n * rejected) BEFORE the line is written, so the file never receives a payload. The append uses the\n * `a` flag, so each record is one O_APPEND write.\n */"
+  },
+  {
+    "name": "FileEvidenceStoreOptions",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface FileEvidenceStoreOptions {\n    /** Append-only newline-delimited file. One canonical JSON record per line, in append order. */\n    readonly path: string;\n    readonly maxLive?: number;\n}"
   },
   {
     "name": "filePathToPattern",
@@ -8441,6 +8565,19 @@
     "doc": "/** Deterministic reference backend for tests and adapter conformance; not for production. */"
   },
   {
+    "name": "MemoryEvidenceStore",
+    "kind": "class",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare class MemoryEvidenceStore implements EvidenceStore {\n    private readonly accumulator;\n    constructor(options?: MemoryEvidenceStoreOptions);\n    append(record: RunEvidence): Promise<void>;\n    get count(): number;\n    live(): readonly RunEvidence[];\n    counters(): EvidenceCounters;\n    completedNodeIds(): readonly string[];\n    artifacts(): readonly ArtifactRef[];\n    digest(): Promise<string>;\n}",
+    "doc": "/** A fully in-memory bounded store. Keeps a window plus aggregates; never the whole stream. */"
+  },
+  {
+    "name": "MemoryEvidenceStoreOptions",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface MemoryEvidenceStoreOptions {\n    /** Records retained in the live window. Older records fall out; aggregates still count them. */\n    readonly maxLive?: number;\n}"
+  },
+  {
     "name": "MemoryIdempotencyStore",
     "kind": "class",
     "package": "@nifrajs/core",
@@ -8565,6 +8702,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function mergeHeads(heads: readonly Meta[]): Meta;",
     "doc": "/**\n * Merge a layout chain's heads, outermost first: `title`/`lang`/`dir` are nearest-wins, and\n * `meta`/`link`/`script` concatenate in chain order.\n *\n * Returns a fresh object whose identity is stable per `heads` *content* only when every entry is a\n * static (by-reference) `Meta` and there is exactly one - otherwise a new object each call. That is\n * fine: `headTags`'s memo is keyed on identity, so a per-request merge simply recomputes (its\n * content can vary with loader data anyway).\n */"
+  },
+  {
+    "name": "mergeStepCatalogs",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function mergeStepCatalogs(...catalogs: readonly StepCatalog[]): StepCatalog;",
+    "doc": "/** Merge catalogs into one. Throws {@link CatalogError} on any duplicate step key (collision). */"
   },
   {
     "name": "Messages",
@@ -9661,6 +9805,33 @@
     "doc": "/**\n * One operation in a contract. Input schemas are any Standard Schema; `response` is optional.\n *\n * The fields below `response` are **optional OpenAPI metadata** - they don't affect runtime\n * validation or the inferred handler types, they enrich the document `toOpenAPI` emits. A contract is\n * the natural home for them: it's the versionable description of the API, decoupled from the impl.\n */"
   },
   {
+    "name": "OrchestrationHost",
+    "kind": "class",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare class OrchestrationHost {\n    private readonly catalog;\n    private readonly limits;\n    private readonly maxSteps;\n    private readonly maxDepth;\n    private readonly runs;\n    private counter;\n    constructor(options: OrchestrationHostOptions);\n    /**\n     * Parse, compile, and register a run in `submitted`. All structural ceilings and capability\n     * authority are enforced here (a `CompileError` with a stable code), so an over-limit or\n     * unauthorized plan never reaches `running`.\n     */\n    submit(source: RunPlan | unknown, options?: SubmitOptions): Promise<string>;\n    /** Content-free progress view. Throws `E_NOT_FOUND` for an unknown run. */\n    inspect(runId: string): RunStatus;\n    /** `submitted` -> `running`. Begins the driver. */\n    start(runId: string): void;\n    /** `running` -> `paused`. Takes effect at the next layer boundary; in-flight nodes finish. */\n    pause(runId: string): void;\n    /** `paused` -> `running`. Releases the layer boundary. */\n    resume(runId: string): void;\n    /**\n     * Cancel from any non-terminal state. Aborts the in-flight layer and any bounded subagent, frees a\n     * paused gate, and freezes the run in `cancelled`. A late completion cannot revive it.\n     */\n    cancel(runId: string): void;\n    /** Terminal result. Throws `E_NOT_TERMINAL` while the run is still live. */\n    result(runId: string): Promise<RunResult>;\n    /** Await the run reaching a terminal state, then return its result. */\n    settled(runId: string): Promise<RunResult>;\n    private require;\n    private transition;\n    private buildResult;\n    private drive;\n    /** Project one kernel event into a content-free evidence record. Frozen once the run is terminal. */\n    private project;\n    /** Walk the plan tree once: node kinds, idempotency flags, and the full id set. */\n    private indexPlan;\n}",
+    "doc": "/** Owns run lifecycle and evidence projection over the kernel WorkflowRunner. */"
+  },
+  {
+    "name": "OrchestrationHostOptions",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface OrchestrationHostOptions {\n    readonly catalog: StepCatalog;\n    readonly limits?: OrchestrationLimits;\n    /** Kernel step ceiling per layer. Generous by default so a full 256-node layer runs. */\n    readonly maxSteps?: number;\n    readonly maxDepth?: number;\n}"
+  },
+  {
+    "name": "OrchestrationLimits",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface OrchestrationLimits {\n    /** Total nodes in the whole tree. Default 256. */\n    readonly maxNodes?: number;\n    /** Maximum structural nesting depth. Default 8. */\n    readonly maxDepth?: number;\n    /** Host concurrency ceiling for any parallel layer or node. Default: the child count. */\n    readonly maxParallel?: number;\n    /** Bounded-subagent child ceiling. Default 4. */\n    readonly maxChildren?: number;\n    /** Capability authority ceiling. `undefined` grants all; otherwise a step's needs must be a subset. */\n    readonly allowedCapabilities?: readonly string[];\n}",
+    "doc": "/** Host-owned ceilings. A plan can only tighten, never widen, these. */"
+  },
+  {
+    "name": "OrchestrationStateError",
+    "kind": "class",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare class OrchestrationStateError extends Error {\n    readonly code: string;\n    constructor(reason: string, code: string);\n}",
+    "doc": "/** Thrown on an illegal lifecycle transition or an unknown run. `code` is stable. */"
+  },
+  {
     "name": "otlpExporter",
     "kind": "function",
     "package": "@nifrajs/otel",
@@ -9934,6 +10105,13 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function parseReplayFile(value: unknown): ReplayFile;"
+  },
+  {
+    "name": "parseRubricVerdict",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function parseRubricVerdict(rubric: RubricSpec, value: unknown): RubricVerdict;",
+    "doc": "/** Parse one verdict against its rubric. Fails closed on unknown outcome, bad range, or stray key. */"
   },
   {
     "name": "parseRulePacks",
@@ -12262,6 +12440,27 @@
     "signature": "export declare const rpcResult: (id: JsonRpcId, value: unknown) => JsonRpcResponse;"
   },
   {
+    "name": "RubricShape",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface RubricShape {\n    readonly rubricId: string;\n    readonly outcomes: readonly string[];\n    readonly scoreMin: number;\n    readonly scoreMax: number;\n    readonly higherIsBetter: boolean;\n    readonly digest: string;\n}",
+    "doc": "/** The frozen shape of a rubric, embedded so a baseline comparison is self-contained. */"
+  },
+  {
+    "name": "RubricSpec",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface RubricSpec {\n    readonly id: string;\n    /** Ordered outcome codes, worst first. Rank = index; a change in rank is an improvement/regression. */\n    readonly outcomes: readonly string[];\n    /** Finite inclusive score range. */\n    readonly score: {\n        readonly min: number;\n        readonly max: number;\n    };\n    /** Whether a higher score is better. Default true. Governs improved/regressed classification. */\n    readonly higherIsBetter?: boolean;\n    /** Allowed numeric metric names. A verdict metric outside this set is rejected. */\n    readonly metrics?: readonly string[];\n}",
+    "doc": "/** A closed rubric contract. Outcomes are ordered worst -> best; the index is the outcome rank. */"
+  },
+  {
+    "name": "RubricVerdict",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface RubricVerdict {\n    readonly rubricId: string;\n    readonly outcome: string;\n    readonly score: number;\n    readonly metrics?: Readonly<Record<string, number>>;\n}",
+    "doc": "/** One rubric's verdict on one case. Numbers and codes only; no free-form text field exists. */"
+  },
+  {
     "name": "RuleContext",
     "kind": "interface",
     "package": "@nifrajs/cli",
@@ -12318,6 +12517,20 @@
     "kind": "function",
     "package": "@nifrajs/cli",
     "signature": "export declare function runAssurance(cwd: string, options?: {\n    readonly json?: boolean;\n    readonly config?: string;\n    readonly bundle?: boolean;\n    readonly strict?: boolean;\n    readonly out?: string;\n    readonly hydration?: boolean;\n    readonly interact?: boolean;\n}): Promise<boolean>;"
+  },
+  {
+    "name": "RunBranchNode",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface RunBranchNode {\n    readonly id: string;\n    readonly kind: \"branch\";\n    readonly step: string;\n    readonly then: RunNode;\n    readonly otherwise?: RunNode;\n    readonly dependsOn?: readonly string[];\n}",
+    "doc": "/** A conditional. `step` names a predicate catalog handler selecting `then` or `otherwise`. */"
+  },
+  {
+    "name": "RunBranchNode",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RunBranchNode {\n    readonly id: string;\n    readonly kind: \"branch\";\n    readonly step: string;\n    readonly then: RunNode;\n    readonly otherwise?: RunNode;\n    readonly dependsOn?: readonly string[];\n}",
+    "doc": "/** A conditional. `step` names a predicate catalog handler selecting `then` or `otherwise`. */"
   },
   {
     "name": "RunContractError",
@@ -12414,6 +12627,34 @@
     "signature": "export interface RunFaultProfileOptions {\n    readonly seed?: number;\n    readonly schedule?: readonly FailureDirective[];\n}"
   },
   {
+    "name": "RunLeafKind",
+    "kind": "type",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export type RunLeafKind = \"task\" | \"verify\" | \"approve\" | \"checkpoint\" | \"handoff\" | \"subagent\";",
+    "doc": "/** Leaf kinds resolve a StepCatalog handler; structural kinds compose child nodes. */"
+  },
+  {
+    "name": "RunLeafKind",
+    "kind": "type",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export type RunLeafKind = \"task\" | \"verify\" | \"approve\" | \"checkpoint\" | \"handoff\" | \"subagent\";",
+    "doc": "/** Leaf kinds resolve a StepCatalog handler; structural kinds compose child nodes. */"
+  },
+  {
+    "name": "RunLeafNode",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface RunLeafNode {\n    readonly id: string;\n    readonly kind: RunLeafKind;\n    /** StepCatalog key. The handler is registered locally and never persisted in the plan. */\n    readonly step: string;\n    /** Only meaningful on top-level nodes; nested children may not declare it. */\n    readonly dependsOn?: readonly string[];\n    /** Required for `approve`; ignored otherwise. */\n    readonly reason?: string;\n    /** When set, the compiler asserts the resolved catalog step declares this exact version. */\n    readonly stepVersion?: number;\n    /** Wraps this leaf's compiled step in a bounded retry. */\n    readonly retry?: RunRetryPolicy;\n}",
+    "doc": "/** A leaf plan node. `step` names a handler resolved locally through a StepCatalog. */"
+  },
+  {
+    "name": "RunLeafNode",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RunLeafNode {\n    readonly id: string;\n    readonly kind: RunLeafKind;\n    /** StepCatalog key. The handler is registered locally and never persisted in the plan. */\n    readonly step: string;\n    /** Only meaningful on top-level nodes; nested children may not declare it. */\n    readonly dependsOn?: readonly string[];\n    /** Required for `approve`; ignored otherwise. */\n    readonly reason?: string;\n    /** When set, the compiler asserts the resolved catalog step declares this exact version. */\n    readonly stepVersion?: number;\n    /** Wraps this leaf's compiled step in a bounded retry. */\n    readonly retry?: RunRetryPolicy;\n}",
+    "doc": "/** A leaf plan node. `step` names a handler resolved locally through a StepCatalog. */"
+  },
+  {
     "name": "runNifraContext",
     "kind": "function",
     "package": "@nifrajs/coding-agent",
@@ -12443,30 +12684,30 @@
   },
   {
     "name": "RunNode",
-    "kind": "interface",
+    "kind": "type",
     "package": "@nifrajs/agent-protocol",
-    "signature": "export interface RunNode {\n    readonly id: string;\n    readonly kind: RunNodeKind;\n    /** StepCatalog key. The handler is registered locally and never persisted in the plan. */\n    readonly step: string;\n    readonly dependsOn?: readonly string[];\n    /** Required for `approve`; ignored otherwise. */\n    readonly reason?: string;\n}",
-    "doc": "/** A serializable plan node. `step` names a handler resolved locally through a StepCatalog. */"
+    "signature": "export type RunNode = RunLeafNode | RunSequenceNode | RunParallelNode | RunRetryNode | RunBranchNode;",
+    "doc": "/** A serializable, closure-free plan node. Structural kinds nest into a tree. */"
   },
   {
     "name": "RunNode",
-    "kind": "interface",
+    "kind": "type",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface RunNode {\n    readonly id: string;\n    readonly kind: RunNodeKind;\n    /** StepCatalog key. The handler is registered locally and never persisted in the plan. */\n    readonly step: string;\n    readonly dependsOn?: readonly string[];\n    /** Required for `approve`; ignored otherwise. */\n    readonly reason?: string;\n}",
-    "doc": "/** A serializable plan node. `step` names a handler resolved locally through a StepCatalog. */"
+    "signature": "export type RunNode = RunLeafNode | RunSequenceNode | RunParallelNode | RunRetryNode | RunBranchNode;",
+    "doc": "/** A serializable, closure-free plan node. Structural kinds nest into a tree. */"
   },
   {
     "name": "RunNodeKind",
     "kind": "type",
     "package": "@nifrajs/agent-protocol",
-    "signature": "export type RunNodeKind = \"task\" | \"verify\" | \"approve\" | \"checkpoint\" | \"handoff\";",
+    "signature": "export type RunNodeKind = RunLeafKind | RunStructuralKind;",
     "doc": "/** Declarative node kinds. Each maps to an existing workflow primitive at compile time. */"
   },
   {
     "name": "RunNodeKind",
     "kind": "type",
     "package": "@nifrajs/coding-agent",
-    "signature": "export type RunNodeKind = \"task\" | \"verify\" | \"approve\" | \"checkpoint\" | \"handoff\";",
+    "signature": "export type RunNodeKind = RunLeafKind | RunStructuralKind;",
     "doc": "/** Declarative node kinds. Each maps to an existing workflow primitive at compile time. */"
   },
   {
@@ -12482,18 +12723,32 @@
     "signature": "export interface RunOptions {\n    /** Origin used to resolve relative paths. Default `\"http://nifra.local\"`. */\n    readonly origin?: string;\n    /** Cap on captured body text, in characters. Default 65536. */\n    readonly maxBodyChars?: number;\n}"
   },
   {
+    "name": "RunParallelNode",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface RunParallelNode {\n    readonly id: string;\n    readonly kind: \"parallel\";\n    readonly children: readonly RunNode[];\n    readonly maxConcurrency?: number;\n    readonly dependsOn?: readonly string[];\n}",
+    "doc": "/** A bounded fan-out. Effective concurrency is the lower of this, the host, and the child count. */"
+  },
+  {
+    "name": "RunParallelNode",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RunParallelNode {\n    readonly id: string;\n    readonly kind: \"parallel\";\n    readonly children: readonly RunNode[];\n    readonly maxConcurrency?: number;\n    readonly dependsOn?: readonly string[];\n}",
+    "doc": "/** A bounded fan-out. Effective concurrency is the lower of this, the host, and the child count. */"
+  },
+  {
     "name": "RunPlan",
     "kind": "interface",
     "package": "@nifrajs/agent-protocol",
     "signature": "export interface RunPlan {\n    readonly version: typeof RUN_PLAN_VERSION;\n    readonly id: string;\n    readonly nodes: readonly RunNode[];\n}",
-    "doc": "/** A serializable, closure-free run plan. */"
+    "doc": "/** A serializable, closure-free run plan. Top-level nodes form a DAG; each node may nest a tree. */"
   },
   {
     "name": "RunPlan",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
     "signature": "export interface RunPlan {\n    readonly version: typeof RUN_PLAN_VERSION;\n    readonly id: string;\n    readonly nodes: readonly RunNode[];\n}",
-    "doc": "/** A serializable, closure-free run plan. */"
+    "doc": "/** A serializable, closure-free run plan. Top-level nodes form a DAG; each node may nest a tree. */"
   },
   {
     "name": "RunQueryOptions",
@@ -12517,9 +12772,44 @@
   {
     "name": "RunResult",
     "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RunResult {\n    readonly runId: string;\n    readonly status: \"succeeded\" | \"failed\" | \"cancelled\";\n    readonly planDigest: string;\n    readonly completedNodeIds: readonly string[];\n    readonly evidenceDigest: string;\n    readonly artifacts: readonly ArtifactRef[];\n    readonly counters: EvidenceCounters;\n    readonly failureCode?: string;\n}",
+    "doc": "/** Deterministic terminal result. Outcome identity only - no step output, prompt, or payload. */"
+  },
+  {
+    "name": "RunResult",
+    "kind": "interface",
     "package": "@nifrajs/runner",
     "signature": "export interface RunResult {\n    readonly label?: string;\n    readonly method: string;\n    readonly path: string;\n    /** `true` when the app returned a 2xx response. `false` for non-2xx, or when `app.fetch` threw. */\n    readonly ok: boolean;\n    /** HTTP status - present when the app returned a response (absent when it threw). */\n    readonly status?: number;\n    readonly statusText?: string;\n    readonly headers?: Readonly<Record<string, string>>;\n    /** Parsed JSON when the response is JSON; otherwise the (possibly truncated) text. */\n    readonly body?: unknown;\n    /** The response body as text, truncated to `maxBodyChars`. */\n    readonly bodyText?: string;\n    /** `true` when `bodyText` was cut to the cap. */\n    readonly truncated?: boolean;\n    /** Wall-clock time for this request, milliseconds. */\n    readonly durationMs: number;\n    /** Set when `app.fetch` threw (the app crashed) rather than returning a response. */\n    readonly error?: {\n        readonly name: string;\n        readonly message: string;\n        readonly stack?: string;\n    };\n}",
     "doc": "/** The captured outcome of one request. */"
+  },
+  {
+    "name": "RunRetryNode",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface RunRetryNode {\n    readonly id: string;\n    readonly kind: \"retry\";\n    readonly child: RunNode;\n    readonly attempts: number;\n    readonly backoffMs?: number;\n    readonly dependsOn?: readonly string[];\n}",
+    "doc": "/** A bounded retry wrapping a single child node. */"
+  },
+  {
+    "name": "RunRetryNode",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RunRetryNode {\n    readonly id: string;\n    readonly kind: \"retry\";\n    readonly child: RunNode;\n    readonly attempts: number;\n    readonly backoffMs?: number;\n    readonly dependsOn?: readonly string[];\n}",
+    "doc": "/** A bounded retry wrapping a single child node. */"
+  },
+  {
+    "name": "RunRetryPolicy",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface RunRetryPolicy {\n    readonly attempts: number;\n    readonly backoffMs?: number;\n}",
+    "doc": "/** Bounded retry policy for a leaf node. Attempts map to the kernel's retry step. */"
+  },
+  {
+    "name": "RunRetryPolicy",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RunRetryPolicy {\n    readonly attempts: number;\n    readonly backoffMs?: number;\n}",
+    "doc": "/** Bounded retry policy for a leaf node. Attempts map to the kernel's retry step. */"
   },
   {
     "name": "runRuleRegistry",
@@ -12532,6 +12822,45 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function runSagaReconciliationWorker(store: SagaStore, options: SpecializedWorkerOptions<SagaReconciliationFinding>): Promise<ReconciliationWorkerResult>;"
+  },
+  {
+    "name": "RunSequenceNode",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface RunSequenceNode {\n    readonly id: string;\n    readonly kind: \"sequence\";\n    readonly children: readonly RunNode[];\n    readonly dependsOn?: readonly string[];\n}",
+    "doc": "/** An ordered composite. Children run in declaration order. */"
+  },
+  {
+    "name": "RunSequenceNode",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RunSequenceNode {\n    readonly id: string;\n    readonly kind: \"sequence\";\n    readonly children: readonly RunNode[];\n    readonly dependsOn?: readonly string[];\n}",
+    "doc": "/** An ordered composite. Children run in declaration order. */"
+  },
+  {
+    "name": "RunState",
+    "kind": "type",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export type RunState = \"submitted\" | \"running\" | \"paused\" | \"succeeded\" | \"failed\" | \"cancelled\";"
+  },
+  {
+    "name": "RunStatus",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RunStatus {\n    readonly runId: string;\n    readonly state: RunState;\n    readonly planDigest: string;\n    readonly layerIndex: number;\n    readonly layerCount: number;\n    readonly counters: EvidenceCounters;\n}",
+    "doc": "/** Content-free progress view of a run. */"
+  },
+  {
+    "name": "RunStructuralKind",
+    "kind": "type",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export type RunStructuralKind = \"sequence\" | \"parallel\" | \"retry\" | \"branch\";"
+  },
+  {
+    "name": "RunStructuralKind",
+    "kind": "type",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export type RunStructuralKind = \"sequence\" | \"parallel\" | \"retry\" | \"branch\";"
   },
   {
     "name": "runtimeAdapterCertificationProfile",
@@ -12761,6 +13090,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function scopedName(filePath: string, className: string): string;",
     "doc": "/**\n * The scoped name for a class. Keyed by `filePath` + `className` (NUL-separated so `\"a\"+\"bc\"` can't\n * collide with `\"ab\"+\"c\"`), so the same class name in two different files gets two different scoped\n * names - cross-file collision resistance - while staying stable across builds.\n *\n * Exported because it is the definition of the name, and the OTHER pipeline has to be able to produce\n * it: Vite ships its own CSS-Modules naming, so without handing Vite this function a class is called\n * one thing under `nifra dev --vite` and another after `nifra build`. `filePath` must be the\n * package-relative form from `reproduciblePath`, never an absolute path, or the name stops being\n * reproducible across machines.\n */"
+  },
+  {
+    "name": "ScoreTolerance",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface ScoreTolerance {\n    readonly rubricId?: string;\n    /** Absolute worsening tolerated. Default 0. */\n    readonly abs?: number;\n    /** Relative worsening tolerated, as a fraction of the baseline magnitude. Default 0. */\n    readonly rel?: number;\n}",
+    "doc": "/** Explicit tolerance for a score regression. `rubricId` omitted applies to every rubric. */"
   },
   {
     "name": "ScriptDescriptor",
@@ -14194,8 +14530,8 @@
     "name": "StepCatalog",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface StepCatalog {\n    get(step: string): CatalogStep | undefined;\n    has(step: string): boolean;\n    readonly keys: readonly string[];\n}",
-    "doc": "/** Resolves step names to handlers. Immutable after construction. */"
+    "signature": "export interface StepCatalog {\n    get(step: string): CatalogStep | undefined;\n    has(step: string): boolean;\n    /** Sorted for deterministic enumeration. */\n    readonly keys: readonly string[];\n}",
+    "doc": "/** Resolves step names to handlers. Immutable after construction; lookup is deterministic. */"
   },
   {
     "name": "StepEffectContext",
@@ -14210,6 +14546,13 @@
     "package": "@nifrajs/coding-agent",
     "signature": "export interface StepRunContext {\n    readonly nodeId: string;\n    readonly planDigest: string;\n    readonly signal: AbortSignal;\n    /** Caller-owned artifact sink. The step routes any raw payload here to get a content-free ref. */\n    readonly artifact: ArtifactPort;\n    readonly values: ReadonlyMap<string, unknown>;\n    set(name: string, value: unknown): void;\n}",
     "doc": "/** Runtime context handed to a step body. Payloads leave only through {@link StepRunContext.artifact}. */"
+  },
+  {
+    "name": "stepVersion",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function stepVersion(step: CatalogStep): number;",
+    "doc": "/** The effective version of a step (defaults to 1). */"
   },
   {
     "name": "StorageAdapter",
@@ -14420,6 +14763,12 @@
     "package": "@nifrajs/web",
     "signature": "export interface Submission {\n    readonly action: string;\n    readonly formData: FormData;\n}",
     "doc": "/** An in-flight client submit - the action it targets + the `FormData` being sent. Set while the\n * submit is pending, cleared when it settles. A component reads `submission.formData` to render an\n * **optimistic** view (the expected result) before the server responds. */"
+  },
+  {
+    "name": "SubmitOptions",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface SubmitOptions {\n    /** Caller-supplied for reproducibility; defaults to a per-host monotonic id (no clock, no random). */\n    readonly runId?: string;\n    /** Caller-owned payload sink. Defaults to hash-and-discard. */\n    readonly artifactPort?: ArtifactPort;\n    /** Evidence store for this run. Defaults to a bounded {@link MemoryEvidenceStore}. */\n    readonly store?: EvidenceStore;\n}"
   },
   {
     "name": "SubmitOptions",

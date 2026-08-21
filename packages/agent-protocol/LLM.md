@@ -25,7 +25,7 @@ Small backend-neutral session and event protocol for Nifra coding agents.
 - **AgentApprovalRequiredEvent** _(interface)_ - `interface AgentApprovalRequiredEvent`
 - **AgentApprovalResolvedEvent** _(interface)_ - `interface AgentApprovalResolvedEvent`
 
-_…and 42 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentprotocol) for the complete list._
+_…and 50 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentprotocol) for the complete list._
 
 ## Footguns
 

@@ -19,6 +19,7 @@ Standalone, extensible Nifra coding-agent host and CLI.
 - **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void` · from `@nifrajs/coding-agent/orchestration`
 - **canonicalJson** _(function)_ - `canonicalJson: (value: unknown) => string` · from `@nifrajs/coding-agent/orchestration`
 - **compileRunPlan** _(function)_ - `compileRunPlan: (source: RunPlan | unknown, options: CompileOptions) => WorkflowStep` · from `@nifrajs/coding-agent/orchestration`
+- **compileRunPlanLayers** _(function)_ - `compileRunPlanLayers: (source: RunPlan | unknown, options: CompileOptions) => readonly WorkflowStep[]` · from `@nifrajs/coding-agent/orchestration`
 - **createCapabilityManifest** _(function)_ - `createCapabilityManifest: (requested: readonly AgentCapability[], trusted?: readonly AgentCapability[], reason?: string) => AgentCapability…` · from `@nifrajs/coding-agent`
 - **createNifraTools** _(function)_ - `createNifraTools: (options: NifraContextOptions & Pick<VerificationOptions, "command">) => readonly NifraAgentTool[]` · from `@nifrajs/coding-agent`
 - **createPresetSpec** _(function)_ - `createPresetSpec: (name: AgentPresetName, prompt: string, id?: string) => SubagentSpec` · from `@nifrajs/coding-agent`
@@ -27,9 +28,8 @@ Standalone, extensible Nifra coding-agent host and CLI.
 - **deniedCapabilities** _(function)_ - `deniedCapabilities: (manifest: AgentCapabilityManifest) => readonly AgentCapability[]` · from `@nifrajs/coding-agent`
 - **deriveNodeEffectKey** _(function)_ - `deriveNodeEffectKey: (material: EffectKeyMaterial) => Promise<NodeEffectKey>` · from `@nifrajs/coding-agent/orchestration`
 - **digestRunPlan** _(function)_ - `digestRunPlan: (plan: RunPlan) => Promise<string>` · from `@nifrajs/coding-agent/orchestration`
-- **discoverExtensions** _(function)_ - `discoverExtensions: (cwd: string) => Promise<readonly string[]>` · from `@nifrajs/coding-agent`
 
-_…and 130 more - see [`api-reference.md`](../../api-reference.md#nifrajscodingagent) for the complete list._
+_…and 156 more - see [`api-reference.md`](../../api-reference.md#nifrajscodingagent) for the complete list._
 
 ## Footguns
 

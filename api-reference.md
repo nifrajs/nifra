@@ -179,17 +179,32 @@ Every public export of every package and documented subpath - name, kind, signat
 - **RUN_PLAN_VERSION** _(const)_ - `RUN_PLAN_VERSION: 1`
   Orchestration contract version. Additive to the session `AGENT_PROTOCOL_VERSION`.
 - **ReloadResult** _(interface)_ - `interface ReloadResult`
+- **RunBranchNode** _(interface)_ - `interface RunBranchNode`
+  A conditional. `step` names a predicate catalog handler selecting `then` or `otherwise`.
 - **RunContractError** _(class)_ - `class RunContractError`
   Thrown by every parser in this module on malformed or content-bearing input. Fails closed.
 - **RunEvidence** _(interface)_ - `interface RunEvidence`
   The content-free projection of one run transition. Every field is id/hash/counter/status/timing.
 - **RunEvidenceStatus** _(type)_ - `type RunEvidenceStatus = "started" | "completed" | "failed"`
-- **RunNode** _(interface)_ - `interface RunNode`
-  A serializable plan node. `step` names a handler resolved locally through a StepCatalog.
-- **RunNodeKind** _(type)_ - `type RunNodeKind = "task" | "verify" | "approve" | "checkpoint" | "handoff"`
+- **RunLeafKind** _(type)_ - `type RunLeafKind = "task" | "verify" | "approve" | "checkpoint" | "handoff" | "subagent"`
+  Leaf kinds resolve a StepCatalog handler; structural kinds compose child nodes.
+- **RunLeafNode** _(interface)_ - `interface RunLeafNode`
+  A leaf plan node. `step` names a handler resolved locally through a StepCatalog.
+- **RunNode** _(type)_ - `type RunNode = RunLeafNode | RunSequenceNode | RunParallelNode | RunRetryNode | RunBranchNode`
+  A serializable, closure-free plan node. Structural kinds nest into a tree.
+- **RunNodeKind** _(type)_ - `type RunNodeKind = RunLeafKind | RunStructuralKind`
   Declarative node kinds. Each maps to an existing workflow primitive at compile time.
+- **RunParallelNode** _(interface)_ - `interface RunParallelNode`
+  A bounded fan-out. Effective concurrency is the lower of this, the host, and the child count.
 - **RunPlan** _(interface)_ - `interface RunPlan`
-  A serializable, closure-free run plan.
+  A serializable, closure-free run plan. Top-level nodes form a DAG; each node may nest a tree.
+- **RunRetryNode** _(interface)_ - `interface RunRetryNode`
+  A bounded retry wrapping a single child node.
+- **RunRetryPolicy** _(interface)_ - `interface RunRetryPolicy`
+  Bounded retry policy for a leaf node. Attempts map to the kernel's retry step.
+- **RunSequenceNode** _(interface)_ - `interface RunSequenceNode`
+  An ordered composite. Children run in declaration order.
+- **RunStructuralKind** _(type)_ - `type RunStructuralKind = "sequence" | "parallel" | "retry" | "branch"`
 - **SendMessageInput** _(interface)_ - `interface SendMessageInput`
 - **agentError** _(function)_ - `agentError: (code: string, message: string, details?: unknown) => AgentError`
 - **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void`
@@ -643,49 +658,91 @@ Every public export of every package and documented subpath - name, kind, signat
   Caller-owned sink for raw payloads - the ONLY place payload bytes leave transient execution. The public repo ships only a discarding no-op and a disposable in-memory test port. No public implementation persists.
 - **ArtifactRef** _(interface)_ - `interface ArtifactRef`
   A content-free pointer to a payload the caller chose to retain out of band.
+- **CatalogError** _(class)_ - `class CatalogError`
+  Thrown on a catalog construction fault: a key collision across merged catalogs.
 - **CatalogStep** _(interface)_ - `interface CatalogStep`
-  One catalog handler. `kind` must match the plan node's kind at compile time. `selectEffect`, when present, marks the step idempotent and projects its identity-bearing input into content-free bytes for {@link deriveNodeEffectKey}. It MUST be pure and read-only.
+  One catalog handler. `kind` must match the plan node's kind at compile time.
 - **CompileError** _(class)_ - `class CompileError`
-  Thrown when a plan cannot be lowered: unknown step, kind mismatch, or a dependency cycle.
+  Thrown when a plan cannot be lowered. `code` is a stable evidence code.
 - **CompileOptions** _(interface)_ - `interface CompileOptions`
   Wiring the compiler injects into every node closure.
 - **EVIDENCE_MAX_BYTES** _(const)_ - `EVIDENCE_MAX_BYTES: 4096`
   Hard cap on a single serialized evidence record. A content-free record never approaches this.
 - **EffectKeyMaterial** _(interface)_ - `interface EffectKeyMaterial`
   Inputs to the effect-key derivation. `selector` is the step's content-free identity projection.
+- **EvidenceCounters** _(interface)_ - `interface EvidenceCounters`
+  Terminal tally of a run's evidence stream. Counts only; no payloads.
+- **EvidenceStore** _(interface)_ - `interface EvidenceStore`
+  A bounded, evidence-only run store. Append is fail-closed; reads are content-free aggregates.
 - **FORBIDDEN_CONTENT_KEYS** _(const)_ - `FORBIDDEN_CONTENT_KEYS: readonly string[]`
   Keys that would carry payload content. They are never valid on evidence or artifact records and are rejected by the strict parsers even if they would otherwise fit the size cap.
+- **FileEvidenceStore** _(class)_ - `class FileEvidenceStore`
+  A bounded store that also appends each parsed record as one canonical-JSON line to a file, in deterministic append order. The record is normalized (and so a forbidden-content record is rejected) BEFORE the line is written, so the file never receives a payload. The append uses the `a` flag, so each …
+- **FileEvidenceStoreOptions** _(interface)_ - `interface FileEvidenceStoreOptions`
 - **MemoryArtifactPort** _(interface)_ - `interface MemoryArtifactPort`
   A memory port that additionally exposes stored bytes for assertions. Test-only.
+- **MemoryEvidenceStore** _(class)_ - `class MemoryEvidenceStore`
+  A fully in-memory bounded store. Keeps a window plus aggregates; never the whole stream.
+- **MemoryEvidenceStoreOptions** _(interface)_ - `interface MemoryEvidenceStoreOptions`
 - **NodeEffectKey** _(interface)_ - `interface NodeEffectKey`
   The stable, content-free identity of one side-effecting node attempt-boundary.
+- **OrchestrationHost** _(class)_ - `class OrchestrationHost`
+  Owns run lifecycle and evidence projection over the kernel WorkflowRunner.
+- **OrchestrationHostOptions** _(interface)_ - `interface OrchestrationHostOptions`
+- **OrchestrationLimits** _(interface)_ - `interface OrchestrationLimits`
+  Host-owned ceilings. A plan can only tighten, never widen, these.
+- **OrchestrationStateError** _(class)_ - `class OrchestrationStateError`
+  Thrown on an illegal lifecycle transition or an unknown run. `code` is stable.
 - **RUN_PLAN_VERSION** _(const)_ - `RUN_PLAN_VERSION: 1`
   Orchestration contract version. Additive to the session `AGENT_PROTOCOL_VERSION`.
+- **RunBranchNode** _(interface)_ - `interface RunBranchNode`
+  A conditional. `step` names a predicate catalog handler selecting `then` or `otherwise`.
 - **RunContractError** _(class)_ - `class RunContractError`
   Thrown by every parser in this module on malformed or content-bearing input. Fails closed.
 - **RunEvidence** _(interface)_ - `interface RunEvidence`
   The content-free projection of one run transition. Every field is id/hash/counter/status/timing.
 - **RunEvidenceStatus** _(type)_ - `type RunEvidenceStatus = "started" | "completed" | "failed"`
-- **RunNode** _(interface)_ - `interface RunNode`
-  A serializable plan node. `step` names a handler resolved locally through a StepCatalog.
-- **RunNodeKind** _(type)_ - `type RunNodeKind = "task" | "verify" | "approve" | "checkpoint" | "handoff"`
+- **RunLeafKind** _(type)_ - `type RunLeafKind = "task" | "verify" | "approve" | "checkpoint" | "handoff" | "subagent"`
+  Leaf kinds resolve a StepCatalog handler; structural kinds compose child nodes.
+- **RunLeafNode** _(interface)_ - `interface RunLeafNode`
+  A leaf plan node. `step` names a handler resolved locally through a StepCatalog.
+- **RunNode** _(type)_ - `type RunNode = RunLeafNode | RunSequenceNode | RunParallelNode | RunRetryNode | RunBranchNode`
+  A serializable, closure-free plan node. Structural kinds nest into a tree.
+- **RunNodeKind** _(type)_ - `type RunNodeKind = RunLeafKind | RunStructuralKind`
   Declarative node kinds. Each maps to an existing workflow primitive at compile time.
+- **RunParallelNode** _(interface)_ - `interface RunParallelNode`
+  A bounded fan-out. Effective concurrency is the lower of this, the host, and the child count.
 - **RunPlan** _(interface)_ - `interface RunPlan`
-  A serializable, closure-free run plan.
+  A serializable, closure-free run plan. Top-level nodes form a DAG; each node may nest a tree.
+- **RunResult** _(interface)_ - `interface RunResult`
+  Deterministic terminal result. Outcome identity only - no step output, prompt, or payload.
+- **RunRetryNode** _(interface)_ - `interface RunRetryNode`
+  A bounded retry wrapping a single child node.
+- **RunRetryPolicy** _(interface)_ - `interface RunRetryPolicy`
+  Bounded retry policy for a leaf node. Attempts map to the kernel's retry step.
+- **RunSequenceNode** _(interface)_ - `interface RunSequenceNode`
+  An ordered composite. Children run in declaration order.
+- **RunState** _(type)_ - `type RunState = "submitted" | "running" | "paused" | "succeeded" | "failed" | "cancelled"`
+- **RunStatus** _(interface)_ - `interface RunStatus`
+  Content-free progress view of a run.
+- **RunStructuralKind** _(type)_ - `type RunStructuralKind = "sequence" | "parallel" | "retry" | "branch"`
 - **RunTraceOptions** _(interface)_ - `interface RunTraceOptions`
 - **RunTraceResult** _(interface)_ - `interface RunTraceResult`
 - **StepCatalog** _(interface)_ - `interface StepCatalog`
-  Resolves step names to handlers. Immutable after construction.
+  Resolves step names to handlers. Immutable after construction; lookup is deterministic.
 - **StepEffectContext** _(interface)_ - `interface StepEffectContext`
   Read-only view handed to a step's pure effect selector. No port, no mutation.
 - **StepRunContext** _(interface)_ - `interface StepRunContext`
   Runtime context handed to a step body. Payloads leave only through {@link StepRunContext.artifact}.
+- **SubmitOptions** _(interface)_ - `interface SubmitOptions`
 - **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void`
   Assert a record serializes within the hard cap. Public reference records are content-free.
 - **canonicalJson** _(function)_ - `canonicalJson: (value: unknown) => string`
   Deterministic JSON with recursively sorted object keys. Arrays keep order. Rejects non-finite numbers.
 - **compileRunPlan** _(function)_ - `compileRunPlan: (source: RunPlan | unknown, options: CompileOptions) => WorkflowStep`
   Compile `source` (a RunPlan or its serialized form) into a single WorkflowStep. The input is always re-parsed through {@link parseRunPlan}, so a malformed or content-bearing plan fails closed.
+- **compileRunPlanLayers** _(function)_ - `compileRunPlanLayers: (source: RunPlan | unknown, options: CompileOptions) => readonly WorkflowStep[]`
+  Compile `source` into one {@link WorkflowStep} per top-level DAG layer, preserving the same ceilings and lowering as {@link compileRunPlan}. A driver can run the layers in order and hold at a layer boundary (a safe-pause point) without a second scheduler: each layer is still executed by the kernel …
 - **createStepCatalog** _(function)_ - `createStepCatalog: (entries: Readonly<Record<string, CatalogStep>>) => StepCatalog`
   Build a StepCatalog from a name -> handler map.
 - **deriveNodeEffectKey** _(function)_ - `deriveNodeEffectKey: (material: EffectKeyMaterial) => Promise<NodeEffectKey>`
@@ -694,6 +751,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Stable digest of a plan's canonical form. Structural identity that node effect keys hang from.
 - **memoryArtifactPort** _(function)_ - `memoryArtifactPort: (options?: { readonly maxBytes?: number; }) => MemoryArtifactPort`
   A disposable in-memory port for tests. Retains payloads up to a small byte budget and throws past it, refusing any load that resembles durable use. NEVER use outside tests - it has no persistence, no tenancy, and no eviction beyond the hard cap.
+- **mergeStepCatalogs** _(function)_ - `mergeStepCatalogs: (...catalogs: readonly StepCatalog[]) => StepCatalog`
+  Merge catalogs into one. Throws {@link CatalogError} on any duplicate step key (collision).
 - **noopArtifactPort** _(function)_ - `noopArtifactPort: () => ArtifactPort`
   Hashes the payload for a content-free {@link ArtifactRef}, then discards the bytes. The default port: public code sees only the digest, size, and coordinates - never the payload.
 - **parseArtifactRef** _(function)_ - `parseArtifactRef: (value: unknown) => ArtifactRef`
@@ -708,6 +767,8 @@ Every public export of every package and documented subpath - name, kind, signat
   SHA-256 of `bytes` as lowercase hex. Collision-resistant so a digest cannot be forged from content.
 - **sha256HexOf** _(function)_ - `sha256HexOf: (text: string) => Promise<string>`
   SHA-256 hex of a UTF-8 string.
+- **stepVersion** _(function)_ - `stepVersion: (step: CatalogStep) => number`
+  The effective version of a step (defaults to 1).
 
 ### `@nifrajs/coding-agent/rpc`
 
@@ -3229,11 +3290,22 @@ _No named exports (side-effect entrypoint)._
 - **AdversarialContractOptions** _(interface)_ - `interface AdversarialContractOptions`
 - **AdversarialContractReport** _(interface)_ - `interface AdversarialContractReport`
 - **AdversarialContractResult** _(interface)_ - `interface AdversarialContractResult`
+- **AgentEvalCase** _(interface)_ - `interface AgentEvalCase`
+  One eval case. `evaluate` is a deterministic producer of rubric verdicts - evidence, not a run.
+- **AgentEvalRegressionError** _(class)_ - `class AgentEvalRegressionError`
+  Thrown by {@link assertAgentEvalBaseline} when a comparison contains a failing code.
+- **AgentEvalReport** _(interface)_ - `interface AgentEvalReport`
+- **AgentEvalSuite** _(interface)_ - `interface AgentEvalSuite`
+- **AgentEvalSuiteSpec** _(interface)_ - `interface AgentEvalSuiteSpec`
 - **AppLike** _(interface)_ - `interface AppLike`
   The minimal shape a nifra `server()` app satisfies - its own `fetch`.
+- **BaselineComparison** _(interface)_ - `interface BaselineComparison`
+- **BaselineOptions** _(interface)_ - `interface BaselineOptions`
 - **CaptureIncidentOptions** _(interface)_ - `interface CaptureIncidentOptions`
 - **CapturedRequest** _(interface)_ - `interface CapturedRequest`
 - **CapturedRequestInput** _(interface)_ - `interface CapturedRequestInput`
+- **CaseComparison** _(interface)_ - `interface CaseComparison`
+- **CaseResult** _(interface)_ - `interface CaseResult`
 - **CertifiableCacheEntry** _(interface)_ - `interface CertifiableCacheEntry`
 - **CertifiableCacheStore** _(interface)_ - `interface CertifiableCacheStore`
 - **CertifiableDomainEvent** _(interface)_ - `interface CertifiableDomainEvent`
@@ -3246,6 +3318,7 @@ _No named exports (side-effect entrypoint)._
 - **CertificationCapabilityEvidence** _(interface)_ - `interface CertificationCapabilityEvidence`
 - **CertificationCheck** _(interface)_ - `interface CertificationCheck<Adapter>`
 - **CertificationCheckEvidence** _(interface)_ - `interface CertificationCheckEvidence`
+- **ComparisonCode** _(type)_ - `type ComparisonCode = | "equal" | "improved" | "tolerated" | "regressed" | "missing" | "incomparable"`
 - **ContractCaseContext** _(interface)_ - `interface ContractCaseContext`
   Stable context passed to request/rejection hooks. It contains no request payloads or secrets.
 - **ContractCaseKind** _(type)_ - `type ContractCaseKind = "input-rejection" | "response-conformance"`
@@ -3293,7 +3366,15 @@ _No named exports (side-effect entrypoint)._
 - **IncidentReplayResult** _(interface)_ - `interface IncidentReplayResult`
 - **ReplayIncidentOptions** _(interface)_ - `interface ReplayIncidentOptions`
 - **ReplayTrajectoryOptions** _(interface)_ - `interface ReplayTrajectoryOptions`
+- **RubricShape** _(interface)_ - `interface RubricShape`
+  The frozen shape of a rubric, embedded so a baseline comparison is self-contained.
+- **RubricSpec** _(interface)_ - `interface RubricSpec`
+  A closed rubric contract. Outcomes are ordered worst -> best; the index is the outcome rank.
+- **RubricVerdict** _(interface)_ - `interface RubricVerdict`
+  One rubric's verdict on one case. Numbers and codes only; no free-form text field exists.
 - **RunFaultProfileOptions** _(interface)_ - `interface RunFaultProfileOptions`
+- **ScoreTolerance** _(interface)_ - `interface ScoreTolerance`
+  Explicit tolerance for a score regression. `rubricId` omitted applies to every rubric.
 - **TestSession** _(interface)_ - `interface TestSession<App>`
 - **TestSessionOptions** _(interface)_ - `interface TestSessionOptions`
 - **TrajectoryInvariantId** _(type)_ - `type TrajectoryInvariantId = | "ledger-evidence" | "capability-admission" | "budget-monotonic" | "bounded-stop" | "resumable-suspension"`
@@ -3305,6 +3386,8 @@ _No named exports (side-effect entrypoint)._
 - **assertAdapterCertification** _(function)_ - `assertAdapterCertification: (report: AdapterCertificationReport) => void`
 - **assertAdversarialContract** _(function)_ - `assertAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>`
   Run the contract laboratory and throw an {@link AdversarialContractError} unless it is fully green.
+- **assertAgentEvalBaseline** _(function)_ - `assertAgentEvalBaseline: (baseline: AgentEvalReport, current: AgentEvalReport, options?: BaselineOptions) => Promise<BaselineComparison>`
+  Assert no failing comparison. Throws {@link AgentEvalRegressionError} with the stable ids.
 - **assertIncidentReplays** _(function)_ - `assertIncidentReplays: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<void>`
   Assert a captured incident still reproduces against the current app. Throws {@link IncidentReplayError}.
 - **assertTrajectoryInvariants** _(function)_ - `assertTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => void`
@@ -3313,6 +3396,8 @@ _No named exports (side-effect entrypoint)._
   Build a capsule from a real `Request`+`Response`, or from plain captured fields.
 - **certifyAdapter** _(function)_ - `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly createAdapter: () => Adapter | Promise<Adapter>; readonly cleanup?: (adapter: Adapter) =>…`
 - **checkTrajectoryInvariants** _(function)_ - `checkTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => readonly TrajectoryInvariantResult[]`
+- **compareAgentEvalBaseline** _(function)_ - `compareAgentEvalBaseline: (baseline: AgentEvalReport, current: AgentEvalReport, options?: BaselineOptions) => Promise<BaselineComparison>`
+  Compare a fresh report against a baseline report. Every (case, rubric) gets a stable id.
 - **contractLabWitnesses** _(const)_ - `contractLabWitnesses: readonly ContractLabWitness[]`
   The shared cross-runtime wire contract. Keep this list small and stable: it is evidence, not a load test.
 - **cookieJar** _(function)_ - `cookieJar: () => CookieJar`
@@ -3323,6 +3408,8 @@ _No named exports (side-effect entrypoint)._
   A reference Web handler for adapter-only suites. Core and edge suites use their real routers instead.
 - **createTrajectoryTranscript** _(function)_ - `createTrajectoryTranscript: (transcript: AgentTranscript, options?: CreateTrajectoryTranscriptOptions) => Promise<TrajectoryTranscript>`
   Record the transcript emitted by a turn without adding a second execution recording path.
+- **defineAgentEvalSuite** _(function)_ - `defineAgentEvalSuite: (spec: AgentEvalSuiteSpec) => AgentEvalSuite`
+  Declare a bounded, deterministic eval suite. Duplicate case or rubric ids fail closed.
 - **defineCertificationProfile** _(function)_ - `defineCertificationProfile: <Adapter>(profile: AdapterCertificationProfile<Adapter>) => AdapterCertificationProfile<Adapter>`
   Define and validate a custom domain/provider profile at module initialization.
 - **defineFaultProfile** _(function)_ - `defineFaultProfile: (profile: FaultProfile) => FaultProfile`
@@ -3335,6 +3422,8 @@ _No named exports (side-effect entrypoint)._
 - **inProcessToolAdapter** _(function)_ - `inProcessToolAdapter: <Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: ToolCallOptions) => ToolAdapter`
 - **jobStoreCertificationProfile** _(function)_ - `jobStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableJobStore>`
 - **mcpToolAdapter** _(function)_ - `mcpToolAdapter: <Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: Omit<ToolCallOptions, "signal" | "ledger">) => ToolAdapter`
+- **parseRubricVerdict** _(function)_ - `parseRubricVerdict: (rubric: RubricSpec, value: unknown) => RubricVerdict`
+  Parse one verdict against its rubric. Fails closed on unknown outcome, bad range, or stray key.
 - **proveIdempotency** _(function)_ - `proveIdempotency: (options: { readonly run: () => Promise<EffectLedger> | EffectLedger; readonly runs?: number; }) => Promise<IdempotencyProof>`
   Run a token-only effect workload repeatedly and report the first stable replay differences.
 - **recordTrajectory** _(const)_ - `recordTrajectory: (transcript: AgentTranscript, options?: CreateTrajectoryTranscriptOptions) => Promise<TrajectoryTranscript>`

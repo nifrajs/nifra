@@ -9,11 +9,19 @@ export type {
   ArtifactPort,
   ArtifactRef,
   NodeEffectKey,
+  RunBranchNode,
   RunEvidence,
   RunEvidenceStatus,
+  RunLeafKind,
+  RunLeafNode,
   RunNode,
   RunNodeKind,
+  RunParallelNode,
   RunPlan,
+  RunRetryNode,
+  RunRetryPolicy,
+  RunSequenceNode,
+  RunStructuralKind,
 } from "@nifrajs/agent-protocol"
 export {
   assertEvidenceSize,
@@ -32,18 +40,40 @@ export {
   noopArtifactPort,
 } from "./artifact-port.ts"
 export {
+  CatalogError,
   type CatalogStep,
   createStepCatalog,
+  mergeStepCatalogs,
   type StepCatalog,
   type StepEffectContext,
   type StepRunContext,
+  stepVersion,
 } from "./catalog.ts"
 export {
   CompileError,
   type CompileOptions,
   compileRunPlan,
+  compileRunPlanLayers,
   digestRunPlan,
+  type OrchestrationLimits,
 } from "./compile.ts"
 export { deriveNodeEffectKey, type EffectKeyMaterial } from "./effect-key.ts"
+export {
+  type EvidenceCounters,
+  type EvidenceStore,
+  FileEvidenceStore,
+  type FileEvidenceStoreOptions,
+  MemoryEvidenceStore,
+  type MemoryEvidenceStoreOptions,
+} from "./evidence-store.ts"
 export { canonicalJson, sha256Hex, sha256HexOf } from "./hash.ts"
+export {
+  OrchestrationHost,
+  type OrchestrationHostOptions,
+  OrchestrationStateError,
+  type RunResult,
+  type RunState,
+  type RunStatus,
+  type SubmitOptions,
+} from "./host.ts"
 export { type RunTraceOptions, type RunTraceResult, runTrace } from "./tracer.ts"

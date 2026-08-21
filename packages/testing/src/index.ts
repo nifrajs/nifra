@@ -26,6 +26,26 @@ export {
   runAdversarialContract,
 } from "./adversarial.ts"
 export {
+  type AgentEvalCase,
+  AgentEvalRegressionError,
+  type AgentEvalReport,
+  type AgentEvalSuite,
+  type AgentEvalSuiteSpec,
+  assertAgentEvalBaseline,
+  type BaselineComparison,
+  type BaselineOptions,
+  type CaseComparison,
+  type CaseResult,
+  type ComparisonCode,
+  compareAgentEvalBaseline,
+  defineAgentEvalSuite,
+  parseRubricVerdict,
+  type RubricShape,
+  type RubricSpec,
+  type RubricVerdict,
+  type ScoreTolerance,
+} from "./agent-eval.ts"
+export {
   AdapterCertificationError,
   type AdapterCertificationProfile,
   type AdapterCertificationReport,
