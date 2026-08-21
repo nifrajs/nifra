@@ -199,6 +199,15 @@ function addLinkedWorktree(path: string, commit: string): void {
   for (const workspaceRoot of ["packages", "apps", "internal", "bench"]) {
     const sourceRoot = resolve(ROOT, workspaceRoot)
     if (!existsSync(sourceRoot)) continue
+    const sourceWorkspaceModules = resolve(sourceRoot, "node_modules")
+    const targetWorkspaceModules = resolve(path, workspaceRoot, "node_modules")
+    if (existsSync(sourceWorkspaceModules) && !existsSync(targetWorkspaceModules)) {
+      try {
+        symlinkSync(sourceWorkspaceModules, targetWorkspaceModules, "junction")
+      } catch {
+        // A clean consumer/release environment may install workspace-root dependencies instead.
+      }
+    }
     for (const entry of readdirSync(sourceRoot, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue
       const source = resolve(sourceRoot, entry.name, "node_modules")

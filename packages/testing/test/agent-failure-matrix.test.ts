@@ -41,7 +41,9 @@ test("composition reuses the existing fault profile and idempotency owners", asy
         method: "POST",
         path: "/effect",
         declared: ["effect.commit"],
-        entries: [{ seq: 0, capability: "effect.commit", phase: "committed", digest: "stable" }],
+        entries: [
+          { seq: 0, at: 0, capability: "effect.commit", phase: "committed", digest: "stable" },
+        ],
       }),
     },
   })
