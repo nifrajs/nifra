@@ -40,6 +40,7 @@ mountAgUI(app, {
 | model reasoning deltas | `REASONING_START` / `REASONING_MESSAGE_START` / `_CONTENT` / `_END` / `REASONING_END` |
 | model tool-args deltas | provisional `TOOL_CALL_START` + `TOOL_CALL_ARGS`, closed by the call's tool evidence |
 | shared state | `STATE_SNAPSHOT` on the seed and `STATE_DELTA` (RFC 6902 ops) per patch (see below) |
+| model usage deltas | summed per `(provider, model)` into the `usage: TokenUsage[]` array on `RUN_FINISHED` |
 | completed output | `TEXT_MESSAGE_START` / `_CONTENT` / `_END` (unless text was streamed), an optional `MESSAGES_SNAPSHOT` (see below), then `RUN_FINISHED` with `result` and `outcome: { "type": "success" }` |
 | completed with a typed error | `RUN_ERROR` |
 | suspended | `CUSTOM { name: "nifra.pending" }` with the continuation, then `RUN_FINISHED` with `outcome: { "type": "interrupt", "interrupts": [...] }` |
@@ -55,8 +56,9 @@ A model port that calls the request's optional `onDelta` callback (see `@nifrajs
 - `{ kind: "text", text }` opens a `TEXT_MESSAGE` and streams each chunk as `TEXT_MESSAGE_CONTENT`. When any text was streamed, the terminal text block is suppressed - the streamed text IS the assistant message, so a streaming port must stream all user-visible text. A non-streaming port keeps the single terminal block; nothing changes for it.
 - `{ kind: "reasoning", text }` streams a `REASONING_*` message.
 - `{ kind: "tool-args", name?, argsText }` opens a provisional `TOOL_CALL_START` (id `<turnId>:call:<n>`) and streams `TOOL_CALL_ARGS`. The tool evidence that follows closes the same call - `TOOL_CALL_END` plus the token-only `TOOL_CALL_RESULT` - instead of opening a second one.
+- `{ kind: "usage", provider?, model?, inputTokens?, ... }` never becomes a frame. The counts are summed per `(provider, model)` across the run's model decisions and stamped as the spec `usage: TokenUsage[]` array on the terminal `RUN_FINISHED` (success and interrupt alike); non-finite figures are ignored.
 
-Each stream closes when a different delta kind starts, when tool evidence lands, or at the end of the run. Deltas are transient observer data: a `Last-Event-ID` replay carries evidence frames and the stored, unsuppressed terminal events only.
+Each stream closes when a different delta kind starts, when tool evidence lands, or at the end of the run. Deltas are transient observer data: a `Last-Event-ID` replay carries evidence frames and the stored, unsuppressed terminal events only - the stored `RUN_FINISHED` keeps its `usage`.
 
 ## Shared state
 

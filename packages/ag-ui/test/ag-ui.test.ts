@@ -629,6 +629,93 @@ describe("mountAgUI model deltas", () => {
   })
 })
 
+describe("mountAgUI usage", () => {
+  test("sums usage deltas across model decisions onto RUN_FINISHED and keeps them on replay", async () => {
+    const { app, call } = captureApp()
+    let calls = 0
+    const model: AgentModelPort = {
+      complete: (request) => {
+        calls += 1
+        if (calls === 1) {
+          request.onDelta?.({
+            kind: "usage",
+            provider: "anthropic",
+            model: "claude-sonnet-5",
+            inputTokens: 100,
+            outputTokens: 20,
+          })
+          return { kind: "tool", name: "reference.echo", input: { value: "x" } }
+        }
+        // Same pair sums; a non-finite or missing figure must not poison the sum.
+        request.onDelta?.({
+          kind: "usage",
+          provider: "anthropic",
+          model: "claude-sonnet-5",
+          inputTokens: 140,
+          outputTokens: Number.NaN,
+        })
+        request.onDelta?.({ kind: "usage", outputTokens: 9 })
+        return { kind: "output", value: { answer: "done" } }
+      },
+    }
+    mountAgUI(app, {
+      agent: definition([echoTool]),
+      ports: ports({ model, capabilities: ["reference.echo"] }),
+      evidenceLog: createMemoryAgentEvidenceLog(),
+    })
+
+    const body = {
+      threadId: "thread-1",
+      runId: "run-1",
+      forwardedProps: { input: { prompt: "x" } },
+    }
+    const list = await events(
+      await call(
+        new Request("http://local/agui", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      ),
+    )
+    const finished = list.at(-1) as { type: string; usage?: unknown }
+    expect(finished.type).toBe("RUN_FINISHED")
+    expect(finished.usage).toEqual([
+      { provider: "anthropic", model: "claude-sonnet-5", inputTokens: 240, outputTokens: 20 },
+      { outputTokens: 9 },
+    ])
+    // Usage never becomes a frame of its own.
+    expect(types(list)).not.toContain("USAGE")
+
+    // The stored terminal events carry the usage, so a replayed stream reports the same totals.
+    const replayed = await events(
+      await call(
+        new Request("http://local/agui", {
+          method: "POST",
+          headers: { "content-type": "application/json", "last-event-id": "0" },
+          body: JSON.stringify(body),
+        }),
+      ),
+    )
+    const replayFinished = replayed.at(-1) as { type: string; usage?: unknown }
+    expect(replayFinished.type).toBe("RUN_FINISHED")
+    expect(replayFinished.usage).toEqual([
+      { provider: "anthropic", model: "claude-sonnet-5", inputTokens: 240, outputTokens: 20 },
+      { outputTokens: 9 },
+    ])
+  })
+
+  test("omits usage when the port reports none", async () => {
+    const { app, call } = captureApp()
+    mountAgUI(app, { agent: definition(), ports: ports() })
+
+    const list = await events(await call(runInput({ forwardedProps: { input: { prompt: "x" } } })))
+    const finished = list.at(-1) as Record<string, unknown>
+    expect(finished.type).toBe("RUN_FINISHED")
+    expect("usage" in finished).toBe(false)
+  })
+})
+
 describe("mountAgUI shared state", () => {
   test("announces body.state upfront and streams patches as STATE_DELTA", async () => {
     const { app, call } = captureApp()

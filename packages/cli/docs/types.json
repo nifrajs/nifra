@@ -393,8 +393,8 @@
     "name": "AgentModelDelta",
     "kind": "type",
     "package": "@nifrajs/agent",
-    "signature": "export type AgentModelDelta = {\n    readonly kind: \"text\";\n    readonly text: string;\n} | {\n    readonly kind: \"reasoning\";\n    readonly text: string;\n} | {\n    readonly kind: \"tool-args\";\n    readonly name?: string;\n    readonly argsText: string;\n};",
-    "doc": "/**\n * One progressive chunk of a model decision in flight: user-visible text, reasoning text, or the\n * raw argument text of the tool call being formed (`name` on the first chunk when the provider\n * announces it). Chunks are provider output surface, not evidence - the runtime never stores them.\n */"
+    "signature": "export type AgentModelDelta = {\n    readonly kind: \"text\";\n    readonly text: string;\n} | {\n    readonly kind: \"reasoning\";\n    readonly text: string;\n} | {\n    readonly kind: \"tool-args\";\n    readonly name?: string;\n    readonly argsText: string;\n} | {\n    readonly kind: \"usage\";\n    readonly provider?: string;\n    readonly model?: string;\n    readonly inputTokens?: number;\n    readonly outputTokens?: number;\n    readonly totalTokens?: number;\n    readonly reasoningTokens?: number;\n    readonly cachedInputTokens?: number;\n};",
+    "doc": "/**\n * One progressive chunk of a model decision in flight: user-visible text, reasoning text, or the\n * raw argument text of the tool call being formed (`name` on the first chunk when the provider\n * announces it). A `usage` delta reports the decision's token counts once the provider settles\n * them, optionally attributed to a provider and model - observers sum across decisions. Chunks\n * are provider output surface, not evidence - the runtime never stores them.\n */"
   },
   {
     "name": "AgentModelPort",
@@ -733,6 +733,13 @@
     "package": "@nifrajs/ag-ui",
     "signature": "export interface AgUIRunContext {\n    /** The runner turn id this request resolves to (fresh run or resume target). */\n    readonly turnId: string;\n    /**\n     * The run's shared UI state channel. `body.state` seeds the document; patches applied by any\n     * port stream to the client as `STATE_SNAPSHOT`/`STATE_DELTA`. Transient - never persisted.\n     */\n    readonly sharedState: AgentSharedState;\n}",
     "doc": "/** Per-run context handed to the `ports` factory alongside the route context. */"
+  },
+  {
+    "name": "AgUIRunUsage",
+    "kind": "interface",
+    "package": "@nifrajs/ag-ui",
+    "signature": "export interface AgUIRunUsage {\n    readonly provider?: string;\n    readonly model?: string;\n    readonly inputTokens?: number;\n    readonly outputTokens?: number;\n    readonly totalTokens?: number;\n    readonly reasoningTokens?: number;\n    readonly cachedInputTokens?: number;\n}",
+    "doc": "/**\n * One aggregated token-usage entry in the spec's `RUN_FINISHED.usage` array: the model port's\n * `usage` deltas summed per `(provider, model)` pair, matching AG-UI's `TokenUsage` shape.\n */"
   },
   {
     "name": "AnyServer",

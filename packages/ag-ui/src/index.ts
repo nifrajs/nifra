@@ -23,8 +23,12 @@
  *     second one. When any text was streamed, the terminal `TEXT_MESSAGE_*` block is suppressed -
  *     the streamed text IS the assistant message, so a streaming port must stream all
  *     user-visible text. A non-streaming port keeps the single terminal
- *     `TEXT_MESSAGE_START`/`_CONTENT`/`_END` block. Deltas are transient: a `Last-Event-ID`
- *     replay carries evidence frames and the stored (unsuppressed) terminal events only.
+ *     `TEXT_MESSAGE_START`/`_CONTENT`/`_END` block. `usage` deltas are summed per
+ *     `(provider, model)` across the run's model decisions and stamped as the spec's
+ *     `usage: TokenUsage[]` array on the terminal `RUN_FINISHED` event (success and interrupt
+ *     alike) - they never produce a frame of their own. Deltas are transient: a `Last-Event-ID`
+ *     replay carries evidence frames and the stored (unsuppressed) terminal events only - the
+ *     stored `RUN_FINISHED` keeps its `usage`.
  *   - The `ports` factory receives `(c, run)` where `run.sharedState` is the run's
  *     `AgentSharedState` channel: `body.state` seeds the document (announced as an upfront
  *     `STATE_SNAPSHOT` when present), every `patch` streams as `STATE_DELTA` (RFC 6902 ops), and
@@ -291,8 +295,8 @@ function sseResponse(
           const openToolCallId = projector.adopt(evidence)
           sendEvidence(send, evidence, identity.turnId, withIds, openToolCallId)
         }
-        const streamedText = projector.finish()
-        const events = terminalEvents(identity, await run, snapshotMessages)
+        const { streamedText, usage } = projector.finish()
+        const events = terminalEvents(identity, await run, snapshotMessages, usage)
         // Store the terminal events before delivering them, so a client that misses them can
         // replay. The stored form is always the unsuppressed one - a replayed stream saw no
         // deltas, so it needs the full terminal text block.
@@ -382,6 +386,28 @@ function sseHeaders(body: ReadableStream<Uint8Array>): Response {
   })
 }
 
+/**
+ * One aggregated token-usage entry in the spec's `RUN_FINISHED.usage` array: the model port's
+ * `usage` deltas summed per `(provider, model)` pair, matching AG-UI's `TokenUsage` shape.
+ */
+export interface AgUIRunUsage {
+  readonly provider?: string
+  readonly model?: string
+  readonly inputTokens?: number
+  readonly outputTokens?: number
+  readonly totalTokens?: number
+  readonly reasoningTokens?: number
+  readonly cachedInputTokens?: number
+}
+
+const USAGE_TOKEN_FIELDS = [
+  "inputTokens",
+  "outputTokens",
+  "totalTokens",
+  "reasoningTokens",
+  "cachedInputTokens",
+] as const
+
 interface DeltaProjector {
   readonly sink: AgentDeltaSink
   /**
@@ -390,8 +416,11 @@ interface DeltaProjector {
    * effect id so the evidence closes the same call the client is watching.
    */
   adopt(evidence: AgentStepEvidence): string | undefined
-  /** Close every open stream. Returns whether any text was streamed during the run. */
-  finish(): boolean
+  /**
+   * Close every open stream. Returns whether any text was streamed during the run, and the
+   * per-(provider, model) token usage sums when any `usage` delta was reported.
+   */
+  finish(): { readonly streamedText: boolean; readonly usage?: readonly AgUIRunUsage[] }
 }
 
 /**
@@ -406,6 +435,7 @@ function createDeltaProjector(send: SseSend, turnId: string): DeltaProjector {
   let reasoningId: string | undefined
   let callId: string | undefined
   let streamedText = false
+  let usage: Map<string, UsageEntry> | undefined
   const closeText = (): void => {
     if (textId === undefined) return
     send({ type: "TEXT_MESSAGE_END", messageId: textId, timestamp: Date.now() })
@@ -425,6 +455,27 @@ function createDeltaProjector(send: SseSend, turnId: string): DeltaProjector {
   }
   const sink: AgentDeltaSink = {
     delta(delta: AgentModelDelta) {
+      // Usage is terminal metadata for the whole run, not a frame: sum per (provider, model)
+      // across model decisions without disturbing whichever stream is open.
+      if (delta.kind === "usage") {
+        usage = usage ?? new Map()
+        const key = `${delta.provider ?? ""} ${delta.model ?? ""}`
+        let entry = usage.get(key)
+        if (entry === undefined) {
+          entry = {
+            ...(delta.provider === undefined ? {} : { provider: delta.provider }),
+            ...(delta.model === undefined ? {} : { model: delta.model }),
+          }
+          usage.set(key, entry)
+        }
+        for (const field of USAGE_TOKEN_FIELDS) {
+          const value = delta[field]
+          // A non-finite figure must not poison the sum; a never-reported field stays absent.
+          if (typeof value === "number" && Number.isFinite(value))
+            entry[field] = (entry[field] ?? 0) + value
+        }
+        return
+      }
       const timestamp = Date.now()
       if (delta.kind === "text") {
         closeReasoning()
@@ -490,9 +541,20 @@ function createDeltaProjector(send: SseSend, turnId: string): DeltaProjector {
       closeCall()
       closeReasoning()
       closeText()
-      return streamedText
+      return { streamedText, ...(usage === undefined ? {} : { usage: [...usage.values()] }) }
     },
   }
+}
+
+/** Mutable accumulator behind one `AgUIRunUsage` entry. */
+interface UsageEntry {
+  provider?: string
+  model?: string
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+  reasoningTokens?: number
+  cachedInputTokens?: number
 }
 
 /** JSON Schema for the payload a spec `resume` entry must carry back. */
@@ -516,8 +578,12 @@ function terminalEvents(
   identity: RunIdentity,
   result: AgentRunResult<unknown>,
   snapshotMessages: unknown,
+  usage?: readonly AgUIRunUsage[],
 ): readonly Record<string, unknown>[] {
   const timestamp = Date.now()
+  // Usage rides the spec's RUN_FINISHED `usage` array, so the stored terminal events keep it
+  // and a replayed stream reports the same totals as the live one.
+  const withUsage = usage === undefined ? {} : { usage }
   if (result.status === "completed") {
     if (result.error !== undefined)
       return [{ type: "RUN_ERROR", message: result.error.code, timestamp }]
@@ -534,6 +600,7 @@ function terminalEvents(
         runId: identity.runId,
         result: result.output,
         outcome: { type: "success" },
+        ...withUsage,
         timestamp,
       },
     ]
@@ -562,11 +629,20 @@ function terminalEvents(
             },
           ],
         },
+        ...withUsage,
         timestamp,
       },
     ]
   }
-  return [{ type: "RUN_FINISHED", threadId: identity.threadId, runId: identity.runId, timestamp }]
+  return [
+    {
+      type: "RUN_FINISHED",
+      threadId: identity.threadId,
+      runId: identity.runId,
+      ...withUsage,
+      timestamp,
+    },
+  ]
 }
 
 /**

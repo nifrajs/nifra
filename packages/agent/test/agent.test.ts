@@ -611,6 +611,7 @@ describe("model deltas", () => {
           complete: (request) => {
             request.onDelta?.({ kind: "text", text: "he" })
             request.onDelta?.({ kind: "text", text: "llo" })
+            request.onDelta?.({ kind: "usage", inputTokens: 12, outputTokens: 3 })
             return { kind: "output", value: { answer: "hello" } }
           },
         },
@@ -623,6 +624,7 @@ describe("model deltas", () => {
     expect(seen).toEqual([
       { kind: "text", text: "he" },
       { kind: "text", text: "llo" },
+      { kind: "usage", inputTokens: 12, outputTokens: 3 },
     ])
     expect(JSON.stringify(result.evidence)).not.toContain("hello")
   })

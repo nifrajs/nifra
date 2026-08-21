@@ -30,6 +30,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The structural slice of a route context the seam needs.
 - **AgUIRunContext** _(interface)_ - `interface AgUIRunContext`
   Per-run context handed to the `ports` factory alongside the route context.
+- **AgUIRunUsage** _(interface)_ - `interface AgUIRunUsage`
+  One aggregated token-usage entry in the spec's `RUN_FINISHED.usage` array: the model port's `usage` deltas summed per `(provider, model)` pair, matching AG-UI's `TokenUsage` shape.
 - **MountAgUIOptions** _(interface)_ - `interface MountAgUIOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>`
 - **mountAgUI** _(function)_ - `mountAgUI: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(app: AgUIMountableApp, options: MountAgUIOptions<InputSchema, OutputSchema>) => void`
   Mount a single agent as an AG-UI `POST {path}` SSE endpoint.
@@ -43,8 +45,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentDefinition** _(interface)_ - `interface AgentDefinition<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>`
 - **AgentDeltaSink** _(interface)_ - `interface AgentDeltaSink`
   A transient observer of model deltas - an SSE bridge, a live console, a progress meter.
-- **AgentModelDelta** _(type)_ - `type AgentModelDelta = | { readonly kind: "text"; readonly text: string } | { readonly kind: "reasoning"; readonly text: string } | { readonly kind: "tool-args"; readonly name?: string; readonly argsText: string }`
-  One progressive chunk of a model decision in flight: user-visible text, reasoning text, or the raw argument text of the tool call being formed (`name` on the first chunk when the provider announces it). Chunks are provider output surface, not evidence - the runtime never stores them.
+- **AgentModelDelta** _(type)_ - `type AgentModelDelta`
+  One progressive chunk of a model decision in flight: user-visible text, reasoning text, or the raw argument text of the tool call being formed (`name` on the first chunk when the provider announces it). A `usage` delta reports the decision's token counts once the provider settles them, optionally a…
 - **AgentModelPort** _(interface)_ - `interface AgentModelPort`
 - **AgentModelRequest** _(interface)_ - `interface AgentModelRequest`
 - **AgentModelResponse** _(type)_ - `type AgentModelResponse = | { readonly kind: "output"; readonly value: unknown } | { readonly kind: "tool"; readonly name: string; readonly input: unknown }`

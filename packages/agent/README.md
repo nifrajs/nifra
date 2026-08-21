@@ -26,7 +26,9 @@ telemetry port supplied through `ports`.
 
 A model port can stream: when the caller wires an `AgentDeltaSink` into `ports.deltas`, every model
 request carries an optional `onDelta` callback the port may call per chunk - user-visible text,
-reasoning text, or the raw argument text of the tool call being formed. Deltas are transient
+reasoning text, the raw argument text of the tool call being formed, or a `usage` delta reporting
+the decision's settled token counts (optionally attributed to a provider and model, for observers
+to sum across the run). Deltas are transient
 observer data for live UIs (`@nifrajs/ag-ui` projects them onto `TEXT_MESSAGE_*`, `REASONING_*`,
 and `TOOL_CALL_ARGS` frames): they are never validated, persisted, or replayed, and a failing sink
 never fails the model step. `combineAgentDeltaSinks(a, b, ...)` fans deltas out the way

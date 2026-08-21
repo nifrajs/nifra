@@ -116,12 +116,24 @@ export interface AgentModelPort {
 /**
  * One progressive chunk of a model decision in flight: user-visible text, reasoning text, or the
  * raw argument text of the tool call being formed (`name` on the first chunk when the provider
- * announces it). Chunks are provider output surface, not evidence - the runtime never stores them.
+ * announces it). A `usage` delta reports the decision's token counts once the provider settles
+ * them, optionally attributed to a provider and model - observers sum across decisions. Chunks
+ * are provider output surface, not evidence - the runtime never stores them.
  */
 export type AgentModelDelta =
   | { readonly kind: "text"; readonly text: string }
   | { readonly kind: "reasoning"; readonly text: string }
   | { readonly kind: "tool-args"; readonly name?: string; readonly argsText: string }
+  | {
+      readonly kind: "usage"
+      readonly provider?: string
+      readonly model?: string
+      readonly inputTokens?: number
+      readonly outputTokens?: number
+      readonly totalTokens?: number
+      readonly reasoningTokens?: number
+      readonly cachedInputTokens?: number
+    }
 
 /** A transient observer of model deltas - an SSE bridge, a live console, a progress meter. */
 export interface AgentDeltaSink {
