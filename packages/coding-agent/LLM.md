@@ -23,13 +23,13 @@ Standalone, extensible Nifra coding-agent host and CLI.
 - **compileRunPlan** _(function)_ - `compileRunPlan: (source: RunPlan | unknown, options: CompileOptions) => WorkflowStep` · from `@nifrajs/coding-agent/orchestration`
 - **compileRunPlanLayers** _(function)_ - `compileRunPlanLayers: (source: RunPlan | unknown, options: CompileOptions) => readonly WorkflowStep[]` · from `@nifrajs/coding-agent/orchestration`
 - **createCapabilityManifest** _(function)_ - `createCapabilityManifest: (requested: readonly AgentCapability[], trusted?: readonly AgentCapability[], reason?: string) => AgentCapability…` · from `@nifrajs/coding-agent`
-- **createNifraTools** _(function)_ - `createNifraTools: (options: NifraContextOptions & Pick<VerificationOptions, "command">) => readonly NifraAgentTool[]` · from `@nifrajs/coding-agent`
-- **createPresetSpec** _(function)_ - `createPresetSpec: (name: AgentPresetName, prompt: string, id?: string) => SubagentSpec` · from `@nifrajs/coding-agent`
-- **createStepCatalog** _(function)_ - `createStepCatalog: (entries: Readonly<Record<string, CatalogStep>>) => StepCatalog` · from `@nifrajs/coding-agent/orchestration`
-- **createVerificationRepairTask** _(function)_ - `createVerificationRepairTask: (result: VerificationResult, cwd: string) => VerificationRepairTask | undefined` · from `@nifrajs/coding-agent`
-- **deniedCapabilities** _(function)_ - `deniedCapabilities: (manifest: AgentCapabilityManifest) => readonly AgentCapability[]` · from `@nifrajs/coding-agent`
+- **createCiDeploymentAdapter** _(function)_ - `createCiDeploymentAdapter: () => CiDeploymentAdapter` · from `@nifrajs/coding-agent`
+- **createDurableJobsStore** _(function)_ - `createDurableJobsStore: (options?: DurableJobsStoreOptions) => RunDispatchStore & { readonly jobs: JobStore; deadLetters(): readonly RunDis…` · from `@nifrajs/coding-agent/orchestration`
+- **createLocalProcessDeploymentAdapter** _(function)_ - `createLocalProcessDeploymentAdapter: () => LocalProcessDeploymentAdapter` · from `@nifrajs/coding-agent`
+- **createMemoryRunDispatchStore** _(function)_ - `createMemoryRunDispatchStore: (options?: { readonly now?: () => number; }) => RunDispatchStore & { readonly jobs: JobStore; deadLetters(): …` · from `@nifrajs/coding-agent/orchestration`
+- **createNativeGatewayModelPort** _(function)_ - `createNativeGatewayModelPort: (options: NativeGatewayModelPortOptions) => NativeModelPort` · from `@nifrajs/coding-agent`
 
-_…and 177 more - see [`api-reference.md`](../../api-reference.md#nifrajscodingagent) for the complete list._
+_…and 231 more - see [`api-reference.md`](../../api-reference.md#nifrajscodingagent) for the complete list._
 
 ## Footguns
 

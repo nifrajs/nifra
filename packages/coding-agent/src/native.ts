@@ -1,4 +1,10 @@
 import {
+  type ModelGateway,
+  type ModelRoutePolicy,
+  runModelGateway,
+  structuredOutputParser,
+} from "@nifrajs/agent"
+import {
   type AgentBackend,
   type AgentBackendInfo,
   type AgentEvent,
@@ -48,6 +54,49 @@ export interface NativeModelPort {
   complete(
     request: NativeModelRequest,
   ): NativeModelResponse | PromiseLike<NativeModelResponse> | AsyncIterable<NativeModelChunk>
+}
+
+export interface NativeGatewayModelPortOptions {
+  readonly gateway: ModelGateway
+  readonly policy: ModelRoutePolicy
+  readonly routeId?: string
+}
+
+/** Adapt the provider-neutral gateway to the native backend without making it the default path. */
+export function createNativeGatewayModelPort(
+  options: NativeGatewayModelPortOptions,
+): NativeModelPort {
+  const parser = structuredOutputParser<NativeModelResponse>((value) =>
+    parseNativeModelResponse(value),
+  )
+  return {
+    complete(request) {
+      return runModelGateway(
+        options.gateway,
+        {
+          input: request,
+          ...(options.routeId === undefined ? {} : { routeId: options.routeId }),
+          parser,
+          signal: request.signal,
+        },
+        options.policy,
+      ).then((result) => {
+        if (!result.ok) throw new Error(`native gateway failed: ${result.error.code}`)
+        return result.output
+      })
+    },
+  }
+}
+
+function parseNativeModelResponse(value: unknown): NativeModelResponse {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    throw new TypeError("native model response is invalid")
+  const record = value as Record<string, unknown>
+  if (record.type === "text" && typeof record.text === "string")
+    return Object.freeze({ type: "text", text: record.text })
+  if (record.type === "tool" && typeof record.name === "string" && Object.hasOwn(record, "input"))
+    return Object.freeze({ type: "tool", name: record.name, input: record.input })
+  throw new TypeError("native model response is invalid")
 }
 
 export interface NativeApprovalPort {

@@ -56,6 +56,12 @@ const q = createQueue({ store: new RedisJobStore(redis) })
 Leasing is at-least-once: a leased job is hidden for `leaseMs`; a worker that dies mid-job releases it
 back automatically. Make handlers **idempotent**.
 
+The queue remains agent-agnostic. `@nifrajs/coding-agent` can place content-free run-dispatch
+identities in a dedicated `JobStore`, but this package does not import or define agent concepts. A
+`MemoryJobStore` is disposable single-process storage; production durability, authorization,
+retention, reconciliation, and worker coordination belong to the caller's operated adapter. No
+exactly-once delivery guarantee is implied by a lease.
+
 ## Cloudflare Workers
 
 Workers has no long-lived process, so don't call `start()`. Back the queue with a durable store and a

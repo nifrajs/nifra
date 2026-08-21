@@ -35,3 +35,8 @@ Both surfaces degrade to a stable notice when the host offers neither, so the
 shell stays usable when the agent backend is unavailable. Neither renders a
 prompt, a free-text reason, tool data, model output, a diagnostic, or an
 artifact.
+
+The Run Studio adds a graph, evidence timeline, eval comparison, and deterministic fault-injection
+view. Long histories are projected through bounded virtual windows, and replay links contain only
+structural coordinates and digests. The browser build depends on `@nifrajs/agent-app` and protocol
+views, never on Pi, native backends, session stores, or host-internal modules.

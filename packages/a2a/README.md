@@ -74,3 +74,6 @@ The seam performs no authentication or authorization - wrap it with your app's r
 ## Docs
 
 Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one core, five UI libraries, every runtime. Scaffold a new app with `bun create nifra`.
+
+For AI agents, see [`LLM.md`](./LLM.md) and the full corpus
+[`../../llms-full.txt`](../../llms-full.txt).

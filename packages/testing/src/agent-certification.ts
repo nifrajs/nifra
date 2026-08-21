@@ -10,6 +10,17 @@
  */
 
 import {
+  AgentDeployment,
+  type AgentDeploymentAdapter,
+  createDeploymentAuthority,
+  type ModelGateway,
+  parseDeploymentCapabilityReport,
+  parseModelGatewayError,
+  parseModelGatewayResult,
+  runModelGateway,
+  structuredOutputParser,
+} from "@nifrajs/agent"
+import {
   type CapabilityDescriptor,
   composeRegistrySnapshot,
   parseCapabilityDescriptor,
@@ -108,3 +119,178 @@ export function registryCertificationProfile(): AdapterCertificationProfile<Cert
     ],
   })
 }
+
+class NamedCertificationFailure extends Error {
+  constructor(name: string) {
+    super(name)
+    this.name = name
+  }
+}
+
+export interface CertifiableModelGateway extends ModelGateway {}
+
+/** Certification for provider-neutral gateways. It never emits request or response content. */
+export function gatewayCertificationProfile(): AdapterCertificationProfile<CertifiableModelGateway> {
+  return defineCertificationProfile<CertifiableModelGateway>({
+    id: "model-gateway",
+    version: 1,
+    capabilities: ["parse-boundary", "error-taxonomy", "fallback-policy", "evidence-firewall"],
+    checks: [
+      {
+        id: "parse-boundary",
+        capability: "parse-boundary",
+        async run(adapter) {
+          const result = await runModelGateway(
+            adapter,
+            { input: { probe: true }, parser: structuredOutputParser((value) => value) },
+            { routes: ["cert-route"], retryableCodes: [], budget: { maxAttempts: 1 } },
+          )
+          if (!result.ok || result.evidence.some((item) => Object.hasOwn(item, "input")))
+            throw new NamedCertificationFailure("GatewayParseBoundary")
+        },
+      },
+      {
+        id: "error-taxonomy",
+        capability: "error-taxonomy",
+        run() {
+          for (const code of [
+            "malformed_output",
+            "refusal",
+            "timeout",
+            "rate_limit",
+            "unavailable",
+            "policy_denied",
+            "cancelled",
+            "internal",
+          ] as const) {
+            if (parseModelGatewayError({ code }).code !== code)
+              throw new NamedCertificationFailure("GatewayErrorTaxonomy")
+          }
+        },
+      },
+      {
+        id: "fallback-policy",
+        capability: "fallback-policy",
+        async run(adapter) {
+          const result = await runModelGateway(
+            adapter,
+            { input: { probe: true } },
+            {
+              routes: ["cert-route", "cert-fallback"],
+              retryableCodes: ["rate_limit", "unavailable"],
+              allowFallback: true,
+              budget: { maxAttempts: 2 },
+            },
+          )
+          if (result.evidence.some((item) => item.kind === "fallback")) return
+          if (!result.ok) throw new NamedCertificationFailure("GatewayFallback")
+        },
+      },
+      {
+        id: "evidence-firewall",
+        capability: "evidence-firewall",
+        async run(adapter) {
+          const raw = await adapter.complete({
+            routeId: "cert-route",
+            input: { probe: true },
+            signal: new AbortController().signal,
+            envelope: { attempt: 1, attemptsRemaining: 0 },
+          })
+          if (parseModelGatewayResult(raw).ok === false && isRecordWithKey(raw, "evidence"))
+            throw new NamedCertificationFailure("GatewayEvidenceFirewall")
+          const result = await runModelGateway(
+            adapter,
+            { input: { prompt: "transient" } },
+            { routes: ["cert-route"], retryableCodes: [], budget: { maxAttempts: 1 } },
+          )
+          const evidence = JSON.stringify(result.evidence).toLowerCase()
+          if (/prompt|message|response|credential|secret|diagnostic|stack|content/.test(evidence))
+            throw new NamedCertificationFailure("GatewayEvidenceFirewall")
+        },
+      },
+    ],
+  })
+}
+
+function isRecordWithKey(value: unknown, key: string): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.hasOwn(value, key)
+  )
+}
+
+export const modelGatewayCertificationProfile = gatewayCertificationProfile
+
+export interface CertifiableDeploymentAdapter extends AgentDeploymentAdapter {
+  /** Required only when the adapter claims real OS hostile-code isolation. */
+  readonly verifyHostileCodeIsolation?: () => boolean | PromiseLike<boolean>
+}
+
+/** Certification for lifecycle cleanup, capability truthfulness, authority, and isolation claims. */
+export function deploymentCertificationProfile(): AdapterCertificationProfile<CertifiableDeploymentAdapter> {
+  return defineCertificationProfile<CertifiableDeploymentAdapter>({
+    id: "deployment-adapter",
+    version: 1,
+    capabilities: ["capability-truthfulness", "lifecycle", "cleanup", "isolation-claims"],
+    checks: [
+      {
+        id: "capability-truthfulness",
+        capability: "capability-truthfulness",
+        async run(adapter) {
+          const report = parseDeploymentCapabilityReport(await adapter.capabilityReport())
+          if (report.adapterId !== adapter.id)
+            throw new NamedCertificationFailure("DeploymentCapability")
+        },
+      },
+      {
+        id: "lifecycle",
+        capability: "lifecycle",
+        async run(adapter) {
+          const deployment = new AgentDeployment(
+            adapter,
+            createDeploymentAuthority({ workspaceMaxBytes: 1024 * 1024 }),
+          )
+          await deployment.prepare({ deploymentId: "cert-deployment" })
+          await deployment.start()
+          const inspection = await deployment.inspect()
+          if (inspection.state !== "running")
+            throw new NamedCertificationFailure("DeploymentLifecycle")
+          await deployment.cancel()
+          await deployment.dispose()
+        },
+      },
+      {
+        id: "cleanup",
+        capability: "cleanup",
+        async run(adapter) {
+          const deployment = new AgentDeployment(
+            adapter,
+            createDeploymentAuthority({ workspaceMaxBytes: 1024 * 1024 }),
+          )
+          await deployment.prepare({ deploymentId: "cert-cleanup" })
+          await deployment.dispose()
+          if (deployment.lifecycleState !== "disposed")
+            throw new NamedCertificationFailure("DeploymentCleanup")
+        },
+      },
+      {
+        id: "isolation-claims",
+        capability: "isolation-claims",
+        async run(adapter) {
+          const report = parseDeploymentCapabilityReport(await adapter.capabilityReport())
+          if (report.capabilities.hostileCodeIsolation === "os") {
+            if (
+              adapter.verifyHostileCodeIsolation === undefined ||
+              !(await adapter.verifyHostileCodeIsolation())
+            )
+              throw new NamedCertificationFailure("DeploymentIsolationClaim")
+          }
+        },
+      },
+    ],
+  })
+}
+
+export const deploymentAdapterCertificationProfile = deploymentCertificationProfile

@@ -1,143 +1,109 @@
-import { describe, expect, test } from "bun:test"
+import { expect, test } from "bun:test"
 import {
-  type BoundaryStateView,
-  boundaryCommands,
-  boundaryIsStale,
-  type RegistryCapabilityView,
-  toRegistryCapabilityView,
+  toEvalComparisonView,
+  toEvidenceTimelineView,
+  toFaultInjectionViews,
+  toRunStudioView,
+  virtualizeEvidenceRows,
 } from "../src/view-models.ts"
 
-const DIGEST = "a".repeat(64)
+const digest = "e".repeat(64)
 
-function descriptor(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    descriptorVersion: 1,
-    kind: "tool",
-    name: "search",
-    version: "1.0.0",
-    schemaDigest: DIGEST,
-    requiredCapabilities: ["filesystem"],
-    approval: { kind: "required" },
-    retry: "none",
-    idempotency: "request",
-    isolation: "process",
-    ...overrides,
-  }
-}
-
-describe("toRegistryCapabilityView", () => {
-  test("projects a descriptor to its content-free identity card", () => {
-    const view = toRegistryCapabilityView(descriptor())
-    expect(view).toEqual({
-      kind: "tool",
-      name: "search",
-      version: "1.0.0",
-      schemaDigest: DIGEST,
-      requiredCapabilities: ["filesystem"],
-      approval: "required",
-      retry: "none",
-      idempotency: "request",
-      isolation: "process",
-    } satisfies RegistryCapabilityView)
+test("run studio projections reconstruct branches, retries, and recovery from evidence", () => {
+  const run = toRunStudioView({
+    runId: "run-1",
+    planId: "plan-1",
+    planDigest: digest,
+    cursor: 5,
+    state: "running",
+    traceRef: "trace-1",
+    replayRef: "replay-1",
+    nodes: [
+      {
+        nodeId: "node-2",
+        dependsOn: ["node-1"],
+        state: "recovered",
+        attempt: 2,
+        retryCount: 1,
+        checkpointed: true,
+        cancelled: false,
+        recovered: true,
+      },
+      {
+        nodeId: "node-1",
+        dependsOn: [],
+        state: "succeeded",
+        attempt: 1,
+        retryCount: 0,
+        checkpointed: true,
+        cancelled: false,
+        recovered: false,
+      },
+    ],
   })
-
-  test("drops any content-bearing field on the raw record", () => {
-    const view = toRegistryCapabilityView(
-      descriptor({ inputSchema: { secret: true }, description: "leak", prompt: "leak" }),
-    )
-    expect(view).not.toBeUndefined()
-    expect(view).not.toHaveProperty("inputSchema")
-    expect(view).not.toHaveProperty("description")
-    expect(view).not.toHaveProperty("prompt")
+  expect(run?.nodes.map((node) => node.nodeId)).toEqual(["node-1", "node-2"])
+  expect(run?.activeNodes).toBe(0)
+  expect(run?.terminalNodes).toBe(1)
+  expect(
+    toRunStudioView({
+      runId: "run",
+      planId: "plan",
+      planDigest: digest,
+      cursor: 0,
+      state: "running",
+      nodes: [],
+      output: "no",
+    }),
+  ).toBeUndefined()
+})
+test("timeline and eval views drop content and retain opaque references", () => {
+  const timeline = toEvidenceTimelineView([
+    {
+      seq: 2,
+      eventId: "run:2",
+      runId: "run",
+      nodeId: "node",
+      status: "completed",
+      attempt: 2,
+      replayRef: "replay",
+      output: "never",
+    },
+    {
+      seq: 1,
+      eventId: "run:1",
+      runId: "run",
+      nodeId: "node",
+      status: "retrying",
+      attempt: 1,
+      scheduleToken: "job:1",
+    },
+  ])
+  expect(timeline.map((row) => row.seq)).toEqual([1])
+  const evalView = toEvalComparisonView({
+    suiteId: "suite",
+    comparisons: [
+      { caseId: "case", rubricId: "rubric", code: "regressed", regressionId: "suite/case/rubric" },
+    ],
+    regressions: ["suite/case/rubric"],
   })
-
-  test("carries a numeric threshold level as a bound, not content", () => {
-    const view = toRegistryCapabilityView(descriptor({ approval: { kind: "threshold", level: 2 } }))
-    expect(view?.approval).toBe("threshold")
-    expect(view?.approvalLevel).toBe(2)
-  })
-
-  test.each([
-    ["unknown kind", { kind: "provider" }],
-    ["missing name", { name: "" }],
-    ["short digest", { schemaDigest: "abc" }],
-    ["non-string capability", { requiredCapabilities: [1] }],
-    ["bad isolation", { isolation: "vm" }],
-    ["malformed approval", { approval: { kind: "maybe" } }],
-    ["not a record", undefined],
-  ])("returns undefined for %s", (_label, overrides) => {
-    const raw = overrides === undefined ? "nope" : descriptor(overrides as Record<string, unknown>)
-    expect(toRegistryCapabilityView(raw)).toBeUndefined()
-  })
+  expect(evalView?.comparisons[0]?.code).toBe("regressed")
+  expect(
+    toFaultInjectionViews([
+      {
+        id: "fault",
+        kind: "lease",
+        scheduleToken: "seed:1",
+        regressionId: "fault/1",
+        ok: true,
+        message: "drop",
+      },
+    ]),
+  ).toEqual([])
 })
 
-describe("boundaryCommands", () => {
-  const at = (
-    kind: "approval" | "handoff",
-    state: string,
-    expiresAt = 10_000,
-  ): BoundaryStateView => ({
-    kind,
-    state,
-    expiresAt,
-  })
-
-  test("offers approve, deny, and cancel on a pending approval", () => {
-    expect(boundaryCommands(at("approval", "pending"), { inbox: true, now: 0 })).toEqual([
-      "approve",
-      "deny",
-      "cancel",
-    ])
-  })
-
-  test("offers assign and cancel on a pending handoff, resolve only once assigned", () => {
-    expect(boundaryCommands(at("handoff", "pending"), { inbox: true, now: 0 })).toEqual([
-      "assign",
-      "cancel",
-    ])
-    expect(boundaryCommands(at("handoff", "assigned"), { inbox: true, now: 0 })).toEqual([
-      "resolve",
-      "cancel",
-    ])
-  })
-
-  test.each([
-    "approved",
-    "denied",
-    "expired",
-    "cancelled",
-  ])("offers nothing on the terminal approval state %s", (state) => {
-    expect(boundaryCommands(at("approval", state), { inbox: true, now: 0 })).toEqual([])
-  })
-
-  test.each([
-    "resolved",
-    "declined",
-    "expired",
-    "cancelled",
-  ])("offers nothing on the terminal handoff state %s", (state) => {
-    expect(boundaryCommands(at("handoff", state), { inbox: true, now: 0 })).toEqual([])
-  })
-
-  test("offers resolve and cancel on an accepted handoff", () => {
-    expect(boundaryCommands(at("handoff", "accepted"), { inbox: true, now: 0 })).toEqual([
-      "resolve",
-      "cancel",
-    ])
-  })
-
-  test("offers nothing for an unsupported state", () => {
-    expect(boundaryCommands(at("approval", "reticulating"), { inbox: true, now: 0 })).toEqual([])
-  })
-
-  test("fails closed when the inbox feature is not negotiated", () => {
-    expect(boundaryCommands(at("approval", "pending"), { inbox: false, now: 0 })).toEqual([])
-  })
-
-  test("fails closed at or past expiry", () => {
-    const item = at("approval", "pending", 5_000)
-    expect(boundaryIsStale(item, 4_999)).toBe(false)
-    expect(boundaryIsStale(item, 5_000)).toBe(true)
-    expect(boundaryCommands(item, { inbox: true, now: 5_000 })).toEqual([])
-  })
+test("histories over 1,000 rows are windowed", () => {
+  const rows = Array.from({ length: 2_000 }, (_unused, index) => index)
+  const window = virtualizeEvidenceRows(rows, 1_500, 100)
+  expect(window.rows).toHaveLength(100)
+  expect(window.offset).toBe(1_450)
 })

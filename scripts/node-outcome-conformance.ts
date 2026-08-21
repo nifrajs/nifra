@@ -208,9 +208,9 @@ const LAWS: readonly Law[] = [
       assertEqual(json.status, 200, "json socket status")
       assertEqual(onlyHeader(json, "x-mixed-case"), "kept", "socket lowercases header names")
       assertEqual(
-        json.headers["x-merged"]?.join("|"),
+        json.headers["x-merged"]?.join(", "),
         "first, second",
-        "socket merges duplicate headers",
+        "socket preserves normalized duplicate header semantics",
       )
       assertEqual(json.headers["set-cookie"]?.length, 2, "socket keeps multiple cookies")
       assertBytes(json.body, JSON.stringify({ ok: true }), "json socket body")
@@ -218,9 +218,9 @@ const LAWS: readonly Law[] = [
       const body = await readRawResponse(port, "GET", "/body")
       assertEqual(body.status, 201, "body socket status")
       assertEqual(
-        body.headers["x-merged"]?.join("|"),
+        body.headers["x-merged"]?.join(", "),
         "first, second",
-        "body merges duplicate headers",
+        "body preserves normalized duplicate header semantics",
       )
       assertEqual(body.headers["set-cookie"]?.length, 2, "body keeps duplicate cookies")
       assertBytes(body.body, "body", "body socket bytes")

@@ -18,6 +18,11 @@ const result = await runAgent(definition, { value: input }, ports, {
 The public in-memory adapters are for local development and tests. Durable state, provider
 credentials, and operated policy remain adapter concerns.
 
+Gateway and deployment contracts are deliberately provider-neutral. Retry, fallback, budget,
+deadline, workspace, and hostile-code isolation claims are admitted only from a host-approved
+capability report. The local and replay reference profiles are not hostile-code sandboxes, and no
+public package loads provider credentials or promises durable execution.
+
 Several telemetry consumers can observe the same run: `combineAgentTelemetry(a, b, ...)` fans step
 evidence out to every port in order, so an SSE evidence stream and an exporter (for example
 `@nifrajs/agent-telemetry`'s `traceAgentRun`) compose instead of displacing each other. The HTTP

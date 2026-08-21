@@ -345,6 +345,25 @@
     "doc": "/** A transient observer of model deltas - an SSE bridge, a live console, a progress meter. */"
   },
   {
+    "name": "AgentDeployment",
+    "kind": "class",
+    "package": "@nifrajs/agent",
+    "signature": "export declare class AgentDeployment {\n    private readonly adapter;\n    private readonly signal;\n    readonly id: string;\n    private deploymentId;\n    private state;\n    private preparedRef;\n    private handleRef;\n    private report;\n    private readonly evidence;\n    constructor(adapter: AgentDeploymentAdapter, authority: DeploymentAuthority, signal?: AbortSignal, options?: DeploymentActivationOptions);\n    private readonly authority;\n    private readonly approved;\n    get lifecycleState(): \"new\" | DeploymentState;\n    get evidenceRecords(): readonly DeploymentEvidence[];\n    capabilityReport(): Promise<DeploymentCapabilityReport>;\n    prepare(planInput: AgentDeploymentPlan | unknown): Promise<DeploymentPrepareResult>;\n    start(): Promise<DeploymentStartResult>;\n    inspect(): Promise<DeploymentInspection>;\n    cancel(): Promise<DeploymentCancelResult>;\n    dispose(): Promise<DeploymentDisposeResult>;\n    private fail;\n}",
+    "doc": "/** Host-owned deterministic lifecycle wrapper for an adapter. */"
+  },
+  {
+    "name": "AgentDeploymentAdapter",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentDeploymentAdapter {\n    readonly id: string;\n    capabilityReport(): DeploymentCapabilityReport | PromiseLike<DeploymentCapabilityReport>;\n    prepare(request: DeploymentPrepareRequest): DeploymentPrepareResult | PromiseLike<DeploymentPrepareResult>;\n    start(request: DeploymentStartRequest): DeploymentStartResult | PromiseLike<DeploymentStartResult>;\n    inspect(request: DeploymentInspectRequest): DeploymentInspection | PromiseLike<DeploymentInspection>;\n    cancel(request: DeploymentCancelRequest): DeploymentCancelResult | PromiseLike<DeploymentCancelResult>;\n    dispose(request: DeploymentDisposeRequest): DeploymentDisposeResult | PromiseLike<DeploymentDisposeResult>;\n}"
+  },
+  {
+    "name": "AgentDeploymentPlan",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface AgentDeploymentPlan {\n    readonly deploymentId: string;\n    readonly hostileCode?: boolean;\n    readonly workspaceMaxBytes?: number;\n    readonly deadlineAt?: number;\n}"
+  },
+  {
     "name": "agentError",
     "kind": "function",
     "package": "@nifrajs/agent-protocol",
@@ -362,6 +381,24 @@
     "package": "@nifrajs/testing",
     "signature": "export interface AgentEvalCase {\n    readonly id: string;\n    evaluate(): readonly RubricVerdict[] | PromiseLike<readonly RubricVerdict[]>;\n}",
     "doc": "/** One eval case. `evaluate` is a deterministic producer of rubric verdicts - evidence, not a run. */"
+  },
+  {
+    "name": "AgentEvalComponentEvidence",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface AgentEvalComponentEvidence {\n    readonly id: \"trajectory\" | \"fault-profile\" | \"contract-lab\" | \"idempotency\" | \"certification\";\n    readonly ok: boolean;\n    readonly code?: string;\n    readonly digest?: string;\n}"
+  },
+  {
+    "name": "AgentEvalCompositionOptions",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface AgentEvalCompositionOptions {\n    readonly suite: AgentEvalSuite;\n    readonly trajectory?: () => Promise<{\n        readonly ok: boolean;\n        readonly digest: string;\n        readonly regressionIds?: readonly string[];\n    }>;\n    readonly faultProfile?: {\n        readonly profile: FaultProfile;\n        readonly seed?: number;\n    };\n    readonly contractLab?: () => Promise<{\n        readonly ok: boolean;\n        readonly digest?: string;\n        readonly code?: string;\n    }>;\n    readonly idempotency?: {\n        readonly run: () => Promise<EffectLedger> | EffectLedger;\n        readonly runs?: number;\n    };\n    readonly certification?: () => Promise<{\n        readonly ok: boolean;\n        readonly digest?: string;\n        readonly code?: string;\n    }>;\n}"
+  },
+  {
+    "name": "AgentEvalCompositionReport",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface AgentEvalCompositionReport {\n    readonly version: 1;\n    readonly suite: AgentEvalReport;\n    readonly components: readonly AgentEvalComponentEvidence[];\n    readonly regressionIds: readonly string[];\n    readonly digest: string;\n    readonly ok: boolean;\n}"
   },
   {
     "name": "AgentEvalRegressionError",
@@ -458,6 +495,31 @@
     "kind": "interface",
     "package": "@nifrajs/agent-protocol",
     "signature": "export interface AgentExtensionReloadedEvent extends AgentSessionEventBase {\n    readonly type: \"extension.reloaded\";\n    readonly revision: string;\n    readonly loaded: readonly string[];\n    readonly disabled: readonly string[];\n    readonly rolledBack: boolean;\n}"
+  },
+  {
+    "name": "AgentFailureMatrixCase",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface AgentFailureMatrixCase {\n    readonly id: string;\n    readonly kind: AgentFailureMatrixKind;\n    readonly scheduleToken: string;\n    readonly ok: boolean;\n    readonly regressionId: string;\n}"
+  },
+  {
+    "name": "AgentFailureMatrixError",
+    "kind": "class",
+    "package": "@nifrajs/testing",
+    "signature": "export declare class AgentFailureMatrixError extends Error {\n    readonly report: AgentFailureMatrixReport;\n    constructor(report: AgentFailureMatrixReport);\n}"
+  },
+  {
+    "name": "AgentFailureMatrixKind",
+    "kind": "type",
+    "package": "@nifrajs/testing",
+    "signature": "export type AgentFailureMatrixKind = \"model\" | \"tool\" | \"approval\" | \"cancellation\" | \"lease\" | \"cursor\" | \"registry\" | \"deployment\";",
+    "doc": "/** Fault boundaries covered by the public deterministic matrix. */"
+  },
+  {
+    "name": "AgentFailureMatrixReport",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface AgentFailureMatrixReport {\n    readonly version: 1;\n    readonly seed: number;\n    readonly cases: readonly AgentFailureMatrixCase[];\n    readonly digest: string;\n    readonly ok: boolean;\n}"
   },
   {
     "name": "AgentFileSpec",
@@ -1152,6 +1214,12 @@
     "doc": "/** Run the contract laboratory and throw an {@link AdversarialContractError} unless it is fully green. */"
   },
   {
+    "name": "assertAgentEval",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function assertAgentEval(report: AgentEvalCompositionReport): void;"
+  },
+  {
     "name": "assertAgentEvalBaseline",
     "kind": "function",
     "package": "@nifrajs/testing",
@@ -1159,11 +1227,24 @@
     "doc": "/** Assert no failing comparison. Throws {@link AgentEvalRegressionError} with the stable ids. */"
   },
   {
+    "name": "assertAgentFailureMatrix",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function assertAgentFailureMatrix(report: AgentFailureMatrixReport): void;"
+  },
+  {
     "name": "assertBudgetRemaining",
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function assertBudgetRemaining(budget: RequestBudget, requiredMs?: number): void;",
     "doc": "/** Fail before starting work that cannot fit inside the remaining time. */"
+  },
+  {
+    "name": "assertDeploymentAuthorityMonotonic",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function assertDeploymentAuthorityMonotonic(parent: DeploymentAuthority, child: DeploymentAuthority): void;",
+    "doc": "/** Prove a child deployment authority is a subset of its parent's authority. */"
   },
   {
     "name": "assertEvidenceSize",
@@ -2890,6 +2971,12 @@
     "signature": "export interface CertifiableCacheStore {\n    get(key: string): CertifiableCacheEntry | undefined | Promise<CertifiableCacheEntry | undefined>;\n    set(key: string, entry: CertifiableCacheEntry, tags: readonly string[]): void | Promise<void>;\n    delete(key: string): void | Promise<void>;\n    invalidateTag(tag: string): void | Promise<void>;\n    clear(): void | Promise<void>;\n}"
   },
   {
+    "name": "CertifiableDeploymentAdapter",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface CertifiableDeploymentAdapter extends AgentDeploymentAdapter {\n    /** Required only when the adapter claims real OS hostile-code isolation. */\n    readonly verifyHostileCodeIsolation?: () => boolean | PromiseLike<boolean>;\n}"
+  },
+  {
     "name": "CertifiableDescriptorAdapter",
     "kind": "interface",
     "package": "@nifrajs/testing",
@@ -2919,6 +3006,12 @@
     "kind": "interface",
     "package": "@nifrajs/testing",
     "signature": "export interface CertifiableJobStore {\n    enqueue(job: {\n        name: string;\n        payload: unknown;\n        runAt: number;\n        maxAttempts: number;\n    }): string | Promise<string>;\n    lease(now: number, limit: number, leaseMs: number): CertifiableStoredJob[] | Promise<CertifiableStoredJob[]>;\n    complete(id: string): void | Promise<void>;\n    retry(id: string, runAt: number): void | Promise<void>;\n    deadLetter(id: string, error: string): void | Promise<void>;\n    counts(): {\n        pending: number;\n        active: number;\n        dead: number;\n    } | Promise<{\n        pending: number;\n        active: number;\n        dead: number;\n    }>;\n}"
+  },
+  {
+    "name": "CertifiableModelGateway",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface CertifiableModelGateway extends ModelGateway {\n}"
   },
   {
     "name": "CertifiableRuntimeAdapter",
@@ -3064,6 +3157,12 @@
     "package": "@nifrajs/web",
     "signature": "export interface ChunkSize {\n    /** The emitted file's basename (e.g. `index-abc123.js`). */\n    readonly name: string;\n    /** Raw byte length of the file. */\n    readonly bytes: number;\n    /** Gzipped byte length (what the client actually downloads, modulo brotli). */\n    readonly gzip: number;\n}",
     "doc": "/** One emitted chunk's measured size, in raw bytes + gzipped bytes (over-the-wire weight). */"
+  },
+  {
+    "name": "CiDeploymentAdapter",
+    "kind": "class",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare class CiDeploymentAdapter extends DeterministicDeploymentAdapter {\n    constructor();\n}"
   },
   {
     "name": "classificationAtLeast",
@@ -3356,6 +3455,13 @@
     "package": "@nifrajs/agent-app",
     "signature": "export type CommandOutcome<T> = {\n    readonly ok: true;\n    readonly status: number;\n    readonly value: T;\n} | {\n    readonly ok: false;\n    readonly status: number;\n    readonly error: string;\n};",
     "doc": "/**\n * The outcome of a command. Non-ok responses never throw here so a caller can render a bounded state\n * instead of unwinding; `error` carries only the server's status text, never a credential.\n */"
+  },
+  {
+    "name": "CommittedEffect",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface CommittedEffect {\n    readonly committed: true;\n}",
+    "doc": "/** A side effect must explicitly confirm that its idempotency proof was durably recorded. */"
   },
   {
     "name": "commonSecretPatterns",
@@ -3954,6 +4060,12 @@
     "signature": "export declare function createCapabilityManifest(requested: readonly AgentCapability[], trusted?: readonly AgentCapability[], reason?: string): AgentCapabilityManifest;"
   },
   {
+    "name": "createCiDeploymentAdapter",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function createCiDeploymentAdapter(): CiDeploymentAdapter;"
+  },
+  {
     "name": "createClientRouter",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -3973,6 +4085,12 @@
     "doc": "/**\n * Bind a private data adapter to request-local capability evidence.\n *\n * The adapter remains responsible for RLS enforcement and durable storage. This wrapper owns the\n * framework-side proof boundary: it emits exactly the operation's typed `db.read`/`db.write` token\n * before invoking the adapter, and refuses to run when no beacon is configured or the beacon denies\n * the operation. The context is never copied into the request or retained by the port.\n *\n * The emitted token is derived from the **contract**, never from `request.capability`. The typed\n * request narrows that field, but types are erased before this line runs, and a request assembled\n * from decoded input would otherwise let a write operation announce itself as `db.read` - evidence\n * that names the wrong capability is worse than no evidence, because the ledger looks satisfied. An\n * unknown operation, or a declared capability that disagrees with the contract, fails closed.\n */"
   },
   {
+    "name": "createDeploymentAuthority",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function createDeploymentAuthority(input: {\n    readonly workspaceMaxBytes: number;\n    readonly deadlineAt?: number;\n    readonly cancellation?: DeploymentCancellation;\n    readonly hostileCodeIsolation?: HostileCodeIsolation;\n}): DeploymentAuthority;"
+  },
+  {
     "name": "createDevServer",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -3990,6 +4108,13 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function createDurableExecutionAdapter(backend: DurableRecordBackend): DurableExecutionAdapter;"
+  },
+  {
+    "name": "createDurableJobsStore",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function createDurableJobsStore(options?: DurableJobsStoreOptions): RunDispatchStore & {\n    readonly jobs: JobStore;\n    deadLetters(): readonly RunDispatchEvidence[];\n};",
+    "doc": "/**\n * Create an at-least-once run dispatch store over an existing JobStore.\n *\n * JobStore's `attempt` increments only when a caller explicitly retries; an expired lease is\n * redelivered at the same logical attempt, which is what makes the idempotency key stable across a\n * duplicate delivery. A retry intentionally advances the logical attempt and gets a new key.\n */"
   },
   {
     "name": "createEffectEvidenceScope",
@@ -4067,6 +4192,12 @@
     "doc": "/**\n * Run a command with the host controls available to a normal child process. The local adapter is NOT\n * a security boundary. Without OS-level sandboxing it contains crashes and accidents, not hostile code.\n */"
   },
   {
+    "name": "createLocalProcessDeploymentAdapter",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function createLocalProcessDeploymentAdapter(): LocalProcessDeploymentAdapter;"
+  },
+  {
     "name": "createMatcher",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -4126,6 +4257,13 @@
     "doc": "/** Bounded in-memory sink for tests and local development. Token-only, like every sink. */"
   },
   {
+    "name": "createMemoryRunDispatchStore",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function createMemoryRunDispatchStore(options?: {\n    readonly now?: () => number;\n}): RunDispatchStore & {\n    readonly jobs: JobStore;\n    deadLetters(): readonly RunDispatchEvidence[];\n};",
+    "doc": "/** Disposable local reference adapter; it makes no durability or exactly-once guarantee. */"
+  },
+  {
     "name": "createMetricsRegistry",
     "kind": "function",
     "package": "@nifrajs/otel",
@@ -4145,6 +4283,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function createMutation<TData, TVariables>(fn: (variables: TVariables) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>): MutationHandle<TData, TVariables>;",
     "doc": "/**\n * Create a standalone mutation state machine - framework-agnostic, so a per-adapter `useMutation`\n * binding just subscribes to it. Single-flight by a monotonic token: overlapping `mutate` calls each\n * run their `fn`, but only the latest publishes state (an older, slower response can't clobber a newer\n * one). The callbacks fire in TanStack order: `onMutate` (before), then `onSuccess`/`onError`, then\n * `onSettled`.\n */"
+  },
+  {
+    "name": "createNativeGatewayModelPort",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function createNativeGatewayModelPort(options: NativeGatewayModelPortOptions): NativeModelPort;",
+    "doc": "/** Adapt the provider-neutral gateway to the native backend without making it the default path. */"
   },
   {
     "name": "createNifraTools",
@@ -4222,6 +4367,12 @@
     "doc": "/** A reference Web handler for adapter-only suites. Core and edge suites use their real routers instead. */"
   },
   {
+    "name": "createReplayDeploymentAdapter",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function createReplayDeploymentAdapter(): ReplayDeploymentAdapter;"
+  },
+  {
     "name": "createRequestBudget",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -4253,6 +4404,13 @@
     "package": "@nifrajs/image",
     "signature": "export declare function createResvgRasterizer(Resvg: ResvgConstructor): OgImageRasterizer;",
     "doc": "/** Reference adapter for Resvg-compatible constructors, without making the optional codec a dependency. */"
+  },
+  {
+    "name": "createRunDispatch",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function createRunDispatch(input: Omit<RunDispatch, \"version\">): RunDispatch;",
+    "doc": "/** Create a parsed dispatch identity before handing it to any adapter. */"
   },
   {
     "name": "createSagaEngine",
@@ -4298,6 +4456,13 @@
     "package": "@nifrajs/coding-agent",
     "signature": "export declare function createStepCatalog(entries: Readonly<Record<string, CatalogStep>>): StepCatalog;",
     "doc": "/** Build a StepCatalog from a name -> handler map. */"
+  },
+  {
+    "name": "createStructuredOutputParser",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function createStructuredOutputParser<Schema extends StandardSchemaV1>(schema: Schema): StructuredOutputParser<NonNullable<Schema[\"~standard\"][\"types\"]>[\"output\"]>;",
+    "doc": "/** Adapt any Standard Schema validator into a strict structured-output parser. */"
   },
   {
     "name": "createStylesheetEmitter",
@@ -5033,6 +5198,170 @@
     "signature": "export interface DenoServer {\n    /** The bound port (resolved when `port: 0` is requested). */\n    readonly port: number;\n    /**\n     * Stop accepting connections, let in-flight requests drain (up to `drainMs`), then\n     * force-close stragglers. Mirrors nifra's Bun `stop()`.\n     */\n    stop(options?: {\n        drainMs?: number;\n    }): Promise<void>;\n}"
   },
   {
+    "name": "DEPLOYMENT_REFERENCE_PROFILES",
+    "kind": "const",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare const DEPLOYMENT_REFERENCE_PROFILES: Readonly<{\n    localProcess: DeploymentCapabilityReport;\n    ci: DeploymentCapabilityReport;\n    replay: DeploymentCapabilityReport;\n}>;"
+  },
+  {
+    "name": "DeploymentActivationOptions",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface DeploymentActivationOptions {\n    /** Host-owned approval obtained from a separately reviewed/certified isolation decision. */\n    readonly approved?: boolean;\n}"
+  },
+  {
+    "name": "deploymentAdapterCertificationProfile",
+    "kind": "const",
+    "package": "@nifrajs/testing",
+    "signature": "export declare const deploymentAdapterCertificationProfile: typeof deploymentCertificationProfile;"
+  },
+  {
+    "name": "DeploymentAuthority",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface DeploymentAuthority {\n    readonly workspaceMaxBytes: number;\n    readonly deadlineAt?: number;\n    readonly cancellation: DeploymentCancellation;\n    readonly hostileCodeIsolation: HostileCodeIsolation;\n}"
+  },
+  {
+    "name": "DeploymentCancellation",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type DeploymentCancellation = \"none\" | \"cooperative\" | \"forced\";"
+  },
+  {
+    "name": "DeploymentCancelRequest",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface DeploymentCancelRequest {\n    readonly deploymentId: string;\n    readonly preparedRef?: string;\n    readonly handleRef?: string;\n    readonly signal: AbortSignal;\n}"
+  },
+  {
+    "name": "DeploymentCancelResult",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface DeploymentCancelResult {\n    readonly deploymentId: string;\n    readonly state: \"cancelled\";\n}"
+  },
+  {
+    "name": "DeploymentCapabilities",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface DeploymentCapabilities {\n    readonly runtime: DeploymentRuntime;\n    readonly network: DeploymentNetwork;\n    readonly filesystem: DeploymentFilesystem;\n    readonly process: DeploymentProcess;\n    readonly secrets: DeploymentSecrets;\n    readonly workspace: {\n        readonly mode: \"none\" | \"scoped\";\n        readonly maxBytes: number;\n    };\n    readonly cancellation: DeploymentCancellation;\n    readonly hostileCodeIsolation: HostileCodeIsolation;\n}"
+  },
+  {
+    "name": "DeploymentCapabilityReport",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface DeploymentCapabilityReport {\n    readonly schemaVersion: 1;\n    readonly adapterId: string;\n    readonly capabilities: DeploymentCapabilities;\n    readonly limitations: readonly string[];\n}"
+  },
+  {
+    "name": "deploymentCertificationProfile",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function deploymentCertificationProfile(): AdapterCertificationProfile<CertifiableDeploymentAdapter>;",
+    "doc": "/** Certification for lifecycle cleanup, capability truthfulness, authority, and isolation claims. */"
+  },
+  {
+    "name": "DeploymentDisposeRequest",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface DeploymentDisposeRequest {\n    readonly deploymentId: string;\n    readonly preparedRef?: string;\n    readonly handleRef?: string;\n    readonly signal: AbortSignal;\n}"
+  },
+  {
+    "name": "DeploymentDisposeResult",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface DeploymentDisposeResult {\n    readonly deploymentId: string;\n    readonly state: \"disposed\";\n}"
+  },
+  {
+    "name": "DeploymentError",
+    "kind": "class",
+    "package": "@nifrajs/agent",
+    "signature": "export declare class DeploymentError extends Error {\n    readonly code: DeploymentErrorCode;\n    constructor(code: DeploymentErrorCode);\n}"
+  },
+  {
+    "name": "DeploymentErrorCode",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type DeploymentErrorCode = \"invalid_capabilities\" | \"capability_denied\" | \"hostile_code_requires_isolation\" | \"authority_expanded\" | \"invalid_plan\" | \"invalid_transition\" | \"malformed_callback\" | \"adapter_error\" | \"cancelled\";"
+  },
+  {
+    "name": "DeploymentEvidence",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type DeploymentEvidence = {\n    readonly kind: \"prepared\" | \"started\" | \"inspected\" | \"cancelled\" | \"disposed\" | \"failed\";\n    readonly deploymentId: string;\n    readonly state: DeploymentState | \"new\";\n    readonly code?: DeploymentErrorCode;\n};"
+  },
+  {
+    "name": "DeploymentFilesystem",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type DeploymentFilesystem = \"none\" | \"workspace\" | \"host\";"
+  },
+  {
+    "name": "DeploymentInspection",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface DeploymentInspection {\n    readonly deploymentId: string;\n    readonly state: DeploymentState;\n    readonly handleRef?: string;\n}"
+  },
+  {
+    "name": "DeploymentInspectRequest",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface DeploymentInspectRequest {\n    readonly deploymentId: string;\n    readonly handleRef?: string;\n    readonly signal: AbortSignal;\n}"
+  },
+  {
+    "name": "DeploymentNetwork",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type DeploymentNetwork = \"none\" | \"outbound\" | \"inbound\" | \"unrestricted\";"
+  },
+  {
+    "name": "DeploymentPrepareRequest",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface DeploymentPrepareRequest {\n    readonly plan: AgentDeploymentPlan;\n    readonly authority: DeploymentAuthority;\n    readonly signal: AbortSignal;\n}"
+  },
+  {
+    "name": "DeploymentPrepareResult",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface DeploymentPrepareResult {\n    readonly deploymentId: string;\n    readonly state: \"prepared\";\n    readonly preparedRef: string;\n}"
+  },
+  {
+    "name": "DeploymentProcess",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type DeploymentProcess = \"none\" | \"child\";"
+  },
+  {
+    "name": "DeploymentRuntime",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type DeploymentRuntime = \"local\" | \"ci\" | \"replay\" | \"worker\" | \"unknown\";",
+    "doc": "/**\n * Provider-neutral deployment lifecycle contracts.\n *\n * A deployment adapter is an execution seam, not a sandbox claim. The host owns activation,\n * authority, cancellation, and cleanup. Public reference adapters may be local, CI, or replay, but\n * only a capability report declaring real OS isolation can admit a hostile-code plan.\n */"
+  },
+  {
+    "name": "DeploymentSecrets",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type DeploymentSecrets = \"none\" | \"caller\";"
+  },
+  {
+    "name": "DeploymentStartRequest",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface DeploymentStartRequest {\n    readonly deploymentId: string;\n    readonly preparedRef: string;\n    readonly authority: DeploymentAuthority;\n    readonly signal: AbortSignal;\n}"
+  },
+  {
+    "name": "DeploymentStartResult",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface DeploymentStartResult {\n    readonly deploymentId: string;\n    readonly state: \"running\";\n    readonly handleRef: string;\n}"
+  },
+  {
+    "name": "DeploymentState",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type DeploymentState = \"prepared\" | \"running\" | \"cancelled\" | \"disposed\";"
+  },
+  {
     "name": "deriveNodeEffectKey",
     "kind": "function",
     "package": "@nifrajs/coding-agent",
@@ -5047,10 +5376,17 @@
     "doc": "/**\n * Derive one route's behaviour from its module exports.\n *\n * `prerender`/`getStaticPaths` win over `revalidate`: a page rendered at build time is not revalidated at\n * runtime, so if a route declares both, the build-time answer is the one that describes what ships. That\n * combination is worth surfacing rather than silently resolving, which is what `conflicts` is for once a\n * target is known.\n */"
   },
   {
+    "name": "deriveRunIdempotencyKey",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function deriveRunIdempotencyKey(planDigest: string, runId: string, nodeId: string, logicalAttemptBoundary: number): Promise<string>;",
+    "doc": "/** Stable key for one logical node attempt. Duplicate delivery uses the same boundary number. */"
+  },
+  {
     "name": "descriptorFromTool",
     "kind": "function",
     "package": "@nifrajs/agent",
-    "signature": "export declare function descriptorFromTool(tool: ToolContract, options?: ToolDescriptorOptions): Promise<CapabilityDescriptor>;",
+    "signature": "export declare function descriptorFromTool<Input, Output>(tool: ToolContract<Input, Output>, options?: ToolDescriptorOptions): Promise<CapabilityDescriptor>;",
     "doc": "/**\n * Adapt a Nifra core {@link ToolContract} into a descriptor without touching its execution contract.\n * The schema digest is taken over the tool's own input JSON schema, retry follows idempotency, and\n * the approval policy is carried through unchanged, so the descriptor is a faithful, content-free\n * projection of the contract the runtime already enforces.\n */"
   },
   {
@@ -5289,6 +5625,42 @@
     "doc": "/** Options for {@link discoverRoutes}. */"
   },
   {
+    "name": "DISPATCH_JOB_NAME",
+    "kind": "const",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare const DISPATCH_JOB_NAME = \"nifra.agent.run-node\";"
+  },
+  {
+    "name": "DispatchBoundary",
+    "kind": "type",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export type DispatchBoundary = \"before-effect\" | \"after-effect\";"
+  },
+  {
+    "name": "DispatchInspection",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface DispatchInspection {\n    readonly dispatch: RunDispatch;\n    readonly state: DispatchState;\n    readonly attempt: number;\n    readonly generation: number;\n    readonly checkpoint?: RunCheckpoint;\n    readonly evidence: readonly RunDispatchEvidence[];\n}"
+  },
+  {
+    "name": "DispatchResultCode",
+    "kind": "type",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export type DispatchResultCode = \"accepted\" | \"stale_lease\" | \"cancelled\" | \"terminal\" | \"invalid_checkpoint\" | \"idempotency_required\";"
+  },
+  {
+    "name": "DispatchState",
+    "kind": "type",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export type DispatchState = \"queued\" | \"leased\" | \"checkpointed\" | \"retrying\" | \"succeeded\" | \"failed\" | \"cancelled\" | \"dead-lettered\";"
+  },
+  {
+    "name": "DispatchWriteResult",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface DispatchWriteResult {\n    readonly ok: boolean;\n    readonly code: DispatchResultCode;\n}"
+  },
+  {
     "name": "docsTools",
     "kind": "function",
     "package": "@nifrajs/cli",
@@ -5321,6 +5693,13 @@
     "kind": "interface",
     "package": "@nifrajs/middleware",
     "signature": "export interface DurableCommandOptions {\n    /** Where effect transitions are recorded. `createDurableEffectJournal` from\n     * `@nifrajs/core/durable-execution` is the one this is built for; any implementation of the seam\n     * works, and a memory-backed one is a test double, not a durable command. */\n    readonly journal: CapabilityExecutionJournal;\n}"
+  },
+  {
+    "name": "DurableDispatchAdapter",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface DurableDispatchAdapter<OpaqueContext = unknown> extends RunDispatchStore {\n    authorize(context: OpaqueContext, operation: \"enqueue\" | \"lease\" | \"inspect\" | \"settle\"): boolean | Promise<boolean>;\n    enforceDataLayerPolicy(context: OpaqueContext, operation: \"read\" | \"write\"): boolean | Promise<boolean>;\n    retainEvidence(context: OpaqueContext, evidence: RunDispatchEvidence): void | Promise<void>;\n    reconcile(context: OpaqueContext, dispatchId: string): void | Promise<void>;\n    workerHealth(context: OpaqueContext): \"ready\" | \"draining\" | \"unavailable\" | Promise<\"ready\" | \"draining\" | \"unavailable\">;\n}",
+    "doc": "/**\n * Optional operated-depth handoff. The context is intentionally opaque: the public package does not\n * model tenants, rows, RLS policy text, retention periods, credentials, workers, or fleet topology.\n * A private adapter supplies those controls and still implements the evidence-only store port above.\n */"
   },
   {
     "name": "DurableEffectJournalOptions",
@@ -5364,6 +5743,12 @@
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface DurableExecutionConformanceResult {\n    readonly effects: true;\n    readonly approvals: true;\n    readonly sagas: true;\n    readonly leases: true;\n}"
+  },
+  {
+    "name": "DurableJobsStoreOptions",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface DurableJobsStoreOptions {\n    /** A dedicated at-least-once JobStore. Defaults to disposable in-memory storage. */\n    readonly store?: JobStore;\n    /** Injected time source used for lease and cancellation decisions. */\n    readonly now?: () => number;\n}"
   },
   {
     "name": "DurableObjectExecutionAdapter",
@@ -5592,6 +5977,13 @@
     "signature": "export interface EffectReconciliationFinding {\n    readonly effectId: string;\n    readonly capability: string;\n    readonly state: \"incomplete\" | \"ambiguous\";\n    readonly updatedAt: number;\n}"
   },
   {
+    "name": "EffectRejectedError",
+    "kind": "class",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare class EffectRejectedError extends Error {\n    readonly code: string;\n    constructor(code?: string);\n}",
+    "doc": "/** Stable pre-effect failure; it may be retried with a new logical attempt. */"
+  },
+  {
     "name": "EffectScope",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -5808,6 +6200,12 @@
     "signature": "export interface ETagOptions {\n    /** Emit a weak validator (`W/\"…\"`). Default `true` - it's a content hash, not a byte-for-byte promise. */\n    readonly weak?: boolean;\n    /** Maximum response bytes to hash. Default `1_000_000`; larger responses pass through unchanged. */\n    readonly maxBytes?: number;\n}"
   },
   {
+    "name": "EvalComparisonView",
+    "kind": "interface",
+    "package": "@nifrajs/agent-app",
+    "signature": "export interface EvalComparisonView {\n    readonly suiteId: string;\n    readonly comparisons: readonly {\n        readonly caseId: string;\n        readonly rubricId: string;\n        readonly code: EvalComparisonViewCode;\n        readonly regressionId: string;\n    }[];\n    readonly regressionIds: readonly string[];\n}"
+  },
+  {
     "name": "evaluateBuildFreshness",
     "kind": "function",
     "package": "@nifrajs/cli",
@@ -5912,6 +6310,12 @@
     "package": "@nifrajs/coding-agent",
     "signature": "export interface EvidenceStore {\n    /** Parse, tally, and persist one record. Throws on a payload-bearing or oversized record. */\n    append(record: RunEvidence): Promise<void>;\n    /** Total records appended (not the live-window size). */\n    readonly count: number;\n    /** The most recent records, oldest first, capped at the configured window. */\n    live(): readonly RunEvidence[];\n    counters(): EvidenceCounters;\n    /** Distinct node ids that reached `completed`, sorted for determinism. */\n    completedNodeIds(): readonly string[];\n    /** Every artifact ref referenced by the stream, in append order. */\n    artifacts(): readonly ArtifactRef[];\n    /** Order-independent SHA-256 of the run's outcome multiset (parallel order cannot change it). */\n    digest(): Promise<string>;\n}",
     "doc": "/** A bounded, evidence-only run store. Append is fail-closed; reads are content-free aggregates. */"
+  },
+  {
+    "name": "EvidenceTimelineView",
+    "kind": "interface",
+    "package": "@nifrajs/agent-app",
+    "signature": "export interface EvidenceTimelineView {\n    readonly seq: number;\n    readonly eventId: string;\n    readonly runId: string;\n    readonly nodeId: string;\n    readonly status: \"started\" | \"checkpointed\" | \"retrying\" | \"recovered\" | \"completed\" | \"failed\" | \"cancelled\" | \"dead-lettered\";\n    readonly attempt: number;\n    readonly traceRef?: string;\n    readonly replayRef?: string;\n    readonly scheduleToken?: string;\n}"
   },
   {
     "name": "Example",
@@ -6165,6 +6569,25 @@
     "kind": "interface",
     "package": "@nifrajs/testing",
     "signature": "export interface FailureScenarioReport {\n    readonly name: string;\n    readonly ok: boolean;\n    readonly replay: FailureReplay;\n    readonly evidence: readonly FailureEvidence[];\n    /** Sanitized failure identity. Messages and stacks are deliberately excluded. */\n    readonly error?: {\n        readonly name: string;\n        readonly kind?: FailureInjectedError[\"kind\"];\n    };\n}"
+  },
+  {
+    "name": "FakeModelGateway",
+    "kind": "class",
+    "package": "@nifrajs/agent",
+    "signature": "export declare class FakeModelGateway implements ModelGateway {\n    private readonly responses;\n    private cursor;\n    constructor(options: FakeModelGatewayOptions);\n    get calls(): number;\n    complete(_request: ModelGatewayAttemptRequest): ModelGatewayRawResult;\n}",
+    "doc": "/** Deterministic, network-free gateway for tests and local examples. It records no request input. */"
+  },
+  {
+    "name": "FakeModelGatewayOptions",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface FakeModelGatewayOptions {\n    readonly responses: readonly ModelGatewayRawResult[];\n}"
+  },
+  {
+    "name": "FaultInjectionView",
+    "kind": "interface",
+    "package": "@nifrajs/agent-app",
+    "signature": "export interface FaultInjectionView {\n    readonly id: string;\n    readonly kind: string;\n    readonly scheduleToken: string;\n    readonly regressionId: string;\n    readonly ok: boolean;\n}"
   },
   {
     "name": "FaultProfile",
@@ -6640,6 +7063,13 @@
     "signature": "export interface GateResult {\n    readonly gate: \"check\" | \"doctor\" | \"render\" | \"hydration\" | \"contracts\" | \"size\" | \"tests\" | string;\n    readonly status: \"pass\" | \"fail\" | \"skip\";\n    readonly skipReason?: string;\n    readonly durationMs: number;\n    readonly diagnostics: readonly Diagnostic[];\n    readonly replay?: string;\n}"
   },
   {
+    "name": "gatewayCertificationProfile",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function gatewayCertificationProfile(): AdapterCertificationProfile<CertifiableModelGateway>;",
+    "doc": "/** Certification for provider-neutral gateways. It never emits request or response content. */"
+  },
+  {
     "name": "Gauge",
     "kind": "class",
     "package": "@nifrajs/otel",
@@ -7003,6 +7433,12 @@
     "doc": "/** Latency-style distribution over fixed buckets (seconds). Renders Prometheus cumulative buckets. */"
   },
   {
+    "name": "HostileCodeIsolation",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type HostileCodeIsolation = \"none\" | \"os\";"
+  },
+  {
     "name": "HostPolicy",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
@@ -7280,6 +7716,12 @@
     "kind": "interface",
     "package": "@nifrajs/testing",
     "signature": "export interface IdempotencyProof {\n    readonly ok: boolean;\n    readonly divergences: readonly IdempotencyDivergence[];\n}"
+  },
+  {
+    "name": "IdempotencyProofStore",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface IdempotencyProofStore {\n    has(key: string): boolean | Promise<boolean>;\n    record(key: string): void | Promise<void>;\n}"
   },
   {
     "name": "IdempotencyRecord",
@@ -7662,6 +8104,12 @@
     "doc": "/** Options for an {@link InfiniteQueryHandle}. `getNextPageParam` (required) derives the param for the\n * next page from the last page - return `undefined`/`null` to signal there is no next page. */"
   },
   {
+    "name": "InjectedClock",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface InjectedClock {\n    readonly now: () => number;\n    readonly sleep?: (milliseconds: number) => Promise<void>;\n}"
+  },
+  {
     "name": "injectStyles",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -7892,6 +8340,12 @@
     "package": "@nifrajs/web",
     "signature": "export declare function isManifestInSync(drift: ManifestDrift): boolean;",
     "doc": "/** True when a drift report is clean (no missing + no extra routes). */"
+  },
+  {
+    "name": "isModelGatewayErrorCode",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function isModelGatewayErrorCode(value: unknown): value is ModelGatewayErrorCode;"
   },
   {
     "name": "IsolatedExtensionSnapshot",
@@ -8576,6 +9030,12 @@
     "signature": "export interface LocalProcessAdapterOptions {\n    readonly cwd?: string;\n    /** Only these inherited environment names are copied. Default: PATH, LANG, and LC_ALL. */\n    readonly envAllowlist?: readonly string[];\n    readonly maxOutputBytes?: number;\n}"
   },
   {
+    "name": "LocalProcessDeploymentAdapter",
+    "kind": "class",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare class LocalProcessDeploymentAdapter extends DeterministicDeploymentAdapter {\n    constructor();\n}"
+  },
+  {
     "name": "LocalProcessPolicyError",
     "kind": "class",
     "package": "@nifrajs/agent",
@@ -8707,6 +9167,18 @@
     "package": "@nifrajs/core",
     "signature": "export declare const MAX_COST_AXES = 8;",
     "doc": "/** Most cost axes one entry may carry. */"
+  },
+  {
+    "name": "MAX_DISPATCH_ATTEMPTS",
+    "kind": "const",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare const MAX_DISPATCH_ATTEMPTS = 16;"
+  },
+  {
+    "name": "MAX_DISPATCH_STRING",
+    "kind": "const",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare const MAX_DISPATCH_STRING = 256;"
   },
   {
     "name": "MAX_MEDIA_QUERY_LENGTH",
@@ -8954,14 +9426,14 @@
     "name": "mcpToolDescriptor",
     "kind": "function",
     "package": "@nifrajs/mcp",
-    "signature": "export declare function mcpToolDescriptor(tool: ToolContract, options?: McpDescriptorOptions): Promise<CapabilityDescriptor>;",
+    "signature": "export declare function mcpToolDescriptor<Input, Output>(tool: ToolContract<Input, Output>, options?: McpDescriptorOptions): Promise<CapabilityDescriptor>;",
     "doc": "/**\n * Project one MCP-facing tool contract into a `mcp-tool` capability descriptor. The digest is taken\n * over the tool's own input schema, so it matches the core tool descriptor for the same contract.\n */"
   },
   {
     "name": "mcpToolDescriptors",
     "kind": "function",
     "package": "@nifrajs/mcp",
-    "signature": "export declare function mcpToolDescriptors(tools: readonly ToolContract[], options?: McpDescriptorOptions): Promise<readonly CapabilityDescriptor[]>;",
+    "signature": "export declare function mcpToolDescriptors<Input, Output>(tools: readonly ToolContract<Input, Output>[], options?: McpDescriptorOptions): Promise<readonly CapabilityDescriptor[]>;",
     "doc": "/** Project a set of MCP tool contracts, preserving order. Compose the result into a snapshot to dedupe. */"
   },
   {
@@ -9118,6 +9590,13 @@
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
     "signature": "export interface MemoryEvidenceStoreOptions {\n    /** Records retained in the live window. Older records fall out; aggregates still count them. */\n    readonly maxLive?: number;\n}"
+  },
+  {
+    "name": "MemoryIdempotencyProofStore",
+    "kind": "class",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare class MemoryIdempotencyProofStore implements IdempotencyProofStore {\n    private readonly keys;\n    has(key: string): boolean;\n    record(key: string): void;\n    keysSnapshot(): readonly string[];\n}",
+    "doc": "/** Disposable proof reference for tests and one-process local runs. */"
   },
   {
     "name": "MemoryIdempotencyStore",
@@ -9367,6 +9846,19 @@
     "doc": "/**\n * A bundle of lifecycle hooks applied together via {@link Server.use} - the unit\n * `@nifrajs/middleware` ships (cors, security headers, rate-limit). Every hook is\n * optional and wired to its lifecycle point. Middleware carrying a portable response tier must be\n * marked with `withResponseObserver()` from `@nifrajs/core/response-observer`, or the server must\n * install `responseObserver()` before the bundle is applied. Middleware is context-agnostic (sees\n * the base `Context`); `use` does no context-type merging - the full type-merging\n * plugin system is deferred, and `.use` is reserved as its future entry point.\n */"
   },
   {
+    "name": "migrateLegacySession",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function migrateLegacySession(options: MigrateLegacySessionOptions): Promise<SessionMigrationReport>;",
+    "doc": "/** Read, project, validate, and atomically commit one legacy local session. */"
+  },
+  {
+    "name": "MigrateLegacySessionOptions",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface MigrateLegacySessionOptions {\n    readonly sourceRoot: string;\n    readonly targetRoot: string;\n    readonly sessionId: string;\n    /** Abort before any target commit. The legacy source is never modified. */\n    readonly signal?: AbortSignal;\n    /** Bound the amount of legacy data read into transient memory. */\n    readonly maxSourceBytes?: number;\n}"
+  },
+  {
     "name": "MIN_DIGEST_KEY_BYTES",
     "kind": "const",
     "package": "@nifrajs/core",
@@ -9412,6 +9904,134 @@
     "kind": "interface",
     "package": "@nifrajs/mock",
     "signature": "export interface MockServerOptions {\n    /** Seed for deterministic mock generation. */\n    readonly seed?: number | undefined;\n    /** Log mock requests to console. */\n    readonly verbose?: boolean | undefined;\n    /**\n     * Derive a JSON Schema from a response validator that carries none (zod/valibot expose a Standard Schema\n     * validator but no `.jsonSchema`), so their routes mock real data instead of `{}`. Fail-safe: throwing or\n     * returning undefined falls back to `{}`, as today. Ready-made for zod: `@nifrajs/testing/zod`.\n     *\n     * Defaults to {@link autoReflectJsonSchema}, which recognizes zod by its Standard Schema vendor tag and\n     * converts via `z.toJSONSchema` when zod is installed - so zod routes mock real data with no wiring.\n     * Pass a hook to override, or `() => undefined` to force every opaque schema back to `{}`.\n     */\n    readonly reflectJsonSchema?: (schema: unknown) => JsonSchema | undefined;\n}"
+  },
+  {
+    "name": "MODEL_GATEWAY_ERROR_CODES",
+    "kind": "const",
+    "package": "@nifrajs/agent",
+    "signature": "export declare const MODEL_GATEWAY_ERROR_CODES: readonly [\"malformed_output\", \"refusal\", \"timeout\", \"rate_limit\", \"unavailable\", \"policy_denied\", \"cancelled\", \"internal\"];"
+  },
+  {
+    "name": "ModelGateway",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ModelGateway {\n    complete(request: ModelGatewayAttemptRequest): ModelGatewayRawResult | PromiseLike<ModelGatewayRawResult> | unknown;\n}",
+    "doc": "/** A leaf adapter may be backed by any provider, but it must return this parsed envelope. */"
+  },
+  {
+    "name": "ModelGatewayAttemptRequest",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ModelGatewayAttemptRequest<Input = unknown> {\n    readonly routeId: string;\n    readonly input: Input;\n    readonly signal: AbortSignal;\n    readonly envelope: ModelGatewayEnvelope;\n}",
+    "doc": "/** The transient request given to a leaf adapter. Never copy `input` into evidence. */"
+  },
+  {
+    "name": "ModelGatewayBudget",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ModelGatewayBudget {\n    readonly maxAttempts: number;\n    readonly maxInputTokens?: number;\n    readonly maxOutputTokens?: number;\n}"
+  },
+  {
+    "name": "modelGatewayCertificationProfile",
+    "kind": "const",
+    "package": "@nifrajs/testing",
+    "signature": "export declare const modelGatewayCertificationProfile: typeof gatewayCertificationProfile;"
+  },
+  {
+    "name": "ModelGatewayEnvelope",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ModelGatewayEnvelope {\n    readonly attempt: number;\n    readonly attemptsRemaining: number;\n    readonly inputTokensRemaining?: number;\n    readonly outputTokensRemaining?: number;\n    readonly deadlineAt?: number;\n}"
+  },
+  {
+    "name": "ModelGatewayError",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ModelGatewayError {\n    readonly code: ModelGatewayErrorCode;\n}"
+  },
+  {
+    "name": "ModelGatewayErrorCode",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type ModelGatewayErrorCode = (typeof MODEL_GATEWAY_ERROR_CODES)[number];"
+  },
+  {
+    "name": "ModelGatewayEvidence",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type ModelGatewayEvidence = (ModelGatewayEvidenceBase & {\n    readonly kind: \"attempt\";\n    readonly outcome: \"started\" | \"passed\" | \"failed\";\n    readonly code?: ModelGatewayErrorCode;\n}) | (ModelGatewayEvidenceBase & {\n    readonly kind: \"fallback\";\n    readonly fromRouteId: string;\n    readonly toRouteId: string;\n}) | (ModelGatewayEvidenceBase & {\n    readonly kind: \"parse\";\n    readonly outcome: \"passed\" | \"failed\";\n    readonly code?: \"malformed_output\";\n}) | (ModelGatewayEvidenceBase & {\n    readonly kind: \"terminal\";\n    readonly outcome: \"passed\" | \"failed\";\n    readonly code?: ModelGatewayErrorCode;\n});"
+  },
+  {
+    "name": "ModelGatewayExecutionResult",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type ModelGatewayExecutionResult<Output> = ModelGatewayResult<Output> | ModelGatewayTerminalFailure;"
+  },
+  {
+    "name": "ModelGatewayFailure",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ModelGatewayFailure {\n    readonly ok: false;\n    readonly error: ModelGatewayError;\n}"
+  },
+  {
+    "name": "ModelGatewayFailureError",
+    "kind": "class",
+    "package": "@nifrajs/agent",
+    "signature": "export declare class ModelGatewayFailureError extends Error {\n    readonly code: ModelGatewayErrorCode;\n    constructor(code: ModelGatewayErrorCode);\n}"
+  },
+  {
+    "name": "ModelGatewayRawResult",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type ModelGatewayRawResult = ModelGatewaySuccess | ModelGatewayFailure;"
+  },
+  {
+    "name": "ModelGatewayRequest",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ModelGatewayRequest<Input = unknown, Output = unknown> {\n    readonly input: Input;\n    /** Optional initial route. If omitted, the first route in the caller policy is used. */\n    readonly routeId?: string;\n    readonly parser?: StructuredOutputParser<Output>;\n    readonly signal?: AbortSignal;\n}"
+  },
+  {
+    "name": "ModelGatewayResult",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ModelGatewayResult<Output> {\n    readonly ok: true;\n    readonly output: Output;\n    readonly routeId: string;\n    readonly attempts: number;\n    readonly usage: ModelGatewayUsage;\n    readonly evidence: readonly ModelGatewayEvidence[];\n}"
+  },
+  {
+    "name": "ModelGatewaySuccess",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ModelGatewaySuccess {\n    readonly ok: true;\n    readonly output: unknown;\n    readonly usage?: ModelGatewayUsage;\n}"
+  },
+  {
+    "name": "ModelGatewayTerminalFailure",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ModelGatewayTerminalFailure {\n    readonly ok: false;\n    readonly error: ModelGatewayError;\n    readonly routeId: string;\n    readonly attempts: number;\n    readonly usage: ModelGatewayUsage;\n    readonly evidence: readonly ModelGatewayEvidence[];\n}"
+  },
+  {
+    "name": "ModelGatewayUsage",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ModelGatewayUsage {\n    readonly inputTokens?: number;\n    readonly outputTokens?: number;\n}"
+  },
+  {
+    "name": "ModelRoute",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ModelRoute {\n    /** Caller-owned opaque route identifier. It is not a provider or model name. */\n    readonly id: string;\n}"
+  },
+  {
+    "name": "ModelRoutePolicy",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ModelRoutePolicy {\n    readonly routes: readonly ModelRouteRef[];\n    readonly retryableCodes: readonly ModelGatewayErrorCode[];\n    readonly maxAttempts?: number;\n    readonly allowFallback?: boolean;\n    readonly budget?: ModelGatewayBudget;\n    readonly deadlineAt?: number;\n    readonly now?: () => number;\n}"
+  },
+  {
+    "name": "ModelRouteRef",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type ModelRouteRef = string | ModelRoute;"
   },
   {
     "name": "MODERN_PROTOCOL_VERSION",
@@ -9619,6 +10239,12 @@
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
     "signature": "export interface NativeApprovalPort {\n    request(input: {\n        readonly sessionId: string;\n        readonly tool: NativeTool;\n        readonly input: unknown;\n        readonly signal: AbortSignal;\n    }): boolean | PromiseLike<boolean>;\n}"
+  },
+  {
+    "name": "NativeGatewayModelPortOptions",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface NativeGatewayModelPortOptions {\n    readonly gateway: ModelGateway;\n    readonly policy: ModelRoutePolicy;\n    readonly routeId?: string;\n}"
   },
   {
     "name": "NativeMessage",
@@ -10401,6 +11027,39 @@
     "doc": "/** Thrown on an illegal lifecycle transition or an unknown run. `code` is stable. */"
   },
   {
+    "name": "orchestrationTelemetry",
+    "kind": "function",
+    "package": "@nifrajs/agent-telemetry",
+    "signature": "export declare function orchestrationTelemetry(options?: OrchestrationTelemetryOptions): OrchestrationTelemetry;",
+    "doc": "/** Create an opt-in, bounded telemetry bridge for run/retry/recovery correlation. */"
+  },
+  {
+    "name": "OrchestrationTelemetry",
+    "kind": "interface",
+    "package": "@nifrajs/agent-telemetry",
+    "signature": "export interface OrchestrationTelemetry {\n    readonly enabled: boolean;\n    readonly dropped: number;\n    record(event: OrchestrationTelemetryEvent | unknown): boolean;\n    close(): void;\n}"
+  },
+  {
+    "name": "OrchestrationTelemetryEvent",
+    "kind": "interface",
+    "package": "@nifrajs/agent-telemetry",
+    "signature": "export interface OrchestrationTelemetryEvent {\n    readonly kind: OrchestrationTelemetryKind;\n    readonly runId: string;\n    readonly planDigest: string;\n    readonly nodeId: string;\n    readonly attempt: number;\n    readonly evidenceSeq: number;\n    readonly at: number;\n    readonly evidenceId?: string;\n    readonly replayId?: string;\n    readonly traceRef?: string;\n    readonly scheduleToken?: string;\n    readonly statusCode?: string;\n}",
+    "doc": "/** Allowlisted correlation fields. No index signature is intentional: arbitrary attributes are rejected. */"
+  },
+  {
+    "name": "OrchestrationTelemetryKind",
+    "kind": "type",
+    "package": "@nifrajs/agent-telemetry",
+    "signature": "export type OrchestrationTelemetryKind = \"started\" | \"checkpointed\" | \"retrying\" | \"recovered\" | \"cancelled\" | \"completed\" | \"failed\" | \"dead-lettered\";",
+    "doc": "/** Content-free lifecycle kinds emitted by run dispatch and recovery. */"
+  },
+  {
+    "name": "OrchestrationTelemetryOptions",
+    "kind": "interface",
+    "package": "@nifrajs/agent-telemetry",
+    "signature": "export interface OrchestrationTelemetryOptions {\n    /** No exporter means disabled telemetry and zero spans. */\n    readonly exporter?: ObservationAdapter;\n    readonly adapters?: readonly ObservationAdapter[];\n    readonly maxDistinctValues?: number;\n}"
+  },
+  {
     "name": "OrderedEventBuffer",
     "kind": "class",
     "package": "@nifrajs/agent-app",
@@ -10601,6 +11260,19 @@
     "doc": "/**\n * Decode a decision coordinate. Content-free: forbidden payload keys are rejected, and only the\n * declared structural fields are read. `vector` and `expiresAt` must be non-negative safe integers.\n */"
   },
   {
+    "name": "parseDeploymentCapabilityReport",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function parseDeploymentCapabilityReport(value: unknown): DeploymentCapabilityReport;",
+    "doc": "/** Parse an untrusted capability report before the host admits an adapter. */"
+  },
+  {
+    "name": "parseDeploymentPlan",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function parseDeploymentPlan(value: unknown): AgentDeploymentPlan;"
+  },
+  {
     "name": "ParsedFontFace",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -10691,6 +11363,20 @@
     "doc": "/** The baked top-level `styles` array in a committed server-manifest (empty if absent/unparseable). Pure. */"
   },
   {
+    "name": "parseModelGatewayError",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function parseModelGatewayError(value: unknown): ModelGatewayError;",
+    "doc": "/** Normalize arbitrary adapter failures without retaining their message, stack, or cause. */"
+  },
+  {
+    "name": "parseModelGatewayResult",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function parseModelGatewayResult(value: unknown): ModelGatewayRawResult;",
+    "doc": "/** Parse the leaf result before policy or structured-output code sees it. */"
+  },
+  {
     "name": "parseNifraManifest",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -10724,6 +11410,25 @@
     "signature": "export declare function parseRulePacks(value: unknown): readonly RulePack[];"
   },
   {
+    "name": "parseRunCheckpoint",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function parseRunCheckpoint(value: unknown): RunCheckpoint;"
+  },
+  {
+    "name": "parseRunDispatch",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function parseRunDispatch(value: unknown): RunDispatch;",
+    "doc": "/** Parse a dispatch identity and reject content or undeclared fields. */"
+  },
+  {
+    "name": "parseRunDispatchEvidence",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function parseRunDispatchEvidence(value: unknown): RunDispatchEvidence;"
+  },
+  {
     "name": "parseRunEvidence",
     "kind": "function",
     "package": "@nifrajs/agent-protocol",
@@ -10743,6 +11448,12 @@
     "package": "@nifrajs/agent-protocol",
     "signature": "export declare function parseRunEvidenceEvent(value: unknown): RunEvidenceEvent;",
     "doc": "/**\n * Decode an evidence-event envelope. The envelope is forward-compatible, but the inner record is\n * validated strictly by {@link parseRunEvidence}, and its identity must match `${runId}:${seq}`.\n */"
+  },
+  {
+    "name": "parseRunLease",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function parseRunLease(value: unknown): RunLease;"
   },
   {
     "name": "parseRunPlan",
@@ -10771,6 +11482,13 @@
     "package": "@nifrajs/agent-protocol",
     "signature": "export declare function parseRunSnapshot(value: unknown): RunSnapshot;",
     "doc": "/**\n * Decode a bounded run snapshot. Forward-compatible: unknown additive fields are ignored so an\n * older client tolerates a newer host. Forbidden content keys are still rejected.\n */"
+  },
+  {
+    "name": "parseSessionEvidenceRecord",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function parseSessionEvidenceRecord(value: unknown): SessionEvidenceRecord;",
+    "doc": "/** Parse one evidence record strictly. Payload-bearing or unknown fields are rejected. */"
   },
   {
     "name": "parseTraceparent",
@@ -11849,6 +12567,25 @@
     "doc": "/** Alias that reads naturally at a call site which has just completed a run. */"
   },
   {
+    "name": "RecoveryCrashError",
+    "kind": "class",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare class RecoveryCrashError extends Error {\n    readonly boundary: \"before-effect\" | \"after-effect\" | \"after-checkpoint\";\n    constructor(boundary: \"before-effect\" | \"after-effect\" | \"after-checkpoint\");\n}",
+    "doc": "/** Simulates worker loss at a named boundary; the lease is intentionally left unresolved. */"
+  },
+  {
+    "name": "RecoveryMachineOptions",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RecoveryMachineOptions {\n    readonly store: RunDispatchStore;\n    readonly clock?: InjectedClock;\n    readonly proofStore?: IdempotencyProofStore;\n    readonly leaseMs?: number;\n    readonly retryBackoff?: (attempt: number) => number;\n    readonly signal?: AbortSignal;\n}"
+  },
+  {
+    "name": "RecoveryProcessResult",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RecoveryProcessResult {\n    readonly leased: number;\n    readonly completed: number;\n    readonly retried: number;\n    readonly deadLettered: number;\n    readonly cancelled: number;\n}"
+  },
+  {
     "name": "redactForEmission",
     "kind": "function",
     "package": "@nifrajs/testing",
@@ -12203,6 +12940,12 @@
     "signature": "export interface ReplayBackendOptions {\n    readonly events: readonly AgentEvent[];\n    readonly delayMs?: number;\n}"
   },
   {
+    "name": "ReplayDeploymentAdapter",
+    "kind": "class",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare class ReplayDeploymentAdapter extends DeterministicDeploymentAdapter {\n    constructor();\n}"
+  },
+  {
     "name": "ReplayEntryView",
     "kind": "interface",
     "package": "@nifrajs/agent-app",
@@ -12228,6 +12971,19 @@
     "kind": "interface",
     "package": "@nifrajs/testing",
     "signature": "export interface ReplayIncidentOptions {\n    readonly origin?: string;\n    /** Also require the response body SHAPE to match the captured shape (not just status). Default false. */\n    readonly assertShape?: boolean;\n}"
+  },
+  {
+    "name": "ReplayModelGateway",
+    "kind": "class",
+    "package": "@nifrajs/agent",
+    "signature": "export declare class ReplayModelGateway implements ModelGateway {\n    readonly replayId: string;\n    private readonly responses;\n    private cursor;\n    constructor(options: ReplayModelGatewayOptions);\n    get calls(): number;\n    complete(_request: ModelGatewayAttemptRequest): ModelGatewayRawResult;\n}",
+    "doc": "/** Network-free deterministic gateway for a caller-owned, already prepared response sequence. */"
+  },
+  {
+    "name": "ReplayModelGatewayOptions",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ReplayModelGatewayOptions {\n    readonly replayId: string;\n    readonly responses: readonly ModelGatewayRawResult[];\n}"
   },
   {
     "name": "ReplayResult",
@@ -13195,6 +13951,13 @@
     "signature": "export interface RulePack {\n    readonly name: string;\n    readonly rules: readonly CheckRule[];\n}"
   },
   {
+    "name": "RUN_DISPATCH_VERSION",
+    "kind": "const",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare const RUN_DISPATCH_VERSION: 1;",
+    "doc": "/**\n * Evidence-only dispatch contracts for at-least-once run execution.\n *\n * These values deliberately contain no job payload, tenant state, credentials, retention policy,\n * error message, or tool/model data. A durable operated adapter may implement the ports, but the\n * public reference adapters are disposable and keep only identifiers, digests, counters, and\n * lifecycle evidence. Delivery is at-least-once; callers make effects idempotent with the key\n * derived below and prove completion before a recovered worker skips the effect.\n */"
+  },
+  {
     "name": "RUN_LIFECYCLE_VERSION",
     "kind": "const",
     "package": "@nifrajs/agent-protocol",
@@ -13229,6 +13992,20 @@
     "signature": "export declare function runAgent<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, input: AgentTurnInput, ports: AgentPorts, options: RunAgentOptions): Promise<AgentRunResult<NonNullable<OutputSchema[\"~standard\"][\"types\"]>[\"output\"]>>;"
   },
   {
+    "name": "runAgentEvalComposition",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function runAgentEvalComposition(options: AgentEvalCompositionOptions): Promise<AgentEvalCompositionReport>;",
+    "doc": "/** Compose existing trajectory, fault, contract, idempotency, and certification owners. */"
+  },
+  {
+    "name": "runAgentFailureMatrix",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function runAgentFailureMatrix(options?: {\n    readonly seed?: number;\n}): Promise<AgentFailureMatrixReport>;",
+    "doc": "/**\n * Run the same token-only crash fixture at each agent boundary. The implementation intentionally\n * delegates scheduling and replay identity to the existing failure laboratory; this is a matrix\n * consumer, not a second fault engine.\n */"
+  },
+  {
     "name": "RunAgentOptions",
     "kind": "interface",
     "package": "@nifrajs/agent",
@@ -13260,6 +14037,13 @@
     "package": "@nifrajs/coding-agent",
     "signature": "export interface RunBranchNode {\n    readonly id: string;\n    readonly kind: \"branch\";\n    readonly step: string;\n    readonly then: RunNode;\n    readonly otherwise?: RunNode;\n    readonly dependsOn?: readonly string[];\n}",
     "doc": "/** A conditional. `step` names a predicate catalog handler selecting `then` or `otherwise`. */"
+  },
+  {
+    "name": "RunCheckpoint",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RunCheckpoint {\n    readonly version: typeof RUN_DISPATCH_VERSION;\n    readonly dispatchId: string;\n    readonly runId: string;\n    readonly nodeId: string;\n    readonly attempt: number;\n    readonly generation: number;\n    readonly boundary: DispatchBoundary;\n    readonly idempotencyKey: string;\n    readonly at: number;\n    readonly scheduleToken: string;\n}",
+    "doc": "/** A safe boundary checkpoint. It never contains a result or effect payload. */"
   },
   {
     "name": "RunContractError",
@@ -13304,11 +14088,43 @@
     "doc": "/** Running tallies over a run's evidence stream. */"
   },
   {
+    "name": "RunDispatch",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RunDispatch {\n    readonly version: typeof RUN_DISPATCH_VERSION;\n    readonly dispatchId: string;\n    readonly runId: string;\n    readonly planDigest: string;\n    readonly nodeId: string;\n    readonly maxAttempts: number;\n    readonly notBefore: number;\n}",
+    "doc": "/** A queued node identity. It is safe to persist and safe to show in evidence. */"
+  },
+  {
+    "name": "RunDispatchEvidence",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RunDispatchEvidence {\n    readonly version: typeof RUN_DISPATCH_VERSION;\n    readonly dispatchId: string;\n    readonly runId: string;\n    readonly nodeId: string;\n    readonly state: DispatchState;\n    readonly attempt: number;\n    readonly generation: number;\n    readonly at: number;\n    readonly scheduleToken: string;\n    readonly idempotencyKey: string;\n    readonly code?: string;\n}",
+    "doc": "/** A terminal or transitional record suitable for a public evidence sink. */"
+  },
+  {
+    "name": "RunDispatchStore",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RunDispatchStore {\n    enqueue(dispatch: RunDispatch): void | Promise<void>;\n    lease(now: number, limit: number, leaseMs: number): RunLease[] | Promise<RunLease[]>;\n    checkpoint(lease: RunLease, checkpoint: RunCheckpoint): DispatchWriteResult | Promise<DispatchWriteResult>;\n    complete(lease: RunLease, evidence?: RunDispatchEvidence): DispatchWriteResult | Promise<DispatchWriteResult>;\n    retry(lease: RunLease, runAt: number, code: string): DispatchWriteResult | Promise<DispatchWriteResult>;\n    deadLetter(lease: RunLease, code: string): DispatchWriteResult | Promise<DispatchWriteResult>;\n    cancel(runId: string, code?: string): number | Promise<number>;\n    inspect(dispatchId: string): DispatchInspection | undefined | Promise<DispatchInspection | undefined>;\n}"
+  },
+  {
     "name": "runDurableExecutionAdapterConformance",
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function runDurableExecutionAdapterConformance(adapter: DurableExecutionAdapter): Promise<DurableExecutionConformanceResult>;",
     "doc": "/** Runtime-independent conformance suite reusable by adapter authors and CI. */"
+  },
+  {
+    "name": "RunEffect",
+    "kind": "type",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export type RunEffect = (context: RunEffectContext) => Promise<CommittedEffect> | CommittedEffect;"
+  },
+  {
+    "name": "RunEffectContext",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RunEffectContext {\n    readonly lease: RunLease;\n    readonly signal: AbortSignal;\n    /** Persist a content-free safe boundary; a failed write prevents the next unsafe step. */\n    readonly checkpoint: (boundary: \"before-effect\" | \"after-effect\") => Promise<boolean>;\n}"
   },
   {
     "name": "runEffectReconciliationWorker",
@@ -13398,11 +14214,25 @@
     "doc": "/** A leaf plan node. `step` names a handler resolved locally through a StepCatalog. */"
   },
   {
+    "name": "RunLease",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface RunLease {\n    readonly version: typeof RUN_DISPATCH_VERSION;\n    readonly leaseId: string;\n    readonly dispatch: RunDispatch;\n    /** Logical attempt is stable across duplicate delivery while the same attempt is unresolved. */\n    readonly attempt: number;\n    readonly generation: number;\n    readonly leasedAt: number;\n    readonly leaseUntil: number;\n    readonly scheduleToken: string;\n    readonly idempotencyKey: string;\n}",
+    "doc": "/** A lease with a generation. A completion from any older generation is rejected. */"
+  },
+  {
     "name": "RunLifecycleState",
     "kind": "type",
     "package": "@nifrajs/agent-protocol",
     "signature": "export type RunLifecycleState = \"submitted\" | \"running\" | \"paused\" | \"succeeded\" | \"failed\" | \"cancelled\";",
     "doc": "/** Terminal-or-transient state of a run as observed through evidence. */"
+  },
+  {
+    "name": "runModelGateway",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function runModelGateway<Input, Output>(gateway: ModelGateway, request: ModelGatewayRequest<Input, Output>, policy: ModelRoutePolicy): Promise<ModelGatewayExecutionResult<Output>>;",
+    "doc": "/** Execute a gateway under an explicit route, retry, fallback, budget, and deadline policy. */"
   },
   {
     "name": "runNifraContext",
@@ -13520,6 +14350,13 @@
     "signature": "export declare function runReconciliationWorker<Finding>(options: ReconciliationWorkerOptions<Finding>): Promise<ReconciliationWorkerResult>;"
   },
   {
+    "name": "RunRecoveryMachine",
+    "kind": "class",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare class RunRecoveryMachine {\n    private readonly store;\n    private readonly clock;\n    private readonly proofs;\n    private readonly leaseMs;\n    private readonly retryBackoff;\n    private readonly signal;\n    constructor(options: RecoveryMachineOptions);\n    /** Cancel all matching run dispatches; every late lease write then fails closed. */\n    cancel(runId: string): Promise<number>;\n    /** Process one bounded lease batch. No payload is read or emitted by this coordinator. */\n    process(effect: RunEffect, options?: {\n        readonly limit?: number;\n    }): Promise<RecoveryProcessResult>;\n    private processLease;\n    private storeCheckpoint;\n}",
+    "doc": "/**\n * Drives leases through safe checkpoints and terminal transitions. The caller owns the effect and\n * any real idempotency ledger; this class stores only opaque proof keys in the reference adapter.\n */"
+  },
+  {
     "name": "runRequest",
     "kind": "function",
     "package": "@nifrajs/runner",
@@ -13625,6 +14462,24 @@
     "kind": "type",
     "package": "@nifrajs/coding-agent",
     "signature": "export type RunStructuralKind = \"sequence\" | \"parallel\" | \"retry\" | \"branch\";"
+  },
+  {
+    "name": "RunStudioNodeState",
+    "kind": "type",
+    "package": "@nifrajs/agent-app",
+    "signature": "export type RunStudioNodeState = \"pending\" | \"running\" | \"paused\" | \"succeeded\" | \"failed\" | \"cancelled\" | \"recovered\";"
+  },
+  {
+    "name": "RunStudioNodeView",
+    "kind": "interface",
+    "package": "@nifrajs/agent-app",
+    "signature": "export interface RunStudioNodeView {\n    readonly nodeId: string;\n    readonly dependsOn: readonly string[];\n    readonly state: RunStudioNodeState;\n    readonly attempt: number;\n    readonly retryCount: number;\n    readonly checkpointed: boolean;\n    readonly cancelled: boolean;\n    readonly recovered: boolean;\n}"
+  },
+  {
+    "name": "RunStudioView",
+    "kind": "interface",
+    "package": "@nifrajs/agent-app",
+    "signature": "export interface RunStudioView {\n    readonly runId: string;\n    readonly planId: string;\n    readonly planDigest: string;\n    readonly cursor: number;\n    readonly state: RunStudioNodeState;\n    readonly nodes: readonly RunStudioNodeView[];\n    readonly activeNodes: number;\n    readonly terminalNodes: number;\n    readonly traceRef?: string;\n    readonly replayRef?: string;\n}"
   },
   {
     "name": "runtimeAdapterCertificationProfile",
@@ -14412,6 +15267,13 @@
     "doc": "/** A typed session handle. Every key is optional - a fresh session is empty. */"
   },
   {
+    "name": "SESSION_EVIDENCE_VERSION",
+    "kind": "const",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare const SESSION_EVIDENCE_VERSION: 1;",
+    "doc": "/** Version of the evidence-only legacy session file format. */"
+  },
+  {
     "name": "SessionContext",
     "kind": "interface",
     "package": "@nifrajs/auth",
@@ -14424,6 +15286,13 @@
     "package": "@nifrajs/auth",
     "signature": "export type SessionCookieOptions = Pick<CookieOptions, \"secure\" | \"sameSite\" | \"path\" | \"domain\">;",
     "doc": "/** Cookie attributes a session may tune. `httpOnly` is **not** offered - a session cookie is always\n * HttpOnly; `maxAge`/`expires` are derived from the session's lifetime. */"
+  },
+  {
+    "name": "SessionEvidenceRecord",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface SessionEvidenceRecord {\n    readonly version: typeof SESSION_EVIDENCE_VERSION;\n    readonly sessionId: string;\n    readonly seq: number;\n    readonly at: number;\n    readonly code: string;\n    readonly count: 1;\n    readonly digest: string;\n    readonly pinned?: boolean;\n}",
+    "doc": "/**\n * A single legacy session record after content has been removed.\n *\n * `digest` covers this record without the digest field. It is an integrity identifier, not a\n * digest of the legacy payload. The payload is never written to the migration target.\n */"
   },
   {
     "name": "SessionFailedView",
@@ -14448,6 +15317,19 @@
     "kind": "interface",
     "package": "@nifrajs/auth",
     "signature": "export interface SessionManager<Data extends Record<string, unknown> = Record<string, unknown>> {\n    /** Load the session from the request cookie (verified + un-expired), or a fresh anonymous one. */\n    get(c: SessionContext): Promise<Session<Data>>;\n    /** Read-only load from a raw `Request` - for `@nifrajs/web` loaders (which can read the request but not\n     * write cookies). Identical verify/expiry to {@link get}; commit/destroy in a route or action. */\n    read(request: Request): Promise<Session<Data>>;\n    /** Persist the session: write the store (store mode) + the signed cookie. */\n    commit(c: SessionContext, session: Session<Data>): Promise<void>;\n    /** End the session: drop the store record (store mode) + clear the cookie. */\n    destroy(c: SessionContext, session?: Session<Data>): Promise<void>;\n    /** Rotate the session id on the next commit (call on privilege change - login - to defend against\n     * session fixation). Data is preserved; the old store record is dropped. */\n    regenerate(session: Session<Data>): void;\n}"
+  },
+  {
+    "name": "SessionMigrationError",
+    "kind": "class",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare class SessionMigrationError extends Error {\n    readonly code: string;\n    constructor(code: string, message: string);\n}"
+  },
+  {
+    "name": "SessionMigrationReport",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface SessionMigrationReport {\n    readonly version: typeof SESSION_EVIDENCE_VERSION;\n    readonly sessionId: string;\n    readonly records: number;\n    /** Number of source event types replaced by the stable unknown-event code. */\n    readonly skipped: number;\n    readonly skippedByCode: Readonly<Record<string, number>>;\n    readonly counts: Readonly<Record<string, number>>;\n    readonly firstSeq?: number;\n    readonly lastSeq?: number;\n    /** Digest of the complete evidence-only target file, including line separators. */\n    readonly digest: string;\n}",
+    "doc": "/** Counts and integrity metadata emitted after a target has been fully validated. */"
   },
   {
     "name": "SessionOf",
@@ -15043,6 +15925,13 @@
     "doc": "/** Loads a module through the dev server's module graph rather than the runtime's resolver. */"
   },
   {
+    "name": "stableSessionEventCode",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function stableSessionEventCode(type: string): Promise<{\n    readonly code: string;\n    readonly replaced: boolean;\n}>;",
+    "doc": "/**\n * Convert a legacy event type into a stable, content-free evidence code.\n * Unknown event names are intentionally not copied to the target: their SHA-256 prefix gives a\n * repeatable grouping key without disclosing an arbitrary source string.\n */"
+  },
+  {
     "name": "StaleBuildError",
     "kind": "class",
     "package": "@nifrajs/cli",
@@ -15516,6 +16405,18 @@
     "doc": "/**\n * Strip the XML declaration, comments, and DOCTYPE from an SVG source by index scan. Shared by every\n * adapter's SVG-component transform instead of chained regex `replace`s, for two reasons: the lazy\n * `[\\s\\S]*?` scans backtrack quadratically on an unterminated marker, and sequential single-pass\n * replaces can splice removed delimiters back together (`<<!---->!DOCTYPE …>` survives them). The\n * scan removes each block in one forward pass, so neither failure mode exists. An unterminated\n * marker swallows the rest of the input - the correct reading, matching an XML parser.\n */"
   },
   {
+    "name": "structuredOutputParser",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function structuredOutputParser<Output>(parse: (value: unknown) => Output | PromiseLike<Output>): StructuredOutputParser<Output>;"
+  },
+  {
+    "name": "StructuredOutputParser",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface StructuredOutputParser<Output> {\n    readonly parse: (value: unknown) => Output | PromiseLike<Output>;\n}"
+  },
+  {
     "name": "StylesheetEmitter",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -15688,6 +16589,12 @@
     "doc": "/** Wrap raw SVG XML in a template-only Vue SFC (single root → Vue inherits attrs onto the `<svg>`). */"
   },
   {
+    "name": "systemClock",
+    "kind": "const",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare const systemClock: InjectedClock;"
+  },
+  {
     "name": "t",
     "kind": "const",
     "package": "@nifrajs/schema",
@@ -15707,6 +16614,13 @@
     "package": "@nifrajs/client",
     "signature": "export declare const testClient: typeof inProcessClient;",
     "doc": "/**\n * The in-process test client - the Fastify-`inject` / supertest equivalent for nifra. Drives the\n * app's own `fetch` directly: no server, no port, no network, the full real lifecycle (validation,\n * middleware, contracts, auth), and end-to-end types from `App`. Calls never throw - branch on\n * `res.ok`. An alias of {@link inProcessClient} with a test-focused name; identical behavior.\n *\n * ```ts\n * import { testClient } from \"@nifrajs/client\"\n * import { app } from \"../src/app\"\n *\n * const api = testClient<typeof app>(app)\n * const res = await api.users({ id: \"42\" }).get()\n * expect(res.ok && res.data.id).toBe(\"42\")\n * ```\n */"
+  },
+  {
+    "name": "TestClock",
+    "kind": "class",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare class TestClock implements InjectedClock {\n    private current;\n    constructor(start?: number);\n    now: () => number;\n    advance(milliseconds: number): void;\n}",
+    "doc": "/** A small deterministic clock useful for recovery schedules and tests. */"
   },
   {
     "name": "testSession",
@@ -15773,11 +16687,30 @@
     "doc": "/** Build the single descriptive projection shared by agent, MCP, and test adapters. */"
   },
   {
+    "name": "toEvalComparisonView",
+    "kind": "function",
+    "package": "@nifrajs/agent-app",
+    "signature": "export declare function toEvalComparisonView(value: unknown): EvalComparisonView | undefined;"
+  },
+  {
     "name": "toEventView",
     "kind": "function",
     "package": "@nifrajs/agent-app",
     "signature": "export declare function toEventView(event: AgentEvent): AgentEventView;",
     "doc": "/** Project one protocol event to its content-free view. Total over the event union - never returns undefined. */"
+  },
+  {
+    "name": "toEvidenceTimelineView",
+    "kind": "function",
+    "package": "@nifrajs/agent-app",
+    "signature": "export declare function toEvidenceTimelineView(value: unknown): readonly EvidenceTimelineView[];",
+    "doc": "/** Drop every field except bounded timeline evidence and sort by sequence. */"
+  },
+  {
+    "name": "toFaultInjectionViews",
+    "kind": "function",
+    "package": "@nifrajs/agent-app",
+    "signature": "export declare function toFaultInjectionViews(value: unknown): readonly FaultInjectionView[];"
   },
   {
     "name": "toFetchHandler",
@@ -16082,6 +17015,13 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function toResponse(result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders): Response;"
+  },
+  {
+    "name": "toRunStudioView",
+    "kind": "function",
+    "package": "@nifrajs/agent-app",
+    "signature": "export declare function toRunStudioView(value: unknown): RunStudioView | undefined;",
+    "doc": "/** Project an evidence-only run graph; malformed or content-bearing input is rejected. */"
   },
   {
     "name": "toRunView",
@@ -17108,6 +18048,13 @@
     "package": "nifra",
     "signature": "export declare const VERSION: \"3.1.0\";",
     "doc": "/**\n * Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't\n * read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and\n * `check:publish` asserts it equals `@nifrajs/core`'s package version.\n */"
+  },
+  {
+    "name": "virtualizeEvidenceRows",
+    "kind": "function",
+    "package": "@nifrajs/agent-app",
+    "signature": "export declare function virtualizeEvidenceRows<T>(rows: readonly T[], cursor: number, windowSize?: number): {\n    readonly offset: number;\n    readonly rows: readonly T[];\n};",
+    "doc": "/** Keep browser work bounded when a run has more than 1,000 evidence rows. */"
   },
   {
     "name": "viteBundler",

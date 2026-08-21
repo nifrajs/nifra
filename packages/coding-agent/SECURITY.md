@@ -15,3 +15,16 @@ The preview is local-first and fail-closed:
 
 The capability manifest is a public declaration seam, not a sandbox by itself. Operators must pair
 it with OS policy, a sandbox, or an approval broker appropriate to the deployment.
+
+## Release regression coverage
+
+The security suite fails closed for the following named boundaries: strict plan and evidence parsing,
+capability and child-authority escalation, approval and handoff expiry, workspace and symlink escape,
+content-bearing evidence, unauthorised remote RPC binding, contradictory adapter capability claims,
+false hostile-code isolation claims, and credential-shaped values in logs. Stable failure codes are
+asserted at each boundary. Local process and replay deployment profiles explicitly report that they
+are not hostile-code sandboxes.
+
+Legacy session migration is a separate local operation. It validates source records, writes only
+structural evidence to a new target, rejects overlapping roots and existing targets, validates the
+committed file, and never rewrites the source. See the public migration guide for rollback.

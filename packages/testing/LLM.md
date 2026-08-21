@@ -16,7 +16,9 @@ Contract-derived adversarial tests, runtime-matrix response conformance, and coo
 
 - **assertAdapterCertification** _(function)_ - `assertAdapterCertification: (report: AdapterCertificationReport) => void` · from `@nifrajs/testing`
 - **assertAdversarialContract** _(function)_ - `assertAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>` · from `@nifrajs/testing`
+- **assertAgentEval** _(function)_ - `assertAgentEval: (report: AgentEvalCompositionReport) => void` · from `@nifrajs/testing`
 - **assertAgentEvalBaseline** _(function)_ - `assertAgentEvalBaseline: (baseline: AgentEvalReport, current: AgentEvalReport, options?: BaselineOptions) => Promise<BaselineComparison>` · from `@nifrajs/testing`
+- **assertAgentFailureMatrix** _(function)_ - `assertAgentFailureMatrix: (report: AgentFailureMatrixReport) => void` · from `@nifrajs/testing`
 - **assertIncidentReplays** _(function)_ - `assertIncidentReplays: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<void>` · from `@nifrajs/testing`
 - **assertTrajectoryInvariants** _(function)_ - `assertTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => void` · from `@nifrajs/testing`
 - **cacheStoreCertificationProfile** _(function)_ - `cacheStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableCacheStore>` · from `@nifrajs/testing`
@@ -26,10 +28,8 @@ Contract-derived adversarial tests, runtime-matrix response conformance, and coo
 - **compareAgentEvalBaseline** _(function)_ - `compareAgentEvalBaseline: (baseline: AgentEvalReport, current: AgentEvalReport, options?: BaselineOptions) => Promise<BaselineComparison>` · from `@nifrajs/testing`
 - **cookieJar** _(function)_ - `cookieJar: () => CookieJar` · from `@nifrajs/testing`
 - **createFailureLab** _(function)_ - `createFailureLab: (options: FailureLabOptions) => FailureLab` · from `@nifrajs/testing`
-- **createReferenceContractLabHandler** _(function)_ - `createReferenceContractLabHandler: () => ContractLabHandler` · from `@nifrajs/testing`
-- **createTrajectoryTranscript** _(function)_ - `createTrajectoryTranscript: (transcript: AgentTranscript, options?: CreateTrajectoryTranscriptOptions) => Promise<TrajectoryTranscript>` · from `@nifrajs/testing`
 
-_…and 122 more - see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
+_…and 139 more - see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
 
 ## Footguns
 

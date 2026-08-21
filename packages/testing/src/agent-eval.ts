@@ -13,6 +13,10 @@
  * incomparable against explicit tolerances, and every regression carries a stable, addressable id.
  */
 
+import { type FailureDirective, FailureInjectedError, runFailureScenario } from "./failure-lab.ts"
+import { type FaultProfile, runFaultProfile } from "./fault-profile.ts"
+import { type EffectLedger, type IdempotencyProof, proveIdempotency } from "./idempotency.ts"
+
 const TOKEN = /^[a-z0-9][a-z0-9._:-]{0,127}$/
 const MAX_CASES = 512
 const MAX_RUBRICS = 32
@@ -142,6 +146,212 @@ export class AgentEvalRegressionError extends Error {
     )
     this.name = "AgentEvalRegressionError"
   }
+}
+
+// ── Composition and deterministic fault matrix ───────────────────────────────────────────────
+
+/** Fault boundaries covered by the public deterministic matrix. */
+export type AgentFailureMatrixKind =
+  | "model"
+  | "tool"
+  | "approval"
+  | "cancellation"
+  | "lease"
+  | "cursor"
+  | "registry"
+  | "deployment"
+
+export interface AgentFailureMatrixCase {
+  readonly id: string
+  readonly kind: AgentFailureMatrixKind
+  readonly scheduleToken: string
+  readonly ok: boolean
+  readonly regressionId: string
+}
+
+export interface AgentFailureMatrixReport {
+  readonly version: 1
+  readonly seed: number
+  readonly cases: readonly AgentFailureMatrixCase[]
+  readonly digest: string
+  readonly ok: boolean
+}
+
+export class AgentFailureMatrixError extends Error {
+  constructor(readonly report: AgentFailureMatrixReport) {
+    super(
+      `agent failure matrix: ${report.cases
+        .filter((entry) => !entry.ok)
+        .map((entry) => entry.regressionId)
+        .join(", ")}`,
+    )
+    this.name = "AgentFailureMatrixError"
+  }
+}
+
+const MATRIX_CASES: readonly { readonly id: string; readonly kind: AgentFailureMatrixKind }[] = [
+  { id: "approval-denied", kind: "approval" },
+  { id: "cancel-race", kind: "cancellation" },
+  { id: "cursor-gap", kind: "cursor" },
+  { id: "deployment-loss", kind: "deployment" },
+  { id: "lease-expired", kind: "lease" },
+  { id: "model-reply", kind: "model" },
+  { id: "registry-drift", kind: "registry" },
+  { id: "tool-effect", kind: "tool" },
+]
+
+function matrixSchedule(caseId: string): readonly FailureDirective[] {
+  return [{ point: `agent.${caseId}`, kind: "crash" }]
+}
+
+/**
+ * Run the same token-only crash fixture at each agent boundary. The implementation intentionally
+ * delegates scheduling and replay identity to the existing failure laboratory; this is a matrix
+ * consumer, not a second fault engine.
+ */
+export async function runAgentFailureMatrix(
+  options: { readonly seed?: number } = {},
+): Promise<AgentFailureMatrixReport> {
+  const seed = Number.isFinite(options.seed) ? Math.trunc(options.seed as number) >>> 0 : 0x4e494652
+  const cases: AgentFailureMatrixCase[] = []
+  for (const entry of MATRIX_CASES) {
+    const caseId = entry.id
+    const report = await runFailureScenario(
+      {
+        name: `agent-${caseId}`,
+        execute(lab) {
+          lab.checkpoint(`agent.${caseId}`)
+          return true
+        },
+        verify: ({ error }) => error instanceof FailureInjectedError,
+      },
+      { seed, schedule: matrixSchedule(caseId) },
+    )
+    const scheduleToken = `${report.replay.seed}:${caseId}:1`
+    const regressionId = `${caseId}/${scheduleToken}`
+    cases.push({ id: caseId, kind: entry.kind, scheduleToken, ok: report.ok, regressionId })
+  }
+  const digest = await sha256(canonical({ version: 1, seed, cases }))
+  return Object.freeze({
+    version: 1,
+    seed,
+    cases: Object.freeze(cases),
+    digest,
+    ok: cases.every((entry) => entry.ok),
+  })
+}
+
+export function assertAgentFailureMatrix(report: AgentFailureMatrixReport): void {
+  if (!report.ok) throw new AgentFailureMatrixError(report)
+}
+
+export interface AgentEvalComponentEvidence {
+  readonly id: "trajectory" | "fault-profile" | "contract-lab" | "idempotency" | "certification"
+  readonly ok: boolean
+  readonly code?: string
+  readonly digest?: string
+}
+
+export interface AgentEvalCompositionOptions {
+  readonly suite: AgentEvalSuite
+  readonly trajectory?: () => Promise<{
+    readonly ok: boolean
+    readonly digest: string
+    readonly regressionIds?: readonly string[]
+  }>
+  readonly faultProfile?: { readonly profile: FaultProfile; readonly seed?: number }
+  readonly contractLab?: () => Promise<{
+    readonly ok: boolean
+    readonly digest?: string
+    readonly code?: string
+  }>
+  readonly idempotency?: {
+    readonly run: () => Promise<EffectLedger> | EffectLedger
+    readonly runs?: number
+  }
+  readonly certification?: () => Promise<{
+    readonly ok: boolean
+    readonly digest?: string
+    readonly code?: string
+  }>
+}
+
+export interface AgentEvalCompositionReport {
+  readonly version: 1
+  readonly suite: AgentEvalReport
+  readonly components: readonly AgentEvalComponentEvidence[]
+  readonly regressionIds: readonly string[]
+  readonly digest: string
+  readonly ok: boolean
+}
+
+/** Compose existing trajectory, fault, contract, idempotency, and certification owners. */
+export async function runAgentEvalComposition(
+  options: AgentEvalCompositionOptions,
+): Promise<AgentEvalCompositionReport> {
+  const suite = await options.suite.run()
+  const components: AgentEvalComponentEvidence[] = []
+  const regressionIds: string[] = []
+  if (options.trajectory !== undefined) {
+    const result = await options.trajectory()
+    components.push({ id: "trajectory", ok: result.ok, digest: result.digest })
+    for (const id of result.regressionIds ?? []) regressionIds.push(id)
+  }
+  if (options.faultProfile !== undefined) {
+    const result = await runFaultProfile(
+      options.faultProfile.profile,
+      options.faultProfile.seed === undefined ? {} : { seed: options.faultProfile.seed },
+    )
+    components.push({ id: "fault-profile", ok: result.ok })
+    if (!result.ok) regressionIds.push(`fault-profile/${result.name}`)
+  }
+  if (options.contractLab !== undefined) {
+    const result = await options.contractLab()
+    components.push({
+      id: "contract-lab",
+      ok: result.ok,
+      ...(result.digest === undefined ? {} : { digest: result.digest }),
+      ...(result.code === undefined ? {} : { code: result.code }),
+    })
+    if (!result.ok) regressionIds.push(`contract-lab/${result.code ?? "failed"}`)
+  }
+  if (options.idempotency !== undefined) {
+    const result: IdempotencyProof = await proveIdempotency(options.idempotency)
+    components.push({ id: "idempotency", ok: result.ok })
+    if (!result.ok) regressionIds.push("idempotency/divergent")
+  }
+  if (options.certification !== undefined) {
+    const result = await options.certification()
+    components.push({
+      id: "certification",
+      ok: result.ok,
+      ...(result.digest === undefined ? {} : { digest: result.digest }),
+      ...(result.code === undefined ? {} : { code: result.code }),
+    })
+    if (!result.ok) regressionIds.push(`certification/${result.code ?? "failed"}`)
+  }
+  const ok = regressionIds.length === 0 && components.every((entry) => entry.ok)
+  const digest = await sha256(
+    canonical({ version: 1, suite: suite.digest, components, regressionIds }),
+  )
+  return Object.freeze({
+    version: 1,
+    suite,
+    components: Object.freeze(components),
+    regressionIds: Object.freeze(regressionIds.sort()),
+    digest,
+    ok,
+  })
+}
+
+export function assertAgentEval(report: AgentEvalCompositionReport): void {
+  if (!report.ok)
+    throw new AgentEvalRegressionError({
+      suiteId: report.suite.suiteId,
+      comparisons: [],
+      regressions: report.regressionIds,
+      digest: report.digest,
+    })
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────────────────

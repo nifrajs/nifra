@@ -26,16 +26,31 @@ export {
   runAdversarialContract,
 } from "./adversarial.ts"
 export {
+  type CertifiableDeploymentAdapter,
   type CertifiableDescriptorAdapter,
+  type CertifiableModelGateway,
+  deploymentAdapterCertificationProfile,
+  deploymentCertificationProfile,
+  gatewayCertificationProfile,
+  modelGatewayCertificationProfile,
   registryCertificationProfile,
 } from "./agent-certification.ts"
 export {
   type AgentEvalCase,
+  type AgentEvalComponentEvidence,
+  type AgentEvalCompositionOptions,
+  type AgentEvalCompositionReport,
   AgentEvalRegressionError,
   type AgentEvalReport,
   type AgentEvalSuite,
   type AgentEvalSuiteSpec,
+  type AgentFailureMatrixCase,
+  AgentFailureMatrixError,
+  type AgentFailureMatrixKind,
+  type AgentFailureMatrixReport,
+  assertAgentEval,
   assertAgentEvalBaseline,
+  assertAgentFailureMatrix,
   type BaselineComparison,
   type BaselineOptions,
   type CaseComparison,
@@ -47,6 +62,8 @@ export {
   type RubricShape,
   type RubricSpec,
   type RubricVerdict,
+  runAgentEvalComposition,
+  runAgentFailureMatrix,
   type ScoreTolerance,
 } from "./agent-eval.ts"
 export {

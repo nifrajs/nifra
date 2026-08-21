@@ -13,7 +13,12 @@
         "@elysiajs/node": "^1.4.5",
         "@mdx-js/mdx": "^3",
         "@mdx-js/rollup": "^3",
+        "@nifrajs/agent": "workspace:*",
+        "@nifrajs/agent-app": "workspace:*",
+        "@nifrajs/agent-protocol": "workspace:*",
+        "@nifrajs/coding-agent": "workspace:*",
         "@nifrajs/island-trigger": "workspace:*",
+        "@nifrajs/pi": "workspace:*",
         "@types/bun": "^1.3.14",
         "@types/express": "^5.0.6",
         "@upstash/context7-mcp": "4.0.2",
@@ -41,6 +46,8 @@
       "name": "@nifrajs/workbench",
       "version": "3.1.0",
       "dependencies": {
+        "@nifrajs/agent-app": "workspace:*",
+        "@nifrajs/agent-protocol": "workspace:*",
         "@nifrajs/coding-agent": "workspace:*",
       },
     },
@@ -163,6 +170,13 @@
         "@nifrajs/core": "workspace:*",
       },
     },
+    "packages/agent-app": {
+      "name": "@nifrajs/agent-app",
+      "version": "3.1.0",
+      "dependencies": {
+        "@nifrajs/agent-protocol": "workspace:*",
+      },
+    },
     "packages/agent-protocol": {
       "name": "@nifrajs/agent-protocol",
       "version": "3.1.0",
@@ -264,7 +278,9 @@
         "nifra-agent": "./dist/cli.js",
       },
       "dependencies": {
+        "@nifrajs/agent": "workspace:*",
         "@nifrajs/agent-protocol": "workspace:*",
+        "@nifrajs/jobs": "workspace:*",
         "@nifrajs/pi": "workspace:*",
       },
     },
@@ -403,13 +419,16 @@
       "name": "@nifrajs/mcp",
       "version": "3.1.0",
       "devDependencies": {
+        "@nifrajs/agent": "workspace:*",
         "@nifrajs/core": "workspace:*",
         "react": "19.2.7",
       },
       "peerDependencies": {
+        "@nifrajs/agent": "workspace:^",
         "@nifrajs/core": "workspace:^",
       },
       "optionalPeers": [
+        "@nifrajs/agent",
         "@nifrajs/core",
       ],
     },
@@ -1081,6 +1100,8 @@
     "@nifrajs/ag-ui": ["@nifrajs/ag-ui@workspace:packages/ag-ui"],
 
     "@nifrajs/agent": ["@nifrajs/agent@workspace:packages/agent"],
+
+    "@nifrajs/agent-app": ["@nifrajs/agent-app@workspace:packages/agent-app"],
 
     "@nifrajs/agent-protocol": ["@nifrajs/agent-protocol@workspace:packages/agent-protocol"],
 

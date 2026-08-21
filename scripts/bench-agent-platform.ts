@@ -1,5 +1,5 @@
 /**
- * Agent-platform orchestration bench. Three modes, each runnable under `--check` (assert invariants,
+ * Agent-platform orchestration bench. Five modes, each runnable under `--check` (assert invariants,
  * non-zero exit on violation) or bare (print timings):
  *
  *   compile   - checked compile of a 256-node fixture and a no-op fixture; the ceiling holds and the
@@ -8,11 +8,14 @@
  *               completes and the terminal digest is deterministic.
  *   memory    - append 1k/10k/100k evidence records to a bounded store; the live window stays
  *               bounded, the full count is tallied, and the digest is order-independent.
+ *   gateway   - compare direct deterministic fake calls with the bounded gateway policy path.
+ *   replay    - replay 1,000 token-only steps twice and require an identical schedule digest.
  *
- * Usage: `bun run scripts/bench-agent-platform.ts [--check] [compile] [schedule] [memory] [--json]`
+ * Usage: `bun run scripts/bench-agent-platform.ts [--check] [compile] [schedule] [memory] [gateway] [replay] [--json]`
  */
 
 import { performance } from "node:perf_hooks"
+import { FakeModelGateway, runModelGateway } from "@nifrajs/agent"
 import { RUN_PLAN_VERSION, type RunEvidence, type RunPlan } from "@nifrajs/agent-protocol"
 import {
   compileRunPlan,
@@ -22,10 +25,11 @@ import {
   OrchestrationHost,
   type StepCatalog,
 } from "@nifrajs/coding-agent/orchestration"
+import { runFailureScenario } from "@nifrajs/testing"
 
 const CHECK = Bun.argv.includes("--check")
 const JSON_OUT = Bun.argv.includes("--json")
-const ALL = ["compile", "schedule", "memory"] as const
+const ALL = ["compile", "schedule", "memory", "gateway", "replay"] as const
 type Mode = (typeof ALL)[number]
 const requested = Bun.argv.filter((arg): arg is Mode => (ALL as readonly string[]).includes(arg))
 const modes: readonly Mode[] = requested.length > 0 ? requested : ALL
@@ -122,6 +126,92 @@ async function benchMemory(): Promise<void> {
   results.memory = rows
 }
 
+async function benchGateway(): Promise<void> {
+  const operations = 256
+  const responses = Array.from({ length: operations }, () => ({
+    ok: true as const,
+    output: { ok: true },
+  }))
+  const directGateway = new FakeModelGateway({ responses })
+  const directStart = performance.now()
+  for (let i = 0; i < operations; i++) {
+    await directGateway.complete({
+      routeId: "bench-route",
+      input: {},
+      signal: new AbortController().signal,
+      envelope: { attempt: 1, attemptsRemaining: 0 },
+    })
+  }
+  const directMs = performance.now() - directStart
+
+  const wrappedGateway = new FakeModelGateway({ responses })
+  const wrappedStart = performance.now()
+  for (let i = 0; i < operations; i++) {
+    const result = await runModelGateway(
+      wrappedGateway,
+      { input: {} },
+      { routes: ["bench-route"], retryableCodes: [], budget: { maxAttempts: 1 } },
+    )
+    assert(result.ok, "gateway wrapper must accept the fake response")
+  }
+  const gatewayMs = performance.now() - wrappedStart
+  assert(directGateway.calls === operations, "direct fake call count must match")
+  assert(wrappedGateway.calls === operations, "gateway fake call count must match")
+  results.gateway = {
+    operations,
+    directMs: round(directMs),
+    gatewayMs: round(gatewayMs),
+    overheadMs: round(gatewayMs - directMs),
+  }
+  log(
+    `gateway: ${operations.toLocaleString()} direct/facaded calls, ${round(gatewayMs - directMs)}ms overhead`,
+  )
+}
+
+async function benchReplay(): Promise<void> {
+  const steps = 1_000
+  const run = async () => {
+    let delivered = 0
+    const report = await runFailureScenario(
+      {
+        name: "agent-replay-1000",
+        execute(lab) {
+          for (let index = 0; index < steps; index++) {
+            delivered += lab.deliveries(`replay.${index}`, [index]).length
+          }
+          return true
+        },
+        verify: () => delivered === steps,
+      },
+      { seed: 0x5245504c, schedule: [] },
+    )
+    return { report, delivered }
+  }
+  const start = performance.now()
+  const first = await run()
+  const second = await run()
+  const ms = performance.now() - start
+  const firstEvidence = JSON.stringify({
+    replay: first.report.replay,
+    evidence: first.report.evidence,
+  })
+  const secondEvidence = JSON.stringify({
+    replay: second.report.replay,
+    evidence: second.report.evidence,
+  })
+  assert(first.report.ok && second.report.ok, "1,000-step replay must pass")
+  assert(first.delivered === steps && second.delivered === steps, "replay must deliver every step")
+  assert(firstEvidence === secondEvidence, "replay evidence digest must be deterministic")
+  results.replay = { steps, ms: round(ms), digest: await digest(firstEvidence) }
+  log(`replay: ${steps.toLocaleString()} deterministic steps in ${round(ms)}ms`)
+}
+
+async function digest(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value)
+  const raw = await crypto.subtle.digest("SHA-256", bytes)
+  return [...new Uint8Array(raw)].map((byte) => byte.toString(16).padStart(2, "0")).join("")
+}
+
 function log(line: string): void {
   if (!JSON_OUT) console.log(line)
 }
@@ -129,7 +219,9 @@ function log(line: string): void {
 for (const mode of modes) {
   if (mode === "compile") benchCompile()
   else if (mode === "schedule") await benchSchedule()
-  else await benchMemory()
+  else if (mode === "memory") await benchMemory()
+  else if (mode === "gateway") await benchGateway()
+  else await benchReplay()
 }
 
 if (JSON_OUT) console.log(JSON.stringify({ check: CHECK, modes, results }))

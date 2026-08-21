@@ -29,8 +29,8 @@ export interface McpDescriptorOptions {
  * Project one MCP-facing tool contract into a `mcp-tool` capability descriptor. The digest is taken
  * over the tool's own input schema, so it matches the core tool descriptor for the same contract.
  */
-export function mcpToolDescriptor(
-  tool: ToolContract,
+export function mcpToolDescriptor<Input, Output>(
+  tool: ToolContract<Input, Output>,
   options: McpDescriptorOptions = {},
 ): Promise<CapabilityDescriptor> {
   return descriptorFromTool(tool, {
@@ -41,8 +41,8 @@ export function mcpToolDescriptor(
 }
 
 /** Project a set of MCP tool contracts, preserving order. Compose the result into a snapshot to dedupe. */
-export function mcpToolDescriptors(
-  tools: readonly ToolContract[],
+export function mcpToolDescriptors<Input, Output>(
+  tools: readonly ToolContract<Input, Output>[],
   options: McpDescriptorOptions = {},
 ): Promise<readonly CapabilityDescriptor[]> {
   return Promise.all(tools.map((tool) => mcpToolDescriptor(tool, options)))

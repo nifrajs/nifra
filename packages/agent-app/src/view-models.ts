@@ -542,3 +542,378 @@ export class OrderedEventBuffer {
     return out
   }
 }
+
+// ---------------------------------------------------------------------------
+// Run studio projections
+// ---------------------------------------------------------------------------
+
+export type RunStudioNodeState =
+  | "pending"
+  | "running"
+  | "paused"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "recovered"
+
+export interface RunStudioNodeView {
+  readonly nodeId: string
+  readonly dependsOn: readonly string[]
+  readonly state: RunStudioNodeState
+  readonly attempt: number
+  readonly retryCount: number
+  readonly checkpointed: boolean
+  readonly cancelled: boolean
+  readonly recovered: boolean
+}
+
+export interface RunStudioView {
+  readonly runId: string
+  readonly planId: string
+  readonly planDigest: string
+  readonly cursor: number
+  readonly state: RunStudioNodeState
+  readonly nodes: readonly RunStudioNodeView[]
+  readonly activeNodes: number
+  readonly terminalNodes: number
+  readonly traceRef?: string
+  readonly replayRef?: string
+}
+
+export interface EvidenceTimelineView {
+  readonly seq: number
+  readonly eventId: string
+  readonly runId: string
+  readonly nodeId: string
+  readonly status:
+    | "started"
+    | "checkpointed"
+    | "retrying"
+    | "recovered"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "dead-lettered"
+  readonly attempt: number
+  readonly traceRef?: string
+  readonly replayRef?: string
+  readonly scheduleToken?: string
+}
+
+export type EvalComparisonViewCode =
+  | "equal"
+  | "improved"
+  | "tolerated"
+  | "regressed"
+  | "missing"
+  | "incomparable"
+
+export interface EvalComparisonView {
+  readonly suiteId: string
+  readonly comparisons: readonly {
+    readonly caseId: string
+    readonly rubricId: string
+    readonly code: EvalComparisonViewCode
+    readonly regressionId: string
+  }[]
+  readonly regressionIds: readonly string[]
+}
+
+export interface FaultInjectionView {
+  readonly id: string
+  readonly kind: string
+  readonly scheduleToken: string
+  readonly regressionId: string
+  readonly ok: boolean
+}
+
+const STUDIO_TOKEN = /^[-A-Za-z0-9._:/]{1,128}$/
+const STUDIO_DIGEST = /^[0-9a-f]{64}$/
+const STUDIO_STATES: ReadonlySet<string> = new Set([
+  "pending",
+  "running",
+  "paused",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "recovered",
+])
+const STUDIO_STATUSES: ReadonlySet<string> = new Set([
+  "started",
+  "checkpointed",
+  "retrying",
+  "recovered",
+  "completed",
+  "failed",
+  "cancelled",
+  "dead-lettered",
+])
+const STUDIO_CODES: ReadonlySet<string> = new Set([
+  "equal",
+  "improved",
+  "tolerated",
+  "regressed",
+  "missing",
+  "incomparable",
+])
+const STUDIO_FORBIDDEN: ReadonlySet<string> = new Set([
+  "prompt",
+  "message",
+  "text",
+  "input",
+  "output",
+  "arguments",
+  "body",
+  "response",
+  "secret",
+  "credential",
+  "diagnostic",
+  "stack",
+  "content",
+  "transcript",
+  "artifact",
+  "path",
+])
+
+function studioRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function studioToken(value: unknown): value is string {
+  return typeof value === "string" && STUDIO_TOKEN.test(value)
+}
+
+function studioInt(value: unknown, min = 0): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= min
+}
+
+function studioSafeKeys(value: Record<string, unknown>, allowed: ReadonlySet<string>): boolean {
+  return Object.keys(value).every(
+    (key) => !STUDIO_FORBIDDEN.has(key.toLowerCase()) && allowed.has(key),
+  )
+}
+
+/** Project an evidence-only run graph; malformed or content-bearing input is rejected. */
+export function toRunStudioView(value: unknown): RunStudioView | undefined {
+  if (!studioRecord(value)) return undefined
+  const allowed = new Set([
+    "runId",
+    "planId",
+    "planDigest",
+    "cursor",
+    "state",
+    "nodes",
+    "traceRef",
+    "replayRef",
+  ])
+  if (
+    !studioSafeKeys(value, allowed) ||
+    !studioToken(value.runId) ||
+    !studioToken(value.planId) ||
+    typeof value.planDigest !== "string" ||
+    !STUDIO_DIGEST.test(value.planDigest) ||
+    !studioInt(value.cursor) ||
+    typeof value.state !== "string" ||
+    !STUDIO_STATES.has(value.state) ||
+    !Array.isArray(value.nodes)
+  )
+    return undefined
+  if (value.traceRef !== undefined && !studioToken(value.traceRef)) return undefined
+  if (value.replayRef !== undefined && !studioToken(value.replayRef)) return undefined
+  const nodes: RunStudioNodeView[] = []
+  for (const raw of value.nodes) {
+    if (
+      !studioRecord(raw) ||
+      !studioSafeKeys(
+        raw,
+        new Set([
+          "nodeId",
+          "dependsOn",
+          "state",
+          "attempt",
+          "retryCount",
+          "checkpointed",
+          "cancelled",
+          "recovered",
+        ]),
+      )
+    )
+      return undefined
+    if (
+      !studioToken(raw.nodeId) ||
+      !Array.isArray(raw.dependsOn) ||
+      !raw.dependsOn.every(studioToken) ||
+      typeof raw.state !== "string" ||
+      !STUDIO_STATES.has(raw.state) ||
+      !studioInt(raw.attempt, 1) ||
+      !studioInt(raw.retryCount) ||
+      typeof raw.checkpointed !== "boolean" ||
+      typeof raw.cancelled !== "boolean" ||
+      typeof raw.recovered !== "boolean"
+    )
+      return undefined
+    nodes.push(
+      Object.freeze({
+        nodeId: raw.nodeId,
+        dependsOn: Object.freeze([...raw.dependsOn].sort()),
+        state: raw.state as RunStudioNodeState,
+        attempt: raw.attempt,
+        retryCount: raw.retryCount,
+        checkpointed: raw.checkpointed,
+        cancelled: raw.cancelled,
+        recovered: raw.recovered,
+      }),
+    )
+  }
+  nodes.sort((a, b) => a.nodeId.localeCompare(b.nodeId))
+  return Object.freeze({
+    runId: value.runId,
+    planId: value.planId,
+    planDigest: value.planDigest,
+    cursor: value.cursor,
+    state: value.state as RunStudioNodeState,
+    nodes: Object.freeze(nodes),
+    activeNodes: nodes.filter((node) => node.state === "running" || node.state === "paused").length,
+    terminalNodes: nodes.filter(
+      (node) => node.state === "succeeded" || node.state === "failed" || node.state === "cancelled",
+    ).length,
+    ...(value.traceRef === undefined ? {} : { traceRef: value.traceRef }),
+    ...(value.replayRef === undefined ? {} : { replayRef: value.replayRef }),
+  })
+}
+
+/** Drop every field except bounded timeline evidence and sort by sequence. */
+export function toEvidenceTimelineView(value: unknown): readonly EvidenceTimelineView[] {
+  if (!Array.isArray(value)) return []
+  const rows: EvidenceTimelineView[] = []
+  for (const raw of value) {
+    if (
+      !studioRecord(raw) ||
+      !studioSafeKeys(
+        raw,
+        new Set([
+          "seq",
+          "eventId",
+          "runId",
+          "nodeId",
+          "status",
+          "attempt",
+          "traceRef",
+          "replayRef",
+          "scheduleToken",
+        ]),
+      )
+    )
+      continue
+    if (
+      !studioInt(raw.seq) ||
+      !studioToken(raw.eventId) ||
+      !studioToken(raw.runId) ||
+      !studioToken(raw.nodeId) ||
+      typeof raw.status !== "string" ||
+      !STUDIO_STATUSES.has(raw.status) ||
+      !studioInt(raw.attempt, 1)
+    )
+      continue
+    if (raw.traceRef !== undefined && !studioToken(raw.traceRef)) continue
+    if (raw.replayRef !== undefined && !studioToken(raw.replayRef)) continue
+    if (raw.scheduleToken !== undefined && !studioToken(raw.scheduleToken)) continue
+    rows.push(
+      Object.freeze({
+        seq: raw.seq,
+        eventId: raw.eventId,
+        runId: raw.runId,
+        nodeId: raw.nodeId,
+        status: raw.status as EvidenceTimelineView["status"],
+        attempt: raw.attempt,
+        ...(raw.traceRef === undefined ? {} : { traceRef: raw.traceRef }),
+        ...(raw.replayRef === undefined ? {} : { replayRef: raw.replayRef }),
+        ...(raw.scheduleToken === undefined ? {} : { scheduleToken: raw.scheduleToken }),
+      }),
+    )
+  }
+  rows.sort((a, b) => a.seq - b.seq)
+  return Object.freeze(rows)
+}
+
+export function toEvalComparisonView(value: unknown): EvalComparisonView | undefined {
+  if (
+    !studioRecord(value) ||
+    !studioSafeKeys(value, new Set(["suiteId", "comparisons", "regressions"])) ||
+    !studioToken(value.suiteId) ||
+    !Array.isArray(value.comparisons) ||
+    !Array.isArray(value.regressions) ||
+    !value.regressions.every(studioToken)
+  )
+    return undefined
+  const comparisons: Array<EvalComparisonView["comparisons"][number]> = []
+  for (const raw of value.comparisons) {
+    if (
+      !studioRecord(raw) ||
+      !studioSafeKeys(raw, new Set(["caseId", "rubricId", "code", "regressionId"])) ||
+      !studioToken(raw.caseId) ||
+      !studioToken(raw.rubricId) ||
+      typeof raw.code !== "string" ||
+      !STUDIO_CODES.has(raw.code) ||
+      !studioToken(raw.regressionId)
+    )
+      return undefined
+    comparisons.push(
+      Object.freeze({
+        caseId: raw.caseId,
+        rubricId: raw.rubricId,
+        code: raw.code as EvalComparisonViewCode,
+        regressionId: raw.regressionId,
+      }),
+    )
+  }
+  return Object.freeze({
+    suiteId: value.suiteId,
+    comparisons: Object.freeze(comparisons),
+    regressionIds: Object.freeze([...value.regressions]),
+  })
+}
+
+export function toFaultInjectionViews(value: unknown): readonly FaultInjectionView[] {
+  if (!Array.isArray(value)) return []
+  const views: FaultInjectionView[] = []
+  for (const raw of value) {
+    if (
+      !studioRecord(raw) ||
+      !studioSafeKeys(raw, new Set(["id", "kind", "scheduleToken", "regressionId", "ok"])) ||
+      !studioToken(raw.id) ||
+      !studioToken(raw.kind) ||
+      !studioToken(raw.scheduleToken) ||
+      !studioToken(raw.regressionId) ||
+      typeof raw.ok !== "boolean"
+    )
+      continue
+    views.push(
+      Object.freeze({
+        id: raw.id,
+        kind: raw.kind,
+        scheduleToken: raw.scheduleToken,
+        regressionId: raw.regressionId,
+        ok: raw.ok,
+      }),
+    )
+  }
+  return Object.freeze(views)
+}
+
+/** Keep browser work bounded when a run has more than 1,000 evidence rows. */
+export function virtualizeEvidenceRows<T>(
+  rows: readonly T[],
+  cursor: number,
+  windowSize = 100,
+): { readonly offset: number; readonly rows: readonly T[] } {
+  if (!Number.isSafeInteger(cursor) || cursor < 0)
+    throw new RangeError("evidence cursor must be non-negative")
+  if (!Number.isSafeInteger(windowSize) || windowSize < 1 || windowSize > 256)
+    throw new RangeError("evidence window size is invalid")
+  const offset = Math.min(
+    Math.max(0, cursor - Math.floor(windowSize / 2)),
+    Math.max(0, rows.length - windowSize),
+  )
+  return Object.freeze({ offset, rows: Object.freeze(rows.slice(offset, offset + windowSize)) })
+}

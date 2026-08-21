@@ -12,12 +12,17 @@ Agent telemetry plugin - child spans for AI tool calls on /_nifra/tool/* and MCP
 
 - **agentTelemetry** _(function)_ - `agentTelemetry: (options: AgentTelemetryOptions) => { name: string; beforeHandle(context: HookContext): undefined; onError(error: unknown, …`
 - **consoleAgentExporter** _(function)_ - `consoleAgentExporter: (log?: (line: string) => void) => ObservationAdapter`
+- **orchestrationTelemetry** _(function)_ - `orchestrationTelemetry: (options?: OrchestrationTelemetryOptions) => OrchestrationTelemetry`
 - **traceAgentRun** _(function)_ - `traceAgentRun: (options: TraceAgentRunOptions) => AgentRunTrace`
 - **AgentRunEvidence** _(interface)_ - `interface AgentRunEvidence`
 - **AgentRunOutcome** _(interface)_ - `interface AgentRunOutcome`
 - **AgentRunTrace** _(interface)_ - `interface AgentRunTrace`
 - **AgentTelemetryOptions** _(interface)_ - `interface AgentTelemetryOptions`
+- **OrchestrationTelemetry** _(interface)_ - `interface OrchestrationTelemetry`
+- **OrchestrationTelemetryEvent** _(interface)_ - `interface OrchestrationTelemetryEvent`
+- **OrchestrationTelemetryOptions** _(interface)_ - `interface OrchestrationTelemetryOptions`
 - **TraceAgentRunOptions** _(interface)_ - `interface TraceAgentRunOptions`
+- **OrchestrationTelemetryKind** _(type)_ - `type OrchestrationTelemetryKind = | "started" | "checkpointed" | "retrying" | "recovered" | "cancelled" | "completed" | "failed" | "dead-le…`
 
 ## Footguns
 

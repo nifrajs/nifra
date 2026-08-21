@@ -9,6 +9,7 @@ import {
   discoverExtensions,
   ExtensionHost,
   FileSessionStore,
+  migrateLegacySession,
   NIFRA_AGENT_INSTRUCTIONS,
   PiBackend,
   ReplayBackend,
@@ -24,6 +25,7 @@ Usage:
   nifra-agent [--backend pi|replay] [--cwd <dir>] [--once <prompt>]
               [--json] [--no-session] [--session-dir <dir>] [--session-id <id>]
               [--verify-after-turn check,assure] [--pi <command>] [--replay <file>]
+  nifra-agent --migrate-session <id> --migrate-from <dir> --migrate-to <dir> [--json]
   nifra-agent --rpc [--cwd <dir>] [--host 127.0.0.1] [--port 0]
 
 Commands in interactive mode:
@@ -55,6 +57,9 @@ export interface CliOptions {
   readonly port: number
   readonly authToken?: string
   readonly sessionId?: string
+  readonly migrateSession?: string
+  readonly migrationSource?: string
+  readonly migrationTarget?: string
   readonly verifyAfterTurn: readonly ("check" | "assure" | "test")[]
 }
 
@@ -72,6 +77,9 @@ export function parseArgs(args: readonly string[]): CliOptions {
   let port = 0
   let authToken: string | undefined
   let sessionId: string | undefined
+  let migrateSession: string | undefined
+  let migrationSource: string | undefined
+  let migrationTarget: string | undefined
   let verifyAfterTurn: readonly ("check" | "assure" | "test")[] = []
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]
@@ -82,6 +90,9 @@ export function parseArgs(args: readonly string[]): CliOptions {
     else if (arg === "--no-session") noSession = true
     else if (arg === "--session-dir") sessionDir = resolve(args[++index] ?? "")
     else if (arg === "--session-id") sessionId = args[++index]
+    else if (arg === "--migrate-session") migrateSession = args[++index]
+    else if (arg === "--migrate-from") migrationSource = resolve(args[++index] ?? "")
+    else if (arg === "--migrate-to") migrationTarget = resolve(args[++index] ?? "")
     else if (arg === "--pi") piCommand = args[++index] ?? piCommand
     else if (arg === "--replay") replayFile = resolve(args[++index] ?? "")
     else if (arg === "--rpc") rpc = true
@@ -101,6 +112,16 @@ export function parseArgs(args: readonly string[]): CliOptions {
   if (backend !== "pi" && backend !== "replay") throw new Error(`unsupported backend: ${backend}`)
   if (backend === "replay" && replayFile === undefined)
     throw new Error("--backend replay requires --replay <file>")
+  if (
+    migrateSession === undefined &&
+    (migrationSource !== undefined || migrationTarget !== undefined)
+  )
+    throw new Error("--migrate-from and --migrate-to require --migrate-session")
+  if (
+    migrateSession !== undefined &&
+    (migrationSource === undefined || migrationTarget === undefined)
+  )
+    throw new Error("--migrate-session requires --migrate-from and --migrate-to")
   return {
     backend,
     cwd,
@@ -115,6 +136,9 @@ export function parseArgs(args: readonly string[]): CliOptions {
     port,
     ...(authToken === undefined ? {} : { authToken }),
     ...(sessionId === undefined ? {} : { sessionId }),
+    ...(migrateSession === undefined ? {} : { migrateSession }),
+    ...(migrationSource === undefined ? {} : { migrationSource }),
+    ...(migrationTarget === undefined ? {} : { migrationTarget }),
     verifyAfterTurn,
   }
 }
@@ -152,6 +176,19 @@ function printEvent(event: AgentEvent, json: boolean): void {
 
 async function main(): Promise<void> {
   const options = parseArgs(Bun.argv.slice(2))
+  if (options.migrateSession !== undefined) {
+    const report = await migrateLegacySession({
+      sessionId: options.migrateSession,
+      sourceRoot: options.migrationSource!,
+      targetRoot: options.migrationTarget!,
+    })
+    if (options.json) console.log(JSON.stringify({ type: "session.migrated", report }))
+    else
+      console.log(
+        `[session] migrated ${report.records} evidence records (${report.firstSeq ?? "empty"}..${report.lastSeq ?? "empty"}) digest ${report.digest}`,
+      )
+    return
+  }
   const backend =
     options.backend === "replay"
       ? new ReplayBackend({ events: await readReplayEvents(options.replayFile!) })

@@ -45,6 +45,10 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentDefinition** _(interface)_ - `interface AgentDefinition<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>`
 - **AgentDeltaSink** _(interface)_ - `interface AgentDeltaSink`
   A transient observer of model deltas - an SSE bridge, a live console, a progress meter.
+- **AgentDeployment** _(class)_ - `class AgentDeployment`
+  Host-owned deterministic lifecycle wrapper for an adapter.
+- **AgentDeploymentAdapter** _(interface)_ - `interface AgentDeploymentAdapter`
+- **AgentDeploymentPlan** _(interface)_ - `interface AgentDeploymentPlan`
 - **AgentModelDelta** _(type)_ - `type AgentModelDelta`
   One progressive chunk of a model decision in flight: user-visible text, reasoning text, or the raw argument text of the tool call being formed (`name` on the first chunk when the provider announces it). A `usage` delta reports the decision's token counts once the provider settles them, optionally a…
 - **AgentModelPort** _(interface)_ - `interface AgentModelPort`
@@ -79,12 +83,40 @@ Every public export of every package and documented subpath - name, kind, signat
 - **CapabilityDescriptor** _(interface)_ - `interface CapabilityDescriptor`
 - **CapabilityKind** _(type)_ - `type CapabilityKind = | "tool" | "mcp-tool" | "extension" | "model-adapter" | "deployment-adapter"`
   Producer families a descriptor can describe. A value outside this set fails `unsupported_kind`.
+- **DeploymentActivationOptions** _(interface)_ - `interface DeploymentActivationOptions`
+- **DeploymentAuthority** _(interface)_ - `interface DeploymentAuthority`
+- **DeploymentCancelRequest** _(interface)_ - `interface DeploymentCancelRequest`
+- **DeploymentCancelResult** _(interface)_ - `interface DeploymentCancelResult`
+- **DeploymentCancellation** _(type)_ - `type DeploymentCancellation = "none" | "cooperative" | "forced"`
+- **DeploymentCapabilities** _(interface)_ - `interface DeploymentCapabilities`
+- **DeploymentCapabilityReport** _(interface)_ - `interface DeploymentCapabilityReport`
+- **DeploymentDisposeRequest** _(interface)_ - `interface DeploymentDisposeRequest`
+- **DeploymentDisposeResult** _(interface)_ - `interface DeploymentDisposeResult`
+- **DeploymentError** _(class)_ - `class DeploymentError`
+- **DeploymentErrorCode** _(type)_ - `type DeploymentErrorCode = | "invalid_capabilities" | "capability_denied" | "hostile_code_requires_isolation" | "authority_expanded" | "invalid_plan" | "invalid_transition" | "malformed_callback" | "adapter_error" | "ca…`
+- **DeploymentEvidence** _(type)_ - `type DeploymentEvidence = { readonly kind: "prepared" | "started" | "inspected" | "cancelled" | "disposed" | "failed" readonly deploymentId: string readonly state: DeploymentState | "new" readonly code?: DeploymentError…`
+- **DeploymentFilesystem** _(type)_ - `type DeploymentFilesystem = "none" | "workspace" | "host"`
+- **DeploymentInspectRequest** _(interface)_ - `interface DeploymentInspectRequest`
+- **DeploymentInspection** _(interface)_ - `interface DeploymentInspection`
+- **DeploymentNetwork** _(type)_ - `type DeploymentNetwork = "none" | "outbound" | "inbound" | "unrestricted"`
+- **DeploymentPrepareRequest** _(interface)_ - `interface DeploymentPrepareRequest`
+- **DeploymentPrepareResult** _(interface)_ - `interface DeploymentPrepareResult`
+- **DeploymentProcess** _(type)_ - `type DeploymentProcess = "none" | "child"`
+- **DeploymentRuntime** _(type)_ - `type DeploymentRuntime = "local" | "ci" | "replay" | "worker" | "unknown"`
+- **DeploymentSecrets** _(type)_ - `type DeploymentSecrets = "none" | "caller"`
+- **DeploymentStartRequest** _(interface)_ - `interface DeploymentStartRequest`
+- **DeploymentStartResult** _(interface)_ - `interface DeploymentStartResult`
+- **DeploymentState** _(type)_ - `type DeploymentState = "prepared" | "running" | "cancelled" | "disposed"`
 - **DescriptorInput** _(interface)_ - `interface DescriptorInput`
   The fields an adapter supplies. The schema digest is derived from `inputSchema`, never passed in.
 - **ExecutionPolicy** _(interface)_ - `interface ExecutionPolicy`
   A public, token-only execution policy. It describes a required capability; it is not an isolation mechanism by itself.
 - **ExecutionPolicyAdapter** _(interface)_ - `interface ExecutionPolicyAdapter`
   An adapter that can prove whether it satisfies a contract's execution policy.
+- **FakeModelGateway** _(class)_ - `class FakeModelGateway`
+  Deterministic, network-free gateway for tests and local examples. It records no request input.
+- **FakeModelGatewayOptions** _(interface)_ - `interface FakeModelGatewayOptions`
+- **HostileCodeIsolation** _(type)_ - `type HostileCodeIsolation = "none" | "os"`
 - **IdempotencyClass** _(type)_ - `type IdempotencyClass = "none" | "request" | "durable"`
   Idempotency guarantee a capability declares, mirroring the tool idempotency scope.
 - **IsolationClass** _(type)_ - `type IsolationClass = "inherit" | "process" | "sandbox"`
@@ -96,16 +128,44 @@ Every public export of every package and documented subpath - name, kind, signat
 - **LocalProcessPolicyError** _(class)_ - `class LocalProcessPolicyError`
 - **LocalProcessRequest** _(interface)_ - `interface LocalProcessRequest`
 - **LocalProcessResult** _(interface)_ - `interface LocalProcessResult`
+- **MODEL_GATEWAY_ERROR_CODES** _(const)_ - `MODEL_GATEWAY_ERROR_CODES: readonly ["malformed_output", "refusal", "timeout", "rate_limit", "unavailable", "policy_denied", "cancelled", "internal"]`
 - **MemoryAgentStateStore** _(class)_ - `class MemoryAgentStateStore`
+- **ModelGateway** _(interface)_ - `interface ModelGateway`
+  A leaf adapter may be backed by any provider, but it must return this parsed envelope.
+- **ModelGatewayAttemptRequest** _(interface)_ - `interface ModelGatewayAttemptRequest<Input = unknown>`
+  The transient request given to a leaf adapter. Never copy `input` into evidence.
+- **ModelGatewayBudget** _(interface)_ - `interface ModelGatewayBudget`
+- **ModelGatewayEnvelope** _(interface)_ - `interface ModelGatewayEnvelope`
+- **ModelGatewayError** _(interface)_ - `interface ModelGatewayError`
+- **ModelGatewayErrorCode** _(type)_ - `type ModelGatewayErrorCode = (typeof MODEL_GATEWAY_ERROR_CODES)[number]`
+- **ModelGatewayEvidence** _(type)_ - `type ModelGatewayEvidence`
+- **ModelGatewayExecutionResult** _(type)_ - `type ModelGatewayExecutionResult<Output> = | ModelGatewayResult<Output> | ModelGatewayTerminalFailure`
+- **ModelGatewayFailure** _(interface)_ - `interface ModelGatewayFailure`
+- **ModelGatewayFailureError** _(class)_ - `class ModelGatewayFailureError`
+- **ModelGatewayRawResult** _(type)_ - `type ModelGatewayRawResult = ModelGatewaySuccess | ModelGatewayFailure`
+- **ModelGatewayRequest** _(interface)_ - `interface ModelGatewayRequest<Input = unknown, Output = unknown>`
+- **ModelGatewayResult** _(interface)_ - `interface ModelGatewayResult<Output>`
+- **ModelGatewaySuccess** _(interface)_ - `interface ModelGatewaySuccess`
+- **ModelGatewayTerminalFailure** _(interface)_ - `interface ModelGatewayTerminalFailure`
+- **ModelGatewayUsage** _(interface)_ - `interface ModelGatewayUsage`
+- **ModelRoute** _(interface)_ - `interface ModelRoute`
+- **ModelRoutePolicy** _(interface)_ - `interface ModelRoutePolicy`
+- **ModelRouteRef** _(type)_ - `type ModelRouteRef = string | ModelRoute`
 - **REGISTRY_SNAPSHOT_VERSION** _(const)_ - `REGISTRY_SNAPSHOT_VERSION: 1`
 - **RegistryError** _(class)_ - `class RegistryError`
   A stable, content-free failure. `code` is the machine-addressable reason; the message is generic.
 - **RegistryErrorCode** _(type)_ - `type RegistryErrorCode`
 - **RegistrySnapshot** _(interface)_ - `interface RegistrySnapshot`
+- **ReplayModelGateway** _(class)_ - `class ReplayModelGateway`
+  Network-free deterministic gateway for a caller-owned, already prepared response sequence.
+- **ReplayModelGatewayOptions** _(interface)_ - `interface ReplayModelGatewayOptions`
 - **RetryClass** _(type)_ - `type RetryClass = "none" | "idempotent"`
   Whether a failed invocation may be retried. A capability is retry-eligible only when idempotent.
 - **RunAgentOptions** _(interface)_ - `interface RunAgentOptions`
+- **StructuredOutputParser** _(interface)_ - `interface StructuredOutputParser<Output>`
 - **ToolDescriptorOptions** _(interface)_ - `interface ToolDescriptorOptions`
+- **assertDeploymentAuthorityMonotonic** _(function)_ - `assertDeploymentAuthorityMonotonic: (parent: DeploymentAuthority, child: DeploymentAuthority) => void`
+  Prove a child deployment authority is a subset of its parent's authority.
 - **combineAgentDeltaSinks** _(function)_ - `combineAgentDeltaSinks: (...sinks: readonly (AgentDeltaSink | undefined)[]) => AgentDeltaSink | undefined`
   Fan model deltas out to several sinks - a protocol bridge and a logger can watch the same run. `undefined` entries are skipped, and the combined sink is `undefined` when none remain. Each sink is isolated: one sink throwing never starves the others.
 - **combineAgentTelemetry** _(function)_ - `combineAgentTelemetry: (...ports: readonly (AgentTelemetryPort | undefined)[]) => AgentTelemetryPort | undefined`
@@ -116,16 +176,30 @@ Every public export of every package and documented subpath - name, kind, signat
   Compose a deterministic registry snapshot. Descriptors are validated, checked for identity collisions, canonically ordered, and digested. Two descriptors that share a (kind, name) identity fail `descriptor_collision` when their schema digests agree and `schema_drift` when they differ - a drifted sc…
 - **createAgentSharedState** _(function)_ - `createAgentSharedState: <State>(initial: State) => AgentSharedState<State>`
 - **createAgentState** _(function)_ - `createAgentState: (turnId: string) => AgentTurnState`
+- **createDeploymentAuthority** _(function)_ - `createDeploymentAuthority: (input: { readonly workspaceMaxBytes: number; readonly deadlineAt?: number; readonly cancellation?: DeploymentCancellation; readonly hostileCodeIsolation?: HostileCodeIsolation; }) => Deployme…`
 - **createLocalProcessAdapter** _(function)_ - `createLocalProcessAdapter: (options?: LocalProcessAdapterOptions) => LocalProcessAdapter`
   Run a command with the host controls available to a normal child process. The local adapter is NOT a security boundary. Without OS-level sandboxing it contains crashes and accidents, not hostile code.
-- **descriptorFromTool** _(function)_ - `descriptorFromTool: (tool: ToolContract, options?: ToolDescriptorOptions) => Promise<CapabilityDescriptor>`
+- **createStructuredOutputParser** _(function)_ - `createStructuredOutputParser: <Schema extends StandardSchemaV1>(schema: Schema) => StructuredOutputParser<NonNullable<Schema["~standard"]["types"]>["output"]>`
+  Adapt any Standard Schema validator into a strict structured-output parser.
+- **descriptorFromTool** _(function)_ - `descriptorFromTool: <Input, Output>(tool: ToolContract<Input, Output>, options?: ToolDescriptorOptions) => Promise<CapabilityDescriptor>`
   Adapt a Nifra core {@link ToolContract} into a descriptor without touching its execution contract. The schema digest is taken over the tool's own input JSON schema, retry follows idempotency, and the approval policy is carried through unchanged, so the descriptor is a faithful, content-free project…
+- **isModelGatewayErrorCode** _(function)_ - `isModelGatewayErrorCode: (value: unknown) => value is ModelGatewayErrorCode`
 - **parseCapabilityDescriptor** _(function)_ - `parseCapabilityDescriptor: (value: unknown) => CapabilityDescriptor`
   Validate an untrusted value as a {@link CapabilityDescriptor}, normalizing capability order. Missing, unknown, or content-bearing fields are rejected with a stable code. This is the single admission point: every adapter output and every wire value passes through it before it enters a snapshot.
+- **parseDeploymentCapabilityReport** _(function)_ - `parseDeploymentCapabilityReport: (value: unknown) => DeploymentCapabilityReport`
+  Parse an untrusted capability report before the host admits an adapter.
+- **parseDeploymentPlan** _(function)_ - `parseDeploymentPlan: (value: unknown) => AgentDeploymentPlan`
+- **parseModelGatewayError** _(function)_ - `parseModelGatewayError: (value: unknown) => ModelGatewayError`
+  Normalize arbitrary adapter failures without retaining their message, stack, or cause.
+- **parseModelGatewayResult** _(function)_ - `parseModelGatewayResult: (value: unknown) => ModelGatewayRawResult`
+  Parse the leaf result before policy or structured-output code sees it.
 - **replayAgent** _(function)_ - `replayAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, input: AgentTurnInput, ports: Omit<AgentPorts, "model">, transcript: Age…`
 - **resumeAgent** _(function)_ - `resumeAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, turnId: string, input: AgentTurnInput, ports: AgentPorts, options?: Omit…`
   Load a saved token-only state record and continue a bounded run.
 - **runAgent** _(function)_ - `runAgent: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, input: AgentTurnInput, ports: AgentPorts, options: RunAgentOptions) => Prom…`
+- **runModelGateway** _(function)_ - `runModelGateway: <Input, Output>(gateway: ModelGateway, request: ModelGatewayRequest<Input, Output>, policy: ModelRoutePolicy) => Promise<ModelGatewayExecutionResult<Output>>`
+  Execute a gateway under an explicit route, retry, fallback, budget, and deadline policy.
+- **structuredOutputParser** _(function)_ - `structuredOutputParser: <Output>(parse: (value: unknown) => Output | PromiseLike<Output>) => StructuredOutputParser<Output>`
 - **turn** _(function)_ - `turn: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, state: AgentTurnState, input: AgentTurnInput, ports: AgentPorts) => Promise<Age…`
 
 ### `@nifrajs/agent/events`
@@ -180,7 +254,7 @@ Every public export of every package and documented subpath - name, kind, signat
   Build a validated descriptor from adapter fields, digesting the input schema. Two adapters that describe the same capability (same kind, name, version, schema, and classes) produce byte-identical descriptors and therefore the same digest, which is what makes cross-package parity checkable.
 - **composeRegistrySnapshot** _(function)_ - `composeRegistrySnapshot: (descriptors: readonly CapabilityDescriptor[]) => Promise<RegistrySnapshot>`
   Compose a deterministic registry snapshot. Descriptors are validated, checked for identity collisions, canonically ordered, and digested. Two descriptors that share a (kind, name) identity fail `descriptor_collision` when their schema digests agree and `schema_drift` when they differ - a drifted sc…
-- **descriptorFromTool** _(function)_ - `descriptorFromTool: (tool: ToolContract, options?: ToolDescriptorOptions) => Promise<CapabilityDescriptor>`
+- **descriptorFromTool** _(function)_ - `descriptorFromTool: <Input, Output>(tool: ToolContract<Input, Output>, options?: ToolDescriptorOptions) => Promise<CapabilityDescriptor>`
   Adapt a Nifra core {@link ToolContract} into a descriptor without touching its execution contract. The schema digest is taken over the tool's own input JSON schema, retry follows idempotency, and the approval policy is carried through unchanged, so the descriptor is a faithful, content-free project…
 - **parseCapabilityDescriptor** _(function)_ - `parseCapabilityDescriptor: (value: unknown) => CapabilityDescriptor`
   Validate an untrusted value as a {@link CapabilityDescriptor}, normalizing capability order. Missing, unknown, or content-bearing fields are rejected with a stable code. This is the single admission point: every adapter output and every wire value passes through it before it enters a snapshot.
@@ -212,7 +286,10 @@ Every public export of every package and documented subpath - name, kind, signat
 - **CommandOutcome** _(type)_ - `type CommandOutcome<T> = | { readonly ok: true; readonly status: number; readonly value: T } | { readonly ok: false; readonly status: number; readonly error: string }`
   The outcome of a command. Non-ok responses never throw here so a caller can render a bounded state instead of unwinding; `error` carries only the server's status text, never a credential.
 - **CreateSessionInput** _(interface)_ - `interface CreateSessionInput`
+- **EvalComparisonView** _(interface)_ - `interface EvalComparisonView`
+- **EvidenceTimelineView** _(interface)_ - `interface EvidenceTimelineView`
 - **ExtensionReloadedView** _(interface)_ - `interface ExtensionReloadedView`
+- **FaultInjectionView** _(interface)_ - `interface FaultInjectionView`
 - **HandoffView** _(interface)_ - `interface HandoffView`
   A handoff reduced to routing identifiers and status - the reason string is content and is dropped.
 - **HttpAgentTransport** _(class)_ - `class HttpAgentTransport`
@@ -230,6 +307,9 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ReplayResult** _(type)_ - `type ReplayResult`
 - **ResolveHandoffInput** _(interface)_ - `interface ResolveHandoffInput`
 - **ResumeInput** _(interface)_ - `interface ResumeInput`
+- **RunStudioNodeState** _(type)_ - `type RunStudioNodeState = | "pending" | "running" | "paused" | "succeeded" | "failed" | "cancelled" | "recovered"`
+- **RunStudioNodeView** _(interface)_ - `interface RunStudioNodeView`
+- **RunStudioView** _(interface)_ - `interface RunStudioView`
 - **RunView** _(interface)_ - `interface RunView`
   A run reduced to plan reference, lifecycle state, and progress counters - no node payloads.
 - **SessionFailedView** _(interface)_ - `interface SessionFailedView`
@@ -248,13 +328,21 @@ Every public export of every package and documented subpath - name, kind, signat
   True once `now` reaches or passes the boundary's expiry. A stale boundary fails every command closed.
 - **parseEventStream** _(function)_ - `parseEventStream: (body: ReadableStream<Uint8Array>, method: string) => AsyncIterable<AgentEvent>`
   Parse an SSE body into protocol events, skipping any frame whose data is not a valid event.
+- **toEvalComparisonView** _(function)_ - `toEvalComparisonView: (value: unknown) => EvalComparisonView | undefined`
 - **toEventView** _(function)_ - `toEventView: (event: AgentEvent) => AgentEventView`
   Project one protocol event to its content-free view. Total over the event union - never returns undefined.
+- **toEvidenceTimelineView** _(function)_ - `toEvidenceTimelineView: (value: unknown) => readonly EvidenceTimelineView[]`
+  Drop every field except bounded timeline evidence and sort by sequence.
+- **toFaultInjectionViews** _(function)_ - `toFaultInjectionViews: (value: unknown) => readonly FaultInjectionView[]`
 - **toHandoffView** _(function)_ - `toHandoffView: (snapshot: HandoffSnapshot) => HandoffView`
 - **toRegistryCapabilityView** _(function)_ - `toRegistryCapabilityView: (value: unknown) => RegistryCapabilityView | undefined`
   Project one raw registry descriptor to a content-free {@link RegistryCapabilityView}, or `undefined` when a required identifier is missing or malformed. Only whitelisted structural fields are read, so an unexpected content field on the record can never reach the returned view.
+- **toRunStudioView** _(function)_ - `toRunStudioView: (value: unknown) => RunStudioView | undefined`
+  Project an evidence-only run graph; malformed or content-bearing input is rejected.
 - **toRunView** _(function)_ - `toRunView: (snapshot: RunSnapshot) => RunView`
 - **toSessionView** _(function)_ - `toSessionView: (snapshot: AgentSessionSnapshot) => SessionView`
+- **virtualizeEvidenceRows** _(function)_ - `virtualizeEvidenceRows: <T>(rows: readonly T[], cursor: number, windowSize?: number) => { readonly offset: number; readonly rows: readonly T[]; }`
+  Keep browser work bounded when a run has more than 1,000 evidence rows.
 
 ## @nifrajs/agent-protocol
 
@@ -430,11 +518,19 @@ Every public export of every package and documented subpath - name, kind, signat
   Structural slice of the runner's `AgentRunResult` that `end()` reads.
 - **AgentRunTrace** _(interface)_ - `interface AgentRunTrace`
 - **AgentTelemetryOptions** _(interface)_ - `interface AgentTelemetryOptions`
+- **OrchestrationTelemetry** _(interface)_ - `interface OrchestrationTelemetry`
+- **OrchestrationTelemetryEvent** _(interface)_ - `interface OrchestrationTelemetryEvent`
+  Allowlisted correlation fields. No index signature is intentional: arbitrary attributes are rejected.
+- **OrchestrationTelemetryKind** _(type)_ - `type OrchestrationTelemetryKind = | "started" | "checkpointed" | "retrying" | "recovered" | "cancelled" | "completed" | "failed" | "dead-lettered"`
+  Content-free lifecycle kinds emitted by run dispatch and recovery.
+- **OrchestrationTelemetryOptions** _(interface)_ - `interface OrchestrationTelemetryOptions`
 - **TraceAgentRunOptions** _(interface)_ - `interface TraceAgentRunOptions`
 - **agentTelemetry** _(function)_ - `agentTelemetry: (options: AgentTelemetryOptions) => { name: string; beforeHandle(context: HookContext): undefined; onError(error: unknown, context: HookContext): undefined; onResponse(response: Response, request: Reques…`
   Agent telemetry middleware. Register via `app.use(agentTelemetry({ exporter }))`.
 - **consoleAgentExporter** _(function)_ - `consoleAgentExporter: (log?: (line: string) => void) => ObservationAdapter`
   Pretty-prints agent tool call traces to the terminal.
+- **orchestrationTelemetry** _(function)_ - `orchestrationTelemetry: (options?: OrchestrationTelemetryOptions) => OrchestrationTelemetry`
+  Create an opt-in, bounded telemetry bridge for run/retry/recovery correlation.
 - **traceAgentRun** _(function)_ - `traceAgentRun: (options: TraceAgentRunOptions) => AgentRunTrace`
   Open a run span and adapt the runner's step evidence into child spans.
 
@@ -722,6 +818,7 @@ Every public export of every package and documented subpath - name, kind, signat
   Explicitly bounded child execution. Recursive fan-out is impossible without a caller budget.
 - **BoundedText** _(interface)_ - `interface BoundedText`
 - **CapabilityDescriptor** _(interface)_ - `interface CapabilityDescriptor`
+- **CiDeploymentAdapter** _(class)_ - `class CiDeploymentAdapter`
 - **CodingAgentExtension** _(interface)_ - `interface CodingAgentExtension`
 - **CodingAgentHost** _(class)_ - `class CodingAgentHost`
   Small lifecycle host shared by the CLI, RPC server, and future Workbench.
@@ -735,6 +832,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ContextWindow** _(class)_ - `class ContextWindow`
   In-memory prompt window with automatic, deterministic compaction and a hard size ceiling.
 - **ContextWindowOptions** _(interface)_ - `interface ContextWindowOptions`
+- **DEPLOYMENT_REFERENCE_PROFILES** _(const)_ - `DEPLOYMENT_REFERENCE_PROFILES: Readonly<{ localProcess: DeploymentCapabilityReport; ci: DeploymentCapabilityReport; replay: DeploymentCapabilityReport; }>`
 - **ExtensionCommand** _(type)_ - `type ExtensionCommand = ( args: string, context: ExtensionContext, ) => unknown | PromiseLike<unknown>`
 - **ExtensionContext** _(interface)_ - `interface ExtensionContext`
 - **ExtensionDescriptorOptions** _(interface)_ - `interface ExtensionDescriptorOptions`
@@ -769,9 +867,12 @@ Every public export of every package and documented subpath - name, kind, signat
 - **IsolatedExtensionWorker** _(class)_ - `class IsolatedExtensionWorker`
   Optional process-backed extension runner. A worker crash rejects callers instead of taking down the host. It is intentionally not advertised as a hostile-code sandbox: use an OS sandbox and a capability decision before loading code you do not trust.
 - **IsolatedExtensionWorkerOptions** _(interface)_ - `interface IsolatedExtensionWorkerOptions`
+- **LocalProcessDeploymentAdapter** _(class)_ - `class LocalProcessDeploymentAdapter`
+- **MigrateLegacySessionOptions** _(interface)_ - `interface MigrateLegacySessionOptions`
 - **NIFRA_AGENT_INSTRUCTIONS** _(const)_ - `NIFRA_AGENT_INSTRUCTIONS: string`
   Short, provider-neutral instructions injected into Pi only when the optional agent is used.
 - **NativeApprovalPort** _(interface)_ - `interface NativeApprovalPort`
+- **NativeGatewayModelPortOptions** _(interface)_ - `interface NativeGatewayModelPortOptions`
 - **NativeMessage** _(interface)_ - `interface NativeMessage`
 - **NativeModelChunk** _(type)_ - `type NativeModelChunk = | { readonly type: "text_delta"; readonly text: string } | { readonly type: "response"; readonly response: NativeModelResponse }`
 - **NativeModelPort** _(interface)_ - `interface NativeModelPort`
@@ -800,9 +901,17 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ReplayBackend** _(class)_ - `class ReplayBackend`
   Deterministic protocol backend for demos, CI, and UI regression tests.
 - **ReplayBackendOptions** _(interface)_ - `interface ReplayBackendOptions`
+- **ReplayDeploymentAdapter** _(class)_ - `class ReplayDeploymentAdapter`
+- **SESSION_EVIDENCE_VERSION** _(const)_ - `SESSION_EVIDENCE_VERSION: 1`
+  Version of the evidence-only legacy session file format.
 - **SelfHealingController** _(class)_ - `class SelfHealingController`
   Staged repair loop for extensions, tools, and workflows. It never activates an unverified change.
+- **SessionEvidenceRecord** _(interface)_ - `interface SessionEvidenceRecord`
+  A single legacy session record after content has been removed.
 - **SessionLogEntry** _(interface)_ - `interface SessionLogEntry`
+- **SessionMigrationError** _(class)_ - `class SessionMigrationError`
+- **SessionMigrationReport** _(interface)_ - `interface SessionMigrationReport`
+  Counts and integrity metadata emitted after a target has been fully validated.
 - **SessionStore** _(interface)_ - `interface SessionStore`
 - **SubagentExecutor** _(interface)_ - `interface SubagentExecutor`
 - **SubagentResult** _(interface)_ - `interface SubagentResult`
@@ -829,9 +938,14 @@ Every public export of every package and documented subpath - name, kind, signat
 - **approvalRequestFromEvent** _(function)_ - `approvalRequestFromEvent: (event: AgentApprovalRequiredEvent) => ApprovalRequest`
 - **approvalResolvedEvent** _(function)_ - `approvalResolvedEvent: (sessionId: string, seq: number, decision: ApprovalDecision, turnId?: string) => AgentApprovalResolvedEvent`
 - **createCapabilityManifest** _(function)_ - `createCapabilityManifest: (requested: readonly AgentCapability[], trusted?: readonly AgentCapability[], reason?: string) => AgentCapabilityManifest`
+- **createCiDeploymentAdapter** _(function)_ - `createCiDeploymentAdapter: () => CiDeploymentAdapter`
+- **createLocalProcessDeploymentAdapter** _(function)_ - `createLocalProcessDeploymentAdapter: () => LocalProcessDeploymentAdapter`
+- **createNativeGatewayModelPort** _(function)_ - `createNativeGatewayModelPort: (options: NativeGatewayModelPortOptions) => NativeModelPort`
+  Adapt the provider-neutral gateway to the native backend without making it the default path.
 - **createNifraTools** _(function)_ - `createNifraTools: (options: NifraContextOptions & Pick<VerificationOptions, "command">) => readonly NifraAgentTool[]`
   Optional first-party tool descriptors. The Pi adapter can register these through an extension.
 - **createPresetSpec** _(function)_ - `createPresetSpec: (name: AgentPresetName, prompt: string, id?: string) => SubagentSpec`
+- **createReplayDeploymentAdapter** _(function)_ - `createReplayDeploymentAdapter: () => ReplayDeploymentAdapter`
 - **createVerificationRepairTask** _(function)_ - `createVerificationRepairTask: (result: VerificationResult, cwd: string) => VerificationRepairTask | undefined`
   Turn a failed gate into a bounded, auditable repair task for the agent loop.
 - **deniedCapabilities** _(function)_ - `deniedCapabilities: (manifest: AgentCapabilityManifest) => readonly AgentCapability[]`
@@ -842,7 +956,11 @@ Every public export of every package and documented subpath - name, kind, signat
 - **extensionDescriptors** _(function)_ - `extensionDescriptors: (extensions: readonly ExtensionDescriptorSource[], options: ExtensionDescriptorOptions) => Promise<readonly CapabilityDescriptor[]>`
   Project a set of extensions under a single trusted allowlist, preserving order.
 - **getAgentPreset** _(function)_ - `getAgentPreset: (name: AgentPresetName) => AgentPreset`
+- **migrateLegacySession** _(function)_ - `migrateLegacySession: (options: MigrateLegacySessionOptions) => Promise<SessionMigrationReport>`
+  Read, project, validate, and atomically commit one legacy local session.
 - **parseCapabilityManifest** _(function)_ - `parseCapabilityManifest: (value: unknown) => AgentCapabilityManifest`
+- **parseSessionEvidenceRecord** _(function)_ - `parseSessionEvidenceRecord: (value: unknown) => SessionEvidenceRecord`
+  Parse one evidence record strictly. Payload-bearing or unknown fields are rejected.
 - **readBoundedText** _(function)_ - `readBoundedText: (stream: ReadableStream<Uint8Array> | null | undefined | number, maxBytes: number) => Promise<BoundedText>`
 - **readProjectDiff** _(function)_ - `readProjectDiff: (options: ProjectDiffOptions) => Promise<ProjectDiffResult>`
   Read a bounded, non-interactive git diff for review surfaces. No user-supplied git arguments are accepted.
@@ -851,6 +969,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Project discovery kept outside the framework runtime; it is only spawned when an agent asks for it.
 - **runNifraVerification** _(function)_ - `runNifraVerification: (name: "check" | "assure" | "test", options: VerificationOptions) => Promise<VerificationResult>`
   Run an existing Nifra gate without importing the large framework CLI into the agent runtime.
+- **stableSessionEventCode** _(function)_ - `stableSessionEventCode: (type: string) => Promise<{ readonly code: string; readonly replaced: boolean; }>`
+  Convert a legacy event type into a stable, content-free evidence code. Unknown event names are intentionally not copied to the target: their SHA-256 prefix gives a repeatable grouping key without disclosing an arbitrary source string.
 - **validateExtensionModule** _(function)_ - `validateExtensionModule: (path: string) => Promise<void>`
   Parse an extension without activating it. This is a fast syntax gate before staging.
 
@@ -892,14 +1012,27 @@ Every public export of every package and documented subpath - name, kind, signat
   One catalog handler. `kind` must match the plan node's kind at compile time.
 - **ChildVectorTracker** _(class)_ - `class ChildVectorTracker`
   Per-run monotonic child-vector allocator. `open` returns the next strictly increasing vector for a run; `last` reports the high-water mark (`-1` before the first boundary). A vector is never reused, so a decision carrying anything other than its boundary's opened vector is provably stale.
+- **CommittedEffect** _(interface)_ - `interface CommittedEffect`
+  A side effect must explicitly confirm that its idempotency proof was durably recorded.
 - **CompileError** _(class)_ - `class CompileError`
   Thrown when a plan cannot be lowered. `code` is a stable evidence code.
 - **CompileOptions** _(interface)_ - `interface CompileOptions`
   Wiring the compiler injects into every node closure.
+- **DISPATCH_JOB_NAME** _(const)_ - `DISPATCH_JOB_NAME: "nifra.agent.run-node"`
+- **DispatchBoundary** _(type)_ - `type DispatchBoundary = "before-effect" | "after-effect"`
+- **DispatchInspection** _(interface)_ - `interface DispatchInspection`
+- **DispatchResultCode** _(type)_ - `type DispatchResultCode = | "accepted" | "stale_lease" | "cancelled" | "terminal" | "invalid_checkpoint" | "idempotency_required"`
+- **DispatchState** _(type)_ - `type DispatchState = | "queued" | "leased" | "checkpointed" | "retrying" | "succeeded" | "failed" | "cancelled" | "dead-lettered"`
+- **DispatchWriteResult** _(interface)_ - `interface DispatchWriteResult`
+- **DurableDispatchAdapter** _(interface)_ - `interface DurableDispatchAdapter<OpaqueContext = unknown>`
+  Optional operated-depth handoff. The context is intentionally opaque: the public package does not model tenants, rows, RLS policy text, retention periods, credentials, workers, or fleet topology. A private adapter supplies those controls and still implements the evidence-only store port above.
+- **DurableJobsStoreOptions** _(interface)_ - `interface DurableJobsStoreOptions`
 - **EVIDENCE_MAX_BYTES** _(const)_ - `EVIDENCE_MAX_BYTES: 4096`
   Hard cap on a single serialized evidence record. A content-free record never approaches this.
 - **EffectKeyMaterial** _(interface)_ - `interface EffectKeyMaterial`
   Inputs to the effect-key derivation. `selector` is the step's content-free identity projection.
+- **EffectRejectedError** _(class)_ - `class EffectRejectedError`
+  Stable pre-effect failure; it may be retried with a new logical attempt.
 - **EvidenceCounters** _(interface)_ - `interface EvidenceCounters`
   Terminal tally of a run's evidence stream. Counts only; no payloads.
 - **EvidenceStore** _(interface)_ - `interface EvidenceStore`
@@ -911,11 +1044,17 @@ Every public export of every package and documented subpath - name, kind, signat
 - **FileEvidenceStoreOptions** _(interface)_ - `interface FileEvidenceStoreOptions`
 - **HostPolicy** _(interface)_ - `interface HostPolicy`
   The authoritative admission policy. Empty allowlists deny everything of that kind.
+- **IdempotencyProofStore** _(interface)_ - `interface IdempotencyProofStore`
+- **InjectedClock** _(interface)_ - `interface InjectedClock`
+- **MAX_DISPATCH_ATTEMPTS** _(const)_ - `MAX_DISPATCH_ATTEMPTS: 16`
+- **MAX_DISPATCH_STRING** _(const)_ - `MAX_DISPATCH_STRING: 256`
 - **MemoryArtifactPort** _(interface)_ - `interface MemoryArtifactPort`
   A memory port that additionally exposes stored bytes for assertions. Test-only.
 - **MemoryEvidenceStore** _(class)_ - `class MemoryEvidenceStore`
   A fully in-memory bounded store. Keeps a window plus aggregates; never the whole stream.
 - **MemoryEvidenceStoreOptions** _(interface)_ - `interface MemoryEvidenceStoreOptions`
+- **MemoryIdempotencyProofStore** _(class)_ - `class MemoryIdempotencyProofStore`
+  Disposable proof reference for tests and one-process local runs.
 - **NodeEffectKey** _(interface)_ - `interface NodeEffectKey`
   The stable, content-free identity of one side-effecting node attempt-boundary.
 - **OrchestrationHost** _(class)_ - `class OrchestrationHost`
@@ -927,12 +1066,26 @@ Every public export of every package and documented subpath - name, kind, signat
   Thrown on an illegal lifecycle transition or an unknown run. `code` is stable.
 - **PolicyError** _(class)_ - `class PolicyError`
   Thrown when the host refuses admission and the caller wants an exception rather than a result.
+- **RUN_DISPATCH_VERSION** _(const)_ - `RUN_DISPATCH_VERSION: 1`
 - **RUN_PLAN_VERSION** _(const)_ - `RUN_PLAN_VERSION: 1`
   Orchestration contract version. Additive to the session `AGENT_PROTOCOL_VERSION`.
+- **RecoveryCrashError** _(class)_ - `class RecoveryCrashError`
+  Simulates worker loss at a named boundary; the lease is intentionally left unresolved.
+- **RecoveryMachineOptions** _(interface)_ - `interface RecoveryMachineOptions`
+- **RecoveryProcessResult** _(interface)_ - `interface RecoveryProcessResult`
 - **RunBranchNode** _(interface)_ - `interface RunBranchNode`
   A conditional. `step` names a predicate catalog handler selecting `then` or `otherwise`.
+- **RunCheckpoint** _(interface)_ - `interface RunCheckpoint`
+  A safe boundary checkpoint. It never contains a result or effect payload.
 - **RunContractError** _(class)_ - `class RunContractError`
   Thrown by every parser in this module on malformed or content-bearing input. Fails closed.
+- **RunDispatch** _(interface)_ - `interface RunDispatch`
+  A queued node identity. It is safe to persist and safe to show in evidence.
+- **RunDispatchEvidence** _(interface)_ - `interface RunDispatchEvidence`
+  A terminal or transitional record suitable for a public evidence sink.
+- **RunDispatchStore** _(interface)_ - `interface RunDispatchStore`
+- **RunEffect** _(type)_ - `type RunEffect = (context: RunEffectContext) => Promise<CommittedEffect> | CommittedEffect`
+- **RunEffectContext** _(interface)_ - `interface RunEffectContext`
 - **RunEvidence** _(interface)_ - `interface RunEvidence`
   The content-free projection of one run transition. Every field is id/hash/counter/status/timing.
 - **RunEvidenceStatus** _(type)_ - `type RunEvidenceStatus = "started" | "completed" | "failed"`
@@ -940,6 +1093,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Leaf kinds resolve a StepCatalog handler; structural kinds compose child nodes.
 - **RunLeafNode** _(interface)_ - `interface RunLeafNode`
   A leaf plan node. `step` names a handler resolved locally through a StepCatalog.
+- **RunLease** _(interface)_ - `interface RunLease`
+  A lease with a generation. A completion from any older generation is rejected.
 - **RunNode** _(type)_ - `type RunNode = RunLeafNode | RunSequenceNode | RunParallelNode | RunRetryNode | RunBranchNode`
   A serializable, closure-free plan node. Structural kinds nest into a tree.
 - **RunNodeKind** _(type)_ - `type RunNodeKind = RunLeafKind | RunStructuralKind`
@@ -948,6 +1103,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A bounded fan-out. Effective concurrency is the lower of this, the host, and the child count.
 - **RunPlan** _(interface)_ - `interface RunPlan`
   A serializable, closure-free run plan. Top-level nodes form a DAG; each node may nest a tree.
+- **RunRecoveryMachine** _(class)_ - `class RunRecoveryMachine`
+  Drives leases through safe checkpoints and terminal transitions. The caller owns the effect and any real idempotency ledger; this class stores only opaque proof keys in the reference adapter.
 - **RunResult** _(interface)_ - `interface RunResult`
   Deterministic terminal result. Outcome identity only - no step output, prompt, or payload.
 - **RunRetryNode** _(interface)_ - `interface RunRetryNode`
@@ -969,6 +1126,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **StepRunContext** _(interface)_ - `interface StepRunContext`
   Runtime context handed to a step body. Payloads leave only through {@link StepRunContext.artifact}.
 - **SubmitOptions** _(interface)_ - `interface SubmitOptions`
+- **TestClock** _(class)_ - `class TestClock`
+  A small deterministic clock useful for recovery schedules and tests.
 - **admitCapability** _(function)_ - `admitCapability: (policy: HostPolicy, descriptor: CapabilityDescriptor) => Admission`
   Admit a capability descriptor against the host policy. The policy is the floor; the descriptor can only meet or exceed it. Returns the first failing reason, or `{ ok: true }` when every gate passes.
 - **assertAdmitted** _(function)_ - `assertAdmitted: (policy: HostPolicy, descriptor: CapabilityDescriptor) => void`
@@ -981,10 +1140,18 @@ Every public export of every package and documented subpath - name, kind, signat
   Compile `source` (a RunPlan or its serialized form) into a single WorkflowStep. The input is always re-parsed through {@link parseRunPlan}, so a malformed or content-bearing plan fails closed.
 - **compileRunPlanLayers** _(function)_ - `compileRunPlanLayers: (source: RunPlan | unknown, options: CompileOptions) => readonly WorkflowStep[]`
   Compile `source` into one {@link WorkflowStep} per top-level DAG layer, preserving the same ceilings and lowering as {@link compileRunPlan}. A driver can run the layers in order and hold at a layer boundary (a safe-pause point) without a second scheduler: each layer is still executed by the kernel …
+- **createDurableJobsStore** _(function)_ - `createDurableJobsStore: (options?: DurableJobsStoreOptions) => RunDispatchStore & { readonly jobs: JobStore; deadLetters(): readonly RunDispatchEvidence[]; }`
+  Create an at-least-once run dispatch store over an existing JobStore.
+- **createMemoryRunDispatchStore** _(function)_ - `createMemoryRunDispatchStore: (options?: { readonly now?: () => number; }) => RunDispatchStore & { readonly jobs: JobStore; deadLetters(): readonly RunDispatchEvidence[]; }`
+  Disposable local reference adapter; it makes no durability or exactly-once guarantee.
+- **createRunDispatch** _(function)_ - `createRunDispatch: (input: Omit<RunDispatch, "version">) => RunDispatch`
+  Create a parsed dispatch identity before handing it to any adapter.
 - **createStepCatalog** _(function)_ - `createStepCatalog: (entries: Readonly<Record<string, CatalogStep>>) => StepCatalog`
   Build a StepCatalog from a name -> handler map.
 - **deriveNodeEffectKey** _(function)_ - `deriveNodeEffectKey: (material: EffectKeyMaterial) => Promise<NodeEffectKey>`
   Derive the stable, content-free key for a node attempt. The returned digest is safe to log and to cross a boundary; two attempts with the same identity converge, distinct identities diverge.
+- **deriveRunIdempotencyKey** _(function)_ - `deriveRunIdempotencyKey: (planDigest: string, runId: string, nodeId: string, logicalAttemptBoundary: number) => Promise<string>`
+  Stable key for one logical node attempt. Duplicate delivery uses the same boundary number.
 - **digestRunPlan** _(function)_ - `digestRunPlan: (plan: RunPlan) => Promise<string>`
   Stable digest of a plan's canonical form. Structural identity that node effect keys hang from.
 - **memoryArtifactPort** _(function)_ - `memoryArtifactPort: (options?: { readonly maxBytes?: number; }) => MemoryArtifactPort`
@@ -995,8 +1162,13 @@ Every public export of every package and documented subpath - name, kind, signat
   Hashes the payload for a content-free {@link ArtifactRef}, then discards the bytes. The default port: public code sees only the digest, size, and coordinates - never the payload.
 - **parseArtifactRef** _(function)_ - `parseArtifactRef: (value: unknown) => ArtifactRef`
   Parse a content-free artifact reference. Rejects any non-schema or content key.
+- **parseRunCheckpoint** _(function)_ - `parseRunCheckpoint: (value: unknown) => RunCheckpoint`
+- **parseRunDispatch** _(function)_ - `parseRunDispatch: (value: unknown) => RunDispatch`
+  Parse a dispatch identity and reject content or undeclared fields.
+- **parseRunDispatchEvidence** _(function)_ - `parseRunDispatchEvidence: (value: unknown) => RunDispatchEvidence`
 - **parseRunEvidence** _(function)_ - `parseRunEvidence: (value: unknown) => RunEvidence`
   Parse a content-free evidence record. Rejects content keys and any record over the size cap.
+- **parseRunLease** _(function)_ - `parseRunLease: (value: unknown) => RunLease`
 - **parseRunPlan** _(function)_ - `parseRunPlan: (value: unknown) => RunPlan`
   Parse a declarative run plan. Rejects closures, unknown keys, and structural errors.
 - **runTrace** _(function)_ - `runTrace: (source: RunPlan | unknown, options: RunTraceOptions) => Promise<RunTraceResult>`
@@ -1007,6 +1179,7 @@ Every public export of every package and documented subpath - name, kind, signat
   SHA-256 hex of a UTF-8 string.
 - **stepVersion** _(function)_ - `stepVersion: (step: CatalogStep) => number`
   The effective version of a step (defaults to 1).
+- **systemClock** _(const)_ - `systemClock: InjectedClock`
 
 ### `@nifrajs/coding-agent/registry`
 
@@ -2994,9 +3167,9 @@ _No named exports (side-effect entrypoint)._
 - **IsolationClass** _(type)_ - `type IsolationClass = "inherit" | "process" | "sandbox"`
   Isolation the host must provide to invoke the capability.
 - **McpDescriptorOptions** _(interface)_ - `interface McpDescriptorOptions`
-- **mcpToolDescriptor** _(function)_ - `mcpToolDescriptor: (tool: ToolContract, options?: McpDescriptorOptions) => Promise<CapabilityDescriptor>`
+- **mcpToolDescriptor** _(function)_ - `mcpToolDescriptor: <Input, Output>(tool: ToolContract<Input, Output>, options?: McpDescriptorOptions) => Promise<CapabilityDescriptor>`
   Project one MCP-facing tool contract into a `mcp-tool` capability descriptor. The digest is taken over the tool's own input schema, so it matches the core tool descriptor for the same contract.
-- **mcpToolDescriptors** _(function)_ - `mcpToolDescriptors: (tools: readonly ToolContract[], options?: McpDescriptorOptions) => Promise<readonly CapabilityDescriptor[]>`
+- **mcpToolDescriptors** _(function)_ - `mcpToolDescriptors: <Input, Output>(tools: readonly ToolContract<Input, Output>[], options?: McpDescriptorOptions) => Promise<readonly CapabilityDescriptor[]>`
   Project a set of MCP tool contracts, preserving order. Compose the result into a snapshot to dedupe.
 
 ### `@nifrajs/mcp/http`
@@ -3552,11 +3725,19 @@ _No named exports (side-effect entrypoint)._
 - **AdversarialContractResult** _(interface)_ - `interface AdversarialContractResult`
 - **AgentEvalCase** _(interface)_ - `interface AgentEvalCase`
   One eval case. `evaluate` is a deterministic producer of rubric verdicts - evidence, not a run.
+- **AgentEvalComponentEvidence** _(interface)_ - `interface AgentEvalComponentEvidence`
+- **AgentEvalCompositionOptions** _(interface)_ - `interface AgentEvalCompositionOptions`
+- **AgentEvalCompositionReport** _(interface)_ - `interface AgentEvalCompositionReport`
 - **AgentEvalRegressionError** _(class)_ - `class AgentEvalRegressionError`
   Thrown by {@link assertAgentEvalBaseline} when a comparison contains a failing code.
 - **AgentEvalReport** _(interface)_ - `interface AgentEvalReport`
 - **AgentEvalSuite** _(interface)_ - `interface AgentEvalSuite`
 - **AgentEvalSuiteSpec** _(interface)_ - `interface AgentEvalSuiteSpec`
+- **AgentFailureMatrixCase** _(interface)_ - `interface AgentFailureMatrixCase`
+- **AgentFailureMatrixError** _(class)_ - `class AgentFailureMatrixError`
+- **AgentFailureMatrixKind** _(type)_ - `type AgentFailureMatrixKind = | "model" | "tool" | "approval" | "cancellation" | "lease" | "cursor" | "registry" | "deployment"`
+  Fault boundaries covered by the public deterministic matrix.
+- **AgentFailureMatrixReport** _(interface)_ - `interface AgentFailureMatrixReport`
 - **AppLike** _(interface)_ - `interface AppLike`
   The minimal shape a nifra `server()` app satisfies - its own `fetch`.
 - **BaselineComparison** _(interface)_ - `interface BaselineComparison`
@@ -3568,12 +3749,14 @@ _No named exports (side-effect entrypoint)._
 - **CaseResult** _(interface)_ - `interface CaseResult`
 - **CertifiableCacheEntry** _(interface)_ - `interface CertifiableCacheEntry`
 - **CertifiableCacheStore** _(interface)_ - `interface CertifiableCacheStore`
+- **CertifiableDeploymentAdapter** _(interface)_ - `interface CertifiableDeploymentAdapter`
 - **CertifiableDescriptorAdapter** _(interface)_ - `interface CertifiableDescriptorAdapter`
   The test-only surface a descriptor adapter exposes for certification. `describe` yields the adapter's representative descriptor; `describeDrift` yields a descriptor with the SAME identity (kind and name) but a DIFFERENT schema digest, so the drift check can prove the adapter's identity is stable ac…
 - **CertifiableDomainEvent** _(interface)_ - `interface CertifiableDomainEvent`
 - **CertifiableEventDeliveryAdapter** _(interface)_ - `interface CertifiableEventDeliveryAdapter`
 - **CertifiableEventRecord** _(interface)_ - `interface CertifiableEventRecord`
 - **CertifiableJobStore** _(interface)_ - `interface CertifiableJobStore`
+- **CertifiableModelGateway** _(interface)_ - `interface CertifiableModelGateway`
 - **CertifiableRuntimeAdapter** _(interface)_ - `interface CertifiableRuntimeAdapter`
 - **CertifiableRuntimeServer** _(interface)_ - `interface CertifiableRuntimeServer`
 - **CertifiableStorageAdapter** _(interface)_ - `interface CertifiableStorageAdapter`
@@ -3648,8 +3831,10 @@ _No named exports (side-effect entrypoint)._
 - **assertAdapterCertification** _(function)_ - `assertAdapterCertification: (report: AdapterCertificationReport) => void`
 - **assertAdversarialContract** _(function)_ - `assertAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>`
   Run the contract laboratory and throw an {@link AdversarialContractError} unless it is fully green.
+- **assertAgentEval** _(function)_ - `assertAgentEval: (report: AgentEvalCompositionReport) => void`
 - **assertAgentEvalBaseline** _(function)_ - `assertAgentEvalBaseline: (baseline: AgentEvalReport, current: AgentEvalReport, options?: BaselineOptions) => Promise<BaselineComparison>`
   Assert no failing comparison. Throws {@link AgentEvalRegressionError} with the stable ids.
+- **assertAgentFailureMatrix** _(function)_ - `assertAgentFailureMatrix: (report: AgentFailureMatrixReport) => void`
 - **assertIncidentReplays** _(function)_ - `assertIncidentReplays: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<void>`
   Assert a captured incident still reproduces against the current app. Throws {@link IncidentReplayError}.
 - **assertTrajectoryInvariants** _(function)_ - `assertTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => void`
@@ -3676,7 +3861,12 @@ _No named exports (side-effect entrypoint)._
   Define and validate a custom domain/provider profile at module initialization.
 - **defineFaultProfile** _(function)_ - `defineFaultProfile: (profile: FaultProfile) => FaultProfile`
   Validate and freeze a reusable fault profile.
+- **deploymentAdapterCertificationProfile** _(const)_ - `deploymentAdapterCertificationProfile: () => AdapterCertificationProfile<CertifiableDeploymentAdapter>`
+- **deploymentCertificationProfile** _(function)_ - `deploymentCertificationProfile: () => AdapterCertificationProfile<CertifiableDeploymentAdapter>`
+  Certification for lifecycle cleanup, capability truthfulness, authority, and isolation claims.
 - **eventDeliveryCertificationProfile** _(function)_ - `eventDeliveryCertificationProfile: () => AdapterCertificationProfile<CertifiableEventDeliveryAdapter>`
+- **gatewayCertificationProfile** _(function)_ - `gatewayCertificationProfile: () => AdapterCertificationProfile<CertifiableModelGateway>`
+  Certification for provider-neutral gateways. It never emits request or response content.
 - **generateRegressionTest** _(function)_ - `generateRegressionTest: (capsule: IncidentCapsule, options?: GenerateRegressionTestOptions) => string`
   Emit a committable regression test from a capsule. Request string values are redacted BY DEFAULT with a sanitize banner - replace the `<redacted>` placeholders with safe, reproducing values before you commit. The test asserts the response contract via {@link assertIncidentReplays}.
 - **httpToolAdapter** _(function)_ - `httpToolAdapter: <Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: Omit<ToolCallOptions, "signal" | "ledger">) => ToolAdapter`
@@ -3684,6 +3874,7 @@ _No named exports (side-effect entrypoint)._
 - **inProcessToolAdapter** _(function)_ - `inProcessToolAdapter: <Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: ToolCallOptions) => ToolAdapter`
 - **jobStoreCertificationProfile** _(function)_ - `jobStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableJobStore>`
 - **mcpToolAdapter** _(function)_ - `mcpToolAdapter: <Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: Omit<ToolCallOptions, "signal" | "ledger">) => ToolAdapter`
+- **modelGatewayCertificationProfile** _(const)_ - `modelGatewayCertificationProfile: () => AdapterCertificationProfile<CertifiableModelGateway>`
 - **parseRubricVerdict** _(function)_ - `parseRubricVerdict: (rubric: RubricSpec, value: unknown) => RubricVerdict`
   Parse one verdict against its rubric. Fails closed on unknown outcome, bad range, or stray key.
 - **proveIdempotency** _(function)_ - `proveIdempotency: (options: { readonly run: () => Promise<EffectLedger> | EffectLedger; readonly runs?: number; }) => Promise<IdempotencyProof>`
@@ -3702,6 +3893,10 @@ _No named exports (side-effect entrypoint)._
   Replay a recorded run with local model decisions and dry-run tools. The supplied model port is never called. Fault schedules use the existing deterministic failure-lab controller.
 - **runAdversarialContract** _(function)_ - `runAdversarialContract: (app: ContractTestApp, options?: AdversarialContractOptions) => Promise<AdversarialContractReport>`
   Execute contract-derived hostile inputs and declared-response conformance against a runtime matrix. Runtime/request failures are captured in the report; inspect `report.ok`, `failures`, and `gaps` (or use {@link assertAdversarialContract} for a throwing test assertion).
+- **runAgentEvalComposition** _(function)_ - `runAgentEvalComposition: (options: AgentEvalCompositionOptions) => Promise<AgentEvalCompositionReport>`
+  Compose existing trajectory, fault, contract, idempotency, and certification owners.
+- **runAgentFailureMatrix** _(function)_ - `runAgentFailureMatrix: (options?: { readonly seed?: number; }) => Promise<AgentFailureMatrixReport>`
+  Run the same token-only crash fixture at each agent boundary. The implementation intentionally delegates scheduling and replay identity to the existing failure laboratory; this is a matrix consumer, not a second fault engine.
 - **runContractLab** _(function)_ - `runContractLab: (handler: ContractLabHandler, origin?: string) => Promise<void>`
   Execute every witness against one runtime and throw a bounded, replayable mismatch.
 - **runContractLabOverHttp** _(function)_ - `runContractLabOverHttp: (origin: string, fetcher?: typeof fetch) => Promise<void>`

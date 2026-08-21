@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "path": "packages/agent/src/index.ts",
+      "name": "MemoryAgentStateStore",
+      "kind": "memory",
+      "port": "AgentStateStore"
+    },
+    {
+      "path": "packages/agent/src/execution-policy.ts",
+      "name": "createLocalProcessAdapter",
+      "kind": "local-file",
+      "port": "ExecutionPolicyAdapter"
+    },
+    {
+      "path": "packages/agent/src/gateway.ts",
+      "name": "FakeModelGateway",
+      "kind": "fake",
+      "port": "ModelGateway"
+    },
+    {
+      "path": "packages/agent/src/gateway.ts",
+      "name": "ReplayModelGateway",
+      "kind": "replay",
+      "port": "ModelGateway"
+    },
+    {
+      "path": "packages/coding-agent/src/sessions.ts",
+      "name": "FileSessionStore",
+      "kind": "local-file",
+      "port": "SessionStore"
+    },
+    {
+      "path": "packages/coding-agent/src/orchestration/evidence-store.ts",
+      "name": "MemoryEvidenceStore",
+      "kind": "memory",
+      "port": "EvidenceStore"
+    },
+    {
+      "path": "packages/coding-agent/src/orchestration/evidence-store.ts",
+      "name": "FileEvidenceStore",
+      "kind": "local-file",
+      "port": "EvidenceStore"
+    },
+    {
+      "path": "packages/coding-agent/src/deployment-adapters.ts",
+      "name": "LocalProcessDeploymentAdapter",
+      "kind": "local-file",
+      "port": "AgentDeploymentAdapter"
+    },
+    {
+      "path": "packages/coding-agent/src/deployment-adapters.ts",
+      "name": "CiDeploymentAdapter",
+      "kind": "ci",
+      "port": "AgentDeploymentAdapter"
+    },
+    {
+      "path": "packages/coding-agent/src/deployment-adapters.ts",
+      "name": "ReplayDeploymentAdapter",
+      "kind": "replay",
+      "port": "AgentDeploymentAdapter"
+    },
+    {
+      "path": "packages/coding-agent/src/deployment-adapters.ts",
+      "name": "createLocalProcessDeploymentAdapter",
+      "kind": "local-file",
+      "port": "AgentDeploymentAdapter"
+    },
+    {
+      "path": "packages/coding-agent/src/deployment-adapters.ts",
+      "name": "createCiDeploymentAdapter",
+      "kind": "ci",
+      "port": "AgentDeploymentAdapter"
+    },
+    {
+      "path": "packages/coding-agent/src/deployment-adapters.ts",
+      "name": "createReplayDeploymentAdapter",
+      "kind": "replay",
+      "port": "AgentDeploymentAdapter"
+    },
+    {
+      "path": "packages/coding-agent/src/orchestration/durable-jobs.ts",
+      "name": "createDurableJobsStore",
+      "kind": "memory",
+      "port": "RunDispatchStore"
+    },
+    {
+      "path": "packages/coding-agent/src/orchestration/durable-jobs.ts",
+      "name": "createMemoryRunDispatchStore",
+      "kind": "memory",
+      "port": "RunDispatchStore"
+    },
+    {
+      "path": "packages/coding-agent/src/orchestration/recovery.ts",
+      "name": "MemoryIdempotencyProofStore",
+      "kind": "memory",
+      "port": "IdempotencyProofStore"
+    },
+    {
+      "path": "packages/testing/src/contract-lab.ts",
+      "name": "runContractLabThroughAdapter",
+      "kind": "fake",
+      "port": "ContractLabAdapter"
+    },
+    {
+      "path": "packages/testing/src/tool-contract.ts",
+      "name": "inProcessToolAdapter",
+      "kind": "fake",
+      "port": "ToolAdapter"
+    },
+    {
+      "path": "packages/testing/src/tool-contract.ts",
+      "name": "testToolAdapter",
+      "kind": "fake",
+      "port": "ToolAdapter"
+    },
+    {
+      "path": "packages/testing/src/tool-contract.ts",
+      "name": "mcpToolAdapter",
+      "kind": "fake",
+      "port": "ToolAdapter"
+    },
+    {
+      "path": "packages/testing/src/tool-contract.ts",
+      "name": "httpToolAdapter",
+      "kind": "fake",
+      "port": "ToolAdapter"
+    }
+  ]
+}

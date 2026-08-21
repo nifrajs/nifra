@@ -13,19 +13,19 @@ Presentation-safe browser SDK for Nifra agent hosts: negotiated commands, ordere
 - **boundaryCommands** _(function)_ - `boundaryCommands: (item: BoundaryStateView, options: { readonly inbox: boolean; readonly now: number; }) => readonly BoundaryCommand[]`
 - **boundaryIsStale** _(function)_ - `boundaryIsStale: (item: BoundaryStateView, now: number) => boolean`
 - **parseEventStream** _(function)_ - `parseEventStream: (body: ReadableStream<Uint8Array>, method: string) => AsyncIterable<AgentEvent>`
+- **toEvalComparisonView** _(function)_ - `toEvalComparisonView: (value: unknown) => EvalComparisonView | undefined`
 - **toEventView** _(function)_ - `toEventView: (event: AgentEvent) => AgentEventView`
+- **toEvidenceTimelineView** _(function)_ - `toEvidenceTimelineView: (value: unknown) => readonly EvidenceTimelineView[]`
+- **toFaultInjectionViews** _(function)_ - `toFaultInjectionViews: (value: unknown) => readonly FaultInjectionView[]`
 - **toHandoffView** _(function)_ - `toHandoffView: (snapshot: HandoffSnapshot) => HandoffView`
 - **toRegistryCapabilityView** _(function)_ - `toRegistryCapabilityView: (value: unknown) => RegistryCapabilityView | undefined`
+- **toRunStudioView** _(function)_ - `toRunStudioView: (value: unknown) => RunStudioView | undefined`
 - **toRunView** _(function)_ - `toRunView: (snapshot: RunSnapshot) => RunView`
 - **toSessionView** _(function)_ - `toSessionView: (snapshot: AgentSessionSnapshot) => SessionView`
+- **virtualizeEvidenceRows** _(function)_ - `virtualizeEvidenceRows: <T>(rows: readonly T[], cursor: number, windowSize?: number) => { readonly offset: number; readonly rows: readonly …`
 - **AgentAppClient** _(class)_ - `class AgentAppClient`
-- **AgentAppError** _(class)_ - `class AgentAppError`
-- **AgentTransportError** _(class)_ - `class AgentTransportError`
-- **HttpAgentTransport** _(class)_ - `class HttpAgentTransport`
-- **OrderedEventBuffer** _(class)_ - `class OrderedEventBuffer`
-- **AGENT_APP_FEATURES** _(const)_ - `AGENT_APP_FEATURES: readonly ["approvals", "checkpoint", "fork", "handoff", "inbox", "reload", "resume", "workflows"]`
 
-_…and 34 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentapp) for the complete list._
+_…and 45 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentapp) for the complete list._
 
 ## Footguns
 

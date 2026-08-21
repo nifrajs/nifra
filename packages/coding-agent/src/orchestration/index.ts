@@ -57,6 +57,36 @@ export {
   digestRunPlan,
   type OrchestrationLimits,
 } from "./compile.ts"
+export {
+  createRunDispatch,
+  DISPATCH_JOB_NAME,
+  type DispatchBoundary,
+  type DispatchInspection,
+  type DispatchResultCode,
+  type DispatchState,
+  type DispatchWriteResult,
+  type DurableDispatchAdapter,
+  deriveRunIdempotencyKey,
+  type InjectedClock,
+  MAX_DISPATCH_ATTEMPTS,
+  MAX_DISPATCH_STRING,
+  parseRunCheckpoint,
+  parseRunDispatch,
+  parseRunDispatchEvidence,
+  parseRunLease,
+  RUN_DISPATCH_VERSION,
+  type RunCheckpoint,
+  type RunDispatch,
+  type RunDispatchEvidence,
+  type RunDispatchStore,
+  type RunLease,
+  systemClock,
+} from "./dispatch.ts"
+export {
+  createDurableJobsStore,
+  createMemoryRunDispatchStore,
+  type DurableJobsStoreOptions,
+} from "./durable-jobs.ts"
 export { deriveNodeEffectKey, type EffectKeyMaterial } from "./effect-key.ts"
 export {
   type EvidenceCounters,
@@ -85,4 +115,17 @@ export {
   type HostPolicy,
   PolicyError,
 } from "./policy.ts"
+export {
+  type CommittedEffect,
+  EffectRejectedError,
+  type IdempotencyProofStore,
+  MemoryIdempotencyProofStore,
+  RecoveryCrashError,
+  type RecoveryMachineOptions,
+  type RecoveryProcessResult,
+  type RunEffect,
+  type RunEffectContext,
+  RunRecoveryMachine,
+  TestClock,
+} from "./recovery.ts"
 export { type RunTraceOptions, type RunTraceResult, runTrace } from "./tracer.ts"

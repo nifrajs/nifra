@@ -25,6 +25,40 @@ import {
 } from "@nifrajs/core/tool-contract"
 
 export {
+  AgentDeployment,
+  type AgentDeploymentAdapter,
+  type AgentDeploymentPlan,
+  assertDeploymentAuthorityMonotonic,
+  createDeploymentAuthority,
+  type DeploymentActivationOptions,
+  type DeploymentAuthority,
+  type DeploymentCancellation,
+  type DeploymentCancelRequest,
+  type DeploymentCancelResult,
+  type DeploymentCapabilities,
+  type DeploymentCapabilityReport,
+  type DeploymentDisposeRequest,
+  type DeploymentDisposeResult,
+  DeploymentError,
+  type DeploymentErrorCode,
+  type DeploymentEvidence,
+  type DeploymentFilesystem,
+  type DeploymentInspection,
+  type DeploymentInspectRequest,
+  type DeploymentNetwork,
+  type DeploymentPrepareRequest,
+  type DeploymentPrepareResult,
+  type DeploymentProcess,
+  type DeploymentRuntime,
+  type DeploymentSecrets,
+  type DeploymentStartRequest,
+  type DeploymentStartResult,
+  type DeploymentState,
+  type HostileCodeIsolation,
+  parseDeploymentCapabilityReport,
+  parseDeploymentPlan,
+} from "./deployment.ts"
+export {
   createLocalProcessAdapter,
   type ExecutionPolicy,
   type ExecutionPolicyAdapter,
@@ -35,6 +69,39 @@ export {
   type LocalProcessRequest,
   type LocalProcessResult,
 } from "./execution-policy.ts"
+export {
+  createStructuredOutputParser,
+  FakeModelGateway,
+  type FakeModelGatewayOptions,
+  isModelGatewayErrorCode,
+  MODEL_GATEWAY_ERROR_CODES,
+  type ModelGateway,
+  type ModelGatewayAttemptRequest,
+  type ModelGatewayBudget,
+  type ModelGatewayEnvelope,
+  type ModelGatewayError,
+  type ModelGatewayErrorCode,
+  type ModelGatewayEvidence,
+  type ModelGatewayExecutionResult,
+  type ModelGatewayFailure,
+  ModelGatewayFailureError,
+  type ModelGatewayRawResult,
+  type ModelGatewayRequest,
+  type ModelGatewayResult,
+  type ModelGatewaySuccess,
+  type ModelGatewayTerminalFailure,
+  type ModelGatewayUsage,
+  type ModelRoute,
+  type ModelRoutePolicy,
+  type ModelRouteRef,
+  parseModelGatewayError,
+  parseModelGatewayResult,
+  ReplayModelGateway,
+  type ReplayModelGatewayOptions,
+  runModelGateway,
+  type StructuredOutputParser,
+  structuredOutputParser,
+} from "./gateway.ts"
 
 export type AgentStatus = "continue" | "completed" | "suspended"
 export type AgentPendingKind = "approval" | "budget" | "model" | "cancelled"
@@ -1026,7 +1093,7 @@ export type {
   RegistrySnapshot,
   RetryClass,
   ToolDescriptorOptions,
-} from "./registry"
+} from "./registry.ts"
 export {
   CAPABILITY_DESCRIPTOR_VERSION,
   composeDescriptor,
@@ -1035,4 +1102,4 @@ export {
   parseCapabilityDescriptor,
   REGISTRY_SNAPSHOT_VERSION,
   RegistryError,
-} from "./registry"
+} from "./registry.ts"

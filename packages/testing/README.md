@@ -194,6 +194,14 @@ that every call carries and captures cookies via a shared jar.
 
 For a **stateless** request (no cookies), use `testClient` from `@nifrajs/client` directly.
 
+### Agent evaluation and failure matrix
+
+`runAgentEvalComposition` composes trajectory replay, fault profiles, contract invariants,
+idempotency proofs, and adapter certification. Reports expose explicit invariant and rubric cases,
+stable regression IDs, schedule tokens, and digests; they do not retain prompts, tool payloads,
+model output, labels, or a single opaque quality score. The failure matrix covers model, tool,
+approval, cancellation, lease, cursor, registry, and deployment boundaries.
+
 ## For AI agents
 
 Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),

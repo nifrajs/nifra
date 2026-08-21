@@ -23,6 +23,10 @@ attached as children; otherwise the plugin creates a standalone observation. Oth
 codes, and effect-ledger heads carried as span attributes. Only the runner's constrained evidence
 fields are exported - prompts, tool inputs, and outputs cannot enter a trace.
 
+Orchestration correlation is opt-in and cardinality-bounded. Allowed attributes are run, plan, node,
+attempt, evidence, replay, and trace coordinates plus bounded status/error codes. Content-bearing or
+unbounded attributes are rejected; the exporter is not a payload retention sink.
+
 ```ts
 import { traceAgentRun } from "@nifrajs/agent-telemetry"
 import { combineAgentTelemetry, runAgent } from "@nifrajs/agent"

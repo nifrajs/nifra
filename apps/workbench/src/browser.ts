@@ -20,7 +20,12 @@ import {
   boundaryCommands,
   HttpAgentTransport,
   type RegistryCapabilityView,
+  toEvalComparisonView,
+  toEvidenceTimelineView,
+  toFaultInjectionViews,
   toRegistryCapabilityView,
+  toRunStudioView,
+  virtualizeEvidenceRows,
 } from "@nifrajs/agent-app"
 
 const params = new URLSearchParams(window.location.search)
@@ -47,6 +52,10 @@ const ui = {
   workflows: el("workflows"),
   subagents: el("subagents"),
   providers: el("providers"),
+  runGraph: el("run-graph"),
+  evidenceTimeline: el("evidence-timeline"),
+  evalView: el("eval-view"),
+  faultView: el("fault-view"),
   uiExtensions: el("ui-extensions"),
   diffStatus: el("diff-status"),
   diffOutput: el("diff-output"),
@@ -143,8 +152,68 @@ async function connect(): Promise<void> {
     refreshList("workflow.list", "workflows", ui.workflows, "No workflow extensions loaded"),
     refreshList("subagent.list", "subagents", ui.subagents, "No custom roles loaded"),
     refreshList("provider.list", "providers", ui.providers, "No custom providers loaded"),
+    refreshStudio(),
     refreshUi(),
   ])
+}
+
+/** Render run/retry/recovery/eval evidence through the SDK view-model boundary only. */
+async function refreshStudio(): Promise<void> {
+  const outcome = await client.command<Record<string, unknown>>("run.studio")
+  if (!outcome.ok) {
+    ui.runGraph.textContent = `Run graph unavailable (${outcome.status})`
+    ui.evidenceTimeline.textContent = "Evidence timeline unavailable"
+    ui.evalView.textContent = "Eval comparison unavailable"
+    ui.faultView.textContent = "Fault injection unavailable"
+    return
+  }
+  const run = toRunStudioView(outcome.value.run)
+  ui.runGraph.replaceChildren()
+  if (run === undefined) {
+    ui.runGraph.textContent = "No content-free run snapshot"
+  } else {
+    const header = document.createElement("div")
+    header.className = "studio-summary"
+    header.textContent = `${run.state} · ${run.runId} · ${run.terminalNodes}/${run.nodes.length} terminal · cursor ${run.cursor}`
+    ui.runGraph.append(header)
+    for (const node of run.nodes.slice(0, 256)) {
+      const row = document.createElement("div")
+      row.className = "surface-row"
+      row.textContent = `${node.nodeId} · ${node.state} · attempt ${node.attempt} · retries ${node.retryCount}${node.checkpointed ? " · checkpoint" : ""}${node.recovered ? " · recovered" : ""}`
+      ui.runGraph.append(row)
+    }
+  }
+
+  const timeline = toEvidenceTimelineView(outcome.value.timeline)
+  const window = virtualizeEvidenceRows(
+    timeline,
+    timeline.length === 0 ? 0 : timeline.length - 1,
+    100,
+  )
+  ui.evidenceTimeline.replaceChildren()
+  for (const row of window.rows) {
+    const item = document.createElement("div")
+    item.className = "event"
+    item.textContent = `#${row.seq} ${row.nodeId} · ${row.status} · attempt ${row.attempt}${row.scheduleToken === undefined ? "" : ` · ${row.scheduleToken}`}`
+    ui.evidenceTimeline.append(item)
+  }
+  if (window.rows.length === 0) ui.evidenceTimeline.textContent = "No evidence rows"
+
+  const evaluation = toEvalComparisonView(outcome.value.evaluation)
+  ui.evalView.textContent =
+    evaluation === undefined
+      ? "No eval comparison"
+      : `${evaluation.suiteId} · ${evaluation.comparisons.length} comparisons · ${evaluation.regressionIds.length} regression(s)`
+
+  const faults = toFaultInjectionViews(outcome.value.faults)
+  ui.faultView.replaceChildren()
+  for (const fault of faults.slice(0, 256)) {
+    const item = document.createElement("div")
+    item.className = "surface-row"
+    item.textContent = `${fault.id} · ${fault.kind} · ${fault.ok ? "pass" : "regression"} · ${fault.scheduleToken}`
+    ui.faultView.append(item)
+  }
+  if (faults.length === 0) ui.faultView.textContent = "No fault schedule"
 }
 
 /**
@@ -484,6 +553,7 @@ async function reload(): Promise<void> {
     refreshList("subagent.list", "subagents", ui.subagents, "No custom roles loaded"),
     refreshList("provider.list", "providers", ui.providers, "No custom providers loaded"),
     refreshUi(),
+    refreshStudio(),
   ])
 }
 

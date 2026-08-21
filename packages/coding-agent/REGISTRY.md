@@ -9,3 +9,7 @@ The optional registry is intentionally a local seam in preview releases:
 
 A future public registry can distribute signed metadata and versioned manifests. It must not move
 credentials, tenant state, pricing, prompt IP, or operated execution into the public package.
+
+Agent Platform registry snapshots are canonical and digestable. Descriptor adapters expose identity,
+schema digest, capability tokens, and policy classes only. Invocation, credentials, signed
+distribution, retention, and organization policy remain host or caller responsibilities.

@@ -22,6 +22,15 @@ export {
   type NifraContextResult,
   runNifraContext,
 } from "./context.ts"
+export {
+  CiDeploymentAdapter,
+  createCiDeploymentAdapter,
+  createLocalProcessDeploymentAdapter,
+  createReplayDeploymentAdapter,
+  DEPLOYMENT_REFERENCE_PROFILES,
+  LocalProcessDeploymentAdapter,
+  ReplayDeploymentAdapter,
+} from "./deployment-adapters.ts"
 export { type ProjectDiffOptions, type ProjectDiffResult, readProjectDiff } from "./diff.ts"
 export {
   type CodingAgentExtension,
@@ -61,7 +70,9 @@ export {
   type IsolatedExtensionWorkerOptions,
 } from "./isolated.ts"
 export {
+  createNativeGatewayModelPort,
   type NativeApprovalPort,
+  type NativeGatewayModelPortOptions,
   type NativeMessage,
   type NativeModelChunk,
   type NativeModelPort,
@@ -100,6 +111,16 @@ export {
   type CodingAgentRpcServerHandle,
   type CodingAgentRpcServerOptions,
 } from "./rpc.ts"
+export {
+  type MigrateLegacySessionOptions,
+  migrateLegacySession,
+  parseSessionEvidenceRecord,
+  SESSION_EVIDENCE_VERSION,
+  type SessionEvidenceRecord,
+  SessionMigrationError,
+  type SessionMigrationReport,
+  stableSessionEventCode,
+} from "./session-migration.ts"
 export {
   type CompactionReport,
   type ContextRecord,

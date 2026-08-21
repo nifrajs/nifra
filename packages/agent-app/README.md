@@ -23,6 +23,8 @@ counts.
   evicted from the retained window asks the caller to resync.
 - **Approvals and handoffs.** Pending approvals list as identifiers; decisions and handoff outcomes go
   back through negotiated commands.
+- **Run Studio views.** Run graphs, retry/recovery timelines, eval comparisons, and fault-injection
+  rows consume only protocol evidence and bounded replay references.
 - **Escape hatch.** `command()` reaches host-specific surfaces outside the negotiated contract and
   still returns a bounded `CommandOutcome` - it never throws the credential.
 
@@ -56,6 +58,13 @@ this SDK can render progress and resolve interactions, and cannot reconstruct a 
 model completion, diagnostic report, or filesystem path. The `scripts/check-agent-boundary.ts` gate
 enforces that this package imports nothing but `@nifrajs/agent-protocol`.
 
+The SDK is transport-neutral and opt-in: it does not retain payloads, provide identity or tenancy,
+claim a remote security boundary, or imply durable delivery. Production hosts own authorization,
+retention, and adapter policy.
+
 ## License
 
 MIT
+
+For AI agents, see [`LLM.md`](./LLM.md) and the full corpus
+[`../../llms-full.txt`](../../llms-full.txt).

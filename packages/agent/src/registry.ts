@@ -364,8 +364,8 @@ export interface ToolDescriptorOptions {
  * the approval policy is carried through unchanged, so the descriptor is a faithful, content-free
  * projection of the contract the runtime already enforces.
  */
-export function descriptorFromTool(
-  tool: ToolContract,
+export function descriptorFromTool<Input, Output>(
+  tool: ToolContract<Input, Output>,
   options: ToolDescriptorOptions = {},
 ): Promise<CapabilityDescriptor> {
   return composeDescriptor({

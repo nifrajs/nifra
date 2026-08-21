@@ -33,5 +33,27 @@ an injected model implementation and bounded tools without importing a provider
 SDK. `ReplayBackend` and `readReplayEvents` provide deterministic protocol
 replays for CI and Workbench regression tests.
 
+## At-least-once run dispatch
+
+`@nifrajs/coding-agent/orchestration` also exports an evidence-only run dispatch port and an adapter
+over `@nifrajs/jobs`. Dispatch is at-least-once: a lease may be delivered again after worker loss or
+lease expiry. Every logical node attempt receives a stable idempotency key derived from the plan,
+run, node, and attempt boundary. Effects must provide a matching proof before recovery can settle a
+completed boundary; an unproven post-effect failure is dead-lettered rather than guessed safe.
+
+`createMemoryRunDispatchStore()` is disposable single-process test infrastructure. It makes no
+durability, hosted-worker, retention, tenant-authorization, or exactly-once guarantee. Durable
+operated adapters implement the exported `RunDispatchStore` and `DurableDispatchAdapter` ports in
+their own data layer, including authorization, row policy, retention, reconciliation, and worker
+health. The public package does not store prompts, model output, tool arguments, or job payloads in
+its dispatch evidence.
+
+Legacy `FileSessionStore` files remain supported for explicit local compatibility. Use
+`nifra-agent --migrate-session <id> --migrate-from <legacy-dir> --migrate-to <evidence-dir>` to
+create a separately validated, evidence-only target. The source is left untouched and the command
+does not switch an active configuration pointer; see
+[`docs/agent-platform/protocol-and-session-migration.md`](../../docs/agent-platform/protocol-and-session-migration.md)
+for rollback and protocol compatibility details.
+
 For AI agents, see [`LLM.md`](./LLM.md) and the full corpus
 [`../../llms-full.txt`](../../llms-full.txt).

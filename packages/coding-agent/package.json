@@ -69,6 +69,7 @@
   "dependencies": {
     "@nifrajs/agent": "workspace:*",
     "@nifrajs/agent-protocol": "workspace:*",
+    "@nifrajs/jobs": "workspace:*",
     "@nifrajs/pi": "workspace:*"
   },
   "repository": {
