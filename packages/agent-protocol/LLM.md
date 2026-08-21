@@ -12,20 +12,20 @@ Small backend-neutral session and event protocol for Nifra coding agents.
 
 - **agentError** _(function)_ - `agentError: (code: string, message: string, details?: unknown) => AgentError`
 - **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void`
+- **coordinateIsFresh** _(function)_ - `coordinateIsFresh: (coordinate: DecisionCoordinate, now: number) => boolean`
+- **coordinatesMatch** _(function)_ - `coordinatesMatch: (a: DecisionCoordinate, b: DecisionCoordinate) => boolean`
 - **createAgentEventStream** _(function)_ - `createAgentEventStream: (maxQueueSize?: number) => AgentEventStream`
 - **evidenceEventId** _(function)_ - `evidenceEventId: (runId: string, seq: number) => string`
 - **isAgentEvent** _(function)_ - `isAgentEvent: (value: unknown) => value is AgentEvent`
+- **isTerminalApprovalState** _(function)_ - `isTerminalApprovalState: (state: ApprovalLifecycleState) => boolean`
+- **isTerminalHandoffState** _(function)_ - `isTerminalHandoffState: (state: HandoffLifecycleState) => boolean`
 - **negotiateFeatures** _(function)_ - `negotiateFeatures: (offered: readonly string[], requested: readonly string[]) => FeatureNegotiation`
+- **nextApprovalState** _(function)_ - `nextApprovalState: (from: ApprovalLifecycleState, op: BoundaryOp) => ApprovalLifecycleState | undefined`
+- **nextHandoffState** _(function)_ - `nextHandoffState: (from: HandoffLifecycleState, op: BoundaryOp) => HandoffLifecycleState | undefined`
 - **parseArtifactRef** _(function)_ - `parseArtifactRef: (value: unknown) => ArtifactRef`
-- **parseHandoffSnapshot** _(function)_ - `parseHandoffSnapshot: (value: unknown) => HandoffSnapshot`
-- **parseRunEvidence** _(function)_ - `parseRunEvidence: (value: unknown) => RunEvidence`
-- **parseRunEvidenceEvent** _(function)_ - `parseRunEvidenceEvent: (value: unknown) => RunEvidenceEvent`
-- **parseRunPlan** _(function)_ - `parseRunPlan: (value: unknown) => RunPlan`
-- **parseRunPlanRef** _(function)_ - `parseRunPlanRef: (value: unknown) => RunPlanRef`
-- **parseRunSnapshot** _(function)_ - `parseRunSnapshot: (value: unknown) => RunSnapshot`
-- **resumeFromCursor** _(function)_ - `resumeFromCursor: <T extends { readonly seq: number; }>(window: readonly T[], cursor?: number) => CursorResume<T>`
+- **parseDecisionCoordinate** _(function)_ - `parseDecisionCoordinate: (value: unknown) => DecisionCoordinate`
 
-_…and 72 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentprotocol) for the complete list._
+_…and 88 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentprotocol) for the complete list._
 
 ## Footguns
 

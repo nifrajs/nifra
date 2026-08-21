@@ -335,3 +335,182 @@ export function parseHandoffSnapshot(value: unknown): HandoffSnapshot {
   }
   return snapshot
 }
+
+// ── Decision boundaries: approval and handoff lifecycles ────────────────────────────────────────
+//
+// A decision boundary is a paused point in a run awaiting a human (or delegated) decision: an
+// approval to proceed, or a handoff between roles. Both are addressed by the same content-free
+// {@link DecisionCoordinate} - run, node, capability, request id, a monotonic per-run child vector,
+// and an absolute expiry - so a decision that does not match the live boundary, arrives after expiry,
+// or replays a stale vector fails closed rather than resuming the wrong work. The lifecycles are
+// modelled as explicit state machines below; a transition absent from the table is illegal.
+
+/** The two boundary families a host pauses on. */
+export type BoundaryKind = "approval" | "handoff"
+
+/** Approval lifecycle. Terminal states accept no further transition. */
+export type ApprovalLifecycleState = "pending" | "approved" | "denied" | "expired" | "cancelled"
+
+/** Handoff lifecycle. `assigned` is the only non-pending live state; the rest are terminal. */
+export type HandoffLifecycleState =
+  | "pending"
+  | "assigned"
+  | "accepted"
+  | "declined"
+  | "resolved"
+  | "expired"
+  | "cancelled"
+
+/** The operations that drive a boundary. Not every op is legal from every state. */
+export type BoundaryOp =
+  | "approve"
+  | "deny"
+  | "assign"
+  | "accept"
+  | "decline"
+  | "resolve"
+  | "expire"
+  | "cancel"
+
+/**
+ * The negotiated command surface for the inbox: a superset of {@link BoundaryOp} plus the read verbs
+ * `list` and `inspect`. A host advertises the subset it supports; a client drives only the granted
+ * commands. Order here is the canonical advertisement order.
+ */
+export const BOUNDARY_COMMANDS = [
+  "list",
+  "inspect",
+  "approve",
+  "deny",
+  "assign",
+  "resolve",
+  "expire",
+  "cancel",
+] as const
+
+export type BoundaryCommand = (typeof BOUNDARY_COMMANDS)[number]
+
+/** Stable, content-free reasons a boundary decision is refused. */
+export type BoundaryRejection =
+  | "unknown_boundary"
+  | "identity_mismatch"
+  | "stale_vector"
+  | "expired"
+  | "illegal_transition"
+
+/**
+ * The content-free identity of one decision boundary. `vector` is the run's monotonic child index at
+ * which the boundary opened; a decision must carry the boundary's exact vector, so a replayed or
+ * superseded decision (a lower or mismatched vector) is refused. `expiresAt` is an absolute epoch-ms
+ * deadline. No field carries a prompt, a reason-as-free-text, or a payload.
+ */
+export interface DecisionCoordinate {
+  readonly runId: string
+  readonly nodeId: string
+  readonly capability: string
+  readonly requestId: string
+  readonly vector: number
+  readonly expiresAt: number
+}
+
+/** True when both coordinates address the same boundary at the same child vector. */
+export function coordinatesMatch(a: DecisionCoordinate, b: DecisionCoordinate): boolean {
+  return (
+    a.runId === b.runId &&
+    a.nodeId === b.nodeId &&
+    a.capability === b.capability &&
+    a.requestId === b.requestId &&
+    a.vector === b.vector
+  )
+}
+
+/** True while `now` is strictly before the coordinate's expiry. At or past expiry fails closed. */
+export function coordinateIsFresh(coordinate: DecisionCoordinate, now: number): boolean {
+  return now < coordinate.expiresAt
+}
+
+/**
+ * Monotonic child-vector check: a newly opened boundary must advance strictly past the run's last
+ * allocated vector. A non-advancing vector is a replay and is refused. `last` is `-1` before any
+ * boundary has opened for the run.
+ */
+export function vectorAdvances(last: number, next: number): boolean {
+  return Number.isSafeInteger(next) && next > last
+}
+
+const APPROVAL_TRANSITIONS: Readonly<
+  Record<ApprovalLifecycleState, Partial<Record<BoundaryOp, ApprovalLifecycleState>>>
+> = {
+  pending: { approve: "approved", deny: "denied", expire: "expired", cancel: "cancelled" },
+  approved: {},
+  denied: {},
+  expired: {},
+  cancelled: {},
+}
+
+const HANDOFF_TRANSITIONS: Readonly<
+  Record<HandoffLifecycleState, Partial<Record<BoundaryOp, HandoffLifecycleState>>>
+> = {
+  pending: {
+    assign: "assigned",
+    accept: "accepted",
+    decline: "declined",
+    expire: "expired",
+    cancel: "cancelled",
+  },
+  assigned: {
+    accept: "accepted",
+    decline: "declined",
+    resolve: "resolved",
+    expire: "expired",
+    cancel: "cancelled",
+  },
+  accepted: { resolve: "resolved", expire: "expired", cancel: "cancelled" },
+  declined: {},
+  resolved: {},
+  expired: {},
+  cancelled: {},
+}
+
+/** The next approval state for an op, or `undefined` when the transition is illegal. */
+export function nextApprovalState(
+  from: ApprovalLifecycleState,
+  op: BoundaryOp,
+): ApprovalLifecycleState | undefined {
+  return APPROVAL_TRANSITIONS[from][op]
+}
+
+/** The next handoff state for an op, or `undefined` when the transition is illegal. */
+export function nextHandoffState(
+  from: HandoffLifecycleState,
+  op: BoundaryOp,
+): HandoffLifecycleState | undefined {
+  return HANDOFF_TRANSITIONS[from][op]
+}
+
+/** True once a boundary state accepts no further op. */
+export function isTerminalApprovalState(state: ApprovalLifecycleState): boolean {
+  return Object.keys(APPROVAL_TRANSITIONS[state]).length === 0
+}
+
+/** True once a handoff state accepts no further op. */
+export function isTerminalHandoffState(state: HandoffLifecycleState): boolean {
+  return Object.keys(HANDOFF_TRANSITIONS[state]).length === 0
+}
+
+/**
+ * Decode a decision coordinate. Content-free: forbidden payload keys are rejected, and only the
+ * declared structural fields are read. `vector` and `expiresAt` must be non-negative safe integers.
+ */
+export function parseDecisionCoordinate(value: unknown): DecisionCoordinate {
+  if (!isRecord(value)) throw new RunContractError("decision coordinate must be an object")
+  assertNoForbiddenKeys(value, "decision coordinate")
+  return {
+    runId: str(value, "runId", "decision coordinate"),
+    nodeId: str(value, "nodeId", "decision coordinate"),
+    capability: str(value, "capability", "decision coordinate"),
+    requestId: str(value, "requestId", "decision coordinate"),
+    vector: nonNegInt(value, "vector", "decision coordinate"),
+    expiresAt: nonNegInt(value, "expiresAt", "decision coordinate"),
+  }
+}

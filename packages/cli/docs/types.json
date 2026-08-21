@@ -103,6 +103,12 @@
     "signature": "export interface AdapterCertificationReport {\n    readonly schemaVersion: 1;\n    readonly ok: boolean;\n    readonly profile: {\n        readonly id: string;\n        readonly version: number;\n    };\n    readonly adapterId: string;\n    readonly checks: readonly CertificationCheckEvidence[];\n    readonly capabilities: readonly CertificationCapabilityEvidence[];\n    readonly evidenceHash: string;\n}"
   },
   {
+    "name": "Admission",
+    "kind": "type",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export type Admission = {\n    readonly ok: true;\n} | {\n    readonly ok: false;\n    readonly code: AdmissionRejection;\n};"
+  },
+  {
     "name": "AdmissionController",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -157,10 +163,24 @@
     "doc": "/**\n * Application-supplied admission policy. Return a decision to override the default mechanics\n * for this request, or `undefined` to defer to them. `admit` may draw from reserved headroom above\n * `maxInFlight`; `shed` forces rejection.\n */"
   },
   {
+    "name": "AdmissionRejection",
+    "kind": "type",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export type AdmissionRejection = \"kind_not_allowed\" | \"capability_not_allowed\" | \"isolation_too_weak\" | \"approval_downgrade\";",
+    "doc": "/** Stable, content-free reasons the host refuses to admit a capability. */"
+  },
+  {
     "name": "AdmissionSnapshot",
     "kind": "interface",
     "package": "@nifrajs/middleware",
     "signature": "export interface AdmissionSnapshot {\n    readonly inFlight: number;\n    readonly queued: number;\n    readonly fastPathAdmits: number;\n    readonly slowPathEntries: number;\n    readonly everQueued: number;\n    readonly shed: number;\n}"
+  },
+  {
+    "name": "admitCapability",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function admitCapability(policy: HostPolicy, descriptor: CapabilityDescriptor): Admission;",
+    "doc": "/**\n * Admit a capability descriptor against the host policy. The policy is the floor; the descriptor can\n * only meet or exceed it. Returns the first failing reason, or `{ ok: true }` when every gate passes.\n */"
   },
   {
     "name": "admitDeadline",
@@ -197,7 +217,7 @@
     "name": "AGENT_APP_FEATURES",
     "kind": "const",
     "package": "@nifrajs/agent-app",
-    "signature": "export declare const AGENT_APP_FEATURES: readonly [\"approvals\", \"checkpoint\", \"fork\", \"handoff\", \"reload\", \"resume\", \"workflows\"];",
+    "signature": "export declare const AGENT_APP_FEATURES: readonly [\"approvals\", \"checkpoint\", \"fork\", \"handoff\", \"inbox\", \"reload\", \"resume\", \"workflows\"];",
     "doc": "/** Interaction features the client knows how to drive. A host grants the subset it supports. */"
   },
   {
@@ -230,7 +250,7 @@
     "name": "AgentAppClient",
     "kind": "class",
     "package": "@nifrajs/agent-app",
-    "signature": "export declare class AgentAppClient {\n    private readonly transport;\n    private readonly requested;\n    private readonly maxPending;\n    private currentSession;\n    private granted;\n    constructor(transport: AgentTransport, options?: AgentAppClientOptions);\n    /** The current session view, or `undefined` before {@link createSession}/{@link resume}. */\n    get session(): SessionView | undefined;\n    /** Features the host granted at negotiation. */\n    get features(): readonly string[];\n    supports(feature: string): boolean;\n    requireFeature(feature: string): void;\n    /** Open a session and negotiate the feature set against the host's advertised capabilities. */\n    createSession(input?: CreateSessionInput): Promise<SessionView>;\n    /**\n     * Stream a turn as ordered, deduplicated view models. The underlying transport receives the host's\n     * full event stream, but every value yielded here is content-free.\n     */\n    send(message: string, options?: {\n        signal?: AbortSignal;\n    }): AsyncIterable<AgentEventView>;\n    /** Resume a persisted log by cursor. A cursor whose next record was evicted asks for a resync. */\n    resume(input?: ResumeInput): Promise<ReplayResult>;\n    /** List approvals awaiting a decision, projected to their identifiers only. */\n    listApprovals(): Promise<readonly PendingApprovalView[]>;\n    /** Approve or decline a pending approval. Returns the host's recorded decision. */\n    resolveApproval(approvalId: string, approved: boolean, reason?: string): Promise<boolean>;\n    /** Accept or decline a handoff. Returns the resulting handoff view when the host reports one. */\n    resolveHandoff(input: ResolveHandoffInput): Promise<HandoffView | undefined>;\n    /** Fetch a run snapshot by id, projected to a content-free {@link RunView}. */\n    runSnapshot(runId: string): Promise<RunView>;\n    /** Cancel the active turn / stop the session. */\n    cancel(reason?: string): Promise<void>;\n    /**\n     * Escape hatch for host-specific commands outside the negotiated contract. Returns a bounded\n     * {@link CommandOutcome}; the caller is responsible for keeping whatever it renders content-free.\n     */\n    command<T = unknown>(method: string, params?: unknown, signal?: AbortSignal): Promise<CommandOutcome<T>>;\n    private adoptSnapshot;\n    private expectSnapshot;\n    private decodeResume;\n}"
+    "signature": "export declare class AgentAppClient {\n    private readonly transport;\n    private readonly requested;\n    private readonly maxPending;\n    private currentSession;\n    private granted;\n    constructor(transport: AgentTransport, options?: AgentAppClientOptions);\n    /** The current session view, or `undefined` before {@link createSession}/{@link resume}. */\n    get session(): SessionView | undefined;\n    /** Features the host granted at negotiation. */\n    get features(): readonly string[];\n    supports(feature: string): boolean;\n    requireFeature(feature: string): void;\n    /** Open a session and negotiate the feature set against the host's advertised capabilities. */\n    createSession(input?: CreateSessionInput): Promise<SessionView>;\n    /**\n     * Stream a turn as ordered, deduplicated view models. The underlying transport receives the host's\n     * full event stream, but every value yielded here is content-free.\n     */\n    send(message: string, options?: {\n        signal?: AbortSignal;\n    }): AsyncIterable<AgentEventView>;\n    /** Resume a persisted log by cursor. A cursor whose next record was evicted asks for a resync. */\n    resume(input?: ResumeInput): Promise<ReplayResult>;\n    /** List approvals awaiting a decision, projected to their identifiers only. */\n    listApprovals(): Promise<readonly PendingApprovalView[]>;\n    /** Approve or decline a pending approval. Returns the host's recorded decision. */\n    resolveApproval(approvalId: string, approved: boolean, reason?: string): Promise<boolean>;\n    /** Accept or decline a handoff. Returns the resulting handoff view when the host reports one. */\n    resolveHandoff(input: ResolveHandoffInput): Promise<HandoffView | undefined>;\n    /**\n     * List every pending decision boundary (approvals and handoffs) as content-free item views. Gated\n     * on the negotiated `inbox` feature.\n     */\n    listBoundaries(): Promise<readonly BoundaryItemView[]>;\n    /** Inspect one boundary by request id, projected to a content-free item view. */\n    inspectBoundary(requestId: string): Promise<BoundaryItemView | undefined>;\n    /**\n     * Drive one boundary command against its exact coordinate. Because the full {@link DecisionCoordinate}\n     * (run, node, capability, request id, vector, expiry) rides on every call, a decision can only ever\n     * resolve the boundary it names - never a different item - and the host fails a stale or mismatched\n     * coordinate closed. `assign` carries the owner role in `to`.\n     */\n    decideBoundary(command: BoundaryCommand, coordinate: DecisionCoordinate, options?: {\n        readonly to?: string;\n    }): Promise<BoundaryDecisionResult>;\n    /** Fetch a run snapshot by id, projected to a content-free {@link RunView}. */\n    runSnapshot(runId: string): Promise<RunView>;\n    /** Cancel the active turn / stop the session. */\n    cancel(reason?: string): Promise<void>;\n    /**\n     * Escape hatch for host-specific commands outside the negotiated contract. Returns a bounded\n     * {@link CommandOutcome}; the caller is responsible for keeping whatever it renders content-free.\n     */\n    command<T = unknown>(method: string, params?: unknown, signal?: AbortSignal): Promise<CommandOutcome<T>>;\n    private adoptSnapshot;\n    private expectSnapshot;\n    private decodeResume;\n}"
   },
   {
     "name": "AgentAppClientOptions",
@@ -953,10 +973,17 @@
     "signature": "export declare class ApprovalDeniedError extends Error {\n    constructor();\n}"
   },
   {
+    "name": "ApprovalLifecycleState",
+    "kind": "type",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export type ApprovalLifecycleState = \"pending\" | \"approved\" | \"denied\" | \"expired\" | \"cancelled\";",
+    "doc": "/** Approval lifecycle. Terminal states accept no further transition. */"
+  },
+  {
     "name": "ApprovalManager",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
-    "signature": "export declare class ApprovalManager {\n    private readonly options;\n    private readonly pendingApprovals;\n    constructor(options?: ApprovalManagerOptions);\n    get pending(): readonly ApprovalRequest[];\n    /** Convert a streamed backend approval event into a resolvable pending request. */\n    observe(event: AgentApprovalRequiredEvent): Promise<ApprovalRequest | undefined>;\n    /** Publish a pending approval without waiting for its decision (useful for transports). */\n    offer(input: Omit<ApprovalRequest, \"createdAt\" | \"expiresAt\">): Promise<ApprovalRequest | undefined>;\n    /** Create a host-owned approval that can be awaited by a workflow or extension. */\n    request(input: Omit<ApprovalRequest, \"createdAt\" | \"expiresAt\">): Promise<boolean>;\n    resolve(approvalId: string, approved: boolean, reason?: string): ApprovalDecision | undefined;\n    close(): void;\n    private create;\n}",
+    "signature": "export declare class ApprovalManager {\n    private readonly options;\n    private readonly pendingApprovals;\n    constructor(options?: ApprovalManagerOptions);\n    get pending(): readonly ApprovalRequest[];\n    /** Convert a streamed backend approval event into a resolvable pending request. */\n    observe(event: AgentApprovalRequiredEvent): Promise<ApprovalRequest | undefined>;\n    /** Publish a pending approval without waiting for its decision (useful for transports). */\n    offer(input: Omit<ApprovalRequest, \"createdAt\" | \"expiresAt\">): Promise<ApprovalRequest | undefined>;\n    /** Create a host-owned approval that can be awaited by a workflow or extension. */\n    request(input: Omit<ApprovalRequest, \"createdAt\" | \"expiresAt\">): Promise<boolean>;\n    /**\n     * Resolve an approval that was opened with a {@link DecisionCoordinate}, admitting the decision only\n     * when it matches the live boundary and is still fresh. Every failure is content-free and fails\n     * closed: an unknown id, a coordinate-less approval, a mismatched or superseded coordinate, or an\n     * expired boundary resumes no work. This adds a typed path alongside the untyped {@link resolve}; it\n     * never loosens it.\n     */\n    resolveMatched(coordinate: DecisionCoordinate, approved: boolean, now?: number): ApprovalMatchResult;\n    resolve(approvalId: string, approved: boolean, reason?: string): ApprovalDecision | undefined;\n    close(): void;\n    private create;\n}",
     "doc": "/**\n * Small approval broker shared by RPC, Workbench, and workflow extensions.\n *\n * Approval state is deliberately bounded and expires closed (denied) by default. It is a policy\n * seam, not a security boundary: filesystem/process isolation still belongs to the host or OS.\n */"
   },
   {
@@ -964,6 +991,19 @@
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
     "signature": "export interface ApprovalManagerOptions {\n    readonly maxPending?: number;\n    readonly timeoutMs?: number;\n    readonly onRequired?: (request: ApprovalRequest) => void | PromiseLike<void>;\n    readonly onResolved?: (decision: ApprovalDecision) => void | PromiseLike<void>;\n}"
+  },
+  {
+    "name": "ApprovalMatchRejection",
+    "kind": "type",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export type ApprovalMatchRejection = \"unknown_boundary\" | \"identity_mismatch\" | \"stale_vector\" | \"expired\" | \"illegal_transition\";",
+    "doc": "/** Stable, content-free reasons a coordinate-matched resolution is refused. */"
+  },
+  {
+    "name": "ApprovalMatchResult",
+    "kind": "type",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export type ApprovalMatchResult = {\n    readonly ok: true;\n    readonly decision: ApprovalDecision;\n} | {\n    readonly ok: false;\n    readonly code: ApprovalMatchRejection;\n};"
   },
   {
     "name": "ApprovalPendingError",
@@ -981,7 +1021,7 @@
     "name": "ApprovalRequest",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface ApprovalRequest {\n    readonly id: string;\n    readonly sessionId: string;\n    readonly turnId?: string;\n    readonly action: string;\n    readonly capability: string;\n    readonly reason?: string;\n    readonly createdAt: number;\n    readonly expiresAt: number;\n}"
+    "signature": "export interface ApprovalRequest {\n    readonly id: string;\n    readonly sessionId: string;\n    readonly turnId?: string;\n    readonly action: string;\n    readonly capability: string;\n    readonly reason?: string;\n    /**\n     * Optional decision-boundary coordinate. When present, {@link ApprovalManager.resolveMatched}\n     * admits a decision only if it names this exact run, node, capability, request id, and vector, and\n     * arrives before expiry. Coordinate-less approvals keep their original untyped {@link resolve} path.\n     */\n    readonly coordinate?: DecisionCoordinate;\n    readonly createdAt: number;\n    readonly expiresAt: number;\n}"
   },
   {
     "name": "approvalRequestFromEvent",
@@ -1096,6 +1136,13 @@
     "kind": "function",
     "package": "@nifrajs/testing",
     "signature": "export declare function assertAdapterCertification(report: AdapterCertificationReport): void;"
+  },
+  {
+    "name": "assertAdmitted",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function assertAdmitted(policy: HostPolicy, descriptor: CapabilityDescriptor): void;",
+    "doc": "/** Admit or throw {@link PolicyError}. Use at the host boundary where a refusal must stop the run. */"
   },
   {
     "name": "assertAdversarialContract",
@@ -1811,11 +1858,24 @@
     "doc": "/** A discriminated union: the `mode` selects the context type accepted by `load`. */"
   },
   {
+    "name": "BOUNDARY_COMMANDS",
+    "kind": "const",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare const BOUNDARY_COMMANDS: readonly [\"list\", \"inspect\", \"approve\", \"deny\", \"assign\", \"resolve\", \"expire\", \"cancel\"];",
+    "doc": "/**\n * The negotiated command surface for the inbox: a superset of {@link BoundaryOp} plus the read verbs\n * `list` and `inspect`. A host advertises the subset it supports; a client drives only the granted\n * commands. Order here is the canonical advertisement order.\n */"
+  },
+  {
     "name": "BOUNDARY_GLOBAL",
     "kind": "const",
     "package": "@nifrajs/web",
     "signature": "export declare const BOUNDARY_GLOBAL = \"__NIFRA_BOUNDARIES__\";",
     "doc": "/** Dynamic-boundary states for hydration; absent when a route declares no boundaries. */"
+  },
+  {
+    "name": "BoundaryCommand",
+    "kind": "type",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export type BoundaryCommand = (typeof BOUNDARY_COMMANDS)[number];"
   },
   {
     "name": "BoundaryDescriptor",
@@ -1838,6 +1898,13 @@
     "signature": "export interface BoundaryError {\n    readonly name: string;\n    readonly message: string;\n}"
   },
   {
+    "name": "BoundaryKind",
+    "kind": "type",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export type BoundaryKind = \"approval\" | \"handoff\";",
+    "doc": "/** The two boundary families a host pauses on. */"
+  },
+  {
     "name": "BoundaryMode",
     "kind": "type",
     "package": "@nifrajs/web",
@@ -1851,10 +1918,24 @@
     "doc": "/** Stable mode label for adapter registries and diagnostics. */"
   },
   {
+    "name": "BoundaryOp",
+    "kind": "type",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export type BoundaryOp = \"approve\" | \"deny\" | \"assign\" | \"accept\" | \"decline\" | \"resolve\" | \"expire\" | \"cancel\";",
+    "doc": "/** The operations that drive a boundary. Not every op is legal from every state. */"
+  },
+  {
     "name": "BoundaryRegistration",
     "kind": "type",
     "package": "@nifrajs/web",
     "signature": "export type BoundaryRegistration = (ErasedBoundaryBase & {\n    readonly mode: \"static\";\n    readonly load?: (ctx: StaticCtx) => unknown | Promise<unknown>;\n}) | (ErasedBoundaryBase & {\n    readonly mode: \"dynamic\";\n    readonly load?: (ctx: BoundaryRequestCtx) => unknown | Promise<unknown>;\n}) | (ErasedBoundaryBase & {\n    readonly mode: {\n        readonly intercept: string;\n    };\n    readonly load?: (ctx: BoundaryRequestCtx) => unknown | Promise<unknown>;\n});"
+  },
+  {
+    "name": "BoundaryRejection",
+    "kind": "type",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export type BoundaryRejection = \"unknown_boundary\" | \"identity_mismatch\" | \"stale_vector\" | \"expired\" | \"illegal_transition\";",
+    "doc": "/** Stable, content-free reasons a boundary decision is refused. */"
   },
   {
     "name": "BoundaryRequestCtx",
@@ -2936,6 +3017,13 @@
     "signature": "export declare function checkTrajectoryInvariants(result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions): readonly TrajectoryInvariantResult[];"
   },
   {
+    "name": "ChildVectorTracker",
+    "kind": "class",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare class ChildVectorTracker {\n    private readonly highWater;\n    /** Allocate the next vector for a run. Strictly greater than every previously allocated vector. */\n    open(runId: string): number;\n    /** The last allocated vector for a run, or `-1` when none has opened. */\n    last(runId: string): number;\n    /** Forget a run's vectors once it is terminal. Idempotent. */\n    release(runId: string): void;\n}",
+    "doc": "/**\n * Per-run monotonic child-vector allocator. `open` returns the next strictly increasing vector for a\n * run; `last` reports the high-water mark (`-1` before the first boundary). A vector is never reused,\n * so a decision carrying anything other than its boundary's opened vector is provably stale.\n */"
+  },
+  {
     "name": "ChunkSize",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -3738,6 +3826,20 @@
     "doc": "/**\n * A signing secret, or a rotation list of them. With a list, **the first secret signs** and\n * verification accepts **any** entry - so rotation is: prepend the new secret, keep the old one\n * until every cookie signed by it has expired, then drop it. An empty list throws.\n */"
   },
   {
+    "name": "coordinateIsFresh",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function coordinateIsFresh(coordinate: DecisionCoordinate, now: number): boolean;",
+    "doc": "/** True while `now` is strictly before the coordinate's expiry. At or past expiry fails closed. */"
+  },
+  {
+    "name": "coordinatesMatch",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function coordinatesMatch(a: DecisionCoordinate, b: DecisionCoordinate): boolean;",
+    "doc": "/** True when both coordinates address the same boundary at the same child vector. */"
+  },
+  {
     "name": "copyPublicDir",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -4527,6 +4629,13 @@
     "package": "@nifrajs/core",
     "signature": "export type DeadlineHeadersInit = Headers | Readonly<Record<string, string>> | [string, string][] | undefined;",
     "doc": "/** DOM-lib-independent subset accepted by the Web `Headers` constructor. */"
+  },
+  {
+    "name": "DecisionCoordinate",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface DecisionCoordinate {\n    readonly runId: string;\n    readonly nodeId: string;\n    readonly capability: string;\n    readonly requestId: string;\n    readonly vector: number;\n    readonly expiresAt: number;\n}",
+    "doc": "/**\n * The content-free identity of one decision boundary. `vector` is the run's monotonic child index at\n * which the boundary opened; a decision must carry the boundary's exact vector, so a replayed or\n * superseded decision (a lower or mismatched vector) is refused. `expiresAt` is an absolute epoch-ms\n * deadline. No field carries a prompt, a reason-as-free-text, or a payload.\n */"
   },
   {
     "name": "declaredCapabilities",
@@ -6739,6 +6848,46 @@
     "doc": "/**\n * The handlers `implement` requires: one per operation, typed from the op's input + response contract,\n * intersected with the host app's accumulated `derive`/`decorate` context - the same\n * `Context & Ctx` an inline {@link Handler} receives, so a handler graduates either way unchanged.\n */"
   },
   {
+    "name": "HandoffCoordinator",
+    "kind": "class",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare class HandoffCoordinator {\n    private readonly vectors;\n    private readonly approvals;\n    private readonly defaultTtlMs;\n    private readonly maxPending;\n    private readonly now;\n    private readonly records;\n    constructor(options?: HandoffCoordinatorOptions);\n    /** Open a pending handoff. Allocates the run's next monotonic child vector. */\n    open(input: OpenHandoffInput): HandoffView;\n    /** Every boundary, or - with `activeOnly` - just those still awaiting a decision. */\n    list(activeOnly?: boolean): readonly HandoffView[];\n    /** Inspect one boundary by request id, or `undefined` when unknown. */\n    inspect(requestId: string): HandoffView | undefined;\n    assign(decision: HandoffDecision): HandoffView;\n    accept(decision: HandoffDecision): HandoffView;\n    decline(decision: HandoffDecision): HandoffView;\n    /** Resolve a boundary, resuming exactly the one matching paused node. */\n    resolve(decision: HandoffDecision): HandoffView;\n    expire(decision: HandoffDecision): HandoffView;\n    cancel(decision: HandoffDecision): HandoffView;\n    private drive;\n    private settle;\n    private settleApproval;\n    private isTerminal;\n    private activeCount;\n    private view;\n}"
+  },
+  {
+    "name": "HandoffCoordinatorOptions",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface HandoffCoordinatorOptions {\n    readonly vectors?: ChildVectorTracker;\n    readonly approvals?: ApprovalManager;\n    readonly defaultTtlMs?: number;\n    readonly maxPending?: number;\n    /** Injectable clock (epoch ms). Defaults to {@link Date.now}. */\n    readonly now?: () => number;\n}"
+  },
+  {
+    "name": "HandoffDecision",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface HandoffDecision {\n    readonly coordinate: DecisionCoordinate;\n    /** Owner role to assign (for `assign`) or the actor claiming to own the boundary (accept/resolve). */\n    readonly by?: string;\n}",
+    "doc": "/** A decision against a live boundary. The coordinate must match the boundary exactly. */"
+  },
+  {
+    "name": "HandoffError",
+    "kind": "class",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare class HandoffError extends Error {\n    readonly code: HandoffRejection;\n    constructor(code: HandoffRejection);\n}",
+    "doc": "/** Thrown on any refused handoff operation. `code` is the machine-addressable reason. */"
+  },
+  {
+    "name": "HandoffLifecycleState",
+    "kind": "type",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export type HandoffLifecycleState = \"pending\" | \"assigned\" | \"accepted\" | \"declined\" | \"resolved\" | \"expired\" | \"cancelled\";",
+    "doc": "/** Handoff lifecycle. `assigned` is the only non-pending live state; the rest are terminal. */"
+  },
+  {
+    "name": "HandoffRejection",
+    "kind": "type",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export type HandoffRejection = \"unknown_boundary\" | \"identity_mismatch\" | \"stale_vector\" | \"expired\" | \"illegal_transition\" | \"authority_expanded\" | \"duplicate\" | \"invalid_handoff\";",
+    "doc": "/** Stable, content-free reasons the coordinator refuses a handoff request or decision. */"
+  },
+  {
     "name": "HandoffSnapshot",
     "kind": "interface",
     "package": "@nifrajs/agent-protocol",
@@ -6758,6 +6907,13 @@
     "package": "@nifrajs/agent-app",
     "signature": "export interface HandoffView {\n    readonly runId: string;\n    readonly nodeId: string;\n    readonly seq: number;\n    readonly from: string;\n    readonly to: string;\n    readonly status: HandoffSnapshot[\"status\"];\n}",
     "doc": "/** A handoff reduced to routing identifiers and status - the reason string is content and is dropped. */"
+  },
+  {
+    "name": "HandoffView",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface HandoffView {\n    readonly requestId: string;\n    readonly runId: string;\n    readonly nodeId: string;\n    readonly capability: string;\n    readonly vector: number;\n    readonly expiresAt: number;\n    readonly state: HandoffLifecycleState;\n    /** Opaque origin role. */\n    readonly from: string;\n    /** Opaque owner role once assigned. */\n    readonly to?: string;\n}",
+    "doc": "/** Content-free projection of one handoff boundary for a list/inspect view. */"
   },
   {
     "name": "hash8",
@@ -6810,6 +6966,13 @@
     "package": "@nifrajs/otel",
     "signature": "export declare class Histogram {\n    readonly name: string;\n    readonly help: string;\n    private readonly series;\n    private readonly buckets;\n    constructor(name: string, help: string, buckets: readonly number[]);\n    observe(value: number, labels?: Labels): void;\n    render(): string;\n}",
     "doc": "/** Latency-style distribution over fixed buckets (seconds). Renders Prometheus cumulative buckets. */"
+  },
+  {
+    "name": "HostPolicy",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface HostPolicy {\n    /** Capability kinds the host will admit. A descriptor of any other kind is refused. */\n    readonly allowedKinds: readonly CapabilityKind[];\n    /** Required-capability allowlist. Every `requiredCapabilities` entry must be present. */\n    readonly allowedCapabilities: readonly string[];\n    /** Isolation floor. A descriptor offering weaker isolation than this is refused. */\n    readonly minIsolation: IsolationClass;\n    /** When true, a descriptor whose approval class is `none` is refused as a downgrade. */\n    readonly requireApproval: boolean;\n}",
+    "doc": "/** The authoritative admission policy. Empty allowlists deny everything of that kind. */"
   },
   {
     "name": "hotUpdateNeedsReload",
@@ -7802,6 +7965,20 @@
     "package": "nifra",
     "signature": "export declare function isSameOriginRequest(origin: string, request: Request): boolean;",
     "doc": "/**\n * True when `origin` is the request's own origin, as observed from inside a possibly-proxied server.\n *\n * The host must match exactly. The scheme must be equal or STRONGER on the Origin side, never weaker:\n *\n *   - `https://app` page → `http://app` request URL: accepted. This is what every TLS-terminating\n *     proxy looks like from the origin server - Cloudflare, a tunnel, an ingress. The socket is plain\n *     HTTP, so `request.url` says `http:` while the browser correctly reports an `https:` page.\n *   - `http://app` page → `https://app` request URL: rejected. Nifra terminated TLS itself here, so a\n *     plaintext page on the same host is the downgrade an attacker would need and buys nothing real.\n *\n * Comparing full origins instead is not the stricter option, it is an outage: measured, it rejects\n * every server-function POST behind a terminating proxy, while the cross-origin attacker it aims at\n * was already rejected by the host comparison. Nifra deliberately does not read `X-Forwarded-Proto` -\n * a forwarded header is attacker-controlled unless something upstream is proven to overwrite it - so\n * the scheme in `request.url` is the socket's, not the browser's, and this asymmetry is how the two\n * are reconciled without trusting a header.\n *\n * An unparseable Origin is not same-origin.\n */"
+  },
+  {
+    "name": "isTerminalApprovalState",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function isTerminalApprovalState(state: ApprovalLifecycleState): boolean;",
+    "doc": "/** True once a boundary state accepts no further op. */"
+  },
+  {
+    "name": "isTerminalHandoffState",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function isTerminalHandoffState(state: HandoffLifecycleState): boolean;",
+    "doc": "/** True once a handoff state accepts no further op. */"
   },
   {
     "name": "JobContext",
@@ -9626,6 +9803,20 @@
     "signature": "export type NetlifyHandler = (event: NetlifyEvent) => Promise<PlatformResponse>;"
   },
   {
+    "name": "nextApprovalState",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function nextApprovalState(from: ApprovalLifecycleState, op: BoundaryOp): ApprovalLifecycleState | undefined;",
+    "doc": "/** The next approval state for an op, or `undefined` when the transition is illegal. */"
+  },
+  {
+    "name": "nextHandoffState",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function nextHandoffState(from: HandoffLifecycleState, op: BoundaryOp): HandoffLifecycleState | undefined;",
+    "doc": "/** The next handoff state for an op, or `undefined` when the transition is illegal. */"
+  },
+  {
     "name": "nextRun",
     "kind": "function",
     "package": "@nifrajs/cron",
@@ -10135,6 +10326,12 @@
     "doc": "/** Inputs for {@link openGraph} - the common Open Graph properties. All optional; only the provided\n * ones become tags. `type` defaults to `\"website\"`. */"
   },
   {
+    "name": "OpenHandoffInput",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface OpenHandoffInput {\n    readonly runId: string;\n    readonly nodeId: string;\n    readonly capability: string;\n    readonly requestId: string;\n    /** Opaque origin role. */\n    readonly from: string;\n    /** Milliseconds until the boundary expires closed. Falls back to the coordinator default. */\n    readonly expiresInMs?: number;\n    /** When true, a paired approval is opened on the composed {@link ApprovalManager}, if present. */\n    readonly requireApproval?: boolean;\n    readonly sessionId?: string;\n}"
+  },
+  {
     "name": "OperationDef",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -10145,14 +10342,14 @@
     "name": "OrchestrationHost",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
-    "signature": "export declare class OrchestrationHost {\n    private readonly catalog;\n    private readonly limits;\n    private readonly maxSteps;\n    private readonly maxDepth;\n    private readonly runs;\n    private counter;\n    constructor(options: OrchestrationHostOptions);\n    /**\n     * Parse, compile, and register a run in `submitted`. All structural ceilings and capability\n     * authority are enforced here (a `CompileError` with a stable code), so an over-limit or\n     * unauthorized plan never reaches `running`.\n     */\n    submit(source: RunPlan | unknown, options?: SubmitOptions): Promise<string>;\n    /** Content-free progress view. Throws `E_NOT_FOUND` for an unknown run. */\n    inspect(runId: string): RunStatus;\n    /** `submitted` -> `running`. Begins the driver. */\n    start(runId: string): void;\n    /** `running` -> `paused`. Takes effect at the next layer boundary; in-flight nodes finish. */\n    pause(runId: string): void;\n    /** `paused` -> `running`. Releases the layer boundary. */\n    resume(runId: string): void;\n    /**\n     * Cancel from any non-terminal state. Aborts the in-flight layer and any bounded subagent, frees a\n     * paused gate, and freezes the run in `cancelled`. A late completion cannot revive it.\n     */\n    cancel(runId: string): void;\n    /** Terminal result. Throws `E_NOT_TERMINAL` while the run is still live. */\n    result(runId: string): Promise<RunResult>;\n    /** Await the run reaching a terminal state, then return its result. */\n    settled(runId: string): Promise<RunResult>;\n    private require;\n    private transition;\n    private buildResult;\n    private drive;\n    /** Project one kernel event into a content-free evidence record. Frozen once the run is terminal. */\n    private project;\n    /** Walk the plan tree once: node kinds, idempotency flags, and the full id set. */\n    private indexPlan;\n}",
+    "signature": "export declare class OrchestrationHost {\n    private readonly catalog;\n    private readonly limits;\n    private readonly maxSteps;\n    private readonly maxDepth;\n    private readonly policy;\n    private readonly vectors;\n    private readonly runs;\n    private counter;\n    constructor(options: OrchestrationHostOptions);\n    /**\n     * Admit a capability descriptor against the host policy before it can be invoked. Throws\n     * {@link OrchestrationStateError} (`E_POLICY_REJECTED`) carrying the admission reason when refused.\n     * With no policy configured this is a passthrough - the host admits nothing it is not told to gate.\n     */\n    admit(descriptor: CapabilityDescriptor): void;\n    /**\n     * Allocate the next monotonic child vector for a live run, addressing a decision boundary the run\n     * pauses on. Strictly increasing per run, so a decision carrying any other vector is provably stale.\n     */\n    openBoundaryVector(runId: string): number;\n    /**\n     * Parse, compile, and register a run in `submitted`. All structural ceilings and capability\n     * authority are enforced here (a `CompileError` with a stable code), so an over-limit or\n     * unauthorized plan never reaches `running`.\n     */\n    submit(source: RunPlan | unknown, options?: SubmitOptions): Promise<string>;\n    /** Content-free progress view. Throws `E_NOT_FOUND` for an unknown run. */\n    inspect(runId: string): RunStatus;\n    /** `submitted` -> `running`. Begins the driver. */\n    start(runId: string): void;\n    /** `running` -> `paused`. Takes effect at the next layer boundary; in-flight nodes finish. */\n    pause(runId: string): void;\n    /** `paused` -> `running`. Releases the layer boundary. */\n    resume(runId: string): void;\n    /**\n     * Cancel from any non-terminal state. Aborts the in-flight layer and any bounded subagent, frees a\n     * paused gate, and freezes the run in `cancelled`. A late completion cannot revive it.\n     */\n    cancel(runId: string): void;\n    /** Terminal result. Throws `E_NOT_TERMINAL` while the run is still live. */\n    result(runId: string): Promise<RunResult>;\n    /** Await the run reaching a terminal state, then return its result. */\n    settled(runId: string): Promise<RunResult>;\n    private require;\n    private transition;\n    private buildResult;\n    private drive;\n    /** Project one kernel event into a content-free evidence record. Frozen once the run is terminal. */\n    private project;\n    /** Walk the plan tree once: node kinds, idempotency flags, and the full id set. */\n    private indexPlan;\n}",
     "doc": "/** Owns run lifecycle and evidence projection over the kernel WorkflowRunner. */"
   },
   {
     "name": "OrchestrationHostOptions",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface OrchestrationHostOptions {\n    readonly catalog: StepCatalog;\n    readonly limits?: OrchestrationLimits;\n    /** Kernel step ceiling per layer. Generous by default so a full 256-node layer runs. */\n    readonly maxSteps?: number;\n    readonly maxDepth?: number;\n}"
+    "signature": "export interface OrchestrationHostOptions {\n    readonly catalog: StepCatalog;\n    readonly limits?: OrchestrationLimits;\n    /** Kernel step ceiling per layer. Generous by default so a full 256-node layer runs. */\n    readonly maxSteps?: number;\n    readonly maxDepth?: number;\n    /**\n     * Authoritative admission policy. When set, {@link OrchestrationHost.admit} refuses any capability\n     * descriptor that asks to run outside the policy's kinds, capability allowlist, isolation floor, or\n     * approval requirement. A descriptor, plan, model, or extension cannot override it.\n     */\n    readonly policy?: HostPolicy;\n}"
   },
   {
     "name": "OrchestrationLimits",
@@ -10360,6 +10557,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function parseDeadlineHeader(headers: Headers): DeadlineHeaderResult;",
     "doc": "/** Parse the canonical deadline header without trusting or clamping it. */"
+  },
+  {
+    "name": "parseDecisionCoordinate",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function parseDecisionCoordinate(value: unknown): DecisionCoordinate;",
+    "doc": "/**\n * Decode a decision coordinate. Content-free: forbidden payload keys are rejected, and only the\n * declared structural fields are read. `vector` and `expiresAt` must be non-negative safe integers.\n */"
   },
   {
     "name": "ParsedFontFace",
@@ -10743,6 +10947,13 @@
     "package": "@nifrajs/image",
     "signature": "export type PngRenderer = (svg: string) => Uint8Array | Promise<Uint8Array>;",
     "doc": "/** A dependency-free shape implemented by SVG→PNG codecs such as Resvg, Satori, or a WASM backend. */"
+  },
+  {
+    "name": "PolicyError",
+    "kind": "class",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare class PolicyError extends Error {\n    readonly code: AdmissionRejection;\n    constructor(code: AdmissionRejection);\n}",
+    "doc": "/** Thrown when the host refuses admission and the caller wants an exception rather than a result. */"
   },
   {
     "name": "port",
@@ -16715,6 +16926,13 @@
     "package": "@nifrajs/web-vanilla",
     "signature": "export type VanillaComponent = (props: RenderProps & {\n    children?: Template;\n}) => Template;",
     "doc": "/**\n * A vanilla \"component\": a plain function from props to a {@link Template}. The page (innermost\n * chain element) receives the loader {@link RenderProps}; a layout receives `{ children }` - the\n * already-rendered inner fragment - plus the same render props, mirroring the React/Preact\n * adapters' `children` contract.\n */"
+  },
+  {
+    "name": "vectorAdvances",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function vectorAdvances(last: number, next: number): boolean;",
+    "doc": "/**\n * Monotonic child-vector check: a newly opened boundary must advance strictly past the run's last\n * allocated vector. A non-advancing vector is a replay and is refused. `last` is `-1` before any\n * boundary has opened for the run.\n */"
   },
   {
     "name": "VercelHandler",

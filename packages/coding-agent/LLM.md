@@ -14,8 +14,10 @@ Standalone, extensible Nifra coding-agent host and CLI.
 
 ## Key exports
 
+- **admitCapability** _(function)_ - `admitCapability: (policy: HostPolicy, descriptor: CapabilityDescriptor) => Admission` · from `@nifrajs/coding-agent/orchestration`
 - **approvalRequestFromEvent** _(function)_ - `approvalRequestFromEvent: (event: AgentApprovalRequiredEvent) => ApprovalRequest` · from `@nifrajs/coding-agent`
 - **approvalResolvedEvent** _(function)_ - `approvalResolvedEvent: (sessionId: string, seq: number, decision: ApprovalDecision, turnId?: string) => AgentApprovalResolvedEvent` · from `@nifrajs/coding-agent`
+- **assertAdmitted** _(function)_ - `assertAdmitted: (policy: HostPolicy, descriptor: CapabilityDescriptor) => void` · from `@nifrajs/coding-agent/orchestration`
 - **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void` · from `@nifrajs/coding-agent/orchestration`
 - **canonicalJson** _(function)_ - `canonicalJson: (value: unknown) => string` · from `@nifrajs/coding-agent/orchestration`
 - **compileRunPlan** _(function)_ - `compileRunPlan: (source: RunPlan | unknown, options: CompileOptions) => WorkflowStep` · from `@nifrajs/coding-agent/orchestration`
@@ -26,10 +28,8 @@ Standalone, extensible Nifra coding-agent host and CLI.
 - **createStepCatalog** _(function)_ - `createStepCatalog: (entries: Readonly<Record<string, CatalogStep>>) => StepCatalog` · from `@nifrajs/coding-agent/orchestration`
 - **createVerificationRepairTask** _(function)_ - `createVerificationRepairTask: (result: VerificationResult, cwd: string) => VerificationRepairTask | undefined` · from `@nifrajs/coding-agent`
 - **deniedCapabilities** _(function)_ - `deniedCapabilities: (manifest: AgentCapabilityManifest) => readonly AgentCapability[]` · from `@nifrajs/coding-agent`
-- **deriveNodeEffectKey** _(function)_ - `deriveNodeEffectKey: (material: EffectKeyMaterial) => Promise<NodeEffectKey>` · from `@nifrajs/coding-agent/orchestration`
-- **digestRunPlan** _(function)_ - `digestRunPlan: (plan: RunPlan) => Promise<string>` · from `@nifrajs/coding-agent/orchestration`
 
-_…and 161 more - see [`api-reference.md`](../../api-reference.md#nifrajscodingagent) for the complete list._
+_…and 177 more - see [`api-reference.md`](../../api-reference.md#nifrajscodingagent) for the complete list._
 
 ## Footguns
 

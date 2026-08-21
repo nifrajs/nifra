@@ -1,6 +1,10 @@
-import type {
-  AgentApprovalRequiredEvent,
-  AgentApprovalResolvedEvent,
+import {
+  type AgentApprovalRequiredEvent,
+  type AgentApprovalResolvedEvent,
+  coordinateIsFresh,
+  coordinatesMatch,
+  type DecisionCoordinate,
+  nextApprovalState,
 } from "@nifrajs/agent-protocol"
 
 export interface ApprovalRequest {
@@ -10,9 +14,27 @@ export interface ApprovalRequest {
   readonly action: string
   readonly capability: string
   readonly reason?: string
+  /**
+   * Optional decision-boundary coordinate. When present, {@link ApprovalManager.resolveMatched}
+   * admits a decision only if it names this exact run, node, capability, request id, and vector, and
+   * arrives before expiry. Coordinate-less approvals keep their original untyped {@link resolve} path.
+   */
+  readonly coordinate?: DecisionCoordinate
   readonly createdAt: number
   readonly expiresAt: number
 }
+
+/** Stable, content-free reasons a coordinate-matched resolution is refused. */
+export type ApprovalMatchRejection =
+  | "unknown_boundary"
+  | "identity_mismatch"
+  | "stale_vector"
+  | "expired"
+  | "illegal_transition"
+
+export type ApprovalMatchResult =
+  | { readonly ok: true; readonly decision: ApprovalDecision }
+  | { readonly ok: false; readonly code: ApprovalMatchRejection }
 
 export interface ApprovalDecision {
   readonly approvalId: string
@@ -101,6 +123,38 @@ export class ApprovalManager {
     })
   }
 
+  /**
+   * Resolve an approval that was opened with a {@link DecisionCoordinate}, admitting the decision only
+   * when it matches the live boundary and is still fresh. Every failure is content-free and fails
+   * closed: an unknown id, a coordinate-less approval, a mismatched or superseded coordinate, or an
+   * expired boundary resumes no work. This adds a typed path alongside the untyped {@link resolve}; it
+   * never loosens it.
+   */
+  resolveMatched(
+    coordinate: DecisionCoordinate,
+    approved: boolean,
+    now: number = Date.now(),
+  ): ApprovalMatchResult {
+    const pending = this.pendingApprovals.get(coordinate.requestId)
+    if (pending === undefined) return { ok: false, code: "unknown_boundary" }
+    const bound = pending.request.coordinate
+    if (bound === undefined) return { ok: false, code: "identity_mismatch" }
+    if (!coordinatesMatch(bound, coordinate))
+      return {
+        ok: false,
+        code: bound.vector !== coordinate.vector ? "stale_vector" : "identity_mismatch",
+      }
+    if (!coordinateIsFresh(bound, now)) {
+      this.resolve(coordinate.requestId, false, "approval expired")
+      return { ok: false, code: "expired" }
+    }
+    if (nextApprovalState("pending", approved ? "approve" : "deny") === undefined)
+      return { ok: false, code: "illegal_transition" }
+    const decision = this.resolve(coordinate.requestId, approved)
+    if (decision === undefined) return { ok: false, code: "unknown_boundary" }
+    return { ok: true, decision }
+  }
+
   resolve(approvalId: string, approved: boolean, reason?: string): ApprovalDecision | undefined {
     const pending = this.pendingApprovals.get(approvalId)
     if (pending === undefined) return undefined
@@ -139,6 +193,7 @@ export class ApprovalManager {
       ...input,
       ...(input.turnId === undefined ? {} : { turnId: input.turnId }),
       ...(input.reason === undefined ? {} : { reason: input.reason.slice(0, 512) }),
+      ...(input.coordinate === undefined ? {} : { coordinate: input.coordinate }),
       createdAt,
       expiresAt: createdAt + this.options.timeoutMs,
     })

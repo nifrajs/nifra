@@ -20,7 +20,7 @@ Presentation-safe browser SDK for Nifra agent hosts: negotiated commands, ordere
 - **AgentTransportError** _(class)_ - `class AgentTransportError`
 - **HttpAgentTransport** _(class)_ - `class HttpAgentTransport`
 - **OrderedEventBuffer** _(class)_ - `class OrderedEventBuffer`
-- **AGENT_APP_FEATURES** _(const)_ - `AGENT_APP_FEATURES: readonly ["approvals", "checkpoint", "fork", "handoff", "reload", "resume", "workflows"]`
+- **AGENT_APP_FEATURES** _(const)_ - `AGENT_APP_FEATURES: readonly ["approvals", "checkpoint", "fork", "handoff", "inbox", "reload", "resume", "workflows"]`
 - **AgentAppClientOptions** _(interface)_ - `interface AgentAppClientOptions`
 - **AgentTransport** _(interface)_ - `interface AgentTransport`
 - **AgentTransportRequest** _(interface)_ - `interface AgentTransportRequest`

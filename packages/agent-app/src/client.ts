@@ -12,6 +12,8 @@
 
 import {
   type AgentSessionSnapshot,
+  type BoundaryCommand,
+  type DecisionCoordinate,
   negotiateFeatures,
   parseHandoffSnapshot,
   parseRunSnapshot,
@@ -35,6 +37,7 @@ export const AGENT_APP_FEATURES = [
   "checkpoint",
   "fork",
   "handoff",
+  "inbox",
   "reload",
   "resume",
   "workflows",
@@ -101,6 +104,29 @@ export interface ResolveHandoffInput {
   readonly accept: boolean
   readonly reason?: string
 }
+
+/**
+ * One pending decision boundary in the inbox, projected to structural coordinates and a state only.
+ * It never carries a prompt, a free-text reason, tool data, model output, a diagnostic, or an
+ * artifact - just enough identity for the UI to address the exact boundary a decision resolves.
+ */
+export interface BoundaryItemView {
+  readonly kind: "approval" | "handoff"
+  readonly requestId: string
+  readonly runId: string
+  readonly nodeId: string
+  readonly capability: string
+  readonly vector: number
+  readonly expiresAt: number
+  readonly state: string
+  /** Opaque owner role once a handoff is assigned. */
+  readonly to?: string
+}
+
+/** The bounded outcome of a boundary decision: the resulting item, or a content-free refusal code. */
+export type BoundaryDecisionResult =
+  | { readonly ok: true; readonly item: BoundaryItemView }
+  | { readonly ok: false; readonly code: string }
 
 export class AgentAppClient {
   private readonly transport: AgentTransport
@@ -233,6 +259,67 @@ export class AgentAppClient {
     return toHandoffView(parseHandoffSnapshot(outcome.value.handoff))
   }
 
+  /**
+   * List every pending decision boundary (approvals and handoffs) as content-free item views. Gated
+   * on the negotiated `inbox` feature.
+   */
+  async listBoundaries(): Promise<readonly BoundaryItemView[]> {
+    this.requireFeature("inbox")
+    const outcome = await this.transport.command<unknown>({ method: "boundary.list" })
+    if (!outcome.ok) throw commandError("boundary.list", outcome)
+    const items = isRecord(outcome.value) ? outcome.value.items : undefined
+    if (!Array.isArray(items)) return []
+    const views: BoundaryItemView[] = []
+    for (const item of items) {
+      const view = toBoundaryItemView(item)
+      if (view !== undefined) views.push(view)
+    }
+    return Object.freeze(views)
+  }
+
+  /** Inspect one boundary by request id, projected to a content-free item view. */
+  async inspectBoundary(requestId: string): Promise<BoundaryItemView | undefined> {
+    this.requireFeature("inbox")
+    const outcome = await this.transport.command<unknown>({
+      method: "boundary.inspect",
+      params: { requestId },
+    })
+    if (!outcome.ok) throw commandError("boundary.inspect", outcome)
+    const source =
+      isRecord(outcome.value) && outcome.value.item !== undefined
+        ? outcome.value.item
+        : outcome.value
+    return toBoundaryItemView(source)
+  }
+
+  /**
+   * Drive one boundary command against its exact coordinate. Because the full {@link DecisionCoordinate}
+   * (run, node, capability, request id, vector, expiry) rides on every call, a decision can only ever
+   * resolve the boundary it names - never a different item - and the host fails a stale or mismatched
+   * coordinate closed. `assign` carries the owner role in `to`.
+   */
+  async decideBoundary(
+    command: BoundaryCommand,
+    coordinate: DecisionCoordinate,
+    options?: { readonly to?: string },
+  ): Promise<BoundaryDecisionResult> {
+    this.requireFeature("inbox")
+    const outcome = await this.transport.command<unknown>({
+      method: `boundary.${command}`,
+      params: { coordinate, ...(options?.to === undefined ? {} : { to: options.to }) },
+    })
+    if (!outcome.ok) throw commandError(`boundary.${command}`, outcome)
+    if (isRecord(outcome.value) && typeof outcome.value.rejected === "string")
+      return { ok: false, code: outcome.value.rejected }
+    const item = toBoundaryItemView(
+      isRecord(outcome.value) && outcome.value.item !== undefined
+        ? outcome.value.item
+        : outcome.value,
+    )
+    if (item === undefined) return { ok: false, code: "invalid_response" }
+    return { ok: true, item }
+  }
+
   /** Fetch a run snapshot by id, projected to a content-free {@link RunView}. */
   async runSnapshot(runId: string): Promise<RunView> {
     const outcome = await this.transport.command<unknown>({
@@ -347,4 +434,32 @@ function commandError(method: string, outcome: { status: number; error: string }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+/** Project a raw boundary record to a content-free {@link BoundaryItemView}, or drop it if malformed. */
+function toBoundaryItemView(value: unknown): BoundaryItemView | undefined {
+  if (!isRecord(value)) return undefined
+  const { kind, requestId, runId, nodeId, capability, vector, expiresAt, state, to } = value
+  if (
+    (kind !== "approval" && kind !== "handoff") ||
+    typeof requestId !== "string" ||
+    typeof runId !== "string" ||
+    typeof nodeId !== "string" ||
+    typeof capability !== "string" ||
+    typeof vector !== "number" ||
+    typeof expiresAt !== "number" ||
+    typeof state !== "string"
+  )
+    return undefined
+  return Object.freeze({
+    kind,
+    requestId,
+    runId,
+    nodeId,
+    capability,
+    vector,
+    expiresAt,
+    state,
+    ...(typeof to === "string" ? { to } : {}),
+  })
 }

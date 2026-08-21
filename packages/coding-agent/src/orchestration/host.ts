@@ -12,6 +12,7 @@
  * step output, prompt, or payload.
  */
 
+import type { CapabilityDescriptor } from "@nifrajs/agent/registry"
 import type {
   ArtifactPort,
   ArtifactRef,
@@ -27,6 +28,7 @@ import { noopArtifactPort } from "./artifact-port.ts"
 import type { StepCatalog } from "./catalog.ts"
 import { compileRunPlanLayers, digestRunPlan, type OrchestrationLimits } from "./compile.ts"
 import { type EvidenceCounters, type EvidenceStore, MemoryEvidenceStore } from "./evidence-store.ts"
+import { admitCapability, ChildVectorTracker, type HostPolicy } from "./policy.ts"
 
 export type RunState = "submitted" | "running" | "paused" | "succeeded" | "failed" | "cancelled"
 
@@ -84,6 +86,12 @@ export interface OrchestrationHostOptions {
   /** Kernel step ceiling per layer. Generous by default so a full 256-node layer runs. */
   readonly maxSteps?: number
   readonly maxDepth?: number
+  /**
+   * Authoritative admission policy. When set, {@link OrchestrationHost.admit} refuses any capability
+   * descriptor that asks to run outside the policy's kinds, capability allowlist, isolation floor, or
+   * approval requirement. A descriptor, plan, model, or extension cannot override it.
+   */
+  readonly policy?: HostPolicy
 }
 
 const DEFAULT_MAX_STEPS = 100_000
@@ -116,6 +124,8 @@ export class OrchestrationHost {
   private readonly limits: OrchestrationLimits | undefined
   private readonly maxSteps: number
   private readonly maxDepth: number
+  private readonly policy: HostPolicy | undefined
+  private readonly vectors = new ChildVectorTracker()
   private readonly runs = new Map<string, RunRecord>()
   private counter = 0
 
@@ -124,6 +134,36 @@ export class OrchestrationHost {
     this.limits = options.limits
     this.maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH
+    this.policy = options.policy
+  }
+
+  /**
+   * Admit a capability descriptor against the host policy before it can be invoked. Throws
+   * {@link OrchestrationStateError} (`E_POLICY_REJECTED`) carrying the admission reason when refused.
+   * With no policy configured this is a passthrough - the host admits nothing it is not told to gate.
+   */
+  admit(descriptor: CapabilityDescriptor): void {
+    if (this.policy === undefined) return
+    const admission = admitCapability(this.policy, descriptor)
+    if (!admission.ok)
+      throw new OrchestrationStateError(
+        `capability refused by host policy (${admission.code})`,
+        "E_POLICY_REJECTED",
+      )
+  }
+
+  /**
+   * Allocate the next monotonic child vector for a live run, addressing a decision boundary the run
+   * pauses on. Strictly increasing per run, so a decision carrying any other vector is provably stale.
+   */
+  openBoundaryVector(runId: string): number {
+    const run = this.require(runId)
+    if (isTerminal(run.state))
+      throw new OrchestrationStateError(
+        `run '${runId}' is terminal; no boundary opens`,
+        "E_NOT_TERMINAL",
+      )
+    return this.vectors.open(runId)
   }
 
   /**
@@ -238,6 +278,7 @@ export class OrchestrationHost {
     run.controller.abort()
     run.gate?.resolve()
     run.gate = undefined
+    this.vectors.release(run.runId)
     run.finish()
   }
 
@@ -311,6 +352,7 @@ export class OrchestrationHost {
       if (!isTerminal(run.state)) run.state = "succeeded"
     } finally {
       if (!isTerminal(run.state)) run.state = "failed"
+      this.vectors.release(run.runId)
       run.finish()
     }
   }

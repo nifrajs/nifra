@@ -76,4 +76,13 @@ export {
   type RunStatus,
   type SubmitOptions,
 } from "./host.ts"
+export {
+  type Admission,
+  type AdmissionRejection,
+  admitCapability,
+  assertAdmitted,
+  ChildVectorTracker,
+  type HostPolicy,
+  PolicyError,
+} from "./policy.ts"
 export { type RunTraceOptions, type RunTraceResult, runTrace } from "./tracer.ts"

@@ -187,7 +187,7 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ## @nifrajs/agent-app
 
-- **AGENT_APP_FEATURES** _(const)_ - `AGENT_APP_FEATURES: readonly ["approvals", "checkpoint", "fork", "handoff", "reload", "resume", "workflows"]`
+- **AGENT_APP_FEATURES** _(const)_ - `AGENT_APP_FEATURES: readonly ["approvals", "checkpoint", "fork", "handoff", "inbox", "reload", "resume", "workflows"]`
   Interaction features the client knows how to drive. A host grants the subset it supports.
 - **AgentAppClient** _(class)_ - `class AgentAppClient`
 - **AgentAppClientOptions** _(interface)_ - `interface AgentAppClientOptions`
@@ -277,12 +277,23 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AgentToolStartedEvent** _(interface)_ - `interface AgentToolStartedEvent`
 - **AgentTurnStartedEvent** _(interface)_ - `interface AgentTurnStartedEvent`
 - **AgentVerificationCompletedEvent** _(interface)_ - `interface AgentVerificationCompletedEvent`
+- **ApprovalLifecycleState** _(type)_ - `type ApprovalLifecycleState = "pending" | "approved" | "denied" | "expired" | "cancelled"`
+  Approval lifecycle. Terminal states accept no further transition.
 - **ArtifactContext** _(interface)_ - `interface ArtifactContext`
   What a payload is and where it came from, handed to the port at `put` time.
 - **ArtifactPort** _(interface)_ - `interface ArtifactPort`
   Caller-owned sink for raw payloads - the ONLY place payload bytes leave transient execution. The public repo ships only a discarding no-op and a disposable in-memory test port. No public implementation persists.
 - **ArtifactRef** _(interface)_ - `interface ArtifactRef`
   A content-free pointer to a payload the caller chose to retain out of band.
+- **BOUNDARY_COMMANDS** _(const)_ - `BOUNDARY_COMMANDS: readonly ["list", "inspect", "approve", "deny", "assign", "resolve", "expire", "cancel"]`
+  The negotiated command surface for the inbox: a superset of {@link BoundaryOp} plus the read verbs `list` and `inspect`. A host advertises the subset it supports; a client drives only the granted commands. Order here is the canonical advertisement order.
+- **BoundaryCommand** _(type)_ - `type BoundaryCommand = (typeof BOUNDARY_COMMANDS)[number]`
+- **BoundaryKind** _(type)_ - `type BoundaryKind = "approval" | "handoff"`
+  The two boundary families a host pauses on.
+- **BoundaryOp** _(type)_ - `type BoundaryOp = | "approve" | "deny" | "assign" | "accept" | "decline" | "resolve" | "expire" | "cancel"`
+  The operations that drive a boundary. Not every op is legal from every state.
+- **BoundaryRejection** _(type)_ - `type BoundaryRejection = | "unknown_boundary" | "identity_mismatch" | "stale_vector" | "expired" | "illegal_transition"`
+  Stable, content-free reasons a boundary decision is refused.
 - **CURSOR_BEFORE_ALL** _(const)_ - `CURSOR_BEFORE_ALL: -1`
   Sentinel cursor meaning "before any record". A fresh subscription passes this or `undefined`.
 - **CreateSessionInput** _(interface)_ - `interface CreateSessionInput`
@@ -292,6 +303,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **CursorResyncReason** _(type)_ - `type CursorResyncReason = "stale_cursor"`
 - **CursorResyncRequired** _(interface)_ - `interface CursorResyncRequired`
   The bounded window no longer contains the record after the cursor; a full resync is required.
+- **DecisionCoordinate** _(interface)_ - `interface DecisionCoordinate`
+  The content-free identity of one decision boundary. `vector` is the run's monotonic child index at which the boundary opened; a decision must carry the boundary's exact vector, so a replayed or superseded decision (a lower or mismatched vector) is refused. `expiresAt` is an absolute epoch-ms deadli…
 - **EVIDENCE_MAX_BYTES** _(const)_ - `EVIDENCE_MAX_BYTES: 4096`
   Hard cap on a single serialized evidence record. A content-free record never approaches this.
 - **EvidenceRef** _(interface)_ - `interface EvidenceRef`
@@ -302,6 +315,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The result of reconciling a client's requested features against a host's offered set.
 - **ForkSessionInput** _(interface)_ - `interface ForkSessionInput`
 - **ForkSessionResult** _(interface)_ - `interface ForkSessionResult`
+- **HandoffLifecycleState** _(type)_ - `type HandoffLifecycleState = | "pending" | "assigned" | "accepted" | "declined" | "resolved" | "expired" | "cancelled"`
+  Handoff lifecycle. `assigned` is the only non-pending live state; the rest are terminal.
 - **HandoffSnapshot** _(interface)_ - `interface HandoffSnapshot`
   A content-free snapshot of one handoff between roles/agents within a run.
 - **HandoffStatus** _(type)_ - `type HandoffStatus = "pending" | "accepted" | "declined"`
@@ -353,15 +368,29 @@ Every public export of every package and documented subpath - name, kind, signat
 - **agentError** _(function)_ - `agentError: (code: string, message: string, details?: unknown) => AgentError`
 - **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void`
   Assert a record serializes within the hard cap. Public reference records are content-free.
+- **coordinateIsFresh** _(function)_ - `coordinateIsFresh: (coordinate: DecisionCoordinate, now: number) => boolean`
+  True while `now` is strictly before the coordinate's expiry. At or past expiry fails closed.
+- **coordinatesMatch** _(function)_ - `coordinatesMatch: (a: DecisionCoordinate, b: DecisionCoordinate) => boolean`
+  True when both coordinates address the same boundary at the same child vector.
 - **createAgentEventStream** _(function)_ - `createAgentEventStream: (maxQueueSize?: number) => AgentEventStream`
   Small bounded event stream for RPC clients and UIs. The authoritative event history belongs to the backend/session store; this live view may drop old transient events if a consumer falls behind.
 - **evidenceEventId** _(function)_ - `evidenceEventId: (runId: string, seq: number) => string`
   The stable dedupe identity for an evidence record.
 - **isAgentEvent** _(function)_ - `isAgentEvent: (value: unknown) => value is AgentEvent`
+- **isTerminalApprovalState** _(function)_ - `isTerminalApprovalState: (state: ApprovalLifecycleState) => boolean`
+  True once a boundary state accepts no further op.
+- **isTerminalHandoffState** _(function)_ - `isTerminalHandoffState: (state: HandoffLifecycleState) => boolean`
+  True once a handoff state accepts no further op.
 - **negotiateFeatures** _(function)_ - `negotiateFeatures: (offered: readonly string[], requested: readonly string[]) => FeatureNegotiation`
   Reconcile requested features against the offered set. A requested feature the host does not offer is reported as unsupported rather than silently dropped, so a client can degrade deliberately.
+- **nextApprovalState** _(function)_ - `nextApprovalState: (from: ApprovalLifecycleState, op: BoundaryOp) => ApprovalLifecycleState | undefined`
+  The next approval state for an op, or `undefined` when the transition is illegal.
+- **nextHandoffState** _(function)_ - `nextHandoffState: (from: HandoffLifecycleState, op: BoundaryOp) => HandoffLifecycleState | undefined`
+  The next handoff state for an op, or `undefined` when the transition is illegal.
 - **parseArtifactRef** _(function)_ - `parseArtifactRef: (value: unknown) => ArtifactRef`
   Parse a content-free artifact reference. Rejects any non-schema or content key.
+- **parseDecisionCoordinate** _(function)_ - `parseDecisionCoordinate: (value: unknown) => DecisionCoordinate`
+  Decode a decision coordinate. Content-free: forbidden payload keys are rejected, and only the declared structural fields are read. `vector` and `expiresAt` must be non-negative safe integers.
 - **parseHandoffSnapshot** _(function)_ - `parseHandoffSnapshot: (value: unknown) => HandoffSnapshot`
   Decode a handoff snapshot. Forward-compatible about unknown additive fields; forbidden content keys are rejected.
 - **parseRunEvidence** _(function)_ - `parseRunEvidence: (value: unknown) => RunEvidence`
@@ -376,6 +405,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Decode a bounded run snapshot. Forward-compatible: unknown additive fields are ignored so an older client tolerates a newer host. Forbidden content keys are still rejected.
 - **resumeFromCursor** _(function)_ - `resumeFromCursor: <T extends { readonly seq: number; }>(window: readonly T[], cursor?: number) => CursorResume<T>`
   Resume an ordered, seq-keyed window from a cursor.
+- **vectorAdvances** _(function)_ - `vectorAdvances: (last: number, next: number) => boolean`
+  Monotonic child-vector check: a newly opened boundary must advance strictly past the run's last allocated vector. A non-advancing vector is a replay and is refused. `last` is `-1` before any boundary has opened for the run.
 
 ## @nifrajs/agent-telemetry
 
@@ -669,6 +700,9 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ApprovalManager** _(class)_ - `class ApprovalManager`
   Small approval broker shared by RPC, Workbench, and workflow extensions.
 - **ApprovalManagerOptions** _(interface)_ - `interface ApprovalManagerOptions`
+- **ApprovalMatchRejection** _(type)_ - `type ApprovalMatchRejection = | "unknown_boundary" | "identity_mismatch" | "stale_vector" | "expired" | "illegal_transition"`
+  Stable, content-free reasons a coordinate-matched resolution is refused.
+- **ApprovalMatchResult** _(type)_ - `type ApprovalMatchResult = | { readonly ok: true; readonly decision: ApprovalDecision } | { readonly ok: false; readonly code: ApprovalMatchRejection }`
 - **ApprovalRequest** _(interface)_ - `interface ApprovalRequest`
 - **BoundedSubagentRunner** _(class)_ - `class BoundedSubagentRunner`
   Explicitly bounded child execution. Recursive fan-out is impossible without a caller budget.
@@ -703,6 +737,16 @@ Every public export of every package and documented subpath - name, kind, signat
 - **FileSessionStore** _(class)_ - `class FileSessionStore`
   Small append-only JSONL store. It stores redacted, bounded event evidence rather than raw model transcripts, so session recovery is useful without turning the agent into a memory sink.
 - **FileSessionStoreOptions** _(interface)_ - `interface FileSessionStoreOptions`
+- **HandoffCoordinator** _(class)_ - `class HandoffCoordinator`
+- **HandoffCoordinatorOptions** _(interface)_ - `interface HandoffCoordinatorOptions`
+- **HandoffDecision** _(interface)_ - `interface HandoffDecision`
+  A decision against a live boundary. The coordinate must match the boundary exactly.
+- **HandoffError** _(class)_ - `class HandoffError`
+  Thrown on any refused handoff operation. `code` is the machine-addressable reason.
+- **HandoffRejection** _(type)_ - `type HandoffRejection = | "unknown_boundary" | "identity_mismatch" | "stale_vector" | "expired" | "illegal_transition" | "authority_expanded" | "duplicate" | "invalid_handoff"`
+  Stable, content-free reasons the coordinator refuses a handoff request or decision.
+- **HandoffView** _(interface)_ - `interface HandoffView`
+  Content-free projection of one handoff boundary for a list/inspect view.
 - **HealingEvent** _(type)_ - `type HealingEvent`
 - **HealingOptions** _(interface)_ - `interface HealingOptions`
 - **HealingResult** _(interface)_ - `interface HealingResult`
@@ -726,6 +770,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **NifraBackendOptions** _(interface)_ - `interface NifraBackendOptions`
 - **NifraContextOptions** _(interface)_ - `interface NifraContextOptions`
 - **NifraContextResult** _(interface)_ - `interface NifraContextResult`
+- **OpenHandoffInput** _(interface)_ - `interface OpenHandoffInput`
 - **PiBackend** _(class)_ - `class PiBackend`
   Spawn Pi in its documented JSONL RPC mode and translate its events into the Nifra protocol.
 - **PiBackendOptions** _(interface)_ - `interface PiBackendOptions`
@@ -818,6 +863,9 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ### `@nifrajs/coding-agent/orchestration`
 
+- **Admission** _(type)_ - `type Admission = { readonly ok: true } | { readonly ok: false; readonly code: AdmissionRejection }`
+- **AdmissionRejection** _(type)_ - `type AdmissionRejection = | "kind_not_allowed" | "capability_not_allowed" | "isolation_too_weak" | "approval_downgrade"`
+  Stable, content-free reasons the host refuses to admit a capability.
 - **ArtifactContext** _(interface)_ - `interface ArtifactContext`
   What a payload is and where it came from, handed to the port at `put` time.
 - **ArtifactPort** _(interface)_ - `interface ArtifactPort`
@@ -828,6 +876,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Thrown on a catalog construction fault: a key collision across merged catalogs.
 - **CatalogStep** _(interface)_ - `interface CatalogStep`
   One catalog handler. `kind` must match the plan node's kind at compile time.
+- **ChildVectorTracker** _(class)_ - `class ChildVectorTracker`
+  Per-run monotonic child-vector allocator. `open` returns the next strictly increasing vector for a run; `last` reports the high-water mark (`-1` before the first boundary). A vector is never reused, so a decision carrying anything other than its boundary's opened vector is provably stale.
 - **CompileError** _(class)_ - `class CompileError`
   Thrown when a plan cannot be lowered. `code` is a stable evidence code.
 - **CompileOptions** _(interface)_ - `interface CompileOptions`
@@ -845,6 +895,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **FileEvidenceStore** _(class)_ - `class FileEvidenceStore`
   A bounded store that also appends each parsed record as one canonical-JSON line to a file, in deterministic append order. The record is normalized (and so a forbidden-content record is rejected) BEFORE the line is written, so the file never receives a payload. The append uses the `a` flag, so each …
 - **FileEvidenceStoreOptions** _(interface)_ - `interface FileEvidenceStoreOptions`
+- **HostPolicy** _(interface)_ - `interface HostPolicy`
+  The authoritative admission policy. Empty allowlists deny everything of that kind.
 - **MemoryArtifactPort** _(interface)_ - `interface MemoryArtifactPort`
   A memory port that additionally exposes stored bytes for assertions. Test-only.
 - **MemoryEvidenceStore** _(class)_ - `class MemoryEvidenceStore`
@@ -859,6 +911,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Host-owned ceilings. A plan can only tighten, never widen, these.
 - **OrchestrationStateError** _(class)_ - `class OrchestrationStateError`
   Thrown on an illegal lifecycle transition or an unknown run. `code` is stable.
+- **PolicyError** _(class)_ - `class PolicyError`
+  Thrown when the host refuses admission and the caller wants an exception rather than a result.
 - **RUN_PLAN_VERSION** _(const)_ - `RUN_PLAN_VERSION: 1`
   Orchestration contract version. Additive to the session `AGENT_PROTOCOL_VERSION`.
 - **RunBranchNode** _(interface)_ - `interface RunBranchNode`
@@ -901,6 +955,10 @@ Every public export of every package and documented subpath - name, kind, signat
 - **StepRunContext** _(interface)_ - `interface StepRunContext`
   Runtime context handed to a step body. Payloads leave only through {@link StepRunContext.artifact}.
 - **SubmitOptions** _(interface)_ - `interface SubmitOptions`
+- **admitCapability** _(function)_ - `admitCapability: (policy: HostPolicy, descriptor: CapabilityDescriptor) => Admission`
+  Admit a capability descriptor against the host policy. The policy is the floor; the descriptor can only meet or exceed it. Returns the first failing reason, or `{ ok: true }` when every gate passes.
+- **assertAdmitted** _(function)_ - `assertAdmitted: (policy: HostPolicy, descriptor: CapabilityDescriptor) => void`
+  Admit or throw {@link PolicyError}. Use at the host boundary where a refusal must stop the run.
 - **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void`
   Assert a record serializes within the hard cap. Public reference records are content-free.
 - **canonicalJson** _(function)_ - `canonicalJson: (value: unknown) => string`

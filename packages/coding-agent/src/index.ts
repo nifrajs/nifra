@@ -3,6 +3,8 @@ export {
   type ApprovalDecision,
   ApprovalManager,
   type ApprovalManagerOptions,
+  type ApprovalMatchRejection,
+  type ApprovalMatchResult,
   type ApprovalRequest,
   approvalRequestFromEvent,
   approvalResolvedEvent,
@@ -35,6 +37,15 @@ export {
   type ExtensionTool,
   validateExtensionModule,
 } from "./extensions.ts"
+export {
+  HandoffCoordinator,
+  type HandoffCoordinatorOptions,
+  type HandoffDecision,
+  HandoffError,
+  type HandoffRejection,
+  type HandoffView,
+  type OpenHandoffInput,
+} from "./handoffs.ts"
 export {
   type HealingEvent,
   type HealingOptions,
