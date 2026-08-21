@@ -10,12 +10,17 @@
  * it could use to reconstruct a payload.
  */
 
-import type {
-  AgentEvent,
-  AgentSessionSnapshot,
-  AgentSessionStatus,
-  HandoffSnapshot,
-  RunSnapshot,
+import {
+  type AgentEvent,
+  type AgentSessionSnapshot,
+  type AgentSessionStatus,
+  type ApprovalLifecycleState,
+  type BoundaryCommand,
+  type HandoffLifecycleState,
+  type HandoffSnapshot,
+  nextApprovalState,
+  nextHandoffState,
+  type RunSnapshot,
 } from "@nifrajs/agent-protocol"
 
 /** A session reduced to lifecycle and capability facts. The working directory is deliberately omitted. */
@@ -317,6 +322,154 @@ export function toHandoffView(snapshot: HandoffSnapshot): HandoffView {
     to: snapshot.to,
     status: snapshot.status,
   })
+}
+
+/**
+ * A registry capability projected to its content-free identity card.
+ *
+ * The registry lists the invokable capabilities a host admits. A view carries only structural facts -
+ * kind, identifier, version, the schema *digest* (a hash, never the schema), the required capability
+ * tokens, and the host classes (approval, retry, idempotency, isolation). It never carries an input
+ * schema, a description, an instruction, a prompt, or any other content field; any such field on the
+ * raw record is simply dropped by the projection rather than surfaced.
+ */
+export interface RegistryCapabilityView {
+  readonly kind: "tool" | "mcp-tool" | "extension" | "model-adapter" | "deployment-adapter"
+  readonly name: string
+  readonly version: string
+  readonly schemaDigest: string
+  readonly requiredCapabilities: readonly string[]
+  readonly approval: "none" | "required" | "threshold"
+  /** Present only for a `threshold` approval class. A numeric level is a bound, not content. */
+  readonly approvalLevel?: number
+  readonly retry: "none" | "idempotent"
+  readonly idempotency: "none" | "request" | "durable"
+  readonly isolation: "inherit" | "process" | "sandbox"
+}
+
+const REGISTRY_KINDS: ReadonlySet<string> = new Set([
+  "tool",
+  "mcp-tool",
+  "extension",
+  "model-adapter",
+  "deployment-adapter",
+])
+const REGISTRY_RETRY: ReadonlySet<string> = new Set(["none", "idempotent"])
+const REGISTRY_IDEMPOTENCY: ReadonlySet<string> = new Set(["none", "request", "durable"])
+const REGISTRY_ISOLATION: ReadonlySet<string> = new Set(["inherit", "process", "sandbox"])
+const HEX64 = /^[0-9a-f]{64}$/
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function readApproval(
+  value: unknown,
+): { readonly approval: RegistryCapabilityView["approval"]; readonly level?: number } | undefined {
+  if (!isRecordValue(value)) return undefined
+  const kind = value.kind
+  if (kind === "none" || kind === "required") return { approval: kind }
+  if (kind === "threshold" && typeof value.level === "number" && Number.isSafeInteger(value.level))
+    return { approval: "threshold", level: value.level }
+  return undefined
+}
+
+/**
+ * Project one raw registry descriptor to a content-free {@link RegistryCapabilityView}, or `undefined`
+ * when a required identifier is missing or malformed. Only whitelisted structural fields are read, so
+ * an unexpected content field on the record can never reach the returned view.
+ */
+export function toRegistryCapabilityView(value: unknown): RegistryCapabilityView | undefined {
+  if (!isRecordValue(value)) return undefined
+  const { kind, name, version, schemaDigest, requiredCapabilities, retry, idempotency, isolation } =
+    value
+  if (
+    typeof kind !== "string" ||
+    !REGISTRY_KINDS.has(kind) ||
+    typeof name !== "string" ||
+    name.length === 0 ||
+    typeof version !== "string" ||
+    version.length === 0 ||
+    typeof schemaDigest !== "string" ||
+    !HEX64.test(schemaDigest) ||
+    !Array.isArray(requiredCapabilities) ||
+    !requiredCapabilities.every((entry) => typeof entry === "string") ||
+    typeof retry !== "string" ||
+    !REGISTRY_RETRY.has(retry) ||
+    typeof idempotency !== "string" ||
+    !REGISTRY_IDEMPOTENCY.has(idempotency) ||
+    typeof isolation !== "string" ||
+    !REGISTRY_ISOLATION.has(isolation)
+  )
+    return undefined
+  const approval = readApproval(value.approval)
+  if (approval === undefined) return undefined
+  return Object.freeze({
+    kind: kind as RegistryCapabilityView["kind"],
+    name,
+    version,
+    schemaDigest,
+    requiredCapabilities: Object.freeze([...requiredCapabilities]),
+    approval: approval.approval,
+    ...(approval.level === undefined ? {} : { approvalLevel: approval.level }),
+    retry: retry as RegistryCapabilityView["retry"],
+    idempotency: idempotency as RegistryCapabilityView["idempotency"],
+    isolation: isolation as RegistryCapabilityView["isolation"],
+  })
+}
+
+/** The minimal boundary facts a decision needs. A `BoundaryItemView` from the client satisfies it. */
+export interface BoundaryStateView {
+  readonly kind: "approval" | "handoff"
+  readonly state: string
+  /** Absolute epoch-ms expiry. At or past it, the boundary is stale and offers no command. */
+  readonly expiresAt: number
+}
+
+const APPROVAL_STATES: ReadonlySet<string> = new Set([
+  "pending",
+  "approved",
+  "denied",
+  "expired",
+  "cancelled",
+])
+const HANDOFF_STATES: ReadonlySet<string> = new Set([
+  "pending",
+  "assigned",
+  "accepted",
+  "declined",
+  "resolved",
+  "expired",
+  "cancelled",
+])
+/** UI verbs per boundary kind, in display order. `cancel` is shared; a numeric level never appears. */
+const APPROVAL_UI_OPS = ["approve", "deny", "cancel"] as const
+const HANDOFF_UI_OPS = ["assign", "resolve", "cancel"] as const
+
+/** True once `now` reaches or passes the boundary's expiry. A stale boundary fails every command closed. */
+export function boundaryIsStale(item: BoundaryStateView, now: number): boolean {
+  return now >= item.expiresAt
+}
+
+/**
+ * The boundary commands a UI may currently offer for one item. A command appears only when the host
+ * has negotiated the `inbox` feature, the boundary has not expired, and the op is a legal transition
+ * from the boundary's live state. An unknown or terminal state yields no commands, so a stale,
+ * unsupported, or already-settled boundary can never present an actionable control.
+ */
+export function boundaryCommands(
+  item: BoundaryStateView,
+  options: { readonly inbox: boolean; readonly now: number },
+): readonly BoundaryCommand[] {
+  if (!options.inbox || boundaryIsStale(item, options.now)) return []
+  if (item.kind === "approval") {
+    if (!APPROVAL_STATES.has(item.state)) return []
+    const state = item.state as ApprovalLifecycleState
+    return Object.freeze(APPROVAL_UI_OPS.filter((op) => nextApprovalState(state, op) !== undefined))
+  }
+  if (!HANDOFF_STATES.has(item.state)) return []
+  const state = item.state as HandoffLifecycleState
+  return Object.freeze(HANDOFF_UI_OPS.filter((op) => nextHandoffState(state, op) !== undefined))
 }
 
 /**

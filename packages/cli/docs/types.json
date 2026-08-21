@@ -1878,6 +1878,20 @@
     "signature": "export type BoundaryCommand = (typeof BOUNDARY_COMMANDS)[number];"
   },
   {
+    "name": "boundaryCommands",
+    "kind": "function",
+    "package": "@nifrajs/agent-app",
+    "signature": "export declare function boundaryCommands(item: BoundaryStateView, options: {\n    readonly inbox: boolean;\n    readonly now: number;\n}): readonly BoundaryCommand[];",
+    "doc": "/**\n * The boundary commands a UI may currently offer for one item. A command appears only when the host\n * has negotiated the `inbox` feature, the boundary has not expired, and the op is a legal transition\n * from the boundary's live state. An unknown or terminal state yields no commands, so a stale,\n * unsupported, or already-settled boundary can never present an actionable control.\n */"
+  },
+  {
+    "name": "BoundaryDecisionResult",
+    "kind": "type",
+    "package": "@nifrajs/agent-app",
+    "signature": "export type BoundaryDecisionResult = {\n    readonly ok: true;\n    readonly item: BoundaryItemView;\n} | {\n    readonly ok: false;\n    readonly code: string;\n};",
+    "doc": "/** The bounded outcome of a boundary decision: the resulting item, or a content-free refusal code. */"
+  },
+  {
     "name": "BoundaryDescriptor",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -1896,6 +1910,20 @@
     "kind": "interface",
     "package": "@nifrajs/web",
     "signature": "export interface BoundaryError {\n    readonly name: string;\n    readonly message: string;\n}"
+  },
+  {
+    "name": "boundaryIsStale",
+    "kind": "function",
+    "package": "@nifrajs/agent-app",
+    "signature": "export declare function boundaryIsStale(item: BoundaryStateView, now: number): boolean;",
+    "doc": "/** True once `now` reaches or passes the boundary's expiry. A stale boundary fails every command closed. */"
+  },
+  {
+    "name": "BoundaryItemView",
+    "kind": "interface",
+    "package": "@nifrajs/agent-app",
+    "signature": "export interface BoundaryItemView {\n    readonly kind: \"approval\" | \"handoff\";\n    readonly requestId: string;\n    readonly runId: string;\n    readonly nodeId: string;\n    readonly capability: string;\n    readonly vector: number;\n    readonly expiresAt: number;\n    readonly state: string;\n    /** Opaque owner role once a handoff is assigned. */\n    readonly to?: string;\n}",
+    "doc": "/**\n * One pending decision boundary in the inbox, projected to structural coordinates and a state only.\n * It never carries a prompt, a free-text reason, tool data, model output, a diagnostic, or an\n * artifact - just enough identity for the UI to address the exact boundary a decision resolves.\n */"
   },
   {
     "name": "BoundaryKind",
@@ -1956,6 +1984,13 @@
     "kind": "type",
     "package": "@nifrajs/web",
     "signature": "export type BoundaryStates = Readonly<Record<string, BoundaryState>>;"
+  },
+  {
+    "name": "BoundaryStateView",
+    "kind": "interface",
+    "package": "@nifrajs/agent-app",
+    "signature": "export interface BoundaryStateView {\n    readonly kind: \"approval\" | \"handoff\";\n    readonly state: string;\n    /** Absolute epoch-ms expiry. At or past it, the boundary is stale and offers no command. */\n    readonly expiresAt: number;\n}",
+    "doc": "/** The minimal boundary facts a decision needs. A `BoundaryItemView` from the client satisfies it. */"
   },
   {
     "name": "BoundaryStatus",
@@ -11964,6 +11999,13 @@
     "signature": "export declare const REGISTRY_SNAPSHOT_VERSION: 1;"
   },
   {
+    "name": "RegistryCapabilityView",
+    "kind": "interface",
+    "package": "@nifrajs/agent-app",
+    "signature": "export interface RegistryCapabilityView {\n    readonly kind: \"tool\" | \"mcp-tool\" | \"extension\" | \"model-adapter\" | \"deployment-adapter\";\n    readonly name: string;\n    readonly version: string;\n    readonly schemaDigest: string;\n    readonly requiredCapabilities: readonly string[];\n    readonly approval: \"none\" | \"required\" | \"threshold\";\n    /** Present only for a `threshold` approval class. A numeric level is a bound, not content. */\n    readonly approvalLevel?: number;\n    readonly retry: \"none\" | \"idempotent\";\n    readonly idempotency: \"none\" | \"request\" | \"durable\";\n    readonly isolation: \"inherit\" | \"process\" | \"sandbox\";\n}",
+    "doc": "/**\n * A registry capability projected to its content-free identity card.\n *\n * The registry lists the invokable capabilities a host admits. A view carries only structural facts -\n * kind, identifier, version, the schema *digest* (a hash, never the schema), the required capability\n * tokens, and the host classes (approval, retry, idempotency, isolation). It never carries an input\n * schema, a description, an instruction, a prompt, or any other content field; any such field on the\n * raw record is simply dropped by the projection rather than surfaced.\n */"
+  },
+  {
     "name": "registryCertificationProfile",
     "kind": "function",
     "package": "@nifrajs/testing",
@@ -16027,6 +16069,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function topUserFrame(frames: readonly DiagnosticFrame[], root: string | undefined): DiagnosticFrame | undefined;",
     "doc": "/** The first frame that points at the user's own source - what the codeframe should show. */"
+  },
+  {
+    "name": "toRegistryCapabilityView",
+    "kind": "function",
+    "package": "@nifrajs/agent-app",
+    "signature": "export declare function toRegistryCapabilityView(value: unknown): RegistryCapabilityView | undefined;",
+    "doc": "/**\n * Project one raw registry descriptor to a content-free {@link RegistryCapabilityView}, or `undefined`\n * when a required identifier is missing or malformed. Only whitelisted structural fields are read, so\n * an unexpected content field on the record can never reach the returned view.\n */"
   },
   {
     "name": "toResponse",

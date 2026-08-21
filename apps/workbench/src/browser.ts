@@ -13,7 +13,15 @@
  * escape hatch and projected to content-free fields here at the call site.
  */
 
-import { AgentAppClient, type AgentEventView, HttpAgentTransport } from "@nifrajs/agent-app"
+import {
+  AgentAppClient,
+  type AgentEventView,
+  type BoundaryItemView,
+  boundaryCommands,
+  HttpAgentTransport,
+  type RegistryCapabilityView,
+  toRegistryCapabilityView,
+} from "@nifrajs/agent-app"
 
 const params = new URLSearchParams(window.location.search)
 const endpoint = params.get("rpc") ?? ""
@@ -32,6 +40,8 @@ const ui = {
   session: el("session"),
   messages: el("messages"),
   timeline: el("timeline"),
+  registry: el("registry"),
+  inbox: el("inbox"),
   approvals: el("approvals"),
   verification: el("verification"),
   workflows: el("workflows"),
@@ -128,11 +138,131 @@ async function connect(): Promise<void> {
   ui.session.textContent = `${view.id}\n${view.backend} · seq ${view.lastSeq}\nfeatures: ${client.features.join(", ") || "none"}`
   await Promise.allSettled([
     refreshApprovals(),
+    refreshRegistry(),
+    refreshInbox(),
     refreshList("workflow.list", "workflows", ui.workflows, "No workflow extensions loaded"),
     refreshList("subagent.list", "subagents", ui.subagents, "No custom roles loaded"),
     refreshList("provider.list", "providers", ui.providers, "No custom providers loaded"),
     refreshUi(),
   ])
+}
+
+/**
+ * Render the capability registry as content-free identity cards. Reached through the bounded command
+ * escape hatch and projected with {@link toRegistryCapabilityView}, so a stray content field on a raw
+ * descriptor is dropped rather than shown. Degrades to a stable notice when the host offers no
+ * registry (for example when Pi is unavailable).
+ */
+async function refreshRegistry(): Promise<void> {
+  const outcome = await client.command<Record<string, unknown>>("registry.list")
+  ui.registry.replaceChildren()
+  if (!outcome.ok) {
+    ui.registry.textContent = `Registry not offered (${outcome.status})`
+    ui.registry.className = "surface-list muted"
+    return
+  }
+  const raw = outcome.value.descriptors ?? outcome.value.capabilities
+  const source = Array.isArray(raw) ? raw : []
+  const views: RegistryCapabilityView[] = []
+  for (const item of source) {
+    const view = toRegistryCapabilityView(item)
+    if (view !== undefined) views.push(view)
+  }
+  if (views.length === 0) {
+    ui.registry.textContent = "No capabilities registered"
+    ui.registry.className = "surface-list muted"
+    return
+  }
+  ui.registry.className = "surface-list"
+  for (const view of views) {
+    const row = document.createElement("div")
+    row.className = "surface-row"
+    const label = document.createElement("div")
+    const strong = document.createElement("strong")
+    strong.textContent = `${view.name} · ${view.kind}`
+    const small = document.createElement("small")
+    const approval =
+      view.approval === "threshold" ? `threshold:${view.approvalLevel}` : view.approval
+    // Structural facts only: capability tokens, isolation, approval class, idempotency. No content.
+    small.textContent = `${view.requiredCapabilities.join(" · ") || "no capabilities"} · ${view.isolation} · approval:${approval} · ${view.idempotency}`
+    label.append(strong, small)
+    row.append(label)
+    ui.registry.append(row)
+  }
+}
+
+/**
+ * Render the pending decision-boundary inbox. Each item shows its structural coordinate (run, node,
+ * capability, child vector, expiry) and lifecycle state - never a prompt, reason, tool payload, model
+ * output, or diagnostic. Command buttons appear only for the ops {@link boundaryCommands} reports as
+ * currently legal, and each carries the item's exact coordinate so a decision can only ever resolve
+ * the boundary it names. Gated on the negotiated `inbox` feature.
+ */
+async function refreshInbox(): Promise<void> {
+  if (!client.supports("inbox")) {
+    ui.inbox.textContent = "Inbox not offered by this host"
+    ui.inbox.className = "muted"
+    return
+  }
+  const items = await client.listBoundaries()
+  ui.inbox.replaceChildren()
+  if (items.length === 0) {
+    ui.inbox.textContent = "No pending decisions"
+    ui.inbox.className = "muted"
+    return
+  }
+  ui.inbox.className = ""
+  const now = Date.now()
+  for (const item of items) renderBoundary(item, now)
+}
+
+function renderBoundary(item: BoundaryItemView, now: number): void {
+  const card = document.createElement("div")
+  card.className = "approval"
+  const title = document.createElement("strong")
+  title.textContent = `${item.kind} · ${item.capability}`
+  const detail = document.createElement("small")
+  const owner = item.to === undefined ? "" : ` · owner ${item.to}`
+  // Opaque references only: run/node ids, child vector, request id, state, expiry. No content.
+  detail.textContent = `${item.state} · run ${item.runId} · node ${item.nodeId} · v${item.vector} · req ${item.requestId} · expires ${item.expiresAt}${owner}`
+  const actions = document.createElement("div")
+  actions.className = "approval-actions"
+  for (const command of boundaryCommands(item, { inbox: true, now })) {
+    const button = document.createElement("button")
+    button.type = "button"
+    button.textContent = command
+    if (command === "deny" || command === "cancel") button.className = "deny"
+    button.addEventListener("click", () => void decideBoundary(item, command))
+    actions.append(button)
+  }
+  card.append(title, detail, actions)
+  ui.inbox.append(card)
+}
+
+async function decideBoundary(
+  item: BoundaryItemView,
+  command: ReturnType<typeof boundaryCommands>[number],
+): Promise<void> {
+  const coordinate = {
+    runId: item.runId,
+    nodeId: item.nodeId,
+    capability: item.capability,
+    requestId: item.requestId,
+    vector: item.vector,
+    expiresAt: item.expiresAt,
+  }
+  const options =
+    command === "assign"
+      ? { to: window.prompt("Assign to owner role", "")?.trim() ?? "" }
+      : undefined
+  if (command === "assign" && (options === undefined || options.to === "")) return
+  const result = await client.decideBoundary(command, coordinate, options)
+  addTimeline(
+    result.ok
+      ? `boundary.${command} · ${result.item.state}`
+      : `boundary.${command} · refused ${result.code}`,
+  )
+  await refreshInbox()
 }
 
 async function sendPrompt(message: string): Promise<void> {
@@ -152,7 +282,7 @@ async function sendPrompt(message: string): Promise<void> {
     }
     if (deltas === 0 && tools === 0)
       evidence.textContent = "assistant evidence · turn produced no events"
-    await refreshApprovals()
+    await Promise.allSettled([refreshApprovals(), refreshInbox()])
   } catch (error) {
     evidence.textContent = `turn failed · ${error instanceof Error ? error.message : String(error)}`
   }
@@ -348,6 +478,8 @@ async function reload(): Promise<void> {
   const disabled = Array.isArray(outcome.value.disabled) ? outcome.value.disabled.length : 0
   addTimeline(`session.reload · ${loaded} loaded / ${disabled} disabled`)
   await Promise.allSettled([
+    refreshRegistry(),
+    refreshInbox(),
     refreshList("workflow.list", "workflows", ui.workflows, "No workflow extensions loaded"),
     refreshList("subagent.list", "subagents", ui.subagents, "No custom roles loaded"),
     refreshList("provider.list", "providers", ui.providers, "No custom providers loaded"),

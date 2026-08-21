@@ -203,6 +203,12 @@ Every public export of every package and documented subpath - name, kind, signat
 - **AssistantChunkView** _(interface)_ - `interface AssistantChunkView`
 - **AuthProvider** _(type)_ - `type AuthProvider = () => string | undefined | Promise<string | undefined>`
   Returns a bearer token for the next request, or `undefined` for an unauthenticated call.
+- **BoundaryDecisionResult** _(type)_ - `type BoundaryDecisionResult = | { readonly ok: true; readonly item: BoundaryItemView } | { readonly ok: false; readonly code: string }`
+  The bounded outcome of a boundary decision: the resulting item, or a content-free refusal code.
+- **BoundaryItemView** _(interface)_ - `interface BoundaryItemView`
+  One pending decision boundary in the inbox, projected to structural coordinates and a state only. It never carries a prompt, a free-text reason, tool data, model output, a diagnostic, or an artifact - just enough identity for the UI to address the exact boundary a decision resolves.
+- **BoundaryStateView** _(interface)_ - `interface BoundaryStateView`
+  The minimal boundary facts a decision needs. A `BoundaryItemView` from the client satisfies it.
 - **CommandOutcome** _(type)_ - `type CommandOutcome<T> = | { readonly ok: true; readonly status: number; readonly value: T } | { readonly ok: false; readonly status: number; readonly error: string }`
   The outcome of a command. Non-ok responses never throw here so a caller can render a bounded state instead of unwinding; `error` carries only the server's status text, never a credential.
 - **CreateSessionInput** _(interface)_ - `interface CreateSessionInput`
@@ -216,6 +222,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **OrderedEventBuffer** _(class)_ - `class OrderedEventBuffer`
   Orders events by their sequence number and suppresses duplicates before they reach the UI.
 - **PendingApprovalView** _(interface)_ - `interface PendingApprovalView`
+- **RegistryCapabilityView** _(interface)_ - `interface RegistryCapabilityView`
+  A registry capability projected to its content-free identity card.
 - **RepairRequiredView** _(interface)_ - `interface RepairRequiredView`
 - **ReplayEntryView** _(interface)_ - `interface ReplayEntryView`
   One persisted log record reduced to ordering and a type label - never its payload.
@@ -234,11 +242,17 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ToolStartedView** _(interface)_ - `interface ToolStartedView`
 - **TurnStartedView** _(interface)_ - `interface TurnStartedView`
 - **VerificationCompletedView** _(interface)_ - `interface VerificationCompletedView`
+- **boundaryCommands** _(function)_ - `boundaryCommands: (item: BoundaryStateView, options: { readonly inbox: boolean; readonly now: number; }) => readonly BoundaryCommand[]`
+  The boundary commands a UI may currently offer for one item. A command appears only when the host has negotiated the `inbox` feature, the boundary has not expired, and the op is a legal transition from the boundary's live state. An unknown or terminal state yields no commands, so a stale, unsupport…
+- **boundaryIsStale** _(function)_ - `boundaryIsStale: (item: BoundaryStateView, now: number) => boolean`
+  True once `now` reaches or passes the boundary's expiry. A stale boundary fails every command closed.
 - **parseEventStream** _(function)_ - `parseEventStream: (body: ReadableStream<Uint8Array>, method: string) => AsyncIterable<AgentEvent>`
   Parse an SSE body into protocol events, skipping any frame whose data is not a valid event.
 - **toEventView** _(function)_ - `toEventView: (event: AgentEvent) => AgentEventView`
   Project one protocol event to its content-free view. Total over the event union - never returns undefined.
 - **toHandoffView** _(function)_ - `toHandoffView: (snapshot: HandoffSnapshot) => HandoffView`
+- **toRegistryCapabilityView** _(function)_ - `toRegistryCapabilityView: (value: unknown) => RegistryCapabilityView | undefined`
+  Project one raw registry descriptor to a content-free {@link RegistryCapabilityView}, or `undefined` when a required identifier is missing or malformed. Only whitelisted structural fields are read, so an unexpected content field on the record can never reach the returned view.
 - **toRunView** _(function)_ - `toRunView: (snapshot: RunSnapshot) => RunView`
 - **toSessionView** _(function)_ - `toSessionView: (snapshot: AgentSessionSnapshot) => SessionView`
 
@@ -863,7 +877,7 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ### `@nifrajs/coding-agent/orchestration`
 
-- **Admission** _(type)_ - `type Admission = { readonly ok: true } | { readonly ok: false; readonly code: AdmissionRejection }`
+- **Admission** _(type)_ - `type Admission = | { readonly ok: true } | { readonly ok: false; readonly code: AdmissionRejection }`
 - **AdmissionRejection** _(type)_ - `type AdmissionRejection = | "kind_not_allowed" | "capability_not_allowed" | "isolation_too_weak" | "approval_downgrade"`
   Stable, content-free reasons the host refuses to admit a capability.
 - **ArtifactContext** _(interface)_ - `interface ArtifactContext`

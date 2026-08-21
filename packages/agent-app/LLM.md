@@ -10,9 +10,12 @@ Presentation-safe browser SDK for Nifra agent hosts: negotiated commands, ordere
 
 ## Key exports
 
+- **boundaryCommands** _(function)_ - `boundaryCommands: (item: BoundaryStateView, options: { readonly inbox: boolean; readonly now: number; }) => readonly BoundaryCommand[]`
+- **boundaryIsStale** _(function)_ - `boundaryIsStale: (item: BoundaryStateView, now: number) => boolean`
 - **parseEventStream** _(function)_ - `parseEventStream: (body: ReadableStream<Uint8Array>, method: string) => AsyncIterable<AgentEvent>`
 - **toEventView** _(function)_ - `toEventView: (event: AgentEvent) => AgentEventView`
 - **toHandoffView** _(function)_ - `toHandoffView: (snapshot: HandoffSnapshot) => HandoffView`
+- **toRegistryCapabilityView** _(function)_ - `toRegistryCapabilityView: (value: unknown) => RegistryCapabilityView | undefined`
 - **toRunView** _(function)_ - `toRunView: (snapshot: RunSnapshot) => RunView`
 - **toSessionView** _(function)_ - `toSessionView: (snapshot: AgentSessionSnapshot) => SessionView`
 - **AgentAppClient** _(class)_ - `class AgentAppClient`
@@ -21,11 +24,8 @@ Presentation-safe browser SDK for Nifra agent hosts: negotiated commands, ordere
 - **HttpAgentTransport** _(class)_ - `class HttpAgentTransport`
 - **OrderedEventBuffer** _(class)_ - `class OrderedEventBuffer`
 - **AGENT_APP_FEATURES** _(const)_ - `AGENT_APP_FEATURES: readonly ["approvals", "checkpoint", "fork", "handoff", "inbox", "reload", "resume", "workflows"]`
-- **AgentAppClientOptions** _(interface)_ - `interface AgentAppClientOptions`
-- **AgentTransport** _(interface)_ - `interface AgentTransport`
-- **AgentTransportRequest** _(interface)_ - `interface AgentTransportRequest`
 
-_…and 27 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentapp) for the complete list._
+_…and 34 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentapp) for the complete list._
 
 ## Footguns
 
