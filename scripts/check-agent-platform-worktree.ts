@@ -186,16 +186,16 @@ function addLinkedWorktree(path: string, commit: string): void {
     encoding: "utf8",
   })
   if (result.status !== 0) throw new Error(result.stderr.trim() || "git worktree add failed")
-  // Reuse the already-installed dependencies without putting them under source control. The
-  // generated or release tree is still a separate Git worktree and cannot mutate this checkout.
-  const nodeModules = resolve(path, "node_modules")
-  if (!existsSync(nodeModules)) {
-    try {
-      symlinkSync(resolve(ROOT, "node_modules"), nodeModules, "junction")
-    } catch {
-      // A clean consumer/release environment may install dependencies in the linked tree instead.
-    }
-  }
+  // Install the frozen lockfile in the temporary worktree so workspace packages resolve to THIS
+  // checkout. Reusing absolute workspace symlinks from the shared tree creates duplicate module
+  // identities (notably the web navigation bridge) and makes a release test exercise mixed commits.
+  // Bun's offline cache keeps this local and deterministic; the worktree remains disposable.
+  const install = spawnSync("bun", ["install", "--frozen-lockfile", "--offline"], {
+    cwd: path,
+    stdio: "inherit",
+    env: process.env,
+  })
+  if (install.status !== 0) throw new Error("bun install failed in isolated worktree")
   for (const workspaceRoot of ["packages", "apps", "internal", "bench"]) {
     const sourceRoot = resolve(ROOT, workspaceRoot)
     if (!existsSync(sourceRoot)) continue
@@ -361,19 +361,19 @@ export function auditAgentPlatformWorktree(
   if (taskId !== undefined && allowlist.length === 0)
     failures.push(`unknown task or empty allowlist: ${taskId}`)
   const baselineMap = new Map(baseline.files.map((file) => [file.path, file.digest]))
+  const currentSet = new Set(current)
   for (const file of baseline.files) {
+    // Older baselines did not carry the optional `dirty` bit. A path that is still reported dirty
+    // and has the same digest is necessarily pre-existing dirt; infer that fact for compatibility,
+    // while leaving a changed clean target owned by the current task.
+    const wasDirty =
+      file.dirty === true || (currentSet.has(file.path) && digest(file.path) === file.digest)
     if (digest(file.path) !== file.digest) {
       const taskOwnsCleanTarget =
-        taskId !== undefined &&
-        file.dirty !== true &&
-        matchesAgentPlatformAllowlist(file.path, allowlist)
+        taskId !== undefined && !wasDirty && matchesAgentPlatformAllowlist(file.path, allowlist)
       if (!taskOwnsCleanTarget) failures.push(`baseline file changed: ${file.path}`)
     }
-    if (
-      taskId !== undefined &&
-      file.dirty === true &&
-      matchesAgentPlatformAllowlist(file.path, allowlist)
-    )
+    if (taskId !== undefined && wasDirty && matchesAgentPlatformAllowlist(file.path, allowlist))
       failures.push(`allowlisted target was already dirty at baseline: ${file.path}`)
   }
   for (const path of changed) {

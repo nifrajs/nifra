@@ -1424,19 +1424,25 @@ function writeJsonOutcome(
   // without it Node falls back to chunked framing, which costs extra wire bytes and client parsing
   // on every response (and no other runtime chunks a buffered JSON body).
   if (outcome.body !== null) {
-    if (headers["content-type"] === undefined) headers["content-type"] = JSON_CONTENT_TYPE
-    headers["content-length"] = String(Buffer.byteLength(outcome.body))
+    if (headers["content-type"] === undefined) headers["Content-Type"] = JSON_CONTENT_TYPE
+    else {
+      headers["Content-Type"] = headers["content-type"]
+      delete headers["content-type"]
+    }
+    headers["Content-Length"] = String(Buffer.byteLength(outcome.body))
+    delete headers["content-length"]
   } else if (isBodylessStatus(outcome.status)) {
     // 204/205/304 never carry a payload; discard a user/native-hook length even when the body is
     // already represented as null so the direct writer cannot advertise bytes that will not ship.
     delete headers["content-length"]
+    delete headers["Content-Length"]
   } else if (!isHead && headers["content-length"] === undefined) {
     // A body-less render at a status that MAY carry a body - a `redirect()`, above all. Node frames
     // a `writeHead` + bare `end()` as chunked, so the shortest response the framework emits went out
     // with a chunk terminator and no length, where every Web-native runtime sends `content-length: 0`.
     // Declared here so the wire matches them. HEAD is excluded: its length describes the GET's body,
     // which this lane does not know.
-    headers["content-length"] = "0"
+    headers["Content-Length"] = "0"
   }
   if (outcome.cookies !== undefined && outcome.cookies.length > 0) {
     headers["set-cookie"] = [...outcome.cookies]

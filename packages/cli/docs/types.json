@@ -11594,7 +11594,7 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function plainValidationError(issues: ReadonlyArray<StandardIssue>): ResponseResult;",
-    "doc": "/** The 422 as plain data - the shape every lane's response wrapper takes, so a rejected body costs\n * what an accepted one costs: on Node it is written straight to the socket with a `content-length`\n * instead of being built as a `Response` and drained back out. */"
+    "doc": "/** The shared 422 response result used by every body-validation lane. */"
   },
   {
     "name": "planBuildTarget",
@@ -12418,7 +12418,7 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function readBodyFramed<T>(source: RequestSource, maxBodyBytes: number, protoPoisoning: ProtoPoisoning, onParsed: (parsed: unknown) => MaybePromise<T>, wrapResponse: (response: Response | ResponseResult) => T, onError: (err: unknown) => MaybePromise<T>): Promise<T>;",
-    "doc": "/**\n * The shared bounded body framing/parser: the single trust-boundary enforcement point every body\n * lane routes through. Content-type dispatch, the urlencoded-form cap, and the JSON path\n * (`Content-Length` pre-reject -> streaming cap -> prototype-poisoning guard, all inside\n * `readBoundedJsonSource`) live here so the fused body runner, the generic body-only lane, and a\n * compact edge entrypoint all enforce the same boundary from one definition. `protoPoisoning` is a\n * parameter, not read off a server instance, so this stays free of any dependency on the class.\n *\n * `onParsed` receives the decoded, guard-screened value; a framing rejection (`Content-Length` over\n * the cap, a lying length caught mid-stream, malformed JSON, an unsupported media type) is rendered\n * through `wrapResponse`; a read that never completed (client abort, socket error) reaches `onError`.\n */"
+    "doc": "/** The shared content-type dispatcher around the JSON and urlencoded lanes. */"
   },
   {
     "name": "readBoundedBytes",

@@ -217,6 +217,11 @@
       "types": "./dist/router/router.d.ts",
       "default": "./dist/router/router.js"
     },
+    "./edge": {
+      "bun": "./src/server/edge.ts",
+      "types": "./dist/server/edge.d.ts",
+      "default": "./dist/server/edge.js"
+    },
     "./schema": {
       "bun": "./src/schema/standard.ts",
       "types": "./dist/schema/standard.d.ts",

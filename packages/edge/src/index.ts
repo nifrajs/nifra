@@ -12,6 +12,7 @@
  * from one to the other without its clients noticing.
  */
 
+import { toFetchHandler } from "@nifrajs/core/edge"
 import {
   EMPTY_RESPONSE_CONTROLS,
   type ProtoPoisoning,
@@ -24,14 +25,8 @@ import {
   searchOf,
   toResponse,
 } from "@nifrajs/core/edge-kit"
-import {
-  type Method,
-  type Params,
-  Router,
-  type StandardIssue,
-  type StandardSchemaV1,
-  toFetchHandler,
-} from "@nifrajs/core/server"
+import { Router } from "@nifrajs/core/router"
+import type { Method, Params, StandardIssue, StandardSchemaV1 } from "@nifrajs/core/server"
 
 /** The full Server's `DEFAULT_MAX_BODY_BYTES` - the same 1 MB cap, so the two agree on `413`. */
 const DEFAULT_MAX_BODY_BYTES = 1_000_000

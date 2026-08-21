@@ -1923,6 +1923,19 @@ Every public export of every package and documented subpath - name, kind, signat
 - **reconcileSagas** _(function)_ - `reconcileSagas: (store: SagaStore, options: { readonly staleBefore: number; }) => Promise<readonly SagaReconciliationFinding[]>`
 - **reconcileSagasPage** _(function)_ - `reconcileSagasPage: (store: SagaStore, options: { readonly staleBefore: number; readonly cursor?: string; readonly limit?: number; }) => Promise<ReconciliationPage<SagaReconciliationFinding>>`
 
+### `@nifrajs/core/edge`
+
+- **DurableObjectNamespaceLike** _(interface)_ - `interface DurableObjectNamespaceLike`
+  Structural view of a Cloudflare Durable Object namespace binding - keeps `@cloudflare/workers-types` out of `@nifrajs/core`. The real `DurableObjectNamespace` satisfies it.
+- **ExecutionContext** _(interface)_ - `interface ExecutionContext`
+  A Cloudflare Workers-style execution context (the `fetch` 3rd arg). Structural - only `waitUntil` is used; declared here so `@nifrajs/core` needs no Workers type dependency.
+- **ScheduledController** _(interface)_ - `interface ScheduledController`
+  A Cloudflare Workers-style scheduled (cron) controller. Structural - no Workers type dependency.
+- **ScheduledHandler** _(type)_ - `type ScheduledHandler<Env = unknown> = ( controller: ScheduledController, context: { readonly env: Env; waitUntil(promise: Promise<unknown>): void }, ) => MaybePromise<void>`
+  A nifra cron handler: the platform controller + the same typed `env`/`waitUntil` nifra threads into request handlers. Schedule background work with `waitUntil` so it outlives the trigger.
+- **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
+  Adapt a nifra app to an edge "ExportedHandler" - use it as a Cloudflare Workers (or any `fetch(request, env, ctx)` runtime) default export. It threads `env` + `ctx.waitUntil` into the nifra Context, so handlers read `c.env` and schedule background work via `c.waitUntil`:
+
 ### `@nifrajs/core/edge-kit`
 
 - **CtxSet** _(type)_ - `type CtxSet = ResponseControls & { _headers?: Record<string, string> /** Accumulated `Set-Cookie` values - a list, since a `Record` would collapse multiple cookies. */ _cookies?: string[] }`
@@ -1939,10 +1952,10 @@ Every public export of every package and documented subpath - name, kind, signat
 - **plainError** _(function)_ - `plainError: (status: number, error: string, headers?: Record<string, string>) => ResponseResult`
   The same envelope as {@link jsonError}, as plain data rather than a built `Response`.
 - **plainValidationError** _(function)_ - `plainValidationError: (issues: ReadonlyArray<StandardIssue>) => ResponseResult`
-  The 422 as plain data - the shape every lane's response wrapper takes, so a rejected body costs what an accepted one costs: on Node it is written straight to the socket with a `content-length` instead of being built as a `Response` and drained back out.
+  The shared 422 response result used by every body-validation lane.
 - **queryObjectOf** _(function)_ - `queryObjectOf: (search: string) => Record<string, QueryValue>`
 - **readBodyFramed** _(function)_ - `readBodyFramed: <T>(source: RequestSource, maxBodyBytes: number, protoPoisoning: ProtoPoisoning, onParsed: (parsed: unknown) => MaybePromise<T>, wrapResponse: (response: Response | ResponseResult) => T, onError: (err: u…`
-  The shared bounded body framing/parser: the single trust-boundary enforcement point every body lane routes through. Content-type dispatch, the urlencoded-form cap, and the JSON path (`Content-Length` pre-reject -> streaming cap -> prototype-poisoning guard, all inside `readBoundedJsonSource`) live …
+  The shared content-type dispatcher around the JSON and urlencoded lanes.
 - **searchOf** _(function)_ - `searchOf: (url: string) => string`
 - **toResponse** _(function)_ - `toResponse: (result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders) => Response`
 

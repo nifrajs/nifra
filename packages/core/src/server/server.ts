@@ -108,9 +108,9 @@ import {
   isResponseResult,
   type ResponseResult,
   requestOf,
-  status,
 } from "./runtime-core.ts"
 import { normalizeStaticResponseHeaders, type StaticResponseHeaders } from "./static-headers.ts"
+import { plainValidationError } from "./validation.ts"
 
 // NodeServeOutcome (the nifra<->node bridge render form) now lives in `./node-outcome.ts`; re-exported
 // so existing importers keep resolving it from the server module.
@@ -428,28 +428,13 @@ const STOP_HOOK_TIMEOUT_MS = 5_000
  * for the same request, so a browser that could open a socket was told its POST was cross-origin. */
 const wsSameOrigin = isSameOriginRequest
 
-function validationIssues(issues: ReadonlyArray<StandardIssue>): {
-  ok: false
-  error: string
-  issues: unknown[]
-} {
-  const serialized = issues.map((issue) => {
-    const path = issue.path?.map((seg) => String(typeof seg === "object" ? seg.key : seg))
-    return path !== undefined ? { message: issue.message, path } : { message: issue.message }
-  })
-  return { ok: false, error: "validation", issues: serialized }
-}
-
-/** The 422 as plain data - the shape every lane's response wrapper takes, so a rejected body costs
- * what an accepted one costs: on Node it is written straight to the socket with a `content-length`
- * instead of being built as a `Response` and drained back out. */
-export function plainValidationError(issues: ReadonlyArray<StandardIssue>): ResponseResult {
-  return status(422, validationIssues(issues))
-}
-
 // `jsonError`, `urlPartsOf`, `pathnameOf` moved to `./http.ts` (a dependency-free leaf shared with the
 // opt-in request lanes); re-exported so existing importers keep resolving from here.
 export { pathnameOf, urlPartsOf } from "./http.ts"
+/** The 422 as plain data - the shape every lane's response wrapper takes, so a rejected body costs
+ * what an accepted one costs: on Node it is written straight to the socket with a `content-length`
+ * instead of being built as a `Response` and drained back out. */
+export { plainValidationError } from "./validation.ts"
 // Query-string + urlencoded-form parsing now lives in `./query.ts`; re-exported so existing
 // importers keep resolving `searchOf`/`queryObjectOf`/`QueryValue` from here.
 export { type QueryValue, queryObjectOf, searchOf }
