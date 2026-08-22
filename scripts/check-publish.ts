@@ -45,6 +45,7 @@ const LIBRARIES = [
   "agent-telemetry",
   "agent",
   "agent-protocol",
+  "agent-app",
   "pi",
   "coding-agent",
   "devtools",
