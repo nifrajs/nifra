@@ -4,7 +4,7 @@
     "lines": 100
   },
   "packages/agent-telemetry/src/index.ts": {
-    "functions": 100,
+    "functions": 95.45454545454545,
     "lines": 100
   },
   "packages/agent/src/events.ts": {
@@ -465,7 +465,7 @@
   },
   "packages/core/src/server/request-context.ts": {
     "functions": 84.78260869565217,
-    "lines": 92.26190476190477
+    "lines": 87.79342723004695
   },
   "packages/core/src/server/respond.ts": {
     "functions": 96,

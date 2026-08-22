@@ -1050,7 +1050,7 @@ test("SECURITY: an UNDERSTATED Content-Length cannot smuggle a body past the cap
   })
   running = await serve(app, { port: 0 })
 
-  const smuggled = `{"name":"${"a".repeat(2_000_000)}"}` // 2 MB, twice the default 1 MB cap
+  const smuggled = `{"name":"${"a".repeat(1_100_000)}"}` // 1.1 MB, above the default 1 MB cap
   const socket = connect(running.port, "127.0.0.1")
   socket.on("error", () => {}) // the server closes on the garbage pipelined remainder
   await new Promise<void>((resolve) => socket.once("connect", () => resolve()))
@@ -1058,10 +1058,13 @@ test("SECURITY: an UNDERSTATED Content-Length cannot smuggle a body past the cap
   socket.on("data", (chunk: Buffer) => {
     received += chunk.toString("latin1")
   })
+  const responseStarted = new Promise<void>((resolve) => socket.once("data", () => resolve()))
   socket.write(
     `POST /u HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 5\r\n\r\n${smuggled}`,
   )
-  await Bun.sleep(150) // let the response come back before the socket is torn down
+  // Wait for the response rather than assuming a fixed scheduling window. Bun's per-test timeout
+  // remains the bound for a missing response, while isolated release runs may be slower under load.
+  await responseStarted
   socket.destroy()
 
   // `{"nam` - the first 5 declared bytes - is not valid JSON, so the route rejects it.

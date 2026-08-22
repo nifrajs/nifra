@@ -30,11 +30,14 @@ test("idleTimeoutSec governs how long Bun holds a connection open for a slow han
 
 test("a handler under the ceiling still answers normally", async () => {
   const app = server().get("/slow", async () => {
-    await Bun.sleep(5000)
+    // Keep this control case short: the first test covers the long-running timeout path. A
+    // one-second handler still proves that a ceiling above the work does not cut the response,
+    // without making the full repository suite depend on a five-second scheduling window.
+    await Bun.sleep(1000)
     return { ok: true }
   })
-  // Control for the test above: same handler, a ceiling above it, so the rejection there is
-  // attributable to the option and not to the handler simply being slow.
+  // Control for the test above: a ceiling above the handler, so a successful response is
+  // attributable to the option and not to the handler being instant.
   const running = app.listen(0, { hostname: "127.0.0.1", idleTimeoutSec: 30 })
   try {
     const res = await fetch(`http://127.0.0.1:${running.port}/slow`)

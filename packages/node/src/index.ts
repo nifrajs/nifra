@@ -1000,7 +1000,28 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
   const protocol = protocolResolver(options.protocol)
   const hostPolicy = hostPolicyOf(options)
   const staticState = options.static !== undefined ? staticStateOf(options.static) : undefined
+  // Node otherwise destroys a socket as soon as its HTTP parser emits `clientError`. That can
+  // discard the response for an already-dispatched request when an understated Content-Length
+  // leaves surplus bytes that look like a malformed pipelined request. Keep the parser error
+  // connection-scoped and close only after active responses finish, preserving response ordering.
+  const activeResponses = new WeakMap<object, Set<ServerResponse>>()
+  const parserErrorSockets = new WeakSet<object>()
   const server = createServer((nodeReq, nodeRes) => {
+    const socket = nodeReq.socket
+    let responses = activeResponses.get(socket)
+    if (responses === undefined) {
+      responses = new Set<ServerResponse>()
+      activeResponses.set(socket, responses)
+    }
+    responses.add(nodeRes)
+    const releaseResponse = (): void => {
+      const current = activeResponses.get(socket)
+      if (current === undefined) return
+      current.delete(nodeRes)
+      if (current.size === 0) activeResponses.delete(socket)
+    }
+    nodeRes.once("finish", releaseResponse)
+    nodeRes.once("close", releaseResponse)
     inFlight += 1
     try {
       const handled = handle(app, nodeReq, nodeRes, protocol, staticState, hostPolicy)
@@ -1021,6 +1042,29 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
       failWrite(nodeRes)
       inFlight -= 1
     }
+  })
+
+  server.on("clientError", (_error, socket) => {
+    if (socket.destroyed) return
+    const responses = activeResponses.get(socket)
+    if (responses !== undefined && responses.size > 0) {
+      if (parserErrorSockets.has(socket)) return
+      parserErrorSockets.add(socket)
+      const closeWhenDrained = (): void => {
+        const current = activeResponses.get(socket)
+        if (current === undefined || current.size === 0) socket.destroy()
+      }
+      for (const response of responses) {
+        if (response.writableEnded || response.destroyed) closeWhenDrained()
+        else response.once("finish", closeWhenDrained)
+        response.once("close", closeWhenDrained)
+      }
+      return
+    }
+    const body = "Bad Request"
+    socket.end(
+      `HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
+    )
   })
 
   // WebSocket upgrades (a nifra app exposing the seam): handled on the http server's `upgrade` event via
