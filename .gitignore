@@ -47,6 +47,7 @@ packages/web/test/.tmp-*
 bench/**/*.md
 !bench/README.md
 !bench/techempower/README.md
+!bench/http/worst-case/README.md
 /plans
 
 # Local editor/agent tooling - machine-specific (absolute paths, local settings); never committed.
@@ -77,4 +78,3 @@ dv-*/
 # Isolated tree of PUBLISHED @nifrajs packages for benchmarking a release (generated)
 /bench/.published
 /data/browser
-/bench/http/worst-case
