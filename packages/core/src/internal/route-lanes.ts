@@ -17,7 +17,7 @@ export interface RouteLaneSelection {
   readonly fusedBody: boolean
   readonly lane: RouteExecutionLane
   readonly lifecycleLane: LifecycleExecutionLane
-  readonly lifecycleHookLane: "derive-before" | undefined
+  readonly lifecycleHookLane: "derive-before" | "derive-before-after" | undefined
   readonly fusedLane: "bare" | "body" | "query" | undefined
 }
 
@@ -144,9 +144,11 @@ export function selectRouteLanes(options: {
     !hasDecorations &&
     derives === 1 &&
     beforeHandle === 1 &&
-    afterHandle === 0 &&
+    afterHandle <= 1 &&
     onError === 0
-      ? "derive-before"
+      ? afterHandle === 0
+        ? "derive-before"
+        : "derive-before-after"
       : undefined
 
   return {

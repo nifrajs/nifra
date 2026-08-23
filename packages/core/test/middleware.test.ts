@@ -156,6 +156,78 @@ describe("lifecycle hooks", () => {
     })
   })
 
+  test("specialized derive-before-after lifecycle preserves order and short-circuiting", async () => {
+    const events: string[] = []
+    const app = server()
+      .derive(() => {
+        events.push("derive")
+        return { role: "admin" }
+      })
+      .beforeHandle((c) => {
+        events.push(`before:${c.role}`)
+        return c.req.headers.get("x-block") === "1"
+          ? new Response("blocked", { status: 403 })
+          : undefined
+      })
+      .afterHandle((result) => {
+        events.push("after")
+        return { wrapped: result }
+      })
+      .get("/specialized", () => {
+        events.push("handler")
+        return { ok: true }
+      })
+
+    const ok = await app.fetch(new Request("http://x/specialized"))
+    expect(ok.status).toBe(200)
+    expect(await ok.json()).toEqual({ wrapped: { ok: true } })
+    expect(events).toEqual(["derive", "before:admin", "handler", "after"])
+
+    events.length = 0
+    const blocked = await app.fetch(
+      new Request("http://x/specialized", { headers: { "x-block": "1" } }),
+    )
+    expect(blocked.status).toBe(403)
+    expect(await blocked.text()).toBe("blocked")
+    expect(events).toEqual(["derive", "before:admin"])
+  })
+
+  test("specialized derive-before-after lifecycle preserves async continuation", async () => {
+    const app = server()
+      .derive(async () => ({ role: "admin" }))
+      .beforeHandle(async (c) => (c.role === "admin" ? undefined : new Response("blocked")))
+      .afterHandle(async (result) => ({ wrapped: result }))
+      .get("/async-specialized", () => ({ ok: true }))
+
+    const res = await app.fetch(new Request("http://x/async-specialized"))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ wrapped: { ok: true } })
+  })
+
+  test("specialized derive-before-after lifecycle keeps rejection handling on the standard path", async () => {
+    const handlerFailure = server({ logger: silentLogger })
+      .derive(() => ({ role: "admin" }))
+      .beforeHandle(() => undefined)
+      .afterHandle((result) => result)
+      .get("/handler-failure", async () => {
+        throw new Error("handler failed")
+      })
+    const handlerResponse = await handlerFailure.fetch(new Request("http://x/handler-failure"))
+    expect(handlerResponse.status).toBe(500)
+    expect(await handlerResponse.json()).toEqual({ ok: false, error: "internal_error" })
+
+    const afterFailure = server({ logger: silentLogger })
+      .derive(() => ({ role: "admin" }))
+      .beforeHandle(() => undefined)
+      .afterHandle(async () => {
+        throw new Error("after failed")
+      })
+      .get("/after-failure", () => ({ ok: true }))
+    const afterResponse = await afterFailure.fetch(new Request("http://x/after-failure"))
+    expect(afterResponse.status).toBe(500)
+    expect(await afterResponse.json()).toEqual({ ok: false, error: "internal_error" })
+  })
+
   test("onError returns a custom response", async () => {
     const app = server()
       .onError((err) => new Response(`caught: ${(err as Error).message}`, { status: 418 }))

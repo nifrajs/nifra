@@ -4364,6 +4364,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (entry.lifecycleHookLane === "derive-before") {
       return this.runLifecycleDeriveBefore(entry, ctx, finalize, wrapResponse)
     }
+    if (entry.lifecycleHookLane === "derive-before-after") {
+      return this.runLifecycleDeriveBeforeAfter(entry, ctx, finalize, wrapResponse)
+    }
     try {
       if (entry.hasDecorations) Object.assign(ctx, entry.decorations)
       for (let i = 0; i < entry.derives.length; i++) {
@@ -4424,6 +4427,62 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         )
       }
       return this.finishSimpleLifecycleResult(entry, ctx, finalize, wrapResponse, result)
+    } catch (err) {
+      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+    }
+  }
+
+  /** Registration-specialized derive → before → handler → one after lifecycle. */
+  private runLifecycleDeriveBeforeAfter<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
+  ): MaybePromise<T> {
+    try {
+      const extension = entry.derives[0]!(ctx)
+      if (extension instanceof Promise) {
+        return this.continueLifecycleAfterDerive(entry, ctx, finalize, wrapResponse, 0, extension)
+      }
+      if (isDeriveEarlyExit(extension)) return finalize(extension, responseSet(ctx))
+      Object.assign(ctx, extension)
+
+      const outcome = entry.beforeHandle[0]!(ctx)
+      if (outcome instanceof Promise) {
+        return this.continueLifecycleAfterBefore(entry, ctx, finalize, wrapResponse, 0, outcome)
+      }
+      if (outcome !== undefined) return finalize(outcome, responseSet(ctx))
+
+      const result = entry.handler(ctx)
+      if (result instanceof Promise) {
+        return result.then(
+          (value) => this.finishLifecycleAfterOne(entry, ctx, finalize, wrapResponse, value),
+          (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+        )
+      }
+      return this.finishLifecycleAfterOne(entry, ctx, finalize, wrapResponse, result)
+    } catch (err) {
+      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
+    }
+  }
+
+  /** Run the single registered after hook without allocating or iterating a hook chain. */
+  private finishLifecycleAfterOne<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
+    result: unknown,
+  ): MaybePromise<T> {
+    try {
+      const transformed = entry.afterHandle[0]!(result, ctx)
+      if (transformed instanceof Promise) {
+        return transformed.then(
+          (value) => this.finishLifecycleContract(entry, ctx, finalize, wrapResponse, value),
+          (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+        )
+      }
+      return this.finishLifecycleContract(entry, ctx, finalize, wrapResponse, transformed)
     } catch (err) {
       return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
     }

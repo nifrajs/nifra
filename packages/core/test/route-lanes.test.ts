@@ -67,8 +67,15 @@ describe("selectRouteLanes", () => {
     })
   })
 
-  test("preserves lifecycle sublanes and the derive-before specialization", () => {
+  test("preserves lifecycle sublanes and the derive-before specializations", () => {
     const hooks = selectRouteLanes({ ...base, derives: 1, beforeHandle: 1 })
+    const hooksAfter = selectRouteLanes({ ...base, derives: 1, beforeHandle: 1, afterHandle: 1 })
+    const hooksAfterChain = selectRouteLanes({
+      ...base,
+      derives: 1,
+      beforeHandle: 1,
+      afterHandle: 2,
+    })
     const bodyQuery = selectRouteLanes({
       ...base,
       derives: 1,
@@ -81,6 +88,12 @@ describe("selectRouteLanes", () => {
       lifecycleLane: "hooks",
       lifecycleHookLane: "derive-before",
     })
+    expect(hooksAfter).toMatchObject({
+      lane: "lifecycle",
+      lifecycleLane: "hooks",
+      lifecycleHookLane: "derive-before-after",
+    })
+    expect(hooksAfterChain.lifecycleHookLane).toBeUndefined()
     expect(bodyQuery).toMatchObject({ lane: "lifecycle", lifecycleLane: "body-query" })
     expect(around).toMatchObject({ lane: "bare", fusedLane: undefined })
   })
