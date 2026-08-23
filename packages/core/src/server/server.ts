@@ -36,6 +36,8 @@ import {
   type RawErrorHandler,
   type RouteEntry,
 } from "../internal/route-execution.ts"
+import type { RouteProgramStage } from "../internal/route-program.ts"
+import { compileRouteProgram, executeRouteProgram } from "../internal/route-program.ts"
 import { isSameOriginRequest } from "../internal/same-origin.ts"
 import type { ResponseObserverPlugin } from "../response-observer.ts"
 import { decodeRouteParams } from "../router/pattern.ts"
@@ -508,21 +510,6 @@ export type CtxSet = ResponseControls & {
 
 function responseSet(ctx: RawContext): CtxSet {
   return ctx[CONTEXT_SET]() ?? EMPTY_RESPONSE_CONTROLS
-}
-
-/**
- * A `derive` that answered with a response rather than a context extension - `status(...)`, or a bare
- * `Response`. The request ends there, on the same lane a `beforeHandle`'s early return takes.
- *
- * `derive` is the one stage that could not exit early: `beforeHandle` says "done" by returning a
- * value, but a derive's return value IS the extension, so the only way out was `throw`ing a
- * `Response` - which measured as the single most expensive way to answer (the `Response` object
- * costs ~40% of the rejection lane; see `PlainRender`). Neither shape had a meaning here before:
- * `Object.assign(ctx, response)` copies nothing (a `Response`'s properties live on its prototype),
- * so a derive that returned one silently fell through to the handler it meant to prevent.
- */
-function isDeriveEarlyExit(extension: unknown): boolean {
-  return isResponseResult(extension) || extension instanceof Response
 }
 
 function isContextlessNoArgArrow(handler: (context: never) => unknown): boolean {
@@ -1753,6 +1740,19 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           : fusedBody
             ? this.buildFusedBodyWeb(fusedBodyRunner as FusedBodyRunner)
             : undefined
+    const program = compileRouteProgram({
+      schema,
+      handler: handler as unknown as InternalHandler,
+      derives: this.derives,
+      beforeHandle: this.beforeHandleHooks,
+      afterHandle: this.afterHandleHooks,
+      onError: this.onErrorHooks,
+      decorations: routeDecorations,
+      hasDecorations,
+      bodySchema: schema?.body,
+      bodyLimit,
+      responseContract,
+    })
     const contextless =
       lanes.bare && this.aroundHooks.length === 0 && isContextlessNoArgArrow(handler)
     const execution = compileRouteExecutionPlan({
@@ -1760,7 +1760,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       contextless,
       hasAround: this.aroundHooks.length > 0,
       hasLedger: ledgered !== undefined,
-      lifecycleLane: lanes.lifecycleLane,
       fusedWeb,
       fusedBody: fusedBodyRunner,
       fusedLane: lanes.fusedLane,
@@ -1781,6 +1780,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       lifecycleHookLane: lanes.lifecycleHookLane,
       around: [...this.aroundHooks],
       execution,
+      program,
     }
     const descriptor: RouteDescriptor = {
       method,
@@ -2825,7 +2825,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /**
    * Route → build context → run. Synchronous through to the handler for a **bare** route
    * (selected by its compiled plan), so a sync handler produces its result with zero promise allocations;
-   * routes with validation/hooks keep the full async {@link runLifecycle}, unchanged.
+   * routes with validation/hooks keep the full compiled route program, unchanged.
    */
   private routeAndRun<T>(
     source: RequestSource,
@@ -3171,7 +3171,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /**
    * The synchronous fast path selected by a route's execution plan: apply static decorations, call the
    * handler, render the result - **no `await`** unless the handler itself returns a promise. It mirrors
-   * the bare slice of {@link runLifecycle} (which a bare route would otherwise no-op through) and shares
+   * the same error boundary as the compiled route program (which a bare route would otherwise no-op through) and shares
    * {@link logRequestError}; a bare route has no `onError` hooks, so error handling is fully synchronous
    * (a thrown `Response` is control flow; anything else is a logged flat 500). This is where nifra skips
    * the per-request async-frame tax - the same win codegen routers get, but without `eval`.
@@ -3200,7 +3200,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     return finalize(result, responseSet(ctx))
   }
 
-  /** Bare-route error rendering - identical to {@link runLifecycle}'s catch minus the (absent) onError
+  /** Bare-route error rendering - identical to the compiled route program's catch minus the (absent) onError
    * loop: a thrown `Response` is returned as deliberate control flow; anything else is logged + 500. */
   /**
    * Build a route's fused Web renderer. Composition happens once at
@@ -3611,6 +3611,76 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       : outcome
   }
 
+  /** Execute the registration-compiled general stage program. */
+  // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
+  private runProgram<T>(
+    entry: RouteEntry,
+    source: RequestSource,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
+  ): MaybePromise<T> {
+    return executeRouteProgram(this, entry, entry.program, source, ctx, finalize, wrapResponse)
+  }
+
+  /** Bind a compiled validation stage to its stable schema and the existing recovery contract. */
+  // @ts-expect-error TS6133 -- invoked structurally by the general route program
+  private validateProgramStage(
+    entry: RouteEntry,
+    stage: Extract<RouteProgramStage, { kind: "headers" | "params" | "body" | "query" }>,
+    source: RequestSource,
+    ctx: RawContext,
+  ): MaybePromise<Response | ResponseResult | undefined> {
+    const input =
+      stage.kind === "headers"
+        ? headerObjectOf(source.headers)
+        : stage.kind === "params"
+          ? ctx.params
+          : stage.kind === "query"
+            ? queryObjectOf(ctx[CONTEXT_SEARCH])
+            : undefined
+    if (stage.kind === "body") return this.readProgramBody(entry, source, ctx)
+    const validation = stage.schema["~standard"].validate(input)
+    return validation instanceof Promise
+      ? validation.then((result) => this.applyLifecycleValidation(entry, result, ctx, stage.kind))
+      : this.applyLifecycleValidation(entry, validation, ctx, stage.kind)
+  }
+
+  /** Preserve the existing bounded body reader and its fail-closed framing/prototype checks. */
+  private readProgramBody(
+    entry: RouteEntry,
+    source: RequestSource,
+    ctx: RawContext,
+  ): Promise<Response | ResponseResult | undefined> {
+    const bodySchema = entry.program.bodySchema
+    if (bodySchema === undefined) return Promise.resolve(plainError(415, "unsupported_media_type"))
+    return this.readAndValidateBody(source, entry, ctx, bodySchema, entry.program.bodyLimit)
+  }
+
+  /** Keep thrown Response/status and redacted 500 semantics in one existing error boundary. */
+  // @ts-expect-error TS6133 -- invoked structurally by the general route program
+  private handleProgramError<T>(
+    entry: RouteEntry,
+    error: unknown,
+    ctx: RawContext,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
+  ): MaybePromise<T> {
+    return this.handleLifecycleError(entry, error, ctx, finalize, wrapResponse)
+  }
+
+  /** Finish a successful program result through response-contract enforcement and finalization. */
+  // @ts-expect-error TS6133 -- invoked structurally by the general route program
+  private finishProgramResult<T>(
+    entry: RouteEntry,
+    ctx: RawContext,
+    result: unknown,
+    finalize: (result: unknown, set: CtxSet) => T,
+    wrapResponse: (response: Response | ResponseResult) => T,
+  ): MaybePromise<T> {
+    return this.finishLifecycleContract(entry, ctx, finalize, wrapResponse, result)
+  }
+
   private runAround<T>(
     hooks: ReadonlyArray<RawAround>,
     ctx: RawContext,
@@ -3998,643 +4068,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (timer !== undefined) clearTimeout(timer)
     }
   }
-
-  /**
-   * The post-match lifecycle: validate → derive → beforeHandle → handler → afterHandle, with onError.
-   * Generic over the render: a success value goes through `finalize(result, set)` (a Web `Response`, or
-   * node-direct primitives); an early/error `Response` (validation, thrown, 500) through `wrapResponse`.
-   */
-  /** Synchronous until a validator, lifecycle hook, handler, or contract check actually returns a Promise. */
-  // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
-  private runLifecycle<T>(
-    entry: RouteEntry,
-    source: RequestSource,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-  ): MaybePromise<T> {
-    try {
-      const headersSchema = entry.schema?.headers
-      if (headersSchema !== undefined) {
-        const validation = headersSchema["~standard"].validate(headerObjectOf(source.headers))
-        if (validation instanceof Promise) {
-          return validation.then(
-            (result) =>
-              this.runLifecycleAfterHeadersResult(
-                entry,
-                source,
-                ctx,
-                finalize,
-                wrapResponse,
-                result,
-              ),
-            (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
-          )
-        }
-        return this.runLifecycleAfterHeadersResult(
-          entry,
-          source,
-          ctx,
-          finalize,
-          wrapResponse,
-          validation,
-        )
-      }
-      const paramsSchema = entry.schema?.params
-      if (paramsSchema !== undefined) {
-        const validation = paramsSchema["~standard"].validate(ctx.params)
-        if (validation instanceof Promise) {
-          return validation.then(
-            (result) =>
-              this.runLifecycleAfterParamsResult(
-                entry,
-                source,
-                ctx,
-                finalize,
-                wrapResponse,
-                result,
-              ),
-            (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
-          )
-        }
-        return this.runLifecycleAfterParamsResult(
-          entry,
-          source,
-          ctx,
-          finalize,
-          wrapResponse,
-          validation,
-        )
-      }
-      // Registration already knows whether this route has body/params/query validation. Most real
-      // read routes have no body or params schema, so skip the generic stage ladder and go straight to
-      // query validation + lifecycle hooks. The fallback below remains the complete path for routes
-      // with body/params combinations and validation recovery.
-      if (entry.schema?.body === undefined) {
-        return this.runQueryAndLifecycle(entry, ctx, finalize, wrapResponse)
-      }
-      return this.runLifecycleAfterParams(entry, source, ctx, finalize, wrapResponse, undefined)
-    } catch (err) {
-      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
-    }
-  }
-
-  private runLifecycleAfterHeadersResult<T>(
-    entry: RouteEntry,
-    source: RequestSource,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-    result: StandardResult<unknown>,
-  ): MaybePromise<T> {
-    try {
-      const headersError = this.applyLifecycleValidation(entry, result, ctx, "headers")
-      if (headersError instanceof Promise) {
-        return headersError.then(
-          (error) =>
-            error === undefined
-              ? this.runLifecycleAfterHeaders(entry, source, ctx, finalize, wrapResponse)
-              : wrapResponse(error),
-          (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
-        )
-      }
-      return headersError === undefined
-        ? this.runLifecycleAfterHeaders(entry, source, ctx, finalize, wrapResponse)
-        : wrapResponse(headersError)
-    } catch (err) {
-      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
-    }
-  }
-
-  private runLifecycleAfterHeaders<T>(
-    entry: RouteEntry,
-    source: RequestSource,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-  ): MaybePromise<T> {
-    const paramsSchema = entry.schema?.params
-    if (paramsSchema === undefined) {
-      if (entry.schema?.body === undefined)
-        return this.runQueryAndLifecycle(entry, ctx, finalize, wrapResponse)
-      return this.runLifecycleAfterParams(entry, source, ctx, finalize, wrapResponse, undefined)
-    }
-    const validation = paramsSchema["~standard"].validate(ctx.params)
-    if (validation instanceof Promise) {
-      return validation.then(
-        (result) =>
-          this.runLifecycleAfterParamsResult(entry, source, ctx, finalize, wrapResponse, result),
-        (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
-      )
-    }
-    return this.runLifecycleAfterParamsResult(
-      entry,
-      source,
-      ctx,
-      finalize,
-      wrapResponse,
-      validation,
-    )
-  }
-
-  /** Registration-specialized query lifecycle: query validation (including recovery) → hooks. */
-  private runLifecycleQuery<T>(
-    entry: RouteEntry,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-  ): MaybePromise<T> {
-    try {
-      // The execution plan only selects this runner when the route has a query schema. Keeping the
-      // non-null access here removes the per-request schema-presence branch from realistic GETs.
-      const validation = entry.schema!.query!["~standard"].validate(
-        queryObjectOf(ctx[CONTEXT_SEARCH]),
-      )
-      if (validation instanceof Promise) {
-        return validation.then(
-          (result) => {
-            try {
-              return this.runQueryAndLifecycleResult(entry, ctx, finalize, wrapResponse, result)
-            } catch (err) {
-              return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
-            }
-          },
-          (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
-        )
-      }
-      return this.runQueryAndLifecycleResult(entry, ctx, finalize, wrapResponse, validation)
-    } catch (err) {
-      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
-    }
-  }
-
-  /** Registration-specialized body lifecycle: bounded body validation (including recovery) → hooks. */
-  // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
-  private runLifecycleBody<T>(
-    entry: RouteEntry,
-    source: RequestSource,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-  ): MaybePromise<T> {
-    return this.readAndValidateBody(source, entry, ctx).then(
-      (bodyError) =>
-        bodyError === undefined
-          ? this.runLifecycleHooks(entry, ctx, finalize, wrapResponse)
-          : wrapResponse(bodyError),
-      (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
-    )
-  }
-
-  /** Registration-specialized body + query lifecycle: bounded body validation → query validation → hooks. */
-  // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)
-  private runLifecycleBodyQuery<T>(
-    entry: RouteEntry,
-    source: RequestSource,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-  ): MaybePromise<T> {
-    return this.readAndValidateBody(source, entry, ctx).then(
-      (bodyError) =>
-        bodyError === undefined
-          ? this.runLifecycleQuery(entry, ctx, finalize, wrapResponse)
-          : wrapResponse(bodyError),
-      (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
-    )
-  }
-
-  /** Registration-specialized no-body lifecycle: query validation (if present) → derives/hooks. */
-  private runQueryAndLifecycle<T>(
-    entry: RouteEntry,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-  ): MaybePromise<T> {
-    const querySchema = entry.schema?.query
-    return querySchema === undefined
-      ? this.runLifecycleHooks(entry, ctx, finalize, wrapResponse)
-      : this.runLifecycleQuery(entry, ctx, finalize, wrapResponse)
-  }
-
-  private runQueryAndLifecycleResult<T>(
-    entry: RouteEntry,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-    result: StandardResult<unknown>,
-  ): MaybePromise<T> {
-    const queryError = this.applyLifecycleValidation(entry, result, ctx, "query")
-    if (queryError instanceof Promise) {
-      return queryError.then(
-        (error) =>
-          error === undefined
-            ? this.runLifecycleHooks(entry, ctx, finalize, wrapResponse)
-            : wrapResponse(error),
-        (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
-      )
-    }
-    if (queryError !== undefined) return wrapResponse(queryError)
-    return this.runLifecycleHooks(entry, ctx, finalize, wrapResponse)
-  }
-
-  private runLifecycleAfterParamsResult<T>(
-    entry: RouteEntry,
-    source: RequestSource,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-    result: StandardResult<unknown>,
-  ): MaybePromise<T> {
-    try {
-      return this.runLifecycleAfterParams(
-        entry,
-        source,
-        ctx,
-        finalize,
-        wrapResponse,
-        this.applyLifecycleValidation(entry, result, ctx, "params"),
-      )
-    } catch (err) {
-      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
-    }
-  }
-
-  private runLifecycleAfterParams<T>(
-    entry: RouteEntry,
-    source: RequestSource,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-    paramsError: MaybePromise<Response | ResponseResult | undefined>,
-  ): MaybePromise<T> {
-    if (paramsError instanceof Promise) {
-      return paramsError.then(
-        (error) =>
-          this.runLifecycleAfterParamsSettled(entry, source, ctx, finalize, wrapResponse, error),
-        (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
-      )
-    }
-    return this.runLifecycleAfterParamsSettled(
-      entry,
-      source,
-      ctx,
-      finalize,
-      wrapResponse,
-      paramsError,
-    )
-  }
-
-  private runLifecycleAfterParamsSettled<T>(
-    entry: RouteEntry,
-    source: RequestSource,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-    paramsError: Response | ResponseResult | undefined,
-  ): MaybePromise<T> {
-    if (paramsError !== undefined) return wrapResponse(paramsError)
-    if (entry.schema?.body !== undefined) {
-      return this.readAndValidateBody(source, entry, ctx).then(
-        (bodyError) => this.runLifecycleAfterBody(entry, ctx, finalize, wrapResponse, bodyError),
-        (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
-      )
-    }
-    return this.runLifecycleAfterBody(entry, ctx, finalize, wrapResponse, undefined)
-  }
-
-  private runLifecycleAfterBody<T>(
-    entry: RouteEntry,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-    bodyError: Response | ResponseResult | undefined,
-  ): MaybePromise<T> {
-    if (bodyError !== undefined) return wrapResponse(bodyError)
-    const querySchema = entry.schema?.query
-    if (querySchema === undefined) return this.runLifecycleHooks(entry, ctx, finalize, wrapResponse)
-    const validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
-    if (validation instanceof Promise) {
-      return validation.then(
-        (result) => this.runLifecycleAfterQueryResult(entry, ctx, finalize, wrapResponse, result),
-        (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
-      )
-    }
-    return this.runLifecycleAfterQueryResult(entry, ctx, finalize, wrapResponse, validation)
-  }
-
-  private runLifecycleAfterQueryResult<T>(
-    entry: RouteEntry,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-    result: StandardResult<unknown>,
-  ): MaybePromise<T> {
-    try {
-      const queryError = this.applyLifecycleValidation(entry, result, ctx, "query")
-      if (queryError instanceof Promise) {
-        return queryError.then(
-          (error) => this.runLifecycleAfterQuery(entry, ctx, finalize, wrapResponse, error),
-          (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
-        )
-      }
-      return this.runLifecycleAfterQuery(entry, ctx, finalize, wrapResponse, queryError)
-    } catch (err) {
-      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
-    }
-  }
-
-  private runLifecycleAfterQuery<T>(
-    entry: RouteEntry,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-    queryError: Response | ResponseResult | undefined,
-  ): MaybePromise<T> {
-    if (queryError !== undefined) return wrapResponse(queryError)
-    return this.runLifecycleHooks(entry, ctx, finalize, wrapResponse)
-  }
-
-  private runLifecycleHooks<T>(
-    entry: RouteEntry,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-  ): MaybePromise<T> {
-    if (entry.lifecycleHookLane === "derive-before") {
-      return this.runLifecycleDeriveBefore(entry, ctx, finalize, wrapResponse)
-    }
-    if (entry.lifecycleHookLane === "derive-before-after") {
-      return this.runLifecycleDeriveBeforeAfter(entry, ctx, finalize, wrapResponse)
-    }
-    try {
-      if (entry.hasDecorations) Object.assign(ctx, entry.decorations)
-      for (let i = 0; i < entry.derives.length; i++) {
-        const extension = entry.derives[i]!(ctx)
-        if (extension instanceof Promise) {
-          return this.continueLifecycleAfterDerive(entry, ctx, finalize, wrapResponse, i, extension)
-        }
-        if (isDeriveEarlyExit(extension)) return finalize(extension, responseSet(ctx))
-        Object.assign(ctx, extension)
-      }
-      for (let i = 0; i < entry.beforeHandle.length; i++) {
-        const outcome = entry.beforeHandle[i]!(ctx)
-        if (outcome instanceof Promise) {
-          return this.continueLifecycleAfterBefore(entry, ctx, finalize, wrapResponse, i, outcome)
-        }
-        if (outcome !== undefined) return finalize(outcome, responseSet(ctx))
-      }
-      const result = entry.handler(ctx)
-      if (result instanceof Promise) {
-        return result.then(
-          (value) => this.finishLifecycleResult(entry, ctx, finalize, wrapResponse, value),
-          (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
-        )
-      }
-      return this.finishLifecycleResult(entry, ctx, finalize, wrapResponse, result)
-    } catch (err) {
-      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
-    }
-  }
-
-  /** Registration-specialized derive → before → handler lifecycle. */
-  private runLifecycleDeriveBefore<T>(
-    entry: RouteEntry,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-  ): MaybePromise<T> {
-    try {
-      const extension = entry.derives[0]!(ctx)
-      if (extension instanceof Promise) {
-        return this.continueLifecycleAfterDerive(entry, ctx, finalize, wrapResponse, 0, extension)
-      }
-      if (isDeriveEarlyExit(extension)) return finalize(extension, responseSet(ctx))
-      Object.assign(ctx, extension)
-
-      const outcome = entry.beforeHandle[0]!(ctx)
-      if (outcome instanceof Promise) {
-        return this.continueLifecycleAfterBefore(entry, ctx, finalize, wrapResponse, 0, outcome)
-      }
-      if (outcome !== undefined)
-        return this.finishSimpleLifecycleResult(entry, ctx, finalize, wrapResponse, outcome)
-
-      const result = entry.handler(ctx)
-      if (result instanceof Promise) {
-        return result.then(
-          (value) => this.finishSimpleLifecycleResult(entry, ctx, finalize, wrapResponse, value),
-          (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
-        )
-      }
-      return this.finishSimpleLifecycleResult(entry, ctx, finalize, wrapResponse, result)
-    } catch (err) {
-      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
-    }
-  }
-
-  /** Registration-specialized derive → before → handler → one after lifecycle. */
-  private runLifecycleDeriveBeforeAfter<T>(
-    entry: RouteEntry,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-  ): MaybePromise<T> {
-    try {
-      const extension = entry.derives[0]!(ctx)
-      if (extension instanceof Promise) {
-        return this.continueLifecycleAfterDerive(entry, ctx, finalize, wrapResponse, 0, extension)
-      }
-      if (isDeriveEarlyExit(extension)) return finalize(extension, responseSet(ctx))
-      Object.assign(ctx, extension)
-
-      const outcome = entry.beforeHandle[0]!(ctx)
-      if (outcome instanceof Promise) {
-        return this.continueLifecycleAfterBefore(entry, ctx, finalize, wrapResponse, 0, outcome)
-      }
-      if (outcome !== undefined) return finalize(outcome, responseSet(ctx))
-
-      const result = entry.handler(ctx)
-      if (result instanceof Promise) {
-        return result.then(
-          (value) => this.finishLifecycleAfterOne(entry, ctx, finalize, wrapResponse, value),
-          (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
-        )
-      }
-      return this.finishLifecycleAfterOne(entry, ctx, finalize, wrapResponse, result)
-    } catch (err) {
-      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
-    }
-  }
-
-  /** Run the single registered after hook without allocating or iterating a hook chain. */
-  private finishLifecycleAfterOne<T>(
-    entry: RouteEntry,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-    result: unknown,
-  ): MaybePromise<T> {
-    try {
-      const transformed = entry.afterHandle[0]!(result, ctx)
-      if (transformed instanceof Promise) {
-        return transformed.then(
-          (value) => this.finishLifecycleContract(entry, ctx, finalize, wrapResponse, value),
-          (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
-        )
-      }
-      return this.finishLifecycleContract(entry, ctx, finalize, wrapResponse, transformed)
-    } catch (err) {
-      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
-    }
-  }
-
-  /** Finalize the specialized lane without rechecking its registration-proven invariants. */
-  private finishSimpleLifecycleResult<T>(
-    entry: RouteEntry,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-    result: unknown,
-  ): MaybePromise<T> {
-    try {
-      return finalize(result, responseSet(ctx))
-    } catch (err) {
-      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
-    }
-  }
-
-  private async continueLifecycleAfterDerive<T>(
-    entry: RouteEntry,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-    firstIndex: number,
-    first: Promise<unknown>,
-  ): Promise<T> {
-    try {
-      const settled = await first
-      if (isDeriveEarlyExit(settled)) return finalize(settled, responseSet(ctx))
-      Object.assign(ctx, settled)
-      for (let i = firstIndex + 1; i < entry.derives.length; i++) {
-        const raw = entry.derives[i]!(ctx)
-        const extension = raw instanceof Promise ? await raw : raw
-        if (isDeriveEarlyExit(extension)) return finalize(extension, responseSet(ctx))
-        Object.assign(ctx, extension)
-      }
-      return await this.runLifecycleHooksAsync(entry, ctx, finalize, wrapResponse)
-    } catch (err) {
-      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
-    }
-  }
-
-  private async runLifecycleHooksAsync<T>(
-    entry: RouteEntry,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-  ): Promise<T> {
-    try {
-      // Indexed, not `for...of`. An array iterator declared inside an async function stays live
-      // across the `await` below, so neither engine can sink it - unlike the sync lanes above,
-      // where V8 elides it. Measured cost of the iterator form: 43ns per hook on Bun, ~9ns on
-      // Node, on a chain whose hooks return synchronously (the common shape).
-      for (let i = 0; i < entry.beforeHandle.length; i++) {
-        const outcome = entry.beforeHandle[i]!(ctx)
-        const early = outcome instanceof Promise ? await outcome : outcome
-        if (early !== undefined) return finalize(early, responseSet(ctx))
-      }
-      return await this.runLifecycleHandlerAsync(entry, ctx, finalize, wrapResponse)
-    } catch (err) {
-      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
-    }
-  }
-
-  private async continueLifecycleAfterBefore<T>(
-    entry: RouteEntry,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-    firstIndex: number,
-    first: Promise<unknown>,
-  ): Promise<T> {
-    try {
-      const firstOutcome = await first
-      if (firstOutcome !== undefined) return finalize(firstOutcome, responseSet(ctx))
-      for (let i = firstIndex + 1; i < entry.beforeHandle.length; i++) {
-        const outcome = entry.beforeHandle[i]!(ctx)
-        const early = outcome instanceof Promise ? await outcome : outcome
-        if (early !== undefined) return finalize(early, responseSet(ctx))
-      }
-      return await this.runLifecycleHandlerAsync(entry, ctx, finalize, wrapResponse)
-    } catch (err) {
-      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
-    }
-  }
-
-  private async runLifecycleHandlerAsync<T>(
-    entry: RouteEntry,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-  ): Promise<T> {
-    try {
-      const output = entry.handler(ctx)
-      const result = output instanceof Promise ? await output : output
-      return await this.finishLifecycleResult(entry, ctx, finalize, wrapResponse, result)
-    } catch (err) {
-      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
-    }
-  }
-
-  private finishLifecycleResult<T>(
-    entry: RouteEntry,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-    initial: unknown,
-  ): MaybePromise<T> {
-    try {
-      let result = initial
-      for (let i = 0; i < entry.afterHandle.length; i++) {
-        const transformed = entry.afterHandle[i]!(result, ctx)
-        if (transformed instanceof Promise) {
-          return this.continueLifecycleAfterHandle(
-            entry,
-            ctx,
-            finalize,
-            wrapResponse,
-            i,
-            transformed,
-          )
-        }
-        result = transformed
-      }
-      return this.finishLifecycleContract(entry, ctx, finalize, wrapResponse, result)
-    } catch (err) {
-      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
-    }
-  }
-
-  private async continueLifecycleAfterHandle<T>(
-    entry: RouteEntry,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-    firstIndex: number,
-    first: Promise<unknown>,
-  ): Promise<T> {
-    try {
-      let result = await first
-      for (let i = firstIndex + 1; i < entry.afterHandle.length; i++) {
-        const transformed = entry.afterHandle[i]!(result, ctx)
-        result = transformed instanceof Promise ? await transformed : transformed
-      }
-      return await this.finishLifecycleContract(entry, ctx, finalize, wrapResponse, result)
-    } catch (err) {
-      return this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse)
-    }
-  }
-
   private finishLifecycleContract<T>(
     entry: RouteEntry,
     ctx: RawContext,
@@ -4735,7 +4168,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     return wrapResponse(plainError(500, "internal_error"))
   }
 
-  /** Log an unhandled request error to the (redacting) logger - shared by {@link runLifecycle} and the
+  /** Log an unhandled request error to the (redacting) logger - shared by the compiled route program and the
    * bare fast path ({@link bareError}) so both record the same fields. Never throws; never leaks. */
   private logRequestError(err: unknown, ctx: RawContext): void {
     emitRequestErrorLog(this.logger, this.errorLogDetail, err, ctx)
@@ -4745,15 +4178,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     req: RequestSource,
     entry: RouteEntry,
     ctx: RawContext,
+    bodySchema: StandardSchemaV1 = entry.schema?.body as StandardSchemaV1,
+    bodyLimit: number | undefined = entry.bodyLimit,
   ): Promise<Response | ResponseResult | undefined> {
     const contentType = headerOf(req, "content-type") ?? ""
     let parsed: unknown
     if (contentType === "application/json" || contentType.includes("application/json")) {
-      const json = await this.readBoundedJson(req, entry.bodyLimit ?? UNLIMITED_BODY_BYTES)
+      const json = await this.readBoundedJson(req, bodyLimit ?? UNLIMITED_BODY_BYTES)
       if (isResponseResult(json)) return json
       parsed = json
     } else if (isUrlEncodedForm(contentType)) {
-      const form = await readBoundedForm(req, entry.bodyLimit ?? UNLIMITED_BODY_BYTES)
+      const form = await readBoundedForm(req, bodyLimit ?? UNLIMITED_BODY_BYTES)
       if (isResponseResult(form)) return form
       parsed = form
     } else {
@@ -4761,7 +4196,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       // fit a value schema; use a schema-less route + @nifrajs/uploads helpers for those.
       return plainError(415, "unsupported_media_type")
     }
-    const validation = entry.schema!.body!["~standard"].validate(parsed)
+    const validation = bodySchema["~standard"].validate(parsed)
     const result = validation instanceof Promise ? await validation : validation
     return this.applyLifecycleValidation(entry, result, ctx, "body")
   }

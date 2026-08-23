@@ -29,6 +29,7 @@ import { RequestContext } from "../server/request-context.ts"
 import type { ResponseContractRuntime } from "../server/response-contract-lane.ts"
 import type { HandlerResult, ResponseResult } from "../server/runtime-core.ts"
 import type { CtxSet, MaybePromise, RawContext, RequestSource, Server } from "../server/server.ts"
+import type { RouteProgram } from "./route-program.ts"
 
 export type InternalHandler = (ctx: RawContext) => MaybePromise<HandlerResult>
 
@@ -98,33 +99,7 @@ interface RouteExecutionRuntime {
     finalize: (result: unknown, set: CtxSet) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T>
-  runLifecycleHooks<T>(
-    entry: RouteEntry,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-  ): MaybePromise<T>
-  runLifecycleQuery<T>(
-    entry: RouteEntry,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-  ): MaybePromise<T>
-  runLifecycleBody<T>(
-    entry: RouteEntry,
-    source: RequestSource,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-  ): MaybePromise<T>
-  runLifecycleBodyQuery<T>(
-    entry: RouteEntry,
-    source: RequestSource,
-    ctx: RawContext,
-    finalize: (result: unknown, set: CtxSet) => T,
-    wrapResponse: (response: Response | ResponseResult) => T,
-  ): MaybePromise<T>
-  runLifecycle<T>(
+  runProgram<T>(
     entry: RouteEntry,
     source: RequestSource,
     ctx: RawContext,
@@ -158,13 +133,11 @@ export function compileRouteExecutionPlan(options: {
   readonly contextless: boolean
   readonly hasAround: boolean
   readonly hasLedger: boolean
-  readonly lifecycleLane: LifecycleExecutionLane
   readonly fusedWeb: FusedWebRunner | undefined
   readonly fusedBody: FusedBodyRunner | undefined
   readonly fusedLane: "bare" | "body" | "query" | undefined
 }): RouteExecutionPlan {
-  const { lane, contextless, hasAround, hasLedger, lifecycleLane, fusedWeb, fusedBody, fusedLane } =
-    options
+  const { lane, contextless, hasAround, hasLedger, fusedWeb, fusedBody, fusedLane } = options
 
   if (contextless) {
     const run: RouteExecutionRunner = (
@@ -220,55 +193,14 @@ export function compileRouteExecutionPlan(options: {
         )
       break
     default:
-      switch (lifecycleLane) {
-        case "hooks":
-          inner = (runtime, entry, _source, ctx, finalize, wrapResponse) =>
-            (runtime as unknown as RouteExecutionRuntime).runLifecycleHooks(
-              entry,
-              ctx,
-              finalize,
-              wrapResponse,
-            )
-          break
-        case "query":
-          inner = (runtime, entry, _source, ctx, finalize, wrapResponse) =>
-            (runtime as unknown as RouteExecutionRuntime).runLifecycleQuery(
-              entry,
-              ctx,
-              finalize,
-              wrapResponse,
-            )
-          break
-        case "body":
-          inner = (runtime, entry, source, ctx, finalize, wrapResponse) =>
-            (runtime as unknown as RouteExecutionRuntime).runLifecycleBody(
-              entry,
-              source,
-              ctx,
-              finalize,
-              wrapResponse,
-            )
-          break
-        case "body-query":
-          inner = (runtime, entry, source, ctx, finalize, wrapResponse) =>
-            (runtime as unknown as RouteExecutionRuntime).runLifecycleBodyQuery(
-              entry,
-              source,
-              ctx,
-              finalize,
-              wrapResponse,
-            )
-          break
-        default:
-          inner = (runtime, entry, source, ctx, finalize, wrapResponse) =>
-            (runtime as unknown as RouteExecutionRuntime).runLifecycle(
-              entry,
-              source,
-              ctx,
-              finalize,
-              wrapResponse,
-            )
-      }
+      inner = (runtime, entry, source, ctx, finalize, wrapResponse) =>
+        (runtime as unknown as RouteExecutionRuntime).runProgram(
+          entry,
+          source,
+          ctx,
+          finalize,
+          wrapResponse,
+        )
   }
 
   const execute: ContextRouteRunner = hasAround
@@ -382,6 +314,8 @@ export interface RouteEntry {
   readonly around: ReadonlyArray<RawAround>
   /** The single immutable execution decision consumed by portable, Node-direct, and Bun-native paths. */
   readonly execution: RouteExecutionPlan
+  /** One immutable general lifecycle program compiled at registration. */
+  readonly program: RouteProgram
 }
 
 /** The fused Web lane: same inputs `routeAndRun` would hand the generic path, a `Response` out. */
