@@ -1,7 +1,7 @@
 /**
  * WORST-CASE throughput matrix - nifra vs Elysia only, on Bun/Node/Deno - driven by
  * `oha`. The app under test deliberately misses every nifra fast tier at once (hooks +
- * multi-param route + validated query + untrusted JSON body + per-request dynamic
+ * multi-param route + validated query + JSON body validation + per-request dynamic
  * response headers), so this measures the GENERIC lane against Elysia's AOT-compiled
  * handler - the shape most likely to show nifra behind. Harness mechanics mirror
  * ../run.ts (isolated subprocess per server, warmup, median-of-N, ratios are the signal).
@@ -23,6 +23,7 @@ const SCALE_PCT = envInt("BENCH_SCALE", 100)
 const WARMUP = envInt("BENCH_WARMUP", 1, 0) // 0 skips the warmup run
 const RUNS = envInt("BENCH_RUNS", 3)
 const BASE_PORT = 3520
+const JSON_MODE = process.argv.includes("--json")
 
 // ---- workload payloads ------------------------------------------------------------
 
@@ -334,7 +335,10 @@ for (const section of sections) {
       }
       const perTarget = new Map<string, Measure[]>(running.map((r) => [r.target.framework, []]))
       for (let round = 0; round < RUNS; round++) {
-        for (const r of running) {
+        // Alternate the first measured target so a thermal/CPU/cache drift cannot charge every
+        // round's first or second position to one framework.
+        const order = round % 2 === 0 ? running : [...running].reverse()
+        for (const r of order) {
           const m = await runOha(`${r.base}${w.path}`, w, requests)
           if (Bun.env.BENCH_TRACE === "1") {
             console.error(`    [round ${round}] ${r.target.framework} ${m.rps} req/s`)
@@ -357,6 +361,16 @@ for (const section of sections) {
     }
     await Bun.sleep(1500)
   }
+}
+
+if (JSON_MODE) {
+  console.log(
+    JSON.stringify({
+      meta: { bun: Bun.version, runs: RUNS, scalePct: SCALE_PCT, connections: CONNECTIONS },
+      results,
+    }),
+  )
+  process.exit(0)
 }
 
 // ---- report -----------------------------------------------------------------------

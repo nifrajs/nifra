@@ -20,7 +20,9 @@ export function makeWorstElysiaApp(options?: ConstructorParameters<typeof Elysia
         }
         return undefined
       })
-      .onAfterHandle(() => undefined)
+      // Return the current response explicitly so the hook has the same observable transform
+      // semantics as nifra's `afterHandle((result) => result)` benchmark hook.
+      .onAfterHandle(({ responseValue }) => responseValue)
       .get(
         "/orgs/:org/projects/:proj/tasks/:id",
         ({ params, query, requestId, set }) => {

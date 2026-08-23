@@ -35,6 +35,9 @@ same-run ratios (nifra vs the field, % of the raw server) - not the absolute num
 Workloads are identical across every framework (`bench/http/serve*.ts`): `GET /users/:id` (routing +
 path param) and `POST /users` (validated body), plus `GET /` and `GET /search` under `--full`. Each
 server runs in its own subprocess, measured one at a time, so nothing contends with the load client.
+The Deno rows use the shared direct `Deno.serve` ingress in `bench/http/deno-ingress.ts`, including
+the same parser-framing marker for Nifra; they do not mix Nifra's production adapter overhead into
+the framework comparison.
 
 `bench:http:realworld` (`bench/http-realworld/`) runs the same GET/POST split on a route with what a
 real API route actually has - security headers, CORS, a request-id hook, bearer-token auth, a cookie

@@ -6,8 +6,11 @@
  *   - derive + beforeHandle + afterHandle registered  → hookful (generic) lifecycle lane
  *   - multi-segment path params                       → no static-map route hit
  *   - validated query                                 → query materialization + validate
- *   - untrusted JSON body (no trusted-framing mark)   → capped read + parse + validate
+ *   - JSON body validation on the generic body stage → parse + validate after runtime framing
  *   - per-request `c.set.headers` writes              → dynamic headers, static-header tier off
+ *
+ * Runtime adapters mark requests delivered by the platform HTTP parser as framed; this benchmark
+ * therefore measures body parsing + validation, not the separate in-process untrusted-stream path.
  *
  * Value import points at built `dist/` (same reasoning as ../_nifra-app.ts: measure the
  * artifact a real install runs, not live TS source).

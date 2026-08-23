@@ -10,9 +10,9 @@
  * Core's VALUE import points at the built `dist/` output: Deno's npm condition set has no "bun"
  * condition, so a real `npm:@nifrajs/core` install resolves the "default" export straight to
  * `dist/*.js` - importing `src/*.ts` here would benchmark an artifact no Deno user runs (the same
- * source-vs-dist trap _nifra-app.ts documents for Bun). The adapter's own `src` import below is the
- * one place that stays TypeScript - a pure type-strip of the same code - and `setup-published.ts`
- * rewrites it to the installed `dist/index.js` when measuring a release.
+ * source-vs-dist trap _nifra-app.ts documents for Bun). The Standard Schema type import below stays
+ * TypeScript only because it is erased at runtime; the shared ingress keeps every row on direct
+ * `Deno.serve` with the same parser-framing marker.
  *
  *   deno run --allow-net --allow-env --no-check bench/http-realworld/serve-deno.ts <nifra|hono|elysia|deno-raw|*-body> <port>
  */
@@ -28,7 +28,7 @@ import type {
   StandardSchemaV1,
   StandardTypes,
 } from "../../packages/core/src/index.ts"
-import { serve } from "../../packages/deno/src/index.ts"
+import { serveFetch } from "../http/deno-ingress.ts"
 
 const framework = Deno.args[0]
 const port = Number(Deno.args[1])
@@ -185,7 +185,7 @@ if (framework === "nifra" || framework === "nifra-body") {
         return undefined
       })
   }
-  await serve(app, { port })
+  serveFetch(app.fetch.bind(app), port)
 } else if (framework === "hono") {
   const app = new Hono<{ Variables: { userId: string; theme: string } }>()
   app.use("*", secureHeaders())
@@ -226,7 +226,7 @@ if (framework === "nifra" || framework === "nifra-body") {
       return c.json({ ok: true, id: "ord_new", sku, qty, by: c.get("userId") })
     },
   )
-  Deno.serve({ port, onListen() {} }, app.fetch)
+  serveFetch(app.fetch.bind(app), port)
 } else if (framework === "hono-body") {
   const app = new Hono<{ Variables: { userId: string; theme: string } }>()
   // Hono's body-observing idiom (its etag middleware's shape): run after the handler, drain the
@@ -276,7 +276,7 @@ if (framework === "nifra" || framework === "nifra-body") {
       return c.json({ ok: true, id: "ord_new", sku, qty, by: c.get("userId") })
     },
   )
-  Deno.serve({ port, onListen() {} }, app.fetch)
+  serveFetch(app.fetch.bind(app), port)
 } else if (framework === "elysia") {
   const { Elysia, t } = await import("elysia")
   const { WebStandardAdapter } = await import("elysia/adapter/web-standard")
@@ -312,7 +312,7 @@ if (framework === "nifra" || framework === "nifra-body") {
       ({ body, userId }) => ({ ok: true, id: "ord_new", sku: body.sku, qty: body.qty, by: userId }),
       { body: t.Object({ sku: t.String(), qty: t.Number(), note: t.String() }) },
     )
-  Deno.serve({ port, onListen() {} }, app.fetch)
+  serveFetch(app.fetch.bind(app), port)
 } else if (framework === "elysia-body") {
   const { Elysia, t } = await import("elysia")
   const { WebStandardAdapter } = await import("elysia/adapter/web-standard")
@@ -360,12 +360,12 @@ if (framework === "nifra" || framework === "nifra-body") {
       ({ body, userId }) => ({ ok: true, id: "ord_new", sku: body.sku, qty: body.qty, by: userId }),
       { body: t.Object({ sku: t.String(), qty: t.Number(), note: t.String() }) },
     )
-  Deno.serve({ port, onListen() {} }, app.fetch)
+  serveFetch(app.fetch.bind(app), port)
 } else if (framework === "deno-raw") {
   // NOT an `async` handler: that would return a promise for every request including the GET
   // workload, charging the ceiling a microtask the framework rows never pay and understating the
   // number they are all measured against. Only the POST branch, which awaits a body, is async.
-  Deno.serve({ port, onListen() {} }, (req): Response | Promise<Response> => {
+  serveFetch((req): Response | Promise<Response> => {
     const pathname = pathnameOf(req.url)
     if (!pathname.startsWith("/api/orders")) return new Response("not found", { status: 404 })
     const who = authOf(req)
@@ -401,7 +401,7 @@ if (framework === "nifra" || framework === "nifra-body") {
         )
     }
     return new Response("not found", { status: 404, headers })
-  })
+  }, port)
 } else if (framework === "deno-raw-body") {
   // The body-hash ceiling: hand-written, the hash computed inline at serialization time.
   const jsonHashed = (
@@ -417,7 +417,7 @@ if (framework === "nifra" || framework === "nifra-body") {
   }
   // Sync handler for the same reason as `deno-raw` above: the body-hash workload is a GET, so an
   // async ceiling would pay a per-request microtask that no framework row pays.
-  Deno.serve({ port, onListen() {} }, (req): Response | Promise<Response> => {
+  serveFetch((req): Response | Promise<Response> => {
     const pathname = pathnameOf(req.url)
     if (!pathname.startsWith("/api/orders")) return new Response("not found", { status: 404 })
     const who = authOf(req)
@@ -455,7 +455,7 @@ if (framework === "nifra" || framework === "nifra-body") {
         )
     }
     return new Response("not found", { status: 404, headers })
-  })
+  }, port)
 } else {
   throw new Error(`unknown framework: ${framework ?? "(none)"}`)
 }

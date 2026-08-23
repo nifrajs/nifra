@@ -16,17 +16,16 @@ import { Hono } from "hono"
 import { validator } from "hono/validator"
 // Core's VALUE import points at built dist: Deno's npm condition set has no "bun" condition, so a
 // real `npm:@nifrajs/core` install resolves the "default" export to `dist/*.js` - importing src
-// here would benchmark an artifact no Deno user runs. The adapter's own `src` import below is the
-// one place that stays TypeScript: it is a pure type-strip of the same code (no bundler, no
-// conditions), and `setup-published.ts` rewrites it to the installed `dist/index.js` when measuring
-// a release.
+// here would benchmark an artifact no Deno user runs. The Standard Schema type import below stays
+// TypeScript only because it is erased at runtime; the shared ingress keeps every row on the same
+// direct `Deno.serve` callback.
 import { server } from "../../packages/core/dist/index.js"
 import type {
   StandardResult,
   StandardSchemaV1,
   StandardTypes,
 } from "../../packages/core/src/index.ts"
-import { serve } from "../../packages/deno/src/index.ts"
+import { serveFetch } from "./deno-ingress.ts"
 
 const framework = Deno.args[0]
 const port = Number(Deno.args[1])
@@ -101,14 +100,12 @@ function pathnameOf(url: string): string {
 }
 
 if (framework === "nifra") {
-  await serve(
-    server()
-      .get("/", () => ({ hello: "world" }))
-      .get("/users/:id", (c) => ({ id: c.params.id }))
-      .get("/search", { query: searchQuery }, (c) => ({ q: c.query.q, limit: c.query.limit }))
-      .post("/users", { body: userBody }, (c) => ({ id: "1", name: c.body.name })),
-    { port },
-  )
+  const app = server()
+    .get("/", () => ({ hello: "world" }))
+    .get("/users/:id", (c) => ({ id: c.params.id }))
+    .get("/search", { query: searchQuery }, (c) => ({ q: c.query.q, limit: c.query.limit }))
+    .post("/users", { body: userBody }, (c) => ({ id: "1", name: c.body.name }))
+  serveFetch(app.fetch.bind(app), port)
 } else if (framework === "hono") {
   const app = new Hono()
     .get("/", (c) => c.json({ hello: "world" }))
@@ -125,10 +122,9 @@ if (framework === "nifra") {
       validator("json", (value, c) => (isUser(value) ? value : c.json({ error: "invalid" }, 400))),
       (c) => c.json({ id: "1", name: c.req.valid("json").name }),
     )
-  Deno.serve({ port, onListen() {} }, app.fetch)
+  serveFetch(app.fetch.bind(app), port)
 } else if (framework === "elysia") {
-  // Elysia on Deno via its Web-Standard adapter → Deno.serve(app.fetch). IDENTICAL routes + TypeBox
-  // validation to the Bun/Node servers, so a cross-runtime delta is Elysia's own, not the bench's.
+  // Elysia on Deno via its Web-Standard adapter and the same ingress as every other row.
   const { Elysia, t } = await import("elysia")
   const { WebStandardAdapter } = await import("elysia/adapter/web-standard")
   const app = new Elysia({ adapter: WebStandardAdapter })
@@ -140,46 +136,38 @@ if (framework === "nifra") {
     .post("/users", ({ body }) => ({ id: "1", name: body.name }), {
       body: t.Object({ name: t.String(), age: t.Number() }),
     })
-  Deno.serve({ port, onListen() {} }, app.fetch)
+  serveFetch(app.fetch.bind(app), port)
 } else if (framework === "deno-raw") {
   const usersPrefix = "/users/"
-  Deno.serve(
-    {
-      port,
-      onListen() {},
-    },
-    // Deliberately NOT an `async` handler. An async function returns a promise for EVERY request,
-    // including the GET workloads that need no await at all - which costs the ceiling a microtask
-    // per request that the frameworks (returning their Response synchronously) never pay, and so
-    // understates the very number every other row is measured against. Only the POST branch, which
-    // genuinely awaits the body, returns a promise.
-    (req): Response | Promise<Response> => {
-      const pathname = pathnameOf(req.url)
-      if (req.method === "GET") {
-        if (pathname === "/") return Response.json({ hello: "world" })
-        if (pathname.startsWith(usersPrefix)) {
-          return Response.json({ id: pathname.slice(usersPrefix.length) })
-        }
-        if (pathname === "/search") {
-          const url = new URL(req.url)
-          const q = url.searchParams.get("q")
-          const limit = url.searchParams.get("limit")
-          if (q !== null && limit !== null) return Response.json({ q, limit })
-          return new Response("invalid", { status: 400 })
-        }
-      } else if (req.method === "POST" && pathname === "/users") {
-        return req
-          .json()
-          .catch(() => undefined)
-          .then((body: unknown) =>
-            isUser(body)
-              ? Response.json({ id: "1", name: body.name })
-              : new Response("invalid", { status: 400 }),
-          )
+  // Deliberately NOT an `async` handler. An async function returns a promise for EVERY request,
+  // including the GET workloads that need no await at all - which costs the ceiling a microtask
+  // per request that the frameworks (returning their Response synchronously) never pay.
+  serveFetch((req): Response | Promise<Response> => {
+    const pathname = pathnameOf(req.url)
+    if (req.method === "GET") {
+      if (pathname === "/") return Response.json({ hello: "world" })
+      if (pathname.startsWith(usersPrefix)) {
+        return Response.json({ id: pathname.slice(usersPrefix.length) })
       }
-      return new Response("not found", { status: 404 })
-    },
-  )
+      if (pathname === "/search") {
+        const url = new URL(req.url)
+        const q = url.searchParams.get("q")
+        const limit = url.searchParams.get("limit")
+        if (q !== null && limit !== null) return Response.json({ q, limit })
+        return new Response("invalid", { status: 400 })
+      }
+    } else if (req.method === "POST" && pathname === "/users") {
+      return req
+        .json()
+        .catch(() => undefined)
+        .then((body: unknown) =>
+          isUser(body)
+            ? Response.json({ id: "1", name: body.name })
+            : new Response("invalid", { status: 400 }),
+        )
+    }
+    return new Response("not found", { status: 404 })
+  }, port)
 } else {
   throw new Error(`unknown framework: ${framework ?? "(none)"}`)
 }
