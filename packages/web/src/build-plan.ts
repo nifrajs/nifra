@@ -76,7 +76,15 @@ export interface ServerBuildTargetPlan {
 export type BuildTargetPlan = StaticBuildTargetPlan | ServerBuildTargetPlan
 
 const finalPathSegment = (path: string): string => {
-  const trimmed = path.replace(/[\\/]+$/, "")
+  // Do not use a repeated, unanchored regex here: a separator-heavy path followed by a
+  // non-separator can make the regex engine retry every possible start position (ReDoS).
+  let end = path.length
+  while (end > 0) {
+    const code = path.charCodeAt(end - 1)
+    if (code !== 0x2f && code !== 0x5c) break
+    end -= 1
+  }
+  const trimmed = path.slice(0, end)
   const slash = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"))
   return slash === -1 ? trimmed : trimmed.slice(slash + 1)
 }

@@ -64,4 +64,9 @@ describe("build-plan contract", () => {
       outputFile: undefined,
     })
   })
+
+  test("handles separator-heavy output paths without regex backtracking", () => {
+    const outDir = `${"/".repeat(20_000)}site`
+    expect(planBuildTarget("node", outDir).run).toContain("(run: node site/server.js)")
+  })
 })
