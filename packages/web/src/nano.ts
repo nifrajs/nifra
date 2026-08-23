@@ -122,7 +122,7 @@ export interface Resource<T> extends Readable<ResourceState<T>> {
  * declared dependency changes, exposing the result as an explicit `{ status, value, error }`.
  *
  * Two footguns are handled here so they cannot be got wrong by hand:
- *   - Races: each run holds a token; a stale run's resolution is dropped, and its `AbortSignal` is
+ *   - Races: each run holds a generation; a stale run's resolution is dropped, and its `AbortSignal` is
  *     aborted, so an earlier-started-later-finishing fetch never overwrites a newer one.
  *   - Deps: like `computed`, dependencies are DECLARED (`NF-C023` checks the fetcher's `.get()` reads
  *     against the array). A `resource` that reads a signal its deps omit won't refetch when it changes.
@@ -132,21 +132,21 @@ export function resource<T>(
   deps: readonly Readable<unknown>[] = [],
 ): Resource<T> {
   const state = signal<ResourceState<T>>({ status: "pending", value: undefined, error: undefined })
-  let token = 0
+  let generation = 0
   let controller: AbortController | undefined
   const run = (): void => {
-    const mine = ++token
+    const mine = ++generation
     controller?.abort()
     controller = new AbortController()
     const active = controller
     state.set({ status: "pending", value: undefined, error: undefined })
     fetcher(active.signal).then(
       (value) => {
-        if (mine === token) state.set({ status: "ready", value, error: undefined })
+        if (mine === generation) state.set({ status: "ready", value, error: undefined })
       },
       (error) => {
         // A stale run (superseded) or one we aborted must not surface as an error state.
-        if (mine === token && !active.signal.aborted)
+        if (mine === generation && !active.signal.aborted)
           state.set({ status: "error", value: undefined, error })
       },
     )

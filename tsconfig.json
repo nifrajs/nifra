@@ -104,6 +104,7 @@
     "bench/ssr",
     "bench/http/serve-deno.ts",
     "bench/http/serve-deno-static-headers.ts",
+    "bench/http/worst-case/serve-deno.ts",
     "bench/http-realworld/serve-deno.ts",
     "site",
     "packages/deno",

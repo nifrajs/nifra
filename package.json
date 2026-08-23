@@ -115,6 +115,7 @@
     "@nifrajs/agent-protocol": "workspace:*",
     "@nifrajs/coding-agent": "workspace:*",
     "@nifrajs/pi": "workspace:*",
+    "@nifrajs/testing": "workspace:*",
     "@nifrajs/island-trigger": "workspace:*",
     "@biomejs/biome": "^2.4.16",
     "@changesets/cli": "^2.31.0",

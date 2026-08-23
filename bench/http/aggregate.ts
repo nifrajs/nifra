@@ -62,7 +62,7 @@ interface Meta {
   readonly deno: string
   readonly oha: string
   readonly runs: number
-  readonly durationS: number
+  readonly scalePct: number
   readonly connections: number
 }
 type Results = Record<string, Record<string, Record<string, Measure>>>
@@ -209,7 +209,7 @@ for (const rt of runtimes) {
   }
 }
 
-const metaLine = `_Median of **${runs}** full-matrix runs (each a median of ${meta.runs} × ${meta.durationS}s oha samples @ ${meta.connections} connections) · Bun ${meta.bun} · Node ${meta.node} · Deno ${meta.deno} · oha ${meta.oha}. Read the same-run ratios, not the absolutes._`
+const metaLine = `_Median of **${runs}** full-matrix runs (each a median of ${meta.runs} count-bounded oha samples @ ${meta.connections} connections) · Bun ${meta.bun} · Node ${meta.node} · Deno ${meta.deno} · oha ${meta.oha}. Read the same-run ratios, not the absolutes._`
 
 if (!write) {
   console.log(`\n${metaLine}\n`)

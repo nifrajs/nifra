@@ -14,30 +14,42 @@
  *   bun run bench/http/run.ts bun        # one section only (bun | node | deno)
  */
 
-// Duration/warmup/run knobs are env-overridable for a fast pass (noisier, but the same-run RATIO
-// holds): `BENCH_DURATION_S=2 BENCH_WARMUP_S=1 BENCH_RUNS=1 …`. Defaults are the credible-numbers set.
+// Scale/warmup/run knobs are env-overridable for a fast pass (noisier, but the same-run RATIO
+// holds): `BENCH_SCALE=10 BENCH_WARMUP=0 BENCH_RUNS=1 …`. Defaults are the credible-numbers set.
 const envInt = (name: string, dflt: number, min = 1): number => {
   const n = Bun.env[name] === undefined ? Number.NaN : Number(Bun.env[name])
   return Number.isInteger(n) && n >= min ? n : dflt
 }
 const CONNECTIONS = envInt("BENCH_CONNS", 50)
-const DURATION_S = envInt("BENCH_DURATION_S", 4)
-const WARMUP_S = envInt("BENCH_WARMUP_S", 2, 0)
+/** Scales every workload's request count (percent). `BENCH_SCALE=10` → a fast smoke pass. */
+const SCALE_PCT = envInt("BENCH_SCALE", 100)
+const WARMUP = envInt("BENCH_WARMUP", 1, 0) // 0 skips the warmup run
 const RUNS = envInt("BENCH_RUNS", 3)
 const BASE_PORT = 3400
 
 interface Workload {
   readonly name: string
   readonly path: string
+  /** Requests per timed run. Runs are COUNT-bounded (`oha -n`), not duration-bounded
+   *  (`-z`): a `-z` deadline aborts all 50 in-flight requests mid-body, and Deno.serve
+   *  degrades badly after repeated mid-POST aborts (measured: 12K → 200 req/s for every
+   *  subsequent run against ANY server in the section until the workload changed).
+   *  Count-bounded runs end cleanly and the pathology never triggers. */
+  readonly requests: number
   readonly post?: { readonly headers: Readonly<Record<string, string>>; readonly body: string }
 }
 
-const GET_ROOT: Workload = { name: "GET /", path: "/" }
-const GET_USER: Workload = { name: "GET /users/:id", path: "/users/123" }
-const GET_SEARCH: Workload = { name: "GET /search?query", path: "/search?q=ada&limit=10" }
+const GET_ROOT: Workload = { name: "GET /", path: "/", requests: 150_000 }
+const GET_USER: Workload = { name: "GET /users/:id", path: "/users/123", requests: 150_000 }
+const GET_SEARCH: Workload = {
+  name: "GET /search?query",
+  path: "/search?q=ada&limit=10",
+  requests: 120_000,
+}
 const POST_USERS: Workload = {
   name: "POST /users",
   path: "/users",
+  requests: 100_000,
   post: {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name: "Ada", age: 36 }),
@@ -184,12 +196,12 @@ function parseOha(raw: string): Measure {
   return { rps: Math.round(rps), p50ms: p50 * 1000, p99ms: p99 * 1000 }
 }
 
-async function runOha(url: string, w: Workload, durationS: number): Promise<Measure> {
+async function runOha(url: string, w: Workload, requests: number): Promise<Measure> {
   const args = [
     "-c",
     String(CONNECTIONS),
-    "-z",
-    `${durationS}s`,
+    "-n",
+    String(requests),
     "--no-tui",
     "--output-format",
     "json",
@@ -216,9 +228,13 @@ async function runOha(url: string, w: Workload, durationS: number): Promise<Meas
 
 /** Median req/s across N runs (best reported too). The median resists outliers; a
  *  single slow run from a background CPU spike can't drag the reported number down. */
-async function sample(url: string, w: Workload): Promise<{ median: Measure; best: Measure }> {
+async function sample(
+  url: string,
+  w: Workload,
+  requests: number,
+): Promise<{ median: Measure; best: Measure }> {
   const runs: Measure[] = []
-  for (let i = 0; i < RUNS; i++) runs.push(await runOha(url, w, DURATION_S))
+  for (let i = 0; i < RUNS; i++) runs.push(await runOha(url, w, requests))
   const sorted = [...runs].sort((a, b) => a.rps - b.rps)
   const median = sorted[sorted.length >> 1] ?? ZERO
   const best = sorted[sorted.length - 1] ?? ZERO
@@ -276,8 +292,10 @@ for (const section of sections) {
       proc = Bun.spawn([...target.spawn(port)], { stdout: "ignore", stderr: "inherit" })
       await waitReady(base, 8000)
       for (const w of WORKLOADS) {
-        await runOha(`${base}${w.path}`, w, WARMUP_S) // warm the JIT for this workload
-        const { median } = await sample(`${base}${w.path}`, w)
+        const requests = Math.max(500, Math.round((w.requests * SCALE_PCT) / 100))
+        // warm the JIT for this workload
+        if (WARMUP > 0) await runOha(`${base}${w.path}`, w, Math.round(requests / 5))
+        const { median } = await sample(`${base}${w.path}`, w, requests)
         fwResults[w.name] = median
       }
     } catch (e) {
@@ -315,7 +333,7 @@ const meta = {
   deno: toolVersion("deno", "--version"),
   oha: toolVersion("oha", "--version"),
   runs: RUNS,
-  durationS: DURATION_S,
+  scalePct: SCALE_PCT,
   connections: CONNECTIONS,
 }
 
@@ -328,7 +346,7 @@ if (jsonMode) {
 
 const versions = `Bun ${meta.bun} · Node ${meta.node} · Deno ${meta.deno}`
 console.log(
-  `\nHTTP throughput - oha, median-of-${RUNS} × ${DURATION_S}s @ ${CONNECTIONS} conns  (${versions})\nRatios on the same run are the signal; absolutes are indicative only.\n`,
+  `\nHTTP throughput - oha, median-of-${RUNS} count-bounded runs @ ${CONNECTIONS} conns  (${versions})\nRatios on the same run are the signal; absolutes are indicative only.\n`,
 )
 
 for (const section of sections) {
