@@ -312,10 +312,11 @@ async function walkPortSource(
   cwd: string,
   visit: (rel: string, content: string) => void,
 ): Promise<void> {
-  for await (const rel of new Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}").scan({
+  for await (const rawRel of new Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}").scan({
     cwd,
     dot: false,
   })) {
+    const rel = rawRel.replaceAll("\\", "/")
     if (IGNORED.test(rel)) continue
     visit(rel, await Bun.file(join(cwd, rel)).text())
   }

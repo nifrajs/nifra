@@ -220,7 +220,12 @@ function sourceBranch(content: string): boolean {
 
 async function sourceFiles(cwd: string): Promise<Array<{ file: string; content: string }>> {
   const files: Array<{ file: string; content: string }> = []
-  for await (const file of new Bun.Glob(SOURCE_GLOB).scan({ cwd, onlyFiles: true, dot: false })) {
+  for await (const rawFile of new Bun.Glob(SOURCE_GLOB).scan({
+    cwd,
+    onlyFiles: true,
+    dot: false,
+  })) {
+    const file = rawFile.replaceAll("\\", "/")
     if (IGNORED.test(file)) continue
     files.push({ file, content: await readFile(join(cwd, file), "utf8") })
   }

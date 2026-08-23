@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { fileURLToPath } from "node:url"
 import {
   type NifraWebSocket,
   type RunningServer,
@@ -1015,7 +1016,7 @@ describe("ws runtime gate (.use(websocket()))", () => {
   // A fresh process that calls app.ws() WITHOUT `.use(websocket())` must fail loud at registration.
   test("app.ws() without `.use(websocket())` fails loud at registration", async () => {
     const script = `
-      import { server } from "${new URL("../src/index.ts", import.meta.url).pathname}"
+      import { server } from ${JSON.stringify(fileURLToPath(new URL("../src/index.ts", import.meta.url)))}
       try {
         server().ws("/chat", { message: () => {} })
         console.log("NO_THROW")

@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { gzipSync } from "bun"
 
 // The reason this package exists is the number this test pins. Bundling the bare index measures
@@ -14,7 +15,7 @@ test("full-feature island bundle stays within the island budget (≤ 2 KB gz)", 
     entry,
     `
 import { batch, computed, effect, island, islandState, mountIslands, signal } from ${JSON.stringify(
-      new URL("../src/index.ts", import.meta.url).pathname,
+      fileURLToPath(new URL("../src/index.ts", import.meta.url)),
     )}
 island("compare", ({ state, root }) => {
   const count = state("count", 0)

@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test"
+import { fileURLToPath } from "node:url"
 
 test("content index client bundle stays within its opt-in gzip budget", async () => {
   const result = await Bun.build({
-    entrypoints: [new URL("../src/index.ts", import.meta.url).pathname],
+    entrypoints: [fileURLToPath(new URL("../src/index.ts", import.meta.url))],
     target: "browser",
     minify: true,
     external: ["marked", "yaml"],

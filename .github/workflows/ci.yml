@@ -157,7 +157,11 @@ jobs:
         run: bun run typecheck
 
       - name: Test
-        run: bun run test
+        # Bun 1.3.x on Windows can panic with an internal integer overflow after the entire monorepo
+        # suite shares one process (~0.8 GB RSS in the failed run). This runs the exact same test dirs
+        # through the strict tolerant wrapper, in bounded child processes; no tests are omitted and a
+        # failed/crashed/no-summary child still fails the job.
+        run: bun run scripts/test-windows.ts
 
   deno:
     runs-on: ubuntu-latest

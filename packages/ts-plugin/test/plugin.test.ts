@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import ts from "typescript"
 import plugin, { findRoutePathLiteral, findRoutesDir } from "../src/index.ts"
 import { resolveRouteFile } from "../src/resolve.ts"
@@ -55,9 +55,10 @@ test("findRoutePathLiteral ignores non-path literals and positions off any liter
 })
 
 test("findRoutesDir walks up to the nearest directory containing routes/", () => {
-  const has = (p: string): boolean => p === "/app/routes"
-  expect(findRoutesDir("/app/routes/about.tsx", has)).toBe("/app/routes")
-  expect(findRoutesDir("/app/src/deep/component.tsx", has)).toBe("/app/routes")
+  const routes = join(resolve("/app"), "routes")
+  const has = (p: string): boolean => p === routes
+  expect(findRoutesDir(join(routes, "about.tsx"), has)).toBe(routes)
+  expect(findRoutesDir(join(resolve("/app"), "src", "deep", "component.tsx"), has)).toBe(routes)
   expect(findRoutesDir("/elsewhere/file.ts", () => false)).toBeUndefined()
 })
 
@@ -77,7 +78,8 @@ function makeLanguageService(): ts.LanguageService {
   const host: ts.LanguageServiceHost = {
     getScriptFileNames: () => [srcPath],
     getScriptVersion: () => "1",
-    getScriptSnapshot: (f) => (f === srcPath ? ts.ScriptSnapshot.fromString(appCode) : undefined),
+    getScriptSnapshot: (f) =>
+      f.toLowerCase() === srcPath.toLowerCase() ? ts.ScriptSnapshot.fromString(appCode) : undefined,
     getCurrentDirectory: () => root,
     getCompilationSettings: () => ({ jsx: ts.JsxEmit.ReactJSX, allowJs: true }),
     getDefaultLibFileName: (o) => ts.getDefaultLibFilePath(o),

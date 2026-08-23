@@ -46,7 +46,8 @@ export async function syncServerManifests(cwd: string): Promise<SyncManifestResu
     "@nifrajs/web/build"
   )
   const results: SyncManifestResult[] = []
-  for await (const rel of new Glob("**/server-manifest.ts").scan({ cwd, dot: false })) {
+  for await (const rawRel of new Glob("**/server-manifest.ts").scan({ cwd, dot: false })) {
+    const rel = rawRel.replaceAll("\\", "/")
     if (IGNORED.test(rel)) continue
     const abs = join(cwd, rel)
     const source = await Bun.file(abs).text()

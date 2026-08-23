@@ -15,7 +15,7 @@
  */
 
 import { readFile } from "node:fs/promises"
-import { dirname, sep } from "node:path"
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 
 /** How the current root was chosen. `arg` = explicit `nifra mcp <dir>`; `cwd` = the spawn directory;
@@ -110,8 +110,13 @@ export function pathsFromRootsResult(result: unknown): string[] {
   return paths
 }
 
-const contains = (parent: string, child: string): boolean =>
-  parent === child || child.startsWith(parent + sep)
+const contains = (parent: string, child: string): boolean => {
+  const distance = relative(resolve(parent), resolve(child))
+  return (
+    distance === "" ||
+    (distance !== ".." && !distance.startsWith(`..${sep}`) && !isAbsolute(distance))
+  )
+}
 
 /** True when the server root and the client's workspace are DISJOINT - neither contains the other.
  * A server rooted at a monorepo whose sub-app is the open workspace (or vice versa) is not a

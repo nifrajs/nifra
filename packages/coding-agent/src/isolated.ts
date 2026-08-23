@@ -1,5 +1,6 @@
 import { realpathSync } from "node:fs"
 import { isAbsolute, relative, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 import { readBoundedText } from "./process.ts"
 
 export interface IsolatedExtensionWorkerOptions {
@@ -91,7 +92,7 @@ export class IsolatedExtensionWorker {
   async start(): Promise<IsolatedExtensionSnapshot> {
     if (this.started) return this.ready
     this.started = true
-    const workerPath = new URL("./isolated-worker.ts", import.meta.url).pathname
+    const workerPath = fileURLToPath(new URL("./isolated-worker.ts", import.meta.url))
     this.process = Bun.spawn(
       [process.execPath, workerPath, realpathSync(this.options.modulePath), this.options.cwd],
       {

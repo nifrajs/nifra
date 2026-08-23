@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { cssModulesBunPlugin, transformCssModule } from "../src/plugins/css-modules.ts"
 
 type LoadCb = (args: {
@@ -310,7 +311,7 @@ describe("transformCssModule - robustness on malformed/edge input", () => {
 })
 
 describe("cssModulesBunPlugin - wiring + SSR/dom parity", () => {
-  const fixture = new URL("./fixtures/styles.module.css", import.meta.url).pathname
+  const fixture = fileURLToPath(new URL("./fixtures/styles.module.css", import.meta.url))
 
   test("dom: the import emits the class map AND a virtual ?nifra-css-module CSS import", async () => {
     const { cssModuleLoad, cssLoad, cssResolve } = setupCssModulesPlugin("dom")

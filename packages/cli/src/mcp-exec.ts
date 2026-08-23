@@ -699,7 +699,8 @@ const WARM_RUN_EXTRA_FILES = ["bun.lock", "bun.lockb"] as const
 
 async function warmRunFingerprint(cwd: string): Promise<string> {
   const parts: string[] = []
-  for await (const rel of WARM_RUN_GLOB.scan({ cwd, dot: false })) {
+  for await (const rawRel of WARM_RUN_GLOB.scan({ cwd, dot: false })) {
+    const rel = rawRel.replaceAll("\\", "/")
     if (WARM_RUN_IGNORED.test(rel)) continue
     try {
       const s = await stat(resolve(cwd, rel))

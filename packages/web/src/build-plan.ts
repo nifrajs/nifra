@@ -1,3 +1,4 @@
+import { basename as pathBasename } from "node:path"
 import type { ClientModuleGraph } from "./module-graph.ts"
 
 export interface BuildManifest {
@@ -166,7 +167,7 @@ interface GraphInput {
   readonly imports?: readonly GraphImport[]
 }
 
-const basename = (path: string): string => path.slice(path.lastIndexOf("/") + 1)
+const basename = (path: string): string => pathBasename(path)
 
 const nodeBuiltinOf = (im: GraphImport): string | undefined => {
   if (im.original?.startsWith("node:")) return im.original

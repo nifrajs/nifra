@@ -173,7 +173,8 @@ export async function inspectBuildFreshness(cwd: string): Promise<BuildFreshness
     const path = resolve(cwd, name)
     if (existsSync(path)) sourcePaths.push(path)
   }
-  for await (const path of SOURCE_GLOB.scan({ cwd, dot: false })) {
+  for await (const rawPath of SOURCE_GLOB.scan({ cwd, dot: false })) {
+    const path = rawPath.replaceAll("\\", "/")
     if (!IGNORED.test(path) && path.startsWith("routes/")) sourcePaths.push(resolve(cwd, path))
   }
   const sourceTimes = await fileTimes(sourcePaths)
@@ -181,7 +182,8 @@ export async function inspectBuildFreshness(cwd: string): Promise<BuildFreshness
     const buildDir = resolve(cwd, buildDirName)
     if (!existsSync(buildDir)) continue
     const artifacts: string[] = []
-    for await (const path of new Glob("**/*.{js,mjs,cjs}").scan({ cwd: buildDir, dot: false })) {
+    for await (const rawPath of new Glob("**/*.{js,mjs,cjs}").scan({ cwd: buildDir, dot: false })) {
+      const path = rawPath.replaceAll("\\", "/")
       artifacts.push(resolve(buildDir, path))
     }
     if (artifacts.length === 0) continue
@@ -515,7 +517,8 @@ export function renderWorkGraphText(result: ProjectWorkGraphResult): string {
 
 async function collectProjectFiles(cwd: string): Promise<WorkGraphSourceFile[]> {
   const files: WorkGraphSourceFile[] = []
-  for await (const path of SOURCE_GLOB.scan({ cwd, dot: false })) {
+  for await (const rawPath of SOURCE_GLOB.scan({ cwd, dot: false })) {
+    const path = rawPath.replaceAll("\\", "/")
     if (IGNORED.test(path)) continue
     const full = resolve(cwd, path)
     try {

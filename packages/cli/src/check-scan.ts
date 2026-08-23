@@ -44,6 +44,10 @@ const IGNORED_DIR =
 const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/
 const IGNORED = new RegExp(`${IGNORED_DIR.source}|${TEST_FILE.source}`)
 
+/** Paths crossing the scanner boundary are project-relative identifiers, not filesystem paths. Keep
+ * them stable across runtimes so rules, diagnostics, ignore globs, and import chains have one shape. */
+const normalizeProjectPath = (path: string): string => path.replaceAll("\\", "/")
+
 // A file under `routes/` - a page module bundled for the browser, where a server-only import is unsafe.
 const ROUTE_FILE = /(^|\/)routes\//
 
@@ -1733,7 +1737,8 @@ export async function walkSource(
   // List candidates first (cheap - no reads), drop the built-in ignores, then exclude gitignored paths in
   // one batch before the (expensive) reads. So a gitignored generated/build tree is never read or scanned.
   const rels: string[] = []
-  for await (const rel of new Glob("**/*.{ts,tsx,mts,cts}").scan({ cwd, dot: false })) {
+  for await (const rawRel of new Glob("**/*.{ts,tsx,mts,cts}").scan({ cwd, dot: false })) {
+    const rel = normalizeProjectPath(rawRel)
     if (!skip.test(rel)) rels.push(rel)
   }
   const ignored = await gitIgnored(cwd, rels)
@@ -1789,7 +1794,8 @@ export async function scanServerManifestDrift(cwd: string): Promise<ManifestDrif
     "@nifrajs/web/build"
   )
   const findings: ManifestDriftFinding[] = []
-  for await (const rel of new Glob("**/server-manifest.ts").scan({ cwd, dot: false })) {
+  for await (const rawRel of new Glob("**/server-manifest.ts").scan({ cwd, dot: false })) {
+    const rel = normalizeProjectPath(rawRel)
     if (IGNORED.test(rel)) continue
     const source = await Bun.file(join(cwd, rel)).text()
     if (!source.includes(GENERATED_MARKER)) continue // not a generated manifest - skip

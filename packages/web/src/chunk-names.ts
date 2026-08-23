@@ -8,8 +8,9 @@
  * unsafe→safe basename map lets the build manifest point at the renamed files.
  */
 import { readFileSync, renameSync, writeFileSync } from "node:fs"
+import { dirname, join, basename as pathBasename } from "node:path"
 
-const basename = (path: string): string => path.slice(path.lastIndexOf("/") + 1)
+const basename = (path: string): string => pathBasename(path)
 const URL_UNSAFE_NAME = /[^A-Za-z0-9._-]/g
 
 export function sanitizeOutputNames(
@@ -38,7 +39,7 @@ export function sanitizeOutputNames(
   for (const out of outputs) {
     const safe = renames.get(basename(out.path))
     if (safe !== undefined) {
-      renameSync(out.path, out.path.slice(0, out.path.lastIndexOf("/") + 1) + safe)
+      renameSync(out.path, join(dirname(out.path), safe))
     }
   }
   return renames

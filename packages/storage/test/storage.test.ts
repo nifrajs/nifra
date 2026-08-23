@@ -222,30 +222,36 @@ describe("FileStorage filesystem containment", () => {
     expect(await readFile(target, "utf8")).toBe("keep me")
   })
 
-  test("rejects a storage tree writable by another local principal", async () => {
-    const root = await mkdtemp(join(tmpdir(), "nifra-storage-root-"))
-    tmpDirs.push(root, `${root}.nifra-metadata`)
-    await writeFile(join(root, "object.txt"), "secret")
-    await chmod(root, 0o777)
+  test.skipIf(process.platform === "win32")(
+    "rejects a storage tree writable by another local principal",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "nifra-storage-root-"))
+      tmpDirs.push(root, `${root}.nifra-metadata`)
+      await writeFile(join(root, "object.txt"), "secret")
+      await chmod(root, 0o777)
 
-    const storage = new FileStorage(root)
-    await expect(storage.get("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
-    await expect(storage.exists("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
-    await expect(storage.delete("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
-  })
+      const storage = new FileStorage(root)
+      await expect(storage.get("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
+      await expect(storage.exists("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
+      await expect(storage.delete("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
+    },
+  )
 
-  test("delete rejects a root whose parent can be swapped by another local principal", async () => {
-    const parent = await mkdtemp(join(tmpdir(), "nifra-storage-parent-"))
-    const root = join(parent, "objects")
-    tmpDirs.push(parent, `${root}.nifra-metadata`)
-    await mkdir(root, { mode: 0o700 })
-    await writeFile(join(root, "object.txt"), "secret")
-    await chmod(parent, 0o777)
+  test.skipIf(process.platform === "win32")(
+    "delete rejects a root whose parent can be swapped by another local principal",
+    async () => {
+      const parent = await mkdtemp(join(tmpdir(), "nifra-storage-parent-"))
+      const root = join(parent, "objects")
+      tmpDirs.push(parent, `${root}.nifra-metadata`)
+      await mkdir(root, { mode: 0o700 })
+      await writeFile(join(root, "object.txt"), "secret")
+      await chmod(parent, 0o777)
 
-    const storage = new FileStorage(root)
-    await expect(storage.delete("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
-    expect(await readFile(join(root, "object.txt"), "utf8")).toBe("secret")
-  })
+      const storage = new FileStorage(root)
+      await expect(storage.delete("object.txt")).rejects.toBeInstanceOf(StorageKeyError)
+      expect(await readFile(join(root, "object.txt"), "utf8")).toBe("secret")
+    },
+  )
 })
 
 describe("toBytes", () => {

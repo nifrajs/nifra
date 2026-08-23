@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { realpathSync } from "node:fs"
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { basename, join } from "node:path"
+import { basename, join, resolve } from "node:path"
 import type { StandardSchemaV1 } from "@nifrajs/core"
 import { server } from "@nifrajs/core"
 import { mcp } from "@nifrajs/core/mcp"
@@ -756,12 +756,12 @@ describe("monorepo detection + tool namespacing", () => {
 
 describe("nifra_check / nifra_test - `dir` scopes to a subdirectory", () => {
   test("resolveProjectDir resolves subdirs and rejects escapes (path-traversal guard)", () => {
-    const root = "/proj"
+    const root = resolve("/proj")
     expect(resolveProjectDir(root, undefined)).toBe(root) // no dir → root
     expect(resolveProjectDir(root, "")).toBe(root)
-    expect(resolveProjectDir(root, "app")).toBe("/proj/app")
-    expect(resolveProjectDir(root, "packages/api")).toBe("/proj/packages/api")
-    expect(resolveProjectDir(root, "./app/")).toBe("/proj/app")
+    expect(resolveProjectDir(root, "app")).toBe(join(root, "app"))
+    expect(resolveProjectDir(root, "packages/api")).toBe(join(root, "packages", "api"))
+    expect(resolveProjectDir(root, "./app/")).toBe(join(root, "app"))
     expect(resolveProjectDir(root, "../escape")).toBeNull() // climbs out → rejected
     expect(resolveProjectDir(root, "/etc/passwd")).toBeNull() // absolute elsewhere → rejected
     expect(resolveProjectDir(root, "app/../../escape")).toBeNull() // normalizes then escapes → rejected

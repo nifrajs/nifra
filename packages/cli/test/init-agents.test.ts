@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { existsSync } from "node:fs"
 import { mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import {
   type InitAgentsResult,
   initAgents,
@@ -27,8 +27,9 @@ const actionFor = (r: InitAgentsResult, path: string): string | undefined =>
 
 describe("safeJoin - confines writes to the project root", () => {
   test("resolves a normal relative path under cwd", () => {
-    expect(safeJoin("/proj", ".cursor/mcp.json")).toBe("/proj/.cursor/mcp.json")
-    expect(safeJoin("/proj", "CLAUDE.md")).toBe("/proj/CLAUDE.md")
+    const root = resolve("/proj")
+    expect(safeJoin(root, ".cursor/mcp.json")).toBe(join(root, ".cursor", "mcp.json"))
+    expect(safeJoin(root, "CLAUDE.md")).toBe(join(root, "CLAUDE.md"))
   })
 
   test("rejects a path that escapes the root (traversal)", () => {

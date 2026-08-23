@@ -1,4 +1,4 @@
-import { relative, resolve } from "node:path"
+import { relative, resolve, sep } from "node:path"
 
 export interface SubagentSpec {
   readonly id: string
@@ -203,5 +203,8 @@ export class BoundedSubagentRunner {
 
 function within(root: string, candidate: string): boolean {
   const relativePath = relative(resolve(root), resolve(candidate))
-  return relativePath === "" || (relativePath !== ".." && !relativePath.startsWith("../"))
+  return (
+    relativePath === "" ||
+    (relativePath !== ".." && !relativePath.startsWith(`..${sep}`) && !relativePath.startsWith("/"))
+  )
 }

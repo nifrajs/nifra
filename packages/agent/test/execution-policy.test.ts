@@ -52,7 +52,10 @@ describe("local execution policy adapter", () => {
     })
     expect(result.ok).toBe(false)
     expect(result.timedOut).toBe(true)
-    expect(result.signal).toBe("SIGKILL")
+    // POSIX exposes the escalation signal. Windows' child-process layer reports the terminating
+    // signal as SIGTERM even when the second kill is the operation that closes the child; timeout
+    // and completion are the portable contract there.
+    expect(result.signal).toBe(process.platform === "win32" ? "SIGTERM" : "SIGKILL")
   }, 10_000)
 
   // `maxOutputBytes` is one budget over the whole capture, not one per stream. Two independent

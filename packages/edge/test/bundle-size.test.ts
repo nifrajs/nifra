@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { fileURLToPath } from "node:url"
 
 /**
  * The whole point of `@nifrajs/edge` is a small self-contained bundle. This guards it: bundle the
@@ -13,7 +14,7 @@ const CEILING_GZIP_BYTES = 9_000
 
 test(`self-contained bundle stays under ${CEILING_GZIP_BYTES} B gzipped`, async () => {
   const built = await Bun.build({
-    entrypoints: [new URL("../src/index.ts", import.meta.url).pathname],
+    entrypoints: [fileURLToPath(new URL("../src/index.ts", import.meta.url))],
     minify: true,
     target: "browser",
   })

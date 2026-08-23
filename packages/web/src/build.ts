@@ -7,7 +7,14 @@
  */
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { cp, lstat, mkdir, realpath } from "node:fs/promises"
-import { dirname, join, relative, resolve as resolvePath, sep } from "node:path"
+import {
+  dirname,
+  join,
+  basename as pathBasename,
+  relative,
+  resolve as resolvePath,
+  sep,
+} from "node:path"
 import {
   singleCopyPlugin as declaredSingleCopyPlugin,
   readSingleCopyDeclaration,
@@ -52,7 +59,7 @@ import { prerenderRoutes } from "./prerender.ts"
 
 export * from "./build-plan.ts"
 
-const basename = (path: string): string => path.slice(path.lastIndexOf("/") + 1)
+const basename = (path: string): string => pathBasename(path)
 // The lazy shape declares `const loaders`, the eager shape `const modules`. Anchored at a line start,
 // NOT `.includes("const loaders =")`: the real emit is `const loaders: Record<...> = {`, whose `:` type
 // annotation sits between the name and the `=`, so the ` =` substring never matched and every lazy

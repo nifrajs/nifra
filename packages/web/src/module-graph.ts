@@ -44,6 +44,11 @@ export interface ClientModuleGraph {
   readonly chunks: Readonly<Record<string, GraphChunk>>
 }
 
+/** Module ids are graph identifiers, not filesystem paths exposed to an OS API. Bun uses `\\` on
+ * Windows, while Rollup and the guards use `/` for suffix matching and stable diagnostics. Normalize at
+ * each adapter boundary so every consumer sees one graph shape. */
+const normalizeModuleId = (id: string): string => id.replaceAll("\\", "/")
+
 /** The slice of Bun's metafile this seam consumes. Not yet in `@types/bun`; shape per the docs. */
 export interface BunMetafileLike {
   readonly inputs?: Readonly<
@@ -66,14 +71,23 @@ export interface BunMetafileLike {
  */
 export function fromBunMetafile(meta: BunMetafileLike | undefined): ClientModuleGraph {
   const modules: Record<string, GraphModule> = {}
-  for (const [id, input] of Object.entries(meta?.inputs ?? {})) {
-    modules[id] = { imports: input.imports ?? [] }
+  for (const [rawId, input] of Object.entries(meta?.inputs ?? {})) {
+    const id = normalizeModuleId(rawId)
+    modules[id] = {
+      imports: (input.imports ?? []).map((im) => ({
+        ...(im.path === undefined ? {} : { path: normalizeModuleId(im.path) }),
+        ...(im.original === undefined ? {} : { original: im.original }),
+      })),
+    }
   }
   const chunks: Record<string, GraphChunk> = {}
-  for (const [path, output] of Object.entries(meta?.outputs ?? {})) {
+  for (const [rawPath, output] of Object.entries(meta?.outputs ?? {})) {
+    const path = normalizeModuleId(rawPath)
     chunks[path] = {
-      ...(output.entryPoint !== undefined ? { entryPoint: output.entryPoint } : {}),
-      modules: Object.keys(output.inputs ?? {}),
+      ...(output.entryPoint !== undefined
+        ? { entryPoint: normalizeModuleId(output.entryPoint) }
+        : {}),
+      modules: Object.keys(output.inputs ?? {}).map(normalizeModuleId),
     }
   }
   return { modules, chunks }
@@ -117,11 +131,11 @@ export function fromRollupBundle(
     // Assets (CSS, copied files) have no module graph; `type` is absent only on hand-built test inputs,
     // which are always chunks, so treat "not explicitly an asset" as a chunk.
     if (output.type === "asset") continue
-    const moduleIds = output.moduleIds ?? []
+    const moduleIds = (output.moduleIds ?? []).map(normalizeModuleId)
     // Start from the real modules; `node:` builtins get appended below.
     const chunkModules: string[] = [...moduleIds]
     for (const id of moduleIds) {
-      const imports = importsOf(id).map((path) => ({ path }))
+      const imports = importsOf(id).map((path) => ({ path: normalizeModuleId(path) }))
       if (modules[id] === undefined) modules[id] = { imports }
       // The guards locate a leak by finding the builtin IN a chunk's module list - Bun BUNDLES the `node:`
       // polyfill, so the builtin appears there as an input. Rollup EXTERNALIZES `node:`, so it never lands
@@ -135,10 +149,10 @@ export function fromRollupBundle(
         if (modules[im.path] === undefined) modules[im.path] = { imports: [] }
       }
     }
-    chunks[fileName] = {
+    chunks[normalizeModuleId(fileName)] = {
       // `facadeModuleId` is null for a shared/common chunk (no single entry) - omit it then, matching
       // how a non-entry Bun output omits `entryPoint`, so the guards' entry set stays the real entries.
-      ...(output.facadeModuleId ? { entryPoint: output.facadeModuleId } : {}),
+      ...(output.facadeModuleId ? { entryPoint: normalizeModuleId(output.facadeModuleId) } : {}),
       modules: chunkModules,
     }
   }

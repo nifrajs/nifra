@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
+import { pathToFileURL } from "node:url"
 import { clientSupportsRoots, guardTools } from "../src/mcp.ts"
 import type { McpTool, McpToolContext } from "../src/mcp-protocol.ts"
 import {
@@ -94,16 +95,17 @@ describe("resolveRootState", () => {
 
 describe("pathsFromRootsResult", () => {
   test("file:// URIs become paths; non-file and malformed URIs are skipped", () => {
+    const expected = resolve("/a/b")
     expect(
       pathsFromRootsResult({
         roots: [
-          { uri: "file:///a/b" },
+          { uri: pathToFileURL(expected).href },
           { uri: "https://example.com" },
           { uri: "file://remote-host/x" },
           { notUri: true },
         ],
       }),
-    ).toEqual(["/a/b"])
+    ).toEqual([expected])
   })
 
   test("garbage shapes yield no roots", () => {
@@ -114,8 +116,9 @@ describe("pathsFromRootsResult", () => {
 })
 
 describe("rootMismatch", () => {
+  const workspace = resolve("/w")
   const base: McpRootState = {
-    root: "/w/app",
+    root: join(workspace, "app"),
     source: "cwd",
     isProject: true,
     clientRoots: null,
@@ -125,13 +128,21 @@ describe("rootMismatch", () => {
     expect(rootMismatch({ ...base, clientRoots: [] })).toBe(false)
   })
   test("containment in either direction is not a mismatch", () => {
-    expect(rootMismatch({ ...base, clientRoots: ["/w"] })).toBe(false)
-    expect(rootMismatch({ ...base, root: "/w", clientRoots: ["/w/app"] })).toBe(false)
-    expect(rootMismatch({ ...base, clientRoots: ["/w/app"] })).toBe(false)
+    expect(rootMismatch({ ...base, clientRoots: [workspace] })).toBe(false)
+    expect(rootMismatch({ ...base, root: workspace, clientRoots: [join(workspace, "app")] })).toBe(
+      false,
+    )
+    expect(rootMismatch({ ...base, clientRoots: [join(workspace, "app")] })).toBe(false)
   })
   test("disjoint trees are a mismatch - and prefix-sharing names do not count as containment", () => {
-    expect(rootMismatch({ ...base, clientRoots: ["/other"] })).toBe(true)
-    expect(rootMismatch({ ...base, root: "/w/app", clientRoots: ["/w/app2"] })).toBe(true)
+    expect(rootMismatch({ ...base, clientRoots: [resolve("/other")] })).toBe(true)
+    expect(
+      rootMismatch({
+        ...base,
+        root: join(workspace, "app"),
+        clientRoots: [join(workspace, "app2")],
+      }),
+    ).toBe(true)
   })
 })
 

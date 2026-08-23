@@ -71,13 +71,13 @@ test("the user's ENTIRE bunfig round-trips - not just the two fields the merge t
   expect(toml).toContain('factory = "h"')
   expect(toml).toContain('"process.env.FLAG" = "true"')
   expect(toml).toContain('registry = "https://registry.example.com"')
-  expect(toml).toContain('preload = ["/app/setup.ts"]')
   expect(toml).toContain(
     'plugins = ["/app/.nifra/dev-bun/boundary-plugin.ts", "bun-plugin-tailwind"]',
   )
   // And the emitted TOML parses back to the same data (plus the plugin merge).
   const reparsed = parseUserBunfig(toml)
   expect((reparsed.jsx as Record<string, unknown>).factory).toBe("h")
+  expect(reparsed.preload).toEqual([resolve("/app/setup.ts")])
 })
 
 test("serializeBunfig refuses a shape it cannot round-trip instead of dropping it", () => {

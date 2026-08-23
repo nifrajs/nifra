@@ -1,5 +1,5 @@
 import { access, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises"
-import { join, resolve } from "node:path"
+import { basename, join, resolve } from "node:path"
 
 /** Version of the evidence-only legacy session file format. */
 export const SESSION_EVIDENCE_VERSION = 1 as const
@@ -285,10 +285,7 @@ async function commitTarget(
     if (error instanceof SessionMigrationError) throw error
   }
   assertNotAborted(signal)
-  const temporary = join(
-    targetRoot,
-    `.${targetFile.split("/").at(-1)}.${process.pid}.${randomToken()}.tmp`,
-  )
+  const temporary = join(targetRoot, `.${basename(targetFile)}.${process.pid}.${randomToken()}.tmp`)
   try {
     await writeFile(temporary, content, { encoding: "utf8", mode: 0o600, flag: "wx" })
     assertNotAborted(signal)
