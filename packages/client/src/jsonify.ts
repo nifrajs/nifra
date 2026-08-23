@@ -4,12 +4,19 @@ import type { BinaryResponse, RawResponse } from "@nifrajs/core/binary"
  * Maps a value to the shape it takes after a JSON round-trip, so the client's
  * `data` type reflects the wire - not the handler's in-memory return.
  *
- * - `Date` → `string`; `undefined` / functions / `bigint` → dropped from objects
+ * - `Date` → `string`; `undefined` / functions / `bigint` → dropped from objects (a top-level
+ *   `undefined` remains `undefined`, which is useful for bodyless statuses such as `204`)
  * - arrays and plain objects recurse; optionality (`?`) is preserved
  *
  * Pragmatic by design: `Map`/`Set`/class instances/custom `toJSON` are treated as
  * plain objects (best-effort), not specially handled. Documented, not magic.
  */
+type JsonifyObjectProperty<T> = T extends undefined
+  ? never
+  : T extends (...args: never[]) => unknown
+    ? never
+    : Jsonify<T>
+
 export type Jsonify<T> = [unknown] extends [T]
   ? unknown // `unknown`/`any` (e.g. a route with no response schema) stays opaque
   : // A route that declared itself binary with `bytes()`. Checked FIRST, before the object arm below
@@ -30,11 +37,13 @@ export type Jsonify<T> = [unknown] extends [T]
             : T extends (...args: never[]) => unknown
               ? never
               : T extends undefined
-                ? never
+                ? undefined
                 : T extends ReadonlyArray<infer U>
                   ? Array<Jsonify<U>>
                   : T extends object
                     ? {
-                        [K in keyof T as [Jsonify<T[K]>] extends [never] ? never : K]: Jsonify<T[K]>
+                        [K in keyof T as [JsonifyObjectProperty<T[K]>] extends [never]
+                          ? never
+                          : K]: JsonifyObjectProperty<T[K]>
                       }
                     : never

@@ -615,7 +615,7 @@ Every public export of every package and documented subpath - name, kind, signat
   Add `{ principal: P }` to a server's context while preserving its route registry `R` (no collapse to `any`). This is the type that makes `.use(authed(auth))` thread a NON-NULL `c.principal`.
 - **authed** _(function)_ - `authed: <A extends BetterAuthLike, const RequireTenant extends boolean = false>(auth: A, options?: AuthedOptions<SessionUserOf<A>> & { readonly requireTenant?: RequireTenant; }) => <S extends AnyServer>(app: S) => WithP…`
   A nifra plugin that derives a fail-closed {@link Principal} onto every downstream handler as `c.principal`. After `server().use(authed(auth))`, `c.principal.user` / `c.principal.userId` are typed and **non-null** - a handler CANNOT run without an authenticated caller, so the guard can't be forgotte…
-- **betterAuth** _(function)_ - `betterAuth: (auth: BetterAuthLike, options?: BetterAuthOptions) => import("@nifrajs/core").IdentityPlugin`
+- **betterAuth** _(function)_ - `betterAuth: (auth: BetterAuthLike, options?: BetterAuthOptions) => import("@nifrajs/core").IdentityPlugin<never>`
   Mount a better-auth instance into a nifra app: registers its handler at `${basePath}/*` (default `/api/auth/*`) for `GET` + `POST`, so every better-auth endpoint - sign-in/up/out, OAuth callbacks, session, 2FA, magic links, … - is served by your nifra server.
 - **getSession** _(function)_ - `getSession: <A extends BetterAuthLike>(auth: A, request: Request) => Promise<SessionOf<A> | null>`
   Resolve the better-auth session for a request - a thin, typed wrapper over `auth.api.getSession`. Returns `null` when unauthenticated. Takes the raw `Request` so it works in both server handlers (`c.req`) and web loaders/actions (`request`).
@@ -760,7 +760,6 @@ Every public export of every package and documented subpath - name, kind, signat
   Typed route client plus the explicit platform-aware backend mount capability.
 - **InProcessClientOptions** _(interface)_ - `interface InProcessClientOptions`
 - **Jsonify** _(type)_ - `type Jsonify<T>`
-  Maps a value to the shape it takes after a JSON round-trip, so the client's `data` type reflects the wire - not the handler's in-memory return.
 - **LoaderArgs** _(interface)_ - `interface LoaderArgs<Api, Env = unknown, Search = undefined>`
   Context a route `loader` receives: the route params, the request, a typed in-process `api` (an {@link ApiProxy} for the app contract `Api`), and the platform `env`. Pair with `inProcessClient`.
 - **LoaderData** _(type)_ - `type LoaderData<L> = L extends (...args: never[]) => infer R ? Awaited<R> : never`
@@ -775,7 +774,7 @@ Every public export of every package and documented subpath - name, kind, signat
   Extract the accumulated route registry from a server's type (`typeof app`), ignoring its middleware context.
 - **ResponseContractViolation** _(class)_ - `class ResponseContractViolation`
   A response body that broke its route's declared contract. Thrown THROUGH the "never throws" client on purpose: this is a test assertion about the server's honesty, not a call outcome the caller should branch on - swallowing it into a `Result` would let the drift pass the test.
-- **Result** _(type)_ - `type Result<Data, Errors = unknown>`
+- **Result** _(type)_ - `type Result<Data, Errors = unknown, Responses = unknown>`
   The outcome of a client call. The client never throws - inspect `ok` to branch.
 - **SubscribeOptions** _(interface)_ - `interface SubscribeOptions<I extends RouteInfo>`
 - **Subscription** _(interface)_ - `interface Subscription`
@@ -1292,7 +1291,7 @@ Every public export of every package and documented subpath - name, kind, signat
   A capacity-admission gate. Decides, per request, whether the instance has capacity to run it now - bounding *concurrency*, which rate limits (frequency) and deadlines (duration) do not. Provide an implementation (see `@nifrajs/middleware`'s `createAdmissionController`) as {@link ServerOptions.admis…
 - **AdmissionDecision** _(type)_ - `type AdmissionDecision = | { readonly admitted: true; release(): void } | { readonly admitted: false; readonly response: Response }`
   The outcome of a capacity-admission decision. `admitted` requests carry a `release` the server calls exactly once when the response is finalized; a shed request carries a ready `429` Response.
-- **AnyServer** _(type)_ - `type AnyServer = Server<any, any>`
+- **AnyServer** _(type)_ - `type AnyServer = Server<any, any, any>`
 - **Context** _(interface)_ - `interface Context<Path extends string = string, S extends RouteSchema = RouteSchema>`
   Handler context. `params` are inferred from the path; `body` and `query` are the validated outputs of their schemas when declared (else `undefined` / raw `URLSearchParams`).
 - **ContextPlugin** _(type)_ - `type ContextPlugin<D extends object> = (<R extends Registry, Ctx>( app: Server<R, Ctx>, ) => Server<R, Ctx & D>) & { readonly pluginName?: string }`
@@ -1314,7 +1313,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **FrameworkName** _(type)_ - `type FrameworkName = typeof FRAMEWORK_NAME`
 - **Handler** _(type)_ - `type Handler<Path extends string, S extends RouteSchema = RouteSchema, Ctx = EmptyContext> = (ctx: Context<Path, S> & Ctx) => MaybePromise<ResponseOf<S>>`
   Public handler shape: context typed from the path, the (optional) schema, and any accumulated middleware context `Ctx` (from `derive`/`decorate`).
-- **IdentityPlugin** _(type)_ - `type IdentityPlugin = (<S extends AnyServer>(app: S) => S) & { readonly pluginName?: string }`
+- **IdentityPlugin** _(type)_ - `type IdentityPlugin<AddedHookOutput = never> = (<R extends Registry, Ctx, HookOutput>( app: Server<R, Ctx, HookOutput>, ) => Server<R, Ctx, HookOutput | AddedHookOutput>) & { readonly pluginName?: string }`
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ - `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ - `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
@@ -1384,6 +1383,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A portable header-only response hook - the recommended shape for response middleware that only reads or writes headers (security headers, CORS reflection, cache directives, negotiation). It runs on every runtime from one implementation: the server adapts it into the Web `onResponse` walk AND the No…
 - **ResponseHeadersView** _(interface)_ - `interface ResponseHeadersView`
   The mutable, case-insensitive header surface a portable {@link ResponseHeadersHook} writes through. Deliberately the subset of the Web `Headers` interface every runtime can satisfy natively: on the Web paths the hook receives the response's own `Headers` object directly (which structurally implemen…
+- **ResponseMapFor** _(type)_ - `type ResponseMapFor<S extends RouteSchema, Output> = ResponseMap<S, Output>`
+  Public type seam for build-time consumers that need the complete route response map.
 - **ResponseResult** _(interface)_ - `interface ResponseResult`
 - **RouteConfigError** _(class)_ - `class RouteConfigError`
   Thrown at route registration when a route is misconfigured. This is the boot-time rejection layer: loud and early, never deferred to the first request.
@@ -1393,6 +1394,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A registered route's public descriptor - method, path, and input schemas. The router trie discards the original patterns, so this flat list is what lets tools (e.g. `toOpenAPI`) enumerate routes after registration.
 - **RouteInfo** _(interface)_ - `interface RouteInfo`
   One route's input/output shape as the **client** will consume it. `query`/`body` are `never` when the route declares no schema for them, so the client can detect "this route takes no body" via `[body] extends [never]`. `output` is the handler's raw return type (the client applies `Jsonify` when rea…
+- **RouteInfoFor** _(type)_ - `type RouteInfoFor<Path extends string, S extends RouteSchema, Output, HookOutput = never>`
+  Build a {@link RouteInfo} from a route's path, schema, and handler output type.
 - **RouteSchema** _(interface)_ - `interface RouteSchema`
   Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…).
 - **Router** _(class)_ - `class Router<T>`
@@ -1412,7 +1415,7 @@ Every public export of every package and documented subpath - name, kind, signat
   A Cloudflare Workers-style scheduled (cron) controller. Structural - no Workers type dependency.
 - **ScheduledHandler** _(type)_ - `type ScheduledHandler<Env = unknown> = ( controller: ScheduledController, context: { readonly env: Env; waitUntil(promise: Promise<unknown>): void }, ) => MaybePromise<void>`
   A nifra cron handler: the platform controller + the same typed `env`/`waitUntil` nifra threads into request handlers. Schedule background work with `waitUntil` so it outlives the trigger.
-- **Server** _(class)_ - `class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext>`
+- **Server** _(class)_ - `class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, HookOutput = never>`
   The inline server. Routes are chainable and fully type-inferred. `derive`/ `decorate` extend the handler context (`Ctx`) for routes defined *after* them, with full types; `Ctx` is server-only and never touches the client registry.
 - **ServerOptions** _(interface)_ - `interface ServerOptions`
 - **StandardIssue** _(interface)_ - `interface StandardIssue`
@@ -1422,6 +1425,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **StandardTypes** _(interface)_ - `interface StandardTypes<Input = unknown, Output = Input>`
 - **StandardWebSocket** _(interface)_ - `interface StandardWebSocket`
   A standard server-side `WebSocket` - the half returned by Deno's `Deno.upgradeWebSocket` and the Workers `WebSocketPair`. {@link attachWebSocket} wires one to a nifra handler, so the Deno and Workers bridges share all the dispatch/normalization/error-isolation logic (only the upgrade call differs).
+- **StatusResponse** _(interface)_ - `interface StatusResponse<Code extends number = number, Body = unknown>`
+  A status-bearing response whose code and body remain visible to TypeScript.
 - **ToolAnnotations** _(interface)_ - `interface ToolAnnotations`
   MCP tool safety hints, surfaced in `tools/list`, that tell an agent how risky a `.tool()` call is - so it can decide whether to auto-invoke or confirm first. All optional; an omitted hint means "unknown". Mirrors the MCP spec's tool `annotations`.
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
@@ -1446,11 +1451,11 @@ Every public export of every package and documented subpath - name, kind, signat
   RFC 6265bis cookie-name prefix, matched **case-insensitively** the way browsers match it - `__secure-x` triggers the same enforcement as `__Secure-x`. `undefined` for unprefixed names. Writers (set AND delete) must satisfy the prefix contract or the user agent silently discards the whole `Set-Cooki…
 - **defineContextPlugin** _(function)_ - `defineContextPlugin: <D extends object>(name: string, apply: <R extends Registry, Ctx>(app: Server<R, Ctx>) => Server<R, Ctx & D>) => ContextPlugin<D>`
   Define a named plugin that **adds typed context and nothing else** - the `derive` case - without collapsing the caller's types. `use` instantiates the generic signature against the concrete receiver, so `R` and `Ctx` come back unchanged with `D` intersected onto the context.
-- **defineIdentityPlugin** _(function)_ - `defineIdentityPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
+- **defineIdentityPlugin** _(function)_ - `defineIdentityPlugin: <AddedHookOutput = never>(name: string, apply: <S extends AnyServer>(app: S) => S | AnyServer) => IdentityPlugin<AddedHookOutput>`
   Define a type-**identity** plugin: it registers routes/hooks as a side effect but returns the app with its `Registry` + `Context` UNCHANGED. Use this (not {@link definePlugin}) for any plugin that doesn't add context types - e.g. one mounting an auth handler. It threads the caller's *concrete* serv…
 - **definePlugin** _(function)_ - `definePlugin: <In extends AnyServer, Out extends AnyServer>(name: string, apply: (app: In) => Out) => DefinePluginResult<In, Out>`
   Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
-- **defineRouterPlugin** _(const)_ - `defineRouterPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
+- **defineRouterPlugin** _(const)_ - `defineRouterPlugin: <AddedHookOutput = never>(name: string, apply: <S extends AnyServer>(app: S) => S | AnyServer) => IdentityPlugin<AddedHookOutput>`
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
   Is `value` a destination that stays on this origin?
@@ -1471,7 +1476,7 @@ Every public export of every package and documented subpath - name, kind, signat
   Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies. With a {@link CookieSecret} rotation list, signs with the first secret.
 - **silentLogger** _(const)_ - `silentLogger: Logger`
   Discards everything - for tests, or when log output is handled elsewhere.
-- **status** _(function)_ - `status: (code: number, body?: unknown, init?: { readonly headers?: Readonly<Record<string, string>>; }) => ResponseResult`
+- **status** _(function)_ - `status: { <const Code extends number>(code: Code, body?: undefined, init?: { readonly headers?: Readonly<Record<string, string>>; }): StatusResponse<Code, undefined>; <const Code extends number, const Body>(code: Code, …`
   Finish the request here, with this status and body, without building a `Response`.
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
   Adapt a nifra app to an edge "ExportedHandler" - use it as a Cloudflare Workers (or any `fetch(request, env, ctx)` runtime) default export. It threads `env` + `ctx.waitUntil` into the nifra Context, so handlers read `c.env` and schedule background work via `c.waitUntil`:
@@ -1756,13 +1761,13 @@ Every public export of every package and documented subpath - name, kind, signat
   One operation in a contract. Input schemas are any Standard Schema; `response` is optional.
 - **RegistryFor** _(type)_ - `type RegistryFor<C extends ContractShape> = { [P in C[keyof C]["path"]]: { [K in keyof C as C[K]["path"] extends P ? C[K]["method"] : never]: RouteInfoForOp<C[K]> } }`
   Re-key the name-keyed ops into the `path → method → RouteInfo` registry.
-- **RegistryFromImpl** _(type)_ - `type RegistryFromImpl<C extends ContractShape, H extends HandlersFor<C, Ctx>, Ctx = NonNullable<unknown>>`
+- **RegistryFromImpl** _(type)_ - `type RegistryFromImpl<C extends ContractShape, H extends HandlersFor<C, Ctx>, Ctx = NonNullable<unknown>, HookOutput = never>`
   The registry produced by `implement`: input from the contract op; `output` is the declared `response` contract when present (it wins - exactly as in the inline path), else the bound HANDLER's return - so the implemented server stays route-for-route identical to the equivalent inline server (the mod…
 - **ResponseDef** _(interface)_ - `interface ResponseDef`
   An additional (non-success) response a contract operation can document, e.g. a `404`.
 - **defineContract** _(function)_ - `defineContract: <const C extends ContractShape>(contract: C) => C`
   Define a standalone, versionable contract. Identity at runtime (it returns the contract for type inference via the `const` type parameter, which preserves the path/method literals) plus boot-time (L2) validation: each operation must use a known method, a path starting with `/`, and no two operation…
-- **implement** _(function)_ - `implement: <const C extends ContractShape, H extends HandlersFor<C, Ctx>, R extends Registry = {}, Ctx = {}>(contract: C, handlers: H, app?: Server<R, Ctx>) => Server<R & RegistryFromImpl<C, H, Ctx>, Ctx>`
+- **implement** _(function)_ - `implement: <const C extends ContractShape, H extends HandlersFor<C, Ctx>, R extends Registry = {}, Ctx = {}, HookOutput = never>(contract: C, handlers: H, app?: Server<R, Ctx, HookOutput>) => Server<R & RegistryFromImpl…`
   Bind handlers to a contract, producing a real {@link Server} you can `.listen()` or `.fetch()`. Each op is registered through the same path as the inline builder, so the result is identical to writing the routes inline - handlers lift over **unchanged** ("graduation"), and body/query schemas valida…
 
 ### `@nifrajs/core/cookies`
@@ -2341,7 +2346,7 @@ Every public export of every package and documented subpath - name, kind, signat
   A capacity-admission gate. Decides, per request, whether the instance has capacity to run it now - bounding *concurrency*, which rate limits (frequency) and deadlines (duration) do not. Provide an implementation (see `@nifrajs/middleware`'s `createAdmissionController`) as {@link ServerOptions.admis…
 - **AdmissionDecision** _(type)_ - `type AdmissionDecision = | { readonly admitted: true; release(): void } | { readonly admitted: false; readonly response: Response }`
   The outcome of a capacity-admission decision. `admitted` requests carry a `release` the server calls exactly once when the response is finalized; a shed request carries a ready `429` Response.
-- **AnyServer** _(type)_ - `type AnyServer = Server<any, any>`
+- **AnyServer** _(type)_ - `type AnyServer = Server<any, any, any>`
 - **Context** _(interface)_ - `interface Context<Path extends string = string, S extends RouteSchema = RouteSchema>`
   Handler context. `params` are inferred from the path; `body` and `query` are the validated outputs of their schemas when declared (else `undefined` / raw `URLSearchParams`).
 - **ContextPlugin** _(type)_ - `type ContextPlugin<D extends object> = (<R extends Registry, Ctx>( app: Server<R, Ctx>, ) => Server<R, Ctx & D>) & { readonly pluginName?: string }`
@@ -2363,7 +2368,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **FrameworkName** _(type)_ - `type FrameworkName = typeof FRAMEWORK_NAME`
 - **Handler** _(type)_ - `type Handler<Path extends string, S extends RouteSchema = RouteSchema, Ctx = EmptyContext> = (ctx: Context<Path, S> & Ctx) => MaybePromise<ResponseOf<S>>`
   Public handler shape: context typed from the path, the (optional) schema, and any accumulated middleware context `Ctx` (from `derive`/`decorate`).
-- **IdentityPlugin** _(type)_ - `type IdentityPlugin = (<S extends AnyServer>(app: S) => S) & { readonly pluginName?: string }`
+- **IdentityPlugin** _(type)_ - `type IdentityPlugin<AddedHookOutput = never> = (<R extends Registry, Ctx, HookOutput>( app: Server<R, Ctx, HookOutput>, ) => Server<R, Ctx, HookOutput | AddedHookOutput>) & { readonly pluginName?: string }`
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ - `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ - `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
@@ -2433,6 +2438,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A portable header-only response hook - the recommended shape for response middleware that only reads or writes headers (security headers, CORS reflection, cache directives, negotiation). It runs on every runtime from one implementation: the server adapts it into the Web `onResponse` walk AND the No…
 - **ResponseHeadersView** _(interface)_ - `interface ResponseHeadersView`
   The mutable, case-insensitive header surface a portable {@link ResponseHeadersHook} writes through. Deliberately the subset of the Web `Headers` interface every runtime can satisfy natively: on the Web paths the hook receives the response's own `Headers` object directly (which structurally implemen…
+- **ResponseMapFor** _(type)_ - `type ResponseMapFor<S extends RouteSchema, Output> = ResponseMap<S, Output>`
+  Public type seam for build-time consumers that need the complete route response map.
 - **ResponseResult** _(interface)_ - `interface ResponseResult`
 - **RouteConfigError** _(class)_ - `class RouteConfigError`
   Thrown at route registration when a route is misconfigured. This is the boot-time rejection layer: loud and early, never deferred to the first request.
@@ -2442,6 +2449,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A registered route's public descriptor - method, path, and input schemas. The router trie discards the original patterns, so this flat list is what lets tools (e.g. `toOpenAPI`) enumerate routes after registration.
 - **RouteInfo** _(interface)_ - `interface RouteInfo`
   One route's input/output shape as the **client** will consume it. `query`/`body` are `never` when the route declares no schema for them, so the client can detect "this route takes no body" via `[body] extends [never]`. `output` is the handler's raw return type (the client applies `Jsonify` when rea…
+- **RouteInfoFor** _(type)_ - `type RouteInfoFor<Path extends string, S extends RouteSchema, Output, HookOutput = never>`
+  Build a {@link RouteInfo} from a route's path, schema, and handler output type.
 - **RouteSchema** _(interface)_ - `interface RouteSchema`
   Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…).
 - **Router** _(class)_ - `class Router<T>`
@@ -2461,7 +2470,7 @@ Every public export of every package and documented subpath - name, kind, signat
   A Cloudflare Workers-style scheduled (cron) controller. Structural - no Workers type dependency.
 - **ScheduledHandler** _(type)_ - `type ScheduledHandler<Env = unknown> = ( controller: ScheduledController, context: { readonly env: Env; waitUntil(promise: Promise<unknown>): void }, ) => MaybePromise<void>`
   A nifra cron handler: the platform controller + the same typed `env`/`waitUntil` nifra threads into request handlers. Schedule background work with `waitUntil` so it outlives the trigger.
-- **Server** _(class)_ - `class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext>`
+- **Server** _(class)_ - `class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, HookOutput = never>`
   The inline server. Routes are chainable and fully type-inferred. `derive`/ `decorate` extend the handler context (`Ctx`) for routes defined *after* them, with full types; `Ctx` is server-only and never touches the client registry.
 - **ServerOptions** _(interface)_ - `interface ServerOptions`
 - **StandardIssue** _(interface)_ - `interface StandardIssue`
@@ -2471,6 +2480,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **StandardTypes** _(interface)_ - `interface StandardTypes<Input = unknown, Output = Input>`
 - **StandardWebSocket** _(interface)_ - `interface StandardWebSocket`
   A standard server-side `WebSocket` - the half returned by Deno's `Deno.upgradeWebSocket` and the Workers `WebSocketPair`. {@link attachWebSocket} wires one to a nifra handler, so the Deno and Workers bridges share all the dispatch/normalization/error-isolation logic (only the upgrade call differs).
+- **StatusResponse** _(interface)_ - `interface StatusResponse<Code extends number = number, Body = unknown>`
+  A status-bearing response whose code and body remain visible to TypeScript.
 - **ToolAnnotations** _(interface)_ - `interface ToolAnnotations`
   MCP tool safety hints, surfaced in `tools/list`, that tell an agent how risky a `.tool()` call is - so it can decide whether to auto-invoke or confirm first. All optional; an omitted hint means "unknown". Mirrors the MCP spec's tool `annotations`.
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
@@ -2492,11 +2503,11 @@ Every public export of every package and documented subpath - name, kind, signat
   RFC 6265bis cookie-name prefix, matched **case-insensitively** the way browsers match it - `__secure-x` triggers the same enforcement as `__Secure-x`. `undefined` for unprefixed names. Writers (set AND delete) must satisfy the prefix contract or the user agent silently discards the whole `Set-Cooki…
 - **defineContextPlugin** _(function)_ - `defineContextPlugin: <D extends object>(name: string, apply: <R extends Registry, Ctx>(app: Server<R, Ctx>) => Server<R, Ctx & D>) => ContextPlugin<D>`
   Define a named plugin that **adds typed context and nothing else** - the `derive` case - without collapsing the caller's types. `use` instantiates the generic signature against the concrete receiver, so `R` and `Ctx` come back unchanged with `D` intersected onto the context.
-- **defineIdentityPlugin** _(function)_ - `defineIdentityPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
+- **defineIdentityPlugin** _(function)_ - `defineIdentityPlugin: <AddedHookOutput = never>(name: string, apply: <S extends AnyServer>(app: S) => S | AnyServer) => IdentityPlugin<AddedHookOutput>`
   Define a type-**identity** plugin: it registers routes/hooks as a side effect but returns the app with its `Registry` + `Context` UNCHANGED. Use this (not {@link definePlugin}) for any plugin that doesn't add context types - e.g. one mounting an auth handler. It threads the caller's *concrete* serv…
 - **definePlugin** _(function)_ - `definePlugin: <In extends AnyServer, Out extends AnyServer>(name: string, apply: (app: In) => Out) => DefinePluginResult<In, Out>`
   Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
-- **defineRouterPlugin** _(const)_ - `defineRouterPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
+- **defineRouterPlugin** _(const)_ - `defineRouterPlugin: <AddedHookOutput = never>(name: string, apply: <S extends AnyServer>(app: S) => S | AnyServer) => IdentityPlugin<AddedHookOutput>`
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
   Is `value` a destination that stays on this origin?
@@ -2517,7 +2528,7 @@ Every public export of every package and documented subpath - name, kind, signat
   Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies. With a {@link CookieSecret} rotation list, signs with the first secret.
 - **silentLogger** _(const)_ - `silentLogger: Logger`
   Discards everything - for tests, or when log output is handled elsewhere.
-- **status** _(function)_ - `status: (code: number, body?: unknown, init?: { readonly headers?: Readonly<Record<string, string>>; }) => ResponseResult`
+- **status** _(function)_ - `status: { <const Code extends number>(code: Code, body?: undefined, init?: { readonly headers?: Readonly<Record<string, string>>; }): StatusResponse<Code, undefined>; <const Code extends number, const Body>(code: Code, …`
   Finish the request here, with this status and body, without building a `Response`.
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
   Adapt a nifra app to an edge "ExportedHandler" - use it as a Cloudflare Workers (or any `fetch(request, env, ctx)` runtime) default export. It threads `env` + `ctx.waitUntil` into the nifra Context, so handlers read `c.env` and schedule background work via `c.waitUntil`:
@@ -2749,7 +2760,7 @@ _No named exports (side-effect entrypoint)._
 - **DevToolsOptions** _(interface)_ - `interface DevToolsOptions`
 - **DevToolsQuery** _(interface)_ - `interface DevToolsQuery`
   Query for a DevTools state snapshot: an optional `path` prefix and a most-recent-`limit`.
-- **devtools** _(function)_ - `devtools: (options?: DevToolsOptions | undefined) => import("@nifrajs/core").IdentityPlugin`
+- **devtools** _(function)_ - `devtools: (options?: DevToolsOptions | undefined) => import("@nifrajs/core").IdentityPlugin<never>`
 - **devtoolsClientScript** _(function)_ - `devtoolsClientScript: (options?: DevToolsClientOptions) => string`
   Returns a self-contained JavaScript string that creates a floating DevTools overlay in the browser. Inject via `<script>` tag in dev mode.
 - **filterDevToolsEvents** _(function)_ - `filterDevToolsEvents: (events: readonly DevToolsEvent[], query?: DevToolsQuery) => DevToolsEvent[]`
@@ -3360,7 +3371,7 @@ _No named exports (side-effect entrypoint)._
 - **VerifyJwtResult** _(type)_ - `type VerifyJwtResult<C extends JwtClaims = JwtClaims> = | { readonly ok: true; readonly data: VerifiedJwt<C> } | { readonly ok: false; readonly error: Error }`
 - **apiKey** _(function)_ - `apiKey: { (options: ApiKeyStaticOptions): AuthPlugin<string>; <P>(options: ApiKeyVerifyOptions<P>): AuthPlugin<P>; }`
   API-key authentication via a header (default `x-api-key`). Two forms: - `apiKey({ keys })` - a fixed key set, compared in **constant time**; the matched key is the principal. - `apiKey({ verify })` - custom (e.g. DB-backed) verification returning a typed principal.
-- **appendTrailingSlash** _(function)_ - `appendTrailingSlash: (options?: TrailingSlashOptions) => import("@nifrajs/core").IdentityPlugin`
+- **appendTrailingSlash** _(function)_ - `appendTrailingSlash: (options?: TrailingSlashOptions) => import("@nifrajs/core").IdentityPlugin<never>`
   Append a trailing slash to non-root paths. By default it skips file-looking paths such as `/app.css`, which keeps static assets and extensionful API routes stable.
 - **basicAuth** _(function)_ - `basicAuth: { (options: BasicAuthStaticOptions): BasicAuthPlugin<string>; <P>(options: BasicAuthStaticOptions<P>): BasicAuthPlugin<P>; <P>(options: BasicAuthVerifyOptions<P>): BasicAuthPlugin<P>; }`
   HTTP Basic authentication. Prefer short-lived Basic Auth for internal tools and staging gates, not public user login. Static credentials are compared in constant time after SHA-256 hashing; the callback form is available for external stores.
@@ -3372,11 +3383,11 @@ _No named exports (side-effect entrypoint)._
   Build an OpenAPI 3.1 document from a route list. Delegates to `@nifrajs/schema`'s `toOpenAPI`, so a route validated with `t` (TypeBox) emits full field-level request/query/response schemas plus `$ref`-reused `components.schemas`; a BYO Standard Schema (zod/valibot/arktype) exposes no portable JSON-…
 - **cache** _(function)_ - `cache: (options: CacheOptions) => Middleware`
   Full response cache for small, cacheable responses. Use a shared `store` in production. The middleware honors `Cache-Control` by default, avoids `Set-Cookie`, caps stored bytes, emits `Age`, and keeps `Vary` headers aligned with the cache key.
-- **cacheControl** _(function)_ - `cacheControl: (value: string | ((request: Request) => string | undefined), options?: CacheControlOptions) => import("@nifrajs/core").IdentityPlugin`
+- **cacheControl** _(function)_ - `cacheControl: (value: string | ((request: Request) => string | undefined), options?: CacheControlOptions) => import("@nifrajs/core").IdentityPlugin<never>`
   Set a `Cache-Control` header on matching responses. `value` is either a fixed directive string or a function of the request (return `undefined` to leave a response untouched - e.g. cache by path). Defaults to `GET`/`HEAD` + 2xx, and never clobbers a `Cache-Control` the handler set itself.
 - **combine** _(function)_ - `combine: (...items: readonly Composable[]) => IdentityPlugin`
   Compose middleware/plugins into one reusable bundle. Individual named plugins still dedupe.
-- **compression** _(function)_ - `compression: (options?: CompressionOptions) => import("@nifrajs/core").IdentityPlugin`
+- **compression** _(function)_ - `compression: (options?: CompressionOptions) => import("@nifrajs/core").IdentityPlugin<never>`
   Transparently **gzip** responses when the client sends `Accept-Encoding: gzip` and the body is a compressible type larger than `threshold`. Uses the Web-standard `CompressionStream`, so it runs on every nifra runtime including the edge; gzip is the one encoding `CompressionStream` guarantees everyw…
 - **conditionalResponse** _(function)_ - `conditionalResponse: (request: Request, response: Response, options?: ConditionalResponseOptions) => Response`
   Apply validators to a response and produce a standards-compliant 304 when it is fresh.
@@ -3391,7 +3402,7 @@ _No named exports (side-effect entrypoint)._
   Signed double-submit CSRF protection. A protected request must carry the same signed token in a cookie and a header, and must come from an allowed Origin/Referer unless `checkOrigin:false` is set.
 - **durableCommand** _(function)_ - `durableCommand: (options: DurableCommandOptions) => IdentityPlugin`
   Journal every capability effect on the routes below it, and declare the evidence that says so.
-- **etag** _(function)_ - `etag: (options?: ETagOptions) => import("@nifrajs/core").IdentityPlugin`
+- **etag** _(function)_ - `etag: (options?: ETagOptions) => import("@nifrajs/core").IdentityPlugin<never>`
   A {@link defineRouterPlugin} plugin that adds a content-hash `ETag` to `GET` `200` responses and returns **`304 Not Modified`** when the client's `If-None-Match` matches - saving bandwidth on unchanged responses. Built on the portable `onResponseBody` tier: the hook receives the final framework-ser…
 - **healthcheck** _(function)_ - `healthcheck: (options?: HealthcheckOptions) => IdentityPlugin`
   Register **liveness** (`/health`) and **readiness** (`/ready`) endpoints. Liveness is a flat `200` (the process is serving). Readiness runs each `check` and returns `200 { status: "ok", checks }` when all pass, or `503 { status: "error", checks }` when any fail (a thrown check counts as failed). Bo…
@@ -3406,7 +3417,7 @@ _No named exports (side-effect entrypoint)._
   Derives `c.language` from `Accept-Language` and emits `Content-Language` by default.
 - **logger** _(function)_ - `logger: (options?: LoggerOptions) => IdentityPlugin`
   A {@link defineIdentityPlugin} plugin that logs one structured line per request - method, path, status, and duration - via `onRequest`/`onResponse` (so it covers 404s and errors too). The start time is paired to the request through a `WeakMap` (no per-request allocation leak). Idempotent.
-- **methodOverride** _(function)_ - `methodOverride: (options?: MethodOverrideOptions) => import("@nifrajs/core").IdentityPlugin`
+- **methodOverride** _(function)_ - `methodOverride: (options?: MethodOverrideOptions) => import("@nifrajs/core").IdentityPlugin<never>`
   HTTP method override for clients that can only send `POST`. The middleware rewrites the request before routing, so handlers, validation, and response hooks all see the overridden method.
 - **multipartResponse** _(function)_ - `multipartResponse: (parts: Iterable<MultipartPart> | AsyncIterable<MultipartPart>, options?: MultipartResponseOptions) => Response`
   Stream a multipart response without buffering the parts. The part headers and bodies are emitted as supplied; this helper deliberately does not persist, inspect, or serialize payloads.
@@ -3424,9 +3435,9 @@ _No named exports (side-effect entrypoint)._
   Pick the best supported language for an `Accept-Language` header. Exact tags win, then compatible base-language matches, then `*`, then the configured default.
 - **poweredBy** _(function)_ - `poweredBy: (options?: PoweredByOptions) => Middleware`
   Opt-in `X-Powered-By` style header. Nifra does not emit this by default; use it only when you want a public framework/product marker.
-- **prettyJson** _(function)_ - `prettyJson: (options?: PrettyJsonOptions) => import("@nifrajs/core").IdentityPlugin`
+- **prettyJson** _(function)_ - `prettyJson: (options?: PrettyJsonOptions) => import("@nifrajs/core").IdentityPlugin<never>`
   Pretty-print JSON responses for debugging and developer-facing APIs. It only touches JSON content, skips encoded responses, caps inspection size, and leaves invalid JSON untouched.
-- **problemDetails** _(function)_ - `problemDetails: (options?: ProblemDetailsOptions) => import("@nifrajs/core").IdentityPlugin`
+- **problemDetails** _(function)_ - `problemDetails: (options?: ProblemDetailsOptions) => import("@nifrajs/core").IdentityPlugin<never>`
   Opt-in RFC 9457 formatting for Nifra's structured error envelope.
 - **rangeResponse** _(function)_ - `rangeResponse: (request: Request, body: string | ArrayBuffer | ArrayBufferView | Uint8Array, options?: RangeResponseOptions) => Response`
   Create a standards-shaped byte representation response with Range, If-Range, and conditional validator handling. The input is already caller-owned memory; this helper does not read or retain external state. Multiple ranges use `multipart/byteranges` and adjacent ranges are coalesced.
@@ -3439,7 +3450,7 @@ _No named exports (side-effect entrypoint)._
   A safe-by-default set of response security headers, covering errors and 404s too: `X-Content-Type-Options: nosniff`, `X-Frame-Options`, and `Referrer-Policy` always; `Strict-Transport-Security` and `Content-Security-Policy` only when configured (both are environment-/app-specific).
 - **timing** _(function)_ - `timing: (options?: TimingOptions) => ContextPlugin<{ timing: TimingControls; }>`
   Adds a `Server-Timing` response header and typed `c.timing` controls for custom metrics. Put request-rewriting middleware (for example `methodOverride`) before `timing()` so timing is attached to the final routed request.
-- **trimTrailingSlash** _(function)_ - `trimTrailingSlash: (options?: TrailingSlashOptions) => import("@nifrajs/core").IdentityPlugin`
+- **trimTrailingSlash** _(function)_ - `trimTrailingSlash: (options?: TrailingSlashOptions) => import("@nifrajs/core").IdentityPlugin<never>`
   Remove trailing slashes from non-root paths. Redirect mode is the production default because it canonicalizes URLs for clients and caches; rewrite mode is available for compatibility migrations.
 - **tryVerifyJwt** _(function)_ - `tryVerifyJwt: <C extends JwtClaims = JwtClaims>(token: string, options: VerifyJwtOptions) => Promise<VerifyJwtResult<C>>`
 - **verifyCsrfToken** _(function)_ - `verifyCsrfToken: (token: string, secret: CsrfSecret) => Promise<boolean>`
@@ -5470,7 +5481,7 @@ _No named exports (side-effect entrypoint)._
   A capacity-admission gate. Decides, per request, whether the instance has capacity to run it now - bounding *concurrency*, which rate limits (frequency) and deadlines (duration) do not. Provide an implementation (see `@nifrajs/middleware`'s `createAdmissionController`) as {@link ServerOptions.admis…
 - **AdmissionDecision** _(type)_ - `type AdmissionDecision = | { readonly admitted: true; release(): void } | { readonly admitted: false; readonly response: Response }`
   The outcome of a capacity-admission decision. `admitted` requests carry a `release` the server calls exactly once when the response is finalized; a shed request carries a ready `429` Response.
-- **AnyServer** _(type)_ - `type AnyServer = Server<any, any>`
+- **AnyServer** _(type)_ - `type AnyServer = Server<any, any, any>`
 - **Context** _(interface)_ - `interface Context<Path extends string = string, S extends RouteSchema = RouteSchema>`
   Handler context. `params` are inferred from the path; `body` and `query` are the validated outputs of their schemas when declared (else `undefined` / raw `URLSearchParams`).
 - **ContextPlugin** _(type)_ - `type ContextPlugin<D extends object> = (<R extends Registry, Ctx>( app: Server<R, Ctx>, ) => Server<R, Ctx & D>) & { readonly pluginName?: string }`
@@ -5492,7 +5503,7 @@ _No named exports (side-effect entrypoint)._
 - **FrameworkName** _(type)_ - `type FrameworkName = typeof FRAMEWORK_NAME`
 - **Handler** _(type)_ - `type Handler<Path extends string, S extends RouteSchema = RouteSchema, Ctx = EmptyContext> = (ctx: Context<Path, S> & Ctx) => MaybePromise<ResponseOf<S>>`
   Public handler shape: context typed from the path, the (optional) schema, and any accumulated middleware context `Ctx` (from `derive`/`decorate`).
-- **IdentityPlugin** _(type)_ - `type IdentityPlugin = (<S extends AnyServer>(app: S) => S) & { readonly pluginName?: string }`
+- **IdentityPlugin** _(type)_ - `type IdentityPlugin<AddedHookOutput = never> = (<R extends Registry, Ctx, HookOutput>( app: Server<R, Ctx, HookOutput>, ) => Server<R, Ctx, HookOutput | AddedHookOutput>) & { readonly pluginName?: string }`
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ - `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ - `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
@@ -5562,6 +5573,8 @@ _No named exports (side-effect entrypoint)._
   A portable header-only response hook - the recommended shape for response middleware that only reads or writes headers (security headers, CORS reflection, cache directives, negotiation). It runs on every runtime from one implementation: the server adapts it into the Web `onResponse` walk AND the No…
 - **ResponseHeadersView** _(interface)_ - `interface ResponseHeadersView`
   The mutable, case-insensitive header surface a portable {@link ResponseHeadersHook} writes through. Deliberately the subset of the Web `Headers` interface every runtime can satisfy natively: on the Web paths the hook receives the response's own `Headers` object directly (which structurally implemen…
+- **ResponseMapFor** _(type)_ - `type ResponseMapFor<S extends RouteSchema, Output> = ResponseMap<S, Output>`
+  Public type seam for build-time consumers that need the complete route response map.
 - **ResponseResult** _(interface)_ - `interface ResponseResult`
 - **RouteConfigError** _(class)_ - `class RouteConfigError`
   Thrown at route registration when a route is misconfigured. This is the boot-time rejection layer: loud and early, never deferred to the first request.
@@ -5571,6 +5584,8 @@ _No named exports (side-effect entrypoint)._
   A registered route's public descriptor - method, path, and input schemas. The router trie discards the original patterns, so this flat list is what lets tools (e.g. `toOpenAPI`) enumerate routes after registration.
 - **RouteInfo** _(interface)_ - `interface RouteInfo`
   One route's input/output shape as the **client** will consume it. `query`/`body` are `never` when the route declares no schema for them, so the client can detect "this route takes no body" via `[body] extends [never]`. `output` is the handler's raw return type (the client applies `Jsonify` when rea…
+- **RouteInfoFor** _(type)_ - `type RouteInfoFor<Path extends string, S extends RouteSchema, Output, HookOutput = never>`
+  Build a {@link RouteInfo} from a route's path, schema, and handler output type.
 - **RouteSchema** _(interface)_ - `interface RouteSchema`
   Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…).
 - **Router** _(class)_ - `class Router<T>`
@@ -5590,7 +5605,7 @@ _No named exports (side-effect entrypoint)._
   A Cloudflare Workers-style scheduled (cron) controller. Structural - no Workers type dependency.
 - **ScheduledHandler** _(type)_ - `type ScheduledHandler<Env = unknown> = ( controller: ScheduledController, context: { readonly env: Env; waitUntil(promise: Promise<unknown>): void }, ) => MaybePromise<void>`
   A nifra cron handler: the platform controller + the same typed `env`/`waitUntil` nifra threads into request handlers. Schedule background work with `waitUntil` so it outlives the trigger.
-- **Server** _(class)_ - `class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext>`
+- **Server** _(class)_ - `class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, HookOutput = never>`
   The inline server. Routes are chainable and fully type-inferred. `derive`/ `decorate` extend the handler context (`Ctx`) for routes defined *after* them, with full types; `Ctx` is server-only and never touches the client registry.
 - **ServerOptions** _(interface)_ - `interface ServerOptions`
 - **StandardIssue** _(interface)_ - `interface StandardIssue`
@@ -5600,6 +5615,8 @@ _No named exports (side-effect entrypoint)._
 - **StandardTypes** _(interface)_ - `interface StandardTypes<Input = unknown, Output = Input>`
 - **StandardWebSocket** _(interface)_ - `interface StandardWebSocket`
   A standard server-side `WebSocket` - the half returned by Deno's `Deno.upgradeWebSocket` and the Workers `WebSocketPair`. {@link attachWebSocket} wires one to a nifra handler, so the Deno and Workers bridges share all the dispatch/normalization/error-isolation logic (only the upgrade call differs).
+- **StatusResponse** _(interface)_ - `interface StatusResponse<Code extends number = number, Body = unknown>`
+  A status-bearing response whose code and body remain visible to TypeScript.
 - **ToolAnnotations** _(interface)_ - `interface ToolAnnotations`
   MCP tool safety hints, surfaced in `tools/list`, that tell an agent how risky a `.tool()` call is - so it can decide whether to auto-invoke or confirm first. All optional; an omitted hint means "unknown". Mirrors the MCP spec's tool `annotations`.
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
@@ -5624,11 +5641,11 @@ _No named exports (side-effect entrypoint)._
   RFC 6265bis cookie-name prefix, matched **case-insensitively** the way browsers match it - `__secure-x` triggers the same enforcement as `__Secure-x`. `undefined` for unprefixed names. Writers (set AND delete) must satisfy the prefix contract or the user agent silently discards the whole `Set-Cooki…
 - **defineContextPlugin** _(function)_ - `defineContextPlugin: <D extends object>(name: string, apply: <R extends Registry, Ctx>(app: Server<R, Ctx>) => Server<R, Ctx & D>) => ContextPlugin<D>`
   Define a named plugin that **adds typed context and nothing else** - the `derive` case - without collapsing the caller's types. `use` instantiates the generic signature against the concrete receiver, so `R` and `Ctx` come back unchanged with `D` intersected onto the context.
-- **defineIdentityPlugin** _(function)_ - `defineIdentityPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
+- **defineIdentityPlugin** _(function)_ - `defineIdentityPlugin: <AddedHookOutput = never>(name: string, apply: <S extends AnyServer>(app: S) => S | AnyServer) => IdentityPlugin<AddedHookOutput>`
   Define a type-**identity** plugin: it registers routes/hooks as a side effect but returns the app with its `Registry` + `Context` UNCHANGED. Use this (not {@link definePlugin}) for any plugin that doesn't add context types - e.g. one mounting an auth handler. It threads the caller's *concrete* serv…
 - **definePlugin** _(function)_ - `definePlugin: <In extends AnyServer, Out extends AnyServer>(name: string, apply: (app: In) => Out) => DefinePluginResult<In, Out>`
   Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
-- **defineRouterPlugin** _(const)_ - `defineRouterPlugin: (name: string, apply: <S extends AnyServer>(app: S) => S) => IdentityPlugin`
+- **defineRouterPlugin** _(const)_ - `defineRouterPlugin: <AddedHookOutput = never>(name: string, apply: <S extends AnyServer>(app: S) => S | AnyServer) => IdentityPlugin<AddedHookOutput>`
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
   Is `value` a destination that stays on this origin?
@@ -5649,7 +5666,7 @@ _No named exports (side-effect entrypoint)._
   Append an HMAC-SHA256 signature to a value → `value.signature` (base64url). For signed cookies. With a {@link CookieSecret} rotation list, signs with the first secret.
 - **silentLogger** _(const)_ - `silentLogger: Logger`
   Discards everything - for tests, or when log output is handled elsewhere.
-- **status** _(function)_ - `status: (code: number, body?: unknown, init?: { readonly headers?: Readonly<Record<string, string>>; }) => ResponseResult`
+- **status** _(function)_ - `status: { <const Code extends number>(code: Code, body?: undefined, init?: { readonly headers?: Readonly<Record<string, string>>; }): StatusResponse<Code, undefined>; <const Code extends number, const Body>(code: Code, …`
   Finish the request here, with this status and body, without building a `Response`.
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`
   Adapt a nifra app to an edge "ExportedHandler" - use it as a Cloudflare Workers (or any `fetch(request, env, ctx)` runtime) default export. It threads `env` + `ctx.waitUntil` into the nifra Context, so handlers read `c.env` and schedule background work via `c.waitUntil`:

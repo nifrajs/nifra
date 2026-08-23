@@ -64,6 +64,22 @@ export interface ResponseResult {
   readonly plain?: PlainRender
 }
 
+/**
+ * Type-only metadata carried by {@link status}. The symbol is declared, not created, so this brand
+ * adds no runtime property and no per-response allocation. It lets the registry distinguish a typed
+ * early response from an ordinary handler value while preserving the existing ResponseResult marker.
+ */
+export declare const STATUS_RESPONSE_TYPE: unique symbol
+
+/** A status-bearing response whose code and body remain visible to TypeScript. */
+export interface StatusResponse<Code extends number = number, Body = unknown>
+  extends ResponseResult {
+  readonly [STATUS_RESPONSE_TYPE]: {
+    readonly code: Code
+    readonly body: Body
+  }
+}
+
 export function isResponseResult(value: unknown): value is ResponseResult {
   return (
     typeof value === "object" &&
@@ -114,11 +130,21 @@ export function plainRenderHeaders(
  * The body is serialized by the lane that renders it, exactly like a handler's plain return, so the
  * response carries a `content-length` rather than falling to chunked, and queued cookies still apply.
  */
+export function status<const Code extends number>(
+  code: Code,
+  body?: undefined,
+  init?: { readonly headers?: Readonly<Record<string, string>> },
+): StatusResponse<Code, undefined>
+export function status<const Code extends number, const Body>(
+  code: Code,
+  body: Body,
+  init?: { readonly headers?: Readonly<Record<string, string>> },
+): StatusResponse<Code, Body>
 export function status(
   code: number,
   body?: unknown,
   init?: { readonly headers?: Readonly<Record<string, string>> },
-): ResponseResult {
+): StatusResponse<number, unknown> {
   // The range `Response` accepts, enforced HERE so the plain lane cannot outrun it. A plain render
   // is written straight to the socket by the Node adapter, where `writeHead` takes 100-999 - so a
   // status this rejects would otherwise ship on Node and throw on every Web runtime, from the same
@@ -141,7 +167,7 @@ export function status(
       headers["content-type"] ??= "application/json;charset=utf-8"
       return new Response(JSON.stringify(body), { status: code, headers })
     },
-  }
+  } as StatusResponse<number, unknown>
 }
 
 /** The concrete `Request` for a source - itself when a real `Request` was passed (the Web path), or the

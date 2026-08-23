@@ -23,7 +23,9 @@ export type NifraPlugin<In extends AnyServer = AnyServer, Out extends AnyServer 
  * server type it receives, preserving the caller's typed registry and context across `.use()` while
  * still allowing the plugin to register runtime hooks or handlers.
  */
-export type IdentityPlugin = (<S extends AnyServer>(app: S) => S) & {
+export type IdentityPlugin<AddedHookOutput = never> = (<R extends Registry, Ctx, HookOutput>(
+  app: Server<R, Ctx, HookOutput>,
+) => Server<R, Ctx, HookOutput | AddedHookOutput>) & {
   readonly pluginName?: string
 }
 
@@ -142,11 +144,15 @@ export function definePlugin(
  * const api = server().get("/a", h).use(audit).get("/b", h) // /a AND /b stay typed
  * ```
  */
-export function defineIdentityPlugin(
+export function defineIdentityPlugin<AddedHookOutput = never>(
   name: string,
-  apply: <S extends AnyServer>(app: S) => S,
-): IdentityPlugin {
-  return Object.assign(apply, { pluginName: name }) as IdentityPlugin
+  // The runtime identity plugin may install lifecycle hooks whose richer type is intentionally not
+  // threaded through this legacy identity seam. Accept the resulting server here so existing
+  // middleware remains source-compatible; direct typed hooks and future typed middleware can use the
+  // concrete Server return type without forcing every identity plugin to become response-aware.
+  apply: <S extends AnyServer>(app: S) => S | AnyServer,
+): IdentityPlugin<AddedHookOutput> {
+  return Object.assign(apply, { pluginName: name }) as IdentityPlugin<AddedHookOutput>
 }
 
 /**

@@ -136,6 +136,42 @@ describe("toOpenAPI(app)", () => {
   test("default info when omitted", () => {
     expect(doc.info).toEqual({ title: "API", version: "1.0.0" })
   })
+
+  test("build-time inferred responses enrich an app without overriding explicit schemas", () => {
+    const inferredApp = server()
+      .get("/inferred/:id", (c) => ({ id: c.params.id }))
+      .get("/explicit", { response: t.object({ explicit: t.boolean() }) }, () => ({
+        explicit: true,
+      }))
+    const inferred = toOpenAPI(inferredApp, {
+      inferredResponses: {
+        "GET /inferred/:id": {
+          "200": { schema: { type: "object", properties: { id: { type: "string" } } } },
+          "404": {
+            schema: { type: "object", properties: { error: { type: "string" } } },
+          },
+        },
+        "GET /explicit": {
+          "200": { schema: { type: "string" } },
+        },
+      },
+    })
+    expect(inferred.paths["/inferred/{id}"]?.get?.responses["404"]?.content).toEqual({
+      "application/json": {
+        schema: { type: "object", properties: { error: { type: "string" } } },
+      },
+    })
+    expect(inferred.paths["/explicit"]?.get?.responses["200"]?.content).toEqual({
+      "application/json": {
+        schema: {
+          type: "object",
+          properties: { explicit: { type: "boolean" } },
+          required: ["explicit"],
+          additionalProperties: false,
+        },
+      },
+    })
+  })
 })
 
 describe("BYO Standard Schema (no JSON Schema) is emitted without detail", () => {

@@ -1,6 +1,7 @@
 import { basename } from "node:path"
 import { toOpenAPI } from "@nifrajs/schema/openapi"
 import type { LoadedApp } from "./load.ts"
+import { type InferredOpenAPIResponses, inferOpenAPIResponses } from "./openapi-types.ts"
 
 export type OpenApiFormat = "json" | "yaml"
 
@@ -52,10 +53,19 @@ function toYaml(value: unknown, depth = 0): string {
  * the trimmed document still references those names, and recomputing the exact reachable subset isn't
  * worth the risk of emitting a `$ref` with no target.
  */
-export function renderOpenApi(app: LoadedApp, format: OpenApiFormat, pathPrefix?: string): string {
+function renderOpenApiWithResponses(
+  app: LoadedApp,
+  format: OpenApiFormat,
+  pathPrefix: string | undefined,
+  inferredResponses: InferredOpenAPIResponses | undefined,
+): string {
   const title = `${basename(app.cwd)} API`
   const input = hasRoutesMethod(app.backend) ? app.backend : {}
-  const generated = toOpenAPI(input, { title, version: "1.0.0" })
+  const generated = toOpenAPI(input, {
+    title,
+    version: "1.0.0",
+    ...(inferredResponses === undefined ? {} : { inferredResponses }),
+  })
   // Narrow to operations under the prefix, rebuilding the doc (its `paths` is readonly). `components`
   // stays - see the doc comment for why the schema set isn't recomputed.
   const document =
@@ -68,4 +78,24 @@ export function renderOpenApi(app: LoadedApp, format: OpenApiFormat, pathPrefix?
         }
       : generated
   return format === "yaml" ? toYaml(document) : JSON.stringify(document, null, 2)
+}
+
+/** Render the current runtime route table without loading the TypeScript compiler. */
+export function renderOpenApi(app: LoadedApp, format: OpenApiFormat, pathPrefix?: string): string {
+  return renderOpenApiWithResponses(app, format, pathPrefix, undefined)
+}
+
+/**
+ * Render OpenAPI with optional build-time response-type inference. The TypeScript compiler is loaded
+ * only in this explicit CLI path; the server and schema runtime packages remain compiler-free.
+ */
+export async function renderOpenApiWithTypes(
+  app: LoadedApp,
+  format: OpenApiFormat,
+  pathPrefix?: string,
+): Promise<string> {
+  const inferred = await inferOpenAPIResponses(app.cwd)
+  for (const warning of inferred.warnings)
+    console.warn(`[nifra] OpenAPI type inference: ${warning}`)
+  return renderOpenApiWithResponses(app, format, pathPrefix, inferred.responses)
 }

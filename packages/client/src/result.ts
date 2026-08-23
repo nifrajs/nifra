@@ -74,6 +74,40 @@ type DeclaredFailures<Errors extends Record<number, unknown>> = {
   }
 }[Extract<keyof Errors, number>]
 
+type DecimalDigit = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
+/** The finite success-status set keeps a declared 200/201 arm narrowable without a `number` fallback
+ * swallowing it. */
+type SuccessStatus = {
+  [S in `2${DecimalDigit}${DecimalDigit}`]: S extends `${infer N extends number}` ? N : never
+}[`2${DecimalDigit}${DecimalDigit}`]
+
+type DeclaredSuccesses<Responses> = {
+  [K in Extract<keyof Responses, SuccessStatus>]: {
+    readonly ok: true
+    readonly status: K
+    readonly data: Responses[K]
+    readonly error: null
+  }
+}[Extract<keyof Responses, SuccessStatus>]
+
+type SuccessFallback<Data, Responses> =
+  Exclude<SuccessStatus, Extract<keyof Responses, SuccessStatus>> extends never
+    ? never
+    : {
+        readonly ok: true
+        readonly status: Exclude<SuccessStatus, Extract<keyof Responses, SuccessStatus>>
+        readonly data: Data
+        readonly error: null
+      }
+
+type SuccessResult<Data, Responses> = [Responses] extends [never]
+  ? { readonly ok: true; readonly status: number; readonly data: Data; readonly error: null }
+  : [Responses] extends [object]
+    ? number extends keyof Responses
+      ? { readonly ok: true; readonly status: number; readonly data: Data; readonly error: null }
+      : DeclaredSuccesses<Responses> | SuccessFallback<Data, Responses>
+    : { readonly ok: true; readonly status: number; readonly data: Data; readonly error: null }
+
 /**
  * The outcome of a client call. The client never throws - inspect `ok` to branch.
  *
@@ -84,8 +118,8 @@ type DeclaredFailures<Errors extends Record<number, unknown>> = {
  * single failure arm with `data: Errors` (`unknown`). `error` is always the server's normalized
  * `{ error, issues? }` summary on failure, `null` on success.
  */
-export type Result<Data, Errors = unknown> =
-  | { readonly ok: true; readonly status: number; readonly data: Data; readonly error: null }
+export type Result<Data, Errors = unknown, Responses = unknown> =
+  | SuccessResult<Data, Responses>
   | ([Errors] extends [Record<number, unknown>]
       ?
           | DeclaredFailures<Errors>

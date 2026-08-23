@@ -5,7 +5,7 @@
  */
 import type { Equal, Expect } from "@nifrajs/test-utils"
 import type { Server, StandardSchemaV1 } from "../src/index.ts"
-import { server } from "../src/index.ts"
+import { server, status } from "../src/index.ts"
 
 type RegistryOf<S> = S extends Server<infer R> ? R : never
 
@@ -96,6 +96,72 @@ declare const idOnly: StandardSchemaV1<unknown, { id: string }>
 const contractApp = server().get("/c", { response: idOnly }, () => ({ id: "always-1" as const }))
 export type _ResponseContractWins = Expect<
   Equal<RegistryOf<typeof contractApp>["/c"]["GET"]["output"], { id: string }>
+>
+
+// Status-bearing returns are inferred without a duplicated response/errors declaration.
+const statusApp = server().get("/status/:id", (c) =>
+  c.params.id === "missing"
+    ? status(404, { code: "not_found", id: c.params.id })
+    : { id: c.params.id, found: true },
+)
+type StatusRoute = RegistryOf<typeof statusApp>["/status/:id"]["GET"]
+export type _StatusSuccess = Expect<Equal<StatusRoute["output"], { id: string; found: boolean }>>
+export type _StatusError = Expect<
+  Equal<StatusRoute["errors"], { 404: { readonly code: "not_found"; readonly id: "missing" } }>
+>
+export type _StatusResponses = Expect<
+  Equal<
+    NonNullable<StatusRoute["responses"]>,
+    {
+      200: { id: string; found: boolean }
+      404: { readonly code: "not_found"; readonly id: "missing" }
+    }
+  >
+>
+
+// Scoped lifecycle hooks contribute their concrete early responses while derive still extends context.
+const lifecycleApp = server()
+  .derive(() => ({ userId: "u" as string }))
+  .beforeHandle((c) => (c.userId === "blocked" ? status(401, { code: "unauthorized" }) : undefined))
+  .afterHandle(() => status(202, { accepted: true }))
+  .onError(() => status(503, { code: "unavailable" }))
+  .get("/lifecycle", (c) => ({ id: c.userId }))
+type LifecycleRoute = RegistryOf<typeof lifecycleApp>["/lifecycle"]["GET"]
+export type _LifecycleSuccess = Expect<
+  Equal<LifecycleRoute["output"], { readonly accepted: true } | { id: string }>
+>
+export type _LifecycleErrors = Expect<
+  Equal<
+    LifecycleRoute["errors"],
+    { 401: { readonly code: "unauthorized" }; 503: { readonly code: "unavailable" } }
+  >
+>
+
+const middlewareApp = server()
+  .use({ beforeHandle: () => status(429, { code: "rate_limited" }) })
+  .get("/middleware", () => ({ ok: true }))
+type MiddlewareRoute = RegistryOf<typeof middlewareApp>["/middleware"]["GET"]
+export type _MiddlewareErrors = Expect<
+  Equal<MiddlewareRoute["errors"], { 429: { readonly code: "rate_limited" } }>
+>
+
+// Composition preserves the parent hook accumulator for routes declared after merge, while the
+// merged group's own route metadata remains local to the group that declared it.
+const guardedParent = server().beforeHandle(() => status(401, { code: "unauthorized" }))
+const publicGroup = server().get("/public", () => ({ ok: true }))
+const composed = guardedParent.merge(publicGroup).get("/private", () => ({ ok: true }))
+type ComposedPrivate = RegistryOf<typeof composed>["/private"]["GET"]
+export type _MergeKeepsHookOutputs = Expect<
+  Equal<ComposedPrivate["errors"], { 401: { readonly code: "unauthorized" } }>
+>
+type ComposedPublic = RegistryOf<typeof composed>["/public"]["GET"]
+export type _MergeDoesNotRetrofitParentHooks = Expect<Equal<ComposedPublic["errors"], unknown>>
+
+declare const dynamicCode: number
+const dynamicStatusApp = server().get("/dynamic", () => status(dynamicCode, { ok: true }))
+type DynamicRoute = RegistryOf<typeof dynamicStatusApp>["/dynamic"]["GET"]
+export type _DynamicStatusIsOpaque = Expect<
+  Equal<NonNullable<DynamicRoute["responses"]>, { 200: unknown }>
 >
 
 // A handler whose return isn't assignable to the declared response is a compile error (no drift).

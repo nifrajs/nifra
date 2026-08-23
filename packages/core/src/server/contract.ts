@@ -5,8 +5,10 @@ import { METHODS, type Method } from "../router/router.ts"
 import type { InferInput, InferOutput, StandardSchemaV1 } from "../schema/standard.ts"
 import { assertByteLimit } from "./body.ts"
 import type { Context, IdempotencyConfig, Params, RouteSchema } from "./context.ts"
-import type { EmptyRegistry, OutputOf, Registry } from "./registry.ts"
+import type { EmptyRegistry, OutputOf, Registry, RouteInfoFor } from "./registry.ts"
 import { Server } from "./server.ts"
+
+type EmptyResponseMap = NonNullable<unknown>
 
 /** An additional (non-success) response a contract operation can document, e.g. a `404`. */
 export interface ResponseDef {
@@ -88,7 +90,9 @@ type OpErrorBodies<Rs extends Record<string, ResponseDef>> = {
   [K in keyof Rs as K extends `2${string}`
     ? never
     : K extends `${infer N extends number}`
-      ? N
+      ? Rs[K] extends { schema: StandardSchemaV1 }
+        ? N
+        : never
       : never]: Rs[K] extends {
     schema: infer S extends StandardSchemaV1
   }
@@ -106,6 +110,26 @@ type OpErrors<O extends OperationDef> = O extends {
     : OpErrorBodies<Rs>
   : unknown
 
+/** The schema-bearing status map a contract consumer can use for success and failure narrowing. */
+type OpAdditionalResponseMap<O extends OperationDef> = O extends {
+  responses: infer Rs extends Record<string, ResponseDef>
+}
+  ? {
+      [K in keyof Rs as K extends `${infer N extends number}`
+        ? Rs[K] extends { schema: StandardSchemaV1 }
+          ? N
+          : never
+        : never]: Rs[K] extends { schema: infer S extends StandardSchemaV1 }
+        ? InferOutput<S>
+        : never
+    }
+  : EmptyResponseMap
+
+type OpResponseMap<O extends OperationDef> = Omit<OpAdditionalResponseMap<O>, 200> &
+  (O extends { response: infer R extends StandardSchemaV1 }
+    ? { 200: InferOutput<R> }
+    : EmptyResponseMap)
+
 /**
  * RouteInfo as a *decoupled consumer* sees it from the contract alone: the
  * `output` is the declared `response` schema's type, or `unknown` when none is
@@ -118,6 +142,7 @@ type RouteInfoForOp<O extends OperationDef> = {
   readonly query: OpQuery<O>
   readonly body: OpBody<O>
   readonly output: OpResponse<O>
+  readonly responses: OpResponseMap<O>
   // The error union from the op's non-2xx `responses` - so a decoupled contract client sees typed error
   // bodies, just like an inline route's `errors`. `unknown` when the op declares no error responses.
   readonly errors: OpErrors<O>
@@ -142,6 +167,25 @@ type SchemaForOp<O extends OperationDef> = (O extends { body: infer B extends St
     ? { headers: H }
     : Record<never, never>) &
   (O extends { params: infer P extends StandardSchemaV1 } ? { params: P } : Record<never, never>)
+
+type OpResponseSchemas<O extends OperationDef> = O extends {
+  responses: infer Rs extends Record<string, ResponseDef>
+}
+  ? {
+      [K in keyof Rs as K extends `2${string}`
+        ? never
+        : Rs[K] extends { schema: StandardSchemaV1 }
+          ? K extends `${infer N extends number}`
+            ? N
+            : never
+          : never]: Rs[K] extends { schema: infer S extends StandardSchemaV1 } ? S : never
+    }
+  : EmptyResponseMap
+
+type RouteSchemaForOp<O extends OperationDef> = SchemaForOp<O> &
+  RouteSchema &
+  (O extends { response: infer R extends StandardSchemaV1 } ? { response: R } : EmptyResponseMap) &
+  (keyof OpResponseSchemas<O> extends never ? EmptyResponseMap : { errors: OpResponseSchemas<O> })
 
 /**
  * The handler context for an op - identical to the inline `Context<Path, S>`, so a
@@ -245,23 +289,12 @@ export type RegistryFromImpl<
   C extends ContractShape,
   H extends HandlersFor<C, Ctx>,
   Ctx = NonNullable<unknown>,
+  HookOutput = never,
 > = {
   [P in C[keyof C]["path"]]: {
-    [K in keyof C as C[K]["path"] extends P ? C[K]["method"] : never]: {
-      readonly params: Params<C[K]["path"]>
-      readonly query: OpQuery<C[K]>
-      readonly body: OpBody<C[K]>
-      readonly output: C[K] extends { response: infer R extends StandardSchemaV1 }
-        ? InferOutput<R>
-        : H[K] extends AnyFn
-          ? OutputOf<H[K]>
-          : unknown
-      // The error union from the op's non-2xx `responses` (see OpErrors) - a graduated contract client sees
-      // the same typed error bodies as the inline `errors` path.
-      readonly errors: OpErrors<C[K]>
-      // Mirrors RouteInfoForOp: no SSE contract on contract ops (yet) - mode conformance holds.
-      readonly sse: never
-    }
+    [K in keyof C as C[K]["path"] extends P ? C[K]["method"] : never]: H[K] extends AnyFn
+      ? RouteInfoFor<C[K]["path"], RouteSchemaForOp<C[K]>, OutputOf<H[K]>, HookOutput>
+      : RouteInfoFor<C[K]["path"], RouteSchemaForOp<C[K]>, unknown, HookOutput>
   }
 }
 
@@ -290,9 +323,24 @@ export function implement<
   H extends HandlersFor<C, Ctx>,
   R extends Registry = EmptyRegistry,
   Ctx = NonNullable<unknown>,
->(contract: C, handlers: H, app?: Server<R, Ctx>): Server<R & RegistryFromImpl<C, H, Ctx>, Ctx> {
-  const target = (app ?? new Server()) as Server<R, Ctx>
+  HookOutput = never,
+>(
+  contract: C,
+  handlers: H,
+  app?: Server<R, Ctx, HookOutput>,
+): Server<R & RegistryFromImpl<C, H, Ctx, HookOutput>, Ctx, HookOutput> {
+  const target = (app ?? new Server()) as Server<R, Ctx, HookOutput>
   const routes = Object.entries(contract).map(([name, op]) => {
+    const errors =
+      op.responses === undefined
+        ? undefined
+        : Object.fromEntries(
+            Object.entries(op.responses)
+              .filter(
+                ([status, response]) => !status.startsWith("2") && response.schema !== undefined,
+              )
+              .map(([status, response]) => [Number(status), response.schema!]),
+          )
     // body/query are validated at the request boundary; `response` is a type + introspection contract
     // ONLY - never validated at runtime and never read on the request hot path (the lifecycle reads
     // schema.body/query by name; the `bare`/bodyOnly/queryOnly fast-path gates ignore `response`). Built
@@ -304,6 +352,7 @@ export function implement<
       op.body !== undefined ||
       op.query !== undefined ||
       op.response !== undefined ||
+      (errors !== undefined && Object.keys(errors).length > 0) ||
       op.capabilities !== undefined ||
       op.idempotency !== undefined ||
       op.bodyLimit !== undefined ||
@@ -316,6 +365,7 @@ export function implement<
             ...(op.body !== undefined ? { body: op.body } : {}),
             ...(op.query !== undefined ? { query: op.query } : {}),
             ...(op.response !== undefined ? { response: op.response } : {}),
+            ...(errors !== undefined && Object.keys(errors).length > 0 ? { errors } : {}),
             ...(op.capabilities !== undefined ? { capabilities: op.capabilities } : {}),
             ...(op.idempotency !== undefined ? { idempotency: op.idempotency } : {}),
             ...(op.bodyLimit !== undefined ? { bodyLimit: op.bodyLimit } : {}),
@@ -335,5 +385,5 @@ export function implement<
   target.registerBatch(routes)
   // Runtime registered exactly the contract's routes through the inline path; the
   // registry type is computed from the contract inputs + handler return types.
-  return target as unknown as Server<R & RegistryFromImpl<C, H, Ctx>, Ctx>
+  return target as unknown as Server<R & RegistryFromImpl<C, H, Ctx, HookOutput>, Ctx, HookOutput>
 }

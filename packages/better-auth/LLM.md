@@ -11,7 +11,7 @@ Mount better-auth into a nifra app - one app.use() wires /api/auth/*, plus typed
 ## Key exports
 
 - **authed** _(function)_ - `authed: <A extends BetterAuthLike, const RequireTenant extends boolean = false>(auth: A, options?: AuthedOptions<SessionUserOf<A>> & { read…`
-- **betterAuth** _(function)_ - `betterAuth: (auth: BetterAuthLike, options?: BetterAuthOptions) => import("@nifrajs/core").IdentityPlugin`
+- **betterAuth** _(function)_ - `betterAuth: (auth: BetterAuthLike, options?: BetterAuthOptions) => import("@nifrajs/core").IdentityPlugin<never>`
 - **getSession** _(function)_ - `getSession: <A extends BetterAuthLike>(auth: A, request: Request) => Promise<SessionOf<A> | null>`
 - **requirePrincipal** _(function)_ - `requirePrincipal: <A extends BetterAuthLike, const RequireTenant extends boolean = false>(auth: A, request: Request, options?: AuthedOption…`
 - **requireSession** _(function)_ - `requireSession: <A extends BetterAuthLike>(auth: A, request: Request, options?: RequireSessionOptions) => Promise<SessionOf<A>>`

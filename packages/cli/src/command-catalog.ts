@@ -298,6 +298,12 @@ interface ContextInput {
   readonly dir?: string | undefined
 }
 
+interface OpenApiInput {
+  readonly format?: "json" | "yaml" | undefined
+  readonly path?: string | undefined
+  readonly dir?: string | undefined
+}
+
 interface DoctorInput {
   readonly json?: boolean | undefined
   readonly autoFix?: boolean | undefined
@@ -371,6 +377,11 @@ interface RoutesCommandOutput {
 }
 interface ContextCommandOutput {
   readonly ok: true
+  readonly text: string
+}
+interface OpenApiCommandOutput {
+  readonly ok: true
+  readonly format: "json" | "yaml"
   readonly text: string
 }
 interface FixCommandOutput {
@@ -567,6 +578,24 @@ const CONTEXT_SCHEMA = input<ContextInput>(
     return {
       path: optionalString(raw.path, "path"),
       kind: raw.kind as "api" | "pages" | undefined,
+      ...(raw.dir === undefined ? {} : { dir: raw.dir }),
+    }
+  },
+)
+
+const OPENAPI_SCHEMA = input<OpenApiInput>(
+  objectSchema({
+    format: { type: "string", enum: ["json", "yaml"] },
+    path: { type: "string" },
+    dir: { type: "string" },
+  }),
+  (value) => {
+    const raw = withDir(record(value))
+    if (raw.format !== undefined && raw.format !== "json" && raw.format !== "yaml")
+      throw new TypeError("format must be json or yaml")
+    return {
+      format: (raw.format ?? "json") as "json" | "yaml",
+      path: optionalString(raw.path, "path"),
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
     }
   },
@@ -1027,6 +1056,38 @@ const contextSpec: CommandSpec<ContextInput, ContextCommandOutput> = {
   render: (out) => [out.text],
 }
 
+const openApiSpec: CommandSpec<OpenApiInput, OpenApiCommandOutput> = {
+  name: "openapi",
+  summary:
+    "Generate the backend OpenAPI document, including supported build-time response inference.",
+  input: OPENAPI_SCHEMA,
+  output: output({
+    type: "object",
+    properties: { ok: { type: "boolean" }, format: { type: "string" }, text: { type: "string" } },
+    required: ["ok", "format", "text"],
+  }),
+  transports: ["cli"],
+  stability: "stable",
+  argv: {
+    flags: [
+      { name: "format", field: "format", type: "string" },
+      { name: "path", field: "path", type: "string" },
+    ],
+  },
+  async run(value, ctx) {
+    const app = await loadAppFor(ctx)
+    const { renderOpenApiWithTypes } = await import("./openapi-tool.ts")
+    const format = value.format ?? "json"
+    return {
+      ok: true,
+      format,
+      text: await renderOpenApiWithTypes(app, format, value.path),
+    }
+  },
+  render: (out) => [out.text],
+  json: (out) => (out.format === "json" ? JSON.parse(out.text) : out.text),
+}
+
 const doctorSpec: CommandSpec<DoctorInput, DoctorResult> = {
   name: "doctor",
   summary: "Find undeclared imports, duplicate identity installs, and pipeline readiness drift.",
@@ -1365,6 +1426,7 @@ export const commandSpecs = Object.freeze([
   manifestSpec,
   routesSpec,
   contextSpec,
+  openApiSpec,
   doctorSpec,
   fixSpec,
   snapshotSpec,

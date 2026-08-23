@@ -70,8 +70,13 @@ export {
   toVercelHandler,
   type VercelHandler,
 } from "./server/platform-adapters.ts"
-export type { Registry, RouteInfo } from "./server/registry.ts"
-export { type PlainRender, type ResponseResult, status } from "./server/runtime-core.ts"
+export type { Registry, ResponseMapFor, RouteInfo, RouteInfoFor } from "./server/registry.ts"
+export {
+  type PlainRender,
+  type ResponseResult,
+  type StatusResponse,
+  status,
+} from "./server/runtime-core.ts"
 export {
   type AdmissionController,
   type AdmissionDecision,

@@ -1,6 +1,7 @@
 import type { BinaryResponse, RawResponse } from "../binary.ts"
 import type { InferInput, InferOutput, StandardSchemaV1 } from "../schema/standard.ts"
 import type { Params, RouteSchema } from "./context.ts"
+import type { StatusResponse } from "./runtime-core.ts"
 
 /**
  * One route's input/output shape as the **client** will consume it. `query`/`body`
@@ -17,6 +18,8 @@ export interface RouteInfo {
   readonly query: unknown
   readonly body: unknown
   readonly output: unknown
+  /** The complete inferred/declared status-keyed response map. */
+  readonly responses?: unknown
   /** The route's declared error bodies as a status-keyed record (from `schema.errors`, e.g.
    * `{ 404: NotFound }`); `unknown` when the route declares none. The typed client turns this into
    * a status-discriminated failure union. */
@@ -48,22 +51,73 @@ type RegistryQuery<S extends RouteSchema> = S extends { query: infer Q extends S
   ? InferInput<Q>
   : never
 
-/** The client-visible output: the declared `response` contract when present (so the client sees the
- * contract, not the handler's incidental return), otherwise the inferred handler output. */
-type RegistryOutput<S extends RouteSchema, Output> = S extends {
+type StatusCodeOf<Output> =
+  Output extends StatusResponse<infer Code, unknown> ? (number extends Code ? never : Code) : never
+
+type StatusBodyAt<Output, Code extends number> =
+  Output extends StatusResponse<infer Actual, infer Body>
+    ? Code extends Actual
+      ? Body
+      : never
+    : never
+
+type IsSuccessCode<Code extends number> = `${Code}` extends `2${string}` ? true : false
+
+type EmptyResponseMap = NonNullable<unknown>
+
+type StatusBodies<Output, Codes extends number = StatusCodeOf<Output>> = [Codes] extends [never]
+  ? EmptyResponseMap
+  : { [Code in Codes]: StatusBodyAt<Output, Code> }
+
+/** A dynamic status code cannot be classified as success or failure; expose an opaque success arm
+ * rather than guessing a status or body schema. Explicit route schemas still override this fallback. */
+type DynamicStatusResponses<Output> =
+  Output extends StatusResponse<infer Code, unknown>
+    ? number extends Code
+      ? { 200: unknown }
+      : EmptyResponseMap
+    : EmptyResponseMap
+
+type InferredResponses<Output> = (Exclude<
+  Output,
+  StatusResponse<number, unknown> | Response
+> extends never
+  ? EmptyResponseMap
+  : { 200: Exclude<Output, StatusResponse<number, unknown> | Response> }) &
+  StatusBodies<Output> &
+  DynamicStatusResponses<Output>
+
+type ExplicitResponses<S extends RouteSchema> = (S extends {
   response: infer R extends StandardSchemaV1
 }
-  ? InferOutput<R>
-  : Output
+  ? { 200: InferOutput<R> }
+  : EmptyResponseMap) &
+  (S extends { errors: infer E extends Record<number, StandardSchemaV1> }
+    ? { [K in keyof E]: E[K] extends StandardSchemaV1 ? InferOutput<E[K]> : never }
+    : EmptyResponseMap)
 
-/** A route's declared error-response body types as a STATUS-KEYED record (`schema.errors` →
- * `{ 404: NotFound, 409: Conflict }`), so the typed client can discriminate the failure body by
- * `status`, not just surface a union. `unknown` when the route declares no `errors`. */
-type RegistryErrors<S extends RouteSchema> = S extends {
-  errors: infer E extends Record<number, StandardSchemaV1>
+type MergeResponseMaps<Inferred, Explicit> = Omit<Inferred, keyof Explicit> & Explicit
+
+type ResponseMap<S extends RouteSchema, Output> = MergeResponseMaps<
+  InferredResponses<Output>,
+  ExplicitResponses<S>
+>
+
+/** Public type seam for build-time consumers that need the complete route response map. */
+export type ResponseMapFor<S extends RouteSchema, Output> = ResponseMap<S, Output>
+
+type ResponseErrors<M> = {
+  [K in keyof M as K extends number ? (IsSuccessCode<K> extends true ? never : K) : never]: M[K]
 }
-  ? { [K in keyof E]: E[K] extends StandardSchemaV1 ? InferOutput<E[K]> : never }
-  : unknown
+
+type ResponseSuccessBodies<M> = {
+  [K in keyof M]: K extends number ? (IsSuccessCode<K> extends true ? M[K] : never) : never
+}[keyof M]
+
+type NonEmptyOrUnknown<M> = keyof M extends never ? unknown : M
+
+/** The client-visible output is the union of all inferred/declared 2xx bodies. */
+type RegistryOutput<S extends RouteSchema, Output> = ResponseSuccessBodies<ResponseMap<S, Output>>
 
 /** The SSE event payload type from a route's `sse` schema; `never` for ordinary routes. */
 type RegistrySse<S extends RouteSchema> = S extends { sse: infer E extends StandardSchemaV1 }
@@ -71,12 +125,13 @@ type RegistrySse<S extends RouteSchema> = S extends { sse: infer E extends Stand
   : never
 
 /** Build a {@link RouteInfo} from a route's path, schema, and handler output type. */
-export type RouteInfoFor<Path extends string, S extends RouteSchema, Output> = {
+export type RouteInfoFor<Path extends string, S extends RouteSchema, Output, HookOutput = never> = {
   readonly params: Params<Path>
   readonly query: RegistryQuery<S>
   readonly body: RegistryBody<S>
-  readonly output: RegistryOutput<S, Output>
-  readonly errors: RegistryErrors<S>
+  readonly output: RegistryOutput<S, Output | HookOutput>
+  readonly responses?: ResponseMapFor<S, Output | HookOutput>
+  readonly errors: NonEmptyOrUnknown<ResponseErrors<ResponseMapFor<S, Output | HookOutput>>>
   readonly sse: RegistrySse<S>
 }
 

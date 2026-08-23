@@ -16,7 +16,7 @@ Bun-native, contract-first HTTP framework - the router, server, and route descri
 
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>` · from `@nifrajs/core`
 - **defineContract** _(function)_ - `defineContract: <const C extends ContractShape>(contract: C) => C` · from `@nifrajs/core/contract`
-- **implement** _(function)_ - `implement: <const C extends ContractShape, H extends HandlersFor<C, Ctx>, R extends Registry = {}, Ctx = {}>(contract: C, handlers: H, app?…` · from `@nifrajs/core/contract`
+- **implement** _(function)_ - `implement: <const C extends ContractShape, H extends HandlersFor<C, Ctx>, R extends Registry = {}, Ctx = {}, HookOutput = never>(contract: …` · from `@nifrajs/core/contract`
 - **definePlugin** _(function)_ - `definePlugin: <In extends AnyServer, Out extends AnyServer>(name: string, apply: (app: In) => Out) => DefinePluginResult<In, Out>` · from `@nifrajs/core`
 - **sse** _(function)_ - `sse: (c: SSEContext, run: (stream: SSEStream) => void | Promise<void>, init?: SSEInit) => Response` · from `@nifrajs/core/sse`
 - **idempotency** _(function)_ - `idempotency: (options?: IdempotencyPluginOptions) => IdentityPlugin` · from `@nifrajs/core/idempotency-plugin`
@@ -29,7 +29,7 @@ Bun-native, contract-first HTTP framework - the router, server, and route descri
 - **attachEffectLedger** _(function)_ - `attachEffectLedger: (context: object, ledger: RequestLedger) => void` · from `@nifrajs/core/ledger`
 - **attachWebSocket** _(function)_ - `attachWebSocket: <Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | u…` · from `@nifrajs/core/ws`
 
-_…and 634 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 637 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 

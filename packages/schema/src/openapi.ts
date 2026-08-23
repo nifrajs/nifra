@@ -56,6 +56,26 @@ export interface ToOpenAPIOptions {
    * can't be introspected - richer response bodies, examples, app-route tags/security.
    */
   readonly operations?: Readonly<Record<string, Record<string, unknown>>>
+  /**
+   * Optional build-time response schemas inferred from TypeScript declarations. Keys are
+   * `METHOD /path` (for example `GET /users/:id`), and explicit route/contract schemas always win.
+   * This is inert OpenAPI metadata: it never enables runtime response validation.
+   */
+  readonly inferredResponses?: Readonly<
+    Record<
+      string,
+      Readonly<
+        Record<
+          string,
+          {
+            readonly description?: string
+            readonly schema?: JsonSchema
+            readonly contentType?: string
+          }
+        >
+      >
+    >
+  >
 }
 
 interface OpenAPIParameter {
@@ -240,6 +260,9 @@ interface OperationInput {
         Record<string, { description?: string; schema?: SchemaReflection; contentType?: string }>
       >
     | undefined
+  readonly inferredResponses?:
+    | Readonly<Record<string, { description?: string; schema?: JsonSchema; contentType?: string }>>
+    | undefined
 }
 
 const STATUS_TEXT: Readonly<Record<string, string>> = {
@@ -295,6 +318,23 @@ function buildResponses(
       const schema = def.schema !== undefined ? store.collect(def.schema.jsonSchema) : undefined
       if (schema !== undefined)
         response.content = { [def.contentType ?? "application/json"]: { schema } }
+      responses[status] = response
+    }
+  }
+  // Build-time TypeScript inference is an additive documentation convenience. Explicit route and
+  // contract schemas above remain authoritative for both status and body details.
+  if (input.inferredResponses !== undefined) {
+    for (const [status, definition] of Object.entries(input.inferredResponses)) {
+      if (!/^[1-5][0-9]{2}$/.test(status) || responses[status] !== undefined) continue
+      const response: OpenAPIResponse = {
+        description: definition.description ?? STATUS_TEXT[status] ?? "Response",
+      }
+      const schema = store.collect(definition.schema)
+      if (schema !== undefined) {
+        response.content = {
+          [definition.contentType ?? "application/json"]: { schema },
+        }
+      }
       responses[status] = response
     }
   }
@@ -376,6 +416,8 @@ export function toOpenAPI(
           response: route.schema?.response,
           // …and an `errors` contract - emit each as a non-2xx response.
           responses: reflectedErrorsToResponses(route.schema?.errors),
+          inferredResponses:
+            options.inferredResponses?.[`${route.method.toUpperCase()} ${route.path}`],
           operationId: undefined,
         },
         store,
@@ -417,6 +459,7 @@ export function toOpenAPI(
                     ]
                   }),
                 ),
+          inferredResponses: options.inferredResponses?.[`${op.method.toUpperCase()} ${op.path}`],
         },
         store,
         options.operations,

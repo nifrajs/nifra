@@ -1,6 +1,6 @@
 import type { Treaty } from "@nifrajs/client"
 import type { StandardSchemaV1 } from "@nifrajs/core"
-import { server } from "@nifrajs/core"
+import { server, status } from "@nifrajs/core"
 /**
  * The air-tight gate for the Eden-style proxy type. Verified by `tsc`. A ~25-route
  * app exercises instantiation depth; correct calls assert input/output inference
@@ -249,6 +249,31 @@ export type _FallbackExcludesDeclared = Expect<
 type LooseFailure = Extract<Awaited<ReturnType<typeof errApi.loose.get>>, { ok: false }>
 export type _LooseData = Expect<Equal<LooseFailure["data"], unknown>>
 export type _LooseStatus = Expect<Equal<LooseFailure["status"], number>>
+
+// Handler-returned status branches are inferred without an explicit `errors` map.
+const inferredErrApp = server().get("/inferred/:id", (c) =>
+  c.params.id === "missing"
+    ? status(404, { code: "not_found", id: c.params.id })
+    : { id: c.params.id },
+)
+const inferredErrApi = {} as Treaty<typeof inferredErrApp>
+type InferredErrCall = Awaited<ReturnType<ReturnType<typeof inferredErrApi.inferred>["get"]>>
+type Inferred404 = Extract<InferredErrCall, { status: 404 }>
+export type _Inferred404 = Expect<
+  Equal<Inferred404["data"], { readonly code: "not_found"; readonly id: "missing" }>
+>
+
+// Known 2xx statuses are discriminated too; undeclared 2xx statuses retain the route's output type.
+const inferredSuccessApp = server().get("/created", () => status(201, { id: "created" }))
+const inferredSuccessApi = {} as Treaty<typeof inferredSuccessApp>
+type InferredSuccessCall = Awaited<ReturnType<typeof inferredSuccessApi.created.get>>
+type Created201 = Extract<InferredSuccessCall, { status: 201 }>
+export type _Inferred201 = Expect<Equal<Created201["data"], { readonly id: "created" }>>
+
+const noBodyApp = server().get("/nocontent", () => status(204))
+const noBodyApi = {} as Treaty<typeof noBodyApp>
+type NoBodyResult = Awaited<ReturnType<typeof noBodyApi.nocontent.get>>
+export type _NoBody = Expect<Equal<Extract<NoBodyResult, { status: 204 }>["data"], undefined>>
 
 // --- typed WebSocket handles ---
 

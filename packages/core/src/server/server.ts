@@ -108,6 +108,7 @@ import {
   isResponseResult,
   type ResponseResult,
   requestOf,
+  type StatusResponse,
 } from "./runtime-core.ts"
 import { normalizeStaticResponseHeaders, type StaticResponseHeaders } from "./static-headers.ts"
 import { plainValidationError } from "./validation.ts"
@@ -369,6 +370,31 @@ type ResponseOf<S extends RouteSchema> = S extends { response: infer R extends S
   ? InferOutput<R> | Response | ResponseResult
   : HandlerResult
 
+/** A typed status result is control flow, not a context extension. */
+type StatusResponseOf<T> = T extends StatusResponse<number, unknown> ? T : never
+
+type ContextExtensionPart<T> = T extends object ? T : EmptyContext
+type ContextExtensionOf<T> = [Exclude<Awaited<T>, Response | ResponseResult>] extends [never]
+  ? EmptyContext
+  : ContextExtensionPart<Exclude<Awaited<T>, Response | ResponseResult>>
+
+/** Keep concrete lifecycle return values for route inference, but don't let an untyped hook widen every route to unknown. */
+type HookOutputOf<T> = unknown extends Awaited<T> ? never : Exclude<Awaited<T>, void>
+
+type ReturnOfHookField<M, K extends PropertyKey> = M extends {
+  readonly [P in K]?: infer F
+}
+  ? F extends (...args: never[]) => infer R
+    ? HookOutputOf<R>
+    : never
+  : never
+
+type MiddlewareOutputOf<M> =
+  | ReturnOfHookField<M, "beforeHandle">
+  | ReturnOfHookField<M, "afterHandle">
+  | ReturnOfHookField<M, "onError">
+  | ReturnOfHookField<M, "around">
+
 /**
  * Public handler shape: context typed from the path, the (optional) schema, and
  * any accumulated middleware context `Ctx` (from `derive`/`decorate`).
@@ -402,7 +428,7 @@ export type {
 // A plugin operates over arbitrary Server shapes; `any` here is the standard framework escape hatch
 // (the precise threading happens at the `use` call site, which is generic over the *concrete* `this`).
 // biome-ignore lint/suspicious/noExplicitAny: plugins are generic over any Server's Registry/Context
-export type AnyServer = Server<any, any>
+export type AnyServer = Server<any, any, any>
 
 // Plugin definers + their types now live in `./plugin.ts`; re-exported here so `.use()` callers and
 // existing importers keep resolving them from the server module.
@@ -638,7 +664,7 @@ const sealHookAudit = (
  *   app.decorate("db", db).derive((c) => ({ user: auth(c) }))
  *      .get("/me", (c) => c.user)            // c.user + c.db are typed
  */
-export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
+export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, HookOutput = never> {
   /**
    * Which copy of `@nifrajs/core` declared this type. Two copies in one build (a linked sibling repo,
    * a hoisting split) produce two unrelated `Server` types whose assignment error is a wall of
@@ -891,14 +917,22 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * takes, where `throw new Response(...)` pays ~40% of the rejection lane to build the object. That
    * branch is control flow, so it does not widen the derived context type.
    */
-  derive<D extends object>(
-    fn: (context: Context & Ctx) => MaybePromise<D | ResponseResult | Response>,
-  ): Server<R, Ctx & D> {
+  derive<H extends (context: Context & Ctx) => MaybePromise<unknown>>(
+    fn: H,
+  ): Server<
+    R,
+    Ctx & ContextExtensionOf<ReturnType<H>>,
+    HookOutput | StatusResponseOf<Awaited<ReturnType<H>>>
+  > {
     this.assertConfigurable("derive()")
     this.derives.push(fn as unknown as RawDerive)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
       recordScopedHook(this, this.catalog.size, "derive")
-    return this as unknown as Server<R, Ctx & D>
+    return this as unknown as Server<
+      R,
+      Ctx & ContextExtensionOf<ReturnType<H>>,
+      HookOutput | StatusResponseOf<Awaited<ReturnType<H>>>
+    >
   }
 
   /**
@@ -906,12 +940,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * by none before; one added after the last route reaches nothing
    * (see {@link ServerOptions.unusedScopedHooks}).
    */
-  decorate<const K extends string, V>(key: K, value: V): Server<R, Ctx & Record<K, V>> {
+  decorate<const K extends string, V>(key: K, value: V): Server<R, Ctx & Record<K, V>, HookOutput> {
     this.assertConfigurable("decorate()")
     this.decorations[key] = value
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
       recordScopedHook(this, this.catalog.size, "decorate")
-    return this as unknown as Server<R, Ctx & Record<K, V>>
+    return this as unknown as Server<R, Ctx & Record<K, V>, HookOutput>
   }
 
   /**
@@ -933,12 +967,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * it is snapshotted into every route declared *after* this call and covers none declared before, so
    * one added after the last route reaches nothing (see {@link ServerOptions.unusedScopedHooks}).
    */
-  beforeHandle(fn: (context: Context & Ctx) => MaybePromise<unknown>): this {
+  beforeHandle<H extends (context: Context & Ctx) => MaybePromise<unknown>>(
+    fn: H,
+  ): Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>> {
     this.assertConfigurable("beforeHandle()")
     this.beforeHandleHooks.push(fn as unknown as RawBeforeHandle)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
       recordScopedHook(this, this.catalog.size, "beforeHandle")
-    return this
+    return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
   }
 
   /**
@@ -949,12 +985,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * Order-scoped: captured by every route declared *after* this call, none before; one added after the
    * last route reaches nothing (see {@link ServerOptions.unusedScopedHooks}).
    */
-  around(fn: <T>(context: Context & Ctx, next: () => MaybePromise<T>) => MaybePromise<T>): this {
+  around<
+    H extends (context: Context & Ctx, next: () => MaybePromise<unknown>) => MaybePromise<unknown>,
+  >(fn: H): Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>> {
     this.assertConfigurable("around()")
     this.aroundHooks.push(fn as unknown as RawAround)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
       recordScopedHook(this, this.catalog.size, "around")
-    return this
+    return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
   }
 
   /**
@@ -996,23 +1034,27 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   /** Transform the handler's result before it is serialized. Order-scoped: captured by routes declared
    * *after* this call, none before; one added after the last route reaches nothing (see
    * {@link ServerOptions.unusedScopedHooks}). */
-  afterHandle(fn: (result: unknown, context: Context & Ctx) => MaybePromise<unknown>): this {
+  afterHandle<H extends (result: unknown, context: Context & Ctx) => MaybePromise<unknown>>(
+    fn: H,
+  ): Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>> {
     this.assertConfigurable("afterHandle()")
     this.afterHandleHooks.push(fn as unknown as RawAfterHandle)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
       recordScopedHook(this, this.catalog.size, "afterHandle")
-    return this
+    return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
   }
 
   /** Handle a thrown error; a non-`undefined` return becomes the response (else the default 500).
    * Order-scoped: captured by routes declared *after* this call, none before; one added after the last
    * route reaches nothing (see {@link ServerOptions.unusedScopedHooks}). */
-  onError(fn: (error: unknown, context: Context & Ctx) => MaybePromise<unknown>): this {
+  onError<H extends (error: unknown, context: Context & Ctx) => MaybePromise<unknown>>(
+    fn: H,
+  ): Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>> {
     this.assertConfigurable("onError()")
     this.onErrorHooks.push(fn as unknown as RawErrorHandler)
     if (hookAuditRuntime && process.env.NODE_ENV !== "production")
       recordScopedHook(this, this.catalog.size, "onError")
-    return this
+    return this as unknown as Server<R, Ctx, HookOutput | HookOutputOf<ReturnType<H>>>
   }
 
   /** Transform every outgoing response - success, error, 404, 405, short-circuit. Global. */
@@ -1124,21 +1166,23 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
   /** Enable the opt-in portable response observer methods. */
   use(plugin: ResponseObserverPlugin): this & ResponseObserverMethods
   /**
-   * Apply a type-**identity** plugin ({@link IdentityPlugin}, from {@link defineIdentityPlugin}) - it
-   * registers routes/hooks but doesn't change the types, so this returns `this` with the route registry
-   * and context fully intact. This overload exists specifically so a named identity plugin (e.g.
-   * `@nifrajs/better-auth`) threads the registry: its `& { pluginName }` intersection would otherwise
-   * defeat the generic inference of the transforming overload below and collapse the result to `any`.
-   */
-  use(plugin: IdentityPlugin): this
-  /**
    * Apply a **context** plugin ({@link ContextPlugin}, from {@link defineContextPlugin}) - it adds `D`
    * to the handler context and changes nothing else, so the route registry `R` and the existing context
    * `Ctx` thread through untouched. Like the identity overload above, this exists because the generic
    * `(app: this) => Out` overload below cannot infer through a *generic* plugin signature: it erases the
    * plugin's own type parameters to their constraints, which silently widens `R` to `Registry`.
    */
-  use<D extends object>(plugin: ContextPlugin<D>): Server<R, Ctx & D>
+  use<D extends object>(plugin: ContextPlugin<D>): Server<R, Ctx & D, HookOutput>
+  /**
+   * Apply a type-**identity** plugin ({@link IdentityPlugin}, from {@link defineIdentityPlugin}) - it
+   * registers routes/hooks but doesn't change the types, so this returns `this` with the route registry
+   * and context fully intact. This overload exists specifically so a named identity plugin (e.g.
+   * `@nifrajs/better-auth`) threads the registry: its `& { pluginName }` intersection would otherwise
+   * defeat the generic inference of the transforming overload below and collapse the result to `any`.
+   */
+  use<AddedHookOutput = never>(
+    plugin: IdentityPlugin<AddedHookOutput>,
+  ): Server<R, Ctx, HookOutput | AddedHookOutput>
   /**
    * Apply a **plugin function** - `(app) => app`, typically built with {@link definePlugin}. It's
    * called with `this` and its result is returned, so an inline plugin's `derive`/`decorate` thread
@@ -1162,6 +1206,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * the last route reaches nothing - {@link ServerOptions.unusedScopedHooks} logs that at seal. A named
    * bundle already applied is skipped (idempotent).
    */
+  use<M extends Middleware>(mw: M): Server<R, Ctx, HookOutput | MiddlewareOutputOf<M>>
   use(mw: Middleware): this
   use(arg: Middleware | ((app: this) => AnyServer)): AnyServer {
     this.assertConfigurable("use()")
@@ -1246,16 +1291,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     path: Path,
     schema: S,
     handler: H,
-  ): Server<AddRoute<R, "GET", Path, RouteInfoFor<Path, S, OutputOf<H>>>, Ctx>
+  ): Server<
+    AddRoute<R, "GET", Path, RouteInfoFor<Path, S, OutputOf<H>, HookOutput>>,
+    Ctx,
+    HookOutput
+  >
   get<Path extends string, H extends Handler<Path, RouteSchema, Ctx>>(
     path: Path,
     handler: H,
-  ): Server<AddRoute<R, "GET", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>>>, Ctx>
+  ): Server<
+    AddRoute<R, "GET", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>, HookOutput>>,
+    Ctx,
+    HookOutput
+  >
   get(
     path: string,
     schemaOrHandler: RouteSchema | ErasedHandler,
     handler?: ErasedHandler,
-  ): Server<Registry, Ctx> {
+  ): Server<Registry, Ctx, HookOutput> {
     return this.route("GET", path, schemaOrHandler, handler)
   }
 
@@ -1288,12 +1341,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       stream: TypedSSEStream<InferOutput<S["sse"]>>,
     ) => void | Promise<void>,
     init?: SSEInit,
-  ): Server<AddRoute<R, "GET", Path, RouteInfoFor<Path, S, Response>>, Ctx> {
+  ): Server<
+    AddRoute<R, "GET", Path, RouteInfoFor<Path, S, Response, HookOutput>>,
+    Ctx,
+    HookOutput
+  > {
     const handler = (context: Context<Path, S> & Ctx): Response =>
       requireSseRuntime(this.sseRuntime).response(context, (stream) => run(context, stream), init)
     return this.route("GET", path, schema, handler as unknown as ErasedHandler) as Server<
-      AddRoute<R, "GET", Path, RouteInfoFor<Path, S, Response>>,
-      Ctx
+      AddRoute<R, "GET", Path, RouteInfoFor<Path, S, Response, HookOutput>>,
+      Ctx,
+      HookOutput
     >
   }
 
@@ -1301,16 +1359,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     path: Path,
     schema: S,
     handler: H,
-  ): Server<AddRoute<R, "POST", Path, RouteInfoFor<Path, S, OutputOf<H>>>, Ctx>
+  ): Server<
+    AddRoute<R, "POST", Path, RouteInfoFor<Path, S, OutputOf<H>, HookOutput>>,
+    Ctx,
+    HookOutput
+  >
   post<Path extends string, H extends Handler<Path, RouteSchema, Ctx>>(
     path: Path,
     handler: H,
-  ): Server<AddRoute<R, "POST", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>>>, Ctx>
+  ): Server<
+    AddRoute<R, "POST", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>, HookOutput>>,
+    Ctx,
+    HookOutput
+  >
   post(
     path: string,
     schemaOrHandler: RouteSchema | ErasedHandler,
     handler?: ErasedHandler,
-  ): Server<Registry, Ctx> {
+  ): Server<Registry, Ctx, HookOutput> {
     return this.route("POST", path, schemaOrHandler, handler)
   }
 
@@ -1318,16 +1384,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     path: Path,
     schema: S,
     handler: H,
-  ): Server<AddRoute<R, "PUT", Path, RouteInfoFor<Path, S, OutputOf<H>>>, Ctx>
+  ): Server<
+    AddRoute<R, "PUT", Path, RouteInfoFor<Path, S, OutputOf<H>, HookOutput>>,
+    Ctx,
+    HookOutput
+  >
   put<Path extends string, H extends Handler<Path, RouteSchema, Ctx>>(
     path: Path,
     handler: H,
-  ): Server<AddRoute<R, "PUT", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>>>, Ctx>
+  ): Server<
+    AddRoute<R, "PUT", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>, HookOutput>>,
+    Ctx,
+    HookOutput
+  >
   put(
     path: string,
     schemaOrHandler: RouteSchema | ErasedHandler,
     handler?: ErasedHandler,
-  ): Server<Registry, Ctx> {
+  ): Server<Registry, Ctx, HookOutput> {
     return this.route("PUT", path, schemaOrHandler, handler)
   }
 
@@ -1335,16 +1409,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     path: Path,
     schema: S,
     handler: H,
-  ): Server<AddRoute<R, "PATCH", Path, RouteInfoFor<Path, S, OutputOf<H>>>, Ctx>
+  ): Server<
+    AddRoute<R, "PATCH", Path, RouteInfoFor<Path, S, OutputOf<H>, HookOutput>>,
+    Ctx,
+    HookOutput
+  >
   patch<Path extends string, H extends Handler<Path, RouteSchema, Ctx>>(
     path: Path,
     handler: H,
-  ): Server<AddRoute<R, "PATCH", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>>>, Ctx>
+  ): Server<
+    AddRoute<R, "PATCH", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>, HookOutput>>,
+    Ctx,
+    HookOutput
+  >
   patch(
     path: string,
     schemaOrHandler: RouteSchema | ErasedHandler,
     handler?: ErasedHandler,
-  ): Server<Registry, Ctx> {
+  ): Server<Registry, Ctx, HookOutput> {
     return this.route("PATCH", path, schemaOrHandler, handler)
   }
 
@@ -1352,16 +1434,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     path: Path,
     schema: S,
     handler: H,
-  ): Server<AddRoute<R, "DELETE", Path, RouteInfoFor<Path, S, OutputOf<H>>>, Ctx>
+  ): Server<
+    AddRoute<R, "DELETE", Path, RouteInfoFor<Path, S, OutputOf<H>, HookOutput>>,
+    Ctx,
+    HookOutput
+  >
   delete<Path extends string, H extends Handler<Path, RouteSchema, Ctx>>(
     path: Path,
     handler: H,
-  ): Server<AddRoute<R, "DELETE", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>>>, Ctx>
+  ): Server<
+    AddRoute<R, "DELETE", Path, RouteInfoFor<Path, Record<never, never>, OutputOf<H>, HookOutput>>,
+    Ctx,
+    HookOutput
+  >
   delete(
     path: string,
     schemaOrHandler: RouteSchema | ErasedHandler,
     handler?: ErasedHandler,
-  ): Server<Registry, Ctx> {
+  ): Server<Registry, Ctx, HookOutput> {
     return this.route("DELETE", path, schemaOrHandler, handler)
   }
 
@@ -1404,10 +1494,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
         S["output"] extends StandardSchemaV1
           ? { body: S["input"]; response: S["output"] }
           : { body: S["input"] },
-        OutputOf<H>
+        OutputOf<H>,
+        HookOutput
       >
     >,
-    Ctx
+    Ctx,
+    HookOutput
   >
   tool(
     name: string,
@@ -1418,7 +1510,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
       annotations?: ToolAnnotations
     },
     handler: (input: unknown, ctx: Context & Ctx) => unknown,
-  ): Server<Registry, Ctx> {
+  ): Server<Registry, Ctx, HookOutput> {
     const plan = requireMcpRuntime(this.mcpRuntime).tool(
       name,
       config,
@@ -1431,7 +1523,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     if (lastRoute) {
       ;(lastRoute as { tool?: RouteDescriptor["tool"] }).tool = plan.descriptor
     }
-    return this as unknown as Server<Registry, Ctx>
+    return this as unknown as Server<Registry, Ctx, HookOutput>
   }
 
   /**
@@ -1444,7 +1536,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     uri: string,
     config: { readonly name: string; readonly description?: string; readonly mimeType?: string },
     read: McpResourceDescriptor["read"],
-  ): Server<R, Ctx> {
+  ): Server<R, Ctx, HookOutput> {
     this.assertConfigurable("resource()")
     this.mcpResourceList.push(requireMcpRuntime(this.mcpRuntime).resource(uri, config, read))
     return this
@@ -1458,7 +1550,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     name: string,
     config: { readonly description: string; readonly arguments?: readonly PromptArgument[] },
     handler: McpPromptDescriptor["handler"],
-  ): Server<R, Ctx> {
+  ): Server<R, Ctx, HookOutput> {
     this.assertConfigurable("prompt()")
     this.mcpPromptList.push(requireMcpRuntime(this.mcpRuntime).prompt(name, config, handler))
     return this
@@ -1498,8 +1590,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     path: Path,
     handler: WebSocketHandler<Data, EnvOf<Ctx>, Schema, Send>,
   ): string extends Path
-    ? Server<R, Ctx>
-    : Server<AddRoute<R, "WS", Path, WsRouteInfoFor<Path, Schema, Send>>, Ctx> {
+    ? Server<R, Ctx, HookOutput>
+    : Server<AddRoute<R, "WS", Path, WsRouteInfoFor<Path, Schema, Send>>, Ctx, HookOutput> {
     this.assertConfigurable("ws()")
     // Boot-time guard: the WS runtime is a subpath (`@nifrajs/core/ws`) so no-WebSocket apps don't
     // bundle it. Registration is the loud, early failure point - never the first connection.
@@ -1544,7 +1636,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     path: string,
     schemaOrHandler: RouteSchema | ErasedHandler,
     handler?: ErasedHandler,
-  ): Server<Registry, Ctx> {
+  ): Server<Registry, Ctx, HookOutput> {
     let rawHandler: ErasedHandler
     let schema: RouteSchema | undefined
     if (handler !== undefined) {
@@ -1557,7 +1649,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     this.register(method, path, schema, rawHandler)
     // The accumulated registry type is compile-time only; the same instance
     // carries every route, so the public methods re-type `this` per call.
-    return this as unknown as Server<Registry, Ctx>
+    return this as unknown as Server<Registry, Ctx, HookOutput>
   }
 
   /**
@@ -1814,7 +1906,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
    * `RouteConfigError` at merge time, and a group with WebSocket routes is refused (register
    * those on the parent).
    */
-  merge<R2 extends Registry, Ctx2>(other: Server<R2, Ctx2>): Server<R & R2, Ctx> {
+  merge<R2 extends Registry, Ctx2, HookOutput2>(
+    other: Server<R2, Ctx2, HookOutput2>,
+  ): Server<R & R2, Ctx, HookOutput> {
     this.assertConfigurable("merge()")
     const source = other as unknown as Server<Registry, EmptyContext>
     if (source.wsRouteCount > 0) {
@@ -1899,7 +1993,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext> {
     if (!scoped) this.globalAssurance.push(...source.globalAssurance)
     this.mcpResourceList.push(...source.mcpResourceList)
     this.mcpPromptList.push(...source.mcpPromptList)
-    return this as unknown as Server<R & R2, Ctx>
+    return this as unknown as Server<R & R2, Ctx, HookOutput>
   }
 
   /** A fused renderer closes over runtime services to keep its seven-argument JSC fast path. Merging

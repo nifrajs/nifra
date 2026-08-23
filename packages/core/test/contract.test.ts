@@ -103,6 +103,18 @@ describe("implement() - response contract on the descriptor", () => {
     expect(app.routes()[0]?.schema?.response).toBe(passThrough)
   })
 
+  test("carries schema-bearing non-2xx contract responses onto the route schema", () => {
+    const contract = defineContract({
+      getMe: {
+        method: "GET",
+        path: "/me",
+        responses: { "404": { schema: passThrough } },
+      },
+    })
+    const app = implement(contract, { getMe: () => ({ id: "1" }) })
+    expect(app.routes()[0]?.schema?.errors?.[404]).toBe(passThrough)
+  })
+
   test("a response-less op still produces an undefined schema (byte-identical to before)", () => {
     const app = implement(defineContract({ ping: { method: "GET", path: "/ping" } }), {
       ping: () => ({ ok: true }),

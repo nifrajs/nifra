@@ -21,9 +21,9 @@ export async function openApiHandler(
   args: Record<string, unknown>,
   loadAppCached: (outDirName?: string) => Promise<LoadedApp>,
 ): Promise<string> {
-  const { renderOpenApi } = await import("./openapi-tool.ts")
+  const { renderOpenApiWithTypes } = await import("./openapi-tool.ts")
   const pathPrefix = typeof args.path === "string" ? args.path : undefined
-  return renderOpenApi(await loadAppCached(), openApiFormat(args), pathPrefix)
+  return renderOpenApiWithTypes(await loadAppCached(), openApiFormat(args), pathPrefix)
 }
 
 async function readProjectFile(

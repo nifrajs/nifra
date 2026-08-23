@@ -22,3 +22,4 @@ export type _DropsFunctions = Expect<Equal<Jsonify<{ a: string; fn: () => void }
 export type _ArrayOfObjects = Expect<Equal<Jsonify<Array<{ at: Date }>>, Array<{ at: string }>>>
 
 export type _PreservesOptional = Expect<Equal<Jsonify<{ a?: string }>, { a?: string }>>
+export type _TopLevelUndefined = Expect<Equal<Jsonify<undefined>, undefined>>

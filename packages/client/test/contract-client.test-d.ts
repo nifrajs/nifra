@@ -10,9 +10,15 @@ import type { Equal, Expect } from "@nifrajs/test-utils"
 
 declare const userOut: StandardSchemaV1<unknown, { id: string; name: string }>
 declare const nameBody: StandardSchemaV1<{ name: string }, { name: string }>
+declare const notFound: StandardSchemaV1<unknown, { code: "not_found" }>
 
 const contract = defineContract({
-  getUser: { method: "GET", path: "/users/:id", response: userOut },
+  getUser: {
+    method: "GET",
+    path: "/users/:id",
+    response: userOut,
+    responses: { "404": { schema: notFound } },
+  },
   createUser: { method: "POST", path: "/users", body: nameBody, response: userOut },
   listUsers: { method: "GET", path: "/users" },
 })
@@ -24,6 +30,9 @@ type DataOf<P> = Extract<Awaited<P>, { ok: true }> extends { data: infer D } ? D
 // output comes from the response schema
 const byId = api.users({ id: "1" }).get()
 export type _ById = Expect<Equal<DataOf<typeof byId>, { id: string; name: string }>>
+type ByIdResult = Awaited<ReturnType<ReturnType<typeof api.users>["get"]>>
+type ById404 = Extract<ByIdResult, { status: 404 }>
+export type _ById404 = Expect<Equal<ById404["data"], { code: "not_found" }>>
 const created = api.users.post({ name: "Ada" })
 export type _Created = Expect<Equal<DataOf<typeof created>, { id: string; name: string }>>
 

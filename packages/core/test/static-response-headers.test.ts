@@ -362,8 +362,8 @@ describe("responseHeaders() - semantics", () => {
   test("response hooks see declared values through their view on both lanes", async () => {
     const seen: string[] = []
     const app = server()
-      .use(responseObserver())
       .use(nodeDirect())
+      .use(responseObserver())
       .responseHeaders(DECLARED)
       .onResponseHeaders((headers) => {
         seen.push(headers.get("x-frame-options") ?? "missing")
@@ -377,8 +377,8 @@ describe("responseHeaders() - semantics", () => {
   test("a body hook sees declared values and keeps the direct lane", async () => {
     const seen: (string | null)[] = []
     const app = server()
-      .use(responseObserver())
       .use(nodeDirect())
+      .use(responseObserver())
       .responseHeaders(DECLARED)
       .onResponseBody((body, headers) => {
         seen.push(headers.get("referrer-policy"))
@@ -400,8 +400,8 @@ describe("responseHeaders() - semantics", () => {
     const app = server()
       .onResponse((r) => r)
       .responseHeaders(DECLARED)
-      .use(responseObserver())
       .use(nodeDirect())
+      .use(responseObserver())
       .onResponseBody((body, headers) => {
         // Only reached when the framework body marker is still on the response; a stripped marker
         // makes `taggedResponseBody` return undefined and this hook is skipped entirely.

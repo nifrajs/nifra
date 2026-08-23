@@ -22,6 +22,10 @@ type CallOptions<I extends RouteInfo> = {
   signal?: AbortSignal
 }
 
+/** Response metadata is a status map, so an explicitly bodyless status must keep its `undefined`
+ * value instead of being treated like an omitted object property by the general `Jsonify` helper. */
+type JsonifyResponses<T> = T extends object ? { [K in keyof T]: Jsonify<T[K]> } : never
+
 type IsBodyVerb<M extends string> = M extends "POST" | "PUT" | "PATCH" ? true : false
 
 /**
@@ -37,12 +41,20 @@ type MethodCall<I extends RouteInfo, BodyVerb extends boolean> = BodyVerb extend
     ? (
         body?: undefined,
         options?: CallOptions<I>,
-      ) => Promise<Result<Jsonify<I["output"]>, Jsonify<I["errors"]>>>
+      ) => Promise<
+        Result<Jsonify<I["output"]>, Jsonify<I["errors"]>, JsonifyResponses<I["responses"]>>
+      >
     : (
         body: I["body"],
         options?: CallOptions<I>,
-      ) => Promise<Result<Jsonify<I["output"]>, Jsonify<I["errors"]>>>
-  : (options?: CallOptions<I>) => Promise<Result<Jsonify<I["output"]>, Jsonify<I["errors"]>>>
+      ) => Promise<
+        Result<Jsonify<I["output"]>, Jsonify<I["errors"]>, JsonifyResponses<I["responses"]>>
+      >
+  : (
+      options?: CallOptions<I>,
+    ) => Promise<
+      Result<Jsonify<I["output"]>, Jsonify<I["errors"]>, JsonifyResponses<I["responses"]>>
+    >
 
 // --- typed SSE subscriptions ---
 

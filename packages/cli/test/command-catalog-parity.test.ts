@@ -22,6 +22,7 @@ test("the stable catalog is the public command allowlist", () => {
     "manifest",
     "routes",
     "context",
+    "openapi",
     "doctor",
     "fix",
     "snapshot",
@@ -46,17 +47,21 @@ test("CLI help/card projection and MCP descriptors read the same catalog", () =>
     expect(spec).toBeDefined()
     expect(lines.some((line) => line.startsWith(`nifra ${entry.name}`))).toBe(true)
     const tool = tools.find((candidate) => candidate.name === commandMcpName(entry.name))
-    expect(tool).toBeDefined()
-    expect(tool?.description).toBe(entry.summary)
-    expect(tool?.inputSchema).toEqual(entry.inputSchema)
-    const adapted = toMcpTool(entry, {
-      cwd: "/fake",
-      loadAppCached: async () => {
-        throw new Error("not called while describing tools")
-      },
-    })
-    expect(adapted.name).toBe(tool!.name)
-    expect(adapted.inputSchema).toEqual(entry.inputSchema)
+    if (entry.transports.includes("mcp")) {
+      expect(tool).toBeDefined()
+      expect(tool?.description).toBe(entry.summary)
+      expect(tool?.inputSchema).toEqual(entry.inputSchema)
+      const adapted = toMcpTool(entry, {
+        cwd: "/fake",
+        loadAppCached: async () => {
+          throw new Error("not called while describing tools")
+        },
+      })
+      expect(adapted.name).toBe(tool!.name)
+      expect(adapted.inputSchema).toEqual(entry.inputSchema)
+    } else {
+      expect(tool).toBeUndefined()
+    }
   }
 })
 
