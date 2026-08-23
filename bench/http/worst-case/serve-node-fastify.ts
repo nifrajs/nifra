@@ -16,7 +16,7 @@ if (!Number.isInteger(port)) {
 
 const app = Fastify({ logger: false })
 
-app.get("/health", async () => ({ ok: true }))
+app.get("/health", () => ({ ok: true }))
 
 // Fastify's request object is the per-request context for the same derive value used by the
 // Nifra/Elysia peers. The hook is deliberately read-only and does not inspect request bodies.
@@ -54,7 +54,7 @@ app.get<{
       },
     },
   },
-  async (request, reply) => {
+  (request, reply) => {
     reply.header("x-request-id", request.requestId)
     reply.header("x-trace", request.query.trace)
     return {
@@ -98,7 +98,7 @@ app.post<{
       },
     },
   },
-  async (request, reply) => {
+  (request, reply) => {
     reply.header("x-request-id", request.requestId)
     reply.header("x-count", String(request.body.items.length))
     return {
