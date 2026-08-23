@@ -4198,7 +4198,7 @@ the command printed by the build.
 
 ## Nifra - Coding agents
 
-> An MCP server that lets an agent build a Nifra app and then prove it: verified docs and examples, a drift gate to fix against, real requests to check behaviour, and a ladder that says what the project actually holds.
+> Nifra's agent layer: live MCP tools for coding agents, bounded typed turns, resumable evidence, a coding-agent host, browser views, A2A and AG-UI bridges, and token-only telemetry.
 
 Nifra ships an MCP server. It is not a documentation lookup bolted onto a framework: an agent
 can read the project, learn the real API, run actual requests against the backend it just
@@ -4363,8 +4363,8 @@ nifra levels --min 1
 
 ### Building agent features, not just serving them
 
-The tools above let an agent work on your app. Three packages are for the opposite case, where
-the app you are building is itself an AI feature.
+The tools above let an agent work on your app. Nifra also provides provider-neutral building
+blocks for the opposite case, where the app you are building is itself an AI feature.
 
 **
 `@nifrajs/prompt`
@@ -4405,6 +4405,99 @@ export const app = server().use(agentTelemetry({ exporter: consoleAgentExporter(
 serves a SQLite database as its own MCP server, fail-closed: allowlisted schema tools by
 default, and read-only queries only when you opt in, with plan verification. Handing a model a
 database connection is not the same as handing it a query tool, and this is the second one.
+
+### Run a coding agent
+
+`@nifrajs/agent-protocol` is the small versioned session and event contract.
+`@nifrajs/coding-agent` provides the standalone `nifra-agent` host with
+bounded sessions, checkpoints, workflows, extensions, verification, and authenticated local
+RPC. `@nifrajs/pi` is an optional Pi backend; other backends implement the same
+protocol port.
+
+```ts
+bun add @nifrajs/coding-agent @nifrajs/pi
+
+# Interactive, one-shot, JSON, and local RPC modes are available.
+bunx nifra-agent --backend pi
+bunx nifra-agent --backend pi --message "run the checks and explain failures"
+```
+
+The public host keeps live queues and captured evidence bounded, filters verification process
+environments, and treats extensions as an explicit opt-in. The local process adapter and
+extension worker are crash-containment helpers, not hostile-code sandboxes.
+
+### Expose the same agent to other clients
+
+`@nifrajs/a2a` mounts an A2A 1.0 card and JSON-RPC/SSE binding.
+`@nifrajs/ag-ui` mounts the AG-UI event stream. Both drive the same bounded runner,
+compose step evidence with telemetry, and support typed human-in-the-loop continuation. Model
+ports, state stores, capabilities, and approval transports are injected per request.
+
+```ts
+import { server } from "@nifrajs/core"
+import { mountA2A } from "@nifrajs/a2a"
+import { mountAgUI } from "@nifrajs/ag-ui"
+import type { AgentPorts } from "@nifrajs/agent"
+import { agent } from "./agent"
+
+declare const myModelPort: AgentPorts["model"]
+declare const myStateStore: NonNullable<AgentPorts["state"]>
+
+const app = server()
+const ports = () => ({
+  model: myModelPort,
+  capabilities: ["search.read"],
+  state: myStateStore, // scope this to the request subject
+})
+
+mountA2A(app, {
+  agent,
+  card: { url: "https://api.example.com/a2a", version: "1.0.0" },
+  ports,
+})
+mountAgUI(app, { agent, ports })
+
+// A2A: GET the card, POST JSON-RPC, optional SSE streaming.
+// AG-UI: POST RunAgentInput, receive the event stream over SSE.
+```
+
+These mounts deliberately do not authenticate callers: put the route behind your application's
+auth and authorization middleware, and scope every injected port to the request subject.
+
+### Browser views and the Workbench
+
+`@nifrajs/agent-app` is a backend-free browser SDK for negotiated commands, ordered
+and resumable event streams, approvals, handoffs, and Run Studio projections. Its public views
+contain structure - statuses, counters, coordinates, and error codes - rather than prompts,
+tool payloads, model output, or filesystem paths. The optional Workbench uses that same surface:
+run `bun run --filter '@nifrajs/workbench' dev -- --cwd /path/to/project` for the
+local browser client.
+
+```ts
+import { AgentAppClient, HttpAgentTransport } from "@nifrajs/agent-app"
+
+declare function currentToken(): string
+declare function render(view: unknown): void
+
+const client = new AgentAppClient(new HttpAgentTransport({
+  endpoint: "http://127.0.0.1:8787",
+  authorize: () => currentToken(), // minted per request; never stored by the transport
+}))
+
+const session = await client.createSession()
+for await (const view of client.send("summarize the diff")) {
+  render(view) // content-free status, counts, coordinates, and error codes
+}
+```
+
+### Evidence, streaming, and telemetry
+
+`@nifrajs/agent` runs bounded typed turns with tool contracts, budgets, approvals,
+resumable token-only evidence, model deltas, and a transient shared-state channel. Add an
+`evidenceLog` to the HTTP seams for SSE replay after a dropped connection; replay
+resumes evidence and never re-executes the turn. `@nifrajs/agent-telemetry` converts
+the same constrained evidence into fail-open OpenTelemetry run and step spans. Providers,
+credentials, durable storage, retention, and tenant policy remain application-owned ports.
 
 ### Projects without a web config
 

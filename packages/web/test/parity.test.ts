@@ -219,6 +219,25 @@ test("development parity reports no css for a style-free route", async () => {
   }
 })
 
+test("development parity ignores css examples in comments and template literals", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-parity-css-examples-"))
+  try {
+    const routesDir = join(root, "routes")
+    await mkdir(routesDir, { recursive: true })
+    await writeFile(
+      join(routesDir, "index.tsx"),
+      [
+        '// import "./comment.css"',
+        'const example = `import "./template.css"`',
+        "export default function Index() { return <pre>{example}</pre> }",
+      ].join("\n"),
+    )
+    expect(collectDevelopmentParityInput(routesDir, false).css).toEqual([])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("parity passes when production emits non-JS assets (svg, woff2)", () => {
   expect(() =>
     assertDevelopmentProductionParity(devInput(), {

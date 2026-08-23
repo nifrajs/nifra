@@ -91,6 +91,26 @@ pi install npm:@nifrajs/skills                                     # Pi
 
 Not in a Nifra repo? The docs tools are also hosted - add `https://mcp.nifra.dev` to Claude, Cursor, or ChatGPT and it learns Nifra from the same verified corpora, no checkout. One MCP, two transports (the same hosted-plus-local pairing Supabase, Stripe, and GitHub use): project tools run only on your machine over stdio - **your code never reaches our servers**.
 
+### Build and host agents
+
+The same public contracts also cover applications that are agent products:
+
+| Use case | Packages | What it provides |
+|---|---|---|
+| Bounded agent turns | [agent](packages/agent) | Typed tools, budgets, approvals, resumable token-only evidence, streaming deltas, and shared run state. Model, storage, and policy stay injected ports. |
+| Coding-agent host | [coding-agent](packages/coding-agent) · [agent-protocol](packages/agent-protocol) · [pi](packages/pi) | A standalone nifra-agent host with sessions, workflows, extensions, verification, local RPC, and an optional Pi backend. |
+| Browser and desktop UI | [agent-app](packages/agent-app) · [runner](packages/runner) · [apps/workbench](apps/workbench) | Content-free browser views, ordered/resumable event handling, and structured in-process request runs for Workbench and other hosts. |
+| Protocol bridges | [a2a](packages/a2a) · [ag-ui](packages/ag-ui) | A2A 1.0 JSON-RPC/SSE and AG-UI SSE endpoints over the same agent runner, including typed human-in-the-loop resume. |
+| Observability and skills | [agent-telemetry](packages/agent-telemetry) · [skills](packages/skills) | Token-only OpenTelemetry run traces and portable skills that keep agents pointed at the live MCP contract. |
+
+    bun add @nifrajs/coding-agent @nifrajs/pi
+    bunx nifra-agent --backend pi --message "run the checks and explain failures"
+
+Provider credentials, durable state, authorization, and approval policy are application ports rather
+than hidden framework state. The local process adapter contains crashes and accidents but is **not** a
+hostile-code sandbox; use OS-level isolation for untrusted code. A2A and AG-UI mounts likewise require
+the host application to add authentication and authorization at its route boundary.
+
 ## Proof, not promises
 
 Three CI gates turn security posture into build failures:
@@ -136,7 +156,9 @@ Run it yourself: `bun run bench:http` · `bun run bench:ssr`
 | Full-stack | [`web`](packages/web) SSR core · `web-react` / `web-vue` / `web-solid` / `web-svelte` / `web-preact` adapters |
 | App services | [`auth`](packages/auth) · [`jobs`](packages/jobs) · [`cron`](packages/cron) · [`cache`](packages/cache) · [`storage`](packages/storage) · [`uploads`](packages/uploads) · [`image`](packages/image) · [`i18n`](packages/i18n) · [`env`](packages/env) · [`content`](packages/content) |
 | Quality | [`testing`](packages/testing) contract-derived tests · [`mock`](packages/mock) contract mocks · [`otel`](packages/otel) tracing · [`devtools`](packages/devtools) |
-| Agents | [`cli`](packages/cli) the `nifra` toolchain · [`mcp`](packages/mcp) build MCP servers · [`prompt`](packages/prompt) schema-validated LLM output · [`skills`](packages/skills) portable agent skills |
+| Agents | [`cli`](packages/cli) the `nifra` toolchain · [`mcp`](packages/mcp) build MCP servers · [`prompt`](packages/prompt) schema-validated LLM output · [`skills`](packages/skills) portable agent skills · [`runner`](packages/runner) structured app runs |
+| Agent runtime | [`agent`](packages/agent) bounded turns · [`agent-protocol`](packages/agent-protocol) versioned sessions/events · [`agent-app`](packages/agent-app) content-free browser views · [`agent-telemetry`](packages/agent-telemetry) OTel traces |
+| Agent host & protocols | [`coding-agent`](packages/coding-agent) host/CLI · [`pi`](packages/pi) Pi adapter · [`a2a`](packages/a2a) A2A bridge · [`ag-ui`](packages/ag-ui) AG-UI bridge |
 
 Every package documents its own surface; the root stays lean and everything advanced is an opt-in subpath, so you never pay for a concept you don't import. [All packages →](https://nifra.dev/docs)
 

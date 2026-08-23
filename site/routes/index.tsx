@@ -592,11 +592,13 @@ export default function Home() {
             Run <code>nifra mcp</code> and point Claude Code or Cursor at it: an integrated MCP
             server plus a conventions file expose your project's live routes, schemas, examples, and
             drift checks, so the agent reads the real API surface directly. It runs on your machine
-            - your code never leaves it. The docs tools are also hosted at{" "}
-            <code>mcp.nifra.dev</code> for agents outside a checkout.
+            - your code never leaves it. The same public surface also supports bounded agent turns,
+            resumable evidence, a coding-agent host, browser views, and A2A/AG-UI protocol bridges.
+            The docs tools are also hosted at <code>mcp.nifra.dev</code> for agents outside a
+            checkout.
           </p>
           <a href="/docs/agents" className="perf-link">
-            Read about Agent MCP →
+            Explore the agent layer →
           </a>
         </div>
         <CodeBlock code={AGENT_CODE} lang="ts" />

@@ -1,5 +1,17 @@
 [
   {
+    "name": "AGENT_APP",
+    "topic": "Nifra - Coding agents",
+    "slug": "agents",
+    "code": "import { AgentAppClient, HttpAgentTransport } from \"@nifrajs/agent-app\"\n\ndeclare function currentToken(): string\ndeclare function render(view: unknown): void\n\nconst client = new AgentAppClient(new HttpAgentTransport({\n  endpoint: \"http://127.0.0.1:8787\",\n  authorize: () => currentToken(), // minted per request; never stored by the transport\n}))\n\nconst session = await client.createSession()\nfor await (const view of client.send(\"summarize the diff\")) {\n  render(view) // content-free status, counts, coordinates, and error codes\n}"
+  },
+  {
+    "name": "PROTOCOLS",
+    "topic": "Nifra - Coding agents",
+    "slug": "agents",
+    "code": "import { server } from \"@nifrajs/core\"\nimport { mountA2A } from \"@nifrajs/a2a\"\nimport { mountAgUI } from \"@nifrajs/ag-ui\"\nimport type { AgentPorts } from \"@nifrajs/agent\"\nimport { agent } from \"./agent\"\n\ndeclare const myModelPort: AgentPorts[\"model\"]\ndeclare const myStateStore: NonNullable<AgentPorts[\"state\"]>\n\nconst app = server()\nconst ports = () => ({\n  model: myModelPort,\n  capabilities: [\"search.read\"],\n  state: myStateStore, // scope this to the request subject\n})\n\nmountA2A(app, {\n  agent,\n  card: { url: \"https://api.example.com/a2a\", version: \"1.0.0\" },\n  ports,\n})\nmountAgUI(app, { agent, ports })\n\n// A2A: GET the card, POST JSON-RPC, optional SSE streaming.\n// AG-UI: POST RunAgentInput, receive the event stream over SSE."
+  },
+  {
     "name": "TELEMETRY",
     "topic": "Nifra - Coding agents",
     "slug": "agents",

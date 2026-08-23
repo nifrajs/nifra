@@ -162,14 +162,121 @@ export interface DevelopmentParityInput {
 }
 
 const SOURCE_EXTENSIONS = /\.(?:c|m)?(?:j|t)sx?$|\.(?:mdx|svelte|vue)$/
-/** A first-party reference to a stylesheet by an explicit path specifier. Covers static `import`,
- * re-export `from`, dynamic `import(...)`, and `require(...)`. It stays deliberately *sound*: it only
- * matches when a stylesheet specifier genuinely exists, never on an unreferenced `.css` file in the
- * tree. With the css parity comparison now directional (a scanner miss passes, a false positive fails),
- * a loose pattern would fail correct apps. Specifiers that cannot end in a stylesheet extension (a bare
- * package `exports` subpath) stay unreachable without a resolver; those fall in the passing direction. */
-const CSS_IMPORT =
-  /(?:import\s+(?:[^"']+\s+from\s+)?|from\s+|(?:import|require)\s*\(\s*)["'][^"']+\.(?:css|scss|sass|less|styl)(?:\?[^"']*)?["']/i
+/** A stylesheet path that the source scanner can prove is a real explicit import. */
+const CSS_SPECIFIER = /\.(?:css|scss|sass|less|styl)(?:\?[^"'`]*)?$/i
+
+type CssToken =
+  | { readonly kind: "identifier"; readonly value: string; readonly lineStart: boolean }
+  | { readonly kind: "string"; readonly value: string }
+  | { readonly kind: "punctuator"; readonly value: string }
+
+/**
+ * Tokenize only the small part of TypeScript/JS needed for the CSS contract.
+ *
+ * A regex over source text is not sound here: documentation routes contain code examples such as
+ * `import "./app.css"` in template literals, and comments can contain the same text. Those are not
+ * imports and must not make a style-free production build fail. This intentionally conservative lexer
+ * drops comments and complete template literals (including `${...}` expressions); missing a stylesheet
+ * is the passing direction of this parity check, while claiming one that is not imported is not.
+ */
+const cssTokens = (source: string): readonly CssToken[] => {
+  const tokens: CssToken[] = []
+  let lineStart = true
+  for (let index = 0; index < source.length; ) {
+    const char = source[index]
+    if (char === undefined) break
+    if (/\s/.test(char)) {
+      if (char === "\n" || char === "\r") lineStart = true
+      index++
+      continue
+    }
+    if (char === "/" && source[index + 1] === "/") {
+      index += 2
+      while (index < source.length && source[index] !== "\n") index++
+      continue
+    }
+    if (char === "/" && source[index + 1] === "*") {
+      const commentStart = index
+      index += 2
+      while (index < source.length && !(source[index] === "*" && source[index + 1] === "/")) index++
+      index = Math.min(source.length, index + 2)
+      if (/[\r\n]/.test(source.slice(commentStart, index))) lineStart = true
+      continue
+    }
+    if (char === "`") {
+      const templateStart = index
+      index++
+      while (index < source.length) {
+        const templateChar = source[index]
+        if (templateChar === "\\") {
+          index += 2
+          continue
+        }
+        index++
+        if (templateChar === "`") break
+      }
+      lineStart = /[\r\n]/.test(source.slice(templateStart, index))
+      continue
+    }
+    if (char === '"' || char === "'") {
+      const quote = char
+      const start = ++index
+      while (index < source.length) {
+        const stringChar = source[index]
+        if (stringChar === "\\") {
+          index += 2
+          continue
+        }
+        index++
+        if (stringChar === quote) break
+      }
+      tokens.push({ kind: "string", value: source.slice(start, Math.max(start, index - 1)) })
+      lineStart = false
+      continue
+    }
+    if (/[A-Za-z_$]/.test(char)) {
+      const start = index++
+      while (index < source.length && /[A-Za-z0-9_$]/.test(source[index] ?? "")) index++
+      tokens.push({ kind: "identifier", value: source.slice(start, index), lineStart })
+      lineStart = false
+      continue
+    }
+    tokens.push({ kind: "punctuator", value: char })
+    lineStart = false
+    index++
+  }
+  return tokens
+}
+
+const isStylesheetToken = (token: CssToken | undefined): boolean =>
+  token?.kind === "string" && CSS_SPECIFIER.test(token.value)
+
+/** Detect static imports, re-exports, literal dynamic imports, and literal require calls. */
+const hasStylesheetImport = (source: string): boolean => {
+  const tokens = cssTokens(source)
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index]
+    if (token?.kind !== "identifier") continue
+    const next = tokens[index + 1]
+    if (token.value === "import") {
+      if (token.lineStart && isStylesheetToken(next)) return true
+      if (next?.value === "(" && isStylesheetToken(tokens[index + 2])) return true
+    }
+    if (token.value === "require" && next?.value === "(" && isStylesheetToken(tokens[index + 2]))
+      return true
+    if (token.value === "from" && isStylesheetToken(next)) {
+      for (let previous = index - 1; previous >= 0; previous--) {
+        const candidate = tokens[previous]
+        if (candidate?.kind === "identifier" && candidate.lineStart) {
+          if (candidate.value === "import" || candidate.value === "export") return true
+          break
+        }
+        if (candidate?.value === ";") break
+      }
+    }
+  }
+  return false
+}
 /** A single-file-component `<style>` block (Svelte/Vue). The bundler extracts these into the app
  * stylesheet even though no `import "...css"` statement exists, so the dev contract must count them
  * or a scoped-style component would look style-free next to a production manifest that carries css. */
@@ -782,7 +889,11 @@ const sourceFilesUnder = (root: string): readonly string[] => {
   const files: string[] = []
   const walk = (current: string): void => {
     for (const entry of readdirSync(current, { withFileTypes: true })) {
-      if (["node_modules", "dist", "build", ".git", ".nifra", "coverage"].includes(entry.name))
+      if (
+        ["node_modules", "dist", "dist-node", "build", ".git", ".nifra", "coverage"].includes(
+          entry.name,
+        )
+      )
         continue
       const path = join(current, entry.name)
       if (entry.isDirectory()) walk(path)
@@ -821,7 +932,7 @@ export function collectDevelopmentParityInput(
   const sourceRoot = dirname(resolve(routesDir))
   const css = sourceFilesUnder(sourceRoot).some((file) => {
     const content = readFileSync(file, "utf8")
-    return CSS_IMPORT.test(content) || (isSingleFileComponent(file) && SFC_STYLE.test(content))
+    return hasStylesheetImport(content) || (isSingleFileComponent(file) && SFC_STYLE.test(content))
   })
     ? ["css:present"]
     : []
@@ -862,9 +973,9 @@ export function compareManifestParity(
   return differences
 }
 
-/** The forms `CSS_IMPORT` cannot see, quoted in a css parity failure so the reader knows where to look. */
+/** The forms the source scanner cannot prove, quoted in a css parity failure so the reader knows where to look. */
 const CSS_SCANNER_BLIND_SPOTS =
-  "a dynamic import(), a bare package subpath (exports), require(), an @import inside a stylesheet, or plugin-injected css"
+  "a bare package subpath (exports), an @import inside a stylesheet, template interpolation, or plugin-injected css"
 
 const symmetricDifference = (
   a: readonly string[],
@@ -888,7 +999,7 @@ function explainParityDifference(
     const shipped = (production.css ?? []).join(", ")
     const where = development.sourceRoot === undefined ? "" : ` under ${development.sourceRoot}`
     return (
-      `css: production ships [${shipped || "(none)"}] but the development scanner found no static ` +
+      `css: production ships [${shipped || "(none)"}] but the development scanner found a static ` +
       `stylesheet import${where} - it is blind to ${CSS_SCANNER_BLIND_SPOTS}`
     )
   }
