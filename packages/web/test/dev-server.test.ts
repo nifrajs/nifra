@@ -34,11 +34,12 @@ afterEach(() => {
 })
 
 /** Boot the dev server against the temp app. Leak guards off - `buildClient` is covered by its own tests. */
-const boot = async (): Promise<DevServer> => {
+const boot = async (conditions?: readonly string[]): Promise<DevServer> => {
   server = await createDevServer({
     routesDir,
     outDir: join(projectRoot, "dist"),
     clientModule,
+    ...(conditions === undefined ? {} : { conditions }),
     port: 0,
     guardLeaks: false,
     createApp: (clientEntry, importQuery) => ({
@@ -52,6 +53,18 @@ const boot = async (): Promise<DevServer> => {
   })
   return server
 }
+
+test("Bun dev reports unsupported client resolve conditions", async () => {
+  const warnings: string[] = []
+  const originalWarn = console.warn
+  console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "))
+  try {
+    await boot(["custom-condition"])
+    expect(warnings.join("\n")).toContain("does not reach the client bundle")
+  } finally {
+    console.warn = originalWarn
+  }
+})
 
 test("pages reference the STABLE entry URL, never Bun's hashed one", async () => {
   const dev = await boot()
