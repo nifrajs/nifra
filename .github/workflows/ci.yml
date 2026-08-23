@@ -135,6 +135,11 @@ jobs:
         run: bun run check:verification-parity
 
   windows:
+    # Windows is the slowest platform job and is a release gate, not the fast PR feedback loop.
+    # Release listens for a successful CI run on main, so this still runs before Version Packages
+    # publishing while avoiding a full Windows build/test on every pull request (including the bot's
+    # Version Packages PR).
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: windows-latest
     permissions:
       contents: read
