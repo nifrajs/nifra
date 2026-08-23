@@ -151,6 +151,19 @@ describe("protoPoisoning end to end (schema lane + c.boundedJson)", () => {
     expect(ran).toBe(false)
   })
 
+  test("default reject holds on the compiled generic lifecycle lane", async () => {
+    let ran = false
+    const app = server()
+      .derive(() => ({ requestId: "req-1" }))
+      .post("/users", { body: anyBody }, () => {
+        ran = true
+        return { ok: true }
+      })
+    const response = await app.fetch(lengthedRequest("/users", POISONED))
+    expect(response.status).toBe(400)
+    expect(ran).toBe(false)
+  })
+
   test("default reject holds on the streaming (no Content-Length) path too", async () => {
     const app = server().post("/users", { body: anyBody }, () => ({ ok: true }))
     expect((await app.fetch(streamRequest("/users", POISONED))).status).toBe(400)

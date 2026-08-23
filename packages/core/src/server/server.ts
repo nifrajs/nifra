@@ -77,14 +77,8 @@ import type {
   ResponseHeadersHook,
   ResponseHeadersView,
 } from "./node-outcome-hook.ts"
-import {
-  isUrlEncodedForm,
-  type QueryValue,
-  queryObjectOf,
-  readBoundedForm,
-  searchOf,
-} from "./query.ts"
-import { RequestContext, readBodyFramed, readBoundedJsonSource } from "./request-context.ts"
+import { type QueryValue, queryObjectOf, searchOf } from "./query.ts"
+import { RequestContext, readBodyFramed } from "./request-context.ts"
 import {
   applyStaticResponseHeaders,
   buildStaticResponseHeaders,
@@ -4174,31 +4168,31 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     emitRequestErrorLog(this.logger, this.errorLogDetail, err, ctx)
   }
 
-  private async readAndValidateBody(
+  private readAndValidateBody(
     req: RequestSource,
     entry: RouteEntry,
     ctx: RawContext,
     bodySchema: StandardSchemaV1 = entry.schema?.body as StandardSchemaV1,
     bodyLimit: number | undefined = entry.bodyLimit,
   ): Promise<Response | ResponseResult | undefined> {
-    const contentType = headerOf(req, "content-type") ?? ""
-    let parsed: unknown
-    if (contentType === "application/json" || contentType.includes("application/json")) {
-      const json = await this.readBoundedJson(req, bodyLimit ?? UNLIMITED_BODY_BYTES)
-      if (isResponseResult(json)) return json
-      parsed = json
-    } else if (isUrlEncodedForm(contentType)) {
-      const form = await readBoundedForm(req, bodyLimit ?? UNLIMITED_BODY_BYTES)
-      if (isResponseResult(form)) return form
-      parsed = form
-    } else {
-      // multipart/form-data (file uploads) stays 415 on the schema path by design - files don't
-      // fit a value schema; use a schema-less route + @nifrajs/uploads helpers for those.
-      return plainError(415, "unsupported_media_type")
+    // Keep the generic lifecycle body stage on the same framed parser/continuation as the body-only
+    // lane. This avoids an async wrapper that first awaits parsing and then starts validation in a
+    // second continuation, while retaining the exact bounded-read, content-type, and poisoning
+    // contracts shared by every body route.
+    const validate = (parsed: unknown): MaybePromise<Response | ResponseResult | undefined> => {
+      const validation = bodySchema["~standard"].validate(parsed)
+      return validation instanceof Promise
+        ? validation.then((result) => this.applyLifecycleValidation(entry, result, ctx, "body"))
+        : this.applyLifecycleValidation(entry, validation, ctx, "body")
     }
-    const validation = bodySchema["~standard"].validate(parsed)
-    const result = validation instanceof Promise ? await validation : validation
-    return this.applyLifecycleValidation(entry, result, ctx, "body")
+    return readBodyFramed(
+      req,
+      bodyLimit ?? UNLIMITED_BODY_BYTES,
+      this.protoPoisoning,
+      validate,
+      (response) => response,
+      (error) => Promise.reject(error),
+    )
   }
 
   /** Apply validation and its recovery hook on the generic lifecycle lane. Recovery is completed
@@ -4258,36 +4252,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (retried.issues !== undefined) return plainValidationError(retried.issues)
     assign(retried.value)
     return undefined
-  }
-
-  /**
-   * Read + parse the JSON body, capped at `maxBodyBytes` and screened by the server's
-   * `protoPoisoning` policy. Rejects a `Content-Length` over the cap *before* buffering,
-   * re-checks what was actually delivered after the read, and aborts a chunked or
-   * length-less body mid-stream once the running byte count exceeds the cap - so a lying
-   * or absent length can't force us to buffer an oversized payload.
-   */
-  private readBoundedJson(
-    req: RequestSource,
-    maxBodyBytes?: number,
-  ): Promise<unknown | ResponseResult>
-  private readBoundedJson<T>(
-    req: RequestSource,
-    maxBodyBytes: number,
-    onResult: (parsed: unknown | ResponseResult) => T | Promise<T>,
-    onError: (error: unknown) => T | Promise<T>,
-  ): Promise<T>
-  private readBoundedJson<T>(
-    req: RequestSource,
-    maxBodyBytes = this.maxBodyBytes,
-    onResult?: (parsed: unknown | ResponseResult) => T | Promise<T>,
-    onError?: (error: unknown) => T | Promise<T>,
-  ): Promise<unknown | ResponseResult | T> {
-    // Not `async`: this is a pass-through, and wrapping the lane's own promise in a coroutine
-    // frame costs an extra microtask hop on every JSON body.
-    return onResult === undefined
-      ? readBoundedJsonSource(req, maxBodyBytes, this.protoPoisoning)
-      : readBoundedJsonSource(req, maxBodyBytes, this.protoPoisoning, onResult, onError!)
   }
 
   /** Adapt one route's compiled execution plan to Bun's already-matched request shape. Route
