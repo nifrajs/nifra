@@ -116,7 +116,7 @@ for (const section of ["bun", "node", "deno"]) {
   const workloads = Object.keys(got.nifra ?? got.elysia ?? {})
   for (const workload of workloads) {
     console.log(`  ${workload}`)
-    for (const framework of ["nifra", "elysia"]) {
+    for (const framework of Object.keys(got)) {
       const measure = got[framework]?.[workload]
       if (measure === undefined) continue
       console.log(

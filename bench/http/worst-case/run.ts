@@ -134,6 +134,10 @@ const SECTIONS: readonly Section[] = [
         framework: "elysia",
         spawn: (p) => ["node", "bench/http/worst-case/serve-node-elysia.ts", String(p)],
       },
+      {
+        framework: "fastify",
+        spawn: (p) => ["node", "bench/http/worst-case/serve-node-fastify.ts", String(p)],
+      },
     ],
   },
   {
@@ -389,7 +393,7 @@ for (const section of sections) {
   console.log(`## ${section.runtime}\n`)
   for (const w of WORKLOADS) {
     console.log(`  ${w.name}`)
-    for (const framework of ["nifra", "elysia"]) {
+    for (const framework of section.targets.map((target) => target.framework)) {
       const m = got[framework]?.[w.name] ?? ZERO
       console.log(
         `    ${framework.padEnd(7)} ${pad(m.rps.toLocaleString(), 9)} req/s   ` +

@@ -13,6 +13,7 @@ bun run bench:http:quick bun    # …on the Bun section (adds Elysia)
 bun run bench:http:quick deno post   # …Deno, POST /users workload
 bun run bench:http:update       # repeated matrix, medianed, writes BENCHMARKS.md (git-ignored, local)
 bun run bench:http:update --full     # all 4 workloads instead of the default GET + POST pair
+bun run bench/http/route-count.ts --check  # fresh-process route-count matrix: core + network
 bun run bench:http:realworld    # realistic-shape matrix: auth + middleware route, all runtimes
 bun run bench:http:realworld:update  # repeated, medianed, writes BENCHMARKS-REALWORLD.md (git-ignored)
 
@@ -47,3 +48,15 @@ body) through each framework's own idiomatic body tier (nifra `onResponseBody`, 
 Elysia `mapResponse`, Hono drain-and-rebuild, Express `res.json` wrap, inline for the raw ceilings) -
 the cost a header-only comparison can't show. Compare a framework's ratio across both suites to see
 its fast-path premium directly.
+
+`bench/http/route-count.ts` is the general-pipeline baseline. It runs each 1/10/50/200-route row in
+a fresh Bun process across static, dynamic, query, body, and derive/before/after lifecycle shapes.
+It correctness-probes status and JSON before load, then reports separate direct `app.fetch` and
+real TCP `Bun.serve` measurements with request count, concurrency, median/p50, p99, runtime, and
+success rate. `--check` fails closed unless every loaded response succeeds. The route-count matrix
+is a diagnostic baseline, not a framework-specific fast lane or a public throughput promise.
+
+The mixed-route worst-case matrix also runs correctness probes before count-bounded `oha` load. Its
+Node section includes Nifra, Elysia, and Fastify on the same route graph, body/query workload,
+dynamic headers, hook behavior, and direct Node ingress. Comparisons below five percent require
+confirmation on the Linux performance rig before being treated as a release claim.
