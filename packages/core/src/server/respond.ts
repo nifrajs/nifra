@@ -160,6 +160,7 @@ function withStaticHeaderInit(
 // portable constructor path there and select the Deno-specific shape only for Web responses that
 // carry a plain record. The first request lazily probes Deno's native JSON content-type so this
 // preserves the runtime's Response.json contract instead of baking in Bun's charset suffix.
+const IS_BUN = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined"
 const IS_DENO = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined"
 let denoJsonContentType: string | undefined
 
@@ -186,6 +187,24 @@ function denoResponseWithJsonBody(
   }
   if (!hasContentType) response.headers.set("content-type", defaultContentType)
   return response
+}
+
+/**
+ * Render a JSON value with caller-owned headers on the runtimes where mutating the response is
+ * cheaper than asking the Response constructor to ingest a record. Node deliberately stays on the
+ * record path: its undici implementation is a little faster there, and its production HTTP adapter
+ * normally uses the direct node outcome anyway. The two operations are equivalent at the Web
+ * boundary: Response.json supplies the same default content type, then the caller's headers override
+ * it exactly as `withJsonContentType` did.
+ */
+function jsonResponseWithOwnHeaders(
+  result: object,
+  status: number,
+  headers: Record<string, string>,
+): Response {
+  const response = status === 200 ? Response.json(result) : Response.json(result, { status })
+  for (const name of Object.keys(headers)) response.headers.set(name, headers[name]!)
+  return stamped(response)
 }
 
 // The framework-buffered-body marker shared with the Node adapter: a Response carrying it exposes
@@ -437,6 +456,24 @@ export function toResponse(
   const status = set.status ?? (result === undefined ? 204 : 200)
   if (status === 204 || status === 205 || status === 304) {
     return stamped(new Response(null, headers === undefined ? { status } : { status, headers }))
+  }
+  // Bun and Deno both make a JSON response first and then accept a few header mutations more cheaply
+  // than ingesting the same plain record in the constructor. This is the common dynamic-header
+  // shape (`c.set.headers`) after all cookies/static-header/tagging cases have been excluded. Keep the
+  // Node record path unchanged: its Web constructor wins by a small margin, and the native Node
+  // adapter's normal route finalizer does not build this Response in the first place.
+  if (
+    own !== undefined &&
+    !(own instanceof Headers) &&
+    statics === undefined &&
+    (set._cookies === undefined || set._cookies.length === 0) &&
+    (IS_BUN || IS_DENO) &&
+    !tagResponseBody &&
+    result !== undefined &&
+    typeof result === "object" &&
+    result !== null
+  ) {
+    return jsonResponseWithOwnHeaders(result, status, own)
   }
   if (own === undefined && result !== undefined) {
     // Fast respond (profiled ~50 ns/req faster on every plain-JSON return): `JSON.stringify` + a
