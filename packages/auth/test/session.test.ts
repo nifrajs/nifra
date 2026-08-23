@@ -87,7 +87,12 @@ describe("session - store mode", () => {
     const session = await sessions.get(a.context)
     session.set("userId", "u1")
     await sessions.commit(a.context, session)
-    const tampered = `${lastCookie(a.setCalls).slice(0, -2)}XX` // corrupt the signature tail
+    const cookie = lastCookie(a.setCalls)
+    const last = cookie.at(-1)
+    // Change one signature character to a different valid base64url character. Unlike replacing
+    // the tail with a fixed string, this is guaranteed to differ even when the random signature
+    // already happens to end in that string.
+    const tampered = `${cookie.slice(0, -1)}${last === "A" ? "B" : "A"}`
     const loaded = await sessions.get(ctx({ nifra_session: tampered }).context)
     expect(loaded.isEmpty).toBe(true)
   })
