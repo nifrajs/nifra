@@ -314,10 +314,12 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
           // whole string as a single condition name, so the comma form fails silently.
           ...(app.framework.conditions ?? []).map((condition) => `--conditions=${condition}`),
           // Reuse the actual loaded module rather than trusting either runtime's reconstructed
-          // `argv[1]` spelling. This also works when a package-bin shim launches the CLI. The command
-          // parser below already proves Bun.argv[2..] is the user argument vector (`dev`, flags, ...).
+          // `argv[1]` spelling. This also works when a package-bin shim launches the CLI. `cliArgv()`
+          // is important here: Bun 1.4 on Windows can omit the script from Bun.argv, making the
+          // command start at index 1 instead of index 2. Slicing at a fixed index would silently drop
+          // `dev`, causing the child to load this module and exit successfully without starting it.
           fileURLToPath(import.meta.url),
-          ...Bun.argv.slice(2),
+          ...cliArgv(),
         ],
         {
           // On Windows, inheriting the parent's already-piped stdout/stderr can make a nested Bun
@@ -997,12 +999,18 @@ function isCliCommandToken(value: string): boolean {
 }
 
 function findCliCommand(values: readonly string[]): number {
-  return values.findIndex((value, index) => index > 0 && isCliCommandToken(value))
+  // Most Bun/Node argv vectors reserve index 0 for the runtime and index 1 for the script. Bun 1.4
+  // on Windows can omit the script for a directly spawned TS entry, leaving the command at index 0.
+  // Accept that one exact-token shape while keeping arbitrary imported-module argv inert.
+  return values.findIndex((value) => isCliCommandToken(value))
 }
 
 function cliArgv(): readonly string[] {
-  const commandIndex = findCliCommand(Bun.argv)
-  return commandIndex >= 0 ? Bun.argv.slice(commandIndex) : Bun.argv.slice(2)
+  for (const values of [Bun.argv, process.argv]) {
+    const commandIndex = findCliCommand(values)
+    if (commandIndex >= 0) return values.slice(commandIndex)
+  }
+  return Bun.argv.slice(2)
 }
 
 function hasCliCommandToken(): boolean {
