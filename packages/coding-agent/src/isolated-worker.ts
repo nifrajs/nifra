@@ -7,6 +7,8 @@ if (modulePath === undefined || cwd === undefined)
   throw new Error("isolated extension worker: modulePath and cwd are required")
 
 const tools = new Map<string, ExtensionTool>()
+let ready = false
+const queuedRequests: string[] = []
 const context: ExtensionContext = {
   cwd,
   registerCommand(name) {
@@ -35,18 +37,8 @@ const context: ExtensionContext = {
   },
 }
 
-try {
-  const module = (await import(`${realpathSync(modulePath)}?isolated=${Date.now()}`)) as {
-    default?: (context: ExtensionContext) => unknown | PromiseLike<unknown>
-  }
-  if (typeof module.default !== "function") throw new Error("extension has no default factory")
-  await module.default(context)
-  post({ type: "ready" })
-} catch (error) {
-  post({ type: "fatal", error: error instanceof Error ? error.message : String(error) })
-  process.exit(1)
-}
-
+// The host starts sending immediately after `ready`; attach before the async extension import so
+// Windows cannot deliver that first request while the child is between initialization phases.
 let buffer = ""
 process.stdin.on("data", (chunk) => {
   buffer += String(chunk)
@@ -56,9 +48,24 @@ process.stdin.on("data", (chunk) => {
     const line = buffer.slice(0, newline)
     buffer = buffer.slice(newline + 1)
     if (line.length === 0) continue
-    void handle(line)
+    if (ready) void handle(line)
+    else queuedRequests.push(line)
   }
 })
+
+try {
+  const module = (await import(`${realpathSync(modulePath)}?isolated=${Date.now()}`)) as {
+    default?: (context: ExtensionContext) => unknown | PromiseLike<unknown>
+  }
+  if (typeof module.default !== "function") throw new Error("extension has no default factory")
+  await module.default(context)
+  post({ type: "ready" })
+  ready = true
+  for (const line of queuedRequests.splice(0)) void handle(line)
+} catch (error) {
+  post({ type: "fatal", error: error instanceof Error ? error.message : String(error) })
+  process.exit(1)
+}
 
 async function handle(line: string): Promise<void> {
   let request: { type?: string; id?: string; name?: string; input?: unknown }
