@@ -58,6 +58,7 @@ test(
         cwd: root,
         stdout: "pipe",
         stderr: "pipe",
+        env: { ...process.env, NIFRA_BUN_DEV_DEBUG: "1" },
       })
       const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
       let banner = ""

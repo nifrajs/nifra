@@ -305,6 +305,9 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
       // the configured process cannot silently fall back to `nifra`'s help and exit 0. The launch token
       // is still the proof boundary; these arguments are only a transport, never authorization.
       const childCliArgv = [...cliArgv()]
+      debugBunDev(
+        `parent-spawn argv=${JSON.stringify(childCliArgv)} token=${launchToken.length} depth=${depth + 1}`,
+      )
       const child = Bun.spawn(
         [
           process.execPath,
@@ -1081,6 +1084,24 @@ function isBunDevReexecChild(): boolean {
     process.env.NIFRA_BUN_DEV_TOKEN !== "" &&
     Number.isSafeInteger(depth) &&
     depth > 0
+  )
+}
+
+/** Temporary, opt-in boundary diagnostics for the Windows Bun re-exec investigation. */
+function debugBunDev(message: string): void {
+  if (process.env.NIFRA_BUN_DEV_DEBUG === "1") console.error(`[DEBUG-BUN-WIN] ${message}`)
+}
+
+if (process.env.NIFRA_BUN_DEV_DEBUG === "1") {
+  const bunMain = (Bun as unknown as { main?: unknown }).main
+  debugBunDev(
+    `module importMetaMain=${String(import.meta.main)} isMain=${String(isMainModule())} ` +
+      `isChild=${String(isBunDevReexecChild())} hasCommand=${String(hasCliCommandToken())} ` +
+      `token=${process.env.NIFRA_BUN_DEV_TOKEN === undefined ? "absent" : "present"} ` +
+      `depth=${JSON.stringify(process.env.NIFRA_BUN_DEV_DEPTH ?? null)} ` +
+      `argsLength=${process.env.NIFRA_BUN_DEV_ARGS?.length ?? 0} ` +
+      `bunMainType=${typeof bunMain} bunArgv=${JSON.stringify(Bun.argv)} ` +
+      `processArgv=${JSON.stringify(process.argv)}`,
   )
 }
 
