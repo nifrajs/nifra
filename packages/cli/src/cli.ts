@@ -261,7 +261,6 @@ export function formatCliError(err: unknown): string {
 }
 
 async function dev(app: LoadedApp, flags: Flags): Promise<void> {
-  debugBunDev(`dev-enter pipelineFlags=${JSON.stringify({ vite: flags.vite, bun: flags.bun })}`)
   if (flags.vite && flags.bun) {
     throw new Error("[nifra] `nifra dev` takes `--vite` or `--bun`, not both.")
   }
@@ -280,7 +279,6 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
     flags.vite ? "vite" : flags.bun ? "bun" : undefined,
     "dev",
   )
-  debugBunDev(`dev-decision pipeline=${decision.pipeline}`)
   if (decision.pipeline === "bun") {
     // Bun's dev-server bundler takes plugins only via bunfig `[serve.static]`, read at process
     // start - so the boundary plugins (server-fn stubs, server-only emptying) are delivered by
@@ -307,9 +305,6 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
       // the configured process cannot silently fall back to `nifra`'s help and exit 0. The launch token
       // is still the proof boundary; these arguments are only a transport, never authorization.
       const childCliArgv = [...cliArgv()]
-      debugBunDev(
-        `parent-spawn argv=${JSON.stringify(childCliArgv)} token=${launchToken.length} depth=${depth + 1}`,
-      )
       const child = Bun.spawn(
         [
           process.execPath,
@@ -751,14 +746,12 @@ function installReflectionExitHint(): (command: string | undefined) => void {
 }
 
 async function main(): Promise<void> {
-  debugBunDev(`main-enter argv=${JSON.stringify(cliArgv())}`)
   const { argv: rawArgv, files: envFiles } = takeEnvFileFlags(cliArgv())
   // Applied before any command runs: a reflecting command imports the app on its first await, and the
   // app reads its environment at module scope, so the variables must already be in place by then.
   if (envFiles.length > 0) await applyEnvFiles(process.cwd(), envFiles)
   const argv = rawArgv
   const command = argv[0]
-  debugBunDev(`main-command command=${JSON.stringify(command)} envFiles=${envFiles.length}`)
   if (command === undefined || command === "--help" || command === "-h" || command === "help") {
     if (command === undefined && isBunDevReexecChild()) {
       throw new Error(
@@ -929,9 +922,7 @@ async function main(): Promise<void> {
     return
   }
   const flags = parseFlags(argv.slice(1))
-  debugBunDev(`main-load-app-start command=${command}`)
   const app = await loadApp(process.cwd(), flags.out)
-  debugBunDev(`main-load-app-done command=${command}`)
   if (command === "dev") await dev(app, flags)
   else if (command === "build") await buildForTarget(app, flags.target, flags)
   else await start(app, flags)
@@ -1093,34 +1084,17 @@ function isBunDevReexecChild(): boolean {
   )
 }
 
-/** Temporary, opt-in boundary diagnostics for the Windows Bun re-exec investigation. */
-function debugBunDev(message: string): void {
-  if (process.env.NIFRA_BUN_DEV_DEBUG === "1") console.error(`[DEBUG-BUN-WIN] ${message}`)
-}
-
-if (process.env.NIFRA_BUN_DEV_DEBUG === "1") {
-  const bunMain = (Bun as unknown as { main?: unknown }).main
-  debugBunDev(
-    `module importMetaMain=${String(import.meta.main)} isMain=${String(isMainModule())} ` +
-      `isChild=${String(isBunDevReexecChild())} hasCommand=${String(hasCliCommandToken())} ` +
-      `token=${process.env.NIFRA_BUN_DEV_TOKEN === undefined ? "absent" : "present"} ` +
-      `depth=${JSON.stringify(process.env.NIFRA_BUN_DEV_DEPTH ?? null)} ` +
-      `argsLength=${process.env.NIFRA_BUN_DEV_ARGS?.length ?? 0} ` +
-      `bunMainType=${typeof bunMain} bunArgv=${JSON.stringify(Bun.argv)} ` +
-      `processArgv=${JSON.stringify(process.argv)}`,
-  )
-}
-
-debugBunDev(
-  `dispatch isMain=${String(isMainModule())} isChild=${String(isBunDevReexecChild())} ` +
-    `hasCommand=${String(hasCliCommandToken())}`,
-)
-
 // Only run the CLI when invoked as the entry (`bun cli.ts …`), not when a test imports it for the
 // exported `parseFlags`.
 if (isMainModule() || isBunDevReexecChild() || hasCliCommandToken()) {
-  main().catch((err) => {
+  // Keep the entry module alive until the async CLI has completed. Bun 1.4 on Windows can otherwise
+  // terminate a process created by Bun.spawn while its first dynamic import is pending, leaving an
+  // exit-0 child with no output. Imported test modules never enter this branch, so the CLI's top-level
+  // await cannot start a server merely because a test imports a helper from this file.
+  try {
+    await main()
+  } catch (err) {
     console.error(formatCliError(err))
     process.exitCode = 1
-  })
+  }
 }
