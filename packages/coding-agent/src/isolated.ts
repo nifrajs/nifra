@@ -26,6 +26,7 @@ export interface IsolatedExtensionSnapshot {
 interface WorkerMessage {
   readonly type?: string
   readonly id?: string
+  readonly port?: number
   readonly name?: string
   readonly description?: string
   readonly capabilities?: readonly string[]
@@ -40,6 +41,7 @@ interface PendingCall {
   readonly resolve: (value: unknown) => void
   readonly reject: (reason?: unknown) => void
   readonly timer: ReturnType<typeof setTimeout>
+  readonly abort: AbortController
 }
 
 /**
@@ -58,6 +60,8 @@ export class IsolatedExtensionWorker {
   private readonly commands = new Set<string>()
   private readonly events = new Set<string>()
   private buffer = ""
+  private readonly token: string
+  private port: number | undefined
   private started = false
   private closed = false
   private readyResolve: ((snapshot: IsolatedExtensionSnapshot) => void) | undefined
@@ -73,6 +77,7 @@ export class IsolatedExtensionWorker {
       timeoutMs: options.timeoutMs ?? 30_000,
       maxMessageBytes: options.maxMessageBytes ?? 256 * 1024,
     }
+    this.token = crypto.randomUUID().replaceAll("-", "")
     if (!isAbsolute(options.modulePath))
       throw new TypeError("isolated extension: modulePath must be absolute")
     if (!isAbsolute(options.cwd)) throw new TypeError("isolated extension: cwd must be absolute")
@@ -93,16 +98,20 @@ export class IsolatedExtensionWorker {
     if (this.started) return this.ready
     this.started = true
     const workerPath = fileURLToPath(new URL("./isolated-worker.ts", import.meta.url))
+    // Bun 1.4's Windows child IPC can start the worker but drop parent→child messages. The
+    // loopback endpoint keeps the command channel cross-platform without exposing it remotely.
     this.process = Bun.spawn(
       [process.execPath, workerPath, realpathSync(this.options.modulePath), this.options.cwd],
       {
         cwd: this.options.cwd,
-        env: filteredEnv(),
+        env: {
+          ...filteredEnv(),
+          NIFRA_EXTENSION_TOKEN: this.token,
+          NIFRA_EXTENSION_MAX_MESSAGE_BYTES: String(this.options.maxMessageBytes),
+        },
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
-        ipc: () => {},
-        serialization: "json",
       },
     )
     void this.readOutput()
@@ -126,24 +135,23 @@ export class IsolatedExtensionWorker {
     await this.start()
     if (!this.tools.has(name)) throw new Error(`isolated extension: unknown tool ${name}`)
     const id = crypto.randomUUID().replaceAll("-", "")
+    const abort = new AbortController()
     const result = new Promise<unknown>((resolveResult, rejectResult) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
+        abort.abort()
         rejectResult(new Error(`isolated extension: tool ${name} timed out`))
       }, this.options.timeoutMs)
       ;(timer as unknown as { unref?: () => void }).unref?.()
-      this.pending.set(id, { resolve: resolveResult, reject: rejectResult, timer })
+      this.pending.set(id, { resolve: resolveResult, reject: rejectResult, timer, abort })
     })
-    try {
-      this.write({ type: "invoke", id, name, input })
-    } catch (error) {
+    void this.sendInvoke(id, name, input, abort.signal).catch((error: unknown) => {
       const pending = this.pending.get(id)
-      if (pending !== undefined) {
-        clearTimeout(pending.timer)
-        this.pending.delete(id)
-        pending.reject(error)
-      }
-    }
+      if (pending === undefined) return
+      clearTimeout(pending.timer)
+      this.pending.delete(id)
+      pending.reject(error)
+    })
     return result
   }
 
@@ -155,14 +163,45 @@ export class IsolatedExtensionWorker {
     await this.process?.exited
   }
 
-  private write(message: Record<string, unknown>): void {
-    const process = this.process
-    if (process === undefined || typeof process.send !== "function")
-      throw new Error("isolated extension: worker IPC unavailable")
-    const text = JSON.stringify(message)
+  private async sendInvoke(
+    id: string,
+    name: string,
+    input: unknown,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const port = this.port
+    if (!isValidPort(port))
+      throw new Error("isolated extension: worker control endpoint unavailable")
+    const text = JSON.stringify({ type: "invoke", id, name, input })
     if (Buffer.byteLength(text, "utf8") > this.options.maxMessageBytes)
       throw new RangeError("isolated extension: message is too large")
-    process.send(JSON.parse(text))
+    const response = await fetch(`http://127.0.0.1:${port}/invoke`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${this.token}`,
+        "content-type": "application/json",
+      },
+      body: text,
+      signal,
+    })
+    const body = await readBoundedText(response.body, this.options.maxMessageBytes)
+    if (body.truncated) throw new Error("isolated extension: worker response exceeded limit")
+    if (!response.ok)
+      throw new Error(`isolated extension: worker request failed (${response.status})`)
+    let message: WorkerMessage
+    try {
+      message = JSON.parse(body.text) as WorkerMessage
+    } catch {
+      throw new Error("isolated extension: worker returned invalid JSON")
+    }
+    if (message.type !== "result" || message.id !== id)
+      throw new Error("isolated extension: worker returned an invalid result")
+    const pending = this.pending.get(id)
+    if (pending === undefined) return
+    clearTimeout(pending.timer)
+    this.pending.delete(id)
+    if (message.error !== undefined) pending.reject(new Error(message.error))
+    else pending.resolve(message.output)
   }
 
   private async readOutput(): Promise<void> {
@@ -215,6 +254,13 @@ export class IsolatedExtensionWorker {
 
   private handle(message: WorkerMessage): void {
     if (message.type === "ready") {
+      const port = message.port
+      if (!isValidPort(port)) {
+        this.fail(new Error("isolated extension: worker control endpoint is invalid"))
+        this.process?.kill()
+        return
+      }
+      this.port = port
       this.readyResolve?.(this.snapshot)
       this.readyResolve = undefined
       this.readyReject = undefined
@@ -262,6 +308,7 @@ export class IsolatedExtensionWorker {
     this.readyResolve = undefined
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer)
+      pending.abort.abort()
       pending.reject(error)
     }
     this.pending.clear()
@@ -271,6 +318,10 @@ export class IsolatedExtensionWorker {
 function isWithin(root: string, candidate: string): boolean {
   const path = relative(resolve(root), resolve(candidate))
   return path === "" || (!path.startsWith("..") && !path.includes("/.."))
+}
+
+function isValidPort(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 1 && (value as number) <= 65_535
 }
 
 function filteredEnv(): Record<string, string> {
