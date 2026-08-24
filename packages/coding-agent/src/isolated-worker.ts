@@ -39,18 +39,11 @@ const context: ExtensionContext = {
 
 // The host starts sending immediately after `ready`; attach before the async extension import so
 // Windows cannot deliver that first request while the child is between initialization phases.
+const decoder = new TextDecoder()
 let buffer = ""
-process.stdin.on("data", (chunk) => {
-  buffer += String(chunk)
-  for (;;) {
-    const newline = buffer.indexOf("\n")
-    if (newline < 0) return
-    const line = buffer.slice(0, newline)
-    buffer = buffer.slice(newline + 1)
-    if (line.length === 0) continue
-    if (ready) void handle(line)
-    else queuedRequests.push(line)
-  }
+void readInput().catch((error) => {
+  post({ type: "fatal", error: error instanceof Error ? error.message : String(error) })
+  process.exit(1)
 })
 
 try {
@@ -65,6 +58,27 @@ try {
 } catch (error) {
   post({ type: "fatal", error: error instanceof Error ? error.message : String(error) })
   process.exit(1)
+}
+
+async function readInput(): Promise<void> {
+  for await (const chunk of Bun.stdin.stream()) {
+    buffer += decoder.decode(chunk as Uint8Array, { stream: true })
+    drainInput()
+  }
+  buffer += decoder.decode()
+  drainInput()
+}
+
+function drainInput(): void {
+  for (;;) {
+    const newline = buffer.indexOf("\n")
+    if (newline < 0) return
+    const line = buffer.slice(0, newline)
+    buffer = buffer.slice(newline + 1)
+    if (line.length === 0) continue
+    if (ready) void handle(line)
+    else queuedRequests.push(line)
+  }
 }
 
 async function handle(line: string): Promise<void> {
