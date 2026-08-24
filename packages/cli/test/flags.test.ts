@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
+import { resolve } from "node:path"
 import { DEFAULT_DEV_PORT } from "@nifrajs/web"
 import { assureBundleRequested, formatCliError, parseFlags } from "../src/cli.ts"
 
@@ -90,4 +91,28 @@ test("formatCliError deduplicates a cause Bun repeats across .errors", () => {
 test("formatCliError falls back to the message for a plain Error, and String for a non-error", () => {
   expect(formatCliError(new Error("plain boom"))).toBe("plain boom")
   expect(formatCliError("just a string")).toBe("just a string")
+})
+
+test("a configured Bun child recovers its command vector when argv is empty", async () => {
+  const cli = resolve(import.meta.dir, "../src/cli.ts")
+  const config = resolve(import.meta.dir, "../../../bunfig.toml")
+  const proc = Bun.spawn([process.execPath, `--config=${config}`, cli], {
+    cwd: resolve(import.meta.dir, "../../.."),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...process.env,
+      NIFRA_BUN_DEV_TOKEN: "test-launch-token",
+      NIFRA_BUN_DEV_DEPTH: "1",
+      NIFRA_BUN_DEV_ARGS: JSON.stringify(["--version"]),
+    },
+  })
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ])
+  expect(code).toBe(0)
+  expect(stderr).toBe("")
+  expect(stdout).toContain("nifra (@nifrajs/cli)")
 })

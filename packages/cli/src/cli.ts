@@ -300,6 +300,11 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
         )
       }
       const { bunfigPath, launchToken } = await writeBunDevConfig(app.cwd, app.configPath)
+      // Bun 1.4 on Windows may discard the script-relative portion of argv when `--config` is
+      // present. Keep a second, authenticated copy of the user vector in the child's environment so
+      // the configured process cannot silently fall back to `nifra`'s help and exit 0. The launch token
+      // is still the proof boundary; these arguments are only a transport, never authorization.
+      const childCliArgv = [...cliArgv()]
       const child = Bun.spawn(
         [
           process.execPath,
@@ -319,7 +324,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
           // command start at index 1 instead of index 2. Slicing at a fixed index would silently drop
           // `dev`, causing the child to load this module and exit successfully without starting it.
           fileURLToPath(import.meta.url),
-          ...cliArgv(),
+          ...childCliArgv,
         ],
         {
           // On Windows, inheriting the parent's already-piped stdout/stderr can make a nested Bun
@@ -333,6 +338,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
             ...process.env,
             NIFRA_BUN_DEV_TOKEN: launchToken,
             NIFRA_BUN_DEV_DEPTH: String(depth + 1),
+            NIFRA_BUN_DEV_ARGS: JSON.stringify(childCliArgv),
             // The child is the process that renders, so it is the one that needs dev-shaped runtimes.
             // A library ships its dev build behind the `development` export condition with a `NODE_ENV`
             // fallback for resolvers that set no conditions - which is Bun's runtime, where SSR runs,
@@ -360,6 +366,12 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
       }
       return
     }
+    // The verified child no longer needs the transport or its launch proof. Remove both from the
+    // long-lived dev process so command-line values (which may include an env-file path) are not
+    // inherited by an app-spawned subprocess or exposed through its environment diagnostics.
+    delete process.env.NIFRA_BUN_DEV_ARGS
+    delete process.env.NIFRA_BUN_DEV_TOKEN
+    delete process.env.NIFRA_BUN_DEV_DEPTH
     // SSR runs in THIS process, on Bun's runtime - a different loader from the dev-server bundler the
     // bunfig above configures. Both halves have to agree, so the runtime gets the same transforms:
     //
@@ -741,6 +753,12 @@ async function main(): Promise<void> {
   const argv = rawArgv
   const command = argv[0]
   if (command === undefined || command === "--help" || command === "-h" || command === "help") {
+    if (command === undefined && isBunDevReexecChild()) {
+      throw new Error(
+        "[nifra] the configured Bun dev child lost its command arguments; refusing to serve without " +
+          "the verified dev configuration. Re-run `nifra dev`.",
+      )
+    }
     console.log(HELP)
     return
   }
@@ -1006,11 +1024,42 @@ function findCliCommand(values: readonly string[]): number {
 }
 
 function cliArgv(): readonly string[] {
+  const reexec = reexecCliArgv()
+  if (reexec !== undefined) return reexec
   for (const values of [Bun.argv, process.argv]) {
     const commandIndex = findCliCommand(values)
     if (commandIndex >= 0) return values.slice(commandIndex)
   }
   return Bun.argv.slice(2)
+}
+
+/**
+ * Recover the original command vector when Bun's Windows `--config` launch drops it from both public
+ * argv arrays. This is deliberately narrow: only a positive re-exec marker can enable the channel, the
+ * first item must be a real Nifra command, and malformed/oversized data is ignored so an inherited
+ * environment can never turn an imported CLI module into an arbitrary command runner.
+ */
+function reexecCliArgv(): readonly string[] | undefined {
+  if (!isBunDevReexecChild()) return undefined
+  const encoded = process.env.NIFRA_BUN_DEV_ARGS
+  if (encoded === undefined || encoded.length > 64 * 1024) return undefined
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(encoded)
+  } catch {
+    return undefined
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.length > 128) return undefined
+  if (
+    !parsed.every(
+      (value) => typeof value === "string" && value.length <= 16 * 1024 && !value.includes("\0"),
+    )
+  ) {
+    return undefined
+  }
+  const command = parsed[0]
+  if (typeof command !== "string") return undefined
+  return isCliCommandToken(command) ? (parsed as string[]) : undefined
 }
 
 function hasCliCommandToken(): boolean {
