@@ -55,5 +55,10 @@ test("every site scaffold matches its committed snapshot", async () => {
     await writeFile(SNAPSHOT, current)
     return
   }
-  expect(current).toBe(await readFile(SNAPSHOT, "utf8"))
+  // Git may check this text file out with CRLF on Windows even though the generator emits LF. Line
+  // endings are not part of the scaffold contract, so compare the canonical form on both sides.
+  const expected = (await readFile(SNAPSHOT, "utf8"))
+    .replaceAll("\r\n", "\n")
+    .replaceAll("\r", "\n")
+  expect(current.replaceAll("\r\n", "\n").replaceAll("\r", "\n")).toBe(expected)
 })

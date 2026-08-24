@@ -39,7 +39,9 @@ export function normalizeFilePath(path: string): string {
     try {
       value = fileURLToPath(value)
     } catch {
-      // Let the eventual filesystem/import operation report an invalid path.
+      // Preserve malformed URL-shaped input. Converting it with Windows slash rules would turn
+      // `file://%` into a plausible-looking local path (`file:\\%`) and hide the actual bad specifier.
+      return value
     }
   }
   if (process.platform === "win32") {

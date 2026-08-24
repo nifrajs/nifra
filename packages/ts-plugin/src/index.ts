@@ -12,7 +12,7 @@
  * matches with `@nifrajs/core`'s pattern matcher (see ./resolve.ts), so a path resolves to exactly the
  * file it would serve at runtime. The plugin only wires that into `getDefinitionAndBoundSpan`.
  */
-import { existsSync, realpathSync } from "node:fs"
+import { existsSync, realpathSync, statSync } from "node:fs"
 import { dirname, isAbsolute, join, resolve } from "node:path"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import type * as ts from "typescript"
@@ -49,6 +49,18 @@ function canonicalProgramPath(fileName: string): string {
   }
 }
 
+/** Match a real file even when Windows handed the editor an 8.3 alias for the same path. */
+function filesystemIdentity(fileName: string): string | undefined {
+  try {
+    const info = statSync(resolve(fileName), { bigint: true })
+    return `${info.dev}:${info.ino}`
+  } catch {
+    // TypeScript also exposes virtual/source-overlay files. They have no filesystem identity, so
+    // the lexical/realpath checks remain the correct fallback for those inputs.
+    return undefined
+  }
+}
+
 function programSourceFile(
   program: ts.Program | undefined,
   fileName: string,
@@ -57,7 +69,16 @@ function programSourceFile(
   const direct = program.getSourceFile(fileName)
   if (direct !== undefined) return direct
   const wanted = canonicalProgramPath(fileName)
-  return program.getSourceFiles().find((source) => canonicalProgramPath(source.fileName) === wanted)
+  const byPath = program
+    .getSourceFiles()
+    .find((source) => canonicalProgramPath(source.fileName) === wanted)
+  if (byPath !== undefined) return byPath
+
+  const wantedIdentity = filesystemIdentity(fileName)
+  if (wantedIdentity === undefined) return undefined
+  return program
+    .getSourceFiles()
+    .find((source) => filesystemIdentity(source.fileName) === wantedIdentity)
 }
 
 /** The innermost AST node whose span contains `position`. */

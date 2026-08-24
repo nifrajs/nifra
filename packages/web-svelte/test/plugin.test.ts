@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { portablePath } from "@nifrajs/web/plugins/kit"
 import { svelteBunPlugin } from "../src/plugin.ts"
 
 /**
@@ -41,10 +42,11 @@ describe("svelteBunPlugin", () => {
     // 1) compiling the .svelte (with a ?query suffix, which is stripped) appends an
     //    `import "<path>?svelte-css"` so the bundler pulls the scoped CSS into the app stylesheet.
     const out = await (svelteLoad as LoadCb)({ path: `${fixture}?v=1` })
+    const virtualPath = portablePath(fixture)
     expect(out.loader).toBe("js")
-    expect(out.contents).toContain(`${fixture}?svelte-css`)
+    expect(out.contents).toContain(`${virtualPath}?svelte-css`)
     // 2) the resolver routes that specifier into the nifra-svelte-css namespace.
-    const resolved = (cssResolve as ResolveCb)({ path: `${fixture}?svelte-css` })
+    const resolved = (cssResolve as ResolveCb)({ path: `${virtualPath}?svelte-css` })
     expect(resolved.namespace).toBe("nifra-svelte-css")
     // 3) the namespaced loader returns the compiled, scoped stylesheet (css loader). Svelte scopes
     //    `#title` to `#title.svelte-<hash>` and bakes the class into the markup.

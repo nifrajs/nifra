@@ -6,7 +6,7 @@
  * manifest normalization so those callers cannot quietly grow separate rules.
  */
 
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { lstat, realpath, stat } from "node:fs/promises"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import {
@@ -336,7 +336,10 @@ const pathExists = (path: string): Promise<boolean> =>
  * printed side by side, so they have to be normalized the same way (`/var` vs `/private/var`). */
 const realpathOrSelf = (path: string): string => {
   try {
-    return realpathSync(path)
+    // The native Windows resolver is the one that knows how to expand 8.3 aliases such as
+    // `RUNNER~1`. The portable resolver can preserve the spelling it was given, which makes two
+    // handles to the same checkout look like different install roots.
+    return process.platform === "win32" ? realpathSync.native(path) : realpathSync(path)
   } catch {
     return path
   }
@@ -350,12 +353,45 @@ const comparisonPath = (path: string): string => {
   return process.platform === "win32" ? native.toLowerCase() : native
 }
 
-const pathInside = (root: string, path: string): boolean => {
+/**
+ * Windows may expose the same directory through a long path and an 8.3 short path even after
+ * `realpathSync` has normalized both inputs. When the lexical comparison above says "outside", walk
+ * the target's existing ancestors and compare the filesystem identity of each one. `statSync` with
+ * bigint fields avoids truncating Windows file IDs, and a missing identity fails closed.
+ */
+const pathInsideByFilesystemIdentity = (root: string, path: string): boolean => {
+  if (process.platform !== "win32") return false
+  const rootIdentity = (() => {
+    try {
+      const info = statSync(realpathOrSelf(resolve(root)), { bigint: true })
+      return { dev: info.dev, ino: info.ino }
+    } catch {
+      return undefined
+    }
+  })()
+  if (rootIdentity === undefined) return false
+
+  let current = realpathOrSelf(resolve(path))
+  for (;;) {
+    try {
+      const info = statSync(current, { bigint: true })
+      if (info.dev === rootIdentity.dev && info.ino === rootIdentity.ino) return true
+    } catch {
+      // A non-existent leaf can still have an existing parent. Keep walking; if no ancestor can
+      // prove containment, the answer remains false rather than trusting a spelling alone.
+    }
+    const parent = dirname(current)
+    if (parent === current) return false
+    current = parent
+  }
+}
+
+export const pathInside = (root: string, path: string): boolean => {
   const distance = relative(comparisonPath(root), comparisonPath(path))
-  return (
+  const lexicallyInside =
     distance === "" ||
     (distance !== ".." && !distance.startsWith(`..${sep}`) && !isAbsolute(distance))
-  )
+  return lexicallyInside || pathInsideByFilesystemIdentity(root, path)
 }
 
 const workspaceContains = async (

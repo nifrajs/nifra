@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { PluginBuilder } from "../src/plugins/kit.ts"
+import { normalizeFilePath } from "../src/plugins/kit.ts"
 import {
   type PostcssConfigLoader,
   type PostcssPluginOptions,
@@ -69,7 +70,7 @@ describe("postcssBunPlugin - plain CSS (side-effect import)", () => {
     const cssPath = new URL("./fixtures/plain.css", import.meta.url).pathname
     await setupPlugin("dom", { postcss, plugins: [marker] })({ path: cssPath })
     expect(calls[0]?.plugins).toEqual([marker])
-    expect(calls[0]?.from).toBe(cssPath)
+    expect(calls[0]?.from).toBe(normalizeFilePath(cssPath))
   })
 })
 

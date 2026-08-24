@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { portablePath } from "@nifrajs/web/plugins/kit"
 import { plugin } from "bun"
 import { vueAdapter } from "../src/index.ts"
 import { compileVue, compileVueStyles, vueBunPlugin } from "../src/plugin.ts"
@@ -119,11 +120,12 @@ describe("vueBunPlugin - scoped <style> round-trip", () => {
 
   test("dom: the .vue import emits a virtual ?vue-css module that loads the scoped stylesheet", async () => {
     const { vueLoad, cssLoad, cssResolve } = setupVuePlugin("dom")
+    const virtualPath = portablePath(fixture)
     // 1) compiling the .vue appends an `import "<path>?vue-css"` so the bundler pulls in the CSS.
     const out = await (vueLoad as LoadCb)({ path: fixture })
-    expect(out.contents).toContain(`${fixture}?vue-css`)
+    expect(out.contents).toContain(`${virtualPath}?vue-css`)
     // 2) the resolver routes that specifier into the nifra-vue-css namespace.
-    const resolved = (cssResolve as ResolveCb)({ path: `${fixture}?vue-css` })
+    const resolved = (cssResolve as ResolveCb)({ path: `${virtualPath}?vue-css` })
     expect(resolved.namespace).toBe("nifra-vue-css")
     // 3) the namespaced loader returns the compiled, scoped stylesheet (css loader).
     const css = await (cssLoad as LoadCb)({ path: resolved.path })

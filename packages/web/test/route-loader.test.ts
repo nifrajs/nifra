@@ -69,7 +69,7 @@ test("every route in the chain goes through the injected loader", async () => {
       const seen: string[] = []
       const manifest = discoverRoutes(dir, {
         load: async (p) => {
-          seen.push(p.slice(dir.length + 1))
+          seen.push(p.slice(dir.length + 1).replaceAll("\\", "/"))
           return { default: 1 }
         },
       })

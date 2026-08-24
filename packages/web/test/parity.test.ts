@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { realpathSync } from "node:fs"
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -10,6 +11,7 @@ import {
   formatIdentityParityFindings,
   identityParityBasis,
   identityParityHeadline,
+  pathInside,
 } from "../src/internal/parity.ts"
 
 const devInput = (over: Partial<Parameters<typeof assertDevelopmentProductionParity>[0]> = {}) => ({
@@ -161,6 +163,43 @@ test("shared identity parity resolves a workspace from an app subdirectory", asy
     expect(formatIdentityParityFindings(result.findings)).toContain("scope:")
   } finally {
     await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("Windows identity containment accepts an alias only when the filesystem proves it", async () => {
+  const ground = await mkdtemp(join(tmpdir(), "nifra-parity-windows-identity-"))
+  const root = join(ground, "project")
+  const alias = join(ground, "PROJECT~1")
+  const outside = join(ground, "other")
+  await mkdir(root, { recursive: true })
+  await mkdir(outside, { recursive: true })
+  await symlink(root, alias, "dir")
+
+  const originalPlatform = process.platform
+  const originalNative = realpathSync.native
+  try {
+    // The CI Windows path that motivated this fallback can expose the same directory through an
+    // 8.3 spelling after lexical normalization. Keep this probe isolated and synchronous after the
+    // override: no other test can observe the temporary platform or resolver.
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" })
+    realpathSync.native = ((path: string) => path) as typeof realpathSync.native
+
+    // The leaf does not exist, but its symlinked ancestor has the same filesystem identity as root.
+    expect(pathInside(root, join(alias, "not-created-yet"))).toBe(true)
+    // A path with no matching ancestor is rejected, and an unavailable root fails closed.
+    expect(pathInside(root, join(outside, "not-created-yet"))).toBe(false)
+    expect(pathInside(join(ground, "missing-root"), join(alias, "not-created-yet"))).toBe(false)
+
+    // Exercise the realpath fallback as well: malformed/unresolvable input must not become a
+    // trusted containment result merely because the Windows branch was selected.
+    realpathSync.native = (() => {
+      throw new Error("unresolvable probe")
+    }) as typeof realpathSync.native
+    expect(pathInside(root, join(alias, "still-not-created"))).toBe(true)
+  } finally {
+    realpathSync.native = originalNative
+    Object.defineProperty(process, "platform", { configurable: true, value: originalPlatform })
+    await rm(ground, { recursive: true, force: true })
   }
 })
 

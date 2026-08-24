@@ -58,7 +58,7 @@ async function loadWithClientModule(spec: string): Promise<string> {
 // absolutized at load, or it resolves against different bases and loads in one phase but not the other.
 test("a relative clientModule is resolved to absolute at load", async () => {
   const resolved = await loadWithClientModule("./src/client.tsx")
-  expect(resolved.endsWith("/src/client.tsx")).toBe(true)
+  expect(resolved.endsWith(join("src", "client.tsx"))).toBe(true)
   expect(resolve(resolved)).toBe(resolved) // already absolute
 })
 

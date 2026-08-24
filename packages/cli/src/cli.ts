@@ -47,6 +47,23 @@ export interface Flags {
   readonly allowDuplicateIdentity: boolean
 }
 
+/** Forward a re-exec'd Bun child's output without relying on Windows inheriting a pipe-of-a-pipe. */
+async function forwardChildOutput(
+  stream: ReadableStream<Uint8Array>,
+  sink: { write(chunk: Uint8Array): unknown },
+): Promise<void> {
+  const reader = stream.getReader()
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) return
+      sink.write(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
 const HELP = `nifra - zero-config dev/build/start for a nifra app
 
 Usage:
@@ -298,7 +315,13 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
           ...process.argv.slice(1),
         ],
         {
-          stdio: ["inherit", "inherit", "inherit"],
+          // On Windows, inheriting the parent's already-piped stdout/stderr can make a nested Bun
+          // process exit successfully without exposing either its banner or its error. Use explicit
+          // pipes and forward them from this process instead; the caller still observes one CLI stream,
+          // while the child gets real handles it can write to on every platform.
+          stdin: "inherit",
+          stdout: "pipe",
+          stderr: "pipe",
           env: {
             ...process.env,
             NIFRA_BUN_DEV_TOKEN: launchToken,
@@ -314,10 +337,16 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
           },
         },
       )
+      const forwarded = Promise.all([
+        forwardChildOutput(child.stdout as ReadableStream<Uint8Array>, process.stdout),
+        forwardChildOutput(child.stderr as ReadableStream<Uint8Array>, process.stderr),
+      ])
       const forward = (): void => child.kill("SIGINT")
       process.on("SIGINT", forward)
       process.on("SIGTERM", forward)
-      process.exit(await child.exited)
+      const [code] = await Promise.all([child.exited, forwarded])
+      process.exitCode = code
+      return
     }
     // SSR runs in THIS process, on Bun's runtime - a different loader from the dev-server bundler the
     // bunfig above configures. Both halves have to agree, so the runtime gets the same transforms:
