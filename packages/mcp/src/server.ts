@@ -74,6 +74,11 @@ export interface McpServer {
   fetch(request: Request, overrides?: Pick<McpHttpOptions, "authorizeMessage">): Promise<Response>
   /** Dispatch one JSON-RPC message directly (no HTTP) - for headless verification and unit tests. */
   handle(message: JsonRpcRequest): Promise<JsonRpcResponse | null>
+  /**
+   * Release server-owned resources, when the implementation has any (for example a database worker).
+   * Calling it more than once is safe. The base MCP server has nothing to release and omits this hook.
+   */
+  readonly close?: () => Promise<void>
 }
 
 export function createMcpServer(opts: CreateMcpServerOptions): McpServer {

@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite"
-import { describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -42,6 +42,44 @@ async function call(
     text: body.result?.content?.[0]?.text ?? body.error?.message ?? "",
     // Tool-level failures use result.isError; protocol-level ones (e.g. unknown tool) use error.
     isError: body.result?.isError === true || body.error !== undefined,
+  }
+}
+
+async function withFakeWorker<T>(
+  closeMode: "throw" | "ignore",
+  action: () => Promise<T>,
+): Promise<T> {
+  const previousWorker = globalThis.Worker
+  class FakeWorker {
+    onmessage: ((event: MessageEvent) => void) | null = null
+    onerror: (() => void) | null = null
+
+    postMessage(message: { id?: number; type?: string }): void {
+      if (message.type === "close") {
+        if (closeMode === "throw") throw new Error("worker is unavailable")
+        return
+      }
+      queueMicrotask(() =>
+        this.onmessage?.({ data: { id: message.id, ok: true, rows: [] } } as MessageEvent),
+      )
+    }
+
+    terminate(): void {}
+    unref(): void {}
+  }
+  Object.defineProperty(globalThis, "Worker", {
+    configurable: true,
+    writable: true,
+    value: FakeWorker,
+  })
+  try {
+    return await action()
+  } finally {
+    Object.defineProperty(globalThis, "Worker", {
+      configurable: true,
+      writable: true,
+      value: previousWorker,
+    })
   }
 }
 
@@ -125,6 +163,11 @@ describe("run_query (opt-in)", () => {
     },
   })
   const auth = { "x-key": "s3cret" }
+
+  afterAll(async () => {
+    await server.close?.()
+    await server.close?.()
+  })
 
   test("unauthorized request is rejected at the transport boundary", async () => {
     const result = await call(server, "run_query", { sql: "SELECT * FROM habits" })
@@ -426,6 +469,7 @@ describe("query execution lanes", () => {
       expect(JSON.parse(second.text).rows).toEqual([{ n: 2 }])
       expect(snapshots).toBe(0)
     } finally {
+      await served.close?.()
       db.close()
       rmSync(directory, { recursive: true, force: true })
     }
@@ -448,8 +492,52 @@ describe("query execution lanes", () => {
       expect(result.isError).toBe(true)
       expect(result.text).toBe("query exceeded the time limit")
     } finally {
+      await served.close?.()
       db.close()
       rmSync(directory, { recursive: true, force: true })
     }
+  })
+
+  test("a failed worker close rejects pending work and releases the lane", async () => {
+    await withFakeWorker("throw", async () => {
+      const directory = mkdtempSync(join(tmpdir(), "nifra-mcp-db-"))
+      const path = join(directory, "close-throws.db")
+      const db = new Database(path)
+      db.run("CREATE TABLE habits (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+      const served = serveDatabaseAsMcp(db, {
+        tables: ["habits"],
+        runQuery: { authorize: () => true },
+      })
+      try {
+        const result = await call(served, "run_query", { sql: "SELECT name FROM habits" })
+        expect(result.isError).toBe(false)
+        await served.close?.()
+        await served.close?.()
+      } finally {
+        db.close()
+        rmSync(directory, { recursive: true, force: true })
+      }
+    })
+  })
+
+  test("a worker that does not acknowledge close is force-terminated", async () => {
+    await withFakeWorker("ignore", async () => {
+      const directory = mkdtempSync(join(tmpdir(), "nifra-mcp-db-"))
+      const path = join(directory, "close-timeout.db")
+      const db = new Database(path)
+      db.run("CREATE TABLE habits (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+      const served = serveDatabaseAsMcp(db, {
+        tables: ["habits"],
+        runQuery: { authorize: () => true },
+      })
+      try {
+        const result = await call(served, "run_query", { sql: "SELECT name FROM habits" })
+        expect(result.isError).toBe(false)
+        await served.close?.()
+      } finally {
+        db.close()
+        rmSync(directory, { recursive: true, force: true })
+      }
+    })
   })
 })

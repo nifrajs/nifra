@@ -367,6 +367,7 @@ class QueryTimeoutError extends Error {
 /** One execution lane for `run_query`: `run` resolves rows, or rejects once the deadline passes. */
 interface QuerySession {
   run(sql: string, deadline: number): Promise<unknown[]>
+  close(): Promise<void>
 }
 
 /**
@@ -379,7 +380,17 @@ const SQLITE_WORKER_SOURCE = `
 const { Database } = require("bun:sqlite")
 let db
 self.onmessage = (event) => {
-  const { id, filename, sql } = event.data
+  const { id, filename, sql, type } = event.data
+  if (type === "close") {
+    try {
+      db?.close()
+      db = undefined
+      self.postMessage({ id, closed: true, ok: true })
+    } catch (error) {
+      self.postMessage({ id, closed: true, ok: false, error: String(error) })
+    }
+    return
+  }
   try {
     if (db === undefined) {
       db = new Database(filename, { readonly: true })
@@ -409,23 +420,46 @@ interface PendingQuery {
   reject(error: Error): void
 }
 
+interface PendingClose {
+  readonly id: number
+  resolve(): void
+}
+
+const WORKER_CLOSE_TIMEOUT_MS = 1_000
+
 function workerSession(filename: string): QuerySession {
   let worker: Worker | undefined
   let sourceUrl: string | undefined
   let nextId = 0
   const pending = new Map<number, PendingQuery>()
   let lane: Promise<unknown> = Promise.resolve()
+  let closed = false
+  let closePromise: Promise<void> | undefined
+  let pendingClose: PendingClose | undefined
+
+  const releaseWorker = (active: Worker | undefined = worker): void => {
+    if (active === undefined) return
+    active.terminate()
+    if (worker !== active) return
+    worker = undefined
+    if (sourceUrl !== undefined) URL.revokeObjectURL(sourceUrl)
+    sourceUrl = undefined
+  }
+
+  const rejectPending = (error: Error): void => {
+    const waiters = [...pending.values()]
+    pending.clear()
+    for (const waiter of waiters) waiter.reject(error)
+  }
 
   /** Drop the worker and fail everything riding on it. The only bound this side can enforce over a
    * statement already running inside native SQLite is to stop owning the connection it runs on. */
   const discard = (error: Error): void => {
-    const waiters = [...pending.values()]
-    pending.clear()
-    worker?.terminate()
-    if (sourceUrl !== undefined) URL.revokeObjectURL(sourceUrl)
-    worker = undefined
-    sourceUrl = undefined
-    for (const waiter of waiters) waiter.reject(error)
+    const closing = pendingClose
+    pendingClose = undefined
+    releaseWorker()
+    rejectPending(error)
+    closing?.resolve()
   }
 
   const ensureWorker = (): Worker => {
@@ -433,10 +467,23 @@ function workerSession(filename: string): QuerySession {
     sourceUrl = URL.createObjectURL(new Blob([SQLITE_WORKER_SOURCE], { type: "text/javascript" }))
     const spawned = new Worker(sourceUrl)
     spawned.onmessage = (
-      event: MessageEvent<{ id?: number; ok?: boolean; rows?: unknown[]; error?: string }>,
+      event: MessageEvent<{
+        id?: number
+        ok?: boolean
+        rows?: unknown[]
+        error?: string
+        closed?: boolean
+      }>,
     ) => {
       const { id, ok, rows, error } = event.data
       if (typeof id !== "number") return
+      if (event.data.closed === true) {
+        const closing = pendingClose
+        if (closing?.id !== id) return
+        pendingClose = undefined
+        closing.resolve()
+        return
+      }
       const waiter = pending.get(id)
       if (waiter === undefined) return
       pending.delete(id)
@@ -452,6 +499,7 @@ function workerSession(filename: string): QuerySession {
   }
 
   const dispatch = (sql: string, deadline: number): Promise<unknown[]> => {
+    if (closed) return Promise.reject(new Error("query session is closed"))
     const remaining = deadline - Date.now()
     if (remaining <= 0) return Promise.reject(new QueryTimeoutError())
     const active = ensureWorker()
@@ -486,6 +534,39 @@ function workerSession(filename: string): QuerySession {
       lane = result.catch(() => undefined)
       return result
     },
+    close() {
+      if (closePromise !== undefined) return closePromise
+      closed = true
+      closePromise = (async () => {
+        const active = worker
+        if (active !== undefined) {
+          await new Promise<void>((resolve) => {
+            const id = ++nextId
+            let settled = false
+            const finish = (error?: Error): void => {
+              if (settled) return
+              settled = true
+              clearTimeout(timer)
+              if (pendingClose?.id === id) pendingClose = undefined
+              if (error !== undefined) rejectPending(error)
+              releaseWorker(active)
+              resolve()
+            }
+            const timer = setTimeout(() => {
+              finish(new Error("query session is closed"))
+            }, WORKER_CLOSE_TIMEOUT_MS)
+            pendingClose = { id, resolve: finish }
+            try {
+              active.postMessage({ id, type: "close" })
+            } catch {
+              finish(new Error("query session is closed"))
+            }
+          })
+        }
+        await lane
+      })()
+      return closePromise
+    },
   }
 }
 
@@ -503,6 +584,7 @@ function inProcessSession(db: SqliteDatabaseLike): QuerySession {
       if (Date.now() > deadline) throw new QueryTimeoutError()
       return rows
     },
+    async close() {},
   }
 }
 
@@ -559,6 +641,7 @@ export function serveDatabaseAsMcp(
   assertResultLimit(queryTimeoutMs, "queryTimeoutMs")
   assertResultLimit(maxConcurrentQueries, "maxConcurrentQueries")
   let activeQueries = 0
+  let session: QuerySession | undefined
 
   const listTables = defineMcpTool({
     name: "list_tables",
@@ -601,7 +684,8 @@ export function serveDatabaseAsMcp(
 
   if (options.runQuery !== undefined) {
     // One lane for the life of the server: picked once here, so the handler below always has it.
-    const session = openQuerySession(db)
+    const querySession = openQuerySession(db)
+    session = querySession
     const runQuery = defineMcpTool({
       name: "run_query",
       description:
@@ -649,7 +733,7 @@ export function serveDatabaseAsMcp(
           const query = executable
           let planRows: Array<{ detail?: unknown }>
           try {
-            planRows = (await session.run(`EXPLAIN QUERY PLAN ${query}`, deadline)) as Array<{
+            planRows = (await querySession.run(`EXPLAIN QUERY PLAN ${query}`, deadline)) as Array<{
               detail?: unknown
             }>
           } catch (error) {
@@ -689,7 +773,7 @@ export function serveDatabaseAsMcp(
             // Fetch at most one row beyond the advertised cap. This keeps the database driver's
             // materialization bounded even when the caller submits `SELECT * FROM a_huge_table`.
             // nifra-expect sql-dynamic: wraps the caller's already-allowlisted read-only query (guarded above) in a bounding subselect; the query text is the tool's input, run on a read-only session
-            limitedRows = await session.run(
+            limitedRows = await querySession.run(
               `SELECT * FROM (${query}) AS "__nifra_result" LIMIT ${maxRows + 1}`,
               deadline,
             )
@@ -703,7 +787,7 @@ export function serveDatabaseAsMcp(
           if (wasLimited && options.runQuery?.exactTotal === true) {
             try {
               // nifra-expect sql-dynamic: wraps the caller's already-allowlisted read-only query (guarded above) in a counting subselect; the query text is the tool's input, run on a read-only session
-              const countRows = (await session.run(
+              const countRows = (await querySession.run(
                 `SELECT count(*) AS "__nifra_total" FROM (${query}) AS "__nifra_count"`,
                 deadline,
               )) as Array<{ __nifra_total?: unknown }>
@@ -754,15 +838,17 @@ export function serveDatabaseAsMcp(
     tools,
   })
 
-  if (options.runQuery === undefined) return server
+  const runQueryOptions = options.runQuery
+  if (session === undefined || runQueryOptions === undefined) return server
 
   // `run_query` is authorized at the TRANSPORT boundary, where the inbound Request's credentials
   // are visible - the handler itself performs no auth, so every path to it must pass this gate:
   // the wrapped fetch authorizes, and direct handle() dispatch fails closed (no Request → no auth).
-  const { authorize } = options.runQuery
+  const { authorize } = runQueryOptions
 
   return {
     ...server,
+    close: () => session.close(),
     fetch: (request: Request) =>
       server.fetch(request, {
         authorizeMessage: async (message, inbound) =>

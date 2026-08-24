@@ -32,6 +32,11 @@ const OPERATED_RE =
 const FORBIDDEN_DEPENDENCY_RE =
   /(?:^|[-@])(openai|anthropic|google-generative|gemini|provider-sdk|credential|secret-vault|stripe|tenant|fleet)(?:$|[-@])/i
 
+/** Bun returns platform-native separators from glob scans; inventory keys are always POSIX paths. */
+function normalizeRelativePath(path: string): string {
+  return path.replace(/\\/g, "/")
+}
+
 interface AllowlistEntry {
   readonly path: string
   readonly name: string
@@ -47,7 +52,8 @@ interface AllowlistFile {
 function sourceFiles(directory: string, root = ROOT): string[] {
   if (!existsSync(resolve(root, directory))) return []
   const files: string[] = []
-  for (const file of new Bun.Glob("src/**/*").scanSync({ cwd: resolve(root, directory) })) {
+  for (const rawFile of new Bun.Glob("src/**/*").scanSync({ cwd: resolve(root, directory) })) {
+    const file = normalizeRelativePath(rawFile)
     if (SKIP.test(file) || !/\.tsx?$/.test(file)) continue
     files.push(`${directory}/${file}`)
   }
@@ -141,7 +147,8 @@ export async function runPublicBoundary(
     failures.push("PRIVATE_MARKERS must be non-empty in CI/release mode")
   for (const marker of markers) {
     for (const dir of publicPackageDirs) {
-      for (const file of new Bun.Glob("**/*").scanSync(dir)) {
+      for (const rawFile of new Bun.Glob("**/*").scanSync(dir)) {
+        const file = normalizeRelativePath(rawFile)
         if (SKIP.test(file) || !/\.(?:ts|tsx|js|jsx|md|mdx|json)$/.test(file)) continue
         const text = await Bun.file(`${dir}/${file}`).text()
         if (text.toLowerCase().includes(marker.toLowerCase()))

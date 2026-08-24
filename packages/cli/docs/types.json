@@ -9375,7 +9375,7 @@
     "name": "McpServer",
     "kind": "interface",
     "package": "@nifrajs/mcp",
-    "signature": "export interface McpServer {\n    readonly tools: McpTool[];\n    readonly features: McpServerFeatures;\n    readonly serverInfo: {\n        name: string;\n        version: string;\n    };\n    /** Web `fetch` handler - mount at `POST /mcp` (GET is a health page, OPTIONS the CORS preflight). */\n    fetch(request: Request, overrides?: Pick<McpHttpOptions, \"authorizeMessage\">): Promise<Response>;\n    /** Dispatch one JSON-RPC message directly (no HTTP) - for headless verification and unit tests. */\n    handle(message: JsonRpcRequest): Promise<JsonRpcResponse | null>;\n}"
+    "signature": "export interface McpServer {\n    readonly tools: McpTool[];\n    readonly features: McpServerFeatures;\n    readonly serverInfo: {\n        name: string;\n        version: string;\n    };\n    /** Web `fetch` handler - mount at `POST /mcp` (GET is a health page, OPTIONS the CORS preflight). */\n    fetch(request: Request, overrides?: Pick<McpHttpOptions, \"authorizeMessage\">): Promise<Response>;\n    /** Dispatch one JSON-RPC message directly (no HTTP) - for headless verification and unit tests. */\n    handle(message: JsonRpcRequest): Promise<JsonRpcResponse | null>;\n    /**\n     * Release server-owned resources, when the implementation has any (for example a database worker).\n     * Calling it more than once is safe. The base MCP server has nothing to release and omits this hook.\n     */\n    readonly close?: () => Promise<void>;\n}"
   },
   {
     "name": "McpServerConfig",

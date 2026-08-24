@@ -26,6 +26,11 @@ const scripts = (
   }
 ).scripts
 
+/** Bun returns platform-native separators from glob scans; package inventory keys are POSIX paths. */
+function normalizeRelativePath(path: string): string {
+  return path.replace(/\\/g, "/")
+}
+
 /**
  * Directories deliberately outside a script, each with the reason. An entry here is a decision someone
  * can argue with; an omission from the scripts is one nobody ever sees.
@@ -45,7 +50,8 @@ const EXEMPT: Readonly<Record<string, { readonly test?: string; readonly coverag
 
 async function testDirs(): Promise<string[]> {
   const dirs = new Set<string>()
-  for await (const rel of new Glob("packages/*/test/**/*.test.{ts,tsx}").scan({ cwd: ROOT })) {
+  for await (const rawRel of new Glob("packages/*/test/**/*.test.{ts,tsx}").scan({ cwd: ROOT })) {
+    const rel = normalizeRelativePath(rawRel)
     dirs.add(rel.split("/").slice(0, 3).join("/"))
   }
   return [...dirs].sort()

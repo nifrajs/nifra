@@ -70,23 +70,27 @@ describe("rateLimit", () => {
     expect(sizeOf(overflow)).toBe(2)
   })
 
-  test("eviction stays bounded under a distinct-key flood (no full sweep per insert) [AUDIT]", async () => {
-    const sizeOf = (s: MemoryStore): number =>
-      (s as unknown as { windows: Map<string, unknown> }).windows.size
+  test(
+    "eviction stays bounded under a distinct-key flood (no full sweep per insert) [AUDIT]",
+    async () => {
+      const sizeOf = (s: MemoryStore): number =>
+        (s as unknown as { windows: Map<string, unknown> }).windows.size
 
-    // Worst case for eviction: every key is fresh (long window) and the amortized sweep is disabled,
-    // so each over-cap insertion hits the eviction path with no expired entry to reclaim. Measure the
-    // ALGORITHM (entries scanned per over-cap insert), not wall-clock - wall-clock conflates O() with
-    // machine load and flakes under a busy host. A full O(n) sweep per insertion (the pre-fix bug)
-    // scans ~maxKeys entries each; the bounded scan caps at MAX_EVICTION_SCAN (64). Cap holds exactly.
-    const maxKeys = 20_000
-    const store = new MemoryStore({ maxKeys, sweepIntervalMs: Number.MAX_SAFE_INTEGER })
-    for (let i = 0; i < maxKeys * 3; i++) await store.hit(`flood${i}`, 600_000)
-    expect(sizeOf(store)).toBe(maxKeys) // hard cap held under the flood
-    // First maxKeys inserts fill to the cap; the remaining 2*maxKeys each evict once.
-    const overCapInserts = maxKeys * 2
-    expect(store.evictionScanCount / overCapInserts).toBeLessThan(100) // ~O(1)/insert (≤64); O(n) sweep ≈ maxKeys
-  })
+      // Worst case for eviction: every key is fresh (long window) and the amortized sweep is disabled,
+      // so each over-cap insertion hits the eviction path with no expired entry to reclaim. Measure the
+      // ALGORITHM (entries scanned per over-cap insert), not wall-clock - wall-clock conflates O() with
+      // machine load and flakes under a busy host. A full O(n) sweep per insertion (the pre-fix bug)
+      // scans ~maxKeys entries each; the bounded scan caps at MAX_EVICTION_SCAN (64). Cap holds exactly.
+      const maxKeys = 20_000
+      const store = new MemoryStore({ maxKeys, sweepIntervalMs: Number.MAX_SAFE_INTEGER })
+      for (let i = 0; i < maxKeys * 3; i++) await store.hit(`flood${i}`, 600_000)
+      expect(sizeOf(store)).toBe(maxKeys) // hard cap held under the flood
+      // First maxKeys inserts fill to the cap; the remaining 2*maxKeys each evict once.
+      const overCapInserts = maxKeys * 2
+      expect(store.evictionScanCount / overCapInserts).toBeLessThan(100) // ~O(1)/insert (≤64); O(n) sweep ≈ maxKeys
+    },
+    { timeout: 30_000 },
+  )
 
   test("distinct keys are limited independently", async () => {
     let current = "a"
