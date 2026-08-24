@@ -8,7 +8,14 @@ if (modulePath === undefined || cwd === undefined)
 
 const tools = new Map<string, ExtensionTool>()
 let ready = false
-const queuedRequests: string[] = []
+interface WorkerRequest {
+  readonly type?: unknown
+  readonly id?: unknown
+  readonly name?: unknown
+  readonly input?: unknown
+}
+
+const queuedRequests: WorkerRequest[] = []
 const context: ExtensionContext = {
   cwd,
   registerCommand(name) {
@@ -38,12 +45,14 @@ const context: ExtensionContext = {
 }
 
 // The host starts sending immediately after `ready`; attach before the async extension import so
-// Windows cannot deliver that first request while the child is between initialization phases.
-const decoder = new TextDecoder()
-let buffer = ""
-void readInput().catch((error) => {
-  post({ type: "fatal", error: error instanceof Error ? error.message : String(error) })
-  process.exit(1)
+// the first request is queued until the extension has registered its tools.
+process.on("message", (message: unknown) => {
+  if (!isWorkerRequest(message)) {
+    post({ type: "fatal", error: "invalid worker IPC message" })
+    return
+  }
+  if (ready) void handle(message)
+  else queuedRequests.push(message)
 })
 
 try {
@@ -60,35 +69,7 @@ try {
   process.exit(1)
 }
 
-async function readInput(): Promise<void> {
-  for await (const chunk of Bun.stdin.stream()) {
-    buffer += decoder.decode(chunk as Uint8Array, { stream: true })
-    drainInput()
-  }
-  buffer += decoder.decode()
-  drainInput()
-}
-
-function drainInput(): void {
-  for (;;) {
-    const newline = buffer.indexOf("\n")
-    if (newline < 0) return
-    const line = buffer.slice(0, newline)
-    buffer = buffer.slice(newline + 1)
-    if (line.length === 0) continue
-    if (ready) void handle(line)
-    else queuedRequests.push(line)
-  }
-}
-
-async function handle(line: string): Promise<void> {
-  let request: { type?: string; id?: string; name?: string; input?: unknown }
-  try {
-    request = JSON.parse(line) as typeof request
-  } catch {
-    post({ type: "fatal", error: "invalid request JSON" })
-    return
-  }
+async function handle(request: WorkerRequest): Promise<void> {
   if (request.type === "shutdown") {
     process.exit(0)
     return
@@ -114,6 +95,10 @@ async function handle(line: string): Promise<void> {
       error: error instanceof Error ? error.message : String(error),
     })
   }
+}
+
+function isWorkerRequest(message: unknown): message is WorkerRequest {
+  return message !== null && typeof message === "object" && !Array.isArray(message)
 }
 
 function post(message: Record<string, unknown>): void {

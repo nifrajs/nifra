@@ -98,9 +98,11 @@ export class IsolatedExtensionWorker {
       {
         cwd: this.options.cwd,
         env: filteredEnv(),
-        stdin: "pipe",
+        stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
+        ipc: () => {},
+        serialization: "json",
       },
     )
     void this.readOutput()
@@ -154,14 +156,13 @@ export class IsolatedExtensionWorker {
   }
 
   private write(message: Record<string, unknown>): void {
-    const stdin = this.process?.stdin
-    if (stdin === undefined || stdin === null || typeof stdin === "number")
-      throw new Error("isolated extension: worker stdin unavailable")
+    const process = this.process
+    if (process === undefined || typeof process.send !== "function")
+      throw new Error("isolated extension: worker IPC unavailable")
     const text = JSON.stringify(message)
     if (Buffer.byteLength(text, "utf8") > this.options.maxMessageBytes)
       throw new RangeError("isolated extension: message is too large")
-    stdin.write(`${text}\n`)
-    stdin.flush()
+    process.send(JSON.parse(text))
   }
 
   private async readOutput(): Promise<void> {
