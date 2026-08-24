@@ -135,7 +135,15 @@ export function compileRouteExecutionPlan(options: {
   readonly hasLedger: boolean
   readonly fusedWeb: FusedWebRunner | undefined
   readonly fusedBody: FusedBodyRunner | undefined
-  readonly fusedLane: "bare" | "body" | "query" | undefined
+  readonly fusedLane:
+    | "bare"
+    | "body"
+    | "query"
+    | "derive-before"
+    | "derive-before-after"
+    | "body-derive-before"
+    | "body-derive-before-after"
+    | undefined
 }): RouteExecutionPlan {
   const { lane, contextless, hasAround, hasLedger, fusedWeb, fusedBody, fusedLane } = options
 
@@ -164,7 +172,7 @@ export function compileRouteExecutionPlan(options: {
         finalize,
         wrapResponse,
       )
-    return Object.freeze({ run, fusedWeb, fusedBody, fusedLane })
+    return Object.freeze({ run, fusedWeb, fusedBody, fusedLane }) as RouteExecutionPlan
   }
 
   let inner: ContextRouteRunner
@@ -261,7 +269,7 @@ export function compileRouteExecutionPlan(options: {
     }
     return outcome
   }
-  return Object.freeze({ run, fusedWeb, fusedBody, fusedLane })
+  return Object.freeze({ run, fusedWeb, fusedBody, fusedLane }) as RouteExecutionPlan
 }
 
 /** Registration-compiled route behavior. Every adapter invokes the same runner; the optional fused
@@ -273,7 +281,14 @@ export interface RouteExecutionPlan {
   /** Which builder produced {@link fusedWeb} - a merge rebinds the closure to the executing server
    * and must rebuild it with the SAME semantics (a query-fused route rebuilt as bare would skip its
    * validation). `undefined` iff `fusedWeb` is. */
-  readonly fusedLane: "bare" | "body" | "query" | undefined
+  readonly fusedLane:
+    | "bare"
+    | "body"
+    | "query"
+    | "derive-before"
+    | "derive-before-after"
+    | "body-derive-before-after"
+    | undefined
 }
 
 export interface RouteEntry {

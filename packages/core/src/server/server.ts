@@ -1716,6 +1716,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           bodyLimit ?? UNLIMITED_BODY_BYTES,
         )
       : undefined
+    // Fused lifecycle lanes: derive + before (with or without an after), and body + the same shape.
+    // The lane selectors in `selectRouteLanes` are exhaustive about the lifecycleHookLane /
+    // body-derive-before-after eligibility, so we only need to check the lane and the hook counts.
+    const lifecycleHookLane = lanes.lifecycleHookLane
+    const isFusedLifecycle = lifecycleHookLane !== undefined && this.derives.length === 1
+    const isFusedBodyLifecycle =
+      lanes.fusedLane === "body-derive-before" || lanes.fusedLane === "body-derive-before-after"
     const fusedWeb =
       bare && this.aroundHooks.length === 0
         ? this.buildFusedWeb(
@@ -1733,7 +1740,33 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
             )
           : fusedBody
             ? this.buildFusedBodyWeb(fusedBodyRunner as FusedBodyRunner)
-            : undefined
+            : isFusedBodyLifecycle
+              ? this.buildFusedBodyDeriveBeforeAfter(
+                  handler as unknown as InternalHandler,
+                  this.derives[0]!,
+                  this.beforeHandleHooks[0]!,
+                  this.afterHandleHooks[0],
+                  schema?.body as StandardSchemaV1,
+                  bodyLimit ?? UNLIMITED_BODY_BYTES,
+                )
+              : isFusedLifecycle && lifecycleHookLane === "derive-before"
+                ? this.buildFusedDeriveBefore(
+                    handler as unknown as InternalHandler,
+                    this.derives[0]!,
+                    this.beforeHandleHooks[0]!,
+                    schema?.query,
+                    bodyLimit ?? UNLIMITED_BODY_BYTES,
+                  )
+                : isFusedLifecycle && lifecycleHookLane === "derive-before-after"
+                  ? this.buildFusedDeriveBeforeAfter(
+                      handler as unknown as InternalHandler,
+                      this.derives[0]!,
+                      this.beforeHandleHooks[0]!,
+                      this.afterHandleHooks[0]!,
+                      schema?.query,
+                      bodyLimit ?? UNLIMITED_BODY_BYTES,
+                    )
+                  : undefined
     const program = compileRouteProgram({
       schema,
       handler: handler as unknown as InternalHandler,
@@ -1997,31 +2030,80 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (entry.execution.fusedWeb === undefined) return route
     // Rebuild with the SAME builder that produced the closure - rebinding a query-fused route as
     // bare would silently drop its validation.
-    const fusedBody =
-      entry.execution.fusedLane === "body"
-        ? this.buildFusedBodyRunner(
-            entry.handler,
-            entry.schema?.body as StandardSchemaV1,
-            entry.hasDecorations ? entry.decorations : undefined,
-            entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
-          )
-        : undefined
+    const lane = entry.execution.fusedLane
+    // Type-erase the lane so each `===` branch sees the full union, not the narrowed remainder.
+    const laneName: string | undefined = lane
+    const isBodyLifecycle =
+      laneName === "body-derive-before" || laneName === "body-derive-before-after"
+    const isBodyLane = laneName === "body" || isBodyLifecycle
+    const fusedBody = isBodyLane
+      ? this.buildFusedBodyRunner(
+          entry.handler,
+          entry.schema?.body as StandardSchemaV1,
+          entry.hasDecorations ? entry.decorations : undefined,
+          entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
+        )
+      : undefined
+    const derive = entry.derives[0]
+    const before = entry.beforeHandle[0]
+    const after = entry.afterHandle[0]
     const fusedWeb =
-      entry.execution.fusedLane === "body"
+      laneName === "body"
         ? this.buildFusedBodyWeb(fusedBody as FusedBodyRunner)
-        : entry.execution.fusedLane === "query"
+        : laneName === "query"
           ? this.buildFusedQueryWeb(
               entry.handler,
               entry.hasDecorations ? entry.decorations : undefined,
               entry.schema?.query as StandardSchemaV1,
               entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
             )
-          : this.buildFusedWeb(
-              entry.handler,
-              entry.hasDecorations ? entry.decorations : undefined,
-              isContextlessNoArgArrow(entry.handler),
-              entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
-            )
+          : laneName === "body-derive-before" && derive !== undefined && before !== undefined
+            ? this.buildFusedBodyDeriveBeforeAfter(
+                entry.handler,
+                derive,
+                before,
+                undefined,
+                entry.schema?.body as StandardSchemaV1,
+                entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
+              )
+            : laneName === "body-derive-before-after" &&
+                derive !== undefined &&
+                before !== undefined &&
+                after !== undefined
+              ? this.buildFusedBodyDeriveBeforeAfter(
+                  entry.handler,
+                  derive,
+                  before,
+                  after,
+                  entry.schema?.body as StandardSchemaV1,
+                  entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
+                )
+              : laneName === "derive-before" && derive !== undefined && before !== undefined
+                ? this.buildFusedDeriveBefore(
+                    entry.handler,
+                    derive,
+                    before,
+                    entry.schema?.query,
+                    entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
+                  )
+                : laneName === "derive-before-after" &&
+                    derive !== undefined &&
+                    before !== undefined &&
+                    after !== undefined
+                  ? this.buildFusedDeriveBeforeAfter(
+                      entry.handler,
+                      derive,
+                      before,
+                      after,
+                      entry.schema?.query,
+                      entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
+                    )
+                  : this.buildFusedWeb(
+                      entry.handler,
+                      entry.hasDecorations ? entry.decorations : undefined,
+                      isContextlessNoArgArrow(entry.handler),
+                      entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
+                    )
     return {
       ...route,
       entry: {
@@ -3569,6 +3651,464 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (validation.issues !== undefined)
         return this.wrapWebResponse(plainValidationError(validation.issues))
       return runHandler(ctx, validation.value)
+    }
+  }
+
+  /**
+   * Compile a route's `derive + before` lifecycle to a single closure: the per-request walk through
+   * `runSync` → `runHooksSync` is a stack of 3 frames and 2 `Object.assign`s for what is by far the
+   * most common middleware shape (auth/trace/id derivation, an auth/policy `beforeHandle`). Folding
+   * the same steps into one closure hits the same monomorphic inline-cache site as `buildFusedWeb`,
+   * and `Object.assign(ctx, deriveResult)` becomes one extra property write on the context's already
+   * hot hidden class. Behavior is byte-identical to the compiled route program: the same thrown-value
+   * contract (`Response` is control flow, anything else logs + 500), the same `c.set` semantics, the
+   * same `fusedRespond` for the rendered body. The `LifecycleExecutionLane` guarantee
+   * (`schema.params === undefined && schema.headers === undefined && derives === 1 &&
+   * beforeHandle === 1 && afterHandle === 0 && onError === 0 && !hasResponseContract &&
+   * !hasDecorations`) is enforced by `selectRouteLanes`; this lane is selected ONLY when all of those
+   * hold. A `query` schema (the route declares `{ query }` alongside the hooks) is validated FIRST,
+   * mirroring the compiled route program's stage order; the fused builder runs validate → derive →
+   * before → handler in one frame.
+   */
+  private buildFusedDeriveBefore(
+    handler: InternalHandler,
+    derive: RawDerive,
+    before: RawBeforeHandle,
+    querySchema: StandardSchemaV1 | undefined,
+    maxBodyBytes: number,
+  ): FusedWebRunner {
+    const logError = (err: unknown, ctx: RawContext): Response =>
+      this.bareError(
+        err,
+        ctx,
+        (result, set) => this.wrapWebResponse(toResponse(result, set)),
+        this.wrapWebResponse,
+      )
+    return (source, params, search, signal, budget, platform, nativeContext) => {
+      const ctx = nativeContext
+        ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
+        : new RequestContext(
+            source,
+            params,
+            search,
+            signal,
+            budget,
+            platform,
+            maxBodyBytes,
+            this.protoPoisoning,
+          )
+      const runHandler = (): MaybePromise<Response> => {
+        let result: unknown
+        try {
+          result = handler(ctx)
+        } catch (err) {
+          return logError(err, ctx)
+        }
+        if (result instanceof Promise) {
+          return result.then(
+            (value) =>
+              fusedRespond(
+                value,
+                ctx,
+                this.responseBodyTag,
+                this.staticResponseHeaders,
+                this.onResponseHooks.length === 0,
+              ),
+            (err) => logError(err, ctx),
+          )
+        }
+        return fusedRespond(
+          result,
+          ctx,
+          this.responseBodyTag,
+          this.staticResponseHeaders,
+          this.onResponseHooks.length === 0,
+        )
+      }
+      const runBefore = (): MaybePromise<Response> => {
+        let early: unknown
+        try {
+          early = before(ctx)
+        } catch (err) {
+          return logError(err, ctx)
+        }
+        if (early instanceof Promise) {
+          return early.then(
+            (settled) => {
+              if (settled === undefined) return runHandler()
+              return fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders)
+            },
+            (err) => logError(err, ctx),
+          )
+        }
+        if (early === undefined) return runHandler()
+        return fusedRespond(early, ctx, this.responseBodyTag, this.staticResponseHeaders)
+      }
+      const runDerive = (): MaybePromise<Response> => {
+        let derived: unknown
+        try {
+          derived = derive(ctx)
+        } catch (err) {
+          return logError(err, ctx)
+        }
+        if (derived instanceof Promise) {
+          return derived.then(
+            (settled) => {
+              if (isResponseResult(settled) || settled instanceof Response) {
+                return fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders)
+              }
+              Object.assign(ctx, settled as object)
+              return runBefore()
+            },
+            (err) => logError(err, ctx),
+          )
+        }
+        if (isResponseResult(derived) || derived instanceof Response) {
+          return fusedRespond(derived, ctx, this.responseBodyTag, this.staticResponseHeaders)
+        }
+        Object.assign(ctx, derived as object)
+        return runBefore()
+      }
+      if (querySchema === undefined) return runDerive()
+      let validation: MaybePromise<StandardResult<unknown>>
+      try {
+        validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
+      } catch (err) {
+        return logError(err, ctx)
+      }
+      if (validation instanceof Promise) {
+        return validation.then(
+          (settled) => {
+            if (settled.issues !== undefined)
+              return this.wrapWebResponse(plainValidationError(settled.issues))
+            ctx.query = settled.value
+            return runDerive()
+          },
+          (err) => logError(err, ctx),
+        )
+      }
+      if (validation.issues !== undefined)
+        return this.wrapWebResponse(plainValidationError(validation.issues))
+      ctx.query = validation.value
+      return runDerive()
+    }
+  }
+
+  /**
+   * Same shape as `buildFusedDeriveBefore`, plus one `afterHandle` step. The closure runs (validate) →
+   * derive → before → handler → after in one frame, the shape the realistic middleware route lands on
+   * when it also wants a response transform (e.g. attaching a request id to a successful payload's
+   * headers). `LifecycleExecutionLane` and `selectRouteLanes` guarantee `afterHandle === 1`, the
+   * throw contract is the same as the generic program, and the `after` step is the final transform +
+   * respond the generic program already does.
+   */
+  private buildFusedDeriveBeforeAfter(
+    handler: InternalHandler,
+    derive: RawDerive,
+    before: RawBeforeHandle,
+    after: RawAfterHandle,
+    querySchema: StandardSchemaV1 | undefined,
+    maxBodyBytes: number,
+  ): FusedWebRunner {
+    const logError = (err: unknown, ctx: RawContext): Response =>
+      this.bareError(
+        err,
+        ctx,
+        (result, set) => this.wrapWebResponse(toResponse(result, set)),
+        this.wrapWebResponse,
+      )
+    return (source, params, search, signal, budget, platform, nativeContext) => {
+      const ctx = nativeContext
+        ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
+        : new RequestContext(
+            source,
+            params,
+            search,
+            signal,
+            budget,
+            platform,
+            maxBodyBytes,
+            this.protoPoisoning,
+          )
+      const runAfter = (result: unknown): MaybePromise<Response> => {
+        let transformed: unknown
+        try {
+          transformed = after(result, ctx)
+        } catch (err) {
+          return logError(err, ctx)
+        }
+        if (transformed instanceof Promise) {
+          return transformed.then(
+            (value) =>
+              fusedRespond(
+                value,
+                ctx,
+                this.responseBodyTag,
+                this.staticResponseHeaders,
+                this.onResponseHooks.length === 0,
+              ),
+            (err) => logError(err, ctx),
+          )
+        }
+        return fusedRespond(
+          transformed,
+          ctx,
+          this.responseBodyTag,
+          this.staticResponseHeaders,
+          this.onResponseHooks.length === 0,
+        )
+      }
+      const runHandler = (): MaybePromise<Response> => {
+        let result: unknown
+        try {
+          result = handler(ctx)
+        } catch (err) {
+          return logError(err, ctx)
+        }
+        if (result instanceof Promise) {
+          return result.then(
+            (value) => runAfter(value),
+            (err) => logError(err, ctx),
+          )
+        }
+        return runAfter(result)
+      }
+      const runBefore = (): MaybePromise<Response> => {
+        let early: unknown
+        try {
+          early = before(ctx)
+        } catch (err) {
+          return logError(err, ctx)
+        }
+        if (early instanceof Promise) {
+          return early.then(
+            (settled) => {
+              if (settled === undefined) return runHandler()
+              return fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders)
+            },
+            (err) => logError(err, ctx),
+          )
+        }
+        if (early === undefined) return runHandler()
+        return fusedRespond(early, ctx, this.responseBodyTag, this.staticResponseHeaders)
+      }
+      const runDerive = (): MaybePromise<Response> => {
+        let derived: unknown
+        try {
+          derived = derive(ctx)
+        } catch (err) {
+          return logError(err, ctx)
+        }
+        if (derived instanceof Promise) {
+          return derived.then(
+            (settled) => {
+              if (isResponseResult(settled) || settled instanceof Response) {
+                return fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders)
+              }
+              Object.assign(ctx, settled as object)
+              return runBefore()
+            },
+            (err) => logError(err, ctx),
+          )
+        }
+        if (isResponseResult(derived) || derived instanceof Response) {
+          return fusedRespond(derived, ctx, this.responseBodyTag, this.staticResponseHeaders)
+        }
+        Object.assign(ctx, derived as object)
+        return runBefore()
+      }
+      if (querySchema === undefined) return runDerive()
+      let validation: MaybePromise<StandardResult<unknown>>
+      try {
+        validation = querySchema["~standard"].validate(queryObjectOf(ctx[CONTEXT_SEARCH]))
+      } catch (err) {
+        return logError(err, ctx)
+      }
+      if (validation instanceof Promise) {
+        return validation.then(
+          (settled) => {
+            if (settled.issues !== undefined)
+              return this.wrapWebResponse(plainValidationError(settled.issues))
+            ctx.query = settled.value
+            return runDerive()
+          },
+          (err) => logError(err, ctx),
+        )
+      }
+      if (validation.issues !== undefined)
+        return this.wrapWebResponse(plainValidationError(validation.issues))
+      ctx.query = validation.value
+      return runDerive()
+    }
+  }
+
+  /**
+   * Body + lifecycle hooks fused: parse → validate → derive → before → handler → (after) in one
+   * closure, the same win `buildFusedBodyRunner` gives for the no-hooks body shape. The shape is
+   * `lifecycleHookLane` PLUS a body schema with no other validation conflicts; the lane is selected
+   * ONLY when `schema.body !== undefined && schema.query/params/headers === undefined &&
+   * schema.onValidationError === undefined && !defaultOnValidationError && !hasIdempotency &&
+   * !hasLedger && derives === 1 && beforeHandle === 1 && afterHandle <= 1 && onError === 0 &&
+   * !hasResponseContract && !hasDecorations && around === 0`. The same single `querySchema === undefined`
+   * trick used in the no-body lane lets the build path stay simple: a query + body route falls back
+   * to the generic program (this is rare in practice - validated query + validated body is usually a
+   * "search results" route with a middleware chain on top, and the generic lane is fine there).
+   */
+  private buildFusedBodyDeriveBeforeAfter(
+    handler: InternalHandler,
+    derive: RawDerive,
+    before: RawBeforeHandle,
+    after: RawAfterHandle | undefined,
+    bodySchema: StandardSchemaV1,
+    maxBodyBytes: number,
+  ): FusedWebRunner {
+    const logError = (err: unknown, ctx: RawContext): Response =>
+      this.bareError(
+        err,
+        ctx,
+        (result, set) => this.wrapWebResponse(toResponse(result, set)),
+        this.wrapWebResponse,
+      )
+    return (source, params, search, signal, budget, platform, nativeContext) => {
+      const ctx = nativeContext
+        ? RequestContext.native(source, params, search, maxBodyBytes, platform, this.protoPoisoning)
+        : new RequestContext(
+            source,
+            params,
+            search,
+            signal,
+            budget,
+            platform,
+            maxBodyBytes,
+            this.protoPoisoning,
+          )
+      const runHandlerValidated = (): MaybePromise<Response> => {
+        const runAfter = (result: unknown): MaybePromise<Response> => {
+          if (after === undefined) {
+            return fusedRespond(
+              result,
+              ctx,
+              this.responseBodyTag,
+              this.staticResponseHeaders,
+              this.onResponseHooks.length === 0,
+            )
+          }
+          let transformed: unknown
+          try {
+            transformed = after(result, ctx)
+          } catch (err) {
+            return logError(err, ctx)
+          }
+          if (transformed instanceof Promise) {
+            return transformed.then(
+              (value) =>
+                fusedRespond(
+                  value,
+                  ctx,
+                  this.responseBodyTag,
+                  this.staticResponseHeaders,
+                  this.onResponseHooks.length === 0,
+                ),
+              (err) => logError(err, ctx),
+            )
+          }
+          return fusedRespond(
+            transformed,
+            ctx,
+            this.responseBodyTag,
+            this.staticResponseHeaders,
+            this.onResponseHooks.length === 0,
+          )
+        }
+        const runHandler = (): MaybePromise<Response> => {
+          let result: unknown
+          try {
+            result = handler(ctx)
+          } catch (err) {
+            return logError(err, ctx)
+          }
+          if (result instanceof Promise) {
+            return result.then(
+              (value) => runAfter(value),
+              (err) => logError(err, ctx),
+            )
+          }
+          return runAfter(result)
+        }
+        const runBefore = (): MaybePromise<Response> => {
+          let early: unknown
+          try {
+            early = before(ctx)
+          } catch (err) {
+            return logError(err, ctx)
+          }
+          if (early instanceof Promise) {
+            return early.then(
+              (settled) => {
+                if (settled === undefined) return runHandler()
+                return fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders)
+              },
+              (err) => logError(err, ctx),
+            )
+          }
+          if (early === undefined) return runHandler()
+          return fusedRespond(early, ctx, this.responseBodyTag, this.staticResponseHeaders)
+        }
+        let derived: unknown
+        try {
+          derived = derive(ctx)
+        } catch (err) {
+          return logError(err, ctx)
+        }
+        if (derived instanceof Promise) {
+          return derived.then(
+            (settled) => {
+              if (isResponseResult(settled) || settled instanceof Response) {
+                return fusedRespond(settled, ctx, this.responseBodyTag, this.staticResponseHeaders)
+              }
+              Object.assign(ctx, settled as object)
+              return runBefore()
+            },
+            (err) => logError(err, ctx),
+          )
+        }
+        if (isResponseResult(derived) || derived instanceof Response) {
+          return fusedRespond(derived, ctx, this.responseBodyTag, this.staticResponseHeaders)
+        }
+        Object.assign(ctx, derived as object)
+        return runBefore()
+      }
+      const onParsed = (parsed: unknown): MaybePromise<Response> => {
+        let validation: StandardResult<unknown> | Promise<StandardResult<unknown>>
+        try {
+          validation = bodySchema["~standard"].validate(parsed)
+        } catch (err) {
+          return logError(err, ctx)
+        }
+        if (validation instanceof Promise) {
+          return validation.then(
+            (settled) => {
+              if (settled.issues !== undefined)
+                return this.wrapWebResponse(plainValidationError(settled.issues))
+              ctx.body = settled.value
+              return runHandlerValidated()
+            },
+            (err) => logError(err, ctx),
+          )
+        }
+        if (validation.issues !== undefined)
+          return this.wrapWebResponse(plainValidationError(validation.issues))
+        ctx.body = validation.value
+        return runHandlerValidated()
+      }
+      return readBodyFramed(
+        source,
+        maxBodyBytes,
+        this.protoPoisoning,
+        onParsed,
+        (response) => this.wrapWebResponse(response),
+        (err) => Promise.resolve(logError(err, ctx)),
+      ) as MaybePromise<Response>
     }
   }
 
