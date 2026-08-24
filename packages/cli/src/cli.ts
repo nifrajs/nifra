@@ -918,16 +918,57 @@ async function main(): Promise<void> {
 function isMainModule(): boolean {
   if (import.meta.main) return true
   const target = fileURLToPath(import.meta.url)
-  // Bun and Node do not always expose the same entry spelling on Windows. Try both vectors instead of
-  // allowing a malformed/flag-like Bun entry to hide a valid process entry in the Node-compat vector.
-  for (const entry of [Bun.argv[1], process.argv[1]]) {
-    if (entry === undefined) continue
-    try {
-      if (realpathSync(entry) === realpathSync(target)) return true
-    } catch {
-      // A virtual/synthetic entry has no realpath. Do not infer main-ness from an unresolved spelling:
-      // importing the CLI must never start a server just because a caller's argv happens to match it.
+  /**
+   * Bun's `--config`/`--conditions` flags can sit before the script in the child argv. `argv[1]` is
+   * therefore a runtime flag on Bun 1.4/Windows, not the entry module. `Bun.main` is the authoritative
+   * runtime answer when available; the bounded argv fallback covers Bun releases that do not expose it.
+   * Only non-flag entries are considered and every match must resolve to this exact file, so an
+   * unresolved or arbitrary flag can never turn an imported CLI module into a running CLI.
+   */
+  const bunMain = (Bun as unknown as { main?: unknown }).main
+  const argvEntries = (argv: readonly string[]): string[] => {
+    const entries: string[] = []
+    for (const value of argv.slice(1)) {
+      if (value === "--") break
+      if (value.startsWith("-")) continue
+      entries.push(value)
+      // The script is before the user's command/flags. A small bound keeps a caller's arbitrary
+      // arguments from becoming an entry-point probe while covering a config plus a few conditions.
+      if (entries.length === 4) break
     }
+    return entries
+  }
+  const entries = [
+    ...(typeof bunMain === "string" ? [bunMain] : []),
+    ...argvEntries(Bun.argv),
+    ...argvEntries(process.argv),
+  ]
+  const canonical = (value: string): Set<string> => {
+    const paths = new Set<string>()
+    const add = (path: string): void => {
+      const slashed = path
+        .replaceAll("\\", "/")
+        .replace(/^\/\/\?\/UNC\//i, "//")
+        .replace(/^\/\/\?\//, "")
+      paths.add(process.platform === "win32" ? slashed.toLowerCase() : slashed)
+    }
+    try {
+      add(resolve(value))
+    } catch {
+      return paths
+    }
+    for (const resolver of [realpathSync.native, realpathSync]) {
+      try {
+        add(resolver(value))
+      } catch {
+        // A virtual/synthetic argv entry has no realpath; it is not safe evidence of main-ness.
+      }
+    }
+    return paths
+  }
+  const targetPaths = canonical(target)
+  for (const entry of entries) {
+    if (entry !== "" && [...canonical(entry)].some((path) => targetPaths.has(path))) return true
   }
   return false
 }

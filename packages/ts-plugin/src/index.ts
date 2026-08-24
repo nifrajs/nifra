@@ -12,7 +12,7 @@
  * matches with `@nifrajs/core`'s pattern matcher (see ./resolve.ts), so a path resolves to exactly the
  * file it would serve at runtime. The plugin only wires that into `getDefinitionAndBoundSpan`.
  */
-import { existsSync, realpathSync, statSync } from "node:fs"
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { dirname, isAbsolute, join, resolve } from "node:path"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import type * as ts from "typescript"
@@ -47,10 +47,16 @@ function normalizeProgramPath(fileName: string): string {
 
 /** Keep every spelling a filesystem resolver may return; native and portable realpath disagree on
  * some Windows short-name paths, so matching only one of them is still a false negative. */
-function canonicalProgramPaths(fileName: string): readonly string[] {
+function canonicalProgramPaths(tsm: typeof ts, fileName: string): readonly string[] {
   const absolute = resolve(fileName)
   const paths = new Set<string>([normalizeProgramPath(absolute)])
-  for (const resolver of [realpathSync.native, realpathSync]) {
+  const tsmRealpath = tsm.sys.realpath
+  const resolvers = [
+    ...(typeof tsmRealpath === "function" ? [tsmRealpath] : []),
+    realpathSync.native,
+    realpathSync,
+  ]
+  for (const resolver of resolvers) {
     try {
       paths.add(normalizeProgramPath(resolver(absolute)))
     } catch {
@@ -129,10 +135,10 @@ function programSourceFile(
     if (byTypeScriptPath !== undefined) return byTypeScriptPath
   }
 
-  const wanted = new Set(canonicalProgramPaths(fileName))
+  const wanted = new Set(canonicalProgramPaths(tsm, fileName))
   const byPath = program
     .getSourceFiles()
-    .find((source) => canonicalProgramPaths(source.fileName).some((path) => wanted.has(path)))
+    .find((source) => canonicalProgramPaths(tsm, source.fileName).some((path) => wanted.has(path)))
   if (byPath !== undefined) return byPath
 
   const wantedIdentity = filesystemIdentity(fileName)
@@ -170,6 +176,34 @@ function hostSourceFile(
       (typeof getScriptKindFromFileName === "function"
         ? getScriptKindFromFileName(fileName)
         : tsm.ScriptKind.TSX),
+  )
+}
+
+/** Last-resort source overlay for embedders that omit `languageServiceHost` from PluginCreateInfo. */
+function diskSourceFile(
+  tsm: typeof ts,
+  program: ts.Program | undefined,
+  fileName: string,
+): ts.SourceFile | undefined {
+  let text: string
+  try {
+    text = readFileSync(fileName, "utf8")
+  } catch {
+    return undefined
+  }
+  const getScriptKindFromFileName = (
+    tsm as unknown as {
+      getScriptKindFromFileName?: (fileName: string) => ts.ScriptKind
+    }
+  ).getScriptKindFromFileName
+  return tsm.createSourceFile(
+    fileName,
+    text,
+    program?.getCompilerOptions().target ?? tsm.ScriptTarget.Latest,
+    true,
+    typeof getScriptKindFromFileName === "function"
+      ? getScriptKindFromFileName(fileName)
+      : tsm.ScriptKind.TSX,
   )
 }
 
@@ -216,7 +250,9 @@ function routeDefinitionAt(
 ): ts.DefinitionInfoAndBoundSpan | undefined {
   const program = ls.getProgram()
   const source =
-    programSourceFile(tsm, program, fileName) ?? hostSourceFile(tsm, host, program, fileName)
+    programSourceFile(tsm, program, fileName) ??
+    hostSourceFile(tsm, host, program, fileName) ??
+    diskSourceFile(tsm, program, fileName)
   if (source === undefined) return undefined
   const literal = findRoutePathLiteral(tsm, source, position)
   if (literal === undefined) return undefined
@@ -260,7 +296,20 @@ function init(modules: { typescript: typeof ts }): ts.server.PluginModule {
         const member = ls[key]
         writable[key] =
           typeof member === "function"
-            ? (member as (...args: unknown[]) => unknown).bind(ls)
+            ? (...args: unknown[]) => {
+                // TypeScript's public methods generally take the source file name first. Map an
+                // editor's short/long Windows spelling to the Program's own spelling before delegating;
+                // this preserves the real service (and its diagnostics) instead of swallowing a path
+                // mismatch as an empty result.
+                const fileName = args[0]
+                const source =
+                  typeof fileName === "string"
+                    ? programSourceFile(tsm, ls.getProgram(), fileName)
+                    : undefined
+                return (member as (...args: unknown[]) => unknown).apply(ls, [
+                  ...(source === undefined ? args : [source.fileName, ...args.slice(1)]),
+                ])
+              }
             : member
       }
       proxy.getDefinitionAndBoundSpan = (fileName, position) =>
