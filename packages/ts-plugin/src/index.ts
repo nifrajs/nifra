@@ -147,10 +147,11 @@ function programSourceFile(
  * here would make the plugin jump based on stale source while an editor buffer is open. */
 function hostSourceFile(
   tsm: typeof ts,
-  host: ts.LanguageServiceHost,
+  host: ts.LanguageServiceHost | undefined,
   program: ts.Program | undefined,
   fileName: string,
 ): ts.SourceFile | undefined {
+  if (host === undefined) return undefined
   const snapshot = host.getScriptSnapshot(fileName)
   if (snapshot === undefined) return undefined
   const text = snapshot.getText(0, snapshot.getLength())
@@ -209,7 +210,7 @@ export function findRoutePathLiteral(
 function routeDefinitionAt(
   tsm: typeof ts,
   ls: ts.LanguageService,
-  host: ts.LanguageServiceHost,
+  host: ts.LanguageServiceHost | undefined,
   fileName: string,
   position: number,
 ): ts.DefinitionInfoAndBoundSpan | undefined {

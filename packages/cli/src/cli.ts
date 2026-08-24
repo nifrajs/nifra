@@ -9,7 +9,7 @@
  *
  * Bun-only (it runs the framework's TS + Bun plugins directly). The *output* runs anywhere.
  */
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { inProcessClient } from "@nifrajs/client"
@@ -908,9 +908,33 @@ async function main(): Promise<void> {
   else await start(app, flags)
 }
 
+/**
+ * Bun 1.4 on Windows can report `import.meta.main === false` for a module launched after a `--config`
+ * re-exec, even though that module is the process entry. Treat the runtime flag as authoritative when
+ * it is true, but recover from that false negative by comparing the runtime's entry path with this file.
+ * The comparison is deliberately realpath-based so a package-bin symlink is accepted while an imported
+ * copy of the CLI remains inert (tests import `parseFlags` from this module).
+ */
+function isMainModule(): boolean {
+  if (import.meta.main) return true
+  const target = fileURLToPath(import.meta.url)
+  // Bun and Node do not always expose the same entry spelling on Windows. Try both vectors instead of
+  // allowing a malformed/flag-like Bun entry to hide a valid process entry in the Node-compat vector.
+  for (const entry of [Bun.argv[1], process.argv[1]]) {
+    if (entry === undefined) continue
+    try {
+      if (realpathSync(entry) === realpathSync(target)) return true
+    } catch {
+      // A virtual/synthetic entry has no realpath. Do not infer main-ness from an unresolved spelling:
+      // importing the CLI must never start a server just because a caller's argv happens to match it.
+    }
+  }
+  return false
+}
+
 // Only run the CLI when invoked as the entry (`bun cli.ts …`), not when a test imports it for the
-// exported `parseFlags`. `import.meta.main` is true only for the process's entry module.
-if (import.meta.main) {
+// exported `parseFlags`.
+if (isMainModule()) {
   main().catch((err) => {
     console.error(formatCliError(err))
     process.exitCode = 1
