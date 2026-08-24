@@ -11,6 +11,7 @@
  */
 import { existsSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 import { inProcessClient } from "@nifrajs/client"
 import {
   type CreateWebAppOptions,
@@ -312,13 +313,11 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
           // One flag per condition. `--conditions=a,b` is accepted and matches nothing: Bun takes the
           // whole string as a single condition name, so the comma form fails silently.
           ...(app.framework.conditions ?? []).map((condition) => `--conditions=${condition}`),
-          // Use Bun's own argument vector here. `process.argv` is a Node-compatibility surface and
-          // Bun 1.4 on Windows can omit the source entry (or spell it differently) when a Bun
-          // process is re-executed from a process whose stdout is already piped. Without the entry,
-          // the child exits successfully after parsing the runtime flags and never runs this CLI.
-          // Bun.argv is the same vector the command parser below uses and preserves the executable
-          // entry/arguments across runtimes.
-          ...Bun.argv.slice(1),
+          // Reuse the actual loaded module rather than trusting either runtime's reconstructed
+          // `argv[1]` spelling. This also works when a package-bin shim launches the CLI. The command
+          // parser below already proves Bun.argv[2..] is the user argument vector (`dev`, flags, ...).
+          fileURLToPath(import.meta.url),
+          ...Bun.argv.slice(2),
         ],
         {
           // On Windows, inheriting the parent's already-piped stdout/stderr can make a nested Bun

@@ -202,11 +202,25 @@ const toBase64Url = (buf: ArrayBuffer): string => {
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
 }
 
+const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+const BASE64URL_RE = /^[A-Za-z0-9_-]+$/
+
 // Returns `Uint8Array<ArrayBuffer>` (not the generic `Uint8Array<ArrayBufferLike>`) so it satisfies
-// WebCrypto's `BufferSource` parameter under TS 5.7+'s typed-array generics.
+// WebCrypto's `BufferSource` parameter under TS 5.7+'s typed-array generics. Reject non-canonical
+// encodings: base64 decoders otherwise accept alternate final characters whose unused padding bits
+// decode to the same bytes, which lets a visibly changed signed cookie verify as if it were original.
 const fromBase64Url = (s: string): Uint8Array<ArrayBuffer> | null => {
+  if (s.length === 0 || s.length % 4 === 1 || !BASE64URL_RE.test(s)) return null
+  const remainder = s.length % 4
+  const last = BASE64URL_ALPHABET.indexOf(s[s.length - 1]!)
+  // Two or three base64 characters leave four or two unused low bits respectively. The encoder above
+  // always emits those bits as zero; accepting anything else creates a second spelling of the same
+  // byte sequence.
+  if ((remainder === 2 && (last & 0x0f) !== 0) || (remainder === 3 && (last & 0x03) !== 0))
+    return null
   try {
-    const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/"))
+    const padded = s + "=".repeat((4 - remainder) % 4)
+    const bin = atob(padded.replace(/-/g, "+").replace(/_/g, "/"))
     const bytes = new Uint8Array(bin.length)
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
     return bytes

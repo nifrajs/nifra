@@ -142,6 +142,36 @@ function programSourceFile(
     .find((source) => filesystemIdentity(source.fileName) === wantedIdentity)
 }
 
+/** Parse the editor's current snapshot when the Program has canonicalized the on-disk path under a
+ * different spelling. This keeps route navigation correct for unsaved edits too; reading from disk
+ * here would make the plugin jump based on stale source while an editor buffer is open. */
+function hostSourceFile(
+  tsm: typeof ts,
+  host: ts.LanguageServiceHost,
+  program: ts.Program | undefined,
+  fileName: string,
+): ts.SourceFile | undefined {
+  const snapshot = host.getScriptSnapshot(fileName)
+  if (snapshot === undefined) return undefined
+  const text = snapshot.getText(0, snapshot.getLength())
+  const options = program?.getCompilerOptions()
+  const getScriptKindFromFileName = (
+    tsm as unknown as {
+      getScriptKindFromFileName?: (fileName: string) => ts.ScriptKind
+    }
+  ).getScriptKindFromFileName
+  return tsm.createSourceFile(
+    fileName,
+    text,
+    options?.target ?? tsm.ScriptTarget.Latest,
+    true,
+    host.getScriptKind?.(fileName) ??
+      (typeof getScriptKindFromFileName === "function"
+        ? getScriptKindFromFileName(fileName)
+        : tsm.ScriptKind.TSX),
+  )
+}
+
 /** The innermost AST node whose span contains `position`. */
 function innermostNodeAt(
   tsm: typeof ts,
@@ -179,10 +209,13 @@ export function findRoutePathLiteral(
 function routeDefinitionAt(
   tsm: typeof ts,
   ls: ts.LanguageService,
+  host: ts.LanguageServiceHost,
   fileName: string,
   position: number,
 ): ts.DefinitionInfoAndBoundSpan | undefined {
-  const source = programSourceFile(tsm, ls.getProgram(), fileName)
+  const program = ls.getProgram()
+  const source =
+    programSourceFile(tsm, program, fileName) ?? hostSourceFile(tsm, host, program, fileName)
   if (source === undefined) return undefined
   const literal = findRoutePathLiteral(tsm, source, position)
   if (literal === undefined) return undefined
@@ -230,11 +263,17 @@ function init(modules: { typescript: typeof ts }): ts.server.PluginModule {
             : member
       }
       proxy.getDefinitionAndBoundSpan = (fileName, position) =>
-        routeDefinitionAt(tsm, ls, fileName, position) ??
-        ls.getDefinitionAndBoundSpan(
-          programSourceFile(tsm, ls.getProgram(), fileName)?.fileName ?? fileName,
-          position,
-        )
+        routeDefinitionAt(tsm, ls, info.languageServiceHost, fileName, position) ??
+        (() => {
+          // TypeScript throws when handed an editor spelling that is not the Program's canonical file
+          // name (notably an 8.3 Windows alias). Returning no definition is safer than turning a normal
+          // editor request into an exception; every other language-service method remains delegated
+          // unchanged through the proxy above.
+          const source = programSourceFile(tsm, ls.getProgram(), fileName)
+          return source === undefined
+            ? undefined
+            : ls.getDefinitionAndBoundSpan(source.fileName, position)
+        })()
       return proxy
     },
   }

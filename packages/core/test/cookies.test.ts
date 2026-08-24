@@ -194,6 +194,18 @@ describe("signValue / unsignValue", () => {
     expect(await unsignValue(`${value}.!!not-base64!!`, secret)).toBeNull() // bad base64 sig
   })
 
+  test("rejects non-canonical base64url signatures", async () => {
+    const signed = await signValue("v", secret)
+    const [value, sig] = signed.split(".")
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    const last = alphabet.indexOf(sig!.at(-1)!)
+    // HMAC-SHA256 is 32 bytes → the final base64url character has two unused low bits. Flipping one
+    // of them changes the cookie text but not the decoded signature bytes.
+    const alternate = alphabet[last ^ 1]
+    expect(alternate).toBeDefined()
+    expect(await unsignValue(`${value}.${sig!.slice(0, -1)}${alternate}`, secret)).toBeNull()
+  })
+
   test("rotation list: first secret signs, any listed secret verifies", async () => {
     const oldSecret = "old-secret-at-least-32-bytes-ok!!"
     const newSecret = "new-secret-at-least-32-bytes-ok!!"
