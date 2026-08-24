@@ -382,13 +382,19 @@ let db
 self.onmessage = (event) => {
   const { id, filename, sql, type } = event.data
   if (type === "close") {
+    let response
     try {
       db?.close()
       db = undefined
-      self.postMessage({ id, closed: true, ok: true })
+      response = { id, closed: true, ok: true }
     } catch (error) {
-      self.postMessage({ id, closed: true, ok: false, error: String(error) })
+      response = { id, closed: true, ok: false, error: String(error) }
     }
+    // A forced parent-side terminate can leave native SQLite handles locked on Windows even after
+    // close() returns. Let the worker exit its own event turn so the runtime can finish releasing
+    // those handles before the parent considers graceful cleanup complete.
+    self.postMessage(response)
+    self.close()
     return
   }
   try {
@@ -422,7 +428,7 @@ interface PendingQuery {
 
 interface PendingClose {
   readonly id: number
-  resolve(): void
+  resolve(graceful?: boolean): void
 }
 
 const WORKER_CLOSE_TIMEOUT_MS = 1_000
@@ -437,13 +443,18 @@ function workerSession(filename: string): QuerySession {
   let closePromise: Promise<void> | undefined
   let pendingClose: PendingClose | undefined
 
-  const releaseWorker = (active: Worker | undefined = worker): void => {
+  const detachWorker = (active: Worker | undefined = worker): void => {
     if (active === undefined) return
-    active.terminate()
     if (worker !== active) return
     worker = undefined
     if (sourceUrl !== undefined) URL.revokeObjectURL(sourceUrl)
     sourceUrl = undefined
+  }
+
+  const releaseWorker = (active: Worker | undefined = worker): void => {
+    if (active === undefined) return
+    active.terminate()
+    detachWorker(active)
   }
 
   const rejectPending = (error: Error): void => {
@@ -481,7 +492,7 @@ function workerSession(filename: string): QuerySession {
         const closing = pendingClose
         if (closing?.id !== id) return
         pendingClose = undefined
-        closing.resolve()
+        closing.resolve(event.data.ok === true)
         return
       }
       const waiter = pending.get(id)
@@ -543,19 +554,20 @@ function workerSession(filename: string): QuerySession {
           await new Promise<void>((resolve) => {
             const id = ++nextId
             let settled = false
-            const finish = (error?: Error): void => {
+            const finish = (error?: Error, graceful = false): void => {
               if (settled) return
               settled = true
               clearTimeout(timer)
               if (pendingClose?.id === id) pendingClose = undefined
               if (error !== undefined) rejectPending(error)
-              releaseWorker(active)
+              if (graceful) detachWorker(active)
+              else releaseWorker(active)
               resolve()
             }
             const timer = setTimeout(() => {
               finish(new Error("query session is closed"))
             }, WORKER_CLOSE_TIMEOUT_MS)
-            pendingClose = { id, resolve: finish }
+            pendingClose = { id, resolve: (graceful) => finish(undefined, graceful) }
             try {
               active.postMessage({ id, type: "close" })
             } catch {
