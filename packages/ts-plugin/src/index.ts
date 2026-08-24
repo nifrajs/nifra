@@ -61,6 +61,37 @@ function canonicalProgramPaths(fileName: string): readonly string[] {
   return [...paths]
 }
 
+/**
+ * TypeScript keeps an internal, canonical `Path` for every source file. Prefer that lookup when it
+ * is available: unlike a direct string comparison it applies the same case/normalization rules the
+ * Program used while loading the file. This is important on Windows, where the language service can
+ * receive an 8.3 spelling (`RUNNER~1`) while the Program was populated from the long spelling.
+ */
+function typeScriptProgramPath(
+  tsm: typeof ts,
+  program: ts.Program,
+  fileName: string,
+): ts.Path | undefined {
+  const toPath = (
+    tsm as unknown as {
+      toPath?: (
+        fileName: string,
+        currentDirectory: string,
+        getCanonicalFileName: (fileName: string) => string,
+      ) => ts.Path
+    }
+  ).toPath
+  if (typeof toPath !== "function") return undefined
+  const getCanonicalFileName = tsm.sys.useCaseSensitiveFileNames
+    ? (value: string): string => value
+    : (value: string): string => value.toLowerCase()
+  try {
+    return toPath(resolve(fileName), program.getCurrentDirectory(), getCanonicalFileName)
+  } catch {
+    return undefined
+  }
+}
+
 /** Match a real file even when Windows handed the editor an 8.3 alias for the same path. */
 function filesystemIdentity(fileName: string): string | undefined {
   try {
@@ -81,12 +112,23 @@ function filesystemIdentity(fileName: string): string | undefined {
 }
 
 function programSourceFile(
+  tsm: typeof ts,
   program: ts.Program | undefined,
   fileName: string,
 ): ts.SourceFile | undefined {
   if (program === undefined) return undefined
   const direct = program.getSourceFile(fileName)
   if (direct !== undefined) return direct
+
+  // `getSourceFileByPath` is the Program's own canonical lookup. It is deliberately attempted before
+  // the filesystem scans below because an editor may provide a virtual source overlay that has no
+  // stat/realpath identity at all.
+  const programPath = typeScriptProgramPath(tsm, program, fileName)
+  if (programPath !== undefined) {
+    const byTypeScriptPath = program.getSourceFileByPath(programPath)
+    if (byTypeScriptPath !== undefined) return byTypeScriptPath
+  }
+
   const wanted = new Set(canonicalProgramPaths(fileName))
   const byPath = program
     .getSourceFiles()
@@ -140,7 +182,7 @@ function routeDefinitionAt(
   fileName: string,
   position: number,
 ): ts.DefinitionInfoAndBoundSpan | undefined {
-  const source = programSourceFile(ls.getProgram(), fileName)
+  const source = programSourceFile(tsm, ls.getProgram(), fileName)
   if (source === undefined) return undefined
   const literal = findRoutePathLiteral(tsm, source, position)
   if (literal === undefined) return undefined
@@ -190,7 +232,7 @@ function init(modules: { typescript: typeof ts }): ts.server.PluginModule {
       proxy.getDefinitionAndBoundSpan = (fileName, position) =>
         routeDefinitionAt(tsm, ls, fileName, position) ??
         ls.getDefinitionAndBoundSpan(
-          programSourceFile(ls.getProgram(), fileName)?.fileName ?? fileName,
+          programSourceFile(tsm, ls.getProgram(), fileName)?.fileName ?? fileName,
           position,
         )
       return proxy
