@@ -384,7 +384,10 @@ self.onmessage = (event) => {
   if (type === "close") {
     let response
     try {
-      db?.close()
+      // prepare().all() leaves a statement alive until it is finalized or collected. Bun's
+      // default close(false) preserves those statements and can keep the database file locked;
+      // close(true) finalizes every outstanding statement before the worker exits.
+      db?.close(true)
       db = undefined
       response = { id, closed: true, ok: true }
     } catch (error) {
