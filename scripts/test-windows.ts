@@ -28,7 +28,6 @@ const groups: ReadonlyArray<readonly string[]> = [
     "packages/pi/test",
   ],
   [
-    "packages/coding-agent/test",
     "packages/devtools/test",
     "packages/mock/test",
     "packages/prompt/test",
@@ -80,27 +79,46 @@ async function testFilesIn(directories: readonly string[]): Promise<string[]> {
   return files.flat()
 }
 
-async function runBatch(label: string, directories: readonly string[]): Promise<number> {
+async function runBatch(
+  label: string,
+  directories: readonly string[],
+  testArgs: readonly string[] = [],
+): Promise<number> {
   const files = await testFilesIn(directories)
   if (files.length === 0) {
     console.error(`[windows-tests] ${label} resolved no test files`)
     return 1
   }
   console.log(`\n==> Windows Bun test ${label} (${files.length} files)`)
-  const child = spawn(process.execPath, ["run", "scripts/tolerant-test.ts", ...files], {
-    stdio: "inherit",
-    cwd: ROOT,
-  })
+  const child = spawn(
+    process.execPath,
+    ["run", "scripts/tolerant-test.ts", ...files, ...testArgs],
+    {
+      stdio: "inherit",
+      cwd: ROOT,
+    },
+  )
   return await new Promise<number>((resolve) => {
     child.once("error", () => resolve(1))
     child.once("close", (code) => resolve(code ?? 1))
   })
 }
 
-for (const [index, directories] of [
-  ...groups,
-  ["packages/mcp/test", "packages/mcp-db/test", "scripts"],
-].entries()) {
-  const status = await runBatch(`${index + 1}/${groups.length + 1}`, directories)
+const batches: ReadonlyArray<readonly [string, readonly string[]]> = [
+  ...groups.map((directories, index) => [`${index + 1}/4`, directories] as const),
+  ["4/4", ["packages/mcp/test", "packages/mcp-db/test", "scripts"]],
+]
+
+// The isolated extension test launches a second Bun process and is sensitive to Windows runner
+// contention. Keep it covered, but run the package serially with a diagnostic-only timeout budget.
+const codingAgentStatus = await runBatch(
+  "coding-agent (dedicated; serial, 30s timeout)",
+  ["packages/coding-agent/test"],
+  ["--max-concurrency", "1", "--timeout", "30000"],
+)
+if (codingAgentStatus !== 0) process.exit(codingAgentStatus)
+
+for (const [label, directories] of batches) {
+  const status = await runBatch(label, directories)
   if (status !== 0) process.exit(status)
 }
