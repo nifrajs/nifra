@@ -732,7 +732,7 @@ function installReflectionExitHint(): (command: string | undefined) => void {
 }
 
 async function main(): Promise<void> {
-  const { argv: rawArgv, files: envFiles } = takeEnvFileFlags(Bun.argv.slice(2))
+  const { argv: rawArgv, files: envFiles } = takeEnvFileFlags(cliArgv())
   // Applied before any command runs: a reflecting command imports the app on its first await, and the
   // app reads its environment at module scope, so the variables must already be in place by then.
   if (envFiles.length > 0) await applyEnvFiles(process.cwd(), envFiles)
@@ -974,6 +974,42 @@ function isMainModule(): boolean {
 }
 
 /**
+ * Bun 1.4 on Windows can omit the script path from both argv vectors when a TS file is launched by
+ * `Bun.spawn`. The command token is a safe last-resort discriminator: a test importing this module
+ * sees test-file paths and runner flags, not an exact Nifra command, while a direct CLI invocation
+ * has one of the manual or catalogued command names below.
+ */
+function isCliCommandToken(value: string): boolean {
+  return (
+    value === "dev" ||
+    value === "build" ||
+    value === "start" ||
+    value === "mcp" ||
+    value === "init-agents" ||
+    value === "upgrade" ||
+    value === "help" ||
+    value === "--help" ||
+    value === "-h" ||
+    value === "--version" ||
+    value === "-v" ||
+    findCommandSpec(value) !== undefined
+  )
+}
+
+function findCliCommand(values: readonly string[]): number {
+  return values.findIndex((value, index) => index > 0 && isCliCommandToken(value))
+}
+
+function cliArgv(): readonly string[] {
+  const commandIndex = findCliCommand(Bun.argv)
+  return commandIndex >= 0 ? Bun.argv.slice(commandIndex) : Bun.argv.slice(2)
+}
+
+function hasCliCommandToken(): boolean {
+  return findCliCommand(Bun.argv) >= 0 || findCliCommand(process.argv) >= 0
+}
+
+/**
  * Bun 1.4/Windows can load the explicit script after a `--config` re-exec while reporting neither a
  * usable `import.meta.main` nor the script in its public argv vectors. The child still carries the
  * parent-generated launch proof and a positive depth; accepting that narrow marker lets it enter
@@ -993,7 +1029,7 @@ function isBunDevReexecChild(): boolean {
 
 // Only run the CLI when invoked as the entry (`bun cli.ts …`), not when a test imports it for the
 // exported `parseFlags`.
-if (isMainModule() || isBunDevReexecChild()) {
+if (isMainModule() || isBunDevReexecChild() || hasCliCommandToken()) {
   main().catch((err) => {
     console.error(formatCliError(err))
     process.exitCode = 1
