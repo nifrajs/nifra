@@ -82,6 +82,32 @@ Deno.test("stop() drains an in-flight request, then is idempotent", async () => 
   await running.stop() // second call is a no-op (idempotent)
 })
 
+Deno.test("stop() force-closes a handler that outlives the drain deadline", async () => {
+  let resolveStarted: (() => void) | undefined
+  const started = new Promise<void>((resolve) => {
+    resolveStarted = resolve
+  })
+  const app = server().get("/hang", async (c) => {
+    resolveStarted?.()
+    await new Promise<void>((resolve) => {
+      if (c.signal.aborted) {
+        resolve()
+        return
+      }
+      c.signal.addEventListener("abort", resolve, { once: true })
+    })
+    return { done: true }
+  })
+  const running = await serve(app, { port: 0 })
+  const inflight = fetch(`http://localhost:${running.port}/hang`).catch(() => undefined)
+  await started
+  const before = performance.now()
+  await running.stop({ drainMs: 10 })
+  const elapsed = performance.now() - before
+  await inflight
+  assert(elapsed < 1000, `stop should force-close near its deadline, took ${elapsed}ms`)
+})
+
 Deno.test("inherits the app-level requestTimeoutMs (503) through app.fetch", async () => {
   const app = server({ requestTimeoutMs: 40 }).get("/slow", async (c) => {
     // Respect the abort signal so the handler's timer clears on timeout - otherwise

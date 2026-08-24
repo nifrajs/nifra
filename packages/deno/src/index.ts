@@ -96,8 +96,35 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
   // Aborting this signal force-closes the server - used when the drain deadline elapses.
   const controller = new AbortController()
   let closed = false
+  let activeRequests = 0
+  let idleResolvers: Array<() => void> = []
   // Bound once: a plain `{ fetch }` handler leaves this undefined and skips the seam entirely.
   const resolveWs = app.resolveWebSocketUpgrade?.bind(app)
+
+  function beginRequest(): () => void {
+    activeRequests += 1
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      activeRequests -= 1
+      if (activeRequests !== 0) return
+      const resolvers = idleResolvers
+      idleResolvers = []
+      for (const resolve of resolvers) resolve()
+    }
+  }
+
+  function waitForIdle(): Promise<void> {
+    if (activeRequests === 0) return Promise.resolve()
+    return new Promise((resolve) => idleResolvers.push(resolve))
+  }
+
+  function settleRequest<T>(result: T | Promise<T>, release: () => void): T | Promise<T> {
+    if (result instanceof Promise) return result.finally(release)
+    release()
+    return result
+  }
 
   const httpServer = Deno.serve(
     {
@@ -107,6 +134,13 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
       onListen() {}, // suppress Deno's default "Listening on …" banner
     },
     (request, info: { readonly remoteAddr?: { readonly hostname?: string } }) => {
+      // Deno has no separate "stop accepting" primitive: shutdown() starts closing the same
+      // resource that the signal abort listener owns. Calling abort after shutdown began is a
+      // BadResource on current Deno releases, so mark the adapter closed first and reject the tiny
+      // window of requests that can arrive while existing handlers drain. The one abort in stop()
+      // then owns the resource close for every Deno version.
+      if (closed) return serverClosing()
+      const release = beginRequest()
       // WebSocket upgrade for a registered `app.ws()` route → Deno.upgradeWebSocket. The shared
       // resolveWebSocketUpgrade seam runs the route's upgrade() guard; pass falls through to HTTP.
       //
@@ -118,17 +152,21 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
       // 2.8) - i.e. the gate charged every request to save nothing. Calling the seam directly puts
       // the adapter within a few percent of a hand-written `Deno.serve` handler.
       if (resolveWs !== undefined) {
-        let outcome: WsUpgradeOutcome | Promise<WsUpgradeOutcome>
         try {
-          outcome = resolveWs(request)
+          const outcome = resolveWs(request)
+          if (outcome instanceof Promise) {
+            return settleRequest(
+              outcome.then((o) => finishWs(o, request, info)).catch(() => internalError()),
+              release,
+            )
+          }
+          return settleRequest(finishWs(outcome, request, info), release)
         } catch {
+          release()
           return internalError()
         }
-        return outcome instanceof Promise
-          ? outcome.then((o) => finishWs(o, request, info)).catch(() => internalError())
-          : finishWs(outcome, request, info)
       }
-      return runFetch(request, info)
+      return settleRequest(runFetch(request, info), release)
     },
   )
 
@@ -181,16 +219,21 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
       Deno.removeSignalListener("SIGTERM", onSignal)
       Deno.removeSignalListener("SIGINT", onSignal)
     }
-    // shutdown() stops accepting + drains in-flight requests. Race it against drainMs;
-    // if the deadline wins, abort the signal to force-close stragglers.
+    // Do not call httpServer.shutdown() until the application handlers have drained. Deno attaches
+    // shutdown() and the signal to the same underlying resource; once shutdown() starts, aborting
+    // that signal can throw BadResource (and Deno reports the event-listener exception outside this
+    // Promise). If the application drains in time, shutdown() gets to flush the final Responses. If
+    // the deadline wins, the signal is the only close operation and force-closes the stragglers.
+    const timeoutMs = Number.isFinite(drainMs) ? Math.max(0, drainMs) : DEFAULT_DRAIN_MS
     let timer: ReturnType<typeof setTimeout> | undefined
-    const drained = httpServer.shutdown().then(() => true)
-    const deadline = new Promise<boolean>((resolve) => {
-      timer = setTimeout(() => resolve(false), drainMs)
+    const deadline = new Promise<"deadline">((resolve) => {
+      timer = setTimeout(() => resolve("deadline"), timeoutMs)
     })
-    const drainedInTime = await Promise.race([drained, deadline])
+    const drained = waitForIdle().then(() => "drained" as const)
+    const outcome = await Promise.race([drained, deadline])
     if (timer !== undefined) clearTimeout(timer)
-    if (!drainedInTime) controller.abort()
+    if (outcome === "drained") await httpServer.shutdown()
+    else controller.abort()
     await httpServer.finished
   }
 
@@ -212,6 +255,13 @@ function internalError(): Response {
   return new Response('{"ok":false,"error":"internal_error"}', {
     status: 500,
     headers: { "content-type": "application/json" },
+  })
+}
+
+function serverClosing(): Response {
+  return new Response('{"ok":false,"error":"server_closing"}', {
+    status: 503,
+    headers: { connection: "close", "content-type": "application/json" },
   })
 }
 

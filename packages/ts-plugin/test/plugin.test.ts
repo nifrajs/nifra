@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import ts from "typescript"
@@ -74,12 +74,25 @@ writeFileSync(srcPath, appCode)
 
 afterAll(() => rmSync(root, { recursive: true, force: true }))
 
-function makeLanguageService(): ts.LanguageService {
+interface LanguageServiceBundle {
+  readonly service: ts.LanguageService
+  readonly host: ts.LanguageServiceHost
+}
+
+function makeLanguageService(): LanguageServiceBundle {
+  const sameFile = (a: string, b: string): boolean => {
+    if (a.toLowerCase() === b.toLowerCase()) return true
+    try {
+      return realpathSync.native(a).toLowerCase() === realpathSync.native(b).toLowerCase()
+    } catch {
+      return false
+    }
+  }
   const host: ts.LanguageServiceHost = {
     getScriptFileNames: () => [srcPath],
     getScriptVersion: () => "1",
     getScriptSnapshot: (f) =>
-      f.toLowerCase() === srcPath.toLowerCase() ? ts.ScriptSnapshot.fromString(appCode) : undefined,
+      sameFile(f, srcPath) ? ts.ScriptSnapshot.fromString(appCode) : undefined,
     getCurrentDirectory: () => root,
     getCompilationSettings: () => ({ jsx: ts.JsxEmit.ReactJSX, allowJs: true }),
     getDefaultLibFileName: (o) => ts.getDefaultLibFilePath(o),
@@ -89,12 +102,13 @@ function makeLanguageService(): ts.LanguageService {
     directoryExists: ts.sys.directoryExists,
     getDirectories: ts.sys.getDirectories,
   }
-  return ts.createLanguageService(host, ts.createDocumentRegistry())
+  return { service: ts.createLanguageService(host, ts.createDocumentRegistry()), host }
 }
 
-const createProxy = (ls: ts.LanguageService): ts.LanguageService =>
+const createProxy = ({ service, host }: LanguageServiceBundle): ts.LanguageService =>
   plugin({ typescript: ts }).create({
-    languageService: ls,
+    languageService: service,
+    languageServiceHost: host,
   } as unknown as ts.server.PluginCreateInfo)
 
 test("the plugin proxy sends go-to-definition on a route literal to its routes/ file", () => {

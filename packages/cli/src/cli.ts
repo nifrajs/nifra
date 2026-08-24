@@ -973,9 +973,27 @@ function isMainModule(): boolean {
   return false
 }
 
+/**
+ * Bun 1.4/Windows can load the explicit script after a `--config` re-exec while reporting neither a
+ * usable `import.meta.main` nor the script in its public argv vectors. The child still carries the
+ * parent-generated launch proof and a positive depth; accepting that narrow marker lets it enter
+ * `main()`, where `consumeLaunchToken()` remains the fail-closed gate before the configured server can
+ * run. A forged marker only causes the normal token-mismatch relaunch/error path - it cannot bypass the
+ * boundary plugin proof.
+ */
+function isBunDevReexecChild(): boolean {
+  const depth = Number(process.env.NIFRA_BUN_DEV_DEPTH)
+  return (
+    process.env.NIFRA_BUN_DEV_TOKEN !== undefined &&
+    process.env.NIFRA_BUN_DEV_TOKEN !== "" &&
+    Number.isSafeInteger(depth) &&
+    depth > 0
+  )
+}
+
 // Only run the CLI when invoked as the entry (`bun cli.ts …`), not when a test imports it for the
 // exported `parseFlags`.
-if (isMainModule()) {
+if (isMainModule() || isBunDevReexecChild()) {
   main().catch((err) => {
     console.error(formatCliError(err))
     process.exitCode = 1
