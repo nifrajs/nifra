@@ -9,6 +9,8 @@
  * peer). Pass `"dom"` for the client bundle, preload `"ssr"` for the server; a plain
  * `import "./icon.svg"` (asset URL) is untouched - only `?component` matches.
  */
+
+import { normalizeFilePath } from "@nifrajs/web/plugins/kit"
 import { SVG_COMPONENT_FILTER, stripSvgPreamble } from "@nifrajs/web/plugins/svg"
 import type { BunPlugin } from "bun"
 import { compileVue } from "./plugin.ts"
@@ -26,7 +28,7 @@ export function vueSvgComponentBunPlugin(generate: "dom" | "ssr"): BunPlugin {
     name: `nifra-vue-svg-${generate}`,
     setup(build) {
       build.onLoad({ filter: SVG_COMPONENT_FILTER }, async (args) => {
-        const path = args.path.split("?")[0] ?? args.path
+        const path = normalizeFilePath(args.path)
         const xml = await Bun.file(path).text()
         return { contents: compileVue(svgToVueSfc(xml), `${path}.vue`, generate), loader: "js" }
       })

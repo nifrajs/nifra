@@ -8,7 +8,7 @@ import { transformAsync } from "@babel/core"
 // @ts-expect-error - no type declarations published
 import presetTypeScript from "@babel/preset-typescript"
 import type { RenderAdapter } from "@nifrajs/web"
-import { devServerCompile, rewriteSsrImports } from "@nifrajs/web/plugins/kit"
+import { devServerCompile, normalizeFilePath, rewriteSsrImports } from "@nifrajs/web/plugins/kit"
 // @ts-expect-error - no type declarations published
 import presetSolid from "babel-preset-solid"
 import type { BunPlugin } from "bun"
@@ -65,7 +65,7 @@ export function solidBunPlugin(generate: "dom" | "ssr"): BunPlugin {
       // Match `.tsx`, tolerating a `?query` suffix (dev servers append one to bust Bun's import
       // cache); strip it before reading the file off disk.
       build.onLoad({ filter: /\.tsx(\?|$)/ }, async (args) => {
-        const path = args.path.split("?")[0] ?? args.path
+        const path = normalizeFilePath(args.path)
         const source = await Bun.file(path).text()
         const result = await transformAsync(source, {
           filename: path,

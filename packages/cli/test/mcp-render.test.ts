@@ -22,11 +22,14 @@ function spawnRenderWorker(cwd: string): {
   call: (id: number, requests: unknown) => Promise<{ id: number; output: unknown }>
   close: () => Promise<void>
 } {
-  const proc = Bun.spawn(["bun", join(import.meta.dir, "../src/mcp-render.ts"), cwd, "--worker"], {
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-  }) as PipeProc
+  const proc = Bun.spawn(
+    [process.execPath, join(import.meta.dir, "../src/mcp-render.ts"), cwd, "--worker"],
+    {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  ) as PipeProc
   const reader = proc.stdout.getReader()
   const decoder = new TextDecoder()
   let buffer = ""
@@ -70,7 +73,7 @@ function spawnRenderWorker(cwd: string): {
  * dispatcher), which is environment-dependent and not how the tool is ever invoked. Subprocess = faithful.
  */
 async function renderViaSubprocess(cwd: string, requests: unknown): Promise<RenderResult> {
-  const proc = Bun.spawn(["bun", join(import.meta.dir, "../src/mcp-render.ts"), cwd], {
+  const proc = Bun.spawn([process.execPath, join(import.meta.dir, "../src/mcp-render.ts"), cwd], {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",

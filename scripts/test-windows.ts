@@ -114,11 +114,11 @@ const batches: ReadonlyArray<readonly [string, readonly string[]]> = [
 const codingAgentStatus = await runBatch(
   "coding-agent (dedicated; serial, 30s timeout)",
   ["packages/coding-agent/test"],
-  ["--max-concurrency", "1", "--timeout", "30000"],
+  ["--parallel=1", "--max-concurrency=1", "--timeout=30000"],
 )
 if (codingAgentStatus !== 0) process.exit(codingAgentStatus)
 
 for (const [label, directories] of batches) {
-  const status = await runBatch(label, directories)
+  const status = await runBatch(label, directories, ["--parallel=1", "--max-concurrency=1"])
   if (status !== 0) process.exit(status)
 }

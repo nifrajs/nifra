@@ -15,7 +15,24 @@
  * MDX is JSX-oriented, so this targets the JSX family (React/Preact/Solid) via `jsxImportSource`. Needs
  * `@mdx-js/mdx` installed (an optional peer - lazy-loaded at build time only).
  */
+
+import { fileURLToPath } from "node:url"
 import type { BunPlugin } from "bun"
+
+/** Convert Bun's file-URL pathname form (`/D:/…`) into a path the host filesystem can open. */
+function normalizeFilePath(path: string): string {
+  let value = path.split("?", 1)[0] ?? path
+  if (value.startsWith("file://")) {
+    try {
+      value = fileURLToPath(value)
+    } catch {
+      // Let Bun report an invalid path at the actual read boundary.
+    }
+  }
+  if (process.platform !== "win32") return value
+  if (/^\/[A-Za-z]:[\\/]/.test(value)) value = value.slice(1)
+  return value.replaceAll("/", "\\")
+}
 
 export interface MdxPluginOptions {
   /** JSX runtime source the compiled MDX imports from - `"react"` (default), `"preact"`, `"solid-js"`. */
@@ -59,7 +76,7 @@ export function mdxBunPlugin(options: MdxPluginOptions = {}): BunPlugin {
       // Tolerate a `?query` suffix - `nifra dev` (Vite) appends an import-cache-busting query so edited
       // `.mdx` re-SSR; strip it before reading off disk.
       build.onLoad({ filter: /\.mdx(\?|$)/ }, async (args) => {
-        const path = args.path.split("?")[0] ?? args.path
+        const path = normalizeFilePath(args.path)
         const source = await Bun.file(path).text()
         const compiled = await compile(source, {
           jsxImportSource,

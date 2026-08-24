@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { isAbsolute, join } from "node:path"
 import { solidBunPlugin } from "../src/index.ts"
 
 /**
@@ -96,7 +96,7 @@ test("both refresh runtimes resolve from this package, not from the app", async 
 
   const refresh = resolve("solid-refresh")
   expect(refresh).toBeDefined()
-  expect(refresh).toStartWith("/")
+  expect(isAbsolute(refresh as string)).toBe(true)
   expect(refresh).toContain("solid-refresh")
 
   const bridge = resolve("nifra:solid-hot")

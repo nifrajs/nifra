@@ -214,7 +214,10 @@ export async function loadApp(
   // and passes through unchanged.
   let clientModule: string
   if (fw.clientModule.startsWith("./") || fw.clientModule.startsWith("../")) {
-    clientModule = resolve(cwd, fw.clientModule)
+    // The value is embedded in generated import source, not passed directly to a filesystem API.
+    // Keep it absolute but slash-normalized so the generated module is identical on POSIX and
+    // Windows (Bun accepts an absolute drive path with forward slashes).
+    clientModule = resolve(cwd, fw.clientModule).replaceAll("\\", "/")
   } else {
     // A specifier that is neither `./`-relative, scoped (`@…`), nor absolute is read as a BARE PACKAGE
     // specifier - resolved against `node_modules`, not `cwd`. If a real local file sits at that path

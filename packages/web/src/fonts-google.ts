@@ -424,7 +424,9 @@ export async function loadGoogleFont(
     const hash = await contentHash(bytes)
     const style = face.style === "italic" ? "italic" : "normal"
     const fileName = `${slug(family)}-${slug(face.subset)}-${style}-${face.weight.replace(/\s+/g, "_")}-${hash}.woff2`
-    const path = join(io.outDir, fileName)
+    // The injected writer is also a public/test seam. Forward slashes are accepted by Node/Bun on
+    // Windows and keep its observed path stable instead of leaking the host separator.
+    const path = join(io.outDir, fileName).replaceAll("\\", "/")
     await writeFile(path, bytes)
 
     const href = `${publicPath}/${fileName}`

@@ -12,8 +12,8 @@
  * matches with `@nifrajs/core`'s pattern matcher (see ./resolve.ts), so a path resolves to exactly the
  * file it would serve at runtime. The plugin only wires that into `getDefinitionAndBoundSpan`.
  */
-import { existsSync } from "node:fs"
-import { dirname, isAbsolute, join } from "node:path"
+import { existsSync, realpathSync } from "node:fs"
+import { dirname, isAbsolute, join, resolve } from "node:path"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import type * as ts from "typescript"
 import { resolveRouteFile } from "./resolve.ts"
@@ -31,6 +31,33 @@ export function findRoutesDir(
     dir = parent
   }
   return undefined
+}
+
+/**
+ * TypeScript can canonicalize a file through its host while the editor hands the plugin a different
+ * spelling. Windows CI exposes this as the short `RUNNER~1` temp path versus the long path stored in
+ * the Program. Match by filesystem identity before delegating to TypeScript; a failed realpath falls
+ * back to the lexical absolute path so a missing or synthetic file is still handled normally.
+ */
+function canonicalProgramPath(fileName: string): string {
+  const absolute = resolve(fileName)
+  try {
+    const real = realpathSync.native(absolute)
+    return process.platform === "win32" ? real.toLowerCase() : real
+  } catch {
+    return process.platform === "win32" ? absolute.toLowerCase() : absolute
+  }
+}
+
+function programSourceFile(
+  program: ts.Program | undefined,
+  fileName: string,
+): ts.SourceFile | undefined {
+  if (program === undefined) return undefined
+  const direct = program.getSourceFile(fileName)
+  if (direct !== undefined) return direct
+  const wanted = canonicalProgramPath(fileName)
+  return program.getSourceFiles().find((source) => canonicalProgramPath(source.fileName) === wanted)
 }
 
 /** The innermost AST node whose span contains `position`. */
@@ -73,7 +100,7 @@ function routeDefinitionAt(
   fileName: string,
   position: number,
 ): ts.DefinitionInfoAndBoundSpan | undefined {
-  const source = ls.getProgram()?.getSourceFile(fileName)
+  const source = programSourceFile(ls.getProgram(), fileName)
   if (source === undefined) return undefined
   const literal = findRoutePathLiteral(tsm, source, position)
   if (literal === undefined) return undefined
@@ -122,7 +149,10 @@ function init(modules: { typescript: typeof ts }): ts.server.PluginModule {
       }
       proxy.getDefinitionAndBoundSpan = (fileName, position) =>
         routeDefinitionAt(tsm, ls, fileName, position) ??
-        ls.getDefinitionAndBoundSpan(fileName, position)
+        ls.getDefinitionAndBoundSpan(
+          programSourceFile(ls.getProgram(), fileName)?.fileName ?? fileName,
+          position,
+        )
       return proxy
     },
   }

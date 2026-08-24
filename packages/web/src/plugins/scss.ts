@@ -17,7 +17,7 @@ import { dirname } from "node:path"
 import { pathToFileURL } from "node:url"
 import type { BunPlugin } from "bun"
 import { transformCssModule } from "./css-modules.ts"
-import { createStylesheetEmitter, reproduciblePath, requirePeer } from "./kit.ts"
+import { createStylesheetEmitter, normalizeFilePath, reproduciblePath, requirePeer } from "./kit.ts"
 
 const STYLE_NS = "nifra-scss"
 
@@ -65,7 +65,7 @@ export function scssBunPlugin(generate: "dom" | "ssr", options: ScssPluginOption
       }
 
       build.onLoad({ filter: /\.s[ac]ss(\?|$)/ }, async (args) => {
-        const path = args.path.split("?")[0] ?? args.path
+        const path = normalizeFilePath(args.path)
         const source = await Bun.file(path).text()
         const sass = await getCompiler()
         let css: string

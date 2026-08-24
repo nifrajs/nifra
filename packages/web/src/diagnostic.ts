@@ -13,6 +13,7 @@
  */
 import { readFileSync, realpathSync } from "node:fs"
 import { isAbsolute, relative, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 
 /** Shared endpoint name used by both dev pipelines and the agent-facing MCP tools. */
 export const LAST_ERROR_PATH = "/__nifra/last-error"
@@ -71,7 +72,13 @@ function cleanFramePath(path: string): string | undefined {
   let p = path.trim()
   if (p.startsWith("file://")) {
     try {
-      p = decodeURIComponent(new URL(p).pathname)
+      const url = new URL(p)
+      const pathname = decodeURIComponent(url.pathname)
+      // Keep synthetic POSIX paths such as file:///app/... stable for injected readers and unit
+      // fixtures. A drive-qualified or UNC URL, however, needs Node's native conversion on Windows;
+      // using URL.pathname there leaves the leading slash (`/C:/…`) and makes the filesystem look in
+      // the wrong directory.
+      p = url.hostname !== "" || /^\/[A-Za-z]:[\\/]/.test(pathname) ? fileURLToPath(url) : pathname
     } catch {
       return undefined
     }
@@ -259,7 +266,12 @@ export function buildDiagnostic(err: unknown, options: BuildDiagnosticOptions = 
   const top = topUserFrame(frames, root)
   const codeframe =
     top?.file !== undefined && top.line !== undefined
-      ? buildCodeframe(canonicalPath(top.file), top.line, top.column, options.read)
+      ? buildCodeframe(
+          options.read === undefined ? canonicalPath(top.file) : top.file,
+          top.line,
+          top.column,
+          options.read,
+        )
       : undefined
   const { code, cause, fix, docsAnchor } = classify(error.name || "Error", message)
   return {

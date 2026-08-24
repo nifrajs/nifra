@@ -288,7 +288,7 @@ describe("CLI dispatch (subprocess)", () => {
   const CLI = join(import.meta.dir, "../src/cli.ts")
   test("`nifra init-agents` runs in the cwd, writes the files, exits 0", async () => {
     const dir = await freshDir()
-    const proc = Bun.spawn(["bun", CLI, "init-agents"], {
+    const proc = Bun.spawn([process.execPath, CLI, "init-agents"], {
       cwd: dir,
       stdout: "pipe",
       stderr: "pipe",
@@ -301,7 +301,7 @@ describe("CLI dispatch (subprocess)", () => {
   })
 
   test("`nifra init-agents` appears in --help", async () => {
-    const proc = Bun.spawn(["bun", CLI, "--help"], { stdout: "pipe", stderr: "pipe" })
+    const proc = Bun.spawn([process.execPath, CLI, "--help"], { stdout: "pipe", stderr: "pipe" })
     const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
     expect(code).toBe(0)
     expect(stdout).toContain("nifra init-agents")

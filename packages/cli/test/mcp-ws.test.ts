@@ -85,7 +85,7 @@ describe("runWebSocket (nifra_ws engine)", () => {
 
   test("child entry emits parseable JSON for the MCP subprocess", async () => {
     await withBackend(async (cwd) => {
-      const proc = Bun.spawn(["bun", join(import.meta.dir, "../src/mcp-ws.ts"), cwd], {
+      const proc = Bun.spawn([process.execPath, join(import.meta.dir, "../src/mcp-ws.ts"), cwd], {
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",

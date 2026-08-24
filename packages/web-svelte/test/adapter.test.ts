@@ -31,7 +31,7 @@ test("svelteAdapter conforms under the real SSR plugin", async () => {
     if (svelteAdapter.hydrationHead() !== "") throw new Error("unexpected hydration head");
   `
 
-  const proc = Bun.spawn(["bun", "--eval", code], { stdout: "pipe", stderr: "pipe" })
+  const proc = Bun.spawn([process.execPath, "--eval", code], { stdout: "pipe", stderr: "pipe" })
   const [stdout, stderr, codeResult] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -60,7 +60,7 @@ test("the adapter can be imported BEFORE the SSR plugin is registered", async ()
     });
     if (!/data-search[^>]*>2</.test(html)) throw new Error("late plugin registration lost: " + html);
   `
-  const proc = Bun.spawn(["bun", "--eval", code], { stdout: "pipe", stderr: "pipe" })
+  const proc = Bun.spawn([process.execPath, "--eval", code], { stdout: "pipe", stderr: "pipe" })
   const [stdout, stderr, codeResult] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -86,7 +86,7 @@ test("useSearch reads the route's search from Chain's context (SSR-correct)", as
     });
     if (!/data-search[^>]*>2</.test(html)) throw new Error("useSearch did not read search; got: " + html);
   `
-  const proc = Bun.spawn(["bun", "--eval", code], { stdout: "pipe", stderr: "pipe" })
+  const proc = Bun.spawn([process.execPath, "--eval", code], { stdout: "pipe", stderr: "pipe" })
   const [stdout, stderr, codeResult] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),

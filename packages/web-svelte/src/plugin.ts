@@ -1,4 +1,10 @@
-import { devHotComponent, devServerCompile, rewriteSsrImports } from "@nifrajs/web/plugins/kit"
+import {
+  devHotComponent,
+  devServerCompile,
+  normalizeFilePath,
+  portablePath,
+  rewriteSsrImports,
+} from "@nifrajs/web/plugins/kit"
 import type { BunPlugin } from "bun"
 import { compile } from "svelte/compiler"
 
@@ -53,7 +59,7 @@ export function svelteBunPlugin(generate: "dom" | "ssr"): BunPlugin {
       // Match `.svelte`, tolerating a `?query` suffix (dev servers append one to bust Bun's import
       // cache); strip it before reading the file off disk.
       build.onLoad({ filter: /\.svelte(\?|$)/ }, async (args) => {
-        const path = args.path.split("?")[0] ?? args.path
+        const path = normalizeFilePath(args.path)
         const source = await Bun.file(path).text()
         // Per compile, not per registration: the CLI registers the SSR plugin before the dev server
         // exists, and the flag is set by the dev server.
@@ -86,10 +92,10 @@ export function svelteBunPlugin(generate: "dom" | "ssr"): BunPlugin {
           hmr: dev && generate === "dom" && devHotComponent(path),
         })
         if (generate === "dom" && css?.code) {
-          cssByPath.set(path, css.code)
+          cssByPath.set(portablePath(path), css.code)
           // Import the virtual style module so the bundler pulls the scoped CSS into the app stylesheet.
           return {
-            contents: `${js.code}\nimport ${JSON.stringify(path + STYLE_SUFFIX)}\n`,
+            contents: `${js.code}\nimport ${JSON.stringify(portablePath(path) + STYLE_SUFFIX)}\n`,
             loader: "js",
           }
         }
@@ -101,7 +107,7 @@ export function svelteBunPlugin(generate: "dom" | "ssr"): BunPlugin {
         namespace: STYLE_NS,
       }))
       build.onLoad({ filter: /.*/, namespace: STYLE_NS }, (args) => ({
-        contents: cssByPath.get(args.path.slice(0, -STYLE_SUFFIX.length)) ?? "",
+        contents: cssByPath.get(portablePath(args.path.slice(0, -STYLE_SUFFIX.length))) ?? "",
         loader: "css",
       }))
     },

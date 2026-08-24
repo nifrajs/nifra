@@ -8363,7 +8363,7 @@
     "name": "IsolatedExtensionWorker",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
-    "signature": "export declare class IsolatedExtensionWorker {\n    private readonly options;\n    private process;\n    private readonly pending;\n    private readonly tools;\n    private readonly commands;\n    private readonly events;\n    private buffer;\n    private started;\n    private closed;\n    private readyResolve;\n    private readyReject;\n    private readonly ready;\n    constructor(options: IsolatedExtensionWorkerOptions);\n    start(): Promise<IsolatedExtensionSnapshot>;\n    get snapshot(): IsolatedExtensionSnapshot;\n    invokeTool(name: string, input: unknown): Promise<unknown>;\n    close(): Promise<void>;\n    private write;\n    private readOutput;\n    private readErrors;\n    private consume;\n    private handle;\n    private fail;\n}",
+    "signature": "export declare class IsolatedExtensionWorker {\n    private readonly options;\n    private process;\n    private readonly pending;\n    private readonly tools;\n    private readonly commands;\n    private readonly events;\n    private buffer;\n    private readonly token;\n    private port;\n    private started;\n    private closed;\n    private readyResolve;\n    private readyReject;\n    private readonly ready;\n    constructor(options: IsolatedExtensionWorkerOptions);\n    start(): Promise<IsolatedExtensionSnapshot>;\n    get snapshot(): IsolatedExtensionSnapshot;\n    invokeTool(name: string, input: unknown): Promise<unknown>;\n    close(): Promise<void>;\n    private sendInvoke;\n    private readOutput;\n    private readErrors;\n    private consume;\n    private handle;\n    private fail;\n}",
     "doc": "/**\n * Optional process-backed extension runner. A worker crash rejects callers instead of taking down\n * the host. It is intentionally not advertised as a hostile-code sandbox: use an OS sandbox and a\n * capability decision before loading code you do not trust.\n */"
   },
   {
@@ -10800,6 +10800,13 @@
     "doc": "/** Validate, copy, and freeze token-only effect metadata before it reaches a ledger or policy hook. */"
   },
   {
+    "name": "normalizeFilePath",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function normalizeFilePath(path: string): string;",
+    "doc": "/**\n * Convert a plugin/runtime path into a path the host filesystem can open.\n *\n * Bun and URL-based test/build APIs can hand a Windows path to a plugin as `/D:/…` (the\n * `pathname` form of a file URL). Node's filesystem APIs correctly treat the native form as\n * `D:\\…`, but do not reinterpret that URL pathname. Keep this conversion at the boundary so\n * generated module specifiers can remain slash-normalized without making filesystem reads\n * platform-dependent.\n */"
+  },
+  {
     "name": "normalizeRolldownPlugins",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -11713,6 +11720,13 @@
     "package": "@nifrajs/env",
     "signature": "export declare function port(opts?: Base<number>): StandardSchemaV1<number>;",
     "doc": "/** A TCP port: an integer in 1-65535. */"
+  },
+  {
+    "name": "portablePath",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function portablePath(path: string): string;",
+    "doc": "/** A stable slash-separated path for generated imports, virtual module IDs, and diagnostics. */"
   },
   {
     "name": "postcssBunPlugin",

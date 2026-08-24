@@ -35,7 +35,11 @@ async function capture(cwd: string, run: () => Promise<unknown>): Promise<string
   } finally {
     console.log = original
   }
-  return lines.join("\n").split(cwd).join("<cwd>")
+  let output = lines.join("\n").split(cwd).join("<cwd>")
+  // Normalize only the separator immediately after the redacted absolute path. Replacing every
+  // backslash corrupts JSON output (`\"` becomes `/\"`, and `\n` becomes `/n`).
+  if (cwd.includes("\\")) output = output.replaceAll(/(<cwd>)\\/g, "$1/")
+  return output
 }
 
 const PAY_BACKEND = [

@@ -1,6 +1,8 @@
 import {
   devServerCompile,
   hash8,
+  normalizeFilePath,
+  portablePath,
   reproduciblePath,
   rewriteSsrImports,
 } from "@nifrajs/web/plugins/kit"
@@ -187,7 +189,7 @@ export function vueBunPlugin(generate: "dom" | "ssr"): BunPlugin {
     setup(build) {
       // Match `.vue`, tolerating a `?query` suffix (dev servers append one to bust Bun's import cache).
       build.onLoad({ filter: /\.vue(\?|$)/ }, async (args) => {
-        const path = args.path.split("?")[0] ?? args.path
+        const path = normalizeFilePath(args.path)
         const source = await Bun.file(path).text()
         // `ts`, not `js`: `@vue/compiler-sfc` leaves TS syntax (a `lang="ts"` script's types) for the
         // bundler to strip. The `ts` loader handles both TS and plain-JS SFC output (TS ⊃ JS).
@@ -195,9 +197,9 @@ export function vueBunPlugin(generate: "dom" | "ssr"): BunPlugin {
         if (generate === "dom") {
           const css = compileVueStyles(source, path)
           if (css.length > 0) {
-            cssByPath.set(path, css)
+            cssByPath.set(portablePath(path), css)
             return {
-              contents: `${js}\nimport ${JSON.stringify(path + STYLE_SUFFIX)}\n`,
+              contents: `${js}\nimport ${JSON.stringify(portablePath(path) + STYLE_SUFFIX)}\n`,
               loader: "ts",
             }
           }
@@ -210,7 +212,7 @@ export function vueBunPlugin(generate: "dom" | "ssr"): BunPlugin {
         namespace: STYLE_NS,
       }))
       build.onLoad({ filter: /.*/, namespace: STYLE_NS }, (args) => ({
-        contents: cssByPath.get(args.path.slice(0, -STYLE_SUFFIX.length)) ?? "",
+        contents: cssByPath.get(portablePath(args.path.slice(0, -STYLE_SUFFIX.length))) ?? "",
         loader: "css",
       }))
     },

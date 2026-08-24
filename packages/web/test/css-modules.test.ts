@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { cssModulesBunPlugin, transformCssModule } from "../src/plugins/css-modules.ts"
+import { portablePath } from "../src/plugins/kit.ts"
 
 type LoadCb = (args: {
   path: string
@@ -319,7 +320,7 @@ describe("cssModulesBunPlugin - wiring + SSR/dom parity", () => {
     const out = await (cssModuleLoad as LoadCb)({ path: `${fixture}?v=1` }) // ?query stripped before read
     expect(out.loader).toBe("js")
     expect(out.contents).toContain("export default")
-    expect(out.contents).toContain(`${fixture}${"?nifra-css-module"}`)
+    expect(out.contents).toContain(`${portablePath(fixture)}${"?nifra-css-module"}`)
 
     // The resolver routes the virtual specifier into the namespace; the namespaced loader returns CSS.
     const resolved = (cssResolve as ResolveCb)({ path: `${fixture}?nifra-css-module` })

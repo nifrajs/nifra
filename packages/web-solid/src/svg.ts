@@ -11,6 +11,7 @@
 import { transformAsync } from "@babel/core"
 // @ts-expect-error - no type declarations published
 import presetTypeScript from "@babel/preset-typescript"
+import { normalizeFilePath } from "@nifrajs/web/plugins/kit"
 import { SVG_COMPONENT_FILTER, svgComponentSource } from "@nifrajs/web/plugins/svg"
 // @ts-expect-error - no type declarations published
 import presetSolid from "babel-preset-solid"
@@ -23,7 +24,7 @@ export function solidSvgComponentBunPlugin(generate: "dom" | "ssr"): BunPlugin {
     name: `nifra-solid-svg-${generate}`,
     setup(build) {
       build.onLoad({ filter: SVG_COMPONENT_FILTER }, async (args) => {
-        const path = args.path.split("?")[0] ?? args.path
+        const path = normalizeFilePath(args.path)
         const xml = await Bun.file(path).text()
         // Solid uses `class`; emit the component JSX, then run the Solid + TS babel passes.
         const source = svgComponentSource(xml, { classProp: "class" })

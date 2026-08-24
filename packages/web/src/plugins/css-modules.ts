@@ -20,7 +20,7 @@
  * Not handled: the bare `:global`/`:local` *switch* form and `composes:` - out of scope by design.
  */
 import type { BunPlugin } from "bun"
-import { createStylesheetEmitter, hash8, reproduciblePath } from "./kit.ts"
+import { createStylesheetEmitter, hash8, normalizeFilePath, reproduciblePath } from "./kit.ts"
 
 const STYLE_NS = "nifra-css-module"
 
@@ -425,7 +425,7 @@ export function cssModulesBunPlugin(generate: "dom" | "ssr"): BunPlugin {
     setup(build) {
       const stylesheet = createStylesheetEmitter(build, STYLE_NS)
       build.onLoad({ filter: /\.module\.css(\?|$)/ }, async (args) => {
-        const path = args.path.split("?")[0] ?? args.path
+        const path = normalizeFilePath(args.path)
         const source = await Bun.file(path).text()
         // Hash scoped names off the cwd-relative path so they're reproducible across machines/CI.
         const { exports, css } = transformCssModule(source, reproduciblePath(path))

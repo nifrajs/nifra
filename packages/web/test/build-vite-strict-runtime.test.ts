@@ -170,11 +170,12 @@ test("nothing imports vite except the shared, guarded importer", async () => {
   const srcDir = join(import.meta.dir, "..", "src")
   const offenders: string[] = []
   for await (const rel of new Bun.Glob("**/*.ts").scan({ cwd: srcDir, dot: false })) {
-    if (rel === join("internal", "vite-import.ts").replaceAll("\\", "/")) continue
+    const portableRel = rel.replaceAll("\\", "/")
+    if (portableRel === "internal/vite-import.ts") continue
     const text = await Bun.file(join(srcDir, rel)).text()
     // Strip line comments so the prose warning next to the dev server's call does not self-report.
     const code = text.replaceAll(/^[\t ]*\/\/.*$/gm, "")
-    if (/\bimport\(\s*["']vite["']\s*\)/.test(code)) offenders.push(rel)
+    if (/\bimport\(\s*["']vite["']\s*\)/.test(code)) offenders.push(portableRel)
   }
   expect(offenders).toEqual([])
 })

@@ -18,7 +18,7 @@
  */
 import type { BunPlugin } from "bun"
 import { transformCssModule } from "./css-modules.ts"
-import { createStylesheetEmitter, reproduciblePath, requirePeer } from "./kit.ts"
+import { createStylesheetEmitter, normalizeFilePath, reproduciblePath, requirePeer } from "./kit.ts"
 
 const STYLE_NS = "nifra-postcss"
 
@@ -93,7 +93,7 @@ export function postcssBunPlugin(
       }
 
       build.onLoad({ filter: CSS_FILTER }, async (args) => {
-        const path = args.path.split("?")[0] ?? args.path
+        const path = normalizeFilePath(args.path)
         const source = await Bun.file(path).text()
         const postcss = await getProcessor()
         const plugins = await getPlugins()

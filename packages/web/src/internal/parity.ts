@@ -8,7 +8,7 @@
 
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs"
 import { lstat, realpath, stat } from "node:fs/promises"
-import { dirname, join, relative, resolve, sep } from "node:path"
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import {
   matchesSingleCopyDeclaration,
   readSingleCopyDeclaration,
@@ -332,8 +332,31 @@ const pathExists = (path: string): Promise<boolean> =>
     () => false,
   )
 
-const pathInside = (root: string, path: string): boolean =>
-  path === root || path.startsWith(root.endsWith(sep) ? root : `${root}${sep}`)
+/** The real path, or the input when it cannot be resolved. Roots are compared against each other and
+ * printed side by side, so they have to be normalized the same way (`/var` vs `/private/var`). */
+const realpathOrSelf = (path: string): string => {
+  try {
+    return realpathSync(path)
+  } catch {
+    return path
+  }
+}
+
+/** Canonical comparison form for containment. Windows paths are case-insensitive and CI can expose
+ * the same directory once through a short name (`RUNNER~1`) and once through its long name. */
+const comparisonPath = (path: string): string => {
+  const resolved = realpathOrSelf(resolve(path))
+  const native = resolved.replaceAll("/", sep)
+  return process.platform === "win32" ? native.toLowerCase() : native
+}
+
+const pathInside = (root: string, path: string): boolean => {
+  const distance = relative(comparisonPath(root), comparisonPath(path))
+  return (
+    distance === "" ||
+    (distance !== ".." && !distance.startsWith(`..${sep}`) && !isAbsolute(distance))
+  )
+}
 
 const workspaceContains = async (
   root: string,
@@ -346,25 +369,10 @@ const workspaceContains = async (
     for await (const match of new Bun.Glob(packagePattern).scan({ cwd: root, dot: false })) {
       if (match.split(/[\\/]/).includes("node_modules")) continue
       const packageRoot = resolve(root, dirname(match))
-      const targetRelative = relative(packageRoot, target)
-      if (
-        targetRelative === "" ||
-        (!targetRelative.startsWith(`..${sep}`) && targetRelative !== "..")
-      )
-        return true
+      if (pathInside(packageRoot, target)) return true
     }
   }
   return false
-}
-
-/** The real path, or the input when it cannot be resolved. Roots are compared against each other and
- * printed side by side, so they have to be normalized the same way (`/var` vs `/private/var`). */
-const realpathOrSelf = (path: string): string => {
-  try {
-    return realpathSync(path)
-  } catch {
-    return path
-  }
 }
 
 /** Resolve the workspace root once, even when the caller starts in a workspace package. */
@@ -505,7 +513,7 @@ const linkedPackageRoots = async (
 
 export const displayPath = (cwd: string, path: string): string => {
   const rel = relative(cwd, path)
-  return rel === "" ? "." : rel
+  return rel === "" ? "." : rel.replaceAll("\\", "/")
 }
 
 /**

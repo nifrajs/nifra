@@ -397,7 +397,7 @@ describe("runMcpServer root gating over stdio", () => {
     expect_: number[],
     onServerRequest?: (req: { id: unknown; method: string }) => object[] | undefined,
   ): Promise<Record<number, unknown>> => {
-    const proc = Bun.spawn(["bun", join(import.meta.dir, "../src/cli.ts"), "mcp"], {
+    const proc = Bun.spawn([process.execPath, join(import.meta.dir, "../src/cli.ts"), "mcp"], {
       cwd: dir,
       stdin: "pipe",
       stdout: "pipe",
@@ -439,6 +439,7 @@ describe("runMcpServer root gating over stdio", () => {
     } finally {
       reader.cancel().catch(() => {})
       proc.kill()
+      await proc.exited.catch(() => 0)
     }
     return byId
   }

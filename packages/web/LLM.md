@@ -29,7 +29,7 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 - **buildClientVite** _(function)_ - `buildClientVite: (options: BuildClientViteOptions) => Promise<BuildManifest>` · from `@nifrajs/web/build-vite`
 - **buildCodeframe** _(function)_ - `buildCodeframe: (file: string, line: number, column: number | undefined, read?: SourceReader, radius?: number) => Codeframe | undefined` · from `@nifrajs/web/diagnostic`
 
-_…and 386 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 388 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 

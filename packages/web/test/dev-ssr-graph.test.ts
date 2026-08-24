@@ -1,7 +1,8 @@
 import { afterAll, expect, test } from "bun:test"
 import { mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs"
+import { pathToFileURL } from "node:url"
 import { createDevServer } from "../src/dev.ts"
-import { createSsrGraph } from "../src/dev-ssr-graph.ts"
+import { createSsrGraph, rewriteSsrImports } from "../src/dev-ssr-graph.ts"
 
 // The bug these pin: on the Bun pipeline the route-level `?v=` query reloads the ROUTE module and
 // nothing under it, so a component or helper edit left SSR rendering the code that was on disk when the
@@ -54,6 +55,30 @@ test("an edit below the entry re-evaluates that module and everything importing 
   expect(graph.sweep()).toBe(false)
   expect(graph.generation()).toBe(1)
   graph.dispose()
+})
+
+test("the SSR graph accepts file URLs and Windows URL-path spellings", () => {
+  const dir = `${root}/normalization`
+  mkdirSync(dir, { recursive: true })
+  const graph = createSsrGraph({ root: dir })
+  try {
+    expect(rewriteSsrImports("const value = 1", pathToFileURL(`${dir}/entry.ts`).href, "ssr")).toBe(
+      "const value = 1",
+    )
+    expect(rewriteSsrImports("const value = 1", "file://%", "ssr")).toBe("const value = 1")
+
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!
+    Object.defineProperty(process, "platform", { value: "win32" })
+    try {
+      expect(rewriteSsrImports("const value = 1", "/C:/nifra-missing/entry.ts", "ssr")).toBe(
+        "const value = 1",
+      )
+    } finally {
+      Object.defineProperty(process, "platform", platform)
+    }
+  } finally {
+    graph.dispose()
+  }
 })
 
 test("a dev-server page render picks up a component edit without a restart", async () => {

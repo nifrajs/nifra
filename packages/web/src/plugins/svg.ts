@@ -16,7 +16,7 @@
  * `style="..."` into an object, and drops XML declarations/comments so the result is valid JSX.
  */
 import type { BunPlugin } from "bun"
-import { requirePeer } from "./kit.ts"
+import { normalizeFilePath, requirePeer } from "./kit.ts"
 
 /** The subset of the `svgo` API this plugin uses (structural, so no hard dependency on its types). */
 export interface SvgOptimizer {
@@ -168,7 +168,7 @@ export function svgComponentBunPlugin(
       }
 
       build.onLoad({ filter: SVG_FILTER }, async (args) => {
-        const path = args.path.split("?")[0] ?? args.path
+        const path = normalizeFilePath(args.path)
         let xml = await Bun.file(path).text()
         const svgo = await getOptimizer()
         if (svgo !== undefined) {

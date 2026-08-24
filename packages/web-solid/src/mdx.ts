@@ -9,7 +9,7 @@
 import { transformAsync } from "@babel/core"
 // @ts-expect-error - no type declarations published
 import presetTypeScript from "@babel/preset-typescript"
-import { rewriteSsrImports } from "@nifrajs/web/plugins/kit"
+import { normalizeFilePath, rewriteSsrImports } from "@nifrajs/web/plugins/kit"
 // @ts-expect-error - no type declarations published
 import presetSolid from "babel-preset-solid"
 import type { BunPlugin } from "bun"
@@ -36,7 +36,7 @@ export function solidMdxBunPlugin(generate: "dom" | "ssr"): BunPlugin {
         )
       }
       build.onLoad({ filter: /\.mdx(\?|$)/ }, async (args) => {
-        const path = args.path.split("?")[0] ?? args.path
+        const path = normalizeFilePath(args.path)
         // 1. MDX → JSX, with intrinsics provided by the Solid runtime (rendered via `<Dynamic>`).
         const jsx = String(
           await compile(await Bun.file(path).text(), {

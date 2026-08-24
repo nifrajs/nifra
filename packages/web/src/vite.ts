@@ -16,7 +16,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http"
-import { relative, resolve as resolvePath } from "node:path"
+import { isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path"
 import { createDevDiagnostics } from "./dev-diagnostics.ts"
 import { listenOrExplain } from "./dev-port.ts"
 import { discoverRoutes } from "./fs.ts"
@@ -31,7 +31,13 @@ import {
 import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
 import { importVite } from "./internal/vite-import.ts"
 import { scopedName } from "./plugins/css-modules.ts"
-import { DEV_ROOT_ENV, DEV_ROUTES_ENV, reproduciblePath } from "./plugins/kit.ts"
+import {
+  DEV_ROOT_ENV,
+  DEV_ROUTES_ENV,
+  normalizeFilePath,
+  portablePath,
+  reproduciblePath,
+} from "./plugins/kit.ts"
 import { viteServerFnStub } from "./plugins/vite-server-fn.ts"
 import { viteServerOnlyEmpty } from "./plugins/vite-server-only.ts"
 
@@ -138,6 +144,19 @@ export { LAST_ERROR_PATH } from "./diagnostic.ts"
 
 // The codegen'd client entry is written here (at the Vite root) so Vite serves + HMRs it.
 const DEV_ENTRY = ".nifra-vite-entry.tsx"
+
+/** Candidate spellings for Vite's module-graph map. Vite has used native and slash-normalized
+ * absolute Windows paths across versions, while watcher events can additionally arrive as a file URL. */
+const modulePathCandidates = (path: string): string[] => {
+  const native = normalizeFilePath(path)
+  const portable = portablePath(path)
+  return [...new Set([path, native, portable])]
+}
+
+const pathInside = (root: string, path: string): boolean => {
+  const rel = relative(resolvePath(root), resolvePath(normalizeFilePath(path)))
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
+}
 
 const readNodeBody = async (req: IncomingMessage): Promise<Buffer | undefined> => {
   if (req.method === "GET" || req.method === "HEAD") return undefined
@@ -344,7 +363,8 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   process.env[DEV_ROUTES_ENV] = routesDir
 
   // Codegen the client entry with Vite-servable, root-relative specifiers (e.g. `/routes/index.tsx`).
-  const toUrl = (file: string): string => `/${relative(root, `${routesDir}/${file}`)}`
+  const toUrl = (file: string): string =>
+    `/${relative(root, join(routesDir, file)).replaceAll("\\", "/")}`
   const writeClientEntry = (): void => {
     const manifest = discoverRoutes(routesDir)
     writeFileSync(
@@ -523,10 +543,13 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   const invalidateImporterClosure = (path: string): void => {
     const graph = vite.moduleGraph
     if (graph === undefined) return
-    const roots = graph.getModulesByFile(path)
-    if (roots === undefined) return
     const seen = new Set<ViteModuleNode>()
-    const stack = [...roots]
+    const stack: ViteModuleNode[] = []
+    for (const candidate of modulePathCandidates(path)) {
+      const roots = graph.getModulesByFile(candidate)
+      if (roots !== undefined) stack.push(...roots)
+    }
+    if (stack.length === 0) return
     for (let mod = stack.pop(); mod !== undefined; mod = stack.pop()) {
       if (seen.has(mod)) continue
       seen.add(mod)
@@ -549,11 +572,12 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
       })
       .catch((err) => console.error("[nifra/web/vite] app re-create failed:", err))
   }
-  vite.watcher.on("change", refreshApp)
+  vite.watcher.on("change", (path) => refreshApp(normalizeFilePath(path)))
   for (const event of ["add", "unlink"] as const) {
     vite.watcher.on(event, (path) => {
-      if (path.startsWith(`${routesDir}/`) || path.startsWith(`${routesDir}\\`)) writeClientEntry()
-      refreshApp(path)
+      const filePath = normalizeFilePath(path)
+      if (pathInside(routesDir, filePath)) writeClientEntry()
+      refreshApp(filePath)
     })
   }
 

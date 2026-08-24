@@ -29,7 +29,7 @@ if (dirs.length === 0) {
 }
 
 let captured = ""
-const child = spawn("bun", ["test", ...dirs], {
+const child = spawn(process.execPath, ["test", ...dirs], {
   stdio: ["inherit", "pipe", "pipe"],
 })
 // Stream live so CI logs are unchanged, while capturing to classify the exit afterward.

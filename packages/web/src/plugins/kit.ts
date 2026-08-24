@@ -5,7 +5,8 @@
  * `@nifrajs/web` (imported by the sibling plugin modules); not a public subpath.
  */
 import { existsSync } from "node:fs"
-import { dirname, relative } from "node:path"
+import { dirname, join, relative } from "node:path"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import type { BunPlugin } from "bun"
 
 /** The argument Bun passes to a plugin's `setup` - Bun doesn't export the type, so derive it. */
@@ -23,6 +24,36 @@ export { rewriteSsrImports } from "../dev-ssr-graph.ts"
 
 const packageRootCache = new Map<string, string>()
 
+/**
+ * Convert a plugin/runtime path into a path the host filesystem can open.
+ *
+ * Bun and URL-based test/build APIs can hand a Windows path to a plugin as `/D:/…` (the
+ * `pathname` form of a file URL). Node's filesystem APIs correctly treat the native form as
+ * `D:\…`, but do not reinterpret that URL pathname. Keep this conversion at the boundary so
+ * generated module specifiers can remain slash-normalized without making filesystem reads
+ * platform-dependent.
+ */
+export function normalizeFilePath(path: string): string {
+  let value = path.split("?", 1)[0] ?? path
+  if (value.startsWith("file://")) {
+    try {
+      value = fileURLToPath(value)
+    } catch {
+      // Let the eventual filesystem/import operation report an invalid path.
+    }
+  }
+  if (process.platform === "win32") {
+    if (/^\/[A-Za-z]:[\\/]/.test(value)) value = value.slice(1)
+    return value.replaceAll("/", "\\")
+  }
+  return value
+}
+
+/** A stable slash-separated path for generated imports, virtual module IDs, and diagnostics. */
+export function portablePath(path: string): string {
+  return normalizeFilePath(path).replaceAll("\\", "/")
+}
+
 /** The nearest ancestor directory of `startDir` that holds a `package.json` (the file's package root),
  * cached. Falls back to `startDir` if none is found, so it never throws. */
 function packageRootOf(startDir: string): string {
@@ -30,7 +61,7 @@ function packageRootOf(startDir: string): string {
   if (cached !== undefined) return cached
   let dir = startDir
   for (;;) {
-    if (existsSync(`${dir}/package.json`)) break
+    if (existsSync(join(dir, "package.json"))) break
     const parent = dirname(dir)
     if (parent === dir) {
       dir = startDir // reached the filesystem root with no package.json - anchor on the file's own dir
@@ -52,8 +83,9 @@ function packageRootOf(startDir: string): string {
  * cwd-relative path would silently desync if the SSR server started from a non-project-root cwd.)
  */
 export function reproduciblePath(absolutePath: string): string {
-  const root = packageRootOf(dirname(absolutePath))
-  return relative(root, absolutePath).replaceAll("\\", "/")
+  const filePath = normalizeFilePath(absolutePath)
+  const root = packageRootOf(dirname(filePath))
+  return relative(root, filePath).replaceAll("\\", "/")
 }
 
 /**
@@ -100,7 +132,14 @@ export const DEV_ROUTES_ENV = "NIFRA_DEV_ROUTES"
 const under = (path: string, dir: string | undefined): boolean =>
   dir !== undefined &&
   dir !== "" &&
-  (path === dir || path.startsWith(dir.endsWith("/") ? dir : `${dir}/`))
+  (() => {
+    const normalizedPath = portablePath(path)
+    const normalizedDir = portablePath(dir)
+    return (
+      normalizedPath === normalizedDir ||
+      normalizedPath.startsWith(normalizedDir.endsWith("/") ? normalizedDir : `${normalizedDir}/`)
+    )
+  })()
 
 /**
  * Whether a dev compile of `path` may wrap the module in component-level hot-patching - i.e. whether it
@@ -124,7 +163,7 @@ const under = (path: string, dir: string | undefined): boolean =>
 export function devHotComponent(path: string): boolean {
   const root = process.env[DEV_ROOT_ENV]
   if (!under(path, root)) return false
-  if (path.includes("/node_modules/")) return false
+  if (portablePath(path).includes("/node_modules/")) return false
   return !under(path, process.env[DEV_ROUTES_ENV])
 }
 
@@ -151,17 +190,20 @@ export function createStylesheetEmitter(
   const cssByPath = new Map<string, string>()
   // `\?${namespace}$`: namespaces are plain identifiers, so no regex metachars to escape.
   build.onResolve({ filter: new RegExp(`\\?${namespace}$`) }, (args) => ({
-    path: args.path,
+    // Bun may hand this hook a native Windows path while the emitter stores portable module IDs.
+    // Normalize the path portion but preserve the virtual namespace suffix.
+    path: `${portablePath(args.path.slice(0, -suffix.length))}${suffix}`,
     namespace,
   }))
   build.onLoad({ filter: /.*/, namespace }, (args) => ({
-    contents: cssByPath.get(args.path.slice(0, -suffix.length)) ?? "",
+    contents: cssByPath.get(portablePath(args.path.slice(0, -suffix.length))) ?? "",
     loader: "css",
   }))
   return {
     emit(path, css) {
-      cssByPath.set(path, css)
-      return `import ${JSON.stringify(path + suffix)}\n`
+      const filePath = portablePath(path)
+      cssByPath.set(filePath, css)
+      return `import ${JSON.stringify(filePath + suffix)}\n`
     },
   }
 }
@@ -175,13 +217,22 @@ export async function requirePeer<T>(
   specifier: string,
   hint: { readonly feature: string; readonly install: string },
 ): Promise<T> {
+  const isPathSpecifier =
+    specifier.startsWith("file://") ||
+    /^\/[A-Za-z]:[\\/]/.test(specifier) ||
+    /^[A-Za-z]:[\\/]/.test(specifier)
   try {
-    return (await import(specifier)) as T
+    // Dynamic import treats a Windows URL pathname (`/D:/…`) as a POSIX root. Convert local path
+    // seams to a file URL so the runtime, regardless of platform, receives an unambiguous module ID.
+    const importPath = isPathSpecifier
+      ? pathToFileURL(normalizeFilePath(specifier)).href
+      : specifier
+    return (await import(importPath)) as T
   } catch (err) {
     // Only a genuine resolution failure means "not installed" - surface anything else (a corrupt
     // install, a native-binding error, a throw at module top-level) as the real error rather than
     // masking it behind a misleading "please install it" hint.
-    if ((err as { code?: unknown }).code === "ERR_MODULE_NOT_FOUND") {
+    if (!isPathSpecifier && (err as { code?: unknown }).code === "ERR_MODULE_NOT_FOUND") {
       throw new Error(
         `[nifra/web] ${hint.feature} requires the optional peer "${specifier}". Install it: ${hint.install}`,
       )

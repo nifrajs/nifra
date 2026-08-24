@@ -474,11 +474,14 @@ describe("runBackend (nifra_run engine) - input guards", () => {
           "",
         ].join("\n"),
       )
-      proc = Bun.spawn(["bun", join(import.meta.dir, "../src/mcp-run.ts"), dir, "--worker"], {
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-      }) as PipeProc
+      proc = Bun.spawn(
+        [process.execPath, join(import.meta.dir, "../src/mcp-run.ts"), dir, "--worker"],
+        {
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      ) as PipeProc
       const reader = proc.stdout.getReader()
       const decoder = new TextDecoder()
       let buffer = ""
@@ -797,7 +800,7 @@ describe("nifra_check / nifra_test - `dir` scopes to a subdirectory", () => {
     // The parent of the first existing ancestor is `/`, whose trailing separator is part of it.
     // Slicing past its length would eat the first character of the segment name.
     expect(resolveProjectDir("/", "nifra-does-not-exist-xyz/deep")).toBe(
-      "/nifra-does-not-exist-xyz/deep",
+      resolve("/", "nifra-does-not-exist-xyz/deep"),
     )
   })
 
@@ -1005,7 +1008,7 @@ describe("runMcpServer starts on a project it cannot load", () => {
     messages: object[],
     expect_: number[],
   ): Promise<Record<number, unknown>> => {
-    const proc = Bun.spawn(["bun", join(import.meta.dir, "../src/cli.ts"), "mcp"], {
+    const proc = Bun.spawn([process.execPath, join(import.meta.dir, "../src/cli.ts"), "mcp"], {
       cwd: dir,
       stdin: "pipe",
       stdout: "pipe",
@@ -1040,6 +1043,7 @@ describe("runMcpServer starts on a project it cannot load", () => {
     } finally {
       reader.cancel().catch(() => {})
       proc.kill()
+      await proc.exited.catch(() => 0)
     }
     return byId
   }

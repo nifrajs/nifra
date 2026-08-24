@@ -4770,6 +4770,10 @@ _No named exports (side-effect entrypoint)._
   True while a nifra dev server is running, i.e. the compile may emit HMR wiring (and, where the framework couples the two, dev-mode runtime output).
 - **hash8** _(function)_ - `hash8: (input: string) => string`
   Deterministic 8-hex hash (djb2/xor). Stable across builds - no `Date.now`/`Math.random` - so build output is reproducible. The single hash implementation behind CSS-module scoped names (and a drop-in for any SFC scope id).
+- **normalizeFilePath** _(function)_ - `normalizeFilePath: (path: string) => string`
+  Convert a plugin/runtime path into a path the host filesystem can open.
+- **portablePath** _(function)_ - `portablePath: (path: string) => string`
+  A stable slash-separated path for generated imports, virtual module IDs, and diagnostics.
 - **reproduciblePath** _(function)_ - `reproduciblePath: (absolutePath: string) => string`
   A **package-root-relative**, forward-slashed form of an absolute path - the input to {@link hash8} for any build-stable identifier (e.g. CSS-module scoped names). Anchoring on the file's nearest `package.json` (not the absolute path, not `process.cwd()`) makes the result independent of BOTH the mac…
 - **requirePeer** _(function)_ - `requirePeer: <T>(specifier: string, hint: { readonly feature: string; readonly install: string; }) => Promise<T>`

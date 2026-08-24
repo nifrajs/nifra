@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test"
+import { join } from "node:path"
+import { pathToFileURL } from "node:url"
 import {
   createStylesheetEmitter,
   hash8,
+  normalizeFilePath,
   type PluginBuilder,
+  portablePath,
   reproduciblePath,
   requirePeer,
 } from "../src/plugins/kit.ts"
@@ -35,6 +39,21 @@ describe("hash8", () => {
   test("different inputs (almost always) hash differently", () => {
     expect(hash8("foo")).not.toBe(hash8("bar"))
   })
+})
+
+test("path seams normalize file URLs, malformed URLs, and Windows URL paths", () => {
+  const file = join(process.cwd(), "packages", "web", "test", ".tmp-nifra-style.css")
+  expect(normalizeFilePath(`${pathToFileURL(file).href}?v=1`)).toBe(normalizeFilePath(file))
+  expect(normalizeFilePath("file://%")).toBe("file://%")
+  expect(portablePath("C:\\project\\styles\\app.css")).toBe("C:/project/styles/app.css")
+
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!
+  Object.defineProperty(process, "platform", { value: "win32" })
+  try {
+    expect(normalizeFilePath("/C:/project/styles/app.css?v=1")).toBe("C:\\project\\styles\\app.css")
+  } finally {
+    Object.defineProperty(process, "platform", platform)
+  }
 })
 
 describe("createStylesheetEmitter", () => {

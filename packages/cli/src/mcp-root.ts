@@ -102,7 +102,16 @@ export function pathsFromRootsResult(result: unknown): string[] {
     const uri = (entry as { uri?: unknown })?.uri
     if (typeof uri !== "string" || !uri.startsWith("file://")) continue
     try {
-      paths.push(fileURLToPath(uri))
+      const parsed = new URL(uri)
+      // A remote file host is a UNC path on Windows, not a local workspace root. MCP roots are
+      // intentionally local-only here: accepting it would let a client silently point the server
+      // at a different machine/share. `localhost` is the only equivalent spelling we accept.
+      if (
+        parsed.protocol !== "file:" ||
+        (parsed.hostname !== "" && parsed.hostname !== "localhost")
+      )
+        continue
+      paths.push(fileURLToPath(parsed))
     } catch {
       // Malformed URI - skip.
     }

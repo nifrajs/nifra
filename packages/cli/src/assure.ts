@@ -57,6 +57,8 @@ export function createMemoryAssureSink(): MemoryAssureSink {
 
 export const DEFAULT_ASSURANCE_CONFIG = "nifra.assurance.ts"
 
+const displayPath = (path: string): string => path.replaceAll("\\", "/")
+
 function isConfig(value: unknown): value is AssuranceConfig {
   if (typeof value !== "object" || value === null) return false
   const candidate = value as Partial<AssuranceConfig>
@@ -74,7 +76,7 @@ export async function loadAssuranceConfig(
   const path = resolve(cwd, configPath)
   if (!existsSync(path)) {
     throw new Error(
-      `[nifra] route assurance config not found: ${path} - create ${DEFAULT_ASSURANCE_CONFIG} with a default defineAssuranceConfig({ source, policy }) export.`,
+      `[nifra] route assurance config not found: ${displayPath(path)} - create ${DEFAULT_ASSURANCE_CONFIG} with a default defineAssuranceConfig({ source, policy }) export.`,
     )
   }
   const specifier = pathToFileURL(path)
@@ -82,7 +84,7 @@ export async function loadAssuranceConfig(
   const loaded = (await import(specifier.href)) as { default?: unknown }
   if (!isConfig(loaded.default)) {
     throw new Error(
-      `[nifra] ${path} must default-export defineAssuranceConfig({ source, policy }).`,
+      `[nifra] ${displayPath(path)} must default-export defineAssuranceConfig({ source, policy }).`,
     )
   }
   return loaded.default

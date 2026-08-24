@@ -54,7 +54,7 @@ test(
 
       const cli = resolve(import.meta.dir, "../src/cli.ts")
       // Port 0: the banner reports the port Bun actually bound, so nothing here can collide.
-      proc = Bun.spawn(["bun", cli, "dev", "--port", "0"], {
+      proc = Bun.spawn([process.execPath, cli, "dev", "--port", "0"], {
         cwd: root,
         stdout: "pipe",
         stderr: "pipe",
@@ -92,7 +92,10 @@ test(
       expect(css).toContain(`.${ssrClass}`)
       expect(css).toMatch(/(?:rebeccapurple|#639)/)
     } finally {
-      proc?.kill()
+      if (proc !== undefined) {
+        proc.kill()
+        await proc.exited.catch(() => 0)
+      }
       removeFixtureRoot(root)
     }
   },

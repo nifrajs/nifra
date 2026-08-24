@@ -48,7 +48,7 @@ test(
       )
 
       const cli = resolve(import.meta.dir, "../src/cli.ts")
-      proc = Bun.spawn(["bun", cli, "dev", "--port", "0"], {
+      proc = Bun.spawn([process.execPath, cli, "dev", "--port", "0"], {
         cwd: root,
         stdout: "pipe",
         stderr: "pipe",
@@ -75,7 +75,10 @@ test(
       expect(res.status).toBe(200)
       expect(res.headers.get("x-app-use")).toBe("reached")
     } finally {
-      proc?.kill()
+      if (proc !== undefined) {
+        proc.kill()
+        await proc.exited.catch(() => 0)
+      }
       removeFixtureRoot(root)
     }
   },

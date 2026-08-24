@@ -160,7 +160,7 @@ test(
       writeFileSync(join(root, "serve.ts"), SERVE_FIXTURE)
 
       const { bunfigPath } = await writeBunDevConfig(root)
-      proc = Bun.spawn(["bun", `--config=${bunfigPath}`, join(root, "serve.ts")], {
+      proc = Bun.spawn([process.execPath, `--config=${bunfigPath}`, join(root, "serve.ts")], {
         cwd: root,
         stdout: "pipe",
         stderr: "pipe",
@@ -208,7 +208,7 @@ test(
       writeFileSync(join(root, "serve.ts"), SERVE_FIXTURE)
 
       const { bunfigPath } = await writeBunDevConfig(root)
-      proc = Bun.spawn(["bun", `--config=${bunfigPath}`, join(root, "serve.ts")], {
+      proc = Bun.spawn([process.execPath, `--config=${bunfigPath}`, join(root, "serve.ts")], {
         cwd: root,
         stdout: "pipe",
         stderr: "pipe",
@@ -286,7 +286,7 @@ test(
       writeFileSync(join(root, "serve.ts"), SERVE_FIXTURE)
 
       const { bunfigPath } = await writeBunDevConfig(root, configPath)
-      proc = Bun.spawn(["bun", `--config=${bunfigPath}`, join(root, "serve.ts")], {
+      proc = Bun.spawn([process.execPath, `--config=${bunfigPath}`, join(root, "serve.ts")], {
         cwd: root,
         stdout: "pipe",
         stderr: "pipe",

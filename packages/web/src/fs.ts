@@ -4,6 +4,7 @@
  * only. It scans a routes dir and feeds the pure `buildManifest`.
  */
 import { readdirSync } from "node:fs"
+import { join } from "node:path"
 import { buildManifest, type Manifest, type RouteModule } from "./manifest.ts"
 
 /** Options for {@link discoverRoutes}. */
@@ -39,6 +40,6 @@ export function discoverRoutes(dir: string, options: DiscoverRoutesOptions = {})
       : // No `importQuery` here: an injected loader owns its own invalidation (Vite's module graph
         // re-evaluates on change), and appending a cache-buster would defeat it by minting a new
         // module id per request.
-        () => load(`${dir}/${file}`) as Promise<RouteModule>,
+        () => load(join(dir, file)) as Promise<RouteModule>,
   )
 }

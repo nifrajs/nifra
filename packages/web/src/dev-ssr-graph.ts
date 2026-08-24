@@ -55,7 +55,8 @@
  * Bun-only + dev-only; never imported by the edge runtime or by a production build.
  */
 import { statSync } from "node:fs"
-import { dirname } from "node:path"
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path"
+import { fileURLToPath } from "node:url"
 import type { BunPlugin } from "bun"
 
 /**
@@ -76,11 +77,25 @@ const REWRITABLE = "mts|cts|mjs|cjs|tsx|jsx|ts|js"
  * no dot-directory (`.nifra-bun/`, `.git/`), and a source extension, with an optional cache-busting
  * query. It mirrors {@link SsrGraph}'s ownership test; keep the two in step.
  */
-const appSourceFilter = (root: string): RegExp =>
-  new RegExp(
-    `^${root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/` +
-      `(?!.*/node_modules/)(?!\\.)(?!.*/\\.)[^?]*\\.(?:${REWRITABLE})(?:\\?|$)`,
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+/** All path spellings Bun has used for an absolute Windows module id. */
+const pathForms = (path: string): string[] => {
+  const native = plainPath(path)
+  const portable = native.replaceAll("\\", "/")
+  const forms = [native, portable]
+  if (process.platform === "win32" && /^[A-Za-z]:\//.test(portable)) forms.push(`/${portable}`)
+  return [...new Set(forms)]
+}
+
+const appSourceFilter = (root: string): RegExp => {
+  const roots = pathForms(root).map(escapeRegExp).join("|")
+  return new RegExp(
+    `^(?:${roots})[\\\\/]` +
+      `(?!(?:.*[\\\\/])?node_modules[\\\\/])` +
+      `(?!\\.)(?!.*[\\\\/]\\.)[^?]*\\.(?:${REWRITABLE})(?:\\?|$)`,
   )
+}
 
 /**
  * `from "x"`, `import "x"`, `import("x")`, `require("x")` - every form that carries a static specifier,
@@ -113,10 +128,18 @@ export interface SsrGraph {
 
 /** `/abs/path.ts?v=2` and `file:///abs/path.ts` both name `/abs/path.ts`. */
 function plainPath(path: string): string {
-  const withoutQuery = path.split("?")[0] ?? path
-  return withoutQuery.startsWith("file://")
-    ? decodeURIComponent(withoutQuery.slice("file://".length))
-    : withoutQuery
+  const withoutQuery = path.split("?", 1)[0] ?? path
+  let value = withoutQuery
+  if (value.startsWith("file://")) {
+    try {
+      value = fileURLToPath(value)
+    } catch {
+      // Let the caller's filesystem/resolver operation report a malformed URL.
+    }
+  }
+  if (process.platform !== "win32") return value
+  if (/^\/[A-Za-z]:[\\/]/.test(value)) value = value.slice(1)
+  return value.replaceAll("/", "\\")
 }
 
 const mtimeOf = (path: string): number =>
@@ -161,8 +184,7 @@ export function rewriteSsrImports(contents: string, path: string, generate: "dom
 
 /** Track and version the app's own server-side module graph. See the module doc for the whole design. */
 export function createSsrGraph(options: SsrGraphOptions): SsrGraph {
-  const root = options.root.endsWith("/") ? options.root.slice(0, -1) : options.root
-  const prefix = `${root}/`
+  const root = resolve(plainPath(options.root))
   /** Every tracked module, by absolute path: its current cache version and the mtime it was read at. */
   const nodes = new Map<string, { version: number; mtime: number }>()
   /** Reverse edges - who imports this file - which is the direction invalidation travels. */
@@ -171,20 +193,30 @@ export function createSsrGraph(options: SsrGraphOptions): SsrGraph {
 
   /** Inside the app, outside `node_modules`, outside dot-directories, and a file worth re-reading. */
   const owned = (abs: string): boolean => {
-    if (!abs.startsWith(prefix)) return false
-    if (abs.includes("/node_modules/")) return false
+    const candidate = resolve(plainPath(abs))
+    const rel = relative(root, candidate)
+    if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel) || rel === "") return false
     // Relative to the app, so a project that itself lives under a dotted directory is not excluded
     // wholesale - this is about the app's own generated trees (`.nifra/`, `.nifra-bun/`, `.git/`).
-    const rel = abs.slice(prefix.length)
-    if (rel.startsWith(".") || rel.includes("/.")) return false
-    return VERSIONED.test(abs)
+    const portable = rel.replaceAll("\\", "/")
+    if (
+      portable === "node_modules" ||
+      portable.startsWith("node_modules/") ||
+      portable.includes("/node_modules/") ||
+      portable.startsWith(".") ||
+      portable.includes("/.")
+    )
+      return false
+    return VERSIONED.test(candidate)
   }
 
   const track = (abs: string, importer: string): void => {
-    if (!nodes.has(abs)) nodes.set(abs, { version: 0, mtime: mtimeOf(abs) })
-    const parents = importers.get(abs)
-    if (parents === undefined) importers.set(abs, new Set([importer]))
-    else parents.add(importer)
+    const file = resolve(plainPath(abs))
+    const parent = resolve(plainPath(importer))
+    if (!nodes.has(file)) nodes.set(file, { version: 0, mtime: mtimeOf(file) })
+    const parents = importers.get(file)
+    if (parents === undefined) importers.set(file, new Set([parent]))
+    else parents.add(parent)
   }
 
   // `Bun.resolveSync` re-enters this plugin's own `onResolve`, which is an unbounded recursion rather
@@ -210,18 +242,21 @@ export function createSsrGraph(options: SsrGraphOptions): SsrGraph {
    */
   const keyFor = (specifier: string, importer: string): string | undefined => {
     const abs = resolveFrom(specifier, dirname(importer))
-    if (abs === undefined || !owned(abs)) return undefined
-    track(abs, importer)
-    const version = nodes.get(abs)?.version ?? 0
+    if (abs === undefined) return undefined
+    const file = resolve(plainPath(abs))
+    if (!owned(file)) return undefined
+    track(file, importer)
+    const version = nodes.get(file)?.version ?? 0
     // Version 0 is the shared, unversioned instance - see the module doc.
-    return version === 0 ? undefined : `${abs}?v=${version}`
+    return version === 0 ? undefined : `${file.replaceAll("\\", "/")}?v=${version}`
   }
 
   const rewrite = (contents: string, importer: string): string => {
-    if (!importer.startsWith(prefix) || importer.includes("/node_modules/")) return contents
+    const importerPath = resolve(plainPath(importer))
+    if (!owned(importerPath)) return contents
     let scanned: readonly { readonly path: string }[]
     try {
-      scanned = new Bun.Transpiler({ loader: scanLoaderFor(importer) }).scanImports(contents)
+      scanned = new Bun.Transpiler({ loader: scanLoaderFor(importerPath) }).scanImports(contents)
     } catch {
       // Source Bun cannot parse is source Bun is about to reject with a real error message. Hand it
       // through untouched rather than adding a second, worse one.
@@ -231,7 +266,7 @@ export function createSsrGraph(options: SsrGraphOptions): SsrGraph {
     if (candidates.size === 0) return contents
     const keys = new Map<string, string>()
     for (const specifier of candidates) {
-      const key = keyFor(specifier, importer)
+      const key = keyFor(specifier, importerPath)
       if (key !== undefined) keys.set(specifier, key)
     }
     if (keys.size === 0) return contents
@@ -260,7 +295,7 @@ export function createSsrGraph(options: SsrGraphOptions): SsrGraph {
         // virtual sub-request (`?vue-css` and friends) - both are already keyed.
         if (args.path.includes("?")) return undefined
         const importer = plainPath(args.importer)
-        if (!importer.startsWith(prefix) || importer.includes("/node_modules/")) return undefined
+        if (!owned(importer)) return undefined
         const key = keyFor(args.path, importer)
         return key === undefined ? undefined : { path: key }
       })

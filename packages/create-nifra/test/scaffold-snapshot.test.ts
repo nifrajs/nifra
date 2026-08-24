@@ -27,7 +27,7 @@ async function treeOf(root: string): Promise<string[]> {
     for (const entry of await readdir(dir, { withFileTypes: true })) {
       const full = join(dir, entry.name)
       if (entry.isDirectory()) await walk(full)
-      else out.push(relative(root, full))
+      else out.push(relative(root, full).replaceAll("\\", "/"))
     }
   }
   await walk(root)

@@ -1,4 +1,4 @@
-import { rewriteSsrImports } from "@nifrajs/web/plugins/kit"
+import { normalizeFilePath, portablePath, rewriteSsrImports } from "@nifrajs/web/plugins/kit"
 import type { BunPlugin } from "bun"
 import { compile } from "svelte/compiler"
 
@@ -37,7 +37,7 @@ export function svelteMdxBunPlugin(generate: "dom" | "ssr"): BunPlugin {
         )
       }
       build.onLoad({ filter: /\.mdx(\?|$)/ }, async (args) => {
-        const path = args.path.split("?")[0] ?? args.path
+        const path = normalizeFilePath(args.path)
         // 1. Markdown/MDX → Svelte source (mdsvex). `extensions` must include `.mdx` or mdsvex skips the
         // file (returns undefined - it only processes its configured extensions, default `.svx`).
         const pre = await mdsvexCompile(await Bun.file(path).text(), {
@@ -52,9 +52,9 @@ export function svelteMdxBunPlugin(generate: "dom" | "ssr"): BunPlugin {
           css: "external",
         })
         if (generate === "dom" && css?.code) {
-          cssByPath.set(path, css.code)
+          cssByPath.set(portablePath(path), css.code)
           return {
-            contents: `${js.code}\nimport ${JSON.stringify(path + STYLE_SUFFIX)}\n`,
+            contents: `${js.code}\nimport ${JSON.stringify(portablePath(path) + STYLE_SUFFIX)}\n`,
             loader: "js",
           }
         }
@@ -65,7 +65,7 @@ export function svelteMdxBunPlugin(generate: "dom" | "ssr"): BunPlugin {
         namespace: STYLE_NS,
       }))
       build.onLoad({ filter: /.*/, namespace: STYLE_NS }, (args) => ({
-        contents: cssByPath.get(args.path.slice(0, -STYLE_SUFFIX.length)) ?? "",
+        contents: cssByPath.get(portablePath(args.path.slice(0, -STYLE_SUFFIX.length))) ?? "",
         loader: "css",
       }))
     },
