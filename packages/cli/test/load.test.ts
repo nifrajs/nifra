@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test"
 import { mkdirSync, writeFileSync } from "node:fs"
-import { join, resolve } from "node:path"
+import { isAbsolute, join } from "node:path"
 import { loadApp } from "../src/load.ts"
 import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
@@ -58,8 +58,8 @@ async function loadWithClientModule(spec: string): Promise<string> {
 // absolutized at load, or it resolves against different bases and loads in one phase but not the other.
 test("a relative clientModule is resolved to absolute at load", async () => {
   const resolved = await loadWithClientModule("./src/client.tsx")
-  expect(resolved.endsWith(join("src", "client.tsx"))).toBe(true)
-  expect(resolve(resolved)).toBe(resolved) // already absolute
+  expect(resolved.replaceAll("\\", "/").endsWith("/src/client.tsx")).toBe(true)
+  expect(isAbsolute(resolved)).toBe(true)
 })
 
 test("a bare/package clientModule specifier is left unchanged", async () => {

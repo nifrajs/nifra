@@ -39,25 +39,44 @@ export function findRoutesDir(
  * the Program. Match by filesystem identity before delegating to TypeScript; a failed realpath falls
  * back to the lexical absolute path so a missing or synthetic file is still handled normally.
  */
-function canonicalProgramPath(fileName: string): string {
+function normalizeProgramPath(fileName: string): string {
+  const slashed = fileName.replaceAll("\\", "/")
+  const withoutDevicePrefix = slashed.replace(/^\/\/\?\/UNC\//i, "//").replace(/^\/\/\?\//, "")
+  return process.platform === "win32" ? withoutDevicePrefix.toLowerCase() : withoutDevicePrefix
+}
+
+/** Keep every spelling a filesystem resolver may return; native and portable realpath disagree on
+ * some Windows short-name paths, so matching only one of them is still a false negative. */
+function canonicalProgramPaths(fileName: string): readonly string[] {
   const absolute = resolve(fileName)
-  try {
-    const real = realpathSync.native(absolute)
-    return process.platform === "win32" ? real.toLowerCase() : real
-  } catch {
-    return process.platform === "win32" ? absolute.toLowerCase() : absolute
+  const paths = new Set<string>([normalizeProgramPath(absolute)])
+  for (const resolver of [realpathSync.native, realpathSync]) {
+    try {
+      paths.add(normalizeProgramPath(resolver(absolute)))
+    } catch {
+      // Synthetic editor files and a path removed during an edit have no realpath. The absolute
+      // spelling remains a valid candidate for TypeScript's virtual source overlay.
+    }
   }
+  return [...paths]
 }
 
 /** Match a real file even when Windows handed the editor an 8.3 alias for the same path. */
 function filesystemIdentity(fileName: string): string | undefined {
   try {
     const info = statSync(resolve(fileName), { bigint: true })
-    return `${info.dev}:${info.ino}`
+    if (info.ino === 0n) return undefined
+    return `bigint:${info.dev}:${info.ino}`
   } catch {
-    // TypeScript also exposes virtual/source-overlay files. They have no filesystem identity, so
-    // the lexical/realpath checks remain the correct fallback for those inputs.
-    return undefined
+    try {
+      const info = statSync(resolve(fileName))
+      if (info.ino === 0) return undefined
+      return `number:${info.dev}:${info.ino}`
+    } catch {
+      // TypeScript also exposes virtual/source-overlay files. They have no filesystem identity, so
+      // the lexical/realpath checks remain the correct fallback for those inputs.
+      return undefined
+    }
   }
 }
 
@@ -68,10 +87,10 @@ function programSourceFile(
   if (program === undefined) return undefined
   const direct = program.getSourceFile(fileName)
   if (direct !== undefined) return direct
-  const wanted = canonicalProgramPath(fileName)
+  const wanted = new Set(canonicalProgramPaths(fileName))
   const byPath = program
     .getSourceFiles()
-    .find((source) => canonicalProgramPath(source.fileName) === wanted)
+    .find((source) => canonicalProgramPaths(source.fileName).some((path) => wanted.has(path)))
   if (byPath !== undefined) return byPath
 
   const wantedIdentity = filesystemIdentity(fileName)

@@ -57,7 +57,7 @@ async function forwardChildOutput(
     for (;;) {
       const { done, value } = await reader.read()
       if (done) return
-      sink.write(value)
+      await sink.write(value)
     }
   } finally {
     reader.releaseLock()
@@ -338,14 +338,19 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
         },
       )
       const forwarded = Promise.all([
-        forwardChildOutput(child.stdout as ReadableStream<Uint8Array>, process.stdout),
-        forwardChildOutput(child.stderr as ReadableStream<Uint8Array>, process.stderr),
+        forwardChildOutput(child.stdout as ReadableStream<Uint8Array>, Bun.stdout),
+        forwardChildOutput(child.stderr as ReadableStream<Uint8Array>, Bun.stderr),
       ])
       const forward = (): void => child.kill("SIGINT")
       process.on("SIGINT", forward)
       process.on("SIGTERM", forward)
-      const [code] = await Promise.all([child.exited, forwarded])
-      process.exitCode = code
+      try {
+        const [code] = await Promise.all([child.exited, forwarded])
+        process.exitCode = code
+      } finally {
+        process.off("SIGINT", forward)
+        process.off("SIGTERM", forward)
+      }
       return
     }
     // SSR runs in THIS process, on Bun's runtime - a different loader from the dev-server bundler the

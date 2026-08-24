@@ -364,9 +364,16 @@ const pathInsideByFilesystemIdentity = (root: string, path: string): boolean => 
   const rootIdentity = (() => {
     try {
       const info = statSync(realpathOrSelf(resolve(root)), { bigint: true })
+      if (info.ino === 0n) return undefined
       return { dev: info.dev, ino: info.ino }
     } catch {
-      return undefined
+      try {
+        const info = statSync(realpathOrSelf(resolve(root)))
+        if (info.ino === 0) return undefined
+        return { dev: BigInt(info.dev), ino: BigInt(info.ino) }
+      } catch {
+        return undefined
+      }
     }
   })()
   if (rootIdentity === undefined) return false
@@ -375,10 +382,21 @@ const pathInsideByFilesystemIdentity = (root: string, path: string): boolean => 
   for (;;) {
     try {
       const info = statSync(current, { bigint: true })
-      if (info.dev === rootIdentity.dev && info.ino === rootIdentity.ino) return true
+      if (info.ino !== 0n && info.dev === rootIdentity.dev && info.ino === rootIdentity.ino)
+        return true
     } catch {
-      // A non-existent leaf can still have an existing parent. Keep walking; if no ancestor can
-      // prove containment, the answer remains false rather than trusting a spelling alone.
+      try {
+        const info = statSync(current)
+        if (
+          info.ino !== 0 &&
+          BigInt(info.dev) === rootIdentity.dev &&
+          BigInt(info.ino) === rootIdentity.ino
+        )
+          return true
+      } catch {
+        // A non-existent leaf can still have an existing parent. Keep walking; if no ancestor can
+        // prove containment, the answer remains false rather than trusting a spelling alone.
+      }
     }
     const parent = dirname(current)
     if (parent === current) return false
@@ -622,7 +640,7 @@ const describeScope = (
   if (requestedRoot === scanRoot) return undefined
   const outside = paths.filter((path) => !pathInside(requestedRoot, path))
   if (outside.length === 0) return undefined
-  const here = relative(scanRoot, requestedRoot) || "."
+  const here = displayPath(scanRoot, requestedRoot) || "."
   return `${outside.length} of these copies ${outside.length === 1 ? "is" : "are"} outside ${here}, so this fails every build in the workspace, including apps that never import the package. The scan is anchored on the workspace on purpose: a copy reached through a workspace-linked dependency cannot be seen from ${here} alone, and scoping to it would miss the case this check exists for. Fix the copies where they live, or declare the package single-copy.`
 }
 
