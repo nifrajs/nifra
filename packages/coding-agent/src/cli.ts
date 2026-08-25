@@ -26,7 +26,7 @@ Usage:
               [--json] [--no-session] [--session-dir <dir>] [--session-id <id>]
               [--verify-after-turn check,assure] [--pi <command>] [--replay <file>]
   nifra-agent --migrate-session <id> --migrate-from <dir> --migrate-to <dir> [--json]
-  nifra-agent --rpc [--cwd <dir>] [--host 127.0.0.1] [--port 0]
+  nifra-agent --rpc [--cwd <dir>] [--host 127.0.0.1] [--port 0] [--expose-error-stacks]
 
 Commands in interactive mode:
   /reload       reload Pi or Nifra extensions
@@ -56,6 +56,7 @@ export interface CliOptions {
   readonly host: string
   readonly port: number
   readonly authToken?: string
+  readonly exposeErrorStacks: boolean
   readonly sessionId?: string
   readonly migrateSession?: string
   readonly migrationSource?: string
@@ -76,6 +77,7 @@ export function parseArgs(args: readonly string[]): CliOptions {
   let host = "127.0.0.1"
   let port = 0
   let authToken: string | undefined
+  let exposeErrorStacks = false
   let sessionId: string | undefined
   let migrateSession: string | undefined
   let migrationSource: string | undefined
@@ -102,6 +104,7 @@ export function parseArgs(args: readonly string[]): CliOptions {
       if (!Number.isSafeInteger(port) || port < 0 || port > 65_535)
         throw new Error("--port must be an integer between 0 and 65535")
     } else if (arg === "--token") authToken = args[++index]
+    else if (arg === "--expose-error-stacks") exposeErrorStacks = true
     else if (arg === "--verify-after-turn")
       verifyAfterTurn = parseVerificationNames(args[++index] ?? "")
     else if (arg === "--help" || arg === "-h") {
@@ -135,6 +138,7 @@ export function parseArgs(args: readonly string[]): CliOptions {
     host,
     port,
     ...(authToken === undefined ? {} : { authToken }),
+    exposeErrorStacks,
     ...(sessionId === undefined ? {} : { sessionId }),
     ...(migrateSession === undefined ? {} : { migrateSession }),
     ...(migrationSource === undefined ? {} : { migrationSource }),
@@ -213,6 +217,7 @@ async function main(): Promise<void> {
       hostname: options.host,
       port: options.port,
       ...(options.authToken === undefined ? {} : { authToken: options.authToken }),
+      exposeErrorStacks: options.exposeErrorStacks,
       ...(options.sessionDir === undefined
         ? {}
         : { sessionStore: new FileSessionStore({ root: join(options.sessionDir, "events") }) }),

@@ -95,4 +95,44 @@ describe("self-healing and UI extension seams", () => {
       await worker.close()
     }
   })
+
+  test("preserves a worker stack only in local diagnostics mode", async () => {
+    const defaultWorker = new IsolatedExtensionWorker({
+      modulePath: resolve(import.meta.dir, "fixtures/isolated-error-extension.ts"),
+      cwd: process.cwd(),
+    })
+    try {
+      await defaultWorker.start()
+      let error: unknown
+      try {
+        await defaultWorker.invokeTool("fail", {})
+      } catch (caught) {
+        error = caught
+      }
+      expect(error).toBeInstanceOf(Error)
+      expect((error as Error).message).toBe("extension diagnostic")
+      expect((error as Error).stack).not.toContain("isolated-error-extension.ts")
+    } finally {
+      await defaultWorker.close()
+    }
+
+    const worker = new IsolatedExtensionWorker({
+      modulePath: resolve(import.meta.dir, "fixtures/isolated-error-extension.ts"),
+      cwd: process.cwd(),
+      exposeErrorStacks: true,
+    })
+    try {
+      await worker.start()
+      try {
+        await worker.invokeTool("fail", {})
+        throw new Error("expected isolated tool failure")
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error)
+        expect((error as Error).message).toBe("extension diagnostic")
+        expect((error as Error).stack).toContain("isolated-error-extension.ts")
+      }
+    } finally {
+      await worker.close()
+    }
+  })
 })

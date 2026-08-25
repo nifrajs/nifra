@@ -1,3 +1,5 @@
+import { publicErrorDetails } from "./errors.ts"
+
 export interface WorkflowContext {
   readonly signal: AbortSignal
   readonly values: ReadonlyMap<string, unknown>
@@ -59,12 +61,18 @@ export interface WorkflowRunnerOptions {
   readonly maxSteps?: number
   readonly maxDepth?: number
   readonly onEvent?: (event: WorkflowEvent) => void | PromiseLike<void>
+  readonly exposeErrorStacks?: boolean
 }
 
 export type WorkflowEvent =
   | { readonly type: "step.started"; readonly id: string }
   | { readonly type: "step.completed"; readonly id: string; readonly output?: unknown }
-  | { readonly type: "step.failed"; readonly id: string; readonly error: string }
+  | {
+      readonly type: "step.failed"
+      readonly id: string
+      readonly error: string
+      readonly stack?: string
+    }
   | { readonly type: "approval.required"; readonly id: string; readonly reason: string }
   | { readonly type: "checkpoint.created"; readonly id: string }
 
@@ -73,6 +81,7 @@ export interface WorkflowResult {
   readonly values: ReadonlyMap<string, unknown>
   readonly completed: readonly string[]
   readonly error?: string
+  readonly stack?: string
 }
 
 /** Bounded orchestration primitives. The kernel knows no provider, UI, or framework package. */
@@ -104,11 +113,17 @@ export class WorkflowRunner {
         completed: Object.freeze([...this.completed]),
       }
     } catch (error) {
+      const details = publicErrorDetails(
+        error,
+        "workflow failed",
+        this.options.exposeErrorStacks === true,
+      )
       return {
         ok: false,
         values: new Map(this.values),
         completed: Object.freeze([...this.completed]),
-        error: error instanceof Error ? error.message : String(error),
+        error: details.message,
+        ...(details.stack === undefined ? {} : { stack: details.stack }),
       }
     }
   }
@@ -190,8 +205,17 @@ export class WorkflowRunner {
       await this.emit({ type: "step.completed", id, ...(output === undefined ? {} : { output }) })
       return output
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      await this.emit({ type: "step.failed", id, error: message })
+      const details = publicErrorDetails(
+        error,
+        "workflow step failed",
+        this.options.exposeErrorStacks === true,
+      )
+      await this.emit({
+        type: "step.failed",
+        id,
+        error: details.message,
+        ...(details.stack === undefined ? {} : { stack: details.stack }),
+      })
       throw error
     }
   }

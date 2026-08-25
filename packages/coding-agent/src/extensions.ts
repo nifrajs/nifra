@@ -58,6 +58,7 @@ export interface WorkflowRunOptions {
   readonly maxSteps?: number
   readonly maxDepth?: number
   readonly onEvent?: (event: WorkflowEvent) => void | PromiseLike<void>
+  readonly exposeErrorStacks?: boolean
 }
 
 export interface CodingAgentExtension {

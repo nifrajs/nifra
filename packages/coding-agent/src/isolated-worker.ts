@@ -1,4 +1,5 @@
 import { realpathSync } from "node:fs"
+import { publicErrorDetails } from "./errors.ts"
 import type { ExtensionContext, ExtensionTool } from "./extensions.ts"
 import { readBoundedText } from "./process.ts"
 
@@ -9,6 +10,7 @@ if (modulePath === undefined || cwd === undefined)
 
 const token = process.env.NIFRA_EXTENSION_TOKEN
 const maxMessageBytes = Number(process.env.NIFRA_EXTENSION_MAX_MESSAGE_BYTES)
+const exposeErrorStacks = process.env.NIFRA_EXTENSION_EXPOSE_ERROR_STACKS === "1"
 if (
   token === undefined ||
   token.length < 32 ||
@@ -32,6 +34,7 @@ interface WorkerResult {
   readonly type: "result"
   readonly id: string
   readonly error?: string
+  readonly stack?: string
   readonly output?: unknown
 }
 
@@ -100,7 +103,16 @@ try {
   ready = true
 } catch (error) {
   server?.stop()
-  post({ type: "fatal", error: error instanceof Error ? error.message : String(error) })
+  const details = publicErrorDetails(
+    error,
+    "isolated extension worker failed to start",
+    exposeErrorStacks,
+  )
+  post({
+    type: "fatal",
+    error: details.message,
+    ...(details.stack === undefined ? {} : { stack: details.stack }),
+  })
   process.exit(1)
 }
 
@@ -124,10 +136,12 @@ async function handle(request: WorkerRequest): Promise<WorkerResult | undefined>
     const output = await tool.execute(request.input, context)
     return { type: "result", id: request.id, output }
   } catch (error) {
+    const details = publicErrorDetails(error, "tool execution failed", exposeErrorStacks)
     return {
       type: "result",
       id: request.id,
-      error: error instanceof Error ? error.message : String(error),
+      error: details.message,
+      ...(details.stack === undefined ? {} : { stack: details.stack }),
     }
   }
 }
@@ -139,12 +153,19 @@ function isWorkerRequest(message: unknown): message is WorkerRequest {
 function jsonResponse(message: WorkerResult): Response {
   let text: string
   try {
-    text = JSON.stringify(message)
+    text = JSON.stringify(
+      message,
+      exposeErrorStacks
+        ? undefined
+        : (key: string, nested: unknown) => (key === "stack" ? undefined : nested),
+    )
   } catch {
     text = JSON.stringify({ type: "result", id: message.id, error: "tool output is not JSON-safe" })
   }
   if (Buffer.byteLength(text, "utf8") > maxMessageBytes)
     text = JSON.stringify({ type: "result", id: message.id, error: "tool output is too large" })
+  // lgtm [js/stack-trace-exposure] stacks are emitted only when the parent explicitly enables local
+  // diagnostics; the default protocol response contains only the bounded public message.
   return new Response(text, {
     status: 200,
     headers: { "content-type": "application/json" },

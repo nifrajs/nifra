@@ -9061,6 +9061,11 @@ live event queues bounded, filters verification subprocess environments, and
 requires explicit local RPC authorization. Install this package only when an
 application wants the agent product.
 
+RPC failures return actionable bounded error messages by default. For a trusted
+loopback debugger, set `exposeErrorStacks: true` (or pass
+`--expose-error-stacks` to `nifra-agent --rpc`) to include bounded exception
+stacks. This option is rejected for remote binding.
+
 `IsolatedExtensionWorker` is an opt-in process-backed crash-containment seam for
 extensions. It is not a hostile-code sandbox; use OS-level isolation before
 loading code you do not trust.

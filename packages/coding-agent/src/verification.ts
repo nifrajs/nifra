@@ -1,3 +1,4 @@
+import { publicErrorDetails } from "./errors.ts"
 import { readBoundedText } from "./process.ts"
 
 export interface VerificationResult {
@@ -7,6 +8,7 @@ export interface VerificationResult {
   readonly report?: unknown
   readonly output?: string
   readonly error?: string
+  readonly stack?: string
 }
 
 export interface VerificationRepairTask {
@@ -17,6 +19,7 @@ export interface VerificationRepairTask {
   readonly capabilities: readonly string[]
   readonly output?: string
   readonly report?: unknown
+  readonly stack?: string
 }
 
 /** Turn a failed gate into a bounded, auditable repair task for the agent loop. */
@@ -35,6 +38,7 @@ export function createVerificationRepairTask(
     capabilities: Object.freeze(["process", "read", "write"]),
     ...(result.output === undefined ? {} : { output: result.output.slice(0, 32_768) }),
     ...(result.report === undefined ? {} : { report: result.report }),
+    ...(result.stack === undefined ? {} : { stack: result.stack }),
   })
 }
 
@@ -44,6 +48,7 @@ export interface VerificationOptions {
   readonly timeoutMs?: number
   readonly maxOutputBytes?: number
   readonly env?: Readonly<Record<string, string | undefined>>
+  readonly exposeErrorStacks?: boolean
 }
 
 /** Run an existing Nifra gate without importing the large framework CLI into the agent runtime. */
@@ -88,11 +93,17 @@ export async function runNifraVerification(
       ...(timedOut ? { error: `nifra ${name} timed out after ${timeoutMs}ms` } : {}),
     }
   } catch (error) {
+    const details = publicErrorDetails(
+      error,
+      "verification failed",
+      options.exposeErrorStacks === true,
+    )
     return {
       name,
       ok: false,
       status: null,
-      error: error instanceof Error ? error.message : String(error),
+      error: details.message,
+      ...(details.stack === undefined ? {} : { stack: details.stack }),
     }
   } finally {
     clearTimeout(timer)

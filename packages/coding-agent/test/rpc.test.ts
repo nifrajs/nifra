@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import type { AgentBackend } from "@nifrajs/agent-protocol"
 import { PiBackend } from "@nifrajs/pi"
 import { ExtensionHost } from "../src/extensions.ts"
 import { CodingAgentRpcServer } from "../src/rpc.ts"
@@ -25,6 +26,23 @@ process.stdin.on("data", (chunk) => {
 })
 `
 
+function failingBackend(message: string): AgentBackend {
+  const fail = async (): Promise<never> => {
+    throw new Error(message)
+  }
+  return {
+    info: { name: "failing", capabilities: [] },
+    createSession: fail,
+    send: () => {
+      throw new Error(message)
+    },
+    cancel: fail,
+    snapshot: fail,
+    reload: fail,
+    close: fail,
+  }
+}
+
 describe("coding agent RPC", () => {
   test("rejects remote binding unless explicitly enabled", () => {
     expect(
@@ -34,6 +52,49 @@ describe("coding agent RPC", () => {
         backend: new PiBackend({ command: process.execPath, rpcArgs: ["-e", fakePi] }),
       }).start(),
     ).rejects.toThrow("remote binding")
+  })
+
+  test("rejects error-stack diagnostics for remote binding", () => {
+    expect(
+      new CodingAgentRpcServer({
+        hostname: "0.0.0.0",
+        allowRemote: true,
+        exposeErrorStacks: true,
+        cwd: process.cwd(),
+        backend: new PiBackend({ command: process.execPath, rpcArgs: ["-e", fakePi] }),
+      }).start(),
+    ).rejects.toThrow("exposeErrorStacks")
+  })
+
+  test("returns actionable errors and opts into stacks only on loopback", async () => {
+    for (const exposeErrorStacks of [false, true]) {
+      const rpc = new CodingAgentRpcServer({
+        cwd: process.cwd(),
+        backend: failingBackend("backend session initialization failed"),
+        exposeErrorStacks,
+      })
+      const handle = await rpc.start()
+      try {
+        const response = await fetch(`${handle.url}/rpc`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${handle.token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ method: "session.create" }),
+        })
+        const body = (await response.json()) as {
+          error: { message: string; stack?: string }
+        }
+        expect(response.status).toBe(500)
+        expect(body.error.message).toBe("backend session initialization failed")
+        if (exposeErrorStacks)
+          expect(body.error.stack).toContain("backend session initialization failed")
+        else expect(body.error.stack).toBeUndefined()
+      } finally {
+        await rpc.stop()
+      }
+    }
   })
 
   test("requires a token and streams a turn over SSE", async () => {

@@ -1,3 +1,5 @@
+import { publicErrorMessage } from "./errors.ts"
+
 export type UiExtensionSlot = "sidebar" | "main" | "timeline" | "diff" | "workflow" | "status"
 
 export interface UiThemeDescriptor {
@@ -67,7 +69,7 @@ export class UiExtensionHost {
         revision: this.revision,
         active: this.active,
         rolledBack: true,
-        error: error instanceof Error ? error.message : String(error),
+        error: publicErrorMessage(error, "UI extension preview failed"),
       }
     }
   }
@@ -83,7 +85,7 @@ export class UiExtensionHost {
         revision: this.revision,
         active: this.active,
         rolledBack: true,
-        error: error instanceof Error ? error.message : String(error),
+        error: publicErrorMessage(error, "UI extension reload failed"),
       }
     }
   }

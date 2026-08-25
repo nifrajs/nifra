@@ -122,6 +122,8 @@ function staticJsonResponse(
       contentType,
     )
   }
+  // lgtm [js/stack-trace-exposure] `body` is already serialized; ordinary thrown errors are replaced
+  // with the fixed internal-error envelope before reaching this response boundary.
   return new Response(body, init)
 }
 
@@ -177,6 +179,8 @@ function denoResponseWithJsonBody(
   headers: Record<string, string>,
   defaultContentType = responseJsonContentType(),
 ): Response {
+  // lgtm [js/stack-trace-exposure] this body is serialized data; ordinary thrown errors are replaced
+  // with the fixed internal-error envelope before reaching this response boundary.
   const response = new Response(body, { status })
   let hasContentType = false
   for (const [name, value] of Object.entries(headers)) {
@@ -488,7 +492,8 @@ export function toResponse(
           : { status, headers: jsonCtHeaders }
       return tagged(
         statics === undefined
-          ? new Response(body, init)
+          ? // lgtm [js/stack-trace-exposure] the serialized body is not a caught error stack.
+            new Response(body, init)
           : staticJsonResponse(body, status, statics, JSON_CONTENT_TYPE, init),
         body,
         tagResponseBody,
@@ -508,7 +513,8 @@ export function toResponse(
               headers as Record<string, string>,
               JSON_CT_HEADERS.get("content-type") ?? "application/json;charset=utf-8",
             )
-          : new Response(body, { status, headers: withJsonContentType(headers) })
+          : // lgtm [js/stack-trace-exposure] the serialized body is not a caught error stack.
+            new Response(body, { status, headers: withJsonContentType(headers) })
       return tagged(
         response,
         body,

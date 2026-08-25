@@ -5,6 +5,7 @@ import {
   resumeFromCursor,
 } from "@nifrajs/agent-protocol"
 import { readProjectDiff } from "./diff.ts"
+import { publicErrorDetails } from "./errors.ts"
 import type { ExtensionHost } from "./extensions.ts"
 import { CodingAgentHost, type CodingAgentHostOptions } from "./host.ts"
 import { readBoundedText } from "./process.ts"
@@ -21,6 +22,8 @@ export interface CodingAgentRpcServerOptions {
   readonly port?: number
   /** A random token is generated when omitted. Use an explicit token only for managed local launchers. */
   readonly authToken?: string
+  /** Include bounded exception stacks in RPC failures only for trusted loopback debugging. */
+  readonly exposeErrorStacks?: boolean
   readonly maxBodyBytes?: number
   readonly sessionStore?: SessionStore
   readonly contextWindow?: ContextWindowOptions
@@ -83,6 +86,8 @@ export class CodingAgentRpcServer {
     const hostname = this.options.hostname ?? "127.0.0.1"
     if (!this.options.allowRemote && !isLoopbackHost(hostname))
       throw new Error("agent rpc: remote binding requires allowRemote: true")
+    if (this.options.exposeErrorStacks === true && this.options.allowRemote === true)
+      throw new Error("agent rpc: exposeErrorStacks is only allowed for local-only binding")
     this.listener = Bun.serve({
       hostname,
       port: this.options.port ?? 0,
@@ -131,28 +136,20 @@ export class CodingAgentRpcServer {
       rpc = parseRpcRequest(body.text)
     } catch (error) {
       return json(
-        {
-          error: {
-            code: "invalid_request",
-            message: error instanceof Error ? error.message : String(error),
-          },
-        },
+        { error: this.protocolError("invalid_request", error, "request body is invalid") },
         400,
         cors,
+        this.options.exposeErrorStacks === true,
       )
     }
     try {
       return await this.dispatch(rpc, request, cors)
     } catch (error) {
       return json(
-        {
-          error: {
-            code: "rpc_failed",
-            message: error instanceof Error ? error.message : String(error),
-          },
-        },
+        { error: this.protocolError("rpc_failed", error, "request could not be completed") },
         500,
         cors,
+        this.options.exposeErrorStacks === true,
       )
     }
   }
@@ -258,17 +255,22 @@ export class CodingAgentRpcServer {
           )
         const stream = this.host.prompt(params.message, httpRequest.signal)
         const encoder = new TextEncoder()
+        const includeErrorStacks = this.options.exposeErrorStacks === true
+        const turnError = (error: unknown) => ({
+          code: "turn_failed",
+          ...publicErrorDetails(error, "turn could not be completed", includeErrorStacks),
+        })
         const body = new ReadableStream<Uint8Array>({
           async start(controller) {
             try {
               for await (const event of stream)
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+                controller.enqueue(
+                  encoder.encode(`data: ${serializeRpcValue(event, includeErrorStacks)}\n\n`),
+                )
               controller.close()
             } catch (error) {
               controller.enqueue(
-                encoder.encode(
-                  `event: error\ndata: ${JSON.stringify({ code: "turn_failed", message: error instanceof Error ? error.message : String(error) })}\n\n`,
-                ),
+                encoder.encode(`event: error\ndata: ${JSON.stringify(turnError(error))}\n\n`),
               )
               controller.close()
             }
@@ -429,8 +431,9 @@ export class CodingAgentRpcServer {
           params.maxDepth > 0
             ? { maxDepth: Math.min(params.maxDepth, 16) }
             : {}),
+          exposeErrorStacks: this.options.exposeErrorStacks === true,
         })
-        return json(result, result.ok ? 200 : 422, cors)
+        return json(result, result.ok ? 200 : 422, cors, this.options.exposeErrorStacks === true)
       }
       case "verification.run": {
         const params = record(request.params)
@@ -447,11 +450,27 @@ export class CodingAgentRpcServer {
             cors,
           )
         this.requireSnapshot()
-        return json(await runNifraVerification(name, { cwd: this.options.cwd }), 200, cors)
+        return json(
+          await runNifraVerification(name, {
+            cwd: this.options.cwd,
+            exposeErrorStacks: this.options.exposeErrorStacks === true,
+          }),
+          200,
+          cors,
+          this.options.exposeErrorStacks === true,
+        )
       }
       case "project.diff": {
         this.requireSnapshot()
-        return json(await readProjectDiff({ cwd: this.options.cwd }), 200, cors)
+        return json(
+          await readProjectDiff({
+            cwd: this.options.cwd,
+            exposeErrorStacks: this.options.exposeErrorStacks === true,
+          }),
+          200,
+          cors,
+          this.options.exposeErrorStacks === true,
+        )
       }
       case "session.stop": {
         await this.host.stop("rpc request")
@@ -469,6 +488,14 @@ export class CodingAgentRpcServer {
   private requireSnapshot(): AgentSessionSnapshot {
     if (this.host.snapshot === undefined) throw new Error("agent RPC session has not been created")
     return this.host.snapshot
+  }
+
+  private protocolError(
+    code: string,
+    error: unknown,
+    fallback: string,
+  ): { readonly code: string; readonly message: string; readonly stack?: string } {
+    return { code, ...publicErrorDetails(error, fallback, this.options.exposeErrorStacks === true) }
   }
 
   private async readRequest(
@@ -543,8 +570,24 @@ function isLoopbackHost(hostname: string): boolean {
   )
 }
 
-function json(value: unknown, status: number, inherited: Headers): Response {
+function json(
+  value: unknown,
+  status: number,
+  inherited: Headers,
+  includeErrorStacks = false,
+): Response {
   const headers = new Headers(inherited)
   headers.set("content-type", "application/json; charset=utf-8")
-  return new Response(JSON.stringify(value), { status, headers })
+  // lgtm [js/stack-trace-exposure] the default replacer removes stack fields from protocol data;
+  // stacks are serialized only in explicitly opt-in, loopback-only diagnostics mode.
+  return new Response(serializeRpcValue(value, includeErrorStacks), { status, headers })
+}
+
+function serializeRpcValue(value: unknown, includeErrorStacks: boolean): string {
+  return JSON.stringify(
+    value,
+    includeErrorStacks
+      ? undefined
+      : (key: string, nested: unknown) => (key === "stack" ? undefined : nested),
+  )
 }

@@ -3,6 +3,8 @@
 The preview is local-first and fail-closed:
 
 - RPC binds to loopback and requires a random bearer token; remote binding is opt-in.
+- RPC error stacks are omitted by default; `exposeErrorStacks` is an explicit loopback-only
+  diagnostics mode and is rejected when remote binding is enabled.
 - Project extensions are explicit, path-bounded, syntax-checked, capability-checked, and
   transactionally reloaded.
 - Session evidence is bounded, redacted for secret-shaped keys, and written as append-only JSONL.

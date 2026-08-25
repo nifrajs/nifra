@@ -3242,7 +3242,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       this.protoPoisoning,
     )
     this.logRequestError(err, ctx)
-    return wrapResponse(plainError(500, "internal_error"))
+    return this.internalErrorResponse(wrapResponse)
   }
 
   /**
@@ -4122,9 +4122,23 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // The thrown-value contract lives in `bare-error-lane.ts`, one source of truth for both this
     // lane and the fused body runner. `responseSet` and the logger are injected because they reach
     // into class state; the closure is allocated only on the throw path, never on the hot lane.
-    return renderBareError(err, ctx, finalize, wrapResponse, responseSet, (e, c) =>
-      this.logRequestError(e, c),
+    return renderBareError(
+      err,
+      ctx,
+      finalize,
+      wrapResponse,
+      responseSet,
+      (e, c) => this.logRequestError(e, c),
+      () => this.internalErrorResponse(wrapResponse),
     )
+  }
+
+  /**
+   * Keep the ordinary thrown-error response independent from the caught value. Deliberate Response
+   * control flow is handled by `renderBareError`; every other throw gets this fixed public envelope.
+   */
+  private internalErrorResponse<T>(wrapResponse: (response: Response | ResponseResult) => T): T {
+    return wrapResponse(plainError(500, "internal_error"))
   }
 
   // @ts-expect-error TS6133 -- invoked structurally by compiled plans (internal/route-execution.ts)

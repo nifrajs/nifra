@@ -1,9 +1,11 @@
+import { publicErrorDetails } from "./errors.ts"
 import { readBoundedText } from "./process.ts"
 
 export interface ProjectDiffOptions {
   readonly cwd: string
   readonly timeoutMs?: number
   readonly maxOutputBytes?: number
+  readonly exposeErrorStacks?: boolean
 }
 
 export interface ProjectDiffResult {
@@ -12,6 +14,7 @@ export interface ProjectDiffResult {
   readonly output?: string
   readonly truncated?: boolean
   readonly error?: string
+  readonly stack?: string
 }
 
 /** Read a bounded, non-interactive git diff for review surfaces. No user-supplied git arguments are accepted. */
@@ -55,10 +58,12 @@ export async function readProjectDiff(options: ProjectDiffOptions): Promise<Proj
       ...(timedOut ? { error: `git diff timed out after ${timeoutMs}ms` } : {}),
     }
   } catch (error) {
+    const details = publicErrorDetails(error, "git diff failed", options.exposeErrorStacks === true)
     return {
       ok: false,
       status: null,
-      error: error instanceof Error ? error.message : String(error),
+      error: details.message,
+      ...(details.stack === undefined ? {} : { stack: details.stack }),
     }
   } finally {
     clearTimeout(timer)

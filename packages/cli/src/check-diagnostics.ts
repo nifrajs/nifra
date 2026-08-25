@@ -10,7 +10,6 @@ import { join, resolve } from "node:path"
 import type { AssuranceConfig, AssuranceReport } from "@nifrajs/core/assurance"
 import { type ProjectEvidenceSnapshot, snapshotProjectEvidence } from "@nifrajs/core/evidence"
 import { SINGLE_COPY_REGISTER_SPECIFIER } from "@nifrajs/core/single-copy"
-import { Glob } from "bun"
 import type { CapabilityProjectReport } from "./capabilities-tool.ts"
 import type { SourceFinding, StaticRouteFinding } from "./check-scan.ts"
 import {
@@ -166,6 +165,194 @@ export interface CheckConfig {
 export interface RuleOverride {
   readonly severity?: "error" | "warn" | "info" | "off"
   readonly ignore?: readonly string[]
+}
+
+const MAX_IGNORE_GLOB_LENGTH = 4096
+const MAX_IGNORE_GLOB_ALTERNATIVES = 64
+
+/**
+ * Match the small file-glob language used by check overrides without compiling user input into a
+ * regular expression. `nifra.check.json` is commonly supplied by a project or CI wrapper, so an
+ * attacker who can influence it must not be able to turn a diagnostic filter into a ReDoS input.
+ * The matcher supports the portable glob forms users expect here: `*`, `?`, `**`, character
+ * classes, and brace alternatives.
+ */
+function safeIgnoreGlobMatch(pattern: string, file: string): boolean {
+  if (pattern.length === 0 || pattern.length > MAX_IGNORE_GLOB_LENGTH) return false
+  for (const alternative of expandIgnoreGlobBraces(pattern)) {
+    if (matchIgnoreGlobPath(alternative, file)) return true
+  }
+  return false
+}
+
+function expandIgnoreGlobBraces(pattern: string): readonly string[] {
+  const open = firstUnescaped(pattern, "{")
+  if (open === -1) return [pattern]
+  const close = matchingBrace(pattern, open)
+  if (close === -1) return [pattern]
+  const choices = splitBraceChoices(pattern.slice(open + 1, close))
+  if (choices.length < 2) return [pattern]
+
+  const expanded: string[] = []
+  for (const choice of choices) {
+    const prefix = pattern.slice(0, open) + choice + pattern.slice(close + 1)
+    for (const nested of expandIgnoreGlobBraces(prefix)) {
+      expanded.push(nested)
+      if (expanded.length >= MAX_IGNORE_GLOB_ALTERNATIVES) return expanded
+    }
+  }
+  return expanded
+}
+
+function firstUnescaped(value: string, needle: string): number {
+  let escaped = false
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index]!
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    if (char === "\\") {
+      escaped = true
+      continue
+    }
+    if (char === needle) return index
+  }
+  return -1
+}
+
+function matchingBrace(value: string, open: number): number {
+  let depth = 0
+  let escaped = false
+  for (let index = open; index < value.length; index++) {
+    const char = value[index]!
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    if (char === "\\") {
+      escaped = true
+      continue
+    }
+    if (char === "{") depth++
+    else if (char === "}" && --depth === 0) return index
+  }
+  return -1
+}
+
+function splitBraceChoices(value: string): readonly string[] {
+  const choices: string[] = []
+  let start = 0
+  let depth = 0
+  let escaped = false
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index]!
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    if (char === "\\") {
+      escaped = true
+      continue
+    }
+    if (char === "{") depth++
+    else if (char === "}") depth--
+    else if (char === "," && depth === 0) {
+      choices.push(value.slice(start, index))
+      start = index + 1
+    }
+  }
+  choices.push(value.slice(start))
+  return choices
+}
+
+function matchIgnoreGlobPath(pattern: string, file: string): boolean {
+  const patternParts = pattern.split("/")
+  const fileParts = file.split("/")
+  let reachable = new Array<boolean>(fileParts.length + 1).fill(false)
+  reachable[0] = true
+  for (const part of patternParts) {
+    const next = new Array<boolean>(fileParts.length + 1).fill(false)
+    if (part === "**") {
+      let canReach = false
+      for (let index = 0; index <= fileParts.length; index++) {
+        canReach ||= reachable[index] === true
+        next[index] = canReach
+      }
+    } else {
+      for (let index = 0; index < fileParts.length; index++) {
+        if (reachable[index] && matchIgnoreGlobPart(part, fileParts[index]!)) next[index + 1] = true
+      }
+    }
+    reachable = next
+  }
+  return reachable[fileParts.length] === true
+}
+
+function matchIgnoreGlobPart(pattern: string, value: string): boolean {
+  let previous = new Array<boolean>(value.length + 1).fill(false)
+  previous[0] = true
+  for (let patternIndex = 0; patternIndex < pattern.length; patternIndex++) {
+    const char = pattern[patternIndex]!
+    const next = new Array<boolean>(value.length + 1).fill(false)
+    if (char === "*") {
+      next[0] = previous[0] === true
+      for (let valueIndex = 1; valueIndex <= value.length; valueIndex++)
+        next[valueIndex] = previous[valueIndex] === true || next[valueIndex - 1] === true
+    } else if (char === "?") {
+      for (let valueIndex = 1; valueIndex <= value.length; valueIndex++)
+        next[valueIndex] = previous[valueIndex - 1] === true
+    } else if (char === "\\" && patternIndex + 1 < pattern.length) {
+      const literal = pattern[++patternIndex]!
+      for (let valueIndex = 1; valueIndex <= value.length; valueIndex++)
+        next[valueIndex] = previous[valueIndex - 1] === true && value[valueIndex - 1] === literal
+    } else if (char === "[") {
+      const classEnd = ignoreGlobClassEnd(pattern, patternIndex + 1)
+      if (classEnd === -1)
+        return matchIgnoreGlobPart(`\\[${pattern.slice(patternIndex + 1)}`, value)
+      for (let valueIndex = 1; valueIndex <= value.length; valueIndex++)
+        next[valueIndex] =
+          previous[valueIndex - 1] === true &&
+          matchIgnoreGlobClass(pattern.slice(patternIndex + 1, classEnd), value[valueIndex - 1]!)
+      patternIndex = classEnd
+    } else {
+      for (let valueIndex = 1; valueIndex <= value.length; valueIndex++)
+        next[valueIndex] = previous[valueIndex - 1] === true && value[valueIndex - 1] === char
+    }
+    previous = next
+  }
+  return previous[value.length] === true
+}
+
+function ignoreGlobClassEnd(pattern: string, start: number): number {
+  for (let index = start; index < pattern.length; index++) {
+    if (pattern[index] === "]" && index > start) return index
+  }
+  return -1
+}
+
+function matchIgnoreGlobClass(spec: string, value: string): boolean {
+  let index = 0
+  let negated = false
+  if (spec[0] === "!" || spec[0] === "^") {
+    negated = true
+    index++
+  }
+  let matched = false
+  while (index < spec.length) {
+    const first = spec[index] === "\\" ? spec[++index] : spec[index]
+    if (first === undefined) break
+    index++
+    if (spec[index] === "-" && index + 1 < spec.length) {
+      index++
+      const last = spec[index] === "\\" ? spec[++index] : spec[index]
+      if (last !== undefined && first <= value && value <= last) matched = true
+      index++
+    } else if (value === first) {
+      matched = true
+    }
+  }
+  return negated ? !matched : matched
 }
 
 const UNTYPED_CLIENT_HINT =
@@ -973,16 +1160,10 @@ export async function collectCheckDiagnostics(
     }
     return undefined
   }
-  const ignoreGlobs = new Map<RuleOverride, Glob[]>()
   const dropped = (override: RuleOverride, file: string | undefined): boolean => {
     if (override.severity === "off") return true
     if (override.ignore === undefined || file === undefined) return false
-    let globs = ignoreGlobs.get(override)
-    if (globs === undefined) {
-      globs = override.ignore.map((pattern) => new Glob(pattern))
-      ignoreGlobs.set(override, globs)
-    }
-    return globs.some((glob) => glob.match(file))
+    return override.ignore.some((pattern) => safeIgnoreGlobMatch(pattern, file))
   }
   const codeToLegacy = new Map(
     Object.entries(LEGACY_RULE_CODES).map(([name, code]) => [code, name]),

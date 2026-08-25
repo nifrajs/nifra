@@ -21,6 +21,11 @@ describe("nifra-agent CLI arguments", () => {
     expect(options.host).toBe("127.0.0.1")
     expect(options.sessionDir).toContain(".sessions")
     expect(options.authToken).toBe("local-token-123456")
+    expect(options.exposeErrorStacks).toBe(false)
+  })
+
+  test("parses the local RPC error-stack diagnostics flag", () => {
+    expect(parseArgs(["--rpc", "--expose-error-stacks"]).exposeErrorStacks).toBe(true)
   })
 
   test("parses optional post-turn verification gates", () => {

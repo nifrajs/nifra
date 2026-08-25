@@ -8,6 +8,8 @@ export interface IsolatedExtensionWorkerOptions {
   readonly cwd: string
   readonly timeoutMs?: number
   readonly maxMessageBytes?: number
+  /** Include bounded worker exception stacks for trusted local debugging. */
+  readonly exposeErrorStacks?: boolean
   readonly trustedCapabilities?: readonly string[]
 }
 
@@ -31,6 +33,7 @@ interface WorkerMessage {
   readonly description?: string
   readonly capabilities?: readonly string[]
   readonly error?: string
+  readonly stack?: string
   readonly output?: unknown
   readonly commands?: readonly string[]
   readonly tools?: readonly IsolatedExtensionTool[]
@@ -108,6 +111,7 @@ export class IsolatedExtensionWorker {
           ...filteredEnv(),
           NIFRA_EXTENSION_TOKEN: this.token,
           NIFRA_EXTENSION_MAX_MESSAGE_BYTES: String(this.options.maxMessageBytes),
+          NIFRA_EXTENSION_EXPOSE_ERROR_STACKS: this.options.exposeErrorStacks === true ? "1" : "0",
         },
         stdin: "ignore",
         stdout: "pipe",
@@ -200,7 +204,7 @@ export class IsolatedExtensionWorker {
     if (pending === undefined) return
     clearTimeout(pending.timer)
     this.pending.delete(id)
-    if (message.error !== undefined) pending.reject(new Error(message.error))
+    if (message.error !== undefined) pending.reject(workerError(message))
     else pending.resolve(message.output)
   }
 
@@ -287,7 +291,7 @@ export class IsolatedExtensionWorker {
       return
     }
     if (message.type === "fatal") {
-      this.fail(new Error(message.error ?? "isolated extension worker failed"))
+      this.fail(workerError(message))
       return
     }
     if (message.type === "command" && typeof message.name === "string")
@@ -298,7 +302,7 @@ export class IsolatedExtensionWorker {
     if (pending === undefined) return
     clearTimeout(pending.timer)
     this.pending.delete(message.id)
-    if (message.error !== undefined) pending.reject(new Error(message.error))
+    if (message.error !== undefined) pending.reject(workerError(message))
     else pending.resolve(message.output)
   }
 
@@ -322,6 +326,12 @@ function isWithin(root: string, candidate: string): boolean {
 
 function isValidPort(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 1 && (value as number) <= 65_535
+}
+
+function workerError(message: WorkerMessage): Error {
+  const error = new Error(message.error ?? "isolated extension worker failed")
+  if (message.stack !== undefined) error.stack = message.stack
+  return error
 }
 
 function filteredEnv(): Record<string, string> {

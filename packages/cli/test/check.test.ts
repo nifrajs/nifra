@@ -1964,6 +1964,20 @@ describe("nifra.check.json rule overrides", () => {
     await rm(dir, { recursive: true, force: true })
   })
 
+  test("ignore globs support braces without compiling regex-shaped input", async () => {
+    const dir = await project({
+      "typed-client": { ignore: ["src/**/{users,other}.ts", "src/**/(a+)+.ts"] },
+    })
+    await writeFile(join(dir, "src", "other.ts"), 'const r = await fetch("/other")\n')
+    await writeFile(join(dir, "src", "(a+)+.ts"), 'const r = await fetch("/regex-shaped")\n')
+    await mkdir(join(dir, "app"), { recursive: true })
+    await writeFile(join(dir, "app", "other.ts"), 'const r = await fetch("/users")\n')
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    const files = result.diagnostics.filter((d) => d.rule === "typed-client").map((d) => d.file)
+    expect(files).toEqual(["app/other.ts"])
+    await rm(dir, { recursive: true, force: true })
+  })
+
   test("an invalid entry is skipped with a check-config warning, never silently applied", async () => {
     const dir = await project({ "typed-client": { severity: "silent" } })
     const result = await collectCheckResult(dir, { lintsOnly: true })

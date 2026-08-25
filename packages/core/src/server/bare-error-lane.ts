@@ -17,7 +17,7 @@
  * which lane caught it. Both the generic bare lane and the fused body runner route here, so that
  * decision lives in exactly one place.
  */
-import { pathnameOf, plainError } from "./http.ts"
+import { pathnameOf } from "./http.ts"
 import type { Logger } from "./logger.ts"
 import { isResponseResult, type ResponseResult } from "./runtime-core.ts"
 import type { CtxSet, RawContext } from "./server.ts"
@@ -43,11 +43,12 @@ export function renderBareError<T>(
   wrapResponse: (response: Response | ResponseResult) => T,
   responseSet: (ctx: RawContext) => CtxSet,
   logError: (err: unknown, ctx: RawContext) => void,
+  internalError: () => T,
 ): T {
   if (err instanceof Response) return wrapResponse(err)
   if (isResponseResult(err)) return finalize(err, responseSet(ctx), ctx)
   logError(err, ctx)
-  return wrapResponse(plainError(500, "internal_error"))
+  return internalError()
 }
 
 /**
