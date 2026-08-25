@@ -45,20 +45,36 @@ async function call(
   }
 }
 
+interface FakeWorkerOptions {
+  readonly beforeResponse?: () => void
+  readonly postMessage?: "throw"
+  readonly spawnDelayMs?: number
+}
+
 async function withFakeWorker<T>(
   closeMode: "throw" | "ignore",
   action: () => Promise<T>,
+  options: FakeWorkerOptions = {},
 ): Promise<T> {
   const previousWorker = globalThis.Worker
   class FakeWorker {
     onmessage: ((event: MessageEvent) => void) | null = null
     onerror: (() => void) | null = null
 
+    constructor() {
+      if (options.spawnDelayMs !== undefined) {
+        const buffer = new Int32Array(new SharedArrayBuffer(4))
+        Atomics.wait(buffer, 0, 0, options.spawnDelayMs)
+      }
+    }
+
     postMessage(message: { id?: number; type?: string }): void {
       if (message.type === "close") {
         if (closeMode === "throw") throw new Error("worker is unavailable")
         return
       }
+      if (options.postMessage === "throw") throw new Error("worker post failed")
+      options.beforeResponse?.()
       queueMicrotask(() =>
         this.onmessage?.({ data: { id: message.id, ok: true, rows: [] } } as MessageEvent),
       )
@@ -119,6 +135,18 @@ describe("construction fails closed", () => {
         runQuery: { authorize: () => true, queryTimeoutMs: Number.NaN },
       }),
     ).toThrow(/queryTimeoutMs/)
+  })
+
+  test("fails closed when query_only cannot be enabled", () => {
+    const db = {
+      prepare: () => ({ all: () => [] }),
+      run: () => {
+        throw new Error("pragma unavailable")
+      },
+    }
+    expect(() => serveDatabaseAsMcp(db, { tables: ["habits"] })).toThrow(
+      /could not set PRAGMA query_only/,
+    )
   })
 })
 
@@ -219,6 +247,27 @@ describe("run_query (opt-in)", () => {
     expect(result.rows).toHaveLength(1)
     expect(result.truncated).toBe(true)
     expect(result.total).toBeNull()
+  })
+
+  test("exactTotal reports the full count after row truncation", async () => {
+    const exact = serveDatabaseAsMcp(seededDb(), {
+      tables: ["habits"],
+      runQuery: { authorize: () => true, maxRows: 1, exactTotal: true },
+    })
+    try {
+      const { text, isError } = await call(exact, "run_query", { sql: "SELECT * FROM habits" })
+      expect(isError).toBe(false)
+      const result = JSON.parse(text) as {
+        rows: unknown[]
+        truncated?: boolean
+        total?: number | null
+      }
+      expect(result.rows).toHaveLength(1)
+      expect(result.truncated).toBe(true)
+      expect(result.total).toBe(2)
+    } finally {
+      await exact.close?.()
+    }
   })
 
   test("writes are rejected (statement gate)", async () => {
@@ -470,6 +519,98 @@ describe("query execution lanes", () => {
       expect(snapshots).toBe(0)
     } finally {
       await served.close?.()
+      db.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  test("a worker response that arrives after its deadline is discarded", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "nifra-mcp-db-"))
+    const path = join(directory, "late-response.db")
+    const db = new Database(path)
+    db.run("CREATE TABLE habits (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+    const realNow = Date.now
+    let now = realNow()
+    Date.now = () => now
+    try {
+      await withFakeWorker(
+        "ignore",
+        async () => {
+          const served = serveDatabaseAsMcp(db, {
+            tables: ["habits"],
+            runQuery: { authorize: () => true, queryTimeoutMs: 1_000 },
+          })
+          try {
+            const result = await call(served, "run_query", { sql: "SELECT name FROM habits" })
+            expect(result.isError).toBe(true)
+            expect(result.text).toBe("query exceeded the time limit")
+          } finally {
+            await served.close?.()
+          }
+        },
+        { beforeResponse: () => (now += 2_000) },
+      )
+    } finally {
+      Date.now = realNow
+      db.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  test("a worker that cannot start before the deadline is discarded", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "nifra-mcp-db-"))
+    const path = join(directory, "late-start.db")
+    const db = new Database(path)
+    db.run("CREATE TABLE habits (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+    try {
+      await withFakeWorker(
+        "ignore",
+        async () => {
+          const served = serveDatabaseAsMcp(db, {
+            tables: ["habits"],
+            runQuery: { authorize: () => true, queryTimeoutMs: 1 },
+          })
+          try {
+            const result = await call(served, "run_query", { sql: "SELECT name FROM habits" })
+            expect(result.isError).toBe(true)
+            expect(result.text).toBe("query exceeded the time limit")
+          } finally {
+            await served.close?.()
+          }
+        },
+        { spawnDelayMs: 10 },
+      )
+    } finally {
+      db.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  test("a worker post failure is returned as a query error", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "nifra-mcp-db-"))
+    const path = join(directory, "post-failure.db")
+    const db = new Database(path)
+    db.run("CREATE TABLE habits (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+    try {
+      await withFakeWorker(
+        "throw",
+        async () => {
+          const served = serveDatabaseAsMcp(db, {
+            tables: ["habits"],
+            runQuery: { authorize: () => true },
+          })
+          try {
+            const result = await call(served, "run_query", { sql: "SELECT name FROM habits" })
+            expect(result.isError).toBe(true)
+            expect(result.text).toContain("query failed to plan")
+            expect(result.text).toContain("worker post failed")
+          } finally {
+            await served.close?.()
+          }
+        },
+        { postMessage: "throw" },
+      )
+    } finally {
       db.close()
       rmSync(directory, { recursive: true, force: true })
     }
