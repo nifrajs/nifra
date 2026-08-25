@@ -44,7 +44,7 @@ export interface CodingAgentHostOptions {
   readonly maxRepairAttempts?: number
   readonly verification?: Pick<
     VerificationOptions,
-    "command" | "timeoutMs" | "maxOutputBytes" | "env"
+    "command" | "commandArgs" | "timeoutMs" | "maxOutputBytes" | "env"
   >
   /** Retain bounded exception stacks for trusted local diagnostics. */
   readonly exposeErrorStacks?: boolean
@@ -62,7 +62,7 @@ export class CodingAgentHost {
   private readonly maxRepairAttempts: number
   private readonly exposeErrorStacks: boolean
   private readonly verification:
-    | Pick<VerificationOptions, "command" | "timeoutMs" | "maxOutputBytes" | "env">
+    | Pick<VerificationOptions, "command" | "commandArgs" | "timeoutMs" | "maxOutputBytes" | "env">
     | undefined
 
   constructor(options: CodingAgentHostOptions) {

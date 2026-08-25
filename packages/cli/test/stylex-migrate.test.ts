@@ -1,12 +1,13 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { migrateTailwindSource, migrateTailwindToStylex } from "../src/stylex-migrate.ts"
+import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 
 const temporaryDirectories: string[] = []
 
 afterEach(() => {
-  for (const directory of temporaryDirectories) rmSync(directory, { recursive: true, force: true })
+  for (const directory of temporaryDirectories) removeFixtureRoot(directory)
   temporaryDirectories.length = 0
 })
 
@@ -50,7 +51,7 @@ test("reports dynamic className expressions instead of guessing", () => {
 })
 
 test("scans safely, writes only with --write semantics, and skips generated directories", async () => {
-  const root = mkdtempSync(join(process.cwd(), "packages/cli/test/.tmp-stylex-migrate-"))
+  const root = createFixtureRoot("stylex-migrate-")
   temporaryDirectories.push(root)
   mkdirSync(join(root, "src"), { recursive: true })
   mkdirSync(join(root, "node_modules/pkg"), { recursive: true })

@@ -3369,7 +3369,7 @@
     "name": "CodingAgentHostOptions",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface CodingAgentHostOptions {\n    readonly backend: AgentBackend;\n    readonly sessionStore?: SessionStore;\n    readonly contextWindow?: ContextWindowOptions;\n    readonly extensions?: ExtensionHost;\n    readonly approvals?: ApprovalManagerOptions;\n    /** Optional post-turn gates. Disabled by default to keep the hot path fast. */\n    readonly verifyAfterTurn?: readonly (\"check\" | \"assure\" | \"test\")[];\n    /**\n     * Maximum number of automatic repair turns after a failed post-turn gate. Set to zero to\n     * preserve observe-only verification while still emitting repair.required.\n     */\n    readonly maxRepairAttempts?: number;\n    readonly verification?: Pick<VerificationOptions, \"command\" | \"timeoutMs\" | \"maxOutputBytes\" | \"env\">;\n    /** Retain bounded exception stacks for trusted local diagnostics. */\n    readonly exposeErrorStacks?: boolean;\n}"
+    "signature": "export interface CodingAgentHostOptions {\n    readonly backend: AgentBackend;\n    readonly sessionStore?: SessionStore;\n    readonly contextWindow?: ContextWindowOptions;\n    readonly extensions?: ExtensionHost;\n    readonly approvals?: ApprovalManagerOptions;\n    /** Optional post-turn gates. Disabled by default to keep the hot path fast. */\n    readonly verifyAfterTurn?: readonly (\"check\" | \"assure\" | \"test\")[];\n    /**\n     * Maximum number of automatic repair turns after a failed post-turn gate. Set to zero to\n     * preserve observe-only verification while still emitting repair.required.\n     */\n    readonly maxRepairAttempts?: number;\n    readonly verification?: Pick<VerificationOptions, \"command\" | \"commandArgs\" | \"timeoutMs\" | \"maxOutputBytes\" | \"env\">;\n    /** Retain bounded exception stacks for trusted local diagnostics. */\n    readonly exposeErrorStacks?: boolean;\n}"
   },
   {
     "name": "CodingAgentRpcServer",
@@ -18054,7 +18054,7 @@
     "name": "VerificationOptions",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface VerificationOptions {\n    readonly cwd: string;\n    readonly command?: string;\n    readonly timeoutMs?: number;\n    readonly maxOutputBytes?: number;\n    readonly env?: Readonly<Record<string, string | undefined>>;\n    readonly exposeErrorStacks?: boolean;\n}"
+    "signature": "export interface VerificationOptions {\n    readonly cwd: string;\n    readonly command?: string;\n    /** Arguments placed before the gate name; useful for portable interpreter-backed test commands. */\n    readonly commandArgs?: readonly string[];\n    readonly timeoutMs?: number;\n    readonly maxOutputBytes?: number;\n    readonly env?: Readonly<Record<string, string | undefined>>;\n    readonly exposeErrorStacks?: boolean;\n}"
   },
   {
     "name": "VerificationRepairTask",

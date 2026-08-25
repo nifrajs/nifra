@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type {
@@ -96,29 +96,31 @@ class ScriptedBackend implements AgentBackend {
 test("host automatically repairs a failed verification and re-verifies", async () => {
   const root = await mkdtemp(join(tmpdir(), "nifra-agent-host-"))
   const marker = join(root, "verification.marker")
-  const command = join(root, "verify.sh")
+  const verifier = join(root, "verify.ts")
   await writeFile(
-    command,
+    verifier,
     [
-      "#!/bin/sh",
-      'if [ -f "$NIFRA_REPAIR_MARKER" ]; then',
-      "  printf '%s\\n' '{\"ok\":true}'",
-      "  exit 0",
-      "fi",
-      'touch "$NIFRA_REPAIR_MARKER"',
-      'printf \'%s\\n\' \'{"ok":false,"error":"fixture failure"}\'',
-      "exit 1",
+      'import { existsSync, writeFileSync } from "node:fs"',
+      "const marker = process.env.NIFRA_REPAIR_MARKER",
+      "if (marker === undefined) process.exit(2)",
+      "if (existsSync(marker)) { console.log(JSON.stringify({ ok: true })); process.exit(0) }",
+      'writeFileSync(marker, "")',
+      'console.log(JSON.stringify({ ok: false, error: "fixture failure" }))',
+      "process.exit(1)",
       "",
     ].join("\n"),
   )
-  await chmod(command, 0o755)
 
   const backend = new ScriptedBackend()
   const host = new CodingAgentHost({
     backend,
     maxRepairAttempts: 2,
     verifyAfterTurn: ["check"],
-    verification: { command, env: { NIFRA_REPAIR_MARKER: marker } },
+    verification: {
+      command: process.execPath,
+      commandArgs: [verifier],
+      env: { NIFRA_REPAIR_MARKER: marker },
+    },
   })
   try {
     await host.start({ cwd: root, backend: backend.info.name })
@@ -142,21 +144,22 @@ test("host automatically repairs a failed verification and re-verifies", async (
 
 test("host stops automatic repair at the configured attempt cap", async () => {
   const root = await mkdtemp(join(tmpdir(), "nifra-agent-host-cap-"))
-  const command = join(root, "verify.sh")
+  const verifier = join(root, "verify.ts")
   await writeFile(
-    command,
-    ["#!/bin/sh", 'printf \'%s\\n\' \'{"ok":false,"error":"still broken"}\'', "exit 1", ""].join(
-      "\n",
-    ),
+    verifier,
+    [
+      'console.log(JSON.stringify({ ok: false, error: "still broken" }))',
+      "process.exit(1)",
+      "",
+    ].join("\n"),
   )
-  await chmod(command, 0o755)
 
   const backend = new ScriptedBackend()
   const host = new CodingAgentHost({
     backend,
     maxRepairAttempts: 2,
     verifyAfterTurn: ["check"],
-    verification: { command },
+    verification: { command: process.execPath, commandArgs: [verifier] },
   })
   try {
     await host.start({ cwd: root, backend: backend.info.name })

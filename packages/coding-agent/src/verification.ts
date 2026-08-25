@@ -45,6 +45,8 @@ export function createVerificationRepairTask(
 export interface VerificationOptions {
   readonly cwd: string
   readonly command?: string
+  /** Arguments placed before the gate name; useful for portable interpreter-backed test commands. */
+  readonly commandArgs?: readonly string[]
   readonly timeoutMs?: number
   readonly maxOutputBytes?: number
   readonly env?: Readonly<Record<string, string | undefined>>
@@ -57,8 +59,9 @@ export async function runNifraVerification(
   options: VerificationOptions,
 ): Promise<VerificationResult> {
   const command = options.command ?? "nifra"
+  const commandArgs = options.commandArgs ?? []
   const args = name === "test" ? ["test"] : [name, "--json"]
-  const proc = Bun.spawn([command, ...args], {
+  const proc = Bun.spawn([command, ...commandArgs, ...args], {
     cwd: options.cwd,
     stdin: "ignore",
     stdout: "pipe",
