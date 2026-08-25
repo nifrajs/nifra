@@ -22,6 +22,8 @@ interface WorkbenchOptions {
   readonly rpcPort: number
   readonly piCommand: string
   readonly backend: BackendMode
+  readonly verifyAfterTurn: readonly ("check" | "assure" | "test")[]
+  readonly maxRepairAttempts: number
 }
 
 const options = parseArgs(Bun.argv.slice(2))
@@ -72,6 +74,8 @@ async function buildRpcServer(opts: WorkbenchOptions): Promise<CodingAgentRpcSer
     cwd: opts.cwd,
     hostname: "127.0.0.1",
     port: opts.rpcPort,
+    maxRepairAttempts: opts.maxRepairAttempts,
+    verifyAfterTurn: opts.verifyAfterTurn,
   }
   if (opts.backend === "replay") return new CodingAgentRpcServer(base)
   const extensionRoots = await discoverExtensions(opts.cwd)
@@ -134,6 +138,8 @@ function parseArgs(args: readonly string[]): WorkbenchOptions {
   let rpcPort = 0
   let piCommand = "pi"
   let backend: BackendMode = "pi"
+  let verifyAfterTurn: readonly ("check" | "assure" | "test")[] = []
+  let maxRepairAttempts = 2
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]
     if (arg === "--cwd") cwd = resolvePath(args[++index] ?? cwd)
@@ -141,14 +147,45 @@ function parseArgs(args: readonly string[]): WorkbenchOptions {
     else if (arg === "--rpc-port") rpcPort = parsePort(args[++index], "--rpc-port")
     else if (arg === "--pi") piCommand = args[++index] ?? piCommand
     else if (arg === "--backend") backend = parseBackend(args[++index])
-    else if (arg === "--help" || arg === "-h") {
+    else if (arg === "--verify-after-turn")
+      verifyAfterTurn = parseVerificationNames(args[++index] ?? "")
+    else if (arg === "--max-repair-attempts") {
+      maxRepairAttempts = Number(args[++index] ?? "")
+      if (
+        !Number.isSafeInteger(maxRepairAttempts) ||
+        maxRepairAttempts < 0 ||
+        maxRepairAttempts > 8
+      )
+        throw new Error("--max-repair-attempts must be an integer between 0 and 8")
+    } else if (arg === "--help" || arg === "-h") {
       console.log(
-        "nifra-workbench [--cwd <dir>] [--ui-port <port>] [--rpc-port <port>] [--pi <command>] [--backend pi|replay]",
+        "nifra-workbench [--cwd <dir>] [--ui-port <port>] [--rpc-port <port>] [--pi <command>] [--backend pi|replay] [--verify-after-turn check,assure,test] [--max-repair-attempts <n>]",
       )
       process.exit(0)
     } else throw new Error(`unknown argument: ${arg}`)
   }
-  return { cwd, uiPort, rpcPort, piCommand, backend }
+  return {
+    cwd,
+    uiPort,
+    rpcPort,
+    piCommand,
+    backend,
+    verifyAfterTurn,
+    maxRepairAttempts,
+  }
+}
+
+function parseVerificationNames(value: string): readonly ("check" | "assure" | "test")[] {
+  const names = value
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean)
+  if (
+    names.length === 0 ||
+    names.some((name) => name !== "check" && name !== "assure" && name !== "test")
+  )
+    throw new Error("--verify-after-turn must contain only check, assure, or test")
+  return Object.freeze([...new Set(names)] as ("check" | "assure" | "test")[])
 }
 
 function parseBackend(value: string | undefined): BackendMode {

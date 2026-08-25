@@ -103,8 +103,9 @@ The same public contracts also cover applications that are agent products:
 | Protocol bridges | [a2a](packages/a2a) · [ag-ui](packages/ag-ui) | A2A 1.0 JSON-RPC/SSE and AG-UI SSE endpoints over the same agent runner, including typed human-in-the-loop resume. |
 | Observability and skills | [agent-telemetry](packages/agent-telemetry) · [skills](packages/skills) | Token-only OpenTelemetry run traces and portable skills that keep agents pointed at the live MCP contract. |
 
-    bun add @nifrajs/coding-agent @nifrajs/pi
-    bunx nifra-agent --backend pi --message "run the checks and explain failures"
+   bun add @nifrajs/coding-agent @nifrajs/pi
+    bunx nifra-agent --backend pi --message "run the checks and explain failures" \
+      --verify-after-turn check --max-repair-attempts 2
 
 Provider credentials, durable state, authorization, and approval policy are application ports rather
 than hidden framework state. The local process adapter contains crashes and accidents but is **not** a

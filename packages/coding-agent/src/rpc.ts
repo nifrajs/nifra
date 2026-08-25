@@ -30,6 +30,7 @@ export interface CodingAgentRpcServerOptions {
   readonly extensions?: ExtensionHost
   readonly ui?: UiExtensionHost
   readonly verifyAfterTurn?: readonly ("check" | "assure" | "test")[]
+  readonly maxRepairAttempts?: number
   readonly verification?: CodingAgentHostOptions["verification"]
 }
 
@@ -71,6 +72,10 @@ export class CodingAgentRpcServer {
       ...(options.verifyAfterTurn === undefined
         ? {}
         : { verifyAfterTurn: options.verifyAfterTurn }),
+      ...(options.maxRepairAttempts === undefined
+        ? {}
+        : { maxRepairAttempts: options.maxRepairAttempts }),
+      exposeErrorStacks: options.exposeErrorStacks === true,
       ...(options.verification === undefined ? {} : { verification: options.verification }),
     })
     this.token = options.authToken ?? crypto.randomUUID().replaceAll("-", "")

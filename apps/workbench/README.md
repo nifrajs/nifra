@@ -10,6 +10,15 @@ bun run --filter '@nifrajs/workbench' dev -- --cwd /path/to/project
 The launcher prints a one-time local URL. Desktop packaging (Tauri) can wrap this client after the
 local web surface is stable; the browser client is intentionally usable by itself for fast iteration.
 
+To enable the automatic repair loop in the Workbench, pass a verification gate:
+
+    bun run --filter '@nifrajs/workbench' dev -- --cwd /path/to/project \
+      --verify-after-turn check --max-repair-attempts 2
+
+A failed gate is sent back to the Pi-backed agent as bounded repair work, then the gate is rerun
+until it passes or the attempt cap is reached. --max-repair-attempts 0 keeps verification
+observe-only.
+
 The shell also discovers workflow extensions and controlled UI manifests through
 the same RPC connection. Workflow execution remains bounded by the host, and
 the navigation, approval, and security surfaces stay owned by the stable shell.

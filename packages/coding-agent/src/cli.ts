@@ -24,7 +24,8 @@ const HELP = `nifra-agent - local coding agent host
 Usage:
   nifra-agent [--backend pi|replay] [--cwd <dir>] [--once <prompt>]
               [--json] [--no-session] [--session-dir <dir>] [--session-id <id>]
-              [--verify-after-turn check,assure] [--pi <command>] [--replay <file>]
+              [--verify-after-turn check,assure] [--max-repair-attempts <n>]
+              [--pi <command>] [--replay <file>]
   nifra-agent --migrate-session <id> --migrate-from <dir> --migrate-to <dir> [--json]
   nifra-agent --rpc [--cwd <dir>] [--host 127.0.0.1] [--port 0] [--expose-error-stacks]
 
@@ -62,6 +63,7 @@ export interface CliOptions {
   readonly migrationSource?: string
   readonly migrationTarget?: string
   readonly verifyAfterTurn: readonly ("check" | "assure" | "test")[]
+  readonly maxRepairAttempts: number
 }
 
 export function parseArgs(args: readonly string[]): CliOptions {
@@ -83,6 +85,7 @@ export function parseArgs(args: readonly string[]): CliOptions {
   let migrationSource: string | undefined
   let migrationTarget: string | undefined
   let verifyAfterTurn: readonly ("check" | "assure" | "test")[] = []
+  let maxRepairAttempts = 2
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]
     if (arg === "--backend") backend = args[++index] ?? backend
@@ -107,7 +110,15 @@ export function parseArgs(args: readonly string[]): CliOptions {
     else if (arg === "--expose-error-stacks") exposeErrorStacks = true
     else if (arg === "--verify-after-turn")
       verifyAfterTurn = parseVerificationNames(args[++index] ?? "")
-    else if (arg === "--help" || arg === "-h") {
+    else if (arg === "--max-repair-attempts") {
+      maxRepairAttempts = Number(args[++index] ?? "")
+      if (
+        !Number.isSafeInteger(maxRepairAttempts) ||
+        maxRepairAttempts < 0 ||
+        maxRepairAttempts > 8
+      )
+        throw new Error("--max-repair-attempts must be an integer between 0 and 8")
+    } else if (arg === "--help" || arg === "-h") {
       console.log(HELP)
       process.exit(0)
     } else throw new Error(`unknown argument: ${arg}`)
@@ -144,6 +155,7 @@ export function parseArgs(args: readonly string[]): CliOptions {
     ...(migrationSource === undefined ? {} : { migrationSource }),
     ...(migrationTarget === undefined ? {} : { migrationTarget }),
     verifyAfterTurn,
+    maxRepairAttempts,
   }
 }
 
@@ -222,6 +234,7 @@ async function main(): Promise<void> {
         ? {}
         : { sessionStore: new FileSessionStore({ root: join(options.sessionDir, "events") }) }),
       extensions,
+      maxRepairAttempts: options.maxRepairAttempts,
       verifyAfterTurn: options.verifyAfterTurn,
     })
     const handle = await rpc.start()
@@ -240,11 +253,17 @@ async function main(): Promise<void> {
 
   const hostOptions =
     options.sessionDir === undefined
-      ? { backend, extensions, verifyAfterTurn: options.verifyAfterTurn }
+      ? {
+          backend,
+          extensions,
+          maxRepairAttempts: options.maxRepairAttempts,
+          verifyAfterTurn: options.verifyAfterTurn,
+        }
       : {
           backend,
           sessionStore: new FileSessionStore({ root: join(options.sessionDir, "events") }),
           extensions,
+          maxRepairAttempts: options.maxRepairAttempts,
           verifyAfterTurn: options.verifyAfterTurn,
         }
   const host = new CodingAgentHost(hostOptions)

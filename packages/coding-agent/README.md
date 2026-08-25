@@ -16,8 +16,13 @@ customizations explicit and replaceable.
 ```sh
 bunx nifra-agent --backend pi
 bunx nifra-agent --backend pi --message "run the checks and explain failures"
+bunx nifra-agent --backend pi --verify-after-turn check --max-repair-attempts 2
 bunx nifra-agent --backend replay --replay ./session-events.jsonl --json
 ```
+
+When --verify-after-turn is enabled, a failed gate becomes a bounded repair turn: the host sends
+the failure diagnostics back to the agent, runs the gate again, and stops on success or after the
+configured attempt cap. Use --max-repair-attempts 0 for observe-only verification.
 
 For embedding, use `CodingAgentHost` or `CodingAgentRpcServer`. The host keeps
 live event queues bounded, filters verification subprocess environments, and

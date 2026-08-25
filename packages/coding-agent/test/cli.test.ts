@@ -28,6 +28,11 @@ describe("nifra-agent CLI arguments", () => {
     expect(parseArgs(["--rpc", "--expose-error-stacks"]).exposeErrorStacks).toBe(true)
   })
 
+  test("parses the bounded automatic repair limit", () => {
+    expect(parseArgs(["--max-repair-attempts", "3"]).maxRepairAttempts).toBe(3)
+    expect(() => parseArgs(["--max-repair-attempts", "9"])).toThrow("max-repair-attempts")
+  })
+
   test("parses optional post-turn verification gates", () => {
     expect(parseArgs(["--verify-after-turn", "check,assure,check"]).verifyAfterTurn).toEqual([
       "check",

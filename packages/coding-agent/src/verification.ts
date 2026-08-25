@@ -2,7 +2,7 @@ import { publicErrorDetails } from "./errors.ts"
 import { readBoundedText } from "./process.ts"
 
 export interface VerificationResult {
-  readonly name: string
+  readonly name: "check" | "assure" | "test"
   readonly ok: boolean
   readonly status: number | null
   readonly report?: unknown
