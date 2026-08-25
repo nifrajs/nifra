@@ -45,7 +45,7 @@
     },
     "apps/workbench": {
       "name": "@nifrajs/workbench",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@nifrajs/agent-app": "workspace:*",
         "@nifrajs/agent-protocol": "workspace:*",
@@ -54,7 +54,7 @@
     },
     "bench": {
       "name": "@nifrajs/bench",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "devDependencies": {
         "@elysiajs/node": "^1.4.5",
         "@fastify/http-proxy": "^11.6.0",
@@ -88,7 +88,7 @@
     },
     "examples": {
       "name": "@nifrajs/examples",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@electric-sql/pglite": "^0.5.1",
         "@mdx-js/rollup": "^3",
@@ -130,11 +130,11 @@
     },
     "internal/test-utils": {
       "name": "@nifrajs/test-utils",
-      "version": "3.2.0",
+      "version": "3.3.0",
     },
     "packages/a2a": {
       "name": "@nifrajs/a2a",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "devDependencies": {
         "@nifrajs/agent": "workspace:*",
         "@nifrajs/core": "workspace:*",
@@ -150,7 +150,7 @@
     },
     "packages/ag-ui": {
       "name": "@nifrajs/ag-ui",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "devDependencies": {
         "@nifrajs/agent": "workspace:*",
         "@nifrajs/core": "workspace:*",
@@ -166,25 +166,25 @@
     },
     "packages/agent": {
       "name": "@nifrajs/agent",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
       },
     },
     "packages/agent-app": {
       "name": "@nifrajs/agent-app",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@nifrajs/agent-protocol": "workspace:*",
       },
     },
     "packages/agent-protocol": {
       "name": "@nifrajs/agent-protocol",
-      "version": "3.2.0",
+      "version": "3.3.0",
     },
     "packages/agent-telemetry": {
       "name": "@nifrajs/agent-telemetry",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@nifrajs/otel": "workspace:*",
       },
@@ -197,7 +197,7 @@
     },
     "packages/auth": {
       "name": "@nifrajs/auth",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
       },
@@ -207,14 +207,14 @@
     },
     "packages/aws-lambda": {
       "name": "@nifrajs/aws-lambda",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
       },
     },
     "packages/better-auth": {
       "name": "@nifrajs/better-auth",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "devDependencies": {
         "@nifrajs/client": "workspace:*",
         "@nifrajs/core": "workspace:*",
@@ -230,14 +230,14 @@
     },
     "packages/cache": {
       "name": "@nifrajs/cache",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "devDependencies": {
         "@nifrajs/testing": "workspace:*",
       },
     },
     "packages/cli": {
       "name": "@nifrajs/cli",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "bin": {
         "nifra": "./dist/cli.js",
       },
@@ -263,7 +263,7 @@
     },
     "packages/client": {
       "name": "@nifrajs/client",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
         "@nifrajs/test-utils": "workspace:*",
@@ -274,7 +274,7 @@
     },
     "packages/coding-agent": {
       "name": "@nifrajs/coding-agent",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "bin": {
         "nifra-agent": "./dist/cli.js",
       },
@@ -287,7 +287,7 @@
     },
     "packages/content": {
       "name": "@nifrajs/content",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "marked": "^15.0.0",
         "yaml": "^2.6.0",
@@ -301,32 +301,32 @@
     },
     "packages/core": {
       "name": "@nifrajs/core",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "devDependencies": {
         "@nifrajs/test-utils": "workspace:*",
       },
     },
     "packages/create-nifra": {
       "name": "create-nifra",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "bin": {
         "create-nifra": "./dist/cli.js",
       },
     },
     "packages/cron": {
       "name": "@nifrajs/cron",
-      "version": "3.2.0",
+      "version": "3.3.0",
     },
     "packages/deno": {
       "name": "@nifrajs/deno",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
       },
     },
     "packages/devtools": {
       "name": "@nifrajs/devtools",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@nifrajs/otel": "workspace:*",
       },
@@ -339,7 +339,7 @@
     },
     "packages/edge": {
       "name": "@nifrajs/edge",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
       },
@@ -349,11 +349,11 @@
     },
     "packages/env": {
       "name": "@nifrajs/env",
-      "version": "3.2.0",
+      "version": "3.3.0",
     },
     "packages/events": {
       "name": "@nifrajs/events",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
         "@nifrajs/schema": "workspace:*",
@@ -365,7 +365,7 @@
     },
     "packages/graphql": {
       "name": "@nifrajs/graphql",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
         "graphql": "17.0.2",
@@ -383,7 +383,7 @@
     },
     "packages/i18n": {
       "name": "@nifrajs/i18n",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
       },
@@ -396,29 +396,29 @@
     },
     "packages/image": {
       "name": "@nifrajs/image",
-      "version": "3.2.0",
+      "version": "3.3.0",
     },
     "packages/island-trigger": {
       "name": "@nifrajs/island-trigger",
-      "version": "3.2.0",
+      "version": "3.3.0",
     },
     "packages/islets": {
       "name": "@nifrajs/islets",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@nifrajs/island-trigger": "workspace:*",
       },
     },
     "packages/jobs": {
       "name": "@nifrajs/jobs",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "devDependencies": {
         "@nifrajs/testing": "workspace:*",
       },
     },
     "packages/mcp": {
       "name": "@nifrajs/mcp",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "devDependencies": {
         "@nifrajs/agent": "workspace:*",
         "@nifrajs/core": "workspace:*",
@@ -435,14 +435,14 @@
     },
     "packages/mcp-db": {
       "name": "@nifrajs/mcp-db",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@nifrajs/mcp": "workspace:*",
       },
     },
     "packages/middleware": {
       "name": "@nifrajs/middleware",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@nifrajs/schema": "workspace:*",
       },
@@ -457,7 +457,7 @@
     },
     "packages/mock": {
       "name": "@nifrajs/mock",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
       },
@@ -470,14 +470,14 @@
     },
     "packages/nifra": {
       "name": "nifra",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
       },
     },
     "packages/node": {
       "name": "@nifrajs/node",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "srvx": "0.12.5",
       },
@@ -490,7 +490,7 @@
     },
     "packages/otel": {
       "name": "@nifrajs/otel",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
       },
@@ -500,14 +500,14 @@
     },
     "packages/pi": {
       "name": "@nifrajs/pi",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@nifrajs/agent-protocol": "workspace:*",
       },
     },
     "packages/prompt": {
       "name": "@nifrajs/prompt",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
       },
@@ -517,7 +517,7 @@
     },
     "packages/proxy": {
       "name": "@nifrajs/proxy",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "devDependencies": {
         "@nifrajs/core": "workspace:*",
         "@nifrajs/node": "workspace:*",
@@ -532,11 +532,11 @@
     },
     "packages/runner": {
       "name": "@nifrajs/runner",
-      "version": "3.2.0",
+      "version": "3.3.0",
     },
     "packages/schema": {
       "name": "@nifrajs/schema",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@sinclair/typebox": "^0.34.49",
       },
@@ -550,18 +550,18 @@
     },
     "packages/skills": {
       "name": "@nifrajs/skills",
-      "version": "3.2.0",
+      "version": "3.3.0",
     },
     "packages/storage": {
       "name": "@nifrajs/storage",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "devDependencies": {
         "@nifrajs/testing": "workspace:*",
       },
     },
     "packages/testing": {
       "name": "@nifrajs/testing",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@nifrajs/agent": "workspace:*",
         "@nifrajs/client": "workspace:*",
@@ -578,7 +578,7 @@
     },
     "packages/ts-plugin": {
       "name": "@nifrajs/ts-plugin",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
         "@nifrajs/web": "workspace:*",
@@ -589,11 +589,11 @@
     },
     "packages/uploads": {
       "name": "@nifrajs/uploads",
-      "version": "3.2.0",
+      "version": "3.3.0",
     },
     "packages/web": {
       "name": "@nifrajs/web",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
         "@nifrajs/island-trigger": "workspace:*",
@@ -633,7 +633,7 @@
     },
     "packages/web-preact": {
       "name": "@nifrajs/web-preact",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
         "@nifrajs/i18n": "workspace:*",
@@ -650,7 +650,7 @@
     },
     "packages/web-react": {
       "name": "@nifrajs/web-react",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
         "@nifrajs/i18n": "workspace:*",
@@ -670,7 +670,7 @@
     },
     "packages/web-solid": {
       "name": "@nifrajs/web-solid",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@babel/core": "^7.26.0",
         "@babel/preset-typescript": "^7.26.0",
@@ -696,7 +696,7 @@
     },
     "packages/web-svelte": {
       "name": "@nifrajs/web-svelte",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
         "@nifrajs/i18n": "workspace:*",
@@ -716,14 +716,14 @@
     },
     "packages/web-vanilla": {
       "name": "@nifrajs/web-vanilla",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "peerDependencies": {
         "@nifrajs/web": "workspace:^",
       },
     },
     "packages/web-vue": {
       "name": "@nifrajs/web-vue",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
         "@nifrajs/i18n": "workspace:*",
@@ -744,7 +744,7 @@
     },
     "packages/workers": {
       "name": "@nifrajs/workers",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "dependencies": {
         "@nifrajs/core": "workspace:*",
       },
@@ -758,7 +758,7 @@
     },
     "site": {
       "name": "@nifrajs/site",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "devDependencies": {
         "@mdx-js/mdx": "^3",
         "@nifrajs/aws-lambda": "workspace:*",

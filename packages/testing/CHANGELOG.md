@@ -1,5 +1,15 @@
 # @nifrajs/testing
 
+## 3.3.0
+
+### Patch Changes
+
+- @nifrajs/agent@3.3.0
+- @nifrajs/client@3.3.0
+- @nifrajs/core@3.3.0
+- @nifrajs/mcp@3.3.0
+- @nifrajs/mock@3.3.0
+
 ## 3.2.0
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @nifrajs/agent-app
 
+## 3.3.0
+
+### Patch Changes
+
+- @nifrajs/agent-protocol@3.3.0
+
 ## 3.2.0
 
 ### Patch Changes

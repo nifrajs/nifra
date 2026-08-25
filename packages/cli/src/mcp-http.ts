@@ -29,7 +29,7 @@ export { docsTools } from "./mcp-docs-tools.ts"
 export type { TypeEntry } from "./types-search.ts"
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
-const VERSION = "3.2.0"
+const VERSION = "3.3.0"
 const SERVER_INFO = { name: "nifra-docs", version: VERSION }
 // Derive the GET/health tool list from the tools actually served, so the line can never drift from them.
 const docsHealth = (tools: McpTool[]): string =>

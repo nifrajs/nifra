@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/graphql",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "description": "Mount a GraphQL endpoint on a nifra app - a spec-compliant GraphQL-over-HTTP handler you mount at POST /graphql, graphql-ws subscriptions over nifra's native WebSocket lane, and typed nifra context piped straight into your resolvers. Uses graphql's own execute/subscribe; no server framework re-bundled.",
   "keywords": [
     "bun",

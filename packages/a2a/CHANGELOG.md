@@ -1,5 +1,7 @@
 # @nifrajs/a2a
 
+## 3.3.0
+
 ## 3.2.0
 
 ### Minor Changes

@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/aws-lambda",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "description": "AWS Lambda adapter for nifra - API Gateway HTTP API (payload v2) and Function URLs, buffered or streaming, with post-decode body limits and single-site header merging. Dependency-free.",
   "keywords": [
     "bun",
