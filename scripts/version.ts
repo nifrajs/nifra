@@ -50,6 +50,19 @@ for (const { file, re } of constants) {
   console.log(`✓ ${file} → ${version}`)
 }
 
+// The Claude Code plugin manifest is shipped from the repository tree and carries its own
+// version, so changeset version cannot infer or update it from the npm package manifest. Keep the
+// installable plugin and @nifrajs/skills tarball on the same release version or the CI manifest
+// gate will reject the generated Version Packages PR.
+{
+  const file = "packages/skills/.claude-plugin/plugin.json"
+  const src = readFileSync(file, "utf8")
+  const next = src.replace(/("version":\s*")[^"]+(")/, `$1${version}$2`)
+  if (next === src) throw new Error(`could not find plugin version in ${file}`)
+  writeFileSync(file, next)
+  console.log(`✓ ${file} → ${version}`)
+}
+
 const CREATE_NIFRA = "packages/create-nifra"
 const CREATE_NIFRA_SRC = `${CREATE_NIFRA}/src`
 
