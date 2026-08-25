@@ -1,5 +1,18 @@
 # @nifrajs/coding-agent
 
+## 3.3.0
+
+### Minor Changes
+
+- 10085ce: Add the native approval protocol flow to `@nifrajs/coding-agent`. Native turns can now emit bounded, ordered approval events and resolve pending approvals through the backend protocol, while retaining compatibility with the existing boolean approval callback.
+
+### Patch Changes
+
+- @nifrajs/agent@3.3.0
+- @nifrajs/agent-protocol@3.3.0
+- @nifrajs/jobs@3.3.0
+- @nifrajs/pi@3.3.0
+
 ## 3.2.0
 
 ### Minor Changes

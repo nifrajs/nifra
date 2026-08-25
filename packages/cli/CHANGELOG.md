@@ -1,5 +1,18 @@
 # @nifrajs/cli
 
+## 3.3.0
+
+### Patch Changes
+
+- @nifrajs/client@3.3.0
+- @nifrajs/core@3.3.0
+- @nifrajs/mcp@3.3.0
+- @nifrajs/runner@3.3.0
+- @nifrajs/schema@3.3.0
+- @nifrajs/testing@3.3.0
+- @nifrajs/web@3.3.0
+- create-nifra@3.3.0
+
 ## 3.2.0
 
 ### Minor Changes

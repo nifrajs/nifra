@@ -1,5 +1,12 @@
 # @nifrajs/ts-plugin
 
+## 3.3.0
+
+### Patch Changes
+
+- @nifrajs/core@3.3.0
+- @nifrajs/web@3.3.0
+
 ## 3.2.0
 
 ### Patch Changes
