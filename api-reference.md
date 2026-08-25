@@ -4799,6 +4799,25 @@ _No named exports (side-effect entrypoint)._
 - **scssBunPlugin** _(function)_ - `scssBunPlugin: (generate: "dom" | "ssr", options?: ScssPluginOptions) => BunPlugin`
   The SASS/SCSS Bun plugin. `"dom"` → bundles the compiled CSS (and, for `*.module.scss`, exports the scoped class map); `"ssr"` → the class map only for `*.module.scss`, an empty module for plain Sass. Tolerates a trailing `?query` (dev servers append one to bust Bun's import cache).
 
+### `@nifrajs/web/plugins/stylex`
+
+- **StylexBabelCompiler** _(interface)_ - `interface StylexBabelCompiler`
+  Structural slice of `@babel/core` used by the adapter.
+- **StylexCompiler** _(interface)_ - `interface StylexCompiler`
+  Structural slice of the StyleX Babel plugin used by the adapter.
+- **StylexModuleResolution** _(interface)_ - `interface StylexModuleResolution`
+  StyleX's module resolution option, kept structural so the compiler remains an optional peer.
+- **StylexPluginOptions** _(interface)_ - `interface StylexPluginOptions`
+  Optional peer injection and compiler configuration shared by Bun and Vite adapters.
+- **StylexVitePlugin** _(interface)_ - `interface StylexVitePlugin`
+  Structural Vite plugin return type. Vite remains an optional peer of `@nifrajs/web`.
+- **stylexBunPlugin** _(function)_ - `stylexBunPlugin: (generate: "dom" | "ssr", options?: StylexPluginOptions) => BunPlugin`
+  Build a Bun plugin that transforms StyleX and emits CSS for the browser or class maps for SSR.
+- **stylexVite** _(const)_ - `stylexVite: (options?: StylexPluginOptions) => StylexVitePlugin`
+  Convenience alias for apps that configure only a browser Vite build.
+- **stylexVitePlugin** _(function)_ - `stylexVitePlugin: (generate: "dom" | "ssr", options?: StylexPluginOptions) => StylexVitePlugin`
+  Build a Vite plugin that maps each transformed StyleX module to a virtual CSS asset.
+
 ### `@nifrajs/web/plugins/svg`
 
 - **SVG_COMPONENT_FILTER** _(const)_ - `SVG_COMPONENT_FILTER: RegExp`

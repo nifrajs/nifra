@@ -49,6 +49,7 @@ _…and 56 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) fo
 - nifra openapi [--format <value>] [--path <value>] - Generate the backend OpenAPI document, including supported build-time response inference.
 - nifra doctor [--json] [--auto-fix] [--strict] [--target <value>] - Find undeclared imports, duplicate identity installs, and pipeline readiness drift.
 - nifra fix [--code <value>] [--json] - Apply registered mechanical diagnostic recipes and return remaining findings.
+- nifra migrate [--from <value>] [--to <value>] [--write] [--json] [--dir <value>] - Migrate safe static Tailwind className utilities to native StyleX props.
 - nifra snapshot [--out <value>] [--json] - Write the backend API contract as a versioned JSON baseline.
 - nifra diff <baseline> [--json] - Compare the current backend contract with a baseline and fail on breaking changes.
 - nifra contracts <action> [--out <value>] [--json] - Snapshot or check the deterministic route contract lock.

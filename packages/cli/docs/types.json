@@ -16484,6 +16484,62 @@
     "doc": "/** `<link rel=\"stylesheet\">` tags for Bun's extracted CSS, injected into each SSR'd page's `<head>`. */"
   },
   {
+    "name": "StylexBabelCompiler",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface StylexBabelCompiler {\n    transformAsync(source: string, options: Readonly<Record<string, unknown>>): Promise<StylexBabelResult | null | undefined>;\n}",
+    "doc": "/** Structural slice of `@babel/core` used by the adapter. */"
+  },
+  {
+    "name": "stylexBunPlugin",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function stylexBunPlugin(generate: \"dom\" | \"ssr\", options?: StylexPluginOptions): BunPlugin;",
+    "doc": "/** Build a Bun plugin that transforms StyleX and emits CSS for the browser or class maps for SSR. */"
+  },
+  {
+    "name": "StylexCompiler",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface StylexCompiler {\n    withOptions(options: Readonly<Record<string, unknown>>): unknown;\n    processStylexRules(rules: readonly unknown[], options: Readonly<Record<string, unknown>>): string;\n}",
+    "doc": "/** Structural slice of the StyleX Babel plugin used by the adapter. */"
+  },
+  {
+    "name": "StylexModuleResolution",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface StylexModuleResolution {\n    readonly type: \"commonJS\" | \"haste\";\n    readonly rootDir: string;\n}",
+    "doc": "/** StyleX's module resolution option, kept structural so the compiler remains an optional peer. */"
+  },
+  {
+    "name": "StylexPluginOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface StylexPluginOptions {\n    /** Inject `@babel/core` in tests or advanced integrations. Defaults to the optional peer. */\n    readonly babel?: StylexBabelCompiler;\n    /** Inject `@stylexjs/babel-plugin` in tests or advanced integrations. */\n    readonly compiler?: StylexCompiler;\n    /** Inject Babel syntax plugins. Defaults to the three official syntax peers. */\n    readonly syntaxPlugins?: {\n        readonly flow: unknown;\n        readonly jsx: unknown;\n        readonly typescript: unknown;\n    };\n    /** StyleX import sources to transform. Defaults to `stylex` and `@stylexjs/stylex`. */\n    readonly importSources?: readonly string[];\n    /** StyleX development transform mode. Defaults to Nifra's dev-server signal. */\n    readonly dev?: boolean;\n    /** StyleX CSS layer output. Defaults to `true` for deterministic precedence. */\n    readonly useCSSLayers?: boolean;\n    /** StyleX's module resolution policy. */\n    readonly unstable_moduleResolution?: StylexModuleResolution;\n    /** Extra Babel plugins and presets merged before the StyleX plugin. */\n    readonly babelConfig?: {\n        readonly plugins?: readonly unknown[];\n        readonly presets?: readonly unknown[];\n    };\n}",
+    "doc": "/** Optional peer injection and compiler configuration shared by Bun and Vite adapters. */"
+  },
+  {
+    "name": "stylexVite",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const stylexVite: (options?: StylexPluginOptions) => StylexVitePlugin;",
+    "doc": "/** Convenience alias for apps that configure only a browser Vite build. */"
+  },
+  {
+    "name": "stylexVitePlugin",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function stylexVitePlugin(generate: \"dom\" | \"ssr\", options?: StylexPluginOptions): StylexVitePlugin;",
+    "doc": "/** Build a Vite plugin that maps each transformed StyleX module to a virtual CSS asset. */"
+  },
+  {
+    "name": "StylexVitePlugin",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface StylexVitePlugin {\n    readonly name: string;\n    transform(source: string, id: string): Promise<{\n        readonly code: string;\n        readonly map?: null;\n    } | undefined>;\n    resolveId(id: string): string | undefined;\n    load(id: string): string | undefined;\n}",
+    "doc": "/** Structural Vite plugin return type. Vite remains an optional peer of `@nifrajs/web`. */"
+  },
+  {
     "name": "SubagentExecutor",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",

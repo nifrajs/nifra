@@ -8837,6 +8837,7 @@ nifra start   [--port <n>] [--out <dir>]   Run the generated Bun server at <out>
 nifra context                             Print this project's API + page routes + conventions.
 nifra mcp                                 MCP server (stdio) exposing this project to a coding agent.
 nifra check   [--json]                    Gate: typecheck + lints; --json includes fixes/suggestions.
+nifra migrate --from tailwind --to stylex  Dry-run safe static Tailwind → StyleX migration; --write applies it.
 nifra assure  [--config <file>] [--json]  Gate reflected routes against enforcement evidence.
 nifra capabilities check [--json]        Gate effect provenance + the reviewed capability lockfile.
 nifra manifest emit [--sign <key-ref>]   Emit the hash-verified route trust artifact after assurance.
@@ -8898,6 +8899,15 @@ green check means the frontend and backend can't have silently diverged.
 For hand-rolled own-API `fetch()` calls, `nifra check` stays conservative: simple string-literal calls
 that match a statically visible Nifra route get an exact typed-client rewrite diff; dynamic URLs, custom
 headers, bodies, query strings, or ambiguous routes fall back to manual steps.
+
+## `nifra migrate --from tailwind --to stylex`
+
+This command is a dry run by default. It rewrites static `className` attributes whose utilities have a
+direct StyleX equivalent into `stylex.props(...)` plus a local `stylex.create(...)` table. Use
+`--write` to apply the safe changes, and `--dir` to scan a project subdirectory. Responsive breakpoints
+and element-local pseudo-classes are supported; dynamic expressions, arbitrary values, parent-dependent
+variants, and unknown utilities are left untouched and reported with file and line evidence. A non-zero
+exit status means manual migration issues remain.
 
 When a library such as Better Auth intentionally owns a mounted prefix outside the Nifra contract,
 declare that prefix in `nifra.check.json` so its relative calls do not keep CI red:

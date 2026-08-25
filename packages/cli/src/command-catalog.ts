@@ -21,6 +21,7 @@ import type { LoadedApp } from "./load.ts"
 import type { ManifestEmitCommandResult } from "./manifest-tool.ts"
 import { collectPortResult, type PortResult, renderReport } from "./port.ts"
 import type { ReplayResult } from "./replay.ts"
+import type { StylexMigrationResult } from "./stylex-migrate.ts"
 import {
   collectProjectWorkGraph,
   type ProjectWorkGraphResult,
@@ -318,6 +319,14 @@ interface FixInput {
   readonly dir?: string | undefined
 }
 
+interface MigrateInput {
+  readonly from: "tailwind"
+  readonly to: "stylex"
+  readonly write?: boolean | undefined
+  readonly json?: boolean | undefined
+  readonly dir?: string | undefined
+}
+
 interface SnapshotInput {
   readonly out?: string | undefined
   readonly json?: boolean | undefined
@@ -392,6 +401,7 @@ interface FixCommandOutput {
   readonly failed: readonly { readonly code: string; readonly reason: string }[]
   readonly diagnostics: readonly unknown[]
 }
+interface MigrateCommandOutput extends StylexMigrationResult {}
 interface SnapshotCommandOutput {
   readonly ok: true
   readonly file: string
@@ -626,6 +636,32 @@ const FIX_SCHEMA = input<FixInput>(
     return {
       code: optionalString(raw.code, "code"),
       ...parseBooleanFlags(raw, ["json"]),
+      ...(raw.dir === undefined ? {} : { dir: raw.dir }),
+    }
+  },
+)
+
+const MIGRATE_SCHEMA = input<MigrateInput>(
+  objectSchema(
+    {
+      from: { type: "string", enum: ["tailwind"] },
+      to: { type: "string", enum: ["stylex"] },
+      write: { type: "boolean" },
+      json: { type: "boolean" },
+      dir: { type: "string" },
+    },
+    ["from", "to"],
+  ),
+  (value) => {
+    const raw = withDir(record(value))
+    const from = optionalString(raw.from, "from")
+    const to = optionalString(raw.to, "to")
+    if (from !== "tailwind") throw new TypeError("from must be tailwind")
+    if (to !== "stylex") throw new TypeError("to must be stylex")
+    return {
+      from,
+      to,
+      ...parseBooleanFlags(raw, ["write", "json"]),
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
     }
   },
@@ -1189,6 +1225,62 @@ const fixSpec: CommandSpec<FixInput, FixCommandOutput> = {
   success: (out) => out.ok,
 }
 
+const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
+  name: "migrate",
+  summary: "Migrate safe static Tailwind className utilities to native StyleX props.",
+  input: MIGRATE_SCHEMA,
+  output: output({
+    type: "object",
+    properties: {
+      ok: { type: "boolean" },
+      from: { type: "string" },
+      to: { type: "string" },
+      write: { type: "boolean" },
+      scanned: { type: "integer" },
+      changed: { type: "array" },
+      written: { type: "array" },
+      issues: { type: "array" },
+      files: { type: "array" },
+    },
+    required: ["ok", "from", "to", "write", "scanned", "changed", "written", "issues", "files"],
+  }),
+  transports: ["cli"],
+  stability: "stable",
+  argv: {
+    flags: [
+      { name: "from", field: "from", type: "string" },
+      { name: "to", field: "to", type: "string" },
+      { name: "write", field: "write", type: "boolean" },
+      { name: "json", field: "json", type: "boolean" },
+      { name: "dir", field: "dir", type: "string" },
+    ],
+  },
+  async run(value, ctx) {
+    const { migrateTailwindToStylex } = await import("./stylex-migrate.ts")
+    return migrateTailwindToStylex(resolve(ctx.cwd, value.dir ?? "."), {
+      ...(value.write === undefined ? {} : { write: value.write }),
+    })
+  },
+  render: (out) => [
+    out.ok
+      ? `✓ migrated ${out.changed.length} file${out.changed.length === 1 ? "" : "s"}`
+      : `⚠ migrated ${out.changed.length} safe file${out.changed.length === 1 ? "" : "s"}; ${out.issues.length} manual issue${out.issues.length === 1 ? "" : "s"} remain`,
+    `  scanned ${out.scanned} source file${out.scanned === 1 ? "" : "s"}`,
+    ...(out.write
+      ? [`  wrote ${out.written.length} file${out.written.length === 1 ? "" : "s"}`]
+      : out.changed.length > 0
+        ? ["  dry run: pass --write to apply the safe changes"]
+        : []),
+    ...out.issues
+      .slice(0, 30)
+      .map((issue) => `  ${issue.file}:${issue.line} ${issue.token} — ${issue.reason}`),
+    ...(out.issues.length > 30
+      ? [`  … ${out.issues.length - 30} more issue${out.issues.length - 30 === 1 ? "" : "s"}`]
+      : []),
+  ],
+  success: (out) => out.ok,
+}
+
 const snapshotSpec: CommandSpec<SnapshotInput, SnapshotCommandOutput> = {
   name: "snapshot",
   summary: "Write the backend API contract as a versioned JSON baseline.",
@@ -1429,6 +1521,7 @@ export const commandSpecs = Object.freeze([
   openApiSpec,
   doctorSpec,
   fixSpec,
+  migrateSpec,
   snapshotSpec,
   diffSpec,
   contractsSpec,

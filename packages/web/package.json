@@ -124,6 +124,11 @@
       "types": "./dist/plugins/postcss.d.ts",
       "default": "./dist/plugins/postcss.js"
     },
+    "./plugins/stylex": {
+      "bun": "./src/plugins/stylex.ts",
+      "types": "./dist/plugins/stylex.d.ts",
+      "default": "./dist/plugins/stylex.js"
+    },
     "./plugins/svg": {
       "bun": "./src/plugins/svg.ts",
       "types": "./dist/plugins/svg.d.ts",
@@ -195,10 +200,30 @@
     "@nifrajs/island-trigger": "workspace:*"
   },
   "peerDependencies": {
+    "@babel/core": "^7.26.0",
+    "@babel/plugin-syntax-flow": "^7.26.0",
+    "@babel/plugin-syntax-jsx": "^7.25.9",
+    "@babel/plugin-syntax-typescript": "^7.25.9",
+    "@stylexjs/babel-plugin": "^0.19.0",
     "sass": "^1.0.0",
     "vite": "^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0"
   },
   "peerDependenciesMeta": {
+    "@babel/core": {
+      "optional": true
+    },
+    "@babel/plugin-syntax-flow": {
+      "optional": true
+    },
+    "@babel/plugin-syntax-jsx": {
+      "optional": true
+    },
+    "@babel/plugin-syntax-typescript": {
+      "optional": true
+    },
+    "@stylexjs/babel-plugin": {
+      "optional": true
+    },
     "sass": {
       "optional": true
     },
@@ -207,10 +232,16 @@
     }
   },
   "devDependencies": {
+    "@babel/core": "^7.29.7",
+    "@babel/plugin-syntax-flow": "^7.29.7",
+    "@babel/plugin-syntax-jsx": "^7.29.7",
+    "@babel/plugin-syntax-typescript": "^7.29.7",
     "@nifrajs/client": "workspace:*",
     "@nifrajs/schema": "workspace:*",
     "@nifrajs/test-utils": "workspace:*",
     "@nifrajs/web-react": "workspace:*",
+    "@stylexjs/babel-plugin": "^0.19.0",
+    "@stylexjs/stylex": "^0.19.0",
     "sass": "^1.77.0",
     "vite": "^8.2.1"
   },

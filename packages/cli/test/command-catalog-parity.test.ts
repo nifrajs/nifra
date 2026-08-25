@@ -25,6 +25,7 @@ test("the stable catalog is the public command allowlist", () => {
     "openapi",
     "doctor",
     "fix",
+    "migrate",
     "snapshot",
     "diff",
     "contracts",
@@ -76,6 +77,10 @@ test("argv binding produces the same typed input shape MCP receives", () => {
     min: 2,
     seed: 7,
   })
+  const migrate = findCommandSpec("migrate")!
+  expect(
+    bindCommandArgv(migrate, ["--from", "tailwind", "--to", "stylex", "--write"]),
+  ).toMatchObject({ from: "tailwind", to: "stylex", write: true })
 })
 
 test("catalog projections are frozen and output readers tolerate the versioned envelope", () => {

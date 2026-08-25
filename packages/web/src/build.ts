@@ -575,7 +575,12 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     return [...new Set(urls)]
   }
   const routeStyles: Record<string, readonly string[]> = {}
-  if (css.length > 0 && cssByEntry.size > 0) {
+  // A compiler plugin may attach a global stylesheet to the generated bootstrap rather than to a
+  // route entry (StyleX's atomic CSS is one example). In that shape there is no useful per-route map:
+  // emitting `routeId: []` would suppress the aggregate `styles` fallback in `createWebApp` and render
+  // SSR pages unstyled. Keep routeStyles absent until at least one authored route entry owns CSS.
+  const routeCssEntries = [...cssByEntry.keys()].filter((entry) => entry !== resolvePath(entryFile))
+  if (css.length > 0 && routeCssEntries.length > 0) {
     for (const route of routeManifest.routes) {
       routeStyles[route.id] = stylesFor([
         ...route.layoutIds.map((id) => routeManifest.layouts[id]?.file ?? ""),
