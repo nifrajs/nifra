@@ -425,6 +425,7 @@ function reopenableFilename(db: SqliteDatabaseLike): string | undefined {
 }
 
 interface PendingQuery {
+  readonly deadline: number
   resolve(rows: unknown[]): void
   reject(error: Error): void
 }
@@ -500,6 +501,10 @@ function workerSession(filename: string): QuerySession {
       }
       const waiter = pending.get(id)
       if (waiter === undefined) return
+      if (Date.now() >= waiter.deadline) {
+        discard(new QueryTimeoutError())
+        return
+      }
       pending.delete(id)
       if (ok === true) waiter.resolve(rows ?? [])
       else waiter.reject(new Error(error ?? "query failed in worker"))
@@ -514,13 +519,17 @@ function workerSession(filename: string): QuerySession {
 
   const dispatch = (sql: string, deadline: number): Promise<unknown[]> => {
     if (closed) return Promise.reject(new Error("query session is closed"))
-    const remaining = deadline - Date.now()
-    if (remaining <= 0) return Promise.reject(new QueryTimeoutError())
     const active = ensureWorker()
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) {
+      discard(new QueryTimeoutError())
+      return Promise.reject(new QueryTimeoutError())
+    }
     const id = ++nextId
     return new Promise<unknown[]>((resolve, reject) => {
       const timer = setTimeout(() => discard(new QueryTimeoutError()), remaining)
       pending.set(id, {
+        deadline,
         resolve: (rows) => {
           clearTimeout(timer)
           resolve(rows)
