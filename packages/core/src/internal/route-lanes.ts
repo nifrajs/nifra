@@ -154,13 +154,18 @@ export function selectRouteLanes(options: {
     lane === "lifecycle" &&
     !hasResponseContract &&
     !hasDecorations &&
+    !hasIdempotency &&
+    !hasLedger &&
+    schema?.onValidationError === undefined &&
+    !defaultOnValidationError &&
     schema?.params === undefined &&
     schema?.headers === undefined &&
     schema?.body === undefined &&
     derives === 1 &&
     beforeHandle === 1 &&
     afterHandle <= 1 &&
-    onError === 0
+    onError === 0 &&
+    around === 0
       ? afterHandle === 0
         ? "derive-before"
         : "derive-before-after"

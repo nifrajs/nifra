@@ -97,4 +97,39 @@ describe("selectRouteLanes", () => {
     expect(bodyQuery).toMatchObject({ lane: "lifecycle", lifecycleLane: "body-query" })
     expect(around).toMatchObject({ lane: "bare", fusedLane: undefined })
   })
+
+  test("fuses body lifecycle routes only when the complete shape is eligible", () => {
+    const body = { body: t.object({ name: t.string() }) }
+    expect(selectRouteLanes({ ...base, schema: body, derives: 1, beforeHandle: 1 })).toMatchObject({
+      lane: "lifecycle",
+      fusedLane: "body-derive-before",
+    })
+    expect(
+      selectRouteLanes({ ...base, schema: body, derives: 1, beforeHandle: 1, afterHandle: 1 }),
+    ).toMatchObject({
+      lane: "lifecycle",
+      fusedLane: "body-derive-before-after",
+    })
+  })
+
+  test("does not fuse lifecycle routes that need generic wrappers or recovery", () => {
+    const query = { query: t.object({ q: t.string() }) }
+    const recovery = {
+      ...query,
+      onValidationError: () => ({ q: "fallback" }),
+    }
+    const cases = [
+      selectRouteLanes({ ...base, derives: 1, beforeHandle: 1, around: 1 }),
+      selectRouteLanes({ ...base, derives: 1, beforeHandle: 1, hasLedger: true }),
+      selectRouteLanes({ ...base, schema: recovery, derives: 1, beforeHandle: 1 }),
+      selectRouteLanes({
+        ...base,
+        schema: query,
+        derives: 1,
+        beforeHandle: 1,
+        defaultOnValidationError: true,
+      }),
+    ]
+    for (const lanes of cases) expect(lanes.fusedLane).toBeUndefined()
+  })
 })

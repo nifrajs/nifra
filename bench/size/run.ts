@@ -271,15 +271,17 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
 // shared core kernel (bare 25.6 -> 26.2). This is deliberately accepted as a uniform seam cost: the
 // safer status/validation path replaces per-request Response construction and does not make any
 // optional package reachable. The ceilings below retain the same ~0.2 KB headroom over the measured
-// matrix; a further shared-kernel increase still fails all affected rows together.
+// matrix; a further shared-kernel increase still fails all affected rows together. The fused
+// derive/before/after lifecycle lanes add ~0.2 KB gzip to the shared server kernel, accepted here
+// alongside the measured hot-path win for middleware-heavy routes.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
-  "nifra-bare": 26.4,
+  "nifra-bare": 26.7,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 29.5,
-  "nifra-effect-ledger": 28.3,
-  "nifra-mcp": 26.6,
-  "nifra-sse": 27.1,
-  "nifra-valibot": 27.4,
+  "nifra-idempotency": 29.8,
+  "nifra-effect-ledger": 28.6,
+  "nifra-mcp": 27.0,
+  "nifra-sse": 27.4,
+  "nifra-valibot": 27.7,
   "nifra-typebox-t": 56.4,
 }
 

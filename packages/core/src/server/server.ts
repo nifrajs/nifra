@@ -2033,17 +2033,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const lane = entry.execution.fusedLane
     // Type-erase the lane so each `===` branch sees the full union, not the narrowed remainder.
     const laneName: string | undefined = lane
-    const isBodyLifecycle =
-      laneName === "body-derive-before" || laneName === "body-derive-before-after"
-    const isBodyLane = laneName === "body" || isBodyLifecycle
-    const fusedBody = isBodyLane
-      ? this.buildFusedBodyRunner(
-          entry.handler,
-          entry.schema?.body as StandardSchemaV1,
-          entry.hasDecorations ? entry.decorations : undefined,
-          entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
-        )
-      : undefined
+    // Body+lifecycle routes have a fused Web renderer, but no body-only Node renderer: the latter
+    // would bypass derive/before/after because the Node-direct dispatcher prefers `fusedBody` over
+    // the generic execution plan. Only the original body-only lane may populate this slot.
+    const fusedBody =
+      laneName === "body"
+        ? this.buildFusedBodyRunner(
+            entry.handler,
+            entry.schema?.body as StandardSchemaV1,
+            entry.hasDecorations ? entry.decorations : undefined,
+            entry.bodyLimit ?? UNLIMITED_BODY_BYTES,
+          )
+        : undefined
     const derive = entry.derives[0]
     const before = entry.beforeHandle[0]
     const after = entry.afterHandle[0]

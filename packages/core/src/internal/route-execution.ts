@@ -287,6 +287,7 @@ export interface RouteExecutionPlan {
     | "query"
     | "derive-before"
     | "derive-before-after"
+    | "body-derive-before"
     | "body-derive-before-after"
     | undefined
 }
