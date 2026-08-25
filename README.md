@@ -137,6 +137,40 @@ bun create nifra my-app --framework svelte   # or react | vue | solid | preact
 
 [Frameworks →](https://nifra.dev/docs/frameworks) · [Rendering →](https://nifra.dev/docs/rendering) · [Server functions →](https://nifra.dev/docs/server-functions)
 
+## StyleX and Tailwind migration
+
+Nifra includes a conservative Tailwind → StyleX codemod for static JSX class lists:
+
+```sh
+nifra migrate --from tailwind --to stylex          # inspect the proposed changes
+nifra migrate --from tailwind --to stylex --write  # apply safe changes
+```
+
+The codemod rewrites supported `className="..."` attributes to `stylex.props(...)` and a local
+`stylex.create(...)` table. It understands responsive breakpoints and element-local pseudo-classes.
+Dynamic class expressions, arbitrary values, parent-dependent variants, and unknown utilities are
+left untouched with file/line diagnostics for manual review. Use `--dir <path>` to scan a subdirectory.
+
+StyleX compilation is built into Nifra's Bun pipeline. Install the runtime and optional compiler peers,
+then register both browser and SSR transforms in `nifra.config.ts`:
+
+```sh
+bun add @stylexjs/stylex
+bun add -d @babel/core @stylexjs/babel-plugin @babel/plugin-syntax-flow \
+  @babel/plugin-syntax-jsx @babel/plugin-syntax-typescript
+```
+
+```ts
+import { stylexBunPlugin } from "@nifrajs/web/plugins/stylex"
+
+export const clientPlugins = [stylexBunPlugin("dom")]
+export const serverPlugins = [stylexBunPlugin("ssr")]
+```
+
+The same adapter also exposes `stylexVite()` for projects whose transforms intentionally run through
+Vite. See the [StyleX migration guide](https://nifra.dev/docs/cli#tailwind-to-stylex) for the complete
+setup and supported-syntax details.
+
 ## One app, every runtime
 
 The whole lifecycle is `app.fetch(Request): Promise<Response>` - Bun first-class, and the same app deploys to Node (`@nifrajs/node`), Deno, Cloudflare Workers, and Vercel Edge with one line of adapter code. [Deployment →](https://nifra.dev/docs/deployment)

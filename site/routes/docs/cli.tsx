@@ -38,6 +38,24 @@ export const vitePlugins = [react()]          // dev HMR (Fast Refresh)
 //   conditions    = ["solid"]                 // Solid: resolve solid-js to its source
 //   define        = { __VUE_OPTIONS_API__: "true", ... }   // Vue feature flags`
 
+const STYLEX_INSTALL = `# Install the runtime and the optional compiler peers.
+bun add @stylexjs/stylex
+bun add -d @babel/core @stylexjs/babel-plugin @babel/plugin-syntax-flow \\
+  @babel/plugin-syntax-jsx @babel/plugin-syntax-typescript`
+
+const STYLEX_CONFIG = `// nifra.config.ts - Bun's client and SSR build transforms.
+import { stylexBunPlugin } from "@nifrajs/web/plugins/stylex"
+
+export const clientPlugins = [stylexBunPlugin("dom")]
+export const serverPlugins = [stylexBunPlugin("ssr")]`
+
+const VITE_STYLEX = `// doc-check: skip - requires the third-party Vite React plugin
+// If the app intentionally uses Vite, keep StyleX in vitePlugins.
+import react from "@vitejs/plugin-react"
+import { stylexVite } from "@nifrajs/web/plugins/stylex"
+
+export const vitePlugins = [react(), stylexVite()]`
+
 const STRUCTURE = `my-app/
   routes/            # file-based routes (index.tsx, _layout.tsx, [id].tsx, …)
   framework.ts       # deploy-safe render adapter
@@ -96,6 +114,37 @@ export default function Cli() {
         generated server bundles.
       </p>
       <CodeBlock code={FRAMEWORK} />
+
+      <h2 id="tailwind-to-stylex">Tailwind to StyleX</h2>
+      <p>
+        Nifra includes a conservative codemod for moving static Tailwind classes to StyleX. It is a dry
+        run by default, so inspect the proposed edits first:
+      </p>
+      <CodeBlock
+        code={`nifra migrate --from tailwind --to stylex          # report safe edits and manual issues
+nifra migrate --from tailwind --to stylex --write  # apply only safe edits
+nifra migrate --from tailwind --to stylex --dir src`}
+        lang="sh"
+      />
+      <p>
+        Supported static <code>className</code> attributes become <code>stylex.props(...)</code> calls
+        backed by a local <code>stylex.create(...)</code> table. Responsive breakpoints and
+        element-local pseudo-classes such as <code>hover:</code> are supported. Dynamic class
+        expressions, arbitrary values, parent-dependent variants, and unknown utilities stay unchanged
+        and are reported with file/line evidence. A non-zero exit status means manual migration issues
+        remain.
+      </p>
+      <p>
+        StyleX compilation is native to Nifra&apos;s Bun pipeline. Install the runtime and compiler peers,
+        then register both the browser and SSR transforms:
+      </p>
+      <CodeBlock code={STYLEX_INSTALL} lang="sh" />
+      <CodeBlock code={STYLEX_CONFIG} />
+      <p>
+        If the project intentionally uses Vite, add the Vite adapter alongside its existing Vite
+        transforms. Nifra will use Vite when <code>vitePlugins</code> are the app&apos;s only transforms:
+      </p>
+      <CodeBlock code={VITE_STYLEX} />
 
       <h2>Scope</h2>
       <p>

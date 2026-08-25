@@ -114,6 +114,12 @@
     "code": "import { createMemoryCausalityStore, startCausality } from \"@nifrajs/core/causality\"\n\nconst recorder = createMemoryCausalityStore()\nconst requestId = crypto.randomUUID()\n\n// One root node at the ingress boundary. executionId is the graph's identity:\n// generate it once, then propagate it.\nconst step = startCausality(\"request\", requestId, { executionId: crypto.randomUUID() })\n\n// step.context propagates; step.record is what a durable adapter appends.\nawait recorder.record(step.record)"
   },
   {
+    "name": "STYLEX_CONFIG",
+    "topic": "Nifra - CLI",
+    "slug": "cli",
+    "code": "// nifra.config.ts - Bun's client and SSR build transforms.\nimport { stylexBunPlugin } from \"@nifrajs/web/plugins/stylex\"\n\nexport const clientPlugins = [stylexBunPlugin(\"dom\")]\nexport const serverPlugins = [stylexBunPlugin(\"ssr\")]"
+  },
+  {
     "name": "DUAL_API",
     "topic": "Nifra - Framework contract",
     "slug": "contract",

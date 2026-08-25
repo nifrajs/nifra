@@ -4189,6 +4189,48 @@ export const vitePlugins = [react()]          // dev HMR (Fast Refresh)
 //   define        = { __VUE_OPTIONS_API__: "true", ... }   // Vue feature flags
 ```
 
+### Tailwind to StyleX
+
+Nifra includes a conservative codemod for moving static Tailwind classes to StyleX. It is a dry
+run by default, so inspect the proposed edits first:
+
+Supported static `className` attributes become `stylex.props(...)` calls
+backed by a local `stylex.create(...)` table. Responsive breakpoints and
+element-local pseudo-classes such as `hover:` are supported. Dynamic class
+expressions, arbitrary values, parent-dependent variants, and unknown utilities stay unchanged
+and are reported with file/line evidence. A non-zero exit status means manual migration issues
+remain.
+
+StyleX compilation is native to Nifra&apos;s Bun pipeline. Install the runtime and compiler peers,
+then register both the browser and SSR transforms:
+
+```ts
+# Install the runtime and the optional compiler peers.
+bun add @stylexjs/stylex
+bun add -d @babel/core @stylexjs/babel-plugin @babel/plugin-syntax-flow \
+  @babel/plugin-syntax-jsx @babel/plugin-syntax-typescript
+```
+
+```ts
+// nifra.config.ts - Bun's client and SSR build transforms.
+import { stylexBunPlugin } from "@nifrajs/web/plugins/stylex"
+
+export const clientPlugins = [stylexBunPlugin("dom")]
+export const serverPlugins = [stylexBunPlugin("ssr")]
+```
+
+If the project intentionally uses Vite, add the Vite adapter alongside its existing Vite
+transforms. Nifra will use Vite when `vitePlugins` are the app&apos;s only transforms:
+
+```ts
+// doc-check: skip - requires the third-party Vite React plugin
+// If the app intentionally uses Vite, keep StyleX in vitePlugins.
+import react from "@vitejs/plugin-react"
+import { stylexVite } from "@nifrajs/web/plugins/stylex"
+
+export const vitePlugins = [react(), stylexVite()]
+```
+
 ### Scope
 
 `nifra build` defaults to a self-hosted Bun server. Use `--target node`,
