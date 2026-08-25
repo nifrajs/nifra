@@ -1,5 +1,68 @@
 # @nifrajs/cli
 
+## 3.2.0
+
+### Minor Changes
+
+- 652201a: Make islands the first-class interactivity lane for zero-runtime vanilla pages. `@nifrajs/web/islands`
+  now exports `defineIsland` to type an enhancer's props and `createIslandBus` for typed pub/sub between
+  islands that share no state. `nifra check` gains `NF-C020`, warning when an island enhancer wires an
+  event listener but returns no cleanup, and `nifra scaffold` emits a golden vanilla route stub. New
+  "Islands" cookbook documents the counter, cart-badge, and filter patterns.
+- 19a9f84: Add `nifra_frontend` (MCP) and `nifra frontend` (CLI): a symptom-indexed catalog of client-side
+  footguns across every adapter (React, Preact, Solid, Vue, Svelte, vanilla). Each entry returns the
+  cause, the concrete fix, and how to verify it. It splits along the seam `nifra_check` already owns: the
+  adapter-independent boundary issues (a server-only import leaking into a client component, a hydration
+  mismatch, a duplicated framework runtime, loader-data typing) point at the `nifra_*` tool that fixes
+  and checks them, while the per-framework reactivity-loss idioms (Vue ref, Solid props, Svelte runes,
+  React effect deps) point at that framework's own ESLint plugin rather than re-implementing it. Reach
+  for it when a rendered page misbehaves and the static check is green. The tool is project-independent,
+  so it is served on every transport (project stdio, `nifra docs-mcp`, and the site's `/mcp` worker), and
+  the per-framework `nifra_scaffold` notes now route to it.
+- 25305bb: Add `@nifrajs/web/nano`, the explicit-reactivity lane for small apps that want local state without a
+  framework runtime. It exports `signal`, `computed(fn, [deps])` with an explicit dependency array,
+  `resource(fetcher, [deps])` - an async cell with a `pending`/`error`/`ready` value union that aborts a
+  superseded fetch and drops its stale result - and `bind` / `bindList` / `bindResource` DOM edges, all
+  with no virtual DOM and no auto-tracking. Because every reactive edge is a visible call, `nifra check`
+  gains three static lints: `NF-C021` (a `bind`/`bindList`/`bindResource` whose disposer is discarded),
+  `NF-C022` (a `bindList` keyed by the array index), and `NF-C023` (a `computed`/`resource` that reads a
+  signal its deps omit). `nifra scaffold` accepts `variant: "stateful"` to emit the golden nano island
+  pattern on a vanilla project, and a new "nano" cookbook documents signals, keyed lists, async state,
+  and where the lane stops.
+
+### Patch Changes
+
+- e7d55cc: Centralize repository verification gates behind stable, ID-addressed plans and expose the same plan through the project MCP server, so default and release verification cannot drift when gates change.
+- e88c23a: Infer typed status responses across lifecycle hooks and contract-first routes, preserve precise
+  success and error narrowing in the client, and optionally include supported response types in
+  build-time OpenAPI output. Unsupported TypeScript types remain opaque and explicit runtime schemas
+  remain authoritative.
+- 4c81384: Harden Windows Bun dev re-exec entry detection and TypeScript route navigation across short/long path aliases.
+- Updated dependencies [1a041a9]
+- Updated dependencies [652201a]
+- Updated dependencies [6aa39aa]
+- Updated dependencies [3aefb12]
+- Updated dependencies [8b58d1f]
+- Updated dependencies [c4ed8f7]
+- Updated dependencies [cefedc2]
+- Updated dependencies [25305bb]
+- Updated dependencies [095c320]
+- Updated dependencies [7504864]
+- Updated dependencies [e88c23a]
+- Updated dependencies [c39712e]
+- Updated dependencies [9010fd3]
+- Updated dependencies [7551709]
+- Updated dependencies [ea2356e]
+- Updated dependencies [a816b87]
+  - @nifrajs/mcp@3.2.0
+  - @nifrajs/testing@3.2.0
+  - @nifrajs/web@3.2.0
+  - @nifrajs/core@3.2.0
+  - @nifrajs/client@3.2.0
+  - @nifrajs/schema@3.2.0
+  - @nifrajs/runner@3.2.0
+  - create-nifra@3.2.0
+
 ## 3.1.0
 
 ### Patch Changes

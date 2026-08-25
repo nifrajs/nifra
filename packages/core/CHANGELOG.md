@@ -1,5 +1,24 @@
 # @nifrajs/core
 
+## 3.2.0
+
+### Patch Changes
+
+- 8b58d1f: Improve the shared route lifecycle pipeline across Bun, Node, and Deno without changing the public
+  route, validation, response, or body-security contracts.
+- 095c320: On Bun, `app.publish(topic, data)` now fans out through the runtime's native topic broadcast when no WebSocket route validates its outbound frames, so a broadcast reaches every subscriber without a per-connection loop. A route with `validateSend: true` keeps the portable per-socket path, since its frames are validated (and dropped when invalid) individually; other runtimes are unchanged.
+- 7504864: Remove sideEffects entries that no longer resolve to a shipped module; the publish gate now verifies every sideEffects path against the packed tarball.
+- e88c23a: Infer typed status responses across lifecycle hooks and contract-first routes, preserve precise
+  success and error narrowing in the client, and optionally include supported response types in
+  build-time OpenAPI output. Unsupported TypeScript types remain opaque and explicit runtime schemas
+  remain authoritative.
+- c39712e: Move route policy compilation and deploy-target planning behind shared internal seams, pin the Solid adapter's Babel type identity, and add a cleanup-safe cross-runtime contract-lab runner.
+- 9010fd3: Keep route-lane selection in a registration-time internal module so request dispatch continues to use the same compiled execution plans and adapter paths.
+- ea2356e: Optimize routes with exactly one `derive`, `beforeHandle`, and `afterHandle` hook using a
+  registration-specialized lifecycle lane while preserving existing async, short-circuit, and error
+  semantics.
+- a816b87: The Bun WebSocket message path now dispatches each frame without allocating a per-frame closure, bringing echo round-trip throughput to parity with the raw runtime. Error routing is unchanged: a synchronous throw or a rejected promise from a `message` handler still reaches `error()`.
+
 ## 3.1.0
 
 ### Minor Changes

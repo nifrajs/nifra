@@ -1,5 +1,14 @@
 # @nifrajs/client
 
+## 3.2.0
+
+### Patch Changes
+
+- e88c23a: Infer typed status responses across lifecycle hooks and contract-first routes, preserve precise
+  success and error narrowing in the client, and optionally include supported response types in
+  build-time OpenAPI output. Unsupported TypeScript types remain opaque and explicit runtime schemas
+  remain authoritative.
+
 ## 3.1.0
 
 ## 3.0.0

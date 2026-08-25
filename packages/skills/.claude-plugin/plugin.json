@@ -1,7 +1,7 @@
 {
   "name": "nifra",
   "description": "Skills for building and verifying Nifra apps: contract-first APIs, full-stack SSR on five UI libraries, and the check/assure/capabilities gates. Prefers Nifra's live MCP server over model recall.",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "homepage": "https://nifra.dev/docs/agents",
   "repository": "https://github.com/nifrajs/nifra",
   "license": "MIT",

@@ -1,5 +1,45 @@
 # @nifrajs/web
 
+## 3.2.0
+
+### Minor Changes
+
+- 652201a: Make islands the first-class interactivity lane for zero-runtime vanilla pages. `@nifrajs/web/islands`
+  now exports `defineIsland` to type an enhancer's props and `createIslandBus` for typed pub/sub between
+  islands that share no state. `nifra check` gains `NF-C020`, warning when an island enhancer wires an
+  event listener but returns no cleanup, and `nifra scaffold` emits a golden vanilla route stub. New
+  "Islands" cookbook documents the counter, cart-badge, and filter patterns.
+- 25305bb: Add `@nifrajs/web/nano`, the explicit-reactivity lane for small apps that want local state without a
+  framework runtime. It exports `signal`, `computed(fn, [deps])` with an explicit dependency array,
+  `resource(fetcher, [deps])` - an async cell with a `pending`/`error`/`ready` value union that aborts a
+  superseded fetch and drops its stale result - and `bind` / `bindList` / `bindResource` DOM edges, all
+  with no virtual DOM and no auto-tracking. Because every reactive edge is a visible call, `nifra check`
+  gains three static lints: `NF-C021` (a `bind`/`bindList`/`bindResource` whose disposer is discarded),
+  `NF-C022` (a `bindList` keyed by the array index), and `NF-C023` (a `computed`/`resource` that reads a
+  signal its deps omit). `nifra scaffold` accepts `variant: "stateful"` to emit the golden nano island
+  pattern on a vanilla project, and a new "nano" cookbook documents signals, keyed lists, async state,
+  and where the lane stops.
+
+### Patch Changes
+
+- 3aefb12: Make the development/production stylesheet parity guard ignore generated output, comments, and documentation code examples while continuing to detect real stylesheet imports.
+- c4ed8f7: Avoid quadratic regular-expression backtracking when rendering build instructions for separator-heavy output paths.
+- c39712e: Move route policy compilation and deploy-target planning behind shared internal seams, pin the Solid adapter's Babel type identity, and add a cleanup-safe cross-runtime contract-lab runner.
+- 7551709: Harden runtime boundaries and defaults: clean up subprocess abort listeners, support short Cloudflare
+  KV sessions, bound and incrementally sweep the default memory cache, make image reads and cancellation
+  safe, emit content-derived image validators, require trusted forwarded hosts, avoid caching dynamic SSR
+  metadata, and reject invalid upload or image limits.
+- Updated dependencies [8b58d1f]
+- Updated dependencies [095c320]
+- Updated dependencies [7504864]
+- Updated dependencies [e88c23a]
+- Updated dependencies [c39712e]
+- Updated dependencies [9010fd3]
+- Updated dependencies [ea2356e]
+- Updated dependencies [a816b87]
+  - @nifrajs/core@3.2.0
+  - @nifrajs/island-trigger@3.2.0
+
 ## 3.1.0
 
 ### Patch Changes

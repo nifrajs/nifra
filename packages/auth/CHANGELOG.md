@@ -1,5 +1,14 @@
 # @nifrajs/auth
 
+## 3.2.0
+
+### Patch Changes
+
+- 7551709: Harden runtime boundaries and defaults: clean up subprocess abort listeners, support short Cloudflare
+  KV sessions, bound and incrementally sweep the default memory cache, make image reads and cancellation
+  safe, emit content-derived image validators, require trusted forwarded hosts, avoid caching dynamic SSR
+  metadata, and reject invalid upload or image limits.
+
 ## 3.1.0
 
 ## 3.0.0

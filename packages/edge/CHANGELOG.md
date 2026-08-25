@@ -1,5 +1,11 @@
 # @nifrajs/edge
 
+## 3.2.0
+
+### Patch Changes
+
+- 87272f3: Harden cross-runtime response handling and Node parser-error behavior for production agent hosts.
+
 ## 3.1.0
 
 ### Minor Changes

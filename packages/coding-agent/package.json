@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/coding-agent",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "Standalone, extensible Nifra coding-agent host and CLI.",
   "keywords": [
     "bun",
