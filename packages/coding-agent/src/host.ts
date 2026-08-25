@@ -1,5 +1,6 @@
 import {
   type AgentApprovalRequiredEvent,
+  type AgentApprovalResolvedEvent,
   type AgentBackend,
   type AgentEvent,
   type AgentEventPayload,
@@ -218,7 +219,11 @@ export class CodingAgentHost {
     const sessionId = this.requireSession().id
     if (event.type === "approval.required")
       await this.approvals.observe(event as AgentApprovalRequiredEvent)
-    await this.sessionStore?.append(sessionId, event.type, event, {
+    else if (event.type === "approval.resolved") {
+      const resolved = event as AgentApprovalResolvedEvent
+      this.approvals.resolve(resolved.approvalId, resolved.approved, resolved.reason)
+    }
+    await this.sessionStore?.append(sessionId, event.type, eventEvidence(event), {
       pinned:
         event.type === "approval.required" ||
         event.type === "verification.completed" ||
@@ -386,6 +391,73 @@ function eventText(event: AgentEvent): string {
       return event.error.message
     default:
       return event.type
+  }
+}
+
+/** Default session evidence is content-free; live protocol consumers still receive the full event. */
+function eventEvidence(event: AgentEvent): unknown {
+  switch (event.type) {
+    case "session.started":
+    case "session.updated":
+    case "session.completed":
+      return {
+        status: event.snapshot.status,
+        lastSeq: event.snapshot.lastSeq,
+        activeTurnId: event.snapshot.activeTurnId,
+        capabilities: event.snapshot.capabilities,
+      }
+    case "turn.started":
+      return { turnId: event.turnId }
+    case "assistant.delta":
+    case "assistant.message":
+      return { turnId: event.turnId }
+    case "tool.started":
+      return { turnId: event.turnId, callId: event.callId, name: event.name }
+    case "tool.delta":
+      return { turnId: event.turnId, callId: event.callId }
+    case "tool.completed":
+      return {
+        turnId: event.turnId,
+        callId: event.callId,
+        name: event.name,
+        ok: event.ok,
+        ...(event.error === undefined ? {} : { errorCode: event.error.code }),
+      }
+    case "approval.required":
+      return {
+        turnId: event.turnId,
+        approvalId: event.approvalId,
+        action: event.action,
+        capability: event.capability,
+      }
+    case "approval.resolved":
+      return {
+        ...(event.turnId === undefined ? {} : { turnId: event.turnId }),
+        approvalId: event.approvalId,
+        approved: event.approved,
+      }
+    case "repair.required":
+      return {
+        ...(event.turnId === undefined ? {} : { turnId: event.turnId }),
+        taskId: event.task.id,
+        verification: event.task.verification,
+        capabilities: event.task.capabilities,
+      }
+    case "verification.completed":
+      return { name: event.name, ok: event.ok }
+    case "memory.compacted":
+      return { before: event.before, after: event.after, reason: event.reason }
+    case "extension.reloaded":
+      return {
+        revision: event.revision,
+        loaded: event.loaded,
+        disabled: event.disabled,
+        rolledBack: event.rolledBack,
+      }
+    case "session.failed":
+      return { errorCode: event.error.code, recoverable: event.recoverable }
+    case "session.stopped":
+      return {}
   }
 }
 

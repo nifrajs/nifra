@@ -102,6 +102,12 @@ function parseNativeModelResponse(value: unknown): NativeModelResponse {
 export interface NativeApprovalPort {
   request(input: {
     readonly sessionId: string
+    /** Stable, bounded identifier for this approval boundary. */
+    readonly approvalId: string
+    readonly turnId: string
+    readonly callId: string
+    readonly action: string
+    readonly capability: string
     readonly tool: NativeTool
     readonly input: unknown
     readonly signal: AbortSignal
@@ -112,9 +118,36 @@ export interface NifraBackendOptions {
   readonly model: NativeModelPort
   readonly tools?: readonly NativeTool[]
   readonly approval?: NativeApprovalPort
+  /** Maximum time a protocol-visible native approval may remain unresolved. */
+  readonly approvalTimeoutMs?: number
   readonly maxSteps?: number
   readonly maxMessageChars?: number
   readonly now?: () => number
+}
+
+type NativeApprovalFailureCode =
+  | "APPROVAL_DENIED"
+  | "APPROVAL_CANCELLED"
+  | "APPROVAL_TIMEOUT"
+  | "APPROVAL_CLOSED"
+  | "APPROVAL_FAILED"
+
+interface NativeApprovalResolution {
+  readonly approved: boolean
+  readonly reason?: string
+  readonly errorCode?: NativeApprovalFailureCode
+}
+
+interface NativePendingApproval {
+  readonly id: string
+  readonly sessionId: string
+  readonly turnId: string
+  readonly callId: string
+  readonly action: string
+  readonly capability: string
+  readonly resolve: (resolution: NativeApprovalResolution) => void
+  readonly timer: ReturnType<typeof setTimeout>
+  readonly onAbort: () => void
 }
 
 interface NativeSession {
@@ -127,6 +160,7 @@ interface NativeSession {
   seq: number
   extensionRevision: number
   closed: boolean
+  cancelled: boolean
 }
 
 /**
@@ -144,6 +178,7 @@ export class NifraBackend implements AgentBackend {
   private readonly options: Required<Pick<NifraBackendOptions, "maxSteps" | "maxMessageChars">> &
     NifraBackendOptions
   private readonly sessions = new Map<string, NativeSession>()
+  private readonly pendingApprovals = new Map<string, NativePendingApproval>()
 
   constructor(options: NifraBackendOptions) {
     this.options = Object.freeze({
@@ -160,6 +195,13 @@ export class NifraBackend implements AgentBackend {
       throw new RangeError("nifra backend: maxSteps must be between 1 and 512")
     if (!Number.isSafeInteger(this.options.maxMessageChars) || this.options.maxMessageChars < 256)
       throw new RangeError("nifra backend: maxMessageChars must be at least 256")
+    if (
+      this.options.approvalTimeoutMs !== undefined &&
+      (!Number.isSafeInteger(this.options.approvalTimeoutMs) ||
+        this.options.approvalTimeoutMs < 1 ||
+        this.options.approvalTimeoutMs > 24 * 60 * 60_000)
+    )
+      throw new RangeError("nifra backend: approvalTimeoutMs must be between 1ms and 24h")
   }
 
   async createSession(input: CreateSessionInput): Promise<AgentSessionSnapshot> {
@@ -189,6 +231,7 @@ export class NifraBackend implements AgentBackend {
       seq: 0,
       extensionRevision: 0,
       closed: false,
+      cancelled: false,
     }
     this.sessions.set(id, session)
     return snapshot
@@ -205,6 +248,7 @@ export class NifraBackend implements AgentBackend {
       )
     const stream = createAgentEventStream()
     session.active = stream
+    session.cancelled = false
     session.controller = new AbortController()
     const signal = session.controller.signal
     if (input.signal !== undefined) {
@@ -225,6 +269,7 @@ export class NifraBackend implements AgentBackend {
     const session = this.requireSession(sessionId)
     if (session.closed) return
     const stream = session.active
+    session.cancelled = true
     session.controller.abort(reason)
     this.update(session, "stopped")
     this.emit(session, { type: "session.stopped", reason })
@@ -256,10 +301,31 @@ export class NifraBackend implements AgentBackend {
     return { revision, loaded: [], disabled: [], rolledBack: false }
   }
 
+  async resolveApproval(
+    sessionId: string,
+    approvalId: string,
+    approved: boolean,
+    reason?: string,
+  ): Promise<boolean | undefined> {
+    const session = this.requireSession(sessionId)
+    if (session.closed || session.cancelled) return undefined
+    const pending = this.pendingApprovals.get(approvalId)
+    if (pending === undefined || pending.sessionId !== sessionId) return undefined
+    const resolution = this.settleApproval(
+      session,
+      approvalId,
+      approved === true,
+      approved === true ? reason : (reason ?? "approval denied"),
+      approved === true ? undefined : "APPROVAL_DENIED",
+    )
+    return resolution?.approved
+  }
+
   async close(sessionId: string): Promise<void> {
     const session = this.requireSession(sessionId)
     if (session.closed) return
     session.closed = true
+    session.cancelled = true
     session.controller.abort("closed")
     session.active?.complete()
     session.active = undefined
@@ -313,6 +379,7 @@ export class NifraBackend implements AgentBackend {
           continue
         }
         const callId = crypto.randomUUID()
+        const execute = tool.execute
         this.emit(session, {
           type: "tool.started",
           turnId,
@@ -325,29 +392,30 @@ export class NifraBackend implements AgentBackend {
             ? await tool.requiresApproval(response.input)
             : tool.requiresApproval === true
         if (needsApproval) {
-          if (
-            this.options.approval === undefined ||
-            !(await this.options.approval.request({
-              sessionId: session.id,
-              tool,
-              input: response.input,
-              signal,
-            }))
-          ) {
+          const resolution = await this.requestApproval(
+            session,
+            turnId,
+            callId,
+            tool,
+            response.input,
+            signal,
+          )
+          if (!resolution.approved) {
+            const code = resolution.errorCode ?? "APPROVAL_DENIED"
             this.emit(session, {
               type: "tool.completed",
               turnId,
               callId,
               name: tool.name,
               ok: false,
-              error: agentError("APPROVAL_DENIED", `approval denied for ${tool.name}`),
+              error: agentError(code, boundedApprovalMessage(code, tool.name, resolution.reason)),
             })
-            session.messages.push({ role: "tool", name: tool.name, text: "approval denied" })
+            session.messages.push({ role: "tool", name: tool.name, text: code })
             continue
           }
         }
         try {
-          const output = await tool.execute(response.input, { cwd: session.cwd, signal })
+          const output = await execute(response.input, { cwd: session.cwd, signal })
           const text = boundedText(output)
           session.messages.push({ role: "tool", name: tool.name, text })
           this.emit(session, {
@@ -373,7 +441,11 @@ export class NifraBackend implements AgentBackend {
       }
       throw new Error("native turn exceeded maxSteps")
     } catch (error) {
-      if (session.closed) return
+      if (session.closed || session.cancelled) {
+        stream.complete()
+        if (session.active === stream) session.active = undefined
+        return
+      }
       this.update(session, signal.aborted ? "stopped" : "failed")
       this.emit(session, {
         type: "session.failed",
@@ -413,6 +485,133 @@ export class NifraBackend implements AgentBackend {
     this.emit(session, { type: "session.completed", snapshot: session.snapshot })
     stream.complete()
     session.active = undefined
+  }
+
+  private requestApproval(
+    session: NativeSession,
+    turnId: string,
+    callId: string,
+    tool: NativeTool,
+    input: unknown,
+    signal: AbortSignal,
+  ): Promise<NativeApprovalResolution> {
+    const approvalId = `nifra-approval-${crypto.randomUUID()}`
+    const action = boundedApprovalText(tool.name, 512)
+    const capability = boundedApprovalText(tool.capabilities?.[0] ?? `tool:${tool.name}`, 128)
+    let pending!: NativePendingApproval
+    const promise = new Promise<NativeApprovalResolution>((resolve) => {
+      const onAbort = (): void => {
+        this.settleApproval(
+          session,
+          approvalId,
+          false,
+          session.closed ? "approval closed" : "approval cancelled",
+          session.closed ? "APPROVAL_CLOSED" : "APPROVAL_CANCELLED",
+        )
+      }
+      const timer = setTimeout(
+        () => {
+          this.settleApproval(session, approvalId, false, "approval timed out", "APPROVAL_TIMEOUT")
+        },
+        this.options.approvalTimeoutMs ?? 5 * 60_000,
+      )
+      ;(timer as unknown as { unref?: () => void }).unref?.()
+      pending = {
+        id: approvalId,
+        sessionId: session.id,
+        turnId,
+        callId,
+        action,
+        capability,
+        resolve,
+        timer,
+        onAbort,
+      }
+      this.pendingApprovals.set(approvalId, pending)
+      signal.addEventListener("abort", onAbort, { once: true })
+    })
+
+    this.emit(session, {
+      type: "approval.required",
+      turnId,
+      approvalId,
+      action,
+      capability,
+    })
+
+    if (signal.aborted) pending.onAbort()
+    else if (this.options.approval !== undefined) {
+      try {
+        void Promise.resolve(
+          this.options.approval.request({
+            sessionId: session.id,
+            approvalId,
+            turnId,
+            callId,
+            action,
+            capability,
+            tool,
+            input,
+            signal,
+          }),
+        ).then(
+          (approved) =>
+            this.settleApproval(
+              session,
+              approvalId,
+              approved === true,
+              approved === true ? undefined : "approval denied",
+              approved === true ? undefined : "APPROVAL_DENIED",
+            ),
+          () =>
+            this.settleApproval(
+              session,
+              approvalId,
+              false,
+              "approval callback failed",
+              "APPROVAL_FAILED",
+            ),
+        )
+      } catch {
+        this.settleApproval(
+          session,
+          approvalId,
+          false,
+          "approval callback failed",
+          "APPROVAL_FAILED",
+        )
+      }
+    }
+    return promise
+  }
+
+  private settleApproval(
+    session: NativeSession,
+    approvalId: string,
+    approved: boolean,
+    reason: string | undefined,
+    errorCode: NativeApprovalFailureCode | undefined,
+  ): NativeApprovalResolution | undefined {
+    const pending = this.pendingApprovals.get(approvalId)
+    if (pending === undefined || pending.sessionId !== session.id) return undefined
+    clearTimeout(pending.timer)
+    session.controller.signal.removeEventListener("abort", pending.onAbort)
+    this.pendingApprovals.delete(approvalId)
+    const boundedReason = reason === undefined ? undefined : boundedApprovalText(reason, 512)
+    const resolution: NativeApprovalResolution = Object.freeze({
+      approved,
+      ...(boundedReason === undefined ? {} : { reason: boundedReason }),
+      ...(errorCode === undefined ? {} : { errorCode }),
+    })
+    this.emit(session, {
+      type: "approval.resolved",
+      turnId: pending.turnId,
+      approvalId,
+      approved,
+      ...(boundedReason === undefined ? {} : { reason: boundedReason }),
+    })
+    pending.resolve(resolution)
+    return resolution
   }
 
   private emit(
@@ -462,13 +661,39 @@ function isAsyncIterable<T>(value: unknown): value is AsyncIterable<T> {
   return value !== null && typeof value === "object" && Symbol.asyncIterator in value
 }
 
-function boundedText(value: unknown): string {
+function boundedText(value: unknown, maxChars = 64 * 1024): string {
   try {
     const text = typeof value === "string" ? value : JSON.stringify(value)
-    return text.length > 64 * 1024 ? `${text.slice(0, 64 * 1024)}…[truncated]` : text
+    return text.length > maxChars ? `${text.slice(0, maxChars)}…[truncated]` : text
   } catch {
     return "[unserializable tool output]"
   }
+}
+
+function boundedApprovalText(value: string, maxChars: number): string {
+  const text = value.trim()
+  if (text.length === 0) return "native tool"
+  return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text
+}
+
+function boundedApprovalMessage(
+  code: NativeApprovalFailureCode,
+  toolName: string,
+  reason: string | undefined,
+): string {
+  const base =
+    code === "APPROVAL_DENIED"
+      ? "approval denied"
+      : code === "APPROVAL_TIMEOUT"
+        ? "approval timed out"
+        : code === "APPROVAL_CANCELLED"
+          ? "approval cancelled"
+          : code === "APPROVAL_CLOSED"
+            ? "approval closed"
+            : "approval failed"
+  const name = boundedApprovalText(toolName, 128)
+  const suffix = reason === undefined || reason === "approval denied" ? "" : `: ${reason}`
+  return boundedApprovalText(`${base} for ${name}${suffix}`, 512)
 }
 
 function failedStream(error: unknown): AgentEventStream {
