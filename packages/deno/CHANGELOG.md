@@ -1,5 +1,11 @@
 # @nifrajs/deno
 
+## 3.2.0
+
+### Patch Changes
+
+- f061feb: Make Deno server shutdown drain active handlers safely across Deno runtime releases and force-close requests that exceed the configured deadline without triggering a `BadResource` race.
+
 ## 3.1.0
 
 ## 3.0.0

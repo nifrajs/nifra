@@ -1,5 +1,11 @@
 # @nifrajs/content
 
+## 3.2.0
+
+### Patch Changes
+
+- f34a050: Record the pending source changes for these packages in their release notes so fixed-version publishing does not omit their changelog entries.
+
 ## 3.1.0
 
 ## 3.0.0

@@ -1,5 +1,13 @@
 # @nifrajs/mcp
 
+## 3.2.0
+
+### Patch Changes
+
+- 1a041a9: Add provider-neutral gateway and deployment contracts with deterministic reference adapters and evidence-safe policy checks.
+- cefedc2: Stream progress notifications and final JSON-RPC responses over `text/event-stream`, and support
+  cancellable SSE GET connections for Streamable HTTP clients.
+
 ## 3.1.0
 
 ## 3.0.0

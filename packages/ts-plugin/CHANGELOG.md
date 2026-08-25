@@ -1,5 +1,27 @@
 # @nifrajs/ts-plugin
 
+## 3.2.0
+
+### Patch Changes
+
+- 4c81384: Harden Windows Bun dev re-exec entry detection and TypeScript route navigation across short/long path aliases.
+- 469b998: Fix Windows path handling in the TypeScript route plugin and Svelte/Vue build plugins, including file-URL inputs, virtual stylesheet modules, and platform-neutral generated output.
+- Updated dependencies [652201a]
+- Updated dependencies [3aefb12]
+- Updated dependencies [8b58d1f]
+- Updated dependencies [c4ed8f7]
+- Updated dependencies [25305bb]
+- Updated dependencies [095c320]
+- Updated dependencies [7504864]
+- Updated dependencies [e88c23a]
+- Updated dependencies [c39712e]
+- Updated dependencies [9010fd3]
+- Updated dependencies [7551709]
+- Updated dependencies [ea2356e]
+- Updated dependencies [a816b87]
+  - @nifrajs/web@3.2.0
+  - @nifrajs/core@3.2.0
+
 ## 3.1.0
 
 ### Patch Changes

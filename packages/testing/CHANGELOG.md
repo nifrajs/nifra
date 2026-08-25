@@ -1,5 +1,33 @@
 # @nifrajs/testing
 
+## 3.2.0
+
+### Patch Changes
+
+- 1a041a9: Add provider-neutral gateway and deployment contracts with deterministic reference adapters and evidence-safe policy checks.
+- 6aa39aa: Add a runtime-neutral HTTP contract lab with shared request/response witnesses for Bun, Node, Deno, and edge adapter verification.
+- c39712e: Move route policy compilation and deploy-target planning behind shared internal seams, pin the Solid adapter's Babel type identity, and add a cleanup-safe cross-runtime contract-lab runner.
+- Updated dependencies [7aee593]
+- Updated dependencies [8486ed8]
+- Updated dependencies [1a041a9]
+- Updated dependencies [3eacb4a]
+- Updated dependencies [8b58d1f]
+- Updated dependencies [893f7b3]
+- Updated dependencies [cefedc2]
+- Updated dependencies [095c320]
+- Updated dependencies [7504864]
+- Updated dependencies [e88c23a]
+- Updated dependencies [c39712e]
+- Updated dependencies [9010fd3]
+- Updated dependencies [7551709]
+- Updated dependencies [ea2356e]
+- Updated dependencies [a816b87]
+  - @nifrajs/agent@3.2.0
+  - @nifrajs/mcp@3.2.0
+  - @nifrajs/core@3.2.0
+  - @nifrajs/client@3.2.0
+  - @nifrajs/mock@3.2.0
+
 ## 3.1.0
 
 ### Patch Changes

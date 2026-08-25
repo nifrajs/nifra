@@ -1,5 +1,13 @@
 # @nifrajs/middleware
 
+## 3.2.0
+
+### Patch Changes
+
+- f34a050: Record the pending source changes for these packages in their release notes so fixed-version publishing does not omit their changelog entries.
+- Updated dependencies [e88c23a]
+  - @nifrajs/schema@3.2.0
+
 ## 3.1.0
 
 ### Patch Changes

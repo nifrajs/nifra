@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/a2a",
-  "version": "0.1.0",
+  "version": "3.2.0",
   "description": "Mount a nifra agent as an Agent2Agent (A2A) protocol server - the agent card on GET, the A2A 1.0 JSON-RPC binding on POST with SendMessage, streaming SendStreamingMessage over SSE, and GetTask projected from the runner's turn state. A protocol bridge over @nifrajs/agent; the model, state store, and approval transport stay injected per request.",
   "keywords": [
     "bun",

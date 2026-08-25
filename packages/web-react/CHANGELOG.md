@@ -1,5 +1,28 @@
 # @nifrajs/web-react
 
+## 3.2.0
+
+### Patch Changes
+
+- f34a050: Record the pending source changes for these packages in their release notes so fixed-version publishing does not omit their changelog entries.
+- Updated dependencies [652201a]
+- Updated dependencies [3aefb12]
+- Updated dependencies [8b58d1f]
+- Updated dependencies [c4ed8f7]
+- Updated dependencies [25305bb]
+- Updated dependencies [095c320]
+- Updated dependencies [7504864]
+- Updated dependencies [e88c23a]
+- Updated dependencies [c39712e]
+- Updated dependencies [9010fd3]
+- Updated dependencies [7551709]
+- Updated dependencies [ea2356e]
+- Updated dependencies [a816b87]
+  - @nifrajs/web@3.2.0
+  - @nifrajs/core@3.2.0
+  - @nifrajs/image@3.2.0
+  - @nifrajs/i18n@3.2.0
+
 ## 3.1.0
 
 ### Patch Changes

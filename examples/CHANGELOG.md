@@ -1,5 +1,52 @@
 # @nifrajs/examples
 
+## 3.2.0
+
+### Patch Changes
+
+- Updated dependencies [1a041a9]
+- Updated dependencies [87272f3]
+- Updated dependencies [652201a]
+- Updated dependencies [3aefb12]
+- Updated dependencies [e7d55cc]
+- Updated dependencies [f061feb]
+- Updated dependencies [19a9f84]
+- Updated dependencies [8b58d1f]
+- Updated dependencies [c4ed8f7]
+- Updated dependencies [cefedc2]
+- Updated dependencies [25305bb]
+- Updated dependencies [095c320]
+- Updated dependencies [7504864]
+- Updated dependencies [f34a050]
+- Updated dependencies [e88c23a]
+- Updated dependencies [c39712e]
+- Updated dependencies [9010fd3]
+- Updated dependencies [7551709]
+- Updated dependencies [ea2356e]
+- Updated dependencies [4c81384]
+- Updated dependencies [469b998]
+- Updated dependencies [a816b87]
+  - @nifrajs/mcp@3.2.0
+  - @nifrajs/node@3.2.0
+  - @nifrajs/web@3.2.0
+  - @nifrajs/cli@3.2.0
+  - @nifrajs/deno@3.2.0
+  - @nifrajs/core@3.2.0
+  - @nifrajs/content@3.2.0
+  - @nifrajs/middleware@3.2.0
+  - @nifrajs/web-react@3.2.0
+  - @nifrajs/client@3.2.0
+  - @nifrajs/schema@3.2.0
+  - @nifrajs/web-solid@3.2.0
+  - @nifrajs/auth@3.2.0
+  - @nifrajs/image@3.2.0
+  - @nifrajs/web-svelte@3.2.0
+  - @nifrajs/web-vue@3.2.0
+  - @nifrajs/web-preact@3.2.0
+  - @nifrajs/i18n@3.2.0
+  - @nifrajs/workers@3.2.0
+  - @nifrajs/web-vanilla@3.2.0
+
 ## 3.1.0
 
 ### Patch Changes
