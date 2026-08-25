@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://nifra.dev/</loc><lastmod>2026-08-13</lastmod></url>
+  <url><loc>https://nifra.dev/</loc><lastmod>2026-08-24</lastmod></url>
   <url><loc>https://nifra.dev/benchmarks</loc><lastmod>2026-08-08</lastmod></url>
   <url><loc>https://nifra.dev/blog</loc><lastmod>2026-08-13</lastmod></url>
   <url><loc>https://nifra.dev/blog/best-bun-frameworks-2026</loc><lastmod>2026-08-13</lastmod></url>
@@ -18,7 +18,7 @@
   <url><loc>https://nifra.dev/compare/hono</loc><lastmod>2026-08-13</lastmod></url>
   <url><loc>https://nifra.dev/compare/nextjs</loc><lastmod>2026-08-13</lastmod></url>
   <url><loc>https://nifra.dev/docs</loc><lastmod>2026-08-13</lastmod></url>
-  <url><loc>https://nifra.dev/docs/agents</loc><lastmod>2026-08-13</lastmod></url>
+  <url><loc>https://nifra.dev/docs/agents</loc><lastmod>2026-08-24</lastmod></url>
   <url><loc>https://nifra.dev/docs/api</loc><lastmod>2026-08-13</lastmod></url>
   <url><loc>https://nifra.dev/docs/auth</loc><lastmod>2026-08-15</lastmod></url>
   <url><loc>https://nifra.dev/docs/backends</loc><lastmod>2026-08-13</lastmod></url>
@@ -40,15 +40,17 @@
   <url><loc>https://nifra.dev/docs/frameworks</loc><lastmod>2026-08-13</lastmod></url>
   <url><loc>https://nifra.dev/docs/hydration</loc><lastmod>2026-08-13</lastmod></url>
   <url><loc>https://nifra.dev/docs/i18n</loc><lastmod>2026-08-13</lastmod></url>
-  <url><loc>https://nifra.dev/docs/images</loc><lastmod>2026-08-13</lastmod></url>
+  <url><loc>https://nifra.dev/docs/images</loc><lastmod>2026-08-20</lastmod></url>
   <url><loc>https://nifra.dev/docs/integrations</loc><lastmod>2026-08-13</lastmod></url>
+  <url><loc>https://nifra.dev/docs/islands</loc><lastmod>2026-08-20</lastmod></url>
   <url><loc>https://nifra.dev/docs/migrate-2</loc><lastmod>2026-08-13</lastmod></url>
   <url><loc>https://nifra.dev/docs/migrate-3</loc><lastmod>2026-08-16</lastmod></url>
   <url><loc>https://nifra.dev/docs/migrate-backend</loc><lastmod>2026-08-13</lastmod></url>
   <url><loc>https://nifra.dev/docs/migrate-frontend</loc><lastmod>2026-08-13</lastmod></url>
   <url><loc>https://nifra.dev/docs/migrate-route-by-route</loc><lastmod>2026-08-13</lastmod></url>
   <url><loc>https://nifra.dev/docs/mutations</loc><lastmod>2026-08-13</lastmod></url>
-  <url><loc>https://nifra.dev/docs/plugins</loc><lastmod>2026-08-13</lastmod></url>
+  <url><loc>https://nifra.dev/docs/nano</loc><lastmod>2026-08-20</lastmod></url>
+  <url><loc>https://nifra.dev/docs/plugins</loc><lastmod>2026-08-16</lastmod></url>
   <url><loc>https://nifra.dev/docs/query</loc><lastmod>2026-08-13</lastmod></url>
   <url><loc>https://nifra.dev/docs/rendering</loc><lastmod>2026-08-13</lastmod></url>
   <url><loc>https://nifra.dev/docs/routing</loc><lastmod>2026-08-15</lastmod></url>
