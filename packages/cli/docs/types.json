@@ -10237,7 +10237,7 @@
     "name": "NativeApprovalPort",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface NativeApprovalPort {\n    request(input: {\n        readonly sessionId: string;\n        readonly tool: NativeTool;\n        readonly input: unknown;\n        readonly signal: AbortSignal;\n    }): boolean | PromiseLike<boolean>;\n}"
+    "signature": "export interface NativeApprovalPort {\n    request(input: {\n        readonly sessionId: string;\n        /** Stable, bounded identifier for this approval boundary. */\n        readonly approvalId: string;\n        readonly turnId: string;\n        readonly callId: string;\n        readonly action: string;\n        readonly capability: string;\n        readonly tool: NativeTool;\n        readonly input: unknown;\n        readonly signal: AbortSignal;\n    }): boolean | PromiseLike<boolean>;\n}"
   },
   {
     "name": "NativeGatewayModelPortOptions",
@@ -10528,14 +10528,14 @@
     "name": "NifraBackend",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
-    "signature": "export declare class NifraBackend implements AgentBackend {\n    readonly info: AgentBackendInfo;\n    private readonly options;\n    private readonly sessions;\n    constructor(options: NifraBackendOptions);\n    createSession(input: CreateSessionInput): Promise<AgentSessionSnapshot>;\n    send(input: SendMessageInput): AsyncIterable<AgentEvent>;\n    cancel(sessionId: string, reason?: string): Promise<void>;\n    snapshot(sessionId: string): Promise<AgentSessionSnapshot>;\n    reload(sessionId: string): Promise<ReloadResult>;\n    close(sessionId: string): Promise<void>;\n    private run;\n    private consumeModel;\n    private finish;\n    private emit;\n    private update;\n    private requireSession;\n    private now;\n}",
+    "signature": "export declare class NifraBackend implements AgentBackend {\n    readonly info: AgentBackendInfo;\n    private readonly options;\n    private readonly sessions;\n    private readonly pendingApprovals;\n    constructor(options: NifraBackendOptions);\n    createSession(input: CreateSessionInput): Promise<AgentSessionSnapshot>;\n    send(input: SendMessageInput): AsyncIterable<AgentEvent>;\n    cancel(sessionId: string, reason?: string): Promise<void>;\n    snapshot(sessionId: string): Promise<AgentSessionSnapshot>;\n    reload(sessionId: string): Promise<ReloadResult>;\n    resolveApproval(sessionId: string, approvalId: string, approved: boolean, reason?: string): Promise<boolean | undefined>;\n    close(sessionId: string): Promise<void>;\n    private run;\n    private consumeModel;\n    private finish;\n    private requestApproval;\n    private settleApproval;\n    private emit;\n    private update;\n    private requireSession;\n    private now;\n}",
     "doc": "/**\n * Small provider port for a future Nifra-native backend.\n *\n * It deliberately knows only messages, tools, and the protocol. Provider SDKs, credentials, UI,\n * and framework packages stay outside this module. A model may return one response or stream\n * deltas followed by a final response.\n */"
   },
   {
     "name": "NifraBackendOptions",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface NifraBackendOptions {\n    readonly model: NativeModelPort;\n    readonly tools?: readonly NativeTool[];\n    readonly approval?: NativeApprovalPort;\n    readonly maxSteps?: number;\n    readonly maxMessageChars?: number;\n    readonly now?: () => number;\n}"
+    "signature": "export interface NifraBackendOptions {\n    readonly model: NativeModelPort;\n    readonly tools?: readonly NativeTool[];\n    readonly approval?: NativeApprovalPort;\n    /** Maximum time a protocol-visible native approval may remain unresolved. */\n    readonly approvalTimeoutMs?: number;\n    readonly maxSteps?: number;\n    readonly maxMessageChars?: number;\n    readonly now?: () => number;\n}"
   },
   {
     "name": "NifraContextLike",

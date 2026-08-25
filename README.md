@@ -41,7 +41,8 @@ bun add @nifrajs/core @nifrajs/schema @nifrajs/client
 
 ## The core loop
 
-One schema drives everything - runtime validation, TypeScript types, the client, and OpenAPI:
+Routes are typed automatically from their path literals, handler context, and return values. Add a
+Standard Schema when you need runtime validation/coercion or an explicit request/response contract:
 
 ```ts
 // server.ts
@@ -49,7 +50,7 @@ import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
 export const app = server()
-  .get("/users/:id", (c) => ({ id: c.params.id }))
+  .get("/users/:id", (c) => ({ id: c.params.id })) // params + response inferred from the route
   .post("/users", { body: t.object({ name: t.string() }) }, (c) => {
     // c.body is validated + typed - invalid input is a structured 422 before this runs
     return { id: crypto.randomUUID(), name: c.body.name }
@@ -69,7 +70,7 @@ if (res.ok) res.data.id     // typed from the route - tsc fails the moment the r
 else res.error              // failures are returned, never thrown
 ```
 
-Change a route and every caller stops compiling until it's updated. That one property is what keeps agent-edited codebases correct.
+Change a route and every caller stops compiling until it's updated. That one property is what keeps agent-edited codebases correct. For a decoupled, versionable surface, use [`defineContract` + `implement`](https://nifra.dev/docs/contract).
 
 ## Agent-native, by construction
 
@@ -80,7 +81,11 @@ claude mcp add nifra -- bunx nifra mcp     # Claude Code (Cursor/VS Code: same c
 nifra init-agents                          # or: write .mcp.json + AGENTS.md + CLAUDE.md for you
 ```
 
-Highlights of the 15-tool loop: `nifra_context` (live routes + schemas), `nifra_example` (snippets typechecked against your installed version - no hallucinated APIs), `nifra_run` (verify a route in-process), `nifra_check` (drift gate that returns the fix), `nifra_assure` (security evidence per route). [Full tool list →](https://nifra.dev/docs/agents)
+The loop covers live project context and routes, verified docs/examples/types, checks with structured
+fixes, real requests and SSR renders, request inspection, tests, assurance, and verification levels.
+`nifra_context` and `nifra_example` are version-aware; `nifra_run`, `nifra_render`, and
+`nifra_inspect` verify what the edited app actually does; `nifra_check` and `nifra_assure` close the
+drift and security gates. [Full tool list →](https://nifra.dev/docs/agents)
 
 Agents that read skills get the conventions too - the same four skills on every surface:
 
@@ -97,9 +102,9 @@ The same public contracts also cover applications that are agent products:
 
 | Use case | Packages | What it provides |
 |---|---|---|
-| Bounded agent turns | [agent](packages/agent) | Typed tools, budgets, approvals, resumable token-only evidence, streaming deltas, and shared run state. Model, storage, and policy stay injected ports. |
-| Coding-agent host | [coding-agent](packages/coding-agent) · [agent-protocol](packages/agent-protocol) · [pi](packages/pi) | A standalone nifra-agent host with sessions, workflows, extensions, verification, local RPC, and an optional Pi backend. |
-| Browser and desktop UI | [agent-app](packages/agent-app) · [runner](packages/runner) · [apps/workbench](apps/workbench) | Content-free browser views, ordered/resumable event handling, and structured in-process request runs for Workbench and other hosts. |
+| Bounded agent turns | [agent](packages/agent) | Typed tools, budgets, approvals, resumable token-only evidence, token streaming, and shared run state. Model, storage, and policy stay injected ports. |
+| Coding-agent host | [coding-agent](packages/coding-agent) · [agent-protocol](packages/agent-protocol) · [pi](packages/pi) | A standalone nifra-agent host with sessions, workflows, extensions, post-turn verification with bounded automatic repair, native approval events/resolution, local RPC, and an optional Pi backend. |
+| Browser and desktop UI | [agent-app](packages/agent-app) · [runner](packages/runner) · [apps/workbench](apps/workbench) | Content-free negotiated views, ordered/resumable event handling, capability registry, decision inbox, Run Studio projections, and structured in-process request runs. |
 | Protocol bridges | [a2a](packages/a2a) · [ag-ui](packages/ag-ui) | A2A 1.0 JSON-RPC/SSE and AG-UI SSE endpoints over the same agent runner, including typed human-in-the-loop resume. |
 | Observability and skills | [agent-telemetry](packages/agent-telemetry) · [skills](packages/skills) | Token-only OpenTelemetry run traces and portable skills that keep agents pointed at the live MCP contract. |
 
@@ -129,7 +134,10 @@ $ nifra assure
 
 ## Full-stack, five UI libraries
 
-The same routes, loaders, actions, streaming SSR, islands, and typed data layer on **React, Vue, Solid, Svelte, or Preact** - switching is one adapter import, not a rewrite. File routing, SSG/ISR, progressive-enhancement forms, query cache, server functions whose bodies never ship to the browser.
+The same routes, loaders, actions, streaming SSR, `defer()`/`<Await>` progressive rendering, islands,
+and typed data layer work on **React, Vue, Solid, Svelte, or Preact** - switching is one adapter
+import, not a rewrite. File routing, SSG/ISR, progressive-enhancement forms, query cache, and server
+functions whose bodies never ship to the browser.
 
 ```sh
 bun create nifra my-app --framework svelte   # or react | vue | solid | preact

@@ -958,14 +958,47 @@ function Row({ id }: { id: string }) {
 const anyPending = useFetchers().some((f) => f.snapshot().pending)
 ```
 
-## Nifra - Rendering: SSG & ISR
+## Nifra - Rendering: SSR, streaming, SSG & ISR
 
-> Prerender static routes, enumerate dynamic ones, and cache rendered pages with stale-while-revalidate - on every runtime including the edge.
+> Render critical HTML first, stream deferred data progressively, prerender static routes, and cache rendered pages with stale-while-revalidate - on every runtime including the edge.
 
 Nifra renders on one framework-agnostic seam, so the same app can be server-rendered per
-request (the default), **prerendered** to static files at build (SSG), or cached and served
+request (the default), streamed progressively, **prerendered** to static files at build (SSG), or cached and served
 **stale-while-revalidate** (ISR) - and every strategy works on Bun, Node, Deno, **and**
 the edge.
+
+### Progressive rendering with `defer()`
+
+Keep critical loader data in the first HTML shell and mark slower, non-critical values with
+`defer()`. Nifra flushes the document shell and the adapter's rendered stream first,
+then sends each deferred resolution through `<Await>` without a second data
+fetch. The same protocol works for actions and soft navigations, including NDJSON on the client
+side.
+
+```ts
+import { defer } from "@nifrajs/web"
+
+export async function loader({ api }: LoaderArgs<typeof app>) {
+  return {
+    product: (await api.products.get()).data, // critical: rendered in the first shell
+    reviews: defer(api.reviews.get()),        // non-critical: streamed when ready
+  }
+}
+
+export default function Product(props: { data: LoaderData<typeof loader> }) {
+  return (
+    <>
+      <ProductSummary product={props.data.product} />
+      <Await resolve={props.data.reviews} fallback={<p>Loading reviews…</p>}>
+        {(reviews) => <Reviews items={reviews} />}
+      </Await>
+    </>
+  )
+}
+```
+
+This is request-time progressive SSR/partial rendering. It is distinct from build-time SSG:
+the shell is not a precomputed PPR artifact, and deferred values remain request-scoped.
 
 ### SSG - prerender at build
 
@@ -4240,7 +4273,7 @@ the command printed by the build.
 
 ## Nifra - Coding agents
 
-> Nifra's agent layer: live MCP tools for coding agents, bounded typed turns, resumable evidence, a coding-agent host, browser views, A2A and AG-UI bridges, and token-only telemetry.
+> Nifra's agent layer: live MCP tools, bounded repairable turns, native approvals, resumable evidence, content-free browser views, capability registry, decision inbox, Run Studio, A2A, and AG-UI.
 
 Nifra ships an MCP server. It is not a documentation lookup bolted onto a framework: an agent
 can read the project, learn the real API, run actual requests against the backend it just
@@ -4324,6 +4357,8 @@ nifra_check             # typecheck + lints, each with a structured fix
 nifra_fix               # applies the mechanical ones
 nifra_run    {request}  # a real request through the backend: status, headers, parsed body
 nifra_render {path}     # SSR a page route, returns the HTML
+nifra_inspect {port}    # recent dev-server request traces: status, duration, ISR hit/miss
+nifra_explain {error}   # turn a failure into a structured diagnostic and fix
 nifra_test              # bun test, bounded structured results
 
 # 4. What does it now prove?
@@ -4465,8 +4500,28 @@ bunx nifra-agent --backend pi --message "run the checks and explain failures"
 ```
 
 The public host keeps live queues and captured evidence bounded, filters verification process
-environments, and treats extensions as an explicit opt-in. The local process adapter and
-extension worker are crash-containment helpers, not hostile-code sandboxes.
+environments, and treats extensions as an explicit opt-in. Post-turn `check`,
+`assure`, or `test` gates emit `verification.completed` and
+`repair.required`; when enabled, the host sends a bounded repair prompt and reruns
+the gate until it passes or the attempt cap is reached. The local process adapter and extension
+worker are crash-containment helpers, not hostile-code sandboxes.
+
+```ts
+# Post-turn gates are opt-in. A failed gate becomes bounded repair work.
+bunx nifra-agent --backend pi --message "implement the change" \
+  --verify-after-turn check,assure --max-repair-attempts 2
+
+# Set --max-repair-attempts 0 for observe-only verification.
+```
+
+### Native approval protocol
+
+`@nifrajs/coding-agent` can pause a native tool call at the decision boundary and
+emit `approval.required` with an opaque approval id, action, capability, and bounded
+coordinates. Resolve it through the host or RPC with `approval.resolve`; the backend
+emits `approval.resolved` and only then executes the tool. Denial, cancellation,
+timeout, and closed sessions all fail closed, and `approvalTimeoutMs` bounds how long
+a pending decision can remain open.
 
 ### Expose the same agent to other clients
 
@@ -4509,11 +4564,15 @@ auth and authorization middleware, and scope every injected port to the request 
 ### Browser views and the Workbench
 
 `@nifrajs/agent-app` is a backend-free browser SDK for negotiated commands, ordered
-and resumable event streams, approvals, handoffs, and Run Studio projections. Its public views
-contain structure - statuses, counters, coordinates, and error codes - rather than prompts,
-tool payloads, model output, or filesystem paths. The optional Workbench uses that same surface:
-run `bun run --filter '@nifrajs/workbench' dev -- --cwd /path/to/project` for the
-local browser client.
+and resumable event streams, approvals, handoffs, and Run Studio projections. It negotiates
+optional features including `approvals`, `checkpoint`,
+`fork`, `handoff`, `inbox`, `reload`,
+`resume`, and `workflows`, so a browser can degrade deliberately when a
+host does not offer one. Its public views contain structure - statuses, counters, coordinates,
+and error codes - rather than prompts, tool payloads, model output, or filesystem paths. The
+optional Workbench uses that same surface: run
+`bun run --filter '@nifrajs/workbench' dev -- --cwd /path/to/project` for the local
+browser client.
 
 ```ts
 import { AgentAppClient, HttpAgentTransport } from "@nifrajs/agent-app"
@@ -4532,14 +4591,30 @@ for await (const view of client.send("summarize the diff")) {
 }
 ```
 
+### Capability registry, decision inbox, and Run Studio
+
+The Workbench's `registry.list` view shows content-free identity cards for admitted
+capabilities: kind, name, version, schema digest, required capability tokens, and approval,
+retry, idempotency, and isolation classes. It never renders a prompt, input schema, tool
+payload, model output, or filesystem path.
+
+The `inbox` feature lists pending approval and handoff boundaries by exact structural
+coordinate - run, node, capability, child vector, request id, and expiry. Every approve, deny,
+assign, resolve, or cancel command carries that coordinate, so stale, mismatched, or expired
+decisions are refused by the host. `run.studio` projects the same bounded evidence
+into a run graph, retry/recovery timeline, eval comparison, and deterministic fault-injection
+view. These are presentation-safe views: content stays in the host.
+
 ### Evidence, streaming, and telemetry
 
 `@nifrajs/agent` runs bounded typed turns with tool contracts, budgets, approvals,
 resumable token-only evidence, model deltas, and a transient shared-state channel. Add an
 `evidenceLog` to the HTTP seams for SSE replay after a dropped connection; replay
-resumes evidence and never re-executes the turn. `@nifrajs/agent-telemetry` converts
-the same constrained evidence into fail-open OpenTelemetry run and step spans. Providers,
-credentials, durable storage, retention, and tenant policy remain application-owned ports.
+resumes evidence and never re-executes the turn. The additive run-lifecycle contract supplies
+content-free snapshots, ordered evidence refs, feature negotiation, handoff state, and cursor
+resume. `@nifrajs/agent-telemetry` converts the same constrained evidence into
+fail-open OpenTelemetry run and step spans. Providers, credentials, durable storage, retention,
+and tenant policy remain application-owned ports.
 
 ### Projects without a web config
 
@@ -7962,21 +8037,41 @@ isolated fixtures and a test database. Never point a contract laboratory at prod
 
 ## Nifra - Types-first architecture
 
-> One schema is the single source of truth: it drives runtime validation, inferred TypeScript types, the no-codegen typed client, an OpenAPI document, and the MCP contract your agents read.
+> Nifra infers route types from path literals and handlers automatically, with optional Standard Schemas for validation, explicit contracts, OpenAPI, and agent-readable APIs.
 
-In Nifra a single schema is the **source of truth**. The same definition drives runtime
-validation, inferred TypeScript types, the no-codegen typed client, an OpenAPI document, and
-the contract your coding agents read - so the five never drift apart.
+Nifra starts with automatic inference. A route's path literal, handler context, and return
+value produce its TypeScript surface; add a Standard Schema when you need runtime validation,
+coercion, or an explicit request/response contract. The same server type then drives the
+no-codegen client and the agent-readable API surface.
 
-### One schema
+### Inline inference first
 
-Define request inputs and the response shape once with `t`. Nothing here is
-framework-specific; it's a plain object you attach to a route.
+The chainable builder is fully type-inferred. Path parameters are parsed from the route
+pattern, handler context is typed automatically, and plain return values become the success
+response seen by the client. This is the quick-start style, similar to Elysia's inline route
+inference.
+
+```ts
+import { server } from "@nifrajs/core/server"
+
+export const app = server()
+  .get("/users/:id", (c) => ({ id: c.params.id, name: "Ada" }))
+  // c.params.id is inferred from the path; the return type becomes the client response.
+  .post("/users", () => ({ created: true }))
+
+// No schema, annotation, or codegen is required for the route types.
+```
+
+### Schemas at the trust boundary
+
+Attach a Standard Schema when inputs must be validated before the handler runs, or when you
+want an explicit response contract. Path params are already inferred from `:id`;
+the `params` schema below adds runtime constraints/coercion as well.
 
 ```ts
 import { t } from "@nifrajs/schema"
 
-// One contract, defined once. Everything below is derived from it.
+// Add a schema when the boundary needs runtime validation or a declared contract.
 export const GetUser = {
   params: t.object({ id: t.string() }),
   response: t.object({
@@ -8006,9 +8101,10 @@ export const app = server().get("/users/:id", GetUser, (c) => {
 
 ### Inferred types
 
-The same schema types the handler: `c.params.id` is `string`, and the
-return value is checked against `response`. Change the schema and the handler
-stops compiling until it matches - types and validation can't disagree.
+Without a schema, `c.params.id` is still `string` and the handler return
+is captured automatically. With a schema, its output types the handler and its declared
+`response` constrains what the handler may return. Change either the route or the
+contract and the typed client follows at compile time.
 
 ### The typed client
 
@@ -8029,6 +8125,16 @@ if (res.ok) {
   res.error            // client-call failures are returned, never thrown
 }
 ```
+
+### Contract-first when the surface must be separate
+
+Inline inference is the default. If the API needs to be shared, versioned, or implemented by
+more than one service, declare it with `defineContract` and connect handlers with
+`implement`. That keeps the contract type available without importing a server
+implementation into the client.
+
+See [Framework contract](/docs/contract) for the decoupled form and its scaling
+guidance.
 
 ### OpenAPI
 

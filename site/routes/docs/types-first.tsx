@@ -8,12 +8,21 @@ export const hydrate = false
 export const meta = docsMeta(
   "/docs/types-first",
   "Nifra - Types-first architecture",
-  "One schema is the single source of truth: it drives runtime validation, inferred TypeScript types, the no-codegen typed client, an OpenAPI document, and the MCP contract your agents read.",
+  "Nifra infers route types from path literals and handlers automatically, with optional Standard Schemas for validation, explicit contracts, OpenAPI, and agent-readable APIs.",
 )
+
+const INLINE = `import { server } from "@nifrajs/core/server"
+
+export const app = server()
+  .get("/users/:id", (c) => ({ id: c.params.id, name: "Ada" }))
+  // c.params.id is inferred from the path; the return type becomes the client response.
+  .post("/users", () => ({ created: true }))
+
+// No schema, annotation, or codegen is required for the route types.`
 
 const SCHEMA = `import { t } from "@nifrajs/schema"
 
-// One contract, defined once. Everything below is derived from it.
+// Add a schema when the boundary needs runtime validation or a declared contract.
 export const GetUser = {
   params: t.object({ id: t.string() }),
   response: t.object({
@@ -66,15 +75,26 @@ export default function TypesFirst() {
     <div className="prose">
       <h1 className="page">Types-first architecture</h1>
       <p className="lead">
-        In Nifra a single schema is the <b>source of truth</b>. The same definition drives runtime
-        validation, inferred TypeScript types, the no-codegen typed client, an OpenAPI document, and
-        the contract your coding agents read - so the five never drift apart.
+        Nifra starts with automatic inference. A route's path literal, handler context, and return
+        value produce its TypeScript surface; add a Standard Schema when you need runtime validation,
+        coercion, or an explicit request/response contract. The same server type then drives the
+        no-codegen client and the agent-readable API surface.
       </p>
 
-      <h2>One schema</h2>
+      <h2>Inline inference first</h2>
       <p>
-        Define request inputs and the response shape once with <code>t</code>. Nothing here is
-        framework-specific; it's a plain object you attach to a route.
+        The chainable builder is fully type-inferred. Path parameters are parsed from the route
+        pattern, handler context is typed automatically, and plain return values become the success
+        response seen by the client. This is the quick-start style, similar to Elysia's inline route
+        inference.
+      </p>
+      <CodeBlock code={INLINE} lang="ts" />
+
+      <h2>Schemas at the trust boundary</h2>
+      <p>
+        Attach a Standard Schema when inputs must be validated before the handler runs, or when you
+        want an explicit response contract. Path params are already inferred from <code>:id</code>;
+        the <code>params</code> schema below adds runtime constraints/coercion as well.
       </p>
       <CodeBlock code={SCHEMA} lang="ts" />
 
@@ -88,9 +108,10 @@ export default function TypesFirst() {
 
       <h2>Inferred types</h2>
       <p>
-        The same schema types the handler: <code>c.params.id</code> is <code>string</code>, and the
-        return value is checked against <code>response</code>. Change the schema and the handler
-        stops compiling until it matches - types and validation can't disagree.
+        Without a schema, <code>c.params.id</code> is still <code>string</code> and the handler return
+        is captured automatically. With a schema, its output types the handler and its declared
+        <code>response</code> constrains what the handler may return. Change either the route or the
+        contract and the typed client follows at compile time.
       </p>
 
       <h2>The typed client</h2>
@@ -100,6 +121,18 @@ export default function TypesFirst() {
         backend change that breaks a call is a compile error on the frontend.
       </p>
       <CodeBlock code={CLIENT} lang="ts" />
+
+      <h2>Contract-first when the surface must be separate</h2>
+      <p>
+        Inline inference is the default. If the API needs to be shared, versioned, or implemented by
+        more than one service, declare it with <code>defineContract</code> and connect handlers with{" "}
+        <code>implement</code>. That keeps the contract type available without importing a server
+        implementation into the client.
+      </p>
+      <p>
+        See <a href="/docs/contract">Framework contract</a> for the decoupled form and its scaling
+        guidance.
+      </p>
 
       <h2>OpenAPI</h2>
       <p>

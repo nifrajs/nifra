@@ -6,7 +6,7 @@ export const hydrate = false
 export const meta = docsMeta(
   "/docs/agents",
   "Nifra - Coding agents",
-  "Nifra's agent layer: live MCP tools for coding agents, bounded typed turns, resumable evidence, a coding-agent host, browser views, A2A and AG-UI bridges, and token-only telemetry.",
+  "Nifra's agent layer: live MCP tools, bounded repairable turns, native approvals, resumable evidence, content-free browser views, capability registry, decision inbox, Run Studio, A2A, and AG-UI.",
 )
 
 const SETUP = `# Registers the MCP server and writes the agent files. Never clobbers what is already there.
@@ -33,6 +33,8 @@ nifra_check             # typecheck + lints, each with a structured fix
 nifra_fix               # applies the mechanical ones
 nifra_run    {request}  # a real request through the backend: status, headers, parsed body
 nifra_render {path}     # SSR a page route, returns the HTML
+nifra_inspect {port}    # recent dev-server request traces: status, duration, ISR hit/miss
+nifra_explain {error}   # turn a failure into a structured diagnostic and fix
 nifra_test              # bun test, bounded structured results
 
 # 4. What does it now prove?
@@ -61,6 +63,12 @@ const HOST = `bun add @nifrajs/coding-agent @nifrajs/pi
 # Interactive, one-shot, JSON, and local RPC modes are available.
 bunx nifra-agent --backend pi
 bunx nifra-agent --backend pi --message "run the checks and explain failures"`
+
+const REPAIR = `# Post-turn gates are opt-in. A failed gate becomes bounded repair work.
+bunx nifra-agent --backend pi --message "implement the change" \\
+  --verify-after-turn check,assure --max-repair-attempts 2
+
+# Set --max-repair-attempts 0 for observe-only verification.`
 
 const PROTOCOLS = `import { server } from "@nifrajs/core"
 import { mountA2A } from "@nifrajs/a2a"
@@ -305,8 +313,22 @@ export default function Agents() {
       <CodeBlock code={HOST} lang="bash" />
       <p>
         The public host keeps live queues and captured evidence bounded, filters verification process
-        environments, and treats extensions as an explicit opt-in. The local process adapter and
-        extension worker are crash-containment helpers, not hostile-code sandboxes.
+        environments, and treats extensions as an explicit opt-in. Post-turn <code>check</code>,{" "}
+        <code>assure</code>, or <code>test</code> gates emit <code>verification.completed</code> and
+        <code>repair.required</code>; when enabled, the host sends a bounded repair prompt and reruns
+        the gate until it passes or the attempt cap is reached. The local process adapter and extension
+        worker are crash-containment helpers, not hostile-code sandboxes.
+      </p>
+      <CodeBlock code={REPAIR} lang="bash" />
+
+      <h2>Native approval protocol</h2>
+      <p>
+        <code>@nifrajs/coding-agent</code> can pause a native tool call at the decision boundary and
+        emit <code>approval.required</code> with an opaque approval id, action, capability, and bounded
+        coordinates. Resolve it through the host or RPC with <code>approval.resolve</code>; the backend
+        emits <code>approval.resolved</code> and only then executes the tool. Denial, cancellation,
+        timeout, and closed sessions all fail closed, and <code>approvalTimeoutMs</code> bounds how long
+        a pending decision can remain open.
       </p>
 
       <h2>Expose the same agent to other clients</h2>
@@ -325,22 +347,44 @@ export default function Agents() {
       <h2>Browser views and the Workbench</h2>
       <p>
         <code>@nifrajs/agent-app</code> is a backend-free browser SDK for negotiated commands, ordered
-        and resumable event streams, approvals, handoffs, and Run Studio projections. Its public views
-        contain structure - statuses, counters, coordinates, and error codes - rather than prompts,
-        tool payloads, model output, or filesystem paths. The optional Workbench uses that same surface:
-        run <code>bun run --filter '@nifrajs/workbench' dev -- --cwd /path/to/project</code> for the
-        local browser client.
+        and resumable event streams, approvals, handoffs, and Run Studio projections. It negotiates
+        optional features including <code>approvals</code>, <code>checkpoint</code>,{" "}
+        <code>fork</code>, <code>handoff</code>, <code>inbox</code>, <code>reload</code>,{" "}
+        <code>resume</code>, and <code>workflows</code>, so a browser can degrade deliberately when a
+        host does not offer one. Its public views contain structure - statuses, counters, coordinates,
+        and error codes - rather than prompts, tool payloads, model output, or filesystem paths. The
+        optional Workbench uses that same surface: run{" "}
+        <code>bun run --filter '@nifrajs/workbench' dev -- --cwd /path/to/project</code> for the local
+        browser client.
       </p>
       <CodeBlock code={AGENT_APP} lang="ts" />
+
+      <h2>Capability registry, decision inbox, and Run Studio</h2>
+      <p>
+        The Workbench's <code>registry.list</code> view shows content-free identity cards for admitted
+        capabilities: kind, name, version, schema digest, required capability tokens, and approval,
+        retry, idempotency, and isolation classes. It never renders a prompt, input schema, tool
+        payload, model output, or filesystem path.
+      </p>
+      <p>
+        The <code>inbox</code> feature lists pending approval and handoff boundaries by exact structural
+        coordinate - run, node, capability, child vector, request id, and expiry. Every approve, deny,
+        assign, resolve, or cancel command carries that coordinate, so stale, mismatched, or expired
+        decisions are refused by the host. <code>run.studio</code> projects the same bounded evidence
+        into a run graph, retry/recovery timeline, eval comparison, and deterministic fault-injection
+        view. These are presentation-safe views: content stays in the host.
+      </p>
 
       <h2>Evidence, streaming, and telemetry</h2>
       <p>
         <code>@nifrajs/agent</code> runs bounded typed turns with tool contracts, budgets, approvals,
         resumable token-only evidence, model deltas, and a transient shared-state channel. Add an{" "}
         <code>evidenceLog</code> to the HTTP seams for SSE replay after a dropped connection; replay
-        resumes evidence and never re-executes the turn. <code>@nifrajs/agent-telemetry</code> converts
-        the same constrained evidence into fail-open OpenTelemetry run and step spans. Providers,
-        credentials, durable storage, retention, and tenant policy remain application-owned ports.
+        resumes evidence and never re-executes the turn. The additive run-lifecycle contract supplies
+        content-free snapshots, ordered evidence refs, feature negotiation, handoff state, and cursor
+        resume. <code>@nifrajs/agent-telemetry</code> converts the same constrained evidence into
+        fail-open OpenTelemetry run and step spans. Providers, credentials, durable storage, retention,
+        and tenant policy remain application-owned ports.
       </p>
 
       <h2>Projects without a web config</h2>

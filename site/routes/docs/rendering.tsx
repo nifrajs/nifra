@@ -7,9 +7,29 @@ export const hydrate = false
 
 export const meta = docsMeta(
   "/docs/rendering",
-  "Nifra - Rendering: SSG & ISR",
-  "Prerender static routes, enumerate dynamic ones, and cache rendered pages with stale-while-revalidate - on every runtime including the edge.",
+  "Nifra - Rendering: SSR, streaming, SSG & ISR",
+  "Render critical HTML first, stream deferred data progressively, prerender static routes, and cache rendered pages with stale-while-revalidate - on every runtime including the edge.",
 )
+
+const PROGRESSIVE = `import { defer } from "@nifrajs/web"
+
+export async function loader({ api }: LoaderArgs<typeof app>) {
+  return {
+    product: (await api.products.get()).data, // critical: rendered in the first shell
+    reviews: defer(api.reviews.get()),        // non-critical: streamed when ready
+  }
+}
+
+export default function Product(props: { data: LoaderData<typeof loader> }) {
+  return (
+    <>
+      <ProductSummary product={props.data.product} />
+      <Await resolve={props.data.reviews} fallback={<p>Loading reviews…</p>}>
+        {(reviews) => <Reviews items={reviews} />}
+      </Await>
+    </>
+  )
+}`
 
 const PRERENDER = `// A static route: render it to a static index.html at build time.
 export const prerender = true
@@ -116,12 +136,26 @@ export const meta = { link: [fontPreload({ href: "/fonts/inter-var.woff2" })] }`
 export default function Rendering() {
   return (
     <div className="prose">
-      <h1 className="page">Rendering: SSG &amp; ISR</h1>
+      <h1 className="page">Rendering: SSR, streaming, SSG &amp; ISR</h1>
       <p className="lead">
         Nifra renders on one framework-agnostic seam, so the same app can be server-rendered per
-        request (the default), <b>prerendered</b> to static files at build (SSG), or cached and served{" "}
+        request (the default), streamed progressively, <b>prerendered</b> to static files at build (SSG), or cached and served{" "}
         <b>stale-while-revalidate</b> (ISR) - and every strategy works on Bun, Node, Deno, <b>and</b>{" "}
         the edge.
+      </p>
+
+      <h2>Progressive rendering with <code>defer()</code></h2>
+      <p>
+        Keep critical loader data in the first HTML shell and mark slower, non-critical values with{" "}
+        <code>defer()</code>. Nifra flushes the document shell and the adapter's rendered stream first,
+        then sends each deferred resolution through <code>&lt;Await&gt;</code> without a second data
+        fetch. The same protocol works for actions and soft navigations, including NDJSON on the client
+        side.
+      </p>
+      <CodeBlock code={PROGRESSIVE} />
+      <p>
+        This is request-time progressive SSR/partial rendering. It is distinct from build-time SSG:
+        the shell is not a precomputed PPR artifact, and deferred values remain request-scoped.
       </p>
 
       <h2>SSG - prerender at build</h2>
