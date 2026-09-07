@@ -9,6 +9,13 @@ test("the Edge adapter satisfies the portable runtime certification profile", as
   const report = await certifyAdapter({
     profile: runtimeAdapterCertificationProfile(),
     adapterId: "edge-fetch",
+    target: {
+      adapter: "@nifrajs/edge",
+      runtime: "bun",
+      artifact: "packages/edge/dist/index.js",
+      source: "packages/edge/src/index.ts",
+      witnessKind: "runtime",
+    },
     createAdapter: () => ({
       async start(app) {
         // EdgeServer is the adapter under test; Bun only supplies the local network boundary that

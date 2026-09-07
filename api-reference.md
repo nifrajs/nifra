@@ -3804,6 +3804,8 @@ _No named exports (side-effect entrypoint)._
 - **CertificationCapabilityEvidence** _(interface)_ - `interface CertificationCapabilityEvidence`
 - **CertificationCheck** _(interface)_ - `interface CertificationCheck<Adapter>`
 - **CertificationCheckEvidence** _(interface)_ - `interface CertificationCheckEvidence`
+- **CertificationTarget** _(interface)_ - `interface CertificationTarget`
+  Portable identity for the artifact, runtime, and witness that produced one check result.
 - **ComparisonCode** _(type)_ - `type ComparisonCode = | "equal" | "improved" | "tolerated" | "regressed" | "missing" | "incomparable"`
 - **ContractCaseContext** _(interface)_ - `interface ContractCaseContext`
   Stable context passed to request/rejection hooks. It contains no request payloads or secrets.
@@ -3882,7 +3884,7 @@ _No named exports (side-effect entrypoint)._
 - **cacheStoreCertificationProfile** _(function)_ - `cacheStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableCacheStore>`
 - **captureIncident** _(function)_ - `captureIncident: (request: Request | CapturedRequestInput, response: Response | { status: number; body?: unknown; }, options?: CaptureIncidentOptions) => Promise<IncidentCapsule>`
   Build a capsule from a real `Request`+`Response`, or from plain captured fields.
-- **certifyAdapter** _(function)_ - `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly createAdapter: () => Adapter | Promise<Adapter>; readonly cleanup?: (adapter: Adapter) =>…`
+- **certifyAdapter** _(function)_ - `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly target?: CertificationTarget; readonly createAdapter: () => Adapter | Promise<Adapter>; r…`
 - **checkTrajectoryInvariants** _(function)_ - `checkTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => readonly TrajectoryInvariantResult[]`
 - **compareAgentEvalBaseline** _(function)_ - `compareAgentEvalBaseline: (baseline: AgentEvalReport, current: AgentEvalReport, options?: BaselineOptions) => Promise<BaselineComparison>`
   Compare a fresh report against a baseline report. Every (case, rubric) gets a stable id.
@@ -3981,9 +3983,11 @@ _No named exports (side-effect entrypoint)._
 - **CertificationCheckEvidence** _(interface)_ - `interface CertificationCheckEvidence`
 - **CertificationContext** _(interface)_ - `interface CertificationContext`
   Profile-based adapter certification. Profiles are structural and dependency-free: an adapter package uses this only in its test/CI surface, while the resulting capability matrix is portable JSON evidence.
+- **CertificationTarget** _(interface)_ - `interface CertificationTarget`
+  Portable identity for the artifact, runtime, and witness that produced one check result.
 - **assertAdapterCertification** _(function)_ - `assertAdapterCertification: (report: AdapterCertificationReport) => void`
 - **cacheStoreCertificationProfile** _(function)_ - `cacheStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableCacheStore>`
-- **certifyAdapter** _(function)_ - `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly createAdapter: () => Adapter | Promise<Adapter>; readonly cleanup?: (adapter: Adapter) =>…`
+- **certifyAdapter** _(function)_ - `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly target?: CertificationTarget; readonly createAdapter: () => Adapter | Promise<Adapter>; r…`
 - **defineCertificationProfile** _(function)_ - `defineCertificationProfile: <Adapter>(profile: AdapterCertificationProfile<Adapter>) => AdapterCertificationProfile<Adapter>`
   Define and validate a custom domain/provider profile at module initialization.
 - **eventDeliveryCertificationProfile** _(function)_ - `eventDeliveryCertificationProfile: () => AdapterCertificationProfile<CertifiableEventDeliveryAdapter>`

@@ -8,9 +8,24 @@ export interface CertificationContext {
   readonly key: (suffix: string) => string
 }
 
+/** Portable identity for the artifact, runtime, and witness that produced one check result. */
+export interface CertificationTarget {
+  /** Published adapter/package name, for example `@nifrajs/node`. */
+  readonly adapter?: string
+  /** Runtime that executed the witness, for example `node`, `deno`, or `workerd`. */
+  readonly runtime?: string
+  /** Checked-in or built artifact path, when the witness exercises one. */
+  readonly artifact?: string
+  /** Source path that owns the behavior, when it differs from the artifact. */
+  readonly source?: string
+  /** Stable category of witness, useful when one report mixes several targets. */
+  readonly witnessKind?: string
+}
+
 export interface CertificationCheck<Adapter> {
   readonly id: string
   readonly capability: string
+  readonly target?: CertificationTarget
   readonly run: (adapter: Adapter, context: CertificationContext) => void | Promise<void>
 }
 
@@ -25,6 +40,7 @@ export interface CertificationCheckEvidence {
   readonly id: string
   readonly capability: string
   readonly ok: boolean
+  readonly target?: CertificationTarget
   /** Error class only. Messages may contain credentials/provider payloads and are never evidence. */
   readonly errorName?: string
 }
@@ -40,6 +56,7 @@ export interface AdapterCertificationReport {
   readonly ok: boolean
   readonly profile: { readonly id: string; readonly version: number }
   readonly adapterId: string
+  readonly target?: CertificationTarget
   readonly checks: readonly CertificationCheckEvidence[]
   readonly capabilities: readonly CertificationCapabilityEvidence[]
   readonly evidenceHash: string
@@ -54,6 +71,7 @@ export class AdapterCertificationError extends Error {
 }
 
 const TOKEN = /^[a-z0-9][a-z0-9._:-]{0,127}$/
+const TARGET_NAME = /^@?[a-z0-9][a-z0-9._:-]*(?:\/[a-z0-9][a-z0-9._:-]*)?$/
 const MAX_CHECKS = 128
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -67,6 +85,28 @@ function canonical(value: unknown): string {
       .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`)
       .join(",")}}`
   return JSON.stringify(value)
+}
+
+const boundedTargetText = (value: string): boolean =>
+  value.length >= 1 &&
+  value.length <= 256 &&
+  [...value].every((character) => {
+    const code = character.codePointAt(0) ?? 0
+    return code > 0x1f && code !== 0x7f
+  })
+
+function validateTarget(target: CertificationTarget | undefined): void {
+  if (target === undefined) return
+  if (target.adapter !== undefined && !TARGET_NAME.test(target.adapter))
+    throw new TypeError("certification target adapter must be a bounded package name")
+  for (const value of [target.runtime, target.witnessKind]) {
+    if (value !== undefined && !TOKEN.test(value))
+      throw new TypeError("certification target tokens must be bounded lowercase names")
+  }
+  for (const value of [target.artifact, target.source]) {
+    if (value !== undefined && !boundedTargetText(value))
+      throw new TypeError("certification target paths must be bounded and control-free")
+  }
 }
 
 async function sha256(value: string): Promise<string> {
@@ -97,6 +137,7 @@ function validateProfile<Adapter>(profile: AdapterCertificationProfile<Adapter>)
         `certification check ${check.id} names undeclared capability ${check.capability}`,
       )
     ids.add(check.id)
+    validateTarget(check.target)
   }
   for (const capability of capabilities) {
     if (!profile.checks.some((check) => check.capability === capability))
@@ -115,27 +156,40 @@ export function defineCertificationProfile<Adapter>(
 export async function certifyAdapter<Adapter>(options: {
   readonly profile: AdapterCertificationProfile<Adapter>
   readonly adapterId: string
+  /** Optional identity shared by all checks; a check target can add or override its fields. */
+  readonly target?: CertificationTarget
   /** A fresh adapter per check prevents one failed check from contaminating the next. */
   readonly createAdapter: () => Adapter | Promise<Adapter>
   readonly cleanup?: (adapter: Adapter) => void | Promise<void>
 }): Promise<AdapterCertificationReport> {
   validateProfile(options.profile)
   if (!TOKEN.test(options.adapterId)) throw new TypeError("adapter id must be a bounded token")
+  validateTarget(options.target)
   const checks: CertificationCheckEvidence[] = []
   for (const check of options.profile.checks) {
     let adapter: Adapter | undefined
+    const target =
+      options.target === undefined && check.target === undefined
+        ? undefined
+        : { ...options.target, ...check.target }
     try {
       adapter = await options.createAdapter()
       await check.run(adapter, {
         key: (suffix) =>
           `nifra-cert:${options.profile.id}:${options.adapterId}:${check.id}:${suffix}`,
       })
-      checks.push({ id: check.id, capability: check.capability, ok: true })
+      checks.push({
+        id: check.id,
+        capability: check.capability,
+        ok: true,
+        ...(target === undefined ? {} : { target }),
+      })
     } catch (error) {
       checks.push({
         id: check.id,
         capability: check.capability,
         ok: false,
+        ...(target === undefined ? {} : { target }),
         errorName:
           error instanceof Error && TOKEN.test(error.name.toLowerCase())
             ? error.name
@@ -165,6 +219,7 @@ export async function certifyAdapter<Adapter>(options: {
     ok: checks.every((check) => check.ok),
     profile: { id: options.profile.id, version: options.profile.version },
     adapterId: options.adapterId,
+    ...(options.target === undefined ? {} : { target: options.target }),
     checks,
     capabilities,
   }

@@ -23,6 +23,13 @@ test("the Node HTTP adapter satisfies the portable runtime certification profile
   const report = await certifyAdapter({
     profile: runtimeAdapterCertificationProfile(),
     adapterId: "node-http",
+    target: {
+      adapter: "@nifrajs/node",
+      runtime: "node",
+      artifact: "packages/node/dist/index.js",
+      source: "packages/node/src/index.ts",
+      witnessKind: "runtime",
+    },
     createAdapter: () => ({
       async start(app) {
         const server = await serve(app, { port: 0, hostname: "127.0.0.1" })

@@ -100,7 +100,7 @@
     "name": "AdapterCertificationReport",
     "kind": "interface",
     "package": "@nifrajs/testing",
-    "signature": "export interface AdapterCertificationReport {\n    readonly schemaVersion: 1;\n    readonly ok: boolean;\n    readonly profile: {\n        readonly id: string;\n        readonly version: number;\n    };\n    readonly adapterId: string;\n    readonly checks: readonly CertificationCheckEvidence[];\n    readonly capabilities: readonly CertificationCapabilityEvidence[];\n    readonly evidenceHash: string;\n}"
+    "signature": "export interface AdapterCertificationReport {\n    readonly schemaVersion: 1;\n    readonly ok: boolean;\n    readonly profile: {\n        readonly id: string;\n        readonly version: number;\n    };\n    readonly adapterId: string;\n    readonly target?: CertificationTarget;\n    readonly checks: readonly CertificationCheckEvidence[];\n    readonly capabilities: readonly CertificationCapabilityEvidence[];\n    readonly evidenceHash: string;\n}"
   },
   {
     "name": "Admission",
@@ -3145,13 +3145,13 @@
     "name": "CertificationCheck",
     "kind": "interface",
     "package": "@nifrajs/testing",
-    "signature": "export interface CertificationCheck<Adapter> {\n    readonly id: string;\n    readonly capability: string;\n    readonly run: (adapter: Adapter, context: CertificationContext) => void | Promise<void>;\n}"
+    "signature": "export interface CertificationCheck<Adapter> {\n    readonly id: string;\n    readonly capability: string;\n    readonly target?: CertificationTarget;\n    readonly run: (adapter: Adapter, context: CertificationContext) => void | Promise<void>;\n}"
   },
   {
     "name": "CertificationCheckEvidence",
     "kind": "interface",
     "package": "@nifrajs/testing",
-    "signature": "export interface CertificationCheckEvidence {\n    readonly id: string;\n    readonly capability: string;\n    readonly ok: boolean;\n    /** Error class only. Messages may contain credentials/provider payloads and are never evidence. */\n    readonly errorName?: string;\n}"
+    "signature": "export interface CertificationCheckEvidence {\n    readonly id: string;\n    readonly capability: string;\n    readonly ok: boolean;\n    readonly target?: CertificationTarget;\n    /** Error class only. Messages may contain credentials/provider payloads and are never evidence. */\n    readonly errorName?: string;\n}"
   },
   {
     "name": "CertificationContext",
@@ -3161,10 +3161,17 @@
     "doc": "/**\n * Profile-based adapter certification. Profiles are structural and dependency-free: an adapter package\n * uses this only in its test/CI surface, while the resulting capability matrix is portable JSON evidence.\n */"
   },
   {
+    "name": "CertificationTarget",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface CertificationTarget {\n    /** Published adapter/package name, for example `@nifrajs/node`. */\n    readonly adapter?: string;\n    /** Runtime that executed the witness, for example `node`, `deno`, or `workerd`. */\n    readonly runtime?: string;\n    /** Checked-in or built artifact path, when the witness exercises one. */\n    readonly artifact?: string;\n    /** Source path that owns the behavior, when it differs from the artifact. */\n    readonly source?: string;\n    /** Stable category of witness, useful when one report mixes several targets. */\n    readonly witnessKind?: string;\n}",
+    "doc": "/** Portable identity for the artifact, runtime, and witness that produced one check result. */"
+  },
+  {
     "name": "certifyAdapter",
     "kind": "function",
     "package": "@nifrajs/testing",
-    "signature": "export declare function certifyAdapter<Adapter>(options: {\n    readonly profile: AdapterCertificationProfile<Adapter>;\n    readonly adapterId: string;\n    /** A fresh adapter per check prevents one failed check from contaminating the next. */\n    readonly createAdapter: () => Adapter | Promise<Adapter>;\n    readonly cleanup?: (adapter: Adapter) => void | Promise<void>;\n}): Promise<AdapterCertificationReport>;"
+    "signature": "export declare function certifyAdapter<Adapter>(options: {\n    readonly profile: AdapterCertificationProfile<Adapter>;\n    readonly adapterId: string;\n    /** Optional identity shared by all checks; a check target can add or override its fields. */\n    readonly target?: CertificationTarget;\n    /** A fresh adapter per check prevents one failed check from contaminating the next. */\n    readonly createAdapter: () => Adapter | Promise<Adapter>;\n    readonly cleanup?: (adapter: Adapter) => void | Promise<void>;\n}): Promise<AdapterCertificationReport>;"
   },
   {
     "name": "ChannelCloseReason",

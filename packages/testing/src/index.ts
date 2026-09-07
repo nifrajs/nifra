@@ -83,6 +83,7 @@ export {
   type CertificationCapabilityEvidence,
   type CertificationCheck,
   type CertificationCheckEvidence,
+  type CertificationTarget,
   cacheStoreCertificationProfile,
   certifyAdapter,
   defineCertificationProfile,

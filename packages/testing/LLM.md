@@ -23,13 +23,13 @@ Contract-derived adversarial tests, runtime-matrix response conformance, and coo
 - **assertTrajectoryInvariants** _(function)_ - `assertTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => void` · from `@nifrajs/testing`
 - **cacheStoreCertificationProfile** _(function)_ - `cacheStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableCacheStore>` · from `@nifrajs/testing`
 - **captureIncident** _(function)_ - `captureIncident: (request: Request | CapturedRequestInput, response: Response | { status: number; body?: unknown; }, options?: CaptureIncid…` · from `@nifrajs/testing`
-- **certifyAdapter** _(function)_ - `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly createAda…` · from `@nifrajs/testing`
+- **certifyAdapter** _(function)_ - `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly target?: …` · from `@nifrajs/testing`
 - **checkTrajectoryInvariants** _(function)_ - `checkTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => readonly TrajectoryInvariantResult[]` · from `@nifrajs/testing`
 - **compareAgentEvalBaseline** _(function)_ - `compareAgentEvalBaseline: (baseline: AgentEvalReport, current: AgentEvalReport, options?: BaselineOptions) => Promise<BaselineComparison>` · from `@nifrajs/testing`
 - **cookieJar** _(function)_ - `cookieJar: () => CookieJar` · from `@nifrajs/testing`
 - **createFailureLab** _(function)_ - `createFailureLab: (options: FailureLabOptions) => FailureLab` · from `@nifrajs/testing`
 
-_…and 139 more - see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
+_…and 140 more - see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
 
 ## Footguns
 

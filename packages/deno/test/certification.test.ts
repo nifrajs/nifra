@@ -9,6 +9,13 @@ Deno.test("the Deno HTTP adapter satisfies the portable runtime certification pr
   const report = await certifyAdapter({
     profile: runtimeAdapterCertificationProfile(),
     adapterId: "deno-http",
+    target: {
+      adapter: "@nifrajs/deno",
+      runtime: "deno",
+      artifact: "packages/deno/dist/index.js",
+      source: "packages/deno/src/index.ts",
+      witnessKind: "runtime",
+    },
     createAdapter: () => ({
       async start(app) {
         const server = await serve(app, { port: 0, hostname: "127.0.0.1" })

@@ -5,6 +5,10 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import {
+  certifyAdapter,
+  defineCertificationProfile,
+} from "../packages/testing/src/certification.ts"
+import {
   createReferenceContractLabHandler,
   runContractLabOverHttp,
 } from "../packages/testing/src/contract-lab.ts"
@@ -97,15 +101,6 @@ async function waitForReady(child: ChildProcess, output: () => string): Promise<
   throw new Error(`timed out waiting for wrangler at ${ORIGIN}:\n${output()}`)
 }
 
-function openWebSocket(path: string): Promise<WebSocket> {
-  return new Promise((resolveSocket, reject) => {
-    const socket = new WebSocket(`${ORIGIN}${path}`)
-    const fail = () => reject(new Error(`WebSocket failed to open: ${path}`))
-    socket.addEventListener("open", () => resolveSocket(socket), { once: true })
-    socket.addEventListener("error", fail, { once: true })
-  })
-}
-
 function nextMessage(socket: WebSocket): Promise<string> {
   return new Promise((resolveMessage, reject) => {
     const timer = setTimeout(
@@ -123,43 +118,75 @@ function nextMessage(socket: WebSocket): Promise<string> {
   })
 }
 
-async function runWorkersWitnesses(): Promise<void> {
-  const stateMutation = await fetch(`${ORIGIN}/state`, {
-    method: "POST",
-    headers: { "content-type": "application/json", connection: "close" },
-    body: JSON.stringify({ value: "persisted" }),
+interface WorkerdCertificationAdapter {
+  readonly origin: string
+}
+
+const workerdCertificationProfile = defineCertificationProfile<WorkerdCertificationAdapter>({
+  id: "workers-workerd",
+  version: 1,
+  capabilities: ["contract-lab", "durable-object-state", "websocket-broadcast"],
+  checks: [
+    {
+      id: "contract-lab",
+      capability: "contract-lab",
+      target: { witnessKind: "contract-lab" },
+      run: (adapter) => runContractLabOverHttp(adapter.origin),
+    },
+    {
+      id: "durable-object-state",
+      capability: "durable-object-state",
+      target: { witnessKind: "durable-object" },
+      async run(adapter, context) {
+        const value = context.key("state")
+        const stateMutation = await fetch(`${adapter.origin}/state`, {
+          method: "POST",
+          headers: { "content-type": "application/json", connection: "close" },
+          body: JSON.stringify({ value }),
+        })
+        if (stateMutation.status !== 200)
+          throw new Error(`DurableObjectStateMutation${stateMutation.status}`)
+        await stateMutation.arrayBuffer()
+
+        const stateRead = await fetch(`${adapter.origin}/state?reconnect=1`, {
+          headers: { connection: "close" },
+        })
+        const stateValue = (await stateRead.json()) as { value?: unknown }
+        if (stateRead.status !== 200 || stateValue.value !== value)
+          throw new Error("DurableObjectStatePersistence")
+      },
+    },
+    {
+      id: "websocket-broadcast",
+      capability: "websocket-broadcast",
+      target: { witnessKind: "websocket" },
+      async run(adapter, context) {
+        const first = await openWebSocketAt(adapter.origin, "/room")
+        const second = await openWebSocketAt(adapter.origin, "/room")
+        try {
+          const firstMessage = nextMessage(first)
+          const secondMessage = nextMessage(second)
+          const payload = context.key("fanout")
+          first.send(payload)
+          const received = await Promise.all([firstMessage, secondMessage])
+          if (received[0] !== payload || received[1] !== payload)
+            throw new Error("DurableObjectWebSocketBroadcast")
+        } finally {
+          first.close()
+          second.close()
+        }
+      },
+    },
+  ],
+})
+
+function openWebSocketAt(origin: string, path: string): Promise<WebSocket> {
+  return new Promise((resolveSocket, reject) => {
+    const socket = new WebSocket(`${origin}${path}`)
+    const fail = () => reject(new Error(`WebSocketOpen${path.replaceAll("/", "_")}`))
+    socket.addEventListener("open", () => resolveSocket(socket), { once: true })
+    socket.addEventListener("error", fail, { once: true })
   })
-  if (stateMutation.status !== 200)
-    throw new Error(`state mutation returned ${stateMutation.status}`)
-  await stateMutation.arrayBuffer()
-
-  const stateRead = await fetch(`${ORIGIN}/state?reconnect=1`, { headers: { connection: "close" } })
-  const stateValue = (await stateRead.json()) as { value?: unknown }
-  if (stateRead.status !== 200 || stateValue.value !== "persisted")
-    throw new Error(`Durable Object state did not persist: ${JSON.stringify(stateValue)}`)
-
-  const hostile = await fetch(`${ORIGIN}/lab/echo`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ message: "", count: 2 }),
-  })
-  if (hostile.status !== 422)
-    throw new Error(`hostile contract input returned ${hostile.status}, expected 422`)
-  await hostile.arrayBuffer()
-
-  const first = await openWebSocket("/room")
-  const second = await openWebSocket("/room")
-  try {
-    const firstMessage = nextMessage(first)
-    const secondMessage = nextMessage(second)
-    first.send("fanout")
-    const received = await Promise.all([firstMessage, secondMessage])
-    if (received[0] !== "fanout" || received[1] !== "fanout")
-      throw new Error(`Durable Object WebSocket fan-out mismatch: ${received.join(", ")}`)
-  } finally {
-    first.close()
-    second.close()
-  }
 }
 
 async function runBunContractLab(): Promise<void> {
@@ -209,9 +236,24 @@ child.stderr?.on("data", capture)
 try {
   await runBunContractLab()
   await waitForReady(child, () => logs)
-  await runContractLabOverHttp(ORIGIN)
-  await runWorkersWitnesses()
-  console.log("✓ workerd contract laboratory passed shared HTTP and Workers witnesses")
+  const report = await certifyAdapter({
+    profile: workerdCertificationProfile,
+    adapterId: "workers-workerd",
+    target: {
+      adapter: "@nifrajs/workers",
+      runtime: "workerd",
+      artifact: "packages/workers/test/workerd/worker.ts",
+      source: "packages/workers/src/index.ts",
+    },
+    createAdapter: () => ({ origin: ORIGIN }),
+  })
+  if (!report.ok) {
+    console.error(JSON.stringify(report, null, 2))
+    throw new Error(`workerd certification failed: ${report.evidenceHash}`)
+  }
+  console.log(
+    `✓ workerd certification passed ${report.capabilities.length} capabilities (${report.evidenceHash})`,
+  )
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error))
   console.error(logs)

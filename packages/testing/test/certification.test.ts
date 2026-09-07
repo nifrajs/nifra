@@ -7,6 +7,7 @@ import {
   type CertifiableDomainEvent,
   cacheStoreCertificationProfile,
   certifyAdapter,
+  defineCertificationProfile,
   eventDeliveryCertificationProfile,
   jobStoreCertificationProfile,
   storageAdapterCertificationProfile,
@@ -126,6 +127,49 @@ describe("portable adapter certification", () => {
     expect(report.ok).toBe(false)
     expect(JSON.stringify(report)).not.toContain("secret")
     expect(() => assertAdapterCertification(report)).toThrow("cache-store")
+  })
+
+  test("attaches portable target metadata to the report and each witness", async () => {
+    const report = await certifyAdapter({
+      profile: defineCertificationProfile({
+        id: "targeted",
+        version: 1,
+        capabilities: ["wire"],
+        checks: [
+          {
+            id: "roundtrip",
+            capability: "wire",
+            target: { witnessKind: "contract-lab" },
+            run: (adapter: { readonly value: string }) => {
+              if (adapter.value !== "ok") throw new Error("TargetWitness")
+            },
+          },
+        ],
+      }),
+      adapterId: "targeted-adapter",
+      target: {
+        adapter: "@nifrajs/testing",
+        runtime: "bun",
+        artifact: "packages/testing/dist/certification.js",
+        source: "packages/testing/src/certification.ts",
+      },
+      createAdapter: () => ({ value: "ok" }),
+    })
+
+    expect(report.target).toEqual({
+      adapter: "@nifrajs/testing",
+      runtime: "bun",
+      artifact: "packages/testing/dist/certification.js",
+      source: "packages/testing/src/certification.ts",
+    })
+    expect(report.checks[0]?.target).toEqual({
+      adapter: "@nifrajs/testing",
+      runtime: "bun",
+      artifact: "packages/testing/dist/certification.js",
+      source: "packages/testing/src/certification.ts",
+      witnessKind: "contract-lab",
+    })
+    expect(await verifyAdapterCertification(report)).toBe(true)
   })
 
   test("certifies the concrete storage and jobs reference adapters", async () => {
