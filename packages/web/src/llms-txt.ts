@@ -1,4 +1,8 @@
-import { reflectRoutes } from "@nifrajs/core/reflection"
+import {
+  type ProjectEvidenceSnapshot,
+  reflectedRoutesFromEvidence,
+  snapshotProjectEvidence,
+} from "@nifrajs/core/evidence"
 
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
@@ -102,7 +106,11 @@ export async function generateLlmsTxt(
   full: boolean,
   pageRoutes: ReadonlyArray<{ readonly pattern: string; readonly id: string }>,
   backend: unknown,
-  options: { readonly includeLocalGuidelines?: boolean } = {},
+  options: {
+    readonly includeLocalGuidelines?: boolean
+    /** Reuse the project's canonical route-evidence pass when one is already available. */
+    readonly evidence?: ProjectEvidenceSnapshot
+  } = {},
 ): Promise<string> {
   let output = ""
   output += `# Nifra App Context\n\n`
@@ -127,7 +135,9 @@ export async function generateLlmsTxt(
 
   // 3. API Routes
   output += `## API Routes\n\n`
-  const apiRoutes = reflectRoutes(backend)
+  const apiRoutes = reflectedRoutesFromEvidence(
+    options.evidence ?? snapshotProjectEvidence(backend),
+  )
 
   if (apiRoutes.length === 0) {
     output += `No API routes registered.\n`
@@ -151,7 +161,9 @@ export async function generateLlmsTxt(
           output += `  - Response Schema: \`${tsTypeOf(responseSchema)}\`\n`
         }
         if (s?.errors) {
-          for (const [status, errorSchema] of Object.entries(s.errors)) {
+          for (const status of Object.keys(s.errors)) {
+            const errorSchema = s.errors[status]
+            if (errorSchema === undefined) continue
             const errJson = errorSchema.jsonSchema
             if (errJson !== undefined) {
               output += `  - Error ${status} Schema: \`${tsTypeOf(errJson)}\`\n`

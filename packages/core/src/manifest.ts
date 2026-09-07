@@ -12,10 +12,8 @@ import {
   diffRouteSnapshots,
   type RouteChange,
   type RouteSnapshotSchema,
-  snapshotRoutes,
 } from "./diff.ts"
-import type { ProjectEvidenceSnapshot } from "./evidence.ts"
-import { reflectRoutes } from "./reflection.ts"
+import { type ProjectEvidenceSnapshot, snapshotProjectEvidence } from "./evidence.ts"
 
 export interface NifraManifestAssurance {
   readonly rule?: string
@@ -190,25 +188,28 @@ export async function buildNifraManifest(input: BuildNifraManifestInput): Promis
   if (input.evidence?.capabilities !== undefined && !input.evidence.capabilities.ok) {
     throw new Error("nifra manifest: refusing to emit failing capability assurance")
   }
+  const evidence =
+    input.evidence ??
+    snapshotProjectEvidence(input.source, {
+      ...(input.assurance === undefined ? {} : { assurance: input.assurance }),
+      ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
+    })
   const reflected = new Map(
-    (input.evidence?.routes ?? reflectRoutes(input.source)).map((route) => [
-      routeKey(route.method, route.path),
-      route,
-    ]),
+    evidence.routes.map((route) => [routeKey(route.method, route.path), route]),
   )
   const assured = new Map(
-    (input.evidence?.assurance?.routes ?? input.assurance?.routes ?? []).map((route) => [
+    (evidence.assurance?.routes ?? input.assurance?.routes ?? []).map((route) => [
       routeKey(route.method, route.path),
       route,
     ]),
   )
   const capable = new Map(
-    (input.evidence?.capabilities?.routes ?? input.capabilities?.routes ?? []).map((route) => [
+    (evidence.capabilities?.routes ?? input.capabilities?.routes ?? []).map((route) => [
       routeKey(route.method, route.path),
       route,
     ]),
   )
-  const routes = (input.evidence?.routes ?? snapshotRoutes(input.source))
+  const routes = evidence.routes
     .map((route): NifraManifestRoute => {
       const key = routeKey(route.method, route.path)
       const reflection = reflected.get(key)

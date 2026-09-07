@@ -18,6 +18,7 @@
  * yield `info` - never a silent pass presented as proof.
  */
 
+import { type ProjectEvidenceSnapshot, reflectedRoutesFromEvidence } from "./evidence.ts"
 import {
   type JsonSchema,
   type ReflectedRoute,
@@ -35,6 +36,7 @@ export interface RouteSnapshotSchema {
   readonly headers?: SchemaSnapshot
   readonly body?: SchemaSnapshot
   readonly query?: SchemaSnapshot
+  readonly params?: SchemaSnapshot
   readonly response?: SchemaSnapshot
   readonly sse?: SchemaSnapshot
   readonly errors?: Readonly<Record<string, SchemaSnapshot>>
@@ -54,7 +56,15 @@ export interface RouteChange {
   readonly method: string
   readonly path: string
   /** Which part of the contract changed; "route" for add/remove of the whole route. */
-  readonly section: "route" | "headers" | "body" | "query" | "response" | "sse" | "errors"
+  readonly section:
+    | "route"
+    | "headers"
+    | "body"
+    | "query"
+    | "params"
+    | "response"
+    | "sse"
+    | "errors"
   /** The top-level field (or error status) the change is about, when field-granular. */
   readonly field?: string
   readonly message: string
@@ -87,7 +97,17 @@ const schemaSnapshot = (
  * `JSON.stringify` unchanged.
  */
 export function snapshotRoutes(source: unknown): readonly RouteSnapshot[] {
+  // Preserve the historical registration order of this low-level helper. The canonical evidence
+  // seam intentionally sorts routes for persistence, while callers using snapshotRoutes directly
+  // may use the order to compare a live reflection with an older baseline.
   return reflectRoutes(source).map((route) => snapshotRoute(route))
+}
+
+/** Snapshot routes from an existing canonical project-evidence pass. */
+export function snapshotRoutesFromEvidence(
+  evidence: ProjectEvidenceSnapshot,
+): readonly RouteSnapshot[] {
+  return reflectedRoutesFromEvidence(evidence).map((route) => snapshotRoute(route))
 }
 
 const snapshotRoute = (route: ReflectedRoute): RouteSnapshot => {
@@ -101,12 +121,14 @@ const snapshotRoute = (route: ReflectedRoute): RouteSnapshot => {
   const body = schemaSnapshot(schema.body)
   const headers = schemaSnapshot(schema.headers)
   const query = schemaSnapshot(schema.query)
+  const params = schemaSnapshot(schema.params)
   const response = schemaSnapshot(schema.response)
   const sse = schemaSnapshot(schema.sse)
   const snapped: RouteSnapshotSchema = {
     ...(headers !== undefined ? { headers } : {}),
     ...(body !== undefined ? { body } : {}),
     ...(query !== undefined ? { query } : {}),
+    ...(params !== undefined ? { params } : {}),
     ...(response !== undefined ? { response } : {}),
     ...(sse !== undefined ? { sse } : {}),
     ...(Object.keys(errors).length > 0 ? { errors } : {}),
@@ -356,7 +378,7 @@ export function diffRouteSnapshots(
     const path = beforeRoute.path
     const beforeSchema = beforeRoute.schema ?? {}
     const afterSchema = afterRoute.schema ?? {}
-    for (const section of ["headers", "body", "query"] as const) {
+    for (const section of ["headers", "body", "query", "params"] as const) {
       diffSchemaSection(
         { method, path, section, direction: "request", changes },
         beforeSchema[section],

@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { diffRouteSnapshots, type RouteSnapshot, snapshotRoutes } from "../src/diff.ts"
+import {
+  diffRouteSnapshots,
+  type RouteSnapshot,
+  snapshotRoutes,
+  snapshotRoutesFromEvidence,
+} from "../src/diff.ts"
+import { snapshotProjectEvidence } from "../src/evidence.ts"
 import type { StandardSchemaV1 } from "../src/index.ts"
 
 const standard: StandardSchemaV1 = {
@@ -42,6 +48,30 @@ describe("snapshotRoutes", () => {
   test("validation-only schemas snapshot without jsonSchema", () => {
     const routes = snap([route("get", "/opaque", { query: standard })])
     expect(routes[0]?.schema?.query).toEqual({})
+  })
+
+  test("snapshotRoutesFromEvidence preserves params schemas for offline consumers", () => {
+    const evidence = snapshotProjectEvidence([
+      route("GET", "/users/:id", {
+        params: objectSchema({ id: { type: "string", format: "uuid" } }, ["id"]),
+      }),
+    ])
+    expect(snapshotRoutesFromEvidence(evidence)).toEqual([
+      {
+        method: "GET",
+        path: "/users/:id",
+        schema: {
+          params: {
+            fields: [{ name: "id", required: true, schema: { type: "string", format: "uuid" } }],
+            jsonSchema: {
+              type: "object",
+              properties: { id: { type: "string", format: "uuid" } },
+              required: ["id"],
+            },
+          },
+        },
+      },
+    ])
   })
 })
 
@@ -171,6 +201,28 @@ describe("diffRouteSnapshots - request direction (body/query)", () => {
     expect(diffRouteSnapshots(withQuery, requiredQuery).changes).toEqual([
       expect.objectContaining({ severity: "breaking", section: "query", field: "cursor" }),
     ])
+  })
+})
+
+describe("diffRouteSnapshots - params direction", () => {
+  test("a newly required path parameter field is reported as a breaking request change", () => {
+    const before = snap([
+      route("GET", "/users/:id", {
+        params: objectSchema({ id: { type: "string" }, scope: { type: "string" } }, ["id"]),
+      }),
+    ])
+    const after = snap([
+      route("GET", "/users/:id", {
+        params: objectSchema({ id: { type: "string" }, scope: { type: "string" } }, [
+          "id",
+          "scope",
+        ]),
+      }),
+    ])
+
+    expect(diffRouteSnapshots(before, after).changes).toContainEqual(
+      expect.objectContaining({ severity: "breaking", section: "params", field: "scope" }),
+    )
   })
 })
 

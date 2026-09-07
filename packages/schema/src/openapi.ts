@@ -1,4 +1,5 @@
 import type { ContractShape } from "@nifrajs/core/contract"
+import { type ProjectEvidenceSnapshot, reflectedRoutesFromEvidence } from "@nifrajs/core/evidence"
 import {
   type JsonSchema,
   type ReflectedRouteSchema,
@@ -50,6 +51,11 @@ export interface ToOpenAPIOptions {
   readonly securitySchemes?: Readonly<Record<string, Record<string, unknown>>>
   /** Document-wide security requirement; a per-operation `security` (incl. `[]` for public) overrides it. */
   readonly security?: readonly SecurityRequirement[]
+  /**
+   * Reuse a canonical token-only route-evidence pass. This is useful for build artifacts and CLI
+   * projections that already evaluated the project; it never supplies runtime validators.
+   */
+  readonly evidence?: ProjectEvidenceSnapshot
   /**
    * Per-operation overrides, shallow-merged over the generated operation. Keyed by `operationId`
    * (contract op name) or `"METHOD /path"` (e.g. `"GET /users/:id"`). The escape hatch for detail that
@@ -402,7 +408,11 @@ export function toOpenAPI(
   const store = new SchemaStore()
 
   if (isApp(input)) {
-    for (const route of reflectRoutes(input)) {
+    const routes =
+      options.evidence === undefined
+        ? reflectRoutes(input)
+        : reflectedRoutesFromEvidence(options.evidence)
+    for (const route of routes) {
       addOperation(
         paths,
         route.method,
@@ -484,4 +494,15 @@ export function toOpenAPI(
     ...(options.security !== undefined ? { security: options.security } : {}),
     ...(Object.keys(components).length > 0 ? { components } : {}),
   }
+}
+
+/** Generate OpenAPI from an existing canonical project-evidence snapshot without loading a server. */
+export function toOpenAPIFromEvidence(
+  evidence: ProjectEvidenceSnapshot,
+  options: Omit<ToOpenAPIOptions, "evidence"> = {},
+): OpenAPIDocument {
+  const app = {
+    routes: () => reflectedRoutesFromEvidence(evidence),
+  } as unknown as Server
+  return toOpenAPI(app, { ...options, evidence })
 }

@@ -12178,7 +12178,7 @@
     "name": "ProjectEvidenceOptions",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface ProjectEvidenceOptions {\n    readonly assurance?: AssuranceReport;\n    readonly capabilities?: CapabilityAssuranceReport;\n    /** Optional static source locations keyed by `${METHOD}\\n${path}`. */\n    readonly sourceLocations?: ReadonlyMap<string, readonly ProjectEvidenceSourceLocation[]>;\n}"
+    "signature": "export interface ProjectEvidenceOptions {\n    readonly assurance?: AssuranceReport;\n    readonly capabilities?: CapabilityAssuranceReport;\n    /**\n     * An existing reflection pass. Supplying it lets several offline projections share one pass\n     * without asking the runtime source for `.routes()` again. Validators are consumed only while\n     * building the token-only snapshot and never cross this seam.\n     */\n    readonly routes?: readonly ReflectedRoute[];\n    /** Optional static source locations keyed by `${METHOD}\\n${path}`. */\n    readonly sourceLocations?: ReadonlyMap<string, readonly ProjectEvidenceSourceLocation[]>;\n}"
   },
   {
     "name": "ProjectEvidenceRoute",
@@ -12897,6 +12897,13 @@
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface ReflectedRouteSchema {\n    /** Effective transport body policy; surfaced so upload/streaming exemptions are auditable. */\n    readonly bodyLimit?: number | \"unlimited\";\n    readonly bodyLimitReason?: string;\n    /** Request-header schema; names are normalized to lower-case at runtime. */\n    readonly headers?: SchemaReflection;\n    readonly body?: SchemaReflection;\n    readonly query?: SchemaReflection;\n    /** Path-params schema - constraints (uuid format, integer min/max) declared via `params: t.object(…)`. */\n    readonly params?: SchemaReflection;\n    readonly response?: SchemaReflection;\n    readonly errors?: Readonly<Record<string, SchemaReflection>>;\n    /** The SSE event-payload schema of a typed streaming route (`app.sse()`). */\n    readonly sse?: SchemaReflection;\n}"
+  },
+  {
+    "name": "reflectedRoutesFromEvidence",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function reflectedRoutesFromEvidence(evidence: ProjectEvidenceSnapshot): readonly ReflectedRoute[];",
+    "doc": "/**\n * Adapt the canonical token-only snapshot to the runtime-reflection shape used by projections.\n * The returned schemas deliberately have no `standard` validator: this adapter is for offline\n * contract views, not request validation or mock generation.\n */"
   },
   {
     "name": "ReflectedSchemaField",
@@ -13922,7 +13929,7 @@
     "name": "RouteChange",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface RouteChange {\n    readonly severity: DiffSeverity;\n    readonly method: string;\n    readonly path: string;\n    /** Which part of the contract changed; \"route\" for add/remove of the whole route. */\n    readonly section: \"route\" | \"headers\" | \"body\" | \"query\" | \"response\" | \"sse\" | \"errors\";\n    /** The top-level field (or error status) the change is about, when field-granular. */\n    readonly field?: string;\n    readonly message: string;\n}"
+    "signature": "export interface RouteChange {\n    readonly severity: DiffSeverity;\n    readonly method: string;\n    readonly path: string;\n    /** Which part of the contract changed; \"route\" for add/remove of the whole route. */\n    readonly section: \"route\" | \"headers\" | \"body\" | \"query\" | \"params\" | \"response\" | \"sse\" | \"errors\";\n    /** The top-level field (or error status) the change is about, when field-granular. */\n    readonly field?: string;\n    readonly message: string;\n}"
   },
   {
     "name": "routeClassification",
@@ -14169,7 +14176,7 @@
     "name": "RouteSnapshotSchema",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface RouteSnapshotSchema {\n    readonly headers?: SchemaSnapshot;\n    readonly body?: SchemaSnapshot;\n    readonly query?: SchemaSnapshot;\n    readonly response?: SchemaSnapshot;\n    readonly sse?: SchemaSnapshot;\n    readonly errors?: Readonly<Record<string, SchemaSnapshot>>;\n}"
+    "signature": "export interface RouteSnapshotSchema {\n    readonly headers?: SchemaSnapshot;\n    readonly body?: SchemaSnapshot;\n    readonly query?: SchemaSnapshot;\n    readonly params?: SchemaSnapshot;\n    readonly response?: SchemaSnapshot;\n    readonly sse?: SchemaSnapshot;\n    readonly errors?: Readonly<Record<string, SchemaSnapshot>>;\n}"
   },
   {
     "name": "rpcError",
@@ -16034,6 +16041,13 @@
     "doc": "/**\n * Snapshot an app's routes (anything `reflectRoutes` accepts) as plain JSON. Validators are\n * dropped; only introspectable JSON Schema metadata is kept, so the result round-trips through\n * `JSON.stringify` unchanged.\n */"
   },
   {
+    "name": "snapshotRoutesFromEvidence",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function snapshotRoutesFromEvidence(evidence: ProjectEvidenceSnapshot): readonly RouteSnapshot[];",
+    "doc": "/** Snapshot routes from an existing canonical project-evidence pass. */"
+  },
+  {
     "name": "solidAdapter",
     "kind": "const",
     "package": "@nifrajs/web-solid",
@@ -17381,10 +17395,17 @@
     "doc": "/** Generate an OpenAPI 3.1 document from a contract or a running app. See the module doc for the detail model. */"
   },
   {
+    "name": "toOpenAPIFromEvidence",
+    "kind": "function",
+    "package": "@nifrajs/schema",
+    "signature": "export declare function toOpenAPIFromEvidence(evidence: ProjectEvidenceSnapshot, options?: Omit<ToOpenAPIOptions, \"evidence\">): OpenAPIDocument;",
+    "doc": "/** Generate OpenAPI from an existing canonical project-evidence snapshot without loading a server. */"
+  },
+  {
     "name": "ToOpenAPIOptions",
     "kind": "interface",
     "package": "@nifrajs/schema",
-    "signature": "export interface ToOpenAPIOptions {\n    readonly title?: string;\n    readonly version?: string;\n    readonly description?: string;\n    /** Server URLs the API is served from (OpenAPI `servers`). */\n    readonly servers?: readonly OpenAPIServer[];\n    /** Tag definitions (OpenAPI top-level `tags`) - names referenced by an operation's `tags`. */\n    readonly tags?: readonly OpenAPITag[];\n    /** Reusable security schemes → `components.securitySchemes` (e.g. `{ bearer: { type: \"http\", scheme: \"bearer\" } }`). */\n    readonly securitySchemes?: Readonly<Record<string, Record<string, unknown>>>;\n    /** Document-wide security requirement; a per-operation `security` (incl. `[]` for public) overrides it. */\n    readonly security?: readonly SecurityRequirement[];\n    /**\n     * Per-operation overrides, shallow-merged over the generated operation. Keyed by `operationId`\n     * (contract op name) or `\"METHOD /path\"` (e.g. `\"GET /users/:id\"`). The escape hatch for detail that\n     * can't be introspected - richer response bodies, examples, app-route tags/security.\n     */\n    readonly operations?: Readonly<Record<string, Record<string, unknown>>>;\n    /**\n     * Optional build-time response schemas inferred from TypeScript declarations. Keys are\n     * `METHOD /path` (for example `GET /users/:id`), and explicit route/contract schemas always win.\n     * This is inert OpenAPI metadata: it never enables runtime response validation.\n     */\n    readonly inferredResponses?: Readonly<Record<string, Readonly<Record<string, {\n        readonly description?: string;\n        readonly schema?: JsonSchema;\n        readonly contentType?: string;\n    }>>>>;\n}"
+    "signature": "export interface ToOpenAPIOptions {\n    readonly title?: string;\n    readonly version?: string;\n    readonly description?: string;\n    /** Server URLs the API is served from (OpenAPI `servers`). */\n    readonly servers?: readonly OpenAPIServer[];\n    /** Tag definitions (OpenAPI top-level `tags`) - names referenced by an operation's `tags`. */\n    readonly tags?: readonly OpenAPITag[];\n    /** Reusable security schemes → `components.securitySchemes` (e.g. `{ bearer: { type: \"http\", scheme: \"bearer\" } }`). */\n    readonly securitySchemes?: Readonly<Record<string, Record<string, unknown>>>;\n    /** Document-wide security requirement; a per-operation `security` (incl. `[]` for public) overrides it. */\n    readonly security?: readonly SecurityRequirement[];\n    /**\n     * Reuse a canonical token-only route-evidence pass. This is useful for build artifacts and CLI\n     * projections that already evaluated the project; it never supplies runtime validators.\n     */\n    readonly evidence?: ProjectEvidenceSnapshot;\n    /**\n     * Per-operation overrides, shallow-merged over the generated operation. Keyed by `operationId`\n     * (contract op name) or `\"METHOD /path\"` (e.g. `\"GET /users/:id\"`). The escape hatch for detail that\n     * can't be introspected - richer response bodies, examples, app-route tags/security.\n     */\n    readonly operations?: Readonly<Record<string, Record<string, unknown>>>;\n    /**\n     * Optional build-time response schemas inferred from TypeScript declarations. Keys are\n     * `METHOD /path` (for example `GET /users/:id`), and explicit route/contract schemas always win.\n     * This is inert OpenAPI metadata: it never enables runtime response validation.\n     */\n    readonly inferredResponses?: Readonly<Record<string, Readonly<Record<string, {\n        readonly description?: string;\n        readonly schema?: JsonSchema;\n        readonly contentType?: string;\n    }>>>>;\n}"
   },
   {
     "name": "TopicRegistry",
@@ -18849,7 +18870,7 @@
     "name": "WorkGraphBuildInput",
     "kind": "interface",
     "package": "@nifrajs/cli",
-    "signature": "export interface WorkGraphBuildInput {\n    readonly source: unknown;\n    readonly files?: readonly WorkGraphSourceFile[];\n    readonly freshness?: BuildFreshness;\n}"
+    "signature": "export interface WorkGraphBuildInput {\n    readonly source: unknown;\n    /** Reuse a canonical route-evidence pass when the caller already has one. */\n    readonly evidence?: ProjectEvidenceSnapshot;\n    readonly files?: readonly WorkGraphSourceFile[];\n    readonly freshness?: BuildFreshness;\n}"
   },
   {
     "name": "WorkGraphEdge",
@@ -18867,8 +18888,7 @@
     "name": "WorkGraphNodeKind",
     "kind": "type",
     "package": "@nifrajs/cli",
-    "signature": "export type WorkGraphNodeKind = \"route\" | \"schema\" | \"capability\" | \"assurance\" | \"test\" | \"file\" | \"manifest\";",
-    "doc": "/**\n * Static verification work graph for agents.\n *\n * The graph is intentionally a compact, token-only description of project structure. It connects\n * reflected routes to schemas, capabilities, assurance evidence, source/test files, and static\n * manifests. It never probes a running application and never persists payloads.\n */"
+    "signature": "export type WorkGraphNodeKind = \"route\" | \"schema\" | \"capability\" | \"assurance\" | \"test\" | \"file\" | \"manifest\";"
   },
   {
     "name": "WorkGraphSourceFile",

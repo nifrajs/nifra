@@ -1843,6 +1843,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Diff two route snapshots (`snapshotRoutes` output, possibly restored from JSON). Every change is classified breaking/compatible/info; `hasBreaking` is the CI-gate bit.
 - **snapshotRoutes** _(function)_ - `snapshotRoutes: (source: unknown) => readonly RouteSnapshot[]`
   Snapshot an app's routes (anything `reflectRoutes` accepts) as plain JSON. Validators are dropped; only introspectable JSON Schema metadata is kept, so the result round-trips through `JSON.stringify` unchanged.
+- **snapshotRoutesFromEvidence** _(function)_ - `snapshotRoutesFromEvidence: (evidence: ProjectEvidenceSnapshot) => readonly RouteSnapshot[]`
+  Snapshot routes from an existing canonical project-evidence pass.
 
 ### `@nifrajs/core/durable-adapters`
 
@@ -2015,6 +2017,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ProjectEvidenceSourceLocation** _(interface)_ - `interface ProjectEvidenceSourceLocation`
 - **digestProjectEvidence** _(function)_ - `digestProjectEvidence: (snapshot: ProjectEvidenceSnapshot) => Promise<string>`
   SHA-256 of the canonical snapshot, useful as a cheap freshness/reference token.
+- **reflectedRoutesFromEvidence** _(function)_ - `reflectedRoutesFromEvidence: (evidence: ProjectEvidenceSnapshot) => readonly ReflectedRoute[]`
+  Adapt the canonical token-only snapshot to the runtime-reflection shape used by projections. The returned schemas deliberately have no `standard` validator: this adapter is for offline contract views, not request validation or mock generation.
 - **serializeProjectEvidence** _(function)_ - `serializeProjectEvidence: (snapshot: ProjectEvidenceSnapshot) => string`
   Stable JSON for logs, MCP, generated artifacts, and snapshot tests.
 - **snapshotProjectEvidence** _(function)_ - `snapshotProjectEvidence: (source: unknown, options?: ProjectEvidenceOptions) => ProjectEvidenceSnapshot`
@@ -3676,6 +3680,8 @@ _No named exports (side-effect entrypoint)._
   The built-in schema builder. Each constructor returns a `NifraSchema` - a Standard Schema whose validated output type flows into `c.body`/`c.query`, and whose `jsonSchema` powers `toOpenAPI`. Options (min/max, length, pattern, …) pass straight through to TypeBox and so become JSON Schema constraint…
 - **toOpenAPI** _(function)_ - `toOpenAPI: (input: ContractShape | Server, options?: ToOpenAPIOptions) => OpenAPIDocument`
   Generate an OpenAPI 3.1 document from a contract or a running app. See the module doc for the detail model.
+- **toOpenAPIFromEvidence** _(function)_ - `toOpenAPIFromEvidence: (evidence: ProjectEvidenceSnapshot, options?: Omit<ToOpenAPIOptions, "evidence">) => OpenAPIDocument`
+  Generate OpenAPI from an existing canonical project-evidence snapshot without loading a server.
 
 ### `@nifrajs/schema/openapi`
 
@@ -3689,6 +3695,8 @@ _No named exports (side-effect entrypoint)._
 - **ToOpenAPIOptions** _(interface)_ - `interface ToOpenAPIOptions`
 - **toOpenAPI** _(function)_ - `toOpenAPI: (input: ContractShape | Server, options?: ToOpenAPIOptions) => OpenAPIDocument`
   Generate an OpenAPI 3.1 document from a contract or a running app. See the module doc for the detail model.
+- **toOpenAPIFromEvidence** _(function)_ - `toOpenAPIFromEvidence: (evidence: ProjectEvidenceSnapshot, options?: Omit<ToOpenAPIOptions, "evidence">) => OpenAPIDocument`
+  Generate OpenAPI from an existing canonical project-evidence snapshot without loading a server.
 
 ## @nifrajs/storage
 

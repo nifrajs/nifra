@@ -9,7 +9,12 @@
 import { existsSync } from "node:fs"
 import { readFile, stat } from "node:fs/promises"
 import { basename, resolve } from "node:path"
-import { type ReflectedRoute, reflectRoutes } from "@nifrajs/core/reflection"
+import {
+  type ProjectEvidenceSnapshot,
+  reflectedRoutesFromEvidence,
+  snapshotProjectEvidence,
+} from "@nifrajs/core/evidence"
+import type { ReflectedRoute } from "@nifrajs/core/reflection"
 import { Glob } from "bun"
 import { digestRoute } from "./contracts.ts"
 
@@ -52,6 +57,8 @@ export interface WorkGraphSourceFile {
 
 export interface WorkGraphBuildInput {
   readonly source: unknown
+  /** Reuse a canonical route-evidence pass when the caller already has one. */
+  readonly evidence?: ProjectEvidenceSnapshot
   readonly files?: readonly WorkGraphSourceFile[]
   readonly freshness?: BuildFreshness
 }
@@ -224,7 +231,8 @@ export async function buildProjectWorkGraph(
 ): Promise<ProjectWorkGraphResult> {
   const freshness = input.freshness ?? { ok: true }
   if (!freshness.ok) throw new StaleBuildError(freshness)
-  const graph = await buildWorkGraph(input)
+  const projectEvidence = input.evidence ?? snapshotProjectEvidence(input.source)
+  const graph = await buildWorkGraph({ ...input, evidence: projectEvidence })
   const impact = queryImpact(graph, options.changedFiles ?? [])
   const plan = planProofs(graph, impact, options.minLevel ?? 1)
   const evidence = createEvidenceBundle(graph, impact, plan)
@@ -232,7 +240,9 @@ export async function buildProjectWorkGraph(
 }
 
 export async function buildWorkGraph(input: WorkGraphBuildInput): Promise<WorkGraph> {
-  const routes = reflectRoutes(input.source)
+  const routes = reflectedRoutesFromEvidence(
+    input.evidence ?? snapshotProjectEvidence(input.source),
+  )
   const files = input.files ?? []
   const nodes = new Map<string, WorkGraphNode>()
   const edges: WorkGraphEdge[] = []

@@ -19,6 +19,7 @@
       "@nifrajs/core/sse": ["./packages/core/src/server/sse.ts"],
       "@nifrajs/core/webhook": ["./packages/core/src/server/webhook.ts"],
       "@nifrajs/core/*": ["./packages/core/src/*.ts"],
+      "@nifrajs/core/evidence": ["./packages/core/src/evidence.ts"],
       "@nifrajs/core/pattern": ["./packages/core/src/router/pattern.ts"],
       "@nifrajs/core/reflection": ["./packages/core/src/reflection.ts"],
       "@nifrajs/core/ws": ["./packages/core/src/ws.ts"],

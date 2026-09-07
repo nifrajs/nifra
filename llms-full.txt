@@ -11940,7 +11940,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/schema
 
-`decodeCursor`, `encodeCursor`, `fromTypeBox`, `NifraSchema`, `OpenAPIDocument`, `OpenAPIInfo`, `Page`, `paginate`, `registerFormat`, `t`, `toOpenAPI`
+`decodeCursor`, `encodeCursor`, `fromTypeBox`, `NifraSchema`, `OpenAPIDocument`, `OpenAPIInfo`, `Page`, `paginate`, `registerFormat`, `t`, `toOpenAPI`, `toOpenAPIFromEvidence`
 
 ## @nifrajs/storage
 

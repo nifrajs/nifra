@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import { t } from "@nifrajs/schema"
-import { serializeProjectEvidence, snapshotProjectEvidence } from "../src/evidence.ts"
+import {
+  reflectedRoutesFromEvidence,
+  serializeProjectEvidence,
+  snapshotProjectEvidence,
+} from "../src/evidence.ts"
 import { buildNifraManifest } from "../src/manifest.ts"
 import { server } from "../src/server.ts"
 
@@ -34,6 +38,35 @@ describe("canonical project evidence", () => {
     const evidence = snapshotProjectEvidence(app)
     const manifest = await buildNifraManifest({ evidence })
     expect(manifest.routes).toEqual([{ method: "GET", path: "/health" }])
+  })
+
+  test("offline projections reuse one reflection pass and receive token-only schemas", () => {
+    let reflections = 0
+    const source = {
+      routes: () => {
+        reflections += 1
+        return [
+          {
+            method: "GET",
+            path: "/users/:id",
+            schema: { params: { jsonSchema: { type: "object" } } },
+          },
+        ]
+      },
+    }
+    const evidence = snapshotProjectEvidence(source)
+    const reflected = reflectedRoutesFromEvidence(evidence)
+
+    expect(reflections).toBe(1)
+    expect(reflected).toEqual([
+      {
+        method: "GET",
+        path: "/users/:id",
+        schema: {
+          params: { standard: undefined, jsonSchema: { type: "object" }, fields: undefined },
+        },
+      },
+    ])
   })
 
   test("canonicalizes assurance provenance and evidence order", () => {

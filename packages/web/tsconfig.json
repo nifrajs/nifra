@@ -10,6 +10,7 @@
       "@nifrajs/core/pattern": ["../core/src/router/pattern.ts"],
       "@nifrajs/core/range": ["../core/src/range.ts"],
       "@nifrajs/core/reflection": ["../core/src/reflection.ts"],
+      "@nifrajs/core/evidence": ["../core/src/evidence.ts"],
       "@nifrajs/core/transport-codec": ["../core/src/transport-codec.ts"]
     }
   },

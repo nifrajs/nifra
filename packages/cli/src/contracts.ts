@@ -1,6 +1,11 @@
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
-import { type ReflectedRoute, reflectRoutes } from "@nifrajs/core/reflection"
+import {
+  type ProjectEvidenceSnapshot,
+  reflectedRoutesFromEvidence,
+  snapshotProjectEvidence,
+} from "@nifrajs/core/evidence"
+import type { ReflectedRoute } from "@nifrajs/core/reflection"
 
 export interface ContractDigest {
   readonly request: string
@@ -85,10 +90,14 @@ export async function isVacuousLock(lock: ContractsLock): Promise<boolean> {
   return digests.every((d) => d.request === empty && d.response === empty)
 }
 
-export async function buildContractsLock(source: unknown): Promise<ContractsLock> {
+export async function buildContractsLock(
+  source: unknown,
+  evidence?: ProjectEvidenceSnapshot,
+): Promise<ContractsLock> {
+  const reflected = reflectedRoutesFromEvidence(evidence ?? snapshotProjectEvidence(source))
   const routes = Object.fromEntries(
     await Promise.all(
-      reflectRoutes(source).map(
+      reflected.map(
         async (route) => [`${route.method} ${route.path}`, await digestRoute(route)] as const,
       ),
     ),

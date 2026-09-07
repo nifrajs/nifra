@@ -100,6 +100,12 @@ export interface ProjectEvidenceSnapshot {
 export interface ProjectEvidenceOptions {
   readonly assurance?: AssuranceReport
   readonly capabilities?: CapabilityAssuranceReport
+  /**
+   * An existing reflection pass. Supplying it lets several offline projections share one pass
+   * without asking the runtime source for `.routes()` again. Validators are consumed only while
+   * building the token-only snapshot and never cross this seam.
+   */
+  readonly routes?: readonly ReflectedRoute[]
   /** Optional static source locations keyed by `${METHOD}\n${path}`. */
   readonly sourceLocations?: ReadonlyMap<string, readonly ProjectEvidenceSourceLocation[]>
 }
@@ -262,6 +268,64 @@ function capabilitiesOf(
   })
 }
 
+function schemaPartToReflection(
+  value: ProjectEvidenceSchemaPart | undefined,
+): SchemaReflection | undefined {
+  return value === undefined
+    ? undefined
+    : { standard: undefined, jsonSchema: value.jsonSchema, fields: value.fields }
+}
+
+function schemaFromEvidence(schema: ProjectEvidenceSchema | undefined): ReflectedRoute["schema"] {
+  if (schema === undefined) return undefined
+  const errors = Object.fromEntries(
+    Object.entries(schema.errors ?? {}).map(([status, value]) => [
+      status,
+      schemaPartToReflection(value) as SchemaReflection,
+    ]),
+  )
+  const headers = schemaPartToReflection(schema.headers)
+  const body = schemaPartToReflection(schema.body)
+  const query = schemaPartToReflection(schema.query)
+  const params = schemaPartToReflection(schema.params)
+  const response = schemaPartToReflection(schema.response)
+  const sse = schemaPartToReflection(schema.sse)
+  return {
+    ...(schema.bodyLimit !== undefined ? { bodyLimit: schema.bodyLimit } : {}),
+    ...(schema.bodyLimitReason !== undefined ? { bodyLimitReason: schema.bodyLimitReason } : {}),
+    ...(headers !== undefined ? { headers } : {}),
+    ...(body !== undefined ? { body } : {}),
+    ...(query !== undefined ? { query } : {}),
+    ...(params !== undefined ? { params } : {}),
+    ...(response !== undefined ? { response } : {}),
+    ...(Object.keys(errors).length > 0 ? { errors } : {}),
+    ...(sse !== undefined ? { sse } : {}),
+  }
+}
+
+/**
+ * Adapt the canonical token-only snapshot to the runtime-reflection shape used by projections.
+ * The returned schemas deliberately have no `standard` validator: this adapter is for offline
+ * contract views, not request validation or mock generation.
+ */
+export function reflectedRoutesFromEvidence(
+  evidence: ProjectEvidenceSnapshot,
+): readonly ReflectedRoute[] {
+  return evidence.routes.map((route) => {
+    const schema = schemaFromEvidence(route.schema)
+    return {
+      method: route.method,
+      path: route.path,
+      ...(schema !== undefined ? { schema } : {}),
+      ...(route.assurance !== undefined ? { assurance: route.assurance } : {}),
+      ...(route.capabilities !== undefined ? { capabilities: route.capabilities } : {}),
+      ...(route.family === true ? { family: true } : {}),
+      ...(route.classification !== undefined ? { classification: route.classification } : {}),
+      ...(route.tool !== undefined ? { tool: route.tool } : {}),
+    }
+  })
+}
+
 /** Build the canonical snapshot from reflection and already-evaluated offline reports. */
 export function snapshotProjectEvidence(
   source: unknown,
@@ -270,10 +334,11 @@ export function snapshotProjectEvidence(
   const locations = options.sourceLocations
   const assurance = assuranceOf(options.assurance)
   const capabilities = capabilitiesOf(options.capabilities)
+  const reflected = options.routes ?? reflectRoutes(source)
   const routes = sortByRoute(
     // Importantly, this is the only reflection pass for this snapshot. Every projection can consume
     // the result instead of independently asking the app for `.routes()` and re-shaping schemas.
-    reflectRoutes(source).map((route) =>
+    reflected.map((route) =>
       evidenceRouteOf(route, locations?.get(keyOf(route.method, route.path))),
     ),
   )

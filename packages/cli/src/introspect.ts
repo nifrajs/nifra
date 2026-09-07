@@ -7,72 +7,20 @@
 
 import { reservedKeyFor } from "@nifrajs/client"
 import {
-  type ProjectEvidenceSchema,
   type ProjectEvidenceSchemaPart,
   type ProjectEvidenceSnapshot,
+  reflectedRoutesFromEvidence,
   snapshotProjectEvidence,
 } from "@nifrajs/core/evidence"
-import type { ReflectedRoute, SchemaReflection } from "@nifrajs/core/reflection"
+import type { ReflectedRoute } from "@nifrajs/core/reflection"
 import type { Manifest } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import type { LoadedApp } from "./load.ts"
 import { chooseBuildPipeline, describePipeline } from "./pipeline-guard.ts"
 
 /** Read the backend's registered routes, if it's a `server()` with a `.routes()` method. */
-export function backendRoutes(backend: unknown): ReflectedRoute[] {
+export function backendRoutes(backend: unknown): readonly ReflectedRoute[] {
   return reflectedRoutesFromEvidence(snapshotProjectEvidence(backend))
-}
-
-function schemaPartToReflection(
-  value: ProjectEvidenceSchemaPart | undefined,
-): SchemaReflection | undefined {
-  return value === undefined
-    ? undefined
-    : { standard: undefined, jsonSchema: value.jsonSchema, fields: value.fields }
-}
-
-function schemaFromEvidence(schema: ProjectEvidenceSchema | undefined): ReflectedRoute["schema"] {
-  if (schema === undefined) return undefined
-  const errors = Object.fromEntries(
-    Object.entries(schema.errors ?? {}).map(([status, value]) => [
-      status,
-      schemaPartToReflection(value) as SchemaReflection,
-    ]),
-  )
-  const headers = schemaPartToReflection(schema.headers)
-  const body = schemaPartToReflection(schema.body)
-  const query = schemaPartToReflection(schema.query)
-  const params = schemaPartToReflection(schema.params)
-  const response = schemaPartToReflection(schema.response)
-  const sse = schemaPartToReflection(schema.sse)
-  return {
-    ...(schema.bodyLimit !== undefined ? { bodyLimit: schema.bodyLimit } : {}),
-    ...(schema.bodyLimitReason !== undefined ? { bodyLimitReason: schema.bodyLimitReason } : {}),
-    ...(headers !== undefined ? { headers } : {}),
-    ...(body !== undefined ? { body } : {}),
-    ...(query !== undefined ? { query } : {}),
-    ...(params !== undefined ? { params } : {}),
-    ...(response !== undefined ? { response } : {}),
-    ...(Object.keys(errors).length > 0 ? { errors } : {}),
-    ...(sse !== undefined ? { sse } : {}),
-  }
-}
-
-/** Adapt the canonical token-only snapshot to the legacy reflection view used by Markdown helpers. */
-export function reflectedRoutesFromEvidence(evidence: ProjectEvidenceSnapshot): ReflectedRoute[] {
-  return evidence.routes.map((route) => {
-    const schema = schemaFromEvidence(route.schema)
-    return {
-      method: route.method,
-      path: route.path,
-      ...(schema !== undefined ? { schema } : {}),
-      ...(route.assurance !== undefined ? { assurance: route.assurance } : {}),
-      ...(route.capabilities !== undefined ? { capabilities: route.capabilities } : {}),
-      ...(route.family === true ? { family: true } : {}),
-      ...(route.classification !== undefined ? { classification: route.classification } : {}),
-      ...(route.tool !== undefined ? { tool: route.tool } : {}),
-    }
-  })
 }
 
 interface JsonSchemaNode {

@@ -5,7 +5,8 @@
  * about stdio, HTTP, root trust, or project loading, so the reflection seam is independently testable.
  */
 
-import { type ReflectedRoute, reflectRoutes } from "@nifrajs/core/reflection"
+import { reflectedRoutesFromEvidence, snapshotProjectEvidence } from "@nifrajs/core/evidence"
+import type { ReflectedRoute } from "@nifrajs/core/reflection"
 import type {
   McpPrompt,
   McpPromptMessage,
@@ -24,7 +25,7 @@ type ToolBackend = {
 export function extractBackendTools(backend: unknown): McpTool[] {
   const b = backend as ToolBackend | null
   if (!b || typeof b.routes !== "function") return []
-  const routes = reflectRoutes(b)
+  const routes = reflectedRoutesFromEvidence(snapshotProjectEvidence(b))
 
   return routes
     .filter(

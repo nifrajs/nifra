@@ -21,15 +21,15 @@ Built-in schema builder `t` - TypeBox-backed (free JSON Schema + compiled valida
 - **paginate** _(function)_ - `paginate: <Row>(rows: readonly Row[], limit: number, cursorOf: (row: Row) => unknown) => Page<Row>` · from `@nifrajs/schema`
 - **registerFormat** _(function)_ - `registerFormat: (name: string, validate: (value: string) => boolean) => void` · from `@nifrajs/schema`
 - **toOpenAPI** _(function)_ - `toOpenAPI: (input: ContractShape | Server, options?: ToOpenAPIOptions) => OpenAPIDocument` · from `@nifrajs/schema`
+- **toOpenAPIFromEvidence** _(function)_ - `toOpenAPIFromEvidence: (evidence: ProjectEvidenceSnapshot, options?: Omit<ToOpenAPIOptions, "evidence">) => OpenAPIDocument` · from `@nifrajs/schema`
 - **OpenAPIDocument** _(interface)_ - `interface OpenAPIDocument` · from `@nifrajs/schema`
 - **OpenAPIInfo** _(interface)_ - `interface OpenAPIInfo` · from `@nifrajs/schema`
 - **OpenAPIServer** _(interface)_ - `interface OpenAPIServer` · from `@nifrajs/schema/openapi`
 - **OpenAPITag** _(interface)_ - `interface OpenAPITag` · from `@nifrajs/schema/openapi`
 - **Page** _(interface)_ - `interface Page<Item>` · from `@nifrajs/schema`
 - **ToOpenAPIOptions** _(interface)_ - `interface ToOpenAPIOptions` · from `@nifrajs/schema/openapi`
-- **NifraSchema** _(type)_ - `type NifraSchema<T extends TSchema = TSchema> = StandardSchemaV1<Static<T>, Static<T>> & { readonly jsonSchema: T }` · from `@nifrajs/schema`
 
-_…and 1 more - see [`api-reference.md`](../../api-reference.md#nifrajsschema) for the complete list._
+_…and 2 more - see [`api-reference.md`](../../api-reference.md#nifrajsschema) for the complete list._
 
 ## Footguns
 

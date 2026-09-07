@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test"
 import type { StandardSchemaV1 } from "@nifrajs/core"
 import { server } from "@nifrajs/core"
 import { defineContract } from "@nifrajs/core/contract"
-import { t, toOpenAPI } from "../src/index.ts"
+import { snapshotProjectEvidence } from "@nifrajs/core/evidence"
+import { t, toOpenAPI, toOpenAPIFromEvidence } from "../src/index.ts"
 
 // A BYO Standard Schema: validates at runtime but exposes no JSON Schema.
 const byo: StandardSchemaV1 = {
@@ -131,6 +132,30 @@ describe("toOpenAPI(app)", () => {
     expect(
       doc.paths["/me"]?.get?.responses["200"]?.content?.["application/json"]?.schema,
     ).toMatchObject({ type: "object", properties: { id: { type: "string" } } })
+  })
+
+  test("toOpenAPIFromEvidence renders the same contract without loading the app", () => {
+    let reflections = 0
+    const source = {
+      routes: () => {
+        reflections += 1
+        return server()
+          .get("/users/:id", { params: t.object({ id: t.string({ format: "uuid" }) }) }, (c) => ({
+            id: c.params.id,
+          }))
+          .routes()
+      },
+    }
+    const evidence = snapshotProjectEvidence(source)
+    const doc = toOpenAPIFromEvidence(evidence)
+
+    expect(reflections).toBe(1)
+    expect(doc.paths["/users/{id}"]?.get?.parameters).toContainEqual({
+      name: "id",
+      in: "path",
+      required: true,
+      schema: { type: "string", format: "uuid" },
+    })
   })
 
   test("default info when omitted", () => {
