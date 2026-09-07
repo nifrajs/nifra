@@ -63,6 +63,9 @@
   "publishConfig": {
     "access": "public"
   },
+  "dependencies": {
+    "@nifrajs/agent-protocol": "workspace:*"
+  },
   "peerDependencies": {
     "@nifrajs/agent": "workspace:^",
     "@nifrajs/core": "workspace:^"

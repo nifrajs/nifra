@@ -396,6 +396,7 @@ Every public export of every package and documented subpath - name, kind, signat
   The operations that drive a boundary. Not every op is legal from every state.
 - **BoundaryRejection** _(type)_ - `type BoundaryRejection = | "unknown_boundary" | "identity_mismatch" | "stale_vector" | "expired" | "illegal_transition"`
   Stable, content-free reasons a boundary decision is refused.
+- **BoundedTransportRead** _(type)_ - `type BoundedTransportRead = | { readonly ok: true; readonly bytes: Uint8Array } | { readonly ok: false; readonly reason: "too-large" | "read-error"; readonly error?: unknown }`
 - **CURSOR_BEFORE_ALL** _(const)_ - `CURSOR_BEFORE_ALL: -1`
   Sentinel cursor meaning "before any record". A fresh subscription passes this or `undefined`.
 - **CreateSessionInput** _(interface)_ - `interface CreateSessionInput`
@@ -423,6 +424,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A content-free snapshot of one handoff between roles/agents within a run.
 - **HandoffStatus** _(type)_ - `type HandoffStatus = "pending" | "accepted" | "declined"`
   Handoff resolution state, surfaced content-free.
+- **MAX_TRANSPORT_BYTES** _(const)_ - `MAX_TRANSPORT_BYTES: number`
+  Protocol-neutral byte limits for HTTP adapters.
 - **NodeEffectKey** _(interface)_ - `interface NodeEffectKey`
   The stable, content-free identity of one side-effecting node attempt-boundary.
 - **RUN_LIFECYCLE_VERSION** _(const)_ - `RUN_LIFECYCLE_VERSION: 1`
@@ -467,9 +470,11 @@ Every public export of every package and documented subpath - name, kind, signat
   The bounded current view of a run: its plan pointer, lifecycle state, resume cursor, and counters. `cursor` is the highest evidence `seq` reflected here; a client resumes with everything after it.
 - **RunStructuralKind** _(type)_ - `type RunStructuralKind = "sequence" | "parallel" | "retry" | "branch"`
 - **SendMessageInput** _(interface)_ - `interface SendMessageInput`
+- **TransportByteLimitOptions** _(interface)_ - `interface TransportByteLimitOptions`
 - **agentError** _(function)_ - `agentError: (code: string, message: string, details?: unknown) => AgentError`
 - **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void`
   Assert a record serializes within the hard cap. Public reference records are content-free.
+- **assertTransportByteLimit** _(function)_ - `assertTransportByteLimit: (value: number, options?: TransportByteLimitOptions) => void`
 - **coordinateIsFresh** _(function)_ - `coordinateIsFresh: (coordinate: DecisionCoordinate, now: number) => boolean`
   True while `now` is strictly before the coordinate's expiry. At or past expiry fails closed.
 - **coordinatesMatch** _(function)_ - `coordinatesMatch: (a: DecisionCoordinate, b: DecisionCoordinate) => boolean`
@@ -506,6 +511,10 @@ Every public export of every package and documented subpath - name, kind, signat
   Decode a content-free plan reference. Lenient about unknown additive keys, never content.
 - **parseRunSnapshot** _(function)_ - `parseRunSnapshot: (value: unknown) => RunSnapshot`
   Decode a bounded run snapshot. Forward-compatible: unknown additive fields are ignored so an older client tolerates a newer host. Forbidden content keys are still rejected.
+- **parseTransportContentLength** _(function)_ - `parseTransportContentLength: (value: string | null) => number | undefined`
+  Parse a decimal Content-Length without allowing malformed or unsafe values to pass as a size.
+- **readBoundedTransportBytes** _(function)_ - `readBoundedTransportBytes: (body: ReadableStream<Uint8Array>, maxBytes: number) => Promise<BoundedTransportRead>`
+  Read a Web stream under one byte cap, canceling the source as soon as the cap is exceeded.
 - **resumeFromCursor** _(function)_ - `resumeFromCursor: <T extends { readonly seq: number; }>(window: readonly T[], cursor?: number) => CursorResume<T>`
   Resume an ordered, seq-keyed window from a cursor.
 - **vectorAdvances** _(function)_ - `vectorAdvances: (last: number, next: number) => boolean`

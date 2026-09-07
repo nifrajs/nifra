@@ -12,6 +12,7 @@ Small backend-neutral session and event protocol for Nifra coding agents.
 
 - **agentError** _(function)_ - `agentError: (code: string, message: string, details?: unknown) => AgentError`
 - **assertEvidenceSize** _(function)_ - `assertEvidenceSize: (evidence: RunEvidence) => void`
+- **assertTransportByteLimit** _(function)_ - `assertTransportByteLimit: (value: number, options?: TransportByteLimitOptions) => void`
 - **coordinateIsFresh** _(function)_ - `coordinateIsFresh: (coordinate: DecisionCoordinate, now: number) => boolean`
 - **coordinatesMatch** _(function)_ - `coordinatesMatch: (a: DecisionCoordinate, b: DecisionCoordinate) => boolean`
 - **createAgentEventStream** _(function)_ - `createAgentEventStream: (maxQueueSize?: number) => AgentEventStream`
@@ -23,9 +24,8 @@ Small backend-neutral session and event protocol for Nifra coding agents.
 - **nextApprovalState** _(function)_ - `nextApprovalState: (from: ApprovalLifecycleState, op: BoundaryOp) => ApprovalLifecycleState | undefined`
 - **nextHandoffState** _(function)_ - `nextHandoffState: (from: HandoffLifecycleState, op: BoundaryOp) => HandoffLifecycleState | undefined`
 - **parseArtifactRef** _(function)_ - `parseArtifactRef: (value: unknown) => ArtifactRef`
-- **parseDecisionCoordinate** _(function)_ - `parseDecisionCoordinate: (value: unknown) => DecisionCoordinate`
 
-_…and 88 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentprotocol) for the complete list._
+_…and 94 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentprotocol) for the complete list._
 
 ## Footguns
 

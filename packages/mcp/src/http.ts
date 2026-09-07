@@ -9,6 +9,12 @@
  */
 
 import {
+  assertTransportByteLimit,
+  MAX_TRANSPORT_BYTES,
+  parseTransportContentLength,
+  readBoundedTransportBytes,
+} from "@nifrajs/agent-protocol"
+import {
   handleRpc,
   isJsonRpcRequest,
   type JsonRpcNotification,
@@ -56,9 +62,9 @@ function corsFor(
 }
 
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
-const MAX_BODY_BYTES = 64 * 1024 * 1024
+const MAX_BODY_BYTES = MAX_TRANSPORT_BYTES
 const DEFAULT_MAX_RESPONSE_BYTES = 1_000_000
-const MAX_RESPONSE_BYTES = 64 * 1024 * 1024
+const MAX_RESPONSE_BYTES = MAX_TRANSPORT_BYTES
 const TEXT_DECODER = new TextDecoder()
 const TEXT_ENCODER = new TextEncoder()
 const SSE_CONTENT_TYPE = "text/event-stream; charset=utf-8"
@@ -67,15 +73,15 @@ const SSE_KEEP_ALIVE_MS = 15_000
 /** Invalid byte caps make `total > maxBytes` fail open (especially for `NaN`). Reject configuration
  * before any request body is read so MCP cannot silently lose its memory bound. */
 function assertByteLimit(value: number): void {
-  if (!Number.isSafeInteger(value) || value < 0 || value > MAX_BODY_BYTES) {
-    throw new RangeError(`MCP maxBodyBytes must be between 0 and ${MAX_BODY_BYTES}`)
-  }
+  assertTransportByteLimit(value, { maximum: MAX_BODY_BYTES, label: "MCP maxBodyBytes" })
 }
 
 function assertResponseLimit(value: number): void {
-  if (!Number.isSafeInteger(value) || value < 1_024 || value > MAX_RESPONSE_BYTES) {
-    throw new RangeError(`MCP maxResponseBytes must be between 1024 and ${MAX_RESPONSE_BYTES}`)
-  }
+  assertTransportByteLimit(value, {
+    minimum: 1_024,
+    maximum: MAX_RESPONSE_BYTES,
+    label: "MCP maxResponseBytes",
+  })
 }
 
 export interface McpHttpOptions {
@@ -243,18 +249,6 @@ function eventStreamResponse(
   })
 }
 
-function parseContentLength(value: string): number | undefined {
-  if (value.length === 0) return undefined
-  let length = 0
-  for (let i = 0; i < value.length; i++) {
-    const digit = value.charCodeAt(i) - 48
-    if (digit < 0 || digit > 9) return undefined
-    length = length * 10 + digit
-    if (length > Number.MAX_SAFE_INTEGER) return Number.POSITIVE_INFINITY
-  }
-  return length
-}
-
 /** Validate the HTTP envelope before any method-specific access or authorization callback. */
 function parseHttpMessage(value: unknown): JsonRpcRequest | undefined {
   return isJsonRpcRequest(value) ? value : undefined
@@ -273,7 +267,7 @@ async function readJsonBounded(
 ): Promise<{ ok: true; value: unknown } | { ok: false; status: 400 | 413 }> {
   const declared = request.headers.get("content-length")
   if (declared !== null) {
-    const length = parseContentLength(declared)
+    const length = parseTransportContentLength(declared)
     if (length === undefined) return { ok: false, status: 400 }
     if (length > maxBytes) return { ok: false, status: 413 }
   }
@@ -281,45 +275,12 @@ async function readJsonBounded(
   const body = request.body
   if (body === null) return { ok: false, status: 400 }
 
-  const reader = body.getReader()
+  const read = await readBoundedTransportBytes(body, maxBytes)
+  if (!read.ok) return { ok: false, status: read.reason === "too-large" ? 413 : 400 }
   try {
-    const chunks: Uint8Array[] = []
-    let total = 0
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if (value === undefined || value.byteLength > maxBytes - total) {
-        try {
-          await reader.cancel()
-        } catch {
-          // The request is already over its cap; cancellation failure must not escape the parser.
-        }
-        return { ok: false, status: 413 }
-      }
-      total += value.byteLength
-      chunks.push(value)
-    }
-
-    const bytes = new Uint8Array(total)
-    let offset = 0
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset)
-      offset += chunk.byteLength
-    }
-    try {
-      return { ok: true, value: JSON.parse(TEXT_DECODER.decode(bytes)) as unknown }
-    } catch {
-      return { ok: false, status: 400 }
-    }
+    return { ok: true, value: JSON.parse(TEXT_DECODER.decode(read.bytes)) as unknown }
   } catch {
-    try {
-      await reader.cancel()
-    } catch {
-      // Preserve the generic parse-error response even if the source stream is already broken.
-    }
     return { ok: false, status: 400 }
-  } finally {
-    reader.releaseLock()
   }
 }
 

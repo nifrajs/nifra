@@ -1394,6 +1394,12 @@
     "signature": "export declare function assertTrajectoryInvariants(result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions): void;"
   },
   {
+    "name": "assertTransportByteLimit",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function assertTransportByteLimit(value: number, options?: TransportByteLimitOptions): void;"
+  },
+  {
     "name": "assertTransportTextBounded",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -2190,6 +2196,12 @@
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
     "signature": "export interface BoundedText {\n    readonly text: string;\n    readonly truncated: boolean;\n}"
+  },
+  {
+    "name": "BoundedTransportRead",
+    "kind": "type",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export type BoundedTransportRead = {\n    readonly ok: true;\n    readonly bytes: Uint8Array;\n} | {\n    readonly ok: false;\n    readonly reason: \"too-large\" | \"read-error\";\n    readonly error?: unknown;\n};"
   },
   {
     "name": "bridgeScript",
@@ -9362,6 +9374,13 @@
     "doc": "/** The maximum media-query length accepted from an HTML data attribute. */"
   },
   {
+    "name": "MAX_TRANSPORT_BYTES",
+    "kind": "const",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare const MAX_TRANSPORT_BYTES: number;",
+    "doc": "/**\n * Protocol-neutral byte limits for HTTP adapters.\n *\n * MCP's HTTP server and the Agent App browser transport have different wire protocols, but both need\n * the same fail-closed rules when reading an untrusted stream. Keeping this small policy here avoids\n * coupling either adapter to the other while making the limit and cancellation semantics identical.\n */"
+  },
+  {
     "name": "maxClassification",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -11686,6 +11705,13 @@
     "doc": "/**\n * Parse a `traceparent` header, or `null` if it's absent/malformed/version-unknown - per the spec,\n * a bad header means \"start a fresh trace\", never an error. Only version `00` is accepted.\n */"
   },
   {
+    "name": "parseTransportContentLength",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function parseTransportContentLength(value: string | null): number | undefined;",
+    "doc": "/** Parse a decimal Content-Length without allowing malformed or unsafe values to pass as a size. */"
+  },
+  {
     "name": "pathnameOf",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -12664,6 +12690,13 @@
     "kind": "function",
     "package": "@nifrajs/coding-agent",
     "signature": "export declare function readBoundedText(stream: ReadableStream<Uint8Array> | null | undefined | number, maxBytes: number): Promise<BoundedText>;"
+  },
+  {
+    "name": "readBoundedTransportBytes",
+    "kind": "function",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export declare function readBoundedTransportBytes(body: ReadableStream<Uint8Array>, maxBytes: number): Promise<BoundedTransportRead>;",
+    "doc": "/** Read a Web stream under one byte cap, canceling the source as soon as the cap is exceeded. */"
   },
   {
     "name": "readCausalityHeaders",
@@ -17619,6 +17652,12 @@
     "package": "@nifrajs/web",
     "signature": "export declare function transformCssModule(source: string, filePath: string): CssModuleResult;",
     "doc": "/**\n * Pure core (no I/O): scope a CSS-module source. Same `(source, filePath)` in → byte-identical out, so\n * the `\"dom\"` and `\"ssr\"` plugin forms produce the same class map. Exposed for direct testing.\n */"
+  },
+  {
+    "name": "TransportByteLimitOptions",
+    "kind": "interface",
+    "package": "@nifrajs/agent-protocol",
+    "signature": "export interface TransportByteLimitOptions {\n    readonly minimum?: number;\n    readonly maximum?: number;\n    readonly label?: string;\n}"
   },
   {
     "name": "TransportCodec",

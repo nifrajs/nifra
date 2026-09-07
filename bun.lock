@@ -419,6 +419,9 @@
     "packages/mcp": {
       "name": "@nifrajs/mcp",
       "version": "3.3.0",
+      "dependencies": {
+        "@nifrajs/agent-protocol": "workspace:*",
+      },
       "devDependencies": {
         "@nifrajs/agent": "workspace:*",
         "@nifrajs/core": "workspace:*",

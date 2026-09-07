@@ -8,8 +8,14 @@
  * is never copied into a result, an error, or a log line.
  */
 
-import type { AgentEvent } from "@nifrajs/agent-protocol"
-import { isAgentEvent } from "@nifrajs/agent-protocol"
+import {
+  type AgentEvent,
+  assertTransportByteLimit,
+  isAgentEvent,
+  MAX_TRANSPORT_BYTES,
+  parseTransportContentLength,
+  readBoundedTransportBytes,
+} from "@nifrajs/agent-protocol"
 
 /** One RPC-style call. `params` is JSON-serializable; `signal` cancels the in-flight request. */
 export interface AgentTransportRequest {
@@ -237,13 +243,14 @@ function lineEndingLength(value: string, index: number): number | undefined {
 }
 
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
-const MAX_RESPONSE_BYTES = 64 * 1024 * 1024
+const MAX_RESPONSE_BYTES = MAX_TRANSPORT_BYTES
 
 function assertResponseLimit(value: number): void {
-  if (!Number.isSafeInteger(value) || value < 1_024 || value > MAX_RESPONSE_BYTES)
-    throw new RangeError(
-      `agent transport: maxResponseBytes must be between 1024 and ${MAX_RESPONSE_BYTES}`,
-    )
+  assertTransportByteLimit(value, {
+    minimum: 1_024,
+    maximum: MAX_RESPONSE_BYTES,
+    label: "agent transport: maxResponseBytes",
+  })
 }
 
 async function readResponseText(
@@ -251,7 +258,7 @@ async function readResponseText(
   method: string,
   maxBytes: number,
 ): Promise<string> {
-  const declared = decimalHeader(response.headers.get("content-length"))
+  const declared = parseTransportContentLength(response.headers.get("content-length"))
   if (declared !== undefined && declared > maxBytes) {
     try {
       await response.body?.cancel()
@@ -261,47 +268,16 @@ async function readResponseText(
     throw new AgentTransportError(method, "response body exceeds the configured limit")
   }
   if (response.body === null) return ""
-  const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if (value === undefined || value.byteLength > maxBytes - total) {
-        try {
-          await reader.cancel()
-        } catch {
-          // Preserve the bounded transport error if the source has already closed.
-        }
-        throw new AgentTransportError(method, "response body exceeds the configured limit")
-      }
-      total += value.byteLength
-      chunks.push(value)
-    }
-  } catch (error) {
-    if (error instanceof AgentTransportError) throw error
-    throw new AgentTransportError(method, describe(error))
-  } finally {
-    reader.releaseLock()
+  const read = await readBoundedTransportBytes(response.body, maxBytes)
+  if (!read.ok) {
+    throw new AgentTransportError(
+      method,
+      read.reason === "too-large"
+        ? "response body exceeds the configured limit"
+        : describe(read.error),
+    )
   }
-  const bytes = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return new TextDecoder().decode(bytes)
-}
-
-function decimalHeader(value: string | null): number | undefined {
-  if (value === null || !/^\d+$/.test(value)) return undefined
-  let result = 0
-  for (const character of value) {
-    result = result * 10 + (character.charCodeAt(0) - 48)
-    if (!Number.isSafeInteger(result)) return Number.POSITIVE_INFINITY
-  }
-  return result
+  return new TextDecoder().decode(read.bytes)
 }
 
 function serialize(request: AgentTransportRequest): string {

@@ -397,6 +397,9 @@ export * from "./orchestration.ts"
  */
 export * from "./run-lifecycle.ts"
 
+/** Shared fail-closed byte-limit policy used by independent HTTP adapters. */
+export * from "./transport-policy.ts"
+
 const AGENT_TOKEN_RE = /^[A-Za-z0-9._:/-]{1,128}$/
 const AGENT_MAX_TEXT = 256 * 1024
 const AGENT_MAX_PAYLOAD_TEXT = 64 * 1024
