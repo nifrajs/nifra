@@ -69,8 +69,22 @@ describe("publishedPackages", () => {
 
 describe("uncoveredPackages", () => {
   const packages = new Map([
-    ["core", { dir: "core", name: "@nifrajs/core" }],
-    ["client", { dir: "client", name: "@nifrajs/client" }],
+    [
+      "core",
+      {
+        dir: "core",
+        name: "@nifrajs/core",
+        publishValidation: "library" as const,
+      },
+    ],
+    [
+      "client",
+      {
+        dir: "client",
+        name: "@nifrajs/client",
+        publishValidation: "library" as const,
+      },
+    ],
   ])
 
   test("reports a package whose src changed with no changeset naming it", () => {

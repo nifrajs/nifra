@@ -21,9 +21,9 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
-import { Glob } from "bun"
 import ts from "typescript"
 import { renderCommandCatalogLines } from "../packages/cli/src/command-catalog.ts"
+import { publishedPackages, readPackageManifest } from "./public-package-manifest.ts"
 
 const ROOT = `${import.meta.dir}/..`
 // A card is a quick read by design: cap the export list and the per-line signature so one card stays
@@ -62,15 +62,10 @@ function sourceEntry(dir: string, target: unknown): string | undefined {
  * still useful for the bin-only packages (their footguns), so those are included with no exports. */
 function publicPackages(): Pkg[] {
   const pkgs: Pkg[] = []
-  for (const file of new Glob("packages/*/package.json").scanSync(ROOT)) {
-    const json = JSON.parse(readFileSync(`${ROOT}/${file}`, "utf8")) as {
-      name?: string
-      private?: boolean
-      description?: string
-      exports?: unknown
-    }
-    if (json.private === true || json.name === undefined) continue
-    const dir = `${ROOT}/${file.replace(/\/package\.json$/, "")}`
+  for (const pkg of publishedPackages(ROOT)) {
+    const json = readPackageManifest(ROOT, pkg.dir)
+    if (json === undefined) continue
+    const dir = `${ROOT}/packages/${pkg.dir}`
     const entries: PkgEntry[] = []
     if (json.exports !== null && typeof json.exports === "object") {
       for (const [subpath, target] of Object.entries(json.exports as Record<string, unknown>)) {
@@ -79,7 +74,7 @@ function publicPackages(): Pkg[] {
         const entry = sourceEntry(dir, target)
         if (entry === undefined) continue
         entries.push({
-          importPath: subpath === "." ? json.name : `${json.name}/${subpath.slice(2)}`,
+          importPath: subpath === "." ? pkg.name : `${pkg.name}/${subpath.slice(2)}`,
           entry,
         })
       }
@@ -96,10 +91,10 @@ function publicPackages(): Pkg[] {
           : a.importPath.localeCompare(b.importPath),
     )
     pkgs.push({
-      name: json.name,
+      name: pkg.name,
       dir,
       entries,
-      description: json.description ?? "",
+      description: typeof json.description === "string" ? json.description : "",
     })
   }
   return pkgs.sort((a, b) => a.name.localeCompare(b.name))

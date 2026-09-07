@@ -11,8 +11,8 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
-import { Glob } from "bun"
 import ts from "typescript"
+import { publishedPackages, readPackageManifest } from "./public-package-manifest.ts"
 
 const ROOT = `${import.meta.dir}/..`
 const SIG_CAP = 220
@@ -50,14 +50,10 @@ function sourceEntry(dir: string, target: unknown): string | undefined {
 /** Published packages (skip `private`) and every source-backed public export subpath. */
 function publicPackages(): Pkg[] {
   const pkgs: Pkg[] = []
-  for (const file of new Glob("packages/*/package.json").scanSync(ROOT)) {
-    const json = JSON.parse(readFileSync(`${ROOT}/${file}`, "utf8")) as {
-      name?: string
-      private?: boolean
-      exports?: unknown
-    }
-    if (json.private === true || json.name === undefined) continue
-    const dir = `${ROOT}/${file.replace(/\/package\.json$/, "")}`
+  for (const pkg of publishedPackages(ROOT)) {
+    const json = readPackageManifest(ROOT, pkg.dir)
+    if (json === undefined) continue
+    const dir = `${ROOT}/packages/${pkg.dir}`
     const entries: PkgEntry[] = []
     if (json.exports !== null && typeof json.exports === "object") {
       for (const [subpath, target] of Object.entries(json.exports as Record<string, unknown>)) {
@@ -66,14 +62,14 @@ function publicPackages(): Pkg[] {
         const entry = sourceEntry(dir, target)
         if (entry === undefined) continue
         entries.push({
-          importPath: subpath === "." ? json.name : `${json.name}/${subpath.slice(2)}`,
+          importPath: subpath === "." ? pkg.name : `${pkg.name}/${subpath.slice(2)}`,
           entry,
         })
       }
     }
     const fallback = `${dir}/src/index.ts`
     if (entries.length === 0 && existsSync(fallback)) {
-      entries.push({ importPath: json.name, entry: fallback })
+      entries.push({ importPath: pkg.name, entry: fallback })
     }
     if (entries.length > 0) {
       entries.sort((a, b) =>

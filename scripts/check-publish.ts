@@ -7,67 +7,15 @@
  *   bun run scripts/check-publish.ts
  */
 import { $, Glob } from "bun"
+import {
+  PUBLIC_PACKAGE_SPECS,
+  type PublishedPackage,
+  publishedPackages,
+} from "./public-package-manifest.ts"
 
-// Library packages get publint + attw (type resolution). `create-nifra` is a CLI (bin,
-// no library exports), so it gets publint only.
-const LIBRARIES = [
-  "core",
-  "client",
-  "cache",
-  "testing",
-  "mcp",
-  "schema",
-  "middleware",
-  "auth",
-  "better-auth",
-  "i18n",
-  "image",
-  "uploads",
-  "storage",
-  "node",
-  // Deno-consumed, but it ships built `dist/*.js` + `.d.ts` like every other package (Deno refuses
-  // to strip types under node_modules), so the Node/bundler type-resolution model applies to it.
-  // Loadability under Deno itself is gated separately by `bun run check:deno-tarball`.
-  "deno",
-  // The two adapters that reach a consumer the same way every library above does - a built
-  // `dist/*.js` + `.d.ts` behind an `exports` map - so the same publint/attw model applies. They were
-  // publishable without being listed here, which meant they shipped without either check ever running.
-  "aws-lambda",
-  // The compact edge/serverless server - a built `dist/*.js` + `.d.ts` behind an `exports` map, same
-  // as every library above, so the same publint/attw model applies.
-  "edge",
-  "proxy",
-  "runner",
-  "env",
-  "cron",
-  "jobs",
-  "otel",
-  "agent-telemetry",
-  "agent",
-  "agent-protocol",
-  "agent-app",
-  "pi",
-  "coding-agent",
-  "devtools",
-  "mock",
-  "prompt",
-  "mcp-db",
-  "events",
-  "web",
-  "webmcp",
-  "web-solid",
-  "web-react",
-  "web-vue",
-  "web-preact",
-  "web-vanilla",
-  "islets",
-  "island-trigger",
-  // The GraphQL endpoint package - a built `dist/*.js` + `.d.ts` behind an `exports` map, same model.
-  "graphql",
-  // The agent protocol adapters (A2A JSON-RPC, AG-UI SSE) - same built-dist model.
-  "a2a",
-  "ag-ui",
-] as const
+const published = publishedPackages()
+const declaredPublicDirs = new Set(PUBLIC_PACKAGE_SPECS.map((spec) => `packages/${spec.dir}`))
+const publicPackages = published.filter((pkg) => declaredPublicDirs.has(`packages/${pkg.dir}`))
 
 let failures = 0
 
@@ -118,47 +66,28 @@ await $`bun run build`
 // `changeset:publish` runs `gen:llms` after the build, so every published tarball carries a corpus
 // regenerated from that exact build (see 1.3.0, which shipped a stale corpus before that step existed).
 
-for (const pkg of LIBRARIES) {
-  console.log(`\n=== @nifrajs/${pkg} ===`)
+for (const pkg of publicPackages.filter(
+  (item): item is PublishedPackage => item.publishValidation === "library",
+)) {
+  console.log(`\n=== ${pkg.name} ===`)
   // publint --level warning: suggestions are advisory, warnings/errors fail.
-  const publint = await $`bunx publint --level warning packages/${pkg}`.nothrow()
+  const publint = await $`bunx publint --level warning packages/${pkg.dir}`.nothrow()
   const attw =
-    await $`bunx --bun @arethetypeswrong/cli --pack packages/${pkg} --profile esm-only`.nothrow()
+    await $`bunx --bun @arethetypeswrong/cli --pack packages/${pkg.dir} --profile esm-only`.nothrow()
   if (publint.exitCode !== 0 || attw.exitCode !== 0) {
     failures += 1
-    console.error(`✗ @nifrajs/${pkg}: publint=${publint.exitCode} attw=${attw.exitCode}`)
+    console.error(`✗ ${pkg.name}: publint=${publint.exitCode} attw=${attw.exitCode}`)
   }
 }
 
 // `create-nifra` (bin-only CLI) and `@nifrajs/web-svelte` get publint only: attw models Node/bundler
 // type resolution, which doesn't apply to a CLI with no library exports, or to a Svelte package whose
 // `.svelte` components resolve through the consumer's Svelte toolchain (no `.d.ts` for `*.svelte`).
-const PUBLINT_ONLY = [
-  { name: "@nifrajs/workers", dir: "packages/workers" },
-  { name: "@nifrajs/content", dir: "packages/content" },
-  { name: "create-nifra", dir: "packages/create-nifra" },
-  { name: "@nifrajs/cli", dir: "packages/cli" },
-  { name: "@nifrajs/web-svelte", dir: "packages/web-svelte" },
-  // The unscoped `nifra` meta is a thin re-export of @nifrajs/core; publint validates its
-  // package.json/exports (the real risk for a shim).
-  { name: "nifra", dir: "packages/nifra" },
-  // `@nifrajs/ts-plugin` is a TypeScript language-service plugin: its entry is loaded by tsserver
-  // itself (`typescript` is a peer, provided by the consumer's editor), so attw's Node/bundler
-  // consumer-resolution model doesn't apply to it - publint validates its package.json/exports.
-  { name: "@nifrajs/ts-plugin", dir: "packages/ts-plugin" },
-  // `@nifrajs/skills` ships markdown only (agent `SKILL.md` bundles + the Claude Code plugin
-  // manifest) - no code, no exports map, nothing for attw to resolve. publint validates the manifest.
-  { name: "@nifrajs/skills", dir: "packages/skills" },
-] as const
-
 // Workspace-privacy gate: publishing is deny-by-default. A new package must be deliberately added to
-// one of the public allowlists above; otherwise its manifest must carry `private: true`. This catches
+// the canonical inventory above; otherwise its manifest must carry `private: true`. This catches
 // internal helpers accidentally becoming publishable and also prevents a newly public package from
 // silently skipping tarball/type validation (as happened when packages/events was first added).
-const PUBLIC_PACKAGE_DIRS = new Set([
-  ...LIBRARIES.map((name) => `packages/${name}`),
-  ...PUBLINT_ONLY.map(({ dir }) => dir),
-])
+const PUBLIC_PACKAGE_DIRS = declaredPublicDirs
 const workspaceManifests = [
   "package.json",
   ...(await Array.fromAsync(new Glob("packages/*/package.json").scan("."))),
@@ -217,12 +146,14 @@ if (provenanceGaps === 0) {
   console.log("✓ every published package carries the repository field npm provenance requires")
 }
 
-for (const { name, dir } of PUBLINT_ONLY) {
-  console.log(`\n=== ${name} (publint only) ===`)
-  const publint = await $`bunx publint --level warning ${dir}`.nothrow()
+for (const pkg of publicPackages.filter(
+  (item): item is PublishedPackage => item.publishValidation === "publint-only",
+)) {
+  console.log(`\n=== ${pkg.name} (publint only) ===`)
+  const publint = await $`bunx publint --level warning packages/${pkg.dir}`.nothrow()
   if (publint.exitCode !== 0) {
     failures += 1
-    console.error(`✗ ${name}: publint=${publint.exitCode}`)
+    console.error(`✗ ${pkg.name}: publint=${publint.exitCode}`)
   }
 }
 

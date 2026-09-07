@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { resolve } from "node:path"
-import { Glob } from "bun"
+import { publishedPackages, readPackageManifest } from "./public-package-manifest.ts"
 
 /**
  * Every published package must contribute at least one signature to `types.json`.
@@ -38,32 +38,20 @@ const types = JSON.parse(
  * contribute, and counting it as missing would read as the build-was-skipped failure above. Same
  * exemption `gen:llms` applies when it generates the file this grades.
  */
-const publishedPackages = async (): Promise<string[]> => {
-  const names: string[] = []
-  for await (const file of new Glob("packages/*/package.json").scan(ROOT)) {
-    const manifest = JSON.parse(await Bun.file(`${ROOT}/${file}`).text()) as {
-      name?: string
-      private?: boolean
-      exports?: unknown
-      main?: unknown
-      bin?: unknown
-      types?: unknown
-    }
-    if (manifest.private === true || manifest.name === undefined) continue
-    const code =
-      manifest.exports !== undefined ||
-      manifest.main !== undefined ||
-      manifest.bin !== undefined ||
-      manifest.types !== undefined
-    if (!code) continue
-    names.push(manifest.name)
-  }
-  return names.sort()
-}
-
 test("every published package contributes types", async () => {
   const indexed = new Set(types.map((entry) => entry.package))
-  const missing = (await publishedPackages()).filter((name) => !indexed.has(name))
+  const missing = publishedPackages(ROOT)
+    .filter((pkg) => {
+      const manifest = readPackageManifest(ROOT, pkg.dir)
+      return (
+        manifest?.exports !== undefined ||
+        manifest?.main !== undefined ||
+        manifest?.bin !== undefined ||
+        manifest?.types !== undefined
+      )
+    })
+    .map((pkg) => pkg.name)
+    .filter((name) => !indexed.has(name))
   expect(missing).toEqual([])
 })
 
