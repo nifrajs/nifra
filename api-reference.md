@@ -664,11 +664,20 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **Diagnostic** _(interface)_ - `interface Diagnostic`
 - **DiagnosticFix** _(interface)_ - `interface DiagnosticFix`
+- **SarifLocation** _(interface)_ - `interface SarifLocation`
+- **SarifLog** _(interface)_ - `interface SarifLog`
+  The subset of SARIF 2.1.0 emitted by {@link toSarifLog}.
+- **SarifProjectionOptions** _(interface)_ - `interface SarifProjectionOptions`
+- **SarifResult** _(interface)_ - `interface SarifResult`
+- **SarifRule** _(interface)_ - `interface SarifRule`
+- **SarifRun** _(interface)_ - `interface SarifRun`
 - **Severity** _(type)_ - `type Severity = "error" | "warn" | "info"`
   Stable, machine-actionable diagnostics shared by CLI gates and MCP renderers.
 - **diagnostic** _(const)_ - `diagnostic: (value: Diagnostic) => Diagnostic`
 - **normalizeSeverity** _(function)_ - `normalizeSeverity: (value: "error" | "warning" | "warn" | "info") => Severity`
 - **severityFails** _(function)_ - `severityFails: (severity: Severity, strict?: boolean) => boolean`
+- **toSarifLog** _(function)_ - `toSarifLog: (diagnostics: readonly Diagnostic[], options?: SarifProjectionOptions) => SarifLog`
+  Project stable Nifra diagnostics into SARIF for code-host and external review surfaces.
 
 ### `@nifrajs/cli/fix-recipes`
 

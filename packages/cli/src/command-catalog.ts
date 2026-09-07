@@ -15,6 +15,7 @@ import type {
 } from "./capabilities-tool.ts"
 import { type CheckResult, renderCheckReport } from "./check.ts"
 import type { ContractsLock } from "./contracts.ts"
+import { type Diagnostic, diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
 import type { DoctorResult } from "./doctor.ts"
 import type { VerificationLevelsResult } from "./levels-tool.ts"
 import type { LoadedApp } from "./load.ts"
@@ -240,6 +241,7 @@ function parseBooleanFlags(
 interface CheckInput {
   readonly lintsOnly?: boolean | undefined
   readonly json?: boolean | undefined
+  readonly sarif?: boolean | undefined
   readonly maxDiagnostics?: number | undefined
   readonly dir?: string | undefined
 }
@@ -429,6 +431,7 @@ const CHECK_SCHEMA = input<CheckInput>(
   objectSchema({
     lintsOnly: { type: "boolean" },
     json: { type: "boolean" },
+    sarif: { type: "boolean" },
     maxDiagnostics: { type: "integer", minimum: 1 },
     dir: { type: "string" },
   }),
@@ -438,7 +441,7 @@ const CHECK_SCHEMA = input<CheckInput>(
     if (maxDiagnostics !== undefined && (!Number.isInteger(maxDiagnostics) || maxDiagnostics < 1))
       throw new TypeError("maxDiagnostics must be a positive integer")
     return {
-      ...parseBooleanFlags(raw, ["lintsOnly", "json"]),
+      ...parseBooleanFlags(raw, ["lintsOnly", "json", "sarif"]),
       ...(maxDiagnostics === undefined ? {} : { maxDiagnostics }),
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
     } as CheckInput
@@ -789,10 +792,25 @@ function loadAppFor(ctx: CommandCtx): Promise<LoadedApp> {
   return import("./load.ts").then(({ loadApp }) => loadApp(ctx.cwd))
 }
 
-function checkJson(out: CheckCommandOutput): unknown {
-  return out.structuredDiagnostics === undefined
-    ? out
-    : { ...out, diagnostics: out.structuredDiagnostics }
+function structuredDiagnostics(out: CheckCommandOutput): readonly Diagnostic[] {
+  if (out.structuredDiagnostics !== undefined) return out.structuredDiagnostics
+  return out.diagnostics.map((value) =>
+    diagnostic({
+      code: value.code ?? value.rule,
+      severity: normalizeSeverity(value.severity),
+      message: value.message,
+      ...(value.file === undefined ? {} : { file: value.file }),
+      ...(value.line === undefined ? {} : { line: value.line }),
+      ...(value.evidence === undefined ? {} : { evidence: value.evidence }),
+      ...(value.fix === undefined ? {} : { fix: { recipe: value.fix } }),
+      ...(value.verify === undefined ? {} : { verify: value.verify }),
+    }),
+  )
+}
+
+function checkJson(out: CheckCommandOutput, input?: CheckInput): unknown {
+  if (input?.sarif === true) return toSarifLog(structuredDiagnostics(out))
+  return { ...out, diagnostics: structuredDiagnostics(out) }
 }
 
 const checkSpec: CommandSpec<CheckInput, CheckCommandOutput> = {
@@ -810,6 +828,7 @@ const checkSpec: CommandSpec<CheckInput, CheckCommandOutput> = {
     flags: [
       { name: "lints-only", field: "lintsOnly", type: "boolean" },
       { name: "json", field: "json", type: "boolean" },
+      { name: "sarif", field: "sarif", type: "boolean" },
     ],
   },
   async run(value, ctx) {
@@ -822,9 +841,12 @@ const checkSpec: CommandSpec<CheckInput, CheckCommandOutput> = {
       })
     ).check()
   },
-  render: (out) => renderCheckReport(out),
+  render: (out, input) =>
+    input?.sarif === true
+      ? JSON.stringify(checkJson(out, input), null, 2).split("\n")
+      : renderCheckReport(out),
   success: (out) => out.ok,
-  json: (out) => checkJson(out),
+  json: (out, input) => checkJson(out, input),
 }
 
 const assureSpec: CommandSpec<AssureInput, AssureCommandOutput> = {

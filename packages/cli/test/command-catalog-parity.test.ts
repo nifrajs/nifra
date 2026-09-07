@@ -72,6 +72,7 @@ test("argv binding produces the same typed input shape MCP receives", () => {
     lintsOnly: true,
     json: true,
   })
+  expect(bindCommandArgv(spec, ["--sarif"])).toMatchObject({ sarif: true })
   const levels = findCommandSpec("levels")!
   expect(bindCommandArgv(levels, ["--min", "2", "--seed=7"])).toMatchObject({
     min: 2,
@@ -81,6 +82,22 @@ test("argv binding produces the same typed input shape MCP receives", () => {
   expect(
     bindCommandArgv(migrate, ["--from", "tailwind", "--to", "stylex", "--write"]),
   ).toMatchObject({ from: "tailwind", to: "stylex", write: true })
+})
+
+test("check SARIF is a projection of the structured diagnostics output", () => {
+  const spec = findCommandSpec("check")!
+  const input = spec.input.parse({ sarif: true })
+  const result = {
+    ok: false,
+    typecheck: "pass" as const,
+    diagnostics: [],
+    structuredDiagnostics: [{ code: "NF-X001", severity: "error" as const, message: "review me" }],
+  }
+  expect(spec.json?.(result, input)).toMatchObject({
+    version: "2.1.0",
+    runs: [{ results: [{ ruleId: "NF-X001", message: { text: "review me" } }] }],
+  })
+  expect(spec.render(result, input).join("\n")).toContain('"ruleId": "NF-X001"')
 })
 
 test("catalog projections are frozen and output readers tolerate the versioned envelope", () => {

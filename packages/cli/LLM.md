@@ -29,7 +29,7 @@ The nifra CLI - zero-config dev/build/start for a nifra app (`nifra dev`, `nifra
 - **getFixRecipe** _(function)_ - `getFixRecipe: (id: string) => FixRecipe | undefined` · from `@nifrajs/cli/fix-recipes`
 - **handleMcpHttp** _(function)_ - `handleMcpHttp: (request: Request) => Promise<Response>` · from `@nifrajs/cli/mcp`
 
-_…and 56 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) for the complete list._
+_…and 63 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) for the complete list._
 
 ## Footguns
 
@@ -39,7 +39,7 @@ _…and 56 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) fo
 
 ## Stable project commands
 
-- nifra check [--lints-only] [--json] - Run the typed-contract, source-lint, and dependency drift gate.
+- nifra check [--lints-only] [--json] [--sarif] - Run the typed-contract, source-lint, and dependency drift gate.
 - nifra assure [--config <value>] [--out <value>] [--json] [--bundle] [--strict] [--hydration] [--interact] - Evaluate route classification and fail-closed enforcement evidence.
 - nifra levels [--config <value>] [--seed <value>] [--min <value>] [--json] - Compute the cumulative L0 typed-contract through L4 invariant verification ladder.
 - nifra capabilities <action> <method> <path> [--config <value>] [--out <value>] [--lockfile <value>] [--json] - Snapshot, check, or explain token-only capability provenance and lockfile drift.

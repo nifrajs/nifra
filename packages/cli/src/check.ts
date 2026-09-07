@@ -26,6 +26,7 @@ import {
   collectCheckDiagnostics,
   type RuleOverride,
 } from "./check-diagnostics.ts"
+import { type Diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
 import { createSourceFacts } from "./internal/source-facts.ts"
 import { importProjectTypeScript, type TypeScriptApi } from "./internal/typescript-import.ts"
 // Type-only: `pipeline-report.ts` imports this module's source scanners, so a value import here would
@@ -468,12 +469,29 @@ export async function runCheck(
     readonly json?: boolean
     readonly lintsOnly?: boolean
     readonly structured?: boolean
+    readonly sarif?: boolean
   } = {},
 ): Promise<boolean> {
   // The check view over the one project verification: the same collector `assure` and `levels` read.
   const { collectProjectVerification } = await import("./verification.ts")
   const verification = await collectProjectVerification(cwd, { lintsOnly: opts.lintsOnly ?? false })
   const result = await verification.check()
+  if (opts.sarif) {
+    const diagnostics: readonly Diagnostic[] =
+      result.structuredDiagnostics ??
+      result.diagnostics.map((value) => ({
+        code: value.code ?? value.rule,
+        severity: normalizeSeverity(value.severity),
+        message: value.message,
+        ...(value.file === undefined ? {} : { file: value.file }),
+        ...(value.line === undefined ? {} : { line: value.line }),
+        ...(value.evidence === undefined ? {} : { evidence: value.evidence }),
+        ...(value.fix === undefined ? {} : { fix: { recipe: value.fix } }),
+        ...(value.verify === undefined ? {} : { verify: value.verify }),
+      }))
+    console.log(JSON.stringify(toSarifLog(diagnostics), null, 2))
+    return result.ok
+  }
   if (opts.json) {
     console.log(
       JSON.stringify(

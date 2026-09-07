@@ -129,9 +129,11 @@ Usage:
                                          self-host on a VPS so any remote agent can learn nifra. Default :8787.
   nifra learn   [<step>]                 Print the guided build-an-app path (the human view of nifra_learn):
                                          no arg for the step index, a number for one step's goal/do/verify.
-  nifra check   [--json] [--lints-only]  Gate: typecheck + lints (hand-rolled fetch(), untyped client("…"),
+  nifra check   [--json] [--sarif] [--lints-only]
+                                         Gate: typecheck + lints (hand-rolled fetch(), untyped client("…"),
                                          server-only imports in routes/). Run as "done"; --json for agents;
-                                         --lints-only skips tsc for a near-instant inner-loop pass.
+                                         --sarif emits the same stable diagnostics as SARIF 2.1.0 for external
+                                         review tools; --lints-only skips tsc for a near-instant inner-loop pass.
   nifra verify   [--release] [--json]    Run the shared repository verification gate. --release runs the
                                          full build, test, coverage, corpus, consumer, and cross-runtime gate.
   nifra fix     [--code <NF-code>]       Apply a registered diagnostic recipe, then print the remaining

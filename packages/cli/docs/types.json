@@ -14937,6 +14937,43 @@
     "doc": "/** Alias for integrations whose sanitizer returns a separately named safe value. */"
   },
   {
+    "name": "SarifLocation",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface SarifLocation {\n    readonly physicalLocation: {\n        readonly artifactLocation: {\n            readonly uri: string;\n            readonly uriBaseId?: string;\n        };\n        readonly region?: {\n            readonly startLine: number;\n        };\n    };\n}"
+  },
+  {
+    "name": "SarifLog",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface SarifLog {\n    readonly $schema: \"https://json.schemastore.org/sarif-2.1.0.json\";\n    readonly version: \"2.1.0\";\n    readonly runs: readonly SarifRun[];\n}",
+    "doc": "/** The subset of SARIF 2.1.0 emitted by {@link toSarifLog}. */"
+  },
+  {
+    "name": "SarifProjectionOptions",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface SarifProjectionOptions {\n    /** Name shown by external review tools in the SARIF run metadata. Defaults to `nifra`. */\n    readonly toolName?: string;\n    /** Optional CLI/framework version shown by external review tools. */\n    readonly toolVersion?: string;\n    /** Base URI identifier for relative diagnostic file paths. */\n    readonly uriBaseId?: string;\n}"
+  },
+  {
+    "name": "SarifResult",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface SarifResult {\n    readonly ruleId: string;\n    readonly level: \"error\" | \"warning\" | \"note\";\n    readonly message: {\n        readonly text: string;\n    };\n    readonly locations?: readonly SarifLocation[];\n    readonly properties?: Readonly<Record<string, string | readonly string[]>>;\n}"
+  },
+  {
+    "name": "SarifRule",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface SarifRule {\n    readonly id: string;\n    readonly shortDescription: {\n        readonly text: string;\n    };\n}"
+  },
+  {
+    "name": "SarifRun",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface SarifRun {\n    readonly tool: {\n        readonly driver: {\n            readonly name: string;\n            readonly version?: string;\n            readonly rules: readonly SarifRule[];\n        };\n    };\n    readonly results: readonly SarifResult[];\n}"
+  },
+  {
     "name": "SassCompiler",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -17453,6 +17490,13 @@
     "kind": "function",
     "package": "@nifrajs/agent-app",
     "signature": "export declare function toRunView(snapshot: RunSnapshot): RunView;"
+  },
+  {
+    "name": "toSarifLog",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function toSarifLog(diagnostics: readonly Diagnostic[], options?: SarifProjectionOptions): SarifLog;",
+    "doc": "/**\n * Project stable Nifra diagnostics into SARIF for code-host and external review surfaces.\n *\n * This is deliberately a pure projection: it does not run checks, read files, or reinterpret policy.\n * Relative file names remain relative so callers can choose the review tool's checkout base through\n * {@link SarifProjectionOptions.uriBaseId}.\n */"
   },
   {
     "name": "toSessionView",
