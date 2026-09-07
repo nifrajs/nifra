@@ -1,4 +1,5 @@
 import { basename as pathBasename } from "node:path"
+import type { CssLoadingMode } from "./css-contract.ts"
 import type { ClientModuleGraph } from "./module-graph.ts"
 
 export interface BuildManifest {
@@ -19,6 +20,10 @@ export interface BuildManifest {
    * imported the CSS; the always-safe fallback `createWebApp` links when a route has no per-route entry
    * in {@link routeStyles}. Omitted when the app imports no CSS. */
   readonly css?: readonly string[]
+  /** Whether the Vite client build kept CSS split by entry/chunk. Absent for the native Bun build. */
+  readonly cssCodeSplit?: boolean
+  /** How framework-owned SSR stylesheet links should become active. Defaults to `blocking`. */
+  readonly cssLoading?: CssLoadingMode
   /** `routeId → [chain CSS URLs]` - only the stylesheets the matched route's layout chain + own file
    * actually use (Bun emits a per-entrypoint CSS bundle per route/layout, with shared-component CSS
    * inlined into each consumer). `createWebApp` links these instead of the aggregate, so a page ships
@@ -150,6 +155,10 @@ export interface Bundler {
     readonly define?: Readonly<Record<string, string>>
     readonly publicDir?: string | false
     readonly publicEnvPrefix?: string
+    /** Vite CSS splitting policy; the Bun strategy rejects `false` and otherwise preserves its native behavior. */
+    readonly cssCodeSplit?: boolean
+    /** Framework-owned stylesheet activation policy; supported by both server strategies. */
+    readonly cssLoading?: CssLoadingMode
     /** Project root (Vite needs it; the Bun strategy ignores it). */
     readonly root?: string
   }): Promise<BuildManifest>
@@ -160,8 +169,14 @@ export interface Bundler {
     readonly outDir: string
     readonly clientEntry: string
     readonly target: "browser" | "node" | "bun"
+    /** The client build's aggregate stylesheet URLs to bake into the server manifest. */
+    readonly styles?: readonly string[]
+    /** The client build's per-route stylesheet map to bake into the server manifest. */
+    readonly routeStyles?: Readonly<Record<string, readonly string[]>>
     readonly plugins?: readonly unknown[]
     readonly define?: Readonly<Record<string, string>>
+    /** CSS activation policy to bake into the generated server manifest. */
+    readonly cssLoading?: CssLoadingMode
     readonly root?: string
   }): Promise<ServerBuild>
 }
@@ -618,6 +633,8 @@ export interface ManifestDrift {
 const MANIFEST_ROUTE_ENTRY = /^[ \t]+(["'])([^"'\n]+)\1\s*:\s*(?:m\d+\b|\(\s*\)\s*=>\s*import\b)/gm
 // The baked client-entry line: `export const clientEntry = "…"`.
 const MANIFEST_CLIENT_ENTRY = /export\s+const\s+clientEntry\s*=\s*["']([^"']+)["']/
+// The baked stylesheet activation line: `generateServerManifest` emits this after the style maps.
+const MANIFEST_CSS_LOADING = /export\s+const\s+cssLoading\s*=\s*["'](blocking|deferred)["']/
 
 /**
  * Extract the route-relative file list a committed server-manifest declares, as the same
@@ -642,6 +659,11 @@ export function parseManifestClientEntry(source: string): string | undefined {
   return MANIFEST_CLIENT_ENTRY.exec(source)?.[1]
 }
 
+/** The baked framework stylesheet activation mode, or `undefined` for an older manifest. Pure. */
+export function parseManifestCssLoading(source: string): CssLoadingMode | undefined {
+  return MANIFEST_CSS_LOADING.exec(source)?.[1] as CssLoadingMode | undefined
+}
+
 // The baked asset lines `generateServerManifest` emits: `export const styles = […]` then
 // `export const routeStyles = {…}`, each a JSON literal running to the next `export const`. Extracted
 // with `indexOf` slicing rather than a lazy `[\s\S]*?` regex: the slice is multi-line by nature (a
@@ -653,7 +675,7 @@ function bakedManifestLiteral(source: string, name: string): string | undefined 
   if (start === -1) return undefined
   const from = start + opener.length
   const end = source.indexOf("\nexport const ", from)
-  return end === -1 ? undefined : source.slice(from, end)
+  return source.slice(from, end === -1 ? source.length : end).trim()
 }
 
 /** Parse a baked JSON literal captured from a committed manifest, tolerating a formatter's TRAILING COMMAS

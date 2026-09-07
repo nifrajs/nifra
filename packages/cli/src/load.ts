@@ -14,6 +14,7 @@
  */
 import { existsSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
+import type { CssLoadingMode } from "@nifrajs/web"
 import { checkPipelineSeparation } from "./pipeline-guard.ts"
 
 /**
@@ -60,6 +61,10 @@ export interface NifraFramework {
   readonly publicDir?: string | false
   /** Client-visible environment prefix (default `"PUBLIC_"`; empty disables exposure). */
   readonly publicEnvPrefix?: string
+  /** Vite production CSS output policy. `false` emits one aggregate stylesheet for the whole client. */
+  readonly cssCodeSplit?: boolean
+  /** Framework-owned SSR stylesheet activation. Deferred mode is intended for aggregate CSS. */
+  readonly cssLoading?: CssLoadingMode
 }
 
 /**

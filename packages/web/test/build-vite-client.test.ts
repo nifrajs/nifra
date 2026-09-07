@@ -60,6 +60,68 @@ test("emits entry + per-route chunks + CSS, all under the /assets/ public path",
   expect((manifest.routeStyles?.index ?? []).some((u) => u.endsWith(".css"))).toBe(true)
   // about imports no CSS → no styles for it.
   expect(manifest.routeStyles?.about ?? []).toEqual([])
+  expect(manifest.cssCodeSplit).toBe(true)
+  expect(manifest.cssLoading).toBe("blocking")
+}, 60_000)
+
+test("cssCodeSplit false records one standalone aggregate CSS asset and falls back from route styles", async () => {
+  const { root, routesDir } = scaffold({
+    "routes/_layout.tsx": 'import "../app.css"\nexport default function Layout() { return null }\n',
+    "routes/index.tsx": 'import "../route.css"\nexport default function Index() { return null }\n',
+    "routes/about.tsx": "export default function About() { return null }\n",
+    "app.css": "body { color: rebeccapurple }\n",
+    "route.css": ".route { color: tomato }\n",
+  })
+  const outDir = join(root, "dist", "assets")
+  const manifest = await buildClientVite({
+    root,
+    routesDir,
+    outDir,
+    clientModule: join(root, "client-stub.ts"),
+    cssCodeSplit: false,
+    cssLoading: "deferred",
+    publicDir: false,
+    minify: false,
+  })
+
+  expect(manifest.cssCodeSplit).toBe(false)
+  expect(manifest.cssLoading).toBe("deferred")
+  expect(manifest.css).toHaveLength(1)
+  const css = manifest.css?.[0]
+  expect(css).toMatch(/^\/assets\/.*\.css$/)
+  expect(css === undefined ? false : manifest.assets.includes(css)).toBe(true)
+  expect(css === undefined ? false : existsSync(join(outDir, css.slice("/assets/".length)))).toBe(
+    true,
+  )
+  // Single-file CSS must use the aggregate fallback; an empty per-route map would suppress the only
+  // stylesheet in createWebApp and render every SSR page unstyled.
+  expect(manifest.routeStyles).toBeUndefined()
+
+  const diskManifest = JSON.parse(readFileSync(join(outDir, "manifest.json"), "utf8")) as {
+    css?: readonly string[]
+    cssCodeSplit?: boolean
+    cssLoading?: string
+  }
+  expect(diskManifest.css).toEqual(manifest.css)
+  expect(diskManifest.cssCodeSplit).toBe(false)
+  expect(diskManifest.cssLoading).toBe("deferred")
+}, 60_000)
+
+test("rejects deferred loading when Vite CSS remains split", async () => {
+  const { root, routesDir } = scaffold({
+    "routes/index.tsx": 'import "../app.css"\nexport default function Index() { return null }\n',
+    "app.css": "body { color: rebeccapurple }\n",
+  })
+  await expect(
+    buildClientVite({
+      root,
+      routesDir,
+      outDir: join(root, "dist", "assets"),
+      clientModule: join(root, "client-stub.ts"),
+      cssLoading: "deferred",
+      minify: false,
+    }),
+  ).rejects.toThrow(/cssLoading: "deferred" requires cssCodeSplit: false/)
 }, 60_000)
 
 test("writes manifest.json to outDir and the real chunk files exist on disk", async () => {

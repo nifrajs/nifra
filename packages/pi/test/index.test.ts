@@ -23,6 +23,12 @@ process.stdin.on("data", (chunk) => {
 `
 
 describe("PiBackend", () => {
+  async function collect<T>(source: AsyncIterable<T>): Promise<T[]> {
+    const values: T[] = []
+    for await (const value of source) values.push(value)
+    return values
+  }
+
   test("maps Pi JSONL events into the Nifra protocol", async () => {
     const backend = new PiBackend({ command: process.execPath, rpcArgs: ["-e", fakePi] })
     const snapshot = await backend.createSession({ cwd: process.cwd(), sessionId: "test" })
@@ -34,6 +40,79 @@ describe("PiBackend", () => {
     expect(events.some((event) => event.type === "session.completed")).toBe(true)
     expect((await backend.snapshot("test")).status).toBe("idle")
     await backend.close("test")
+  })
+
+  test("an explicit undefined environment override does not inherit the parent value", async () => {
+    const key = "NIFRA_PI_FILTER_TEST"
+    const previous = process.env[key]
+    process.env[key] = "must-not-leak"
+    const script = `
+process.stdin.on("data", (chunk) => {
+  if (!String(chunk).includes("prompt")) return
+  process.stdout.write(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: process.env.${key} || "absent" }] } }) + "\\n")
+  process.stdout.write(JSON.stringify({ type: "agent_end" }) + "\\n")
+})
+`
+    const backend = new PiBackend({
+      command: process.execPath,
+      rpcArgs: ["-e", script],
+      env: { [key]: undefined },
+    })
+    try {
+      await backend.createSession({ cwd: process.cwd(), sessionId: "env-filter" })
+      const events = await collect(backend.send({ sessionId: "env-filter", message: "hello" }))
+      expect(events.find((event) => event.type === "assistant.message")).toMatchObject({
+        text: "absent",
+      })
+    } finally {
+      await backend.close("env-filter")
+      if (previous === undefined) delete process.env[key]
+      else process.env[key] = previous
+    }
+  })
+
+  test("rejects malformed and oversized Pi JSONL records without throwing from the reader", async () => {
+    const fakeMalformed = `
+process.stdin.on("data", (chunk) => {
+  if (String(chunk).includes("prompt")) process.stdout.write("null\\n")
+})
+`
+    const malformed = new PiBackend({
+      command: process.execPath,
+      rpcArgs: ["-e", fakeMalformed],
+    })
+    await malformed.createSession({ cwd: process.cwd(), sessionId: "malformed-jsonl" })
+    await expect(
+      collect(malformed.send({ sessionId: "malformed-jsonl", message: "hello" })),
+    ).rejects.toMatchObject({ code: "PI_PROTOCOL" })
+    await malformed.close("malformed-jsonl")
+
+    const fakeOversized = `
+process.stdin.on("data", (chunk) => {
+  if (String(chunk).includes("prompt")) process.stdout.write(JSON.stringify("${"x".repeat(2_000)}") + "\\n")
+})
+`
+    const oversized = new PiBackend({
+      command: process.execPath,
+      rpcArgs: ["-e", fakeOversized],
+      maxRecordBytes: 1_024,
+    })
+    await oversized.createSession({ cwd: process.cwd(), sessionId: "oversized-jsonl" })
+    await expect(
+      collect(oversized.send({ sessionId: "oversized-jsonl", message: "hello" })),
+    ).rejects.toMatchObject({ code: "PI_PROTOCOL" })
+    await oversized.close("oversized-jsonl")
+  })
+
+  test("cancelling an idle session does not fabricate a stopped turn", async () => {
+    const backend = new PiBackend({
+      command: process.execPath,
+      rpcArgs: ["-e", "setInterval(() => {}, 1000)"],
+    })
+    await backend.createSession({ cwd: process.cwd(), sessionId: "idle-cancel" })
+    await backend.cancel("idle-cancel")
+    expect((await backend.snapshot("idle-cancel")).status).toBe("idle")
+    await backend.close("idle-cancel")
   })
 
   test("maps a successful Pi reload response", async () => {
@@ -53,6 +132,56 @@ process.stdin.on("data", (chunk) => {
     expect(result).toEqual({ revision: "r2", loaded: ["demo"], disabled: [], rolledBack: false })
     expect((await backend.snapshot("reload")).extensionRevision).toBe("r2")
     await backend.close("reload")
+  })
+
+  test("an old request signal cannot stop a later prompt on the same session", async () => {
+    const fakeTurns = `
+let buffer = ""
+function emit(value) { process.stdout.write(JSON.stringify(value) + "\\n") }
+function finish() {
+  emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "ok" }] } })
+  emit({ type: "agent_end" })
+}
+process.stdin.on("data", (chunk) => {
+  buffer += String(chunk)
+  for (;;) {
+    const newline = buffer.indexOf("\\n")
+    if (newline === -1) break
+    const command = JSON.parse(buffer.slice(0, newline))
+    buffer = buffer.slice(newline + 1)
+    if (command.type === "prompt" && command.message === "one") finish()
+    if (command.type === "prompt" && command.message === "two") setTimeout(finish, 25)
+    if (command.type === "abort") emit({ type: "agent_end" })
+  }
+})
+`
+    const backend = new PiBackend({ command: process.execPath, rpcArgs: ["-e", fakeTurns] })
+    const firstSignal = new AbortController()
+    await backend.createSession({ cwd: process.cwd(), sessionId: "stale-signal" })
+    await collect(
+      backend.send({ sessionId: "stale-signal", message: "one", signal: firstSignal.signal }),
+    )
+
+    const second = collect(backend.send({ sessionId: "stale-signal", message: "two" }))
+    firstSignal.abort("old request ended")
+    const events = await second
+    expect(events.some((event) => event.type === "session.stopped")).toBe(false)
+    expect(events.some((event) => event.type === "session.completed")).toBe(true)
+    expect((await backend.snapshot("stale-signal")).status).toBe("idle")
+    await backend.close("stale-signal")
+  })
+
+  test("close racing a process reload never resurrects the session", async () => {
+    const fakeRestart = `
+process.stdin.on("data", () => {})
+setInterval(() => {}, 1000)
+`
+    const backend = new PiBackend({ command: process.execPath, rpcArgs: ["-e", fakeRestart] })
+    await backend.createSession({ cwd: process.cwd(), sessionId: "reload-race" })
+    const reloading = backend.reload("reload-race")
+    await backend.close("reload-race")
+    await expect(reloading).resolves.toMatchObject({ error: { code: "SESSION_CLOSED" } })
+    await expect(backend.snapshot("reload-race")).rejects.toThrow(/unknown session/)
   })
 
   test("preserves the Pi session while reloading by default", async () => {

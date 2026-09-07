@@ -41,6 +41,12 @@ export {
   RenderAdapterConformanceError,
   type RenderAdapterConformanceFixture,
 } from "./conformance.ts"
+export {
+  assertCssLoadingCompatible,
+  type CssLoadingMode,
+  DEFAULT_CSS_LOADING,
+  normalizeCssLoading,
+} from "./css-contract.ts"
 // Deferred loader data (`defer()` + the `Deferred<T>` type) - consumed by the adapter's `<Await>`.
 export { type Deferred, defer } from "./deferred.ts"
 export {
@@ -258,3 +264,9 @@ export {
 // ctx + `renderPage`) and a client adapter mount call this with the same URL + schema, so the two sides
 // produce the identical value by construction. An adapter's `useSearch` binding reads its result.
 export { type SearchOf, searchOf, searchOfChain, serializeSearch } from "./search.ts"
+export {
+  type SanitizedHtml,
+  sanitizedHtml,
+  type TrustedHtml,
+  trustHtml,
+} from "./trusted-html.ts"

@@ -25,202 +25,226 @@ built so both humans and coding agents can change it safely.</p>
 
 ---
 
-Most code is now written with an AI agent in the loop - and agents drift. They call an endpoint that moved, expect a response shape that changed, or hand-roll `fetch` with types that rot. Nifra removes that class of bug at the framework level: the client is inferred from the server's TypeScript (drift is a compile error), the docs are a live MCP server (agents read the real API, not stale memory), and a route-assurance gate fails the build when any route - human- or agent-written - ships without its required security evidence.
+Nifra is for software that is **built, operated, and used with agents in the loop**.
 
-## Quick start
+An agent should not be a chat bubble bolted onto an app, or a coding assistant guessing at an API.
+It should discover the real contract, call typed capabilities, stream progress into the UI, ask for
+approval at the right boundary, update state optimistically, reconcile with the server, and leave
+evidence that the work actually happened. Nifra makes that one system:
 
-```sh
-bun create nifra my-app            # full-stack app: pick framework, runtime, DB, auth, CI
+- **Build surface:** typed APIs, runtime schemas, a no-codegen client, full-stack SSR, and one app across five UI libraries and five runtimes.
+- **Agent surface:** page-local WebMCP, remote MCP/MCP Apps, A2A, and AG-UI from the same capability and tool contracts.
+- **Execution surface:** bounded agent turns, budgets, approvals, idempotency, cancellation, resumable evidence, and provider-neutral model ports.
+- **UI surface:** deterministic predictive UI, shared run state, streamed deltas, human-in-the-loop decisions, content-free browser views, and Run Studio.
+- **Proof surface:** live MCP project context plus typecheck, route assurance, effect provenance, manifests, and contract-derived verification gates.
+
+## One contract. Every surface.
+
+The central design decision is simple: define the capability once, then project it to the surface that
+fits the moment. A page-local agent can use WebMCP while the page is open; a background agent can use
+remote MCP; another agent can use A2A; a human-facing client can consume AG-UI. They still meet the
+same typed validation, authorization, approval, output, and evidence boundary.
+
+```ts
+import { t } from "@nifrajs/schema"
+import { defineAgentCapability, registerWebMcpTools } from "@nifrajs/webmcp"
+
+export const addToCart = defineAgentCapability({
+  name: "cart.add",
+  description: "Add a product to the current cart.",
+  input: t.object({ sku: t.string(), quantity: t.number() }),
+  output: t.object({ cartVersion: t.string() }),
+  writes: ["cart"],
+  execute: (input) => addItemOnTheServer(input),
+  predict: ({ input, version }) => ({
+    baseVersion: version,
+    patch: [{ op: "add", path: "/items/-", value: input }],
+  }),
+})
+
+// Explicit page-local discovery. Unsupported hosts receive a safe no-op report.
+await registerWebMcpTools([addToCart])
 ```
 
-or start with just a typed API:
+The same `addToCart.tool` can be projected into Nifra's remote MCP adapter or called by an agent
+runner. Predictions are deterministic application code—not LLM guesses—and commit, rollback, conflict,
+expiry, and authoritative reconciliation are explicit outcomes.
+
+See the [WebMCP and predictive UI guide](https://nifra.dev/docs/webmcp) and the
+[agent layer](https://nifra.dev/docs/agents).
+
+## Start with a typed backend
+
+```sh
+bun create nifra my-app            # choose a UI library, runtime, DB, auth, and CI
+```
+
+Or start with a backend only:
 
 ```sh
 bun add @nifrajs/core @nifrajs/schema @nifrajs/client
 ```
 
-## The core loop
-
-Routes are typed automatically from their path literals, handler context, and return values. Add a
-Standard Schema when you need runtime validation/coercion or an explicit request/response contract:
-
 ```ts
-// server.ts
 import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
 export const app = server()
-  .get("/users/:id", (c) => ({ id: c.params.id })) // params + response inferred from the route
-  .post("/users", { body: t.object({ name: t.string() }) }, (c) => {
-    // c.body is validated + typed - invalid input is a structured 422 before this runs
-    return { id: crypto.randomUUID(), name: c.body.name }
-  })
-  .listen(3000)
+  .get("/users/:id", (c) => ({ id: c.params.id }))
+  .post("/users", { body: t.object({ name: t.string() }) }, (c) => ({
+    id: crypto.randomUUID(),
+    name: c.body.name,
+  }))
 ```
 
+The client is inferred from the server type—no codegen, no duplicated schema, no stale SDK:
+
 ```ts
-// anywhere.ts - fully typed from the server, zero codegen
 import { client } from "@nifrajs/client"
 import type { app } from "./server"
 
 const api = client<typeof app>("http://localhost:3000")
+const result = await api.users({ id: "42" }).get()
 
-const res = await api.users({ id: "42" }).get()
-if (res.ok) res.data.id     // typed from the route - tsc fails the moment the route changes
-else res.error              // failures are returned, never thrown
+if (result.ok) result.data.id   // route return type, checked by tsc
+else result.error               // failures are returned, never thrown
 ```
 
-Change a route and every caller stops compiling until it's updated. That one property is what keeps agent-edited codebases correct. For a decoupled, versionable surface, use [`defineContract` + `implement`](https://nifra.dev/docs/contract).
+Change a route and every caller stops compiling until it is updated. Add loaders, actions, streaming,
+`defer()`/`<Await>`, islands, query cache, progressive-enhancement forms, and server functions when
+the app grows. The same web layer runs on React, Vue, Solid, Svelte, or Preact.
 
-## Agent-native, by construction
+## Agentic backend: bounded, typed, observable
 
-Register the MCP server and any coding agent reads your live routes, fetches version-checked examples, runs real requests against the app it just edited, and gates its own drift:
+Nifra also provides the runtime for applications whose product is an agent. The model provider,
+credentials, durable state, tenancy, and policy are injected ports; the framework owns the safety and
+execution semantics around them.
 
-```sh
-claude mcp add nifra -- bunx nifra mcp     # Claude Code (Cursor/VS Code: same command in mcp.json)
-nifra init-agents                          # or: write .mcp.json + AGENTS.md + CLAUDE.md for you
+```ts
+import { createAgentState, runAgent } from "@nifrajs/agent"
+
+const result = await runAgent(definition, { value: input }, ports, {
+  state: createAgentState("support-1"),
+  maxTurns: 8,
+})
 ```
 
-The loop covers live project context and routes, verified docs/examples/types, checks with structured
-fixes, real requests and SSR renders, request inspection, tests, assurance, and verification levels.
-`nifra_context` and `nifra_example` are version-aware; `nifra_run`, `nifra_render`, and
-`nifra_inspect` verify what the edited app actually does; `nifra_check` and `nifra_assure` close the
-drift and security gates. [Full tool list →](https://nifra.dev/docs/agents)
+You get typed tool contracts, bounded turns and budgets, approvals, cancellation, idempotency,
+resumable token-only evidence, model/token streaming, transient shared state, and composable
+telemetry. A failed post-turn gate can become a bounded repair turn in the standalone
+`nifra-agent` host. The local process and extension adapters contain crashes and accidents; they are
+not hostile-code sandboxes.
 
-Agents that read skills get the conventions too - the same four skills on every surface:
+## Agentic UI: from intent to visible state
 
-```sh
-pi install npm:@nifrajs/skills                                     # Pi
-/plugin marketplace add nifrajs/nifra && /plugin install nifra@nifra  # Claude Code
-```
+The UI is not an afterthought. Nifra gives an agent several deliberate ways to interact with an app:
 
-Not in a Nifra repo? The docs tools are also hosted - add `https://mcp.nifra.dev` to Claude, Cursor, or ChatGPT and it learns Nifra from the same verified corpora, no checkout. One MCP, two transports (the same hosted-plus-local pairing Supabase, Stripe, and GitHub use): project tools run only on your machine over stdio - **your code never reaches our servers**.
-
-### Build and host agents
-
-The same public contracts also cover applications that are agent products:
-
-| Use case | Packages | What it provides |
+| Surface | Best for | Nifra's contract |
 |---|---|---|
-| Bounded agent turns | [agent](packages/agent) | Typed tools, budgets, approvals, resumable token-only evidence, token streaming, and shared run state. Model, storage, and policy stay injected ports. |
-| Coding-agent host | [coding-agent](packages/coding-agent) · [agent-protocol](packages/agent-protocol) · [pi](packages/pi) | A standalone nifra-agent host with sessions, workflows, extensions, post-turn verification with bounded automatic repair, native approval events/resolution, local RPC, and an optional Pi backend. |
-| Browser and desktop UI | [agent-app](packages/agent-app) · [runner](packages/runner) · [apps/workbench](apps/workbench) | Content-free negotiated views, ordered/resumable event handling, capability registry, decision inbox, Run Studio projections, and structured in-process request runs. |
-| Protocol bridges | [a2a](packages/a2a) · [ag-ui](packages/ag-ui) | A2A 1.0 JSON-RPC/SSE and AG-UI SSE endpoints over the same agent runner, including typed human-in-the-loop resume. |
-| Observability and skills | [agent-telemetry](packages/agent-telemetry) · [skills](packages/skills) | Token-only OpenTelemetry run traces and portable skills that keep agents pointed at the live MCP contract. |
+| **WebMCP** | An agent acting in the currently open page | Explicit tool allowlists, typed inputs/outputs, bounded receipts, deterministic prediction, versioned reconciliation |
+| **MCP / MCP Apps** | Remote tools, background work, and rich tool results | The same core tool projected to remote MCP and `ui://` widgets |
+| **AG-UI** | Streaming an agent run into a product UI | SSE lifecycle, text/reasoning/tool deltas, shared-state snapshots/deltas, resumable evidence, typed resume |
+| **Agent App / Workbench** | Browser and desktop control planes | Negotiated features, approvals, handoffs, decision inbox, capability registry, Run Studio |
 
-   bun add @nifrajs/coding-agent @nifrajs/pi
-    bunx nifra-agent --backend pi --message "run the checks and explain failures" \
-      --verify-after-turn check --max-repair-attempts 2
+For a predictive interaction, the application supplies a pure patch and a reconciliation rule. The
+store applies it atomically, then either accepts authoritative server state or reports rollback,
+conflict, or expiry. The human UI remains fully functional when no agent host is present.
 
-Provider credentials, durable state, authorization, and approval policy are application ports rather
-than hidden framework state. The local process adapter contains crashes and accidents but is **not** a
-hostile-code sandbox; use OS-level isolation for untrusted code. A2A and AG-UI mounts likewise require
-the host application to add authentication and authorization at its route boundary.
+## Interoperate without rewriting the agent
+
+The runner is the center; protocol adapters are edges:
+
+- [`@nifrajs/mcp`](packages/mcp) exposes tools and MCP Apps.
+- [`@nifrajs/webmcp`](packages/webmcp) exposes explicit page-local tools and predictive UI.
+- [`@nifrajs/a2a`](packages/a2a) mounts an A2A 1.0 card plus JSON-RPC/SSE.
+- [`@nifrajs/ag-ui`](packages/ag-ui) mounts AG-UI events over SSE.
+- [`@nifrajs/agent-app`](packages/agent-app) provides a backend-neutral browser client.
+- [`@nifrajs/coding-agent`](packages/coding-agent), [`@nifrajs/agent-protocol`](packages/agent-protocol), and [`@nifrajs/pi`](packages/pi) provide a standalone coding-agent host.
+
+Every protocol boundary still needs application authentication and authorization. Public reference
+adapters keep credentials, durable storage, tenant state, and operated policy outside the package so
+you can supply the right implementation for your deployment.
+
+## Give coding agents a live project, not stale docs
+
+Register Nifra once and an agent can inspect the actual project, fetch version-checked examples and
+types, scaffold in the correct route directory, run HTTP/SSR/WebSocket checks, inspect recent requests,
+and loop on structured fixes:
+
+```sh
+claude mcp add nifra -- bunx nifra mcp
+nifra init-agents
+
+nifra context       # live route and convention map
+nifra run           # real request through the current app
+nifra check         # typecheck, drift, and bundle-boundary gate
+nifra assure        # route security evidence gate
+nifra levels        # cumulative proof level and next missing rung
+```
+
+The local server runs where your code lives—your source never reaches Nifra. The teaching tools are
+also hosted at [`mcp.nifra.dev`](https://mcp.nifra.dev) for agents that only need the verified Nifra
+corpus. Skills are available for [Pi](packages/skills) and [Claude Code](packages/skills).
 
 ## Proof, not promises
 
-Three CI gates turn security posture into build failures:
+Agentic systems need more than “the model said it worked.” Nifra turns the important claims into gates:
 
 ```sh
-$ nifra assure
-✖ POST /notes (authenticated-write) is missing nifra.authenticated
+nifra check
+nifra assure
+nifra capabilities check
+nifra manifest diff
+nifra levels --min 1
 ```
 
-- **`nifra assure`** - a policy file classifies every route by reflection and fails CI naming exactly what evidence is missing: authentication on a write, a rate limit, CSRF, a body cap. No other framework ships this.
-- **`nifra capabilities check`** - routes declare effect tokens (`{ capabilities: ["db.write"] }`); the check compares what a route *says* against what its module graph can actually *reach*, pinned in a lockfile. A `GET` that can reach a domain write is an error.
-- **`nifra manifest diff`** - one hash-verified artifact of contracts + assurance + effects + response sensitivity; deploy promotion fails closed on breaking contracts, lost assurance, or newly exposed sensitive fields.
+- `nifra check` catches type drift, raw calls around the typed client, server-only bundle leaks, and other contract violations.
+- `nifra assure` classifies the live route graph and fails when required authentication, validation, rate limiting, CSRF, or body-cap evidence is missing.
+- `nifra capabilities check` compares declared effect tokens with the module graph and a reviewed lockfile.
+- `nifra manifest diff` detects contract, assurance, effect, and response-sensitivity changes at promotion time.
+- `nifra levels` reports the highest cumulative proof level a project actually holds, from typed contract to contract-derived invariant tests.
 
-[Security & hardening →](https://nifra.dev/docs/security) · [Effect provenance →](https://nifra.dev/docs/capabilities) · [Verification ladder →](https://nifra.dev/docs/verification)
+Docs and examples are compiled against the live API, and the machine-readable MCP corpus is generated
+from built packages. An agent gets a repairable diagnostic instead of a stale suggestion.
 
-## Full-stack, five UI libraries
+## Full-stack portability, without the framework tax
 
-The same routes, loaders, actions, streaming SSR, `defer()`/`<Await>` progressive rendering, islands,
-and typed data layer work on **React, Vue, Solid, Svelte, or Preact** - switching is one adapter
-import, not a rewrite. File routing, SSG/ISR, progressive-enhancement forms, query cache, and server
-functions whose bodies never ship to the browser.
+The app lifecycle is `app.fetch(Request): Promise<Response>`. Define it once and deploy to Bun, Node,
+Deno, Cloudflare Workers/Pages, or Vercel Edge with a small adapter. The web layer supports React,
+Vue, Solid, Svelte, and Preact without changing the route/data model.
 
-```sh
-bun create nifra my-app --framework svelte   # or react | vue | solid | preact
-```
+Published benchmarks are reproducible and include the rows where Nifra loses:
 
-[Frameworks →](https://nifra.dev/docs/frameworks) · [Rendering →](https://nifra.dev/docs/rendering) · [Server functions →](https://nifra.dev/docs/server-functions)
+- **Bun:** ~131k req/s on the published HTTP matrix.
+- **Node:** ~12% ahead of Fastify on the validated POST workload in the current matrix.
+- **SSR:** React rendered per request at up to ~25× the compared Next.js workload on the same machine.
 
-## StyleX and Tailwind migration
+See the [benchmark methodology and full results](https://nifra.dev/benchmarks), or run
+`bun run bench:http` and `bun run bench:ssr` yourself.
 
-Nifra includes a conservative Tailwind → StyleX codemod for static JSX class lists:
+## Batteries (54 packages, all typed, all optional)
 
-```sh
-nifra migrate --from tailwind --to stylex          # inspect the proposed changes
-nifra migrate --from tailwind --to stylex --write  # apply safe changes
-```
+The package map is organized by job:
 
-The codemod rewrites supported `className="..."` attributes to `stylex.props(...)` and a local
-`stylex.create(...)` table. It understands responsive breakpoints and element-local pseudo-classes.
-Dynamic class expressions, arbitrary values, parent-dependent variants, and unknown utilities are
-left untouched with file/line diagnostics for manual review. Use `--dir <path>` to scan a subdirectory.
-
-StyleX compilation is built into Nifra's Bun pipeline. Install the runtime and optional compiler peers,
-then register both browser and SSR transforms in `nifra.config.ts`:
-
-```sh
-bun add @stylexjs/stylex
-bun add -d @babel/core @stylexjs/babel-plugin @babel/plugin-syntax-flow \
-  @babel/plugin-syntax-jsx @babel/plugin-syntax-typescript
-```
-
-```ts
-import { stylexBunPlugin } from "@nifrajs/web/plugins/stylex"
-
-export const clientPlugins = [stylexBunPlugin("dom")]
-export const serverPlugins = [stylexBunPlugin("ssr")]
-```
-
-The same adapter also exposes `stylexVite()` for projects whose transforms intentionally run through
-Vite. See the [StyleX migration guide](https://nifra.dev/docs/cli#tailwind-to-stylex) for the complete
-setup and supported-syntax details.
-
-## One app, every runtime
-
-The whole lifecycle is `app.fetch(Request): Promise<Response>` - Bun first-class, and the same app deploys to Node (`@nifrajs/node`), Deno, Cloudflare Workers, and Vercel Edge with one line of adapter code. [Deployment →](https://nifra.dev/docs/deployment)
-
-Measured, published, reproducible ([methodology + every row, including the ones we lose](https://nifra.dev/benchmarks)):
-
-- **Bun:** ~131k req/s - 101% of the raw-runtime ceiling, level-to-ahead of Elysia
-- **Node:** ahead of Fastify by ~12% on the validated POST (96% of the raw-Node ceiling), tie on GET
-- **SSR:** React rendered per-request at ~25x Next.js throughput on the same machine
-
-Run it yourself: `bun run bench:http` · `bun run bench:ssr`
-
-## Batteries (53 packages, all typed, all optional)
-
-| | |
+| Layer | Packages |
 |---|---|
-| Core | [`core`](packages/core) router + server · [`client`](packages/client) typed client · [`schema`](packages/schema) validation + OpenAPI · [`middleware`](packages/middleware) CORS/headers/rate-limit |
-| Full-stack | [`web`](packages/web) SSR core · `web-react` / `web-vue` / `web-solid` / `web-svelte` / `web-preact` adapters |
-| App services | [`auth`](packages/auth) · [`jobs`](packages/jobs) · [`cron`](packages/cron) · [`cache`](packages/cache) · [`storage`](packages/storage) · [`uploads`](packages/uploads) · [`image`](packages/image) · [`i18n`](packages/i18n) · [`env`](packages/env) · [`content`](packages/content) |
-| Quality | [`testing`](packages/testing) contract-derived tests · [`mock`](packages/mock) contract mocks · [`otel`](packages/otel) tracing · [`devtools`](packages/devtools) |
-| Agents | [`cli`](packages/cli) the `nifra` toolchain · [`mcp`](packages/mcp) build MCP servers · [`prompt`](packages/prompt) schema-validated LLM output · [`skills`](packages/skills) portable agent skills · [`runner`](packages/runner) structured app runs |
-| Agent runtime | [`agent`](packages/agent) bounded turns · [`agent-protocol`](packages/agent-protocol) versioned sessions/events · [`agent-app`](packages/agent-app) content-free browser views · [`agent-telemetry`](packages/agent-telemetry) OTel traces |
-| Agent host & protocols | [`coding-agent`](packages/coding-agent) host/CLI · [`pi`](packages/pi) Pi adapter · [`a2a`](packages/a2a) A2A bridge · [`ag-ui`](packages/ag-ui) AG-UI bridge |
+| Backend | [`core`](packages/core) · [`schema`](packages/schema) · [`client`](packages/client) · [`middleware`](packages/middleware) |
+| Full-stack web | [`web`](packages/web) · `web-react` · `web-vue` · `web-solid` · `web-svelte` · `web-preact` |
+| Agent runtime | [`agent`](packages/agent) · [`prompt`](packages/prompt) · [`runner`](packages/runner) · [`agent-telemetry`](packages/agent-telemetry) |
+| Agent UI and protocols | [`webmcp`](packages/webmcp) · [`agent-app`](packages/agent-app) · [`mcp`](packages/mcp) · [`a2a`](packages/a2a) · [`ag-ui`](packages/ag-ui) |
+| Coding agents | [`coding-agent`](packages/coding-agent) · [`agent-protocol`](packages/agent-protocol) · [`pi`](packages/pi) · [`skills`](packages/skills) |
+| App services and quality | [`auth`](packages/auth) · [`jobs`](packages/jobs) · [`cron`](packages/cron) · [`storage`](packages/storage) · [`uploads`](packages/uploads) · [`testing`](packages/testing) · [`mock`](packages/mock) · [`otel`](packages/otel) |
 
-Every package documents its own surface; the root stays lean and everything advanced is an opt-in subpath, so you never pay for a concept you don't import. [All packages →](https://nifra.dev/docs)
-
-## Principles (enforced, not aspirational)
-
-- **Reject invalid input at three boundaries** - compile-time, boot-time, request-time (structured `422`).
-- **Speed is a measured goal** - benchmark-regression tests; the published matrix is regenerated, not curated.
-- **Production-grade by default** - graceful shutdown, redacting logs, idempotent guards; nothing is "we'll fix it later".
-- **Docs cannot lie** - examples are compiled against the live API in CI; the MCP corpus regenerates from built packages.
+All packages are optional and typed. Start with the core, then add only the surfaces your product
+needs. [Browse the complete documentation](https://nifra.dev/docs).
 
 ## Develop
 
 ```sh
 bun install
-bun run check          # lint + typecheck (incl. type-level tests) + tests with coverage
-bun run build          # emit dist/ (js + d.ts) for all packages
-bun run bench:http     # the oha HTTP matrix across Bun/Node/Deno
+bun run check          # lint, typecheck, tests, and coverage
+bun run build          # emit dist/ for all packages
+bun run bench:http     # reproducible HTTP matrix
 ```
 
-Contributions welcome - see [CONTRIBUTING.md](CONTRIBUTING.md). Upgrading from 1.x: [migration guide](https://nifra.dev/docs/migrate-2).
-
-MIT licensed.
+Contributions welcome—see [CONTRIBUTING.md](CONTRIBUTING.md). MIT licensed.

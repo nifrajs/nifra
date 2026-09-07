@@ -13,6 +13,7 @@ import {
   agentError,
   type CreateSessionInput,
   createAgentEventStream,
+  isAgentEvent,
   type ReloadResult,
   type SendMessageInput,
 } from "@nifrajs/agent-protocol"
@@ -148,6 +149,7 @@ interface NativePendingApproval {
   readonly resolve: (resolution: NativeApprovalResolution) => void
   readonly timer: ReturnType<typeof setTimeout>
   readonly onAbort: () => void
+  readonly signal: AbortSignal
 }
 
 interface NativeSession {
@@ -157,6 +159,8 @@ interface NativeSession {
   controller: AbortController
   snapshot: AgentSessionSnapshot
   active: AgentEventStream | undefined
+  turnId: string | undefined
+  turnAbortCleanup: (() => void) | undefined
   seq: number
   extensionRevision: number
   closed: boolean
@@ -205,6 +209,20 @@ export class NifraBackend implements AgentBackend {
   }
 
   async createSession(input: CreateSessionInput): Promise<AgentSessionSnapshot> {
+    if (
+      typeof input.cwd !== "string" ||
+      input.cwd.length === 0 ||
+      input.cwd.length > 4_096 ||
+      input.cwd.includes("\0")
+    )
+      throw new TypeError("nifra backend: cwd must be a bounded non-empty path")
+    if (
+      input.capabilities !== undefined &&
+      (!Array.isArray(input.capabilities) ||
+        input.capabilities.length > 256 ||
+        !input.capabilities.every((value) => boundedApprovalToken(value)))
+    )
+      throw new TypeError("nifra backend: capabilities must be bounded tokens")
     const id = input.sessionId ?? crypto.randomUUID()
     if (!/^[a-zA-Z0-9._:-]{1,128}$/.test(id))
       throw new TypeError("nifra backend: sessionId must be a bounded token")
@@ -228,6 +246,8 @@ export class NifraBackend implements AgentBackend {
       controller: new AbortController(),
       snapshot,
       active: undefined,
+      turnId: undefined,
+      turnAbortCleanup: undefined,
       seq: 0,
       extensionRevision: 0,
       closed: false,
@@ -251,30 +271,38 @@ export class NifraBackend implements AgentBackend {
     session.cancelled = false
     session.controller = new AbortController()
     const signal = session.controller.signal
+    const turnId = crypto.randomUUID()
+    session.turnId = turnId
     if (input.signal !== undefined) {
       const externalSignal = input.signal
-      if (externalSignal.aborted) session.controller.abort(externalSignal.reason)
-      else
-        externalSignal.addEventListener(
-          "abort",
-          () => session.controller.abort(externalSignal.reason),
-          { once: true },
+      const onAbort = (): void => {
+        // Capture the turn identity. A request signal must never abort a later turn that reused
+        // this session after the original stream settled.
+        if (
+          session.active !== stream ||
+          session.turnId !== turnId ||
+          session.controller.signal !== signal
         )
+          return
+        void this.cancelTurn(session, stream, turnId, "cancelled")
+      }
+      if (externalSignal.aborted) onAbort()
+      else {
+        externalSignal.addEventListener("abort", onAbort, { once: true })
+        session.turnAbortCleanup = () => externalSignal.removeEventListener("abort", onAbort)
+        // Abort can race the registration between the check above and addEventListener.
+        if (externalSignal.aborted) onAbort()
+      }
     }
-    void this.run(session, input.message, stream, signal)
+    void this.run(session, input.message, stream, signal, turnId)
     return stream
   }
 
   async cancel(sessionId: string, reason = "cancelled"): Promise<void> {
     const session = this.requireSession(sessionId)
     if (session.closed) return
-    const stream = session.active
-    session.cancelled = true
-    session.controller.abort(reason)
-    this.update(session, "stopped")
-    this.emit(session, { type: "session.stopped", reason })
-    stream?.complete()
-    session.active = undefined
+    if (session.active === undefined) return
+    await this.cancelTurn(session, session.active, session.turnId, reason)
   }
 
   async snapshot(sessionId: string): Promise<AgentSessionSnapshot> {
@@ -326,9 +354,12 @@ export class NifraBackend implements AgentBackend {
     if (session.closed) return
     session.closed = true
     session.cancelled = true
+    session.turnAbortCleanup?.()
+    session.turnAbortCleanup = undefined
     session.controller.abort("closed")
     session.active?.complete()
     session.active = undefined
+    session.turnId = undefined
     this.sessions.delete(sessionId)
   }
 
@@ -337,14 +368,18 @@ export class NifraBackend implements AgentBackend {
     message: string,
     stream: AgentEventStream,
     signal: AbortSignal,
+    turnId: string,
   ): Promise<void> {
-    const turnId = crypto.randomUUID()
+    if (!this.isCurrentTurn(session, stream, turnId, signal)) {
+      stream.complete()
+      return
+    }
     this.update(session, "running", turnId)
     this.emit(session, { type: "turn.started", turnId, prompt: message })
     session.messages.push({ role: "user", text: message })
     try {
       for (let step = 0; step < this.options.maxSteps; step++) {
-        if (signal.aborted) throw new Error("native turn cancelled")
+        this.assertCurrentTurn(session, stream, turnId, signal)
         const raw = this.options.model.complete({
           sessionId: session.id,
           cwd: session.cwd,
@@ -358,10 +393,12 @@ export class NifraBackend implements AgentBackend {
           ),
           signal,
         })
-        const response = await this.consumeModel(raw, session, turnId, signal)
+        const response = await this.consumeModel(raw, session, stream, turnId, signal)
+        this.assertCurrentTurn(session, stream, turnId, signal)
         if (response.type === "text") {
-          session.messages.push({ role: "assistant", text: response.text })
-          this.emit(session, { type: "assistant.message", turnId, text: response.text })
+          const text = boundedText(response.text, this.options.maxMessageChars)
+          session.messages.push({ role: "assistant", text })
+          this.emit(session, { type: "assistant.message", turnId, text })
           this.finish(session, stream)
           return
         }
@@ -391,6 +428,7 @@ export class NifraBackend implements AgentBackend {
           typeof tool.requiresApproval === "function"
             ? await tool.requiresApproval(response.input)
             : tool.requiresApproval === true
+        this.assertCurrentTurn(session, stream, turnId, signal)
         if (needsApproval) {
           const resolution = await this.requestApproval(
             session,
@@ -400,6 +438,7 @@ export class NifraBackend implements AgentBackend {
             response.input,
             signal,
           )
+          this.assertCurrentTurn(session, stream, turnId, signal)
           if (!resolution.approved) {
             const code = resolution.errorCode ?? "APPROVAL_DENIED"
             this.emit(session, {
@@ -416,6 +455,7 @@ export class NifraBackend implements AgentBackend {
         }
         try {
           const output = await execute(response.input, { cwd: session.cwd, signal })
+          this.assertCurrentTurn(session, stream, turnId, signal)
           const text = boundedText(output)
           session.messages.push({ role: "tool", name: tool.name, text })
           this.emit(session, {
@@ -427,7 +467,11 @@ export class NifraBackend implements AgentBackend {
             output: text,
           })
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
+          if (signal.aborted || !this.isCurrentTurn(session, stream, turnId, signal)) throw error
+          const message = boundedText(
+            error instanceof Error ? error.message : error,
+            this.options.maxMessageChars,
+          )
           session.messages.push({ role: "tool", name: tool.name, text: message })
           this.emit(session, {
             type: "tool.completed",
@@ -441,50 +485,57 @@ export class NifraBackend implements AgentBackend {
       }
       throw new Error("native turn exceeded maxSteps")
     } catch (error) {
-      if (session.closed || session.cancelled) {
+      if (!this.isCurrentTurn(session, stream, turnId, signal)) {
         stream.complete()
-        if (session.active === stream) session.active = undefined
         return
       }
-      this.update(session, signal.aborted ? "stopped" : "failed")
+      if (signal.aborted || session.cancelled) {
+        await this.cancelTurn(session, stream, turnId, "cancelled")
+        return
+      }
+      this.update(session, "failed")
       this.emit(session, {
         type: "session.failed",
         error: agentError(
-          signal.aborted ? "TURN_CANCELLED" : "NATIVE_TURN_FAILED",
-          error instanceof Error ? error.message : String(error),
+          "NATIVE_TURN_FAILED",
+          boundedText(error instanceof Error ? error.message : error, 4_096),
         ),
         recoverable: true,
       })
       stream.complete()
-      session.active = undefined
+      this.clearTurn(session, stream, turnId)
     }
   }
 
   private async consumeModel(
     raw: ReturnType<NativeModelPort["complete"]>,
     session: NativeSession,
+    stream: AgentEventStream,
     turnId: string,
     signal: AbortSignal,
   ): Promise<NativeModelResponse> {
     if (isAsyncIterable<NativeModelChunk>(raw)) {
       let response: NativeModelResponse | undefined
       for await (const chunk of raw) {
-        if (signal.aborted) throw new Error("native turn cancelled")
+        this.assertCurrentTurn(session, stream, turnId, signal)
         if (chunk.type === "text_delta")
           this.emit(session, { type: "assistant.delta", turnId, text: chunk.text })
         else response = chunk.response
       }
       if (response === undefined) throw new Error("native model stream ended without a response")
+      this.assertCurrentTurn(session, stream, turnId, signal)
       return response
     }
-    return await raw
+    const response = await raw
+    this.assertCurrentTurn(session, stream, turnId, signal)
+    return response
   }
 
   private finish(session: NativeSession, stream: AgentEventStream): void {
     this.update(session, "idle")
     this.emit(session, { type: "session.completed", snapshot: session.snapshot })
     stream.complete()
-    session.active = undefined
+    this.clearTurn(session, stream, session.turnId)
   }
 
   private requestApproval(
@@ -526,6 +577,7 @@ export class NifraBackend implements AgentBackend {
         resolve,
         timer,
         onAbort,
+        signal,
       }
       this.pendingApprovals.set(approvalId, pending)
       signal.addEventListener("abort", onAbort, { once: true })
@@ -595,7 +647,7 @@ export class NifraBackend implements AgentBackend {
     const pending = this.pendingApprovals.get(approvalId)
     if (pending === undefined || pending.sessionId !== session.id) return undefined
     clearTimeout(pending.timer)
-    session.controller.signal.removeEventListener("abort", pending.onAbort)
+    pending.signal.removeEventListener("abort", pending.onAbort)
     this.pendingApprovals.delete(approvalId)
     const boundedReason = reason === undefined ? undefined : boundedApprovalText(reason, 512)
     const resolution: NativeApprovalResolution = Object.freeze({
@@ -614,6 +666,76 @@ export class NifraBackend implements AgentBackend {
     return resolution
   }
 
+  private async cancelTurn(
+    session: NativeSession,
+    expectedStream: AgentEventStream | undefined,
+    expectedTurnId: string | undefined,
+    reason: string,
+  ): Promise<void> {
+    if (
+      expectedStream !== undefined &&
+      (session.active !== expectedStream || session.turnId !== expectedTurnId)
+    )
+      return
+    const stream = session.active
+    const turnId = session.turnId
+    const stopReason = boundedText(reason, 512) || "cancelled"
+    session.cancelled = true
+    this.clearTurnSignal(session)
+    try {
+      session.controller.abort(stopReason)
+    } catch {
+      // AbortController.abort is normally infallible; lifecycle cleanup must still complete if a
+      // host supplies an unusual controller implementation.
+    }
+    this.update(session, "stopped")
+    this.emit(session, { type: "session.stopped", reason: stopReason })
+    stream?.complete()
+    this.clearTurn(session, stream, turnId)
+  }
+
+  private clearTurnSignal(session: NativeSession): void {
+    session.turnAbortCleanup?.()
+    session.turnAbortCleanup = undefined
+  }
+
+  private clearTurn(
+    session: NativeSession,
+    stream: AgentEventStream | undefined,
+    turnId: string | undefined,
+  ): void {
+    if (stream !== undefined && session.active !== stream) return
+    if (turnId !== undefined && session.turnId !== turnId) return
+    this.clearTurnSignal(session)
+    if (stream === undefined || session.active === stream) session.active = undefined
+    if (turnId === undefined || session.turnId === turnId) session.turnId = undefined
+  }
+
+  private isCurrentTurn(
+    session: NativeSession,
+    stream: AgentEventStream,
+    turnId: string,
+    signal: AbortSignal,
+  ): boolean {
+    return (
+      !session.closed &&
+      !session.cancelled &&
+      session.active === stream &&
+      session.turnId === turnId &&
+      session.controller.signal === signal
+    )
+  }
+
+  private assertCurrentTurn(
+    session: NativeSession,
+    stream: AgentEventStream,
+    turnId: string,
+    signal: AbortSignal,
+  ): void {
+    if (signal.aborted || !this.isCurrentTurn(session, stream, turnId, signal))
+      throw new Error("native turn cancelled")
+  }
+
   private emit(
     session: NativeSession,
     payload: import("@nifrajs/agent-protocol").AgentEventPayload,
@@ -625,6 +747,8 @@ export class NifraBackend implements AgentBackend {
       at: this.now(),
       ...payload,
     }) as AgentEvent
+    if (!isAgentEvent(event))
+      throw new Error("nifra backend emitted an event outside protocol bounds")
     session.snapshot = Object.freeze({
       ...session.snapshot,
       lastSeq: event.seq,
@@ -640,7 +764,9 @@ export class NifraBackend implements AgentBackend {
   ): void {
     const next = { ...session.snapshot, status, updatedAt: this.now(), lastSeq: session.seq }
     session.snapshot = Object.freeze(
-      status === "running" && turnId !== undefined ? { ...next, activeTurnId: turnId } : next,
+      status === "running" && turnId !== undefined
+        ? { ...next, activeTurnId: turnId }
+        : removeActiveTurn(next),
     )
     if (session.active !== undefined)
       this.emit(session, { type: "session.updated", snapshot: session.snapshot })
@@ -664,10 +790,18 @@ function isAsyncIterable<T>(value: unknown): value is AsyncIterable<T> {
 function boundedText(value: unknown, maxChars = 64 * 1024): string {
   try {
     const text = typeof value === "string" ? value : JSON.stringify(value)
-    return text.length > maxChars ? `${text.slice(0, maxChars)}…[truncated]` : text
+    if (typeof text !== "string") return "[unserializable tool output]"
+    const suffix = "…[truncated]"
+    return text.length > maxChars
+      ? `${text.slice(0, Math.max(0, maxChars - suffix.length))}${suffix}`
+      : text
   } catch {
     return "[unserializable tool output]"
   }
+}
+
+function boundedApprovalToken(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9._:/-]{1,128}$/.test(value)
 }
 
 function boundedApprovalText(value: string, maxChars: number): string {
@@ -700,4 +834,11 @@ function failedStream(error: unknown): AgentEventStream {
   const stream = createAgentEventStream()
   stream.fail(error)
   return stream
+}
+
+function removeActiveTurn(
+  snapshot: Omit<AgentSessionSnapshot, "activeTurnId"> & { readonly activeTurnId?: string },
+): Omit<AgentSessionSnapshot, "activeTurnId"> {
+  const { activeTurnId: _activeTurnId, ...withoutActiveTurn } = snapshot
+  return withoutActiveTurn
 }

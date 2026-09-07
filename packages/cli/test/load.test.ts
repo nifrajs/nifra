@@ -22,7 +22,10 @@ test("plugin thunks resolve exactly once and remain available to later phases", 
      export const vitePlugins = () => {
        globalThis.__nifraPluginThunkCalls = (globalThis.__nifraPluginThunkCalls ?? 0) + 1
        return [{ name: "one-shot-plugin" }]
-     }\n`,
+     }
+     export const cssCodeSplit = false
+     export const cssLoading = "deferred"
+`,
   )
 
   const globals = globalThis as typeof globalThis & { __nifraPluginThunkCalls?: number }
@@ -31,6 +34,8 @@ test("plugin thunks resolve exactly once and remain available to later phases", 
     const app = await loadApp(root, "dist", { importQuery: `test=${crypto.randomUUID()}` })
     expect(Number(globals.__nifraPluginThunkCalls)).toBe(1)
     expect(app.resolvedPlugins.vitePlugins).toEqual([{ name: "one-shot-plugin" }])
+    expect(app.framework.cssCodeSplit).toBe(false)
+    expect(app.framework.cssLoading).toBe("deferred")
 
     // Build/dev consumers reuse this retained array; reading it never invokes the one-shot factory.
     expect([...app.resolvedPlugins.vitePlugins]).toHaveLength(1)

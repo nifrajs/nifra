@@ -9,6 +9,13 @@ import { existsSync, realpathSync } from "node:fs"
 import { isAbsolute, relative, resolve, sep } from "node:path"
 import { pathToFileURL } from "node:url"
 import { type AppLike, runApp } from "@nifrajs/runner"
+import {
+  CHILD_INPUT_MAX_BYTES,
+  CHILD_OUTPUT_MAX_BYTES,
+  readBoundedLines,
+  readBoundedStream,
+  serializeBoundedJson,
+} from "./mcp-io.ts"
 
 const ENTRY_CANDIDATES = ["backend.ts", "app.ts", "src/backend.ts", "src/app.ts"]
 
@@ -100,54 +107,79 @@ function redirectConsoleToStderr(): void {
   console.error = (...args: unknown[]) => write("error", args)
 }
 
+function safeResponseId(value: unknown): number | string | null {
+  if (typeof value === "number" && Number.isSafeInteger(value)) return value
+  if (typeof value === "string" && value.length <= 128) return value
+  return null
+}
+
 async function runWorker(cwd: string): Promise<void> {
   redirectConsoleToStderr()
   const apps = new Map<string, Promise<{ app: AppLike } | { error: string }>>()
-  const decoder = new TextDecoder()
-  let buffer = ""
   const send = (id: unknown, output: unknown): void => {
-    process.stdout.write(`${JSON.stringify({ id, output })}\n`)
+    const responseId = safeResponseId(id)
+    const encoded = serializeBoundedJson({ id: responseId, output }, CHILD_OUTPUT_MAX_BYTES - 1)
+    process.stdout.write(
+      `${encoded ?? JSON.stringify({ id: responseId, output: { error: "worker output exceeded the size limit" } })}\n`,
+    )
   }
-  for await (const chunk of Bun.stdin.stream()) {
-    buffer += decoder.decode(chunk as Uint8Array, { stream: true })
-    let nl = buffer.indexOf("\n")
-    while (nl !== -1) {
-      const line = buffer.slice(0, nl).trim()
-      buffer = buffer.slice(nl + 1)
-      nl = buffer.indexOf("\n")
-      if (line === "") continue
+  for await (const item of readBoundedLines(Bun.stdin.stream(), CHILD_INPUT_MAX_BYTES)) {
+    if (item.kind === "too-large") {
+      send(null, { error: `worker input exceeded ${CHILD_INPUT_MAX_BYTES} bytes` })
+      continue
+    }
+    const line = item.text.trim()
+    if (line === "") continue
 
-      let message: WorkerMessage
-      try {
-        message = JSON.parse(line) as WorkerMessage
-      } catch {
-        send(null, { error: "invalid worker input: expected JSON line" })
-        continue
-      }
-      const requests = message.input?.requests
-      const entry = message.input?.entry
-      if (!Array.isArray(requests)) {
-        send(message.id, { error: "expected { requests: [...] }" })
-        continue
-      }
-      const key = entry ?? ""
-      let loaded = apps.get(key)
-      if (loaded === undefined) {
-        loaded = loadBackend(cwd, entry)
-        apps.set(key, loaded)
-      }
-      const app = await loaded
-      if ("error" in app) {
-        send(message.id, app)
-        continue
-      }
-      try {
-        send(message.id, {
-          results: await runApp(app.app, requests as Parameters<typeof runApp>[1]),
-        })
-      } catch (err) {
-        send(message.id, { error: errString(err) })
-      }
+    let message: unknown
+    try {
+      message = JSON.parse(line) as unknown
+    } catch {
+      send(null, { error: "invalid worker input: expected JSON line" })
+      continue
+    }
+    const record =
+      message !== null && typeof message === "object" && !Array.isArray(message)
+        ? (message as WorkerMessage)
+        : undefined
+    const input =
+      record?.input !== null && typeof record?.input === "object" && !Array.isArray(record.input)
+        ? record.input
+        : undefined
+    const id = record?.id
+    const requests = input?.requests
+    const entry = input?.entry
+    if (!Array.isArray(requests)) {
+      send(id, { error: "expected { requests: [...] }" })
+      continue
+    }
+    if (entry !== undefined && typeof entry !== "string") {
+      send(id, { error: "entry must be a string" })
+      continue
+    }
+    const key = entry ?? ""
+    let loaded = apps.get(key)
+    if (loaded === undefined) {
+      loaded = loadBackend(cwd, entry)
+      apps.set(key, loaded)
+    }
+    let app: Awaited<typeof loaded>
+    try {
+      app = await loaded
+    } catch (err) {
+      send(id, { error: errString(err) })
+      continue
+    }
+    if ("error" in app) {
+      send(id, app)
+      continue
+    }
+    try {
+      send(id, {
+        results: await runApp(app.app, requests as Parameters<typeof runApp>[1]),
+      })
+    } catch (err) {
+      send(id, { error: errString(err) })
     }
   }
 }
@@ -161,14 +193,22 @@ if (import.meta.main) {
     process.exit(0)
   }
   let output: unknown
-  try {
-    const { requests, entry } = JSON.parse(await Bun.stdin.text()) as {
-      requests: unknown
-      entry?: string
+  const input = await readBoundedStream(Bun.stdin.stream(), CHILD_INPUT_MAX_BYTES)
+  if (input.truncated) {
+    output = { error: `input exceeded ${CHILD_INPUT_MAX_BYTES} bytes` }
+  } else {
+    try {
+      const { requests, entry } = JSON.parse(input.text) as {
+        requests: unknown
+        entry?: string
+      }
+      output = await runBackend(cwd, requests, entry)
+    } catch {
+      output = { error: "invalid input: expected JSON { requests: [...] }" }
     }
-    output = await runBackend(cwd, requests, entry)
-  } catch {
-    output = { error: "invalid input: expected JSON { requests: [...] }" }
   }
-  process.stdout.write(JSON.stringify(output, null, 2))
+  process.stdout.write(
+    serializeBoundedJson(output, CHILD_OUTPUT_MAX_BYTES, 2) ??
+      JSON.stringify({ error: `output exceeded ${CHILD_OUTPUT_MAX_BYTES} bytes` }),
+  )
 }

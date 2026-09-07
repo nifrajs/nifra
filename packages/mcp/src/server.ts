@@ -26,6 +26,7 @@ import {
   type JsonRpcRequest,
   type JsonRpcResponse,
   type McpPrompt,
+  type McpProtocolState,
   type McpResource,
   type McpServerFeatures,
   type McpTool,
@@ -46,11 +47,17 @@ export interface CreateMcpServerOptions {
   readonly health?: string
   /** Max JSON-RPC body size in bytes (default 1 MB). */
   readonly maxBodyBytes?: number
+  /** Max serialized JSON-RPC response or SSE frame size (default 1 MB). */
+  readonly maxResponseBytes?: number
   /** Natural-language guidance for LLMs, surfaced in the modern `server/discover` result (2026-07-28). */
   readonly instructions?: string
   /** Origin allowlist for the DNS-rebinding guard. Omit to allow any origin; set it to reject other
    * browser origins with 403 (e.g. a hardened, non-public mount). */
   readonly allowedOrigins?: readonly string[]
+  /** Shared state for one authenticated MCP session; prefer `resolveState` for multi-session hosts. */
+  readonly state?: McpProtocolState
+  /** Resolve a session-scoped request registry after per-message authorization. */
+  readonly resolveState?: McpHttpOptions["resolveState"]
   /**
    * Per-message authorization, applied after the message parses and before any tool runs. Return
    * `false` to answer 403 with a JSON-RPC `unauthorized` error (`MCP_ERROR.UNAUTHORIZED`) and no result.
@@ -71,7 +78,10 @@ export interface McpServer {
   readonly features: McpServerFeatures
   readonly serverInfo: { name: string; version: string }
   /** Web `fetch` handler - mount at `POST /mcp` (GET is a health page, OPTIONS the CORS preflight). */
-  fetch(request: Request, overrides?: Pick<McpHttpOptions, "authorizeMessage">): Promise<Response>
+  fetch(
+    request: Request,
+    overrides?: Pick<McpHttpOptions, "authorizeMessage" | "state" | "resolveState">,
+  ): Promise<Response>
   /** Dispatch one JSON-RPC message directly (no HTTP) - for headless verification and unit tests. */
   handle(message: JsonRpcRequest): Promise<JsonRpcResponse | null>
   /**
@@ -103,12 +113,20 @@ export function createMcpServer(opts: CreateMcpServerOptions): McpServer {
         features,
         ...(opts.health !== undefined ? { health: opts.health } : {}),
         ...(opts.maxBodyBytes !== undefined ? { maxBodyBytes: opts.maxBodyBytes } : {}),
+        ...(opts.maxResponseBytes !== undefined ? { maxResponseBytes: opts.maxResponseBytes } : {}),
         ...(opts.allowedOrigins !== undefined ? { allowedOrigins: opts.allowedOrigins } : {}),
+        ...(opts.state === undefined ? {} : { state: opts.state }),
+        ...(opts.resolveState === undefined ? {} : { resolveState: opts.resolveState }),
         ...(opts.authorizeMessage !== undefined ? { authorizeMessage: opts.authorizeMessage } : {}),
         ...(overrides?.authorizeMessage !== undefined
           ? { authorizeMessage: overrides.authorizeMessage }
           : {}),
+        ...(overrides?.state === undefined ? {} : { state: overrides.state }),
+        ...(overrides?.resolveState === undefined ? {} : { resolveState: overrides.resolveState }),
       }),
-    handle: (message) => handleRpc(message, tools, serverInfo, features),
+    handle: (message) =>
+      handleRpc(message, tools, serverInfo, features, {
+        ...(opts.state === undefined ? {} : { state: opts.state }),
+      }),
   }
 }

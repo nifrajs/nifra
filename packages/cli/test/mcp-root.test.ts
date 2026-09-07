@@ -113,6 +113,27 @@ describe("pathsFromRootsResult", () => {
     expect(pathsFromRootsResult("nope")).toEqual([])
     expect(pathsFromRootsResult({ roots: "nope" })).toEqual([])
   })
+
+  test("bounds root count, URI/path size, null bytes, and duplicates", () => {
+    const many = Array.from({ length: 80 }, (_unused, index) => ({
+      uri: pathToFileURL(`/nifra-root-${index}`).href,
+    }))
+    const duplicate = pathToFileURL("/nifra-duplicate").href
+    const tooLong = `file:///${"x".repeat(4_100)}`
+    const paths = pathsFromRootsResult({
+      roots: [
+        { uri: duplicate },
+        { uri: duplicate },
+        { uri: tooLong },
+        { uri: "file:///tmp/%00nifra" },
+        ...many,
+      ],
+    })
+    expect(paths).toContain("/nifra-duplicate")
+    expect(paths).not.toContain("/tmp/\0nifra")
+    expect(paths.length).toBeLessThanOrEqual(64)
+    expect(new Set(paths).size).toBe(paths.length)
+  })
 })
 
 describe("rootMismatch", () => {
@@ -479,6 +500,59 @@ describe("runMcpServer root gating over stdio", () => {
 
     await rm(dir, { recursive: true, force: true })
   }, 30_000)
+
+  test("stdio rejects malformed JSON-RPC values and keeps serving later requests", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-root-e2e-malformed-"))
+    const res = await rpc(
+      dir,
+      [
+        null as unknown as object,
+        [] as unknown as object,
+        "scalar" as unknown as object,
+        {
+          jsonrpc: "2.0",
+          id: 3,
+          method: "ping",
+        },
+      ],
+      [3],
+    )
+
+    expect((res[3] as { result?: unknown })?.result).toEqual({})
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("stdio ignores an unsolicited roots response", async () => {
+    const start = await mkdtemp(join(tmpdir(), "nifra-root-e2e-unsolicited-start-"))
+    const proj = await mkdtemp(join(tmpdir(), "nifra-root-e2e-unsolicited-proj-"))
+    await writeFile(
+      join(proj, "package.json"),
+      JSON.stringify({ name: "p", type: "module", dependencies: { "@nifrajs/core": "0.0.0" } }),
+    )
+
+    const res = await rpc(
+      start,
+      [
+        {
+          jsonrpc: "2.0",
+          id: "nifra:roots/list",
+          result: { roots: [{ uri: Bun.pathToFileURL(proj).href }] },
+        },
+        init({}),
+        CALL,
+      ],
+      [1, 2],
+    )
+
+    expect((res[1] as { result?: { instructions?: string } })?.result?.instructions).toContain(
+      "WARNING: no nifra project",
+    )
+    expect(
+      (res[2] as { result?: { content?: { text: string }[] } })?.result?.content?.[0]?.text,
+    ).toContain("No nifra project at")
+    await rm(start, { recursive: true, force: true })
+    await rm(proj, { recursive: true, force: true })
+  })
 
   test("no project at cwd, but the client's workspace root is one: it is adopted", async () => {
     const start = await mkdtemp(join(tmpdir(), "nifra-root-e2e-start-"))

@@ -319,10 +319,23 @@
     "signature": "export type AgentCapability = \"filesystem.read\" | \"filesystem.write\" | \"process.exec\" | \"network.request\" | \"credentials.read\";"
   },
   {
+    "name": "AgentCapability",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface AgentCapability<Input, Output, State = unknown> {\n    readonly tool: ToolContract<Input, Output>;\n    readonly surface: AgentSurfaceDescriptor;\n    readonly predict?: AgentSurfacePredictor<Input, State>;\n    readonly reconcile?: AgentSurfaceReconciler<Input, Output, State>;\n}"
+  },
+  {
     "name": "AgentCapabilityManifest",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
     "signature": "export interface AgentCapabilityManifest {\n    readonly version: typeof AGENT_CAPABILITY_MANIFEST_VERSION;\n    readonly requested: readonly AgentCapability[];\n    readonly trusted: readonly AgentCapability[];\n    readonly reason?: string;\n}"
+  },
+  {
+    "name": "AgentCapabilityReference",
+    "kind": "type",
+    "package": "@nifrajs/webmcp",
+    "signature": "export type AgentCapabilityReference = {\n    readonly tool: Omit<ToolContract, \"input\" | \"output\" | \"execute\" | \"idempotency\" | \"cost\" | \"policy\"> & {\n        readonly input: StandardSchemaV1;\n        readonly output: StandardSchemaV1;\n        readonly execute: (...args: never[]) => unknown | PromiseLike<unknown>;\n        readonly idempotency?: unknown;\n        readonly cost?: unknown;\n        readonly policy?: unknown;\n    };\n    readonly surface: AgentSurfaceDescriptor;\n};",
+    "doc": "/**\n * The erased, read-only handle accepted by capability registries.\n *\n * A real application commonly registers tools with unrelated input and output types. Registry\n * boundaries therefore use this structural view instead of pretending the whole array has one\n * homogeneous generic type. Individual calls remain validated and typed at their capability's\n * `tool` boundary.\n */"
   },
   {
     "name": "agentCard",
@@ -745,6 +758,78 @@
     "kind": "interface",
     "package": "@nifrajs/agent",
     "signature": "export interface AgentStepEvidence {\n    readonly seq: number;\n    readonly at: number;\n    readonly kind: \"model\" | \"tool\" | \"approval\" | \"budget\" | \"state\";\n    readonly outcome: \"started\" | \"passed\" | \"failed\" | \"denied\" | \"suspended\" | \"committed\";\n    readonly name?: string;\n    readonly effectId?: string;\n    readonly code?: string;\n    readonly ledgerHead?: string;\n}"
+  },
+  {
+    "name": "AgentSurfaceAuthoritativeState",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface AgentSurfaceAuthoritativeState<State> {\n    readonly state: State;\n    readonly version: string;\n}"
+  },
+  {
+    "name": "AgentSurfaceConformanceCase",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface AgentSurfaceConformanceCase {\n    readonly capability: AgentCapabilityReference;\n    readonly input: unknown;\n    readonly assert?: (result: unknown) => void | PromiseLike<void>;\n}"
+  },
+  {
+    "name": "AgentSurfaceConformanceOptions",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface AgentSurfaceConformanceOptions {\n    readonly target?: WebMcpTarget;\n    readonly registration?: WebMcpExecutionOptions;\n    readonly cases?: readonly AgentSurfaceConformanceCase[];\n}"
+  },
+  {
+    "name": "AgentSurfaceConformanceResult",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface AgentSurfaceConformanceResult {\n    readonly supported: boolean;\n    readonly registered: readonly string[];\n    readonly failed: readonly WebMcpRegistrationFailure[];\n    readonly checks: readonly string[];\n}"
+  },
+  {
+    "name": "AgentSurfaceDescriptor",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface AgentSurfaceDescriptor {\n    readonly scope: AgentSurfaceScope;\n    readonly reads: readonly string[];\n    readonly writes: readonly string[];\n    readonly reconciliation: ReconciliationMode;\n}"
+  },
+  {
+    "name": "AgentSurfacePrediction",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface AgentSurfacePrediction {\n    readonly baseVersion: string;\n    readonly patch: readonly PredictionPatchOperation[];\n    readonly expiresAt?: number;\n}"
+  },
+  {
+    "name": "AgentSurfacePredictionContext",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface AgentSurfacePredictionContext<State, Input> {\n    readonly input: Input;\n    readonly snapshot: State;\n    readonly version: string;\n    readonly now: number;\n}"
+  },
+  {
+    "name": "AgentSurfacePredictor",
+    "kind": "type",
+    "package": "@nifrajs/webmcp",
+    "signature": "export type AgentSurfacePredictor<Input, State> = (context: AgentSurfacePredictionContext<State, Input>) => AgentSurfacePrediction | PromiseLike<AgentSurfacePrediction>;"
+  },
+  {
+    "name": "AgentSurfaceReconcileContext",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface AgentSurfaceReconcileContext<Input, Output, State> {\n    readonly input: Input;\n    readonly output: Output;\n    readonly previous: AgentSurfaceSnapshot<State>;\n    readonly prediction: AgentSurfacePrediction;\n    readonly now: number;\n}"
+  },
+  {
+    "name": "AgentSurfaceReconciler",
+    "kind": "type",
+    "package": "@nifrajs/webmcp",
+    "signature": "export type AgentSurfaceReconciler<Input, Output, State> = (context: AgentSurfaceReconcileContext<Input, Output, State>) => AgentSurfaceAuthoritativeState<State> | PromiseLike<AgentSurfaceAuthoritativeState<State>>;"
+  },
+  {
+    "name": "AgentSurfaceScope",
+    "kind": "type",
+    "package": "@nifrajs/webmcp",
+    "signature": "export type AgentSurfaceScope = \"page\" | \"session\" | \"server\";"
+  },
+  {
+    "name": "AgentSurfaceSnapshot",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface AgentSurfaceSnapshot<State> {\n    readonly state: State;\n    readonly version: string;\n}"
   },
   {
     "name": "agentTelemetry",
@@ -1238,6 +1323,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function assertBudgetRemaining(budget: RequestBudget, requiredMs?: number): void;",
     "doc": "/** Fail before starting work that cannot fit inside the remaining time. */"
+  },
+  {
+    "name": "assertCssLoadingCompatible",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function assertCssLoadingCompatible(cssCodeSplit: boolean, cssLoading: CssLoadingMode): void;",
+    "doc": "/**\n * Guard the only Vite combination that would claim to solve the stylesheet-insertion regression while\n * leaving the cause in place. A deferred split build can still attach CSS when a prefetched lazy chunk\n * evaluates, so it must fail closed instead of producing a misleadingly healthy deployment.\n */"
   },
   {
     "name": "assertDeploymentAuthorityMonotonic",
@@ -2151,7 +2243,7 @@
     "name": "BuildClientViteOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BuildClientViteOptions extends Omit<BuildClientOptions, \"plugins\"> {\n    /** Vite plugins for the app's client transforms (e.g. `react()`, `vue()`). */\n    readonly vitePlugins?: readonly unknown[];\n    /** Vite project root (default: the parent of `routesDir`). Manifest keys are relative to it. */\n    readonly root?: string;\n}",
+    "signature": "export interface BuildClientViteOptions extends Omit<BuildClientOptions, \"plugins\"> {\n    /** Vite plugins for the app's client transforms (e.g. `react()`, `vue()`). */\n    readonly vitePlugins?: readonly unknown[];\n    /** Vite project root (default: the parent of `routesDir`). Manifest keys are relative to it. */\n    readonly root?: string;\n    /**\n     * Vite's CSS output strategy (default `true`). Set to `false` to emit one aggregate stylesheet for\n     * the whole client, preventing lazy-route prefetch from attaching additional stylesheets.\n     */\n    readonly cssCodeSplit?: boolean;\n    /**\n     * Activation policy for framework-owned SSR stylesheet links (default `\"blocking\"`). `\"deferred\"`\n     * fetches with `media=\"print\"` and the generated client promotes the links before mounting. It must\n     * be paired with `cssCodeSplit: false`; split lazy chunks can otherwise attach CSS during prefetch.\n     */\n    readonly cssLoading?: CssLoadingMode;\n}",
     "doc": "/** Options for {@link buildClientVite} - the Bun {@link BuildClientOptions} minus Bun-plugin specifics,\n * plus the Vite plugin list the app injects for its transforms. */"
   },
   {
@@ -2205,7 +2297,7 @@
     "name": "BuildManifest",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BuildManifest {\n    /** URL of the client entry module (content-hashed). */\n    readonly entry: string;\n    /** URLs of every emitted asset (entry + chunks) - for serving + preloading. */\n    readonly assets: readonly string[];\n    /** `routeId → [layout chunk URLs…, own chunk URL]` - the chunks a route needs, for `createWebApp`'s\n     * `routePreload` (`<link rel=\"modulepreload\">` the matched route alongside the entry). Each route +\n     * layout is also a build entrypoint, so it gets a named chunk the bootstrap's lazy import dedupes to. */\n    readonly routes: Readonly<Record<string, readonly string[]>>;\n    /** URL paths copied from `publicDir`, sorted. Lets the server entry serve them without scanning a\n     * directory per request, and lets an adapter that needs a file list (CDN upload, platform static\n     * assets) consume one. Omitted when there is no `public/`. */\n    readonly publicFiles?: readonly string[];\n    /** The app's bundled, content-hashed stylesheet(s) - the bootstrap's **aggregate** CSS (every\n     * `import './x.css'` reachable from the app). The complete stylesheet regardless of which file\n     * imported the CSS; the always-safe fallback `createWebApp` links when a route has no per-route entry\n     * in {@link routeStyles}. Omitted when the app imports no CSS. */\n    readonly css?: readonly string[];\n    /** `routeId → [chain CSS URLs]` - only the stylesheets the matched route's layout chain + own file\n     * actually use (Bun emits a per-entrypoint CSS bundle per route/layout, with shared-component CSS\n     * inlined into each consumer). `createWebApp` links these instead of the aggregate, so a page ships\n     * only its own CSS. A route is omitted (→ aggregate fallback) when its `[name]` collides with another\n     * route's basename (ambiguous CSS↔route) or the build emitted orphan shared-chunk CSS - correctness\n     * over minimality. Absent entirely when the app imports no CSS. */\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>>;\n}"
+    "signature": "export interface BuildManifest {\n    /** URL of the client entry module (content-hashed). */\n    readonly entry: string;\n    /** URLs of every emitted asset (entry + chunks) - for serving + preloading. */\n    readonly assets: readonly string[];\n    /** `routeId → [layout chunk URLs…, own chunk URL]` - the chunks a route needs, for `createWebApp`'s\n     * `routePreload` (`<link rel=\"modulepreload\">` the matched route alongside the entry). Each route +\n     * layout is also a build entrypoint, so it gets a named chunk the bootstrap's lazy import dedupes to. */\n    readonly routes: Readonly<Record<string, readonly string[]>>;\n    /** URL paths copied from `publicDir`, sorted. Lets the server entry serve them without scanning a\n     * directory per request, and lets an adapter that needs a file list (CDN upload, platform static\n     * assets) consume one. Omitted when there is no `public/`. */\n    readonly publicFiles?: readonly string[];\n    /** The app's bundled, content-hashed stylesheet(s) - the bootstrap's **aggregate** CSS (every\n     * `import './x.css'` reachable from the app). The complete stylesheet regardless of which file\n     * imported the CSS; the always-safe fallback `createWebApp` links when a route has no per-route entry\n     * in {@link routeStyles}. Omitted when the app imports no CSS. */\n    readonly css?: readonly string[];\n    /** Whether the Vite client build kept CSS split by entry/chunk. Absent for the native Bun build. */\n    readonly cssCodeSplit?: boolean;\n    /** How framework-owned SSR stylesheet links should become active. Defaults to `blocking`. */\n    readonly cssLoading?: CssLoadingMode;\n    /** `routeId → [chain CSS URLs]` - only the stylesheets the matched route's layout chain + own file\n     * actually use (Bun emits a per-entrypoint CSS bundle per route/layout, with shared-component CSS\n     * inlined into each consumer). `createWebApp` links these instead of the aggregate, so a page ships\n     * only its own CSS. A route is omitted (→ aggregate fallback) when its `[name]` collides with another\n     * route's basename (ambiguous CSS↔route) or the build emitted orphan shared-chunk CSS - correctness\n     * over minimality. Absent entirely when the app imports no CSS. */\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>>;\n}"
   },
   {
     "name": "buildNifraManifest",
@@ -2251,7 +2343,7 @@
     "name": "BuildServerOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BuildServerOptions {\n    /** The `routes/` directory to discover (absolute path). */\n    readonly routesDir: string;\n    /** The worker entry module (absolute path) - your `worker.ts`. It imports `{ manifest, clientEntry }`\n     * from the generated `./server-manifest`, builds `createWebApp`, and `export default toFetchHandler(app)`. */\n    readonly serverEntry: string;\n    /** Output directory for the bundled worker (absolute path). */\n    readonly outDir: string;\n    /** The content-hashed client entry URL (from `buildClient`'s manifest) - **baked** into the generated\n     * server manifest, since a disk-less worker can't read `manifest.json` at runtime. */\n    readonly clientEntry: string;\n    /** The app's aggregate stylesheet URLs (`buildClient`'s `BuildManifest.css`) - baked into the generated\n     * manifest so the server entry hands them to `createWebApp` (→ `<link rel=\"stylesheet\">`). Omit ⇒ no CSS\n     * link (the built SSR page would otherwise render unstyled). */\n    readonly styles?: readonly string[] | undefined;\n    /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) - baked alongside `styles`. */\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>> | undefined;\n    /** Route/layout file → import specifier in the generated manifest (default: a relative path from the\n     * manifest's location - written next to `serverEntry` - to `routesDir`). */\n    readonly resolve?: (file: string) => string;\n    /** Filename for the generated server-manifest module, written next to `serverEntry` (default\n     * `\"server-manifest.ts\"`); your `serverEntry` imports it as `./server-manifest`. */\n    readonly manifestFile?: string;\n    /** Adapter build plugins (e.g. `solidBunPlugin(\"ssr\")` - Solid routes need their SSR transform at\n     * build time; React's JSX is Bun-native and needs none). */\n    readonly plugins?: readonly BunPlugin[];\n    /** `Bun.build` resolution conditions (default `[\"workerd\", \"edge-light\", \"browser\"]`) - selects each\n     * dependency's edge build. */\n    readonly conditions?: readonly string[];\n    /** Compile-time replacements (default `{ \"process.env.NODE_ENV\": '\"production\"' }` → production\n     * React/Solid on the edge). Pass an explicit object to override (e.g. `{}` to opt out). */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Minify the output (default `true`). */\n    readonly minify?: boolean;\n    /** `Bun.build` target (default `\"browser\"` - the right shape for edge runtimes: Cloudflare Workers,\n     * Vercel Edge, Deno, Deno Deploy). Use `\"node\"` for a `@nifrajs/node` server (so `node:*` built-ins\n     * stay external), or `\"bun\"` for a Bun server. The default `conditions` + the edge resolve shims\n     * only apply to the `\"browser\"` target; `\"node\"`/`\"bun\"` resolve their own renderer builds via the\n     * matching condition. */\n    readonly target?: \"browser\" | \"node\" | \"bun\";\n    /** **Lazy/code-split routes** (default `false`): emit `() => import(route)` loaders + bundle with\n     * `splitting`, so each route is its own chunk loaded on first request (smaller cold-start parse)\n     * instead of all parsed at boot. The output becomes the worker entry **+ chunk files** in `outDir`\n     * - on Cloudflare, ship them with wrangler's `no_bundle` + `find_additional_modules` + an ESModule\n     * `rule` (Node/Deno import the chunks natively). Eager (one self-contained file) stays the default. */\n    readonly lazy?: boolean;\n}"
+    "signature": "export interface BuildServerOptions {\n    /** The `routes/` directory to discover (absolute path). */\n    readonly routesDir: string;\n    /** The worker entry module (absolute path) - your `worker.ts`. It imports `{ manifest, clientEntry }`\n     * from the generated `./server-manifest`, builds `createWebApp`, and `export default toFetchHandler(app)`. */\n    readonly serverEntry: string;\n    /** Output directory for the bundled worker (absolute path). */\n    readonly outDir: string;\n    /** The content-hashed client entry URL (from `buildClient`'s manifest) - **baked** into the generated\n     * server manifest, since a disk-less worker can't read `manifest.json` at runtime. */\n    readonly clientEntry: string;\n    /** The app's aggregate stylesheet URLs (`buildClient`'s `BuildManifest.css`) - baked into the generated\n     * manifest so the server entry hands them to `createWebApp` (→ `<link rel=\"stylesheet\">`). Omit ⇒ no CSS\n     * link (the built SSR page would otherwise render unstyled). */\n    readonly styles?: readonly string[] | undefined;\n    /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) - baked alongside `styles`. */\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>> | undefined;\n    /** How framework-owned stylesheet links should activate before hydration (default `\"blocking\"`). */\n    readonly cssLoading?: CssLoadingMode;\n    /** Route/layout file → import specifier in the generated manifest (default: a relative path from the\n     * manifest's location - written next to `serverEntry` - to `routesDir`). */\n    readonly resolve?: (file: string) => string;\n    /** Filename for the generated server-manifest module, written next to `serverEntry` (default\n     * `\"server-manifest.ts\"`); your `serverEntry` imports it as `./server-manifest`. */\n    readonly manifestFile?: string;\n    /** Adapter build plugins (e.g. `solidBunPlugin(\"ssr\")` - Solid routes need their SSR transform at\n     * build time; React's JSX is Bun-native and needs none). */\n    readonly plugins?: readonly BunPlugin[];\n    /** `Bun.build` resolution conditions (default `[\"workerd\", \"edge-light\", \"browser\"]`) - selects each\n     * dependency's edge build. */\n    readonly conditions?: readonly string[];\n    /** Compile-time replacements (default `{ \"process.env.NODE_ENV\": '\"production\"' }` → production\n     * React/Solid on the edge). Pass an explicit object to override (e.g. `{}` to opt out). */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Minify the output (default `true`). */\n    readonly minify?: boolean;\n    /** `Bun.build` target (default `\"browser\"` - the right shape for edge runtimes: Cloudflare Workers,\n     * Vercel Edge, Deno, Deno Deploy). Use `\"node\"` for a `@nifrajs/node` server (so `node:*` built-ins\n     * stay external), or `\"bun\"` for a Bun server. The default `conditions` + the edge resolve shims\n     * only apply to the `\"browser\"` target; `\"node\"`/`\"bun\"` resolve their own renderer builds via the\n     * matching condition. */\n    readonly target?: \"browser\" | \"node\" | \"bun\";\n    /** **Lazy/code-split routes** (default `false`): emit `() => import(route)` loaders + bundle with\n     * `splitting`, so each route is its own chunk loaded on first request (smaller cold-start parse)\n     * instead of all parsed at boot. The output becomes the worker entry **+ chunk files** in `outDir`\n     * - on Cloudflare, ship them with wrangler's `no_bundle` + `find_additional_modules` + an ESModule\n     * `rule` (Node/Deno import the chunks natively). Eager (one self-contained file) stays the default. */\n    readonly lazy?: boolean;\n}"
   },
   {
     "name": "buildServerVite",
@@ -2264,7 +2356,7 @@
     "name": "BuildServerViteOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BuildServerViteOptions {\n    readonly routesDir: string;\n    readonly serverEntry: string;\n    readonly outDir: string;\n    readonly clientEntry: string;\n    readonly styles?: readonly string[] | undefined;\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>> | undefined;\n    readonly resolve?: (file: string) => string;\n    readonly manifestFile?: string;\n    readonly vitePlugins?: readonly unknown[];\n    readonly conditions?: readonly string[];\n    readonly define?: Readonly<Record<string, string>>;\n    readonly minify?: boolean;\n    /** The runtime the worker targets - mirrors `buildServer`. `browser` = the edge (workerd/edge-light). */\n    readonly target?: \"browser\" | \"node\" | \"bun\";\n    /** Vite project root (default: the parent of `routesDir`). */\n    readonly root?: string;\n}",
+    "signature": "export interface BuildServerViteOptions {\n    readonly routesDir: string;\n    readonly serverEntry: string;\n    readonly outDir: string;\n    readonly clientEntry: string;\n    readonly styles?: readonly string[] | undefined;\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>> | undefined;\n    /** How framework-owned stylesheet links should activate before hydration (default `\"blocking\"`). */\n    readonly cssLoading?: CssLoadingMode;\n    readonly resolve?: (file: string) => string;\n    readonly manifestFile?: string;\n    readonly vitePlugins?: readonly unknown[];\n    readonly conditions?: readonly string[];\n    readonly define?: Readonly<Record<string, string>>;\n    readonly minify?: boolean;\n    /** The runtime the worker targets - mirrors `buildServer`. `browser` = the edge (workerd/edge-light). */\n    readonly target?: \"browser\" | \"node\" | \"bun\";\n    /** Vite project root (default: the parent of `routesDir`). */\n    readonly root?: string;\n}",
     "doc": "/** Options for {@link buildServerVite} - the same surface as `buildServer` minus Bun-plugin specifics. */"
   },
   {
@@ -2284,7 +2376,7 @@
     "name": "BuildTargetOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BuildTargetOptions {\n    /** The `routes/` directory to discover (absolute path). */\n    readonly routesDir: string;\n    /** Output directory for the assembled deploy dir (absolute path). Cleared and recreated. */\n    readonly outDir: string;\n    /** A scratch directory for intermediate codegen (the generated server entry + manifest) and the\n     * server bundle, cleaned up after. Absolute path. */\n    readonly workDir: string;\n    /** The adapter's client runtime module (exports `mountRouter`), e.g. `\"@nifrajs/web-react/client\"`. */\n    readonly clientModule: string;\n    /** Import specifier (resolvable from `workDir`) of the module exporting `adapter`. */\n    readonly adapterImport: string;\n    /** Import specifier (resolvable from `workDir`) of the module exporting `backend`, or `undefined`. */\n    readonly backendImport?: string;\n    /** Import specifier (resolvable from `workDir`) of the module exporting `use` (app-level middleware\n     * applied before page routes are declared), or `undefined`. Must resolve to the same edge-safe\n     * module as `adapterImport`. */\n    readonly useImport?: string;\n    /** Factory that builds the app for `static` prerendering, GIVEN the client build's manifest - so the\n     * emitted hydration `<script src>` uses the REAL content-hashed entry (`client.entry`) plus the same\n     * styles/route-preload the server targets use. A pre-built instance can't work here: the hash isn't known\n     * until `buildClient` runs inside `buildTarget`, so a hardcoded entry 404s → pages render but never\n     * hydrate. Required for `target: \"static\"` (SSG drives `app.fetch`); ignored otherwise. */\n    readonly prerenderApp?: (client: BuildManifest) => PrerenderAppLike | Promise<PrerenderAppLike>;\n    /** Client-build plugins (e.g. the MDX/Vue/Solid Bun plugins). */\n    readonly clientPlugins?: readonly BunPlugin[];\n    /** Server-build plugins (e.g. the SSR variants). */\n    readonly serverPlugins?: readonly BunPlugin[];\n    /** Extra Bun.build resolve conditions for the CLIENT build. */\n    readonly conditions?: readonly string[];\n    /** Compile-time `define` replacements layered onto both builds. */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Project-root static directory copied to deploy root. `false` disables it. */\n    readonly publicDir?: string | false;\n    /** Prefix of environment variables allowed into the client bundle (default `\"PUBLIC_\"`). */\n    readonly publicEnvPrefix?: string;\n    /** Document `<title>` for the generated server entry. */\n    readonly title?: string;\n}"
+    "signature": "export interface BuildTargetOptions {\n    /** The `routes/` directory to discover (absolute path). */\n    readonly routesDir: string;\n    /** Output directory for the assembled deploy dir (absolute path). Cleared and recreated. */\n    readonly outDir: string;\n    /** A scratch directory for intermediate codegen (the generated server entry + manifest) and the\n     * server bundle, cleaned up after. Absolute path. */\n    readonly workDir: string;\n    /** The adapter's client runtime module (exports `mountRouter`), e.g. `\"@nifrajs/web-react/client\"`. */\n    readonly clientModule: string;\n    /** Import specifier (resolvable from `workDir`) of the module exporting `adapter`. */\n    readonly adapterImport: string;\n    /** Import specifier (resolvable from `workDir`) of the module exporting `backend`, or `undefined`. */\n    readonly backendImport?: string;\n    /** Import specifier (resolvable from `workDir`) of the module exporting `use` (app-level middleware\n     * applied before page routes are declared), or `undefined`. Must resolve to the same edge-safe\n     * module as `adapterImport`. */\n    readonly useImport?: string;\n    /** Factory that builds the app for `static` prerendering, GIVEN the client build's manifest - so the\n     * emitted hydration `<script src>` uses the REAL content-hashed entry (`client.entry`) plus the same\n     * styles/route-preload the server targets use. A pre-built instance can't work here: the hash isn't known\n     * until `buildClient` runs inside `buildTarget`, so a hardcoded entry 404s → pages render but never\n     * hydrate. Required for `target: \"static\"` (SSG drives `app.fetch`); ignored otherwise. */\n    readonly prerenderApp?: (client: BuildManifest) => PrerenderAppLike | Promise<PrerenderAppLike>;\n    /** Client-build plugins (e.g. the MDX/Vue/Solid Bun plugins). */\n    readonly clientPlugins?: readonly BunPlugin[];\n    /** Server-build plugins (e.g. the SSR variants). */\n    readonly serverPlugins?: readonly BunPlugin[];\n    /** Extra Bun.build resolve conditions for the CLIENT build. */\n    readonly conditions?: readonly string[];\n    /** Compile-time `define` replacements layered onto both builds. */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Project-root static directory copied to deploy root. `false` disables it. */\n    readonly publicDir?: string | false;\n    /** Prefix of environment variables allowed into the client bundle (default `\"PUBLIC_\"`). */\n    readonly publicEnvPrefix?: string;\n    /**\n     * Vite-only CSS output policy. `false` emits one aggregate stylesheet. The native Bun build does not\n     * support this switch and fails closed if it is supplied instead of silently ignoring it.\n     */\n    readonly cssCodeSplit?: boolean;\n    /**\n     * Activation policy for framework-owned SSR stylesheet links. Defaults to `\"blocking\"`; `\"deferred\"`\n     * fetches with `media=\"print\"` and promotes before hydration. With Vite, pair it with\n     * `cssCodeSplit: false`; the native Bun build supports the activation policy but keeps its existing\n     * CSS output strategy.\n     */\n    readonly cssLoading?: CssLoadingMode;\n    /** Document `<title>` for the generated server entry. */\n    readonly title?: string;\n}"
   },
   {
     "name": "BuildTargetPlan",
@@ -2330,7 +2422,7 @@
     "name": "Bundler",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface Bundler {\n    /** Build the client bundle → the shared {@link BuildManifest}. */\n    buildClient(input: {\n        readonly routesDir: string;\n        readonly outDir: string;\n        readonly clientModule: string;\n        readonly plugins?: readonly unknown[];\n        readonly conditions?: readonly string[];\n        readonly define?: Readonly<Record<string, string>>;\n        readonly publicDir?: string | false;\n        readonly publicEnvPrefix?: string;\n        /** Project root (Vite needs it; the Bun strategy ignores it). */\n        readonly root?: string;\n    }): Promise<BuildManifest>;\n    /** Build the server worker → the shared {@link ServerBuild}. */\n    buildServer(input: {\n        readonly routesDir: string;\n        readonly serverEntry: string;\n        readonly outDir: string;\n        readonly clientEntry: string;\n        readonly target: \"browser\" | \"node\" | \"bun\";\n        readonly plugins?: readonly unknown[];\n        readonly define?: Readonly<Record<string, string>>;\n        readonly root?: string;\n    }): Promise<ServerBuild>;\n}",
+    "signature": "export interface Bundler {\n    /** Build the client bundle → the shared {@link BuildManifest}. */\n    buildClient(input: {\n        readonly routesDir: string;\n        readonly outDir: string;\n        readonly clientModule: string;\n        readonly plugins?: readonly unknown[];\n        readonly conditions?: readonly string[];\n        readonly define?: Readonly<Record<string, string>>;\n        readonly publicDir?: string | false;\n        readonly publicEnvPrefix?: string;\n        /** Vite CSS splitting policy; the Bun strategy rejects `false` and otherwise preserves its native behavior. */\n        readonly cssCodeSplit?: boolean;\n        /** Framework-owned stylesheet activation policy; supported by both server strategies. */\n        readonly cssLoading?: CssLoadingMode;\n        /** Project root (Vite needs it; the Bun strategy ignores it). */\n        readonly root?: string;\n    }): Promise<BuildManifest>;\n    /** Build the server worker → the shared {@link ServerBuild}. */\n    buildServer(input: {\n        readonly routesDir: string;\n        readonly serverEntry: string;\n        readonly outDir: string;\n        readonly clientEntry: string;\n        readonly target: \"browser\" | \"node\" | \"bun\";\n        /** The client build's aggregate stylesheet URLs to bake into the server manifest. */\n        readonly styles?: readonly string[];\n        /** The client build's per-route stylesheet map to bake into the server manifest. */\n        readonly routeStyles?: Readonly<Record<string, readonly string[]>>;\n        readonly plugins?: readonly unknown[];\n        readonly define?: Readonly<Record<string, string>>;\n        /** CSS activation policy to bake into the generated server manifest. */\n        readonly cssLoading?: CssLoadingMode;\n        readonly root?: string;\n    }): Promise<ServerBuild>;\n}",
     "doc": "/**\n * A build-tool STRATEGY for {@link buildTargetWith} - the two bundling steps, and nothing else. Everything\n * around them (server-entry codegen, deploy assembly, prerender, size report) is bundler-agnostic and\n * lives in `buildTargetWith`, so a second bundler (Vite) is this interface, not a second orchestrator.\n *\n * Plugin lists are `readonly unknown[]` because a Bun plugin and a Vite plugin are different types; each\n * strategy casts to its own. `buildTargetWith` only forwards them.\n */"
   },
   {
@@ -3221,7 +3313,7 @@
     "name": "ClientAction",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type ClientAction = (args: ClientActionArgs) => ClientActionResult | void | Promise<ClientActionResult | void>;",
+    "signature": "export type ClientAction = (args: ClientActionArgs) => ClientActionResult | undefined | Promise<ClientActionResult | undefined>;",
     "doc": "/** A client-only action wrapper; it never replaces the server action. */"
   },
   {
@@ -3375,7 +3467,7 @@
     "name": "CodingAgentRpcServer",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
-    "signature": "export declare class CodingAgentRpcServer {\n    readonly host: CodingAgentHost;\n    private readonly options;\n    private readonly token;\n    private readonly maxBodyBytes;\n    private listener;\n    constructor(options: CodingAgentRpcServerOptions);\n    start(): Promise<CodingAgentRpcServerHandle>;\n    stop(): Promise<void>;\n    private fetch;\n    private dispatch;\n    private requireSnapshot;\n    private protocolError;\n    private readRequest;\n}",
+    "signature": "export declare class CodingAgentRpcServer {\n    readonly host: CodingAgentHost;\n    private readonly options;\n    private readonly token;\n    private readonly maxBodyBytes;\n    private readonly maxResponseBytes;\n    private listener;\n    constructor(options: CodingAgentRpcServerOptions);\n    start(): Promise<CodingAgentRpcServerHandle>;\n    stop(): Promise<void>;\n    private fetch;\n    private dispatch;\n    private requireSnapshot;\n    private response;\n    private protocolError;\n    private readRequest;\n}",
     "doc": "/**\n * Minimal loopback RPC surface for the CLI, Workbench, CI clients, and a future mobile companion.\n * Turn output is SSE so clients do not need a WebSocket dependency; every event is still a versioned\n * protocol event from the backend.\n */"
   },
   {
@@ -3388,7 +3480,7 @@
     "name": "CodingAgentRpcServerOptions",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface CodingAgentRpcServerOptions {\n    readonly backend: AgentBackend;\n    readonly cwd: string;\n    readonly hostname?: string;\n    /** Remote binding is opt-in; the default only permits loopback hosts. */\n    readonly allowRemote?: boolean;\n    readonly port?: number;\n    /** A random token is generated when omitted. Use an explicit token only for managed local launchers. */\n    readonly authToken?: string;\n    /** Include bounded exception stacks in RPC failures only for trusted loopback debugging. */\n    readonly exposeErrorStacks?: boolean;\n    readonly maxBodyBytes?: number;\n    readonly sessionStore?: SessionStore;\n    readonly contextWindow?: ContextWindowOptions;\n    readonly extensions?: ExtensionHost;\n    readonly ui?: UiExtensionHost;\n    readonly verifyAfterTurn?: readonly (\"check\" | \"assure\" | \"test\")[];\n    readonly maxRepairAttempts?: number;\n    readonly verification?: CodingAgentHostOptions[\"verification\"];\n}"
+    "signature": "export interface CodingAgentRpcServerOptions {\n    readonly backend: AgentBackend;\n    readonly cwd: string;\n    readonly hostname?: string;\n    /** Remote binding is opt-in; the default only permits loopback hosts. */\n    readonly allowRemote?: boolean;\n    readonly port?: number;\n    /** A random token is generated when omitted. Use an explicit token only for managed local launchers. */\n    readonly authToken?: string;\n    /** Include bounded exception stacks in RPC failures only for trusted loopback debugging. */\n    readonly exposeErrorStacks?: boolean;\n    readonly maxBodyBytes?: number;\n    /** Maximum UTF-8 bytes in one non-streaming JSON response. Defaults to 4 MiB. */\n    readonly maxResponseBytes?: number;\n    readonly sessionStore?: SessionStore;\n    readonly contextWindow?: ContextWindowOptions;\n    readonly extensions?: ExtensionHost;\n    readonly ui?: UiExtensionHost;\n    readonly verifyAfterTurn?: readonly (\"check\" | \"assure\" | \"test\")[];\n    readonly maxRepairAttempts?: number;\n    readonly verification?: CodingAgentHostOptions[\"verification\"];\n}"
   },
   {
     "name": "collectAssuranceReport",
@@ -3692,7 +3784,7 @@
     "name": "Content",
     "kind": "const",
     "package": "@nifrajs/web-vue",
-    "signature": "export declare const Content: import(\"vue\").DefineComponent<import(\"vue\").ExtractPropTypes<{\n    /** Trusted, pre-rendered HTML (e.g. `entry.html`). */\n    html: {\n        type: StringConstructor;\n        required: true;\n    };\n    /** Wrapper element (default `\"div\"`). */\n    as: {\n        type: StringConstructor;\n        default: string;\n    };\n}>, () => import(\"vue\").VNode<import(\"vue\").RendererNode, import(\"vue\").RendererElement, {\n    [key: string]: any;\n}>, {}, {}, {}, import(\"vue\").ComponentOptionsMixin, import(\"vue\").ComponentOptionsMixin, {}, string, import(\"vue\").PublicProps, Readonly<import(\"vue\").ExtractPropTypes<{\n    /** Trusted, pre-rendered HTML (e.g. `entry.html`). */\n    html: {\n        type: StringConstructor;\n        required: true;\n    };\n    /** Wrapper element (default `\"div\"`). */\n    as: {\n        type: StringConstructor;\n        default: string;\n    };\n}>> & Readonly<{}>, {\n    as: string;\n}, {}, {}, {}, string, import(\"vue\").ComponentProvideOptions, true, {}, any>;",
+    "signature": "export declare const Content: import(\"vue\").DefineComponent<import(\"vue\").ExtractPropTypes<{\n    /** Trusted, pre-rendered HTML (e.g. `entry.html`). */\n    html: {\n        type: () => TrustedHtml;\n        required: true;\n    };\n    /** Wrapper element (default `\"div\"`). */\n    as: {\n        type: StringConstructor;\n        default: string;\n    };\n}>, () => import(\"vue\").VNode<import(\"vue\").RendererNode, import(\"vue\").RendererElement, {\n    [key: string]: any;\n}>, {}, {}, {}, import(\"vue\").ComponentOptionsMixin, import(\"vue\").ComponentOptionsMixin, {}, string, import(\"vue\").PublicProps, Readonly<import(\"vue\").ExtractPropTypes<{\n    /** Trusted, pre-rendered HTML (e.g. `entry.html`). */\n    html: {\n        type: () => TrustedHtml;\n        required: true;\n    };\n    /** Wrapper element (default `\"div\"`). */\n    as: {\n        type: StringConstructor;\n        default: string;\n    };\n}>> & Readonly<{}>, {\n    as: string;\n}, {}, {}, {}, string, import(\"vue\").ComponentProvideOptions, true, {}, any>;",
     "doc": "/** Render trusted HTML into a wrapper element. `inheritAttrs: false` + manual attr spread so passthrough\n * (`class`, `id`, `style`, …) lands on the wrapper exactly once. */"
   },
   {
@@ -3718,25 +3810,25 @@
     "name": "ContentProps",
     "kind": "interface",
     "package": "@nifrajs/web-preact",
-    "signature": "export interface ContentProps extends Omit<JSX.HTMLAttributes<HTMLElement>, \"dangerouslySetInnerHTML\"> {\n    /** Trusted, pre-rendered HTML (e.g. `entry.html`). */\n    readonly html: string;\n    /** Wrapper element (default `\"div\"`). */\n    readonly as?: string;\n}"
+    "signature": "export interface ContentProps extends Omit<JSX.HTMLAttributes<HTMLElement>, \"dangerouslySetInnerHTML\"> {\n    /** Trusted, pre-rendered HTML (e.g. `entry.html`). */\n    readonly html: TrustedHtml;\n    /** Wrapper element (default `\"div\"`). */\n    readonly as?: string;\n}"
   },
   {
     "name": "ContentProps",
     "kind": "interface",
     "package": "@nifrajs/web-react",
-    "signature": "export interface ContentProps extends Omit<ComponentPropsWithoutRef<\"div\">, \"dangerouslySetInnerHTML\" | \"children\"> {\n    /** Trusted, pre-rendered HTML (e.g. `entry.html`). */\n    readonly html: string;\n    /** Wrapper element (default `\"div\"`). */\n    readonly as?: ElementType;\n}"
+    "signature": "export interface ContentProps extends Omit<ComponentPropsWithoutRef<\"div\">, \"dangerouslySetInnerHTML\" | \"children\"> {\n    /** Trusted, pre-rendered HTML (e.g. `entry.html`). */\n    readonly html: TrustedHtml;\n    /** Wrapper element (default `\"div\"`). */\n    readonly as?: ElementType;\n}"
   },
   {
     "name": "ContentProps",
     "kind": "interface",
     "package": "@nifrajs/web-solid",
-    "signature": "export interface ContentProps {\n    /** Trusted, pre-rendered HTML (e.g. `entry.html`). */\n    readonly html: string;\n    /** Wrapper element (default `\"div\"`). */\n    readonly as?: string;\n    /** DOM passthrough (`class`, `style`, `id`, `data-*`, handlers). */\n    readonly [key: string]: unknown;\n}"
+    "signature": "export interface ContentProps {\n    /** Trusted, pre-rendered HTML (e.g. `entry.html`). */\n    readonly html: TrustedHtml;\n    /** Wrapper element (default `\"div\"`). */\n    readonly as?: string;\n    /** DOM passthrough (`class`, `style`, `id`, `data-*`, handlers). */\n    readonly [key: string]: unknown;\n}"
   },
   {
     "name": "ContentProps",
     "kind": "interface",
     "package": "@nifrajs/web-svelte",
-    "signature": "export interface ContentProps {\n  /** Trusted, pre-rendered HTML (e.g. `entry.html`). */\n  html: string\n  /** Wrapper element (default `\"div\"`). */\n  as?: string\n  /** DOM passthrough (`class`, `style`, `id`, `data-*`, …). */\n  [key: string]: unknown\n}",
+    "signature": "export interface ContentProps {\n  /** Trusted, pre-rendered HTML (e.g. `entry.html`). */\n  html: TrustedHtml\n  /** Wrapper element (default `\"div\"`). */\n  as?: string\n  /** DOM passthrough (`class`, `style`, `id`, `data-*`, …). */\n  [key: string]: unknown\n}",
     "doc": "/**\n * Hand-written types for `Content.svelte` (svelte-package would generate this). Consumers resolve this\n * through the `./content` export's `types` condition.\n */"
   },
   {
@@ -4220,7 +4312,7 @@
     "name": "CreateMcpServerOptions",
     "kind": "interface",
     "package": "@nifrajs/mcp",
-    "signature": "export interface CreateMcpServerOptions {\n    readonly name: string;\n    readonly version: string;\n    readonly tools?: readonly McpTool[];\n    /** MCP Apps widgets - their resources are registered and the UI capability is advertised. */\n    readonly widgets?: readonly McpWidget[];\n    /** Extra (non-widget) resources to expose. */\n    readonly resources?: readonly McpResource[];\n    readonly prompts?: readonly McpPrompt[];\n    /** GET health-page text. */\n    readonly health?: string;\n    /** Max JSON-RPC body size in bytes (default 1 MB). */\n    readonly maxBodyBytes?: number;\n    /** Natural-language guidance for LLMs, surfaced in the modern `server/discover` result (2026-07-28). */\n    readonly instructions?: string;\n    /** Origin allowlist for the DNS-rebinding guard. Omit to allow any origin; set it to reject other\n     * browser origins with 403 (e.g. a hardened, non-public mount). */\n    readonly allowedOrigins?: readonly string[];\n    /**\n     * Per-message authorization, applied after the message parses and before any tool runs. Return\n     * `false` to answer 403 with a JSON-RPC `unauthorized` error (`MCP_ERROR.UNAUTHORIZED`) and no result.\n     *\n     * This is the seam for \"this caller may list tools but may not call the write ones\" - the HTTP\n     * layer above only sees one opaque POST, so a route guard cannot make that distinction.\n     * `fetch(request, { authorizeMessage })` overrides it per request when the decision depends on\n     * something the surrounding handler resolved (a session, a tenant).\n     */\n    readonly authorizeMessage?: (message: JsonRpcRequest, request: Request) => boolean | Promise<boolean>;\n}"
+    "signature": "export interface CreateMcpServerOptions {\n    readonly name: string;\n    readonly version: string;\n    readonly tools?: readonly McpTool[];\n    /** MCP Apps widgets - their resources are registered and the UI capability is advertised. */\n    readonly widgets?: readonly McpWidget[];\n    /** Extra (non-widget) resources to expose. */\n    readonly resources?: readonly McpResource[];\n    readonly prompts?: readonly McpPrompt[];\n    /** GET health-page text. */\n    readonly health?: string;\n    /** Max JSON-RPC body size in bytes (default 1 MB). */\n    readonly maxBodyBytes?: number;\n    /** Max serialized JSON-RPC response or SSE frame size (default 1 MB). */\n    readonly maxResponseBytes?: number;\n    /** Natural-language guidance for LLMs, surfaced in the modern `server/discover` result (2026-07-28). */\n    readonly instructions?: string;\n    /** Origin allowlist for the DNS-rebinding guard. Omit to allow any origin; set it to reject other\n     * browser origins with 403 (e.g. a hardened, non-public mount). */\n    readonly allowedOrigins?: readonly string[];\n    /** Shared state for one authenticated MCP session; prefer `resolveState` for multi-session hosts. */\n    readonly state?: McpProtocolState;\n    /** Resolve a session-scoped request registry after per-message authorization. */\n    readonly resolveState?: McpHttpOptions[\"resolveState\"];\n    /**\n     * Per-message authorization, applied after the message parses and before any tool runs. Return\n     * `false` to answer 403 with a JSON-RPC `unauthorized` error (`MCP_ERROR.UNAUTHORIZED`) and no result.\n     *\n     * This is the seam for \"this caller may list tools but may not call the write ones\" - the HTTP\n     * layer above only sees one opaque POST, so a route guard cannot make that distinction.\n     * `fetch(request, { authorizeMessage })` overrides it per request when the decision depends on\n     * something the surrounding handler resolved (a session, a tenant).\n     */\n    readonly authorizeMessage?: (message: JsonRpcRequest, request: Request) => boolean | Promise<boolean>;\n}"
   },
   {
     "name": "createMemoryAgentEvidenceLog",
@@ -4311,6 +4403,13 @@
     "package": "@nifrajs/image",
     "signature": "export declare function createPngRasterizer(render: PngRenderer): OgImageRasterizer;",
     "doc": "/**\n * Adapt an injected SVG→PNG renderer to `ogImageResponse`.\n *\n * The renderer stays application-owned because codec/WASM choice is runtime-specific. For example:\n *\n * ```ts\n * import { Resvg } from \"@resvg/resvg-js\"\n * import { createPngRasterizer } from \"@nifrajs/image/og-png\"\n * const rasterizer = createPngRasterizer((svg) => new Resvg(svg).render().asPng())\n * ```\n *\n * This is the public reference adapter; the core package remains zero-dependency and keeps SVG as its\n * explicit default for callers that do not opt into a codec.\n */"
+  },
+  {
+    "name": "createPredictionStore",
+    "kind": "function",
+    "package": "@nifrajs/webmcp",
+    "signature": "export declare function createPredictionStore<State>(initial: AgentSurfaceAuthoritativeState<State>): PredictionStore<State>;",
+    "doc": "/**\n * An atomic, defensive prediction store. Predictions are overlays over authoritative state; a server\n * commit replaces the base and remaining overlays are replayed or conflict-dropped.\n */"
   },
   {
     "name": "createPresetSpec",
@@ -4541,7 +4640,7 @@
     "name": "CreateWebAppOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface CreateWebAppOptions<Env = unknown> {\n    readonly adapter: RenderAdapter;\n    readonly manifest: Manifest;\n    /** URL of the built client entry (module script) injected into every page. */\n    readonly clientEntry: string;\n    /** Default document title for all pages. */\n    readonly title?: string;\n    /**\n     * Options for the underlying `server()` - `requestTimeoutMs`, `admission`, `gracefulSignals`, and\n     * the rest of {@link ServerOptions}.\n     *\n     * Needed because the `Server` is constructed in here, so a caller has no other way to reach its\n     * constructor: a page app could set no request timeout and no capacity gate, which are exactly the\n     * two knobs a production readiness check looks for. An SSR app wants them MORE than a backend does -\n     * a render is slow and allocation-heavy, so a burst that a JSON API would absorb is the one that\n     * exhausts the pod.\n     *\n     * Applies to the whole app, {@link mounts} and the {@link api} auto-mount included: the capacity gate\n     * sits at the fetch entry, ahead of the request hooks those are dispatched from.\n     */\n    readonly server?: ServerOptions;\n    /**\n     * Runs against the app BEFORE any page route is registered - the seam for `securityHeaders()`,\n     * `requestId()`, `logger()`, a rate limit, or anything else applied with `use`.\n     *\n     * ```ts\n     * createWebApp({\n     *   …,\n     *   use: (app) => {\n     *     app.use(securityHeaders())\n     *     app.use(requestId())\n     *   },\n     * })\n     * ```\n     *\n     * A callback rather than an array because `use` is overloaded - `Middleware`, `IdentityPlugin`,\n     * `ContextPlugin` - and only the real call site instantiates the right overload. The return value\n     * is ignored: this is for cross-cutting concerns, not for declaring routes (declare those on the\n     * returned app, where they get their types).\n     *\n     * **Why the timing matters.** `beforeHandle`, `afterHandle`, `around`, `derive`/`decorate`, and\n     * `onError` are snapshotted into each route AS IT IS DECLARED, and `createWebApp` declares every\n     * page (plus the `/*` catch-all) before it returns - so a caller's `app.use(…)` afterwards binds\n     * them to nothing, silently. `requestId()` is exactly that case: it is a `derive`, so applied late\n     * it leaves every page without `c.requestId`. Route assurance evidence is order-scoped the same\n     * way, so a late `securityHeaders()` leaves the pages unable to PROVE the header to `nifra assure`\n     * even though it does still set it.\n     *\n     * `onRequest`/`onResponse` (and the response header/body hooks) are app-global arrays read at\n     * request time, so those alone DO work when added late. Using this seam for everything avoids\n     * having to remember which is which.\n     *\n     * Runs ahead of the {@link mounts} / {@link api} request hooks, so an `onRequest` middleware guards\n     * a mounted auth handler too.\n     *\n     * A `ContextPlugin` applied here takes runtime effect but cannot widen the declared return type of\n     * this function, so `c.requestId` is not typed on routes you declare afterwards. Named plugins are\n     * idempotent, so `app.use(requestId())` on the returned app recovers the TYPE without applying the\n     * plugin a second time.\n     */\n    readonly use?: (app: ReturnType<typeof server<Env>>) => void;\n    /** Injected into each loader's `ctx.api` - typically an `inProcessClient(app)` (typed\n     * per-route via `@nifrajs/client`'s `createRoutes`). Opaque to the core.\n     *\n     * **Auto-mount.** Every `inProcessClient(backend)` exposes the symbol-keyed platform-aware backend\n     * mount interface from `@nifrajs/core/mount`; `createWebApp` also serves that backend over HTTP at\n     * {@link apiPrefix} (default `/api`): a request whose pathname starts with the prefix is dispatched\n     * before page routing with the same `env`/`waitUntil` platform context, and the backend's `Response`\n     * is returned untouched. The mount runs in `nifra dev` too. Pass `apiPrefix: \"\"` to disable it. */\n    readonly api?: unknown;\n    /** HTTP path prefix the {@link api} backend is auto-mounted at (default `\"/api\"`). A request whose\n     * pathname is exactly the prefix or starts with `prefix + \"/\"` is dispatched to the backend before\n     * page routing; the backend therefore defines its routes at the **full** path (`server().post(\"/api/\n     * sync\", …)`), matching the in-process `inProcessClient` call sites. Set to `\"\"` to disable the\n     * auto-mount entirely (the app serves pages only and `api` stays a loader-only `ctx.api`). Mounting\n     * is also a no-op when `api` does not expose the symbol mount. */\n    readonly apiPrefix?: string;\n    /**\n     * Strip {@link apiPrefix} from the pathname before dispatching to `api` (default `false`).\n     *\n     * The default suits a backend that declares FULL paths (`server().post(\"/api/sync\", …)`), which is\n     * right when it is only ever mounted here. Set this when the backend declares its routes WITHOUT the\n     * prefix because it also runs standalone behind its own shell, so its paths cannot carry a prefix that\n     * only exists when it is mounted. Without it every request 404s inside the backend, and the workaround\n     * is a `Proxy` that rewrites each URL.\n     */\n    readonly apiStrip?: boolean;\n    /**\n     * Sub-apps mounted ahead of page routing - an auth handler, a webhook receiver, a stack's routes.\n     *\n     * Structural on purpose: anything with `{ path, app: { fetch } }` fits, so a library that exposes its\n     * routes as such a list mounts as `mounts: theirRoutes` without `@nifrajs/web` taking a dependency on\n     * it. `better-auth` is the motivating case - it is not a `backend` route, so `/api/auth/*` used to 404\n     * silently.\n     *\n     * Tried longest-path-first and BEFORE the `api` mount, so a mount at `/api/auth` wins over a backend\n     * at `/api` no matter which was declared first. `stripPrefix` is the per-mount form of {@link apiStrip}:\n     * leave it off to pass the full path through.\n     */\n    readonly mounts?: ReadonlyArray<{\n        readonly path: string;\n        readonly app: {\n            fetch(request: Request): Response | Promise<Response>;\n        };\n        readonly stripPrefix?: boolean;\n    }>;\n    /** Secret for **draft / preview mode** (see `enableDraft`). When set, a request carrying a valid\n     * signed `__nifra_draft` cookie gets `ctx.draft === true` in loaders/actions (else always `false`).\n     * Pair with `withISR({ draftSecret })` so editors bypass the cache. Omit to disable draft mode. */\n    readonly draftSecret?: string;\n    /** Per-route chunk URLs (`buildClient`'s `BuildManifest.routes`) - `routeId → [layout chunks…, own\n     * chunk]`. When present, each page `modulepreload`s its matched route's chunks alongside the entry,\n     * so the route code downloads in parallel (no entry→route-chunk waterfall). Omit ⇒ entry-only. */\n    readonly routePreload?: Readonly<Record<string, readonly string[]>>;\n    /** The app's bundled stylesheet URLs (`buildClient`'s `BuildManifest.css`) - the aggregate, injected\n     * as `<link rel=\"stylesheet\">` in a page's `<head>`. Used as the fallback for any route absent from\n     * {@link routeStyles}. Omit ⇒ no links (dev, where Vite injects CSS, or a CSS-free app). */\n    readonly styles?: readonly string[];\n    /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) - `routeId → [chain CSS]`.\n     * When a matched route has an entry here, only those (its layout chain + own CSS) are linked instead\n     * of the aggregate `styles`, so a page ships only the CSS it uses. An empty array ⇒ no `<link>` (the\n     * page imports no CSS). Routes absent here fall back to `styles`. Omit ⇒ always use `styles`. */\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>>;\n    /** SSG: the prerendered-path set (e.g. `enumerateStaticRoutes(routes).paths` or the build's\n     * `prerendered.json`). Injected as `window.__NIFRA_PRERENDERED__` on every page so a client soft-nav\n     * into a prerendered route fetches its static `_data.json` instead of hitting the worker. */\n    readonly prerenderedPaths?: readonly string[];\n    /** Publish the project's `AGENTS.md` inside `/llms.txt` and `/llms-full.txt`. **Off by default**:\n     * those endpoints are public and unauthenticated, while `AGENTS.md` is a repo file written for the\n     * team - unreleased feature names, internal hostnames, and \"don't touch X yet\" notes live there\n     * routinely. Turn it on only for a repo whose guidelines you would publish as a page. */\n    readonly publishLocalGuidelines?: boolean;\n    /** SSG: per dynamic route pattern, its `getStaticPaths` `fallback` (from `enumerateStaticRoutes` or\n     * the build's `prerendered.json`). A route mapped to `\"404\"` rejects any path NOT in\n     * `prerenderedPaths` with the 404 page - the unlisted path simply doesn't exist. `\"ssr\"` (the\n     * default for unmapped routes) renders unlisted paths on-demand. */\n    readonly staticFallbacks?: Readonly<Record<string, \"ssr\" | \"404\">>;\n    /** In-memory reference cache for explicitly `static` boundary values. It never persists payloads\n     * across processes; operated/durable cache implementations stay outside the public framework. */\n    readonly staticBoundaryCache?: import(\"../boundary.js\").StaticBoundaryCache;\n    /** Observe every loader/action failure - for error-reporting plugins (Sentry-style). Called for\n     * real throws (not control-flow `Response`s like `redirect`), **before** the nearest `_error`\n     * boundary renders / a soft-nav 500 / a rethrow - so it sees errors that the boundary would\n     * otherwise hide. Observation only; its own throws are swallowed so a faulty reporter can't break\n     * rendering. (`beforeLoader` is intentionally omitted - the core HTTP hooks already cover\n     * pre-request work.) */\n    readonly onLoaderError?: (error: unknown, ctx: {\n        readonly request: Request;\n        readonly params: Readonly<Record<string, string>>;\n        readonly route: string;\n    }) => void;\n}"
+    "signature": "export interface CreateWebAppOptions<Env = unknown> {\n    readonly adapter: RenderAdapter;\n    readonly manifest: Manifest;\n    /** URL of the built client entry (module script) injected into every page. */\n    readonly clientEntry: string;\n    /** Default document title for all pages. */\n    readonly title?: string;\n    /**\n     * Options for the underlying `server()` - `requestTimeoutMs`, `admission`, `gracefulSignals`, and\n     * the rest of {@link ServerOptions}.\n     *\n     * Needed because the `Server` is constructed in here, so a caller has no other way to reach its\n     * constructor: a page app could set no request timeout and no capacity gate, which are exactly the\n     * two knobs a production readiness check looks for. An SSR app wants them MORE than a backend does -\n     * a render is slow and allocation-heavy, so a burst that a JSON API would absorb is the one that\n     * exhausts the pod.\n     *\n     * Applies to the whole app, {@link mounts} and the {@link api} auto-mount included: the capacity gate\n     * sits at the fetch entry, ahead of the request hooks those are dispatched from.\n     */\n    readonly server?: ServerOptions;\n    /**\n     * Runs against the app BEFORE any page route is registered - the seam for `securityHeaders()`,\n     * `requestId()`, `logger()`, a rate limit, or anything else applied with `use`.\n     *\n     * ```ts\n     * createWebApp({\n     *   …,\n     *   use: (app) => {\n     *     app.use(securityHeaders())\n     *     app.use(requestId())\n     *   },\n     * })\n     * ```\n     *\n     * A callback rather than an array because `use` is overloaded - `Middleware`, `IdentityPlugin`,\n     * `ContextPlugin` - and only the real call site instantiates the right overload. The return value\n     * is ignored: this is for cross-cutting concerns, not for declaring routes (declare those on the\n     * returned app, where they get their types).\n     *\n     * **Why the timing matters.** `beforeHandle`, `afterHandle`, `around`, `derive`/`decorate`, and\n     * `onError` are snapshotted into each route AS IT IS DECLARED, and `createWebApp` declares every\n     * page (plus the `/*` catch-all) before it returns - so a caller's `app.use(…)` afterwards binds\n     * them to nothing, silently. `requestId()` is exactly that case: it is a `derive`, so applied late\n     * it leaves every page without `c.requestId`. Route assurance evidence is order-scoped the same\n     * way, so a late `securityHeaders()` leaves the pages unable to PROVE the header to `nifra assure`\n     * even though it does still set it.\n     *\n     * `onRequest`/`onResponse` (and the response header/body hooks) are app-global arrays read at\n     * request time, so those alone DO work when added late. Using this seam for everything avoids\n     * having to remember which is which.\n     *\n     * Runs ahead of the {@link mounts} / {@link api} request hooks, so an `onRequest` middleware guards\n     * a mounted auth handler too.\n     *\n     * A `ContextPlugin` applied here takes runtime effect but cannot widen the declared return type of\n     * this function, so `c.requestId` is not typed on routes you declare afterwards. Named plugins are\n     * idempotent, so `app.use(requestId())` on the returned app recovers the TYPE without applying the\n     * plugin a second time.\n     */\n    readonly use?: (app: ReturnType<typeof server<Env>>) => void;\n    /** Injected into each loader's `ctx.api` - typically an `inProcessClient(app)` (typed\n     * per-route via `@nifrajs/client`'s `createRoutes`). Opaque to the core.\n     *\n     * **Auto-mount.** Every `inProcessClient(backend)` exposes the symbol-keyed platform-aware backend\n     * mount interface from `@nifrajs/core/mount`; `createWebApp` also serves that backend over HTTP at\n     * {@link apiPrefix} (default `/api`): a request whose pathname starts with the prefix is dispatched\n     * before page routing with the same `env`/`waitUntil` platform context, and the backend's `Response`\n     * is returned untouched. The mount runs in `nifra dev` too. Pass `apiPrefix: \"\"` to disable it. */\n    readonly api?: unknown;\n    /** HTTP path prefix the {@link api} backend is auto-mounted at (default `\"/api\"`). A request whose\n     * pathname is exactly the prefix or starts with `prefix + \"/\"` is dispatched to the backend before\n     * page routing; the backend therefore defines its routes at the **full** path (`server().post(\"/api/\n     * sync\", …)`), matching the in-process `inProcessClient` call sites. Set to `\"\"` to disable the\n     * auto-mount entirely (the app serves pages only and `api` stays a loader-only `ctx.api`). Mounting\n     * is also a no-op when `api` does not expose the symbol mount. */\n    readonly apiPrefix?: string;\n    /**\n     * Strip {@link apiPrefix} from the pathname before dispatching to `api` (default `false`).\n     *\n     * The default suits a backend that declares FULL paths (`server().post(\"/api/sync\", …)`), which is\n     * right when it is only ever mounted here. Set this when the backend declares its routes WITHOUT the\n     * prefix because it also runs standalone behind its own shell, so its paths cannot carry a prefix that\n     * only exists when it is mounted. Without it every request 404s inside the backend, and the workaround\n     * is a `Proxy` that rewrites each URL.\n     */\n    readonly apiStrip?: boolean;\n    /**\n     * Sub-apps mounted ahead of page routing - an auth handler, a webhook receiver, a stack's routes.\n     *\n     * Structural on purpose: anything with `{ path, app: { fetch } }` fits, so a library that exposes its\n     * routes as such a list mounts as `mounts: theirRoutes` without `@nifrajs/web` taking a dependency on\n     * it. `better-auth` is the motivating case - it is not a `backend` route, so `/api/auth/*` used to 404\n     * silently.\n     *\n     * Tried longest-path-first and BEFORE the `api` mount, so a mount at `/api/auth` wins over a backend\n     * at `/api` no matter which was declared first. `stripPrefix` is the per-mount form of {@link apiStrip}:\n     * leave it off to pass the full path through.\n     */\n    readonly mounts?: ReadonlyArray<{\n        readonly path: string;\n        readonly app: {\n            fetch(request: Request): Response | Promise<Response>;\n        };\n        readonly stripPrefix?: boolean;\n    }>;\n    /** Secret for **draft / preview mode** (see `enableDraft`). When set, a request carrying a valid\n     * signed `__nifra_draft` cookie gets `ctx.draft === true` in loaders/actions (else always `false`).\n     * Pair with `withISR({ draftSecret })` so editors bypass the cache. Omit to disable draft mode. */\n    readonly draftSecret?: string;\n    /** Per-route chunk URLs (`buildClient`'s `BuildManifest.routes`) - `routeId → [layout chunks…, own\n     * chunk]`. When present, each page `modulepreload`s its matched route's chunks alongside the entry,\n     * so the route code downloads in parallel (no entry→route-chunk waterfall). Omit ⇒ entry-only. */\n    readonly routePreload?: Readonly<Record<string, readonly string[]>>;\n    /** The app's bundled stylesheet URLs (`buildClient`'s `BuildManifest.css`) - the aggregate, injected\n     * as `<link rel=\"stylesheet\">` in a page's `<head>`. Used as the fallback for any route absent from\n     * {@link routeStyles}. Omit ⇒ no links (dev, where Vite injects CSS, or a CSS-free app). */\n    readonly styles?: readonly string[];\n    /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) - `routeId → [chain CSS]`.\n     * When a matched route has an entry here, only those (its layout chain + own CSS) are linked instead\n     * of the aggregate `styles`, so a page ships only the CSS it uses. An empty array ⇒ no `<link>` (the\n     * page imports no CSS). Routes absent here fall back to `styles`. Omit ⇒ always use `styles`. */\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>>;\n    /**\n     * Activation policy for framework-owned stylesheet links (default `\"blocking\"`). `\"deferred\"`\n     * emits `media=\"print\"` links; the generated client waits for them and switches them to `all` before\n     * mounting. Pair with an aggregate Vite stylesheet (`cssCodeSplit: false`) to prevent lazy-prefetch\n     * CSS insertion. Non-hydrated pages always keep their stylesheet links blocking.\n     */\n    readonly cssLoading?: CssLoadingMode;\n    /** SSG: the prerendered-path set (e.g. `enumerateStaticRoutes(routes).paths` or the build's\n     * `prerendered.json`). Injected as `window.__NIFRA_PRERENDERED__` on every page so a client soft-nav\n     * into a prerendered route fetches its static `_data.json` instead of hitting the worker. */\n    readonly prerenderedPaths?: readonly string[];\n    /** Publish the project's `AGENTS.md` inside `/llms.txt` and `/llms-full.txt`. **Off by default**:\n     * those endpoints are public and unauthenticated, while `AGENTS.md` is a repo file written for the\n     * team - unreleased feature names, internal hostnames, and \"don't touch X yet\" notes live there\n     * routinely. Turn it on only for a repo whose guidelines you would publish as a page. */\n    readonly publishLocalGuidelines?: boolean;\n    /** SSG: per dynamic route pattern, its `getStaticPaths` `fallback` (from `enumerateStaticRoutes` or\n     * the build's `prerendered.json`). A route mapped to `\"404\"` rejects any path NOT in\n     * `prerenderedPaths` with the 404 page - the unlisted path simply doesn't exist. `\"ssr\"` (the\n     * default for unmapped routes) renders unlisted paths on-demand. */\n    readonly staticFallbacks?: Readonly<Record<string, \"ssr\" | \"404\">>;\n    /** In-memory reference cache for explicitly `static` boundary values. It never persists payloads\n     * across processes; operated/durable cache implementations stay outside the public framework. */\n    readonly staticBoundaryCache?: import(\"../boundary.js\").StaticBoundaryCache;\n    /** Observe every loader/action failure - for error-reporting plugins (Sentry-style). Called for\n     * real throws (not control-flow `Response`s like `redirect`), **before** the nearest `_error`\n     * boundary renders / a soft-nav 500 / a rethrow - so it sees errors that the boundary would\n     * otherwise hide. Observation only; its own throws are swallowed so a faulty reporter can't break\n     * rendering. (`beforeLoader` is intentionally omitted - the core HTTP hooks already cover\n     * pre-request work.) */\n    readonly onLoaderError?: (error: unknown, ctx: {\n        readonly request: Request;\n        readonly params: Readonly<Record<string, string>>;\n        readonly route: string;\n    }) => void;\n}"
   },
   {
     "name": "createWebSocketHub",
@@ -4595,6 +4694,13 @@
     "kind": "interface",
     "package": "@nifrajs/middleware",
     "signature": "export interface CsrfOptions {\n    /** HMAC secret (≥ 32 bytes), or a rotation list - see {@link CsrfSecret}. */\n    readonly secret: CsrfSecret;\n    /** Cookie carrying the signed token. Default `\"csrf-token\"`. */\n    readonly cookie?: string;\n    /** Header carrying the same signed token. Default `\"x-csrf-token\"`. */\n    readonly header?: string;\n    /** Unsafe methods to protect. Default: every method except GET/HEAD/OPTIONS/TRACE. */\n    readonly methods?: readonly string[];\n    /** Allowed request origins. Default: same-origin derived from the request URL. */\n    readonly origins?: readonly string[];\n    /** Check Origin/Referer on protected requests. Default true. */\n    readonly checkOrigin?: boolean;\n}"
+  },
+  {
+    "name": "CssLoadingMode",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type CssLoadingMode = \"blocking\" | \"deferred\";",
+    "doc": "/**\n * How framework-owned stylesheets are made active during the first document load.\n *\n * `blocking` is the backwards-compatible default. `deferred` is intended for an aggregate\n * stylesheet: the document fetches it with `media=\"print\"`, then the generated client promotes it\n * to `media=\"all\"` after the resource settles and before mounting the app.\n */"
   },
   {
     "name": "CssModuleResult",
@@ -4898,6 +5004,13 @@
     "signature": "export declare const DEFAULT_ASSURANCE_CONFIG = \"nifra.assurance.ts\";"
   },
   {
+    "name": "DEFAULT_CSS_LOADING",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const DEFAULT_CSS_LOADING: CssLoadingMode;",
+    "doc": "/** The default remains the ordinary render-blocking stylesheet link. */"
+  },
+  {
     "name": "DEFAULT_DEV_PORT",
     "kind": "const",
     "package": "@nifrajs/web",
@@ -4957,6 +5070,19 @@
     "package": "@nifrajs/web",
     "signature": "export interface Deferred<T> {\n    readonly __nifra_deferred: true;\n    readonly id: number;\n    readonly promise: Promise<T>;\n}",
     "doc": "/**\n * A loader value marked to stream in after the shell. The component consumes it with the adapter's\n * `<Await resolve={...}>`; until the promise settles the shell shows the `<Suspense>` fallback.\n * `id` is assigned by the server at serialization time - the streamed resolve script keys off it.\n */"
+  },
+  {
+    "name": "defineAgentCapability",
+    "kind": "function",
+    "package": "@nifrajs/webmcp",
+    "signature": "export declare function defineAgentCapability<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1, State = unknown>(options: DefineAgentCapabilityOptions<InputSchema, OutputSchema, State>): AgentCapability<InferOutput<InputSchema>, InferOutput<OutputSchema>, State>;",
+    "doc": "/** Create a capability from the same core tool contract used by Nifra's other adapters. */"
+  },
+  {
+    "name": "DefineAgentCapabilityOptions",
+    "kind": "type",
+    "package": "@nifrajs/webmcp",
+    "signature": "export type DefineAgentCapabilityOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1, State> = ToolContractOptions<InferOutput<InputSchema>, InferOutput<OutputSchema>, InputSchema, OutputSchema> & {\n    readonly scope?: AgentSurfaceScope;\n    readonly reads?: readonly string[];\n    readonly writes?: readonly string[];\n    readonly reconciliation?: ReconciliationMode;\n    readonly predict?: AgentSurfacePredictor<InferOutput<InputSchema>, State>;\n    readonly reconcile?: AgentSurfaceReconciler<InferOutput<InputSchema>, InferOutput<OutputSchema>, State>;\n};"
   },
   {
     "name": "defineAgentEvalSuite",
@@ -6339,11 +6465,31 @@
     "doc": "/** The widget: renders `structuredContent.examples` as a filterable list of example cards. */"
   },
   {
+    "name": "executeAgentCapability",
+    "kind": "function",
+    "package": "@nifrajs/webmcp",
+    "signature": "export declare function executeAgentCapability<Input, Output, State>(capability: AgentCapability<Input, Output, State>, input: unknown, options?: ToolCallOptions): Promise<ToolCallResult<Output>>;",
+    "doc": "/** Execute through Nifra's existing validation, policy, approval, idempotency, and evidence path. */"
+  },
+  {
     "name": "executeCapability",
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function executeCapability<T>(context: object, capability: string, options: CapabilityExecutionOptions, executor: CapabilityExecutor<T>): Promise<T>;",
     "doc": "/**\n * Execute one owned effect behind a fail-closed capability boundary. The boundary assigns a stable\n * effect id, records intent before execution, and records exactly one terminal outcome automatically.\n * The callback result and errors never enter the token-only ledger.\n */"
+  },
+  {
+    "name": "executePredicted",
+    "kind": "function",
+    "package": "@nifrajs/webmcp",
+    "signature": "export declare function executePredicted<Input, Output, State>(capability: AgentCapability<Input, Output, State>, input: unknown, store: PredictionStore<State>, options?: ExecutePredictedOptions): Promise<PredictedExecutionResult<Output, State>>;",
+    "doc": "/** Apply a pure prediction, execute the core tool, then commit or roll it back atomically. */"
+  },
+  {
+    "name": "ExecutePredictedOptions",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface ExecutePredictedOptions extends Omit<ToolCallOptions, \"capabilities\"> {\n    readonly capabilities?: readonly string[];\n    readonly predictionId?: string;\n    readonly now?: () => number;\n}"
   },
   {
     "name": "executeTool",
@@ -6787,14 +6933,14 @@
     "name": "FileSessionStore",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
-    "signature": "export declare class FileSessionStore implements SessionStore {\n    private readonly root;\n    private readonly maxEntryBytes;\n    private readonly sequences;\n    constructor(options: FileSessionStoreOptions);\n    append(sessionId: string, type: string, payload?: unknown, options?: {\n        readonly pinned?: boolean;\n    }): Promise<SessionLogEntry>;\n    read(sessionId: string): Promise<readonly SessionLogEntry[]>;\n    checkpoint(sessionId: string, payload: unknown): Promise<void>;\n    fork(sessionId: string, targetSessionId?: string): Promise<string>;\n    private pathFor;\n    private nextSequence;\n}",
+    "signature": "export declare class FileSessionStore implements SessionStore {\n    private readonly root;\n    private readonly maxEntryBytes;\n    private readonly maxEntries;\n    private readonly maxBytes;\n    private readonly sequences;\n    private readonly locks;\n    constructor(options: FileSessionStoreOptions);\n    append(sessionId: string, type: string, payload?: unknown, options?: {\n        readonly pinned?: boolean;\n    }): Promise<SessionLogEntry>;\n    read(sessionId: string, limit?: number): Promise<readonly SessionLogEntry[]>;\n    checkpoint(sessionId: string, payload: unknown): Promise<void>;\n    fork(sessionId: string, targetSessionId?: string): Promise<string>;\n    private pathFor;\n    private nextSequence;\n    private compactIfNeeded;\n    private readTailText;\n    private readUnlocked;\n    private withSessionLock;\n}",
     "doc": "/**\n * Small append-only JSONL store. It stores redacted, bounded event evidence rather than raw model\n * transcripts, so session recovery is useful without turning the agent into a memory sink.\n */"
   },
   {
     "name": "FileSessionStoreOptions",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface FileSessionStoreOptions {\n    readonly root: string;\n    readonly maxEntryBytes?: number;\n}"
+    "signature": "export interface FileSessionStoreOptions {\n    readonly root: string;\n    readonly maxEntryBytes?: number;\n    /** Maximum retained JSONL entries per session. Defaults to 4,096. */\n    readonly maxEntries?: number;\n    /** Maximum retained JSONL bytes per session. Defaults to 8 MiB. */\n    readonly maxBytes?: number;\n}"
   },
   {
     "name": "FileStorage",
@@ -7139,7 +7285,7 @@
     "name": "GenerateServerManifestOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface GenerateServerManifestOptions {\n    /** Turn a route/layout source file (relative to the routes dir) into an import specifier -\n     * same contract as `generateClientEntry`'s `resolve`. */\n    readonly resolve: (file: string) => string;\n    /** The content-hashed client entry URL (from `buildClient`'s manifest), **baked** into the emitted\n     * module - a disk-less worker can't read `manifest.json` at runtime. */\n    readonly clientEntry: string;\n    /** The app's aggregate stylesheet URLs (`buildClient`'s `BuildManifest.css`) - baked as\n     * `export const styles` so the server entry can hand them to `createWebApp` (→ `<link rel=\"stylesheet\">`\n     * in `<head>`). Without this the built SSR page ships no CSS link and renders unstyled. */\n    readonly styles?: readonly string[] | undefined;\n    /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) - baked as\n     * `export const routeStyles` so a page links only the CSS its route chain uses. */\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>> | undefined;\n    /** Emit **lazy** per-route loaders (`() => import(\"./routes/x\")`, a static specifier) instead of\n     * eager `import * as`, so a bundler with code-splitting emits one chunk per route - loaded on the\n     * first request to it, not all at boot (smaller cold-start parse). Default `false` (eager). Both\n     * modes are fs-free with statically-analyzable specifiers; only the *when* differs. */\n    readonly lazy?: boolean;\n}"
+    "signature": "export interface GenerateServerManifestOptions {\n    /** Turn a route/layout source file (relative to the routes dir) into an import specifier -\n     * same contract as `generateClientEntry`'s `resolve`. */\n    readonly resolve: (file: string) => string;\n    /** The content-hashed client entry URL (from `buildClient`'s manifest), **baked** into the emitted\n     * module - a disk-less worker can't read `manifest.json` at runtime. */\n    readonly clientEntry: string;\n    /** The app's aggregate stylesheet URLs (`buildClient`'s `BuildManifest.css`) - baked as\n     * `export const styles` so the server entry can hand them to `createWebApp` (→ `<link rel=\"stylesheet\">`\n     * in `<head>`). Without this the built SSR page ships no CSS link and renders unstyled. */\n    readonly styles?: readonly string[] | undefined;\n    /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) - baked as\n     * `export const routeStyles` so a page links only the CSS its route chain uses. */\n    readonly routeStyles?: Readonly<Record<string, readonly string[]>> | undefined;\n    /** How framework-owned stylesheet links should activate before the generated client mounts. */\n    readonly cssLoading?: CssLoadingMode;\n    /** Emit **lazy** per-route loaders (`() => import(\"./routes/x\")`, a static specifier) instead of\n     * eager `import * as`, so a bundler with code-splitting emits one chunk per route - loaded on the\n     * first request to it, not all at boot (smaller cold-start parse). Default `false` (eager). Both\n     * modes are fs-free with statically-analyzable specifiers; only the *when* differs. */\n    readonly lazy?: boolean;\n}"
   },
   {
     "name": "generateServiceWorker",
@@ -7484,14 +7630,14 @@
     "name": "HttpAgentTransport",
     "kind": "class",
     "package": "@nifrajs/agent-app",
-    "signature": "export declare class HttpAgentTransport implements AgentTransport {\n    private readonly url;\n    private readonly authorize;\n    private readonly fetchImpl;\n    constructor(options: HttpAgentTransportOptions);\n    private headers;\n    command<T = unknown>(request: AgentTransportRequest): Promise<CommandOutcome<T>>;\n    stream(request: AgentTransportRequest): AsyncIterable<AgentEvent>;\n}",
+    "signature": "export declare class HttpAgentTransport implements AgentTransport {\n    private readonly url;\n    private readonly authorize;\n    private readonly fetchImpl;\n    private readonly maxResponseBytes;\n    constructor(options: HttpAgentTransportOptions);\n    private headers;\n    command<T = unknown>(request: AgentTransportRequest): Promise<CommandOutcome<T>>;\n    stream(request: AgentTransportRequest): AsyncIterable<AgentEvent>;\n}",
     "doc": "/** Web `fetch` + SSE transport. Browser- and Bun-compatible; depends on no Node or framework code. */"
   },
   {
     "name": "HttpAgentTransportOptions",
     "kind": "interface",
     "package": "@nifrajs/agent-app",
-    "signature": "export interface HttpAgentTransportOptions {\n    /** RPC origin, e.g. `http://127.0.0.1:8787`. The `/rpc` path is appended. */\n    readonly endpoint: string;\n    /** Per-request bearer-token source. Never stored; only the header value is used and discarded. */\n    readonly authorize?: AuthProvider;\n    /** Injectable fetch for tests and non-DOM hosts. Defaults to the ambient `fetch`. */\n    readonly fetch?: typeof fetch;\n}"
+    "signature": "export interface HttpAgentTransportOptions {\n    /** RPC origin, e.g. `http://127.0.0.1:8787`. The `/rpc` path is appended. */\n    readonly endpoint: string;\n    /** Per-request bearer-token source. Never stored; only the header value is used and discarded. */\n    readonly authorize?: AuthProvider;\n    /** Injectable fetch for tests and non-DOM hosts. Defaults to the ambient `fetch`. */\n    readonly fetch?: typeof fetch;\n    /** Maximum response bytes retained by command and SSE reads. Defaults to 8 MiB. */\n    readonly maxResponseBytes?: number;\n}"
   },
   {
     "name": "httpToolAdapter",
@@ -8202,7 +8348,8 @@
     "name": "isAgentEvent",
     "kind": "function",
     "package": "@nifrajs/agent-protocol",
-    "signature": "export declare function isAgentEvent(value: unknown): value is AgentEvent;"
+    "signature": "export declare function isAgentEvent(value: unknown): value is AgentEvent;",
+    "doc": "/** Validate the complete discriminated event union before a projection or UI consumer sees it. */"
   },
   {
     "name": "isAllowedFontUrl",
@@ -8238,6 +8385,20 @@
     "package": "@nifrajs/web",
     "signature": "export declare function isDraftEnabled(request: Request, secret: string): Promise<boolean>;",
     "doc": "/**\n * Whether `request` carries a **valid** signed draft cookie (constant-time verify via `unsignValue`).\n * `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for editors. A\n * missing, forged, or tampered cookie returns `false`.\n */"
+  },
+  {
+    "name": "isJsonRpcRequest",
+    "kind": "function",
+    "package": "@nifrajs/mcp",
+    "signature": "export declare function isJsonRpcRequest(value: unknown): value is JsonRpcRequest;",
+    "doc": "/** Validate a JSON-RPC request/notification before any transport or method-specific access. */"
+  },
+  {
+    "name": "isJsonRpcResponse",
+    "kind": "function",
+    "package": "@nifrajs/mcp",
+    "signature": "export declare function isJsonRpcResponse(value: unknown): value is JsonRpcResponse;",
+    "doc": "/** Validate a JSON-RPC response received by a transport-side client hook. Responses are not accepted\n * by {@link handleRpc}; this guard exists for the stdio roots/list answer, which is the one server-\n * initiated request response the CLI consumes itself. */"
   },
   {
     "name": "island",
@@ -9258,7 +9419,7 @@
     "name": "McpAppBridge",
     "kind": "interface",
     "package": "@nifrajs/mcp",
-    "signature": "export interface McpAppBridge {\n    /** Latest `structuredContent` the host pushed (or `null` before the first result). */\n    data: unknown;\n    /** Register a callback for `structuredContent` - fired immediately if data already arrived, then on\n     * every later `ui/notifications/tool-result`. The common case: `mcpApp.onData(render)`. */\n    onData(cb: (data: unknown) => void): void;\n    /** Register a callback for the raw tool-call arguments (`ui/notifications/tool-input`). */\n    onInput(cb: (args: unknown) => void): void;\n    /** Latest theme the host pushed (`{ mode, tokens }`), or `null` before the first push. */\n    theme: unknown;\n    /** Register a callback for host theme pushes. The bridge ALSO auto-applies the tokens to the document\n     * root (shadcn semantic vars + `color-scheme`/`data-theme`), so most widgets need no theme code. */\n    onTheme(cb: (theme: unknown) => void): void;\n    /** Invoke a tool back through the host; resolves with the tools/call result. */\n    callTool(name: string, args?: Record<string, unknown>): Promise<unknown>;\n}",
+    "signature": "export interface McpAppBridge {\n    /** Latest `structuredContent` the host pushed (or `null` before the first result). */\n    data: unknown;\n    /** Register a callback for `structuredContent` - fired immediately if data already arrived, then on\n     * every later `ui/notifications/tool-result`. The common case: `mcpApp.onData(render)`. */\n    onData(cb: (data: unknown) => void): void;\n    /** Register a callback for the raw tool-call arguments (`ui/notifications/tool-input`). */\n    onInput(cb: (args: unknown) => void): void;\n    /** Latest theme the host pushed (`{ mode, tokens }`), or `null` before the first push. */\n    theme: unknown;\n    /** Register a callback for host theme pushes. The bridge ALSO auto-applies the tokens to the document\n     * root (shadcn semantic vars + `color-scheme`/`data-theme`), so most widgets need no theme code. */\n    onTheme(cb: (theme: unknown) => void): void;\n    /** Invoke a tool back through the host; resolves with the tools/call result. */\n    callTool(name: string, args?: Record<string, unknown>): Promise<unknown>;\n    /** Reject pending calls when the embedding host tears down the widget. */\n    disconnect(reason?: string): void;\n}",
     "doc": "/** The author-facing global injected into a widget. Kept minimal and stable. */"
   },
   {
@@ -9298,13 +9459,13 @@
     "name": "McpHttpOptions",
     "kind": "interface",
     "package": "@nifrajs/cli",
-    "signature": "export interface McpHttpOptions {\n    /** Maximum JSON-RPC request body size in bytes. Default 1 MB. */\n    readonly maxBodyBytes?: number;\n    /** Resources / prompts / the MCP Apps UI extension served alongside the tools. */\n    readonly features?: McpServerFeatures;\n    /** Shown on the GET health page so each host can describe itself. */\n    readonly health?: string;\n    /**\n     * Origin allowlist for the DNS-rebinding guard. Omit (the default) to allow any origin - the right\n     * choice for a public, unauthenticated docs server that can't enumerate its browser clients' origins.\n     * Set it (e.g. a localhost origin for a hardened local host) to reject any other browser origin with 403.\n     */\n    readonly allowedOrigins?: readonly string[];\n    /**\n     * Optional authorization, run once per request against the parsed message - after the body has been\n     * read under the size cap, so it never costs a second read of the stream. Returning `false` answers\n     * `403` with a JSON-RPC error (`MCP_ERROR.UNAUTHORIZED`) and the handler never sees the message.\n     */\n    readonly authorizeMessage?: (message: JsonRpcRequest, request: Request) => boolean | Promise<boolean>;\n}"
+    "signature": "export interface McpHttpOptions {\n    /** Maximum JSON-RPC request body size in bytes. Default 1 MB. */\n    readonly maxBodyBytes?: number;\n    /** Maximum serialized JSON-RPC response or SSE frame size. Default 1 MB. */\n    readonly maxResponseBytes?: number;\n    /** Resources / prompts / the MCP Apps UI extension served alongside the tools. */\n    readonly features?: McpServerFeatures;\n    /** Shown on the GET health page so each host can describe itself. */\n    readonly health?: string;\n    /**\n     * Origin allowlist for the DNS-rebinding guard. Omit (the default) to allow any origin - the right\n     * choice for a public, unauthenticated docs server that can't enumerate its browser clients' origins.\n     * Set it (e.g. a localhost origin for a hardened local host) to reject any other browser origin with 403.\n     */\n    readonly allowedOrigins?: readonly string[];\n    /**\n     * Shared request registry for one authenticated MCP session. Pass the same state to the\n     * request that starts a tool call and its `notifications/cancelled` request. Do not share one\n     * state across unrelated callers unless the surrounding authorization boundary makes their\n     * request-id namespace exclusive.\n     */\n    readonly state?: McpProtocolState;\n    /**\n     * Resolve a session-scoped request registry after authorization. This is the preferred seam for\n     * multi-user HTTP hosts: bind the returned state to the authenticated caller/session and return\n     * `undefined` for stateless requests. A resolver failure fails closed with a generic denial.\n     */\n    readonly resolveState?: (request: Request, message: JsonRpcRequest) => McpProtocolState | undefined | Promise<McpProtocolState | undefined>;\n    /**\n     * Optional authorization, run once per request against the parsed message - after the body has been\n     * read under the size cap, so it never costs a second read of the stream. Returning `false` answers\n     * `403` with a JSON-RPC error (`MCP_ERROR.UNAUTHORIZED`) and the handler never sees the message.\n     */\n    readonly authorizeMessage?: (message: JsonRpcRequest, request: Request) => boolean | Promise<boolean>;\n}"
   },
   {
     "name": "McpHttpOptions",
     "kind": "interface",
     "package": "@nifrajs/mcp",
-    "signature": "export interface McpHttpOptions {\n    /** Maximum JSON-RPC request body size in bytes. Default 1 MB. */\n    readonly maxBodyBytes?: number;\n    /** Resources / prompts / the MCP Apps UI extension served alongside the tools. */\n    readonly features?: McpServerFeatures;\n    /** Shown on the GET health page so each host can describe itself. */\n    readonly health?: string;\n    /**\n     * Origin allowlist for the DNS-rebinding guard. Omit (the default) to allow any origin - the right\n     * choice for a public, unauthenticated docs server that can't enumerate its browser clients' origins.\n     * Set it (e.g. a localhost origin for a hardened local host) to reject any other browser origin with 403.\n     */\n    readonly allowedOrigins?: readonly string[];\n    /**\n     * Optional authorization, run once per request against the parsed message - after the body has been\n     * read under the size cap, so it never costs a second read of the stream. Returning `false` answers\n     * `403` with a JSON-RPC error (`MCP_ERROR.UNAUTHORIZED`) and the handler never sees the message.\n     */\n    readonly authorizeMessage?: (message: JsonRpcRequest, request: Request) => boolean | Promise<boolean>;\n}"
+    "signature": "export interface McpHttpOptions {\n    /** Maximum JSON-RPC request body size in bytes. Default 1 MB. */\n    readonly maxBodyBytes?: number;\n    /** Maximum serialized JSON-RPC response or SSE frame size. Default 1 MB. */\n    readonly maxResponseBytes?: number;\n    /** Resources / prompts / the MCP Apps UI extension served alongside the tools. */\n    readonly features?: McpServerFeatures;\n    /** Shown on the GET health page so each host can describe itself. */\n    readonly health?: string;\n    /**\n     * Origin allowlist for the DNS-rebinding guard. Omit (the default) to allow any origin - the right\n     * choice for a public, unauthenticated docs server that can't enumerate its browser clients' origins.\n     * Set it (e.g. a localhost origin for a hardened local host) to reject any other browser origin with 403.\n     */\n    readonly allowedOrigins?: readonly string[];\n    /**\n     * Shared request registry for one authenticated MCP session. Pass the same state to the\n     * request that starts a tool call and its `notifications/cancelled` request. Do not share one\n     * state across unrelated callers unless the surrounding authorization boundary makes their\n     * request-id namespace exclusive.\n     */\n    readonly state?: McpProtocolState;\n    /**\n     * Resolve a session-scoped request registry after authorization. This is the preferred seam for\n     * multi-user HTTP hosts: bind the returned state to the authenticated caller/session and return\n     * `undefined` for stateless requests. A resolver failure fails closed with a generic denial.\n     */\n    readonly resolveState?: (request: Request, message: JsonRpcRequest) => McpProtocolState | undefined | Promise<McpProtocolState | undefined>;\n    /**\n     * Optional authorization, run once per request against the parsed message - after the body has been\n     * read under the size cap, so it never costs a second read of the stream. Returning `false` answers\n     * `403` with a JSON-RPC error (`MCP_ERROR.UNAUTHORIZED`) and the handler never sees the message.\n     */\n    readonly authorizeMessage?: (message: JsonRpcRequest, request: Request) => boolean | Promise<boolean>;\n}"
   },
   {
     "name": "mcpJson",
@@ -9375,7 +9536,7 @@
     "name": "McpServer",
     "kind": "interface",
     "package": "@nifrajs/mcp",
-    "signature": "export interface McpServer {\n    readonly tools: McpTool[];\n    readonly features: McpServerFeatures;\n    readonly serverInfo: {\n        name: string;\n        version: string;\n    };\n    /** Web `fetch` handler - mount at `POST /mcp` (GET is a health page, OPTIONS the CORS preflight). */\n    fetch(request: Request, overrides?: Pick<McpHttpOptions, \"authorizeMessage\">): Promise<Response>;\n    /** Dispatch one JSON-RPC message directly (no HTTP) - for headless verification and unit tests. */\n    handle(message: JsonRpcRequest): Promise<JsonRpcResponse | null>;\n    /**\n     * Release server-owned resources, when the implementation has any (for example a database worker).\n     * Calling it more than once is safe. The base MCP server has nothing to release and omits this hook.\n     */\n    readonly close?: () => Promise<void>;\n}"
+    "signature": "export interface McpServer {\n    readonly tools: McpTool[];\n    readonly features: McpServerFeatures;\n    readonly serverInfo: {\n        name: string;\n        version: string;\n    };\n    /** Web `fetch` handler - mount at `POST /mcp` (GET is a health page, OPTIONS the CORS preflight). */\n    fetch(request: Request, overrides?: Pick<McpHttpOptions, \"authorizeMessage\" | \"state\" | \"resolveState\">): Promise<Response>;\n    /** Dispatch one JSON-RPC message directly (no HTTP) - for headless verification and unit tests. */\n    handle(message: JsonRpcRequest): Promise<JsonRpcResponse | null>;\n    /**\n     * Release server-owned resources, when the implementation has any (for example a database worker).\n     * Calling it more than once is safe. The base MCP server has nothing to release and omits this hook.\n     */\n    readonly close?: () => Promise<void>;\n}"
   },
   {
     "name": "McpServerConfig",
@@ -10528,7 +10689,7 @@
     "name": "NifraBackend",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
-    "signature": "export declare class NifraBackend implements AgentBackend {\n    readonly info: AgentBackendInfo;\n    private readonly options;\n    private readonly sessions;\n    private readonly pendingApprovals;\n    constructor(options: NifraBackendOptions);\n    createSession(input: CreateSessionInput): Promise<AgentSessionSnapshot>;\n    send(input: SendMessageInput): AsyncIterable<AgentEvent>;\n    cancel(sessionId: string, reason?: string): Promise<void>;\n    snapshot(sessionId: string): Promise<AgentSessionSnapshot>;\n    reload(sessionId: string): Promise<ReloadResult>;\n    resolveApproval(sessionId: string, approvalId: string, approved: boolean, reason?: string): Promise<boolean | undefined>;\n    close(sessionId: string): Promise<void>;\n    private run;\n    private consumeModel;\n    private finish;\n    private requestApproval;\n    private settleApproval;\n    private emit;\n    private update;\n    private requireSession;\n    private now;\n}",
+    "signature": "export declare class NifraBackend implements AgentBackend {\n    readonly info: AgentBackendInfo;\n    private readonly options;\n    private readonly sessions;\n    private readonly pendingApprovals;\n    constructor(options: NifraBackendOptions);\n    createSession(input: CreateSessionInput): Promise<AgentSessionSnapshot>;\n    send(input: SendMessageInput): AsyncIterable<AgentEvent>;\n    cancel(sessionId: string, reason?: string): Promise<void>;\n    snapshot(sessionId: string): Promise<AgentSessionSnapshot>;\n    reload(sessionId: string): Promise<ReloadResult>;\n    resolveApproval(sessionId: string, approvalId: string, approved: boolean, reason?: string): Promise<boolean | undefined>;\n    close(sessionId: string): Promise<void>;\n    private run;\n    private consumeModel;\n    private finish;\n    private requestApproval;\n    private settleApproval;\n    private cancelTurn;\n    private clearTurnSignal;\n    private clearTurn;\n    private isCurrentTurn;\n    private assertCurrentTurn;\n    private emit;\n    private update;\n    private requireSession;\n    private now;\n}",
     "doc": "/**\n * Small provider port for a future Nifra-native backend.\n *\n * It deliberately knows only messages, tools, and the protocol. Provider SDKs, credentials, UI,\n * and framework packages stay outside this module. A model may return one response or stream\n * deltas followed by a final response.\n */"
   },
   {
@@ -10791,6 +10952,13 @@
     "package": "@nifrajs/coding-agent",
     "signature": "export declare function noopArtifactPort(): ArtifactPort;",
     "doc": "/**\n * Hashes the payload for a content-free {@link ArtifactRef}, then discards the bytes. The default\n * port: public code sees only the digest, size, and coordinates - never the payload.\n */"
+  },
+  {
+    "name": "normalizeCssLoading",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function normalizeCssLoading(value: unknown): CssLoadingMode;",
+    "doc": "/** Runtime validation for JavaScript callers, generated manifests, and hand-authored integrations. */"
   },
   {
     "name": "normalizeEffectMetadata",
@@ -11309,7 +11477,7 @@
     "name": "parseEventStream",
     "kind": "function",
     "package": "@nifrajs/agent-app",
-    "signature": "export declare function parseEventStream(body: ReadableStream<Uint8Array>, method: string): AsyncIterable<AgentEvent>;",
+    "signature": "export declare function parseEventStream(body: ReadableStream<Uint8Array>, method: string, maxFrameBytes?: number): AsyncIterable<AgentEvent>;",
     "doc": "/** Parse an SSE body into protocol events, skipping any frame whose data is not a valid event. */"
   },
   {
@@ -11346,6 +11514,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function parseManifestClientEntry(source: string): string | undefined;",
     "doc": "/** The baked `clientEntry` URL in a committed server-manifest, or `undefined` if absent. Pure. */"
+  },
+  {
+    "name": "parseManifestCssLoading",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function parseManifestCssLoading(source: string): CssLoadingMode | undefined;",
+    "doc": "/** The baked framework stylesheet activation mode, or `undefined` for an older manifest. Pure. */"
   },
   {
     "name": "parseManifestRouteFiles",
@@ -11532,27 +11707,27 @@
     "name": "PiBackend",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
-    "signature": "export declare class PiBackend implements AgentBackend {\n    readonly info: AgentBackendInfo;\n    private readonly options;\n    private readonly sessions;\n    constructor(options?: PiBackendOptions);\n    createSession(input: CreateSessionInput): Promise<AgentSessionSnapshot>;\n    send(input: SendMessageInput): AsyncIterable<AgentEvent>;\n    cancel(sessionId: string, reason?: string): Promise<void>;\n    snapshot(sessionId: string): Promise<AgentSessionSnapshot>;\n    reload(sessionId: string): Promise<ReloadResult>;\n    resolveApproval(sessionId: string, approvalId: string, approved: boolean): Promise<boolean | undefined>;\n    close(sessionId: string): Promise<void>;\n    private requireSession;\n    private spawnProcess;\n    private attachProcess;\n    private readStdout;\n    private readStderr;\n    private consumeText;\n    private consumeRecord;\n    private emit;\n    private updateSnapshot;\n    private failActive;\n    private finishTurn;\n}",
+    "signature": "export declare class PiBackend implements AgentBackend {\n    readonly info: AgentBackendInfo;\n    private readonly options;\n    private readonly maxRecordBytes;\n    private readonly maxMessageChars;\n    private readonly sessions;\n    constructor(options?: PiBackendOptions);\n    createSession(input: CreateSessionInput): Promise<AgentSessionSnapshot>;\n    send(input: SendMessageInput): AsyncIterable<AgentEvent>;\n    cancel(sessionId: string, reason?: string): Promise<void>;\n    snapshot(sessionId: string): Promise<AgentSessionSnapshot>;\n    reload(sessionId: string): Promise<ReloadResult>;\n    resolveApproval(sessionId: string, approvalId: string, approved: boolean): Promise<boolean | undefined>;\n    close(sessionId: string): Promise<void>;\n    private requireSession;\n    private spawnProcess;\n    private attachProcess;\n    private readStdout;\n    private readStderr;\n    private consumeText;\n    private consumeRecord;\n    private emit;\n    private updateSnapshot;\n    private failActive;\n    private finishTurn;\n    private cancelTurn;\n    private clearTurnSignal;\n    private clearTurn;\n}",
     "doc": "/**\n * Spawn Pi in its documented JSONL RPC mode and translate its events into the Nifra protocol.\n *\n * This adapter intentionally talks to the public Pi process protocol instead of importing Pi into\n * any Nifra framework package. A future SDK adapter can implement the same AgentBackend contract.\n */"
   },
   {
     "name": "PiBackend",
     "kind": "class",
     "package": "@nifrajs/pi",
-    "signature": "export declare class PiBackend implements AgentBackend {\n    readonly info: AgentBackendInfo;\n    private readonly options;\n    private readonly sessions;\n    constructor(options?: PiBackendOptions);\n    createSession(input: CreateSessionInput): Promise<AgentSessionSnapshot>;\n    send(input: SendMessageInput): AsyncIterable<AgentEvent>;\n    cancel(sessionId: string, reason?: string): Promise<void>;\n    snapshot(sessionId: string): Promise<AgentSessionSnapshot>;\n    reload(sessionId: string): Promise<ReloadResult>;\n    resolveApproval(sessionId: string, approvalId: string, approved: boolean): Promise<boolean | undefined>;\n    close(sessionId: string): Promise<void>;\n    private requireSession;\n    private spawnProcess;\n    private attachProcess;\n    private readStdout;\n    private readStderr;\n    private consumeText;\n    private consumeRecord;\n    private emit;\n    private updateSnapshot;\n    private failActive;\n    private finishTurn;\n}",
+    "signature": "export declare class PiBackend implements AgentBackend {\n    readonly info: AgentBackendInfo;\n    private readonly options;\n    private readonly maxRecordBytes;\n    private readonly maxMessageChars;\n    private readonly sessions;\n    constructor(options?: PiBackendOptions);\n    createSession(input: CreateSessionInput): Promise<AgentSessionSnapshot>;\n    send(input: SendMessageInput): AsyncIterable<AgentEvent>;\n    cancel(sessionId: string, reason?: string): Promise<void>;\n    snapshot(sessionId: string): Promise<AgentSessionSnapshot>;\n    reload(sessionId: string): Promise<ReloadResult>;\n    resolveApproval(sessionId: string, approvalId: string, approved: boolean): Promise<boolean | undefined>;\n    close(sessionId: string): Promise<void>;\n    private requireSession;\n    private spawnProcess;\n    private attachProcess;\n    private readStdout;\n    private readStderr;\n    private consumeText;\n    private consumeRecord;\n    private emit;\n    private updateSnapshot;\n    private failActive;\n    private finishTurn;\n    private cancelTurn;\n    private clearTurnSignal;\n    private clearTurn;\n}",
     "doc": "/**\n * Spawn Pi in its documented JSONL RPC mode and translate its events into the Nifra protocol.\n *\n * This adapter intentionally talks to the public Pi process protocol instead of importing Pi into\n * any Nifra framework package. A future SDK adapter can implement the same AgentBackend contract.\n */"
   },
   {
     "name": "PiBackendOptions",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface PiBackendOptions {\n    /** Defaults to `pi`, resolved through PATH. */\n    readonly command?: string;\n    /** Extra arguments appended after `--mode rpc`. */\n    readonly args?: readonly string[];\n    readonly env?: Readonly<Record<string, string | undefined>>;\n    readonly sessionDir?: string;\n    readonly noSession?: boolean;\n    /** Override the generated Pi flags for a test double or a compatible RPC executable. */\n    readonly rpcArgs?: readonly string[];\n    /**\n     * Reload transport. Pi's documented RPC protocol uses a slash command bridged by a tiny\n     * extension; compatible RPC implementations may opt into their legacy top-level command.\n     */\n    readonly reloadCommand?: \"restart\" | \"prompt\" | \"rpc\";\n    /** Load the tiny public-API reload bridge. Defaults to true for generated Pi processes. */\n    readonly enableReloadBridge?: boolean;\n    readonly maxEventQueueSize?: number;\n    /** Optional project instructions passed through Pi's documented append-system-prompt flag. */\n    readonly appendSystemPrompt?: string;\n    /** Opt-in loading of the separately packaged Nifra verification tools extension. */\n    readonly enableNifraTools?: boolean;\n}"
+    "signature": "export interface PiBackendOptions {\n    /** Defaults to `pi`, resolved through PATH. */\n    readonly command?: string;\n    /** Extra arguments appended after `--mode rpc`. */\n    readonly args?: readonly string[];\n    readonly env?: Readonly<Record<string, string | undefined>>;\n    readonly sessionDir?: string;\n    readonly noSession?: boolean;\n    /** Override the generated Pi flags for a test double or a compatible RPC executable. */\n    readonly rpcArgs?: readonly string[];\n    /**\n     * Reload transport. Pi's documented RPC protocol uses a slash command bridged by a tiny\n     * extension; compatible RPC implementations may opt into their legacy top-level command.\n     */\n    readonly reloadCommand?: \"restart\" | \"prompt\" | \"rpc\";\n    /** Load the tiny public-API reload bridge. Defaults to true for generated Pi processes. */\n    readonly enableReloadBridge?: boolean;\n    readonly maxEventQueueSize?: number;\n    /** Maximum UTF-8 bytes accepted for one Pi JSONL record. Defaults to 1 MiB. */\n    readonly maxRecordBytes?: number;\n    /** Maximum prompt characters accepted by the adapter. Defaults to 64 KiB. */\n    readonly maxMessageChars?: number;\n    /** Optional project instructions passed through Pi's documented append-system-prompt flag. */\n    readonly appendSystemPrompt?: string;\n    /** Opt-in loading of the separately packaged Nifra verification tools extension. */\n    readonly enableNifraTools?: boolean;\n}"
   },
   {
     "name": "PiBackendOptions",
     "kind": "interface",
     "package": "@nifrajs/pi",
-    "signature": "export interface PiBackendOptions {\n    /** Defaults to `pi`, resolved through PATH. */\n    readonly command?: string;\n    /** Extra arguments appended after `--mode rpc`. */\n    readonly args?: readonly string[];\n    readonly env?: Readonly<Record<string, string | undefined>>;\n    readonly sessionDir?: string;\n    readonly noSession?: boolean;\n    /** Override the generated Pi flags for a test double or a compatible RPC executable. */\n    readonly rpcArgs?: readonly string[];\n    /**\n     * Reload transport. Pi's documented RPC protocol uses a slash command bridged by a tiny\n     * extension; compatible RPC implementations may opt into their legacy top-level command.\n     */\n    readonly reloadCommand?: \"restart\" | \"prompt\" | \"rpc\";\n    /** Load the tiny public-API reload bridge. Defaults to true for generated Pi processes. */\n    readonly enableReloadBridge?: boolean;\n    readonly maxEventQueueSize?: number;\n    /** Optional project instructions passed through Pi's documented append-system-prompt flag. */\n    readonly appendSystemPrompt?: string;\n    /** Opt-in loading of the separately packaged Nifra verification tools extension. */\n    readonly enableNifraTools?: boolean;\n}"
+    "signature": "export interface PiBackendOptions {\n    /** Defaults to `pi`, resolved through PATH. */\n    readonly command?: string;\n    /** Extra arguments appended after `--mode rpc`. */\n    readonly args?: readonly string[];\n    readonly env?: Readonly<Record<string, string | undefined>>;\n    readonly sessionDir?: string;\n    readonly noSession?: boolean;\n    /** Override the generated Pi flags for a test double or a compatible RPC executable. */\n    readonly rpcArgs?: readonly string[];\n    /**\n     * Reload transport. Pi's documented RPC protocol uses a slash command bridged by a tiny\n     * extension; compatible RPC implementations may opt into their legacy top-level command.\n     */\n    readonly reloadCommand?: \"restart\" | \"prompt\" | \"rpc\";\n    /** Load the tiny public-API reload bridge. Defaults to true for generated Pi processes. */\n    readonly enableReloadBridge?: boolean;\n    readonly maxEventQueueSize?: number;\n    /** Maximum UTF-8 bytes accepted for one Pi JSONL record. Defaults to 1 MiB. */\n    readonly maxRecordBytes?: number;\n    /** Maximum prompt characters accepted by the adapter. Defaults to 64 KiB. */\n    readonly maxMessageChars?: number;\n    /** Optional project instructions passed through Pi's documented append-system-prompt flag. */\n    readonly appendSystemPrompt?: string;\n    /** Opt-in loading of the separately packaged Nifra verification tools extension. */\n    readonly enableNifraTools?: boolean;\n}"
   },
   {
     "name": "pickLanguage",
@@ -11811,6 +11986,43 @@
     "kind": "const",
     "package": "@nifrajs/web",
     "signature": "export declare const preactDedupePlugin: (from: string) => BunPlugin;"
+  },
+  {
+    "name": "PredictedExecutionResult",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface PredictedExecutionResult<Output, State> {\n    readonly outcome: \"committed\" | \"rolled-back\" | \"conflicted\" | \"expired\" | \"stale\" | \"invalid\" | \"executed\";\n    readonly predictionId?: string;\n    readonly prediction?: AgentSurfacePrediction;\n    readonly tool?: ToolCallResult<Output>;\n    readonly snapshot: PredictionStoreSnapshot<State>;\n}"
+  },
+  {
+    "name": "PredictionPatchOperation",
+    "kind": "type",
+    "package": "@nifrajs/webmcp",
+    "signature": "export type PredictionPatchOperation = {\n    readonly op: \"add\" | \"replace\";\n    readonly path: string;\n    readonly value: unknown;\n} | {\n    readonly op: \"remove\";\n    readonly path: string;\n};",
+    "doc": "/** The safe RFC 6902 subset accepted for speculative UI updates. */"
+  },
+  {
+    "name": "PredictionStore",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface PredictionStore<State> {\n    readonly snapshot: () => PredictionStoreSnapshot<State>;\n    readonly predict: (predictionId: string, prediction: AgentSurfacePrediction, now?: number) => PredictionStoreResult<State>;\n    readonly commit: (predictionId: string, authoritative: AgentSurfaceAuthoritativeState<State>, now?: number) => PredictionStoreResult<State>;\n    readonly rollback: (predictionId: string) => PredictionStoreResult<State>;\n    readonly expire: (now?: number) => readonly string[];\n    readonly subscribe: (listener: (event: PredictionStoreEvent<State>) => void) => () => void;\n}"
+  },
+  {
+    "name": "PredictionStoreEvent",
+    "kind": "type",
+    "package": "@nifrajs/webmcp",
+    "signature": "export type PredictionStoreEvent<State> = {\n    readonly type: \"predicted\";\n    readonly predictionId: string;\n    readonly snapshot: PredictionStoreSnapshot<State>;\n} | {\n    readonly type: \"committed\";\n    readonly predictionId: string;\n    readonly snapshot: PredictionStoreSnapshot<State>;\n} | {\n    readonly type: \"rolled-back\";\n    readonly predictionId: string;\n    readonly snapshot: PredictionStoreSnapshot<State>;\n} | {\n    readonly type: \"conflicted\";\n    readonly predictionId: string;\n    readonly snapshot: PredictionStoreSnapshot<State>;\n} | {\n    readonly type: \"expired\";\n    readonly predictionId: string;\n    readonly snapshot: PredictionStoreSnapshot<State>;\n};"
+  },
+  {
+    "name": "PredictionStoreResult",
+    "kind": "type",
+    "package": "@nifrajs/webmcp",
+    "signature": "export type PredictionStoreResult<State> = {\n    readonly outcome: \"predicted\" | \"committed\" | \"rolled-back\" | \"conflicted\" | \"expired\" | \"stale\" | \"invalid\" | \"missing\";\n    readonly predictionId: string;\n    readonly snapshot: PredictionStoreSnapshot<State>;\n};"
+  },
+  {
+    "name": "PredictionStoreSnapshot",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface PredictionStoreSnapshot<State> extends AgentSurfaceSnapshot<State> {\n    readonly authoritativeVersion: string;\n    readonly activePredictionIds: readonly string[];\n}"
   },
   {
     "name": "PrerenderApp",
@@ -12524,6 +12736,12 @@
     "signature": "export interface ReconciliationLeaseStore {\n    readonly durability?: \"memory\" | \"durable\";\n    acquire(input: {\n        readonly name: string;\n        readonly owner: string;\n        readonly now: number;\n        readonly leaseMs: number;\n    }): ReconciliationLease | undefined | Promise<ReconciliationLease | undefined>;\n    renew(input: {\n        readonly name: string;\n        readonly owner: string;\n        readonly token: string;\n        readonly now: number;\n        readonly leaseMs: number;\n    }): boolean | Promise<boolean>;\n    checkpoint(input: {\n        readonly name: string;\n        readonly owner: string;\n        readonly token: string;\n        readonly cursor?: string;\n    }): boolean | Promise<boolean>;\n    release(input: {\n        readonly name: string;\n        readonly owner: string;\n        readonly token: string;\n    }): boolean | Promise<boolean>;\n}"
   },
   {
+    "name": "ReconciliationMode",
+    "kind": "type",
+    "package": "@nifrajs/webmcp",
+    "signature": "export type ReconciliationMode = \"accept-server-state\" | \"reload\" | \"manual\";"
+  },
+  {
     "name": "ReconciliationPage",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -12729,6 +12947,13 @@
     "doc": "/**\n * Install the plugin into the Bun RUNTIME. Import `@nifrajs/core/single-copy/register` from a\n * `bunfig.toml` preload rather than calling this from application code: a resolver installed from\n * inside a module cannot affect the imports that module already resolved.\n */"
   },
   {
+    "name": "registerWebMcpTools",
+    "kind": "function",
+    "package": "@nifrajs/webmcp",
+    "signature": "export declare function registerWebMcpTools(capabilities: readonly AgentCapabilityReference[], target?: WebMcpTarget | undefined, options?: WebMcpExecutionOptions): Promise<WebMcpRegistrationReport>;",
+    "doc": "/** Register an explicit allowlist of capabilities, safely degrading on ordinary browsers. */"
+  },
+  {
     "name": "Registry",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -12880,7 +13105,7 @@
     "name": "RenderPageOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RenderPageOptions {\n    readonly adapter: RenderAdapter;\n    /** The layout chain to render - outermost layout → page (opaque; the adapter renders it). */\n    readonly chain: readonly unknown[];\n    /** The loader output for this request. */\n    readonly data: unknown;\n    /** An action's data return (POST only) - surfaced to the page as `actionData` + serialized\n     * for the client so post-POST hydration matches. Omit on GETs. */\n    readonly actionData?: unknown;\n    /**\n     * URL of the built client entry (loaded as a module script).\n     *\n     * Optional ONLY on a `hydrate: false` page, where there is no client takeover to feed and this value\n     * reaches no output at all. The union below is what enforces that: omitting it on a hydrating page\n     * stays a compile error rather than rendering `src=\"\"`.\n     */\n    readonly clientEntry?: string;\n    /** Chunk URLs for the **matched** route (its layout chain + own chunk) to `modulepreload` in the\n     * shell - so the route code downloads in parallel with the entry instead of after it\n     * (`buildClient`'s per-route map). Empty/omitted ⇒ only the entry is preloaded (unchanged). */\n    readonly preload?: readonly string[];\n    /** Stylesheet URLs for the **matched** route (its layout chain + own CSS, from `buildClient`'s\n     * `BuildManifest.css`) - injected as `<link rel=\"stylesheet\">` in `<head>` so styles arrive with the\n     * first paint (no FOUC). Rendered even on non-hydrated pages. Empty/omitted ⇒ none (unchanged). */\n    readonly styles?: readonly string[];\n    /** SSG: the prerendered-path set, serialized to `window.__NIFRA_PRERENDERED__` so the client fetches\n     * a static `_data.json` on soft-nav into a prerendered route. Empty/omitted ⇒ not injected. */\n    readonly prerenderedPaths?: readonly string[];\n    /** ISR: route freshness in seconds, emitted as the `x-nifra-isr-revalidate` header for a `withISR`\n     * wrapper to read. Omit ⇒ no header (the wrapper's default TTL applies). */\n    readonly revalidate?: number;\n    /** ISR invalidation tags emitted as a bounded `x-nifra-isr-tags` header. */\n    readonly revalidateTags?: readonly string[];\n    /** Matched route id; written to `window.__NIFRA_ROUTE__` so the client hydrates this chain. */\n    readonly routeId?: string;\n    /** The matched route's decoded path params - surfaced to the page as `params` (via {@link RenderProps})\n     * so an adapter's `useParams` is SSR-correct. Omit ⇒ `{}` (a route with no dynamic segments, or an\n     * error/404 render). */\n    readonly params?: Readonly<Record<string, string>>;\n    /** The request's `pathname + search` - surfaced as `path` (via {@link RenderProps}) so an adapter's\n     * `useLocation`/`useSearchParams` render the right URL server-side and hydrate without drift. Omit ⇒\n     * `\"\"`. */\n    readonly path?: string;\n    /** The route's validated search (`searchOf(mod.searchSchema, url.search)`, the same value handed to\n     * the loader as `ctx.search`), surfaced as `search` (via {@link RenderProps}) so an adapter's\n     * `useSearch` is SSR-correct. Omit ⇒ `{}` (a render with no search context). */\n    readonly search?: Record<string, unknown>;\n    /** Per-layout loader data, forwarded to the adapter as `RenderProps.layoutData`. Aligned with the\n     * chain's layout prefix; omitted when no layout in the chain has a loader. */\n    readonly layoutData?: readonly unknown[];\n    /** Dynamic-boundary states, forwarded to the adapter and serialized for hydration when present. */\n    readonly boundaries?: BoundaryStates;\n    /** HTTP status for the response (default 200; e.g. 404 for a not-found page). */\n    readonly status?: number;\n    /** Extra response headers - e.g. the `cache-control` a terminal status page wants. `content-type`\n     * is ignored (the document is always HTML) and the ISR freshness header is applied after these,\n     * so neither can be overridden from here. */\n    readonly headers?: HeadersLike;\n    /** Document title (fallback when `head.title` is unset). */\n    readonly title?: string;\n    /** Resolved route head - `title` overrides `title` above; `meta`/`link` render as managed\n     * (`data-nifra`) tags the client updates on navigation.\n     *\n     * **Head contract (the layout chain contributes).** `createWebApp` resolves this via\n     * {@link mergeHeads}: a route's head is its **layout chain's** `meta`/`head` exports merged with the\n     * page's. A `_layout.tsx` may `export const meta` (or `export function meta(args)`) - its tags land\n     * on every page below it (the home for `hreflang`, `preconnect`, a section-default `<title>`). The\n     * merge is **nearest-wins for scalars** (the page's `title` overrides an inner layout's, which\n     * overrides an outer one; an undefined page title keeps the layout's) and **concatenated for the\n     * `meta`/`link` arrays** (outermost layout first, page last). `<meta>`/`<link>` attributes pass a\n     * shared tag-specific allowlist (including inert `data-*` metadata) and values are escaped. */\n    readonly head?: Meta;\n    /** Id of the container wrapping the app markup (default `\"root\"`). A non-default id also gets\n     * {@link ROOT_ATTRIBUTE}, which is how the generated client entry finds the container to hydrate -\n     * the entry is built once and cannot know what a given render chose. */\n    readonly rootId?: string;\n    /** When `false`, emit a complete but **non-hydrated** document - no client entry script, data\n     * globals, or modulepreloads. Used for server-rendered `_error` pages: a terminal state that needs no\n     * client takeover, and it sidesteps an SSR/hydrate mismatch (the server rendered the boundary, not\n     * the page the client manifest maps this route id to). Default `true`. */\n    readonly hydrate?: boolean;\n    /** Island client bundles (`@nifrajs/web/islands`) to load as `<script type=\"module\">` in the document\n     * tail - emitted **regardless of `hydrate`**, so a static (`hydrate: false`) page can still mount\n     * no-framework islands. URLs are attribute-escaped. Empty/omitted ⇒ none (unchanged output). */\n    readonly islandScripts?: readonly string[];\n    /** CSP nonce applied to every framework-owned executable script in this document. */\n    readonly nonce?: string;\n    /**\n     * Advanced: a per-route slot the renderer fills with the request-invariant document pieces (shell\n     * prefix/suffix, tail statics) on the first render and reuses afterwards, skipping their re-assembly.\n     *\n     * Only pass a cache when every shell-shaping input is IDENTICAL across the requests sharing it:\n     * same `head` content (a static meta chain - never a `meta(data)` function), `title`, `styles`,\n     * `preload`, `islandScripts`, `clientEntry`, `rootId`, `hydrate`, and `prerenderedPaths`. Per-request\n     * values (`data`, `params`, `search`, `actionData`, `layoutData`, deferred state) are always assembled\n     * fresh and safe. A per-request `nonce` disables the cache automatically. `createWebApp` wires this\n     * per route, gated on the route + layout metas being static.\n     */\n    readonly assemblyCache?: RenderAssemblyCache;\n}"
+    "signature": "export interface RenderPageOptions {\n    readonly adapter: RenderAdapter;\n    /** The layout chain to render - outermost layout → page (opaque; the adapter renders it). */\n    readonly chain: readonly unknown[];\n    /** The loader output for this request. */\n    readonly data: unknown;\n    /** An action's data return (POST only) - surfaced to the page as `actionData` + serialized\n     * for the client so post-POST hydration matches. Omit on GETs. */\n    readonly actionData?: unknown;\n    /**\n     * URL of the built client entry (loaded as a module script).\n     *\n     * Optional ONLY on a `hydrate: false` page, where there is no client takeover to feed and this value\n     * reaches no output at all. The union below is what enforces that: omitting it on a hydrating page\n     * stays a compile error rather than rendering `src=\"\"`.\n     */\n    readonly clientEntry?: string;\n    /** Chunk URLs for the **matched** route (its layout chain + own chunk) to `modulepreload` in the\n     * shell - so the route code downloads in parallel with the entry instead of after it\n     * (`buildClient`'s per-route map). Empty/omitted ⇒ only the entry is preloaded (unchanged). */\n    readonly preload?: readonly string[];\n    /** Stylesheet URLs for the **matched** route (its layout chain + own CSS, from `buildClient`'s\n     * `BuildManifest.css`) - injected as `<link rel=\"stylesheet\">` in `<head>` so styles arrive with the\n     * first paint (no FOUC). Rendered even on non-hydrated pages. Empty/omitted ⇒ none (unchanged). */\n    readonly styles?: readonly string[];\n    /**\n     * Activation policy for these framework-owned stylesheet links (default `\"blocking\"`). In\n     * `\"deferred\"` mode, hydrating pages fetch with `media=\"print\"` and the generated client promotes\n     * them to `media=\"all\"` after load/error/timeout. Non-hydrated pages remain blocking so JS-off pages\n     * and terminal documents are styled.\n     */\n    readonly cssLoading?: CssLoadingMode;\n    /** SSG: the prerendered-path set, serialized to `window.__NIFRA_PRERENDERED__` so the client fetches\n     * a static `_data.json` on soft-nav into a prerendered route. Empty/omitted ⇒ not injected. */\n    readonly prerenderedPaths?: readonly string[];\n    /** ISR: route freshness in seconds, emitted as the `x-nifra-isr-revalidate` header for a `withISR`\n     * wrapper to read. Omit ⇒ no header (the wrapper's default TTL applies). */\n    readonly revalidate?: number;\n    /** ISR invalidation tags emitted as a bounded `x-nifra-isr-tags` header. */\n    readonly revalidateTags?: readonly string[];\n    /** Matched route id; written to `window.__NIFRA_ROUTE__` so the client hydrates this chain. */\n    readonly routeId?: string;\n    /** The matched route's decoded path params - surfaced to the page as `params` (via {@link RenderProps})\n     * so an adapter's `useParams` is SSR-correct. Omit ⇒ `{}` (a route with no dynamic segments, or an\n     * error/404 render). */\n    readonly params?: Readonly<Record<string, string>>;\n    /** The request's `pathname + search` - surfaced as `path` (via {@link RenderProps}) so an adapter's\n     * `useLocation`/`useSearchParams` render the right URL server-side and hydrate without drift. Omit ⇒\n     * `\"\"`. */\n    readonly path?: string;\n    /** The route's validated search (`searchOf(mod.searchSchema, url.search)`, the same value handed to\n     * the loader as `ctx.search`), surfaced as `search` (via {@link RenderProps}) so an adapter's\n     * `useSearch` is SSR-correct. Omit ⇒ `{}` (a render with no search context). */\n    readonly search?: Record<string, unknown>;\n    /** Per-layout loader data, forwarded to the adapter as `RenderProps.layoutData`. Aligned with the\n     * chain's layout prefix; omitted when no layout in the chain has a loader. */\n    readonly layoutData?: readonly unknown[];\n    /** Dynamic-boundary states, forwarded to the adapter and serialized for hydration when present. */\n    readonly boundaries?: BoundaryStates;\n    /** HTTP status for the response (default 200; e.g. 404 for a not-found page). */\n    readonly status?: number;\n    /** Extra response headers - e.g. the `cache-control` a terminal status page wants. `content-type`\n     * is ignored (the document is always HTML) and the ISR freshness header is applied after these,\n     * so neither can be overridden from here. */\n    readonly headers?: HeadersLike;\n    /** Document title (fallback when `head.title` is unset). */\n    readonly title?: string;\n    /** Resolved route head - `title` overrides `title` above; `meta`/`link` render as managed\n     * (`data-nifra`) tags the client updates on navigation.\n     *\n     * **Head contract (the layout chain contributes).** `createWebApp` resolves this via\n     * {@link mergeHeads}: a route's head is its **layout chain's** `meta`/`head` exports merged with the\n     * page's. A `_layout.tsx` may `export const meta` (or `export function meta(args)`) - its tags land\n     * on every page below it (the home for `hreflang`, `preconnect`, a section-default `<title>`). The\n     * merge is **nearest-wins for scalars** (the page's `title` overrides an inner layout's, which\n     * overrides an outer one; an undefined page title keeps the layout's) and **concatenated for the\n     * `meta`/`link` arrays** (outermost layout first, page last). `<meta>`/`<link>` attributes pass a\n     * shared tag-specific allowlist (including inert `data-*` metadata) and values are escaped. */\n    readonly head?: Meta;\n    /** Id of the container wrapping the app markup (default `\"root\"`). A non-default id also gets\n     * {@link ROOT_ATTRIBUTE}, which is how the generated client entry finds the container to hydrate -\n     * the entry is built once and cannot know what a given render chose. */\n    readonly rootId?: string;\n    /** When `false`, emit a complete but **non-hydrated** document - no client entry script, data\n     * globals, or modulepreloads. Used for server-rendered `_error` pages: a terminal state that needs no\n     * client takeover, and it sidesteps an SSR/hydrate mismatch (the server rendered the boundary, not\n     * the page the client manifest maps this route id to). Default `true`. */\n    readonly hydrate?: boolean;\n    /** Island client bundles (`@nifrajs/web/islands`) to load as `<script type=\"module\">` in the document\n     * tail - emitted **regardless of `hydrate`**, so a static (`hydrate: false`) page can still mount\n     * no-framework islands. URLs are attribute-escaped. Empty/omitted ⇒ none (unchanged output). */\n    readonly islandScripts?: readonly string[];\n    /** CSP nonce applied to every framework-owned executable script in this document. */\n    readonly nonce?: string;\n    /**\n     * Advanced: a per-route slot the renderer fills with the request-invariant document pieces (shell\n     * prefix/suffix, tail statics) on the first render and reuses afterwards, skipping their re-assembly.\n     *\n     * Only pass a cache when every shell-shaping input is IDENTICAL across the requests sharing it:\n     * same `head` content (a static meta chain - never a `meta(data)` function), `title`, `styles`,\n     * `cssLoading`, `preload`, `islandScripts`, `clientEntry`, `rootId`, `hydrate`, and `prerenderedPaths`.\n     * Per-request\n     * values (`data`, `params`, `search`, `actionData`, `layoutData`, deferred state) are always assembled\n     * fresh and safe. A per-request `nonce` disables the cache automatically. `createWebApp` wires this\n     * per route, gated on the route + layout metas being static.\n     */\n    readonly assemblyCache?: RenderAssemblyCache;\n}"
   },
   {
     "name": "renderPageResult",
@@ -12943,7 +13168,7 @@
     "name": "ReplayBackend",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
-    "signature": "export declare class ReplayBackend implements AgentBackend {\n    readonly info: AgentBackendInfo;\n    private readonly events;\n    private readonly delayMs;\n    private readonly sessions;\n    constructor(options: ReplayBackendOptions);\n    createSession(input: CreateSessionInput): Promise<AgentSessionSnapshot>;\n    send(input: SendMessageInput): AsyncIterable<AgentEvent>;\n    cancel(sessionId: string, reason?: string): Promise<void>;\n    snapshot(sessionId: string): Promise<AgentSessionSnapshot>;\n    reload(sessionId: string): Promise<ReloadResult>;\n    close(sessionId: string): Promise<void>;\n    private replay;\n    private push;\n    private requireSession;\n}",
+    "signature": "export declare class ReplayBackend implements AgentBackend {\n    readonly info: AgentBackendInfo;\n    /** Serialized immutable source records; parsing per replay prevents caller/consumer mutation leaks. */\n    private readonly events;\n    private readonly delayMs;\n    private readonly sessions;\n    constructor(options: ReplayBackendOptions);\n    createSession(input: CreateSessionInput): Promise<AgentSessionSnapshot>;\n    send(input: SendMessageInput): AsyncIterable<AgentEvent>;\n    cancel(sessionId: string, reason?: string): Promise<void>;\n    snapshot(sessionId: string): Promise<AgentSessionSnapshot>;\n    reload(sessionId: string): Promise<ReloadResult>;\n    close(sessionId: string): Promise<void>;\n    private replay;\n    private cancelTurn;\n    private isCurrentTurn;\n    private clearTurn;\n    private push;\n    private requireSession;\n}",
     "doc": "/** Deterministic protocol backend for demos, CI, and UI regression tests. */"
   },
   {
@@ -14053,6 +14278,13 @@
     "signature": "export interface RunAgentOptions {\n    readonly state: AgentTurnState;\n    readonly maxTurns?: number;\n    readonly goal?: (output: unknown) => boolean;\n}"
   },
   {
+    "name": "runAgentSurfaceConformance",
+    "kind": "function",
+    "package": "@nifrajs/webmcp",
+    "signature": "export declare function runAgentSurfaceConformance(capabilities: readonly AgentCapabilityReference[], options?: AgentSurfaceConformanceOptions): Promise<AgentSurfaceConformanceResult>;",
+    "doc": "/** Run deterministic host-independent checks over the WebMCP projection and optional calls. */"
+  },
+  {
     "name": "runApp",
     "kind": "function",
     "package": "@nifrajs/runner",
@@ -14675,6 +14907,20 @@
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface SagaStore {\n    readonly durability?: \"memory\" | \"durable\";\n    create(record: SagaRecord): boolean | Promise<boolean>;\n    get(sagaId: string): SagaRecord | undefined | Promise<SagaRecord | undefined>;\n    /** Atomic version compare-and-set; this is the saga engine's crash/concurrency boundary. */\n    compareAndSet(input: {\n        readonly sagaId: string;\n        readonly version: number;\n        readonly record: SagaRecord;\n    }): boolean | Promise<boolean>;\n    /** Bounded operational scan. Transition-only stores do not need to implement reconciliation. */\n    scan?(input: ReconciliationScanOptions<SagaState>): ReconciliationScanPage<SagaRecord> | Promise<ReconciliationScanPage<SagaRecord>>;\n    /** @deprecated Compatibility fallback; production reconciliation should implement `scan`. */\n    list?(): readonly SagaRecord[] | Promise<readonly SagaRecord[]>;\n}"
+  },
+  {
+    "name": "sanitizedHtml",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const sanitizedHtml: typeof trustHtml;",
+    "doc": "/** Explicit alias for callers that want the sanitized-content vocabulary at the call site. */"
+  },
+  {
+    "name": "SanitizedHtml",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type SanitizedHtml = TrustedHtml;",
+    "doc": "/** Alias for integrations whose sanitizer returns a separately named safe value. */"
   },
   {
     "name": "SassCompiler",
@@ -15409,7 +15655,7 @@
     "name": "SessionStore",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
-    "signature": "export interface SessionStore {\n    append(sessionId: string, type: string, payload?: unknown, options?: {\n        readonly pinned?: boolean;\n    }): Promise<SessionLogEntry>;\n    read(sessionId: string): Promise<readonly SessionLogEntry[]>;\n    checkpoint(sessionId: string, payload: unknown): Promise<void>;\n    fork(sessionId: string, targetSessionId?: string): Promise<string>;\n}"
+    "signature": "export interface SessionStore {\n    append(sessionId: string, type: string, payload?: unknown, options?: {\n        readonly pinned?: boolean;\n    }): Promise<SessionLogEntry>;\n    /** Read at most `limit` retained entries from the tail of the session log. */\n    read(sessionId: string, limit?: number): Promise<readonly SessionLogEntry[]>;\n    checkpoint(sessionId: string, payload: unknown): Promise<void>;\n    fork(sessionId: string, targetSessionId?: string): Promise<string>;\n}"
   },
   {
     "name": "SessionUserOf",
@@ -16923,6 +17169,12 @@
     "signature": "export type ToolApproval = {\n    readonly granted: true;\n    readonly level?: number;\n} | {\n    readonly granted: false;\n    readonly reason?: string;\n};"
   },
   {
+    "name": "ToolApproval",
+    "kind": "type",
+    "package": "@nifrajs/webmcp",
+    "signature": "export type ToolApproval = {\n    readonly granted: true;\n    readonly level?: number;\n} | {\n    readonly granted: false;\n    readonly reason?: string;\n};"
+  },
+  {
     "name": "ToolApprovalPolicy",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -16947,9 +17199,21 @@
     "signature": "export interface ToolCallOptions {\n    readonly effectId?: string;\n    readonly clock?: () => number;\n    readonly signal?: AbortSignal;\n    /** Wall-clock budget shared with the parent request, distinct from the cost `budget`. */\n    readonly deadline?: RequestBudget;\n    readonly capabilities?: readonly string[];\n    readonly approval?: ToolApproval;\n    readonly budget?: ToolBudget;\n    readonly idempotency?: ToolIdempotencyStore;\n    readonly namespace?: string;\n    readonly dryRun?: boolean;\n    readonly ledger?: RequestLedger;\n    readonly executionPolicy?: ExecutionPolicyAdapter;\n}"
   },
   {
+    "name": "ToolCallOptions",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface ToolCallOptions {\n    readonly effectId?: string;\n    readonly clock?: () => number;\n    readonly signal?: AbortSignal;\n    /** Wall-clock budget shared with the parent request, distinct from the cost `budget`. */\n    readonly deadline?: RequestBudget;\n    readonly capabilities?: readonly string[];\n    readonly approval?: ToolApproval;\n    readonly budget?: ToolBudget;\n    readonly idempotency?: ToolIdempotencyStore;\n    readonly namespace?: string;\n    readonly dryRun?: boolean;\n    readonly ledger?: RequestLedger;\n    readonly executionPolicy?: ExecutionPolicyAdapter;\n}"
+  },
+  {
     "name": "ToolCallResult",
     "kind": "type",
     "package": "@nifrajs/core",
+    "signature": "export type ToolCallResult<Output> = {\n    readonly ok: true;\n    readonly output?: Output;\n    readonly dryRun: boolean;\n    readonly evidence: readonly ToolEvidence[];\n    readonly ledger: SealedEffectLedger;\n} | {\n    readonly ok: false;\n    readonly dryRun: boolean;\n    readonly output?: undefined;\n    readonly error: ToolError;\n    readonly evidence: readonly ToolEvidence[];\n    readonly ledger: SealedEffectLedger;\n};"
+  },
+  {
+    "name": "ToolCallResult",
+    "kind": "type",
+    "package": "@nifrajs/webmcp",
     "signature": "export type ToolCallResult<Output> = {\n    readonly ok: true;\n    readonly output?: Output;\n    readonly dryRun: boolean;\n    readonly evidence: readonly ToolEvidence[];\n    readonly ledger: SealedEffectLedger;\n} | {\n    readonly ok: false;\n    readonly dryRun: boolean;\n    readonly output?: undefined;\n    readonly error: ToolError;\n    readonly evidence: readonly ToolEvidence[];\n    readonly ledger: SealedEffectLedger;\n};"
   },
   {
@@ -16984,9 +17248,21 @@
     "signature": "export interface ToolContract<Input = unknown, Output = unknown> {\n    readonly name: string;\n    readonly description: string;\n    readonly input: StandardSchemaV1<unknown, Input>;\n    readonly output: StandardSchemaV1<unknown, Output>;\n    readonly capability: string;\n    readonly approval: ToolApprovalPolicy;\n    readonly idempotency?: ToolIdempotencyPolicy<Input>;\n    readonly cost?: EffectCost;\n    readonly sensitivity: ToolSensitivity;\n    readonly annotations: ToolAnnotations;\n    readonly policy?: ExecutionPolicy;\n    readonly execute: (input: Input, context: ToolExecutionContext) => Output | PromiseLike<Output>;\n}"
   },
   {
+    "name": "ToolContract",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface ToolContract<Input = unknown, Output = unknown> {\n    readonly name: string;\n    readonly description: string;\n    readonly input: StandardSchemaV1<unknown, Input>;\n    readonly output: StandardSchemaV1<unknown, Output>;\n    readonly capability: string;\n    readonly approval: ToolApprovalPolicy;\n    readonly idempotency?: ToolIdempotencyPolicy<Input>;\n    readonly cost?: EffectCost;\n    readonly sensitivity: ToolSensitivity;\n    readonly annotations: ToolAnnotations;\n    readonly policy?: ExecutionPolicy;\n    readonly execute: (input: Input, context: ToolExecutionContext) => Output | PromiseLike<Output>;\n}"
+  },
+  {
     "name": "ToolContractOptions",
     "kind": "interface",
     "package": "@nifrajs/core",
+    "signature": "export interface ToolContractOptions<Input, Output, InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1> {\n    readonly name: string;\n    readonly description: string;\n    readonly input: InputSchema;\n    readonly output: OutputSchema;\n    readonly capability?: string;\n    readonly approval?: ToolApprovalPolicy;\n    readonly idempotency?: ToolIdempotencyPolicy<Input>;\n    /** Dimensionless counters such as `{ calls: 1, ms: 20 }`; never prices. */\n    readonly cost?: EffectCost;\n    readonly sensitivity?: ToolSensitivity;\n    readonly annotations?: ToolAnnotations;\n    readonly policy?: ExecutionPolicy;\n    readonly execute: (input: Input, context: ToolExecutionContext) => Output | PromiseLike<Output>;\n}"
+  },
+  {
+    "name": "ToolContractOptions",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
     "signature": "export interface ToolContractOptions<Input, Output, InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1> {\n    readonly name: string;\n    readonly description: string;\n    readonly input: InputSchema;\n    readonly output: OutputSchema;\n    readonly capability?: string;\n    readonly approval?: ToolApprovalPolicy;\n    readonly idempotency?: ToolIdempotencyPolicy<Input>;\n    /** Dimensionless counters such as `{ calls: 1, ms: 20 }`; never prices. */\n    readonly cost?: EffectCost;\n    readonly sensitivity?: ToolSensitivity;\n    readonly annotations?: ToolAnnotations;\n    readonly policy?: ExecutionPolicy;\n    readonly execute: (input: Input, context: ToolExecutionContext) => Output | PromiseLike<Output>;\n}"
   },
   {
@@ -17008,9 +17284,21 @@
     "signature": "export interface ToolError {\n    readonly code: \"input_invalid\" | \"capability_denied\" | \"execution_policy_unsatisfied\" | \"approval_required\" | \"approval_denied\" | \"idempotency_store_missing\" | \"idempotency_durability\" | \"idempotency_duplicate\" | \"idempotency_in_flight\" | \"idempotency_capacity\" | \"budget_exceeded\" | \"cancelled\" | \"execution_failed\" | \"output_invalid\" | \"ledger_failed\";\n    readonly stage: ToolEvidenceStage;\n    readonly issues?: readonly StandardIssue[];\n}"
   },
   {
+    "name": "ToolError",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface ToolError {\n    readonly code: \"input_invalid\" | \"capability_denied\" | \"execution_policy_unsatisfied\" | \"approval_required\" | \"approval_denied\" | \"idempotency_store_missing\" | \"idempotency_durability\" | \"idempotency_duplicate\" | \"idempotency_in_flight\" | \"idempotency_capacity\" | \"budget_exceeded\" | \"cancelled\" | \"execution_failed\" | \"output_invalid\" | \"ledger_failed\";\n    readonly stage: ToolEvidenceStage;\n    readonly issues?: readonly StandardIssue[];\n}"
+  },
+  {
     "name": "ToolEvidence",
     "kind": "interface",
     "package": "@nifrajs/core",
+    "signature": "export interface ToolEvidence {\n    readonly seq: number;\n    readonly stage: ToolEvidenceStage;\n    readonly outcome: ToolEvidenceOutcome;\n    readonly code?: string;\n}"
+  },
+  {
+    "name": "ToolEvidence",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
     "signature": "export interface ToolEvidence {\n    readonly seq: number;\n    readonly stage: ToolEvidenceStage;\n    readonly outcome: ToolEvidenceOutcome;\n    readonly code?: string;\n}"
   },
   {
@@ -17157,6 +17445,13 @@
     "package": "nifra",
     "signature": "export declare function toVercelHandler<Env = unknown>(app: FetchApp<Env>): VercelHandler;",
     "doc": "/** Adapt a Web-standard app to a Vercel Edge Function default export. */"
+  },
+  {
+    "name": "toWebMcpTool",
+    "kind": "function",
+    "package": "@nifrajs/webmcp",
+    "signature": "export declare function toWebMcpTool<Input, Output, State>(capability: AgentCapability<Input, Output, State>, options?: WebMcpExecutionOptions): WebMcpToolDefinition;",
+    "doc": "/** Adapt one canonical capability to the proposed WebMCP tool shape. */"
   },
   {
     "name": "traceAgentRun",
@@ -17310,6 +17605,19 @@
     "package": "@nifrajs/middleware",
     "signature": "export declare function trimTrailingSlash(options?: TrailingSlashOptions): import(\"@nifrajs/core\").IdentityPlugin<never>;",
     "doc": "/**\n * Remove trailing slashes from non-root paths. Redirect mode is the production default because it\n * canonicalizes URLs for clients and caches; rewrite mode is available for compatibility migrations.\n */"
+  },
+  {
+    "name": "TrustedHtml",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type TrustedHtml = string & {\n    readonly [TRUSTED_HTML_BRAND]: \"trusted-html\";\n};"
+  },
+  {
+    "name": "trustHtml",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function trustHtml(value: string): TrustedHtml;",
+    "doc": "/** Mark already-sanitized or application-owned HTML for an intentional raw-HTML adapter sink. */"
   },
   {
     "name": "tryGetContext",
@@ -18234,6 +18542,20 @@
     "doc": "/** The Vue SVG-component plugin. `generate` selects Vue's client/SSR render, matching `vueBunPlugin`. */"
   },
   {
+    "name": "waitForStyles",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function waitForStyles(options?: WaitForStylesOptions): Promise<void>;",
+    "doc": "/**\n * Wait for the framework-owned deferred stylesheet links in the initial document, then promote them to\n * `media=\"all\"`. It is safe to call more than once: repeated calls for one document share the same\n * per-link waits, and duplicate framework links are removed before waiting. Blocking links are not\n * touched.\n *\n * This function lives in the browser-only `@nifrajs/web/client` entry. It is nevertheless defensive\n * when imported in a non-DOM environment so an accidental import cannot crash a server process.\n */"
+  },
+  {
+    "name": "WaitForStylesOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface WaitForStylesOptions {\n    /**\n     * Maximum time to wait for one framework-owned deferred stylesheet before hydrating anyway.\n     * Defaults to 4000 ms and is capped at 30000 ms so a bad value cannot leave the app inert forever.\n     */\n    readonly timeoutMs?: number;\n}",
+    "doc": "/** Options for {@link waitForStyles}. */"
+  },
+  {
     "name": "wasmImageBackend",
     "kind": "function",
     "package": "@nifrajs/image",
@@ -18265,6 +18587,48 @@
     "package": "@nifrajs/core",
     "signature": "export type WebhookResult = {\n    readonly ok: true;\n    readonly payload: string;\n} | {\n    readonly ok: false;\n    readonly reason: WebhookFailureReason;\n};",
     "doc": "/** Verified ⇒ the raw `payload` text (parse it with your schema). Rejected ⇒ a stable `reason`. */"
+  },
+  {
+    "name": "WebMcpExecutionOptions",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface WebMcpExecutionOptions extends Omit<ToolCallOptions, \"signal\" | \"capabilities\"> {\n    /** Extra capability tokens may be supplied by an embedding host; the tool's own token is always added. */\n    readonly capabilities?: readonly string[];\n    /** A page-local authorization check. Server authorization remains mandatory for remote writes. */\n    readonly authorize?: (input: unknown) => boolean | PromiseLike<boolean>;\n    /** Return the Nifra receipt envelope (default) or only the typed output on success. */\n    readonly resultMode?: \"receipt\" | \"output\";\n    /** Maximum JSON-encoded output bytes retained in the default receipt. */\n    readonly maxReceiptBytes?: number;\n}"
+  },
+  {
+    "name": "WebMcpModelContext",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface WebMcpModelContext {\n    readonly registerTool: (tool: WebMcpToolDefinition) => void | PromiseLike<void>;\n    readonly unregisterTool?: (name: string) => void | PromiseLike<void>;\n}"
+  },
+  {
+    "name": "WebMcpReceipt",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface WebMcpReceipt<Output = unknown> {\n    readonly ok: boolean;\n    readonly outcome: \"committed\" | \"dry-run\" | \"failed\" | \"denied\";\n    readonly dryRun: boolean;\n    readonly output?: Output;\n    readonly outputTruncated?: true;\n    readonly error?: {\n        readonly code: ToolError[\"code\"];\n        readonly stage: ToolError[\"stage\"];\n    };\n    readonly evidence: readonly ToolEvidence[];\n}"
+  },
+  {
+    "name": "WebMcpRegistrationFailure",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface WebMcpRegistrationFailure {\n    readonly name: string;\n    readonly error: string;\n}"
+  },
+  {
+    "name": "WebMcpRegistrationReport",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface WebMcpRegistrationReport {\n    readonly supported: boolean;\n    readonly registered: readonly string[];\n    readonly failed: readonly WebMcpRegistrationFailure[];\n    readonly cleanup: () => Promise<void>;\n}"
+  },
+  {
+    "name": "WebMcpTarget",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface WebMcpTarget {\n    readonly modelContext?: WebMcpModelContext;\n}"
+  },
+  {
+    "name": "WebMcpToolDefinition",
+    "kind": "interface",
+    "package": "@nifrajs/webmcp",
+    "signature": "export interface WebMcpToolDefinition {\n    readonly name: string;\n    readonly description: string;\n    readonly inputSchema: Record<string, unknown>;\n    readonly annotations: AgentCapability<unknown, unknown>[\"tool\"][\"annotations\"];\n    readonly execute: (input: unknown) => unknown | PromiseLike<unknown>;\n}"
   },
   {
     "name": "websocket",
@@ -18454,7 +18818,7 @@
     "name": "WorkflowRunner",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
-    "signature": "export declare class WorkflowRunner {\n    private readonly options;\n    private readonly values;\n    private readonly completed;\n    private steps;\n    constructor(options?: WorkflowRunnerOptions);\n    run(step: WorkflowStep): Promise<WorkflowResult>;\n    private context;\n    private execute;\n    private single;\n    private parallel;\n    private emit;\n}",
+    "signature": "export declare class WorkflowRunner {\n    private readonly options;\n    private readonly signal;\n    private readonly values;\n    private readonly completed;\n    private steps;\n    constructor(options?: WorkflowRunnerOptions);\n    run(step: WorkflowStep): Promise<WorkflowResult>;\n    private context;\n    private execute;\n    private single;\n    private parallel;\n    private emit;\n}",
     "doc": "/** Bounded orchestration primitives. The kernel knows no provider, UI, or framework package. */"
   },
   {

@@ -8,6 +8,7 @@ import {
   agentError,
   type CreateSessionInput,
   type ForkSessionResult,
+  isAgentEvent,
   type ReloadResult,
 } from "@nifrajs/agent-protocol"
 import {
@@ -86,18 +87,33 @@ export class CodingAgentHost {
 
   async start(input: CreateSessionInput): Promise<AgentSessionSnapshot> {
     if (this.session !== undefined) throw new Error("coding agent: a session is already active")
-    this.session = await this.backend.createSession(input)
-    let history: readonly import("./sessions.ts").SessionLogEntry[] = []
-    if (input.sessionId !== undefined && this.sessionStore !== undefined) {
-      history = await this.sessionStore.read(input.sessionId)
-      this.context.restore(history.map(sessionEntryToContextRecord))
-    } else {
+    const created = await this.backend.createSession(input)
+    this.session = created
+    try {
+      let history: readonly import("./sessions.ts").SessionLogEntry[] = []
+      if (input.sessionId !== undefined && this.sessionStore !== undefined) {
+        history = await this.sessionStore.read(input.sessionId)
+        this.context.restore(history.map(sessionEntryToContextRecord))
+      } else {
+        this.context.restore([])
+      }
+      this.nextSeq = nextSequence(created, history)
+      await this.extensions?.reload()
+      await this.sessionStore?.append(created.id, "session.started", created)
+      return created
+    } catch (error) {
+      // Session creation may allocate a process or other external resource. If history, extension
+      // initialization, or the first persistence write fails, roll the backend session back before
+      // exposing the failure; otherwise a retry leaks the live session behind `this.session = undefined`.
+      this.session = undefined
       this.context.restore([])
+      this.nextSeq = 0
+      await this.backend.cancel(created.id, "session startup failed").catch(() => {})
+      await this.backend.close(created.id).catch(() => {})
+      await this.extensions?.close().catch(() => {})
+      this.approvals.close()
+      throw error
     }
-    this.nextSeq = nextSequence(this.session, history)
-    await this.extensions?.reload()
-    await this.sessionStore?.append(this.session.id, "session.started", this.session)
-    return this.session
   }
 
   get snapshot(): AgentSessionSnapshot | undefined {
@@ -119,6 +135,12 @@ export class CodingAgentHost {
         const event = this.acceptBackendEvent(rawEvent)
         await this.recordEvent(event)
         yield event
+        if (event.type === "session.stopped") return
+        if (event.type === "session.failed") {
+          if (event.error.code === "BACKEND_PROTOCOL")
+            await this.backend.cancel(sessionId, "backend protocol error").catch(() => {})
+          return
+        }
       }
       if (signal?.aborted === true) return
 
@@ -133,8 +155,15 @@ export class CodingAgentHost {
 
   private nextSeq = 0
 
-  private acceptBackendEvent(rawEvent: AgentEvent): AgentEvent {
+  private acceptBackendEvent(rawEvent: unknown): AgentEvent {
     const session = this.requireSession()
+    if (!isAgentEvent(rawEvent) || rawEvent.sessionId !== session.id) {
+      return this.createEvent({
+        type: "session.failed",
+        error: agentError("BACKEND_PROTOCOL", "backend emitted an invalid agent event"),
+        recoverable: false,
+      })
+    }
     const event = Object.freeze({
       ...rawEvent,
       sessionId: session.id,
@@ -152,6 +181,26 @@ export class CodingAgentHost {
       })
       this.session = snapshot
       return Object.freeze({ ...event, snapshot }) as AgentEvent
+    }
+    if (event.type === "session.stopped") {
+      const { activeTurnId: _activeTurnId, ...withoutActiveTurn } = session
+      this.session = Object.freeze({
+        ...withoutActiveTurn,
+        status: "stopped",
+        lastSeq: event.seq,
+        updatedAt: event.at,
+      })
+      return event
+    }
+    if (event.type === "session.failed") {
+      const { activeTurnId: _activeTurnId, ...withoutActiveTurn } = session
+      this.session = Object.freeze({
+        ...withoutActiveTurn,
+        status: "failed",
+        lastSeq: event.seq,
+        updatedAt: event.at,
+      })
+      return event
     }
     this.session = Object.freeze({
       ...session,
@@ -200,18 +249,30 @@ export class CodingAgentHost {
 
   private createEvent(payload: AgentEventPayload): AgentEvent {
     const session = this.requireSession()
-    const event = Object.freeze({
+    const candidate = Object.freeze({
       version: 1 as const,
       sessionId: session.id,
       seq: this.nextSeq++,
       at: Date.now(),
       ...payload,
     }) as AgentEvent
-    this.session = Object.freeze({
-      ...session,
-      lastSeq: event.seq,
-      updatedAt: event.at,
-    })
+    const event = normalizeHostEvent(candidate)
+    if (event === undefined) throw new Error("coding agent: host generated an invalid agent event")
+    if (event.type === "session.stopped" || event.type === "session.failed") {
+      const { activeTurnId: _activeTurnId, ...withoutActiveTurn } = session
+      this.session = Object.freeze({
+        ...withoutActiveTurn,
+        status: event.type === "session.stopped" ? "stopped" : "failed",
+        lastSeq: event.seq,
+        updatedAt: event.at,
+      })
+    } else {
+      this.session = Object.freeze({
+        ...session,
+        lastSeq: event.seq,
+        updatedAt: event.at,
+      })
+    }
     return event
   }
 
@@ -310,7 +371,7 @@ export class CodingAgentHost {
     if (this.sessionStore === undefined) return Object.freeze([])
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 4096)
       throw new RangeError("coding agent: history limit must be between 1 and 4096")
-    const entries = await this.sessionStore.read(this.session.id)
+    const entries = await this.sessionStore.read(this.session.id, limit)
     return Object.freeze(entries.slice(-limit))
   }
 
@@ -318,11 +379,16 @@ export class CodingAgentHost {
     if (this.session === undefined) return
     const id = this.session.id
     this.session = undefined
-    await this.sessionStore?.append(id, "session.stopped", { reason })
-    await this.backend.cancel(id, reason).catch(() => {})
-    await this.backend.close(id).catch(() => {})
-    await this.extensions?.close().catch(() => {})
-    this.approvals.close()
+    try {
+      await this.sessionStore?.append(id, "session.stopped", { reason })
+    } finally {
+      // Persistence is an audit aid, not a prerequisite for releasing the backend. Always clean up
+      // the live session even when the store is full, read-only, or temporarily unavailable.
+      await this.backend.cancel(id, reason).catch(() => {})
+      await this.backend.close(id).catch(() => {})
+      await this.extensions?.close().catch(() => {})
+      this.approvals.close()
+    }
   }
 
   get pendingApprovals(): readonly ApprovalRequest[] {
@@ -392,6 +458,63 @@ function eventText(event: AgentEvent): string {
     default:
       return event.type
   }
+}
+
+/** Keep host-owned diagnostics inside the same wire contract as backend events. */
+function normalizeHostEvent(event: unknown): AgentEvent | undefined {
+  if (isAgentEvent(event)) return event
+  if (event === null || typeof event !== "object" || Array.isArray(event)) return undefined
+  const candidate = event as Record<string, unknown>
+  if (candidate.type === "verification.completed") {
+    // Verification reports are command output. They are useful to the repair prompt, but an
+    // arbitrary report must not bypass the protocol's depth/object/string limits on the live stream.
+    const { report: _report, ...withoutReport } = candidate
+    const fallback = Object.freeze(withoutReport)
+    return isAgentEvent(fallback) ? (fallback as AgentEvent) : undefined
+  }
+  if (candidate.type !== "repair.required") return undefined
+
+  const source = candidate.task
+  if (source === null || typeof source !== "object" || Array.isArray(source)) return undefined
+  const taskSource = source as Record<string, unknown>
+  const task = Object.freeze({
+    id: boundedHostToken(taskSource.id)
+      ? taskSource.id
+      : `verification-${typeof candidate.seq === "number" ? candidate.seq : "unknown"}`,
+    verification:
+      taskSource.verification === "check" ||
+      taskSource.verification === "assure" ||
+      taskSource.verification === "test"
+        ? taskSource.verification
+        : "check",
+    cwd: boundedHostText(taskSource.cwd, 4_096) || ".",
+    reason: boundedHostText(taskSource.reason, 256 * 1024) || "verification failed",
+    capabilities: Object.freeze(
+      (Array.isArray(taskSource.capabilities) ? taskSource.capabilities : []).filter(
+        boundedHostToken,
+      ),
+    ),
+    ...(typeof taskSource.output === "string"
+      ? { output: boundedHostText(taskSource.output, 256 * 1024) }
+      : {}),
+  })
+  const { task: _task, turnId, ...base } = candidate
+  const fallback = Object.freeze({
+    ...base,
+    ...(boundedHostToken(turnId) ? { turnId } : {}),
+    task,
+  })
+  return isAgentEvent(fallback) ? (fallback as AgentEvent) : undefined
+}
+
+function boundedHostText(value: unknown, max: number): string {
+  if (typeof value !== "string") return ""
+  const clean = value.replaceAll("\0", "")
+  return clean.length <= max ? clean : clean.slice(0, max)
+}
+
+function boundedHostToken(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9._:/-]{1,128}$/.test(value)
 }
 
 /** Default session evidence is content-free; live protocol consumers still receive the full event. */

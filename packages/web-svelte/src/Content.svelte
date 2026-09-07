@@ -7,6 +7,7 @@
   build/server time) - never pass user-supplied HTML without sanitizing it first. Plain-JS script.
 -->
 <script>
+  /** @type {{ html: import('@nifrajs/web').TrustedHtml, as?: string, [key: string]: unknown }} */
   let { html, as = "div", ...rest } = $props()
 </script>
 

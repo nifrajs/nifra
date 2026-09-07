@@ -7,7 +7,7 @@ export const hydrate = false
 export const meta = docsMeta(
   "/docs/comparison",
   "Nifra vs. other frameworks - the honest comparison",
-  "How Nifra compares to the full-stack frameworks (Next.js, Nuxt, SvelteKit, Remix, TanStack Start) - and, as a standalone backend, to Hono and Elysia. Five UI frameworks, five runtimes, end-to-end types, and an AI-agent toolchain no competitor ships.",
+  "How Nifra compares to the full-stack frameworks (Next.js, Nuxt, SvelteKit, Remix, TanStack Start) - and, as a standalone backend, to Hono and Elysia. Five UI frameworks, five runtimes, end-to-end types, and an agentic application layer built around typed capabilities.",
 )
 
 export default function Comparison() {
@@ -157,8 +157,8 @@ export default function Comparison() {
 
       <h2>The AI-agent toolchain - Nifra-only</h2>
       <p>
-        No competitor - full-stack or backend - ships this. Every Nifra app is built to be edited by AI agents
-        accurately:
+        Nifra covers both sides of the agent loop: agents that edit your codebase and agents that are
+        part of the product. Every surface is anchored to the same typed capability boundary:
       </p>
       <ul>
         <li>
@@ -181,6 +181,18 @@ export default function Comparison() {
           <i>document</i> and Semgrep pattern-matches source text; neither sees the real route graph.
           This is what makes agent-written routes safe to merge - an agent (or a human) cannot ship an
           unauthenticated write past it.
+        </li>
+        <li>
+          <code>@nifrajs/webmcp</code> - explicit page-local tools using the browser WebMCP standard,
+          deterministic predictive UI, bounded receipts, and versioned reconciliation.{" "}
+          <code>@nifrajs/ag-ui</code> streams the same run into a product UI, while{" "}
+          <code>@nifrajs/agent-app</code> provides negotiated browser views, approvals, handoffs, and
+          Run Studio projections.
+        </li>
+        <li>
+          <code>@nifrajs/agent</code> - bounded typed agent turns with budgets, approvals, cancellation,
+          resumable evidence, shared state, and provider-neutral model ports.{" "}
+          <code>@nifrajs/a2a</code> exposes the same runner to other agents without rewriting the core.
         </li>
       </ul>
 

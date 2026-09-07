@@ -30,6 +30,9 @@ const RSS = `${ROOT}/site/public/rss.xml`
  * `_404`), dynamic segments (no fixed URL to list), and anything that is not a route module. */
 function isPageFile(name: string): boolean {
   if (name.startsWith("_") || name.includes("[")) return false
+  // Machine-readable endpoints are linked from HTML/head metadata but should not appear as pages in
+  // the XML sitemap. They return markdown/JSON rather than crawler-facing HTML documents.
+  if (name.endsWith(".md.tsx")) return false
   return name.endsWith(".tsx") || name.endsWith(".mdx")
 }
 
@@ -45,7 +48,8 @@ function collect(dir: string, prefix: string, out: Route[]): void {
     a.name < b.name ? -1 : 1,
   )) {
     if (entry.isDirectory()) {
-      if (entry.name.startsWith("_") || entry.name.startsWith("[")) continue
+      if (entry.name.startsWith("_") || entry.name.startsWith("[") || entry.name === ".well-known")
+        continue
       collect(`${dir}/${entry.name}`, `${prefix}/${entry.name}`, out)
       continue
     }

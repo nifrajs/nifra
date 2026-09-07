@@ -66,7 +66,7 @@ export interface ClientActionResult {
 /** A client-only action wrapper; it never replaces the server action. */
 export type ClientAction = (
   args: ClientActionArgs,
-) => ClientActionResult | void | Promise<ClientActionResult | void>
+) => ClientActionResult | undefined | Promise<ClientActionResult | undefined>
 
 /** Client hooks populated by the generated route entry after a route chunk loads. */
 export interface ClientRouteHooks {

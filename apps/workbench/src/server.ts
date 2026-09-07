@@ -52,7 +52,9 @@ const ui = Bun.serve({
     return new Response("Not found", { status: 404 })
   },
 })
-const workbenchUrl = `${ui.url.toString().replace(/\/$/, "")}/?rpc=${encodeURIComponent(rpcHandle.url)}&token=${encodeURIComponent(rpcHandle.token)}`
+// Bootstrap credentials live in the URL fragment. Browsers do not send fragments in HTTP
+// requests, so the bearer token cannot enter the UI server's access logs or Referer headers.
+const workbenchUrl = `${ui.url.toString().replace(/\/$/, "")}/#rpc=${encodeURIComponent(rpcHandle.url)}&token=${encodeURIComponent(rpcHandle.token)}`
 console.log(`Nifra Workbench: ${workbenchUrl}`)
 console.log(`Project: ${options.cwd}`)
 console.log(`Backend: ${options.backend}`)

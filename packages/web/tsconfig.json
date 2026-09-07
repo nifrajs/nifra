@@ -20,6 +20,7 @@
     "test/islands.test.ts",
     "test/nano.test.ts",
     "test/apply-head.test.ts",
-    "test/client-browser.test.ts"
+    "test/client-browser.test.ts",
+    "test/css-loading.test.ts"
   ]
 }

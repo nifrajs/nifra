@@ -9,6 +9,7 @@ import { mcp } from "@nifrajs/core/mcp"
 import type { LoadedApp } from "../src/load.ts"
 import { detectMonorepo, loadMonorepoApps } from "../src/load.ts"
 import {
+  CHILD_INPUT_MAX_BYTES,
   CHILD_OUTPUT_MAX_BYTES,
   createCachedAppLoader,
   extractBackendPrompts,
@@ -17,9 +18,11 @@ import {
   LOCAL_TOOL_MAX_RESPONSE_BYTES,
   projectFeatures,
   projectTools,
+  readBoundedLines,
   readBoundedResponse,
   readBoundedStream,
   resolveProjectDir,
+  serializeBoundedJson,
   validateLocalPort,
   WarmWorker,
 } from "../src/mcp.ts"
@@ -84,6 +87,35 @@ test("local dev-tool reads validate ports and cap response bodies", async () => 
       }),
     ),
   ).rejects.toThrow("size limit")
+})
+
+test("bounded worker lines cap oversized input and preserve split UTF-8 lines", async () => {
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode("ok\n12345\n"))
+      controller.enqueue(new Uint8Array([0xf0, 0x9f]))
+      controller.enqueue(new Uint8Array([0x98, 0x80, 0x0a]))
+      controller.enqueue(encoder.encode("tail"))
+      controller.close()
+    },
+  })
+  const lines: Array<{ kind: string; text?: string }> = []
+  for await (const line of readBoundedLines(stream, 4)) lines.push(line)
+  expect(lines).toEqual([
+    { kind: "line", text: "ok" },
+    { kind: "too-large" },
+    { kind: "line", text: "😀" },
+    { kind: "line", text: "tail" },
+  ])
+})
+
+test("bounded JSON serialization rejects oversized or non-serializable values", () => {
+  expect(serializeBoundedJson({ ok: true }, 32)).toBe('{"ok":true}')
+  expect(serializeBoundedJson({ value: "x".repeat(64) }, 32)).toBeUndefined()
+  const cyclic: { self?: unknown } = {}
+  cyclic.self = cyclic
+  expect(serializeBoundedJson(cyclic, 1024)).toBeUndefined()
 })
 
 test("child output is cancelled at its byte budget", async () => {
@@ -514,6 +546,18 @@ describe("runBackend (nifra_run engine) - input guards", () => {
         })
         return msg.output.results[0]?.body as { count: number; path: string }
       }
+
+      proc.stdin.write("null\n")
+      const malformed = await readLine()
+      expect(malformed.id).toBeNull()
+      expect(malformed.output).toMatchObject({ error: "expected { requests: [...] }" })
+
+      proc.stdin.write(`${"x".repeat(CHILD_INPUT_MAX_BYTES + 1)}\n`)
+      const oversized = await readLine()
+      expect(oversized.id).toBeNull()
+      expect(oversized.output).toMatchObject({
+        error: `worker input exceeded ${CHILD_INPUT_MAX_BYTES} bytes`,
+      })
 
       expect(await call(1, "/one")).toEqual({ count: 1, path: "/one" })
       expect(await call(2, "/two")).toEqual({ count: 2, path: "/two" })

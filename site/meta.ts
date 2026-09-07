@@ -74,6 +74,15 @@ export function pageMeta(
       // The canonical collapses host duplicates (www, *.pages.dev previews) onto the apex for
       // crawlers - every route passes its own path.
       ...(url !== undefined ? [canonical(url)] : []),
+      // Give agents a stable, content-negotiation-free path to the project's concise operating
+      // instructions and the hosted docs MCP metadata from every HTML page.
+      { rel: "alternate", type: "text/markdown", title: "Agent instructions", href: "/agents.md" },
+      {
+        rel: "alternate",
+        type: "application/json",
+        title: "MCP server metadata",
+        href: "/.well-known/mcp",
+      },
       { rel: "icon", type: "image/png", sizes: "64x64", href: "/assets/favicon.png" },
       { rel: "apple-touch-icon", href: "/assets/apple-touch-icon.png" },
       ...(extras.link ?? []),

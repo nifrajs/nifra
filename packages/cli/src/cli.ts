@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url"
 import { inProcessClient } from "@nifrajs/client"
 import {
   type CreateWebAppOptions,
+  type CssLoadingMode,
   createWebApp,
   DEFAULT_DEV_PORT,
   type RenderAdapter,
@@ -562,20 +563,46 @@ async function buildForTarget(app: LoadedApp, target: string, flags: Flags): Pro
   if (flags.vite && flags.bun) {
     throw new Error("[nifra] `nifra build` takes `--vite` or `--bun`, not both.")
   }
+  const { framework: fw } = app
+  const cssCodeSplitRequested = fw.cssCodeSplit === false
+  const hasBunTransforms =
+    app.resolvedPlugins.clientPlugins.length > 0 || app.resolvedPlugins.serverPlugins.length > 0
+  if (cssCodeSplitRequested && flags.bun) {
+    throw new Error(
+      "[nifra] `cssCodeSplit: false` is a Vite-only production option, but `nifra build --bun` was requested. " +
+        "Drop `--bun` (Nifra will select Vite automatically) or remove the aggregate CSS setting.",
+    )
+  }
+  if (cssCodeSplitRequested && hasBunTransforms) {
+    throw new Error(
+      "[nifra] `cssCodeSplit: false` requires the Vite production pipeline, but this app also declares " +
+        "Bun client/server plugins. Use `--vite` with Vite equivalents, or remove the aggregate CSS setting; " +
+        "switching pipelines would silently drop the Bun transforms.",
+    )
+  }
   // Which bundler builds this app. Default is Bun; an app whose ONLY transforms are `vitePlugins` gets
   // Vite instead, because the Bun build cannot run them and would silently omit the work. `--vite`/`--bun`
   // force it, and the one forced combination that would drop transforms throws.
-  const decision = chooseBuildPipeline(
+  let decision = chooseBuildPipeline(
     app.resolvedPlugins,
     flags.vite ? "vite" : flags.bun ? "bun" : undefined,
   )
+  if (cssCodeSplitRequested && decision.pipeline === "bun") {
+    // With no Bun transforms, aggregate CSS is a Vite-only request that can be honored safely by
+    // selecting the same pipeline the user would otherwise have to force explicitly.
+    decision = {
+      pipeline: "vite",
+      why: "auto",
+      reason: "auto: this app requested Vite's aggregate CSS output (`cssCodeSplit: false`)",
+    }
+  }
   const useVite = decision.pipeline === "vite"
   // Same deploy-dir output - buildTargetVite delegates to the same orchestrator as buildTarget - so only
   // the bundler and the plugin FORMAT (Vite plugins, not Bun) differ.
   const buildTarget = useVite
     ? (await import("@nifrajs/web/build-vite")).buildTargetVite
     : (await import("@nifrajs/web/build")).buildTarget
-  const { framework: fw, routesDir, outDir, cwd, backend } = app
+  const { routesDir, outDir, cwd, backend } = app
   // The server entry must import the adapter from `framework.ts` (edge-safe), not the loaded config.
   // `loadApp` guarantees one of them exists; prefer framework.ts so a multi-target app's Vite-plugin
   // config never reaches the edge bundle (see load.ts module header).
@@ -611,6 +638,8 @@ async function buildForTarget(app: LoadedApp, target: string, flags: Flags): Pro
     ...(fw.define ? { define: fw.define } : {}),
     ...(fw.publicDir !== undefined ? { publicDir: fw.publicDir } : {}),
     ...(fw.publicEnvPrefix !== undefined ? { publicEnvPrefix: fw.publicEnvPrefix } : {}),
+    ...(fw.cssCodeSplit !== undefined ? { cssCodeSplit: fw.cssCodeSplit } : {}),
+    ...(fw.cssLoading !== undefined ? { cssLoading: fw.cssLoading } : {}),
     // The static target needs a built app to drive prerendering - only build it when targeting static.
     ...(target === "static" ? { prerenderApp: await buildPrerenderApp(app) } : {}),
   })
@@ -647,6 +676,7 @@ async function buildPrerenderApp(
       ...(client.routes ? { routePreload: client.routes } : {}),
       ...(client.css ? { styles: client.css } : {}),
       ...(client.routeStyles ? { routeStyles: client.routeStyles } : {}),
+      ...(client.cssLoading !== undefined ? { cssLoading: client.cssLoading } : {}),
       ...apiOf(backend),
     })
 }
@@ -656,6 +686,7 @@ interface BuiltManifest {
   readonly routes?: Readonly<Record<string, readonly string[]>>
   readonly css?: readonly string[]
   readonly routeStyles?: Readonly<Record<string, readonly string[]>>
+  readonly cssLoading?: CssLoadingMode
 }
 
 async function start(app: LoadedApp, flags: Flags): Promise<void> {

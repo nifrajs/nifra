@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { type CompactionReport, ContextWindow, FileSessionStore } from "../src/sessions.ts"
@@ -54,5 +54,39 @@ describe("sessions and compaction", () => {
     expect(context.snapshot().find((item) => item.kind === "memory.summary")?.content).toMatch(
       /^custom:/,
     )
+  })
+
+  test("retains a bounded tail and serializes concurrent appends", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-agent-session-bounded-"))
+    roots.push(root)
+    const store = new FileSessionStore({
+      root,
+      maxEntries: 3,
+      maxBytes: 4_096,
+      maxEntryBytes: 1_024,
+    })
+    await Promise.all(
+      Array.from({ length: 8 }, (_unused, index) =>
+        store.append("bounded", "event", { index, text: "x".repeat(100) }),
+      ),
+    )
+    const entries = await store.read("bounded")
+    expect(entries).toHaveLength(3)
+    expect(entries.map((entry) => entry.seq)).toEqual([5, 6, 7])
+    expect(await store.read("bounded", 1)).toEqual([entries[2]!])
+    expect((await stat(join(root, "bounded.jsonl"))).size).toBeLessThanOrEqual(4_096)
+    expect(
+      (await readFile(join(root, "bounded.jsonl"), "utf8")).split("\n").filter(Boolean),
+    ).toHaveLength(3)
+  })
+
+  test("does not overwrite an existing fork destination", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-agent-session-fork-"))
+    roots.push(root)
+    const store = new FileSessionStore({ root })
+    await store.append("main", "event", { ok: true })
+    await store.append("review", "event", { keep: true })
+    await expect(store.fork("main", "review")).rejects.toThrow()
+    expect((await store.read("review"))[0]?.payload).toEqual({ keep: true })
   })
 })

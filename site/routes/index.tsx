@@ -5,7 +5,7 @@ import { pageMeta, softwareApplication } from "../meta"
 
 export const meta = pageMeta(
   "Nifra - the TypeScript framework for AI-edited codebases",
-  "Build typed APIs and full-stack apps that humans and coding agents can change safely. Nifra combines live MCP project context, verified scaffolds, a no-codegen typed client, multi-framework SSR, and one app across Bun, Node, Deno, and the edge.",
+  "Build typed, agentic applications that humans and coding agents can change safely. Nifra combines live MCP project context, bounded agent runs, WebMCP predictive UI, a no-codegen typed client, multi-framework SSR, and one app across Bun, Node, Deno, and the edge.",
   "/",
   // The one page that describes the project rather than a document, so the SoftwareApplication and
   // the site-wide Organization record both live here and nowhere else.
@@ -19,6 +19,11 @@ export const meta = pageMeta(
         url: "https://nifra.dev",
         logo: "https://nifra.dev/assets/og.jpg",
         sameAs: ["https://github.com/nifrajs/nifra", "https://www.npmjs.com/org/nifrajs"],
+        contactPoint: {
+          "@type": "ContactPoint",
+          contactType: "technical support",
+          url: "https://nifra.dev/contact",
+        },
       },
     ],
   },
@@ -123,6 +128,33 @@ if (res.ok) res.data.id
 //              ^ tsc error here the moment the route or response shape changes
 
 $ nifra check          # CI gate: typecheck + typed-client lint - drift fails the build`
+
+const AGENTIC_UI_CODE = `import { t } from "@nifrajs/schema"
+import { defineAgentCapability, registerWebMcpTools } from "@nifrajs/webmcp"
+
+const addToCart = defineAgentCapability({
+  name: "cart.add",
+  description: "Add a product to the current cart.",
+  input: t.object({ sku: t.string(), quantity: t.number() }),
+  output: t.object({ cartVersion: t.string() }),
+  writes: ["cart"],
+  execute: (input) => addItemOnTheServer(input),
+  predict: ({ input, version }) => ({
+    baseVersion: version,
+    patch: [{ op: "add", path: "/items/-", value: input }],
+  }),
+})
+
+await registerWebMcpTools([addToCart]) // explicit page-local allowlist
+// The same capability can power remote MCP, AG-UI, or an agent runner.`
+
+const NIFRA_UI_CODE = `import { ApprovalCard, PromptComposer } from "@nifrajs/ui"
+import { catalogByName } from "@nifrajs/ui-registry"
+
+// Source-owned UI for the moment an agent proposes a change.
+const contract = catalogByName.ApprovalCard
+// Discover the same public contract through the UI MCP server.
+// bunx @nifrajs/ui-mcp`
 
 const RUNTIME_CODE = `import { app } from "./app"   // one app, defined once
 
@@ -510,8 +542,8 @@ export default function Home() {
             Nifra gives agents the live map they need - MCP context, route-aware scaffolds,
             self-verifying tools, a <strong>no-codegen typed client</strong> - and a{" "}
             <strong>route-assurance gate</strong> so nothing they write ships an unproven route.
-            Start with a fast API, grow into SSR across React, Solid, Vue, Preact, or Svelte, and
-            deploy on Bun, Node, Deno, or the edge.
+            Start with a fast API, add a bounded agent backend and predictive UI, grow into SSR
+            across React, Solid, Vue, Preact, or Svelte, and deploy on Bun, Node, Deno, or the edge.
           </p>
           <div className="hero-actions">
             <InstallWidget />
@@ -553,8 +585,8 @@ export default function Home() {
         <div className="value-item">
           <strong>Agents read your live API - and can't ship an unproven route</strong>
           <span>
-            An MCP server exposes your real routes and schemas to coding agents, and the assurance
-            gate fails the build if anything they write skips auth or validation.
+            The same typed contract powers coding agents and user-facing agents: live context, typed
+            capabilities, real verification, and an assurance gate for every route.
           </span>
         </div>
         <div className="value-item">
@@ -604,10 +636,53 @@ export default function Home() {
         <CodeBlock code={AGENT_CODE} lang="ts" />
       </section>
 
-      {/* FEATURE 2: NO-CODEGEN CLIENT */}
+      {/* FEATURE 2: AGENTIC UI */}
+      <section id="sec-agentic-ui" className="feature-showcase reverse">
+        <div className="feature-info">
+          <span className="kicker">02 · Agentic UI</span>
+          <h2>Let agents act in the interface—and make the state honest.</h2>
+          <p>
+            <code>@nifrajs/webmcp</code> adopts the browser's page-local WebMCP standard with an
+            explicit tool allowlist. Add a deterministic prediction and Nifra applies it atomically,
+            then commits, rolls back, or reports a conflict when authoritative server state arrives.
+            For longer-running agents, <code>@nifrajs/ag-ui</code> streams text, tool calls,
+            approvals, and shared state into the product UI. The normal human UI keeps working when
+            no agent host is present.
+          </p>
+          <a href="/docs/webmcp" className="perf-link">
+            Explore WebMCP &amp; predictive UI →
+          </a>
+        </div>
+        <CodeBlock code={AGENTIC_UI_CODE} lang="ts" />
+      </section>
+
+      {/* FEATURE 2.5: SOURCE-OWNED UI */}
+      <section id="sec-nifra-ui" className="feature-showcase">
+        <div className="feature-info">
+          <span className="kicker">02.5 · Nifra UI</span>
+          <h2>StyleX components that preserve agent intent.</h2>
+          <p>
+            Nifra UI is a separate, source-owned repository for agentic interfaces: 120 accessible
+            React primitives, semantic themes, an inspectable registry, a CLI, and MCP discovery.
+            Use it when the product UI needs to show what an agent knows, proposes, and is allowed
+            to do - without turning the design system into a black box.
+          </p>
+          <a
+            href="https://github.com/nifrajs/nifra-ui"
+            className="perf-link"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Explore the Nifra UI repository ↗
+          </a>
+        </div>
+        <CodeBlock code={NIFRA_UI_CODE} lang="ts" />
+      </section>
+
+      {/* FEATURE 3: NO-CODEGEN CLIENT */}
       <section id="sec-client" className="feature-showcase reverse">
         <div className="feature-info">
-          <span className="kicker">02 · Type-Safe Client</span>
+          <span className="kicker">03 · Type-Safe Client</span>
           <h2>A client that makes API drift a compile error.</h2>
           <p>
             No code generators, no build steps, and no stale SDKs.{" "}
@@ -621,10 +696,10 @@ export default function Home() {
         <CodeBlock code={CLIENT_CODE} lang="ts" />
       </section>
 
-      {/* FEATURE 3: MULTI-UI SSR - CSS-only framework switcher */}
+      {/* FEATURE 4: MULTI-UI SSR - CSS-only framework switcher */}
       <section id="sec-frontend" className="feature-showcase">
         <div className="feature-info">
-          <span className="kicker">03 · Unified Frontend</span>
+          <span className="kicker">04 · Unified Frontend</span>
           <h2>One full-stack engine. Five UI libraries.</h2>
           <p>
             React, Solid, Vue, Preact, and Svelte all sit on the same render engine. Loaders,
@@ -638,10 +713,10 @@ export default function Home() {
         <FrameworkSwitcher />
       </section>
 
-      {/* FEATURE 4: MULTI-RUNTIME */}
+      {/* FEATURE 5: MULTI-RUNTIME */}
       <section id="sec-runtime" className="feature-showcase reverse">
         <div className="feature-info">
-          <span className="kicker">04 · Multi-Runtime</span>
+          <span className="kicker">05 · Multi-Runtime</span>
           <h2>Deploy anywhere. Bun, Node, Deno, or the Edge.</h2>
           <p>
             Nifra is built on Web-standard routing and fetch APIs. Run on Bun for blazing-fast
@@ -668,10 +743,10 @@ export default function Home() {
         </div>
       </section>
 
-      {/* FEATURE 5: HARDENED BACKEND */}
+      {/* FEATURE 6: HARDENED BACKEND */}
       <section id="sec-backend" className="feature-showcase">
         <div className="feature-info">
-          <span className="kicker">05 · Hardened APIs</span>
+          <span className="kicker">06 · Hardened APIs</span>
           <h2>Production security built into the framework.</h2>
           <p>
             Zero-dependency middleware for security headers, cookies, CSRF, JWT authentication, rate
@@ -685,10 +760,10 @@ export default function Home() {
         <CodeBlock code={BACKEND_CODE} lang="ts" />
       </section>
 
-      {/* FEATURE 6: ROUTE ASSURANCE */}
+      {/* FEATURE 7: ROUTE ASSURANCE */}
       <section id="sec-assure" className="feature-showcase reverse">
         <div className="feature-info">
-          <span className="kicker">06 · Route Assurance</span>
+          <span className="kicker">07 · Route Assurance</span>
           <h2>Every route proves its security posture - or the build fails.</h2>
           <p>
             <code>nifra assure</code> classifies every real route against a policy file and fails CI
@@ -875,8 +950,8 @@ export default function Home() {
         <span className="kicker">Ready when you are</span>
         <h2>Build something that survives the next AI edit.</h2>
         <p>
-          One command scaffolds a typed Nifra app - start as a fast API, grow into full-stack SSR,
-          and let your agents read the live contract instead of guessing.
+          One command scaffolds a typed Nifra app - start as a fast API, add agentic behavior when
+          you need it, and let every human or agent interaction run against the live contract.
         </p>
         <div className="hero-actions">
           <InstallWidget />

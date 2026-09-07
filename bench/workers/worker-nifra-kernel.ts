@@ -40,7 +40,7 @@ interface StandardResult {
   readonly issues?: readonly unknown[]
 }
 interface StandardSchema {
-  readonly ["~standard"]: {
+  readonly "~standard": {
     validate(value: unknown): StandardResult | Promise<StandardResult>
   }
 }

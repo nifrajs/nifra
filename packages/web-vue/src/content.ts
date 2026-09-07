@@ -6,6 +6,8 @@
  * Security: injects raw HTML, so `html` MUST be trusted (your own Markdown/content, rendered at
  * build/server time) - never pass user-supplied HTML without sanitizing it first.
  */
+
+import type { TrustedHtml } from "@nifrajs/web"
 import { defineComponent, h } from "vue"
 
 /** Render trusted HTML into a wrapper element. `inheritAttrs: false` + manual attr spread so passthrough
@@ -15,7 +17,7 @@ export const Content = defineComponent({
   inheritAttrs: false,
   props: {
     /** Trusted, pre-rendered HTML (e.g. `entry.html`). */
-    html: { type: String, required: true },
+    html: { type: String as unknown as () => TrustedHtml, required: true },
     /** Wrapper element (default `"div"`). */
     as: { type: String, default: "div" },
   },

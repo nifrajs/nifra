@@ -33,6 +33,10 @@ export interface McpRootState {
   readonly clientRoots: readonly string[] | null
 }
 
+const MAX_CLIENT_ROOTS = 64
+const MAX_ROOT_URI_LENGTH = 16_384
+const MAX_ROOT_PATH_LENGTH = 4_096
+
 /** A directory is a nifra project when its `package.json` depends on any `@nifrajs/*` package, or it
  * is a `nifra.config.ts` monorepo root. Backend-only projects (no web config, no `routes/`) count -
  * the marker is the dependency, not the app shape. */
@@ -98,9 +102,12 @@ export function pathsFromRootsResult(result: unknown): string[] {
   const roots = (result as { roots?: unknown }).roots
   if (!Array.isArray(roots)) return []
   const paths: string[] = []
+  const seen = new Set<string>()
   for (const entry of roots) {
+    if (paths.length >= MAX_CLIENT_ROOTS) break
     const uri = (entry as { uri?: unknown })?.uri
-    if (typeof uri !== "string" || !uri.startsWith("file://")) continue
+    if (typeof uri !== "string" || uri.length > MAX_ROOT_URI_LENGTH || !uri.startsWith("file://"))
+      continue
     try {
       const parsed = new URL(uri)
       // A remote file host is a UNC path on Windows, not a local workspace root. MCP roots are
@@ -111,7 +118,11 @@ export function pathsFromRootsResult(result: unknown): string[] {
         (parsed.hostname !== "" && parsed.hostname !== "localhost")
       )
         continue
-      paths.push(fileURLToPath(parsed))
+      const path = fileURLToPath(parsed)
+      if (path.length === 0 || path.length > MAX_ROOT_PATH_LENGTH || path.includes("\0")) continue
+      if (seen.has(path)) continue
+      seen.add(path)
+      paths.push(path)
     } catch {
       // Malformed URI - skip.
     }

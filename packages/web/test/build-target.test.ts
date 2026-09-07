@@ -138,6 +138,24 @@ test("--target static → prerenders opted-in routes to index.html", async () =>
   expect(existsSync(join(outDir, "assets", "_nifra-entry.ts"))).toBe(false)
 }, 60_000)
 
+test("--target bun persists the CSS loading policy in the client manifest", async () => {
+  const outDir = join(projectRoot, "dist-bun-css")
+  const result = await buildTarget("bun", {
+    routesDir,
+    outDir,
+    workDir: join(projectRoot, ".work-bun-css"),
+    clientModule: join(projectRoot, "client-stub.ts"),
+    adapterImport: join(projectRoot, "framework.ts"),
+    cssLoading: "deferred",
+  })
+
+  expect(result.client.cssLoading).toBe("deferred")
+  const diskManifest = JSON.parse(
+    readFileSync(join(outDir, "assets", "manifest.json"), "utf8"),
+  ) as { cssLoading?: string }
+  expect(diskManifest.cssLoading).toBe("deferred")
+}, 60_000)
+
 test("--target static with no prerenderable route throws a clear error", async () => {
   // Replace the opted-in route with one that doesn't opt in.
   writeFileSync(join(routesDir, "index.tsx"), "export default function Home() { return null }\n")

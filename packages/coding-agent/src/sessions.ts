@@ -1,5 +1,11 @@
-import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises"
+import { O_APPEND, O_CREAT, O_NOFOLLOW, O_RDONLY, O_WRONLY } from "node:constants"
+import { mkdir, open, rename, unlink, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
+
+const DEFAULT_MAX_SESSION_ENTRIES = 4_096
+const DEFAULT_MAX_SESSION_BYTES = 8 * 1024 * 1024
+const MAX_SESSION_ENTRIES = 100_000
+const MAX_SESSION_BYTES = 128 * 1024 * 1024
 
 export interface SessionLogEntry {
   readonly version: 1
@@ -18,7 +24,8 @@ export interface SessionStore {
     payload?: unknown,
     options?: { readonly pinned?: boolean },
   ): Promise<SessionLogEntry>
-  read(sessionId: string): Promise<readonly SessionLogEntry[]>
+  /** Read at most `limit` retained entries from the tail of the session log. */
+  read(sessionId: string, limit?: number): Promise<readonly SessionLogEntry[]>
   checkpoint(sessionId: string, payload: unknown): Promise<void>
   fork(sessionId: string, targetSessionId?: string): Promise<string>
 }
@@ -26,6 +33,10 @@ export interface SessionStore {
 export interface FileSessionStoreOptions {
   readonly root: string
   readonly maxEntryBytes?: number
+  /** Maximum retained JSONL entries per session. Defaults to 4,096. */
+  readonly maxEntries?: number
+  /** Maximum retained JSONL bytes per session. Defaults to 8 MiB. */
+  readonly maxBytes?: number
 }
 
 /**
@@ -35,13 +46,32 @@ export interface FileSessionStoreOptions {
 export class FileSessionStore implements SessionStore {
   private readonly root: string
   private readonly maxEntryBytes: number
+  private readonly maxEntries: number
+  private readonly maxBytes: number
   private readonly sequences = new Map<string, number>()
+  private readonly locks = new Map<string, Promise<void>>()
 
   constructor(options: FileSessionStoreOptions) {
     this.root = options.root
     this.maxEntryBytes = options.maxEntryBytes ?? 256 * 1024
     if (!Number.isSafeInteger(this.maxEntryBytes) || this.maxEntryBytes < 1024)
       throw new RangeError("session store: maxEntryBytes must be at least 1024")
+    this.maxEntries = options.maxEntries ?? DEFAULT_MAX_SESSION_ENTRIES
+    if (
+      !Number.isSafeInteger(this.maxEntries) ||
+      this.maxEntries < 1 ||
+      this.maxEntries > MAX_SESSION_ENTRIES
+    )
+      throw new RangeError(`session store: maxEntries must be between 1 and ${MAX_SESSION_ENTRIES}`)
+    this.maxBytes = options.maxBytes ?? DEFAULT_MAX_SESSION_BYTES
+    if (
+      !Number.isSafeInteger(this.maxBytes) ||
+      this.maxBytes < this.maxEntryBytes + 1 ||
+      this.maxBytes > MAX_SESSION_BYTES
+    )
+      throw new RangeError(
+        `session store: maxBytes must be between maxEntryBytes+1 and ${MAX_SESSION_BYTES}`,
+      )
   }
 
   async append(
@@ -53,59 +83,65 @@ export class FileSessionStore implements SessionStore {
     validateToken(sessionId, "sessionId")
     if (!/^[a-z][a-z0-9._:-]{0,63}$/.test(type))
       throw new TypeError("session store: invalid event type")
-    await mkdir(this.root, { recursive: true })
-    const nextSeq = await this.nextSequence(sessionId)
-    const entry: SessionLogEntry = Object.freeze({
-      version: 1,
-      sessionId,
-      seq: nextSeq,
-      at: Date.now(),
-      type,
-      ...(payload === undefined
-        ? {}
-        : { payload: boundValue(redactValue(payload), this.maxEntryBytes) }),
-      ...(options.pinned === true ? { pinned: true } : {}),
+    return this.withSessionLock(sessionId, async () => {
+      await mkdir(this.root, { recursive: true })
+      const nextSeq = await this.nextSequence(sessionId)
+      const entry: SessionLogEntry = Object.freeze({
+        version: 1,
+        sessionId,
+        seq: nextSeq,
+        at: Date.now(),
+        type,
+        ...(payload === undefined
+          ? {}
+          : { payload: boundValue(redactValue(payload), this.maxEntryBytes) }),
+        ...(options.pinned === true ? { pinned: true } : {}),
+      })
+      const line = JSON.stringify(entry)
+      if (Buffer.byteLength(line, "utf8") > this.maxEntryBytes)
+        throw new RangeError("session store: event exceeds maxEntryBytes")
+      const path = this.pathFor(sessionId)
+      const file = await open(path, O_APPEND | O_CREAT | O_WRONLY | O_NOFOLLOW, 0o600)
+      try {
+        await file.writeFile(`${line}\n`, "utf8")
+      } finally {
+        await file.close()
+      }
+      this.sequences.set(sessionId, nextSeq)
+      await this.compactIfNeeded(sessionId)
+      return entry
     })
-    const line = JSON.stringify(entry)
-    if (Buffer.byteLength(line, "utf8") > this.maxEntryBytes)
-      throw new RangeError("session store: event exceeds maxEntryBytes")
-    await appendFile(this.pathFor(sessionId), `${line}\n`, "utf8")
-    this.sequences.set(sessionId, nextSeq)
-    return entry
   }
 
-  async read(sessionId: string): Promise<readonly SessionLogEntry[]> {
+  async read(sessionId: string, limit = this.maxEntries): Promise<readonly SessionLogEntry[]> {
     validateToken(sessionId, "sessionId")
-    try {
-      const text = await readFile(this.pathFor(sessionId), "utf8")
-      const entries: SessionLogEntry[] = []
-      for (const line of text.split("\n")) {
-        if (line.trim().length === 0) continue
-        const value: unknown = JSON.parse(line)
-        if (isSessionLogEntry(value, sessionId)) entries.push(Object.freeze(value))
-      }
-      const last = entries.at(-1)?.seq
-      if (last !== undefined) this.sequences.set(sessionId, last)
-      return Object.freeze(entries)
-    } catch (error) {
-      if (isNotFound(error)) return Object.freeze([])
-      throw error
-    }
+    if (!Number.isSafeInteger(limit) || limit < 1)
+      throw new RangeError("session store: read limit must be a positive safe integer")
+    const boundedLimit = Math.min(limit, this.maxEntries)
+    return this.withSessionLock(sessionId, () => this.readUnlocked(sessionId, boundedLimit))
   }
 
   async checkpoint(sessionId: string, payload: unknown): Promise<void> {
     validateToken(sessionId, "sessionId")
-    const target = join(this.root, `${sessionId}.checkpoint.json`)
-    const temporary = `${target}.${process.pid}.${Date.now()}.tmp`
-    await mkdir(dirname(target), { recursive: true })
-    const content = JSON.stringify({
-      version: 1,
-      sessionId,
-      at: Date.now(),
-      payload: boundValue(redactValue(payload), this.maxEntryBytes),
+    await this.withSessionLock(sessionId, async () => {
+      const target = join(this.root, `${sessionId}.checkpoint.json`)
+      const temporary = `${target}.${process.pid}.${crypto.randomUUID()}.tmp`
+      await mkdir(dirname(target), { recursive: true })
+      const content = JSON.stringify({
+        version: 1,
+        sessionId,
+        at: Date.now(),
+        payload: boundValue(redactValue(payload), this.maxEntryBytes),
+      })
+      // Exclusive creation prevents a local peer from planting a symlink at the temporary path.
+      await writeFile(temporary, content, { encoding: "utf8", flag: "wx", mode: 0o600 })
+      try {
+        await rename(temporary, target)
+      } catch (error) {
+        await unlink(temporary).catch(() => {})
+        throw error
+      }
     })
-    await writeFile(temporary, content, "utf8")
-    await rename(temporary, target)
   }
 
   async fork(
@@ -114,15 +150,23 @@ export class FileSessionStore implements SessionStore {
   ): Promise<string> {
     validateToken(sessionId, "sessionId")
     validateToken(targetSessionId, "targetSessionId")
-    const entries = await this.read(sessionId)
-    await mkdir(this.root, { recursive: true })
-    const target = this.pathFor(targetSessionId)
-    const lines = entries.map((entry, index) =>
-      JSON.stringify({ ...entry, sessionId: targetSessionId, seq: index }),
-    )
-    await writeFile(target, lines.length === 0 ? "" : `${lines.join("\n")}\n`, "utf8")
-    this.sequences.set(targetSessionId, Math.max(0, lines.length - 1))
-    return targetSessionId
+    return this.withSessionLock(sessionId, async () => {
+      const entries = await this.readUnlocked(sessionId, this.maxEntries)
+      await mkdir(this.root, { recursive: true })
+      const target = this.pathFor(targetSessionId)
+      const lines = entries.map((entry, index) =>
+        JSON.stringify({ ...entry, sessionId: targetSessionId, seq: index }),
+      )
+      // A caller must never be able to overwrite an existing session by choosing its id. The
+      // exclusive create also refuses a pre-planted symlink at the destination.
+      await writeFile(target, lines.length === 0 ? "" : `${lines.join("\n")}\n`, {
+        encoding: "utf8",
+        flag: "wx",
+        mode: 0o600,
+      })
+      this.sequences.set(targetSessionId, Math.max(0, lines.length - 1))
+      return targetSessionId
+    })
   }
 
   private pathFor(sessionId: string): string {
@@ -132,8 +176,107 @@ export class FileSessionStore implements SessionStore {
   private async nextSequence(sessionId: string): Promise<number> {
     const cached = this.sequences.get(sessionId)
     if (cached !== undefined) return cached + 1
-    const entries = await this.read(sessionId)
+    const entries = await this.readUnlocked(sessionId, 1)
     return (entries.at(-1)?.seq ?? -1) + 1
+  }
+
+  private async compactIfNeeded(sessionId: string): Promise<void> {
+    const path = this.pathFor(sessionId)
+    const file = await open(path, O_RDONLY | O_NOFOLLOW)
+    let size: number
+    try {
+      size = (await file.stat()).size
+    } finally {
+      await file.close()
+    }
+    if (size <= this.maxBytes) {
+      const recent = parseSessionEntries(
+        await this.readTailText(path, this.maxEntries + 1, this.maxBytes),
+        sessionId,
+      )
+      if (recent.length <= this.maxEntries) return
+    }
+    // The tail read is bounded by the retention cap plus one maximum-sized line. This keeps
+    // compaction memory bounded even if a pre-existing log is already oversized.
+    const recent = parseSessionEntries(
+      await this.readTailText(path, this.maxEntries + 1, this.maxBytes + this.maxEntryBytes),
+      sessionId,
+    )
+    const retained = retainEntries(recent, this.maxEntries, this.maxBytes)
+    if (retained.length === 0) return
+    const content = `${retained.map((entry) => JSON.stringify(entry)).join("\n")}\n`
+    if (Buffer.byteLength(content, "utf8") >= size && size <= this.maxBytes) return
+    const temporary = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`
+    await writeFile(temporary, content, { encoding: "utf8", flag: "wx", mode: 0o600 })
+    try {
+      await rename(temporary, path)
+    } catch (error) {
+      await unlink(temporary).catch(() => {})
+      throw error
+    }
+    this.sequences.set(sessionId, retained.at(-1)!.seq)
+  }
+
+  private async readTailText(
+    path: string,
+    minimumLines: number,
+    maxBytes: number,
+  ): Promise<string> {
+    const file = await open(path, O_RDONLY | O_NOFOLLOW)
+    try {
+      const size = (await file.stat()).size
+      let end = size
+      let remaining = Math.min(size, maxBytes)
+      const chunks: Buffer[] = []
+      const chunkBytes = 64 * 1024
+      while (remaining > 0) {
+        const take = Math.min(remaining, chunkBytes)
+        end -= take
+        const bytes = Buffer.allocUnsafe(take)
+        const result = await file.read(bytes, 0, take, end)
+        chunks.unshift(bytes.subarray(0, result.bytesRead))
+        remaining -= result.bytesRead
+        const text = Buffer.concat(chunks).toString("utf8")
+        const lines = text.split("\n")
+        const completeLines = end > 0 ? lines.length - 1 : lines.length
+        if (completeLines >= minimumLines || end === 0 || result.bytesRead === 0) return text
+      }
+      return Buffer.concat(chunks).toString("utf8")
+    } finally {
+      await file.close()
+    }
+  }
+
+  private async readUnlocked(
+    sessionId: string,
+    boundedLimit: number,
+  ): Promise<readonly SessionLogEntry[]> {
+    try {
+      const text = await this.readTailText(this.pathFor(sessionId), boundedLimit, this.maxBytes)
+      const entries = parseSessionEntries(text, sessionId)
+      const last = entries.at(-1)?.seq
+      if (last !== undefined) this.sequences.set(sessionId, last)
+      return Object.freeze(entries.slice(-boundedLimit))
+    } catch (error) {
+      if (isNotFound(error)) return Object.freeze([])
+      throw error
+    }
+  }
+
+  private async withSessionLock<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.locks.get(sessionId) ?? Promise.resolve()
+    let release!: () => void
+    const current = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    this.locks.set(sessionId, current)
+    await previous
+    try {
+      return await operation()
+    } finally {
+      release()
+      if (this.locks.get(sessionId) === current) this.locks.delete(sessionId)
+    }
   }
 }
 
@@ -255,6 +398,38 @@ function isSessionLogEntry(value: unknown, sessionId: string): value is SessionL
     typeof record.at === "number" &&
     typeof record.type === "string"
   )
+}
+
+function parseSessionEntries(text: string, sessionId: string): SessionLogEntry[] {
+  const entries: SessionLogEntry[] = []
+  for (const line of text.split("\n")) {
+    if (line.trim().length === 0) continue
+    try {
+      const value: unknown = JSON.parse(line)
+      if (isSessionLogEntry(value, sessionId)) entries.push(Object.freeze(value))
+    } catch {
+      // A tail read can begin in the middle of an old line. Invalid records are ignored so a
+      // damaged/partially rotated log cannot turn every history request into an unbounded retry.
+    }
+  }
+  return entries
+}
+
+function retainEntries(
+  entries: readonly SessionLogEntry[],
+  maxEntries: number,
+  maxBytes: number,
+): readonly SessionLogEntry[] {
+  const retained: SessionLogEntry[] = []
+  let bytes = 0
+  for (let index = entries.length - 1; index >= 0 && retained.length < maxEntries; index--) {
+    const entry = entries[index]!
+    const size = Buffer.byteLength(JSON.stringify(entry), "utf8") + 1
+    if (bytes + size > maxBytes) break
+    retained.unshift(entry)
+    bytes += size
+  }
+  return retained
 }
 
 function redactValue(value: unknown, key = "", depth = 0): unknown {

@@ -76,6 +76,17 @@ export const app = createWebApp({
 })
 // → <link rel="stylesheet"> for just the matched route's CSS in <head>. Serve .css as text/css.`
 
+const CSS_PERF = `// nifra.config.ts - opt into Vite's single-file CSS path for apps that prefetch many lazy routes.
+export const cssCodeSplit = false
+export const cssLoading = "deferred"
+
+// cssCodeSplit: false emits one content-hashed stylesheet, so lazy module prefetch cannot attach a
+// new stylesheet for every route. cssLoading: "deferred" fetches that file with media="print"; the
+// generated client promotes it to media="all" after load/error/timeout and before hydration.
+// `nifra build` selects Vite automatically for this Vite-only output policy. The default stays
+// backward-compatible: split CSS + blocking links.
+// `cssLoading: "deferred"` must be paired with `cssCodeSplit: false` on Vite.`
+
 const VITE_PROD = `// vite.config.ts - a Vite/Rollup PRODUCTION client build (the escape hatch, not the default).
 // Only reach for this when an app needs a Vite-only transform with no Bun equivalent; Nifra's default
 // production bundler stays Bun (buildClient), which is faster and Bun-native.
@@ -461,6 +472,23 @@ export default function Dev() {
       <p>
         This is the <em>global imports</em> tier: one bundled stylesheet linked on every page (the
         common case - a global stylesheet or Tailwind output).
+      </p>
+      <h3>Prefetch-safe aggregate CSS</h3>
+      <p>
+        Vite's default CSS splitting can attach a new stylesheet when a prefetched lazy route module
+        evaluates. If those selectors affect content already on the page, each attachment can trigger
+        style recalculation and layout work. For an app whose stylesheet is already bounded (for
+        example, one using atomic StyleX plus a small legacy CSS-Modules layer), opt into one aggregate
+        CSS asset and deferred activation in the CLI config. The aggregate file is still content-hashed;
+        only its activation is deferred until the browser has fetched it.
+      </p>
+      <CodeBlock code={CSS_PERF} />
+      <p>
+        This is opt-in and Vite-specific. Nifra rejects <code>cssLoading: "deferred"</code> with split
+        Vite CSS because that combination would leave the prefetch insertion problem in place. A failed
+        or slow stylesheet request is bounded: the client promotes the link and hydrates rather than
+        leaving the loader visible forever. Non-hydrated pages keep ordinary blocking links for
+        JavaScript-off and terminal-page styling.
       </p>
 
       <h3>Scoped styles - CSS Modules &amp; SFC &lt;style&gt;</h3>

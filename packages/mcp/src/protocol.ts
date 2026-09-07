@@ -38,6 +38,9 @@ export const MCP_ERROR = {
 } as const
 const META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersion"
 const META_SERVER_INFO = "io.modelcontextprotocol/serverInfo"
+const MAX_RPC_ID_LENGTH = 128
+const MAX_RPC_METHOD_LENGTH = 128
+const MAX_CANCEL_REASON_LENGTH = 512
 
 /** The MIME type a UI resource MUST use so a host recognizes it as an MCP App widget (SEP-1865). */
 export const UI_MIME = "text/html;profile=mcp-app"
@@ -185,7 +188,70 @@ export function createMcpProtocolState(): McpProtocolState {
 
 function requestKey(id: unknown): string | undefined {
   if (typeof id === "string") return `s:${id}`
-  return typeof id === "number" && Number.isFinite(id) ? `n:${id}` : undefined
+  return typeof id === "number" && Number.isSafeInteger(id) ? `n:${id}` : undefined
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+/** Validate a JSON-RPC request/notification before any transport or method-specific access. */
+export function isJsonRpcRequest(value: unknown): value is JsonRpcRequest {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  if (Object.hasOwn(record, "result") || Object.hasOwn(record, "error")) return false
+  if (Object.hasOwn(record, "jsonrpc") && record.jsonrpc !== "2.0") return false
+  if (
+    typeof record.method !== "string" ||
+    record.method.length === 0 ||
+    record.method.length > MAX_RPC_METHOD_LENGTH
+  )
+    return false
+  if (Object.hasOwn(record, "id")) {
+    const id = record.id
+    if (
+      id !== null &&
+      typeof id !== "string" &&
+      !(typeof id === "number" && Number.isSafeInteger(id))
+    )
+      return false
+    if (typeof id === "string" && id.length > MAX_RPC_ID_LENGTH) return false
+  }
+  return (
+    !Object.hasOwn(record, "params") ||
+    (record.params !== null && typeof record.params === "object" && !Array.isArray(record.params))
+  )
+}
+
+/** Validate a JSON-RPC response received by a transport-side client hook. Responses are not accepted
+ * by {@link handleRpc}; this guard exists for the stdio roots/list answer, which is the one server-
+ * initiated request response the CLI consumes itself. */
+export function isJsonRpcResponse(value: unknown): value is JsonRpcResponse {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  if (record.jsonrpc !== "2.0") return false
+  if (Object.hasOwn(record, "method") || Object.hasOwn(record, "params")) return false
+  if (
+    record.id !== null &&
+    typeof record.id !== "string" &&
+    !(typeof record.id === "number" && Number.isSafeInteger(record.id))
+  )
+    return false
+  if (typeof record.id === "string" && record.id.length > MAX_RPC_ID_LENGTH) return false
+  const hasResult = Object.hasOwn(record, "result")
+  const hasError = Object.hasOwn(record, "error")
+  if (hasResult === hasError) return false
+  if (!hasError) return true
+  const error = record.error
+  if (error === null || typeof error !== "object" || Array.isArray(error)) return false
+  const errorRecord = error as Record<string, unknown>
+  return (
+    typeof errorRecord.code === "number" &&
+    Number.isSafeInteger(errorRecord.code) &&
+    typeof errorRecord.message === "string" &&
+    errorRecord.message.length > 0 &&
+    errorRecord.message.length <= MAX_RPC_METHOD_LENGTH
+  )
 }
 
 function metaObject(
@@ -213,7 +279,9 @@ function progressTokenOf(params: Record<string, unknown> | undefined): ProgressT
 
 function cancellationReason(params: Record<string, unknown> | undefined): string | undefined {
   const reason = params?.reason
-  return typeof reason === "string" && reason.length > 0 ? reason : undefined
+  return typeof reason === "string" && reason.length > 0
+    ? reason.slice(0, MAX_CANCEL_REASON_LENGTH)
+    : undefined
 }
 
 function linkAbortSignal(parent: AbortSignal | undefined, child: AbortController): () => void {
@@ -294,6 +362,7 @@ export async function handleRpc(
   features: McpServerFeatures = {},
   options: McpProtocolOptions = {},
 ): Promise<JsonRpcResponse | null> {
+  if (!isJsonRpcRequest(message)) return rpcError(null, -32600, "Invalid Request")
   const { id, method, params } = message
   const isNotification = id === undefined
   const rid = id ?? null
@@ -416,7 +485,10 @@ export async function handleRpc(
       const name = params?.name
       const tool = tools.find((t) => t.name === name)
       if (!tool) return rpcError(rid, -32602, `unknown tool: ${String(name)}`)
-      const args = (params?.arguments as Record<string, unknown>) ?? {}
+      const suppliedArguments = params?.arguments
+      if (suppliedArguments !== undefined && !record(suppliedArguments))
+        return rpcError(rid, -32602, "tool arguments must be an object")
+      const args = suppliedArguments ?? {}
       const controller = new AbortController()
       const key = requestKey(id)
       if (key !== undefined && state.activeRequests.has(key)) {
@@ -526,7 +598,10 @@ export async function handleRpc(
       const name = params?.name
       const prompt = prompts.find((p) => p.name === name)
       if (!prompt) return rpcError(rid, -32602, `unknown prompt: ${String(name)}`)
-      const args = (params?.arguments as Record<string, unknown>) ?? {}
+      const suppliedArguments = params?.arguments
+      if (suppliedArguments !== undefined && !record(suppliedArguments))
+        return rpcError(rid, -32602, "prompt arguments must be an object")
+      const args = suppliedArguments ?? {}
       try {
         return reply({
           description: prompt.description,

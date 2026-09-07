@@ -1,3 +1,4 @@
+import type { TrustedHtml } from "@nifrajs/web"
 import type { Component } from "svelte"
 
 /**
@@ -6,7 +7,7 @@ import type { Component } from "svelte"
  */
 export interface ContentProps {
   /** Trusted, pre-rendered HTML (e.g. `entry.html`). */
-  html: string
+  html: TrustedHtml
   /** Wrapper element (default `"div"`). */
   as?: string
   /** DOM passthrough (`class`, `style`, `id`, `data-*`, …). */

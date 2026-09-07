@@ -10,6 +10,7 @@ import {
   generateServerEntry,
   isManifestInSync,
   parseManifestClientEntry,
+  parseManifestCssLoading,
   parseManifestRouteFiles,
   parseManifestRouteStyles,
   parseManifestStyles,
@@ -156,6 +157,18 @@ describe("parseManifestClientEntry", () => {
   })
 })
 
+describe("parseManifestCssLoading", () => {
+  test("reads the baked stylesheet activation mode", () => {
+    expect(parseManifestCssLoading('export const cssLoading = "deferred"')).toBe("deferred")
+    expect(parseManifestCssLoading('export const cssLoading = "blocking"')).toBe("blocking")
+  })
+
+  test("returns undefined for older or malformed manifests", () => {
+    expect(parseManifestCssLoading('export const cssLoading = "other"')).toBeUndefined()
+    expect(parseManifestCssLoading("const x = 1")).toBeUndefined()
+  })
+})
+
 describe("diffManifestRoutes + formatManifestDrift", () => {
   test("in sync → no missing/extra, formatManifestDrift returns undefined", () => {
     const manifestFiles = parseManifestRouteFiles(EAGER_MANIFEST)
@@ -259,10 +272,11 @@ describe("generateServerEntry", () => {
   test("imports + passes styles/routeStyles to createWebApp (so the SSR head links CSS)", () => {
     const src = generateServerEntry({ target: "bun", adapterImport: "../framework.ts" })
     expect(src).toContain(
-      'import { clientEntry, manifest, styles, routeStyles } from "./server-manifest"',
+      'import { clientEntry, cssLoading, manifest, styles, routeStyles } from "./server-manifest"',
     )
     expect(src).toContain("  styles,")
     expect(src).toContain("  routeStyles,")
+    expect(src).toContain("  cssLoading,")
   })
 })
 
@@ -314,6 +328,16 @@ describe("generateServerManifest - bakes styles for createWebApp", () => {
     })
     expect(src).toContain('export const styles = ["/assets/x.css"]')
     expect(src).toContain('export const routeStyles = {"index":["/assets/x.css"]}')
+    expect(src).toContain('export const cssLoading = "blocking"')
+  })
+
+  test("bakes the deferred stylesheet activation mode", () => {
+    const src = generateServerManifest(EMPTY, {
+      resolve: (f) => `./routes/${f}`,
+      clientEntry: "/assets/x.js",
+      cssLoading: "deferred",
+    })
+    expect(src).toContain('export const cssLoading = "deferred"')
   })
 
   test("defaults to empty exports when the app imports no CSS (so consumers can always import them)", () => {
@@ -323,6 +347,7 @@ describe("generateServerManifest - bakes styles for createWebApp", () => {
     })
     expect(src).toContain("export const styles = []")
     expect(src).toContain("export const routeStyles = {}")
+    expect(src).toContain('export const cssLoading = "blocking"')
   })
 })
 

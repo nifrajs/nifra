@@ -97,6 +97,56 @@ describe("coding agent RPC", () => {
     }
   })
 
+  test("caps serialized JSON responses without returning invalid JSON", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-agent-rpc-cap-"))
+    const rpc = new CodingAgentRpcServer({
+      cwd: process.cwd(),
+      maxResponseBytes: 1_024,
+      backend: new PiBackend({ command: process.execPath, rpcArgs: ["-e", fakePi] }),
+      sessionStore: new FileSessionStore({ root, maxEntryBytes: 4_096, maxBytes: 8_192 }),
+    })
+    const handle = await rpc.start()
+    const headers = {
+      authorization: `Bearer ${handle.token}`,
+      "content-type": "application/json",
+    }
+    try {
+      expect(
+        (
+          await fetch(`${handle.url}/rpc`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ method: "session.create" }),
+          })
+        ).status,
+      ).toBe(200)
+      await fetch(`${handle.url}/rpc`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          method: "session.checkpoint",
+          params: { payload: { diagnostic: "x".repeat(3_000) } },
+        }),
+      })
+      const response = await fetch(`${handle.url}/rpc`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ method: "session.events", params: { limit: 10 } }),
+      })
+      const body = (await response.json()) as {
+        error?: { code?: string; message?: string }
+      }
+      expect(response.status).toBe(500)
+      expect(body.error).toEqual({
+        code: "response_too_large",
+        message: "RPC response exceeded the configured size limit",
+      })
+    } finally {
+      await rpc.stop()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   test("requires a token and streams a turn over SSE", async () => {
     const root = await mkdtemp(join(tmpdir(), "nifra-agent-rpc-"))
     const rpc = new CodingAgentRpcServer({

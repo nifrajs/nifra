@@ -120,6 +120,39 @@ test("renderPage emits stylesheets even on a non-hydrated page (e.g. _error)", a
   expect(esc).not.toContain('"><script>x')
 })
 
+test("renderPage defers framework CSS only for hydrating pages and preserves JS-off styling", async () => {
+  const html = await (
+    await renderPage({
+      adapter: stub,
+      chain: [() => {}],
+      data: null,
+      clientEntry: "/assets/client.js",
+      styles: ["/assets/app.css", "/assets/app.css"],
+      cssLoading: "deferred",
+    })
+  ).text()
+  expect(html.match(/data-nifra-css="deferred"/g)?.length).toBe(1)
+  expect(html).toContain(
+    '<link rel="stylesheet" href="/assets/app.css" media="print" data-nifra-css="deferred">',
+  )
+  expect(html).toContain('<noscript><link rel="stylesheet" href="/assets/app.css"></noscript>')
+  expect(html).not.toContain('media="all"')
+
+  const staticHtml = await (
+    await renderPage({
+      adapter: stub,
+      chain: [() => {}],
+      data: null,
+      styles: ["/assets/app.css"],
+      cssLoading: "deferred",
+      hydrate: false,
+    })
+  ).text()
+  expect(staticHtml).toContain('<link rel="stylesheet" href="/assets/app.css">')
+  expect(staticHtml).not.toContain('media="print"')
+  expect(staticHtml).not.toContain("data-nifra-css")
+})
+
 test("renderPage injects the matched route id only when provided", async () => {
   const withId = await (
     await renderPage({

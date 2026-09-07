@@ -54,6 +54,7 @@ const LIBRARIES = [
   "mcp-db",
   "events",
   "web",
+  "webmcp",
   "web-solid",
   "web-react",
   "web-vue",

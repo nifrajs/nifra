@@ -10,6 +10,7 @@ import { serve } from "@nifrajs/node"
 import { createWebApp } from "@nifrajs/web"
 import { reactAdapter } from "@nifrajs/web-react"
 import { backend } from "./backend"
+import { machineSurfaceFor } from "./machine-surfaces"
 import { clientEntry, manifest } from "./server-manifest"
 
 const app = createWebApp({
@@ -20,7 +21,14 @@ const app = createWebApp({
   title: "nifra",
 })
 
-await serve(app, {
-  port: Number(process.env.PORT ?? 3000),
-  static: { dir: new URL("./assets/", import.meta.url) },
-})
+await serve(
+  {
+    fetch(req) {
+      return machineSurfaceFor(req) ?? app.fetch(req)
+    },
+  },
+  {
+    port: Number(process.env.PORT ?? 3000),
+    static: { dir: new URL("./assets/", import.meta.url) },
+  },
+)

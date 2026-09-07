@@ -25,6 +25,8 @@ export interface CodingAgentRpcServerOptions {
   /** Include bounded exception stacks in RPC failures only for trusted loopback debugging. */
   readonly exposeErrorStacks?: boolean
   readonly maxBodyBytes?: number
+  /** Maximum UTF-8 bytes in one non-streaming JSON response. Defaults to 4 MiB. */
+  readonly maxResponseBytes?: number
   readonly sessionStore?: SessionStore
   readonly contextWindow?: ContextWindowOptions
   readonly extensions?: ExtensionHost
@@ -50,6 +52,10 @@ interface RpcServerLike {
   stop(closeActiveConnections?: boolean): void
 }
 
+const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
+const DEFAULT_MAX_RPC_RESPONSE_BYTES = 4 * 1024 * 1024
+const MAX_RPC_RESPONSE_BYTES = 64 * 1024 * 1024
+
 /**
  * Minimal loopback RPC surface for the CLI, Workbench, CI clients, and a future mobile companion.
  * Turn output is SSE so clients do not need a WebSocket dependency; every event is still a versioned
@@ -60,6 +66,7 @@ export class CodingAgentRpcServer {
   private readonly options: CodingAgentRpcServerOptions
   private readonly token: string
   private readonly maxBodyBytes: number
+  private readonly maxResponseBytes: number
   private listener: RpcServerLike | undefined
 
   constructor(options: CodingAgentRpcServerOptions) {
@@ -82,8 +89,21 @@ export class CodingAgentRpcServer {
     if (!/^[A-Za-z0-9._~-]{16,256}$/.test(this.token))
       throw new TypeError("agent rpc: authToken must be a bounded token")
     this.maxBodyBytes = options.maxBodyBytes ?? 1_048_576
-    if (!Number.isSafeInteger(this.maxBodyBytes) || this.maxBodyBytes < 1024)
-      throw new RangeError("agent rpc: maxBodyBytes must be at least 1024")
+    if (
+      !Number.isSafeInteger(this.maxBodyBytes) ||
+      this.maxBodyBytes < 1024 ||
+      this.maxBodyBytes > MAX_RPC_BODY_BYTES
+    )
+      throw new RangeError(`agent rpc: maxBodyBytes must be between 1024 and ${MAX_RPC_BODY_BYTES}`)
+    this.maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RPC_RESPONSE_BYTES
+    if (
+      !Number.isSafeInteger(this.maxResponseBytes) ||
+      this.maxResponseBytes < 1024 ||
+      this.maxResponseBytes > MAX_RPC_RESPONSE_BYTES
+    )
+      throw new RangeError(
+        `agent rpc: maxResponseBytes must be between 1024 and ${MAX_RPC_RESPONSE_BYTES}`,
+      )
   }
 
   async start(): Promise<CodingAgentRpcServerHandle> {
@@ -111,8 +131,13 @@ export class CodingAgentRpcServer {
   async stop(): Promise<void> {
     const listener = this.listener
     this.listener = undefined
-    await this.host.stop("rpc server stopped")
-    listener?.stop(true)
+    try {
+      await this.host.stop("rpc server stopped")
+    } finally {
+      // The audit write is best effort from a transport-lifecycle perspective. Even when the host
+      // reports a persistence failure, the listening socket must not remain reachable or leaked.
+      listener?.stop(true)
+    }
   }
 
   private async fetch(request: Request): Promise<Response> {
@@ -120,27 +145,40 @@ export class CodingAgentRpcServer {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors })
     const url = new URL(request.url)
     if (url.pathname === "/health" && request.method === "GET")
-      return json({ ok: true, protocol: 1 }, 200, cors)
+      return this.response({ ok: true, protocol: 1 }, 200, cors)
     if (!authorized(request, this.token))
-      return json(
+      return this.response(
         { error: { code: "unauthorized", message: "agent RPC authorization required" } },
         401,
         cors,
       )
     if (url.pathname !== "/rpc" || request.method !== "POST")
-      return json(
+      return this.response(
         { error: { code: "not_found", message: "unknown agent RPC endpoint" } },
         404,
         cors,
       )
-    const body = await this.readRequest(request)
+    let body: Awaited<ReturnType<CodingAgentRpcServer["readRequest"]>>
+    try {
+      body = await this.readRequest(request)
+    } catch {
+      return this.response(
+        { error: { code: "invalid_request", message: "request body could not be read" } },
+        400,
+        cors,
+      )
+    }
     if (!body.ok)
-      return json({ error: { code: "invalid_request", message: body.error } }, body.status, cors)
+      return this.response(
+        { error: { code: "invalid_request", message: body.error } },
+        body.status,
+        cors,
+      )
     let rpc: RpcRequest
     try {
       rpc = parseRpcRequest(body.text)
     } catch (error) {
-      return json(
+      return this.response(
         { error: this.protocolError("invalid_request", error, "request body is invalid") },
         400,
         cors,
@@ -150,7 +188,7 @@ export class CodingAgentRpcServer {
     try {
       return await this.dispatch(rpc, request, cors)
     } catch (error) {
-      return json(
+      return this.response(
         { error: this.protocolError("rpc_failed", error, "request could not be completed") },
         500,
         cors,
@@ -164,6 +202,12 @@ export class CodingAgentRpcServer {
     httpRequest: Request,
     cors: Headers,
   ): Promise<Response> {
+    const json = (
+      value: unknown,
+      status: number,
+      inherited: Headers,
+      includeErrorStacks = false,
+    ): Response => this.response(value, status, inherited, includeErrorStacks)
     switch (request.method) {
       case "session.create": {
         const params = record(request.params)
@@ -259,8 +303,11 @@ export class CodingAgentRpcServer {
             cors,
           )
         const stream = this.host.prompt(params.message, httpRequest.signal)
+        const sessionId = this.host.snapshot?.id
         const encoder = new TextEncoder()
         const includeErrorStacks = this.options.exposeErrorStacks === true
+        const maxResponseBytes = this.maxResponseBytes
+        let finished = false
         const turnError = (error: unknown) => ({
           code: "turn_failed",
           ...publicErrorDetails(error, "turn could not be completed", includeErrorStacks),
@@ -268,17 +315,42 @@ export class CodingAgentRpcServer {
         const body = new ReadableStream<Uint8Array>({
           async start(controller) {
             try {
-              for await (const event of stream)
-                controller.enqueue(
-                  encoder.encode(`data: ${serializeRpcValue(event, includeErrorStacks)}\n\n`),
-                )
-              controller.close()
+              for await (const event of stream) {
+                if (finished) return
+                const serialized = serializeRpcValue(event, includeErrorStacks)
+                if (serializedByteLength(`data: ${serialized}\n\n`) > maxResponseBytes)
+                  throw new Error("turn event exceeded the configured response limit")
+                controller.enqueue(encoder.encode(`data: ${serialized}\n\n`))
+              }
+              if (!finished) {
+                finished = true
+                controller.close()
+              }
             } catch (error) {
-              controller.enqueue(
-                encoder.encode(`event: error\ndata: ${JSON.stringify(turnError(error))}\n\n`),
-              )
-              controller.close()
+              if (finished) return
+              finished = true
+              try {
+                const detail = JSON.stringify(turnError(error))
+                const frame = `event: error\ndata: ${detail}\n\n`
+                controller.enqueue(
+                  encoder.encode(
+                    serializedByteLength(frame) <= maxResponseBytes
+                      ? frame
+                      : 'event: error\ndata: {"code":"turn_failed","message":"turn could not be completed"}\n\n',
+                  ),
+                )
+                controller.close()
+              } catch {
+                // A disconnected client has already cancelled the stream; there is no response
+                // channel left on which to report the producer error.
+              }
             }
+          },
+          cancel: async () => {
+            if (finished) return
+            finished = true
+            if (sessionId !== undefined)
+              await this.host.backend.cancel(sessionId, "client disconnected").catch(() => {})
           },
         })
         return new Response(body, {
@@ -495,6 +567,15 @@ export class CodingAgentRpcServer {
     return this.host.snapshot
   }
 
+  private response(
+    value: unknown,
+    status: number,
+    inherited: Headers,
+    includeErrorStacks = false,
+  ): Response {
+    return json(value, status, inherited, includeErrorStacks, this.maxResponseBytes)
+  }
+
   private protocolError(
     code: string,
     error: unknown,
@@ -509,13 +590,28 @@ export class CodingAgentRpcServer {
     | { readonly ok: true; readonly text: string }
     | { readonly ok: false; readonly status: 400 | 413; readonly error: string }
   > {
-    const length = Number(request.headers.get("content-length") ?? "0")
-    if (Number.isFinite(length) && length > this.maxBodyBytes)
-      return { ok: false, status: 413, error: "request body is too large" }
+    const declared = request.headers.get("content-length")
+    if (declared !== null) {
+      const length = decimalContentLength(declared)
+      if (length === undefined)
+        return { ok: false, status: 400, error: "content-length is invalid" }
+      if (length > this.maxBodyBytes)
+        return { ok: false, status: 413, error: "request body is too large" }
+    }
     const result = await readBoundedText(request.body, this.maxBodyBytes)
     if (result.truncated) return { ok: false, status: 413, error: "request body is too large" }
     return { ok: true, text: result.text }
   }
+}
+
+function decimalContentLength(value: string): number | undefined {
+  if (!/^\d+$/.test(value)) return undefined
+  let length = 0
+  for (const character of value) {
+    length = length * 10 + (character.charCodeAt(0) - 48)
+    if (!Number.isSafeInteger(length)) return Number.POSITIVE_INFINITY
+  }
+  return length
 }
 
 function parseRpcRequest(text: string): RpcRequest {
@@ -580,19 +676,48 @@ function json(
   status: number,
   inherited: Headers,
   includeErrorStacks = false,
+  maxBytes = DEFAULT_MAX_RPC_RESPONSE_BYTES,
 ): Response {
   const headers = new Headers(inherited)
   headers.set("content-type", "application/json; charset=utf-8")
   // lgtm [js/stack-trace-exposure] the default replacer removes stack fields from protocol data;
   // stacks are serialized only in explicitly opt-in, loopback-only diagnostics mode.
-  return new Response(serializeRpcValue(value, includeErrorStacks), { status, headers })
+  let body: string
+  let responseStatus = status
+  try {
+    body = serializeRpcValue(value, includeErrorStacks)
+  } catch {
+    body = JSON.stringify({
+      error: {
+        code: "response_serialization_failed",
+        message: "RPC response could not be serialized",
+      },
+    })
+    responseStatus = 500
+  }
+  if (serializedByteLength(body) > maxBytes) {
+    body = JSON.stringify({
+      error: {
+        code: "response_too_large",
+        message: "RPC response exceeded the configured size limit",
+      },
+    })
+    responseStatus = 500
+  }
+  return new Response(body, { status: responseStatus, headers })
 }
 
 function serializeRpcValue(value: unknown, includeErrorStacks: boolean): string {
-  return JSON.stringify(
+  const serialized = JSON.stringify(
     value,
     includeErrorStacks
       ? undefined
       : (key: string, nested: unknown) => (key === "stack" ? undefined : nested),
   )
+  if (serialized === undefined) throw new TypeError("RPC value is not JSON serializable")
+  return serialized
+}
+
+function serializedByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength
 }

@@ -30,6 +30,7 @@ import {
 } from "./mcp-context.ts"
 import { docsTools } from "./mcp-docs-tools.ts"
 import {
+  CHILD_INPUT_MAX_BYTES,
   CHILD_OUTPUT_MAX_BYTES,
   CHILD_TIMEOUT_MS,
   LOCAL_TOOL_FETCH_TIMEOUT_MS,
@@ -641,6 +642,15 @@ export async function spawnChild(
   signal?: AbortSignal,
 ): Promise<string> {
   if (signal?.aborted) return `${label} cancelled before it started.`
+  let encodedInput: string
+  try {
+    encodedInput = JSON.stringify(input)
+  } catch {
+    return `${label} input is not serializable.`
+  }
+  if (new TextEncoder().encode(encodedInput).byteLength > CHILD_INPUT_MAX_BYTES)
+    return `${label} input exceeded ${CHILD_INPUT_MAX_BYTES} bytes.`
+  if (signal?.aborted) return `${label} cancelled${cancellationSuffix(signal)}.`
   const proc = Bun.spawn(["bun", childPath(child), cwd], {
     stdin: "pipe",
     stdout: "pipe",
@@ -661,8 +671,11 @@ export async function spawnChild(
   }, CHILD_TIMEOUT_MS)
   let outputExceeded = false
   try {
-    proc.stdin.write(JSON.stringify(input))
-    await proc.stdin.end()
+    if (signal?.aborted) kill()
+    else {
+      proc.stdin.write(encodedInput)
+      await proc.stdin.end()
+    }
     const [out, err] = await Promise.all([
       readBoundedStream(proc.stdout, CHILD_OUTPUT_MAX_BYTES, () => {
         outputExceeded = true
@@ -675,7 +688,7 @@ export async function spawnChild(
     ])
     await proc.exited
     if (signal?.aborted) {
-      const reason = typeof signal.reason === "string" ? `: ${signal.reason}` : ""
+      const reason = cancellationSuffix(signal)
       return `${label} cancelled${reason}.`
     }
     if (outputExceeded) {
@@ -696,6 +709,7 @@ const WARM_RUN_GLOB = new Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,json}")
 const WARM_RUN_IGNORED =
   /(^|\/)(node_modules|dist(-[a-z0-9]+)?|build|\.nifra|\.git|\.wrangler|coverage)\//
 const WARM_RUN_EXTRA_FILES = ["bun.lock", "bun.lockb"] as const
+const MAX_WARM_PENDING = 64
 
 async function warmRunFingerprint(cwd: string): Promise<string> {
   const parts: string[] = []
@@ -743,6 +757,7 @@ export class WarmWorker {
     }
   >()
   private stdoutBuffer = ""
+  private stdoutBufferBytes = 0
   private stderrBuffer = ""
   private nextId = 0
   private closed = false
@@ -780,7 +795,18 @@ export class WarmWorker {
   async request(input: unknown, signal?: AbortSignal): Promise<string> {
     if (this.closed) throw new Error(`warm ${this.label} worker is closed`)
     if (signal?.aborted) return `${this.label} cancelled before it started.`
+    if (this.pending.size >= MAX_WARM_PENDING)
+      throw new Error(`warm ${this.label} worker request limit reached`)
     const id = ++this.nextId
+    let encodedInput: string
+    try {
+      encodedInput = JSON.stringify({ id, input })
+    } catch {
+      throw new Error(`warm ${this.label} input is not serializable`)
+    }
+    if (new TextEncoder().encode(encodedInput).byteLength > CHILD_INPUT_MAX_BYTES)
+      throw new Error(`warm ${this.label} input exceeded ${CHILD_INPUT_MAX_BYTES} bytes`)
+    if (signal?.aborted) return `${this.label} cancelled${cancellationSuffix(signal)}.`
     return new Promise((resolve, reject) => {
       const abort = (): void => {
         // Per-request cancel: drop just THIS id and resolve its cancellation. The worker is shared
@@ -789,7 +815,8 @@ export class WarmWorker {
         // cold rebuild. Leave it hot - `createWarmHandler` already replaces it on file change.
         this.pending.delete(id)
         clearTimeout(timer)
-        const reason = typeof signal?.reason === "string" ? `: ${signal.reason}` : ""
+        signal?.removeEventListener("abort", abort)
+        const reason = cancellationSuffix(signal)
         resolve(`${this.label} cancelled${reason}.`)
       }
       // Same backstop as the cold path: a worker wedged mid-request would otherwise leave this
@@ -807,8 +834,15 @@ export class WarmWorker {
       }
       signal?.addEventListener("abort", abort, { once: true })
       this.pending.set(id, { resolve, reject, cleanup })
+      // JSON serialization above can run user-defined `toJSON` hooks. Recheck after installing the
+      // listener and pending entry so an abort during that synchronous work cannot enqueue a request
+      // after cancellation, and so an already-aborted signal does not retain the listener.
+      if (signal?.aborted) {
+        abort()
+        return
+      }
       try {
-        this.proc.stdin.write(`${JSON.stringify({ id, input })}\n`)
+        this.proc.stdin.write(`${encodedInput}\n`)
       } catch (err) {
         this.pending.delete(id)
         cleanup()
@@ -831,8 +865,10 @@ export class WarmWorker {
         this.stop()
         return
       }
-      this.stdoutBuffer += decoder.decode(value, { stream: true })
-      if (this.stdoutBuffer.length > CHILD_OUTPUT_MAX_BYTES) {
+      const text = decoder.decode(value, { stream: true })
+      this.stdoutBuffer += text
+      this.stdoutBufferBytes += new TextEncoder().encode(text).byteLength
+      if (this.stdoutBufferBytes > CHILD_OUTPUT_MAX_BYTES) {
         this.stderrBuffer = boundedAppend(
           this.stderrBuffer,
           `warm ${this.label} worker stdout exceeded ${CHILD_OUTPUT_MAX_BYTES} bytes\n`,
@@ -844,6 +880,7 @@ export class WarmWorker {
       while (nl !== -1) {
         const line = this.stdoutBuffer.slice(0, nl).trim()
         this.stdoutBuffer = this.stdoutBuffer.slice(nl + 1)
+        this.stdoutBufferBytes = new TextEncoder().encode(this.stdoutBuffer).byteLength
         nl = this.stdoutBuffer.indexOf("\n")
         if (line !== "") this.handleLine(line)
       }
@@ -861,23 +898,67 @@ export class WarmWorker {
   }
 
   private handleLine(line: string): void {
-    let message: { id?: unknown; output?: unknown }
+    let message: unknown
     try {
-      message = JSON.parse(line) as { id?: unknown; output?: unknown }
+      message = JSON.parse(line) as unknown
     } catch {
       this.stderrBuffer = boundedAppend(
         this.stderrBuffer,
         `invalid warm ${this.label} worker line: ${line}\n`,
       )
+      this.stop()
       return
     }
-    if (typeof message.id !== "number") return
-    const pending = this.pending.get(message.id)
+    if (
+      message === null ||
+      typeof message !== "object" ||
+      Array.isArray(message) ||
+      typeof (message as { id?: unknown }).id !== "number" ||
+      !Number.isSafeInteger((message as { id: number }).id)
+    ) {
+      this.stderrBuffer = boundedAppend(
+        this.stderrBuffer,
+        `invalid warm ${this.label} worker response envelope\n`,
+      )
+      this.stop()
+      return
+    }
+    const response = message as { id: number; output?: unknown }
+    const pending = this.pending.get(response.id)
     if (pending === undefined) return
-    this.pending.delete(message.id)
+    if (!Object.hasOwn(response, "output")) {
+      this.pending.delete(response.id)
+      pending.cleanup()
+      pending.reject(new Error(`warm ${this.label} worker response is malformed`))
+      this.stop()
+      return
+    }
+    let output: string
+    try {
+      output = JSON.stringify(response.output, null, 2)
+    } catch {
+      this.pending.delete(response.id)
+      pending.cleanup()
+      pending.reject(new Error(`warm ${this.label} worker response is not serializable`))
+      this.stop()
+      return
+    }
+    if (new TextEncoder().encode(output).byteLength > CHILD_OUTPUT_MAX_BYTES) {
+      this.pending.delete(response.id)
+      pending.cleanup()
+      pending.reject(new Error(`warm ${this.label} worker response exceeded the size limit`))
+      this.stop()
+      return
+    }
+    this.pending.delete(response.id)
     pending.cleanup()
-    pending.resolve(JSON.stringify(message.output, null, 2))
+    pending.resolve(output)
   }
+}
+
+function cancellationSuffix(signal: AbortSignal | undefined): string {
+  const reason = signal?.reason
+  return typeof reason === "string" && reason.length > 0 ? `: ${reason.slice(0, 512)}` : ""
 }
 
 /** A warm handler that reuses a hot {@link WarmWorker} across calls and falls back to a one-shot fresh
@@ -892,17 +973,21 @@ export function createWarmHandler(
   let worker: WarmWorker | undefined
   return async (input, signal) => {
     const fingerprint = await warmRunFingerprint(cwd)
-    if (worker === undefined || worker.fingerprint !== fingerprint) {
-      worker?.stop()
-      worker = new WarmWorker(child, cwd, fingerprint, label)
+    let current = worker
+    if (current === undefined || current.fingerprint !== fingerprint) {
+      current?.stop()
+      current = new WarmWorker(child, cwd, fingerprint, label)
+      worker = current
     }
     try {
-      return await worker.request(input, signal)
+      return await current.request(input, signal)
     } catch {
-      worker.stop()
-      worker = undefined
+      // A source change can replace the shared worker while this request is in flight. Only clear
+      // the slot if this request still owns it; an old request must never tear down the replacement.
+      current.stop()
+      if (worker === current) worker = undefined
       if (signal?.aborted) {
-        const reason = typeof signal.reason === "string" ? `: ${signal.reason}` : ""
+        const reason = cancellationSuffix(signal)
         return `${label} cancelled${reason}.`
       }
       return spawnChild(child, cwd, input, label, signal)

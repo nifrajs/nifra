@@ -106,6 +106,12 @@ const TARGETS: readonly Target[] = [
   { name: "@nifrajs/client", entries: ["@nifrajs/client"] },
   { name: "@nifrajs/web", entries: ["@nifrajs/web", "@nifrajs/web/client"] },
   {
+    name: "@nifrajs/webmcp",
+    entries: ["@nifrajs/webmcp"],
+    tsconfig: { lib: ["ES2022", "DOM", "DOM.Iterable"] },
+    typeProbe: "type RouterSearchProbe = ReturnType<typeof entry0.registerWebMcpTools>",
+  },
+  {
     name: "@nifrajs/web-react",
     entries: ["@nifrajs/web-react", "@nifrajs/web-react/router"],
     // React publishes runtime declarations through DefinitelyTyped; a TypeScript consumer supplies them.

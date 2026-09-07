@@ -74,7 +74,10 @@ function safeEnv(
     "CI",
     ...Object.keys(overrides ?? {}),
   ])) {
-    const value = overrides?.[name] ?? process.env[name]
+    const value =
+      overrides !== undefined && Object.hasOwn(overrides, name)
+        ? overrides[name]
+        : process.env[name]
     if (value !== undefined) result[name] = value
   }
   return result

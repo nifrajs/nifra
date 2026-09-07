@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { unlinkSync } from "node:fs"
 import { join } from "node:path"
+import { trustHtml } from "@nifrajs/web"
 import { render } from "svelte/server"
 import { svelteBunPlugin } from "../src/plugin.ts"
 
@@ -25,7 +26,7 @@ test("Content.svelte injects raw HTML via {@html} (not escaped)", async () => {
   await Bun.write(out, await built.outputs[0]!.text())
   try {
     const Content = (await import(out)).default
-    const result = render(Content, { props: { html: "<em>raw &amp; real</em>" } })
+    const result = render(Content, { props: { html: trustHtml("<em>raw &amp; real</em>") } })
     expect(result.body).toContain("<em>raw &amp; real</em>")
     expect(result.body).toContain("<div") // default wrapper element
   } finally {

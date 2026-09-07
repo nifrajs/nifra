@@ -36,7 +36,7 @@ interface StandardResult<Out> {
   readonly issues?: readonly { readonly message: string }[]
 }
 interface StandardSchemaV1<Out> {
-  readonly ["~standard"]: {
+  readonly "~standard": {
     readonly version: 1
     readonly vendor: string
     validate(value: unknown): StandardResult<Out> | Promise<StandardResult<Out>>

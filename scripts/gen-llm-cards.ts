@@ -220,6 +220,11 @@ const FOOTGUNS: Record<string, readonly string[]> = {
     '**Client-leak rule (three guards):** name a server module `*.server.ts` (client build empties it) · add `import "@nifrajs/web/server-only"` to a pure-server module with no `node:` import (build fails loud, with the import chain, if it reaches the browser) · type a value `ServerOnly<T>` to mark intent. A `node:`/native import that reaches a client chunk fails the build with `reached the client bundle` + the chain. See `/docs/troubleshooting`.',
     "`PUBLIC_*` env is baked into the **client** bundle; any other `process.env.X` is `undefined` in the browser (so secrets can't leak, no `process is not defined` crash). Loader data arrives as **`props.data`**, not spread into props.",
   ],
+  "@nifrajs/webmcp": [
+    "WebMCP registration is **page-local and opt-in**: pass an explicit capability allowlist to `registerWebMcpTools`; unsupported browsers safely no-op, and registration never replaces server authorization.",
+    "Predictions are deterministic application transforms, not model guesses. Pair `predict` with `reconcile`, keep patches bounded to `add`/`replace`/`remove`, and treat version conflicts as a normal UI outcome.",
+    'The default WebMCP result is a bounded receipt. Large/non-JSON output is omitted with `outputTruncated: true`; `resultMode: "output"` is an explicit host-controlled escape hatch.',
+  ],
   "@nifrajs/web-react": [
     "React is **deduped** in both the build and the Vite dev server, so a `file:`-linked package shipping its own React no longer nulls the SSR hook dispatcher (`Invalid hook call` / `resolveDispatcher`). See `/docs/troubleshooting`.",
     "A route file that exports `loader`/`action`/`meta` is **not a Fast-Refresh boundary** - keep the view in a child component for state-preserving HMR.",

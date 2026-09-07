@@ -129,6 +129,85 @@ test("buildTargetVite('node') emits a runnable deploy dir that SSRs", async () =
   }
 }, 120_000)
 
+test("buildTargetVite('node') wires aggregate CSS and deferred activation end to end", async () => {
+  const app = scaffoldApp()
+  writeFileSync(
+    join(app.routesDir, "index.tsx"),
+    `import "../app.css"
+     export function loader() { return { hello: "from-loader" } }
+     export default function Index() { return null }
+`,
+  )
+  writeFileSync(join(app.root, "app.css"), "body { color: rebeccapurple }\n")
+  const result = await buildTargetVite("node", {
+    routesDir: app.routesDir,
+    outDir: app.outDir,
+    workDir: app.workDir,
+    clientModule: join(app.root, "client-stub.ts"),
+    adapterImport: join(app.root, "framework.ts"),
+    cssCodeSplit: false,
+    cssLoading: "deferred",
+  })
+
+  expect(result.client.cssCodeSplit).toBe(false)
+  expect(result.client.cssLoading).toBe("deferred")
+  expect(result.client.css).toHaveLength(1)
+  const css = result.client.css?.[0]
+  expect(css).toMatch(/^\/assets\/.*\.css$/)
+  expect(
+    css === undefined
+      ? false
+      : existsSync(join(app.outDir, "assets", css.slice("/assets/".length))),
+  ).toBe(true)
+
+  const reservation = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: { data() {} },
+  })
+  const port = reservation.port
+  reservation.stop(true)
+  const proc = Bun.spawn([Bun.which("node") ?? "node", join(app.outDir, "server.js")], {
+    env: { ...process.env, PORT: String(port) },
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  try {
+    let html: string | undefined
+    for (let i = 0; i < 60; i++) {
+      await Bun.sleep(250)
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/`)
+        if (res.ok) {
+          html = await res.text()
+          break
+        }
+      } catch {
+        // not up yet
+      }
+    }
+    if (html === undefined) {
+      proc.kill()
+      await proc.exited
+      throw new Error(
+        `the built node server never came up:\n${await new Response(proc.stderr).text()}`,
+      )
+    }
+    expect(html).toContain(
+      `<link rel="stylesheet" href="${css}" media="print" data-nifra-css="deferred">`,
+    )
+    expect(html).toContain(`<noscript><link rel="stylesheet" href="${css}"></noscript>`)
+    expect(html).toContain("vite-prod-ssr")
+
+    const cssResponse = await fetch(`http://127.0.0.1:${port}${css}`)
+    expect(cssResponse.status).toBe(200)
+    expect(cssResponse.headers.get("content-type")).toContain("text/css")
+  } finally {
+    proc.kill()
+    await proc.exited
+  }
+}, 120_000)
+
 test("buildTargetVite('cf-pages') emits _worker.js + _routes.json (edge deploy shape)", async () => {
   const { root, routesDir, outDir, workDir } = scaffoldApp()
   mkdirSync(join(root, "public", ".well-known", "acme-challenge"), { recursive: true })

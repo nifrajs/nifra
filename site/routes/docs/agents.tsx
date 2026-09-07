@@ -140,7 +140,9 @@ export default function Agents() {
       <p className="lead">
         Nifra ships an MCP server. It is not a documentation lookup bolted onto a framework: an agent
         can read the project, learn the real API, run actual requests against the backend it just
-        edited, and finish with a report of what the change proved.
+        edited, and finish with a report of what the change proved. The same typed capabilities can
+        power the agent inside your product through <a href="/docs/webmcp">WebMCP and predictive UI</a>
+        or stream into a product surface through AG-UI.
       </p>
 
       <h2>One MCP, two ways to connect</h2>

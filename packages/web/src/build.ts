@@ -31,6 +31,7 @@ import {
   formatNodeBuiltinLeak,
   formatServerOnlyLeak,
   parseManifestClientEntry,
+  parseManifestCssLoading,
   parseManifestRouteStyles,
   parseManifestStyles,
   planBuildTarget,
@@ -38,6 +39,7 @@ import {
   type SizeReport,
 } from "./build-plan.ts"
 import { sanitizeOutputNames } from "./chunk-names.ts"
+import { type CssLoadingMode, normalizeCssCodeSplit, normalizeCssLoading } from "./css-contract.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
 import { dedupePolicyFor } from "./internal/identity-policy.ts"
@@ -350,11 +352,13 @@ export function resyncServerManifestSource(
   manifest: Parameters<typeof generateServerManifest>[0],
   routesPrefix: string,
 ): string {
+  const cssLoading = parseManifestCssLoading(source)
   return generateServerManifest(manifest, {
     resolve: (file) => `${routesPrefix}${file}`,
     clientEntry: parseManifestClientEntry(source) ?? "",
     styles: parseManifestStyles(source),
     routeStyles: parseManifestRouteStyles(source),
+    ...(cssLoading !== undefined ? { cssLoading } : {}),
     lazy: MANIFEST_IS_LAZY.test(source),
   })
 }
@@ -626,6 +630,8 @@ export interface BuildServerOptions {
   readonly styles?: readonly string[] | undefined
   /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) - baked alongside `styles`. */
   readonly routeStyles?: Readonly<Record<string, readonly string[]>> | undefined
+  /** How framework-owned stylesheet links should activate before hydration (default `"blocking"`). */
+  readonly cssLoading?: CssLoadingMode
   /** Route/layout file → import specifier in the generated manifest (default: a relative path from the
    * manifest's location - written next to `serverEntry` - to `routesDir`). */
   readonly resolve?: (file: string) => string
@@ -847,7 +853,7 @@ const solidWebServerPlugin = (from: string): BunPlugin => ({
  * silently ships a broken worker.
  */
 export async function buildServer(options: BuildServerOptions): Promise<ServerBuild> {
-  const { routesDir, serverEntry, outDir, clientEntry, styles, routeStyles } = options
+  const { routesDir, serverEntry, outDir, clientEntry, styles, routeStyles, cssLoading } = options
   const entryDir = dirname(serverEntry)
   const manifestFile = options.manifestFile ?? "server-manifest.ts"
   // Default: import routes relative from the generated manifest (next to serverEntry) to routesDir.
@@ -866,7 +872,14 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
   const manifest = discoverRoutes(routesDir)
   writeFileSync(
     `${entryDir}/${manifestFile}`,
-    generateServerManifest(manifest, { resolve, clientEntry, styles, routeStyles, lazy }),
+    generateServerManifest(manifest, {
+      resolve,
+      clientEntry,
+      styles,
+      routeStyles,
+      ...(cssLoading !== undefined ? { cssLoading } : {}),
+      lazy,
+    }),
   )
 
   const result = await Bun.build({
@@ -963,7 +976,9 @@ export function generateServerEntry(options: {
   if (backendImport !== undefined) {
     lines.push(`import { backend } from ${JSON.stringify(backendImport)}`)
   }
-  lines.push('import { clientEntry, manifest, styles, routeStyles } from "./server-manifest"')
+  lines.push(
+    'import { clientEntry, cssLoading, manifest, styles, routeStyles } from "./server-manifest"',
+  )
   // cf-pages/vercel/deno need the fetch-handler shape; bun/node call app.fetch directly.
   const usesToFetch = target === "cf-pages" || target === "vercel" || target === "deno"
   if (usesToFetch) lines.push('import { toFetchHandler } from "@nifrajs/core/server"')
@@ -977,6 +992,7 @@ export function generateServerEntry(options: {
     "  clientEntry,",
     "  styles,",
     "  routeStyles,",
+    "  cssLoading,",
     ...(backendImport !== undefined ? ["  api: inProcessClient(backend),"] : []),
     `  title: ${JSON.stringify(title)},`,
     "})",
@@ -1157,6 +1173,18 @@ export interface BuildTargetOptions {
   readonly publicDir?: string | false
   /** Prefix of environment variables allowed into the client bundle (default `"PUBLIC_"`). */
   readonly publicEnvPrefix?: string
+  /**
+   * Vite-only CSS output policy. `false` emits one aggregate stylesheet. The native Bun build does not
+   * support this switch and fails closed if it is supplied instead of silently ignoring it.
+   */
+  readonly cssCodeSplit?: boolean
+  /**
+   * Activation policy for framework-owned SSR stylesheet links. Defaults to `"blocking"`; `"deferred"`
+   * fetches with `media="print"` and promotes before hydration. With Vite, pair it with
+   * `cssCodeSplit: false`; the native Bun build supports the activation policy but keeps its existing
+   * CSS output strategy.
+   */
+  readonly cssLoading?: CssLoadingMode
   /** Document `<title>` for the generated server entry. */
   readonly title?: string
 }
@@ -1198,17 +1226,25 @@ export interface BuildTargetResult {
  */
 /** The default (Bun) strategy - `buildClient`/`buildServer` from this module. */
 export const bunBundler: Bundler = {
-  buildClient: (input) =>
-    buildClient({
+  buildClient: (input) => {
+    const cssCodeSplit = normalizeCssCodeSplit(input.cssCodeSplit)
+    if (cssCodeSplit === false) {
+      throw new Error(
+        "[nifra/web] cssCodeSplit: false is a Vite-only production option. Use buildTargetVite or remove it for the native Bun build.",
+      )
+    }
+    return buildClient({
       routesDir: input.routesDir,
       outDir: input.outDir,
       clientModule: input.clientModule,
       ...(input.plugins ? { plugins: input.plugins as BunPlugin[] } : {}),
       ...(input.conditions ? { conditions: input.conditions } : {}),
       ...(input.define ? { define: input.define } : {}),
+      ...(input.cssCodeSplit !== undefined ? { cssCodeSplit } : {}),
       ...(input.publicDir !== undefined ? { publicDir: input.publicDir } : {}),
       ...(input.publicEnvPrefix !== undefined ? { publicEnvPrefix: input.publicEnvPrefix } : {}),
-    }),
+    })
+  },
   buildServer: (input) =>
     buildServer({
       routesDir: input.routesDir,
@@ -1216,8 +1252,11 @@ export const bunBundler: Bundler = {
       outDir: input.outDir,
       clientEntry: input.clientEntry,
       target: input.target,
+      ...(input.styles !== undefined ? { styles: input.styles } : {}),
+      ...(input.routeStyles !== undefined ? { routeStyles: input.routeStyles } : {}),
       ...(input.plugins ? { plugins: input.plugins as BunPlugin[] } : {}),
       ...(input.define ? { define: input.define } : {}),
+      ...(input.cssLoading !== undefined ? { cssLoading: input.cssLoading } : {}),
     }),
 }
 
@@ -1241,6 +1280,10 @@ export async function buildTargetWith(
   bundler: Bundler,
 ): Promise<BuildTargetResult> {
   const { routesDir, outDir, workDir } = options
+  const requestedCssCodeSplit =
+    options.cssCodeSplit === undefined ? undefined : normalizeCssCodeSplit(options.cssCodeSplit)
+  const requestedCssLoading =
+    options.cssLoading === undefined ? undefined : normalizeCssLoading(options.cssLoading)
   const targetPlan = planBuildTarget(target, outDir)
   const { rmSync } = await import("node:fs")
   rmSync(outDir, { recursive: true, force: true })
@@ -1259,8 +1302,16 @@ export async function buildTargetWith(
     define: { "process.env.NODE_ENV": '"production"', ...(options.define ?? {}) },
     publicDir: false,
     ...(options.publicEnvPrefix !== undefined ? { publicEnvPrefix: options.publicEnvPrefix } : {}),
+    ...(requestedCssCodeSplit !== undefined ? { cssCodeSplit: requestedCssCodeSplit } : {}),
+    ...(requestedCssLoading !== undefined ? { cssLoading: requestedCssLoading } : {}),
     root: resolvePath(dirname(routesDir)),
   })
+  // Bun's client builder has no CSS-loading field, but the server-side document policy is bundler
+  // independent. Carry the requested policy into the result so static prerender callbacks and the
+  // generated server entry see the same choice on both build strategies.
+  if (requestedCssLoading !== undefined && client.cssLoading !== requestedCssLoading) {
+    client = { ...client, cssLoading: requestedCssLoading }
+  }
   const publicDir =
     options.publicDir === false
       ? undefined
@@ -1269,6 +1320,11 @@ export async function buildTargetWith(
     publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
   if (publicFiles.length > 0) {
     client = { ...client, publicFiles }
+  }
+  // `buildClient` writes its first manifest before the target orchestration knows the activation policy
+  // (the native Bun client builder has no CSS-loading option). Persist the target-level additions even
+  // when the app has no public/ files; otherwise the returned manifest and the deploy artifact disagree.
+  if (requestedCssLoading !== undefined || publicFiles.length > 0) {
     writeFileSync(`${assetsDir}/manifest.json`, JSON.stringify(client, null, 2))
   }
 
@@ -1330,8 +1386,15 @@ export async function buildTargetWith(
     outDir: `${workDir}/server`,
     clientEntry: client.entry,
     target: targetPlan.serverTarget,
+    ...(client.css !== undefined ? { styles: client.css } : {}),
+    ...(client.routeStyles !== undefined ? { routeStyles: client.routeStyles } : {}),
     ...(options.serverPlugins ? { plugins: options.serverPlugins } : {}),
     define: { "process.env.NODE_ENV": '"production"', ...(options.define ?? {}) },
+    ...(client.cssLoading !== undefined
+      ? { cssLoading: client.cssLoading }
+      : requestedCssLoading !== undefined
+        ? { cssLoading: requestedCssLoading }
+        : {}),
     root: resolvePath(dirname(routesDir)),
   })
 

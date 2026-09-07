@@ -6,12 +6,14 @@
  * Security: injects raw HTML, so `html` MUST be trusted (your own Markdown/content, rendered at
  * build/server time) - never pass user-supplied HTML without sanitizing it first.
  */
+
+import type { TrustedHtml } from "@nifrajs/web"
 import { createElement, type JSX, type VNode } from "preact"
 
 export interface ContentProps
   extends Omit<JSX.HTMLAttributes<HTMLElement>, "dangerouslySetInnerHTML"> {
   /** Trusted, pre-rendered HTML (e.g. `entry.html`). */
-  readonly html: string
+  readonly html: TrustedHtml
   /** Wrapper element (default `"div"`). */
   readonly as?: string
 }

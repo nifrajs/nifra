@@ -294,13 +294,21 @@ export interface AgentEventStream extends AgentEventSink, AsyncIterableIterator<
   readonly dropped: number
 }
 
+const MAX_AGENT_EVENT_QUEUE_SIZE = 65_536
+
 /**
  * Small bounded event stream for RPC clients and UIs. The authoritative event history belongs to
  * the backend/session store; this live view may drop old transient events if a consumer falls behind.
  */
 export function createAgentEventStream(maxQueueSize = 256): AgentEventStream {
-  if (!Number.isSafeInteger(maxQueueSize) || maxQueueSize < 1)
-    throw new RangeError("agent event stream: maxQueueSize must be a positive safe integer")
+  if (
+    !Number.isSafeInteger(maxQueueSize) ||
+    maxQueueSize < 1 ||
+    maxQueueSize > MAX_AGENT_EVENT_QUEUE_SIZE
+  )
+    throw new RangeError(
+      `agent event stream: maxQueueSize must be between 1 and ${MAX_AGENT_EVENT_QUEUE_SIZE}`,
+    )
 
   const queue: AgentEvent[] = []
   const waiters: Array<{
@@ -389,17 +397,207 @@ export * from "./orchestration.ts"
  */
 export * from "./run-lifecycle.ts"
 
-export function isAgentEvent(value: unknown): value is AgentEvent {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false
-  const record = value as Record<string, unknown>
+const AGENT_TOKEN_RE = /^[A-Za-z0-9._:/-]{1,128}$/
+const AGENT_MAX_TEXT = 256 * 1024
+const AGENT_MAX_PAYLOAD_TEXT = 64 * 1024
+const AGENT_MAX_ARRAY = 256
+const AGENT_MAX_OBJECT_KEYS = 256
+const AGENT_MAX_PAYLOAD_DEPTH = 6
+const AGENT_STATUSES: ReadonlySet<string> = new Set([
+  "idle",
+  "running",
+  "waiting",
+  "completed",
+  "failed",
+  "stopped",
+])
+const AGENT_COMPACTION_REASONS: ReadonlySet<string> = new Set([
+  "manual",
+  "threshold",
+  "overflow",
+  "workflow",
+])
+
+function agentRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+function agentToken(value: unknown): value is string {
+  return typeof value === "string" && AGENT_TOKEN_RE.test(value)
+}
+
+function agentText(value: unknown, max = AGENT_MAX_TEXT, allowEmpty = true): value is string {
   return (
-    record.version === AGENT_PROTOCOL_VERSION &&
-    typeof record.sessionId === "string" &&
-    typeof record.seq === "number" &&
-    Number.isSafeInteger(record.seq) &&
-    typeof record.at === "number" &&
-    Number.isFinite(record.at) &&
-    typeof record.type === "string" &&
-    record.type.includes(".")
+    typeof value === "string" &&
+    value.length <= max &&
+    (allowEmpty || value.length > 0) &&
+    !value.includes("\0")
   )
+}
+
+function agentCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+}
+
+function boundedAgentValue(
+  value: unknown,
+  depth = 0,
+  state: { remaining: number } = { remaining: 2_048 },
+): boolean {
+  if (state.remaining-- <= 0 || depth > AGENT_MAX_PAYLOAD_DEPTH) return false
+  if (value === null || typeof value === "boolean") return true
+  if (typeof value === "string") return agentText(value, AGENT_MAX_PAYLOAD_TEXT)
+  if (typeof value === "number")
+    return Number.isFinite(value) && Math.abs(value) <= Number.MAX_SAFE_INTEGER
+  if (Array.isArray(value))
+    return (
+      value.length <= AGENT_MAX_ARRAY &&
+      value.every((item) => boundedAgentValue(item, depth + 1, state))
+    )
+  if (!agentRecord(value) || Object.keys(value).length > AGENT_MAX_OBJECT_KEYS) return false
+  return Object.entries(value).every(
+    ([key, child]) => agentText(key, 128, false) && boundedAgentValue(child, depth + 1, state),
+  )
+}
+
+function optionalBoundedAgentValue(record: Record<string, unknown>, key: string): boolean {
+  return !Object.hasOwn(record, key) || boundedAgentValue(record[key])
+}
+
+function validAgentError(value: unknown): boolean {
+  if (!agentRecord(value)) return false
+  return (
+    agentToken(value.code) &&
+    agentText(value.message, AGENT_MAX_TEXT, false) &&
+    optionalBoundedAgentValue(value, "details")
+  )
+}
+
+function validAgentSnapshot(value: unknown, sessionId: string): value is AgentSessionSnapshot {
+  if (!agentRecord(value)) return false
+  if (
+    value.version !== AGENT_PROTOCOL_VERSION ||
+    !agentToken(value.id) ||
+    value.id !== sessionId ||
+    !agentToken(value.backend) ||
+    !agentText(value.cwd, 4_096, false) ||
+    typeof value.status !== "string" ||
+    !AGENT_STATUSES.has(value.status) ||
+    !agentCount(value.createdAt) ||
+    !agentCount(value.updatedAt) ||
+    !agentCount(value.lastSeq) ||
+    !Array.isArray(value.capabilities) ||
+    value.capabilities.length > AGENT_MAX_ARRAY ||
+    !value.capabilities.every(agentToken)
+  )
+    return false
+  if (value.activeTurnId !== undefined && !agentToken(value.activeTurnId)) return false
+  if (value.extensionRevision !== undefined && !agentToken(value.extensionRevision)) return false
+  return true
+}
+
+function validRepairTask(value: unknown): boolean {
+  if (!agentRecord(value)) return false
+  return (
+    agentToken(value.id) &&
+    (value.verification === "check" ||
+      value.verification === "assure" ||
+      value.verification === "test") &&
+    agentText(value.cwd, 4_096, false) &&
+    agentText(value.reason, AGENT_MAX_TEXT, false) &&
+    Array.isArray(value.capabilities) &&
+    value.capabilities.length <= AGENT_MAX_ARRAY &&
+    value.capabilities.every(agentToken) &&
+    (value.output === undefined || agentText(value.output)) &&
+    optionalBoundedAgentValue(value, "report")
+  )
+}
+
+/** Validate the complete discriminated event union before a projection or UI consumer sees it. */
+export function isAgentEvent(value: unknown): value is AgentEvent {
+  if (!agentRecord(value)) return false
+  if (
+    value.version !== AGENT_PROTOCOL_VERSION ||
+    !agentToken(value.sessionId) ||
+    !agentCount(value.seq) ||
+    !agentCount(value.at) ||
+    typeof value.type !== "string"
+  )
+    return false
+  switch (value.type) {
+    case "session.started":
+    case "session.updated":
+    case "session.completed":
+      return validAgentSnapshot(value.snapshot, value.sessionId)
+    case "turn.started":
+      return agentToken(value.turnId) && agentText(value.prompt)
+    case "assistant.delta":
+    case "assistant.message":
+      return agentToken(value.turnId) && agentText(value.text)
+    case "tool.started":
+      return (
+        agentToken(value.turnId) &&
+        agentToken(value.callId) &&
+        agentToken(value.name) &&
+        optionalBoundedAgentValue(value, "input")
+      )
+    case "tool.delta":
+      return agentToken(value.turnId) && agentToken(value.callId) && agentText(value.text)
+    case "tool.completed":
+      return (
+        agentToken(value.turnId) &&
+        agentToken(value.callId) &&
+        agentToken(value.name) &&
+        typeof value.ok === "boolean" &&
+        optionalBoundedAgentValue(value, "output") &&
+        (value.error === undefined || validAgentError(value.error))
+      )
+    case "approval.required":
+      return (
+        agentToken(value.turnId) &&
+        agentToken(value.approvalId) &&
+        agentText(value.action, AGENT_MAX_TEXT, false) &&
+        agentToken(value.capability) &&
+        (value.reason === undefined || agentText(value.reason))
+      )
+    case "approval.resolved":
+      return (
+        (value.turnId === undefined || agentToken(value.turnId)) &&
+        agentToken(value.approvalId) &&
+        typeof value.approved === "boolean" &&
+        (value.reason === undefined || agentText(value.reason))
+      )
+    case "repair.required":
+      return (value.turnId === undefined || agentToken(value.turnId)) && validRepairTask(value.task)
+    case "verification.completed":
+      return (
+        (value.name === "check" || value.name === "assure" || value.name === "test") &&
+        typeof value.ok === "boolean" &&
+        optionalBoundedAgentValue(value, "report")
+      )
+    case "memory.compacted":
+      return (
+        agentCount(value.before) &&
+        agentCount(value.after) &&
+        typeof value.reason === "string" &&
+        AGENT_COMPACTION_REASONS.has(value.reason)
+      )
+    case "extension.reloaded":
+      return (
+        agentToken(value.revision) &&
+        Array.isArray(value.loaded) &&
+        value.loaded.length <= AGENT_MAX_ARRAY &&
+        value.loaded.every(agentToken) &&
+        Array.isArray(value.disabled) &&
+        value.disabled.length <= AGENT_MAX_ARRAY &&
+        value.disabled.every(agentToken) &&
+        typeof value.rolledBack === "boolean"
+      )
+    case "session.failed":
+      return validAgentError(value.error) && typeof value.recoverable === "boolean"
+    case "session.stopped":
+      return value.reason === undefined || agentText(value.reason)
+    default:
+      return false
+  }
 }

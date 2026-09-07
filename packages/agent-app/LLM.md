@@ -12,7 +12,7 @@ Presentation-safe browser SDK for Nifra agent hosts: negotiated commands, ordere
 
 - **boundaryCommands** _(function)_ - `boundaryCommands: (item: BoundaryStateView, options: { readonly inbox: boolean; readonly now: number; }) => readonly BoundaryCommand[]`
 - **boundaryIsStale** _(function)_ - `boundaryIsStale: (item: BoundaryStateView, now: number) => boolean`
-- **parseEventStream** _(function)_ - `parseEventStream: (body: ReadableStream<Uint8Array>, method: string) => AsyncIterable<AgentEvent>`
+- **parseEventStream** _(function)_ - `parseEventStream: (body: ReadableStream<Uint8Array>, method: string, maxFrameBytes?: number) => AsyncIterable<AgentEvent>`
 - **toEvalComparisonView** _(function)_ - `toEvalComparisonView: (value: unknown) => EvalComparisonView | undefined`
 - **toEventView** _(function)_ - `toEventView: (event: AgentEvent) => AgentEventView`
 - **toEvidenceTimelineView** _(function)_ - `toEvidenceTimelineView: (value: unknown) => readonly EvidenceTimelineView[]`

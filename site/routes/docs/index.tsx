@@ -8,7 +8,7 @@ export const hydrate = false
 export const meta = docsMeta(
   "/docs",
   "Nifra - Getting started",
-  "Get started with Nifra: install, server, typed client, loaders, deploy.",
+  "Get started with Nifra: typed backend, agentic UI, bounded agent runs, full-stack SSR, and portable deployment.",
 )
 
 const HELLO = `import { server } from "@nifrajs/core/server"
@@ -42,10 +42,19 @@ export default function Docs() {
     <div className="prose">
       <h1 className="page">Getting started</h1>
       <p className="lead">
-        Nifra is a contract-first TypeScript framework. Start with just a typed backend - like Hono or
-        Elysia - and the client infers its types with zero codegen. Add a frontend only when you need
-        one: the same route model then drives SSR across React, Solid, Vue, Preact, and Svelte, on
-        Bun, Node, Deno, and the edge.
+        Nifra is a contract-first TypeScript framework for applications with agents in the loop. Start
+        with just a typed backend - like Hono or Elysia - and the client infers its types with zero
+        codegen. Add a full-stack UI, a bounded agent runtime, or page-local WebMCP when you need one:
+        the same contracts drive all of them across Bun, Node, Deno, and the edge.
+      </p>
+
+      <h2>One app, two agent loops</h2>
+      <p>
+        A coding agent can inspect the live project, change it, run real requests, and prove the result.
+        A user-facing agent can discover explicit page tools, stream progress into the UI, predict a
+        state change, and reconcile it with the server. Both use the same typed capabilities and
+        verification boundary. Start with the <a href="/docs/agents">agent layer</a> or the{" "}
+        <a href="/docs/webmcp">WebMCP &amp; predictive UI guide</a> when you are ready to add them.
       </p>
 
       <h2>Install</h2>

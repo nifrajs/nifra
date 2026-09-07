@@ -1966,6 +1966,9 @@ export default function Layout(props: { children?: ReactNode }) {
         <div className="wrap">
           <span>Proudly built with Nifra - server-rendered on Cloudflare Pages.</span>
           <span className="foot-links">
+            <a href="/about">About</a>
+            <a href="/contact">Contact</a>
+            <a href="/agents.md">Agents</a>
             <a href="/frameworks">5 Frameworks</a>
             <a href="/blog">Blog</a>
             <a href="/compare">Compare</a>

@@ -88,6 +88,7 @@ export interface WorkflowResult {
 export class WorkflowRunner {
   private readonly options: Required<Pick<WorkflowRunnerOptions, "maxSteps" | "maxDepth">> &
     WorkflowRunnerOptions
+  private readonly signal: AbortSignal
   private readonly values = new Map<string, unknown>()
   private readonly completed: string[] = []
   private steps = 0
@@ -98,6 +99,7 @@ export class WorkflowRunner {
       maxSteps: options.maxSteps ?? 128,
       maxDepth: options.maxDepth ?? 8,
     }
+    this.signal = options.signal ?? new AbortController().signal
     if (!Number.isSafeInteger(this.options.maxSteps) || this.options.maxSteps < 1)
       throw new RangeError("workflow: maxSteps must be positive")
     if (!Number.isSafeInteger(this.options.maxDepth) || this.options.maxDepth < 1)
@@ -128,12 +130,12 @@ export class WorkflowRunner {
     }
   }
 
-  private context(): WorkflowContext {
+  private context(depth: number): WorkflowContext {
     return {
-      signal: this.options.signal ?? new AbortController().signal,
+      signal: this.signal,
       values: this.values,
       set: (name, value) => this.values.set(name, value),
-      run: (step) => this.execute(step, 1),
+      run: (step) => this.execute(step, depth + 1),
     }
   }
 
@@ -143,51 +145,55 @@ export class WorkflowRunner {
     if (this.options.signal?.aborted) throw new Error("workflow cancelled")
     switch (step.type) {
       case "task":
-        return this.single(step.id, () => step.run(this.context()))
+        return this.single(step.id, () => step.run(this.context(depth)))
       case "verify": {
-        const result = await this.single(step.id, () => step.run(this.context()))
+        const result = await this.single(step.id, () => step.run(this.context(depth)))
         const ok = typeof result === "boolean" ? result : isVerificationResult(result) && result.ok
         if (!ok) throw new Error(`verification failed: ${step.id}`)
         return result
       }
       case "approve": {
         await this.emit({ type: "approval.required", id: step.id, reason: step.reason })
-        const approved = await this.single(step.id, () => step.run(this.context()))
+        const approved = await this.single(step.id, () => step.run(this.context(depth)))
         if (approved !== true) throw new Error(`approval denied: ${step.id}`)
         return approved
       }
       case "checkpoint": {
-        const result = await this.single(step.id, () => step.run(this.context()))
+        const result = await this.single(step.id, () => step.run(this.context(depth)))
         await this.emit({ type: "checkpoint.created", id: step.id })
         return result
       }
       case "handoff":
-        return this.single(step.id, () => step.run(this.context()))
+        return this.single(step.id, () => step.run(this.context(depth)))
       case "sequence": {
         const results: unknown[] = []
         for (const child of step.steps) results.push(await this.execute(child, depth + 1))
         return results
       }
       case "parallel":
+        if (step.steps.length === 0) return []
         return this.parallel(step.steps, step.maxConcurrency ?? step.steps.length, depth)
       case "retry": {
         const attempts = step.attempts ?? 3
         if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 16)
           throw new RangeError("workflow: attempts must be between 1 and 16")
+        const backoffMs = step.backoffMs ?? 0
+        if (!Number.isSafeInteger(backoffMs) || backoffMs < 0)
+          throw new RangeError("workflow: backoffMs must be a non-negative safe integer")
         let last: unknown
         for (let attempt = 0; attempt < attempts; attempt++) {
           try {
             return await this.execute(step.step, depth + 1)
           } catch (error) {
             last = error
-            if (attempt + 1 < attempts && (step.backoffMs ?? 0) > 0)
-              await delay(Math.min(step.backoffMs! * (attempt + 1), 10_000), this.options.signal)
+            if (attempt + 1 < attempts && backoffMs > 0)
+              await delay(Math.min(backoffMs * (attempt + 1), 10_000), this.options.signal)
           }
         }
         throw last instanceof Error ? last : new Error(String(last))
       }
       case "branch": {
-        const selected = await this.single(step.id, () => step.when(this.context()))
+        const selected = await this.single(step.id, () => step.when(this.context(depth)))
         return selected === true
           ? this.execute(step.then, depth + 1)
           : step.otherwise === undefined
@@ -249,21 +255,27 @@ export class WorkflowRunner {
 
 async function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(resolve, ms)
-    if (signal === undefined) return
-    if (signal.aborted) {
-      clearTimeout(timer)
-      reject(new Error("workflow cancelled"))
-      return
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let onAbort: (() => void) | undefined
+    const cleanup = (): void => {
+      if (timer !== undefined) clearTimeout(timer)
+      if (signal !== undefined && onAbort !== undefined)
+        signal.removeEventListener("abort", onAbort)
     }
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer)
-        reject(new Error("workflow cancelled"))
-      },
-      { once: true },
-    )
+    const settle = (error?: Error): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      if (error === undefined) resolve()
+      else reject(error)
+    }
+    timer = setTimeout(() => settle(), ms)
+    if (signal === undefined) return
+    onAbort = () => settle(new Error("workflow cancelled"))
+    signal.addEventListener("abort", onAbort, { once: true })
+    // Abort can race listener registration; check again after subscribing.
+    if (signal.aborted) onAbort()
   })
 }
 

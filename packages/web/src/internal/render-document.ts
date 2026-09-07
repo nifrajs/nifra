@@ -1,5 +1,6 @@
 import { isSameOriginPath, type ResponseResult, status as statusResult } from "@nifrajs/core/server"
 import type { BoundaryRegistration, BoundaryStates } from "../boundary.ts"
+import { type CssLoadingMode, DEFAULT_CSS_LOADING, normalizeCssLoading } from "../css-contract.ts"
 import { DEFERRED_ERROR_CODE, DEFERRED_RUNTIME, prepareDeferred } from "../deferred.ts"
 import { ISR_REVALIDATE_HEADER, ISR_REVALIDATE_TAGS_HEADER, serializeISRTags } from "../isr.ts"
 import type {
@@ -97,6 +98,13 @@ export interface RenderPageOptions {
    * `BuildManifest.css`) - injected as `<link rel="stylesheet">` in `<head>` so styles arrive with the
    * first paint (no FOUC). Rendered even on non-hydrated pages. Empty/omitted ⇒ none (unchanged). */
   readonly styles?: readonly string[]
+  /**
+   * Activation policy for these framework-owned stylesheet links (default `"blocking"`). In
+   * `"deferred"` mode, hydrating pages fetch with `media="print"` and the generated client promotes
+   * them to `media="all"` after load/error/timeout. Non-hydrated pages remain blocking so JS-off pages
+   * and terminal documents are styled.
+   */
+  readonly cssLoading?: CssLoadingMode
   /** SSG: the prerendered-path set, serialized to `window.__NIFRA_PRERENDERED__` so the client fetches
    * a static `_data.json` on soft-nav into a prerendered route. Empty/omitted ⇒ not injected. */
   readonly prerenderedPaths?: readonly string[]
@@ -165,7 +173,8 @@ export interface RenderPageOptions {
    *
    * Only pass a cache when every shell-shaping input is IDENTICAL across the requests sharing it:
    * same `head` content (a static meta chain - never a `meta(data)` function), `title`, `styles`,
-   * `preload`, `islandScripts`, `clientEntry`, `rootId`, `hydrate`, and `prerenderedPaths`. Per-request
+   * `cssLoading`, `preload`, `islandScripts`, `clientEntry`, `rootId`, `hydrate`, and `prerenderedPaths`.
+   * Per-request
    * values (`data`, `params`, `search`, `actionData`, `layoutData`, deferred state) are always assembled
    * fresh and safe. A per-request `nonce` disables the cache automatically. `createWebApp` wires this
    * per route, gated on the route + layout metas being static.
@@ -219,6 +228,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     clientEntry,
     preload = [],
     styles = [],
+    cssLoading: requestedCssLoading,
     prerenderedPaths = [],
     revalidate,
     revalidateTags = [],
@@ -233,6 +243,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     boundaries,
     headers: extraHeaders,
   } = options
+  const cssLoading = normalizeCssLoading(requestedCssLoading ?? DEFAULT_CSS_LOADING)
   if (nonce !== undefined && nonce.trim() === "") {
     throw new TypeError("[nifra/web] renderPage nonce must be non-empty when provided")
   }
@@ -317,10 +328,25 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
         preloadLinks += `<link rel="modulepreload" href="${escapeAttr(url)}">`
     }
     // The matched route's stylesheets - `<link rel="stylesheet">` in `<head>` so CSS arrives with the
-    // first paint (no FOUC). Render-blocking by design, and emitted regardless of `hydrate` (a static
-    // or `_error` page still wants its styles). In dev (Vite) CSS is injected client-side instead.
+    // first paint (no FOUC). Deferred mode is deliberately opt-in and only applies to hydrating pages:
+    // a JS-off page must retain a normal stylesheet link, and a terminal/static page has no generated
+    // client to promote `media="print"` to `media="all"`.
     let styleLinks = ""
-    for (const url of styles) styleLinks += `<link rel="stylesheet" href="${escapeAttr(url)}">`
+    const deferStyles = hydrate && cssLoading === "deferred"
+    const styleUrls = [...new Set(styles)]
+    for (const url of styleUrls) {
+      const href = escapeAttr(url)
+      if (!deferStyles) {
+        styleLinks += `<link rel="stylesheet" href="${href}">`
+        continue
+      }
+      // `media="print"` starts the fetch without making the CSS render-blocking. The marker is scoped
+      // to framework-owned links so the generated client never rewrites an author's head link. The
+      // noscript copy preserves progressive enhancement when JavaScript is disabled.
+      styleLinks +=
+        `<link rel="stylesheet" href="${href}" media="print" data-nifra-css="deferred">` +
+        `<noscript><link rel="stylesheet" href="${href}"></noscript>`
+    }
     // Island bundles are referenced only by a `<script type="module">` at the END of `<body>`, so the
     // browser doesn't discover them until the whole page is parsed. `modulepreload` them in `<head>`
     // so the fetch starts immediately, in parallel with parsing - regardless of `hydrate`.
@@ -554,8 +580,10 @@ function streamDocument(
           deferred.map(async (d) => {
             try {
               const value = serializeData(await d.promise)
+              // `serializeData` JSON-serializes the value and escapes `<`, `>`, and Unicode line
+              // separators before this framework-owned script is emitted.
               controller.enqueue(
-                enc.encode(`<script${nonceAttr}>window.__nifraResolve(${d.id},${value})</script>`),
+                enc.encode(`<script${nonceAttr}>window.__nifraResolve(${d.id},${value})</script>`), // nosemgrep: javascript.lang.security.audit.unknown-value-with-script-tag.unknown-value-with-script-tag
               )
             } catch (err) {
               // A rejected deferred streams __nifraReject (the client `<Await>` surfaces it) - it must

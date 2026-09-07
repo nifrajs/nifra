@@ -46,8 +46,14 @@ concurrency: release-${{ github.event.workflow_run.head_branch }}
 
 jobs:
   release:
-    # Fail closed: anything other than a green CI run stops here.
-    if: github.event.workflow_run.conclusion == 'success'
+    # Fail closed: publish only a green CI run caused by a push to this repository's main branch.
+    # `workflow_run` can otherwise be triggered by a similarly named workflow or a fork, while the
+    # checkout below would still fetch the reported SHA and the job still holds publish credentials.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       # The commit CI actually validated, not whatever main points at now. Without this a push that

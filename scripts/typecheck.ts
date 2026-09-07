@@ -25,6 +25,7 @@ const ROOT = resolve(import.meta.dir, "..")
  */
 export const TYPECHECK_PROJECTS: readonly string[] = [
   "tsconfig.json",
+  "packages/webmcp/tsconfig.json",
   "packages/web/tsconfig.json",
   "packages/web-solid/tsconfig.json",
   "packages/web-react/tsconfig.json",

@@ -77,8 +77,8 @@ const t2 = performance.now()
 // its own `Promise`, so a host `instanceof Promise` check would miss an async handler's return.
 const res = await handler.fetch(request, {}, ctx)
 const firstFetchMs = performance.now() - t2
-if (!res || res.status !== 200) {
-  throw new Error(`cold request was not 200 (got ${res && res.status}): ${bundlePath}`)
+if (res?.status !== 200) {
+  throw new Error(`cold request was not 200 (got ${res?.status}): ${bundlePath}`)
 }
 
 console.log(

@@ -6,8 +6,8 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 
 ## Docs
 
-- [Nifra - Getting started](/docs): Get started with Nifra: install, server, typed client, loaders, deploy.
-- [Nifra vs. other frameworks - the honest comparison](/docs/comparison): How Nifra compares to the full-stack frameworks (Next.js, Nuxt, SvelteKit, Remix, TanStack Start) - and, as a standalone backend, to Hono and Elysia. Five UI frameworks, five runtimes, end-to-end types, and an AI-agent toolchain no competitor ships.
+- [Nifra - Getting started](/docs): Get started with Nifra: typed backend, agentic UI, bounded agent runs, full-stack SSR, and portable deployment.
+- [Nifra vs. other frameworks - the honest comparison](/docs/comparison): How Nifra compares to the full-stack frameworks (Next.js, Nuxt, SvelteKit, Remix, TanStack Start) - and, as a standalone backend, to Hono and Elysia. Five UI frameworks, five runtimes, end-to-end types, and an agentic application layer built around typed capabilities.
 - [Nifra - Routing](/docs/routing): File-based routing in Nifra: conventions, params, nested layouts.
 - [Nifra - API & typed client](/docs/api): Build a typed JSON API with server()/defineContract + validate inputs with any Standard Schema, then consume it from a zero-codegen, never-throwing typed client.
 - [Nifra - Loaders & actions](/docs/data): Typed loaders and actions in Nifra: data on the server, mutations, revalidation.
@@ -51,6 +51,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - [Nifra - Contract-derived adversarial testing](/docs/testing): Turn route schemas into hostile input, response-conformance, replay, shrinking, and runtime-matrix tests with @nifrajs/testing.
 - [Nifra - Types-first architecture](/docs/types-first): Nifra infers route types from path literals and handlers automatically, with optional Standard Schemas for validation, explicit contracts, OpenAPI, and agent-readable APIs.
 - [Nifra - Verification ladder](/docs/verification): Five cumulative levels, from a typed contract to contract-derived invariant tests, that say what a Nifra project actually proves.
+- [Nifra - WebMCP & predictive UI](/docs/webmcp): Expose explicit page-local WebMCP tools from typed Nifra capabilities while keeping remote MCP, authorization, receipts, and predictive UI reconciliation on one contract.
 
 ## Packages
 
@@ -104,6 +105,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - `@nifrajs/web-svelte` - Svelte 5 render adapter for @nifrajs/web - SSR + hydration + the .svelte compiler Bun-plugin.
 - `@nifrajs/web-vanilla` - Zero-framework render adapter for @nifrajs/web - auto-escaping tagged-template HTML, ~0 KB client JS, interactivity via @nifrajs/web/islands.
 - `@nifrajs/web-vue` - Vue render adapter for @nifrajs/web - streaming SSR + hydration, with a .vue SFC compiler Bun plugin (@nifrajs/web-vue/plugin).
+- `@nifrajs/webmcp` - Typed WebMCP site tools and predictive UI contracts for Nifra.
 - `@nifrajs/workers` - Cloudflare Workers helpers for nifra - a Durable Object hub for cross-connection WebSocket broadcast.
 - `create-nifra` - Scaffold a new nifra app - `bun create nifra <dir>`.
 - `nifra` - The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/core, so `import { server } from "nifra"` works. Scaffold an app with `bun create nifra`; the rest of the framework lives under @nifrajs/*.

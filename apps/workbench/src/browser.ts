@@ -28,9 +28,18 @@ import {
   virtualizeEvidenceRows,
 } from "@nifrajs/agent-app"
 
-const params = new URLSearchParams(window.location.search)
+const params = new URLSearchParams(window.location.hash.replace(/^#/, ""))
 const endpoint = params.get("rpc") ?? ""
 const token = params.get("token") ?? ""
+// Keep the credential only in this page's closure and remove it from browser history/address-bar
+// state immediately. The fragment is never sent over HTTP, and the replacement prevents casual
+// copy/paste or later navigation from retaining the bearer token.
+if (window.location.hash !== "")
+  window.history.replaceState(
+    null,
+    document.title,
+    `${window.location.pathname}${window.location.search}`,
+  )
 
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id)
@@ -67,7 +76,7 @@ const ui = {
 
 const transport = new HttpAgentTransport({
   endpoint,
-  // Per-request bearer token minted from the launch query; never stored on the transport.
+  // Per-request bearer token captured from the fragment bootstrap; never stored on the transport.
   authorize: () => token,
 })
 const client = new AgentAppClient(transport)

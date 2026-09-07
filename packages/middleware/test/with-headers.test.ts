@@ -92,8 +92,8 @@ describe("setNodeHeader", () => {
     // would silently vanish from the wire. It has to be an enumerable own property to be written.
     expect(Object.hasOwn(headers, "__proto__")).toBe(true)
     expect(Object.keys(headers)).toEqual(["__proto__"])
-    expect(headers["__proto__"]).toBe("poison")
+    expect(Object.getOwnPropertyDescriptor(headers, "__proto__")?.value).toBe("poison")
     expect(Object.getPrototypeOf(headers)).toBe(Object.prototype)
-    expect(({} as Record<string, unknown>)["poison"]).toBeUndefined()
+    expect(Object.getOwnPropertyDescriptor({}, "poison")?.value).toBeUndefined()
   })
 })

@@ -162,7 +162,7 @@ async function main(): Promise<void> {
   console.log(
     `  ${pad("worker", 16)}${pad("bundle gz", 12)}${pad("compile ms", 12)}${pad("init ms", 10)}${pad("1st req ms", 12)}${pad("cold ms", 10)}vs raw`,
   )
-  console.log("  " + "-".repeat(81))
+  console.log(`  ${"-".repeat(81)}`)
   for (const f of FRAMEWORKS) {
     const c = medianOf(f, "coldMs")
     const delta = f === "raw" ? "+0.00 ms" : `+${(c - rawCold).toFixed(2)} ms`

@@ -45,6 +45,8 @@ import { docsTools } from "./mcp-docs-tools.ts"
 import {
   createMcpProtocolState,
   handleRpc,
+  isJsonRpcRequest,
+  isJsonRpcResponse,
   type JsonRpcNotification,
   type JsonRpcRequest,
   type JsonRpcResponse,
@@ -80,15 +82,18 @@ import {
   type ToolingDrift,
 } from "./mcp-root.ts"
 
-export type { BoundedOutput } from "./mcp-io.ts"
+export type { BoundedLine, BoundedOutput } from "./mcp-io.ts"
 export {
+  CHILD_INPUT_MAX_BYTES,
   CHILD_OUTPUT_MAX_BYTES,
   CHILD_TIMEOUT_MS,
   LOCAL_TOOL_FETCH_TIMEOUT_MS,
   LOCAL_TOOL_MAX_RESPONSE_BYTES,
   notNifraResponse,
+  readBoundedLines,
   readBoundedResponse,
   readBoundedStream,
+  serializeBoundedJson,
   timeoutMessage,
   validateLocalPort,
 } from "./mcp-io.ts"
@@ -155,6 +160,8 @@ async function appDeclaredTools(loader: () => Promise<LoadedApp>): Promise<McpTo
 }
 
 const ROOTS_REQUEST_ID = "nifra:roots/list"
+const MAX_STDIO_MESSAGE_BYTES = 8 * 1024 * 1024
+const STDIO_ENCODER = new TextEncoder()
 
 /** Everything derived from the project root - rebuilt wholesale when the root changes (adoption of a
  * client workspace root), so no per-tool state can keep pointing at the old directory. */
@@ -215,17 +222,31 @@ export async function runMcpServer(
   const serverInfo = { name: "nifra", version }
   const state = createMcpProtocolState()
   const send = (message: JsonRpcResponse | JsonRpcNotification): void => {
-    process.stdout.write(`${JSON.stringify(message)}\n`)
+    let encoded: string
+    try {
+      encoded = JSON.stringify(message)
+    } catch {
+      encoded = JSON.stringify(
+        rpcError(responseIdOf(message), -32603, "MCP response is not serializable"),
+      )
+    }
+    if (STDIO_ENCODER.encode(encoded).byteLength > MAX_STDIO_MESSAGE_BYTES)
+      encoded = JSON.stringify(
+        rpcError(responseIdOf(message), -32603, "MCP response exceeded the size limit"),
+      )
+    process.stdout.write(`${encoded}\n`)
   }
   let rootsSupported = false
+  let rootsRequestPending = false
   const requestRoots = (): void => {
-    if (!rootsSupported) return
+    if (!rootsSupported || rootsRequestPending) return
+    rootsRequestPending = true
     process.stdout.write(
       `${JSON.stringify({ jsonrpc: "2.0", id: ROOTS_REQUEST_ID, method: "roots/list" })}\n`,
     )
   }
-  const onRootsAnswer = async (message: JsonRpcRequest): Promise<void> => {
-    const result = (message as { result?: unknown }).result
+  const onRootsAnswer = async (message: JsonRpcResponse): Promise<void> => {
+    const result = "result" in message ? message.result : undefined
     // An error response (or a malformed one) carries no roots: keep the current state - the absence
     // of workspace data is not a mismatch, and never a reason to move the root.
     if (result === undefined) return
@@ -241,15 +262,15 @@ export async function runMcpServer(
   // must see the adopted root, even though dispatches themselves run concurrently.
   let rootsUpdate: Promise<void> = Promise.resolve()
 
+  const dispatchRootsAnswer = (message: JsonRpcResponse): void => {
+    // The roots answer is a response to a request initiated by this server, not a client RPC request.
+    // Serialize adoption with normal dispatch so a following request cannot observe a half-updated root.
+    if (!rootsRequestPending) return
+    rootsRequestPending = false
+    rootsUpdate = onRootsAnswer(message).catch(() => {})
+  }
+
   const dispatch = async (message: JsonRpcRequest): Promise<void> => {
-    // The client's answer to OUR `roots/list` request - a response (id, no method), which the pure
-    // dispatch would reject as an unknown method. Intercept it before handleRpc ever sees it.
-    if (message.method === undefined && message.id === ROOTS_REQUEST_ID) {
-      // Swallow failures: a bad answer must not poison the chain and 500 every later dispatch.
-      rootsUpdate = onRootsAnswer(message).catch(() => {})
-      await rootsUpdate
-      return
-    }
     await rootsUpdate
     if (message.method === "initialize") {
       rootsSupported = clientSupportsRoots(message.params)
@@ -301,25 +322,64 @@ export async function runMcpServer(
 
   const decoder = new TextDecoder()
   let buffer = ""
-  for await (const chunk of Bun.stdin.stream()) {
-    buffer += decoder.decode(chunk as Uint8Array, { stream: true })
-    let nl = buffer.indexOf("\n")
-    while (nl !== -1) {
-      const line = buffer.slice(0, nl).trim()
-      buffer = buffer.slice(nl + 1)
-      nl = buffer.indexOf("\n")
-      if (line === "") continue
-      let message: JsonRpcRequest
-      try {
-        message = JSON.parse(line)
-      } catch {
-        send(rpcError(null, -32700, "parse error"))
-        continue
-      }
-      void dispatch(message).catch((err) => {
+  let bufferBytes = 0
+  let discardingOversized = false
+  const processLine = (rawLine: string): void => {
+    const line = rawLine.trim()
+    if (line === "") return
+    if (STDIO_ENCODER.encode(rawLine).byteLength > MAX_STDIO_MESSAGE_BYTES) {
+      send(rpcError(null, -32600, "MCP message exceeded the size limit"))
+      return
+    }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(line) as unknown
+    } catch {
+      send(rpcError(null, -32700, "parse error"))
+      return
+    }
+    if (isJsonRpcRequest(parsed)) {
+      void dispatch(parsed).catch((err) => {
         const msg = err instanceof Error ? err.message : String(err)
-        send(rpcError(message.id ?? null, -32603, msg))
+        send(rpcError(parsed.id ?? null, -32603, msg))
       })
+    } else if (isJsonRpcResponse(parsed) && parsed.id === ROOTS_REQUEST_ID) {
+      dispatchRootsAnswer(parsed)
+    } else {
+      // Do not let null, arrays, scalars, responses for unknown ids, or malformed envelopes reach the
+      // dispatch shell. In particular, reading `.id` from a hostile `null` must never crash the loop.
+      send(rpcError(null, -32600, "Invalid Request"))
     }
   }
+  for await (const chunk of Bun.stdin.stream()) {
+    let text = decoder.decode(chunk as Uint8Array, { stream: true })
+    if (discardingOversized) {
+      const newline = text.indexOf("\n")
+      if (newline === -1) continue
+      text = text.slice(newline + 1)
+      discardingOversized = false
+    }
+    buffer += text
+    bufferBytes += STDIO_ENCODER.encode(text).byteLength
+    let nl = buffer.indexOf("\n")
+    while (nl !== -1) {
+      const line = buffer.slice(0, nl)
+      buffer = buffer.slice(nl + 1)
+      bufferBytes = Math.max(0, bufferBytes - STDIO_ENCODER.encode(line).byteLength - 1)
+      nl = buffer.indexOf("\n")
+      processLine(line)
+    }
+    if (bufferBytes > MAX_STDIO_MESSAGE_BYTES) {
+      buffer = ""
+      bufferBytes = 0
+      discardingOversized = true
+      send(rpcError(null, -32600, "MCP message exceeded the size limit"))
+    }
+  }
+}
+
+function responseIdOf(message: JsonRpcResponse | JsonRpcNotification): string | number | null {
+  if (!("id" in message)) return null
+  const id = message.id
+  return id === null || typeof id === "string" || typeof id === "number" ? id : null
 }

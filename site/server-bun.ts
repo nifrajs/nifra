@@ -2,6 +2,7 @@ import { inProcessClient } from "@nifrajs/client"
 import { createWebApp } from "@nifrajs/web"
 import { reactAdapter } from "@nifrajs/web-react"
 import { backend } from "./backend"
+import { machineSurfaceFor } from "./machine-surfaces"
 import { clientEntry, manifest } from "./server-manifest"
 
 const app = createWebApp({
@@ -26,6 +27,8 @@ const server = Bun.serve({
   port: Number(Bun.env.PORT ?? 3000),
   async fetch(req) {
     const { pathname } = new URL(req.url)
+    const machineSurface = machineSurfaceFor(req)
+    if (machineSurface !== undefined) return machineSurface
     if (pathname.startsWith("/assets/")) {
       const name = pathname.slice("/assets/".length)
       if (!/^[A-Za-z0-9._-]+$/.test(name)) return new Response("bad request", { status: 400 })

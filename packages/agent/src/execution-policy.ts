@@ -122,7 +122,7 @@ export function createLocalProcessAdapter(
   ): Record<string, string> {
     const result: Record<string, string> = {}
     for (const name of allowlist) {
-      const value = values[name] ?? process.env[name]
+      const value = Object.hasOwn(values, name) ? values[name] : process.env[name]
       if (value !== undefined) result[name] = value
     }
     return result

@@ -20,16 +20,16 @@ Build MCP servers - and MCP Apps (interactive `ui://` widgets, SEP-1865) - for a
 - **defineMcpTool** _(function)_ - `defineMcpTool: <S extends StandardSchemaV1 = UntypedArgs>(opts: DefineMcpToolOptions<S>) => McpTool` · from `@nifrajs/mcp`
 - **defineMcpWidget** _(function)_ - `defineMcpWidget: (opts: DefineMcpWidgetOptions) => McpWidget` · from `@nifrajs/mcp`
 - **handleRpc** _(function)_ - `handleRpc: (message: JsonRpcRequest, tools: readonly McpTool[], serverInfo: { name: string; version: string; }, features?: McpServerFeature…` · from `@nifrajs/mcp`
+- **isJsonRpcRequest** _(function)_ - `isJsonRpcRequest: (value: unknown) => value is JsonRpcRequest` · from `@nifrajs/mcp`
+- **isJsonRpcResponse** _(function)_ - `isJsonRpcResponse: (value: unknown) => value is JsonRpcResponse` · from `@nifrajs/mcp`
 - **mcpToolDescriptor** _(function)_ - `mcpToolDescriptor: <Input, Output>(tool: ToolContract<Input, Output>, options?: McpDescriptorOptions) => Promise<CapabilityDescriptor>` · from `@nifrajs/mcp/agent-descriptor`
 - **mcpToolDescriptors** _(function)_ - `mcpToolDescriptors: <Input, Output>(tools: readonly ToolContract<Input, Output>[], options?: McpDescriptorOptions) => Promise<readonly Capa…` · from `@nifrajs/mcp/agent-descriptor`
 - **modernVersionOf** _(function)_ - `modernVersionOf: (params: Record<string, unknown> | undefined) => string | undefined` · from `@nifrajs/mcp`
 - **reactWidget** _(function)_ - `reactWidget: (opts: ReactWidgetOptions) => Promise<McpWidget>` · from `@nifrajs/mcp/react`
 - **respondMcpHttp** _(function)_ - `respondMcpHttp: (request: Request, tools: McpTool[], serverInfo: { name: string; version: string; }, options?: McpHttpOptions) => Promise<R…` · from `@nifrajs/mcp`
 - **toMcpTool** _(function)_ - `toMcpTool: <Input, Output>(tool: ToolContract<Input, Output>, options?: McpToolContractOptions) => McpTool` · from `@nifrajs/mcp/tool-contract`
-- **uiResourceMeta** _(function)_ - `uiResourceMeta: (uri: string) => Record<string, unknown>` · from `@nifrajs/mcp`
-- **widgetDocument** _(function)_ - `widgetDocument: (opts: DefineMcpWidgetOptions) => string` · from `@nifrajs/mcp`
 
-_…and 41 more - see [`api-reference.md`](../../api-reference.md#nifrajsmcp) for the complete list._
+_…and 43 more - see [`api-reference.md`](../../api-reference.md#nifrajsmcp) for the complete list._
 
 ## Footguns
 

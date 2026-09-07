@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import {
   toEvalComparisonView,
+  toEventView,
   toEvidenceTimelineView,
   toFaultInjectionViews,
   toRunStudioView,
@@ -106,4 +107,18 @@ test("histories over 1,000 rows are windowed", () => {
   const window = virtualizeEvidenceRows(rows, 1_500, 100)
   expect(window.rows).toHaveLength(100)
   expect(window.offset).toBe(1_450)
+})
+
+test("the event projection rejects malformed payloads instead of dereferencing them", () => {
+  expect(() =>
+    toEventView({
+      version: 1,
+      sessionId: "s",
+      seq: 1,
+      at: 1,
+      type: "assistant.delta",
+      turnId: "t",
+      text: null,
+    } as never),
+  ).toThrow("agent event is invalid")
 })

@@ -31,6 +31,10 @@ describe("agent protocol", () => {
     expect((await stream.next()).done).toBe(true)
   })
 
+  test("rejects an unbounded live event queue configuration", () => {
+    expect(() => createAgentEventStream(65_537)).toThrow(/between 1 and 65536/)
+  })
+
   test("delivers an event directly to a waiting consumer", async () => {
     const stream = createAgentEventStream()
     const next = stream.next()
@@ -63,5 +67,43 @@ describe("agent protocol", () => {
         approved: true,
       }),
     ).toBe(true)
+  })
+
+  test("rejects malformed event-specific payloads before projection", () => {
+    expect(
+      isAgentEvent({
+        version: 1,
+        sessionId: "x",
+        seq: 1,
+        at: 1,
+        type: "assistant.delta",
+        turnId: "turn",
+        text: null,
+      }),
+    ).toBe(false)
+    expect(
+      isAgentEvent({
+        version: 1,
+        sessionId: "x",
+        seq: 1,
+        at: 1,
+        type: "session.updated",
+        snapshot: { version: 1, id: "x", status: "running" },
+      }),
+    ).toBe(false)
+    expect(
+      isAgentEvent({
+        version: 1,
+        sessionId: "x",
+        seq: 1,
+        at: 1,
+        type: "tool.completed",
+        turnId: "turn",
+        callId: "call",
+        name: "tool",
+        ok: false,
+        error: { code: "failed", message: null },
+      }),
+    ).toBe(false)
   })
 })

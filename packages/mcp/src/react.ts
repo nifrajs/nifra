@@ -82,6 +82,8 @@ export async function reactWidget(opts: ReactWidgetOptions): Promise<McpWidget> 
     ...(opts.description !== undefined ? { description: opts.description } : {}),
     ...(opts.title !== undefined ? { title: opts.title } : {}),
     ...(opts.head !== undefined ? { head: opts.head } : {}),
-    html: `<div id="root"></div>\n<script>${safe}</script>`,
+    // `safe` is a Bun-generated JavaScript bundle with every HTML script end-tag escaped before it is
+    // placed in this inline script. The widget test asserts the generated document remains intact.
+    html: `<div id="root"></div>\n<script>${safe}</script>`, // nosemgrep: javascript.lang.security.audit.unknown-value-with-script-tag.unknown-value-with-script-tag
   })
 }

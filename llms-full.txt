@@ -21,12 +21,20 @@ _Extracted from the docs at nifra.dev/docs._
 
 ## Nifra - Getting started
 
-> Get started with Nifra: install, server, typed client, loaders, deploy.
+> Get started with Nifra: typed backend, agentic UI, bounded agent runs, full-stack SSR, and portable deployment.
 
-Nifra is a contract-first TypeScript framework. Start with just a typed backend - like Hono or
-Elysia - and the client infers its types with zero codegen. Add a frontend only when you need
-one: the same route model then drives SSR across React, Solid, Vue, Preact, and Svelte, on
-Bun, Node, Deno, and the edge.
+Nifra is a contract-first TypeScript framework for applications with agents in the loop. Start
+with just a typed backend - like Hono or Elysia - and the client infers its types with zero
+codegen. Add a full-stack UI, a bounded agent runtime, or page-local WebMCP when you need one:
+the same contracts drive all of them across Bun, Node, Deno, and the edge.
+
+### One app, two agent loops
+
+A coding agent can inspect the live project, change it, run real requests, and prove the result.
+A user-facing agent can discover explicit page tools, stream progress into the UI, predict a
+state change, and reconcile it with the server. Both use the same typed capabilities and
+verification boundary. Start with the [agent layer](/docs/agents) or the
+[WebMCP & predictive UI guide](/docs/webmcp) when you are ready to add them.
 
 ### Install
 
@@ -97,7 +105,7 @@ See the [benchmarks](/benchmarks) for how it performs.
 
 ## Nifra vs. other frameworks - the honest comparison
 
-> How Nifra compares to the full-stack frameworks (Next.js, Nuxt, SvelteKit, Remix, TanStack Start) - and, as a standalone backend, to Hono and Elysia. Five UI frameworks, five runtimes, end-to-end types, and an AI-agent toolchain no competitor ships.
+> How Nifra compares to the full-stack frameworks (Next.js, Nuxt, SvelteKit, Remix, TanStack Start) - and, as a standalone backend, to Hono and Elysia. Five UI frameworks, five runtimes, end-to-end types, and an agentic application layer built around typed capabilities.
 
 Honest comparison. Nifra is a **full-stack framework first** - five UI libraries and five runtimes
 from one core, with loaders, actions, streaming, and a typed data layer - and a
@@ -220,8 +228,8 @@ emitting a real 3.1 doc with field-level request/response schemas (+ Scalar UI).
 
 ### The AI-agent toolchain - Nifra-only
 
-No competitor - full-stack or backend - ships this. Every Nifra app is built to be edited by AI agents
-accurately:
+Nifra covers both sides of the agent loop: agents that edit your codebase and agents that are
+part of the product. Every surface is anchored to the same typed capability boundary:
 
 -
 `nifra mcp` - an MCP server exposing `nifra_context` (the project's typed
@@ -243,6 +251,18 @@ classifies every reflected route and CI fails naming exactly which evidence is m
 _document_ and Semgrep pattern-matches source text; neither sees the real route graph.
 This is what makes agent-written routes safe to merge - an agent (or a human) cannot ship an
 unauthenticated write past it.
+
+-
+`@nifrajs/webmcp` - explicit page-local tools using the browser WebMCP standard,
+deterministic predictive UI, bounded receipts, and versioned reconciliation.
+`@nifrajs/ag-ui` streams the same run into a product UI, while
+`@nifrajs/agent-app` provides negotiated browser views, approvals, handoffs, and
+Run Studio projections.
+
+-
+`@nifrajs/agent` - bounded typed agent turns with budgets, approvals, cancellation,
+resumable evidence, shared state, and provider-neutral model ports.
+`@nifrajs/a2a` exposes the same runner to other agents without rewriting the core.
 
 ### Where Nifra fits
 
@@ -4277,7 +4297,9 @@ the command printed by the build.
 
 Nifra ships an MCP server. It is not a documentation lookup bolted onto a framework: an agent
 can read the project, learn the real API, run actual requests against the backend it just
-edited, and finish with a report of what the change proved.
+edited, and finish with a report of what the change proved. The same typed capabilities can
+power the agent inside your product through [WebMCP and predictive UI](/docs/webmcp)
+or stream into a product surface through AG-UI.
 
 ### One MCP, two ways to connect
 
@@ -4990,6 +5012,32 @@ export const app = createWebApp({
 
 This is the _global imports_ tier: one bundled stylesheet linked on every page (the
 common case - a global stylesheet or Tailwind output).
+
+#### Prefetch-safe aggregate CSS
+
+Vite's default CSS splitting can attach a new stylesheet when a prefetched lazy route module
+evaluates. If those selectors affect content already on the page, each attachment can trigger
+style recalculation and layout work. For an app whose stylesheet is already bounded (for
+example, one using atomic StyleX plus a small legacy CSS-Modules layer), opt into one aggregate
+CSS asset and deferred activation in the CLI config. The aggregate file is still content-hashed;
+only its activation is deferred until the browser has fetched it.
+
+```ts
+// nifra.config.ts - opt into Vite's single-file CSS path for apps that prefetch many lazy routes.
+export const cssCodeSplit = false
+export const cssLoading = "deferred"
+
+// cssCodeSplit: false emits one content-hashed stylesheet, so lazy module prefetch cannot attach a
+// new stylesheet for every route. cssLoading: "deferred" fetches that file with media="print"; the
+// generated client promotes it to media="all" after load/error/timeout and before hydration.
+//
+```
+
+This is opt-in and Vite-specific. Nifra rejects `cssLoading: "deferred"` with split
+Vite CSS because that combination would leave the prefetch insertion problem in place. A failed
+or slow stylesheet request is bounded: the client promotes the link and hydrates rather than
+leaving the loader visible forever. Non-hydrated pages keep ordinary blocking links for
+JavaScript-off and terminal-page styling.
 
 #### Scoped styles - CSS Modules & SFC <style>
 
@@ -8281,6 +8329,98 @@ The `nifra_levels` MCP tool returns the same
 `{ achieved, levels[] }` report. An agent can read what its change proved, and a
 level that regressed comes back with the reason it broke.
 
+## Nifra - WebMCP & predictive UI
+
+> Expose explicit page-local WebMCP tools from typed Nifra capabilities while keeping remote MCP, authorization, receipts, and predictive UI reconciliation on one contract.
+
+WebMCP is the right page-local transport for an agent to discover and call tools in the
+currently open site. Nifra adopts that standard directly and adds a complementary contract for
+the semantics WebMCP does not define: typed capabilities, deterministic prediction, versioned
+reconciliation, bounded receipts, and host-independent conformance tests.
+
+### One capability, one trust boundary
+
+Define an explicit capability once. Its input and output schemas are the same Nifra core
+schemas used by every other adapter, and the handler still runs behind capability, approval,
+idempotency, budget, cancellation, and output checks.
+
+```ts
+// doc-check: skip - addItemOnServer is supplied by the application.
+import { t } from "@nifrajs/schema"
+import { defineAgentCapability } from "@nifrajs/webmcp"
+
+export const addToCart = defineAgentCapability({
+  name: "cart.add",
+  description: "Add a product to the current cart.",
+  input: t.object({ sku: t.string(), quantity: t.number() }),
+  output: t.object({ cartVersion: t.string() }),
+  annotations: { readOnlyHint: false, destructiveHint: false },
+  writes: ["cart"],
+  execute: (input) => addItemOnServer(input),
+})
+```
+
+### Adopt WebMCP without a fork
+
+Register only the tools your page intentionally offers. Nifra feature-detects
+`document.modelContext.registerTool`, isolates host registration failures, and
+makes unsupported browsers a no-op. Registration is discovery, not authorization: the server
+must enforce authorization again for writes.
+
+```ts
+// doc-check: skip - addToCart is declared in the preceding section.
+import { registerWebMcpTools } from "@nifrajs/webmcp"
+
+// Explicit allowlist. On ordinary browsers this resolves to a safe unsupported report.
+const registration = await registerWebMcpTools([addToCart])
+console.log(registration.supported, registration.registered, registration.failed)
+// The host receives the standard document.modelContext.registerTool({
+//   name, description, inputSchema, annotations, execute
+// }) shape.
+```
+
+### Keep remote MCP as the durable surface
+
+WebMCP needs an open page and is local to that page. Remote MCP remains the right surface for
+background work, integrations, and MCP Apps. Project the same `capability.tool` into
+the existing MCP adapter; do not maintain a second schema or handler.
+
+```ts
+// doc-check: skip - addToCart is declared in the preceding section.
+import { toMcpTool } from "@nifrajs/mcp/tool-contract"
+
+// Same core schemas, authorization, approval, idempotency, and evidence - different transport.
+const remoteTool = toMcpTool(addToCart.tool, {
+  capabilities: [addToCart.tool.capability],
+})
+```
+
+### Predict, then reconcile
+
+Predictive UI is application-owned deterministic state, not an LLM guess. A predictor returns a
+bounded `add`/`replace`/`remove` patch tied to an authoritative
+version. The store applies it atomically, and a successful server response either replaces the
+authoritative state or rolls the overlay back on failure, expiry, or conflict.
+
+```ts
+// doc-check: skip - addToCart is declared in the preceding section.
+import { createPredictionStore, executePredicted } from "@nifrajs/webmcp"
+
+const store = createPredictionStore({ state: { items: [] }, version: "cart-1" })
+const result = await executePredicted(addToCart, { sku: "sku-1", quantity: 1 }, store)
+// committed | rolled-back | conflicted | expired | stale | invalid | executed
+console.log(result.outcome, result.snapshot)
+// predict is a pure RFC 6902 subset patch; reconcile accepts the authoritative server version.
+```
+
+### What belongs in the complementary contract
+
+Keep the browser standard small: discovery and execution. Keep Nifra’s public seam provider
+neutral: scope, bounded state paths, reconciliation policy, receipts, and deterministic
+conformance. Keep durable idempotency, tenancy, credentials, retention, pricing, and operated
+policy injected behind the same core contract. This makes the surface useful with any WebMCP
+host while preserving Nifra’s server-side trust boundary.
+
 ---
 
 # Package reference (READMEs)
@@ -11415,6 +11555,133 @@ one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
 done-gate, or `nifra mcp` to give the agent live project tools.
 
+## @nifrajs/webmcp
+
+Typed WebMCP site tools plus a deterministic predictive-UI contract for Nifra applications.
+
+WebMCP is the browser-local surface: compatible hosts discover tools from the page through
+`document.modelContext.registerTool`. This package does not replace WebMCP or MCP. It makes one Nifra
+core tool contract usable from a page-local agent while adding prediction, reconciliation, receipts, and
+host-independent conformance tests.
+
+```sh
+bun add @nifrajs/webmcp
+```
+
+```ts
+import { t } from "@nifrajs/schema"
+import {
+  defineAgentCapability,
+  registerWebMcpTools,
+} from "@nifrajs/webmcp"
+
+const addItem = defineAgentCapability({
+  name: "cart.add",
+  description: "Add a product to the current cart.",
+  input: t.object({ sku: t.string(), quantity: t.number() }),
+  output: t.object({ cartVersion: t.string() }),
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  writes: ["cart"],
+  execute: async (input) => addItemOnTheServer(input),
+})
+
+// Safe no-op on browsers/hosts without WebMCP.
+const registration = await registerWebMcpTools([addItem])
+```
+
+The returned WebMCP `execute` function runs Nifra's existing input validation, capability, approval,
+idempotency, budget, cancellation, output validation, and evidence path. By default it returns a bounded
+receipt envelope so an agent can verify whether the operation committed. The normal human UI remains the
+source of page rendering and works when WebMCP is absent.
+
+Receipt output is retained only while its JSON encoding stays within the bounded `maxReceiptBytes`
+limit (16 KiB by default, 64 KiB maximum); oversized or non-JSON output is represented by
+`outputTruncated: true`. Use `resultMode: "output"` only when the embedding host provides its own
+response-size and serialization boundary.
+
+## Predictive UI
+
+Predictions are application-owned and deterministic. They are not LLM guesses. Pair `predict` with
+`reconcile`; prediction patches use an atomic, defensive subset of RFC 6902 (`add`, `replace`, `remove`):
+
+```ts
+const addItem = defineAgentCapability({
+  // ...typed core tool options...
+  predict: ({ input, snapshot, version }) => ({
+    baseVersion: version,
+    patch: [
+      { op: "add", path: "/items/-", value: { sku: input.sku, quantity: input.quantity } },
+    ],
+  }),
+  reconcile: ({ previous, output }) => ({
+    state: { items: previous.state.items },
+    version: output.cartVersion,
+  }),
+})
+```
+
+Use `createPredictionStore` and `executePredicted` for the full lifecycle:
+
+```ts
+const store = createPredictionStore({
+  state: { items: [] },
+  version: "cart-1",
+})
+
+const result = await executePredicted(addItem, input, store)
+// committed | rolled-back | conflicted | expired | stale | invalid | executed
+console.log(result.outcome, result.snapshot)
+```
+
+The store is atomic, defensive, expiry-aware, version-aware, and rejects prototype-grafting paths.
+Successful server state replaces the authoritative base; failed calls roll the overlay back; stale
+commits become conflicts.
+
+## Remote MCP and MCP Apps
+
+The capability contains the canonical `capability.tool`. Project it into the existing MCP adapter without
+creating a second contract:
+
+```ts
+import { toMcpTool } from "@nifrajs/mcp/tool-contract"
+
+const remoteTool = toMcpTool(addItem.tool, {
+  capabilities: [addItem.tool.capability],
+})
+```
+
+Use `@nifrajs/mcp`'s existing `defineMcpTool`, `structuredContent`, `ui://` widgets, and render intents
+when the result should render as an MCP App. WebMCP is page-local; remote MCP remains available without an
+open page.
+
+## Security
+
+- Register an explicit allowlist; never expose every route, DOM event, or `fetch` call.
+- WebMCP registration is not authorization. Enforce authorization again at the server boundary.
+- Keep inputs narrow and annotations honest. A safety hint is not a permission.
+- Predictions are pure local transforms and cannot grant capability or bypass core policy.
+- Receipts contain status, bounded evidence, and error codes—not credentials, request bodies, secrets, or
+  stack traces.
+- Normal browsers and non-WebMCP hosts receive a safe unsupported report.
+
+## AI conformance
+
+`runAgentSurfaceConformance` accepts an injectable host and optional deterministic calls, so CI can verify
+the surface without ChatGPT or a live model:
+
+```ts
+const result = await runAgentSurfaceConformance([addItem], {
+  target: fakeWebMcpHost,
+  cases: [{ capability: addItem, input: { sku: "sku-1", quantity: 1 } }],
+})
+```
+
+For the complete contract, see [`LLM.md`](./LLM.md), the repository [`AGENTS.md`](../../AGENTS.md), and
+the root machine-readable [`llms-full.txt`](../../llms-full.txt) corpus.
+
+See [`examples/webmcp`](../../examples/webmcp) for a complete capability projected to both WebMCP and
+the existing remote MCP adapter.
+
 ## @nifrajs/workers
 
 Cloudflare Workers helpers for nifra - a Durable Object hub for cross-connection WebSocket broadcast.
@@ -11693,7 +11960,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`Action`, `ACTION_GLOBAL`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BOUNDARY_GLOBAL`, `BoundaryDescriptor`, `boundaryDescriptors`, `BoundaryError`, `BoundaryMode`, `boundaryModeKey`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createMutation`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateRouteSearchTypes`, `GenerateRouteSearchTypesOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `gone`, `hashQueryKey`, `IDLE_BLOCKER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `mergeHeads`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `notFound`, `openGraph`, `OpenGraphInput`, `PendingBoundary`, `PRE_HYDRATION_GUARD`, `previewEndpoint`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `registerBlocker`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderedPage`, `renderPage`, `RenderPageInput`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `RETAIN_HEADER`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `RouteSearch`, `ScriptDescriptor`, `searchOf`, `SearchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `ServePublicDirOptions`, `SERVER_FN_MODULE`, `SERVER_ONLY_MODULE`, `ServerOnly`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `SsrModuleLoader`, `startDynamicBoundaries`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `STATUS_HEADER`, `statusPage`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `unsafeInlineScript`, `UnsafeScriptDescriptor`, `withISR`
+`Action`, `ACTION_GLOBAL`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BOUNDARY_GLOBAL`, `BoundaryDescriptor`, `boundaryDescriptors`, `BoundaryError`, `BoundaryMode`, `boundaryModeKey`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createMutation`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateRouteSearchTypes`, `GenerateRouteSearchTypesOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `gone`, `hashQueryKey`, `IDLE_BLOCKER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `mergeHeads`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `normalizeCssLoading`, `notFound`, `openGraph`, `OpenGraphInput`, `PendingBoundary`, `PRE_HYDRATION_GUARD`, `previewEndpoint`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `registerBlocker`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderedPage`, `renderPage`, `RenderPageInput`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `RETAIN_HEADER`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `RouteSearch`, `sanitizedHtml`, `SanitizedHtml`, `ScriptDescriptor`, `searchOf`, `SearchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `ServePublicDirOptions`, `SERVER_FN_MODULE`, `SERVER_ONLY_MODULE`, `ServerOnly`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ssrModuleLoader`, `SsrModuleLoader`, `startDynamicBoundaries`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `STATUS_HEADER`, `statusPage`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `trustHtml`, `unsafeInlineScript`, `UnsafeScriptDescriptor`, `withISR`
 
 ## @nifrajs/web-preact
 
@@ -11718,6 +11985,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 ## @nifrajs/web-vue
 
 `vueAdapter`
+
+## @nifrajs/webmcp
+
+`AgentCapability`, `AgentCapabilityReference`, `AgentSurfaceAuthoritativeState`, `AgentSurfaceConformanceCase`, `AgentSurfaceConformanceOptions`, `AgentSurfaceConformanceResult`, `AgentSurfaceDescriptor`, `AgentSurfacePrediction`, `AgentSurfacePredictionContext`, `AgentSurfacePredictor`, `AgentSurfaceReconcileContext`, `AgentSurfaceReconciler`, `AgentSurfaceScope`, `AgentSurfaceSnapshot`, `createPredictionStore`, `defineAgentCapability`, `DefineAgentCapabilityOptions`, `executeAgentCapability`, `executePredicted`, `ExecutePredictedOptions`, `PredictedExecutionResult`, `PredictionPatchOperation`, `PredictionStore`, `PredictionStoreEvent`, `PredictionStoreResult`, `PredictionStoreSnapshot`, `ReconciliationMode`, `registerWebMcpTools`, `runAgentSurfaceConformance`, `ToolApproval`, `ToolCallOptions`, `ToolCallResult`, `ToolContract`, `ToolContractOptions`, `ToolError`, `ToolEvidence`, `toWebMcpTool`, `WebMcpExecutionOptions`, `WebMcpModelContext`, `WebMcpReceipt`, `WebMcpRegistrationFailure`, `WebMcpRegistrationReport`, `WebMcpTarget`, `WebMcpToolDefinition`
 
 ## @nifrajs/workers
 

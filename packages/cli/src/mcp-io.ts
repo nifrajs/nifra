@@ -8,6 +8,8 @@
 export const CHILD_TIMEOUT_MS = 30_000
 /** Maximum stdout or stderr retained from a project subprocess. The process is killed at the limit. */
 export const CHILD_OUTPUT_MAX_BYTES = 1_048_576
+/** Maximum serialized request sent to a project subprocess or warm worker. */
+export const CHILD_INPUT_MAX_BYTES = 4 * 1024 * 1024
 
 /** Local dev-tool reads are intentionally bounded: MCP runs in an agent process and must not hang on or
  * buffer an unrelated loopback service just because a caller supplied its port. */
@@ -79,6 +81,77 @@ export const timeoutMessage = (label: string, ms: number): string =>
 export interface BoundedOutput {
   readonly text: string
   readonly truncated: boolean
+}
+
+export type BoundedLine =
+  | { readonly kind: "line"; readonly text: string }
+  | { readonly kind: "too-large" }
+
+function decodeLine(chunks: readonly Uint8Array[], totalBytes: number): string {
+  const bytes = new Uint8Array(totalBytes)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new TextDecoder().decode(bytes)
+}
+
+/** Read newline-delimited input without retaining a line larger than the configured byte budget. */
+export async function* readBoundedLines(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes = CHILD_INPUT_MAX_BYTES,
+): AsyncGenerator<BoundedLine> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
+    throw new RangeError("maxBytes must be a positive safe integer")
+  const chunks: Uint8Array[] = []
+  let totalBytes = 0
+  let tooLarge = false
+  for await (const raw of stream) {
+    const value = raw as Uint8Array
+    let start = 0
+    while (start < value.byteLength) {
+      const newline = value.indexOf(0x0a, start)
+      const end = newline === -1 ? value.byteLength : newline
+      const segment = value.subarray(start, end)
+      if (!tooLarge) {
+        if (totalBytes + segment.byteLength > maxBytes) {
+          tooLarge = true
+          chunks.length = 0
+          totalBytes = 0
+        } else if (segment.byteLength > 0) {
+          chunks.push(segment)
+          totalBytes += segment.byteLength
+        }
+      }
+      if (newline === -1) break
+      if (tooLarge) yield { kind: "too-large" }
+      else yield { kind: "line", text: decodeLine(chunks, totalBytes) }
+      chunks.length = 0
+      totalBytes = 0
+      tooLarge = false
+      start = newline + 1
+    }
+  }
+  if (tooLarge) yield { kind: "too-large" }
+  else if (totalBytes > 0) yield { kind: "line", text: decodeLine(chunks, totalBytes) }
+}
+
+/** Serialize a JSON value only when its UTF-8 representation fits within the byte budget. */
+export function serializeBoundedJson(
+  value: unknown,
+  maxBytes: number,
+  space?: string | number,
+): string | undefined {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) return undefined
+  let text: string | undefined
+  try {
+    text = JSON.stringify(value, null, space)
+  } catch {
+    return undefined
+  }
+  if (text === undefined || new TextEncoder().encode(text).byteLength > maxBytes) return undefined
+  return text
 }
 
 /** Read child output incrementally and cancel as soon as the byte budget is crossed. */

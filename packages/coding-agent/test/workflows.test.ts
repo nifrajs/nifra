@@ -78,4 +78,53 @@ describe("bounded workflows", () => {
     expect(planEvents).toContain("plan.phase.completed")
     expect(planEvents.at(-1)).toBe("plan.completed")
   })
+
+  test("propagates nested context depth and fails at the configured ceiling", async () => {
+    const nested: WorkflowStep = {
+      type: "task",
+      id: "nested",
+      run: ({ run }) => run({ type: "task", id: "too-deep", run: () => "never" }),
+    }
+    const result = await new WorkflowRunner({ maxDepth: 1, maxSteps: 16 }).run({
+      type: "task",
+      id: "root",
+      run: ({ run }) => run(nested),
+    })
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain("max depth")
+  })
+
+  test("removes retry abort listeners after the delay settles", async () => {
+    const listeners = new Set<EventListener>()
+    const signal = {
+      aborted: false,
+      addEventListener(_type: string, listener: EventListener) {
+        listeners.add(listener)
+      },
+      removeEventListener(_type: string, listener: EventListener) {
+        listeners.delete(listener)
+      },
+    } as unknown as AbortSignal
+    let attempts = 0
+    const result = await new WorkflowRunner({ signal }).run({
+      type: "retry",
+      attempts: 2,
+      backoffMs: 1,
+      step: {
+        type: "task",
+        id: "flaky",
+        run: () => {
+          if (++attempts === 1) throw new Error("retry once")
+          return "ok"
+        },
+      },
+    })
+    expect(result.ok).toBe(true)
+    expect(listeners.size).toBe(0)
+  })
+
+  test("allows an empty parallel step without manufacturing a concurrency error", async () => {
+    const result = await new WorkflowRunner().run({ type: "parallel", steps: [] })
+    expect(result).toMatchObject({ ok: true })
+  })
 })

@@ -28,8 +28,9 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
     'import { createClientRouter, createMatcher, mergeHeads, resolveMeta } from "@nifrajs/web/client"',
   )
   expect(code).toContain(
-    'import { applyHead, installForms, installHistory, signalHydrated } from "@nifrajs/web/client"',
+    'import { applyHead, installForms, installHistory, signalHydrated, waitForStyles } from "@nifrajs/web/client"',
   )
+  expect(code).toContain("waitForStyles().then(() => loadModule(initial.routeId)).then(() => {")
   expect(code).toContain('import * as __adapter from "@nifrajs/web-solid/client"')
   expect(code).toContain("const { mountRouter } = __adapter")
   expect(code).toContain("const errorBoundary = __adapter.errorBoundary")

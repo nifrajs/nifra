@@ -18,6 +18,7 @@ import {
   type BoundaryCommand,
   type HandoffLifecycleState,
   type HandoffSnapshot,
+  isAgentEvent,
   nextApprovalState,
   nextHandoffState,
   type RunSnapshot,
@@ -172,6 +173,10 @@ export type AgentEventView =
 
 /** Project one protocol event to its content-free view. Total over the event union - never returns undefined. */
 export function toEventView(event: AgentEvent): AgentEventView {
+  // Keep this boundary total even when a caller bypasses the transport's parser with an
+  // untrusted cast. The protocol validator is discriminated and bounded; throwing only this
+  // generic message prevents malformed payloads from reaching content projections or error text.
+  if (!isAgentEvent(event)) throw new TypeError("agent event is invalid")
   const base = { seq: event.seq, at: event.at }
   switch (event.type) {
     case "session.started":

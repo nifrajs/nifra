@@ -6,6 +6,8 @@
  * Security: this injects raw HTML, so the `html` MUST be trusted (your own Markdown/content, rendered
  * at build/server time) - never pass user-supplied HTML without sanitizing it first.
  */
+
+import type { TrustedHtml } from "@nifrajs/web"
 import {
   type ComponentPropsWithoutRef,
   createElement,
@@ -16,7 +18,7 @@ import {
 export interface ContentProps
   extends Omit<ComponentPropsWithoutRef<"div">, "dangerouslySetInnerHTML" | "children"> {
   /** Trusted, pre-rendered HTML (e.g. `entry.html`). */
-  readonly html: string
+  readonly html: TrustedHtml
   /** Wrapper element (default `"div"`). */
   readonly as?: ElementType
 }

@@ -1,3 +1,4 @@
+import { type CssLoadingMode, DEFAULT_CSS_LOADING, normalizeCssLoading } from "../css-contract.ts"
 import { MAP_DEFERRED_SOURCE } from "../deferred.ts"
 import type { LayoutEntry, Manifest } from "../manifest.ts"
 import {
@@ -85,7 +86,7 @@ export function generateClientEntry(
     // `/client`, never the root: the root's graph carries the server (renderPage, the static-file
     // server), and Vite's dev server evaluates what it is given instead of tree-shaking it.
     'import { createClientRouter, createMatcher, mergeHeads, resolveMeta } from "@nifrajs/web/client"',
-    'import { applyHead, installForms, installHistory, signalHydrated } from "@nifrajs/web/client"',
+    'import { applyHead, installForms, installHistory, signalHydrated, waitForStyles } from "@nifrajs/web/client"',
     // Namespace import: `errorBoundary` is optional (an adapter may not export it). A namespace member
     // access yields `undefined` if absent - unlike a named import, which would be a link error.
     `import * as __adapter from ${JSON.stringify(clientModule)}`,
@@ -219,9 +220,9 @@ export function generateClientEntry(
         "is set, `#root` otherwise - and this document has neither. If you emit the document yourself, " +
         'keep `<div id="root">` around the SSR markup.',
     )})`,
-    // Load the initial route's chunk, then hydrate the Router (chain is cached). The initial head
-    // is server-rendered; subsequent navigations update it from the matched route's meta + data.
-    "loadModule(initial.routeId).then(() => {",
+    // Wait for framework-owned deferred CSS before loading/mounting the initial route. The coordinator
+    // is a no-op for the default blocking links and always has a bounded fail-open terminal state.
+    "waitForStyles().then(() => loadModule(initial.routeId)).then(() => {",
     "  mountRouter({ router, routes: chains, searchSchemas, container: root })",
     // Run the optional client loader only after the adapter has mounted the SSR tree. The initial
     // server data is already in `window.__NIFRA_DATA__`, so `serverLoader()` reuses it and cannot
@@ -240,7 +241,7 @@ export function generateClientEntry(
     "      applyHead(mergeHeads((metas[s.routeId] ?? [undefined]).map((m) => resolveMeta(m, args))))",
     "    }",
     "  })",
-    "})",
+    "}).catch((error) => console.error('[nifra/web] hydration failed:', error))",
   ].join("\n")}\n`
 }
 
@@ -305,6 +306,8 @@ export interface GenerateServerManifestOptions {
   /** Per-route stylesheet URLs (`buildClient`'s `BuildManifest.routeStyles`) - baked as
    * `export const routeStyles` so a page links only the CSS its route chain uses. */
   readonly routeStyles?: Readonly<Record<string, readonly string[]>> | undefined
+  /** How framework-owned stylesheet links should activate before the generated client mounts. */
+  readonly cssLoading?: CssLoadingMode
   /** Emit **lazy** per-route loaders (`() => import("./routes/x")`, a static specifier) instead of
    * eager `import * as`, so a bundler with code-splitting emits one chunk per route - loaded on the
    * first request to it, not all at boot (smaller cold-start parse). Default `false` (eager). Both
@@ -339,7 +342,15 @@ export function generateServerManifest(
   manifest: Manifest,
   options: GenerateServerManifestOptions,
 ): string {
-  const { resolve, clientEntry, styles, routeStyles, lazy = false } = options
+  const {
+    resolve,
+    clientEntry,
+    styles,
+    routeStyles,
+    cssLoading: requestedCssLoading,
+    lazy = false,
+  } = options
+  const cssLoading = normalizeCssLoading(requestedCssLoading ?? DEFAULT_CSS_LOADING)
   // Every unique source file in the manifest (routes + layouts + error/status pages), sorted for stable output.
   const files = [
     ...new Set([
@@ -361,6 +372,7 @@ export function generateServerManifest(
   // Always emitted (default empty) so consumers can `import { styles, routeStyles }` unconditionally.
   const stylesLine = `export const styles = ${JSON.stringify(styles ?? [])}`
   const routeStylesLine = `export const routeStyles = ${JSON.stringify(routeStyles ?? {})}`
+  const cssLoadingLine = `export const cssLoading = ${JSON.stringify(cssLoading)}`
   if (lazy) {
     // Lazy: `() => import("./routes/x")` per route (static specifier → one chunk per route under a
     // code-splitting bundler, loaded on first request). The map keys are the route-relative paths
@@ -377,6 +389,7 @@ export function generateServerManifest(
       clientEntryLine,
       stylesLine,
       routeStylesLine,
+      cssLoadingLine,
       "export const manifest = buildManifest(Object.keys(loaders), (file) => () => loaders[file]())",
     ].join("\n")}\n`
   }
@@ -395,6 +408,7 @@ export function generateServerManifest(
     clientEntryLine,
     stylesLine,
     routeStylesLine,
+    cssLoadingLine,
     "export const manifest = buildManifest(Object.keys(modules), (file) => () => Promise.resolve(modules[file]))",
   ].join("\n")}\n`
 }

@@ -19,7 +19,7 @@ const PAGE = /* html */ `<!doctype html><meta charset=utf-8><title>nifra chat</t
 <form id=f><input id=m autocomplete=off placeholder="message…" style=width:80% autofocus> <button>send</button></form>
 <script>
 const name = prompt("your name") || "anon"
-const ws = new WebSocket(\`ws://\${location.host}/chat?name=\${encodeURIComponent(name)}\`)
+const ws = new WebSocket(\`\${location.protocol === "https:" ? "wss:" : "ws:"}//\${location.host}/chat?name=\${encodeURIComponent(name)}\`)
 const log = document.getElementById("log")
 const add = (message) => {
   const row = document.createElement("div")

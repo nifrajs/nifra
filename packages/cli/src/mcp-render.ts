@@ -15,6 +15,13 @@ import { type AppLike, runApp } from "@nifrajs/runner"
 import { createWebApp, type RenderAdapter } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { loadApp, resolvePlugins } from "./load.ts"
+import {
+  CHILD_INPUT_MAX_BYTES,
+  CHILD_OUTPUT_MAX_BYTES,
+  readBoundedLines,
+  readBoundedStream,
+  serializeBoundedJson,
+} from "./mcp-io.ts"
 
 const errString = (err: unknown): string =>
   err instanceof Error ? `${err.name}: ${err.message}` : String(err)
@@ -89,6 +96,12 @@ function redirectConsoleToStderr(): void {
   console.error = (...args: unknown[]) => write("error", args)
 }
 
+function safeResponseId(value: unknown): number | string | null {
+  if (typeof value === "number" && Number.isSafeInteger(value)) return value
+  if (typeof value === "string" && value.length <= 128) return value
+  return null
+}
+
 /**
  * Warm-worker loop (`--worker`): build the web app ONCE, then SSR each `{ id, input: { requests } }` line
  * against that hot app and reply `{ id, output }`. The parent (`mcp.ts`'s warm-render handler) spawns this,
@@ -100,43 +113,51 @@ async function runWorker(cwd: string): Promise<void> {
   // Build once; the same `{ error }` is returned for every request if the build failed, so an agent sees
   // the actionable message and the parent restarts the worker on the next file change.
   const built = await buildWebApp(cwd)
-  const decoder = new TextDecoder()
-  let buffer = ""
   const send = (id: unknown, output: unknown): void => {
-    process.stdout.write(`${JSON.stringify({ id, output })}\n`)
+    const responseId = safeResponseId(id)
+    const encoded = serializeBoundedJson({ id: responseId, output }, CHILD_OUTPUT_MAX_BYTES - 1)
+    process.stdout.write(
+      `${encoded ?? JSON.stringify({ id: responseId, output: { error: "worker output exceeded the size limit" } })}\n`,
+    )
   }
-  for await (const chunk of Bun.stdin.stream()) {
-    buffer += decoder.decode(chunk as Uint8Array, { stream: true })
-    let nl = buffer.indexOf("\n")
-    while (nl !== -1) {
-      const line = buffer.slice(0, nl).trim()
-      buffer = buffer.slice(nl + 1)
-      nl = buffer.indexOf("\n")
-      if (line === "") continue
+  for await (const item of readBoundedLines(Bun.stdin.stream(), CHILD_INPUT_MAX_BYTES)) {
+    if (item.kind === "too-large") {
+      send(null, { error: `worker input exceeded ${CHILD_INPUT_MAX_BYTES} bytes` })
+      continue
+    }
+    const line = item.text.trim()
+    if (line === "") continue
 
-      let message: RenderWorkerMessage
-      try {
-        message = JSON.parse(line) as RenderWorkerMessage
-      } catch {
-        send(null, { error: "invalid worker input: expected JSON line" })
-        continue
-      }
-      const requests = message.input?.requests
-      if (!Array.isArray(requests)) {
-        send(message.id, { error: "expected { requests: [...] }" })
-        continue
-      }
-      if ("error" in built) {
-        send(message.id, built)
-        continue
-      }
-      try {
-        send(message.id, {
-          results: await runApp(built.app, requests as Parameters<typeof runApp>[1]),
-        })
-      } catch (err) {
-        send(message.id, { error: errString(err) })
-      }
+    let message: unknown
+    try {
+      message = JSON.parse(line) as unknown
+    } catch {
+      send(null, { error: "invalid worker input: expected JSON line" })
+      continue
+    }
+    const record =
+      message !== null && typeof message === "object" && !Array.isArray(message)
+        ? (message as RenderWorkerMessage)
+        : undefined
+    const input =
+      record?.input !== null && typeof record?.input === "object" && !Array.isArray(record.input)
+        ? record.input
+        : undefined
+    const requests = input?.requests
+    if (!Array.isArray(requests)) {
+      send(record?.id, { error: "expected { requests: [...] }" })
+      continue
+    }
+    if ("error" in built) {
+      send(record?.id, built)
+      continue
+    }
+    try {
+      send(record?.id, {
+        results: await runApp(built.app, requests as Parameters<typeof runApp>[1]),
+      })
+    } catch (err) {
+      send(record?.id, { error: errString(err) })
     }
   }
 }
@@ -163,13 +184,22 @@ if (import.meta.main) {
     process.exit(0)
   }
   let output: unknown
-  try {
-    const { requests } = JSON.parse(await Bun.stdin.text()) as { requests: unknown }
-    output = await renderPages(cwd, requests)
-  } catch {
-    output = { error: "invalid input: expected JSON { requests: [...] }" }
+  const input = await readBoundedStream(Bun.stdin.stream(), CHILD_INPUT_MAX_BYTES)
+  if (input.truncated) {
+    output = { error: `input exceeded ${CHILD_INPUT_MAX_BYTES} bytes` }
+  } else {
+    try {
+      const { requests } = JSON.parse(input.text) as { requests: unknown }
+      output = await renderPages(cwd, requests)
+    } catch {
+      output = { error: "invalid input: expected JSON { requests: [...] }" }
+    }
   }
-  await Bun.write(Bun.stdout, JSON.stringify(output, null, 2))
+  await Bun.write(
+    Bun.stdout,
+    serializeBoundedJson(output, CHILD_OUTPUT_MAX_BYTES, 2) ??
+      JSON.stringify({ error: `output exceeded ${CHILD_OUTPUT_MAX_BYTES} bytes` }),
+  )
   // Exit explicitly, exactly as the `--worker` branch above already does.
   //
   // Loading the app runs its module side effects, and a real app opens things: a database pool, a

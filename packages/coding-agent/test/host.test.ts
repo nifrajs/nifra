@@ -13,6 +13,7 @@ import type {
   SendMessageInput,
 } from "@nifrajs/agent-protocol"
 import { CodingAgentHost } from "../src/host.ts"
+import type { SessionStore } from "../src/sessions.ts"
 
 class ScriptedBackend implements AgentBackend {
   readonly info: AgentBackendInfo = {
@@ -20,8 +21,12 @@ class ScriptedBackend implements AgentBackend {
     capabilities: [],
   }
   readonly messages: string[] = []
+  cancelCalls = 0
+  closeCalls = 0
   private current: AgentSessionSnapshot | undefined
   private sequence = 0
+
+  constructor(private readonly stopOnly = false) {}
 
   async createSession(input: CreateSessionInput): Promise<AgentSessionSnapshot> {
     const now = Date.now()
@@ -44,6 +49,12 @@ class ScriptedBackend implements AgentBackend {
     const session = this.requireSession()
     const turnId = `turn-${this.messages.length + 1}`
     this.messages.push(input.message)
+    if (this.stopOnly) {
+      const stopped = this.event({ type: "session.stopped", reason: "cancelled" })
+      return (async function* (): AsyncGenerator<AgentEvent> {
+        yield stopped
+      })()
+    }
     const events = [
       this.event({ type: "turn.started", turnId, prompt: input.message }),
       this.event({ type: "assistant.message", turnId, text: "turn complete" }),
@@ -62,7 +73,9 @@ class ScriptedBackend implements AgentBackend {
     })()
   }
 
-  async cancel(): Promise<void> {}
+  async cancel(): Promise<void> {
+    this.cancelCalls++
+  }
 
   async snapshot(): Promise<AgentSessionSnapshot> {
     return this.requireSession()
@@ -73,6 +86,7 @@ class ScriptedBackend implements AgentBackend {
   }
 
   async close(): Promise<void> {
+    this.closeCalls++
     this.current = undefined
   }
 
@@ -173,4 +187,77 @@ test("host stops automatic repair at the configured attempt cap", async () => {
     await host.stop()
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test("host converts malformed backend events into a bounded protocol failure", async () => {
+  const backend = new ScriptedBackend()
+  backend.send = () =>
+    (async function* (): AsyncGenerator<AgentEvent> {
+      yield { version: 1, sessionId: "wrong", seq: 0, at: 0, type: "assistant.delta" } as never
+    })()
+  const host = new CodingAgentHost({ backend })
+  await host.start({ cwd: process.cwd(), sessionId: "malformed", backend: backend.info.name })
+  const events: AgentEvent[] = []
+  for await (const event of host.prompt("malformed")) events.push(event)
+  expect(events).toHaveLength(1)
+  expect(events[0]).toMatchObject({ type: "session.failed", error: { code: "BACKEND_PROTOCOL" } })
+  expect(host.snapshot?.status).toBe("failed")
+  await host.stop()
+})
+
+test("host snapshot becomes stopped when the backend emits only session.stopped", async () => {
+  const backend = new ScriptedBackend(true)
+  const host = new CodingAgentHost({ backend })
+  await host.start({ cwd: process.cwd(), sessionId: "stop-only", backend: backend.info.name })
+  const events: AgentEvent[] = []
+  for await (const event of host.prompt("stop now")) events.push(event)
+  expect(events.map((event) => event.type)).toEqual(["session.stopped"])
+  expect(host.snapshot?.status).toBe("stopped")
+  await host.stop()
+})
+
+test("host startup rolls back a backend session when persistence initialization fails", async () => {
+  const backend = new ScriptedBackend()
+  const store: SessionStore = {
+    append: async () => {
+      throw new Error("session store unavailable")
+    },
+    read: async () => [],
+    checkpoint: async () => {},
+    fork: async () => "unused",
+  }
+  const host = new CodingAgentHost({ backend, sessionStore: store })
+  await expect(host.start({ cwd: process.cwd(), backend: backend.info.name })).rejects.toThrow(
+    "session store unavailable",
+  )
+  expect(host.snapshot).toBeUndefined()
+  expect(backend.cancelCalls).toBe(1)
+  expect(backend.closeCalls).toBe(1)
+})
+
+test("host stop releases the backend when the stop audit write fails", async () => {
+  const backend = new ScriptedBackend()
+  let failAppend = false
+  const store: SessionStore = {
+    append: async () => {
+      if (failAppend) throw new Error("session store became read-only")
+      return {
+        version: 1,
+        sessionId: "scripted-session",
+        seq: 0,
+        at: Date.now(),
+        type: "session.started",
+      }
+    },
+    read: async () => [],
+    checkpoint: async () => {},
+    fork: async () => "unused",
+  }
+  const host = new CodingAgentHost({ backend, sessionStore: store })
+  await host.start({ cwd: process.cwd(), backend: backend.info.name })
+  failAppend = true
+  await expect(host.stop()).rejects.toThrow("session store became read-only")
+  expect(host.snapshot).toBeUndefined()
+  expect(backend.cancelCalls).toBe(1)
+  expect(backend.closeCalls).toBe(1)
 })

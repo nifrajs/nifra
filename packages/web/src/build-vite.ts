@@ -28,6 +28,13 @@ import {
   publicEnvDefines,
 } from "./build.ts"
 import type { BuildManifest, BuildTarget, Bundler, ServerBuild } from "./build-plan.ts"
+import {
+  assertCssLoadingCompatible,
+  type CssLoadingMode,
+  DEFAULT_CSS_LOADING,
+  normalizeCssCodeSplit,
+  normalizeCssLoading,
+} from "./css-contract.ts"
 import { discoverRoutes } from "./fs.ts"
 import { generateClientEntry, generateServerManifest } from "./index.ts"
 import { viteDedupePackages } from "./internal/identity-policy.ts"
@@ -117,6 +124,17 @@ export interface BuildClientViteOptions extends Omit<BuildClientOptions, "plugin
   readonly vitePlugins?: readonly unknown[]
   /** Vite project root (default: the parent of `routesDir`). Manifest keys are relative to it. */
   readonly root?: string
+  /**
+   * Vite's CSS output strategy (default `true`). Set to `false` to emit one aggregate stylesheet for
+   * the whole client, preventing lazy-route prefetch from attaching additional stylesheets.
+   */
+  readonly cssCodeSplit?: boolean
+  /**
+   * Activation policy for framework-owned SSR stylesheet links (default `"blocking"`). `"deferred"`
+   * fetches with `media="print"` and the generated client promotes the links before mounting. It must
+   * be paired with `cssCodeSplit: false`; split lazy chunks can otherwise attach CSS during prefetch.
+   */
+  readonly cssLoading?: CssLoadingMode
 }
 
 /**
@@ -130,6 +148,9 @@ export interface BuildClientViteOptions extends Omit<BuildClientOptions, "plugin
  */
 export async function buildClientVite(options: BuildClientViteOptions): Promise<BuildManifest> {
   const { routesDir, outDir, clientModule } = options
+  const cssCodeSplit = normalizeCssCodeSplit(options.cssCodeSplit)
+  const cssLoading = normalizeCssLoading(options.cssLoading ?? DEFAULT_CSS_LOADING)
+  assertCssLoadingCompatible(cssCodeSplit, cssLoading)
   const root = resolvePath(options.root ?? dirname(routesDir))
   await assertIdentityParity(root)
   const resolve = options.resolve ?? ((file: string) => `${routesDir}/${file}`)
@@ -219,6 +240,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
           outDir,
           emptyOutDir: false, // buildTargetWith owns outDir lifecycle; never let Vite wipe sibling files
           manifest: true,
+          cssCodeSplit,
           minify: options.minify !== false,
           rollupOptions: {
             // Keep `node:` builtins as external specifiers so the leak guard sees `node:crypto` and can
@@ -298,14 +320,20 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     }
     return [...urls]
   }
-  // CSS aggregate - every stylesheet the app emits, the always-safe fallback.
+  // CSS aggregate - every stylesheet the app emits, the always-safe fallback. With native Vite
+  // `cssCodeSplit: false`, the aggregate is a standalone manifest asset and is not listed in any
+  // JavaScript entry's `css` array. Collect both shapes so the framework manifest never loses the only
+  // stylesheet in a single-file build.
   const allCss = new Set<string>()
   for (const entry of Object.values(viteManifest)) {
+    if (entry.file.endsWith(".css")) allCss.add(url(entry.file))
     for (const css of entry.css ?? []) allCss.add(url(css))
   }
   const css = [...allCss]
   const routeStyles: Record<string, readonly string[]> = {}
-  if (css.length > 0) {
+  // A single aggregate stylesheet is deliberately the route fallback. A per-route `[]` map would
+  // suppress it in `createWebApp` and produce unstyled SSR on every route.
+  if (css.length > 0 && cssCodeSplit) {
     for (const route of routeManifest.routes) routeStyles[route.id] = stylesFor(chainFiles(route))
     if (routeManifest.notFound) routeStyles._404 = stylesFor([routeManifest.notFound.file])
   }
@@ -326,6 +354,8 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     entry: url(bootstrap.file),
     assets: [...assets],
     routes,
+    cssCodeSplit,
+    cssLoading,
     ...(publicFiles.length > 0 ? { publicFiles } : {}),
     ...(css.length > 0 ? { css } : {}),
     ...(Object.keys(routeStyles).length > 0 ? { routeStyles } : {}),
@@ -343,6 +373,8 @@ export interface BuildServerViteOptions {
   readonly clientEntry: string
   readonly styles?: readonly string[] | undefined
   readonly routeStyles?: Readonly<Record<string, readonly string[]>> | undefined
+  /** How framework-owned stylesheet links should activate before hydration (default `"blocking"`). */
+  readonly cssLoading?: CssLoadingMode
   readonly resolve?: (file: string) => string
   readonly manifestFile?: string
   readonly vitePlugins?: readonly unknown[]
@@ -434,7 +466,7 @@ function edgeBuiltinGuard(): EdgeGuardPlugin {
  * The client-leak guards are deliberately NOT run here: a server bundle's `node:` imports are legitimate.
  */
 export async function buildServerVite(options: BuildServerViteOptions): Promise<ServerBuild> {
-  const { routesDir, serverEntry, outDir, clientEntry, styles, routeStyles } = options
+  const { routesDir, serverEntry, outDir, clientEntry, styles, routeStyles, cssLoading } = options
   const root = resolvePath(options.root ?? dirname(routesDir))
   const entryDir = dirname(serverEntry)
   const manifestFile = options.manifestFile ?? "server-manifest.ts"
@@ -451,7 +483,13 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
   const routeManifest = discoverRoutes(routesDir)
   writeFileSync(
     `${entryDir}/${manifestFile}`,
-    generateServerManifest(routeManifest, { resolve, clientEntry, styles, routeStyles }),
+    generateServerManifest(routeManifest, {
+      resolve,
+      clientEntry,
+      styles,
+      routeStyles,
+      ...(cssLoading !== undefined ? { cssLoading } : {}),
+    }),
   )
 
   // Pin the mode to match NODE_ENV - the react plugin's JSX runtime (jsx vs jsxDEV) follows it, and a
@@ -536,6 +574,8 @@ export const viteBundler: Bundler = {
       ...(input.plugins ? { vitePlugins: input.plugins } : {}),
       ...(input.conditions ? { conditions: input.conditions } : {}),
       ...(input.define ? { define: input.define } : {}),
+      ...(input.cssCodeSplit !== undefined ? { cssCodeSplit: input.cssCodeSplit } : {}),
+      ...(input.cssLoading !== undefined ? { cssLoading: input.cssLoading } : {}),
       ...(input.publicDir !== undefined ? { publicDir: input.publicDir } : {}),
       ...(input.publicEnvPrefix !== undefined ? { publicEnvPrefix: input.publicEnvPrefix } : {}),
       ...(input.root ? { root: input.root } : {}),
@@ -547,8 +587,11 @@ export const viteBundler: Bundler = {
       outDir: input.outDir,
       clientEntry: input.clientEntry,
       target: input.target,
+      ...(input.styles !== undefined ? { styles: input.styles } : {}),
+      ...(input.routeStyles !== undefined ? { routeStyles: input.routeStyles } : {}),
       ...(input.plugins ? { vitePlugins: input.plugins } : {}),
       ...(input.define ? { define: input.define } : {}),
+      ...(input.cssLoading !== undefined ? { cssLoading: input.cssLoading } : {}),
       ...(input.root ? { root: input.root } : {}),
     }),
 }

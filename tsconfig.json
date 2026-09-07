@@ -55,6 +55,7 @@
       "@nifrajs/mcp/http": ["./packages/mcp/src/http.ts"],
       "@nifrajs/mcp/server": ["./packages/mcp/src/server.ts"],
       "@nifrajs/mcp/react": ["./packages/mcp/src/react.ts"],
+      "@nifrajs/webmcp": ["./packages/webmcp/src/index.ts"],
       "@nifrajs/middleware": ["./packages/middleware/src/index.ts"],
       "@nifrajs/middleware/context-storage": ["./packages/middleware/src/context-storage.ts"],
       "@nifrajs/better-auth": ["./packages/better-auth/src/index.ts"],
@@ -109,12 +110,14 @@
     "site",
     "packages/deno",
     "packages/web/src/client.ts",
+    "packages/webmcp",
     "packages/web/src/islands.ts",
     "packages/web/src/nano.ts",
     "packages/web/test/islands.test.ts",
     "packages/web/test/nano.test.ts",
     "packages/web/test/apply-head.test.ts",
     "packages/web/test/client-browser.test.ts",
+    "packages/web/test/css-loading.test.ts",
     // Cross-adapter dev-SSR integration test: it statically imports @nifrajs/web-react (a frontend
     // adapter, outside this DOM-free program) and resolves it at runtime via linkWorkspacePackages -
     // the same reason build-vite-react-edge.test.ts references the adapter as a runtime string. Its

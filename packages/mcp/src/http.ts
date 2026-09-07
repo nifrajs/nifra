@@ -10,10 +10,12 @@
 
 import {
   handleRpc,
+  isJsonRpcRequest,
   type JsonRpcNotification,
   type JsonRpcRequest,
   type JsonRpcResponse,
   MCP_ERROR,
+  type McpProtocolState,
   type McpServerFeatures,
   type McpTool,
   modernVersionOf,
@@ -54,6 +56,9 @@ function corsFor(
 }
 
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
+const MAX_BODY_BYTES = 64 * 1024 * 1024
+const DEFAULT_MAX_RESPONSE_BYTES = 1_000_000
+const MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 const TEXT_DECODER = new TextDecoder()
 const TEXT_ENCODER = new TextEncoder()
 const SSE_CONTENT_TYPE = "text/event-stream; charset=utf-8"
@@ -62,14 +67,22 @@ const SSE_KEEP_ALIVE_MS = 15_000
 /** Invalid byte caps make `total > maxBytes` fail open (especially for `NaN`). Reject configuration
  * before any request body is read so MCP cannot silently lose its memory bound. */
 function assertByteLimit(value: number): void {
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new RangeError("MCP maxBodyBytes must be a non-negative safe integer")
+  if (!Number.isSafeInteger(value) || value < 0 || value > MAX_BODY_BYTES) {
+    throw new RangeError(`MCP maxBodyBytes must be between 0 and ${MAX_BODY_BYTES}`)
+  }
+}
+
+function assertResponseLimit(value: number): void {
+  if (!Number.isSafeInteger(value) || value < 1_024 || value > MAX_RESPONSE_BYTES) {
+    throw new RangeError(`MCP maxResponseBytes must be between 1024 and ${MAX_RESPONSE_BYTES}`)
   }
 }
 
 export interface McpHttpOptions {
   /** Maximum JSON-RPC request body size in bytes. Default 1 MB. */
   readonly maxBodyBytes?: number
+  /** Maximum serialized JSON-RPC response or SSE frame size. Default 1 MB. */
+  readonly maxResponseBytes?: number
   /** Resources / prompts / the MCP Apps UI extension served alongside the tools. */
   readonly features?: McpServerFeatures
   /** Shown on the GET health page so each host can describe itself. */
@@ -80,6 +93,22 @@ export interface McpHttpOptions {
    * Set it (e.g. a localhost origin for a hardened local host) to reject any other browser origin with 403.
    */
   readonly allowedOrigins?: readonly string[]
+  /**
+   * Shared request registry for one authenticated MCP session. Pass the same state to the
+   * request that starts a tool call and its `notifications/cancelled` request. Do not share one
+   * state across unrelated callers unless the surrounding authorization boundary makes their
+   * request-id namespace exclusive.
+   */
+  readonly state?: McpProtocolState
+  /**
+   * Resolve a session-scoped request registry after authorization. This is the preferred seam for
+   * multi-user HTTP hosts: bind the returned state to the authenticated caller/session and return
+   * `undefined` for stateless requests. A resolver failure fails closed with a generic denial.
+   */
+  readonly resolveState?: (
+    request: Request,
+    message: JsonRpcRequest,
+  ) => McpProtocolState | undefined | Promise<McpProtocolState | undefined>
   /**
    * Optional authorization, run once per request against the parsed message - after the body has been
    * read under the size cap, so it never costs a second read of the stream. Returning `false` answers
@@ -108,6 +137,7 @@ function eventStreamResponse(
   headers: Record<string, string>,
   run: (stream: EventStreamControl) => void | Promise<void>,
   keepAliveMs = 0,
+  maxFrameBytes = DEFAULT_MAX_RESPONSE_BYTES,
 ): Response {
   const abortController = new AbortController()
   let closed = false
@@ -154,7 +184,15 @@ function eventStreamResponse(
     signal: abortController.signal,
     closed: closedPromise,
     send(message) {
-      write(`data: ${JSON.stringify(message)}\n\n`)
+      const encoded = encodeJson(message, maxFrameBytes)
+      const id = "id" in message ? message.id : null
+      const payload = encoded ?? JSON.stringify(rpcError(id ?? null, -32000, "response too large"))
+      const frame = `data: ${payload}\n\n`
+      write(
+        TEXT_ENCODER.encode(frame).byteLength <= maxFrameBytes
+          ? frame
+          : `data: ${JSON.stringify(rpcError(id ?? null, -32000, "response too large"))}\n\n`,
+      )
     },
     comment(value = "") {
       write(`: ${value.replace(/[\r\n]/g, "")}\n\n`)
@@ -217,6 +255,18 @@ function parseContentLength(value: string): number | undefined {
   return length
 }
 
+/** Validate the HTTP envelope before any method-specific access or authorization callback. */
+function parseHttpMessage(value: unknown): JsonRpcRequest | undefined {
+  return isJsonRpcRequest(value) ? value : undefined
+}
+
+function unauthorizedResponse(id: JsonRpcRequest["id"], headers: Record<string, string>): Response {
+  return Response.json(rpcError(id ?? null, MCP_ERROR.UNAUTHORIZED, "unauthorized"), {
+    status: 403,
+    headers,
+  })
+}
+
 async function readJsonBounded(
   request: Request,
   maxBytes: number,
@@ -232,30 +282,61 @@ async function readJsonBounded(
   if (body === null) return { ok: false, status: 400 }
 
   const reader = body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.byteLength
-    if (total > maxBytes) {
-      await reader.cancel()
-      return { ok: false, status: 413 }
-    }
-    chunks.push(value)
-  }
-
-  const bytes = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset)
-    offset += chunk.byteLength
-  }
   try {
-    return { ok: true, value: JSON.parse(TEXT_DECODER.decode(bytes)) as unknown }
+    const chunks: Uint8Array[] = []
+    let total = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value === undefined || value.byteLength > maxBytes - total) {
+        try {
+          await reader.cancel()
+        } catch {
+          // The request is already over its cap; cancellation failure must not escape the parser.
+        }
+        return { ok: false, status: 413 }
+      }
+      total += value.byteLength
+      chunks.push(value)
+    }
+
+    const bytes = new Uint8Array(total)
+    let offset = 0
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset)
+      offset += chunk.byteLength
+    }
+    try {
+      return { ok: true, value: JSON.parse(TEXT_DECODER.decode(bytes)) as unknown }
+    } catch {
+      return { ok: false, status: 400 }
+    }
   } catch {
+    try {
+      await reader.cancel()
+    } catch {
+      // Preserve the generic parse-error response even if the source stream is already broken.
+    }
     return { ok: false, status: 400 }
+  } finally {
+    reader.releaseLock()
   }
+}
+
+function encodeJson(value: unknown, maxBytes: number): string | undefined {
+  try {
+    const encoded = JSON.stringify(value)
+    if (typeof encoded !== "string") return undefined
+    if (TEXT_ENCODER.encode(encoded).byteLength > maxBytes) return undefined
+    return encoded
+  } catch {
+    return undefined
+  }
+}
+
+function boundedResponse(response: JsonRpcResponse, maxBytes: number): JsonRpcResponse {
+  if (encodeJson(response, maxBytes) !== undefined) return response
+  return rpcError(response.id, -32000, "response too large")
 }
 
 const SENTINEL_PREFIX = "=?base64?"
@@ -332,6 +413,8 @@ export async function respondMcpHttp(
 ): Promise<Response> {
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
   assertByteLimit(maxBodyBytes)
+  const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES
+  assertResponseLimit(maxResponseBytes)
   const cors = corsFor(request, options.allowedOrigins)
   if (cors === null) {
     // Origin present but not allowlisted: reject before the body is ever read (DNS-rebinding guard). No
@@ -352,6 +435,7 @@ export async function respondMcpHttp(
           await stream.closed
         },
         SSE_KEEP_ALIVE_MS,
+        maxResponseBytes,
       )
     }
     return new Response(
@@ -376,14 +460,31 @@ export async function respondMcpHttp(
     }
     return Response.json(rpcError(null, -32700, "parse error"), { status: 400, headers: cors })
   }
-  const message = parsed.value as JsonRpcRequest
+  const message = parseHttpMessage(parsed.value)
+  if (message === undefined)
+    return Response.json(rpcError(null, -32600, "Invalid Request"), {
+      status: 400,
+      headers: cors,
+    })
   if (options.authorizeMessage !== undefined) {
-    const authorized = await options.authorizeMessage(message, request)
+    let authorized = false
+    try {
+      authorized = await options.authorizeMessage(message, request)
+    } catch {
+      // Authorization is an application boundary. Fail closed without reflecting verifier or
+      // credential-store diagnostics to an unauthenticated caller.
+      return unauthorizedResponse(message.id, cors)
+    }
     if (!authorized) {
-      return Response.json(rpcError(message.id ?? null, MCP_ERROR.UNAUTHORIZED, "unauthorized"), {
-        status: 403,
-        headers: cors,
-      })
+      return unauthorizedResponse(message.id, cors)
+    }
+  }
+  let state: McpProtocolState | undefined = options.state
+  if (options.resolveState !== undefined) {
+    try {
+      state = await options.resolveState(request, message)
+    } catch {
+      return unauthorizedResponse(message.id, cors)
     }
   }
   const bodyVersion = modernVersionOf(message.params)
@@ -397,20 +498,27 @@ export async function respondMcpHttp(
   }
   const dispatch = (stream?: EventStreamControl): Promise<JsonRpcResponse | null> =>
     handleRpc(message, tools, serverInfo, options.features ?? {}, {
+      ...(state === undefined ? {} : { state }),
       signal: stream?.signal ?? request.signal,
       ...(stream !== undefined ? { sendNotification: stream.send } : {}),
     })
   if (acceptsEventStream(request)) {
-    return eventStreamResponse(request, headers, async (stream) => {
-      const response = await dispatch(stream)
-      if (response !== null) stream.send(response)
-      stream.close()
-    })
+    return eventStreamResponse(
+      request,
+      headers,
+      async (stream) => {
+        const response = await dispatch(stream)
+        if (response !== null) stream.send(response)
+        stream.close()
+      },
+      0,
+      maxResponseBytes,
+    )
   }
   const response = await dispatch()
   // A notification (no id) yields null - acknowledge with 202 Accepted and no body (Streamable-HTTP).
   if (response === null) return new Response(null, { status: 202, headers })
   // Modern requests carry spec HTTP statuses (400 version/header, 404 unknown method); legacy stays 200.
   const status = bodyVersion !== undefined ? modernErrorStatus(response) : 200
-  return Response.json(response, { status, headers })
+  return Response.json(boundedResponse(response, maxResponseBytes), { status, headers })
 }

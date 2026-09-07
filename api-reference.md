@@ -326,7 +326,7 @@ Every public export of every package and documented subpath - name, kind, signat
   The boundary commands a UI may currently offer for one item. A command appears only when the host has negotiated the `inbox` feature, the boundary has not expired, and the op is a legal transition from the boundary's live state. An unknown or terminal state yields no commands, so a stale, unsupport…
 - **boundaryIsStale** _(function)_ - `boundaryIsStale: (item: BoundaryStateView, now: number) => boolean`
   True once `now` reaches or passes the boundary's expiry. A stale boundary fails every command closed.
-- **parseEventStream** _(function)_ - `parseEventStream: (body: ReadableStream<Uint8Array>, method: string) => AsyncIterable<AgentEvent>`
+- **parseEventStream** _(function)_ - `parseEventStream: (body: ReadableStream<Uint8Array>, method: string, maxFrameBytes?: number) => AsyncIterable<AgentEvent>`
   Parse an SSE body into protocol events, skipping any frame whose data is not a valid event.
 - **toEvalComparisonView** _(function)_ - `toEvalComparisonView: (value: unknown) => EvalComparisonView | undefined`
 - **toEventView** _(function)_ - `toEventView: (event: AgentEvent) => AgentEventView`
@@ -479,6 +479,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **evidenceEventId** _(function)_ - `evidenceEventId: (runId: string, seq: number) => string`
   The stable dedupe identity for an evidence record.
 - **isAgentEvent** _(function)_ - `isAgentEvent: (value: unknown) => value is AgentEvent`
+  Validate the complete discriminated event union before a projection or UI consumer sees it.
 - **isTerminalApprovalState** _(function)_ - `isTerminalApprovalState: (state: ApprovalLifecycleState) => boolean`
   True once a boundary state accepts no further op.
 - **isTerminalHandoffState** _(function)_ - `isTerminalHandoffState: (state: HandoffLifecycleState) => boolean`
@@ -3174,6 +3175,10 @@ _No named exports (side-effect entrypoint)._
 - **defineMcpWidget** _(function)_ - `defineMcpWidget: (opts: DefineMcpWidgetOptions) => McpWidget`
 - **handleRpc** _(function)_ - `handleRpc: (message: JsonRpcRequest, tools: readonly McpTool[], serverInfo: { name: string; version: string; }, features?: McpServerFeatures, options?: McpProtocolOptions) => Promise<JsonRpcResponse | null>`
   Dispatch one JSON-RPC message against the given tools. Returns the response, or `null` for a notification (no reply). Tool errors are reported in-band (`isError`) so the agent can react to them.
+- **isJsonRpcRequest** _(function)_ - `isJsonRpcRequest: (value: unknown) => value is JsonRpcRequest`
+  Validate a JSON-RPC request/notification before any transport or method-specific access.
+- **isJsonRpcResponse** _(function)_ - `isJsonRpcResponse: (value: unknown) => value is JsonRpcResponse`
+  Validate a JSON-RPC response received by a transport-side client hook. Responses are not accepted by {@link handleRpc}; this guard exists for the stdio roots/list answer, which is the one server- initiated request response the CLI consumes itself.
 - **modernVersionOf** _(function)_ - `modernVersionOf: (params: Record<string, unknown> | undefined) => string | undefined`
   The protocol version a modern (2026-07-28+) request declares in `_meta`, or `undefined` for a legacy request. Its presence is what puts the dispatch in modern mode for that one request.
 - **respondMcpHttp** _(function)_ - `respondMcpHttp: (request: Request, tools: McpTool[], serverInfo: { name: string; version: string; }, options?: McpHttpOptions) => Promise<Response>`
@@ -3234,6 +3239,10 @@ _No named exports (side-effect entrypoint)._
 - **createMcpProtocolState** _(function)_ - `createMcpProtocolState: () => McpProtocolState`
 - **handleRpc** _(function)_ - `handleRpc: (message: JsonRpcRequest, tools: readonly McpTool[], serverInfo: { name: string; version: string; }, features?: McpServerFeatures, options?: McpProtocolOptions) => Promise<JsonRpcResponse | null>`
   Dispatch one JSON-RPC message against the given tools. Returns the response, or `null` for a notification (no reply). Tool errors are reported in-band (`isError`) so the agent can react to them.
+- **isJsonRpcRequest** _(function)_ - `isJsonRpcRequest: (value: unknown) => value is JsonRpcRequest`
+  Validate a JSON-RPC request/notification before any transport or method-specific access.
+- **isJsonRpcResponse** _(function)_ - `isJsonRpcResponse: (value: unknown) => value is JsonRpcResponse`
+  Validate a JSON-RPC response received by a transport-side client hook. Responses are not accepted by {@link handleRpc}; this guard exists for the stdio roots/list answer, which is the one server- initiated request response the CLI consumes itself.
 - **modernVersionOf** _(function)_ - `modernVersionOf: (params: Record<string, unknown> | undefined) => string | undefined`
   The protocol version a modern (2026-07-28+) request declares in `_meta`, or `undefined` for a legacy request. Its presence is what puts the dispatch in modern mode for that one request.
 - **rpcError** _(const)_ - `rpcError: (id: JsonRpcId, code: number, message: string, data?: unknown) => JsonRpcResponse`
@@ -4077,7 +4086,7 @@ _No named exports (side-effect entrypoint)._
   Pluggable ISR cache backend. **Production deploys MUST use a shared/durable store** (Workers KV, Redis, the platform Cache API) so cached pages *and* revalidation hold across instances; {@link MemoryCacheStore} is dev / single-instance only. Implementations are async so a network store (KV/Redis) f…
 - **CachedResponse** _(interface)_ - `interface CachedResponse`
   A cached SSR response - the bytes + metadata a {@link CacheStore} persists.
-- **ClientAction** _(type)_ - `type ClientAction = ( args: ClientActionArgs, ) => ClientActionResult | void | Promise<ClientActionResult | void>`
+- **ClientAction** _(type)_ - `type ClientAction = ( args: ClientActionArgs, ) => ClientActionResult | undefined | Promise<ClientActionResult | undefined>`
   A client-only action wrapper; it never replaces the server action.
 - **ClientActionArgs** _(interface)_ - `interface ClientActionArgs`
   Safe, client-visible context for a client action. No secrets or raw request headers cross this seam.
@@ -4095,10 +4104,14 @@ _No named exports (side-effect entrypoint)._
   The agnostic router store consumed by per-adapter Router bindings.
 - **ClientRouterOptions** _(interface)_ - `interface ClientRouterOptions`
 - **CreateWebAppOptions** _(interface)_ - `interface CreateWebAppOptions<Env = unknown>`
+- **CssLoadingMode** _(type)_ - `type CssLoadingMode = "blocking" | "deferred"`
+  How framework-owned stylesheets are made active during the first document load.
 - **DATA_GLOBAL** _(const)_ - `DATA_GLOBAL: "__NIFRA_DATA__"`
   Global the server serializes loader data into; the client reads it to hydrate.
 - **DATA_HEADER** _(const)_ - `DATA_HEADER: "x-nifra-data"`
   Request header that asks a nifra route's GET to return just the loader data as JSON (instead of the full HTML document). Set by client-side navigation; read by `createWebApp`'s GET handler.
+- **DEFAULT_CSS_LOADING** _(const)_ - `DEFAULT_CSS_LOADING: CssLoadingMode`
+  The default remains the ordinary render-blocking stylesheet link.
 - **DEFAULT_DEV_PORT** _(const)_ - `DEFAULT_DEV_PORT: 4321`
   The single default port for the dev server (`@nifrajs/web/dev`, `@nifrajs/web/vite`) **and** `nifra start`. Deliberately uncommon: `3000`/`5173`/`8080` collide with whatever else is running (Next, Vite, a stray Node API). `4321` rarely is - and being the *same* constant across `nifra dev` and `nifr…
 - **DRAFT_COOKIE** _(const)_ - `DRAFT_COOKIE: "__nifra_draft"`
@@ -4268,6 +4281,8 @@ _No named exports (side-effect entrypoint)._
   Matches `db.server.ts`, `auth.server.tsx`, `x.server.mjs`, and the extensionless `foo.server`.
 - **STATUS_HEADER** _(const)_ - `STATUS_HEADER: "x-nifra-status"`
   Response header carrying a **terminal status** a loader signalled with `notFound()` / `gone()` / `statusPage(n)` during a client-side navigation's data fetch.
+- **SanitizedHtml** _(type)_ - `type SanitizedHtml = TrustedHtml`
+  Alias for integrations whose sanitizer returns a separately named safe value.
 - **ScriptDescriptor** _(interface)_ - `interface ScriptDescriptor`
 - **SearchOf** _(type)_ - `type SearchOf<Module> = Module extends { searchSchema: infer S } ? S extends StandardSchemaV1 ? InferOutput<S> extends Record<string, unknown> ? InferOutput<S> : never : Record<string, unknown> : Record<string, unknown>`
   The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route navigation: generated route types (`nifra sync-routes`) map each path to `SearchOf<typeof import("./…
@@ -4295,8 +4310,11 @@ _No named exports (side-effect entrypoint)._
   An in-flight client submit - the action it targets + the `FormData` being sent. Set while the submit is pending, cleared when it settles. A component reads `submission.formData` to render an **optimistic** view (the expected result) before the server responds.
 - **SubmitOptions** _(interface)_ - `interface SubmitOptions`
   Per-submit options. `revalidate: false` opts out of the post-action loader re-fetch.
+- **TrustedHtml** _(type)_ - `type TrustedHtml = string & { readonly [TRUSTED_HTML_BRAND]: "trusted-html" }`
 - **UnsafeScriptDescriptor** _(interface)_ - `interface UnsafeScriptDescriptor`
   Explicit escape hatch for executable inline code. A CSP nonce is mandatory.
+- **assertCssLoadingCompatible** _(function)_ - `assertCssLoadingCompatible: (cssCodeSplit: boolean, cssLoading: CssLoadingMode) => void`
+  Guard the only Vite combination that would claim to solve the stylesheet-insertion regression while leaving the cause in place. A deferred split build can still attach CSS when a prefetched lazy chunk evaluates, so it must fail closed instead of producing a misleadingly healthy deployment.
 - **assertRenderAdapterConformance** _(function)_ - `assertRenderAdapterConformance: (adapter: RenderAdapter, fixture: RenderAdapterConformanceFixture) => Promise<void>`
   Execute the observable {@link RenderAdapter} interface against a framework-specific fixture.
 - **assertStaticBoundaryImports** _(function)_ - `assertStaticBoundaryImports: (roots: readonly StaticBoundaryRoot[], edges: readonly StaticBoundaryImportEdge[], requestScopedModules: ReadonlySet<string>) => void`
@@ -4349,6 +4367,8 @@ _No named exports (side-effect entrypoint)._
   Build a JSON-LD `<script type="application/ld+json">` entry for a route's `meta.script` from a plain object. `JSON.stringify` produces the body; the head renderer breakout-escapes it (see `escapeScriptContent`), so a string field containing `</script>` is embedded safely.
 - **mergeHeads** _(function)_ - `mergeHeads: (heads: readonly Meta[]) => Meta`
   Merge a layout chain's heads, outermost first: `title`/`lang`/`dir` are nearest-wins, and `meta`/`link`/`script` concatenate in chain order.
+- **normalizeCssLoading** _(function)_ - `normalizeCssLoading: (value: unknown) => CssLoadingMode`
+  Runtime validation for JavaScript callers, generated manifests, and hand-authored integrations.
 - **notFound** _(function)_ - `notFound: (options?: StatusPageOptions) => never`
   Render the nearest `_404` page at status **404**. `throw` it from a loader when the record does not exist.
 - **openGraph** _(function)_ - `openGraph: (input: OpenGraphInput) => MetaDescriptor[]`
@@ -4376,6 +4396,8 @@ _No named exports (side-effect entrypoint)._
   Return this from an action to declare which routes the mutation changed (alongside the action's `data`). `createWebApp` sets the `X-Nifra-Revalidate` response header; after the submit the client marks those cached routes stale - refetching the active one and any mounted fetcher showing them - so a …
 - **revalidateEndpoint** _(function)_ - `revalidateEndpoint: (options: RevalidateEndpointOptions) => (req: Request) => Promise<Response>`
   An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops a path's cached entry or invalidates every entry carrying a tag. `POST` with the secret in the token header and either `?path=/blog/x`, `?tag=products`, or a JSON `{ "path": "/blog/x" }` / `{ "tag": "products" }` body. Th…
+- **sanitizedHtml** _(const)_ - `sanitizedHtml: (value: string) => TrustedHtml`
+  Explicit alias for callers that want the sanitized-content vocabulary at the call site.
 - **searchOf** _(function)_ - `searchOf: (searchSchema: StandardSchemaV1 | undefined, rawSearch: string) => Record<string, unknown>`
   The search a route sees for a raw URL query: parsed, then validated against a single `searchSchema` when the route declares one (failing closed to its defaults), or the raw parsed query otherwise. A one-link {@link searchOfChain}; use that directly for a layout+page chain. Both the server (`renderP…
 - **searchOfChain** _(function)_ - `searchOfChain: (schemas: readonly (StandardSchemaV1 | undefined)[], rawSearch: string) => Record<string, unknown>`
@@ -4398,6 +4420,8 @@ _No named exports (side-effect entrypoint)._
   Start all dynamic boundary loads at once without making the page wait for the slowest sibling. The initial states contain `status: "pending"`; callers that support deferred values can attach each `pending.promise` to its own slot. `complete` still provides settled, isolated states to non-streaming …
 - **statusPage** _(function)_ - `statusPage: (status: number, options?: StatusPageOptions) => never`
   Render a terminal page at any 4xx/5xx status - the escape hatch behind {@link notFound} and {@link gone} (402, 451, …). Uses `_<status>.tsx` if present, otherwise `_404`.
+- **trustHtml** _(function)_ - `trustHtml: (value: string) => TrustedHtml`
+  Mark already-sanitized or application-owned HTML for an intentional raw-HTML adapter sink.
 - **unsafeInlineScript** _(function)_ - `unsafeInlineScript: (content: string, options: { readonly nonce: string; readonly type?: "module" | "text/javascript"; }) => UnsafeScriptDescriptor`
   Deliberately unsafe escape hatch for executable inline code. The required nonce keeps the result compatible with a strict CSP and makes the security-sensitive choice visible at the call site.
 - **withISR** _(function)_ - `withISR: (app: ISRApp, options: ISROptions) => (req: Request, platform?: ISRPlatform) => Promise<Response>`
@@ -4489,6 +4513,8 @@ _No named exports (side-effect entrypoint)._
   True when a drift report is clean (no missing + no extra routes).
 - **parseManifestClientEntry** _(function)_ - `parseManifestClientEntry: (source: string) => string | undefined`
   The baked `clientEntry` URL in a committed server-manifest, or `undefined` if absent. Pure.
+- **parseManifestCssLoading** _(function)_ - `parseManifestCssLoading: (source: string) => CssLoadingMode | undefined`
+  The baked framework stylesheet activation mode, or `undefined` for an older manifest. Pure.
 - **parseManifestRouteFiles** _(function)_ - `parseManifestRouteFiles: (source: string, _routesPrefix?: string) => string[]`
   Extract the route-relative file list a committed server-manifest declares, as the same `routes/`-relative keys `discoverRoutes` produces (e.g. `docs/index.tsx`). Reads the route map's KEYS, which carry the file extension and no directory prefix - exactly discovery's shape - so the result is indepen…
 - **parseManifestRouteStyles** _(function)_ - `parseManifestRouteStyles: (source: string) => Record<string, string[]>`
@@ -4534,6 +4560,8 @@ _No named exports (side-effect entrypoint)._
 - **IDLE_BLOCKER** _(const)_ - `IDLE_BLOCKER: Blocker`
   The idle blocker - a stable reference (no needless adapter re-renders while unblocked).
 - **InstallHistoryOptions** _(interface)_ - `interface InstallHistoryOptions`
+- **WaitForStylesOptions** _(interface)_ - `interface WaitForStylesOptions`
+  Options for {@link waitForStyles}.
 - **applyHead** _(function)_ - `applyHead: (head: Meta) => void`
   Sync the document head to a route's resolved {@link Meta} on client navigation. Sets the title (when provided) and replaces the **managed** (`data-nifra`) `<meta>`/`<link>` tags - static head content (charset, hand-written tags) is never touched. SSR injects the same `data-nifra` tags, so the first…
 - **createClientRouter** _(function)_ - `createClientRouter: (options: ClientRouterOptions) => ClientRouter`
@@ -4561,6 +4589,8 @@ _No named exports (side-effect entrypoint)._
   The search for a route whose effective schema is a CHAIN - a `_layout` may declare `searchSchema` for shared keys (`?org`, `?theme`) and each page declares its own. The raw query is validated against every schema in the chain (outermost layout first, page last) and their outputs are merged, page-wi…
 - **signalHydrated** _(function)_ - `signalHydrated: () => void`
   Mark the document interactive once the client has hydrated: sets `data-nifra-hydrated` on `<html>` and fires a one-shot `nifra:hydrated` event. The generated client entry calls this on the next frame after the adapter mounts (so every framework binding gets it), letting apps gate a custom JS-only i…
+- **waitForStyles** _(function)_ - `waitForStyles: (options?: WaitForStylesOptions) => Promise<void>`
+  Wait for the framework-owned deferred stylesheet links in the initial document, then promote them to `media="all"`. It is safe to call more than once: repeated calls for one document share the same per-link waits, and duplicate framework links are removed before waiting. Blocking links are not touc…
 
 ### `@nifrajs/web/conformance`
 
@@ -5386,7 +5416,7 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-vue/content`
 
-- **Content** _(const)_ - `Content: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ html: { type: StringConstructor; required: true; }; as: { type: StringConstructor; default: string; }; }>, () => import("vue").VNode<import("vue").…`
+- **Content** _(const)_ - `Content: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ html: { type: () => TrustedHtml; required: true; }; as: { type: StringConstructor; default: string; }; }>, () => import("vue").VNode<import("vue").…`
   Render trusted HTML into a wrapper element. `inheritAttrs: false` + manual attr spread so passthrough (`class`, `id`, `style`, …) lands on the wrapper exactly once.
 
 ### `@nifrajs/web-vue/fetcher`
@@ -5461,6 +5491,62 @@ _No named exports (side-effect entrypoint)._
   Wrap raw SVG XML in a template-only Vue SFC (single root → Vue inherits attrs onto the `<svg>`).
 - **vueSvgComponentBunPlugin** _(function)_ - `vueSvgComponentBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
   The Vue SVG-component plugin. `generate` selects Vue's client/SSR render, matching `vueBunPlugin`.
+
+## @nifrajs/webmcp
+
+- **AgentCapability** _(interface)_ - `interface AgentCapability<Input, Output, State = unknown>`
+- **AgentCapabilityReference** _(type)_ - `type AgentCapabilityReference`
+  The erased, read-only handle accepted by capability registries.
+- **AgentSurfaceAuthoritativeState** _(interface)_ - `interface AgentSurfaceAuthoritativeState<State>`
+- **AgentSurfaceConformanceCase** _(interface)_ - `interface AgentSurfaceConformanceCase`
+- **AgentSurfaceConformanceOptions** _(interface)_ - `interface AgentSurfaceConformanceOptions`
+- **AgentSurfaceConformanceResult** _(interface)_ - `interface AgentSurfaceConformanceResult`
+- **AgentSurfaceDescriptor** _(interface)_ - `interface AgentSurfaceDescriptor`
+- **AgentSurfacePrediction** _(interface)_ - `interface AgentSurfacePrediction`
+- **AgentSurfacePredictionContext** _(interface)_ - `interface AgentSurfacePredictionContext<State, Input>`
+- **AgentSurfacePredictor** _(type)_ - `type AgentSurfacePredictor<Input, State> = ( context: AgentSurfacePredictionContext<State, Input>, ) => AgentSurfacePrediction | PromiseLike<AgentSurfacePrediction>`
+- **AgentSurfaceReconcileContext** _(interface)_ - `interface AgentSurfaceReconcileContext<Input, Output, State>`
+- **AgentSurfaceReconciler** _(type)_ - `type AgentSurfaceReconciler<Input, Output, State> = ( context: AgentSurfaceReconcileContext<Input, Output, State>, ) => AgentSurfaceAuthoritativeState<State> | PromiseLike<AgentSurfaceAuthoritativeState<State>>`
+- **AgentSurfaceScope** _(type)_ - `type AgentSurfaceScope = "page" | "session" | "server"`
+- **AgentSurfaceSnapshot** _(interface)_ - `interface AgentSurfaceSnapshot<State>`
+- **DefineAgentCapabilityOptions** _(type)_ - `type DefineAgentCapabilityOptions<InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1, State>`
+- **ExecutePredictedOptions** _(interface)_ - `interface ExecutePredictedOptions`
+- **PredictedExecutionResult** _(interface)_ - `interface PredictedExecutionResult<Output, State>`
+- **PredictionPatchOperation** _(type)_ - `type PredictionPatchOperation = | { readonly op: "add" | "replace"; readonly path: string; readonly value: unknown } | { readonly op: "remove"; readonly path: string }`
+  The safe RFC 6902 subset accepted for speculative UI updates.
+- **PredictionStore** _(interface)_ - `interface PredictionStore<State>`
+- **PredictionStoreEvent** _(type)_ - `type PredictionStoreEvent<State>`
+- **PredictionStoreResult** _(type)_ - `type PredictionStoreResult<State>`
+- **PredictionStoreSnapshot** _(interface)_ - `interface PredictionStoreSnapshot<State>`
+- **ReconciliationMode** _(type)_ - `type ReconciliationMode = "accept-server-state" | "reload" | "manual"`
+- **ToolApproval** _(type)_ - `type ToolApproval = | { readonly granted: true; readonly level?: number } | { readonly granted: false; readonly reason?: string }`
+- **ToolCallOptions** _(interface)_ - `interface ToolCallOptions`
+- **ToolCallResult** _(type)_ - `type ToolCallResult<Output>`
+- **ToolContract** _(interface)_ - `interface ToolContract<Input = unknown, Output = unknown>`
+- **ToolContractOptions** _(interface)_ - `interface ToolContractOptions<Input, Output, InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>`
+- **ToolError** _(interface)_ - `interface ToolError`
+- **ToolEvidence** _(interface)_ - `interface ToolEvidence`
+- **WebMcpExecutionOptions** _(interface)_ - `interface WebMcpExecutionOptions`
+- **WebMcpModelContext** _(interface)_ - `interface WebMcpModelContext`
+- **WebMcpReceipt** _(interface)_ - `interface WebMcpReceipt<Output = unknown>`
+- **WebMcpRegistrationFailure** _(interface)_ - `interface WebMcpRegistrationFailure`
+- **WebMcpRegistrationReport** _(interface)_ - `interface WebMcpRegistrationReport`
+- **WebMcpTarget** _(interface)_ - `interface WebMcpTarget`
+- **WebMcpToolDefinition** _(interface)_ - `interface WebMcpToolDefinition`
+- **createPredictionStore** _(function)_ - `createPredictionStore: <State>(initial: AgentSurfaceAuthoritativeState<State>) => PredictionStore<State>`
+  An atomic, defensive prediction store. Predictions are overlays over authoritative state; a server commit replaces the base and remaining overlays are replayed or conflict-dropped.
+- **defineAgentCapability** _(function)_ - `defineAgentCapability: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1, State = unknown>(options: DefineAgentCapabilityOptions<InputSchema, OutputSchema, State>) => AgentCapability<InferOutp…`
+  Create a capability from the same core tool contract used by Nifra's other adapters.
+- **executeAgentCapability** _(function)_ - `executeAgentCapability: <Input, Output, State>(capability: AgentCapability<Input, Output, State>, input: unknown, options?: ToolCallOptions) => Promise<ToolCallResult<Output>>`
+  Execute through Nifra's existing validation, policy, approval, idempotency, and evidence path.
+- **executePredicted** _(function)_ - `executePredicted: <Input, Output, State>(capability: AgentCapability<Input, Output, State>, input: unknown, store: PredictionStore<State>, options?: ExecutePredictedOptions) => Promise<PredictedExecutionResult<Output, S…`
+  Apply a pure prediction, execute the core tool, then commit or roll it back atomically.
+- **registerWebMcpTools** _(function)_ - `registerWebMcpTools: (capabilities: readonly AgentCapabilityReference[], target?: WebMcpTarget | undefined, options?: WebMcpExecutionOptions) => Promise<WebMcpRegistrationReport>`
+  Register an explicit allowlist of capabilities, safely degrading on ordinary browsers.
+- **runAgentSurfaceConformance** _(function)_ - `runAgentSurfaceConformance: (capabilities: readonly AgentCapabilityReference[], options?: AgentSurfaceConformanceOptions) => Promise<AgentSurfaceConformanceResult>`
+  Run deterministic host-independent checks over the WebMCP projection and optional calls.
+- **toWebMcpTool** _(function)_ - `toWebMcpTool: <Input, Output, State>(capability: AgentCapability<Input, Output, State>, options?: WebMcpExecutionOptions) => WebMcpToolDefinition`
+  Adapt one canonical capability to the proposed WebMCP tool shape.
 
 ## @nifrajs/workers
 

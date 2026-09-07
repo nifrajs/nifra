@@ -11,6 +11,7 @@ import {
   resolveStaticBoundaries,
   startDynamicBoundaries,
 } from "../boundary.ts"
+import { type CssLoadingMode, DEFAULT_CSS_LOADING, normalizeCssLoading } from "../css-contract.ts"
 import { defer, ndjsonStream, prepareDeferred } from "../deferred.ts"
 import { isDraftEnabled } from "../draft.ts"
 import { generateLlmsTxt } from "../llms-txt.ts"
@@ -174,6 +175,13 @@ export interface CreateWebAppOptions<Env = unknown> {
    * of the aggregate `styles`, so a page ships only the CSS it uses. An empty array ⇒ no `<link>` (the
    * page imports no CSS). Routes absent here fall back to `styles`. Omit ⇒ always use `styles`. */
   readonly routeStyles?: Readonly<Record<string, readonly string[]>>
+  /**
+   * Activation policy for framework-owned stylesheet links (default `"blocking"`). `"deferred"`
+   * emits `media="print"` links; the generated client waits for them and switches them to `all` before
+   * mounting. Pair with an aggregate Vite stylesheet (`cssCodeSplit: false`) to prevent lazy-prefetch
+   * CSS insertion. Non-hydrated pages always keep their stylesheet links blocking.
+   */
+  readonly cssLoading?: CssLoadingMode
   /** SSG: the prerendered-path set (e.g. `enumerateStaticRoutes(routes).paths` or the build's
    * `prerendered.json`). Injected as `window.__NIFRA_PRERENDERED__` on every page so a client soft-nav
    * into a prerendered route fetches its static `_data.json` instead of hitting the worker. */
@@ -277,6 +285,7 @@ export function createWebApp<Env = unknown>(
   options: CreateWebAppOptions<Env>,
 ): ReturnType<typeof server<Env>> {
   const { adapter, manifest, clientEntry, title, api } = options
+  const cssLoading = normalizeCssLoading(options.cssLoading ?? DEFAULT_CSS_LOADING)
   const titleOption = title === undefined ? {} : { title }
   // Draft/preview: when a `draftSecret` is configured, each request's signed `__nifra_draft` cookie is
   // verified once and surfaced to loaders/actions as `ctx.draft`. No secret ⇒ always `false` (sync, free).
@@ -292,10 +301,14 @@ export function createWebApp<Env = unknown>(
   // The matched route's stylesheet links (spread into renderPage). Per-route when the build mapped it
   // (`routeStyles[id]` - only the chain's CSS; an empty array ⇒ no `<link>`), else the aggregate
   // `styles`. Omitted entirely when CSS-free (for exactOptionalPropertyTypes).
-  const stylesOf = (id: string): { styles?: readonly string[] } => {
+  const stylesOf = (id: string): { styles?: readonly string[]; cssLoading?: CssLoadingMode } => {
     const perRoute = options.routeStyles?.[id]
-    if (perRoute !== undefined) return { styles: perRoute }
-    return options.styles && options.styles.length > 0 ? { styles: options.styles } : {}
+    const styles = perRoute ?? options.styles
+    if (styles === undefined || styles.length === 0) return {}
+    return {
+      styles,
+      ...(cssLoading === "deferred" ? { cssLoading } : {}),
+    }
   }
   // Seed the context with the declared `Env` so `app.fetch(req, { env })` / `toFetchHandler(app)` type
   // the platform bindings (see the `createWebApp` doc). The runtime `env` still arrives per-request via

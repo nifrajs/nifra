@@ -53,6 +53,146 @@ export interface InstallHistoryOptions {
   readonly fallback?: (path: string) => void
 }
 
+/** Options for {@link waitForStyles}. */
+export interface WaitForStylesOptions {
+  /**
+   * Maximum time to wait for one framework-owned deferred stylesheet before hydrating anyway.
+   * Defaults to 4000 ms and is capped at 30000 ms so a bad value cannot leave the app inert forever.
+   */
+  readonly timeoutMs?: number
+}
+
+const DEFAULT_CSS_WAIT_MS = 4_000
+const MAX_CSS_WAIT_MS = 30_000
+type CssLinkState = "loaded" | "error" | "timeout"
+
+// Per-link promises keep repeated calls idempotent without retaining an entire document after a hard
+// navigation. A WeakMap also lets tests and embedded documents replace `globalThis.document` safely.
+const stylesheetWaits = new WeakMap<HTMLLinkElement, Promise<void>>()
+
+const cssLinkStateOf = (link: HTMLLinkElement): CssLinkState | undefined => {
+  const state = link.getAttribute("data-nifra-css-state")
+  return state === "loaded" || state === "error" || state === "timeout" ? state : undefined
+}
+
+const hasLoadedStylesheet = (link: HTMLLinkElement): boolean => {
+  // Accessing `sheet` is safe for cross-origin stylesheets, but a browser may still throw while it is
+  // tearing down a document. Treat that as "not observed yet"; the load/error listener or the bounded
+  // timer is the authoritative fallback.
+  try {
+    return link.sheet !== null
+  } catch {
+    return false
+  }
+}
+
+const stylesheetLabel = (link: HTMLLinkElement): string =>
+  link.getAttribute("href") ?? link.href ?? "<unknown>"
+
+/**
+ * Wait for one server-emitted deferred stylesheet. The promise ALWAYS settles: a failed or slow CSS
+ * request must not leave the server-rendered page's loader visible forever. `media="all"` is applied on
+ * every terminal state so a late network completion cannot leave a link permanently in print media.
+ */
+const waitForStylesheet = (link: HTMLLinkElement, timeoutMs: number): Promise<void> =>
+  new Promise<void>((resolve) => {
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+
+    const cleanup = (): void => {
+      link.removeEventListener("load", onLoad)
+      link.removeEventListener("error", onError)
+      if (timer !== undefined) clearTimeout(timer)
+    }
+    const finish = (state: CssLinkState): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      link.setAttribute("data-nifra-css-state", state)
+      // Only the coordinator promotes the framework-owned link, after the resource has settled.
+      link.media = "all"
+      resolve()
+    }
+    const onLoad = (): void => finish("loaded")
+    const onError = (): void => {
+      console.error(`[nifra/web] stylesheet failed to load: ${stylesheetLabel(link)}`)
+      finish("error")
+    }
+
+    const prior = cssLinkStateOf(link)
+    if (prior !== undefined) {
+      finish(prior)
+      return
+    }
+    if (hasLoadedStylesheet(link)) {
+      finish("loaded")
+      return
+    }
+
+    // Attach listeners before the second loaded-sheet check: a cached resource can transition between
+    // the first check and listener registration, and the second check closes that small race.
+    link.addEventListener("load", onLoad, { once: true })
+    link.addEventListener("error", onError, { once: true })
+    timer = setTimeout(() => {
+      console.warn(
+        `[nifra/web] stylesheet load timed out after ${timeoutMs}ms: ${stylesheetLabel(link)}`,
+      )
+      finish("timeout")
+    }, timeoutMs)
+    if (hasLoadedStylesheet(link)) finish("loaded")
+  })
+
+const validateCssWaitMs = (value: number): number => {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new RangeError(
+      `[nifra/web] css wait timeout must be a finite positive number, received ${value}`,
+    )
+  }
+  return Math.min(value, MAX_CSS_WAIT_MS)
+}
+
+/**
+ * Wait for the framework-owned deferred stylesheet links in the initial document, then promote them to
+ * `media="all"`. It is safe to call more than once: repeated calls for one document share the same
+ * per-link waits, and duplicate framework links are removed before waiting. Blocking links are not
+ * touched.
+ *
+ * This function lives in the browser-only `@nifrajs/web/client` entry. It is nevertheless defensive
+ * when imported in a non-DOM environment so an accidental import cannot crash a server process.
+ */
+export function waitForStyles(options: WaitForStylesOptions = {}): Promise<void> {
+  if (typeof document === "undefined") return Promise.resolve()
+  const timeoutMs = validateCssWaitMs(options.timeoutMs ?? DEFAULT_CSS_WAIT_MS)
+  const links = Array.from(
+    document.querySelectorAll<HTMLLinkElement>('link[data-nifra-css="deferred"]'),
+  ).filter(
+    (link) =>
+      link.getAttribute("data-nifra-css") === "deferred" && link.rel.toLowerCase() === "stylesheet",
+  )
+  const unique: HTMLLinkElement[] = []
+  const seen = new Set<string>()
+  for (const link of links) {
+    const key = stylesheetLabel(link)
+    if (seen.has(key)) {
+      // Only remove a duplicate carrying the framework marker; author-owned links are outside this
+      // selector and cannot be affected. Keeping the first link preserves its event state and cache.
+      link.remove()
+      continue
+    }
+    seen.add(key)
+    unique.push(link)
+  }
+  if (unique.length === 0) return Promise.resolve()
+  const promises = unique.map((link) => {
+    const existing = stylesheetWaits.get(link)
+    if (existing !== undefined) return existing
+    const promise = waitForStylesheet(link, timeoutMs)
+    stylesheetWaits.set(link, promise)
+    return promise
+  })
+  return Promise.all(promises).then(() => undefined)
+}
+
 /**
  * Attach history + link interception to a router. Returns a teardown function that removes the
  * listeners. A data-fetch failure during a client navigation falls back to a full-page load, so

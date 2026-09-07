@@ -41,6 +41,8 @@ export interface HttpAgentTransportOptions {
   readonly authorize?: AuthProvider
   /** Injectable fetch for tests and non-DOM hosts. Defaults to the ambient `fetch`. */
   readonly fetch?: typeof fetch
+  /** Maximum response bytes retained by command and SSE reads. Defaults to 8 MiB. */
+  readonly maxResponseBytes?: number
 }
 
 /** Thrown only for transport-level faults (network, malformed body). Carries no credential. */
@@ -59,6 +61,7 @@ export class HttpAgentTransport implements AgentTransport {
   private readonly url: string
   private readonly authorize: AuthProvider | undefined
   private readonly fetchImpl: typeof fetch
+  private readonly maxResponseBytes: number
 
   constructor(options: HttpAgentTransportOptions) {
     if (typeof options.endpoint !== "string" || options.endpoint.length === 0)
@@ -68,6 +71,8 @@ export class HttpAgentTransport implements AgentTransport {
     const bound = options.fetch ?? globalThis.fetch
     if (typeof bound !== "function") throw new TypeError("agent transport: no fetch available")
     this.fetchImpl = bound.bind(globalThis)
+    this.maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES
+    assertResponseLimit(this.maxResponseBytes)
   }
 
   private async headers(accept: string): Promise<Headers> {
@@ -90,7 +95,7 @@ export class HttpAgentTransport implements AgentTransport {
     } catch (error) {
       throw new AgentTransportError(request.method, describe(error))
     }
-    const text = await response.text()
+    const text = await readResponseText(response, request.method, this.maxResponseBytes)
     if (!response.ok)
       return { ok: false, status: response.status, error: text || response.statusText }
     if (text.length === 0) return { ok: true, status: response.status, value: undefined as T }
@@ -114,11 +119,11 @@ export class HttpAgentTransport implements AgentTransport {
       throw new AgentTransportError(request.method, describe(error))
     }
     if (!response.ok) {
-      const text = await response.text()
+      const text = await readResponseText(response, request.method, this.maxResponseBytes)
       throw new AgentTransportError(request.method, text || `status ${response.status}`)
     }
     if (response.body === null) return
-    yield* parseEventStream(response.body, request.method)
+    yield* parseEventStream(response.body, request.method, this.maxResponseBytes)
   }
 }
 
@@ -126,34 +131,76 @@ export class HttpAgentTransport implements AgentTransport {
 export async function* parseEventStream(
   body: ReadableStream<Uint8Array>,
   method: string,
+  maxFrameBytes = DEFAULT_MAX_RESPONSE_BYTES,
 ): AsyncIterable<AgentEvent> {
+  assertResponseLimit(maxFrameBytes)
   const reader = body.getReader()
   const decoder = new TextDecoder()
+  const encoder = new TextEncoder()
   let buffer = ""
+  let reachedEof = false
   try {
     for (;;) {
       const chunk = await reader.read()
-      if (chunk.done) break
+      if (chunk.done) {
+        reachedEof = true
+        buffer += decoder.decode()
+        let boundary = sseBoundary(buffer)
+        while (boundary !== undefined) {
+          const frame = buffer.slice(0, boundary.index)
+          buffer = buffer.slice(boundary.end)
+          if (encoder.encode(frame).byteLength > maxFrameBytes)
+            throw new AgentTransportError(method, "SSE frame exceeds the configured response limit")
+          const event = frameToEvent(frame)
+          if (event !== undefined) yield event
+          boundary = sseBoundary(buffer)
+        }
+        if (encoder.encode(buffer).byteLength > maxFrameBytes)
+          throw new AgentTransportError(method, "SSE frame exceeds the configured response limit")
+        const event = frameToEvent(buffer)
+        if (event !== undefined) yield event
+        break
+      }
       buffer += decoder.decode(chunk.value, { stream: true })
-      let boundary = buffer.indexOf("\n\n")
-      while (boundary !== -1) {
-        const frame = buffer.slice(0, boundary)
-        buffer = buffer.slice(boundary + 2)
+      let boundary = sseBoundary(buffer)
+      while (boundary !== undefined) {
+        const frame = buffer.slice(0, boundary.index)
+        buffer = buffer.slice(boundary.end)
+        if (encoder.encode(frame).byteLength > maxFrameBytes)
+          throw new AgentTransportError(method, "SSE frame exceeds the configured response limit")
         const event = frameToEvent(frame)
         if (event !== undefined) yield event
-        boundary = buffer.indexOf("\n\n")
+        boundary = sseBoundary(buffer)
+      }
+      if (encoder.encode(buffer).byteLength > maxFrameBytes) {
+        try {
+          await reader.cancel()
+        } catch {
+          // Preserve the bounded transport error if the source has already closed.
+        }
+        throw new AgentTransportError(method, "SSE frame exceeds the configured response limit")
       }
     }
   } catch (error) {
+    if (error instanceof AgentTransportError) throw error
     throw new AgentTransportError(method, describe(error))
   } finally {
+    if (!reachedEof) {
+      // Releasing a reader lock does not stop the response producer. Cancel the body when a
+      // consumer breaks early so sockets, server-side work, and buffered chunks can be reclaimed.
+      try {
+        await reader.cancel()
+      } catch {
+        // Preserve the original transport/read error, or the consumer's early-return semantics.
+      }
+    }
     reader.releaseLock()
   }
 }
 
 function frameToEvent(frame: string): AgentEvent | undefined {
   const data = frame
-    .split("\n")
+    .split(/\r\n|\n|\r/)
     .filter((line) => line.startsWith("data:"))
     .map((line) => line.slice(5).replace(/^ /, ""))
     .join("\n")
@@ -165,6 +212,96 @@ function frameToEvent(frame: string): AgentEvent | undefined {
     return undefined
   }
   return isAgentEvent(value) ? value : undefined
+}
+
+function sseBoundary(value: string): { readonly index: number; readonly end: number } | undefined {
+  for (let index = 0; index < value.length; index++) {
+    const firstLength = lineEndingLength(value, index)
+    if (firstLength === undefined) return undefined
+    if (firstLength === 0) continue
+    const secondIndex = index + firstLength
+    const secondLength = lineEndingLength(value, secondIndex)
+    if (secondLength === undefined) return undefined
+    if (secondLength > 0) return { index, end: secondIndex + secondLength }
+    index = secondIndex
+  }
+  return undefined
+}
+
+function lineEndingLength(value: string, index: number): number | undefined {
+  const character = value[index]
+  if (character === "\n") return 1
+  if (character !== "\r") return 0
+  if (index + 1 >= value.length) return undefined
+  return value[index + 1] === "\n" ? 2 : 1
+}
+
+const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+const MAX_RESPONSE_BYTES = 64 * 1024 * 1024
+
+function assertResponseLimit(value: number): void {
+  if (!Number.isSafeInteger(value) || value < 1_024 || value > MAX_RESPONSE_BYTES)
+    throw new RangeError(
+      `agent transport: maxResponseBytes must be between 1024 and ${MAX_RESPONSE_BYTES}`,
+    )
+}
+
+async function readResponseText(
+  response: Response,
+  method: string,
+  maxBytes: number,
+): Promise<string> {
+  const declared = decimalHeader(response.headers.get("content-length"))
+  if (declared !== undefined && declared > maxBytes) {
+    try {
+      await response.body?.cancel()
+    } catch {
+      // The response is already over its cap; cancellation failure must not replace the useful error.
+    }
+    throw new AgentTransportError(method, "response body exceeds the configured limit")
+  }
+  if (response.body === null) return ""
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value === undefined || value.byteLength > maxBytes - total) {
+        try {
+          await reader.cancel()
+        } catch {
+          // Preserve the bounded transport error if the source has already closed.
+        }
+        throw new AgentTransportError(method, "response body exceeds the configured limit")
+      }
+      total += value.byteLength
+      chunks.push(value)
+    }
+  } catch (error) {
+    if (error instanceof AgentTransportError) throw error
+    throw new AgentTransportError(method, describe(error))
+  } finally {
+    reader.releaseLock()
+  }
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new TextDecoder().decode(bytes)
+}
+
+function decimalHeader(value: string | null): number | undefined {
+  if (value === null || !/^\d+$/.test(value)) return undefined
+  let result = 0
+  for (const character of value) {
+    result = result * 10 + (character.charCodeAt(0) - 48)
+    if (!Number.isSafeInteger(result)) return Number.POSITIVE_INFINITY
+  }
+  return result
 }
 
 function serialize(request: AgentTransportRequest): string {

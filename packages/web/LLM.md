@@ -18,6 +18,7 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 - **aggregateSizeReport** _(function)_ - `aggregateSizeReport: (chunks: readonly ChunkSize[]) => SizeReport` · from `@nifrajs/web/build`
 - **applyHead** _(function)_ - `applyHead: (head: Meta) => void` · from `@nifrajs/web/client`
 - **applyResponseHeaders** _(function)_ - `applyResponseHeaders: (headers: Headers, res: NodeHeaderSink) => void` · from `@nifrajs/web/vite`
+- **assertCssLoadingCompatible** _(function)_ - `assertCssLoadingCompatible: (cssCodeSplit: boolean, cssLoading: CssLoadingMode) => void` · from `@nifrajs/web`
 - **assertRenderAdapterConformance** _(function)_ - `assertRenderAdapterConformance: (adapter: RenderAdapter, fixture: RenderAdapterConformanceFixture) => Promise<void>` · from `@nifrajs/web`
 - **assertStaticBoundaryImports** _(function)_ - `assertStaticBoundaryImports: (roots: readonly StaticBoundaryRoot[], edges: readonly StaticBoundaryImportEdge[], requestScopedModules: Reado…` · from `@nifrajs/web`
 - **bind** _(function)_ - `bind: <T>(el: HTMLElement, source: Readable<T>, apply: (el: HTMLElement, value: T) => void) => () => void` · from `@nifrajs/web/nano`
@@ -27,9 +28,8 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 - **boundaryModeKey** _(function)_ - `boundaryModeKey: (mode: BoundaryMode) => string` · from `@nifrajs/web`
 - **buildClient** _(function)_ - `buildClient: (options: BuildClientOptions) => Promise<BuildManifest>` · from `@nifrajs/web/build`
 - **buildClientVite** _(function)_ - `buildClientVite: (options: BuildClientViteOptions) => Promise<BuildManifest>` · from `@nifrajs/web/build-vite`
-- **buildCodeframe** _(function)_ - `buildCodeframe: (file: string, line: number, column: number | undefined, read?: SourceReader, radius?: number) => Codeframe | undefined` · from `@nifrajs/web/diagnostic`
 
-_…and 396 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 407 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 

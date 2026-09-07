@@ -35,6 +35,8 @@ export interface McpAppBridge {
   onTheme(cb: (theme: unknown) => void): void
   /** Invoke a tool back through the host; resolves with the tools/call result. */
   callTool(name: string, args?: Record<string, unknown>): Promise<unknown>
+  /** Reject pending calls when the embedding host tears down the widget. */
+  disconnect(reason?: string): void
 }
 
 /** The bridge source, as a string for inlining in a `<script>`. Self-contained, no imports. */
@@ -46,11 +48,44 @@ export function bridgeScript(): string {
 // global or strip it, and so it has zero dependency on this module's runtime. Intentionally ES5-ish for
 // maximal host/iframe compatibility.
 const BRIDGE_SOURCE = `(function () {
-  var pending = {};
+  var pending = Object.create(null);
   var nextId = 1;
+  var maxPending = 64;
+  var maxCallbacks = 128;
+  var maxNameLength = 128;
+  var maxArgsChars = 65536;
+  var maxReasonLength = 512;
+  var callTimeoutMs = 30000;
+  var disconnected = false;
   var dataCbs = [];
   var inputCbs = [];
   var themeCbs = [];
+  function boundedReason(reason) {
+    return typeof reason === "string" && reason.length > 0
+      ? reason.slice(0, maxReasonLength)
+      : "mcp host disconnected";
+  }
+  function boundedArgs(args) {
+    if (args == null) return {};
+    if (typeof args !== "object" || Array.isArray(args)) return null;
+    try {
+      var encoded = JSON.stringify(args);
+      if (typeof encoded !== "string" || encoded.length > maxArgsChars) return null;
+      return JSON.parse(encoded);
+    } catch (e) {
+      return null;
+    }
+  }
+  function disconnect(reason) {
+    disconnected = true;
+    var message = boundedReason(reason);
+    for (var id in pending) {
+      if (!Object.prototype.hasOwnProperty.call(pending, id)) continue;
+      var item = pending[id]; delete pending[id];
+      if (item.timer) clearTimeout(item.timer);
+      try { item.reject(new Error(message)); } catch (e) {}
+    }
+  }
   function applyTheme(theme) {
     if (!theme || typeof theme !== "object") return;
     var root = document.documentElement;
@@ -72,22 +107,42 @@ const BRIDGE_SOURCE = `(function () {
     theme: null,
     onData: function (cb) {
       if (typeof cb !== "function") return;
+      if (dataCbs.length >= maxCallbacks) return;
       dataCbs.push(cb);
       if (api.data !== null) { try { cb(api.data); } catch (e) {} }
     },
-    onInput: function (cb) { if (typeof cb === "function") inputCbs.push(cb); },
+    onInput: function (cb) {
+      if (typeof cb !== "function" || inputCbs.length >= maxCallbacks) return;
+      inputCbs.push(cb);
+    },
     onTheme: function (cb) {
       if (typeof cb !== "function") return;
+      if (themeCbs.length >= maxCallbacks) return;
       themeCbs.push(cb);
       if (api.theme !== null) { try { cb(api.theme); } catch (e) {} }
     },
     callTool: function (name, args) {
+      if (disconnected) return Promise.reject(new Error("mcp host disconnected"));
+      if (typeof name !== "string" || name.length === 0 || name.length > maxNameLength)
+        return Promise.reject(new Error("mcp host tool name is invalid"));
+      var safeArgs = boundedArgs(args);
+      if (safeArgs === null) return Promise.reject(new Error("mcp host tool arguments are invalid"));
+      var count = 0;
+      for (var key in pending) if (Object.prototype.hasOwnProperty.call(pending, key)) count++;
+      if (count >= maxPending) return Promise.reject(new Error("mcp host call limit reached"));
       var id = "w" + nextId++;
       return new Promise(function (resolve, reject) {
-        pending[id] = { resolve: resolve, reject: reject };
-        post({ jsonrpc: "2.0", id: id, method: "tools/call", params: { name: name, arguments: args || {} } });
+        var timer = setTimeout(function () {
+          var item = pending[id];
+          if (!item) return;
+          delete pending[id];
+          try { item.reject(new Error("mcp host call timed out")); } catch (e) {}
+        }, callTimeoutMs);
+        pending[id] = { resolve: resolve, reject: reject, timer: timer };
+        post({ jsonrpc: "2.0", id: id, method: "tools/call", params: { name: name, arguments: safeArgs } });
       });
-    }
+    },
+    disconnect: function (reason) { disconnect(reason); }
   };
   function post(msg) { try { (window.parent || window).postMessage(msg, "*"); } catch (e) {} }
   function emit(list, value) { for (var i = 0; i < list.length; i++) { try { list[i](value); } catch (e) {} } }
@@ -102,6 +157,7 @@ const BRIDGE_SOURCE = `(function () {
     // A response to one of our tools/call requests (id-matched).
     if (msg.id != null && pending[msg.id]) {
       var p = pending[msg.id]; delete pending[msg.id];
+      if (p.timer) clearTimeout(p.timer);
       if (msg.error) p.reject(msg.error); else p.resolve(msg.result);
       return;
     }
@@ -118,6 +174,8 @@ const BRIDGE_SOURCE = `(function () {
       api.theme = theme;
       applyTheme(theme);
       emit(themeCbs, theme);
+    } else if (msg.method === "ui/notifications/disconnected") {
+      disconnect((msg.params || {}).reason);
     }
   });
   window.mcpApp = api;

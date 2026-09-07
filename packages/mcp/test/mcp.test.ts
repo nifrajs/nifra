@@ -5,6 +5,7 @@ import {
   defineMcpWidget,
   handleRpc,
   MCP_ERROR,
+  type McpHttpOptions,
   type McpTool,
   MODERN_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
@@ -13,7 +14,7 @@ import {
   UI_EXTENSION_KEY,
   UI_MIME,
 } from "../src/index.ts"
-import { createMcpProtocolState } from "../src/protocol.ts"
+import { createMcpProtocolState, isJsonRpcRequest, isJsonRpcResponse } from "../src/protocol.ts"
 
 const INFO = { name: "test", version: "0.0.0" }
 
@@ -42,6 +43,21 @@ const progressTool = defineMcpTool({
     return "complete"
   },
 })
+
+let releaseSlow: (() => void) | undefined
+let slowSignal: AbortSignal | undefined
+const slowTool: McpTool = {
+  name: "slow",
+  description: "waits for cancellation or release",
+  inputSchema: { type: "object" },
+  handler: (_args, context) => {
+    slowSignal = context.signal
+    return new Promise<string>((resolve) => {
+      releaseSlow = () => resolve("done")
+      context.signal.addEventListener("abort", () => resolve("done"), { once: true })
+    })
+  },
+}
 
 describe("defineMcpWidget", () => {
   test("rejects a non-ui:// uri", () => {
@@ -73,6 +89,14 @@ describe("defineMcpWidget", () => {
     expect(text).toContain("ui/notifications/theme")
     expect(text).toContain("setProperty")
     expect(text).toContain("colorScheme")
+  })
+
+  test("the bridge bounds and cleans pending tool calls", async () => {
+    const { text } = await widget.resource.read()
+    expect(text).toContain("maxPending")
+    expect(text).toContain("call timed out")
+    expect(text).toContain("ui/notifications/disconnected")
+    expect(text).toContain("disconnect: function")
   })
 })
 
@@ -201,6 +225,17 @@ describe("defineMcpTool - standard-schema input", () => {
 describe("handleRpc - MCP Apps extensions", () => {
   const features = { resources: [widget.resource], ui: { mimeTypes: [UI_MIME] } }
 
+  test("direct dispatch rejects malformed JSON-RPC envelopes too", async () => {
+    for (const value of [null, [], { method: 1 }, { method: "x", params: [] }]) {
+      const response = await handleRpc(value as never, [ordersTool], INFO)
+      expect(response).toMatchObject({
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32600, message: "Invalid Request" },
+      })
+    }
+  })
+
   test("initialize advertises the io.modelcontextprotocol/ui extension", async () => {
     const res = await handleRpc({ id: 1, method: "initialize" }, [ordersTool], INFO, features)
     const caps = (res as { result: { capabilities: Record<string, unknown> } }).result.capabilities
@@ -274,6 +309,119 @@ describe("handleRpc - MCP Apps extensions", () => {
     expect((res as { result: Record<string, unknown> }).result).toEqual({
       content: [{ type: "text", text: "pong" }],
     })
+  })
+
+  test("rejects non-object tool and prompt arguments before invoking application code", async () => {
+    let toolCalls = 0
+    const tool: McpTool = {
+      name: "strict",
+      description: "strict arguments",
+      inputSchema: { type: "object" },
+      handler: async () => {
+        toolCalls += 1
+        return "ok"
+      },
+    }
+    const toolResult = await handleRpc(
+      { id: 6, method: "tools/call", params: { name: "strict", arguments: null } },
+      [tool],
+      INFO,
+    )
+    expect(toolResult).toMatchObject({ error: { code: -32602 } })
+    expect(toolCalls).toBe(0)
+
+    const promptResult = await handleRpc(
+      { id: 7, method: "prompts/get", params: { name: "strict-prompt", arguments: [] } },
+      [],
+      INFO,
+      {
+        prompts: [
+          {
+            name: "strict-prompt",
+            description: "strict arguments",
+            handler: async () => [{ role: "user", content: { type: "text", text: "ok" } }],
+          },
+        ],
+      },
+    )
+    expect(promptResult).toMatchObject({ error: { code: -32602 } })
+  })
+})
+
+describe("JSON-RPC envelope guards", () => {
+  test("accepts valid requests and notifications, including boundary ids and params", () => {
+    expect(isJsonRpcRequest({ method: "ping" })).toBe(true)
+    expect(isJsonRpcRequest({ jsonrpc: "2.0", id: null, method: "ping", params: {} })).toBe(true)
+    expect(isJsonRpcRequest({ jsonrpc: "2.0", id: "request-1", method: "ping" })).toBe(true)
+    expect(isJsonRpcRequest({ jsonrpc: "2.0", id: Number.MAX_SAFE_INTEGER, method: "ping" })).toBe(
+      true,
+    )
+    expect(isJsonRpcRequest({ jsonrpc: "2.0", id: 0, method: "ping", params: null })).toBe(false)
+  })
+
+  test("rejects non-request values and response-shaped envelopes", () => {
+    for (const value of [null, undefined, [], "request", 1, true, { result: {} }, { error: {} }]) {
+      expect(isJsonRpcRequest(value)).toBe(false)
+    }
+    expect(isJsonRpcRequest({ method: "ping", result: {} })).toBe(false)
+    expect(isJsonRpcRequest({ method: "ping", error: { code: -1, message: "no" } })).toBe(false)
+  })
+
+  test("rejects malformed request fields and oversized values", () => {
+    const invalid = [
+      {},
+      { method: 1 },
+      { method: "" },
+      { method: "m".repeat(129) },
+      { jsonrpc: "1.0", method: "ping" },
+      { jsonrpc: null, method: "ping" },
+      { method: "ping", id: {} },
+      { method: "ping", id: Number.MAX_SAFE_INTEGER + 1 },
+      { method: "ping", id: "i".repeat(129) },
+      { method: "ping", params: null },
+      { method: "ping", params: [] },
+      { method: "ping", params: "invalid" },
+    ]
+    for (const value of invalid) expect(isJsonRpcRequest(value)).toBe(false)
+  })
+
+  test("accepts valid result and error responses", () => {
+    expect(isJsonRpcResponse({ jsonrpc: "2.0", id: null, result: {} })).toBe(true)
+    expect(isJsonRpcResponse({ jsonrpc: "2.0", id: "response-1", result: null })).toBe(true)
+    expect(
+      isJsonRpcResponse({
+        jsonrpc: "2.0",
+        id: Number.MAX_SAFE_INTEGER,
+        error: { code: -32600, message: "Invalid Request", data: { field: "id" } },
+      }),
+    ).toBe(true)
+  })
+
+  test("rejects malformed response envelopes, ids, and errors", () => {
+    const invalid = [
+      null,
+      undefined,
+      [],
+      "response",
+      1,
+      { jsonrpc: "1.0", id: 1, result: {} },
+      { jsonrpc: "2.0", id: 1, method: "ping", result: {} },
+      { jsonrpc: "2.0", id: 1, params: {}, result: {} },
+      { jsonrpc: "2.0", id: {}, result: {} },
+      { jsonrpc: "2.0", id: Number.MAX_SAFE_INTEGER + 1, result: {} },
+      { jsonrpc: "2.0", id: "i".repeat(129), result: {} },
+      { jsonrpc: "2.0", id: 1 },
+      { jsonrpc: "2.0", id: 1, result: {}, error: { code: 0, message: "both" } },
+      { jsonrpc: "2.0", id: 1, error: null },
+      { jsonrpc: "2.0", id: 1, error: [] },
+      { jsonrpc: "2.0", id: 1, error: "invalid" },
+      { jsonrpc: "2.0", id: 1, error: { code: "-32600", message: "bad code" } },
+      { jsonrpc: "2.0", id: 1, error: { code: Number.MAX_SAFE_INTEGER + 1, message: "bad code" } },
+      { jsonrpc: "2.0", id: 1, error: { code: -32600, message: 1 } },
+      { jsonrpc: "2.0", id: 1, error: { code: -32600, message: "" } },
+      { jsonrpc: "2.0", id: 1, error: { code: -32600, message: "m".repeat(129) } },
+    ]
+    for (const value of invalid) expect(isJsonRpcResponse(value)).toBe(false)
   })
 })
 
@@ -409,7 +557,7 @@ describe("createMcpServer.fetch - end to end over HTTP", () => {
 })
 
 describe("respondMcpHttp - transport hardening", () => {
-  const serve = (request: Request, options = {}): Promise<Response> =>
+  const serve = (request: Request, options: McpHttpOptions = {}): Promise<Response> =>
     respondMcpHttp(request, [ordersTool], INFO, options)
   const post = (body: unknown, headers: Record<string, string> = {}): Request =>
     new Request("http://x/mcp", {
@@ -433,6 +581,14 @@ describe("respondMcpHttp - transport hardening", () => {
         maxBodyBytes: Number.NaN,
       }),
     ).rejects.toThrow(/maxBodyBytes/)
+  })
+
+  test("rejects an unsafe response cap before dispatch", async () => {
+    await expect(
+      serve(post({ jsonrpc: "2.0", id: 1, method: "initialize" }), {
+        maxResponseBytes: 512,
+      }),
+    ).rejects.toThrow(/maxResponseBytes/)
   })
 
   test("a notification (no id) is acknowledged with 202 and an empty body", async () => {
@@ -512,6 +668,99 @@ describe("respondMcpHttp - transport hardening", () => {
       { maxBodyBytes: 2 },
     )
     expect(oversized.status).toBe(413)
+  })
+
+  test("caps an oversized serialized response with a generic JSON-RPC error", async () => {
+    const huge: McpTool = {
+      name: "huge",
+      description: "large response",
+      inputSchema: { type: "object" },
+      handler: async () => ({ structuredContent: { value: "x".repeat(20_000) } }),
+    }
+    const response = await respondMcpHttp(
+      post({ jsonrpc: "2.0", id: 31, method: "tools/call", params: { name: "huge" } }),
+      [huge],
+      INFO,
+      { maxResponseBytes: 1_024 },
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      jsonrpc: "2.0",
+      id: 31,
+      error: { code: -32000, message: "response too large" },
+    })
+  })
+
+  test("invalid JSON-RPC envelopes return -32600 instead of throwing or becoming notifications", async () => {
+    for (const value of [null, [], "x", 1, true, {}, { method: 1 }, { method: "x", params: [] }]) {
+      const response = await serve(post(value))
+      expect(response.status).toBe(400)
+      const body = (await response.json()) as { id: unknown; error: { code: number } }
+      expect(body.id).toBeNull()
+      expect(body.error.code).toBe(-32600)
+    }
+    const legacy = await serve(post({ method: "ping", id: 1 }))
+    expect(legacy.status).toBe(200)
+  })
+
+  test("HTTP rejects a mixed request/response envelope before authorization", async () => {
+    let authorized = false
+    const response = await respondMcpHttp(
+      new Request("http://localhost/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping", result: {} }),
+      }),
+      [],
+      INFO,
+      { authorizeMessage: () => (authorized = true) },
+    )
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({ error: { code: -32600 } })
+    expect(authorized).toBe(false)
+  })
+
+  test("authorization failures fail closed without exposing callback errors", async () => {
+    const response = await serve(post({ jsonrpc: "2.0", id: 1, method: "ping" }), {
+      authorizeMessage: () => {
+        throw new Error("private verifier detail")
+      },
+    })
+    expect(response.status).toBe(403)
+    const body = await response.text()
+    expect(body).not.toContain("private verifier detail")
+    expect(body).toContain("unauthorized")
+  })
+
+  test("a shared session state lets a separate cancellation notification abort the active call", async () => {
+    const state = createMcpProtocolState()
+    const call = respondMcpHttp(
+      post({ jsonrpc: "2.0", id: 77, method: "tools/call", params: { name: "slow" } }),
+      [slowTool],
+      INFO,
+      { state },
+    )
+    while (slowSignal === undefined) await Promise.resolve()
+    const cancelled = await respondMcpHttp(
+      post({
+        jsonrpc: "2.0",
+        method: "notifications/cancelled",
+        params: { requestId: 77, reason: "user left" },
+      }),
+      [slowTool],
+      INFO,
+      { state },
+    )
+    expect(cancelled.status).toBe(202)
+    const result = await (await call).json()
+    expect(slowSignal?.aborted).toBe(true)
+    expect(result).toMatchObject({
+      id: 77,
+      result: { isError: true },
+    })
+    releaseSlow?.()
+    slowSignal = undefined
+    releaseSlow = undefined
   })
 
   test("POST streams progress notifications before the final JSON-RPC response", async () => {
