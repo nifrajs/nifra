@@ -26,12 +26,13 @@ import {
   collectCheckDiagnostics,
   type RuleOverride,
 } from "./check-diagnostics.ts"
+import { checkContractsLock, DEFAULT_CONTRACTS_LOCK } from "./contracts.ts"
 import { type Diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
 import { createSourceFacts } from "./internal/source-facts.ts"
 import { importProjectTypeScript, type TypeScriptApi } from "./internal/typescript-import.ts"
 // Type-only: `pipeline-report.ts` imports this module's source scanners, so a value import here would
 // close a cycle. Doctor is what actually runs the collector (see the `pipeline` rule below).
-import type { ProjectFactsSeed } from "./project-facts.ts"
+import type { ContractCheckFacts, ProjectFactsSeed } from "./project-facts.ts"
 import { RULE_CODES } from "./rules/codes.ts"
 import { sourceIndex } from "./rules/index.ts"
 
@@ -231,10 +232,30 @@ interface CheckCollectionOptions {
 
 interface ProjectScan {
   readonly facts: ProjectFactsSeed
-  readonly typecheck: TypecheckResult
-  readonly sqlCompiler: TypeScriptApi | undefined
-  readonly checkConfigError?: string
-  readonly checkConfigWarnings: readonly string[]
+}
+
+async function collectContractFacts(cwd: string): Promise<ContractCheckFacts> {
+  const hasBackend = existsSync(join(cwd, "backend.ts"))
+  const hasLock = existsSync(join(cwd, DEFAULT_CONTRACTS_LOCK))
+  if (!hasBackend && !hasLock) return { present: false, vacuous: false, diagnostics: [] }
+  try {
+    const result = await checkContractsLock(cwd)
+    return {
+      present: result.present,
+      vacuous: result.vacuous,
+      diagnostics: result.diagnostics,
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === "contract source not configured") {
+      return { present: false, vacuous: false, diagnostics: [] }
+    }
+    return {
+      present: hasLock,
+      vacuous: false,
+      diagnostics: [],
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
 }
 
 /** Build the rule input from one source walk and the other check-wide scans. */
@@ -260,7 +281,7 @@ async function buildProjectScan(
   const sourceFacts = sqlCompiler === undefined ? undefined : createSourceFacts(sqlCompiler)
   const sqlImports = sqlCompiler === undefined ? undefined : createProjectSqlImports(cwd)
 
-  const [typecheckResult, _, doctor, manifestDrift] = await Promise.all([
+  const [typecheckResult, _, doctor, manifestDrift, contracts] = await Promise.all([
     opts.lintsOnly
       ? Promise.resolve<TypecheckResult>({ ran: false, ok: true, note: "lints-only mode" })
       : typecheck(cwd, opts.signal),
@@ -277,6 +298,7 @@ async function buildProjectScan(
     }),
     import("./doctor.ts").then((m) => m.collectDoctorResult(cwd)),
     scanServerManifestDrift(cwd),
+    collectContractFacts(cwd),
   ])
 
   const resolveModule: ModuleResolver = (fromFile, specifier) => {
@@ -308,14 +330,17 @@ async function buildProjectScan(
     packages: { doctor, manifestDrift },
     ...(doctor.pipeline === undefined ? {} : { pipeline: doctor.pipeline }),
     policies: { checkConfig, rulePacks: [] },
+    check: {
+      typecheck: typecheckResult,
+      sqlCompilerAvailable: sqlCompiler !== undefined,
+      ...(checkConfigError === undefined ? {} : { checkConfigError }),
+      checkConfigWarnings,
+      contracts,
+    },
     sourceFindings: { fetches, untypedClients, removedImports, responseRoutes, interpolatedSql },
   }
   return {
     facts,
-    typecheck: typecheckResult,
-    sqlCompiler,
-    ...(checkConfigError === undefined ? {} : { checkConfigError }),
-    checkConfigWarnings,
   }
 }
 

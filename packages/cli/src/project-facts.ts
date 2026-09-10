@@ -1,5 +1,9 @@
 import type { CapabilityProjectReport } from "./capabilities-tool.ts"
-import type { CheckAssuranceContext, CheckConfig, CheckDiagnostic } from "./check-diagnostics.ts"
+import type {
+  CheckAssuranceContext,
+  CheckConfig,
+  CheckTypecheckResult,
+} from "./check-diagnostics.ts"
 import type {
   ManifestDriftFinding,
   SourceFinding,
@@ -30,6 +34,22 @@ export interface ProjectPolicyFacts {
   readonly rulePacks: readonly RulePack[]
 }
 
+export interface ContractCheckFacts {
+  readonly present: boolean
+  readonly vacuous: boolean
+  readonly diagnostics: readonly { readonly route?: string; readonly message: string }[]
+  readonly error?: string
+}
+
+/** Check-wide inputs that rules format into diagnostics. Scanners populate facts; rules own policy. */
+export interface ProjectCheckFacts {
+  readonly typecheck: CheckTypecheckResult
+  readonly sqlCompilerAvailable: boolean
+  readonly checkConfigError?: string
+  readonly checkConfigWarnings: readonly string[]
+  readonly contracts: ContractCheckFacts
+}
+
 export interface ProjectFacts {
   readonly source: SourceIndex
   readonly routes: readonly StaticRouteFinding[]
@@ -37,11 +57,11 @@ export interface ProjectFacts {
   readonly packages: ProjectPackageFacts
   readonly pipeline?: PipelineReport
   readonly policies: ProjectPolicyFacts
+  readonly check: ProjectCheckFacts
   readonly sourceFindings: ProjectSourceFindings
-  readonly legacyDiagnostics: readonly CheckDiagnostic[]
 }
 
-export type ProjectFactsSeed = Omit<ProjectFacts, "legacyDiagnostics">
+export type ProjectFactsSeed = ProjectFacts
 
 function freezeFindings<T extends object>(findings: readonly T[]): readonly T[] {
   return Object.freeze(findings.map((finding) => Object.freeze({ ...finding })))
@@ -52,10 +72,7 @@ function freezeFindings<T extends object>(findings: readonly T[]): readonly T[] 
  * these copied, frozen collections. Policy/config objects remain caller-owned because assurance config
  * can contain executable adapters and must not be frozen as a side effect of checking.
  */
-export function freezeProjectFacts(
-  seed: ProjectFactsSeed,
-  legacyDiagnostics: readonly CheckDiagnostic[],
-): ProjectFacts {
+export function freezeProjectFacts(seed: ProjectFactsSeed): ProjectFacts {
   const sourceFindings: ProjectSourceFindings = Object.freeze({
     fetches: freezeFindings(seed.sourceFindings.fetches),
     untypedClients: freezeFindings(seed.sourceFindings.untypedClients),
@@ -66,6 +83,15 @@ export function freezeProjectFacts(
   const policies = Object.freeze({
     ...seed.policies,
     rulePacks: Object.freeze([...seed.policies.rulePacks]),
+  })
+  const check = Object.freeze({
+    ...seed.check,
+    typecheck: Object.freeze({ ...seed.check.typecheck }),
+    checkConfigWarnings: Object.freeze([...seed.check.checkConfigWarnings]),
+    contracts: Object.freeze({
+      ...seed.check.contracts,
+      diagnostics: freezeFindings(seed.check.contracts.diagnostics),
+    }),
   })
   return Object.freeze({
     ...seed,
@@ -78,7 +104,7 @@ export function freezeProjectFacts(
     }),
     ...(seed.pipeline === undefined ? {} : { pipeline: Object.freeze(seed.pipeline) }),
     policies,
+    check,
     sourceFindings,
-    legacyDiagnostics: freezeFindings(legacyDiagnostics),
   })
 }

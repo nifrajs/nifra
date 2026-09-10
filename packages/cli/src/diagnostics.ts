@@ -7,6 +7,32 @@ export interface DiagnosticFix {
   readonly command?: string
 }
 
+/**
+ * The richer compatibility view used by the original `nifra check` renderer. It is deliberately
+ * kept out of the enumerable diagnostic shape: SARIF, MCP structured output, and JSON consumers get
+ * the small stable diagnostic contract, while the legacy text view can still explain an exact edit.
+ */
+export interface DiagnosticCompatibility {
+  /** The pre-registry rule name used by the human/legacy check result. */
+  readonly rule: string
+  /** The old human-facing fix text, when the rule had one. */
+  readonly fix?: string
+  /** A richer legacy suggestion (diff, command, or manual steps). */
+  readonly suggestion?: DiagnosticSuggestion
+  /** The import path evidence used by the legacy server-only-import view. */
+  readonly chain?: readonly string[]
+  /** Preserve the old optional `CheckDiagnostic.code` field exactly where it existed. */
+  readonly includeCode?: boolean
+}
+
+export interface DiagnosticSuggestion {
+  readonly kind: "edit" | "command" | "manual"
+  readonly title: string
+  readonly diff?: string
+  readonly command?: readonly string[]
+  readonly steps?: readonly string[]
+}
+
 export interface Diagnostic {
   /** Stable forever. Never renumber or reuse. */
   readonly code: string
@@ -19,6 +45,35 @@ export interface Diagnostic {
   readonly fix?: DiagnosticFix
   /** Command that proves the fix worked. */
   readonly verify?: string
+}
+
+const DIAGNOSTIC_COMPATIBILITY = Symbol("nifra.diagnosticCompatibility")
+
+/** Attach legacy-only rendering metadata without widening the serialized diagnostic protocol. */
+export function diagnosticWithCompatibility(
+  value: Diagnostic,
+  compatibility: DiagnosticCompatibility,
+): Diagnostic {
+  const result = { ...value }
+  Object.defineProperty(result, DIAGNOSTIC_COMPATIBILITY, {
+    value: Object.freeze({
+      ...compatibility,
+      ...(compatibility.chain === undefined
+        ? {}
+        : { chain: Object.freeze([...compatibility.chain]) }),
+    }),
+    enumerable: false,
+  })
+  return Object.freeze(result)
+}
+
+/** Read legacy-only rendering metadata. Undefined means the diagnostic has no compatibility view. */
+export function diagnosticCompatibilityOf(value: Diagnostic): DiagnosticCompatibility | undefined {
+  return (
+    value as Diagnostic & {
+      readonly [DIAGNOSTIC_COMPATIBILITY]?: DiagnosticCompatibility
+    }
+  )[DIAGNOSTIC_COMPATIBILITY]
 }
 
 /** The subset of SARIF 2.1.0 emitted by {@link toSarifLog}. */

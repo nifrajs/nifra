@@ -672,7 +672,10 @@ Every public export of every package and documented subpath - name, kind, signat
 ### `@nifrajs/cli/diagnostics`
 
 - **Diagnostic** _(interface)_ - `interface Diagnostic`
+- **DiagnosticCompatibility** _(interface)_ - `interface DiagnosticCompatibility`
+  The richer compatibility view used by the original `nifra check` renderer. It is deliberately kept out of the enumerable diagnostic shape: SARIF, MCP structured output, and JSON consumers get the small stable diagnostic contract, while the legacy text view can still explain an exact edit.
 - **DiagnosticFix** _(interface)_ - `interface DiagnosticFix`
+- **DiagnosticSuggestion** _(interface)_ - `interface DiagnosticSuggestion`
 - **SarifLocation** _(interface)_ - `interface SarifLocation`
 - **SarifLog** _(interface)_ - `interface SarifLog`
   The subset of SARIF 2.1.0 emitted by {@link toSarifLog}.
@@ -683,6 +686,10 @@ Every public export of every package and documented subpath - name, kind, signat
 - **Severity** _(type)_ - `type Severity = "error" | "warn" | "info"`
   Stable, machine-actionable diagnostics shared by CLI gates and MCP renderers.
 - **diagnostic** _(const)_ - `diagnostic: (value: Diagnostic) => Diagnostic`
+- **diagnosticCompatibilityOf** _(function)_ - `diagnosticCompatibilityOf: (value: Diagnostic) => DiagnosticCompatibility | undefined`
+  Read legacy-only rendering metadata. Undefined means the diagnostic has no compatibility view.
+- **diagnosticWithCompatibility** _(function)_ - `diagnosticWithCompatibility: (value: Diagnostic, compatibility: DiagnosticCompatibility) => Diagnostic`
+  Attach legacy-only rendering metadata without widening the serialized diagnostic protocol.
 - **normalizeSeverity** _(function)_ - `normalizeSeverity: (value: "error" | "warning" | "warn" | "info") => Severity`
 - **severityFails** _(function)_ - `severityFails: (severity: Severity, strict?: boolean) => boolean`
 - **toSarifLog** _(function)_ - `toSarifLog: (diagnostics: readonly Diagnostic[], options?: SarifProjectionOptions) => SarifLog`

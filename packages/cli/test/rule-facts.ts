@@ -26,6 +26,12 @@ export function projectFacts(
       checkConfig: { externalMounts: [], rules: {} },
       rulePacks: [],
     },
+    check: {
+      typecheck: { ran: false, ok: true, note: "test fixture" },
+      sqlCompilerAvailable: true,
+      checkConfigWarnings: [],
+      contracts: { present: false, vacuous: false, diagnostics: [] },
+    },
     sourceFindings: {
       fetches: [],
       untypedClients: [],
@@ -33,6 +39,5 @@ export function projectFacts(
       responseRoutes: [],
       interpolatedSql: [],
     },
-    legacyDiagnostics: [],
   }
 }

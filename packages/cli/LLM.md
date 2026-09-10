@@ -22,14 +22,14 @@ The nifra CLI - zero-config dev/build/start for a nifra app (`nifra dev`, `nifra
 - **collectProjectWorkGraph** _(function)_ - `collectProjectWorkGraph: (cwd: string, options?: { readonly changedFiles?: readonly string[]; readonly minLevel?: number; }) => Promise<Pro…` · from `@nifrajs/cli/work-graph`
 - **createEvidenceBundle** _(function)_ - `createEvidenceBundle: (graph: WorkGraph, impact: ImpactReport, plan: ProofPlan, proofs?: readonly ProofEvidence[]) => EvidenceBundle` · from `@nifrajs/cli/work-graph`
 - **createMemoryAssureSink** _(function)_ - `createMemoryAssureSink: () => MemoryAssureSink` · from `@nifrajs/cli/assure`
+- **diagnosticCompatibilityOf** _(function)_ - `diagnosticCompatibilityOf: (value: Diagnostic) => DiagnosticCompatibility | undefined` · from `@nifrajs/cli/diagnostics`
+- **diagnosticWithCompatibility** _(function)_ - `diagnosticWithCompatibility: (value: Diagnostic, compatibility: DiagnosticCompatibility) => Diagnostic` · from `@nifrajs/cli/diagnostics`
 - **docsTools** _(function)_ - `docsTools: (loadDocs: () => Promise<string | undefined>, loadExamples: () => Promise<Example[] | undefined>, loadTypes: () => Promise<TypeE…` · from `@nifrajs/cli/mcp`
 - **evaluateBuildFreshness** _(function)_ - `evaluateBuildFreshness: (input: { readonly hasArtifact: boolean; readonly newestSourceMs: number; readonly newestBuildMs: number; readonly …` · from `@nifrajs/cli/work-graph`
 - **examplesAppTool** _(function)_ - `examplesAppTool: (loadExamples: () => Promise<Example[] | undefined>) => McpTool` · from `@nifrajs/cli/mcp`
 - **formatAssuranceReport** _(function)_ - `formatAssuranceReport: (report: AssuranceReport) => string` · from `@nifrajs/cli/assure`
-- **getFixRecipe** _(function)_ - `getFixRecipe: (id: string) => FixRecipe | undefined` · from `@nifrajs/cli/fix-recipes`
-- **handleMcpHttp** _(function)_ - `handleMcpHttp: (request: Request) => Promise<Response>` · from `@nifrajs/cli/mcp`
 
-_…and 63 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) for the complete list._
+_…and 67 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) for the complete list._
 
 ## Footguns
 

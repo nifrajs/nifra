@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { type Diagnostic, toSarifLog } from "../src/diagnostics.ts"
+import {
+  type Diagnostic,
+  diagnosticCompatibilityOf,
+  diagnosticWithCompatibility,
+  toSarifLog,
+} from "../src/diagnostics.ts"
 
 describe("toSarifLog", () => {
   test("projects stable diagnostics into a review-safe SARIF run", () => {
@@ -85,5 +90,31 @@ describe("toSarifLog", () => {
         },
       ],
     })
+  })
+})
+
+describe("diagnostic compatibility metadata", () => {
+  test("is available to the legacy projector but absent from structured serialization", () => {
+    const value = diagnosticWithCompatibility(
+      {
+        code: "NF-C002",
+        severity: "error",
+        message: "typed client drift",
+      },
+      {
+        rule: "typed-client",
+        fix: "use the typed client",
+        suggestion: { kind: "manual", title: "Use the typed client" },
+      },
+    )
+
+    expect(diagnosticCompatibilityOf(value)).toEqual({
+      rule: "typed-client",
+      fix: "use the typed client",
+      suggestion: { kind: "manual", title: "Use the typed client" },
+    })
+    expect(JSON.stringify(value)).toBe(
+      JSON.stringify({ code: "NF-C002", severity: "error", message: "typed client drift" }),
+    )
   })
 })
