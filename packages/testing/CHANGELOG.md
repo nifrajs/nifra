@@ -1,5 +1,21 @@
 # @nifrajs/testing
 
+## 3.4.0
+
+### Patch Changes
+
+- 719d82e: Centralize release-facing evidence and certification seams so generated views, runtime adapters, and
+  consumer checks stay aligned.
+- Updated dependencies [8d23613]
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies [719d82e]
+  - @nifrajs/agent@3.4.0
+  - @nifrajs/mcp@3.4.0
+  - @nifrajs/core@3.4.0
+  - @nifrajs/client@3.4.0
+  - @nifrajs/mock@3.4.0
+
 ## 3.3.0
 
 ### Patch Changes

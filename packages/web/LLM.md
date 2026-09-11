@@ -29,10 +29,11 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 - **buildClient** _(function)_ - `buildClient: (options: BuildClientOptions) => Promise<BuildManifest>` · from `@nifrajs/web/build`
 - **buildClientVite** _(function)_ - `buildClientVite: (options: BuildClientViteOptions) => Promise<BuildManifest>` · from `@nifrajs/web/build-vite`
 
-_…and 407 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 409 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 
 - `meta()` runs at **module load**, before any request - it has **no access to request env or `c.env`**. For the request origin (canonical/OG URLs) read `args.origin` in the meta function, never a build-time constant.
 - **Client-leak rule (three guards):** name a server module `*.server.ts` (client build empties it) · add `import "@nifrajs/web/server-only"` to a pure-server module with no `node:` import (build fails loud, with the import chain, if it reaches the browser) · type a value `ServerOnly<T>` to mark intent. A `node:`/native import that reaches a client chunk fails the build with `reached the client bundle` + the chain. See `/docs/troubleshooting`.
 - `PUBLIC_*` env is baked into the **client** bundle; any other `process.env.X` is `undefined` in the browser (so secrets can't leak, no `process is not defined` crash). Loader data arrives as **`props.data`**, not spread into props.
+- `trustHtml(value)` is an explicit raw-HTML escape hatch, **not a sanitizer**. Use escaped text for untrusted values; pass request/CMS/markdown HTML through a maintained allowlist sanitizer with `sanitizeHtml(value, sanitizer)` before rendering.

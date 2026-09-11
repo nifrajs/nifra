@@ -33,6 +33,12 @@ describe("routePathToFile", () => {
   test("rejects a catch-all that isn't last", () => {
     expect(() => routePathToFile("/a/*rest/b", "tsx")).toThrow(/catch-all must be the last/)
   })
+
+  test("rejects filesystem traversal and separator syntax", () => {
+    expect(() => routePathToFile("/../src/escape", "tsx")).toThrow(/invalid route segment/)
+    expect(() => routePathToFile("/a/../../src/escape", "tsx")).toThrow(/invalid route segment/)
+    expect(() => routePathToFile("/a\\..\\src", "tsx")).toThrow(/invalid route segment/)
+  })
 })
 
 describe("scaffoldRoute", () => {
@@ -144,6 +150,18 @@ describe("writeScaffoldRoute", () => {
     } finally {
       await rm(dir, { recursive: true, force: true })
       await rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  test("refuses to write a traversal path outside routes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-scaffold-"))
+    try {
+      await expect(writeScaffoldRoute(dir, "/../src/escape", "react")).rejects.toThrow(
+        /invalid route segment/,
+      )
+      expect(await readFile(join(dir, "src/escape.tsx")).catch(() => null)).toBeNull()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
     }
   })
 })

@@ -25,6 +25,18 @@ import {
 } from "@nifrajs/core/tool-contract"
 
 export {
+  approximateContextTokens,
+  assembleContext,
+  type ContextAssembly,
+  type ContextAssemblyOptions,
+  type ContextBudget,
+  ContextBudgetError,
+  type ContextItem,
+  type ContextSource,
+  type ContextTokenCounter,
+  collectContext,
+} from "./context.ts"
+export {
   AgentDeployment,
   type AgentDeploymentAdapter,
   type AgentDeploymentPlan,

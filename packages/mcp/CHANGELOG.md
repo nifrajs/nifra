@@ -1,5 +1,18 @@
 # @nifrajs/mcp
 
+## 3.4.0
+
+### Minor Changes
+
+- Harden MCP error responses and browser-origin defaults, confine scaffold writes to `routes/`, and
+  make sanitized HTML require an explicit sanitizer function.
+
+### Patch Changes
+
+- 8d23613: Add the opt-in `@nifrajs/webmcp` package: typed WebMCP registration, core-backed receipts, deterministic predictive-UI reconciliation, and host-independent conformance checks. Also tighten agent execution cancellation cleanup so aborted local work cannot leak into later turns.
+- Updated dependencies [8d23613]
+  - @nifrajs/agent-protocol@3.4.0
+
 ## 3.3.0
 
 ## 3.2.0

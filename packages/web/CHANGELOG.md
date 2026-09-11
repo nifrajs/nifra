@@ -1,5 +1,20 @@
 # @nifrajs/web
 
+## 3.4.0
+
+### Minor Changes
+
+- Harden MCP error responses and browser-origin defaults, confine scaffold writes to `routes/`, and
+  make sanitized HTML require an explicit sanitizer function.
+
+### Patch Changes
+
+- 8d23613: Add the opt-in `@nifrajs/webmcp` package: typed WebMCP registration, core-backed receipts, deterministic predictive-UI reconciliation, and host-independent conformance checks. Also tighten agent execution cancellation cleanup so aborted local work cannot leak into later turns.
+- 8d23613: Add an opt-in Vite aggregate-CSS and deferred stylesheet-loading path that prevents lazy-route prefetch from attaching additional stylesheets before hydration.
+- Updated dependencies [719d82e]
+  - @nifrajs/core@3.4.0
+  - @nifrajs/island-trigger@3.4.0
+
 ## 3.3.0
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/examples",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "type": "module",
   "private": true,
   "description": "Runnable, type-checked examples for nifra. Not published.",
@@ -40,6 +40,7 @@
     "@nifrajs/node": "workspace:*",
     "@nifrajs/schema": "workspace:*",
     "@nifrajs/web": "workspace:*",
+    "@nifrajs/webmcp": "workspace:*",
     "@nifrajs/web-preact": "workspace:*",
     "@nifrajs/web-react": "workspace:*",
     "@nifrajs/web-solid": "workspace:*",

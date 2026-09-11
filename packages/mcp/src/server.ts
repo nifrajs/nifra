@@ -15,9 +15,9 @@
  * {@link McpServer.handle} dispatches a single JSON-RPC message directly (for headless verification / tests).
  *
  * SECURITY: this has NO built-in authentication - once mounted, every tool is callable by anyone who can
- * reach the route (the CORS header is `*` and no credentials are used, so it is effectively public). That
- * is fine for read-only/public tools; if any tool mutates state or returns private data, gate the route
- * yourself (check an `Authorization` header / session in the nifra handler before calling `mcp.fetch`).
+ * reach the route. Browser access is same-origin by default; set `allowAnyOrigin: true` only for a
+ * secret-free public server. If any tool mutates state or returns private data, gate the route yourself
+ * (check an `Authorization` header / session in the nifra handler before calling `mcp.fetch`).
  */
 
 import { type McpHttpOptions, respondMcpHttp } from "./http.ts"
@@ -51,8 +51,9 @@ export interface CreateMcpServerOptions {
   readonly maxResponseBytes?: number
   /** Natural-language guidance for LLMs, surfaced in the modern `server/discover` result (2026-07-28). */
   readonly instructions?: string
-  /** Origin allowlist for the DNS-rebinding guard. Omit to allow any origin; set it to reject other
-   * browser origins with 403 (e.g. a hardened, non-public mount). */
+  /** Explicitly allow browser clients from any origin. Omit for the secure same-origin default. */
+  readonly allowAnyOrigin?: boolean
+  /** Origin allowlist for the DNS-rebinding guard. Set it to permit exact cross-origin clients. */
   readonly allowedOrigins?: readonly string[]
   /** Shared state for one authenticated MCP session; prefer `resolveState` for multi-session hosts. */
   readonly state?: McpProtocolState
@@ -114,6 +115,7 @@ export function createMcpServer(opts: CreateMcpServerOptions): McpServer {
         ...(opts.health !== undefined ? { health: opts.health } : {}),
         ...(opts.maxBodyBytes !== undefined ? { maxBodyBytes: opts.maxBodyBytes } : {}),
         ...(opts.maxResponseBytes !== undefined ? { maxResponseBytes: opts.maxResponseBytes } : {}),
+        ...(opts.allowAnyOrigin === true ? { allowAnyOrigin: true } : {}),
         ...(opts.allowedOrigins !== undefined ? { allowedOrigins: opts.allowedOrigins } : {}),
         ...(opts.state === undefined ? {} : { state: opts.state }),
         ...(opts.resolveState === undefined ? {} : { resolveState: opts.resolveState }),

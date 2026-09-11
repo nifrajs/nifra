@@ -1,5 +1,18 @@
 # @nifrajs/agent
 
+## 3.4.0
+
+### Minor Changes
+
+- Add a provider-neutral `@nifrajs/agent/context` contract for deterministic, token-budgeted context
+  selection and asynchronous source collection.
+
+### Patch Changes
+
+- 8d23613: Add the opt-in `@nifrajs/webmcp` package: typed WebMCP registration, core-backed receipts, deterministic predictive-UI reconciliation, and host-independent conformance checks. Also tighten agent execution cancellation cleanup so aborted local work cannot leak into later turns.
+- Updated dependencies [719d82e]
+  - @nifrajs/core@3.4.0
+
 ## 3.3.0
 
 ### Patch Changes

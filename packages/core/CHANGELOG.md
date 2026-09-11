@@ -1,5 +1,12 @@
 # @nifrajs/core
 
+## 3.4.0
+
+### Patch Changes
+
+- 719d82e: Centralize release-facing evidence and certification seams so generated views, runtime adapters, and
+  consumer checks stay aligned.
+
 ## 3.3.0
 
 ## 3.2.0

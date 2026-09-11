@@ -73,6 +73,8 @@ const mcp = createMcpServer({
   version: "1.0.0",
   tools: [listOrders, listOrdersReact],
   widgets: [ordersWidget, ordersReactWidget],
+  // Demo data only: opt into browser clients from any origin explicitly.
+  allowAnyOrigin: true,
   health: "orders MCP App (nifra) - POST JSON-RPC 2.0 here. Tools: list_orders, list_orders_react.",
 })
 

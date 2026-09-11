@@ -10,11 +10,14 @@ Provider-neutral, typed, resumable agent turns built on Nifra tool contracts.
 
 ## Public entrypoints
 
-`@nifrajs/agent` · `@nifrajs/agent/events` · `@nifrajs/agent/mount` · `@nifrajs/agent/registry`
+`@nifrajs/agent` · `@nifrajs/agent/context` · `@nifrajs/agent/events` · `@nifrajs/agent/mount` · `@nifrajs/agent/registry`
 
 ## Key exports
 
+- **approximateContextTokens** _(function)_ - `approximateContextTokens: (text: string) => number` · from `@nifrajs/agent`
+- **assembleContext** _(function)_ - `assembleContext: (items: readonly ContextItem[], options: ContextAssemblyOptions) => ContextAssembly` · from `@nifrajs/agent`
 - **assertDeploymentAuthorityMonotonic** _(function)_ - `assertDeploymentAuthorityMonotonic: (parent: DeploymentAuthority, child: DeploymentAuthority) => void` · from `@nifrajs/agent`
+- **collectContext** _(function)_ - `collectContext: <Input>(input: Input, sources: readonly ContextSource<Input>[], options: ContextAssemblyOptions) => Promise<ContextAssembly>` · from `@nifrajs/agent`
 - **combineAgentDeltaSinks** _(function)_ - `combineAgentDeltaSinks: (...sinks: readonly (AgentDeltaSink | undefined)[]) => AgentDeltaSink | undefined` · from `@nifrajs/agent`
 - **combineAgentTelemetry** _(function)_ - `combineAgentTelemetry: (...ports: readonly (AgentTelemetryPort | undefined)[]) => AgentTelemetryPort | undefined` · from `@nifrajs/agent`
 - **composeDescriptor** _(function)_ - `composeDescriptor: (input: DescriptorInput) => Promise<CapabilityDescriptor>` · from `@nifrajs/agent`
@@ -25,11 +28,8 @@ Provider-neutral, typed, resumable agent turns built on Nifra tool contracts.
 - **createDeploymentAuthority** _(function)_ - `createDeploymentAuthority: (input: { readonly workspaceMaxBytes: number; readonly deadlineAt?: number; readonly cancellation?: DeploymentCa…` · from `@nifrajs/agent`
 - **createLocalProcessAdapter** _(function)_ - `createLocalProcessAdapter: (options?: LocalProcessAdapterOptions) => LocalProcessAdapter` · from `@nifrajs/agent`
 - **createMemoryAgentEvidenceLog** _(function)_ - `createMemoryAgentEvidenceLog: (options?: MemoryAgentEvidenceLogOptions) => AgentEvidenceLog` · from `@nifrajs/agent/events`
-- **createStructuredOutputParser** _(function)_ - `createStructuredOutputParser: <Schema extends StandardSchemaV1>(schema: Schema) => StructuredOutputParser<NonNullable<Schema["~standard"]["…` · from `@nifrajs/agent`
-- **descriptorFromTool** _(function)_ - `descriptorFromTool: <Input, Output>(tool: ToolContract<Input, Output>, options?: ToolDescriptorOptions) => Promise<CapabilityDescriptor>` · from `@nifrajs/agent`
-- **isModelGatewayErrorCode** _(function)_ - `isModelGatewayErrorCode: (value: unknown) => value is ModelGatewayErrorCode` · from `@nifrajs/agent`
 
-_…and 123 more - see [`api-reference.md`](../../api-reference.md#nifrajsagent) for the complete list._
+_…and 133 more - see [`api-reference.md`](../../api-reference.md#nifrajsagent) for the complete list._
 
 ## Footguns
 

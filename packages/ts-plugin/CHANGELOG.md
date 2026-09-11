@@ -1,5 +1,16 @@
 # @nifrajs/ts-plugin
 
+## 3.4.0
+
+### Patch Changes
+
+- Updated dependencies [8d23613]
+- Updated dependencies [8d23613]
+- Updated dependencies
+- Updated dependencies [719d82e]
+  - @nifrajs/web@3.4.0
+  - @nifrajs/core@3.4.0
+
 ## 3.3.0
 
 ### Patch Changes

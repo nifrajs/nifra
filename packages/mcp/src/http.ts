@@ -44,18 +44,21 @@ const CORS_BASE: Record<string, string> = {
  * Resolve the CORS/Origin headers for one request against the host's `allowedOrigins` policy, or `null`
  * when the request's `Origin` is present but not allowed - the caller then answers 403, per the
  * Streamable-HTTP DNS-rebinding rule ("Servers MUST validate the `Origin` header ... respond with 403").
- * With no policy (the default) every origin is allowed and reflected as `*` - correct for a public,
- * secret-free, unauthenticated server, whose browser clients send arbitrary origins we can't enumerate.
+ * The default is same-origin. Public, secret-free servers must explicitly opt into `allowAnyOrigin`.
  */
 function corsFor(
   request: Request,
   allowedOrigins: readonly string[] | undefined,
+  allowAnyOrigin: boolean,
 ): Record<string, string> | null {
-  if (allowedOrigins === undefined) return { ...CORS_BASE, "access-control-allow-origin": "*" }
+  if (allowAnyOrigin) return { ...CORS_BASE, "access-control-allow-origin": "*" }
   const origin = request.headers.get("origin")
   // A caller with no Origin (curl, server-to-server) can't mount a DNS-rebinding attack - allow it.
   if (origin === null) return { ...CORS_BASE, vary: "Origin" }
-  if (allowedOrigins.includes(origin)) {
+  if (allowedOrigins?.includes(origin)) {
+    return { ...CORS_BASE, "access-control-allow-origin": origin, vary: "Origin" }
+  }
+  if (allowedOrigins === undefined && origin === new URL(request.url).origin) {
     return { ...CORS_BASE, "access-control-allow-origin": origin, vary: "Origin" }
   }
   return null
@@ -93,11 +96,9 @@ export interface McpHttpOptions {
   readonly features?: McpServerFeatures
   /** Shown on the GET health page so each host can describe itself. */
   readonly health?: string
-  /**
-   * Origin allowlist for the DNS-rebinding guard. Omit (the default) to allow any origin - the right
-   * choice for a public, unauthenticated docs server that can't enumerate its browser clients' origins.
-   * Set it (e.g. a localhost origin for a hardened local host) to reject any other browser origin with 403.
-   */
+  /** Explicitly expose a secret-free, unauthenticated server to browser clients from any origin. */
+  readonly allowAnyOrigin?: boolean
+  /** Origin allowlist for the DNS-rebinding guard. When set, only exact origins are accepted. */
   readonly allowedOrigins?: readonly string[]
   /**
    * Shared request registry for one authenticated MCP session. Pass the same state to the
@@ -376,7 +377,7 @@ export async function respondMcpHttp(
   assertByteLimit(maxBodyBytes)
   const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES
   assertResponseLimit(maxResponseBytes)
-  const cors = corsFor(request, options.allowedOrigins)
+  const cors = corsFor(request, options.allowedOrigins, options.allowAnyOrigin === true)
   if (cors === null) {
     // Origin present but not allowlisted: reject before the body is ever read (DNS-rebinding guard). No
     // `id` (no request parsed) and no CORS headers - a disallowed origin gets nothing to work with.

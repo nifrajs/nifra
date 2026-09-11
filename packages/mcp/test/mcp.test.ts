@@ -311,6 +311,48 @@ describe("handleRpc - MCP Apps extensions", () => {
     })
   })
 
+  test("does not reflect tool or prompt handler exception details", async () => {
+    const secretDetail = "/srv/private/orders.sqlite: password=not-for-clients"
+    const failingTool: McpTool = {
+      name: "failing",
+      description: "throws",
+      inputSchema: { type: "object" },
+      handler: async () => {
+        throw new Error(secretDetail)
+      },
+    }
+    const toolResponse = await handleRpc(
+      { id: 8, method: "tools/call", params: { name: "failing" } },
+      [failingTool],
+      INFO,
+    )
+    expect(toolResponse).toMatchObject({
+      result: { isError: true, content: [{ type: "text", text: "Tool execution failed" }] },
+    })
+    expect(JSON.stringify(toolResponse)).not.toContain(secretDetail)
+
+    const promptResponse = await handleRpc(
+      { id: 9, method: "prompts/get", params: { name: "failing-prompt" } },
+      [],
+      INFO,
+      {
+        prompts: [
+          {
+            name: "failing-prompt",
+            description: "throws",
+            handler: async () => {
+              throw new Error(secretDetail)
+            },
+          },
+        ],
+      },
+    )
+    expect(promptResponse).toMatchObject({
+      error: { code: -32000, message: "Prompt execution failed" },
+    })
+    expect(JSON.stringify(promptResponse)).not.toContain(secretDetail)
+  })
+
   test("rejects non-object tool and prompt arguments before invoking application code", async () => {
     let toolCalls = 0
     const tool: McpTool = {
@@ -828,6 +870,26 @@ describe("respondMcpHttp - transport hardening", () => {
     )
     expect(ok.status).toBe(200)
     expect(ok.headers.get("access-control-allow-origin")).toBe("http://localhost:8787")
+  })
+
+  test("same-origin is the default and public wildcard CORS requires an explicit opt-in", async () => {
+    const foreign = await serve(
+      post({ jsonrpc: "2.0", id: 1, method: "initialize" }, { origin: "http://evil.test" }),
+    )
+    expect(foreign.status).toBe(403)
+
+    const sameOrigin = await serve(
+      post({ jsonrpc: "2.0", id: 2, method: "initialize" }, { origin: "http://x" }),
+    )
+    expect(sameOrigin.status).toBe(200)
+    expect(sameOrigin.headers.get("access-control-allow-origin")).toBe("http://x")
+
+    const publicServer = await serve(
+      post({ jsonrpc: "2.0", id: 3, method: "initialize" }, { origin: "http://evil.test" }),
+      { allowAnyOrigin: true },
+    )
+    expect(publicServer.status).toBe(200)
+    expect(publicServer.headers.get("access-control-allow-origin")).toBe("*")
   })
 
   test("initialize echoes a protocol version the server also speaks, else its default", async () => {

@@ -33,4 +33,6 @@ _…and 43 more - see [`api-reference.md`](../../api-reference.md#nifrajsmcp) fo
 
 ## Footguns
 
-- No package-specific footguns beyond the framework conventions. See [`AGENTS.md`](../../AGENTS.md) and [`llms-full.txt`](../../llms-full.txt) for the full contract.
+- HTTP MCP is same-origin for browser clients by default. Set an exact `allowedOrigins` list for known cross-origin callers; use `allowAnyOrigin: true` only for an intentionally public, secret-free server.
+- `createMcpServer` has **no built-in authentication**. Put authorization at the host boundary with `authorizeMessage`, and do not expose state-changing or private tools on an unauthenticated mount.
+- Tool and prompt failures are deliberately returned as generic errors; log detailed diagnostics on the server and never put filesystem paths, SQL, provider responses, or secrets in thrown messages.

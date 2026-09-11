@@ -83,6 +83,13 @@ Every public export of every package and documented subpath - name, kind, signat
 - **CapabilityDescriptor** _(interface)_ - `interface CapabilityDescriptor`
 - **CapabilityKind** _(type)_ - `type CapabilityKind = | "tool" | "mcp-tool" | "extension" | "model-adapter" | "deployment-adapter"`
   Producer families a descriptor can describe. A value outside this set fails `unsupported_kind`.
+- **ContextAssembly** _(interface)_ - `interface ContextAssembly`
+- **ContextAssemblyOptions** _(interface)_ - `interface ContextAssemblyOptions`
+- **ContextBudget** _(interface)_ - `interface ContextBudget`
+- **ContextBudgetError** _(class)_ - `class ContextBudgetError`
+- **ContextItem** _(interface)_ - `interface ContextItem`
+- **ContextSource** _(interface)_ - `interface ContextSource<Input = unknown>`
+- **ContextTokenCounter** _(type)_ - `type ContextTokenCounter = (text: string) => number`
 - **DeploymentActivationOptions** _(interface)_ - `interface DeploymentActivationOptions`
 - **DeploymentAuthority** _(interface)_ - `interface DeploymentAuthority`
 - **DeploymentCancelRequest** _(interface)_ - `interface DeploymentCancelRequest`
@@ -164,8 +171,14 @@ Every public export of every package and documented subpath - name, kind, signat
 - **RunAgentOptions** _(interface)_ - `interface RunAgentOptions`
 - **StructuredOutputParser** _(interface)_ - `interface StructuredOutputParser<Output>`
 - **ToolDescriptorOptions** _(interface)_ - `interface ToolDescriptorOptions`
+- **approximateContextTokens** _(function)_ - `approximateContextTokens: (text: string) => number`
+  A deterministic, provider-free token estimate suitable for local reference behavior.
+- **assembleContext** _(function)_ - `assembleContext: (items: readonly ContextItem[], options: ContextAssemblyOptions) => ContextAssembly`
+  Assemble already-collected items under a hard budget without mutating caller data.
 - **assertDeploymentAuthorityMonotonic** _(function)_ - `assertDeploymentAuthorityMonotonic: (parent: DeploymentAuthority, child: DeploymentAuthority) => void`
   Prove a child deployment authority is a subset of its parent's authority.
+- **collectContext** _(function)_ - `collectContext: <Input>(input: Input, sources: readonly ContextSource<Input>[], options: ContextAssemblyOptions) => Promise<ContextAssembly>`
+  Collect source-owned items in source order, then apply the same deterministic assembly rules.
 - **combineAgentDeltaSinks** _(function)_ - `combineAgentDeltaSinks: (...sinks: readonly (AgentDeltaSink | undefined)[]) => AgentDeltaSink | undefined`
   Fan model deltas out to several sinks - a protocol bridge and a logger can watch the same run. `undefined` entries are skipped, and the combined sink is `undefined` when none remain. Each sink is isolated: one sink throwing never starves the others.
 - **combineAgentTelemetry** _(function)_ - `combineAgentTelemetry: (...ports: readonly (AgentTelemetryPort | undefined)[]) => AgentTelemetryPort | undefined`
@@ -201,6 +214,22 @@ Every public export of every package and documented subpath - name, kind, signat
   Execute a gateway under an explicit route, retry, fallback, budget, and deadline policy.
 - **structuredOutputParser** _(function)_ - `structuredOutputParser: <Output>(parse: (value: unknown) => Output | PromiseLike<Output>) => StructuredOutputParser<Output>`
 - **turn** _(function)_ - `turn: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, state: AgentTurnState, input: AgentTurnInput, ports: AgentPorts) => Promise<Age…`
+
+### `@nifrajs/agent/context`
+
+- **ContextAssembly** _(interface)_ - `interface ContextAssembly`
+- **ContextAssemblyOptions** _(interface)_ - `interface ContextAssemblyOptions`
+- **ContextBudget** _(interface)_ - `interface ContextBudget`
+- **ContextBudgetError** _(class)_ - `class ContextBudgetError`
+- **ContextItem** _(interface)_ - `interface ContextItem`
+- **ContextSource** _(interface)_ - `interface ContextSource<Input = unknown>`
+- **ContextTokenCounter** _(type)_ - `type ContextTokenCounter = (text: string) => number`
+- **approximateContextTokens** _(function)_ - `approximateContextTokens: (text: string) => number`
+  A deterministic, provider-free token estimate suitable for local reference behavior.
+- **assembleContext** _(function)_ - `assembleContext: (items: readonly ContextItem[], options: ContextAssemblyOptions) => ContextAssembly`
+  Assemble already-collected items under a hard budget without mutating caller data.
+- **collectContext** _(function)_ - `collectContext: <Input>(input: Input, sources: readonly ContextSource<Input>[], options: ContextAssemblyOptions) => Promise<ContextAssembly>`
+  Collect source-owned items in source order, then apply the same deterministic assembly rules.
 
 ### `@nifrajs/agent/events`
 
@@ -1458,7 +1487,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
 - **UrlParts** _(interface)_ - `interface UrlParts`
-- **VERSION** _(const)_ - `VERSION: "3.3.0"`
+- **VERSION** _(const)_ - `VERSION: "3.4.0"`
   Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version.
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VercelHandler** _(type)_ - `type VercelHandler = (request: Request) => MaybePromise<Response>`
@@ -4179,6 +4208,8 @@ _No named exports (side-effect entrypoint)._
 - **GenerateServerManifestOptions** _(interface)_ - `interface GenerateServerManifestOptions`
 - **GetStaticPaths** _(type)_ - `type GetStaticPaths = () => StaticPaths | Promise<StaticPaths>`
   A dynamic route's build-time param enumeration (the SSG equivalent of "which pages exist").
+- **HtmlSanitizer** _(type)_ - `type HtmlSanitizer = (value: string) => string`
+  The only contract a project-specific, allowlist-based HTML sanitizer must satisfy.
 - **IDLE_BLOCKER** _(const)_ - `IDLE_BLOCKER: Blocker`
   The idle blocker - a stable reference (no needless adapter re-renders while unblocked).
 - **ISRApp** _(interface)_ - `interface ISRApp`
@@ -4318,8 +4349,8 @@ _No named exports (side-effect entrypoint)._
   Matches `db.server.ts`, `auth.server.tsx`, `x.server.mjs`, and the extensionless `foo.server`.
 - **STATUS_HEADER** _(const)_ - `STATUS_HEADER: "x-nifra-status"`
   Response header carrying a **terminal status** a loader signalled with `notFound()` / `gone()` / `statusPage(n)` during a client-side navigation's data fetch.
-- **SanitizedHtml** _(type)_ - `type SanitizedHtml = TrustedHtml`
-  Alias for integrations whose sanitizer returns a separately named safe value.
+- **SanitizedHtml** _(type)_ - `type SanitizedHtml = TrustedHtml & { readonly [SANITIZED_HTML_BRAND]: "sanitized-html" }`
+  HTML returned by an explicit, caller-supplied sanitizer. It is also trusted by the adapters.
 - **ScriptDescriptor** _(interface)_ - `interface ScriptDescriptor`
 - **SearchOf** _(type)_ - `type SearchOf<Module> = Module extends { searchSchema: infer S } ? S extends StandardSchemaV1 ? InferOutput<S> extends Record<string, unknown> ? InferOutput<S> : never : Record<string, unknown> : Record<string, unknown>`
   The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route navigation: generated route types (`nifra sync-routes`) map each path to `SearchOf<typeof import("./…
@@ -4433,8 +4464,10 @@ _No named exports (side-effect entrypoint)._
   Return this from an action to declare which routes the mutation changed (alongside the action's `data`). `createWebApp` sets the `X-Nifra-Revalidate` response header; after the submit the client marks those cached routes stale - refetching the active one and any mounted fetcher showing them - so a …
 - **revalidateEndpoint** _(function)_ - `revalidateEndpoint: (options: RevalidateEndpointOptions) => (req: Request) => Promise<Response>`
   An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops a path's cached entry or invalidates every entry carrying a tag. `POST` with the secret in the token header and either `?path=/blog/x`, `?tag=products`, or a JSON `{ "path": "/blog/x" }` / `{ "tag": "products" }` body. Th…
-- **sanitizedHtml** _(const)_ - `sanitizedHtml: (value: string) => TrustedHtml`
-  Explicit alias for callers that want the sanitized-content vocabulary at the call site.
+- **sanitizeHtml** _(function)_ - `sanitizeHtml: (value: string, sanitizer: HtmlSanitizer) => SanitizedHtml`
+  Run untrusted markup through an explicit sanitizer before it reaches a raw-HTML adapter.
+- **sanitizedHtml** _(const)_ - `sanitizedHtml: (value: string, sanitizer: HtmlSanitizer) => SanitizedHtml`
+  Explicit sanitized-content vocabulary for callers and security audits.
 - **searchOf** _(function)_ - `searchOf: (searchSchema: StandardSchemaV1 | undefined, rawSearch: string) => Record<string, unknown>`
   The search a route sees for a raw URL query: parsed, then validated against a single `searchSchema` when the route declares one (failing closed to its defaults), or the raw parsed query otherwise. A one-link {@link searchOfChain}; use that directly for a layout+page chain. Both the server (`renderP…
 - **searchOfChain** _(function)_ - `searchOfChain: (schemas: readonly (StandardSchemaV1 | undefined)[], rawSearch: string) => Record<string, unknown>`
@@ -5768,7 +5801,7 @@ _No named exports (side-effect entrypoint)._
 - **TypedSSEStream** _(interface)_ - `interface TypedSSEStream<Event>`
   The stream handed to an `app.sse()` handler: `send` takes the route's TYPED event payload and serializes it (JSON) into the SSE `data:` field - the compile-time half of the `sse` contract.
 - **UrlParts** _(interface)_ - `interface UrlParts`
-- **VERSION** _(const)_ - `VERSION: "3.3.0"`
+- **VERSION** _(const)_ - `VERSION: "3.4.0"`
   Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and `check:publish` asserts it equals `@nifrajs/core`'s package version.
 - **ValidationOutcome** _(type)_ - `type ValidationOutcome<Output> = | { readonly ok: true; readonly value: Output } | { readonly ok: false; readonly issues: ReadonlyArray<StandardIssue> }`
 - **VercelHandler** _(type)_ - `type VercelHandler = (request: Request) => MaybePromise<Response>`

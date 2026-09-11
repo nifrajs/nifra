@@ -78,3 +78,4 @@ dv-*/
 # Isolated tree of PUBLISHED @nifrajs packages for benchmarking a release (generated)
 /bench/.published
 /data/browser
+/output

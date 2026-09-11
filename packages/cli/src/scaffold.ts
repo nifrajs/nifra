@@ -45,11 +45,35 @@ function segmentToFile(seg: string): string {
   return seg
 }
 
+/** Reject syntax that could be interpreted by the host filesystem rather than the route mapper. */
+function assertSafeRouteSegment(segment: string, urlPath: string): void {
+  if (segment === "." || segment === ".." || segment.includes("\0") || segment.includes("\\")) {
+    throw new Error(
+      `invalid route segment in ${JSON.stringify(urlPath)}: ${JSON.stringify(segment)}`,
+    )
+  }
+  const fileSegment = segmentToFile(segment)
+  if (
+    fileSegment === "." ||
+    fileSegment === ".." ||
+    fileSegment.includes("\0") ||
+    fileSegment.includes("/") ||
+    fileSegment.includes("\\") ||
+    fileSegment.includes(":") ||
+    /^[A-Za-z]:/.test(fileSegment)
+  ) {
+    throw new Error(
+      `invalid route segment in ${JSON.stringify(urlPath)}: ${JSON.stringify(segment)}`,
+    )
+  }
+}
+
 /** Map a URL path to its `routes/` file path (relative to `routes/`, without extension prefix dir).
  * `/` → `index`; `/users/:id` → `users/[id]`; `/blog/*slug` → `blog/[...slug]`. */
 export function routePathToFile(urlPath: string, ext: string): string {
   const segments = urlPath.split("/").filter((s) => s.length > 0)
   if (segments.length === 0) return `routes/index.${ext}`
+  for (const segment of segments) assertSafeRouteSegment(segment, urlPath)
   const last = segments.length - 1
   // Catch-all must be the final segment (mirrors @nifrajs/web); flag it rather than emit an invalid file.
   for (let i = 0; i < last; i++) {
@@ -268,11 +292,12 @@ export function scaffoldRoute(
   }
 }
 
-function resolveInsideCwd(cwd: string, relativeFile: string): string {
+function resolveInsideRoutes(cwd: string, relativeFile: string): string {
   const root = resolve(cwd)
+  const routesRoot = resolve(root, "routes")
   const target = resolve(root, relativeFile)
-  if (target !== root && !target.startsWith(`${root}${sep}`)) {
-    throw new Error(`refusing to write outside project root: ${relativeFile}`)
+  if (target === routesRoot || !target.startsWith(`${routesRoot}${sep}`)) {
+    throw new Error(`refusing to write outside routes directory: ${relativeFile}`)
   }
   return target
 }
@@ -325,7 +350,7 @@ export async function writeScaffoldRoute(
       reason: "no verified ready-to-write stub for this framework; use nifra_example for the body",
     }
   }
-  const target = resolveInsideCwd(cwd, result.file)
+  const target = resolveInsideRoutes(cwd, result.file)
   await assertNoSymlinkedAncestors(cwd, target)
   await mkdir(dirname(target), { recursive: true })
   await assertNoSymlinkedAncestors(cwd, target)

@@ -1,5 +1,18 @@
 # @nifrajs/coding-agent
 
+## 3.4.0
+
+### Patch Changes
+
+- 719d82e: Centralize release-facing evidence and certification seams so generated views, runtime adapters, and
+  consumer checks stay aligned.
+- Updated dependencies [8d23613]
+- Updated dependencies
+  - @nifrajs/agent-protocol@3.4.0
+  - @nifrajs/agent@3.4.0
+  - @nifrajs/pi@3.4.0
+  - @nifrajs/jobs@3.4.0
+
 ## 3.3.0
 
 ### Minor Changes

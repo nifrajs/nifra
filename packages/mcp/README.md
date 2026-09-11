@@ -24,6 +24,10 @@ Mount `mcp.fetch` at `POST /mcp`. The package also exposes the JSON-RPC protocol
 layers directly, plus `defineMcpWidget` and the React adapter for tool results that render UI in MCP
 hosts.
 
+MCP servers are same-origin for browser clients by default. Set an exact `allowedOrigins` list for
+known cross-origin clients, or set `allowAnyOrigin: true` only for a deliberately public,
+secret-free server. Authentication is still the host application's responsibility.
+
 Clients that include `text/event-stream` in `Accept` receive progress notifications as they happen,
 followed by the final JSON-RPC response in the same stream. An SSE `GET /mcp` opens a cancellable
 server-message connection; a plain `GET /mcp` remains a health page.

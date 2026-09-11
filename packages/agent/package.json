@@ -1,6 +1,6 @@
 {
   "name": "@nifrajs/agent",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "Provider-neutral, typed, resumable agent turns built on Nifra tool contracts.",
   "keywords": [
     "bun",
@@ -35,6 +35,11 @@
       "bun": "./src/registry.ts",
       "types": "./dist/registry.d.ts",
       "default": "./dist/registry.js"
+    },
+    "./context": {
+      "bun": "./src/context.ts",
+      "types": "./dist/context.d.ts",
+      "default": "./dist/context.js"
     }
   },
   "files": [

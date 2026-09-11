@@ -530,15 +530,19 @@ export async function handleRpc(
         if (controller.signal.aborted) throw new DOMException("cancelled", "AbortError")
         reportProgress(1, 1)
         return reply(toolCallResult(result, tool))
-      } catch (err) {
+      } catch {
         if (controller.signal.aborted) {
           return reply({
             content: [{ type: "text", text: abortMessage(controller.signal) }],
             isError: true,
           })
         }
-        const msg = err instanceof Error ? err.message : String(err)
-        return reply({ content: [{ type: "text", text: `Error: ${msg}` }], isError: true })
+        // Handler errors are application-internal data. Never reflect their messages to a remote
+        // MCP caller: paths, SQL diagnostics, provider responses, and secrets commonly end up there.
+        return reply({
+          content: [{ type: "text", text: "Tool execution failed" }],
+          isError: true,
+        })
       } finally {
         cleanupAbort()
         if (key !== undefined && state.activeRequests.get(key) === controller) {
@@ -607,9 +611,9 @@ export async function handleRpc(
           description: prompt.description,
           messages: await prompt.handler(args),
         })
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        return rpcError(rid, -32000, msg)
+      } catch {
+        // Prompt handlers have the same trust boundary as tools; expose only a stable protocol error.
+        return rpcError(rid, -32000, "Prompt execution failed")
       }
     }
     default:

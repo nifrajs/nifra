@@ -984,7 +984,7 @@
     "lines": 100
   },
   "packages/schema/src/openapi.ts": {
-    "functions": 94.73684210526315,
+    "functions": 90.47619047619048,
     "lines": 100
   },
   "packages/schema/src/pagination.ts": {

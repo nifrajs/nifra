@@ -329,7 +329,8 @@ describe("handleRpc (MCP protocol)", () => {
       INFO,
     )) as { result: { content: Array<{ text: string }>; isError?: boolean } }
     expect(res.result.isError).toBe(true)
-    expect(res.result.content[0]?.text).toContain("kaboom")
+    expect(res.result.content[0]?.text).toBe("Tool execution failed")
+    expect(res.result.content[0]?.text).not.toContain("kaboom")
   })
 
   test("an unknown tool is a -32602 error", async () => {

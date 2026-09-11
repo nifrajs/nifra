@@ -265,8 +265,10 @@ export {
 // produce the identical value by construction. An adapter's `useSearch` binding reads its result.
 export { type SearchOf, searchOf, searchOfChain, serializeSearch } from "./search.ts"
 export {
+  type HtmlSanitizer,
   type SanitizedHtml,
   sanitizedHtml,
+  sanitizeHtml,
   type TrustedHtml,
   trustHtml,
 } from "./trusted-html.ts"

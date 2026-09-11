@@ -1,5 +1,12 @@
 # @nifrajs/mock
 
+## 3.4.0
+
+### Patch Changes
+
+- Updated dependencies [719d82e]
+  - @nifrajs/core@3.4.0
+
 ## 3.3.0
 
 ### Patch Changes

@@ -214,6 +214,12 @@ const FOOTGUNS: Record<string, readonly string[]> = {
     "`meta()` runs at **module load**, before any request - it has **no access to request env or `c.env`**. For the request origin (canonical/OG URLs) read `args.origin` in the meta function, never a build-time constant.",
     '**Client-leak rule (three guards):** name a server module `*.server.ts` (client build empties it) · add `import "@nifrajs/web/server-only"` to a pure-server module with no `node:` import (build fails loud, with the import chain, if it reaches the browser) · type a value `ServerOnly<T>` to mark intent. A `node:`/native import that reaches a client chunk fails the build with `reached the client bundle` + the chain. See `/docs/troubleshooting`.',
     "`PUBLIC_*` env is baked into the **client** bundle; any other `process.env.X` is `undefined` in the browser (so secrets can't leak, no `process is not defined` crash). Loader data arrives as **`props.data`**, not spread into props.",
+    "`trustHtml(value)` is an explicit raw-HTML escape hatch, **not a sanitizer**. Use escaped text for untrusted values; pass request/CMS/markdown HTML through a maintained allowlist sanitizer with `sanitizeHtml(value, sanitizer)` before rendering.",
+  ],
+  "@nifrajs/mcp": [
+    "HTTP MCP is same-origin for browser clients by default. Set an exact `allowedOrigins` list for known cross-origin callers; use `allowAnyOrigin: true` only for an intentionally public, secret-free server.",
+    "`createMcpServer` has **no built-in authentication**. Put authorization at the host boundary with `authorizeMessage`, and do not expose state-changing or private tools on an unauthenticated mount.",
+    "Tool and prompt failures are deliberately returned as generic errors; log detailed diagnostics on the server and never put filesystem paths, SQL, provider responses, or secrets in thrown messages.",
   ],
   "@nifrajs/webmcp": [
     "WebMCP registration is **page-local and opt-in**: pass an explicit capability allowlist to `registerWebMcpTools`; unsupported browsers safely no-op, and registration never replaces server authorization.",

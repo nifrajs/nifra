@@ -1231,6 +1231,13 @@
     "signature": "export declare class ApprovalTokenReplayError extends Error {\n    constructor();\n}"
   },
   {
+    "name": "approximateContextTokens",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function approximateContextTokens(text: string): number;",
+    "doc": "/** A deterministic, provider-free token estimate suitable for local reference behavior. */"
+  },
+  {
     "name": "AroundCapabilityOptions",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -1277,6 +1284,13 @@
     "package": "@nifrajs/coding-agent",
     "signature": "export interface ArtifactRef {\n    /** Caller-namespaced id. Opaque to nifra. */\n    readonly id: string;\n    /** SHA-256 hex of the payload, for integrity and correlation. Content-free. */\n    readonly digest: string;\n    readonly bytes: number;\n    readonly mediaType: string;\n    /** Optional caller-opaque locator (e.g. a private URI). nifra never dereferences it. */\n    readonly locator?: string;\n}",
     "doc": "/** A content-free pointer to a payload the caller chose to retain out of band. */"
+  },
+  {
+    "name": "assembleContext",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function assembleContext(items: readonly ContextItem[], options: ContextAssemblyOptions): ContextAssembly;",
+    "doc": "/** Assemble already-collected items under a hard budget without mutating caller data. */"
   },
   {
     "name": "assertAdapterCertification",
@@ -3514,6 +3528,13 @@
     "signature": "export declare function collectAssureBundle(cwd: string, options?: {\n    readonly config?: string;\n    readonly strict?: boolean;\n    readonly hydration?: boolean;\n    readonly interact?: boolean;\n}): Promise<AssureBundle>;"
   },
   {
+    "name": "collectContext",
+    "kind": "function",
+    "package": "@nifrajs/agent",
+    "signature": "export declare function collectContext<Input>(input: Input, sources: readonly ContextSource<Input>[], options: ContextAssemblyOptions): Promise<ContextAssembly>;",
+    "doc": "/** Collect source-owned items in source order, then apply the same deterministic assembly rules. */"
+  },
+  {
     "name": "Collection",
     "kind": "interface",
     "package": "@nifrajs/content",
@@ -3865,11 +3886,42 @@
     "doc": "/**\n * Handler context. `params` are inferred from the path; `body` and `query` are\n * the validated outputs of their schemas when declared (else `undefined` /\n * raw `URLSearchParams`).\n */"
   },
   {
+    "name": "ContextAssembly",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ContextAssembly {\n    readonly version: 1;\n    readonly text: string;\n    readonly items: readonly ContextItem[];\n    readonly includedIds: readonly string[];\n    readonly omittedIds: readonly string[];\n    readonly tokens: number;\n    readonly budget: {\n        readonly maxTokens: number;\n        readonly reserveTokens: number;\n        readonly availableTokens: number;\n    };\n}"
+  },
+  {
+    "name": "ContextAssemblyOptions",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ContextAssemblyOptions {\n    readonly budget: ContextBudget;\n    /** Defaults to a bounded deterministic chars/4 estimate. */\n    readonly tokenCounter?: ContextTokenCounter;\n    /** Separator inserted between selected item contents. Defaults to two newlines. */\n    readonly separator?: string;\n}"
+  },
+  {
+    "name": "ContextBudget",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ContextBudget {\n    /** Absolute budget for the assembled context, including separators. */\n    readonly maxTokens: number;\n    /** Tokens reserved for caller-owned content outside this assembly. */\n    readonly reserveTokens?: number;\n}"
+  },
+  {
+    "name": "ContextBudgetError",
+    "kind": "class",
+    "package": "@nifrajs/agent",
+    "signature": "export declare class ContextBudgetError extends Error {\n    readonly requiredTokens: number;\n    readonly availableTokens: number;\n    readonly code: \"context_budget_exceeded\";\n    constructor(requiredTokens: number, availableTokens: number);\n}"
+  },
+  {
     "name": "ContextForOp",
     "kind": "type",
     "package": "@nifrajs/core",
     "signature": "export type ContextForOp<O extends OperationDef> = Context<O[\"path\"], SchemaForOp<O> & RouteSchema>;",
     "doc": "/**\n * The handler context for an op - identical to the inline `Context<Path, S>`, so a\n * handler written for an inline route type-checks unchanged under `implement`\n * (the graduation guarantee).\n */"
+  },
+  {
+    "name": "ContextItem",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ContextItem {\n    /** Stable caller-owned identity used in inclusion/omission reports. */\n    readonly id: string;\n    /** Caller-defined category such as `memory`, `retrieval`, `conversation`, or `tools`. */\n    readonly kind: string;\n    /** Transient text inserted into the assembled context. */\n    readonly content: string;\n    /** Required items are admitted before optional items and fail closed when they do not fit. */\n    readonly required?: boolean;\n    /** Higher-priority optional items are admitted first. */\n    readonly priority?: number;\n    /** Optional tie-breaker for recency-aware sources. */\n    readonly recency?: number;\n    /** Stable source label; it is metadata, not an authorization decision. */\n    readonly source?: string;\n}",
+    "doc": "/**\n * Provider-neutral context assembly.\n *\n * The assembler owns deterministic selection and token accounting only. Items are transient\n * caller data: this module does not persist, embed, redact, or log their contents. Durable memory,\n * retrieval indexes, and provider-specific tokenizers belong behind caller-owned adapters.\n */"
   },
   {
     "name": "ContextPlugin",
@@ -3892,11 +3944,23 @@
     "signature": "export interface ContextRecord {\n    readonly kind: string;\n    readonly content: string;\n    readonly pinned?: boolean;\n}"
   },
   {
+    "name": "ContextSource",
+    "kind": "interface",
+    "package": "@nifrajs/agent",
+    "signature": "export interface ContextSource<Input = unknown> {\n    /** Stable source identity used for diagnostics and default item attribution. */\n    readonly id: string;\n    load(input: Input): readonly ContextItem[] | PromiseLike<readonly ContextItem[]>;\n}"
+  },
+  {
     "name": "contextStorage",
     "kind": "function",
     "package": "@nifrajs/middleware",
     "signature": "export declare function contextStorage(): Middleware;",
     "doc": "/**\n * Store the current nifra `Context` in `AsyncLocalStorage` for helpers that run away from the handler\n * argument, e.g. repository/logger functions called deep in the stack.\n *\n * Import from `@nifrajs/middleware/context-storage` so ordinary `@nifrajs/middleware` imports stay\n * node-compat-free on edge runtimes. The runtime must support `node:async_hooks` AsyncLocalStorage.\n */"
+  },
+  {
+    "name": "ContextTokenCounter",
+    "kind": "type",
+    "package": "@nifrajs/agent",
+    "signature": "export type ContextTokenCounter = (text: string) => number;"
   },
   {
     "name": "ContextWindow",
@@ -4331,7 +4395,7 @@
     "name": "CreateMcpServerOptions",
     "kind": "interface",
     "package": "@nifrajs/mcp",
-    "signature": "export interface CreateMcpServerOptions {\n    readonly name: string;\n    readonly version: string;\n    readonly tools?: readonly McpTool[];\n    /** MCP Apps widgets - their resources are registered and the UI capability is advertised. */\n    readonly widgets?: readonly McpWidget[];\n    /** Extra (non-widget) resources to expose. */\n    readonly resources?: readonly McpResource[];\n    readonly prompts?: readonly McpPrompt[];\n    /** GET health-page text. */\n    readonly health?: string;\n    /** Max JSON-RPC body size in bytes (default 1 MB). */\n    readonly maxBodyBytes?: number;\n    /** Max serialized JSON-RPC response or SSE frame size (default 1 MB). */\n    readonly maxResponseBytes?: number;\n    /** Natural-language guidance for LLMs, surfaced in the modern `server/discover` result (2026-07-28). */\n    readonly instructions?: string;\n    /** Origin allowlist for the DNS-rebinding guard. Omit to allow any origin; set it to reject other\n     * browser origins with 403 (e.g. a hardened, non-public mount). */\n    readonly allowedOrigins?: readonly string[];\n    /** Shared state for one authenticated MCP session; prefer `resolveState` for multi-session hosts. */\n    readonly state?: McpProtocolState;\n    /** Resolve a session-scoped request registry after per-message authorization. */\n    readonly resolveState?: McpHttpOptions[\"resolveState\"];\n    /**\n     * Per-message authorization, applied after the message parses and before any tool runs. Return\n     * `false` to answer 403 with a JSON-RPC `unauthorized` error (`MCP_ERROR.UNAUTHORIZED`) and no result.\n     *\n     * This is the seam for \"this caller may list tools but may not call the write ones\" - the HTTP\n     * layer above only sees one opaque POST, so a route guard cannot make that distinction.\n     * `fetch(request, { authorizeMessage })` overrides it per request when the decision depends on\n     * something the surrounding handler resolved (a session, a tenant).\n     */\n    readonly authorizeMessage?: (message: JsonRpcRequest, request: Request) => boolean | Promise<boolean>;\n}"
+    "signature": "export interface CreateMcpServerOptions {\n    readonly name: string;\n    readonly version: string;\n    readonly tools?: readonly McpTool[];\n    /** MCP Apps widgets - their resources are registered and the UI capability is advertised. */\n    readonly widgets?: readonly McpWidget[];\n    /** Extra (non-widget) resources to expose. */\n    readonly resources?: readonly McpResource[];\n    readonly prompts?: readonly McpPrompt[];\n    /** GET health-page text. */\n    readonly health?: string;\n    /** Max JSON-RPC body size in bytes (default 1 MB). */\n    readonly maxBodyBytes?: number;\n    /** Max serialized JSON-RPC response or SSE frame size (default 1 MB). */\n    readonly maxResponseBytes?: number;\n    /** Natural-language guidance for LLMs, surfaced in the modern `server/discover` result (2026-07-28). */\n    readonly instructions?: string;\n    /** Explicitly allow browser clients from any origin. Omit for the secure same-origin default. */\n    readonly allowAnyOrigin?: boolean;\n    /** Origin allowlist for the DNS-rebinding guard. Set it to permit exact cross-origin clients. */\n    readonly allowedOrigins?: readonly string[];\n    /** Shared state for one authenticated MCP session; prefer `resolveState` for multi-session hosts. */\n    readonly state?: McpProtocolState;\n    /** Resolve a session-scoped request registry after per-message authorization. */\n    readonly resolveState?: McpHttpOptions[\"resolveState\"];\n    /**\n     * Per-message authorization, applied after the message parses and before any tool runs. Return\n     * `false` to answer 403 with a JSON-RPC `unauthorized` error (`MCP_ERROR.UNAUTHORIZED`) and no result.\n     *\n     * This is the seam for \"this caller may list tools but may not call the write ones\" - the HTTP\n     * layer above only sees one opaque POST, so a route guard cannot make that distinction.\n     * `fetch(request, { authorizeMessage })` overrides it per request when the decision depends on\n     * something the surrounding handler resolved (a session, a tenant).\n     */\n    readonly authorizeMessage?: (message: JsonRpcRequest, request: Request) => boolean | Promise<boolean>;\n}"
   },
   {
     "name": "createMemoryAgentEvidenceLog",
@@ -5681,6 +5745,20 @@
     "doc": "/**\n * The recognised-failure catalog. Seeded with the highest-signal nifra failures; extend it as new\n * classes of error earn a stable code. Order matters only in that the first match wins.\n */"
   },
   {
+    "name": "DiagnosticCompatibility",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface DiagnosticCompatibility {\n    /** The pre-registry rule name used by the human/legacy check result. */\n    readonly rule: string;\n    /** The old human-facing fix text, when the rule had one. */\n    readonly fix?: string;\n    /** A richer legacy suggestion (diff, command, or manual steps). */\n    readonly suggestion?: DiagnosticSuggestion;\n    /** The import path evidence used by the legacy server-only-import view. */\n    readonly chain?: readonly string[];\n    /** Preserve the old optional `CheckDiagnostic.code` field exactly where it existed. */\n    readonly includeCode?: boolean;\n}",
+    "doc": "/**\n * The richer compatibility view used by the original `nifra check` renderer. It is deliberately\n * kept out of the enumerable diagnostic shape: SARIF, MCP structured output, and JSON consumers get\n * the small stable diagnostic contract, while the legacy text view can still explain an exact edit.\n */"
+  },
+  {
+    "name": "diagnosticCompatibilityOf",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function diagnosticCompatibilityOf(value: Diagnostic): DiagnosticCompatibility | undefined;",
+    "doc": "/** Read legacy-only rendering metadata. Undefined means the diagnostic has no compatibility view. */"
+  },
+  {
     "name": "DiagnosticFix",
     "kind": "interface",
     "package": "@nifrajs/cli",
@@ -5692,6 +5770,19 @@
     "package": "@nifrajs/web",
     "signature": "export interface DiagnosticFrame {\n    readonly raw: string;\n    readonly file?: string;\n    readonly line?: number;\n    readonly column?: number;\n}",
     "doc": "/** One parsed stack frame. `file`/`line`/`column` are present only when the frame could be located. */"
+  },
+  {
+    "name": "DiagnosticSuggestion",
+    "kind": "interface",
+    "package": "@nifrajs/cli",
+    "signature": "export interface DiagnosticSuggestion {\n    readonly kind: \"edit\" | \"command\" | \"manual\";\n    readonly title: string;\n    readonly diff?: string;\n    readonly command?: readonly string[];\n    readonly steps?: readonly string[];\n}"
+  },
+  {
+    "name": "diagnosticWithCompatibility",
+    "kind": "function",
+    "package": "@nifrajs/cli",
+    "signature": "export declare function diagnosticWithCompatibility(value: Diagnostic, compatibility: DiagnosticCompatibility): Diagnostic;",
+    "doc": "/** Attach legacy-only rendering metadata without widening the serialized diagnostic protocol. */"
   },
   {
     "name": "diffDataContract",
@@ -7639,6 +7730,13 @@
     "doc": "/** Plain lowercase HTML `<img>` attributes (`srcset`/`fetchpriority`, not React's camelCase). */"
   },
   {
+    "name": "HtmlSanitizer",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type HtmlSanitizer = (value: string) => string;",
+    "doc": "/** The only contract a project-specific, allowlist-based HTML sanitizer must satisfy. */"
+  },
+  {
     "name": "HtmlValue",
     "kind": "type",
     "package": "@nifrajs/web-vanilla",
@@ -9485,13 +9583,13 @@
     "name": "McpHttpOptions",
     "kind": "interface",
     "package": "@nifrajs/cli",
-    "signature": "export interface McpHttpOptions {\n    /** Maximum JSON-RPC request body size in bytes. Default 1 MB. */\n    readonly maxBodyBytes?: number;\n    /** Maximum serialized JSON-RPC response or SSE frame size. Default 1 MB. */\n    readonly maxResponseBytes?: number;\n    /** Resources / prompts / the MCP Apps UI extension served alongside the tools. */\n    readonly features?: McpServerFeatures;\n    /** Shown on the GET health page so each host can describe itself. */\n    readonly health?: string;\n    /**\n     * Origin allowlist for the DNS-rebinding guard. Omit (the default) to allow any origin - the right\n     * choice for a public, unauthenticated docs server that can't enumerate its browser clients' origins.\n     * Set it (e.g. a localhost origin for a hardened local host) to reject any other browser origin with 403.\n     */\n    readonly allowedOrigins?: readonly string[];\n    /**\n     * Shared request registry for one authenticated MCP session. Pass the same state to the\n     * request that starts a tool call and its `notifications/cancelled` request. Do not share one\n     * state across unrelated callers unless the surrounding authorization boundary makes their\n     * request-id namespace exclusive.\n     */\n    readonly state?: McpProtocolState;\n    /**\n     * Resolve a session-scoped request registry after authorization. This is the preferred seam for\n     * multi-user HTTP hosts: bind the returned state to the authenticated caller/session and return\n     * `undefined` for stateless requests. A resolver failure fails closed with a generic denial.\n     */\n    readonly resolveState?: (request: Request, message: JsonRpcRequest) => McpProtocolState | undefined | Promise<McpProtocolState | undefined>;\n    /**\n     * Optional authorization, run once per request against the parsed message - after the body has been\n     * read under the size cap, so it never costs a second read of the stream. Returning `false` answers\n     * `403` with a JSON-RPC error (`MCP_ERROR.UNAUTHORIZED`) and the handler never sees the message.\n     */\n    readonly authorizeMessage?: (message: JsonRpcRequest, request: Request) => boolean | Promise<boolean>;\n}"
+    "signature": "export interface McpHttpOptions {\n    /** Maximum JSON-RPC request body size in bytes. Default 1 MB. */\n    readonly maxBodyBytes?: number;\n    /** Maximum serialized JSON-RPC response or SSE frame size. Default 1 MB. */\n    readonly maxResponseBytes?: number;\n    /** Resources / prompts / the MCP Apps UI extension served alongside the tools. */\n    readonly features?: McpServerFeatures;\n    /** Shown on the GET health page so each host can describe itself. */\n    readonly health?: string;\n    /** Explicitly expose a secret-free, unauthenticated server to browser clients from any origin. */\n    readonly allowAnyOrigin?: boolean;\n    /** Origin allowlist for the DNS-rebinding guard. When set, only exact origins are accepted. */\n    readonly allowedOrigins?: readonly string[];\n    /**\n     * Shared request registry for one authenticated MCP session. Pass the same state to the\n     * request that starts a tool call and its `notifications/cancelled` request. Do not share one\n     * state across unrelated callers unless the surrounding authorization boundary makes their\n     * request-id namespace exclusive.\n     */\n    readonly state?: McpProtocolState;\n    /**\n     * Resolve a session-scoped request registry after authorization. This is the preferred seam for\n     * multi-user HTTP hosts: bind the returned state to the authenticated caller/session and return\n     * `undefined` for stateless requests. A resolver failure fails closed with a generic denial.\n     */\n    readonly resolveState?: (request: Request, message: JsonRpcRequest) => McpProtocolState | undefined | Promise<McpProtocolState | undefined>;\n    /**\n     * Optional authorization, run once per request against the parsed message - after the body has been\n     * read under the size cap, so it never costs a second read of the stream. Returning `false` answers\n     * `403` with a JSON-RPC error (`MCP_ERROR.UNAUTHORIZED`) and the handler never sees the message.\n     */\n    readonly authorizeMessage?: (message: JsonRpcRequest, request: Request) => boolean | Promise<boolean>;\n}"
   },
   {
     "name": "McpHttpOptions",
     "kind": "interface",
     "package": "@nifrajs/mcp",
-    "signature": "export interface McpHttpOptions {\n    /** Maximum JSON-RPC request body size in bytes. Default 1 MB. */\n    readonly maxBodyBytes?: number;\n    /** Maximum serialized JSON-RPC response or SSE frame size. Default 1 MB. */\n    readonly maxResponseBytes?: number;\n    /** Resources / prompts / the MCP Apps UI extension served alongside the tools. */\n    readonly features?: McpServerFeatures;\n    /** Shown on the GET health page so each host can describe itself. */\n    readonly health?: string;\n    /**\n     * Origin allowlist for the DNS-rebinding guard. Omit (the default) to allow any origin - the right\n     * choice for a public, unauthenticated docs server that can't enumerate its browser clients' origins.\n     * Set it (e.g. a localhost origin for a hardened local host) to reject any other browser origin with 403.\n     */\n    readonly allowedOrigins?: readonly string[];\n    /**\n     * Shared request registry for one authenticated MCP session. Pass the same state to the\n     * request that starts a tool call and its `notifications/cancelled` request. Do not share one\n     * state across unrelated callers unless the surrounding authorization boundary makes their\n     * request-id namespace exclusive.\n     */\n    readonly state?: McpProtocolState;\n    /**\n     * Resolve a session-scoped request registry after authorization. This is the preferred seam for\n     * multi-user HTTP hosts: bind the returned state to the authenticated caller/session and return\n     * `undefined` for stateless requests. A resolver failure fails closed with a generic denial.\n     */\n    readonly resolveState?: (request: Request, message: JsonRpcRequest) => McpProtocolState | undefined | Promise<McpProtocolState | undefined>;\n    /**\n     * Optional authorization, run once per request against the parsed message - after the body has been\n     * read under the size cap, so it never costs a second read of the stream. Returning `false` answers\n     * `403` with a JSON-RPC error (`MCP_ERROR.UNAUTHORIZED`) and the handler never sees the message.\n     */\n    readonly authorizeMessage?: (message: JsonRpcRequest, request: Request) => boolean | Promise<boolean>;\n}"
+    "signature": "export interface McpHttpOptions {\n    /** Maximum JSON-RPC request body size in bytes. Default 1 MB. */\n    readonly maxBodyBytes?: number;\n    /** Maximum serialized JSON-RPC response or SSE frame size. Default 1 MB. */\n    readonly maxResponseBytes?: number;\n    /** Resources / prompts / the MCP Apps UI extension served alongside the tools. */\n    readonly features?: McpServerFeatures;\n    /** Shown on the GET health page so each host can describe itself. */\n    readonly health?: string;\n    /** Explicitly expose a secret-free, unauthenticated server to browser clients from any origin. */\n    readonly allowAnyOrigin?: boolean;\n    /** Origin allowlist for the DNS-rebinding guard. When set, only exact origins are accepted. */\n    readonly allowedOrigins?: readonly string[];\n    /**\n     * Shared request registry for one authenticated MCP session. Pass the same state to the\n     * request that starts a tool call and its `notifications/cancelled` request. Do not share one\n     * state across unrelated callers unless the surrounding authorization boundary makes their\n     * request-id namespace exclusive.\n     */\n    readonly state?: McpProtocolState;\n    /**\n     * Resolve a session-scoped request registry after authorization. This is the preferred seam for\n     * multi-user HTTP hosts: bind the returned state to the authenticated caller/session and return\n     * `undefined` for stateless requests. A resolver failure fails closed with a generic denial.\n     */\n    readonly resolveState?: (request: Request, message: JsonRpcRequest) => McpProtocolState | undefined | Promise<McpProtocolState | undefined>;\n    /**\n     * Optional authorization, run once per request against the parsed message - after the body has been\n     * read under the size cap, so it never costs a second read of the stream. Returning `false` answers\n     * `403` with a JSON-RPC error (`MCP_ERROR.UNAUTHORIZED`) and the handler never sees the message.\n     */\n    readonly authorizeMessage?: (message: JsonRpcRequest, request: Request) => boolean | Promise<boolean>;\n}"
   },
   {
     "name": "mcpJson",
@@ -12248,7 +12346,7 @@
     "name": "ProjectFacts",
     "kind": "interface",
     "package": "@nifrajs/cli",
-    "signature": "export interface ProjectFacts {\n    readonly source: SourceIndex;\n    readonly routes: readonly StaticRouteFinding[];\n    readonly importGraph: readonly TransitiveServerImportFinding[];\n    readonly packages: ProjectPackageFacts;\n    readonly pipeline?: PipelineReport;\n    readonly policies: ProjectPolicyFacts;\n    readonly sourceFindings: ProjectSourceFindings;\n    readonly legacyDiagnostics: readonly CheckDiagnostic[];\n}"
+    "signature": "export interface ProjectFacts {\n    readonly source: SourceIndex;\n    readonly routes: readonly StaticRouteFinding[];\n    readonly importGraph: readonly TransitiveServerImportFinding[];\n    readonly packages: ProjectPackageFacts;\n    readonly pipeline?: PipelineReport;\n    readonly policies: ProjectPolicyFacts;\n    readonly check: ProjectCheckFacts;\n    readonly sourceFindings: ProjectSourceFindings;\n}"
   },
   {
     "name": "ProjectWorkGraphResult",
@@ -14959,15 +15057,22 @@
     "name": "sanitizedHtml",
     "kind": "const",
     "package": "@nifrajs/web",
-    "signature": "export declare const sanitizedHtml: typeof trustHtml;",
-    "doc": "/** Explicit alias for callers that want the sanitized-content vocabulary at the call site. */"
+    "signature": "export declare const sanitizedHtml: typeof sanitizeHtml;",
+    "doc": "/** Explicit sanitized-content vocabulary for callers and security audits. */"
   },
   {
     "name": "SanitizedHtml",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type SanitizedHtml = TrustedHtml;",
-    "doc": "/** Alias for integrations whose sanitizer returns a separately named safe value. */"
+    "signature": "export type SanitizedHtml = TrustedHtml & {\n    readonly [SANITIZED_HTML_BRAND]: \"sanitized-html\";\n};",
+    "doc": "/** HTML returned by an explicit, caller-supplied sanitizer. It is also trusted by the adapters. */"
+  },
+  {
+    "name": "sanitizeHtml",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function sanitizeHtml(value: string, sanitizer: HtmlSanitizer): SanitizedHtml;",
+    "doc": "/**\n * Run untrusted markup through an explicit sanitizer before it reaches a raw-HTML adapter.\n *\n * Nifra deliberately does not bundle a sanitizer: applications choose the maintained allowlist\n * appropriate to their runtime and content policy. Requiring the sanitizer as an argument prevents\n * `sanitizedHtml(value)` from silently becoming an alias for the unsafe trust operation.\n */"
   },
   {
     "name": "SarifLocation",
@@ -18567,14 +18672,14 @@
     "name": "VERSION",
     "kind": "const",
     "package": "@nifrajs/core",
-    "signature": "export declare const VERSION: \"3.3.0\";",
+    "signature": "export declare const VERSION: \"3.4.0\";",
     "doc": "/**\n * Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't\n * read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and\n * `check:publish` asserts it equals `@nifrajs/core`'s package version.\n */"
   },
   {
     "name": "VERSION",
     "kind": "const",
     "package": "nifra",
-    "signature": "export declare const VERSION: \"3.3.0\";",
+    "signature": "export declare const VERSION: \"3.4.0\";",
     "doc": "/**\n * Current package version. A hardcoded literal on purpose - core runs on the edge (no fs), so it can't\n * read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and\n * `check:publish` asserts it equals `@nifrajs/core`'s package version.\n */"
   },
   {

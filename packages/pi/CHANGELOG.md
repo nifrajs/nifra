@@ -1,5 +1,13 @@
 # @nifrajs/pi
 
+## 3.4.0
+
+### Patch Changes
+
+- 8d23613: Add the opt-in `@nifrajs/webmcp` package: typed WebMCP registration, core-backed receipts, deterministic predictive-UI reconciliation, and host-independent conformance checks. Also tighten agent execution cancellation cleanup so aborted local work cannot leak into later turns.
+- Updated dependencies [8d23613]
+  - @nifrajs/agent-protocol@3.4.0
+
 ## 3.3.0
 
 ### Patch Changes

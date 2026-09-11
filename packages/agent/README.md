@@ -18,6 +18,24 @@ const result = await runAgent(definition, { value: input }, ports, {
 The public in-memory adapters are for local development and tests. Durable state, provider
 credentials, and operated policy remain adapter concerns.
 
+For transient prompt assembly, `@nifrajs/agent/context` provides a deterministic, token-budgeted
+selection seam:
+
+```ts
+import { assembleContext } from "@nifrajs/agent/context"
+
+const context = assembleContext(
+  [
+    { id: "system", kind: "instruction", content: "You are concise.", required: true },
+    { id: "memory", kind: "memory", content: "The user prefers short answers.", priority: 10 },
+  ],
+  { budget: { maxTokens: 2_000, reserveTokens: 256 } },
+)
+```
+
+The assembler owns selection, ordering, and accounting only. Persistence, embeddings, retrieval
+indexes, provider tokenizers, redaction, and product policy stay in caller-owned adapters.
+
 Gateway and deployment contracts are deliberately provider-neutral. Retry, fallback, budget,
 deadline, workspace, and hostile-code isolation claims are admitted only from a host-approved
 capability report. The local and replay reference profiles are not hostile-code sandboxes, and no

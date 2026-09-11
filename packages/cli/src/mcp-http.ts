@@ -29,7 +29,7 @@ export { docsTools } from "./mcp-docs-tools.ts"
 export type { TypeEntry } from "./types-search.ts"
 
 // Kept in lockstep with packages/cli/package.json by check:publish's version-consistency gate.
-const VERSION = "3.3.0"
+const VERSION = "3.4.0"
 const SERVER_INFO = { name: "nifra-docs", version: VERSION }
 // Derive the GET/health tool list from the tools actually served, so the line can never drift from them.
 const docsHealth = (tools: McpTool[]): string =>
@@ -69,6 +69,9 @@ export function handleMcpHttp(request: Request): Promise<Response> {
       instructions:
         "nifra's own documentation, runnable examples, and API types - for building with the nifra framework. Call nifra_docs / nifra_example / nifra_types / nifra_learn to learn it without a local checkout.",
     },
+    // This is the intentionally public, secret-free docs server. Other MCP mounts use the
+    // transport's same-origin default unless they explicitly opt into public cross-origin access.
+    allowAnyOrigin: true,
   })
 }
 
