@@ -8,8 +8,10 @@ import type { CssLoadingMode } from "../css-contract.ts"
 import { generateLlmsTxt } from "../llms-txt.ts"
 import type { Manifest } from "../manifest.ts"
 import type { RenderAdapter } from "../render-seam.ts"
-import { createPageRequestExecutor } from "./page-execution.ts"
+import { createPageRequestExecutor, type NonceResolver } from "./page-execution.ts"
 import { urlPartsFor } from "./request-url.ts"
+
+export type { NonceResolver } from "./page-execution.ts"
 export interface CreateWebAppOptions<Env = unknown> {
   readonly adapter: RenderAdapter
   readonly manifest: Manifest
@@ -17,6 +19,14 @@ export interface CreateWebAppOptions<Env = unknown> {
   readonly clientEntry: string
   /** Default document title for all pages. */
   readonly title?: string
+  /**
+   * Resolve a fresh CSP nonce for each document request. The value is applied to every
+   * framework-owned executable script; return `undefined` to keep the default nonce-free output.
+   * Nonce-bearing documents are marked `private, no-store` so the request-specific value is not
+   * replayed by browser, CDN, or ISR caches. The resolver does not declare a CSP header because the
+   * policy's allowed sources are app-specific.
+   */
+  readonly nonce?: NonceResolver<Env>
   /**
    * Options for the underlying `server()` - `requestTimeoutMs`, `admission`, `gracefulSignals`, and
    * the rest of {@link ServerOptions}.
@@ -172,11 +182,11 @@ export interface CreateWebAppOptions<Env = unknown> {
 }
 
 /** The handler context fields createWebApp uses - a structural subset of nifra's `Context`. */
-interface RouteContext {
+interface RouteContext<Env = unknown> {
   readonly params: Record<string, string>
   readonly req: Request
   /** Platform bindings (Workers env), forwarded to each route's loader/action as `args.env`. */
-  readonly env: unknown
+  readonly env: Env
 }
 
 /**
@@ -298,6 +308,7 @@ export function createWebApp<Env = unknown>(
     ...(options.staticBoundaryCache === undefined
       ? {}
       : { staticBoundaryCache: options.staticBoundaryCache }),
+    ...(options.nonce === undefined ? {} : { nonce: options.nonce }),
     ...(options.onLoaderError === undefined ? {} : { onLoaderError: options.onLoaderError }),
   })
 
@@ -322,8 +333,8 @@ export function createWebApp<Env = unknown>(
   })
 
   // Wildcard catch-all: unmatched paths render `_404` (404), or a plain text 404 if absent.
-  app.register("GET", "/*", undefined, (c: RouteContext) =>
-    pageExecutor.notFound(requestPathOf(c.req)),
+  app.register("GET", "/*", undefined, (c: RouteContext<Env>) =>
+    pageExecutor.notFound(c.req, c.env, requestPathOf(c.req)),
   )
 
   return app

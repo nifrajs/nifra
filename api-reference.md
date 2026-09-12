@@ -4281,6 +4281,8 @@ _No named exports (side-effect entrypoint)._
   The `search` type for a navigate to `To`: the route's schema output when `To` is a mapped {@link RouteSearch} key, otherwise the loose `Record<string, unknown>` (so a navigate to any path is always allowed). Keyed on `To` rather than a union, so a mapped route can't fall back to the loose form with…
 - **NavigateTargetInput** _(interface)_ - `interface NavigateTargetInput`
   The runtime shape of an object-form navigate target (loose - the typed narrowing lives in {@link NavigateFunction}'s generic call signature). `to` is a bare pathname; `search` is serialized onto it; `replace` folds into the options.
+- **NonceResolver** _(type)_ - `type NonceResolver<Env = unknown> = (ctx: { readonly request: Request readonly env: Env }) => string | undefined | Promise<string | undefined>`
+  Resolve the CSP nonce for one document request. Return `undefined` to omit nonce attributes.
 - **OpenGraphInput** _(interface)_ - `interface OpenGraphInput`
   Inputs for {@link openGraph} - the common Open Graph properties. All optional; only the provided ones become tags. `type` defaults to `"website"`.
 - **PRE_HYDRATION_GUARD** _(const)_ - `PRE_HYDRATION_GUARD: string`

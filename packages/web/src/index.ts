@@ -120,6 +120,7 @@ export { SERVER_FN_MODULE, SERVER_ONLY_MODULE } from "./internal/server-boundary
 export {
   type CreateWebAppOptions,
   createWebApp,
+  type NonceResolver,
 } from "./internal/web-app.ts"
 // ISR (incremental static regeneration): a pluggable cache store + the `withISR` stale-while-revalidate
 // wrapper for rendered SSR responses.

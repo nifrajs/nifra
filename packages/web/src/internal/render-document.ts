@@ -165,7 +165,8 @@ export interface RenderPageOptions {
    * tail - emitted **regardless of `hydrate`**, so a static (`hydrate: false`) page can still mount
    * no-framework islands. URLs are attribute-escaped. Empty/omitted ⇒ none (unchanged output). */
   readonly islandScripts?: readonly string[]
-  /** CSP nonce applied to every framework-owned executable script in this document. */
+  /** CSP nonce applied to every framework-owned executable script in this document. Nonce-bearing
+   * documents are marked `private, no-store` so a request-specific nonce is never replayed. */
   readonly nonce?: string
   /**
    * Advanced: a per-route slot the renderer fills with the request-invariant document pieces (shell
@@ -421,6 +422,10 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   if (revalidate !== undefined) headers[ISR_REVALIDATE_HEADER] = String(revalidate)
   const serializedTags = serializeISRTags(revalidateTags)
   if (serializedTags !== undefined) headers[ISR_REVALIDATE_TAGS_HEADER] = serializedTags
+  // A per-request nonce must not be replayed from a browser, CDN, or ISR cache. The same policy
+  // also keeps `withISR` from storing a document whose executable scripts carry request-specific
+  // authorization to run under the caller's CSP.
+  if (nonce !== undefined) headers["cache-control"] = "private, no-store"
   const renderProps: RenderProps = {
     data: forComponent,
     actionData: actionSplit?.forComponent,

@@ -51,6 +51,12 @@ import {
 } from "./render-document.ts"
 import { urlPartsFor } from "./request-url.ts"
 
+/** Resolve the CSP nonce for one document request. Return `undefined` to omit nonce attributes. */
+export type NonceResolver<Env = unknown> = (ctx: {
+  readonly request: Request
+  readonly env: Env
+}) => string | undefined | Promise<string | undefined>
+
 /** Structural context supplied by the core server to one page route handler. */
 export interface PageRouteContext<Env = unknown> {
   readonly params: Record<string, string>
@@ -58,7 +64,7 @@ export interface PageRouteContext<Env = unknown> {
   readonly env: Env
 }
 
-export interface PageExecutionOptions {
+export interface PageExecutionOptions<Env = unknown> {
   readonly adapter: RenderAdapter
   readonly manifest: Manifest
   readonly clientEntry: string
@@ -72,6 +78,8 @@ export interface PageExecutionOptions {
   readonly prerenderedPaths?: readonly string[]
   readonly staticFallbacks?: Readonly<Record<string, "ssr" | "404">>
   readonly staticBoundaryCache?: StaticBoundaryCache
+  /** Per-request CSP nonce for framework-owned executable document scripts. */
+  readonly nonce?: NonceResolver<Env>
   readonly onLoaderError?: (
     error: unknown,
     ctx: {
@@ -87,7 +95,7 @@ type PageResponse = Response | ResponseResult | RenderedPage
 export interface PageRequestExecutor<Env = unknown> {
   get(route: RouteEntry): (ctx: PageRouteContext<Env>) => Promise<PageResponse>
   post(route: RouteEntry): (ctx: PageRouteContext<Env>) => Promise<PageResponse>
-  notFound(path?: string): Promise<PageResponse>
+  notFound(request: Request, env: Env, path?: string): Promise<PageResponse>
 }
 
 /**
@@ -100,7 +108,7 @@ export interface PageRequestExecutor<Env = unknown> {
  * outcome and render decisions.
  */
 export function createPageRequestExecutor<Env = unknown>(
-  options: PageExecutionOptions,
+  options: PageExecutionOptions<Env>,
 ): PageRequestExecutor<Env> {
   const { adapter, manifest, clientEntry, api } = options
   const cssLoading = normalizeCssLoading(options.cssLoading ?? DEFAULT_CSS_LOADING)
@@ -120,6 +128,12 @@ export function createPageRequestExecutor<Env = unknown>(
     const chunks = options.routePreload?.[id]
     return chunks ? { preload: chunks } : {}
   }
+
+  const resolveNonce = (
+    request: Request,
+    env: Env,
+  ): string | undefined | Promise<string | undefined> =>
+    options.nonce === undefined ? undefined : options.nonce({ request, env })
 
   const stylesOf = (id: string): { styles?: readonly string[]; cssLoading?: CssLoadingMode } => {
     const perRoute = options.routeStyles?.[id]
@@ -331,6 +345,7 @@ export function createPageRequestExecutor<Env = unknown>(
     route: RouteEntry,
     errorId: string,
     err: unknown,
+    nonce?: string,
   ): Promise<PageResponse> => {
     const errDir = dirOfId(errorId, "_error")
     const keptLayoutIds = route.layoutIds.filter((id) => {
@@ -352,6 +367,7 @@ export function createPageRequestExecutor<Env = unknown>(
       routeId: errorId,
       status: 500,
       hydrate: false,
+      ...(nonce === undefined ? {} : { nonce }),
       ...titleOption,
     })
   }
@@ -360,6 +376,7 @@ export function createPageRequestExecutor<Env = unknown>(
     status: number,
     path?: string,
     extraHeaders?: HeadersLike,
+    nonce?: string,
   ): Promise<PageResponse> => {
     const page = manifest.statusPages?.[String(status)] ?? manifest.notFound
     if (page === undefined) {
@@ -389,6 +406,7 @@ export function createPageRequestExecutor<Env = unknown>(
       ...(path !== undefined ? { path } : {}),
       status,
       ...(extraHeaders !== undefined ? { headers: extraHeaders } : {}),
+      ...(nonce === undefined ? {} : { nonce }),
       ...preloadOf(routeId),
       ...stylesOf(routeId),
       prerenderedPaths: options.prerenderedPaths ?? [],
@@ -396,17 +414,18 @@ export function createPageRequestExecutor<Env = unknown>(
     })
   }
 
-  const renderStatusSignal = (
+  const renderStatusSignal = async (
     req: Request,
+    env: Env,
     signal: StatusSignal,
-  ): Promise<PageResponse> | Response => {
+  ): Promise<PageResponse> => {
     const { status, headers } = signal[STATUS_SIGNAL]
     if (req.headers.get(DATA_HEADER) !== null) {
       const responseHeaders = new Headers(headers)
       responseHeaders.set(STATUS_HEADER, String(status))
       return new Response(null, { status, headers: responseHeaders })
     }
-    return renderTerminalStatus(status, pathOf(req), headers)
+    return renderTerminalStatus(status, pathOf(req), headers, await resolveNonce(req, env))
   }
 
   const reportLoaderError = (
@@ -425,6 +444,7 @@ export function createPageRequestExecutor<Env = unknown>(
 
   const handleDataOrDocument = async (
     req: Request,
+    env: Env,
     route: RouteEntry,
     params: Readonly<Record<string, string>>,
     mod: RouteModule,
@@ -435,7 +455,7 @@ export function createPageRequestExecutor<Env = unknown>(
     boundaryStates: BoundaryStates | undefined,
     assemblyCache: RenderAssemblyCache | undefined,
   ): Promise<PageResponse> => {
-    if (isStatusSignal(data)) return renderStatusSignal(req, data)
+    if (isStatusSignal(data)) return renderStatusSignal(req, env, data)
     if (isControlFlow(data)) return data
     if (req.headers.get(DATA_HEADER) !== null) {
       const pageSplit = prepareDeferred(data)
@@ -474,6 +494,7 @@ export function createPageRequestExecutor<Env = unknown>(
       params,
       origin: originOf(req),
     })
+    const nonce = options.nonce === undefined ? undefined : await resolveNonce(req, env)
     try {
       return await renderPageResult({
         adapter,
@@ -494,20 +515,34 @@ export function createPageRequestExecutor<Env = unknown>(
         ...(mod.revalidate !== undefined ? { revalidate: mod.revalidate } : {}),
         ...(mod.revalidateTags !== undefined ? { revalidateTags: mod.revalidateTags } : {}),
         ...(mod.islandScripts !== undefined ? { islandScripts: mod.islandScripts } : {}),
+        ...(nonce === undefined ? {} : { nonce }),
         ...titleOption,
         ...(assemblyCache === undefined ? {} : { assemblyCache }),
       })
     } catch (err) {
-      if (isStatusSignal(err)) return renderStatusSignal(req, err)
+      if (isStatusSignal(err)) return renderStatusSignal(req, env, err)
       if (isControlFlow(err)) throw err
       reportLoaderError(route, req, { ...params }, err)
       const errorId = boundaryFor(route, err)
       if (errorId === undefined) throw err
-      return renderError(route, errorId, withDuplicateInstanceHint(err))
+      return renderError(route, errorId, withDuplicateInstanceHint(err), nonce)
     }
   }
 
-  const renderNotFound = (path?: string): Promise<PageResponse> => renderTerminalStatus(404, path)
+  const renderNotFound = async (
+    request: Request,
+    env: Env,
+    path?: string,
+  ): Promise<PageResponse> => {
+    const page = manifest.statusPages?.["404"] ?? manifest.notFound
+    if (page === undefined) return renderTerminalStatus(404, path)
+    return renderTerminalStatus(
+      404,
+      path,
+      undefined,
+      options.nonce === undefined ? undefined : await resolveNonce(request, env),
+    )
+  }
 
   return {
     get: (route) => {
@@ -535,7 +570,7 @@ export function createPageRequestExecutor<Env = unknown>(
 
       return async (c: PageRouteContext<Env>) => {
         if (is404Fallback && !prerenderedSet.has(urlPartsFor(c.req).pathname)) {
-          return renderNotFound(pathOf(c.req))
+          return renderNotFound(c.req, c.env, pathOf(c.req))
         }
         const mod = await route.load()
         const draft = await draftFlag(c.req)
@@ -606,7 +641,7 @@ export function createPageRequestExecutor<Env = unknown>(
             boundaryStates = staticBoundaries
           }
         } catch (err) {
-          if (isStatusSignal(err)) return renderStatusSignal(c.req, err)
+          if (isStatusSignal(err)) return renderStatusSignal(c.req, c.env, err)
           if (isControlFlow(err)) throw err
           reportLoaderError(route, c.req, c.params, err)
           const errorId = boundaryFor(route, err)
@@ -617,10 +652,16 @@ export function createPageRequestExecutor<Env = unknown>(
               headers: { "content-type": "text/plain; charset=utf-8" },
             })
           }
-          return renderError(route, errorId, withDuplicateInstanceHint(err))
+          return renderError(
+            route,
+            errorId,
+            withDuplicateInstanceHint(err),
+            options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env),
+          )
         }
         return handleDataOrDocument(
           c.req,
+          c.env,
           route,
           c.params,
           mod,
@@ -694,6 +735,7 @@ export function createPageRequestExecutor<Env = unknown>(
         params: c.params,
         origin: originOf(c.req),
       })
+      const nonce = options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env)
       return renderPageResult({
         adapter,
         chain,
@@ -709,6 +751,7 @@ export function createPageRequestExecutor<Env = unknown>(
         ...preloadOf(route.id),
         ...stylesOf(route.id),
         prerenderedPaths: options.prerenderedPaths ?? [],
+        ...(nonce === undefined ? {} : { nonce }),
         ...titleOption,
       })
     },

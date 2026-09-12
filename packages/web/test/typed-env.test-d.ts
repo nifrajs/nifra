@@ -11,7 +11,7 @@
  */
 import { type Platform, toFetchHandler } from "@nifrajs/core"
 import type { Equal, Expect } from "@nifrajs/test-utils"
-import { createWebApp } from "../src/index.ts"
+import { createWebApp, type NonceResolver } from "../src/index.ts"
 
 // An app's declared platform bindings - a Workers KV namespace + a secret.
 interface KVNamespace {
@@ -58,3 +58,8 @@ export type _UntypedEnvIsUnknown = Expect<
   Equal<Parameters<typeof untypedApp.fetch>[1], Platform | undefined>
 >
 export type _UntypedWorkerEnvIsUnknown = Expect<Equal<UntypedWorkerEnv, unknown>>
+
+// The document nonce resolver sees the same declared platform bindings as route loaders and the
+// fetch entry, so an app can derive a request-specific CSP nonce from its own request context.
+export const _typedNonceResolver: NonceResolver<AppEnv> = ({ request, env }) =>
+  `${request.url}:${env.API_SECRET}`

@@ -73,6 +73,45 @@ test("createWebApp SSRs a route (no layout, no loader → chain 1, data null)", 
   expect(await res.text()).toContain("chain=1:null")
 })
 
+test("createWebApp resolves a fresh CSP nonce for documents, including 404 pages", async () => {
+  const seen: string[] = []
+  const adapterNonces: Array<string | undefined> = []
+  const adapter: RenderAdapter = {
+    renderToStream: () => streamOf("<p>page</p>"),
+    hydrationHead: (nonce) => {
+      adapterNonces.push(nonce)
+      return "<script>adapterBoot()</script>"
+    },
+  }
+  const app = createWebApp<{ readonly marker: string }>({
+    adapter,
+    clientEntry: "/c.js",
+    manifest: fullManifest(),
+    nonce: ({ request, env }) => {
+      seen.push(`${request.url}:${env.marker}`)
+      return `nonce-${seen.length}`
+    },
+  })
+  const platform = { env: { marker: "typed" } }
+
+  const firstResponse = await app.fetch(new Request("http://x/"), platform)
+  const first = await firstResponse.text()
+  const secondResponse = await app.fetch(new Request("http://x/"), platform)
+  const second = await secondResponse.text()
+  const notFoundResponse = await app.fetch(new Request("http://x/missing"), platform)
+  const notFound = await notFoundResponse.text()
+
+  expect(first).toContain('<script nonce="nonce-1">adapterBoot()</script>')
+  expect(first).toContain('<script nonce="nonce-1">')
+  expect(firstResponse.headers.get("cache-control")).toBe("private, no-store")
+  expect(second).toContain('nonce="nonce-2"')
+  expect(second).not.toContain('nonce="nonce-1"')
+  expect(secondResponse.headers.get("cache-control")).toBe("private, no-store")
+  expect(notFound).toContain('nonce="nonce-3"')
+  expect(adapterNonces).toEqual(["nonce-1", "nonce-2", "nonce-3"])
+  expect(seen).toEqual(["http://x/:typed", "http://x/:typed", "http://x/missing:typed"])
+})
+
 test("createWebApp resolves params, runs the loader, and wraps in the layout chain", async () => {
   const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js" })
   const html = await (await app.fetch(new Request("http://x/users/42"))).text()
