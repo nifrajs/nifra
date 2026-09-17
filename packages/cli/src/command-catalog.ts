@@ -22,6 +22,7 @@ import type { LoadedApp } from "./load.ts"
 import type { ManifestEmitCommandResult } from "./manifest-tool.ts"
 import { collectPortResult, type PortResult, renderReport } from "./port.ts"
 import type { ReplayResult } from "./replay.ts"
+import { reviewSpec } from "./review.ts"
 import type { StylexMigrationResult } from "./stylex-migrate.ts"
 import {
   collectProjectWorkGraph,
@@ -81,6 +82,8 @@ export interface CommandSpec<Input, Output> {
   readonly run: (input: Input, ctx: CommandCtx) => Promise<Output>
   readonly render: (out: Output, input?: Input) => readonly string[]
   readonly success?: (out: Output, input: Input) => boolean
+  /** Optional command-specific process status. Legacy commands retain the boolean fallback. */
+  readonly exitCode?: (out: Output, input: Input) => number
   /** JSON-compatible view. Defaults to the raw command result. */
   readonly json?: (out: Output, input: Input) => unknown
 }
@@ -1534,6 +1537,7 @@ const portSpec: CommandSpec<PortInput, PortResult> = {
 
 export const commandSpecs = Object.freeze([
   checkSpec,
+  reviewSpec,
   assureSpec,
   levelsSpec,
   capabilitiesSpec,

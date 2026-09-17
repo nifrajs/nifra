@@ -869,14 +869,27 @@ async function main(): Promise<void> {
       } else {
         console.log(catalogSpec.render(output, input).join("\n"))
       }
-      if (catalogSpec.success !== undefined && !catalogSpec.success(output, input))
+      if (catalogSpec.exitCode !== undefined) {
+        process.exitCode = catalogSpec.exitCode(output, input)
+      } else if (catalogSpec.success !== undefined && !catalogSpec.success(output, input)) {
         process.exitCode = 1
+      }
     } catch (err) {
       // A thrown error is nifra's own reporting path, not a silent abort: clear the sentinel so the
       // hint stays reserved for the case where the process died inside the app import.
       markReflecting(undefined)
       console.error(formatCliError(err))
-      process.exitCode = 1
+      const candidate =
+        typeof err === "object" && err !== null && "exitCode" in err
+          ? (err as { readonly exitCode?: unknown }).exitCode
+          : undefined
+      process.exitCode =
+        typeof candidate === "number" &&
+        Number.isInteger(candidate) &&
+        candidate >= 0 &&
+        candidate <= 255
+          ? candidate
+          : 1
     }
     return
   }

@@ -40,6 +40,7 @@ _…and 67 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) fo
 ## Stable project commands
 
 - nifra check [--lints-only] [--json] [--sarif] - Run the typed-contract, source-lint, and dependency drift gate.
+- nifra review [--strict] [--diff <value>] [--sarif <value>] [--fix] [--dry-run] [--write] [--json] - Run the deterministic, evidence-backed Nifra review.
 - nifra assure [--config <value>] [--out <value>] [--json] [--bundle] [--strict] [--hydration] [--interact] - Evaluate route classification and fail-closed enforcement evidence.
 - nifra levels [--config <value>] [--seed <value>] [--min <value>] [--json] - Compute the cumulative L0 typed-contract through L4 invariant verification ladder.
 - nifra capabilities <action> <method> <path> [--config <value>] [--out <value>] [--lockfile <value>] [--json] - Snapshot, check, or explain token-only capability provenance and lockfile drift.

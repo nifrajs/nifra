@@ -922,3 +922,561 @@ export function virtualizeEvidenceRows<T>(
   )
   return Object.freeze({ offset, rows: Object.freeze(rows.slice(offset, offset + windowSize)) })
 }
+
+// ---------------------------------------------------------------------------
+// Review projections
+// ---------------------------------------------------------------------------
+
+export type ReviewViewStatus = "pass" | "fail" | "inconclusive" | "unavailable"
+
+export interface ReviewViewEvidence {
+  readonly source: string
+  readonly token: string
+  readonly digest: string
+  readonly path?: string
+}
+
+export interface ReviewViewFinding {
+  readonly id: string
+  readonly check: string
+  readonly code: string
+  readonly severity: "error" | "warning" | "info"
+  readonly category: string
+  readonly location?: { readonly path: string; readonly line?: number }
+  readonly evidence: readonly ReviewViewEvidence[]
+  readonly fix?: { readonly recipe: string }
+}
+
+export interface ReviewViewCheck {
+  readonly id: string
+  readonly required: boolean
+  readonly status: "pass" | "fail" | "skipped" | "unavailable" | "error"
+  readonly findings: number
+  readonly errors: number
+  readonly warnings: number
+  readonly info: number
+  readonly outOfScope: number
+  readonly reasonCode?: string
+}
+
+export interface ReviewView {
+  readonly version: 1
+  readonly status: ReviewViewStatus
+  readonly ok: boolean
+  readonly strict: boolean
+  readonly blocking: number
+  readonly digest?: string
+  readonly processStatus?: number | null
+  readonly reasonCode?: "invalid-report" | "unavailable" | "process-failed"
+  readonly scope?: {
+    readonly kind: "project" | "diff"
+    readonly state: "valid" | "invalid"
+    readonly pathDigest: string
+    readonly changedPathCount: number
+    readonly outOfScopeCount: number
+  }
+  readonly checks: readonly ReviewViewCheck[]
+  readonly findings: readonly ReviewViewFinding[]
+  readonly fixes: readonly {
+    readonly recipe: string
+    readonly status: "planned" | "changed" | "no-op" | "failed"
+  }[]
+}
+
+const REVIEW_VIEW_CODE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+const REVIEW_VIEW_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/
+const REVIEW_VIEW_DIGEST = /^[0-9a-f]{64}$/
+const REVIEW_VIEW_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+const REVIEW_VIEW_EVIDENCE_SOURCES = new Set([
+  "check",
+  "assurance",
+  "capability",
+  "manifest",
+  "contract",
+  "coverage",
+  "git-scope",
+  "collector",
+])
+const REVIEW_VIEW_REASONS = new Set([
+  "not-configured",
+  "config-missing",
+  "config-invalid",
+  "collector-error",
+  "collector-unavailable",
+  "diagnostics-truncated",
+  "missing-typescript",
+  "invalid-target",
+  "invalid-git-ref",
+  "invalid-git-scope",
+  "filtered-out-of-scope",
+  "fix-failed",
+  "fix-no-op",
+  "unsupported",
+])
+const REVIEW_VIEW_FIX_RECIPES = new Set(["manifest.sync", "workspace-dist.rebuild"])
+const REVIEW_VIEW_FIX_STATUSES = new Set(["planned", "changed", "no-op", "failed"])
+const REVIEW_VIEW_RPC_ERRORS = new Set([
+  "timeout",
+  "output-truncated",
+  "invalid-report",
+  "spawn-failed",
+])
+const REVIEW_VIEW_CHECKS = new Set([
+  "typecheck",
+  "typed-client",
+  "server-boundary",
+  "route-boundary",
+  "pipeline",
+  "security",
+  "route-assurance",
+  "capability-provenance",
+  "manifest",
+  "dependency",
+  "contract-witness",
+  "coverage",
+  "hydration",
+  "configuration",
+])
+const REVIEW_VIEW_STATUSES = new Set(["pass", "fail", "skipped", "unavailable", "error"])
+const REVIEW_VIEW_SEVERITIES = new Set(["error", "warning", "info"])
+const REVIEW_VIEW_CATEGORIES = new Set([
+  "correctness",
+  "security",
+  "boundary",
+  "assurance",
+  "capability",
+  "contract",
+  "dependency",
+  "hydration",
+  "coverage",
+  "configuration",
+  "operational",
+])
+const REVIEW_VIEW_FORBIDDEN = new Set([
+  "prompt",
+  "message",
+  "text",
+  "input",
+  "output",
+  "arguments",
+  "body",
+  "response",
+  "secret",
+  "credential",
+  "diagnostic",
+  "stack",
+  "content",
+  "transcript",
+  "request",
+  "payload",
+])
+
+function reviewViewRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function reviewViewSafeKeys(value: Record<string, unknown>, allowed: ReadonlySet<string>): boolean {
+  return Object.keys(value).every(
+    (key) => !REVIEW_VIEW_FORBIDDEN.has(key.toLowerCase()) && allowed.has(key),
+  )
+}
+
+function reviewViewEvidence(value: unknown): value is ReviewViewEvidence {
+  if (!reviewViewRecord(value)) return false
+  return (
+    reviewViewSafeKeys(value, new Set(["source", "token", "digest", "path"])) &&
+    typeof value.source === "string" &&
+    REVIEW_VIEW_EVIDENCE_SOURCES.has(value.source) &&
+    typeof value.token === "string" &&
+    REVIEW_VIEW_TOKEN.test(value.token) &&
+    typeof value.digest === "string" &&
+    REVIEW_VIEW_DIGEST.test(value.digest) &&
+    (value.path === undefined || reviewViewPath(value.path))
+  )
+}
+
+function reviewViewReason(value: unknown): value is string {
+  return typeof value === "string" && REVIEW_VIEW_REASONS.has(value)
+}
+
+function reviewViewPath(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 1024 &&
+    !value.includes("\\") &&
+    !value.includes("\u0000") &&
+    !value.startsWith("/") &&
+    !/^[A-Za-z]:/.test(value) &&
+    value.split("/").every((part) => part.length > 0 && part !== "." && part !== "..")
+  )
+}
+
+function reviewViewInt(value: unknown, min = 0): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= min
+}
+
+function reviewUnavailableView(
+  processStatus: number | null,
+  reasonCode: "invalid-report" | "unavailable" | "process-failed",
+): ReviewView {
+  return Object.freeze({
+    version: 1,
+    status: "unavailable",
+    ok: false,
+    strict: false,
+    blocking: 0,
+    processStatus,
+    reasonCode,
+    checks: Object.freeze([]),
+    findings: Object.freeze([]),
+    fixes: Object.freeze([]),
+  })
+}
+
+function parseReviewViewReport(value: Record<string, unknown>): ReviewView | undefined {
+  if (
+    !reviewViewSafeKeys(
+      value,
+      new Set([
+        "version",
+        "strict",
+        "scope",
+        "checks",
+        "findings",
+        "fixes",
+        "blocking",
+        "ok",
+        "status",
+        "digest",
+      ]),
+    ) ||
+    value.version !== 1 ||
+    typeof value.strict !== "boolean" ||
+    (value.status !== "pass" && value.status !== "fail" && value.status !== "inconclusive") ||
+    typeof value.ok !== "boolean" ||
+    value.ok !== (value.status === "pass") ||
+    !reviewViewInt(value.blocking) ||
+    typeof value.digest !== "string" ||
+    !REVIEW_VIEW_DIGEST.test(value.digest) ||
+    !Array.isArray(value.checks) ||
+    !Array.isArray(value.findings) ||
+    value.scope === undefined
+  )
+    return undefined
+
+  let scope: ReviewView["scope"]
+  if (value.scope !== undefined) {
+    if (
+      !reviewViewRecord(value.scope) ||
+      !reviewViewSafeKeys(
+        value.scope,
+        new Set([
+          "kind",
+          "state",
+          "gitRef",
+          "changedPaths",
+          "pathDigest",
+          "outOfScopeCount",
+          "reasonCode",
+        ]),
+      ) ||
+      (value.scope.kind !== "project" && value.scope.kind !== "diff") ||
+      (value.scope.state !== "valid" && value.scope.state !== "invalid") ||
+      !Array.isArray(value.scope.changedPaths) ||
+      !value.scope.changedPaths.every(reviewViewPath) ||
+      typeof value.scope.pathDigest !== "string" ||
+      !REVIEW_VIEW_DIGEST.test(value.scope.pathDigest) ||
+      !reviewViewInt(value.scope.outOfScopeCount)
+    )
+      return undefined
+    if (value.scope.gitRef !== undefined && !REVIEW_VIEW_TOKEN.test(String(value.scope.gitRef)))
+      return undefined
+    if (value.scope.state === "invalid") {
+      if (!reviewViewReason(value.scope.reasonCode)) return undefined
+    } else if (value.scope.reasonCode !== undefined) return undefined
+    scope = Object.freeze({
+      kind: value.scope.kind,
+      state: value.scope.state,
+      pathDigest: value.scope.pathDigest,
+      changedPathCount: value.scope.changedPaths.length,
+      outOfScopeCount: value.scope.outOfScopeCount,
+    })
+  }
+
+  if (value.checks.length > 512 || value.findings.length > 4096) return undefined
+  const checks: ReviewViewCheck[] = []
+  const checkFindingIds = new Map<string, readonly string[]>()
+  for (const raw of value.checks) {
+    if (
+      !reviewViewRecord(raw) ||
+      !reviewViewSafeKeys(
+        raw,
+        new Set([
+          "id",
+          "required",
+          "status",
+          "duration",
+          "counts",
+          "findingIds",
+          "evidence",
+          "reasonCode",
+        ]),
+      ) ||
+      typeof raw.id !== "string" ||
+      !REVIEW_VIEW_CHECKS.has(raw.id) ||
+      checks.some((check) => check.id === raw.id) ||
+      typeof raw.required !== "boolean" ||
+      typeof raw.status !== "string" ||
+      !REVIEW_VIEW_STATUSES.has(raw.status) ||
+      !reviewViewRecord(raw.counts) ||
+      !reviewViewSafeKeys(
+        raw.counts,
+        new Set(["findings", "errors", "warnings", "info", "outOfScope"]),
+      ) ||
+      !reviewViewInt(raw.counts.findings) ||
+      !reviewViewInt(raw.counts.errors) ||
+      !reviewViewInt(raw.counts.warnings) ||
+      !reviewViewInt(raw.counts.info) ||
+      !reviewViewInt(raw.counts.outOfScope) ||
+      !Array.isArray(raw.findingIds) ||
+      !raw.findingIds.every((id) => typeof id === "string" && REVIEW_VIEW_ID.test(id)) ||
+      new Set(raw.findingIds).size !== raw.findingIds.length ||
+      !Array.isArray(raw.evidence) ||
+      raw.evidence.length === 0 ||
+      raw.evidence.length > 1024 ||
+      !raw.evidence.every(reviewViewEvidence)
+    )
+      return undefined
+    if (raw.status === "skipped") {
+      if (raw.required || raw.reasonCode !== "not-configured") return undefined
+    } else if (raw.status === "unavailable" || raw.status === "error") {
+      if (!reviewViewReason(raw.reasonCode)) return undefined
+    } else if (raw.reasonCode !== undefined) return undefined
+    checkFindingIds.set(raw.id, [...raw.findingIds])
+    checks.push(
+      Object.freeze({
+        id: raw.id,
+        required: raw.required,
+        status: raw.status as ReviewViewCheck["status"],
+        findings: raw.counts.findings,
+        errors: raw.counts.errors,
+        warnings: raw.counts.warnings,
+        info: raw.counts.info,
+        outOfScope: raw.counts.outOfScope,
+        ...(raw.reasonCode === undefined ? {} : { reasonCode: raw.reasonCode as string }),
+      }),
+    )
+  }
+
+  const findings: ReviewViewFinding[] = []
+  for (const raw of value.findings) {
+    if (
+      !reviewViewRecord(raw) ||
+      !reviewViewSafeKeys(
+        raw,
+        new Set(["id", "check", "code", "severity", "category", "location", "evidence", "fix"]),
+      ) ||
+      typeof raw.id !== "string" ||
+      !REVIEW_VIEW_ID.test(raw.id) ||
+      findings.some((finding) => finding.id === raw.id) ||
+      typeof raw.check !== "string" ||
+      !REVIEW_VIEW_CHECKS.has(raw.check) ||
+      typeof raw.code !== "string" ||
+      !REVIEW_VIEW_CODE.test(raw.code) ||
+      typeof raw.severity !== "string" ||
+      !REVIEW_VIEW_SEVERITIES.has(raw.severity) ||
+      typeof raw.category !== "string" ||
+      !REVIEW_VIEW_CATEGORIES.has(raw.category) ||
+      !Array.isArray(raw.evidence) ||
+      raw.evidence.length === 0 ||
+      raw.evidence.length > 32
+    )
+      return undefined
+    let location: ReviewViewFinding["location"]
+    if (raw.location !== undefined) {
+      if (
+        !reviewViewRecord(raw.location) ||
+        !reviewViewSafeKeys(raw.location, new Set(["path", "line", "column"])) ||
+        !reviewViewPath(raw.location.path) ||
+        (raw.location.line !== undefined && !reviewViewInt(raw.location.line, 1)) ||
+        (raw.location.column !== undefined && !reviewViewInt(raw.location.column, 1))
+      )
+        return undefined
+      location = Object.freeze({
+        path: raw.location.path,
+        ...(raw.location.line === undefined ? {} : { line: raw.location.line }),
+      })
+    }
+    const evidence: ReviewViewEvidence[] = []
+    for (const rawEvidence of raw.evidence) {
+      if (!reviewViewEvidence(rawEvidence)) return undefined
+      evidence.push(
+        Object.freeze({
+          source: rawEvidence.source,
+          token: rawEvidence.token,
+          digest: rawEvidence.digest,
+          ...(rawEvidence.path === undefined ? {} : { path: rawEvidence.path }),
+        }),
+      )
+    }
+    let fix: ReviewViewFinding["fix"]
+    if (raw.fix !== undefined) {
+      if (
+        !reviewViewRecord(raw.fix) ||
+        !reviewViewSafeKeys(raw.fix, new Set(["recipe"])) ||
+        typeof raw.fix.recipe !== "string" ||
+        !REVIEW_VIEW_FIX_RECIPES.has(raw.fix.recipe)
+      )
+        return undefined
+      fix = Object.freeze({ recipe: raw.fix.recipe })
+    }
+    findings.push(
+      Object.freeze({
+        id: raw.id,
+        check: raw.check,
+        code: raw.code,
+        severity: raw.severity as ReviewViewFinding["severity"],
+        category: raw.category,
+        ...(location === undefined ? {} : { location }),
+        evidence: Object.freeze(evidence),
+        ...(fix === undefined ? {} : { fix }),
+      }),
+    )
+  }
+
+  const fixes: Array<ReviewView["fixes"][number]> = []
+  if (value.fixes !== undefined) {
+    if (!Array.isArray(value.fixes) || value.fixes.length > 256) return undefined
+    for (const raw of value.fixes) {
+      if (
+        !reviewViewRecord(raw) ||
+        !reviewViewSafeKeys(raw, new Set(["recipe", "status", "changedPaths", "reasonCode"])) ||
+        typeof raw.recipe !== "string" ||
+        !REVIEW_VIEW_FIX_RECIPES.has(raw.recipe) ||
+        typeof raw.status !== "string" ||
+        !REVIEW_VIEW_FIX_STATUSES.has(raw.status) ||
+        (raw.changedPaths !== undefined &&
+          (!Array.isArray(raw.changedPaths) || !raw.changedPaths.every(reviewViewPath)))
+      )
+        return undefined
+      if (raw.status === "no-op" || raw.status === "failed") {
+        if (!reviewViewReason(raw.reasonCode)) return undefined
+      } else if (raw.reasonCode !== undefined) return undefined
+      fixes.push(
+        Object.freeze({
+          recipe: raw.recipe,
+          status: raw.status as (typeof fixes)[number]["status"],
+        }),
+      )
+    }
+  }
+
+  const findingById = new Map(findings.map((finding) => [finding.id, finding]))
+  const referenced = new Set<string>()
+  for (const check of checks) {
+    const ids = checkFindingIds.get(check.id) ?? []
+    const ownFindings = findings.filter((finding) => finding.check === check.id)
+    if (
+      ownFindings.length !== ids.length ||
+      check.findings !== ownFindings.length ||
+      check.errors !== ownFindings.filter((finding) => finding.severity === "error").length ||
+      check.warnings !== ownFindings.filter((finding) => finding.severity === "warning").length ||
+      check.info !== ownFindings.filter((finding) => finding.severity === "info").length
+    )
+      return undefined
+    for (const id of ids) {
+      const finding = findingById.get(id)
+      if (finding === undefined || finding.check !== check.id || referenced.has(id))
+        return undefined
+      referenced.add(id)
+    }
+  }
+  if (referenced.size !== findings.length) return undefined
+
+  const errorCount = findings.filter((finding) => finding.severity === "error").length
+  const warningCount = findings.filter((finding) => finding.severity === "warning").length
+  const unresolvedFixes = fixes.filter(
+    (fix) => fix.status === "no-op" || fix.status === "failed",
+  ).length
+  const expectedBlocking = errorCount + (value.strict ? warningCount : 0) + unresolvedFixes
+  const expectedInconclusive =
+    value.scope.state === "invalid" ||
+    checks.some(
+      (check) => check.required && (check.status === "unavailable" || check.status === "error"),
+    )
+  const expectedStatus = expectedInconclusive
+    ? "inconclusive"
+    : expectedBlocking > 0
+      ? "fail"
+      : "pass"
+  if (value.blocking !== expectedBlocking || value.status !== expectedStatus) return undefined
+
+  checks.sort((left, right) => left.id.localeCompare(right.id))
+  findings.sort((left, right) => left.id.localeCompare(right.id))
+  return Object.freeze({
+    version: 1,
+    status: value.status,
+    ok: value.ok,
+    strict: value.strict,
+    blocking: value.blocking,
+    digest: value.digest,
+    ...(scope === undefined ? {} : { scope }),
+    checks: Object.freeze(checks),
+    findings: Object.freeze(findings),
+    fixes: Object.freeze(fixes),
+  })
+}
+
+/** Project a review report or host RPC result into a bounded, content-free browser view. */
+export function toReviewView(value: unknown): ReviewView | undefined {
+  if (!reviewViewRecord(value)) return undefined
+  if (
+    !Object.hasOwn(value, "report") &&
+    Object.hasOwn(value, "ok") &&
+    Object.hasOwn(value, "status") &&
+    (value.status === null || typeof value.status === "number")
+  ) {
+    if (
+      !reviewViewSafeKeys(value, new Set(["ok", "status", "errorCode"])) ||
+      typeof value.ok !== "boolean" ||
+      (value.status !== null && !reviewViewInt(value.status)) ||
+      (value.errorCode !== undefined &&
+        (typeof value.errorCode !== "string" || !REVIEW_VIEW_RPC_ERRORS.has(value.errorCode)))
+    )
+      return reviewUnavailableView(null, "invalid-report")
+    const reason =
+      value.errorCode === "invalid-report"
+        ? "invalid-report"
+        : value.errorCode === undefined
+          ? value.ok
+            ? "invalid-report"
+            : "unavailable"
+          : "process-failed"
+    return reviewUnavailableView(value.status as number | null, reason)
+  }
+  if (Object.hasOwn(value, "report")) {
+    if (
+      !reviewViewSafeKeys(value, new Set(["ok", "status", "report", "errorCode"])) ||
+      (value.status !== null && !reviewViewInt(value.status)) ||
+      typeof value.ok !== "boolean" ||
+      (value.errorCode !== undefined &&
+        (typeof value.errorCode !== "string" || !REVIEW_VIEW_RPC_ERRORS.has(value.errorCode))) ||
+      value.errorCode !== undefined
+    )
+      return reviewUnavailableView(null, "invalid-report")
+    if (value.report === undefined)
+      return reviewUnavailableView(
+        value.status as number | null,
+        value.ok ? "invalid-report" : "unavailable",
+      )
+    const report = toReviewView(value.report)
+    return report === undefined
+      ? reviewUnavailableView(value.status as number | null, "invalid-report")
+      : Object.freeze({
+          ...report,
+          ...(value.status === undefined ? {} : { processStatus: value.status as number | null }),
+        })
+  }
+  return parseReviewViewReport(value)
+}

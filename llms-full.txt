@@ -8827,6 +8827,55 @@ belong in these public contracts.
 For AI agents, see [`LLM.md`](./LLM.md) and the full corpus
 [`../../llms-full.txt`](../../llms-full.txt).
 
+## @nifrajs/agent-review
+
+`@nifrajs/agent-review` is a small, provider-neutral contract for bounded review results. It is a
+leaf package: it does not run checks, read a repository, invoke fixes, provide a CLI, or persist
+review data.
+
+```ts
+import { composeReviewReport, parseReviewReport } from "@nifrajs/agent-review"
+
+const report = await composeReviewReport({
+  strict: false,
+  scope: {
+    kind: "project",
+    state: "valid",
+    changedPaths: [],
+    pathDigest: "a".repeat(64),
+    outOfScopeCount: 0,
+  },
+  checks: [],
+  findings: [],
+})
+
+const verified = await parseReviewReport(JSON.stringify(report))
+```
+
+The parser accepts a JSON string or an unknown value and fails closed. It rejects unknown keys and
+content-bearing keys such as `message`, `prompt`, `output`, `payload`, `body`, and `secret` at any
+depth. Findings carry only stable codes, structural categories, safe locations, and opaque
+evidence references; they do not carry diagnostic messages, source text, requests, responses, or
+model content.
+
+Reports are limited to 256 KiB, depth 8, 32 keys per object, 1,024 array items, 512-byte paths,
+256-byte Git references, and bounded identifiers. Paths are project-relative POSIX paths. Parsed
+reports are deeply frozen. Report status, blocking count, and success are derived and verified;
+callers cannot make an invalid report pass by changing those fields.
+
+Canonical report digests use lowercase Web Crypto SHA-256. Check duration is display-only and is
+excluded from the digest, so equivalent structure has the same identity across runtimes and timing.
+The package uses no runtime dependencies, filesystem access, environment reads, provider SDKs, or
+Nifra package imports. It relies on `globalThis.crypto.subtle` and `TextEncoder`, which are available
+in Bun, modern Node, Deno, Workers, and browsers.
+
+The composer accepts only the typed structural inputs already produced by a trusted collector. It
+sorts and copies them, derives the outcome, signs the canonical report, and runs the same parser
+boundary before returning it. Repository collectors, CLI/MCP projections, SARIF, and safe fix
+recipes belong in higher-level packages.
+
+For coding agents, see [`LLM.md`](./LLM.md). The full machine-readable corpus is [`../../llms-full.txt`](../../llms-full.txt).
+
 ## @nifrajs/agent-telemetry
 
 Child-span telemetry for AI tool calls made through Nifra tool and MCP endpoints.
@@ -11830,11 +11879,15 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/agent-app
 
-`AGENT_APP_FEATURES`, `AgentAppClient`, `AgentAppClientOptions`, `AgentAppError`, `AgentEventView`, `AgentTransport`, `AgentTransportError`, `AgentTransportRequest`, `ApprovalRequiredView`, `ApprovalResolvedView`, `AssistantChunkView`, `AuthProvider`, `boundaryCommands`, `BoundaryDecisionResult`, `boundaryIsStale`, `BoundaryItemView`, `BoundaryStateView`, `CommandOutcome`, `CreateSessionInput`, `EvalComparisonView`, `EvidenceTimelineView`, `ExtensionReloadedView`, `FaultInjectionView`, `HandoffView`, `HttpAgentTransport`, `HttpAgentTransportOptions`, `MemoryCompactedView`, `OrderedEventBuffer`, `parseEventStream`, `PendingApprovalView`, `RegistryCapabilityView`, `RepairRequiredView`, `ReplayEntryView`, `ReplayResult`, `ResolveHandoffInput`, `ResumeInput`, `RunStudioNodeState`, `RunStudioNodeView`, `RunStudioView`, `RunView`, `SessionFailedView`, `SessionLifecycleView`, `SessionStoppedView`, `SessionView`, `toEvalComparisonView`, `toEventView`, `toEvidenceTimelineView`, `toFaultInjectionViews`, `toHandoffView`, `ToolCompletedView`, `ToolDeltaView`, `ToolStartedView`, `toRegistryCapabilityView`, `toRunStudioView`, `toRunView`, `toSessionView`, `TurnStartedView`, `VerificationCompletedView`, `virtualizeEvidenceRows`
+`AGENT_APP_FEATURES`, `AgentAppClient`, `AgentAppClientOptions`, `AgentAppError`, `AgentEventView`, `AgentTransport`, `AgentTransportError`, `AgentTransportRequest`, `ApprovalRequiredView`, `ApprovalResolvedView`, `AssistantChunkView`, `AuthProvider`, `boundaryCommands`, `BoundaryDecisionResult`, `boundaryIsStale`, `BoundaryItemView`, `BoundaryStateView`, `CommandOutcome`, `CreateSessionInput`, `EvalComparisonView`, `EvidenceTimelineView`, `ExtensionReloadedView`, `FaultInjectionView`, `HandoffView`, `HttpAgentTransport`, `HttpAgentTransportOptions`, `MemoryCompactedView`, `OrderedEventBuffer`, `parseEventStream`, `PendingApprovalView`, `RegistryCapabilityView`, `RepairRequiredView`, `ReplayEntryView`, `ReplayResult`, `ResolveHandoffInput`, `ResumeInput`, `ReviewView`, `ReviewViewCheck`, `ReviewViewEvidence`, `ReviewViewFinding`, `ReviewViewStatus`, `RunStudioNodeState`, `RunStudioNodeView`, `RunStudioView`, `RunView`, `SessionFailedView`, `SessionLifecycleView`, `SessionStoppedView`, `SessionView`, `toEvalComparisonView`, `toEventView`, `toEvidenceTimelineView`, `toFaultInjectionViews`, `toHandoffView`, `ToolCompletedView`, `ToolDeltaView`, `ToolStartedView`, `toRegistryCapabilityView`, `toReviewView`, `toRunStudioView`, `toRunView`, `toSessionView`, `TurnStartedView`, `VerificationCompletedView`, `virtualizeEvidenceRows`
 
 ## @nifrajs/agent-protocol
 
 `AGENT_PROTOCOL_VERSION`, `AgentApprovalRequiredEvent`, `AgentApprovalResolvedEvent`, `AgentAssistantDeltaEvent`, `AgentAssistantMessageEvent`, `AgentBackend`, `AgentBackendInfo`, `agentError`, `AgentError`, `AgentEvent`, `AgentEventPayload`, `AgentEventSink`, `AgentEventStream`, `AgentEventType`, `AgentExtensionReloadedEvent`, `AgentMemoryCompactedEvent`, `AgentRepairRequiredEvent`, `AgentRepairTask`, `AgentSessionCheckpoint`, `AgentSessionCompletedEvent`, `AgentSessionEventBase`, `AgentSessionFailedEvent`, `AgentSessionSnapshot`, `AgentSessionStartedEvent`, `AgentSessionStatus`, `AgentSessionStoppedEvent`, `AgentSessionUpdatedEvent`, `AgentToolCompletedEvent`, `AgentToolDeltaEvent`, `AgentToolStartedEvent`, `AgentTurnStartedEvent`, `AgentVerificationCompletedEvent`, `createAgentEventStream`, `CreateSessionInput`, `ForkSessionInput`, `ForkSessionResult`, `isAgentEvent`, `ReloadResult`, `SendMessageInput`
+
+## @nifrajs/agent-review
+
+`canonicalizeReviewReport`, `composeReviewReport`, `digestReviewReport`, `parseReviewReport`, `REVIEW_MAX_ARRAY_ITEMS`, `REVIEW_MAX_BYTES`, `REVIEW_MAX_CODE_BYTES`, `REVIEW_MAX_DEPTH`, `REVIEW_MAX_ID_BYTES`, `REVIEW_MAX_OBJECT_KEYS`, `REVIEW_MAX_PATH_BYTES`, `REVIEW_MAX_REF_BYTES`, `ReviewParserError`
 
 ## @nifrajs/agent-telemetry
 
@@ -11862,7 +11915,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/coding-agent
 
-`AGENT_CAPABILITY_MANIFEST_VERSION`, `AGENT_PRESETS`, `AgentCapability`, `AgentCapabilityManifest`, `AgentPlan`, `AgentPreset`, `AgentPresetName`, `ApprovalDecision`, `ApprovalManager`, `ApprovalManagerOptions`, `ApprovalMatchRejection`, `ApprovalMatchResult`, `ApprovalRequest`, `approvalRequestFromEvent`, `approvalResolvedEvent`, `BoundedSubagentRunner`, `BoundedText`, `CapabilityDescriptor`, `CiDeploymentAdapter`, `CodingAgentExtension`, `CodingAgentHost`, `CodingAgentHostOptions`, `CodingAgentRpcServer`, `CodingAgentRpcServerHandle`, `CodingAgentRpcServerOptions`, `CompactionReport`, `ContextRecord`, `ContextWindow`, `ContextWindowOptions`, `createCapabilityManifest`, `createCiDeploymentAdapter`, `createLocalProcessDeploymentAdapter`, `createNativeGatewayModelPort`, `createNifraTools`, `createPresetSpec`, `createReplayDeploymentAdapter`, `createVerificationRepairTask`, `deniedCapabilities`, `DEPLOYMENT_REFERENCE_PROFILES`, `discoverExtensions`, `ExtensionCommand`, `ExtensionContext`, `extensionDescriptor`, `ExtensionDescriptorOptions`, `extensionDescriptors`, `ExtensionDescriptorSource`, `ExtensionEventHandler`, `ExtensionHost`, `ExtensionHostOptions`, `ExtensionProvider`, `ExtensionReloadResult`, `ExtensionSubagent`, `ExtensionTool`, `FileSessionStore`, `FileSessionStoreOptions`, `getAgentPreset`, `HandoffCoordinator`, `HandoffCoordinatorOptions`, `HandoffDecision`, `HandoffError`, `HandoffRejection`, `HandoffView`, `HealingEvent`, `HealingOptions`, `HealingResult`, `IsolatedExtensionSnapshot`, `IsolatedExtensionTool`, `IsolatedExtensionWorker`, `IsolatedExtensionWorkerOptions`, `LocalProcessDeploymentAdapter`, `migrateLegacySession`, `MigrateLegacySessionOptions`, `NativeApprovalPort`, `NativeGatewayModelPortOptions`, `NativeMessage`, `NativeModelChunk`, `NativeModelPort`, `NativeModelRequest`, `NativeModelResponse`, `NativeTool`, `NIFRA_AGENT_INSTRUCTIONS`, `NifraAgentTool`, `NifraBackend`, `NifraBackendOptions`, `NifraContextOptions`, `NifraContextResult`, `OpenHandoffInput`, `parseCapabilityManifest`, `parseSessionEvidenceRecord`, `PiBackend`, `PiBackendOptions`, `PlanEvent`, `PlanPhase`, `PlanResult`, `PlanRunner`, `PlanRunnerOptions`, `ProjectDiffOptions`, `ProjectDiffResult`, `readBoundedText`, `readProjectDiff`, `readReplayEvents`, `RepairProposal`, `ReplayBackend`, `ReplayBackendOptions`, `ReplayDeploymentAdapter`, `runNifraContext`, `runNifraVerification`, `SelfHealingController`, `SESSION_EVIDENCE_VERSION`, `SessionEvidenceRecord`, `SessionLogEntry`, `SessionMigrationError`, `SessionMigrationReport`, `SessionStore`, `stableSessionEventCode`, `SubagentExecutor`, `SubagentResult`, `SubagentRunnerOptions`, `SubagentSpec`, `UiExtensionHost`, `UiExtensionHostOptions`, `UiExtensionManifest`, `UiExtensionSlot`, `UiReloadResult`, `UiStatusWidget`, `UiThemeDescriptor`, `validateExtensionModule`, `VerificationOptions`, `VerificationRepairTask`, `VerificationResult`, `WorkflowContext`, `WorkflowEvent`, `WorkflowResult`, `WorkflowRunner`, `WorkflowRunnerOptions`, `WorkflowStep`
+`AGENT_CAPABILITY_MANIFEST_VERSION`, `AGENT_PRESETS`, `AgentCapability`, `AgentCapabilityManifest`, `AgentPlan`, `AgentPreset`, `AgentPresetName`, `ApprovalDecision`, `ApprovalManager`, `ApprovalManagerOptions`, `ApprovalMatchRejection`, `ApprovalMatchResult`, `ApprovalRequest`, `approvalRequestFromEvent`, `approvalResolvedEvent`, `BoundedSubagentRunner`, `BoundedText`, `CapabilityDescriptor`, `CiDeploymentAdapter`, `CodingAgentExtension`, `CodingAgentHost`, `CodingAgentHostOptions`, `CodingAgentRpcServer`, `CodingAgentRpcServerHandle`, `CodingAgentRpcServerOptions`, `CompactionReport`, `ContextRecord`, `ContextWindow`, `ContextWindowOptions`, `createCapabilityManifest`, `createCiDeploymentAdapter`, `createLocalProcessDeploymentAdapter`, `createNativeGatewayModelPort`, `createNifraTools`, `createPresetSpec`, `createReplayDeploymentAdapter`, `createVerificationRepairTask`, `deniedCapabilities`, `DEPLOYMENT_REFERENCE_PROFILES`, `discoverExtensions`, `ExtensionCommand`, `ExtensionContext`, `extensionDescriptor`, `ExtensionDescriptorOptions`, `extensionDescriptors`, `ExtensionDescriptorSource`, `ExtensionEventHandler`, `ExtensionHost`, `ExtensionHostOptions`, `ExtensionProvider`, `ExtensionReloadResult`, `ExtensionSubagent`, `ExtensionTool`, `FileSessionStore`, `FileSessionStoreOptions`, `getAgentPreset`, `HandoffCoordinator`, `HandoffCoordinatorOptions`, `HandoffDecision`, `HandoffError`, `HandoffRejection`, `HandoffView`, `HealingEvent`, `HealingOptions`, `HealingResult`, `IsolatedExtensionSnapshot`, `IsolatedExtensionTool`, `IsolatedExtensionWorker`, `IsolatedExtensionWorkerOptions`, `isSafeReviewDiff`, `LocalProcessDeploymentAdapter`, `migrateLegacySession`, `MigrateLegacySessionOptions`, `NativeApprovalPort`, `NativeGatewayModelPortOptions`, `NativeMessage`, `NativeModelChunk`, `NativeModelPort`, `NativeModelRequest`, `NativeModelResponse`, `NativeTool`, `NIFRA_AGENT_INSTRUCTIONS`, `NifraAgentTool`, `NifraBackend`, `NifraBackendOptions`, `NifraContextOptions`, `NifraContextResult`, `OpenHandoffInput`, `parseCapabilityManifest`, `parseSessionEvidenceRecord`, `PiBackend`, `PiBackendOptions`, `PlanEvent`, `PlanPhase`, `PlanResult`, `PlanRunner`, `PlanRunnerOptions`, `ProjectDiffOptions`, `ProjectDiffResult`, `readBoundedText`, `readProjectDiff`, `readReplayEvents`, `RepairProposal`, `ReplayBackend`, `ReplayBackendOptions`, `ReplayDeploymentAdapter`, `ReviewExecutionErrorCode`, `ReviewExecutionResult`, `ReviewOptions`, `runNifraContext`, `runNifraReview`, `runNifraVerification`, `SelfHealingController`, `SESSION_EVIDENCE_VERSION`, `SessionEvidenceRecord`, `SessionLogEntry`, `SessionMigrationError`, `SessionMigrationReport`, `SessionStore`, `stableSessionEventCode`, `SubagentExecutor`, `SubagentResult`, `SubagentRunnerOptions`, `SubagentSpec`, `UiExtensionHost`, `UiExtensionHostOptions`, `UiExtensionManifest`, `UiExtensionSlot`, `UiReloadResult`, `UiStatusWidget`, `UiThemeDescriptor`, `validateExtensionModule`, `VerificationOptions`, `VerificationRepairTask`, `VerificationResult`, `WorkflowContext`, `WorkflowEvent`, `WorkflowResult`, `WorkflowRunner`, `WorkflowRunnerOptions`, `WorkflowStep`
 
 ## @nifrajs/content
 

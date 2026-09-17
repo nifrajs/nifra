@@ -24,6 +24,7 @@ import {
   toEvidenceTimelineView,
   toFaultInjectionViews,
   toRegistryCapabilityView,
+  toReviewView,
   toRunStudioView,
   virtualizeEvidenceRows,
 } from "@nifrajs/agent-app"
@@ -52,6 +53,7 @@ const ui = {
   connection: el("connection"),
   status: el("status"),
   session: el("session"),
+  review: el("review"),
   messages: el("messages"),
   timeline: el("timeline"),
   registry: el("registry"),
@@ -158,6 +160,7 @@ async function connect(): Promise<void> {
     refreshApprovals(),
     refreshRegistry(),
     refreshInbox(),
+    refreshReview(),
     refreshList("workflow.list", "workflows", ui.workflows, "No workflow extensions loaded"),
     refreshList("subagent.list", "subagents", ui.subagents, "No custom roles loaded"),
     refreshList("provider.list", "providers", ui.providers, "No custom providers loaded"),
@@ -166,8 +169,70 @@ async function connect(): Promise<void> {
   ])
 }
 
+/** Render the review report through the SDK's accepted structural projection only. */
+async function refreshReview(): Promise<void> {
+  const outcome = await client.command<Record<string, unknown>>("review.run")
+  ui.review.replaceChildren()
+  if (!outcome.ok) {
+    ui.review.textContent = `Review unavailable (${outcome.status})`
+    ui.review.className = "surface-list muted"
+    return
+  }
+
+  const view = toReviewView(outcome.value)
+  if (view === undefined || view.status === "unavailable") {
+    ui.review.textContent =
+      view?.reasonCode === "invalid-report"
+        ? "Review returned no valid content-free report"
+        : "Review unavailable"
+    ui.review.className = "surface-list muted"
+    return
+  }
+
+  ui.review.className = "surface-list"
+  const summary = document.createElement("div")
+  summary.className = "studio-summary"
+  summary.textContent = `${view.status} · ${view.blocking} blocking · ${view.findings.length} finding(s) · ${view.checks.length} check(s)`
+  ui.review.append(summary)
+
+  if (view.scope !== undefined) {
+    const scope = document.createElement("div")
+    scope.className = "event"
+    scope.textContent = `${view.scope.kind} scope · ${view.scope.state} · ${view.scope.changedPathCount} changed path(s) · ${view.scope.outOfScopeCount} out of scope`
+    ui.review.append(scope)
+  }
+
+  for (const check of view.checks) {
+    const row = document.createElement("div")
+    row.className = "surface-row"
+    row.textContent = `${check.id} · ${check.status} · ${check.findings} finding(s) · ${check.errors} error(s) · ${check.warnings} warning(s)`
+    ui.review.append(row)
+  }
+
+  for (const finding of view.findings.slice(0, 256)) {
+    const row = document.createElement("div")
+    row.className = "surface-row"
+    const location = finding.location === undefined ? "" : ` · ${finding.location.path}`
+    row.textContent = `${finding.code} · ${finding.severity} · ${finding.category}${location}`
+    ui.review.append(row)
+  }
+  if (view.checks.length === 0 && view.findings.length === 0) {
+    const empty = document.createElement("div")
+    empty.className = "muted"
+    empty.textContent = "No review checks or findings"
+    ui.review.append(empty)
+  }
+}
+
 /** Render run/retry/recovery/eval evidence through the SDK view-model boundary only. */
 async function refreshStudio(): Promise<void> {
+  if (!client.supports("run-studio")) {
+    ui.runGraph.textContent = "Run Studio not offered by this host"
+    ui.evidenceTimeline.textContent = "Run Studio not offered by this host"
+    ui.evalView.textContent = "Run Studio not offered by this host"
+    ui.faultView.textContent = "Run Studio not offered by this host"
+    return
+  }
   const outcome = await client.command<Record<string, unknown>>("run.studio")
   if (!outcome.ok) {
     ui.runGraph.textContent = `Run graph unavailable (${outcome.status})`

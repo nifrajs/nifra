@@ -290,7 +290,7 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ## @nifrajs/agent-app
 
-- **AGENT_APP_FEATURES** _(const)_ - `AGENT_APP_FEATURES: readonly ["approvals", "checkpoint", "fork", "handoff", "inbox", "reload", "resume", "workflows"]`
+- **AGENT_APP_FEATURES** _(const)_ - `AGENT_APP_FEATURES: readonly ["approvals", "checkpoint", "fork", "handoff", "inbox", "reload", "resume", "run-studio", "workflows"]`
   Interaction features the client knows how to drive. A host grants the subset it supports.
 - **AgentAppClient** _(class)_ - `class AgentAppClient`
 - **AgentAppClientOptions** _(interface)_ - `interface AgentAppClientOptions`
@@ -336,6 +336,11 @@ Every public export of every package and documented subpath - name, kind, signat
 - **ReplayResult** _(type)_ - `type ReplayResult`
 - **ResolveHandoffInput** _(interface)_ - `interface ResolveHandoffInput`
 - **ResumeInput** _(interface)_ - `interface ResumeInput`
+- **ReviewView** _(interface)_ - `interface ReviewView`
+- **ReviewViewCheck** _(interface)_ - `interface ReviewViewCheck`
+- **ReviewViewEvidence** _(interface)_ - `interface ReviewViewEvidence`
+- **ReviewViewFinding** _(interface)_ - `interface ReviewViewFinding`
+- **ReviewViewStatus** _(type)_ - `type ReviewViewStatus = "pass" | "fail" | "inconclusive" | "unavailable"`
 - **RunStudioNodeState** _(type)_ - `type RunStudioNodeState = | "pending" | "running" | "paused" | "succeeded" | "failed" | "cancelled" | "recovered"`
 - **RunStudioNodeView** _(interface)_ - `interface RunStudioNodeView`
 - **RunStudioView** _(interface)_ - `interface RunStudioView`
@@ -366,6 +371,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **toHandoffView** _(function)_ - `toHandoffView: (snapshot: HandoffSnapshot) => HandoffView`
 - **toRegistryCapabilityView** _(function)_ - `toRegistryCapabilityView: (value: unknown) => RegistryCapabilityView | undefined`
   Project one raw registry descriptor to a content-free {@link RegistryCapabilityView}, or `undefined` when a required identifier is missing or malformed. Only whitelisted structural fields are read, so an unexpected content field on the record can never reach the returned view.
+- **toReviewView** _(function)_ - `toReviewView: (value: unknown) => ReviewView | undefined`
+  Project a review report or host RPC result into a bounded, content-free browser view.
 - **toRunStudioView** _(function)_ - `toRunStudioView: (value: unknown) => RunStudioView | undefined`
   Project an evidence-only run graph; malformed or content-bearing input is rejected.
 - **toRunView** _(function)_ - `toRunView: (snapshot: RunSnapshot) => RunView`
@@ -548,6 +555,51 @@ Every public export of every package and documented subpath - name, kind, signat
   Resume an ordered, seq-keyed window from a cursor.
 - **vectorAdvances** _(function)_ - `vectorAdvances: (last: number, next: number) => boolean`
   Monotonic child-vector check: a newly opened boundary must advance strictly past the run's last allocated vector. A non-advancing vector is a replay and is refused. `last` is `-1` before any boundary has opened for the run.
+
+## @nifrajs/agent-review
+
+- **REVIEW_MAX_ARRAY_ITEMS** _(const)_ - `REVIEW_MAX_ARRAY_ITEMS: 1024`
+- **REVIEW_MAX_BYTES** _(const)_ - `REVIEW_MAX_BYTES: number`
+- **REVIEW_MAX_CODE_BYTES** _(const)_ - `REVIEW_MAX_CODE_BYTES: 64`
+- **REVIEW_MAX_DEPTH** _(const)_ - `REVIEW_MAX_DEPTH: 8`
+- **REVIEW_MAX_ID_BYTES** _(const)_ - `REVIEW_MAX_ID_BYTES: 128`
+- **REVIEW_MAX_OBJECT_KEYS** _(const)_ - `REVIEW_MAX_OBJECT_KEYS: 32`
+- **REVIEW_MAX_PATH_BYTES** _(const)_ - `REVIEW_MAX_PATH_BYTES: 512`
+- **REVIEW_MAX_REF_BYTES** _(const)_ - `REVIEW_MAX_REF_BYTES: 256`
+- **REVIEW_REPORT_VERSION** _(const)_ - `REVIEW_REPORT_VERSION: 1`
+  Stable version of the content-free review report contract.
+- **ReviewCategory** _(type)_ - `type ReviewCategory = | "correctness" | "security" | "boundary" | "assurance" | "capability" | "contract" | "dependency" | "hydration" | "coverage" | "configuration" | "operational"`
+- **ReviewCheckId** _(type)_ - `type ReviewCheckId`
+- **ReviewCheckResult** _(interface)_ - `interface ReviewCheckResult`
+- **ReviewCheckStatus** _(type)_ - `type ReviewCheckStatus = "pass" | "fail" | "skipped" | "unavailable" | "error"`
+- **ReviewCounts** _(interface)_ - `interface ReviewCounts`
+- **ReviewDurationBucket** _(type)_ - `type ReviewDurationBucket = "none" | "fast" | "standard" | "slow" | "timeout"`
+- **ReviewEvidenceRef** _(interface)_ - `interface ReviewEvidenceRef`
+- **ReviewEvidenceSource** _(type)_ - `type ReviewEvidenceSource = | "check" | "assurance" | "capability" | "manifest" | "contract" | "coverage" | "git-scope" | "collector"`
+- **ReviewFinding** _(interface)_ - `interface ReviewFinding`
+- **ReviewFixRecipeId** _(type)_ - `type ReviewFixRecipeId = "manifest.sync" | "workspace-dist.rebuild"`
+- **ReviewFixRef** _(interface)_ - `interface ReviewFixRef`
+- **ReviewFixResult** _(interface)_ - `interface ReviewFixResult`
+- **ReviewFixStatus** _(type)_ - `type ReviewFixStatus = "planned" | "changed" | "no-op" | "failed"`
+- **ReviewLocation** _(interface)_ - `interface ReviewLocation`
+- **ReviewParserError** _(class)_ - `class ReviewParserError`
+  Error raised for every malformed, unsafe, or payload-bearing report.
+- **ReviewParserErrorCode** _(type)_ - `type ReviewParserErrorCode`
+- **ReviewReasonCode** _(type)_ - `type ReviewReasonCode`
+- **ReviewReport** _(interface)_ - `interface ReviewReport`
+- **ReviewReportDraft** _(interface)_ - `interface ReviewReportDraft`
+  Sanitized structural inputs accepted by the deterministic composer.
+- **ReviewScope** _(interface)_ - `interface ReviewScope`
+- **ReviewSeverity** _(type)_ - `type ReviewSeverity = "error" | "warning" | "info"`
+- **ReviewStatus** _(type)_ - `type ReviewStatus = "pass" | "fail" | "inconclusive"`
+- **canonicalizeReviewReport** _(function)_ - `canonicalizeReviewReport: (report: ReviewReport) => string`
+  Return the stable UTF-8 text that identifies a review report's structural result.
+- **composeReviewReport** _(function)_ - `composeReviewReport: (input: ReviewReportDraft) => Promise<ReviewReport>`
+  Compose a report from already-sanitized structural values. This function has no repository, collector, CLI, filesystem, provider, or persistence access. The parser is run once more over the assembled value so the returned report has the same boundary guarantees as external input.
+- **digestReviewReport** _(function)_ - `digestReviewReport: (report: ReviewReport) => Promise<string>`
+  Compute a lowercase Web Crypto SHA-256 digest of the canonical report representation.
+- **parseReviewReport** _(function)_ - `parseReviewReport: (input: unknown) => Promise<ReviewReport>`
+  Parse a JSON string or unknown value into a bounded, deeply frozen review report.
 
 ## @nifrajs/agent-telemetry
 
@@ -956,6 +1008,9 @@ Every public export of every package and documented subpath - name, kind, signat
   Deterministic protocol backend for demos, CI, and UI regression tests.
 - **ReplayBackendOptions** _(interface)_ - `interface ReplayBackendOptions`
 - **ReplayDeploymentAdapter** _(class)_ - `class ReplayDeploymentAdapter`
+- **ReviewExecutionErrorCode** _(type)_ - `type ReviewExecutionErrorCode = | "timeout" | "output-truncated" | "invalid-report" | "spawn-failed"`
+- **ReviewExecutionResult** _(interface)_ - `interface ReviewExecutionResult`
+- **ReviewOptions** _(interface)_ - `interface ReviewOptions`
 - **SESSION_EVIDENCE_VERSION** _(const)_ - `SESSION_EVIDENCE_VERSION: 1`
   Version of the evidence-only legacy session file format.
 - **SelfHealingController** _(class)_ - `class SelfHealingController`
@@ -1010,6 +1065,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **extensionDescriptors** _(function)_ - `extensionDescriptors: (extensions: readonly ExtensionDescriptorSource[], options: ExtensionDescriptorOptions) => Promise<readonly CapabilityDescriptor[]>`
   Project a set of extensions under a single trusted allowlist, preserving order.
 - **getAgentPreset** _(function)_ - `getAgentPreset: (name: AgentPresetName) => AgentPreset`
+- **isSafeReviewDiff** _(function)_ - `isSafeReviewDiff: (value: unknown) => value is string`
+  Validate the only repository selector exposed by the host review RPC.
 - **migrateLegacySession** _(function)_ - `migrateLegacySession: (options: MigrateLegacySessionOptions) => Promise<SessionMigrationReport>`
   Read, project, validate, and atomically commit one legacy local session.
 - **parseCapabilityManifest** _(function)_ - `parseCapabilityManifest: (value: unknown) => AgentCapabilityManifest`
@@ -1021,6 +1078,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **readReplayEvents** _(function)_ - `readReplayEvents: (path: string) => Promise<readonly AgentEvent[]>`
 - **runNifraContext** _(function)_ - `runNifraContext: (options: NifraContextOptions) => Promise<NifraContextResult>`
   Project discovery kept outside the framework runtime; it is only spawned when an agent asks for it.
+- **runNifraReview** _(function)_ - `runNifraReview: (options: ReviewOptions) => Promise<ReviewExecutionResult>`
+  Run `nifra review --json` with the same bounded process discipline as the existing gates.
 - **runNifraVerification** _(function)_ - `runNifraVerification: (name: "check" | "assure" | "test", options: VerificationOptions) => Promise<VerificationResult>`
   Run an existing Nifra gate without importing the large framework CLI into the agent runtime.
 - **stableSessionEventCode** _(function)_ - `stableSessionEventCode: (type: string) => Promise<{ readonly code: string; readonly replaced: boolean; }>`
@@ -1255,11 +1314,18 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ### `@nifrajs/coding-agent/verification`
 
+- **ReviewExecutionErrorCode** _(type)_ - `type ReviewExecutionErrorCode = | "timeout" | "output-truncated" | "invalid-report" | "spawn-failed"`
+- **ReviewExecutionResult** _(interface)_ - `interface ReviewExecutionResult`
+- **ReviewOptions** _(interface)_ - `interface ReviewOptions`
 - **VerificationOptions** _(interface)_ - `interface VerificationOptions`
 - **VerificationRepairTask** _(interface)_ - `interface VerificationRepairTask`
 - **VerificationResult** _(interface)_ - `interface VerificationResult`
 - **createVerificationRepairTask** _(function)_ - `createVerificationRepairTask: (result: VerificationResult, cwd: string) => VerificationRepairTask | undefined`
   Turn a failed gate into a bounded, auditable repair task for the agent loop.
+- **isSafeReviewDiff** _(function)_ - `isSafeReviewDiff: (value: unknown) => value is string`
+  Validate the only repository selector exposed by the host review RPC.
+- **runNifraReview** _(function)_ - `runNifraReview: (options: ReviewOptions) => Promise<ReviewExecutionResult>`
+  Run `nifra review --json` with the same bounded process discipline as the existing gates.
 - **runNifraVerification** _(function)_ - `runNifraVerification: (name: "check" | "assure" | "test", options: VerificationOptions) => Promise<VerificationResult>`
   Run an existing Nifra gate without importing the large framework CLI into the agent runtime.
 

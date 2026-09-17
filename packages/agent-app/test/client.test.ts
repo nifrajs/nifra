@@ -67,6 +67,17 @@ describe("AgentAppClient session + negotiation", () => {
     expect(() => client.requireFeature("resume")).toThrow(AgentAppError)
   })
 
+  test("negotiates the optional run studio surface", async () => {
+    const transport = new FakeTransport(() => ({
+      ok: true,
+      status: 200,
+      value: snapshot({ capabilities: ["run-studio"] }),
+    }))
+    const client = new AgentAppClient(transport)
+    await client.createSession()
+    expect(client.supports("run-studio")).toBe(true)
+  })
+
   test("a session command error surfaces as AgentAppError, never a raw throw of the credential", async () => {
     const transport = new FakeTransport(() => ({ ok: false, status: 401, error: "unauthorized" }))
     const client = new AgentAppClient(transport)

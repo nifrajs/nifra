@@ -19,13 +19,13 @@ Presentation-safe browser SDK for Nifra agent hosts: negotiated commands, ordere
 - **toFaultInjectionViews** _(function)_ - `toFaultInjectionViews: (value: unknown) => readonly FaultInjectionView[]`
 - **toHandoffView** _(function)_ - `toHandoffView: (snapshot: HandoffSnapshot) => HandoffView`
 - **toRegistryCapabilityView** _(function)_ - `toRegistryCapabilityView: (value: unknown) => RegistryCapabilityView | undefined`
+- **toReviewView** _(function)_ - `toReviewView: (value: unknown) => ReviewView | undefined`
 - **toRunStudioView** _(function)_ - `toRunStudioView: (value: unknown) => RunStudioView | undefined`
 - **toRunView** _(function)_ - `toRunView: (snapshot: RunSnapshot) => RunView`
 - **toSessionView** _(function)_ - `toSessionView: (snapshot: AgentSessionSnapshot) => SessionView`
 - **virtualizeEvidenceRows** _(function)_ - `virtualizeEvidenceRows: <T>(rows: readonly T[], cursor: number, windowSize?: number) => { readonly offset: number; readonly rows: readonly …`
-- **AgentAppClient** _(class)_ - `class AgentAppClient`
 
-_…and 45 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentapp) for the complete list._
+_…and 51 more - see [`api-reference.md`](../../api-reference.md#nifrajsagentapp) for the complete list._
 
 ## Footguns
 

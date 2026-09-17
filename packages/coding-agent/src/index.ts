@@ -150,6 +150,11 @@ export {
 } from "./ui.ts"
 export {
   createVerificationRepairTask,
+  isSafeReviewDiff,
+  type ReviewExecutionErrorCode,
+  type ReviewExecutionResult,
+  type ReviewOptions,
+  runNifraReview,
   runNifraVerification,
   type VerificationOptions,
   type VerificationRepairTask,

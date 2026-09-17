@@ -64,6 +64,8 @@ describe("built workbench browser artifact", () => {
     expect(body).not.toMatch(/import\s*["']@nifrajs\/agent-app["']/)
     // And the client machinery is present, proving the dependency was actually inlined.
     expect(body).toContain("createSession")
+    // Review is reached through the host command escape hatch and projected by the SDK view model.
+    expect(body).toContain("review.run")
   })
 
   test("serves an index that loads the bundle as a module", async () => {
@@ -73,5 +75,6 @@ describe("built workbench browser artifact", () => {
     const html = await response.text()
     expect(html).toContain('type="module"')
     expect(html).toContain("/app.js")
+    expect(html).toContain('id="review"')
   })
 })

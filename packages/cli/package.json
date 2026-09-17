@@ -68,6 +68,7 @@
   "dependencies": {
     "@nifrajs/client": "workspace:*",
     "@nifrajs/core": "workspace:*",
+    "@nifrajs/agent-review": "workspace:*",
     "@nifrajs/mcp": "workspace:*",
     "@nifrajs/runner": "workspace:*",
     "@nifrajs/schema": "workspace:*",

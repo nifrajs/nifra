@@ -197,6 +197,13 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
 import { t } from "@nifrajs/schema"
 const body = t.object({ name: t.string(), age: t.number() })
 export default server().post("/users", { body }, (c) => ({ name: c.body.name }))`,
+  // Leaf-import row, not a server row: pins the marginal cost of reaching for the review leaf.
+  // `@nifrajs/agent-review` must stay dependency-minimal and off the request path - it is composed
+  // by `nifra review`, never imported by `core`/`client`/`schema`/`web` or any runtime adapter.
+  // A budget break here means the leaf gained a runtime dependency or became reachable from the
+  // kernel, both of which are Phase 6 regressions, not repricings.
+  "nifra-agent-review": `import { composeReviewReport, digestReviewReport } from "@nifrajs/agent-review"
+console.log(typeof composeReviewReport, typeof digestReviewReport)`,
 }
 
 // Gzip ceilings are deliberately just above measured values: enough headroom for minifier noise, tight
@@ -283,6 +290,8 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-sse": 27.4,
   "nifra-valibot": 27.7,
   "nifra-typebox-t": 56.4,
+  // Review-leaf ceiling: measured 5.0 KB gz + ~0.2 KB headroom, same rule as every other row.
+  "nifra-agent-review": 5.2,
 }
 
 const main = async (): Promise<void> => {

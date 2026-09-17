@@ -60,6 +60,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - `@nifrajs/agent` - Provider-neutral, typed, resumable agent turns built on Nifra tool contracts.
 - `@nifrajs/agent-app` - Presentation-safe browser SDK for Nifra agent hosts: negotiated commands, ordered event streaming, and content-free view models over the agent protocol.
 - `@nifrajs/agent-protocol` - Small backend-neutral session and event protocol for Nifra coding agents.
+- `@nifrajs/agent-review` - A bounded, content-free review report contract for Nifra tooling.
 - `@nifrajs/agent-telemetry` - Agent telemetry plugin - child spans for AI tool calls on /_nifra/tool/* and MCP endpoints.
 - `@nifrajs/auth` - Session primitives for nifra - signed-cookie + server-store sessions, CSRF, and route guards. Bring your own identity (Better Auth / Lucia / OAuth); nifra owns the session.
 - `@nifrajs/aws-lambda` - AWS Lambda adapter for nifra - API Gateway HTTP API (payload v2) and Function URLs, buffered or streaming, with post-decode body limits and single-site header merging. Dependency-free.

@@ -40,6 +40,7 @@ export const AGENT_APP_FEATURES = [
   "inbox",
   "reload",
   "resume",
+  "run-studio",
   "workflows",
 ] as const
 

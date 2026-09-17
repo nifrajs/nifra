@@ -29,7 +29,7 @@ Standalone, extensible Nifra coding-agent host and CLI.
 - **createMemoryRunDispatchStore** _(function)_ - `createMemoryRunDispatchStore: (options?: { readonly now?: () => number; }) => RunDispatchStore & { readonly jobs: JobStore; deadLetters(): …` · from `@nifrajs/coding-agent/orchestration`
 - **createNativeGatewayModelPort** _(function)_ - `createNativeGatewayModelPort: (options: NativeGatewayModelPortOptions) => NativeModelPort` · from `@nifrajs/coding-agent`
 
-_…and 231 more - see [`api-reference.md`](../../api-reference.md#nifrajscodingagent) for the complete list._
+_…and 236 more - see [`api-reference.md`](../../api-reference.md#nifrajscodingagent) for the complete list._
 
 ## Footguns
 

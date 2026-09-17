@@ -11,7 +11,7 @@ import { CodingAgentHost, type CodingAgentHostOptions } from "./host.ts"
 import { readBoundedText } from "./process.ts"
 import type { ContextWindowOptions, SessionStore } from "./sessions.ts"
 import type { UiExtensionHost, UiExtensionManifest } from "./ui.ts"
-import { runNifraVerification } from "./verification.ts"
+import { isSafeReviewDiff, runNifraReview, runNifraVerification } from "./verification.ts"
 
 export interface CodingAgentRpcServerOptions {
   readonly backend: AgentBackend
@@ -535,6 +535,38 @@ export class CodingAgentRpcServer {
           200,
           cors,
           this.options.exposeErrorStacks === true,
+        )
+      }
+      case "review.run": {
+        const params = record(request.params)
+        const allowed = new Set(["strict", "diff"])
+        if (Object.keys(params).some((key) => !allowed.has(key)))
+          return json(
+            { error: { code: "invalid_review", message: "review accepts only strict and diff" } },
+            422,
+            cors,
+          )
+        if (params.strict !== undefined && typeof params.strict !== "boolean")
+          return json(
+            { error: { code: "invalid_review", message: "strict must be a boolean" } },
+            422,
+            cors,
+          )
+        if (params.diff !== undefined && !isSafeReviewDiff(params.diff))
+          return json(
+            { error: { code: "invalid_review", message: "diff must be a safe Git ref" } },
+            422,
+            cors,
+          )
+        return json(
+          await runNifraReview({
+            cwd: this.options.cwd,
+            ...(this.options.verification === undefined ? {} : this.options.verification),
+            ...(params.strict === undefined ? {} : { strict: params.strict }),
+            ...(params.diff === undefined ? {} : { diff: params.diff }),
+          }),
+          200,
+          cors,
         )
       }
       case "project.diff": {

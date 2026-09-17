@@ -217,7 +217,7 @@
     "name": "AGENT_APP_FEATURES",
     "kind": "const",
     "package": "@nifrajs/agent-app",
-    "signature": "export declare const AGENT_APP_FEATURES: readonly [\"approvals\", \"checkpoint\", \"fork\", \"handoff\", \"inbox\", \"reload\", \"resume\", \"workflows\"];",
+    "signature": "export declare const AGENT_APP_FEATURES: readonly [\"approvals\", \"checkpoint\", \"fork\", \"handoff\", \"inbox\", \"reload\", \"resume\", \"run-studio\", \"workflows\"];",
     "doc": "/** Interaction features the client knows how to drive. A host grants the subset it supports. */"
   },
   {
@@ -2596,6 +2596,13 @@
     "doc": "/** Canonicalize JSON bodies so whitespace/property-order retries bind to the same semantic request. */"
   },
   {
+    "name": "canonicalizeReviewReport",
+    "kind": "function",
+    "package": "@nifrajs/agent-review",
+    "signature": "export declare function canonicalizeReviewReport(report: ReviewReport): string;",
+    "doc": "/**\n * Return the stable UTF-8 text that identifies a review report's structural result.\n *\n * The report digest and check duration are omitted. Arrays are copied into their contract-defined\n * order, while object keys are sorted recursively. No caller-owned object is mutated.\n */"
+  },
+  {
     "name": "canonicalJson",
     "kind": "function",
     "package": "@nifrajs/coding-agent",
@@ -3730,6 +3737,13 @@
     "package": "@nifrajs/agent",
     "signature": "export declare function composeRegistrySnapshot(descriptors: readonly CapabilityDescriptor[]): Promise<RegistrySnapshot>;",
     "doc": "/**\n * Compose a deterministic registry snapshot. Descriptors are validated, checked for identity\n * collisions, canonically ordered, and digested. Two descriptors that share a (kind, name) identity\n * fail `descriptor_collision` when their schema digests agree and `schema_drift` when they differ -\n * a drifted schema is a distinct, addressable failure from a duplicate registration. Because the set\n * is sorted before it is digested, the snapshot digest is independent of the input order.\n */"
+  },
+  {
+    "name": "composeReviewReport",
+    "kind": "function",
+    "package": "@nifrajs/agent-review",
+    "signature": "export declare function composeReviewReport(input: ReviewReportDraft): Promise<ReviewReport>;",
+    "doc": "/**\n * Compose a report from already-sanitized structural values. This function has no repository,\n * collector, CLI, filesystem, provider, or persistence access. The parser is run once more over\n * the assembled value so the returned report has the same boundary guarantees as external input.\n */"
   },
   {
     "name": "compression",
@@ -5824,6 +5838,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function digestProjectEvidence(snapshot: ProjectEvidenceSnapshot): Promise<string>;",
     "doc": "/** SHA-256 of the canonical snapshot, useful as a cheap freshness/reference token. */"
+  },
+  {
+    "name": "digestReviewReport",
+    "kind": "function",
+    "package": "@nifrajs/agent-review",
+    "signature": "export declare function digestReviewReport(report: ReviewReport): Promise<string>;",
+    "doc": "/** Compute a lowercase Web Crypto SHA-256 digest of the canonical report representation. */"
   },
   {
     "name": "digestRunPlan",
@@ -8704,6 +8725,13 @@
     "package": "@nifrajs/web",
     "signature": "export interface ISRPlatform {\n    readonly waitUntil?: (promise: Promise<unknown>) => void;\n}",
     "doc": "/** Minimal platform shape `withISR` needs - just `waitUntil` (edge runtimes extend the response\n * lifetime so background regeneration finishes). Off-edge it's absent and regen runs fire-and-forget. */"
+  },
+  {
+    "name": "isSafeReviewDiff",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function isSafeReviewDiff(value: unknown): value is string;",
+    "doc": "/** Validate the only repository selector exposed by the host review RPC. */"
   },
   {
     "name": "isSameOriginPath",
@@ -11709,6 +11737,13 @@
     "signature": "export declare function parseReplayFile(value: unknown): ReplayFile;"
   },
   {
+    "name": "parseReviewReport",
+    "kind": "function",
+    "package": "@nifrajs/agent-review",
+    "signature": "export declare function parseReviewReport(input: unknown): Promise<ReviewReport>;",
+    "doc": "/** Parse a JSON string or unknown value into a bounded, deeply frozen review report. */"
+  },
+  {
     "name": "parseRubricVerdict",
     "kind": "function",
     "package": "@nifrajs/testing",
@@ -13985,6 +14020,243 @@
     "doc": "/** The wrapper `revalidate()` returns: the action's `data` plus the paths it changed. A plain tagged\n * shape (not a class) so `@nifrajs/client`'s `ActionData` can unwrap it structurally without importing\n * from `@nifrajs/web`. `createWebApp` strips the wrapper - the client receives `data` as the body and\n * the paths via the `X-Nifra-Revalidate` header. */"
   },
   {
+    "name": "REVIEW_MAX_ARRAY_ITEMS",
+    "kind": "const",
+    "package": "@nifrajs/agent-review",
+    "signature": "export declare const REVIEW_MAX_ARRAY_ITEMS = 1024;"
+  },
+  {
+    "name": "REVIEW_MAX_BYTES",
+    "kind": "const",
+    "package": "@nifrajs/agent-review",
+    "signature": "export declare const REVIEW_MAX_BYTES: number;"
+  },
+  {
+    "name": "REVIEW_MAX_CODE_BYTES",
+    "kind": "const",
+    "package": "@nifrajs/agent-review",
+    "signature": "export declare const REVIEW_MAX_CODE_BYTES = 64;"
+  },
+  {
+    "name": "REVIEW_MAX_DEPTH",
+    "kind": "const",
+    "package": "@nifrajs/agent-review",
+    "signature": "export declare const REVIEW_MAX_DEPTH = 8;"
+  },
+  {
+    "name": "REVIEW_MAX_ID_BYTES",
+    "kind": "const",
+    "package": "@nifrajs/agent-review",
+    "signature": "export declare const REVIEW_MAX_ID_BYTES = 128;"
+  },
+  {
+    "name": "REVIEW_MAX_OBJECT_KEYS",
+    "kind": "const",
+    "package": "@nifrajs/agent-review",
+    "signature": "export declare const REVIEW_MAX_OBJECT_KEYS = 32;"
+  },
+  {
+    "name": "REVIEW_MAX_PATH_BYTES",
+    "kind": "const",
+    "package": "@nifrajs/agent-review",
+    "signature": "export declare const REVIEW_MAX_PATH_BYTES = 512;"
+  },
+  {
+    "name": "REVIEW_MAX_REF_BYTES",
+    "kind": "const",
+    "package": "@nifrajs/agent-review",
+    "signature": "export declare const REVIEW_MAX_REF_BYTES = 256;"
+  },
+  {
+    "name": "REVIEW_REPORT_VERSION",
+    "kind": "const",
+    "package": "@nifrajs/agent-review",
+    "signature": "export declare const REVIEW_REPORT_VERSION: 1;",
+    "doc": "/** Stable version of the content-free review report contract. */"
+  },
+  {
+    "name": "ReviewCategory",
+    "kind": "type",
+    "package": "@nifrajs/agent-review",
+    "signature": "export type ReviewCategory = \"correctness\" | \"security\" | \"boundary\" | \"assurance\" | \"capability\" | \"contract\" | \"dependency\" | \"hydration\" | \"coverage\" | \"configuration\" | \"operational\";"
+  },
+  {
+    "name": "ReviewCheckId",
+    "kind": "type",
+    "package": "@nifrajs/agent-review",
+    "signature": "export type ReviewCheckId = \"typecheck\" | \"typed-client\" | \"server-boundary\" | \"route-boundary\" | \"pipeline\" | \"security\" | \"route-assurance\" | \"capability-provenance\" | \"manifest\" | \"dependency\" | \"contract-witness\" | \"coverage\" | \"hydration\" | \"configuration\";"
+  },
+  {
+    "name": "ReviewCheckResult",
+    "kind": "interface",
+    "package": "@nifrajs/agent-review",
+    "signature": "export interface ReviewCheckResult {\n    readonly id: ReviewCheckId;\n    readonly required: boolean;\n    readonly status: ReviewCheckStatus;\n    /** Display-only timing bucket. It is deliberately excluded from report digests. */\n    readonly duration: ReviewDurationBucket;\n    readonly counts: ReviewCounts;\n    readonly findingIds: readonly string[];\n    readonly evidence: readonly ReviewEvidenceRef[];\n    readonly reasonCode?: ReviewReasonCode;\n}"
+  },
+  {
+    "name": "ReviewCheckStatus",
+    "kind": "type",
+    "package": "@nifrajs/agent-review",
+    "signature": "export type ReviewCheckStatus = \"pass\" | \"fail\" | \"skipped\" | \"unavailable\" | \"error\";"
+  },
+  {
+    "name": "ReviewCounts",
+    "kind": "interface",
+    "package": "@nifrajs/agent-review",
+    "signature": "export interface ReviewCounts {\n    readonly findings: number;\n    readonly errors: number;\n    readonly warnings: number;\n    readonly info: number;\n    readonly outOfScope: number;\n}"
+  },
+  {
+    "name": "ReviewDurationBucket",
+    "kind": "type",
+    "package": "@nifrajs/agent-review",
+    "signature": "export type ReviewDurationBucket = \"none\" | \"fast\" | \"standard\" | \"slow\" | \"timeout\";"
+  },
+  {
+    "name": "ReviewEvidenceRef",
+    "kind": "interface",
+    "package": "@nifrajs/agent-review",
+    "signature": "export interface ReviewEvidenceRef {\n    readonly source: ReviewEvidenceSource;\n    readonly token: string;\n    readonly digest: string;\n    readonly path?: string;\n}"
+  },
+  {
+    "name": "ReviewEvidenceSource",
+    "kind": "type",
+    "package": "@nifrajs/agent-review",
+    "signature": "export type ReviewEvidenceSource = \"check\" | \"assurance\" | \"capability\" | \"manifest\" | \"contract\" | \"coverage\" | \"git-scope\" | \"collector\";"
+  },
+  {
+    "name": "ReviewExecutionErrorCode",
+    "kind": "type",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export type ReviewExecutionErrorCode = \"timeout\" | \"output-truncated\" | \"invalid-report\" | \"spawn-failed\";"
+  },
+  {
+    "name": "ReviewExecutionResult",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface ReviewExecutionResult {\n    readonly name: \"review\";\n    readonly ok: boolean;\n    readonly status: number | null;\n    /** A parsed, content-free ReviewReport. Raw stdout/stderr is intentionally never returned. */\n    readonly report?: unknown;\n    readonly errorCode?: ReviewExecutionErrorCode;\n}"
+  },
+  {
+    "name": "ReviewFinding",
+    "kind": "interface",
+    "package": "@nifrajs/agent-review",
+    "signature": "export interface ReviewFinding {\n    readonly id: string;\n    readonly check: ReviewCheckId;\n    readonly code: string;\n    readonly severity: ReviewSeverity;\n    readonly category: ReviewCategory;\n    readonly location?: ReviewLocation;\n    readonly evidence: readonly ReviewEvidenceRef[];\n    readonly fix?: ReviewFixRef;\n}"
+  },
+  {
+    "name": "ReviewFixRecipeId",
+    "kind": "type",
+    "package": "@nifrajs/agent-review",
+    "signature": "export type ReviewFixRecipeId = \"manifest.sync\" | \"workspace-dist.rebuild\";"
+  },
+  {
+    "name": "ReviewFixRef",
+    "kind": "interface",
+    "package": "@nifrajs/agent-review",
+    "signature": "export interface ReviewFixRef {\n    readonly recipe: ReviewFixRecipeId;\n}"
+  },
+  {
+    "name": "ReviewFixResult",
+    "kind": "interface",
+    "package": "@nifrajs/agent-review",
+    "signature": "export interface ReviewFixResult {\n    readonly recipe: ReviewFixRecipeId;\n    readonly status: ReviewFixStatus;\n    readonly changedPaths?: readonly string[];\n    readonly reasonCode?: ReviewReasonCode;\n}"
+  },
+  {
+    "name": "ReviewFixStatus",
+    "kind": "type",
+    "package": "@nifrajs/agent-review",
+    "signature": "export type ReviewFixStatus = \"planned\" | \"changed\" | \"no-op\" | \"failed\";"
+  },
+  {
+    "name": "ReviewLocation",
+    "kind": "interface",
+    "package": "@nifrajs/agent-review",
+    "signature": "export interface ReviewLocation {\n    readonly path: string;\n    readonly line?: number;\n    readonly column?: number;\n}"
+  },
+  {
+    "name": "ReviewOptions",
+    "kind": "interface",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export interface ReviewOptions {\n    readonly cwd: string;\n    readonly command?: string;\n    readonly commandArgs?: readonly string[];\n    readonly strict?: boolean;\n    readonly diff?: string;\n    readonly timeoutMs?: number;\n    readonly maxOutputBytes?: number;\n    readonly env?: Readonly<Record<string, string | undefined>>;\n}"
+  },
+  {
+    "name": "ReviewParserError",
+    "kind": "class",
+    "package": "@nifrajs/agent-review",
+    "signature": "export declare class ReviewParserError extends Error {\n    readonly code: ReviewParserErrorCode;\n    readonly path?: string;\n    constructor(code: ReviewParserErrorCode, path?: string);\n}",
+    "doc": "/** Error raised for every malformed, unsafe, or payload-bearing report. */"
+  },
+  {
+    "name": "ReviewParserErrorCode",
+    "kind": "type",
+    "package": "@nifrajs/agent-review",
+    "signature": "export type ReviewParserErrorCode = \"invalid-root\" | \"unknown-key\" | \"forbidden-content\" | \"invalid-type\" | \"invalid-enum\" | \"invalid-id\" | \"invalid-reference\" | \"invalid-path\" | \"invalid-digest\" | \"duplicate-id\" | \"missing-required\" | \"oversized\" | \"derived-field-mismatch\" | \"non-canonical\";"
+  },
+  {
+    "name": "ReviewReasonCode",
+    "kind": "type",
+    "package": "@nifrajs/agent-review",
+    "signature": "export type ReviewReasonCode = \"not-configured\" | \"config-missing\" | \"config-invalid\" | \"collector-error\" | \"collector-unavailable\" | \"diagnostics-truncated\" | \"missing-typescript\" | \"invalid-target\" | \"invalid-git-ref\" | \"invalid-git-scope\" | \"filtered-out-of-scope\" | \"fix-failed\" | \"fix-no-op\" | \"unsupported\";"
+  },
+  {
+    "name": "ReviewReport",
+    "kind": "interface",
+    "package": "@nifrajs/agent-review",
+    "signature": "export interface ReviewReport {\n    readonly version: typeof REVIEW_REPORT_VERSION;\n    readonly strict: boolean;\n    readonly scope: ReviewScope;\n    readonly checks: readonly ReviewCheckResult[];\n    readonly findings: readonly ReviewFinding[];\n    readonly fixes?: readonly ReviewFixResult[];\n    readonly blocking: number;\n    readonly ok: boolean;\n    readonly status: ReviewStatus;\n    /** Lowercase SHA-256 of the canonical report without this field or display-only durations. */\n    readonly digest: string;\n}"
+  },
+  {
+    "name": "ReviewReportDraft",
+    "kind": "interface",
+    "package": "@nifrajs/agent-review",
+    "signature": "export interface ReviewReportDraft {\n    readonly strict: boolean;\n    readonly scope: ReviewScope;\n    readonly checks: readonly ReviewCheckResult[];\n    readonly findings: readonly ReviewFinding[];\n    readonly fixes?: readonly ReviewFixResult[];\n}",
+    "doc": "/** Sanitized structural inputs accepted by the deterministic composer. */"
+  },
+  {
+    "name": "ReviewScope",
+    "kind": "interface",
+    "package": "@nifrajs/agent-review",
+    "signature": "export interface ReviewScope {\n    readonly kind: \"project\" | \"diff\";\n    readonly state: \"valid\" | \"invalid\";\n    readonly gitRef?: string;\n    readonly changedPaths: readonly string[];\n    /** SHA-256 of the canonical changed-path list. */\n    readonly pathDigest: string;\n    readonly outOfScopeCount: number;\n    readonly reasonCode?: ReviewReasonCode;\n}"
+  },
+  {
+    "name": "ReviewSeverity",
+    "kind": "type",
+    "package": "@nifrajs/agent-review",
+    "signature": "export type ReviewSeverity = \"error\" | \"warning\" | \"info\";"
+  },
+  {
+    "name": "ReviewStatus",
+    "kind": "type",
+    "package": "@nifrajs/agent-review",
+    "signature": "export type ReviewStatus = \"pass\" | \"fail\" | \"inconclusive\";"
+  },
+  {
+    "name": "ReviewView",
+    "kind": "interface",
+    "package": "@nifrajs/agent-app",
+    "signature": "export interface ReviewView {\n    readonly version: 1;\n    readonly status: ReviewViewStatus;\n    readonly ok: boolean;\n    readonly strict: boolean;\n    readonly blocking: number;\n    readonly digest?: string;\n    readonly processStatus?: number | null;\n    readonly reasonCode?: \"invalid-report\" | \"unavailable\" | \"process-failed\";\n    readonly scope?: {\n        readonly kind: \"project\" | \"diff\";\n        readonly state: \"valid\" | \"invalid\";\n        readonly pathDigest: string;\n        readonly changedPathCount: number;\n        readonly outOfScopeCount: number;\n    };\n    readonly checks: readonly ReviewViewCheck[];\n    readonly findings: readonly ReviewViewFinding[];\n    readonly fixes: readonly {\n        readonly recipe: string;\n        readonly status: \"planned\" | \"changed\" | \"no-op\" | \"failed\";\n    }[];\n}"
+  },
+  {
+    "name": "ReviewViewCheck",
+    "kind": "interface",
+    "package": "@nifrajs/agent-app",
+    "signature": "export interface ReviewViewCheck {\n    readonly id: string;\n    readonly required: boolean;\n    readonly status: \"pass\" | \"fail\" | \"skipped\" | \"unavailable\" | \"error\";\n    readonly findings: number;\n    readonly errors: number;\n    readonly warnings: number;\n    readonly info: number;\n    readonly outOfScope: number;\n    readonly reasonCode?: string;\n}"
+  },
+  {
+    "name": "ReviewViewEvidence",
+    "kind": "interface",
+    "package": "@nifrajs/agent-app",
+    "signature": "export interface ReviewViewEvidence {\n    readonly source: string;\n    readonly token: string;\n    readonly digest: string;\n    readonly path?: string;\n}"
+  },
+  {
+    "name": "ReviewViewFinding",
+    "kind": "interface",
+    "package": "@nifrajs/agent-app",
+    "signature": "export interface ReviewViewFinding {\n    readonly id: string;\n    readonly check: string;\n    readonly code: string;\n    readonly severity: \"error\" | \"warning\" | \"info\";\n    readonly category: string;\n    readonly location?: {\n        readonly path: string;\n        readonly line?: number;\n    };\n    readonly evidence: readonly ReviewViewEvidence[];\n    readonly fix?: {\n        readonly recipe: string;\n    };\n}"
+  },
+  {
+    "name": "ReviewViewStatus",
+    "kind": "type",
+    "package": "@nifrajs/agent-app",
+    "signature": "export type ReviewViewStatus = \"pass\" | \"fail\" | \"inconclusive\" | \"unavailable\";"
+  },
+  {
     "name": "rewriteSsrImports",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -14665,6 +14937,13 @@
     "package": "@nifrajs/coding-agent",
     "signature": "export declare function runNifraContext(options: NifraContextOptions): Promise<NifraContextResult>;",
     "doc": "/** Project discovery kept outside the framework runtime; it is only spawned when an agent asks for it. */"
+  },
+  {
+    "name": "runNifraReview",
+    "kind": "function",
+    "package": "@nifrajs/coding-agent",
+    "signature": "export declare function runNifraReview(options: ReviewOptions): Promise<ReviewExecutionResult>;",
+    "doc": "/** Run `nifra review --json` with the same bounded process discipline as the existing gates. */"
   },
   {
     "name": "runNifraVerification",
@@ -17622,6 +17901,13 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function toResponse(result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders): Response;"
+  },
+  {
+    "name": "toReviewView",
+    "kind": "function",
+    "package": "@nifrajs/agent-app",
+    "signature": "export declare function toReviewView(value: unknown): ReviewView | undefined;",
+    "doc": "/** Project a review report or host RPC result into a bounded, content-free browser view. */"
   },
   {
     "name": "toRunStudioView",

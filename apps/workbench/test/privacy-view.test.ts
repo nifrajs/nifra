@@ -6,6 +6,8 @@ test("Workbench studio source uses SDK projections and no backend/session import
   const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8")
   expect(browser).toContain("toRunStudioView")
   expect(browser).toContain("toEvidenceTimelineView")
+  expect(browser).toContain('client.supports("run-studio")')
+  expect(browser).toContain("Run Studio not offered by this host")
   expect(browser).not.toMatch(/FileSessionStore|PiBackend|NifraBackend|ReplayBackend|sessionStore/)
   expect(html).toContain("Evidence timeline")
   expect(html).toContain("Eval comparison")

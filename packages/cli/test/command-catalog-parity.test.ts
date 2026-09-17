@@ -16,6 +16,7 @@ test("the stable catalog is the public command allowlist", () => {
   const names = commandCatalog.map((entry) => entry.name)
   expect(names).toEqual([
     "check",
+    "review",
     "assure",
     "levels",
     "capabilities",
