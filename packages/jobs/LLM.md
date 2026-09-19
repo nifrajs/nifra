@@ -12,20 +12,20 @@ Typed background jobs for nifra - enqueue work off the request path with retries
 
 - **createQueue** _(function)_ - `createQueue: (options?: QueueOptions) => Queue`
 - **exponentialBackoff** _(function)_ - `exponentialBackoff: (options?: ExponentialOptions) => Backoff`
+- **toDeadLetterView** _(function)_ - `toDeadLetterView: (records: readonly DeadLetterRecord[]) => readonly DeadLetterView[]`
+- **toQueueHealth** _(function)_ - `toQueueHealth: (counts: { readonly pending: number; readonly active: number; readonly dead: number; }) => QueueHealth`
 - **JobError** _(class)_ - `class JobError`
 - **JobValidationError** _(class)_ - `class JobValidationError`
 - **MemoryJobStore** _(class)_ - `class MemoryJobStore`
 - **fixedBackoff** _(const)_ - `fixedBackoff: (ms: number) => Backoff`
 - **noBackoff** _(const)_ - `noBackoff: Backoff`
+- **DeadLetterRecord** _(interface)_ - `interface DeadLetterRecord`
+- **DeadLetterView** _(interface)_ - `interface DeadLetterView`
 - **EnqueueOptions** _(interface)_ - `interface EnqueueOptions`
 - **ExponentialOptions** _(interface)_ - `interface ExponentialOptions`
 - **JobContext** _(interface)_ - `interface JobContext`
-- **JobCounts** _(interface)_ - `interface JobCounts`
-- **JobDefinition** _(interface)_ - `interface JobDefinition<Payload>`
-- **JobHandle** _(interface)_ - `interface JobHandle<Payload>`
-- **JobStore** _(interface)_ - `interface JobStore`
 
-_…and 11 more - see [`api-reference.md`](../../api-reference.md#nifrajsjobs) for the complete list._
+_…and 16 more - see [`api-reference.md`](../../api-reference.md#nifrajsjobs) for the complete list._
 
 ## Footguns
 

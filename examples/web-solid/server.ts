@@ -27,6 +27,7 @@ function loader(): PageData {
 const app = server()
   .get(
     "/client.js",
+    // nifra-expect raw-response - static client asset is intentionally served as bytes
     () => new Response(clientJs, { headers: { "content-type": "text/javascript" } }),
   )
   .get("/", () =>

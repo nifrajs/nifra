@@ -145,16 +145,16 @@ if (framework === "nifra") {
   serveFetch((req): Response | Promise<Response> => {
     const pathname = pathnameOf(req.url)
     if (req.method === "GET") {
-      if (pathname === "/") return Response.json({ hello: "world" })
+      if (pathname === "/") return Response.json({ hello: "world" }) // nifra-expect raw-response - benchmark measures raw responses
       if (pathname.startsWith(usersPrefix)) {
-        return Response.json({ id: pathname.slice(usersPrefix.length) })
+        return Response.json({ id: pathname.slice(usersPrefix.length) }) // nifra-expect raw-response - benchmark response
       }
       if (pathname === "/search") {
         const url = new URL(req.url)
         const q = url.searchParams.get("q")
         const limit = url.searchParams.get("limit")
-        if (q !== null && limit !== null) return Response.json({ q, limit })
-        return new Response("invalid", { status: 400 })
+        if (q !== null && limit !== null) return Response.json({ q, limit }) // nifra-expect raw-response - benchmark response
+        return new Response("invalid", { status: 400 }) // nifra-expect raw-response - benchmark rejection
       }
     } else if (req.method === "POST" && pathname === "/users") {
       return req
@@ -166,7 +166,7 @@ if (framework === "nifra") {
             : new Response("invalid", { status: 400 }),
         )
     }
-    return new Response("not found", { status: 404 })
+    return new Response("not found", { status: 404 }) // nifra-expect raw-response - benchmark rejection
   }, port)
 } else {
   throw new Error(`unknown framework: ${framework ?? "(none)"}`)

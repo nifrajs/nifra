@@ -4,7 +4,7 @@ import { findAgentBoundaryFailures } from "./check-agent-boundary.ts"
 
 const ROOT = resolve(import.meta.dir, "..")
 const PROTECTED = ["core", "client", "web", "schema"] as const
-const OPTIONAL = ["agent-protocol", "pi", "coding-agent"] as const
+const OPTIONAL = ["agent-protocol", "agent-app", "agent-review", "pi", "coding-agent"] as const
 
 interface PackageMetric {
   readonly package: string

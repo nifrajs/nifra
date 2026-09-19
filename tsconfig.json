@@ -70,6 +70,7 @@
       "@nifrajs/agent-telemetry": ["./packages/agent-telemetry/src/index.ts"],
       "@nifrajs/agent": ["./packages/agent/src/index.ts"],
       "@nifrajs/agent-protocol": ["./packages/agent-protocol/src/index.ts"],
+      "@nifrajs/agent-review": ["./packages/agent-review/src/index.ts"],
       "@nifrajs/pi": ["./packages/pi/src/index.ts"],
       "@nifrajs/coding-agent": ["./packages/coding-agent/src/index.ts"],
       "@nifrajs/devtools": ["./packages/devtools/src/index.ts"],

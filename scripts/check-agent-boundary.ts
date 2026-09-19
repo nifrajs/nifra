@@ -5,6 +5,7 @@ const PROTECTED = ["core", "client", "web", "schema"] as const
 const FORBIDDEN = [
   "@nifrajs/agent",
   "@nifrajs/agent-app",
+  "@nifrajs/agent-review",
   "@nifrajs/agent-protocol",
   "@nifrajs/pi",
   "@nifrajs/coding-agent",

@@ -7,6 +7,10 @@
  */
 import { server } from "@nifrajs/core/server"
 
+const CHECK = process.argv.includes("--check")
+const MAX_OVERHEAD_PERCENT = 50
+const MAX_OVERHEAD_NS = 250
+
 const bare = server().get("/users/:id", (c) => ({ id: c.params.id }))
 
 const withMiddleware = server()
@@ -49,3 +53,15 @@ console.log(
 console.log(
   `  middleware overhead         ${overheadPct.toFixed(1)}%  (${overheadNs.toFixed(0)} ns/req)\n`,
 )
+if (CHECK) {
+  const failures: string[] = []
+  if (!Number.isFinite(overheadPct) || overheadPct > MAX_OVERHEAD_PERCENT)
+    failures.push(`${overheadPct.toFixed(1)}% > ${MAX_OVERHEAD_PERCENT}%`)
+  if (!Number.isFinite(overheadNs) || overheadNs > MAX_OVERHEAD_NS)
+    failures.push(`${overheadNs.toFixed(0)} ns/req > ${MAX_OVERHEAD_NS} ns/req`)
+  if (failures.length > 0)
+    throw new Error(`middleware performance gate failed: ${failures.join("; ")}`)
+  console.log(
+    `middleware performance gate passed (limits ${MAX_OVERHEAD_PERCENT}% / ${MAX_OVERHEAD_NS} ns/req)`,
+  )
+}

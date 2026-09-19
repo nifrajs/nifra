@@ -36,7 +36,10 @@ app.get("/assets/*", async (c) => {
   })
 })
 
-const store = new MemoryCacheStore({ allowInProduction: true })
+const store = new MemoryCacheStore({
+  // @nifra-gate-reviewed - ISR benchmark intentionally measures the in-memory cache path
+  allowInProduction: true,
+})
 const isr = withISR(app, {
   store,
   revalidate: 3600,

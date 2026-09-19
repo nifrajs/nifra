@@ -20,6 +20,7 @@ Contract-derived adversarial tests, runtime-matrix response conformance, and coo
 - **assertAgentEvalBaseline** _(function)_ - `assertAgentEvalBaseline: (baseline: AgentEvalReport, current: AgentEvalReport, options?: BaselineOptions) => Promise<BaselineComparison>` · from `@nifrajs/testing`
 - **assertAgentFailureMatrix** _(function)_ - `assertAgentFailureMatrix: (report: AgentFailureMatrixReport) => void` · from `@nifrajs/testing`
 - **assertIncidentReplays** _(function)_ - `assertIncidentReplays: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<void>` · from `@nifrajs/testing`
+- **assertPredictionLab** _(function)_ - `assertPredictionLab: (options?: PredictionLabOptions) => Promise<PredictionLabReport>` · from `@nifrajs/testing`
 - **assertTrajectoryInvariants** _(function)_ - `assertTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => void` · from `@nifrajs/testing`
 - **cacheStoreCertificationProfile** _(function)_ - `cacheStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableCacheStore>` · from `@nifrajs/testing`
 - **captureIncident** _(function)_ - `captureIncident: (request: Request | CapturedRequestInput, response: Response | { status: number; body?: unknown; }, options?: CaptureIncid…` · from `@nifrajs/testing`
@@ -27,9 +28,8 @@ Contract-derived adversarial tests, runtime-matrix response conformance, and coo
 - **checkTrajectoryInvariants** _(function)_ - `checkTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => readonly TrajectoryInvariantResult[]` · from `@nifrajs/testing`
 - **compareAgentEvalBaseline** _(function)_ - `compareAgentEvalBaseline: (baseline: AgentEvalReport, current: AgentEvalReport, options?: BaselineOptions) => Promise<BaselineComparison>` · from `@nifrajs/testing`
 - **cookieJar** _(function)_ - `cookieJar: () => CookieJar` · from `@nifrajs/testing`
-- **createFailureLab** _(function)_ - `createFailureLab: (options: FailureLabOptions) => FailureLab` · from `@nifrajs/testing`
 
-_…and 140 more - see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
+_…and 151 more - see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
 
 ## Footguns
 

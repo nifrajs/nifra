@@ -470,6 +470,42 @@ export function scanFetchText(
   return out
 }
 
+// `new EventSource(` / `new WebSocket(` - a hand-rolled subscription to this app's own streaming
+// surface. `new` is required so a local binding named `WebSocket` (a wrapper, a mock) stays quiet;
+// The word boundary excludes member calls and identifiers such as `renew WebSocket(`; `new` keeps
+// local wrapper bindings quiet while still matching the platform constructors.
+const STREAM_CONSTRUCT = /(?<![\w$])new\s+(?:EventSource|WebSocket)\s*\(/g
+
+/** Scan one file's text for hand-rolled own-API `EventSource`/`WebSocket` constructions. Pure +
+ * line-accurate. Same contract as {@link scanFetchText}: only a relative-path first argument
+ * (`"/…"` not `"//…"`, no scheme) is this app's API, so absolute `ws(s)://` / `http(s)://` URLs
+ * stay quiet exactly like absolute fetch URLs do. `externalMounts` and the relative-URL rule behave
+ * identically. A relative `new WebSocket("/…")` throws in browsers (the WS constructor needs an
+ * absolute URL), so a hit is either broken or bypassing `api.*.ws()` - either way the typed call
+ * (`api.*.subscribe()` for `app.sse()` routes, `api.*.ws()` for `app.ws()` routes) is the fix, and
+ * it keeps the compiler catching drift. */
+export function scanStreamText(
+  file: string,
+  content: string,
+  externalMounts: readonly string[] = [],
+): SourceFinding[] {
+  const out: SourceFinding[] = []
+  const lines = content.split("\n")
+  const code = codePositionMask(content)
+  STREAM_CONSTRUCT.lastIndex = 0
+  for (let m = STREAM_CONSTRUCT.exec(code); m !== null; m = STREAM_CONSTRUCT.exec(code)) {
+    const argument = firstArgumentIndex(content, m.index + m[0].length)
+    const quote = content[argument]
+    if (quote !== "'" && quote !== '"' && quote !== "`") continue
+    if (content[argument + 1] !== "/" || content[argument + 2] === "/") continue
+    if (externalMounts.length > 0 && matchesExternalMount(content, argument + 1, externalMounts))
+      continue
+    const line = lineAt(content, m.index)
+    out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
+  }
+  return out
+}
+
 /** Statically collect simple Nifra route registrations from source, without importing app code. */
 export function scanStaticRouteText(
   file: string,

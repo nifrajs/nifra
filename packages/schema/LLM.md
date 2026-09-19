@@ -16,20 +16,20 @@ Built-in schema builder `t` - TypeBox-backed (free JSON Schema + compiled valida
 
 - **t** _(const)_ - `t: { readonly string: (options?: StringOptions) => NifraSchema<import("@sinclair/typebox").TString>; readonly number: (options?: NumberOpti…` · from `@nifrajs/schema`
 - **decodeCursor** _(function)_ - `decodeCursor: <T = unknown>(cursor: string | null | undefined) => T | undefined` · from `@nifrajs/schema`
+- **diffOpenApiInventory** _(function)_ - `diffOpenApiInventory: (expected: ImportedApiInventory, actual: ImportedApiInventory) => readonly OpenApiInventoryDrift[]` · from `@nifrajs/schema`
 - **encodeCursor** _(function)_ - `encodeCursor: (value: unknown) => string` · from `@nifrajs/schema`
 - **fromTypeBox** _(function)_ - `fromTypeBox: <T extends TSchema>(schema: T, options?: { readonly coerce?: boolean; }) => NifraSchema<T>` · from `@nifrajs/schema`
+- **importOpenAPI** _(function)_ - `importOpenAPI: (document: unknown, options?: ImportOpenAPIOptions) => ImportedApiInventory` · from `@nifrajs/schema`
 - **paginate** _(function)_ - `paginate: <Row>(rows: readonly Row[], limit: number, cursorOf: (row: Row) => unknown) => Page<Row>` · from `@nifrajs/schema`
 - **registerFormat** _(function)_ - `registerFormat: (name: string, validate: (value: string) => boolean) => void` · from `@nifrajs/schema`
 - **toOpenAPI** _(function)_ - `toOpenAPI: (input: ContractShape | Server, options?: ToOpenAPIOptions) => OpenAPIDocument` · from `@nifrajs/schema`
 - **toOpenAPIFromEvidence** _(function)_ - `toOpenAPIFromEvidence: (evidence: ProjectEvidenceSnapshot, options?: Omit<ToOpenAPIOptions, "evidence">) => OpenAPIDocument` · from `@nifrajs/schema`
-- **OpenAPIDocument** _(interface)_ - `interface OpenAPIDocument` · from `@nifrajs/schema`
-- **OpenAPIInfo** _(interface)_ - `interface OpenAPIInfo` · from `@nifrajs/schema`
-- **OpenAPIServer** _(interface)_ - `interface OpenAPIServer` · from `@nifrajs/schema/openapi`
-- **OpenAPITag** _(interface)_ - `interface OpenAPITag` · from `@nifrajs/schema/openapi`
-- **Page** _(interface)_ - `interface Page<Item>` · from `@nifrajs/schema`
-- **ToOpenAPIOptions** _(interface)_ - `interface ToOpenAPIOptions` · from `@nifrajs/schema/openapi`
+- **OpenAPIImportError** _(class)_ - `class OpenAPIImportError` · from `@nifrajs/schema`
+- **ImportedApiInventory** _(interface)_ - `interface ImportedApiInventory` · from `@nifrajs/schema`
+- **ImportedRoute** _(interface)_ - `interface ImportedRoute` · from `@nifrajs/schema`
+- **ImportedRouteQuery** _(interface)_ - `interface ImportedRouteQuery` · from `@nifrajs/schema`
 
-_…and 2 more - see [`api-reference.md`](../../api-reference.md#nifrajsschema) for the complete list._
+_…and 10 more - see [`api-reference.md`](../../api-reference.md#nifrajsschema) for the complete list._
 
 ## Footguns
 

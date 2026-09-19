@@ -181,22 +181,50 @@ class SchemaStore {
   }
 }
 
-/** Name of a path segment's parameter, or `undefined` for a static segment. */
+const NIFRA_PARAM = /^[A-Za-z_][A-Za-z0-9_]*$/
+const MIXED_PARAM = /:([A-Za-z_][A-Za-z0-9_]*)/g
+
+/** Names captured by a route segment under Nifra's parameter grammar. */
+function segmentParams(segment: string): readonly string[] {
+  if (segment.startsWith("*")) return [segment.length > 1 ? segment.slice(1) : "wildcard"]
+  const names: string[] = []
+  for (const match of segment.matchAll(MIXED_PARAM)) {
+    const name = match[1]
+    if (name === undefined || match.index === undefined) continue
+    const previous = segment[match.index - 1]
+    const atEnd = match.index + match[0].length === segment.length
+    // `things:batchGet` is an established literal action path. The router only treats a terminal
+    // colon after an identifier as a parameter when a literal suffix follows it.
+    if (previous !== undefined && /[A-Za-z0-9_]/.test(previous) && atEnd) continue
+    names.push(name)
+  }
+  return names
+}
+
+/** Name of a wholly dynamic path segment, or `undefined` for static/mixed segments. */
 function segmentParam(segment: string): string | undefined {
-  if (segment.startsWith(":")) return segment.slice(1)
-  if (segment.startsWith("*")) return segment.length > 1 ? segment.slice(1) : "wildcard"
+  const names = segmentParams(segment)
+  if (segment.startsWith("*") && names.length === 1) return names[0]
+  if (segment.startsWith(":") && NIFRA_PARAM.test(segment.slice(1)) && names.length === 1)
+    return names[0]
   return undefined
+}
+
+/** Convert one Nifra route segment, including mixed forms, to OpenAPI templates. */
+function toTemplatedSegment(segment: string): string {
+  const whole = segmentParam(segment)
+  if (whole !== undefined) return `{${whole}}`
+  return segment.replace(MIXED_PARAM, (match, name: string, offset: number) => {
+    const previous = segment[offset - 1]
+    const atEnd = offset + match.length === segment.length
+    if (previous !== undefined && /[A-Za-z0-9_]/.test(previous) && atEnd) return match
+    return `{${name}}`
+  })
 }
 
 /** `/users/:id/*rest` → `/users/{id}/{rest}` (OpenAPI path templating). */
 function toTemplatedPath(path: string): string {
-  return path
-    .split("/")
-    .map((segment) => {
-      const param = segmentParam(segment)
-      return param === undefined ? segment : `{${param}}`
-    })
-    .join("/")
+  return path.split("/").map(toTemplatedSegment).join("/")
 }
 
 function pathParameters(path: string, paramsSchema?: SchemaReflection): OpenAPIParameter[] {
@@ -209,8 +237,7 @@ function pathParameters(path: string, paramsSchema?: SchemaReflection): OpenAPIP
     }
   }
   for (const segment of path.split("/")) {
-    const name = segmentParam(segment)
-    if (name !== undefined) {
+    for (const name of segmentParams(segment)) {
       // Merge the declared constraint (uuid format, integer type, etc.) when present;
       // fall back to the bare { type: "string" } derived from the URL pattern.
       const schema = fieldSchemas.get(name) ?? { type: "string" as const }

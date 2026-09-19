@@ -222,7 +222,7 @@ Published benchmarks are reproducible and include the rows where Nifra loses:
 See the [benchmark methodology and full results](https://nifra.dev/benchmarks), or run
 `bun run bench:http` and `bun run bench:ssr` yourself.
 
-## Batteries (54 packages, all typed, all optional)
+## Batteries (55 packages, all typed, all optional)
 
 The package map is organized by job:
 

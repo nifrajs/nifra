@@ -139,12 +139,12 @@ api.ping.post({ data: 1 })
 // resolution, so a route whose path spells one is unreachable through the typed client. The type
 // must therefore reject the access with the collision brand instead of promising a callable.
 const collisionApp = server()
-  .post("/api/delete", () => ({ removed: true }))
-  .post("/api/assets/delete", () => ({ removed: true }))
-  .get("/Delete/status", () => ({ ok: true }))
-  .get("/jobs/subscribe", () => ({ ok: true }))
-  .get("/legal/index", () => ({ ok: true }))
-  .get("/promise/then", () => ({ ok: true }))
+  .post("/api/delete", () => ({ removed: true })) // nifra-expect reserved-segment - compile-time collision fixture
+  .post("/api/assets/delete", () => ({ removed: true })) // nifra-expect reserved-segment - compile-time collision fixture
+  .get("/Delete/status", () => ({ ok: true })) // nifra-expect reserved-segment - compile-time collision fixture
+  .get("/jobs/subscribe", () => ({ ok: true })) // nifra-expect reserved-segment - compile-time collision fixture
+  .get("/legal/index", () => ({ ok: true })) // nifra-expect reserved-segment - compile-time collision fixture
+  .get("/promise/then", () => ({ ok: true })) // nifra-expect reserved-segment - compile-time collision fixture
   // Sibling routes with clean names stay fully typed.
   .post("/api/remove", () => ({ removed: true }))
   .delete("/api/assets", () => ({ removed: true }))

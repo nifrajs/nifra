@@ -61,6 +61,7 @@ const MAX_BODY_BYTES = 1024 * 1024
 const PROTO_POLICY = "reject" as const
 
 /** Every rejection leaves through one structured envelope, never a bare string. */
+// nifra-expect raw-response - edge benchmark owns the response envelope
 const errorResponse = (status: number, message: string): Response =>
   Response.json({ error: { status, message } }, { status })
 

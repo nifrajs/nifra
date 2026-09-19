@@ -16,6 +16,8 @@ import type { RulePack, SourceIndex } from "./rules/index.ts"
 
 export interface ProjectSourceFindings {
   readonly fetches: readonly SourceFinding[]
+  /** Hand-rolled `new EventSource("/…")` / `new WebSocket("/…")` to the app's own streaming surface. */
+  readonly streams: readonly SourceFinding[]
   readonly untypedClients: readonly SourceFinding[]
   readonly removedImports: readonly SourceFinding[]
   readonly responseRoutes: readonly SourceFinding[]
@@ -75,6 +77,7 @@ function freezeFindings<T extends object>(findings: readonly T[]): readonly T[] 
 export function freezeProjectFacts(seed: ProjectFactsSeed): ProjectFacts {
   const sourceFindings: ProjectSourceFindings = Object.freeze({
     fetches: freezeFindings(seed.sourceFindings.fetches),
+    streams: freezeFindings(seed.sourceFindings.streams),
     untypedClients: freezeFindings(seed.sourceFindings.untypedClients),
     removedImports: freezeFindings(seed.sourceFindings.removedImports),
     responseRoutes: freezeFindings(seed.sourceFindings.responseRoutes),

@@ -10,7 +10,8 @@ import { serve } from "@nifrajs/node"
 const port = Number(process.argv[2] ?? 3630)
 
 const app = server()
-  .get("/get", () => ({ ok: true, items: [1, 2, 3, 4, 5], name: "bench" }))
+  .get("/get", () => ({ ok: true, items: [1, 2, 3, 4, 5], name: "bench" })) // nifra-expect reserved-segment - benchmark endpoint name is part of the comparison
+  // nifra-expect reserved-segment - benchmark endpoint name is part of the comparison
   .post("/post", async (c) => {
     const body = (await c.req.json()) as { readonly name?: string }
     return { ok: true, name: body.name ?? "" }

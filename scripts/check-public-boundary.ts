@@ -16,6 +16,7 @@ const REFERENCE_KINDS = new Set(["memory", "local-file", "noop", "fake", "replay
 const AGENT_ROOTS = [
   "packages/agent",
   "packages/agent-app",
+  "packages/agent-review",
   "packages/agent-protocol",
   "packages/agent-telemetry",
   "packages/coding-agent",
@@ -104,6 +105,7 @@ export function findPublicReferenceFailures(root = ROOT): readonly string[] {
   const manifests = [
     "agent",
     "agent-app",
+    "agent-review",
     "agent-protocol",
     "agent-telemetry",
     "coding-agent",

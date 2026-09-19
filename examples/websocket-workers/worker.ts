@@ -17,6 +17,7 @@ const app = server()
   .use(websocket())
   .get(
     "/",
+    // nifra-expect raw-response - worker example serves its HTML shell directly
     () => new Response(CLIENT_HTML, { headers: { "content-type": "text/html; charset=utf-8" } }),
   )
 

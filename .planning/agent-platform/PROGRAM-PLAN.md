@@ -77,7 +77,7 @@ packages/agent-protocol
            |                           src/index.ts
            |
            +-----------------------> packages/coding-agent
-                                       src/orchestration/compiler.ts
+                                       src/orchestration/compile.ts
                                        src/orchestration/catalog.ts
                                        src/orchestration/host.ts
                                        src/orchestration/evidence-store.ts
@@ -363,7 +363,7 @@ Implement QLT-01 and production reachability for the tracer. Freeze golden versi
 #### Task P1-T1: Expand compiler and catalog across existing primitives
 
 **Requirement IDs:** ORC-04, ORC-05, ORC-07, ORC-08
-**Write allowlist:** `packages/coding-agent/src/orchestration/compiler.ts`, `packages/coding-agent/src/orchestration/catalog.ts`, `packages/coding-agent/src/orchestration/index.ts`, `packages/coding-agent/test/orchestration-compiler.test.ts`
+**Write allowlist:** `packages/coding-agent/src/orchestration/compile.ts`, `packages/coding-agent/src/orchestration/catalog.ts`, `packages/coding-agent/src/orchestration/index.ts`, `packages/coding-agent/test/orchestration-compiler.test.ts`
 
 <read_first>
 
@@ -377,7 +377,7 @@ Implement QLT-01 and production reachability for the tracer. Freeze golden versi
 
 <action>
 
-Implement ORC-04, ORC-05, ORC-07, and ORC-08 in `packages/coding-agent/src/orchestration/compiler.ts`, `catalog.ts`, and focused tests. Compile sequence, bounded parallel, verify, approve, retry, branch, checkpoint, handoff, and subagent nodes to existing owners. Register step keys with version, parsed inputs, declared capabilities, artifact-reference outputs, and deterministic lookup. Enforce 256 nodes and all declared ceilings before execution, then enforce runtime deadline, cancellation, retry, and authority ceilings during execution. The compiler must not contain a second scheduler or copy the current runner switch.
+Implement ORC-04, ORC-05, ORC-07, and ORC-08 in `packages/coding-agent/src/orchestration/compile.ts`, `catalog.ts`, and focused tests. Compile sequence, bounded parallel, verify, approve, retry, branch, checkpoint, handoff, and subagent nodes to existing owners. Register step keys with version, parsed inputs, declared capabilities, artifact-reference outputs, and deterministic lookup. Enforce 256 nodes and all declared ceilings before execution, then enforce runtime deadline, cancellation, retry, and authority ceilings during execution. The compiler must not contain a second scheduler or copy the current runner switch.
 
 </action>
 
@@ -407,7 +407,7 @@ Implement ORC-04, ORC-05, ORC-07, and ORC-08 in `packages/coding-agent/src/orche
 - `packages/coding-agent/src/host.ts`
 - `packages/coding-agent/src/rpc.ts`
 - `packages/coding-agent/src/sessions.ts`
-- `packages/coding-agent/src/orchestration/compiler.ts`
+- `packages/coding-agent/src/orchestration/compile.ts`
 - `packages/coding-agent/src/orchestration/index.ts`
 
 </read_first>

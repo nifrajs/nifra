@@ -34,6 +34,7 @@ export function projectFacts(
     },
     sourceFindings: {
       fetches: [],
+      streams: [],
       untypedClients: [],
       removedImports: [],
       responseRoutes: [],

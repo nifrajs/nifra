@@ -51,6 +51,7 @@ function conformanceApp() {
     .get("/body", () => ({
       [RESPONSE_RESULT]: true,
       toResponse() {
+        // nifra-expect raw-response - conformance fixture exercises the raw response result
         return new Response("body", { status: 201 })
       },
       toNodeBody() {
@@ -75,7 +76,7 @@ function conformanceApp() {
       c.set.headers["content-length"] = "999"
       return { stale: true }
     })
-    .get("/head", () => ({ head: true }))
+    .get("/head", () => ({ head: true })) // nifra-expect reserved-segment - conformance fixture covers HEAD collision
 }
 
 async function readRawResponse(

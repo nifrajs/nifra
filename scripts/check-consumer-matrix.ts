@@ -32,6 +32,7 @@ const TSC = join(ROOT, "node_modules", "typescript", "bin", "tsc")
 const AGENT_PRODUCT_PACKAGES = [
   "@nifrajs/agent-protocol",
   "@nifrajs/agent-app",
+  "@nifrajs/agent-review",
   "@nifrajs/pi",
   "@nifrajs/coding-agent",
   "@nifrajs/workbench",
@@ -65,6 +66,11 @@ interface Target {
 }
 
 const TARGETS: readonly Target[] = [
+  {
+    name: "@nifrajs/agent-review",
+    entries: ["@nifrajs/agent-review"],
+    tsconfig: { lib: ["ES2022", "DOM", "DOM.Iterable"] },
+  },
   {
     name: "@nifrajs/agent-protocol",
     entries: ["@nifrajs/agent-protocol"],

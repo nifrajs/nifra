@@ -46,6 +46,7 @@ const LIBRARY_PACKAGE_DIRS = [
   "agent",
   "agent-protocol",
   "agent-app",
+  "agent-review",
   "pi",
   "coding-agent",
   "devtools",

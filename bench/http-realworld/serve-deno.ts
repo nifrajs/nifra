@@ -332,6 +332,7 @@ if (framework === "nifra" || framework === "nifra-body") {
       if (response instanceof Response) return undefined
       const text = typeof response === "string" ? response : JSON.stringify(response)
       set.headers["x-body-hash"] = hash(text)
+      // nifra-expect raw-response - adapter benchmark owns serialization
       return new Response(text, {
         headers: {
           "content-type": typeof response === "string" ? "text/plain" : "application/json",
@@ -367,16 +368,18 @@ if (framework === "nifra" || framework === "nifra-body") {
   // number they are all measured against. Only the POST branch, which awaits a body, is async.
   serveFetch((req): Response | Promise<Response> => {
     const pathname = pathnameOf(req.url)
-    if (!pathname.startsWith("/api/orders")) return new Response("not found", { status: 404 })
+    if (!pathname.startsWith("/api/orders")) return new Response("not found", { status: 404 }) // nifra-expect raw-response - benchmark rejection
     const who = authOf(req)
     const requestId = req.headers.get("x-request-id") ?? crypto.randomUUID()
     const headers = { ...SEC, "x-request-id": requestId }
     if (who === undefined) {
+      // nifra-expect raw-response - benchmark rejection
       return Response.json({ ok: false, error: "unauthorized" }, { status: 401, headers })
     }
     if (req.method === "GET") {
       const limit = new URL(req.url).searchParams.get("limit")
-      if (limit === null) return new Response("invalid", { status: 400, headers })
+      if (limit === null) return new Response("invalid", { status: 400, headers }) // nifra-expect raw-response - benchmark rejection
+      // nifra-expect raw-response - benchmark measures the raw adapter response
       return Response.json(
         {
           user: who.userId,
@@ -400,7 +403,7 @@ if (framework === "nifra" || framework === "nifra-body") {
             : new Response("invalid", { status: 400, headers }),
         )
     }
-    return new Response("not found", { status: 404, headers })
+    return new Response("not found", { status: 404, headers }) // nifra-expect raw-response - benchmark rejection
   }, port)
 } else if (framework === "deno-raw-body") {
   // The body-hash ceiling: hand-written, the hash computed inline at serialization time.
@@ -410,6 +413,7 @@ if (framework === "nifra" || framework === "nifra-body") {
     headers: Record<string, string>,
   ): Response => {
     const body = JSON.stringify(value)
+    // nifra-expect raw-response - benchmark hashes the serialized wire body
     return new Response(body, {
       status,
       headers: { ...headers, "content-type": "application/json", "x-body-hash": hash(body) },
@@ -419,7 +423,7 @@ if (framework === "nifra" || framework === "nifra-body") {
   // async ceiling would pay a per-request microtask that no framework row pays.
   serveFetch((req): Response | Promise<Response> => {
     const pathname = pathnameOf(req.url)
-    if (!pathname.startsWith("/api/orders")) return new Response("not found", { status: 404 })
+    if (!pathname.startsWith("/api/orders")) return new Response("not found", { status: 404 }) // nifra-expect raw-response - benchmark rejection
     const who = authOf(req)
     const requestId = req.headers.get("x-request-id") ?? crypto.randomUUID()
     const headers = { ...SEC, "x-request-id": requestId }
@@ -428,7 +432,7 @@ if (framework === "nifra" || framework === "nifra-body") {
     }
     if (req.method === "GET") {
       const limit = new URL(req.url).searchParams.get("limit")
-      if (limit === null) return new Response("invalid", { status: 400, headers })
+      if (limit === null) return new Response("invalid", { status: 400, headers }) // nifra-expect raw-response - benchmark rejection
       return jsonHashed(
         {
           user: who.userId,
@@ -454,7 +458,7 @@ if (framework === "nifra" || framework === "nifra-body") {
             : new Response("invalid", { status: 400, headers }),
         )
     }
-    return new Response("not found", { status: 404, headers })
+    return new Response("not found", { status: 404, headers }) // nifra-expect raw-response - benchmark rejection
   }, port)
 } else {
   throw new Error(`unknown framework: ${framework ?? "(none)"}`)

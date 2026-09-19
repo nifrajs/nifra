@@ -13,7 +13,7 @@ export const app = server()
   .get("/todos", async () => await db.select().from(todos).orderBy(desc(todos.id)))
   .get("/todos/:id", async (c) => {
     const id = Number(c.params.id)
-    if (!Number.isInteger(id)) return new Response("Not found", { status: 404 })
+    if (!Number.isInteger(id)) return new Response("Not found", { status: 404 }) // nifra-expect raw-response - example uses a simple 404 response
     const [found] = await db.select().from(todos).where(eq(todos.id, id))
     return found ?? new Response("Not found", { status: 404 })
   })
@@ -27,9 +27,9 @@ export const app = server()
   )
   .post("/todos/:id/toggle", async (c) => {
     const id = Number(c.params.id)
-    if (!Number.isInteger(id)) return new Response("Not found", { status: 404 })
+    if (!Number.isInteger(id)) return new Response("Not found", { status: 404 }) // nifra-expect raw-response - example uses a simple 404 response
     const [found] = await db.select().from(todos).where(eq(todos.id, id))
-    if (!found) return new Response("Not found", { status: 404 })
+    if (!found) return new Response("Not found", { status: 404 }) // nifra-expect raw-response - example uses a simple 404 response
     const [row] = await db
       .update(todos)
       .set({ done: !found.done })

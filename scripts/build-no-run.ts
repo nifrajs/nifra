@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 
 const GROUPS = [
-  ["core"],
+  ["core", "agent-review"],
   [
     "client",
     "cache",

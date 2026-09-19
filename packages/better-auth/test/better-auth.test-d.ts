@@ -11,6 +11,7 @@ import type { Equal, Expect } from "@nifrajs/test-utils"
  * the routes declared both before AND after the `.use`.
  */
 const stubAuth = {
+  // nifra-expect raw-response - type-level fixture models the auth handler boundary
   handler: async (req: Request): Promise<Response> => Response.json({ ok: true, url: req.url }),
   api: { getSession: async (_: { headers: Headers }) => null },
   options: { basePath: "/api/auth" },
@@ -53,6 +54,7 @@ export type _ClientStillTyped = Expect<
  */
 type RealSession = { user: { id: string; email: string }; session: { id: string } }
 const realAuth = {
+  // nifra-expect raw-response - type-level fixture models the auth handler boundary
   handler: async (req: Request): Promise<Response> => Response.json({ url: req.url }),
   api: { getSession: async (_: { headers: Headers }) => null as RealSession | null },
   // disjoint from `{ basePath? }` (no basePath) - exactly the shape that used to need the cast

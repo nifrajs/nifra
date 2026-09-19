@@ -152,6 +152,19 @@ export {
   replayIncident,
   shapeOf,
 } from "./incident.ts"
+export {
+  assertPredictionLab,
+  PREDICTION_LAB_SEED,
+  type PredictionLabContext,
+  type PredictionLabOptions,
+  type PredictionLabReplay,
+  type PredictionLabReport,
+  type PredictionLabResult,
+  type PredictionLabTarget,
+  predictionLabCaseIds,
+  runPredictionLab,
+  toPredictionLabContext,
+} from "./prediction-lab.ts"
 export { type AppLike, type TestSession, type TestSessionOptions, testSession } from "./session.ts"
 export {
   httpToolAdapter,

@@ -61,6 +61,7 @@ import {
   scanResponseRoutes,
   scanServerManifestDrift,
   scanStaticRouteText,
+  scanStreamText,
   scanUntypedClient,
   type TransitiveServerImportFinding,
   walkSource,
@@ -264,6 +265,7 @@ async function buildProjectScan(
   opts: Pick<CheckCollectionOptions, "lintsOnly" | "signal" | "loadTypeScript">,
 ): Promise<ProjectScan> {
   const fetches: SourceFinding[] = []
+  const streams: SourceFinding[] = []
   const staticRoutes: StaticRouteFinding[] = []
   const untypedClients: SourceFinding[] = []
   const removedImports: SourceFinding[] = []
@@ -288,6 +290,7 @@ async function buildProjectScan(
     walkSource(cwd, (rel, content) => {
       sourceFiles.push({ file: rel, content })
       fetches.push(...scanFetchText(rel, content, checkConfig.externalMounts))
+      streams.push(...scanStreamText(rel, content, checkConfig.externalMounts))
       staticRoutes.push(...scanStaticRouteText(rel, content, sourceFacts))
       untypedClients.push(...scanUntypedClient(rel, content))
       removedImports.push(...scanRemovedImports(rel, content))
@@ -337,7 +340,14 @@ async function buildProjectScan(
       checkConfigWarnings,
       contracts,
     },
-    sourceFindings: { fetches, untypedClients, removedImports, responseRoutes, interpolatedSql },
+    sourceFindings: {
+      fetches,
+      streams,
+      untypedClients,
+      removedImports,
+      responseRoutes,
+      interpolatedSql,
+    },
   }
   return {
     facts,
@@ -360,7 +370,7 @@ export async function collectCheckResult(
  * its rule code, so a finding that can flip the exit code is never invisible in the default output. */
 const REPORT_SECTIONS = [
   ["typecheck", "typecheck"],
-  ["typed-client", "hand-rolled fetch() to your own API"],
+  ["typed-client", "hand-rolled fetch()/EventSource/WebSocket to your own API"],
   ["untyped-client", 'client("…") missing its <typeof app> type argument'],
   ["server-only-import", "server-only import in a route module"],
   ["interpolated-sql", "SQL built by interpolating a value into the statement"],

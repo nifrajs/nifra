@@ -41,12 +41,12 @@ document.getElementById("f").onsubmit = (e) => { e.preventDefault(); const i = d
 
 const app = server()
   .use(websocket())
-  .get("/", () => new Response(PAGE, { headers: { "content-type": "text/html; charset=utf-8" } }))
+  .get("/", () => new Response(PAGE, { headers: { "content-type": "text/html; charset=utf-8" } })) // nifra-expect raw-response - example serves an HTML page
   .ws<{ name: string }>("/chat", {
     upgrade(c) {
       const name = new URL(c.req.url).searchParams.get("name")?.slice(0, 32)
       if (name === undefined || name.length === 0)
-        return new Response("name required", { status: 400 })
+        return new Response("name required", { status: 400 }) // nifra-expect raw-response - example rejects invalid websocket upgrades
       return { name }
     },
     open(ws) {

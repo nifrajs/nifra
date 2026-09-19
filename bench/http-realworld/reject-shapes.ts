@@ -78,6 +78,7 @@ if (!SHAPES.includes(shape) || !Number.isInteger(port)) {
 
 const BODY = JSON.stringify({ ok: false, error: "unauthorized" })
 const PAYLOAD = { ok: false, error: "unauthorized" }
+// nifra-expect raw-response - benchmark measures the wire-level rejection envelope
 const unauthorized = (): Response =>
   new Response(BODY, { status: 401, headers: { "content-type": "application/json" } })
 

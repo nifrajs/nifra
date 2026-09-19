@@ -19,6 +19,7 @@ import {
   scanServerManifestDrift,
   scanServerOnlyImports,
   scanStaticRouteText,
+  scanStreamText,
   scanUntypedClient,
   stripComments,
   walkServerOnlyChain,
@@ -70,6 +71,8 @@ describe("release verification", () => {
       "plugin-manifest",
       "size",
       "core-performance",
+      "middleware-performance",
+      "edge-startup",
       "publish",
       "consumer",
       "cold-start",
@@ -269,6 +272,52 @@ describe("scanFetchText - own-API fetch detection", () => {
     expect(scanFetchText("a.ts", 'fetch("/auth/%2e%2e/api/admin")', mounts)).toHaveLength(1)
     // An own-API fetch outside the allowlist is unaffected.
     expect(scanFetchText("a.ts", 'fetch("/users")', mounts)).toHaveLength(1)
+  })
+})
+
+describe("scanStreamText - own-API EventSource/WebSocket detection", () => {
+  test("flags relative-path constructions, with accurate line numbers", () => {
+    const src = [
+      "const a = 1",
+      'const es = new EventSource("/events")',
+      "const ws = new WebSocket('/chat')",
+      "const t = new EventSource(`/events/" + "$" + "{room}`)",
+    ].join("\n")
+    const found = scanStreamText("routes/x.tsx", src)
+    expect(found.map((f) => f.line)).toEqual([2, 3, 4])
+    expect(found[0]).toEqual({
+      file: "routes/x.tsx",
+      line: 2,
+      snippet: 'const es = new EventSource("/events")',
+    })
+  })
+
+  test("does NOT flag absolute URLs, protocol-relative URLs, or variable arguments", () => {
+    expect(scanStreamText("a.ts", 'new EventSource("https://api.example.com/x")')).toHaveLength(0)
+    expect(scanStreamText("a.ts", 'new WebSocket("wss://api.example.com/chat")')).toHaveLength(0)
+    expect(scanStreamText("a.ts", 'new WebSocket("ws://localhost:3000/chat")')).toHaveLength(0)
+    expect(scanStreamText("a.ts", 'new EventSource("//cdn.example.com/x")')).toHaveLength(0)
+    expect(scanStreamText("a.ts", "new WebSocket(url)")).toHaveLength(0) // variable - undecidable
+    expect(scanStreamText("a.ts", "new EventSource(`" + "$" + "{base}/x`)")).toHaveLength(0)
+  })
+
+  test("does NOT flag member constructions, wrappers, or calls inside comments/strings", () => {
+    expect(scanStreamText("a.ts", "x.EventSource('/events')")).toHaveLength(0)
+    expect(scanStreamText("a.ts", "x.WebSocket('/chat')")).toHaveLength(0)
+    expect(scanStreamText("a.ts", "renew WebSocket('/chat')")).toHaveLength(0)
+    const src = [
+      '// new EventSource("/comment")',
+      "const docs = 'use new WebSocket(\"/chat\") here'",
+      'const template = `new EventSource("/template")`',
+    ].join("\n")
+    expect(scanStreamText("a.ts", src)).toEqual([])
+  })
+
+  test("skips a declared external-mount prefix, segment-anchored", () => {
+    const mounts = ["/auth"]
+    expect(scanStreamText("a.ts", 'new EventSource("/auth/events")', mounts)).toEqual([])
+    expect(scanStreamText("a.ts", 'new WebSocket("/authors")', mounts)).toHaveLength(1)
+    expect(scanStreamText("a.ts", 'new EventSource("/events")', mounts)).toHaveLength(1)
   })
 })
 

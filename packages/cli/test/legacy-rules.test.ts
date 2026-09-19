@@ -39,6 +39,34 @@ describe("registry-owned legacy rules", () => {
     })
   })
 
+  test("surfaces hand-rolled streams as NF-C002 with the streaming fix", async () => {
+    const base = projectFacts("src/chat.ts", "")
+    const facts = {
+      ...base,
+      sourceFindings: {
+        ...base.sourceFindings,
+        streams: [{ file: "src/chat.ts", line: 3, snippet: 'new EventSource("/events")' }],
+      },
+    }
+    const [finding] = await rule("NF-C002").scan({
+      root: ".",
+      sources: facts.source,
+      project: facts,
+    })
+
+    expect(finding).toMatchObject({
+      code: "NF-C002",
+      severity: "error",
+      file: "src/chat.ts",
+      line: 3,
+    })
+    expect(diagnosticCompatibilityOf(finding!)).toMatchObject({
+      rule: "typed-client",
+      fix: expect.stringContaining(".subscribe()"),
+      suggestion: { title: "Replace own-API EventSource/WebSocket with the typed nifra client" },
+    })
+  })
+
   test("contract notes are structured-only and do not create a legacy finding", async () => {
     const facts = projectFacts("backend.ts", "")
     const [finding] = await rule("NF-K001").scan({

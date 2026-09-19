@@ -103,6 +103,18 @@ const GATES = Object.freeze([
     { workflowRequired: false },
   ),
   gate(
+    "middleware-performance",
+    [["run", "check:middleware-overhead"]],
+    "Run `bun run check:middleware-overhead` and investigate the middleware-chain regression.",
+    { workflowRequired: false },
+  ),
+  gate(
+    "edge-startup",
+    [["run", "check:edge-startup"]],
+    "Run `bun run check:edge-startup` and investigate edge/Workers import-time growth.",
+    { workflowRequired: false },
+  ),
+  gate(
     "publish",
     [["run", "check:publish"]],
     "Run `bun run check:publish` and fix the publish-consumer metadata or type-surface failure.",
@@ -187,6 +199,8 @@ const RELEASE_PLAN = Object.freeze([
   "plugin-manifest",
   "size",
   "core-performance",
+  "middleware-performance",
+  "edge-startup",
   "publish",
   "consumer",
   "cold-start",

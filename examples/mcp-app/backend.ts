@@ -86,12 +86,14 @@ export const app = server()
   // Browser-viewable host harnesses (what an MCP Apps host does) so the widgets are visible without one.
   .get("/", async () => {
     const widgetHtml = (await ordersWidget.resource.read()).text
+    // nifra-expect raw-response - host harness serves generated HTML
     return new Response(hostDemoPage(widgetHtml, { orders: ORDERS }, HOST_THEME), {
       headers: { "content-type": "text/html; charset=utf-8" },
     })
   })
   .get("/react", async () => {
     const widgetHtml = (await ordersReactWidget.resource.read()).text
+    // nifra-expect raw-response - host harness serves generated HTML
     return new Response(hostDemoPage(widgetHtml, { orders: ORDERS }), {
       headers: { "content-type": "text/html; charset=utf-8" },
     })

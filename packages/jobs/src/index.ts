@@ -14,6 +14,13 @@
  */
 
 export { type ExponentialOptions, exponentialBackoff, fixedBackoff, noBackoff } from "./backoff.ts"
+export {
+  type DeadLetterRecord,
+  type DeadLetterView,
+  type QueueHealth,
+  toDeadLetterView,
+  toQueueHealth,
+} from "./dead-letter-view.ts"
 export { MemoryJobStore } from "./memory-store.ts"
 export {
   createQueue,

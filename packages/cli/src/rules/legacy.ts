@@ -86,6 +86,8 @@ export const LEGACY_RULE_ORDER: readonly string[] = Object.freeze([
 
 const FETCH_HINT =
   "hand-rolled fetch() to your own API - call it through client<typeof app> (from @nifrajs/client) so the compiler catches drift"
+const STREAM_HINT =
+  "hand-rolled EventSource/WebSocket to your own API - subscribe through client<typeof app> (`.subscribe()` for `app.sse()` routes, `.ws()` for `app.ws()` routes) so the compiler catches drift"
 const SERVER_IMPORT_HINT =
   "server-only import in a route module (bundled for the browser) - reach it via c.db / ctx.api inside a loader, never a top-level import"
 const RESPONSE_ROUTE_HINT =
@@ -256,6 +258,19 @@ function ownFetchSuggestion(
   }
 }
 
+function ownStreamSuggestion(): DiagnosticSuggestion {
+  return {
+    kind: "manual",
+    title: "Replace own-API EventSource/WebSocket with the typed nifra client",
+    steps: [
+      "Call `nifra_routes` or read `nifra://routes` for the exact typed-client call form.",
+      "Create `const api = client<typeof app>(baseUrl)` from `@nifrajs/client`.",
+      'Replace `new EventSource("/…")` with the generated `api.…subscribe(onEvent)` call for the matching `app.sse()` route.',
+      'Replace `new WebSocket("/…")` with the generated `api.….ws()` handle for the matching `app.ws()` route.',
+    ],
+  }
+}
+
 function serverImportSuggestion(
   specifier: string,
   chain: readonly string[],
@@ -362,7 +377,7 @@ const typedClientRule: CheckRule = {
   title: TITLES["typed-client"]!,
   async scan(ctx) {
     const routes = staticRouteMap(ctx.project.routes)
-    return [...ctx.project.sourceFindings.fetches].sort(bySite).map((finding) =>
+    const fetchFindings = [...ctx.project.sourceFindings.fetches].sort(bySite).map((finding) =>
       legacyDiagnostic("typed-client", {
         severity: "error",
         file: finding.file,
@@ -371,6 +386,19 @@ const typedClientRule: CheckRule = {
         fix: FETCH_HINT,
         suggestion: ownFetchSuggestion(finding, routes),
       }),
+    )
+    const streamFindings = [...ctx.project.sourceFindings.streams].sort(bySite).map((finding) =>
+      legacyDiagnostic("typed-client", {
+        severity: "error",
+        file: finding.file,
+        line: finding.line,
+        message: `${finding.snippet} - ${STREAM_HINT}`,
+        fix: STREAM_HINT,
+        suggestion: ownStreamSuggestion(),
+      }),
+    )
+    return [...fetchFindings, ...streamFindings].sort(
+      (a, b) => (a.file ?? "").localeCompare(b.file ?? "") || (a.line ?? 0) - (b.line ?? 0),
     )
   },
 }

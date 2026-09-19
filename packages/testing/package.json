@@ -53,7 +53,8 @@
     "@nifrajs/agent": "workspace:*",
     "@nifrajs/core": "workspace:*",
     "@nifrajs/mcp": "workspace:*",
-    "@nifrajs/mock": "workspace:*"
+    "@nifrajs/mock": "workspace:*",
+    "@nifrajs/webmcp": "workspace:*"
   },
   "peerDependencies": {
     "zod": ">=4.0.0"

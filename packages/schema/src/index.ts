@@ -17,6 +17,16 @@ export {
   toOpenAPI,
   toOpenAPIFromEvidence,
 } from "./openapi.ts"
+export {
+  diffOpenApiInventory,
+  type ImportedApiInventory,
+  type ImportedRoute,
+  type ImportedRouteQuery,
+  type ImportOpenAPIOptions,
+  importOpenAPI,
+  OpenAPIImportError,
+  type OpenApiInventoryDrift,
+} from "./openapi-import.ts"
 // Cursor-pagination runtime helpers - pair with `t.paginated` / `t.pageQuery`.
 export { decodeCursor, encodeCursor, type Page, paginate } from "./pagination.ts"
 export { t } from "./t.ts"

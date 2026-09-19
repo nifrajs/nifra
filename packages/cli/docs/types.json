@@ -1374,6 +1374,13 @@
     "doc": "/** Assert a captured incident still reproduces against the current app. Throws {@link IncidentReplayError}. */"
   },
   {
+    "name": "assertPredictionLab",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function assertPredictionLab(options?: PredictionLabOptions): Promise<PredictionLabReport>;",
+    "doc": "/** Run the lab and throw a joined error on failure - the `assertAdversarialContract` shape. */"
+  },
+  {
     "name": "assertRenderAdapterConformance",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -5003,6 +5010,20 @@
     "doc": "/** Backward-compatible name for the request scope carried by every data operation. */"
   },
   {
+    "name": "DeadLetterRecord",
+    "kind": "interface",
+    "package": "@nifrajs/jobs",
+    "signature": "export interface DeadLetterRecord {\n    readonly id: string;\n    readonly name: string;\n    readonly error: string;\n}",
+    "doc": "/** The store-side shape this projects. Structural so durable adapters need no jobs import. */"
+  },
+  {
+    "name": "DeadLetterView",
+    "kind": "interface",
+    "package": "@nifrajs/jobs",
+    "signature": "export interface DeadLetterView {\n    readonly id: string;\n    readonly name: string;\n    /** FNV-1a 32-bit hex of the error text. This is grouping metadata, not a confidentiality boundary. */\n    readonly errorFingerprint: string;\n}",
+    "doc": "/** What leaves the server: identity plus a grouping key. Never the error text. */"
+  },
+  {
     "name": "DeadlineAdmission",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -5818,6 +5839,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function diffNifraManifests(before: NifraManifest, after: NifraManifest): NifraManifestDiff;",
     "doc": "/** Contract changes reuse the route-diff engine; governance changes fail closed on expanded risk. */"
+  },
+  {
+    "name": "diffOpenApiInventory",
+    "kind": "function",
+    "package": "@nifrajs/schema",
+    "signature": "export declare function diffOpenApiInventory(expected: ImportedApiInventory, actual: ImportedApiInventory): readonly OpenApiInventoryDrift[];",
+    "doc": "/** Compare two inventories. Empty means the export/import cycle preserved the route table. */"
   },
   {
     "name": "diffRouteSnapshots",
@@ -8226,6 +8254,37 @@
     "package": "@nifrajs/core",
     "signature": "export declare function implement<const C extends ContractShape, H extends HandlersFor<C, Ctx>, R extends Registry = EmptyRegistry, Ctx = NonNullable<unknown>, HookOutput = never>(contract: C, handlers: H, app?: Server<R, Ctx, HookOutput>): Server<R & RegistryFromImpl<C, H, Ctx, HookOutput>, Ctx, HookOutput>;",
     "doc": "/**\n * Bind handlers to a contract, producing a real {@link Server} you can `.listen()`\n * or `.fetch()`. Each op is registered through the same path as the inline\n * builder, so the result is identical to writing the routes inline - handlers\n * lift over **unchanged** (\"graduation\"), and body/query schemas validate at the\n * request boundary exactly as in inline mode.\n *\n * Pass a pre-configured `app` to give the contract's routes a middleware chain. A route captures the\n * server's `derive`/`decorate`/assurance chain **at registration**, so anything applied to the\n * returned server afterwards reaches the contract's routes not at all - the app must already carry it:\n *\n * ```ts\n * const app = implement(contract, handlers, server().use(auth).derive(sessionOf))\n * ```\n *\n * That is also the seam that lets `nifra assure` prove rather than merely classify a contract-first\n * app: the plugin that installs the enforcement is what declares the evidence\n * ({@link withRouteAssurance}), and only a plugin installed *before* registration is captured. Handlers\n * then see the app's `Ctx`, and the returned server keeps any routes the app already had.\n */"
+  },
+  {
+    "name": "ImportedApiInventory",
+    "kind": "interface",
+    "package": "@nifrajs/schema",
+    "signature": "export interface ImportedApiInventory {\n    readonly title: string;\n    readonly version: string;\n    readonly routes: readonly ImportedRoute[];\n    readonly warnings: readonly string[];\n}"
+  },
+  {
+    "name": "ImportedRoute",
+    "kind": "interface",
+    "package": "@nifrajs/schema",
+    "signature": "export interface ImportedRoute {\n    /** Lowercase HTTP method as it appears in the document. */\n    readonly method: string;\n    /** Nifra-templated path (`/users/:id`). */\n    readonly path: string;\n    readonly operationId?: string;\n    /** Template parameter names in path order. */\n    readonly pathParams: readonly string[];\n    readonly query: readonly ImportedRouteQuery[];\n    readonly hasBody: boolean;\n    readonly requestBodyRequired: boolean;\n    /** Response status keys (`\"200\"`, `\"404\"`, `\"default\"`). */\n    readonly responseStatuses: readonly string[];\n    /** Per-route degradations (wildcard rewrites). */\n    readonly notes: readonly string[];\n}"
+  },
+  {
+    "name": "ImportedRouteQuery",
+    "kind": "interface",
+    "package": "@nifrajs/schema",
+    "signature": "export interface ImportedRouteQuery {\n    readonly name: string;\n    readonly required: boolean;\n}"
+  },
+  {
+    "name": "importOpenAPI",
+    "kind": "function",
+    "package": "@nifrajs/schema",
+    "signature": "export declare function importOpenAPI(document: unknown, options?: ImportOpenAPIOptions): ImportedApiInventory;",
+    "doc": "/** Parse an OpenAPI 3.0/3.1 document into a canonical route inventory. Throws on invalid input. */"
+  },
+  {
+    "name": "ImportOpenAPIOptions",
+    "kind": "interface",
+    "package": "@nifrajs/schema",
+    "signature": "export interface ImportOpenAPIOptions {\n    /** Maximum entries under `paths`. Default 5000. */\n    readonly maxPaths?: number;\n    /** Maximum operations on one path item. Default 8. */\n    readonly maxOperationsPerPath?: number;\n    /** Maximum merged parameters per operation. Default 100. */\n    readonly maxParameters?: number;\n}"
   },
   {
     "name": "IncidentCapsule",
@@ -11256,6 +11315,13 @@
     "signature": "export interface OpenAPIDocument {\n    readonly openapi: \"3.1.0\";\n    readonly info: OpenAPIInfo;\n    readonly paths: Record<string, Record<string, OpenAPIOperation>>;\n    readonly servers?: readonly OpenAPIServer[];\n    readonly tags?: readonly OpenAPITag[];\n    readonly security?: readonly SecurityRequirement[];\n    readonly components?: OpenAPIComponents;\n}"
   },
   {
+    "name": "OpenAPIImportError",
+    "kind": "class",
+    "package": "@nifrajs/schema",
+    "signature": "export declare class OpenAPIImportError extends Error {\n    constructor(message: string);\n}",
+    "doc": "/**\n * OpenAPI 3.x inventory import - the structural half of an export/import roundtrip.\n *\n * `toOpenAPI` renders a Nifra app (or contract) as an OpenAPI 3.1 document. This module reads such\n * a document back into a canonical route inventory: method, Nifra-templated path (`{id}` back to\n * `:id`), required query names, body presence, and response statuses. `diffOpenApiInventory` then\n * compares two inventories, so `export -> import -> diff` proves the cycle survives in CI.\n *\n * Deliberate boundaries, all fail-closed or explicitly documented:\n *\n * - Offline and ref-opaque. `$ref`s are never resolved and nothing is fetched. A `$ref` parameter\n *   cannot yield a name without resolution, so it throws with the location; `$ref` bodies and\n *   response schemas only assert presence, which needs no resolution.\n * - No schema reconstruction. JSON Schema is not turned back into `t` builders here - that is a\n *   separate codegen step needing consumer evidence. The inventory proves the route table survived;\n *   field-level types ride along in the source document, not in this comparison.\n * - No auth interpretation. `security`, `securitySchemes`, and `servers` are never read. Importing\n *   an API must not silently adopt its auth model.\n * - Templated paths degrade conservatively. `/files/*path` exports as `/files/{path}`, indistinguishable\n *   from a single-segment `:path`. Import yields `:path` and records a note for every OpenAPI template;\n *   a greedy remainder needs a manual `*path` rewrite.\n * - Nifra parameter names follow `/^[A-Za-z_][A-Za-z0-9_]*$/`; `__proto__`, `constructor`, and\n *   `prototype` are rejected. Mixed templates are converted only when their boundaries are representable.\n * - Bounded. Path/operation/parameter counts are capped (`ImportOpenAPIOptions`); a document over\n *   the caps throws rather than allocating.\n */"
+  },
+  {
     "name": "OpenApiInfo",
     "kind": "interface",
     "package": "@nifrajs/middleware",
@@ -11267,6 +11333,12 @@
     "package": "@nifrajs/schema",
     "signature": "export interface OpenAPIInfo {\n    readonly title: string;\n    readonly version: string;\n    readonly description?: string;\n}",
     "doc": "/**\n * OpenAPI 3.1 generation. We model a practical slice of the spec - enough to feed Swagger UI / codegen\n * and to validate structurally: paths, parameters, request bodies, responses (incl. non-200 and\n * non-JSON), tags, security, servers, and `$ref` reuse via `components.schemas`.\n *\n * Schemas carry full detail only for `t`/TypeBox inputs (they expose a JSON Schema); a BYO Standard\n * Schema validates at runtime but exposes no JSON Schema, so its route is emitted without body/response\n * detail. A **contract** is richest - its operations carry `response`, `tags`, `security`, additional\n * `responses`, etc.; an **app** emits request shapes + a generic `200` (an inline handler has no\n * response *schema* to serialize), enrichable via `options.operations`.\n */"
+  },
+  {
+    "name": "OpenApiInventoryDrift",
+    "kind": "interface",
+    "package": "@nifrajs/schema",
+    "signature": "export interface OpenApiInventoryDrift {\n    /** `METHOD /path`, or `inventory` for route-set level drift. */\n    readonly route: string;\n    readonly message: string;\n}"
   },
   {
     "name": "OpenApiOptions",
@@ -12167,6 +12239,56 @@
     "signature": "export interface PredictedExecutionResult<Output, State> {\n    readonly outcome: \"committed\" | \"rolled-back\" | \"conflicted\" | \"expired\" | \"stale\" | \"invalid\" | \"executed\";\n    readonly predictionId?: string;\n    readonly prediction?: AgentSurfacePrediction;\n    readonly tool?: ToolCallResult<Output>;\n    readonly snapshot: PredictionStoreSnapshot<State>;\n}"
   },
   {
+    "name": "PREDICTION_LAB_SEED",
+    "kind": "const",
+    "package": "@nifrajs/testing",
+    "signature": "export declare const PREDICTION_LAB_SEED = 1347568964;"
+  },
+  {
+    "name": "predictionLabCaseIds",
+    "kind": "const",
+    "package": "@nifrajs/testing",
+    "signature": "export declare const predictionLabCaseIds: readonly string[];",
+    "doc": "/** Stable case IDs in run order. */"
+  },
+  {
+    "name": "PredictionLabContext",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface PredictionLabContext {\n    readonly seed: number;\n    readonly caseId: string;\n    readonly target: PredictionLabTarget;\n    readonly mutation?: string;\n}"
+  },
+  {
+    "name": "PredictionLabOptions",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface PredictionLabOptions {\n    /** Replayable seed. Prediction IDs and clocks derive from it deterministically. */\n    readonly seed?: number;\n    /** Replay only these stable case IDs. */\n    readonly only?: string | readonly string[];\n}"
+  },
+  {
+    "name": "PredictionLabReplay",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface PredictionLabReplay {\n    readonly seed: number;\n    readonly caseId: string;\n}"
+  },
+  {
+    "name": "PredictionLabReport",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface PredictionLabReport {\n    readonly ok: boolean;\n    readonly seed: number;\n    readonly results: readonly PredictionLabResult[];\n    readonly failures: readonly PredictionLabResult[];\n    readonly counts: {\n        readonly passed: number;\n        readonly failed: number;\n    };\n}"
+  },
+  {
+    "name": "PredictionLabResult",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface PredictionLabResult {\n    readonly id: string;\n    readonly target: PredictionLabTarget;\n    readonly mutation?: string;\n    readonly ok: boolean;\n    readonly message: string;\n    readonly replay: PredictionLabReplay;\n}"
+  },
+  {
+    "name": "PredictionLabTarget",
+    "kind": "type",
+    "package": "@nifrajs/testing",
+    "signature": "export type PredictionLabTarget = \"prediction\" | \"projection\";",
+    "doc": "/**\n * Seeded hostile corpus for predictions and projections - the prediction-side sibling of\n * `adversarial.ts`.\n *\n * `adversarial.ts` proves HTTP body/query/response contracts with validator-proven hostile\n * mutations. This module proves the same shaped guarantees one layer up: the `@nifrajs/webmcp`\n * prediction store (stale versions, expiry, prototype-grafting patches, non-atomic patches,\n * commit conflicts, reconcile/tool rollback) and the WebMCP-plus-MCP projection of one\n * capability (the same witness accepted or rejected identically on both surfaces).\n *\n * Every case has a stable ID, every run carries its replay seed, and every clock is injected -\n * nothing reads `Date.now` or `crypto.randomUUID` implicitly. `only` replays a subset by ID.\n *\n * Deliberately out of scope: A2A and AG-UI projections. Neither package exposes a same-contract\n * projection from a tool/capability (`a2a` has `agentCard`/`mountA2A` at the protocol level; there\n * is no `capability -> a2a/ag-ui` seam), so a parity case here would invent the seam it claims to\n * test. Proposing such a seam needs consumer evidence first (N7), not a lab that assumes it.\n */"
+  },
+  {
     "name": "PredictionPatchOperation",
     "kind": "type",
     "package": "@nifrajs/webmcp",
@@ -12677,6 +12799,13 @@
     "kind": "interface",
     "package": "@nifrajs/jobs",
     "signature": "export interface Queue {\n    /** Register a typed job. Throws now (not at run time) on a duplicate name. */\n    define<Payload>(name: string, definition: JobDefinition<Payload>): JobHandle<Payload>;\n    /** Enqueue by name (the {@link JobHandle} is the typed alternative). */\n    enqueue(name: string, payload: unknown, options?: EnqueueOptions): Promise<string>;\n    /** Run ONE poll round: lease up to `concurrency` due jobs, run them, await them. Returns the count run.\n     * Re-entrant-safe (a concurrent call returns the in-flight round). Used by `start()` and by Workers. */\n    process(): Promise<number>;\n    /** Process repeatedly until no job is due (one-shot batch drain). */\n    drain(): Promise<number>;\n    /** Start the background worker (Bun/Node/Deno). */\n    start(options?: WorkerOptions): Worker;\n    /** Current store counts. */\n    counts(): JobCounts | Promise<JobCounts>;\n    /** The underlying store (for dead-letter inspection, custom drivers). */\n    readonly store: JobStore;\n}"
+  },
+  {
+    "name": "QueueHealth",
+    "kind": "interface",
+    "package": "@nifrajs/jobs",
+    "signature": "export interface QueueHealth {\n    readonly pending: number;\n    readonly active: number;\n    readonly dead: number;\n}",
+    "doc": "/** Queue health counters. A straight passthrough of `JobStore.counts()` - counters are safe. */"
   },
   {
     "name": "QueueOptions",
@@ -15040,6 +15169,12 @@
     "package": "@nifrajs/agent-protocol",
     "signature": "export interface RunPlanRef {\n    readonly id: string;\n    /** SHA-256 hex of the canonical plan. Content-free. */\n    readonly digest: string;\n    readonly nodeCount: number;\n}",
     "doc": "/** A content-free pointer to the plan a run is executing. */"
+  },
+  {
+    "name": "runPredictionLab",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function runPredictionLab(options?: PredictionLabOptions): Promise<PredictionLabReport>;"
   },
   {
     "name": "RunQueryOptions",
@@ -17524,6 +17659,13 @@
     "doc": "/** Build the single descriptive projection shared by agent, MCP, and test adapters. */"
   },
   {
+    "name": "toDeadLetterView",
+    "kind": "function",
+    "package": "@nifrajs/jobs",
+    "signature": "export declare function toDeadLetterView(records: readonly DeadLetterRecord[]): readonly DeadLetterView[];",
+    "doc": "/** Project dead-letter records to content-free views. Throws on malformed input, never partial. */"
+  },
+  {
     "name": "toEvalComparisonView",
     "kind": "function",
     "package": "@nifrajs/agent-app",
@@ -17883,11 +18025,24 @@
     "doc": "/**\n * In-process pub/sub for `ws.subscribe(topic)` + `app.publish(topic, data)`. **Single-instance only** -\n * topics live in this process's memory, so a multi-instance deploy (multiple servers behind a load\n * balancer) needs an external fan-out (Redis pub/sub, a Cloudflare Durable Object, NATS, …) bridged to\n * `app.publish`. The same registry instance is shared by an app's connections and its `publish`.\n */"
   },
   {
+    "name": "toPredictionLabContext",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function toPredictionLabContext(seed: number, labCase: {\n    readonly id: string;\n    readonly target: PredictionLabTarget;\n    readonly mutation?: string;\n}): PredictionLabContext;"
+  },
+  {
     "name": "topUserFrame",
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function topUserFrame(frames: readonly DiagnosticFrame[], root: string | undefined): DiagnosticFrame | undefined;",
     "doc": "/** The first frame that points at the user's own source - what the codeframe should show. */"
+  },
+  {
+    "name": "toQueueHealth",
+    "kind": "function",
+    "package": "@nifrajs/jobs",
+    "signature": "export declare function toQueueHealth(counts: {\n    readonly pending: number;\n    readonly active: number;\n    readonly dead: number;\n}): QueueHealth;",
+    "doc": "/** Project store counts to a health snapshot. Non-negative integers only; anything else throws. */"
   },
   {
     "name": "toRegistryCapabilityView",

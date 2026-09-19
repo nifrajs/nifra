@@ -120,6 +120,7 @@ if (mode === "web-undici") {
       body: req.body,
       signal,
     })
+    // nifra-expect raw-response - proxy benchmark forwards the upstream wire response
     return new Response(upstreamResponse.body, {
       status: upstreamResponse.status,
       headers: upstreamResponse.headers,

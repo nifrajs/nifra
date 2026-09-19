@@ -3202,6 +3202,10 @@ _No named exports (side-effect entrypoint)._
   ms to wait before the next attempt, given the number of attempts already made (1-based).
 - **CapabilityBeacon** _(type)_ - `type CapabilityBeacon = (context: object, capability: string) => void`
   `useCapability` from `@nifrajs/core/capabilities`, taken as a parameter rather than imported so this package keeps its zero dependencies. Wiring it is one line where the queue is created.
+- **DeadLetterRecord** _(interface)_ - `interface DeadLetterRecord`
+  The store-side shape this projects. Structural so durable adapters need no jobs import.
+- **DeadLetterView** _(interface)_ - `interface DeadLetterView`
+  What leaves the server: identity plus a grouping key. Never the error text.
 - **EnqueueOptions** _(interface)_ - `interface EnqueueOptions`
 - **ExponentialOptions** _(interface)_ - `interface ExponentialOptions`
 - **JobContext** _(interface)_ - `interface JobContext`
@@ -3222,6 +3226,8 @@ _No named exports (side-effect entrypoint)._
 - **MemoryJobStore** _(class)_ - `class MemoryJobStore`
   Construct an in-memory job store. `idFor` is injectable for deterministic tests.
 - **Queue** _(interface)_ - `interface Queue`
+- **QueueHealth** _(interface)_ - `interface QueueHealth`
+  Queue health counters. A straight passthrough of `JobStore.counts()` - counters are safe.
 - **QueueOptions** _(interface)_ - `interface QueueOptions`
 - **RetryPolicy** _(interface)_ - `interface RetryPolicy`
 - **StandardResult** _(type)_ - `type StandardResult<Output> = | { readonly value: Output; readonly issues?: undefined } | { readonly issues: ReadonlyArray<{ readonly message: string }> }`
@@ -3240,6 +3246,10 @@ _No named exports (side-effect entrypoint)._
   Fixed delay before every retry.
 - **noBackoff** _(const)_ - `noBackoff: Backoff`
   No delay - retry immediately.
+- **toDeadLetterView** _(function)_ - `toDeadLetterView: (records: readonly DeadLetterRecord[]) => readonly DeadLetterView[]`
+  Project dead-letter records to content-free views. Throws on malformed input, never partial.
+- **toQueueHealth** _(function)_ - `toQueueHealth: (counts: { readonly pending: number; readonly active: number; readonly dead: number; }) => QueueHealth`
+  Project store counts to a health snapshot. Non-negative integers only; anything else throws.
 
 ## @nifrajs/mcp
 
@@ -3779,19 +3789,30 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/schema`
 
+- **ImportOpenAPIOptions** _(interface)_ - `interface ImportOpenAPIOptions`
+- **ImportedApiInventory** _(interface)_ - `interface ImportedApiInventory`
+- **ImportedRoute** _(interface)_ - `interface ImportedRoute`
+- **ImportedRouteQuery** _(interface)_ - `interface ImportedRouteQuery`
 - **NifraSchema** _(type)_ - `type NifraSchema<T extends TSchema = TSchema> = StandardSchemaV1<Static<T>, Static<T>> & { readonly jsonSchema: T }`
   A `t` schema. It is a Standard Schema (so any nifra route validates it with no special-casing) whose raw TypeBox definition stays reachable as `jsonSchema` - and because a TypeBox schema *is* a JSON Schema, that field is exactly what lets `toOpenAPI` emit a real request/response schema for the rout…
 - **OpenAPIDocument** _(interface)_ - `interface OpenAPIDocument`
+- **OpenAPIImportError** _(class)_ - `class OpenAPIImportError`
+  OpenAPI 3.x inventory import - the structural half of an export/import roundtrip.
 - **OpenAPIInfo** _(interface)_ - `interface OpenAPIInfo`
   OpenAPI 3.1 generation. We model a practical slice of the spec - enough to feed Swagger UI / codegen and to validate structurally: paths, parameters, request bodies, responses (incl. non-200 and non-JSON), tags, security, servers, and `$ref` reuse via `components.schemas`.
+- **OpenApiInventoryDrift** _(interface)_ - `interface OpenApiInventoryDrift`
 - **Page** _(interface)_ - `interface Page<Item>`
   A cursor-pagination page - matches the shape of `t.paginated(item)`.
 - **decodeCursor** _(function)_ - `decodeCursor: <T = unknown>(cursor: string | null | undefined) => T | undefined`
   Decode a cursor back to its value. Returns `undefined` for a null/empty/malformed cursor - treat that as "start from the beginning" rather than erroring on a client-supplied string.
+- **diffOpenApiInventory** _(function)_ - `diffOpenApiInventory: (expected: ImportedApiInventory, actual: ImportedApiInventory) => readonly OpenApiInventoryDrift[]`
+  Compare two inventories. Empty means the export/import cycle preserved the route table.
 - **encodeCursor** _(function)_ - `encodeCursor: (value: unknown) => string`
   Encode any JSON-serializable value (e.g. the last row's sort key) into an opaque cursor string.
 - **fromTypeBox** _(function)_ - `fromTypeBox: <T extends TSchema>(schema: T, options?: { readonly coerce?: boolean; }) => NifraSchema<T>`
   Wrap a TypeBox schema as a `NifraSchema`.
+- **importOpenAPI** _(function)_ - `importOpenAPI: (document: unknown, options?: ImportOpenAPIOptions) => ImportedApiInventory`
+  Parse an OpenAPI 3.0/3.1 document into a canonical route inventory. Throws on invalid input.
 - **paginate** _(function)_ - `paginate: <Row>(rows: readonly Row[], limit: number, cursorOf: (row: Row) => unknown) => Page<Row>`
   Build a page from rows you fetched with `limit + 1`. If the extra row came back there are more pages: drop it and emit a `nextCursor` from the last KEPT row via `cursorOf`; otherwise `nextCursor` is `null`.
 - **registerFormat** _(function)_ - `registerFormat: (name: string, validate: (value: string) => boolean) => void`
@@ -3972,6 +3993,13 @@ _No named exports (side-effect entrypoint)._
 - **IncidentCapsule** _(interface)_ - `interface IncidentCapsule`
 - **IncidentReplayError** _(class)_ - `class IncidentReplayError`
 - **IncidentReplayResult** _(interface)_ - `interface IncidentReplayResult`
+- **PREDICTION_LAB_SEED** _(const)_ - `PREDICTION_LAB_SEED: 1347568964`
+- **PredictionLabContext** _(interface)_ - `interface PredictionLabContext`
+- **PredictionLabOptions** _(interface)_ - `interface PredictionLabOptions`
+- **PredictionLabReplay** _(interface)_ - `interface PredictionLabReplay`
+- **PredictionLabReport** _(interface)_ - `interface PredictionLabReport`
+- **PredictionLabResult** _(interface)_ - `interface PredictionLabResult`
+- **PredictionLabTarget** _(type)_ - `type PredictionLabTarget = "prediction" | "projection"`
 - **ReplayIncidentOptions** _(interface)_ - `interface ReplayIncidentOptions`
 - **ReplayTrajectoryOptions** _(interface)_ - `interface ReplayTrajectoryOptions`
 - **RubricShape** _(interface)_ - `interface RubricShape`
@@ -4000,6 +4028,8 @@ _No named exports (side-effect entrypoint)._
 - **assertAgentFailureMatrix** _(function)_ - `assertAgentFailureMatrix: (report: AgentFailureMatrixReport) => void`
 - **assertIncidentReplays** _(function)_ - `assertIncidentReplays: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<void>`
   Assert a captured incident still reproduces against the current app. Throws {@link IncidentReplayError}.
+- **assertPredictionLab** _(function)_ - `assertPredictionLab: (options?: PredictionLabOptions) => Promise<PredictionLabReport>`
+  Run the lab and throw a joined error on failure - the `assertAdversarialContract` shape.
 - **assertTrajectoryInvariants** _(function)_ - `assertTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => void`
 - **cacheStoreCertificationProfile** _(function)_ - `cacheStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableCacheStore>`
 - **captureIncident** _(function)_ - `captureIncident: (request: Request | CapturedRequestInput, response: Response | { status: number; body?: unknown; }, options?: CaptureIncidentOptions) => Promise<IncidentCapsule>`
@@ -4040,6 +4070,8 @@ _No named exports (side-effect entrypoint)._
 - **modelGatewayCertificationProfile** _(const)_ - `modelGatewayCertificationProfile: () => AdapterCertificationProfile<CertifiableModelGateway>`
 - **parseRubricVerdict** _(function)_ - `parseRubricVerdict: (rubric: RubricSpec, value: unknown) => RubricVerdict`
   Parse one verdict against its rubric. Fails closed on unknown outcome, bad range, or stray key.
+- **predictionLabCaseIds** _(const)_ - `predictionLabCaseIds: readonly string[]`
+  Stable case IDs in run order.
 - **proveIdempotency** _(function)_ - `proveIdempotency: (options: { readonly run: () => Promise<EffectLedger> | EffectLedger; readonly runs?: number; }) => Promise<IdempotencyProof>`
   Run a token-only effect workload repeatedly and report the first stable replay differences.
 - **recordTrajectory** _(const)_ - `recordTrajectory: (transcript: AgentTranscript, options?: CreateTrajectoryTranscriptOptions) => Promise<TrajectoryTranscript>`
@@ -4070,6 +4102,7 @@ _No named exports (side-effect entrypoint)._
   Run one scenario and evaluate its post-failure invariant without leaking its result or error text.
 - **runFaultProfile** _(function)_ - `runFaultProfile: (profile: FaultProfile, options?: RunFaultProfileOptions) => Promise<FaultProfileReport>`
   Run every profile scenario with the same deterministic seed and failure schedule.
+- **runPredictionLab** _(function)_ - `runPredictionLab: (options?: PredictionLabOptions) => Promise<PredictionLabReport>`
 - **runTrajectory** _(function)_ - `runTrajectory: <InputSchema extends StandardSchemaV1, OutputSchema extends StandardSchemaV1>(definition: AgentDefinition<InputSchema, OutputSchema>, input: AgentTurnInput, ports: AgentPorts, options: { readonly state: A…`
 - **runtimeAdapterCertificationProfile** _(function)_ - `runtimeAdapterCertificationProfile: () => AdapterCertificationProfile<CertifiableRuntimeAdapter>`
 - **shapeOf** _(function)_ - `shapeOf: (value: unknown) => unknown`
@@ -4078,6 +4111,7 @@ _No named exports (side-effect entrypoint)._
 - **testSession** _(function)_ - `testSession: <App extends AppLike>(app: App, options?: TestSessionOptions) => TestSession<App>`
   Create a cookie-persisting in-process test client for `app`.
 - **testToolAdapter** _(function)_ - `testToolAdapter: <Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: ToolCallOptions) => ToolAdapter`
+- **toPredictionLabContext** _(function)_ - `toPredictionLabContext: (seed: number, labCase: { readonly id: string; readonly target: PredictionLabTarget; readonly mutation?: string; }) => PredictionLabContext`
 - **trajectoryRegressionId** _(function)_ - `trajectoryRegressionId: (transcript: TrajectoryTranscript, faultProfile: string, invariant: TrajectoryInvariantId) => Promise<string>`
 - **verifyAdapterCertification** _(function)_ - `verifyAdapterCertification: (report: AdapterCertificationReport) => Promise<boolean>`
   Recompute the portable evidence hash. Consumers should verify before trusting a stored report.
