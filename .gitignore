@@ -81,3 +81,5 @@ dv-*/
 /output
 /.security
 /.pi
+/.playwright-cli
+/vite-split-*.png
