@@ -298,4 +298,43 @@ describe("mountA2A", () => {
     }
     expect(missing.error.code).toBe(A2A_ERROR_CODES.taskNotFound)
   })
+
+  test("GetTask rejects malformed or traversal-like task ids before touching the store", async () => {
+    const { app, callPost } = captureApp()
+    const requested: string[] = []
+    const store = new MemoryAgentStateStore()
+    const guardedStore = {
+      load: async (id: string) => {
+        requested.push(id)
+        return store.load(id)
+      },
+      save: store.save.bind(store),
+    }
+    mountA2A(app, { agent: definition(), card: cardInfo, ports: ports({ state: guardedStore }) })
+
+    for (const id of ["../../etc/passwd", "", "x".repeat(129)]) {
+      const body = (await (await callPost(rpc("GetTask", { id }))).json()) as {
+        error: { code: number; message: string }
+      }
+      expect(body.error.code).toBe(A2A_ERROR_CODES.invalidParams)
+      expect(body.error.message).toBe("invalid_task_id")
+    }
+    expect(requested).toEqual([])
+  })
+
+  test("bounds oversized JSON-RPC responses", async () => {
+    const { app, callPost } = captureApp()
+    mountA2A(app, {
+      agent: definition(),
+      card: cardInfo,
+      maxOutputBytes: 1024,
+      ports: ports({ model: outputModel({ answer: "x".repeat(4_000) }) }),
+    })
+
+    const response = await callPost(
+      rpc("SendMessage", message([], { metadata: { input: { prompt: "x" } } })),
+    )
+    expect(response.status).toBe(500)
+    expect(await response.json()).toEqual({ error: "response_too_large" })
+  })
 })

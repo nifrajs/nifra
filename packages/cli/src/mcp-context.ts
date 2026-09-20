@@ -7,9 +7,10 @@
 
 import { realpathSync } from "node:fs"
 import { readFile } from "node:fs/promises"
-import { basename, isAbsolute, relative, resolve, sep } from "node:path"
+import { basename, isAbsolute, relative, resolve } from "node:path"
 import type { LoadedApp } from "./load.ts"
 import { createCachedAppLoader } from "./mcp-exec.ts"
+import { resolveMcpProjectPath } from "./mcp-path.ts"
 import type { McpPrompt, McpResource, McpServerFeatures, McpTool } from "./mcp-protocol.ts"
 
 function openApiFormat(args: Record<string, unknown>): "json" | "yaml" {
@@ -31,11 +32,8 @@ async function readProjectFile(
   relativeFile: string,
   maxChars: number,
 ): Promise<string> {
-  const target = resolve(cwd, relativeFile)
-  const root = resolve(cwd)
-  if (target !== root && !target.startsWith(`${root}${sep}`)) {
-    throw new Error(`refusing to read outside project root: ${relativeFile}`)
-  }
+  const target = resolveMcpProjectPath(cwd, relativeFile)
+  if (target === null) throw new Error(`refusing to read outside project root: ${relativeFile}`)
   try {
     const text = await readFile(target, "utf8")
     return text.length <= maxChars

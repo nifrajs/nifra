@@ -85,6 +85,8 @@ export interface ServerOptions {
   readonly wsMaxPayloadBytes?: number
   /** Per-request timeout (ms): a slower request gets a 503 and `ctx.signal` aborts. 0 disables (default). */
   readonly requestTimeoutMs?: number
+  /** WebSocket upgrade admission/guard timeout (ms). Default 10_000; set to 0 only for a deliberate unbounded guard. */
+  readonly wsUpgradeTimeoutMs?: number
   /**
    * How to derive `c.clientIp` behind a reverse proxy or CDN. Omit (default) to trust only the raw
    * socket peer and never believe a forwarded header. Set `{ trustedHops: n }` when the app sits

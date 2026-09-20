@@ -212,6 +212,14 @@ test("a missing public/ directory is not an error", async () => {
   })
 })
 
+test("a directory is not served as a public file", async () => {
+  await withDir(async (dir) => {
+    await mkdir(join(dir, "assets"))
+    const serve = servePublicDir({ dir })
+    expect(await serve(get("/assets"))).toBeUndefined()
+  })
+})
+
 test("a symlinked DIRECTORY inside publicDir cannot leak its contents either", async () => {
   // The per-entry symlink check catches a symlinked FILE. A symlinked directory is the same escape
   // wearing a different hat: every regular file inside it lstats as a plain file, so only resolving

@@ -39,7 +39,10 @@ export interface FetchHandler {
   /** Nifra apps also expose this WS-upgrade seam; present → this adapter serves `app.ws()` routes via
    * the optional `ws` package (lazy-imported on the first upgrade). Absent (a plain `{ fetch }`
    * handler) → HTTP only, and an upgrade request gets a 404. */
-  resolveWebSocketUpgrade?(request: Request): WsUpgradeOutcome | Promise<WsUpgradeOutcome>
+  resolveWebSocketUpgrade?(
+    request: Request,
+    platform?: NodePlatform,
+  ): WsUpgradeOutcome | Promise<WsUpgradeOutcome>
 }
 
 // --- WebSocket types: structurally mirrored from @nifrajs/core. The adapter stays dependency-free;
@@ -2337,7 +2340,10 @@ const WS_STATUS_TEXT: Readonly<Record<number, string>> = {
 /** Resolve a Node `upgrade` event: run the nifra upgrade guard, then either reject (write an HTTP error
  * to the raw socket) or perform the `ws` upgrade and wire the socket to the handler. */
 async function handleUpgrade(
-  resolveWs: (request: Request) => WsUpgradeOutcome | Promise<WsUpgradeOutcome>,
+  resolveWs: (
+    request: Request,
+    platform?: NodePlatform,
+  ) => WsUpgradeOutcome | Promise<WsUpgradeOutcome>,
   getProtocol: RequestProtocolResolver,
   hostPolicy: HostPolicy,
   nodeReq: IncomingMessage,
@@ -2352,7 +2358,9 @@ async function handleUpgrade(
       writeUpgradeRejection(socket, 400, "bad_request")
       return
     }
-    outcome = await resolveWs(toWebRequest(nodeReq, getProtocol(nodeReq), host))
+    const peerAddress = nodeReq.socket.remoteAddress
+    const platform = peerAddress === undefined ? undefined : { clientIp: peerAddress }
+    outcome = await resolveWs(toWebRequest(nodeReq, getProtocol(nodeReq), host), platform)
   } catch {
     writeUpgradeRejection(socket, 500, "internal_error")
     return

@@ -26,6 +26,7 @@ import {
   validateLocalPort,
   WarmWorker,
 } from "../src/mcp.ts"
+import { catalogProjectTools } from "../src/mcp-exec.ts"
 import {
   createMcpProtocolState,
   handleRpc,
@@ -33,6 +34,7 @@ import {
   type McpPrompt,
   type McpResource,
   type McpTool,
+  type McpToolContext,
 } from "../src/mcp-protocol.ts"
 import { loadBackend, runBackend } from "../src/mcp-run.ts"
 
@@ -798,6 +800,50 @@ describe("monorepo detection + tool namespacing", () => {
     }))
     for (const r of namespaced) {
       expect(r.uri.startsWith("nifra://portal/")).toBe(true)
+    }
+  })
+
+  test("project resources reject symlinked files outside the selected project", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-mcp-resource-"))
+    const outside = await mkdtemp(join(tmpdir(), "nifra-mcp-outside-"))
+    try {
+      await writeFile(join(outside, "instructions.md"), "outside secret\n")
+      await symlink(join(outside, "instructions.md"), join(root, "AGENTS.md"))
+      const resource = projectFeatures(root).resources?.find(
+        (item) => item.uri === "nifra://agents-md",
+      )
+      expect(resource).toBeDefined()
+      await expect(resource?.read()).rejects.toThrow("refusing to read outside project root")
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  test("catalog MCP path arguments reject traversal and symlink escapes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nifra-mcp-path-"))
+    const outside = await mkdtemp(join(tmpdir(), "nifra-mcp-path-outside-"))
+    try {
+      const outsideFile = join(outside, "snapshot.json")
+      await writeFile(outsideFile, "do not overwrite\n")
+      await symlink(outsideFile, join(root, "snapshot.json"))
+      const snapshot = catalogProjectTools(root).find((item) => item.name === "nifra_snapshot")
+      expect(snapshot).toBeDefined()
+      const context = { signal: new AbortController().signal } as McpToolContext
+      const traversal = JSON.parse(
+        (await snapshot?.handler({ out: "../escape.json" }, context)) as string,
+      )
+      expect(traversal.ok).toBe(false)
+      expect(traversal.error).toContain("inside")
+      const symlinkResult = JSON.parse(
+        (await snapshot?.handler({ out: "snapshot.json" }, context)) as string,
+      )
+      expect(symlinkResult.ok).toBe(false)
+      expect(symlinkResult.error).toContain("inside")
+      expect(await Bun.file(outsideFile).text()).toBe("do not overwrite\n")
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(outside, { recursive: true, force: true })
     }
   })
 })

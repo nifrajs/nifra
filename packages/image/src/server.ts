@@ -198,8 +198,10 @@ async function handle(req: Request, cfg: ResolvedConfig): Promise<Response> {
   // 2b. Signed-URL enforcement (when configured): reject any request we didn't mint. Verifies the
   //     `&s=` HMAC over the raw (src, w, q[, exp]) - exactly what the loader/`signImageUrl` signed -
   //     and the expiry. Done before the ETag/fetch so unsigned/forged requests cost nothing.
+  let signedCacheControl: string | undefined
   if (cfg.signing !== null) {
     const sig = url.searchParams.get("s")
+    const exp = url.searchParams.get("exp")
     const ok =
       sig !== null &&
       verifyImageParams(
@@ -208,12 +210,21 @@ async function handle(req: Request, cfg: ResolvedConfig): Promise<Response> {
           src,
           w: url.searchParams.get("w") ?? "",
           q: qParam ?? undefined,
-          exp: url.searchParams.get("exp") ?? undefined,
+          exp: exp ?? undefined,
         },
         sig,
         Math.floor(Date.now() / 1000),
       )
     if (!ok) return errorResponse(403, "invalid_signature")
+
+    // An expiring bearer URL must never become a longer-lived shared-cache entry than its
+    // authorization. Keep it private as well: an intermediary must not replay the transformed bytes
+    // after the signature expires without re-running this check.
+    if (exp !== null) {
+      const expiresAt = Number(exp)
+      const remaining = Math.max(0, expiresAt - Math.floor(Date.now() / 1000))
+      signedCacheControl = `private, max-age=${Math.min(cfg.cacheMaxAge, remaining)}`
+    }
   }
 
   // 3/4. Admission precedes source reads so queued requests do not retain large buffers. It is a
@@ -255,7 +266,9 @@ async function handle(req: Request, cfg: ResolvedConfig): Promise<Response> {
     // falsely return 304 when a mutable local/remote source changes at the same URL.
     const etag = `"${await sha256(out.bytes)}"`
     const headers = new Headers({
-      "Cache-Control": `public, max-age=${cfg.cacheMaxAge}${cfg.immutable ? ", immutable" : ""}`,
+      "Cache-Control":
+        signedCacheControl ??
+        `public, max-age=${cfg.cacheMaxAge}${cfg.immutable ? ", immutable" : ""}`,
       ETag: etag,
       Vary: "Accept",
     })

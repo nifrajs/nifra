@@ -65,7 +65,12 @@ describe("signed-URL enforcement", () => {
   test("signImageUrl mints a URL the handler accepts (with a future expiry)", async () => {
     const url = signImageUrl("/_image", { src: SRC, width: 50 }, { secret: SECRET, expiresIn: 300 })
     expect(url).toContain("exp=")
-    expect((await handler(req(url))).status).toBe(200)
+    const res = await handler(req(url))
+    expect(res.status).toBe(200)
+    const cacheControl = res.headers.get("cache-control") ?? ""
+    expect(cacheControl).toMatch(/^private, max-age=([0-9]+)$/)
+    expect(Number(cacheControl.slice("private, max-age=".length))).toBeLessThanOrEqual(300)
+    expect(cacheControl).not.toContain("immutable")
   })
 
   test("an unsigned handler ignores signatures (opt-in only)", async () => {

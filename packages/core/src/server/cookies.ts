@@ -66,7 +66,8 @@ const safeDecode = (v: string): string => {
  *
  * Hand-rolled index walk instead of `split(";")` + `trim()` chains: those allocated an array + up
  * to three substrings per pair and showed up at ~6% of a realistic (auth + cookie) request. Same
- * semantics, two slices per pair, no intermediate array. */
+ * semantics, two slices per pair, no intermediate array. Duplicate names use the first value
+ * deterministically; security-sensitive callers can use {@link hasDuplicateCookie} and fail closed. */
 export function parseCookies(header: string | null | undefined): Record<string, string> {
   // Null-prototype: cookie NAMES come straight from the untrusted header, so a cookie named
   // `constructor`/`__proto__`/`toString` must be an inert own key, not a shadow of a prototype
@@ -106,12 +107,43 @@ export function parseCookies(header: string | null | undefined): Record<string, 
         }
         // Interned: cookie names repeat across requests, and V8 pays ~300ns to internalize a
         // fresh sliced key on a null-proto store (see internParseKey).
-        out[internParseKey(name)] = safeDecode(value)
+        const key = internParseKey(name)
+        // Cookie headers can contain same-name cookies from different paths/domains. Do not let a
+        // later value silently replace the first one: session/auth callers can separately reject the
+        // ambiguity, while ordinary callers get deterministic first-value semantics.
+        if (!Object.hasOwn(out, key)) out[key] = safeDecode(value)
       }
     }
     pos = end + 1
   }
   return out
+}
+
+/** True when a raw Cookie header contains the same exact cookie name more than once. */
+export function hasDuplicateCookie(header: string | null | undefined, targetName: string): boolean {
+  if (!header || targetName.length === 0) return false
+  let found = false
+  const len = header.length
+  let pos = 0
+  while (pos < len) {
+    let end = header.indexOf(";", pos)
+    if (end === -1) end = len
+    let start = pos
+    while (start < end && header.charCodeAt(start) === 32) start++
+    let stop = end
+    while (stop > start && header.charCodeAt(stop - 1) === 32) stop--
+    const eq = header.indexOf("=", start)
+    if (eq > start && eq < stop) {
+      let nameEnd = eq
+      while (nameEnd > start && header.charCodeAt(nameEnd - 1) === 32) nameEnd--
+      if (header.slice(start, nameEnd) === targetName) {
+        if (found) return true
+        found = true
+      }
+    }
+    pos = end + 1
+  }
+  return false
 }
 
 /**

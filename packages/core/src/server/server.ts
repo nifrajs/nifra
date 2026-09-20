@@ -326,6 +326,7 @@ type BunNativeRoutes = Record<string, BunNativeMethodTable>
 type BunRequestWithParams = Request & { readonly params?: Record<string, string> }
 
 const WS_PASS: WebSocketUpgradeOutcome = { kind: "pass" }
+const DEFAULT_WS_UPGRADE_TIMEOUT_MS = 10_000
 
 /** `app.ws()` (and everything downstream of it) needs the runtime `@nifrajs/core/ws` registers. */
 function requireWsRuntime(runtime: WsRuntime | undefined): WsRuntime {
@@ -679,6 +680,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private readonly trustBodyFraming: boolean
   private readonly wsMaxPayloadBytes: number
   private readonly requestTimeoutMs: number
+  private readonly wsUpgradeTimeoutMs: number
   /** Installed by the `responseContract()` plugin; `undefined` = not installed, which is the default
    * and the state in which a declared `response` schema stays a compile-time contract only. */
   private responseContractRuntime: ResponseContractRuntime | undefined
@@ -782,6 +784,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.maxBodyBytes = maxBodyBytes
     this.wsMaxPayloadBytes = wsMaxPayloadBytes
     this.requestTimeoutMs = options.requestTimeoutMs ?? 0
+    this.wsUpgradeTimeoutMs = options.wsUpgradeTimeoutMs ?? DEFAULT_WS_UPGRADE_TIMEOUT_MS
     this.clientIpTrust = options.clientIp
     this.acceptInboundDeadlines = options.acceptInboundDeadlines ?? false
     this.maxInboundDeadlineMs = options.maxInboundDeadlineMs ?? 30_000
@@ -791,6 +794,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     })
     if (!Number.isFinite(this.requestTimeoutMs) || this.requestTimeoutMs < 0) {
       throw new RangeError("requestTimeoutMs must be a finite non-negative number")
+    }
+    if (!Number.isFinite(this.wsUpgradeTimeoutMs) || this.wsUpgradeTimeoutMs < 0) {
+      throw new RangeError("wsUpgradeTimeoutMs must be a finite non-negative number")
     }
     if (!Number.isFinite(this.maxInboundDeadlineMs) || this.maxInboundDeadlineMs <= 0) {
       throw new RangeError("maxInboundDeadlineMs must be a finite positive number")
@@ -2558,83 +2564,173 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * `data`). Runs the route's `upgrade(c)` guard in a real request context. Synchronous unless
    * `upgrade()` is async; a throw rejects with a flat 500 (no detail leaked).
    */
+  private runWebSocketRequestHooks(
+    req: Request,
+    platform?: Platform<EnvOf<Ctx>>,
+  ): MaybePromise<Request | Response> {
+    let current = req
+    for (let i = 0; i < this.onRequestHooks.length; i++) {
+      const hook = this.onRequestHooks[i]
+      if (hook === undefined) return current
+      const outcome = hook(current, platform)
+      if (outcome instanceof Promise) {
+        return outcome.then((first) =>
+          this.continueWebSocketRequestHooks(first, i + 1, current, platform),
+        )
+      }
+      if (outcome instanceof Request) {
+        current = outcome
+        continue
+      }
+      if (outcome !== undefined) return outcome
+    }
+    return current
+  }
+
+  private async continueWebSocketRequestHooks(
+    first: OnRequestResult,
+    start: number,
+    current: Request,
+    platform?: Platform<EnvOf<Ctx>>,
+  ): Promise<Request | Response> {
+    let next = current
+    let outcome = first
+    for (let i = start; ; i++) {
+      if (outcome instanceof Request) next = outcome
+      else if (outcome !== undefined) return outcome
+      if (i >= this.onRequestHooks.length) return next
+      const hook = this.onRequestHooks[i]
+      if (hook === undefined) return next
+      outcome = await hook(next, platform)
+    }
+  }
+
   resolveWebSocketUpgrade(
     req: Request,
     platform?: Platform<EnvOf<Ctx>>,
   ): MaybePromise<WebSocketUpgradeOutcome> {
     if (this.wsRouteCount === 0) return WS_PASS
     if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return WS_PASS
-    const url = urlPartsOf(req.url)
-    const match = this.wsRouter.find("GET", url.pathname)
-    if (!match.found) return WS_PASS // upgrade header, no WS route here → normal routing decides
-    // Inspect only captured values for escapes. Scanning the full pathname repeated work the router
-    // already did and made every plain dynamic route pay for unrelated static path bytes.
-    const params = match.params === EMPTY_PARAMS ? match.params : decodeRouteParams(match.params)
-    if (params === null) return { kind: "reject", response: jsonError(400, "malformed_path") }
-    const handler = match.payload.handler
-    // Non-null: wsRouteCount > 0 ⇒ ws() ran ⇒ `.use(websocket())` installed the runtime + registry.
-    const pubsub = this.topics as TopicRegistry
-    const attach = (this.wsRuntime as WsRuntime).attach
-    // CSWSH guard, before any per-connection work or the user's upgrade(): reject a disallowed
-    // Origin with 403. Browsers don't CORS-protect WS handshakes but do send cookies, so this
-    // blocks cross-site authenticated sockets when the route opts in via `allowedOrigins`.
-    const origin = req.headers.get("origin")
-    if (handler.allowedOrigins !== undefined) {
-      const allowed =
-        typeof handler.allowedOrigins === "function"
-          ? handler.allowedOrigins(origin)
-          : origin !== null && handler.allowedOrigins.includes(origin)
-      if (!allowed) return { kind: "reject", response: jsonError(403, "forbidden_origin") }
-    } else if (origin !== null && !wsSameOrigin(origin, req)) {
-      // Secure default (no explicit `allowedOrigins`): reject a CROSS-ORIGIN browser handshake - the
-      // CSWSH case, since browsers send cookies on WS handshakes and don't apply CORS. Non-browser
-      // clients send no `Origin` and pass; same-origin browsers pass. Set `allowedOrigins` to permit
-      // specific cross-origin clients (or `() => true` for a genuinely public socket).
-      return { kind: "reject", response: jsonError(403, "forbidden_origin") }
-    }
-    if (handler.upgrade === undefined) {
-      return {
-        kind: "upgrade",
-        handler,
-        data: undefined,
-        pubsub,
-        attach,
-        maxPayloadBytes: this.wsMaxPayloadBytes,
+
+    const timeoutMs =
+      this.wsUpgradeTimeoutMs === 0
+        ? 0
+        : this.requestTimeoutMs > 0
+          ? Math.min(this.wsUpgradeTimeoutMs, this.requestTimeoutMs)
+          : this.wsUpgradeTimeoutMs
+    const controller = timeoutMs > 0 ? new AbortController() : undefined
+    const signal = controller?.signal ?? getNeverAbortSignal()
+    const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : undefined
+    const timeoutResponse = jsonError(503, "request_timeout")
+    const onTimeout = (): WebSocketUpgradeOutcome => ({
+      kind: "reject",
+      response: timeoutResponse,
+    })
+    const bounded = <T>(work: Promise<T>, onDone: () => T): Promise<T> =>
+      controller === undefined
+        ? work
+        : this.withTimeout(work, controller, onDone, Math.max(0, deadline! - Date.now()))
+
+    const resolveMatched = (request: Request): MaybePromise<WebSocketUpgradeOutcome> => {
+      const url = urlPartsOf(request.url)
+      const match = this.wsRouter.find("GET", url.pathname)
+      if (!match.found) return WS_PASS // upgrade header, no WS route here → normal routing decides
+      // Inspect only captured values for escapes. Scanning the full pathname repeated work the router
+      // already did and made every plain dynamic route pay for unrelated static path bytes.
+      const params = match.params === EMPTY_PARAMS ? match.params : decodeRouteParams(match.params)
+      if (params === null) return { kind: "reject", response: jsonError(400, "malformed_path") }
+      const handler = match.payload.handler
+      // Non-null: wsRouteCount > 0 ⇒ ws() ran ⇒ `.use(websocket())` installed the runtime + registry.
+      const pubsub = this.topics as TopicRegistry
+      const attach = (this.wsRuntime as WsRuntime).attach
+      // CSWSH guard, before any per-connection work or the user's upgrade(): reject a disallowed
+      // Origin with 403. Browsers don't CORS-protect WS handshakes but do send cookies, so this
+      // blocks cross-site authenticated sockets when the route opts in via `allowedOrigins`.
+      const origin = request.headers.get("origin")
+      if (handler.allowedOrigins !== undefined) {
+        const allowed =
+          typeof handler.allowedOrigins === "function"
+            ? handler.allowedOrigins(origin)
+            : origin !== null && handler.allowedOrigins.includes(origin)
+        if (!allowed) return { kind: "reject", response: jsonError(403, "forbidden_origin") }
+      } else if (origin !== null && !wsSameOrigin(origin, request)) {
+        // Secure default (no explicit `allowedOrigins`): reject a CROSS-ORIGIN browser handshake - the
+        // CSWSH case, since browsers send cookies on WS handshakes and don't apply CORS. Non-browser
+        // clients send no `Origin` and pass; same-origin browsers pass. Set `allowedOrigins` to permit
+        // specific cross-origin clients (or `() => true` for a genuinely public socket).
+        return { kind: "reject", response: jsonError(403, "forbidden_origin") }
+      }
+      if (handler.upgrade === undefined) {
+        return {
+          kind: "upgrade",
+          handler,
+          data: undefined,
+          pubsub,
+          attach,
+          maxPayloadBytes: this.wsMaxPayloadBytes,
+        }
+      }
+      const budget =
+        controller === undefined
+          ? createUnboundedRequestBudget(signal)
+          : createRequestBudget({ deadline: deadline!, signal })
+      const ctx = new RequestContext(
+        request,
+        params,
+        url.search,
+        signal,
+        budget,
+        platform,
+        this.maxBodyBytes,
+        this.protoPoisoning,
+      )
+      const settle = (value: unknown): WebSocketUpgradeOutcome =>
+        value instanceof Response
+          ? { kind: "reject", response: value }
+          : {
+              kind: "upgrade",
+              handler,
+              data: value,
+              pubsub,
+              attach,
+              maxPayloadBytes: this.wsMaxPayloadBytes,
+            }
+      try {
+        const result = handler.upgrade(ctx as unknown as WebSocketContext<EnvOf<Ctx>>)
+        if (!(result instanceof Promise)) return settle(result)
+        const pending = result.then(settle, () => ({
+          kind: "reject" as const,
+          response: jsonError(500, "internal_error"),
+        }))
+        return bounded(pending, onTimeout)
+      } catch {
+        return { kind: "reject", response: jsonError(500, "internal_error") }
       }
     }
-    const upgradeSignal = getNeverAbortSignal()
-    const ctx = new RequestContext(
-      req,
-      params,
-      url.search,
-      upgradeSignal,
-      createUnboundedRequestBudget(upgradeSignal),
-      platform,
-      this.maxBodyBytes,
-      this.protoPoisoning,
-    )
-    const settle = (value: unknown): WebSocketUpgradeOutcome =>
-      value instanceof Response
-        ? { kind: "reject", response: value }
-        : {
-            kind: "upgrade",
-            handler,
-            data: value,
-            pubsub,
-            attach,
-            maxPayloadBytes: this.wsMaxPayloadBytes,
-          }
+
+    if (this.onRequestHooks.length === 0) return resolveMatched(req)
+    let hooked: MaybePromise<Request | Response>
     try {
-      const result = handler.upgrade(ctx as unknown as WebSocketContext<EnvOf<Ctx>>)
-      return result instanceof Promise
-        ? result.then(settle, () => ({
-            kind: "reject" as const,
-            response: jsonError(500, "internal_error"),
-          }))
-        : settle(result)
+      hooked = this.runWebSocketRequestHooks(req, platform)
     } catch {
       return { kind: "reject", response: jsonError(500, "internal_error") }
     }
+    if (!(hooked instanceof Promise)) {
+      return hooked instanceof Response
+        ? { kind: "reject", response: hooked }
+        : resolveMatched(hooked)
+    }
+    const pending = hooked.then(
+      (result) =>
+        result instanceof Response
+          ? { kind: "reject" as const, response: result }
+          : resolveMatched(result),
+      () => ({ kind: "reject" as const, response: jsonError(500, "internal_error") }),
+    )
+    return bounded(
+      Promise.resolve(pending).then((result) => result),
+      onTimeout,
+    )
   }
 
   /** Bun `fetch` when WS routes exist: try a WS upgrade first, else run the normal HTTP lifecycle.
@@ -2652,7 +2748,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         ? undefined
         : jsonError(426, "upgrade_required")
     }
-    const outcome = this.resolveWebSocketUpgrade(req)
+    const outcome = this.resolveWebSocketUpgrade(
+      req,
+      bunPeerPlatform(server, req) as Platform<EnvOf<Ctx>>,
+    )
     return outcome instanceof Promise ? outcome.then(handle) : handle(outcome)
   }
 

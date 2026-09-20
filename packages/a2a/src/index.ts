@@ -56,6 +56,8 @@ export const AGENT_CARD_WELL_KNOWN_PATH = "/.well-known/agent-card.json"
 
 const DEFAULT_PATH = "/a2a"
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
+const DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024
+const MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 const PENDING_KINDS: readonly AgentPendingKind[] = ["approval", "budget", "model", "cancelled"]
 const TURN_ID_PATTERN = /^[a-zA-Z0-9._:-]{1,128}$/
 
@@ -134,6 +136,8 @@ export interface MountA2AOptions<
   readonly maxBodyBytes?: number
   /** Prototype-poisoning policy for the framing lane. Default `"reject"`. */
   readonly protoPoisoning?: ProtoPoisoning
+  /** Maximum total UTF-8 bytes emitted by one response. Default 4 MiB. */
+  readonly maxOutputBytes?: number
   /**
    * Build the ports for one request - the model, durable state store, approval transport,
    * capabilities, and budgets. Receives the route context so the caller can scope every port to the
@@ -173,6 +177,8 @@ export function mountA2A<
   const path = options.path ?? DEFAULT_PATH
   const cardPath = options.cardPath ?? AGENT_CARD_WELL_KNOWN_PATH
   const maxBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
+  const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES
+  assertOutputLimit(maxOutputBytes)
   const proto = options.protoPoisoning ?? "reject"
   const runOptions = options.maxTurns === undefined ? {} : { maxTurns: options.maxTurns }
   const card = agentCard(options.agent, options.card)
@@ -183,7 +189,10 @@ export function mountA2A<
       c.req,
       maxBytes,
       proto,
-      (parsed) => dispatch(c, parsed, options, runOptions),
+      (parsed) =>
+        dispatch(c, parsed, options, runOptions, maxOutputBytes).then((response) =>
+          boundJsonResponse(response, maxOutputBytes),
+        ),
       (rejection) => render(rejection),
       () => rpcErrorResponse(null, A2A_ERROR_CODES.parseError, "parse_error"),
     ).catch(() => rpcErrorResponse(null, A2A_ERROR_CODES.internalError, "internal_error")),
@@ -201,6 +210,7 @@ async function dispatch<
   parsed: unknown,
   options: MountA2AOptions<InputSchema, OutputSchema>,
   runOptions: { readonly maxTurns?: number },
+  maxOutputBytes: number,
 ): Promise<Response> {
   const request = asRecord(parsed)
   const id = request === undefined ? undefined : asRpcId(request.id)
@@ -243,12 +253,14 @@ async function dispatch<
           return rpcErrorResponse(id, A2A_ERROR_CODES.taskNotFound, "task_not_resumable")
         }
       }
-      return streamingResponse(id, turn.turnId, start)
+      return streamingResponse(id, turn.turnId, start, maxOutputBytes)
     }
     case "GetTask": {
       const taskId = typeof params.id === "string" ? params.id : undefined
       if (taskId === undefined)
         return rpcErrorResponse(id, A2A_ERROR_CODES.invalidParams, "invalid_params")
+      if (!isValidTaskId(taskId))
+        return rpcErrorResponse(id, A2A_ERROR_CODES.invalidParams, "invalid_task_id")
       const basePorts = await options.ports(c)
       const state = await basePorts.state?.load(taskId)
       if (state === undefined)
@@ -284,7 +296,7 @@ function prepareTurn(
   const metadata = asRecord(message.metadata) ?? {}
   const taskId = typeof message.taskId === "string" ? message.taskId : undefined
   const resume = parseResume(metadata.resume)
-  if (taskId !== undefined && !TURN_ID_PATTERN.test(taskId))
+  if (taskId !== undefined && !isValidTaskId(taskId))
     return { error: { code: A2A_ERROR_CODES.invalidParams, message: "invalid_task_id" } }
   // A message that names a task must carry the continuation: the runtime keeps state token-only,
   // so there is nothing to continue from without it.
@@ -299,6 +311,10 @@ function prepareTurn(
   }
 }
 
+function isValidTaskId(value: unknown): value is string {
+  return typeof value === "string" && TURN_ID_PATTERN.test(value)
+}
+
 function firstTextPart(parts: unknown): unknown {
   if (!Array.isArray(parts)) return undefined
   for (const part of parts) {
@@ -308,13 +324,25 @@ function firstTextPart(parts: unknown): unknown {
   return undefined
 }
 
-function streamingResponse(id: RpcId, turnId: string, start: RunStart): Response {
+class A2AOutputLimitError extends Error {}
+
+function streamingResponse(
+  id: RpcId,
+  turnId: string,
+  start: RunStart,
+  maxOutputBytes: number,
+): Response {
   const stream = createAgentEvidenceStream()
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder()
+      let emittedBytes = 0
       const send = (payload: unknown): void => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
+        const frame = encoder.encode(`data: ${JSON.stringify(payload)}\n\n`)
+        if (frame.byteLength > maxOutputBytes || emittedBytes > maxOutputBytes - frame.byteLength)
+          throw new A2AOutputLimitError("A2A output limit exceeded")
+        emittedBytes += frame.byteLength
+        controller.enqueue(frame)
       }
       const run = start(stream)
       // The evidence stream must terminate whether the run resolves or throws, or the `for await`
@@ -364,8 +392,18 @@ function streamingResponse(id: RpcId, turnId: string, start: RunStart): Response
             },
           }),
         )
-      } catch {
-        send(rpcError(id, A2A_ERROR_CODES.internalError, "run_failed"))
+      } catch (error) {
+        try {
+          send(
+            rpcError(
+              id,
+              A2A_ERROR_CODES.internalError,
+              error instanceof A2AOutputLimitError ? "output_limit" : "run_failed",
+            ),
+          )
+        } catch {
+          // The output budget itself may be exhausted; the stream still closes below.
+        }
       } finally {
         controller.close()
       }
@@ -506,9 +544,23 @@ function rpcErrorResponse(id: RpcId | null, code: number, message: string): Resp
 }
 
 function asRpcId(value: unknown): RpcId | undefined {
-  if (typeof value === "string") return value
+  if (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 128 &&
+    !hasControlCharacters(value)
+  )
+    return value
   if (typeof value === "number" && Number.isFinite(value)) return value
   return undefined
+}
+
+function hasControlCharacters(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index)
+    if (code <= 0x1f || code === 0x7f) return true
+  }
+  return false
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -517,10 +569,35 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 function jsonResponse(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), {
+  let serialized: string
+  try {
+    const candidate = JSON.stringify(body)
+    if (candidate === undefined) throw new TypeError("undefined response")
+    serialized = candidate
+  } catch {
+    serialized = JSON.stringify({ error: "response_serialization_failed" })
+    status = 500
+  }
+  if (new TextEncoder().encode(serialized).byteLength > DEFAULT_MAX_OUTPUT_BYTES) {
+    serialized = JSON.stringify({ error: "response_too_large" })
+    status = 500
+  }
+  return new Response(serialized, {
     status,
     headers: { "content-type": "application/json; charset=utf-8" },
   })
+}
+
+async function boundJsonResponse(response: Response, maxOutputBytes: number): Promise<Response> {
+  if (!response.headers.get("content-type")?.startsWith("application/json")) return response
+  const bytes = await response.arrayBuffer()
+  if (bytes.byteLength > maxOutputBytes) return jsonResponse(500, { error: "response_too_large" })
+  return new Response(bytes, { status: response.status, headers: response.headers })
+}
+
+function assertOutputLimit(value: number): void {
+  if (!Number.isSafeInteger(value) || value < 1024 || value > MAX_OUTPUT_BYTES)
+    throw new RangeError(`A2A maxOutputBytes must be between 1024 and ${MAX_OUTPUT_BYTES}`)
 }
 
 function render(response: Response | ResponseResult): Response {

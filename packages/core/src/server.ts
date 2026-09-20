@@ -33,6 +33,7 @@ export {
   type CookieOptions,
   type CookieSecret,
   cookieNamePrefix,
+  hasDuplicateCookie,
   parseCookies,
   serializeCookie,
   signValue,

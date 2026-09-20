@@ -91,6 +91,8 @@ import type { StandardSchemaV1 } from "@nifrajs/core/schema"
 
 const DEFAULT_PATH = "/agui"
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
+const DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024
+const MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 const PENDING_KINDS: readonly AgentPendingKind[] = ["approval", "budget", "model", "cancelled"]
 const TURN_ID_PATTERN = /^[a-zA-Z0-9._:-]{1,128}$/
 const LAST_EVENT_ID_PATTERN = /^\d{1,15}$/
@@ -129,6 +131,8 @@ export interface MountAgUIOptions<
   readonly maxBodyBytes?: number
   /** Prototype-poisoning policy for the framing lane. Default `"reject"`. */
   readonly protoPoisoning?: ProtoPoisoning
+  /** Maximum total UTF-8 bytes emitted by one SSE response. Default 4 MiB. */
+  readonly maxOutputBytes?: number
   /**
    * Build the ports for one request - the model, durable state store, approval transport,
    * capabilities, and budgets. Receives the route context so the caller can scope every port to
@@ -156,6 +160,8 @@ export function mountAgUI<
 >(app: AgUIMountableApp, options: MountAgUIOptions<InputSchema, OutputSchema>): void {
   const path = options.path ?? DEFAULT_PATH
   const maxBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
+  const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES
+  assertOutputLimit(maxOutputBytes)
   const proto = options.protoPoisoning ?? "reject"
   const runOptions = options.maxTurns === undefined ? {} : { maxTurns: options.maxTurns }
 
@@ -164,7 +170,7 @@ export function mountAgUI<
       c.req,
       maxBytes,
       proto,
-      (parsed) => execute(c, parsed, options, runOptions),
+      (parsed) => execute(c, parsed, options, runOptions, maxOutputBytes),
       (rejection) => render(rejection),
       () => render(plainError(400, "bad_request")),
     ).catch(() => render(plainError(400, "bad_request"))),
@@ -176,12 +182,15 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
   parsed: unknown,
   options: MountAgUIOptions<InputSchema, OutputSchema>,
   runOptions: { readonly maxTurns?: number },
+  maxOutputBytes: number,
 ): Promise<Response> {
   const body = asRecord(parsed)
   const threadId = body === undefined ? undefined : body.threadId
   const runId = body === undefined ? undefined : body.runId
   if (body === undefined || typeof threadId !== "string" || typeof runId !== "string")
     return jsonResponse(400, { error: "invalid_run_agent_input" })
+  if (!TURN_ID_PATTERN.test(threadId)) return jsonResponse(400, { error: "invalid_thread_id" })
+  if (!TURN_ID_PATTERN.test(runId)) return jsonResponse(400, { error: "invalid_run_id" })
 
   const forwarded = asRecord(body.forwardedProps) ?? {}
   const forwardedTurnId = typeof forwarded.turnId === "string" ? forwarded.turnId : undefined
@@ -189,8 +198,7 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
     return jsonResponse(400, { error: "invalid_turn_id" })
   // Legacy resume names the turn in forwardedProps; spec resume names it via the interrupt id.
   const entry = parseResumeEntry(body.resume)
-  const turnId =
-    forwardedTurnId ?? entry?.turnId ?? (TURN_ID_PATTERN.test(runId) ? runId : crypto.randomUUID())
+  const turnId = forwardedTurnId ?? entry?.turnId ?? runId
 
   const input = Object.hasOwn(forwarded, "input") ? forwarded.input : lastUserMessage(body.messages)
   const resume = parseResume(forwarded.resume) ?? entry?.resume
@@ -204,7 +212,7 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
       return jsonResponse(400, { error: "invalid_last_event_id" })
     const replay = await log.replay(turnId, Number(lastEventId))
     if (replay === undefined) return jsonResponse(409, { error: "replay_unavailable" })
-    return sseReplayResponse(identity, replay)
+    return sseReplayResponse(identity, replay, maxOutputBytes)
   }
 
   // `body.state` seeds the run's shared UI state document; patches stream as STATE_DELTA.
@@ -233,10 +241,17 @@ async function execute<InputSchema extends StandardSchemaV1, OutputSchema extend
     })
   }
   const snapshotMessages = options.emitMessagesSnapshot === true ? body.messages : undefined
-  return sseResponse(identity, start, log, snapshotMessages, {
-    channel: sharedState,
-    announced: body.state !== undefined,
-  })
+  return sseResponse(
+    identity,
+    start,
+    log,
+    snapshotMessages,
+    {
+      channel: sharedState,
+      announced: body.state !== undefined,
+    },
+    maxOutputBytes,
+  )
 }
 
 interface RunIdentity {
@@ -254,13 +269,14 @@ function sseResponse(
   log: AgentEvidenceLog | undefined,
   snapshotMessages: unknown,
   state: { readonly channel: AgentSharedState; readonly announced: boolean },
+  maxOutputBytes: number,
 ): Response {
   const stream = createAgentEvidenceStream()
   // `id:` frames are only meaningful when a log can serve the reconnect they invite.
   const withIds = log !== undefined
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = sseSender(controller)
+      const send = sseSender(controller, maxOutputBytes)
       const projector = createDeltaProjector(send, identity.turnId)
       const run = start(stream, projector.sink)
       // The evidence stream must terminate whether the run resolves or throws, or the `for await`
@@ -307,11 +323,23 @@ function sseResponse(
           if (streamedText && String(event.type).startsWith("TEXT_MESSAGE_")) continue
           send(event)
         }
-      } catch {
+      } catch (error) {
         projector.finish()
-        const events = [{ type: "RUN_ERROR", message: "run_failed", timestamp: Date.now() }]
+        const events = [
+          {
+            type: "RUN_ERROR",
+            message: error instanceof SseOutputLimitError ? "output_limit" : "run_failed",
+            timestamp: Date.now(),
+          },
+        ]
         await finishQuietly(log, identity.turnId, { events })
-        for (const event of events) send(event)
+        for (const event of events) {
+          try {
+            send(event)
+          } catch {
+            // The output budget itself may be exhausted; the stream still closes below.
+          }
+        }
       } finally {
         unsubscribe()
         controller.close()
@@ -321,10 +349,14 @@ function sseResponse(
   return sseHeaders(body)
 }
 
-function sseReplayResponse(identity: RunIdentity, replay: AgentEvidenceReplay): Response {
+function sseReplayResponse(
+  identity: RunIdentity,
+  replay: AgentEvidenceReplay,
+  maxOutputBytes: number,
+): Response {
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = sseSender(controller)
+      const send = sseSender(controller, maxOutputBytes)
       send({ type: "RUN_STARTED", threadId: identity.threadId, runId: identity.runId })
       send({ type: "CUSTOM", name: "nifra.turn", value: { turnId: identity.turnId } })
       try {
@@ -335,8 +367,15 @@ function sseReplayResponse(identity: RunIdentity, replay: AgentEvidenceReplay): 
         const events = asTerminalEvents(await replay.result)
         if (events === undefined) send({ type: "RUN_ERROR", message: "run_failed" })
         else for (const event of events) send(event)
-      } catch {
-        send({ type: "RUN_ERROR", message: "run_failed" })
+      } catch (error) {
+        try {
+          send({
+            type: "RUN_ERROR",
+            message: error instanceof SseOutputLimitError ? "output_limit" : "run_failed",
+          })
+        } catch {
+          // The output budget itself may be exhausted; the stream still closes below.
+        }
       } finally {
         controller.close()
       }
@@ -347,12 +386,27 @@ function sseReplayResponse(identity: RunIdentity, replay: AgentEvidenceReplay): 
 
 type SseSend = (event: Record<string, unknown>, id?: number) => void
 
-function sseSender(controller: ReadableStreamDefaultController<Uint8Array>): SseSend {
+class SseOutputLimitError extends Error {}
+
+function sseSender(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  maxOutputBytes: number,
+): SseSend {
   const encoder = new TextEncoder()
+  let emittedBytes = 0
   return (event, id) => {
     const head = id === undefined ? "" : `id: ${id}\n`
-    controller.enqueue(encoder.encode(`${head}data: ${JSON.stringify(event)}\n\n`))
+    const frame = encoder.encode(`${head}data: ${JSON.stringify(event)}\n\n`)
+    if (frame.byteLength > maxOutputBytes || emittedBytes > maxOutputBytes - frame.byteLength)
+      throw new SseOutputLimitError("AG-UI SSE output limit exceeded")
+    emittedBytes += frame.byteLength
+    controller.enqueue(frame)
   }
+}
+
+function assertOutputLimit(value: number): void {
+  if (!Number.isSafeInteger(value) || value < 1024 || value > MAX_OUTPUT_BYTES)
+    throw new RangeError(`AG-UI maxOutputBytes must be between 1024 and ${MAX_OUTPUT_BYTES}`)
 }
 
 /**

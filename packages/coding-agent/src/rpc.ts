@@ -55,6 +55,11 @@ interface RpcServerLike {
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
 const DEFAULT_MAX_RPC_RESPONSE_BYTES = 4 * 1024 * 1024
 const MAX_RPC_RESPONSE_BYTES = 64 * 1024 * 1024
+const SESSION_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/
+const MIN_REMOTE_TOKEN_BYTES = 32
+const AUTH_FAILURE_WINDOW_MS = 60_000
+const AUTH_FAILURE_THRESHOLD = 3
+const AUTH_MAX_BACKOFF_MS = 2_000
 
 /**
  * Minimal loopback RPC surface for the CLI, Workbench, CI clients, and a future mobile companion.
@@ -68,6 +73,9 @@ export class CodingAgentRpcServer {
   private readonly maxBodyBytes: number
   private readonly maxResponseBytes: number
   private listener: RpcServerLike | undefined
+  private authFailures = 0
+  private authLastFailureAt = 0
+  private authBackoffUntil = 0
 
   constructor(options: CodingAgentRpcServerOptions) {
     this.options = Object.freeze({ ...options })
@@ -85,7 +93,7 @@ export class CodingAgentRpcServer {
       exposeErrorStacks: options.exposeErrorStacks === true,
       ...(options.verification === undefined ? {} : { verification: options.verification }),
     })
-    this.token = options.authToken ?? crypto.randomUUID().replaceAll("-", "")
+    this.token = options.authToken ?? randomAuthToken()
     if (!/^[A-Za-z0-9._~-]{16,256}$/.test(this.token))
       throw new TypeError("agent rpc: authToken must be a bounded token")
     this.maxBodyBytes = options.maxBodyBytes ?? 1_048_576
@@ -111,6 +119,14 @@ export class CodingAgentRpcServer {
     const hostname = this.options.hostname ?? "127.0.0.1"
     if (!this.options.allowRemote && !isLoopbackHost(hostname))
       throw new Error("agent rpc: remote binding requires allowRemote: true")
+    if (
+      this.options.authToken !== undefined &&
+      !isLoopbackHost(hostname) &&
+      new TextEncoder().encode(this.token).byteLength < MIN_REMOTE_TOKEN_BYTES
+    )
+      throw new Error(
+        `agent rpc: explicit remote authToken must be at least ${MIN_REMOTE_TOKEN_BYTES} bytes`,
+      )
     if (this.options.exposeErrorStacks === true && this.options.allowRemote === true)
       throw new Error("agent rpc: exposeErrorStacks is only allowed for local-only binding")
     this.listener = Bun.serve({
@@ -146,12 +162,25 @@ export class CodingAgentRpcServer {
     const url = new URL(request.url)
     if (url.pathname === "/health" && request.method === "GET")
       return this.response({ ok: true, protocol: 1 }, 200, cors)
-    if (!authorized(request, this.token))
+    const backoffMs = this.authBackoffMs()
+    if (backoffMs > 0) {
+      const throttledCors = new Headers(cors)
+      throttledCors.set("retry-after", String(Math.ceil(backoffMs / 1000)))
+      return this.response(
+        { error: { code: "auth_throttled", message: "too many failed authorization attempts" } },
+        429,
+        throttledCors,
+      )
+    }
+    if (!authorized(request, this.token)) {
+      this.noteAuthFailure()
       return this.response(
         { error: { code: "unauthorized", message: "agent RPC authorization required" } },
         401,
         cors,
       )
+    }
+    this.noteAuthSuccess()
     if (url.pathname !== "/rpc" || request.method !== "POST")
       return this.response(
         { error: { code: "not_found", message: "unknown agent RPC endpoint" } },
@@ -211,12 +240,18 @@ export class CodingAgentRpcServer {
     switch (request.method) {
       case "session.create": {
         const params = record(request.params)
+        if (params.sessionId !== undefined && !isValidSessionId(params.sessionId))
+          return json(
+            { error: { code: "invalid_session", message: "sessionId is invalid" } },
+            422,
+            cors,
+          )
         const snapshot =
           this.host.snapshot ??
           (await this.host.start({
             cwd: this.options.cwd,
             backend: this.options.backend.info.name,
-            ...(typeof params.sessionId === "string" ? { sessionId: params.sessionId } : {}),
+            ...(params.sessionId === undefined ? {} : { sessionId: params.sessionId }),
           }))
         return json(snapshot, 200, cors)
       }
@@ -226,10 +261,7 @@ export class CodingAgentRpcServer {
       }
       case "session.resume": {
         const params = record(request.params)
-        if (
-          typeof params.sessionId !== "string" ||
-          !/^[A-Za-z0-9._:-]{1,128}$/.test(params.sessionId)
-        )
+        if (!isValidSessionId(params.sessionId))
           return json(
             { error: { code: "invalid_session", message: "sessionId is required" } },
             422,
@@ -277,7 +309,7 @@ export class CodingAgentRpcServer {
       case "session.fork": {
         this.requireSnapshot()
         const params = record(request.params)
-        if (params.targetSessionId !== undefined && typeof params.targetSessionId !== "string")
+        if (params.targetSessionId !== undefined && !isValidSessionId(params.targetSessionId))
           return json(
             { error: { code: "invalid_session", message: "targetSessionId must be a string" } },
             422,
@@ -599,6 +631,34 @@ export class CodingAgentRpcServer {
     return this.host.snapshot
   }
 
+  private authBackoffMs(): number {
+    const now = Date.now()
+    if (this.authFailures === 0) return 0
+    if (now - this.authLastFailureAt > AUTH_FAILURE_WINDOW_MS) {
+      this.noteAuthSuccess()
+      return 0
+    }
+    return Math.max(0, this.authBackoffUntil - now)
+  }
+
+  private noteAuthFailure(): void {
+    const now = Date.now()
+    if (now - this.authLastFailureAt > AUTH_FAILURE_WINDOW_MS) this.authFailures = 0
+    this.authLastFailureAt = now
+    this.authFailures = Math.min(this.authFailures + 1, 31)
+    if (this.authFailures >= AUTH_FAILURE_THRESHOLD) {
+      const exponent = this.authFailures - AUTH_FAILURE_THRESHOLD
+      const delay = Math.min(AUTH_MAX_BACKOFF_MS, 250 * 2 ** exponent)
+      this.authBackoffUntil = now + delay
+    }
+  }
+
+  private noteAuthSuccess(): void {
+    this.authFailures = 0
+    this.authLastFailureAt = 0
+    this.authBackoffUntil = 0
+  }
+
   private response(
     value: unknown,
     status: number,
@@ -646,6 +706,10 @@ function decimalContentLength(value: string): number | undefined {
   return length
 }
 
+function isValidSessionId(value: unknown): value is string {
+  return typeof value === "string" && SESSION_ID_PATTERN.test(value)
+}
+
 function parseRpcRequest(text: string): RpcRequest {
   let value: unknown
   try {
@@ -671,6 +735,13 @@ function authorized(request: Request, token: string): boolean {
   const header = request.headers.get("authorization")
   if (header === null || !header.startsWith("Bearer ")) return false
   return constantTimeEqual(header.slice(7), token)
+}
+
+function randomAuthToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(MIN_REMOTE_TOKEN_BYTES))
+  let binary = ""
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")
 }
 
 function constantTimeEqual(left: string, right: string): boolean {

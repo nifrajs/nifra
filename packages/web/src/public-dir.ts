@@ -12,8 +12,10 @@
  * Distinct from `publicPath` in `build.ts`, which is the URL prefix for content-hashed bundle chunks.
  * The names collide and the concepts do not: `publicPath` never covers user-authored files.
  */
-import { realpath } from "node:fs/promises"
+import { constants as FS } from "node:fs"
+import { open, realpath } from "node:fs/promises"
 import { normalize, resolve, sep } from "node:path"
+import { Readable } from "node:stream"
 import { parseByteRange } from "@nifrajs/core/range"
 import { pathnameOf } from "@nifrajs/core/server"
 
@@ -129,54 +131,77 @@ export function servePublicDir(
     ) {
       return undefined
     }
-    const file = Bun.file(resolvedFile)
-    if (!(await file.exists())) return undefined
-    const size = file.size
-    const headers = new Headers({
-      "cache-control": pathname.startsWith(hashedPrefix) ? hashed : assets,
-      // Advertised unconditionally: a client that never sees `accept-ranges` will not attempt a seek,
-      // so a video or audio file under `public/` is scrubbable only once this header is present.
-      "accept-ranges": "bytes",
-    })
-    // `new Response(file)` used to infer the media type, which meant HEAD - built from a null body -
-    // silently lost it. Setting it here is what makes the two methods agree.
-    if (file.type !== "") headers.set("content-type", file.type)
-    const lastModified =
-      Number.isFinite(file.lastModified) && file.lastModified > 0 ? file.lastModified : undefined
-    if (lastModified !== undefined) {
-      headers.set("last-modified", new Date(lastModified).toUTCString())
+    // Open the canonical path once and stream from that descriptor. Reopening the pathname after
+    // realpath containment checks would let a writable public tree swap a symlink between validation
+    // and the actual read. O_NOFOLLOW also rejects a final-component symlink if one appears before
+    // the open; the descriptor then pins the bytes for the lifetime of the response.
+    let handle: Awaited<ReturnType<typeof open>> | undefined
+    try {
+      handle = await open(resolvedFile, FS.O_RDONLY | FS.O_NOFOLLOW)
+      const stat = await handle.stat()
+      if (!stat.isFile()) return undefined
+      const size = stat.size
+      const file = Bun.file(resolvedFile)
+      const headers = new Headers({
+        "cache-control": pathname.startsWith(hashedPrefix) ? hashed : assets,
+        // Advertised unconditionally: a client that never sees `accept-ranges` will not attempt a seek,
+        // so a video or audio file under `public/` is scrubbable only once this header is present.
+        "accept-ranges": "bytes",
+      })
+      // `new Response(file)` used to infer the media type, which meant HEAD - built from a null body -
+      // silently lost it. Setting it here is what makes the two methods agree.
+      if (file.type !== "") headers.set("content-type", file.type)
+      const lastModified =
+        Number.isFinite(stat.mtimeMs) && stat.mtimeMs > 0 ? stat.mtimeMs : undefined
+      if (lastModified !== undefined) {
+        headers.set("last-modified", new Date(lastModified).toUTCString())
+      }
+      const head = request.method === "HEAD"
+
+      if (isNotModified(request, lastModified)) {
+        headers.delete("content-type")
+        return new Response(null, { status: 304, headers })
+      }
+
+      const rangeHeader = request.headers.get("range")
+      const range =
+        rangeHeader !== null && ifRangeMatches(request.headers.get("if-range"), lastModified)
+          ? parseByteRange(rangeHeader, size)
+          : ({ kind: "none" } as const)
+
+      if (range.kind === "unsatisfiable") {
+        headers.delete("content-type")
+        headers.set("content-range", `bytes */${size}`)
+        return new Response(null, { status: 416, headers })
+      }
+
+      const body = (start?: number, end?: number): ReadableStream<Uint8Array> => {
+        const stream = handle!.createReadStream({ start, end })
+        // FileHandle.createReadStream owns closing the descriptor after EOF/abort.
+        handle = undefined
+        return Readable.toWeb(stream) as unknown as ReadableStream<Uint8Array>
+      }
+
+      if (range.kind === "satisfiable" && range.ranges.length === 1) {
+        const { start, end } = range.ranges[0]!
+        headers.set("content-range", `bytes ${start}-${end}/${size}`)
+        headers.set("content-length", String(end - start + 1))
+        return new Response(head ? null : body(start, end), { status: 206, headers })
+      }
+
+      // Multiple ranges would require assembling `multipart/byteranges`, and doing that for a file on
+      // disk means buffering the whole representation to serve a request that asked for less of it.
+      // RFC 9110 lets a server ignore Range entirely, so the full body is the conformant answer here.
+      headers.set("content-length", String(size))
+      return new Response(head ? null : body(), { headers })
+    } finally {
+      if (handle !== undefined) {
+        try {
+          await handle.close()
+        } catch {
+          // Closing a descriptor is best-effort after the response decision is made.
+        }
+      }
     }
-    const head = request.method === "HEAD"
-
-    if (isNotModified(request, lastModified)) {
-      headers.delete("content-type")
-      return new Response(null, { status: 304, headers })
-    }
-
-    const rangeHeader = request.headers.get("range")
-    const range =
-      rangeHeader !== null && ifRangeMatches(request.headers.get("if-range"), lastModified)
-        ? parseByteRange(rangeHeader, size)
-        : ({ kind: "none" } as const)
-
-    if (range.kind === "unsatisfiable") {
-      headers.delete("content-type")
-      headers.set("content-range", `bytes */${size}`)
-      return new Response(null, { status: 416, headers })
-    }
-
-    if (range.kind === "satisfiable" && range.ranges.length === 1) {
-      const { start, end } = range.ranges[0]!
-      headers.set("content-range", `bytes ${start}-${end}/${size}`)
-      headers.set("content-length", String(end - start + 1))
-      // `slice` keeps the read lazy: only the selected window is ever pulled off disk.
-      return new Response(head ? null : file.slice(start, end + 1), { status: 206, headers })
-    }
-
-    // Multiple ranges would require assembling `multipart/byteranges`, and doing that for a file on
-    // disk means buffering the whole representation to serve a request that asked for less of it.
-    // RFC 9110 lets a server ignore Range entirely, so the full body is the conformant answer here.
-    if (head) headers.set("content-length", String(size))
-    return new Response(head ? null : file, { headers })
   }
 }

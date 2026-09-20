@@ -3,6 +3,7 @@ import {
   type BackendMountHandler,
   NIFRA_BACKEND_MOUNT,
 } from "@nifrajs/core/mount"
+import type { Platform } from "@nifrajs/core/server"
 import { type ServerOptions, server } from "@nifrajs/core/server"
 import type { CssLoadingMode } from "../css-contract.ts"
 import { generateLlmsTxt } from "../llms-txt.ts"
@@ -121,7 +122,9 @@ export interface CreateWebAppOptions<Env = unknown> {
    */
   readonly mounts?: ReadonlyArray<{
     readonly path: string
-    readonly app: { fetch(request: Request): Response | Promise<Response> }
+    readonly app: {
+      fetch(request: Request, platform?: Platform<Env>): Response | Promise<Response>
+    }
     readonly stripPrefix?: boolean
   }>
   /** Secret for **draft / preview mode** (see `enableDraft`). When set, a request carrying a valid
@@ -214,9 +217,9 @@ function stripMountPrefix(request: Request, prefix: string): Request {
  * Resolve the explicit symbol-keyed backend mount interface. The symbol seam forwards platform
  * context without making web depend on client.
  */
-function backendMountOf(api: unknown): BackendMountHandler | undefined {
+function backendMountOf<Env>(api: unknown): BackendMountHandler<Env> | undefined {
   if ((typeof api !== "object" && typeof api !== "function") || api === null) return undefined
-  const explicit = (api as Partial<BackendMount>)[NIFRA_BACKEND_MOUNT]
+  const explicit = (api as Partial<BackendMount<Env>>)[NIFRA_BACKEND_MOUNT]
   if (typeof explicit !== "function") return undefined
   return (request, platform) => explicit.call(api, request, platform)
 }
@@ -266,7 +269,7 @@ export function createWebApp<Env = unknown>(
   // is registered ONLY when both hold, so a pages-only app keeps core's synchronous no-hook fast path.
   const apiPrefix = options.apiPrefix ?? "/api"
   const apiStrip = options.apiStrip === true
-  const mountedApi = backendMountOf(api)
+  const mountedApi = backendMountOf<Env>(api)
   // Longest path first, so a more specific mount (`/api/auth`) is tried before a broader one (`/api`)
   // regardless of the order they were declared in.
   const mounts = [...(options.mounts ?? [])].sort((a, b) => b.path.length - a.path.length)
@@ -280,7 +283,10 @@ export function createWebApp<Env = unknown>(
       // auth handler mounted at `/api/auth` must not be swallowed by the backend mounted at `/api`.
       for (const mount of mounts) {
         if (!underPrefix(pathname, mount.path)) continue
-        return mount.app.fetch(mount.stripPrefix === true ? stripMountPrefix(req, mount.path) : req)
+        return mount.app.fetch(
+          mount.stripPrefix === true ? stripMountPrefix(req, mount.path) : req,
+          platform,
+        )
       }
       // Exactly the prefix (`/api`) or a sub-path (`/api/…`) - NOT a sibling like `/apixyz` that merely
       // shares the prefix as a string head. Dispatch the original `req` (body intact) to the backend.

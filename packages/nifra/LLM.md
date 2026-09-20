@@ -15,6 +15,7 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
 - **defineContextPlugin** _(function)_ - `defineContextPlugin: <D extends object>(name: string, apply: <R extends Registry, Ctx>(app: Server<R, Ctx>) => Server<R, Ctx & D>) => Conte…`
 - **defineIdentityPlugin** _(function)_ - `defineIdentityPlugin: <AddedHookOutput = never>(name: string, apply: <S extends AnyServer>(app: S) => S | AnyServer) => IdentityPlugin<Adde…`
+- **hasDuplicateCookie** _(function)_ - `hasDuplicateCookie: (header: string | null | undefined, targetName: string) => boolean`
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
 - **jsonLogger** _(function)_ - `jsonLogger: (write?: (line: string) => void, options?: RedactOptions) => Logger`
@@ -23,9 +24,8 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 - **redactLogFields** _(function)_ - `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
 - **signValue** _(function)_ - `signValue: (value: string, secret: CookieSecret) => Promise<string>`
-- **status** _(function)_ - `status: { <const Code extends number>(code: Code, body?: undefined, init?: { readonly headers?: Readonly<Record<string, string>>; }): Statu…`
 
-_…and 102 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 103 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

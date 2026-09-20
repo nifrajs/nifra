@@ -1012,6 +1012,21 @@ test("createWebApp auto-mount: GET /api/x reaches the backend (not the page rout
   expect(await res.json()).toEqual({ x: 1 })
 })
 
+test("createWebApp explicit mounts forward the outer platform", async () => {
+  const mounted = server<{ DB: string }>().get("/mounted", (c) => ({ db: c.env.DB }))
+  const app = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    mounts: [{ path: "/mounted", app: mounted }],
+  })
+  const res = await app.fetch(new Request("http://x/mounted"), {
+    env: { DB: "mounted-binding" },
+  })
+  expect(res.status).toBe(200)
+  expect(await res.json()).toEqual({ db: "mounted-binding" })
+})
+
 test("createWebApp auto-mount: a normal page path still SSRs (mount only claims the prefix)", async () => {
   const api = inProcessBridge(apiBackend())
   const app = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js", api })

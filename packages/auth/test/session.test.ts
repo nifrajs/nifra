@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { signValue } from "@nifrajs/core"
+import { parseCookies } from "@nifrajs/core/cookies"
 import {
   createSessions,
   MemorySessionStore,
@@ -23,6 +24,14 @@ function ctx(cookies: Record<string, string> = {}) {
   return { context, setCalls, deleted }
 }
 
+function requestContext(cookie: string): SessionContext {
+  return {
+    cookies: parseCookies(cookie),
+    request: new Request("http://local/", { headers: { cookie } }),
+    set: { cookie() {}, deleteCookie() {} },
+  }
+}
+
 /** Run get→commit, then load a fresh ctx carrying the cookie commit wrote (the round-trip). */
 const lastCookie = (setCalls: Array<{ value: string }>): string =>
   setCalls.at(-1)?.value ?? "(no cookie written)"
@@ -39,6 +48,19 @@ test("a short secret is rejected", () => {
 test("rotation list: every entry must meet the floor, empty list throws", () => {
   expect(() => createSessions({ secret: [] })).toThrow(/cannot be empty/)
   expect(() => createSessions({ secret: [SECRET, "tooshort"] })).toThrow(/at least 32 bytes/)
+})
+
+test("duplicate session cookies fail closed instead of selecting an ambiguous value", async () => {
+  const sessions = createSessions<Data>({ secret: SECRET, store: new MemorySessionStore() })
+  const source = ctx()
+  const session = await sessions.get(source.context)
+  session.set("userId", "u1")
+  await sessions.commit(source.context, session)
+  const signed = lastCookie(source.setCalls)
+
+  const duplicate = requestContext(`nifra_session=${signed}; nifra_session=${signed}`)
+  const loaded = await sessions.get(duplicate)
+  expect(loaded.isEmpty).toBe(true)
 })
 
 test("a non-finite maxAge is rejected at construction", () => {

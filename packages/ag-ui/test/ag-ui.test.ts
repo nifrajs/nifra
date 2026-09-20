@@ -793,3 +793,42 @@ describe("mountAgUI shared state", () => {
     expect(seenTurnId).toBe("run-1")
   })
 })
+
+describe("mountAgUI transport limits", () => {
+  test("rejects malformed run identities before invoking the ports factory", async () => {
+    const { app, call } = captureApp()
+    let portsCalled = false
+    mountAgUI(app, {
+      agent: definition(),
+      ports: () => {
+        portsCalled = true
+        return ports()({ req: new Request("http://local/agui") })
+      },
+    })
+
+    const response = await call(
+      new Request("http://local/agui", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ threadId: "../../private", runId: "run-1" }),
+      }),
+    )
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: "invalid_thread_id" })
+    expect(portsCalled).toBe(false)
+  })
+
+  test("bounds the total SSE response size", async () => {
+    const { app, call } = captureApp()
+    mountAgUI(app, {
+      agent: definition(),
+      maxOutputBytes: 1024,
+      ports: ports({ model: outputModel({ answer: "x".repeat(4_000) }) }),
+    })
+
+    const response = await call(runInput({ forwardedProps: { input: { prompt: "x" } } }))
+    const text = await response.text()
+    expect(new TextEncoder().encode(text).byteLength).toBeLessThanOrEqual(1024)
+    expect(text).toContain('"message":"output_limit"')
+  })
+})

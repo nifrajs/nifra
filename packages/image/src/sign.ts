@@ -181,7 +181,8 @@ export function verifyImageParams(
 ): boolean {
   if (parts.exp !== undefined) {
     if (!/^\d+$/.test(parts.exp)) return false
-    if (Number(parts.exp) < nowSeconds) return false // expired
+    const expiresAt = Number(parts.exp)
+    if (!Number.isSafeInteger(expiresAt) || expiresAt < nowSeconds) return false // expired/invalid
   }
   return safeEqual(signImageParams(secret, parts), signature)
 }

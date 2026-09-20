@@ -9,13 +9,21 @@
  * cookie is always `HttpOnly`. Reads **fail closed** - a tampered/missing/expired cookie yields a fresh
  * anonymous session, never an error.
  */
-import { type CookieOptions, parseCookies, signValue, unsignValue } from "@nifrajs/core/cookies"
+import {
+  type CookieOptions,
+  hasDuplicateCookie,
+  parseCookies,
+  signValue,
+  unsignValue,
+} from "@nifrajs/core/cookies"
 import type { SessionRecord, SessionStore } from "./store.ts"
 
 /** The cookie + response surface the manager needs - a structural subset of nifra's `Context`, so any
  * `c` satisfies it and it's testable with a stub. */
 export interface SessionContext {
   readonly cookies: Readonly<Record<string, string>>
+  /** Optional raw request, used to reject ambiguous duplicate session cookies. */
+  readonly request?: Request
   readonly set: {
     cookie(name: string, value: string, options?: CookieOptions): void
     deleteCookie(name: string, options?: { readonly path?: string; readonly domain?: string }): void
@@ -210,12 +218,19 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
     return make({ data: payload.data, expiresAt: payload.expiresAt })
   }
 
-  const get = (c: SessionContext): Promise<Session<Data>> => loadFromRaw(c.cookies[cookieName])
+  const sessionCookie = (c: SessionContext): string | undefined =>
+    c.request !== undefined && hasDuplicateCookie(c.request.headers.get("cookie"), cookieName)
+      ? undefined
+      : c.cookies[cookieName]
+
+  const get = (c: SessionContext): Promise<Session<Data>> => loadFromRaw(sessionCookie(c))
 
   // Read-only load from a raw Request - for @nifrajs/web loaders, which have the request but can't write
   // cookies (commit/destroy belong in a route/action with the full Context). Same verify + expiry.
   const read = (request: Request): Promise<Session<Data>> =>
-    loadFromRaw(parseCookies(request.headers.get("cookie"))[cookieName])
+    hasDuplicateCookie(request.headers.get("cookie"), cookieName)
+      ? loadFromRaw(undefined)
+      : loadFromRaw(parseCookies(request.headers.get("cookie"))[cookieName])
 
   const writeCookie = (c: SessionContext, value: string, expiresAt: number): void => {
     const maxAgeSeconds = Math.max(0, Math.floor((expiresAt - now()) / 1000))
@@ -257,7 +272,7 @@ export function createSessions<Data extends Record<string, unknown> = Record<str
       } else {
         // Revoke the record addressed by the signed request cookie even when the caller did not
         // first load a Session object. The signature check prevents deleting attacker-chosen IDs.
-        const raw = c.cookies[cookieName]
+        const raw = sessionCookie(c)
         if (raw !== undefined) id = (await unsignValue(raw, secret)) ?? undefined
       }
       if (id !== undefined) await store.delete(id)

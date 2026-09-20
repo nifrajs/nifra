@@ -60,6 +60,85 @@ describe("resolveWebSocketUpgrade", () => {
     if (out.kind === "upgrade") expect(out.data).toBeUndefined()
   })
 
+  test("global request hooks and platform context apply to the upgrade guard", async () => {
+    const seen: Array<{ clientIp: string | undefined; path: string }> = []
+    const app = server<{ TOKEN: string }>()
+      .onRequest((request, platform) => {
+        seen.push({ clientIp: platform?.clientIp, path: new URL(request.url).pathname })
+        return undefined
+      })
+      .use(websocket())
+      .ws<{ token: string }>("/guarded", {
+        upgrade: (c) => ({ token: c.env.TOKEN }),
+      })
+
+    const out = await app.resolveWebSocketUpgrade(
+      new Request("http://t/guarded", { headers: { upgrade: "websocket" } }),
+      { env: { TOKEN: "from-platform" }, clientIp: "203.0.113.8" },
+    )
+    expect(seen).toEqual([{ clientIp: "203.0.113.8", path: "/guarded" }])
+    expect(out.kind).toBe("upgrade")
+    if (out.kind === "upgrade") expect(out.data).toEqual({ token: "from-platform" })
+  })
+
+  test("async request hooks chain before the upgrade guard", async () => {
+    const seen: string[] = []
+    const app = server()
+      .onRequest(async (request) => {
+        seen.push("first")
+        return new Request(new URL("/guarded", request.url).href, {
+          method: request.method,
+          headers: request.headers,
+        })
+      })
+      .onRequest(async (request) => {
+        seen.push(new URL(request.url).pathname)
+        return undefined
+      })
+      .use(websocket())
+      .ws("/guarded", { upgrade: () => ({ ok: true }) })
+
+    const out = await app.resolveWebSocketUpgrade(
+      new Request("http://t/original", { headers: { upgrade: "websocket" } }),
+    )
+    expect(seen).toEqual(["first", "/guarded"])
+    expect(out.kind).toBe("upgrade")
+  })
+
+  test("a rejected request hook becomes a flat 500", async () => {
+    const app = server()
+      .onRequest(async () => {
+        throw new Error("private hook detail")
+      })
+      .use(websocket())
+      .ws("/guarded", { upgrade: () => ({}) })
+
+    const out = await app.resolveWebSocketUpgrade(
+      new Request("http://t/guarded", { headers: { upgrade: "websocket" } }),
+    )
+    expect(out.kind).toBe("reject")
+    if (out.kind === "reject") {
+      expect(out.response.status).toBe(500)
+      expect(await out.response.text()).not.toContain("private hook detail")
+    }
+  })
+
+  test("upgrade guards have a bounded default deadline", async () => {
+    const app = server({ wsUpgradeTimeoutMs: 10 })
+      .use(websocket())
+      .ws("/slow", {
+        upgrade: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 100))
+          return {}
+        },
+      })
+    const out = await app.resolveWebSocketUpgrade(
+      new Request("http://t/slow", { headers: { upgrade: "websocket" } }),
+    )
+    expect(out.kind).toBe("reject")
+    if (out.kind === "reject") expect(out.response.status).toBe(503)
+  })
+
   test("upgrade() returning a Response rejects before connect", async () => {
     const out = await makeApp().resolveWebSocketUpgrade(
       new Request("http://t/guarded", { headers: { upgrade: "websocket" } }),

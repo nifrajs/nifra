@@ -7,7 +7,7 @@
  */
 
 import { stat } from "node:fs/promises"
-import { resolve, sep } from "node:path"
+import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Glob } from "bun"
 import {
@@ -40,6 +40,7 @@ import {
   timeoutMessage,
   validateLocalPort,
 } from "./mcp-io.ts"
+import { mcpProjectPathError, resolveMcpProjectPath } from "./mcp-path.ts"
 import type { McpTool, McpToolContext } from "./mcp-protocol.ts"
 import { loadTypesCorpus } from "./types-search.ts"
 
@@ -55,6 +56,7 @@ export function toMcpTool(
   const entry = "run" in source ? undefined : source
   const { cwd } = options
   const loadAppCached = options.loadAppCached ?? createCachedAppLoader(cwd)
+  const pathFields = ["config", "out", "lockfile", "before", "after", "baseline", "file"] as const
   return {
     name: commandMcpName(entry?.name ?? spec.name),
     description: entry?.summary ?? spec.summary,
@@ -65,14 +67,28 @@ export function toMcpTool(
       if (dir !== undefined && typeof dir !== "string") return dirError(undefined)
       const target = resolveProjectDir(cwd, dir as string | undefined)
       if (target === null) return dirError(dir as string | undefined)
-      if (typeof raw.config === "string") {
-        const config = resolve(target, raw.config)
-        if (config !== target && !config.startsWith(`${target}${sep}`))
-          return JSON.stringify(
-            { ok: false, error: "config must stay inside the selected project directory" },
-            null,
-            2,
-          )
+      for (const field of pathFields) {
+        const value = raw[field]
+        if (typeof value !== "string") continue
+        const safe = resolveMcpProjectPath(target, value)
+        if (safe === null)
+          return JSON.stringify({ ok: false, error: mcpProjectPathError(field, value) }, null, 2)
+        raw[field] = safe
+      }
+      if (Array.isArray(raw.files)) {
+        const safeFiles: string[] = []
+        for (const value of raw.files) {
+          if (typeof value !== "string") continue
+          const safe = resolveMcpProjectPath(target, value)
+          if (safe === null)
+            return JSON.stringify(
+              { ok: false, error: mcpProjectPathError("files", value) },
+              null,
+              2,
+            )
+          safeFiles.push(safe)
+        }
+        raw.files = safeFiles
       }
       delete raw.dir
       let input: unknown
@@ -195,10 +211,21 @@ export function projectTools(
         if (baseline !== undefined && baseline.trim() === "") {
           return JSON.stringify({ ok: false, error: "baseline must not be empty" }, null, 2)
         }
+        const safeBaseline =
+          baseline === undefined ? undefined : resolveMcpProjectPath(target, baseline)
+        if (baseline !== undefined && safeBaseline === null) {
+          return JSON.stringify(
+            { ok: false, error: mcpProjectPathError("baseline", baseline) },
+            null,
+            2,
+          )
+        }
         try {
           return JSON.stringify(
             await collectContractProof(target, {
-              ...(baseline === undefined ? {} : { baselinePath: baseline }),
+              ...(safeBaseline === undefined || safeBaseline === null
+                ? {}
+                : { baselinePath: safeBaseline }),
               ...(raw.check === undefined ? {} : { check: raw.check === true }),
             }),
             null,

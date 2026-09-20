@@ -44,6 +44,14 @@ import {
   type GraphqlContextInput,
   type NifraContextLike,
 } from "./context.ts"
+import {
+  documentLimitError,
+  documentMetrics,
+  type GraphqlLimits,
+  graphqlLimits,
+  requestLimitError,
+  safeFormattedError,
+} from "./limits.ts"
 
 const DEFAULT_MAX_BODY_BYTES = 1_000_000
 const GRAPHQL_RESPONSE_JSON = "application/graphql-response+json; charset=utf-8"
@@ -64,6 +72,20 @@ export interface GraphqlHttpOptions<Context = unknown, Env = unknown> {
   readonly nifra?: NifraContextLike<Env>
   /** Maximum request body size in bytes. Default 1 MB. Rejected bodies answer 413. */
   readonly maxBodyBytes?: number
+  /** Maximum UTF-8 query size. Default 64 KiB, applied to POST and GET. */
+  readonly maxQueryBytes?: number
+  /** Maximum UTF-8 serialized variables size. Default 256 KiB. */
+  readonly maxVariablesBytes?: number
+  /** Maximum expanded field depth. Default 20. */
+  readonly maxDepth?: number
+  /** Maximum aliases in one document. Default 100. */
+  readonly maxAliases?: number
+  /** Maximum simple field complexity in one document. Default 1,000. */
+  readonly maxComplexity?: number
+  /** Maximum operation definitions in one document. Default 10. */
+  readonly maxOperations?: number
+  /** Maximum asynchronous resolver execution time. Default 10 seconds. */
+  readonly executionTimeoutMs?: number
   /** Prototype-pollution policy for the parsed JSON body. Default `"reject"`. */
   readonly protoPoisoning?: ProtoPoisoning
   /** Optional root value passed to the executor. */
@@ -80,6 +102,8 @@ export interface GraphqlHttpOptions<Context = unknown, Env = unknown> {
   readonly authorize?: (request: Request) => boolean | Promise<boolean>
   /** Emit the legacy always-200 `application/json` response shape instead of `application/graphql-response+json`. */
   readonly legacyJsonResponse?: boolean
+  /** Format request/execution errors. The default masks resolver messages and preserves request errors. */
+  readonly formatError?: (error: GraphQLError, phase: "request" | "execution") => unknown
 }
 
 /** A parsed GraphQL request payload (POST body or GET query string), before validation. */
@@ -92,6 +116,12 @@ interface GraphqlParams {
 function assertByteLimit(value: number): void {
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new RangeError("GraphQL maxBodyBytes must be a non-negative safe integer")
+  }
+}
+
+function assertExecutionTimeout(value: number): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError("GraphQL executionTimeoutMs must be a non-negative safe integer")
   }
 }
 
@@ -136,9 +166,15 @@ function requestError(
   legacy: boolean,
   cors: Record<string, string>,
   errors?: readonly GraphQLError[],
+  formatter?: GraphqlHttpOptions["formatError"],
 ): Response {
   const payload = errors ?? [new GraphQLError(message)]
-  return graphqlResponse({ errors: payload.map((e) => e.toJSON()) }, status, legacy, cors)
+  return graphqlResponse(
+    { errors: payload.map((e) => safeFormattedError(e, "request", formatter)) },
+    status,
+    legacy,
+    cors,
+  )
 }
 
 /** Coerce a `?variables=<json>` string (GET) into an object, or throw a GraphQLError on bad JSON. */
@@ -189,18 +225,43 @@ async function run<Context, Env>(
   isGet: boolean,
   legacy: boolean,
   cors: Record<string, string>,
+  limits: GraphqlLimits,
+  executionTimeoutMs: number,
 ): Promise<Response> {
+  const requestLimit = requestLimitError(params.query, params.variables, limits)
+  if (requestLimit !== undefined) {
+    return requestError(
+      requestLimit,
+      413,
+      legacy,
+      cors,
+      [new GraphQLError(requestLimit)],
+      opts.formatError,
+    )
+  }
   let document: DocumentNode
   try {
     document = parse(new Source(params.query, "GraphQL request"))
   } catch (err) {
     const gqlErr = err instanceof GraphQLError ? err : new GraphQLError(String(err))
-    return requestError("", 400, legacy, cors, [gqlErr])
+    return requestError("", 400, legacy, cors, [gqlErr], opts.formatError)
   }
 
   const validationErrors = validate(opts.schema, document, specifiedRules)
   if (validationErrors.length > 0) {
-    return requestError("", 400, legacy, cors, validationErrors)
+    return requestError("", 400, legacy, cors, validationErrors, opts.formatError)
+  }
+
+  const documentLimit = documentLimitError(documentMetrics(document), limits)
+  if (documentLimit !== undefined) {
+    return requestError(
+      documentLimit,
+      400,
+      legacy,
+      cors,
+      [new GraphQLError(documentLimit)],
+      opts.formatError,
+    )
   }
 
   // GET is idempotent and cacheable, so per the GraphQL-over-HTTP spec it may run queries only.
@@ -212,6 +273,7 @@ async function run<Context, Env>(
       legacy,
       { ...cors, allow: "POST" },
       [new GraphQLError("Only query operations are allowed over GET.")],
+      opts.formatError,
     )
   }
 
@@ -223,26 +285,74 @@ async function run<Context, Env>(
   } catch (err) {
     const gqlErr =
       err instanceof GraphQLError ? err : new GraphQLError("Failed to build request context.")
-    return graphqlResponse({ errors: [gqlErr.toJSON()] }, 500, legacy, cors)
+    return graphqlResponse(
+      { errors: [safeFormattedError(gqlErr, "execution", opts.formatError)] },
+      500,
+      legacy,
+      cors,
+    )
   }
 
   let result: ExecutionResult
   try {
-    result = (await execute({
+    const execution = execute({
       schema: opts.schema,
       document,
       rootValue: opts.rootValue,
       contextValue,
       variableValues: params.variables ?? undefined,
       operationName: params.operationName ?? undefined,
-    })) as ExecutionResult
+    })
+    result = (await withExecutionTimeout(execution, executionTimeoutMs)) as ExecutionResult
   } catch (err) {
-    const gqlErr = err instanceof GraphQLError ? err : new GraphQLError("Execution failed.")
-    return graphqlResponse({ errors: [gqlErr.toJSON()] }, 400, legacy, cors)
+    const gqlErr =
+      err instanceof GraphQLError
+        ? err
+        : err instanceof ExecutionTimeoutError
+          ? new GraphQLError("Execution timed out.")
+          : new GraphQLError("Execution failed.")
+    return graphqlResponse(
+      { errors: [safeFormattedError(gqlErr, "execution", opts.formatError)] },
+      err instanceof ExecutionTimeoutError ? 504 : 500,
+      legacy,
+      cors,
+    )
   }
 
   // Field/execution errors are a normal 200 result with both `data` and `errors`.
-  return graphqlResponse(result, 200, legacy, cors)
+  return graphqlResponse(
+    result.errors === undefined
+      ? result
+      : {
+          ...result,
+          errors: result.errors.map((error) =>
+            safeFormattedError(error, "execution", opts.formatError),
+          ),
+        },
+    200,
+    legacy,
+    cors,
+  )
+}
+
+class ExecutionTimeoutError extends Error {
+  constructor() {
+    super("GraphQL execution timed out")
+    this.name = "ExecutionTimeoutError"
+  }
+}
+
+async function withExecutionTimeout<T>(work: T | Promise<T>, timeoutMs: number): Promise<T> {
+  if (!(work instanceof Promise) || timeoutMs === 0) return work
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new ExecutionTimeoutError()), timeoutMs)
+  })
+  try {
+    return await Promise.race([work, timeout])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
 }
 
 /**
@@ -256,6 +366,9 @@ export async function respondGraphql<Context = unknown, Env = unknown>(
 ): Promise<Response> {
   const maxBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
   assertByteLimit(maxBytes)
+  const limits: GraphqlLimits = graphqlLimits(options)
+  const executionTimeoutMs = options.executionTimeoutMs ?? 10_000
+  assertExecutionTimeout(executionTimeoutMs)
   const legacy = options.legacyJsonResponse === true
 
   const cors = corsFor(request, options.allowedOrigins)
@@ -266,7 +379,14 @@ export async function respondGraphql<Context = unknown, Env = unknown>(
   if (options.authorize !== undefined) {
     const ok = await options.authorize(request)
     if (!ok) {
-      return requestError("Unauthorized.", 401, legacy, cors, [new GraphQLError("Unauthorized.")])
+      return requestError(
+        "Unauthorized.",
+        401,
+        legacy,
+        cors,
+        [new GraphQLError("Unauthorized.")],
+        options.formatError,
+      )
     }
   }
 
@@ -276,15 +396,20 @@ export async function respondGraphql<Context = unknown, Env = unknown>(
       params = paramsFromQuery(queryObjectOf(searchOf(request.url)) as Record<string, unknown>)
     } catch (err) {
       const gqlErr = err instanceof GraphQLError ? err : new GraphQLError(String(err))
-      return requestError("", 400, legacy, cors, [gqlErr])
+      return requestError("", 400, legacy, cors, [gqlErr], options.formatError)
     }
-    return run(params, request, options, true, legacy, cors)
+    return run(params, request, options, true, legacy, cors, limits, executionTimeoutMs)
   }
 
   if (request.method !== "POST") {
-    return requestError("Method not allowed.", 405, legacy, { ...cors, allow: "GET, POST" }, [
-      new GraphQLError("Only GET and POST are supported."),
-    ])
+    return requestError(
+      "Method not allowed.",
+      405,
+      legacy,
+      { ...cors, allow: "GET, POST" },
+      [new GraphQLError("Only GET and POST are supported.")],
+      options.formatError,
+    )
   }
 
   // Read the JSON body through core's single bounded + proto-guarded framing lane.
@@ -298,9 +423,9 @@ export async function respondGraphql<Context = unknown, Env = unknown>(
         params = paramsFromBody(parsed)
       } catch (err) {
         const gqlErr = err instanceof GraphQLError ? err : new GraphQLError(String(err))
-        return requestError("", 400, legacy, cors, [gqlErr])
+        return requestError("", 400, legacy, cors, [gqlErr], options.formatError)
       }
-      return run(params, request, options, false, legacy, cors)
+      return run(params, request, options, false, legacy, cors, limits, executionTimeoutMs)
     },
     (response: Response | ResponseResult) => {
       // readBodyFramed's own rejections (413 too-large, 415, proto-guard) - render + attach CORS.
@@ -311,9 +436,14 @@ export async function respondGraphql<Context = unknown, Env = unknown>(
     (err: unknown) => {
       // A body that failed to read (bad JSON / proto-guard) is a request error, not a crash.
       if (err instanceof Response) return err
-      return requestError("Invalid request body.", 400, legacy, cors, [
-        new GraphQLError("Request body could not be read as JSON."),
-      ])
+      return requestError(
+        "Invalid request body.",
+        400,
+        legacy,
+        cors,
+        [new GraphQLError("Request body could not be read as JSON.")],
+        options.formatError,
+      )
     },
   ).catch(() => plainErrorResponse(cors))
 }

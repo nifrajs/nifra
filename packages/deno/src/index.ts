@@ -62,7 +62,10 @@ export interface FetchHandler {
   fetch(request: Request, platform?: { readonly clientIp?: string }): Response | Promise<Response>
   /** A nifra app also exposes this WS-upgrade seam; present → this adapter serves `app.ws()` routes
    * via `Deno.upgradeWebSocket`. Absent (a plain `{ fetch }` handler) → HTTP only. */
-  resolveWebSocketUpgrade?(request: Request): WsUpgradeOutcome | Promise<WsUpgradeOutcome>
+  resolveWebSocketUpgrade?(
+    request: Request,
+    platform?: { readonly clientIp?: string },
+  ): WsUpgradeOutcome | Promise<WsUpgradeOutcome>
 }
 
 export interface ServeOptions {
@@ -153,7 +156,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
       // the adapter within a few percent of a hand-written `Deno.serve` handler.
       if (resolveWs !== undefined) {
         try {
-          const outcome = resolveWs(request)
+          const clientIp = info.remoteAddr?.hostname
+          const outcome = resolveWs(request, clientIp === undefined ? undefined : { clientIp })
           if (outcome instanceof Promise) {
             return settleRequest(
               outcome.then((o) => finishWs(o, request, info)).catch(() => internalError()),

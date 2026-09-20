@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   cookieNamePrefix,
+  hasDuplicateCookie,
   parseCookies,
   serializeCookie,
   server,
@@ -34,6 +35,12 @@ describe("parseCookies", () => {
 
   test("a malformed %-escape returns the raw value (never throws)", () => {
     expect(parseCookies("bad=%E0%A4%A")).toEqual({ bad: "%E0%A4%A" })
+  })
+
+  test("duplicate names keep the first value and expose ambiguity for sensitive callers", () => {
+    expect(parseCookies("sid=first; sid=second").sid).toBe("first")
+    expect(hasDuplicateCookie("sid=first; sid=second", "sid")).toBe(true)
+    expect(hasDuplicateCookie("sid=first; theme=dark", "sid")).toBe(false)
   })
 })
 

@@ -66,6 +66,18 @@ describe("coding agent RPC", () => {
     ).rejects.toThrow("exposeErrorStacks")
   })
 
+  test("requires a strong explicit token for remote binding", () => {
+    expect(
+      new CodingAgentRpcServer({
+        hostname: "0.0.0.0",
+        allowRemote: true,
+        authToken: "weak-but-long-enough",
+        cwd: process.cwd(),
+        backend: new PiBackend({ command: process.execPath, rpcArgs: ["-e", fakePi] }),
+      }).start(),
+    ).rejects.toThrow("at least 32 bytes")
+  })
+
   test("returns actionable errors and opts into stacks only on loopback", async () => {
     for (const exposeErrorStacks of [false, true]) {
       const rpc = new CodingAgentRpcServer({
@@ -165,6 +177,25 @@ describe("coding agent RPC", () => {
           })
         ).status,
       ).toBe(401)
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        expect(
+          (
+            await fetch(`${handle.url}/rpc`, {
+              method: "POST",
+              headers: { authorization: "Bearer definitely-wrong" },
+              body: JSON.stringify({ method: "session.create" }),
+            })
+          ).status,
+        ).toBe(401)
+      }
+      const throttled = await fetch(`${handle.url}/rpc`, {
+        method: "POST",
+        headers: { authorization: "Bearer definitely-wrong" },
+        body: JSON.stringify({ method: "session.create" }),
+      })
+      expect(throttled.status).toBe(429)
+      expect(throttled.headers.get("retry-after")).toBeTruthy()
+      await new Promise((resolve) => setTimeout(resolve, 300))
       const headers = {
         authorization: `Bearer ${handle.token}`,
         "content-type": "application/json",
@@ -318,6 +349,18 @@ describe("coding agent RPC", () => {
       "content-type": "application/json",
     }
     try {
+      const invalid = await fetch(`${firstHandle.url}/rpc`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          method: "session.create",
+          params: { sessionId: "../../outside" },
+        }),
+      })
+      expect(invalid.status).toBe(422)
+      expect(((await invalid.json()) as { error: { code: string } }).error.code).toBe(
+        "invalid_session",
+      )
       const created = await fetch(`${firstHandle.url}/rpc`, {
         method: "POST",
         headers,

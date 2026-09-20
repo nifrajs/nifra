@@ -1578,6 +1578,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
 - **defineRouterPlugin** _(const)_ - `defineRouterPlugin: <AddedHookOutput = never>(name: string, apply: <S extends AnyServer>(app: S) => S | AnyServer) => IdentityPlugin<AddedHookOutput>`
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
+- **hasDuplicateCookie** _(function)_ - `hasDuplicateCookie: (header: string | null | undefined, targetName: string) => boolean`
+  True when a raw Cookie header contains the same exact cookie name more than once.
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
   Is `value` a destination that stays on this origin?
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
@@ -1899,6 +1901,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A signing secret, or a rotation list of them. With a list, **the first secret signs** and verification accepts **any** entry - so rotation is: prepend the new secret, keep the old one until every cookie signed by it has expired, then drop it. An empty list throws.
 - **cookieNamePrefix** _(function)_ - `cookieNamePrefix: (name: string) => "secure" | "host" | undefined`
   RFC 6265bis cookie-name prefix, matched **case-insensitively** the way browsers match it - `__secure-x` triggers the same enforcement as `__Secure-x`. `undefined` for unprefixed names. Writers (set AND delete) must satisfy the prefix contract or the user agent silently discards the whole `Set-Cooki…
+- **hasDuplicateCookie** _(function)_ - `hasDuplicateCookie: (header: string | null | undefined, targetName: string) => boolean`
+  True when a raw Cookie header contains the same exact cookie name more than once.
 - **parseCookies** _(function)_ - `parseCookies: (header: string | null | undefined) => Record<string, string>`
   Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are skipped rather than throwing - a junk `Cookie` header shouldn't fail the request.
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
@@ -2634,6 +2638,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
 - **defineRouterPlugin** _(const)_ - `defineRouterPlugin: <AddedHookOutput = never>(name: string, apply: <S extends AnyServer>(app: S) => S | AnyServer) => IdentityPlugin<AddedHookOutput>`
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
+- **hasDuplicateCookie** _(function)_ - `hasDuplicateCookie: (header: string | null | undefined, targetName: string) => boolean`
+  True when a raw Cookie header contains the same exact cookie name more than once.
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
   Is `value` a destination that stays on this origin?
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
@@ -5928,6 +5934,8 @@ _No named exports (side-effect entrypoint)._
   Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)` applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each other without double-registering hooks.
 - **defineRouterPlugin** _(const)_ - `defineRouterPlugin: <AddedHookOutput = never>(name: string, apply: <S extends AnyServer>(app: S) => S | AnyServer) => IdentityPlugin<AddedHookOutput>`
   Alias of {@link defineIdentityPlugin} with a name that says what it's FOR: a plugin that **mounts routes/hooks but adds no context type** (an auth router, an audit logger). Use this - not {@link definePlugin} - for any such plugin, or the typed client silently collapses to `any`. The "identity" in …
+- **hasDuplicateCookie** _(function)_ - `hasDuplicateCookie: (header: string | null | undefined, targetName: string) => boolean`
+  True when a raw Cookie header contains the same exact cookie name more than once.
 - **isSameOriginPath** _(function)_ - `isSameOriginPath: (value: string) => boolean`
   Is `value` a destination that stays on this origin?
 - **isSameOriginRequest** _(function)_ - `isSameOriginRequest: (origin: string, request: Request) => boolean`
