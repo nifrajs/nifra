@@ -282,14 +282,17 @@ console.log(typeof composeReviewReport, typeof digestReviewReport)`,
 // derive/before/after lifecycle lanes add ~0.2 KB gzip to the shared server kernel, accepted here
 // alongside the measured hot-path win for middleware-heavy routes.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
-  "nifra-bare": 26.7,
+  // The 2026-09-20 security pass adds bounded WebSocket admission/request-hook handling and
+  // duplicate-cookie detection to the shared kernel. Reprice every core row together with the
+  // measured post-hardening footprint; optional rows must not receive a special exemption.
+  "nifra-bare": 27.1,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 29.8,
-  "nifra-effect-ledger": 28.6,
-  "nifra-mcp": 27.0,
-  "nifra-sse": 27.4,
-  "nifra-valibot": 27.7,
-  "nifra-typebox-t": 56.4,
+  "nifra-idempotency": 30.2,
+  "nifra-effect-ledger": 29.0,
+  "nifra-mcp": 27.3,
+  "nifra-sse": 27.8,
+  "nifra-valibot": 28.1,
+  "nifra-typebox-t": 56.9,
   // Review-leaf ceiling: measured 5.0 KB gz + ~0.2 KB headroom, same rule as every other row.
   "nifra-agent-review": 5.2,
 }

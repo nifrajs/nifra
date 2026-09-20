@@ -208,6 +208,13 @@ ORIGIN = `http://127.0.0.1:${PORT}`
 await assertPortFree(PORT)
 const persist = mkdtempSync(join(tmpdir(), "nifra-workerd-"))
 mkdirSync(persist, { recursive: true })
+// Keep Wrangler's logs, registry, and config inside the disposable test sandbox.
+const wranglerConfig = join(persist, "config")
+const wranglerCache = join(persist, "cache")
+const wranglerRegistry = join(persist, "registry")
+mkdirSync(wranglerConfig, { recursive: true })
+mkdirSync(wranglerCache, { recursive: true })
+mkdirSync(wranglerRegistry, { recursive: true })
 const child = spawn(
   WRANGLER,
   [
@@ -225,7 +232,17 @@ const child = spawn(
     "error",
     "--show-interactive-dev-session=false",
   ],
-  { cwd: ROOT, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] },
+  {
+    cwd: ROOT,
+    detached: process.platform !== "win32",
+    env: {
+      ...process.env,
+      XDG_CONFIG_HOME: wranglerConfig,
+      XDG_CACHE_HOME: wranglerCache,
+      WRANGLER_REGISTRY_PATH: wranglerRegistry,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  },
 )
 let logs = ""
 const capture = (chunk: Buffer): void => {
