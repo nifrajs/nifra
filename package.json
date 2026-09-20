@@ -25,8 +25,6 @@
     "check:publish": "bun run scripts/check-publish.ts",
     "check:public-boundary": "bun run scripts/check-public-boundary.ts",
     "check:public-boundary:release": "bun run scripts/check-public-boundary-release.ts",
-    "check:agent-platform-plan": "bun run scripts/check-agent-platform-plan.ts",
-    "check:agent-platform-worktree": "bun run scripts/check-agent-platform-worktree.ts",
     "check:agent-boundary": "bun run scripts/check-agent-boundary.ts",
     "check:agent-isolation": "bun run scripts/check-agent-isolation.ts",
     "bench:agent": "bun run scripts/bench-agent.ts",
