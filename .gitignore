@@ -79,3 +79,5 @@ dv-*/
 /bench/.published
 /data/browser
 /output
+/.security
+/.pi
