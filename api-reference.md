@@ -3449,7 +3449,7 @@ _No named exports (side-effect entrypoint)._
 - **DurableCommandOptions** _(interface)_ - `interface DurableCommandOptions`
 - **ETagOptions** _(interface)_ - `interface ETagOptions`
 - **HealthcheckOptions** _(interface)_ - `interface HealthcheckOptions`
-- **IdempotencyClaim** _(type)_ - `type IdempotencyClaim = | { readonly state: "new" } | { readonly state: "in_flight" } | { readonly state: "replay"; readonly record: IdempotencyRecord }`
+- **IdempotencyClaim** _(type)_ - `type IdempotencyClaim = | { readonly state: "new"; readonly reservation: string } | { readonly state: "in_flight" } | { readonly state: "replay"; readonly record: IdempotencyRecord }`
 - **IdempotencyOptions** _(interface)_ - `interface IdempotencyOptions`
 - **IdempotencyRecord** _(interface)_ - `interface IdempotencyRecord`
   A captured response, replayed verbatim on a retry. Body is base64 (binary-safe + JSON-serializable).

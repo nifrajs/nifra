@@ -309,6 +309,25 @@ describe("idempotency primitives", () => {
     expect(new Uint8Array(await replayed.arrayBuffer())).toEqual(bytes)
   })
 
+  test("oversized streamed serialization cancels both tee branches promptly", async () => {
+    const encoder = new TextEncoder()
+    const original = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode("1234"))
+        },
+      }),
+    )
+    await expect(
+      Promise.race([
+        serializeResponse(original, { maxBytes: 1 }),
+        Bun.sleep(250).then(() => {
+          throw new Error("serialization timed out")
+        }),
+      ]),
+    ).rejects.toThrow(/response exceeds/i)
+  })
+
   test("replay enforces the configured response bound before decoding store data", () => {
     expect(() =>
       responseFromStored({ status: 200, headers: [], body: "AQID" }, { maxBytes: 2 }),

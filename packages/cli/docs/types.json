@@ -7996,7 +7996,7 @@
     "name": "IdempotencyClaim",
     "kind": "type",
     "package": "@nifrajs/middleware",
-    "signature": "export type IdempotencyClaim = {\n    readonly state: \"new\";\n} | {\n    readonly state: \"in_flight\";\n} | {\n    readonly state: \"replay\";\n    readonly record: IdempotencyRecord;\n};"
+    "signature": "export type IdempotencyClaim = {\n    readonly state: \"new\";\n    readonly reservation: string;\n} | {\n    readonly state: \"in_flight\";\n} | {\n    readonly state: \"replay\";\n    readonly record: IdempotencyRecord;\n};"
   },
   {
     "name": "IdempotencyClass",
@@ -8080,7 +8080,7 @@
     "name": "IdempotencyStore",
     "kind": "interface",
     "package": "@nifrajs/middleware",
-    "signature": "export interface IdempotencyStore {\n    /**\n     * Atomically claim `key`: `\"replay\"` if a completed response is stored, `\"in_flight\"` if another\n     * request holds the lock, else `\"new\"` (the caller now owns the lock and must `complete`/`release`).\n     * The in-flight lock expires after `lockTtlMs` so a crashed handler can't wedge the key forever.\n     */\n    begin(key: string, lockTtlMs: number): Promise<IdempotencyClaim>;\n    /** Store the completed response and release the lock (kept for `ttlMs`). */\n    complete(key: string, record: IdempotencyRecord, ttlMs: number): Promise<void>;\n    /** Release the lock without storing (handler errored / response not cacheable). */\n    release(key: string): Promise<void>;\n}",
+    "signature": "export interface IdempotencyStore {\n    /**\n     * Atomically claim `key`: `\"replay\"` if a completed response is stored, `\"in_flight\"` if another\n     * request holds the lock, else `\"new\"` (the caller now owns the lock and must `complete`/`release`).\n     * The in-flight lock expires after `lockTtlMs` so a crashed handler can't wedge the key forever.\n     */\n    begin(key: string, lockTtlMs: number): Promise<IdempotencyClaim>;\n    /** Store the completed response only when `reservation` still owns the lock (kept for `ttlMs`). */\n    complete(key: string, reservation: string, record: IdempotencyRecord, ttlMs: number): Promise<boolean>;\n    /** Release only the lock owned by `reservation` (handler errored / response not cacheable). */\n    release(key: string, reservation: string): Promise<boolean>;\n}",
     "doc": "/**\n * Store backing the idempotency guarantee. Production deploys MUST use a shared store so the key holds\n * across instances; `begin` MUST be **atomic** (e.g. Redis `SET key NX PX lockTtlMs`) or two concurrent\n * retries can both see `\"new\"`. {@link MemoryIdempotencyStore} is for dev / single-instance only.\n */"
   },
   {
@@ -9994,7 +9994,7 @@
     "name": "MemoryIdempotencyStore",
     "kind": "class",
     "package": "@nifrajs/middleware",
-    "signature": "export declare class MemoryIdempotencyStore implements IdempotencyStore {\n    private readonly entries;\n    private readonly maxEntries;\n    private readonly maxKeyBytes;\n    constructor(options?: MemoryIdempotencyStoreOptions);\n    private validateKey;\n    private maintain;\n    private reserve;\n    begin(key: string, lockTtlMs: number): Promise<IdempotencyClaim>;\n    complete(key: string, record: IdempotencyRecord, ttlMs: number): Promise<void>;\n    release(key: string): Promise<void>;\n}",
+    "signature": "export declare class MemoryIdempotencyStore implements IdempotencyStore {\n    private readonly entries;\n    private readonly maxEntries;\n    private readonly maxKeyBytes;\n    constructor(options?: MemoryIdempotencyStoreOptions);\n    private validateKey;\n    private maintain;\n    private reserve;\n    begin(key: string, lockTtlMs: number): Promise<IdempotencyClaim>;\n    complete(key: string, reservation: string, record: IdempotencyRecord, ttlMs: number): Promise<boolean>;\n    release(key: string, reservation: string): Promise<boolean>;\n}",
     "doc": "/** In-process store. Refuses to run in production unless explicitly allowed (per-instance ⇒ no cross-instance dedupe). */"
   },
   {

@@ -175,6 +175,53 @@ describe("withISR", () => {
     expect(await res2.text()).toBe("v2") // regenerated
   })
 
+  test("stale content is removed when regeneration returns 404", async () => {
+    const store = new MemoryCacheStore()
+    let t = 0
+    let gone = false
+    const app: ISRApp = {
+      fetch: async () =>
+        gone
+          ? new Response("gone", { status: 404, headers: { "content-type": "text/html" } })
+          : html("v1"),
+    }
+    const handler = withISR(app, { store, revalidate: 1, now: () => t })
+    await handler(new Request("http://x/p"))
+    gone = true
+    t = 2000
+    const platform = collectWaitUntil()
+    const stale = await handler(new Request("http://x/p"), platform)
+    expect(await stale.text()).toBe("v1")
+    await platform.settle()
+    expect(await store.get(pageKey("/p"))).toBeUndefined()
+    expect((await handler(new Request("http://x/p"))).status).toBe(404)
+  })
+
+  test("ISR preserves security headers and does not cache a response with Vary", async () => {
+    const store = new MemoryCacheStore()
+    const response = () =>
+      html("localized", {
+        "content-security-policy": "default-src 'none'",
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff",
+        "referrer-policy": "no-referrer",
+        "permissions-policy": "geolocation=()",
+        "cross-origin-opener-policy": "same-origin",
+        vary: "accept-language",
+      })
+    const { app, calls } = trackApp(response)
+    const handler = withISR(app, { store, revalidate: 60, now: () => 0 })
+    const first = await handler(new Request("http://x/p"))
+    expect(first.headers.get("content-security-policy")).toBe("default-src 'none'")
+    expect(first.headers.get("x-frame-options")).toBe("DENY")
+    expect(first.headers.get("x-content-type-options")).toBe("nosniff")
+    expect(first.headers.get("vary")).toBe("accept-language")
+    expect(await store.get(pageKey("/p"))).toBeUndefined()
+    const second = await handler(new Request("http://x/p"))
+    expect(second.headers.get("content-security-policy")).toBe("default-src 'none'")
+    expect(calls()).toBe(2)
+  })
+
   test("stale without waitUntil regenerates fire-and-forget", async () => {
     const store = new MemoryCacheStore()
     let body = "v1"
@@ -307,6 +354,9 @@ describe("withISR", () => {
       headers: {
         "content-type": "text/html",
         "set-cookie": "sid=leaked; Path=/; HttpOnly",
+        "content-security-policy": "default-src 'none'",
+        "x-frame-options": "DENY",
+        vary: "accept-language",
         "x-custom": "internal",
       },
       storedAt: 0,
@@ -318,6 +368,9 @@ describe("withISR", () => {
     expect(await res.text()).toBe("legacy")
     expect(res.headers.get("x-nifra-isr")).toBe("hit")
     expect(res.headers.get("set-cookie")).toBeNull()
+    expect(res.headers.get("content-security-policy")).toBe("default-src 'none'")
+    expect(res.headers.get("x-frame-options")).toBe("DENY")
+    expect(res.headers.get("vary")).toBe("accept-language")
     expect(res.headers.get("x-custom")).toBeNull()
     expect(calls()).toBe(0)
   })
@@ -406,7 +459,7 @@ describe("withISR", () => {
     expect((await store.get(pageKey("/p")))?.body).toBe("v1")
   })
 
-  test("a regeneration that becomes non-cacheable keeps the stale entry", async () => {
+  test("a regeneration that becomes a redirect removes the stale entry", async () => {
     const store = new MemoryCacheStore()
     let cacheable = true
     let t = 0
@@ -420,7 +473,8 @@ describe("withISR", () => {
     const plat = collectWaitUntil()
     await handler(new Request("http://x/p"), plat) // stale; regen → 302 (non-cacheable)
     await plat.settle()
-    expect((await store.get(pageKey("/p")))?.body).toBe("v1") // unchanged
+    expect(await store.get(pageKey("/p"))).toBeUndefined()
+    expect((await handler(new Request("http://x/p"))).status).toBe(302)
   })
 })
 

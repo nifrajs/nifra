@@ -32,6 +32,7 @@ test("Vite route add and unlink events refresh both manifests without restart", 
     routesDir,
     clientModule: join(root, "client.ts"),
     port: 0,
+    poll: true,
     createApp: () => {
       const ids = discoverRoutes(routesDir)
         .routes.map((route) => route.id)

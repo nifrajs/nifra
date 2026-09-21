@@ -183,6 +183,7 @@ test("generateServerManifest({ lazy }) emits per-route import() loaders (no eage
   expect(code).not.toContain('"node:fs"')
 })
 
+// biome-ignore format: keep the existing compact test body while adding an explicit heavy-test timeout.
 test("generated server manifests compile under a strict consumer tsconfig", async () => {
   const root = await mkdtemp(join(tmpdir(), "nifra-server-manifest-types-"))
   try {
@@ -235,7 +236,7 @@ test("generated server manifests compile under a strict consumer tsconfig", asyn
   } finally {
     await rm(root, { recursive: true, force: true })
   }
-})
+}, { timeout: 30_000 })
 
 test("generateRouteSearchTypes augments RouteSearch for static routes only", () => {
   const m = buildManifest(

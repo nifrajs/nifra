@@ -305,6 +305,17 @@ describe("run_query (opt-in)", () => {
     }
   })
 
+  test("a comma-joined unexposed table cannot hide behind an allowlisted alias", async () => {
+    const result = await call(
+      server,
+      "run_query",
+      { sql: "SELECT habits.name FROM habits, users AS habits" },
+      auth,
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain("not exposed")
+  })
+
   test("WITH…SELECT over exposed tables works", async () => {
     const { isError, text } = await call(
       server,

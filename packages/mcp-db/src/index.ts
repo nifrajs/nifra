@@ -234,16 +234,68 @@ function relationNames(sql: string): string[] {
     }
   }
   const names: string[] = []
-  for (let i = 0; i < tokens.length; i++) {
-    if (!isKeyword(tokens[i], "from") && !isKeyword(tokens[i], "join")) continue
-    const first = tokens[i + 1]
-    if (first === undefined || first.kind !== "word") continue // `FROM (subquery)` - nothing to name here
+  const relationAt = (
+    index: number,
+  ): { readonly name: string; readonly next: number } | undefined => {
+    const first = tokens[index]
+    if (first === undefined || first.kind !== "word") return undefined // `FROM (subquery)` - nothing to name here
     // A qualified reference names the table second; an unqualified one names it first.
-    const qualified = tokens[i + 2]?.value === "." && tokens[i + 3]?.kind === "word"
-    const table = qualified ? (tokens[i + 3] as SqlToken).value : first.value
-    if (table !== "" && !ctes.has(table.toLowerCase())) names.push(table.toLowerCase())
+    const qualified = tokens[index + 1]?.value === "." && tokens[index + 2]?.kind === "word"
+    const table = qualified ? (tokens[index + 2] as SqlToken).value : first.value
+    return { name: table.toLowerCase(), next: qualified ? index + 3 : index + 1 }
   }
-  return names
+  const addRelation = (index: number): number | undefined => {
+    const relation = relationAt(index)
+    if (relation === undefined) return undefined
+    if (relation.name !== "" && !ctes.has(relation.name)) names.push(relation.name)
+    return relation.next
+  }
+  // Comma joins are part of the FROM table-source grammar but do not have a JOIN keyword. Walk the
+  // source list after every FROM and collect each top-level comma operand. The walk is deliberately
+  // conservative: an uncertain token is left for SQLite's plan check, while an apparent relation is
+  // always added so an alias cannot hide an unexposed table.
+  const clauseBoundary = new Set([
+    "where",
+    "group",
+    "order",
+    "having",
+    "limit",
+    "offset",
+    "union",
+    "except",
+    "intersect",
+    "window",
+    "returning",
+  ])
+  for (let i = 0; i < tokens.length; i++) {
+    const from = isKeyword(tokens[i], "from")
+    const join = isKeyword(tokens[i], "join")
+    if (!from && !join) continue
+    const next = addRelation(i + 1)
+    if (join || next === undefined) continue
+    let depth = 0
+    for (let j = next; j < tokens.length; j++) {
+      const token = tokens[j]
+      if (token === undefined) break
+      if (token.value === "(") {
+        depth++
+        continue
+      }
+      if (token.value === ")") {
+        if (depth === 0) break
+        depth--
+        continue
+      }
+      if (depth !== 0) continue
+      if (token.bare && clauseBoundary.has(token.value.toLowerCase())) break
+      if (token.value !== ",") continue
+      // A comma at the source-list level is another table reference. If it is a subquery, the nested
+      // FROM scan below still finds its base tables; no relation is inferred from the opening paren.
+      const afterComma = addRelation(j + 1)
+      if (afterComma !== undefined) j = afterComma - 1
+    }
+  }
+  return [...new Set(names)]
 }
 
 /** Reject multi-statement input: allow one terminator only when it is the final character. */

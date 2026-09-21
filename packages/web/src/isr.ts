@@ -439,12 +439,21 @@ const requestCarriesPrivateState = (req: Request): boolean =>
 const responseIsExplicitlyPublic = (res: Response): boolean =>
   cacheControlHas(res.headers, ["public"])
 
+const responseDeclaresVary = (res: Response): boolean => {
+  const value = res.headers.get("vary")
+  return value !== null && value.trim() !== ""
+}
+
 const isCacheablePage = (req: Request, res: Response): boolean => {
   if (req.method !== "GET") return false
   if (req.headers.get("x-nifra-data") !== null) return false
   if (res.status !== 200) return false
   if (!(res.headers.get("content-type") ?? "").includes("text/html")) return false
   if (hasSetCookie(res.headers)) return false
+  // The default ISR key is URL-only. A response that varies on request headers must either use a
+  // caller-supplied key that includes those headers or bypass ISR; otherwise one language/tenant
+  // representation can be served to every request for the URL.
+  if (responseDeclaresVary(res)) return false
   if (cacheControlHas(res.headers, ["private", "no-store"])) return false
   // Cookie/Authorization requests often personalize HTML without setting a new cookie. Cache them only
   // when the route explicitly declares the response public.
@@ -452,14 +461,37 @@ const isCacheablePage = (req: Request, res: Response): boolean => {
   return true
 }
 
+// Keep representation and security policy headers, plus `Vary` for legacy entries. Transport,
+// request-specific, framework-control, and unknown internal headers stay out of the shared cache.
 const CACHEABLE_RESPONSE_HEADERS = new Set([
   "cache-control",
   "content-language",
+  "content-security-policy",
   "content-type",
+  "cross-origin-embedder-policy",
+  "cross-origin-opener-policy",
+  "cross-origin-resource-policy",
   "etag",
   "last-modified",
   "link",
+  "origin-agent-cluster",
+  "permissions-policy",
+  "referrer-policy",
+  "strict-transport-security",
+  "vary",
+  "x-content-type-options",
+  "x-frame-options",
 ])
+
+const isCacheableResponseHeader = (key: string): boolean => {
+  const normalized = key.toLowerCase()
+  return (
+    CACHEABLE_RESPONSE_HEADERS.has(normalized) ||
+    normalized.startsWith("content-security-policy-") ||
+    normalized.startsWith("cross-origin-") ||
+    normalized.startsWith("permissions-policy-")
+  )
+}
 
 const tagsOf = (res: Response): readonly string[] =>
   tagsFromHeader(res.headers.get(ISR_REVALIDATE_TAGS_HEADER))
@@ -467,7 +499,7 @@ const tagsOf = (res: Response): readonly string[] =>
 const headersOf = (res: Response): Record<string, string> => {
   const out: Record<string, string> = {}
   res.headers.forEach((value, key) => {
-    if (CACHEABLE_RESPONSE_HEADERS.has(key)) out[key] = value
+    if (isCacheableResponseHeader(key)) out[key] = value
   })
   return out
 }
@@ -481,11 +513,13 @@ const responseFrom = (entry: CachedResponse, status: "hit" | "stale"): Response 
 function sanitizeCachedHeaders(headers: Readonly<Record<string, string>>): Record<string, string> {
   const out: Record<string, string> = {}
   for (const [key, value] of Object.entries(headers)) {
-    const normalized = key.toLowerCase()
-    if (CACHEABLE_RESPONSE_HEADERS.has(normalized)) out[normalized] = value
+    if (isCacheableResponseHeader(key)) out[key.toLowerCase()] = value
   }
   return out
 }
+
+const isInvalidationResponse = (res: Response): boolean =>
+  res.status === 404 || res.status === 410 || (res.status >= 300 && res.status < 400)
 
 /**
  * Wrap a nifra app with **Incremental Static Regeneration**: a cacheable page is served from
@@ -561,6 +595,11 @@ export function withISR(
           revalidate: ttlMs(res),
           ...(tags.length === 0 ? {} : { tags }),
         })
+      } else if (isInvalidationResponse(res)) {
+        // A successful deletion or redirect is authoritative. Keeping the old entry would make a
+        // withdrawn page stay publicly visible forever because every stale request would retry the same
+        // non-cacheable response while continuing to serve the old body.
+        await store.delete(key)
       } else {
         await res.body?.cancel()
       }

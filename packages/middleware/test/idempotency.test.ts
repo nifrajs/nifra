@@ -345,30 +345,47 @@ describe("MemoryIdempotencyStore", () => {
     const store = new MemoryIdempotencyStore()
     const record = { status: 200, headers: [["content-type", "text/plain"]] as const, body: "" }
 
-    expect(await store.begin("k", 60_000)).toEqual({ state: "new" })
+    const first = await store.begin("k", 60_000)
+    expect(first.state).toBe("new")
     expect(await store.begin("k", 60_000)).toEqual({ state: "in_flight" }) // lock held
-    await store.complete("k", record, 60_000)
+    if (first.state !== "new") throw new Error("expected a reservation")
+    expect(await store.complete("k", first.reservation, record, 60_000)).toBe(true)
     expect(await store.begin("k", 60_000)).toEqual({ state: "replay", record })
 
-    await store.begin("k2", 60_000)
-    await store.release("k2")
-    expect(await store.begin("k2", 60_000)).toEqual({ state: "new" }) // released ⇒ free again
+    const second = await store.begin("k2", 60_000)
+    if (second.state !== "new") throw new Error("expected a reservation")
+    expect(await store.release("k2", second.reservation)).toBe(true)
+    expect((await store.begin("k2", 60_000)).state).toBe("new") // released ⇒ free again
+  })
+
+  test("a late completion cannot overwrite a newer reservation", async () => {
+    const store = new MemoryIdempotencyStore()
+    const first = await store.begin("race", 10)
+    if (first.state !== "new") throw new Error("expected a reservation")
+    await Bun.sleep(30)
+    const second = await store.begin("race", 60_000)
+    if (second.state !== "new") throw new Error("expected a replacement reservation")
+    const oldRecord = { status: 200, headers: [], body: "b2xk" }
+    const newRecord = { status: 200, headers: [], body: "bmV3" }
+    expect(await store.complete("race", first.reservation, oldRecord, 60_000)).toBe(false)
+    expect(await store.complete("race", second.reservation, newRecord, 60_000)).toBe(true)
+    expect(await store.begin("race", 60_000)).toEqual({ state: "replay", record: newRecord })
   })
 
   test("rejects non-finite TTLs instead of creating immediately-expired entries", async () => {
     const store = new MemoryIdempotencyStore()
     expect(() => store.begin("bad", Number.NaN)).toThrow(/lockTtlMs/)
-    expect(() => store.complete("bad", { status: 200, headers: [], body: "" }, Number.NaN)).toThrow(
-      /ttlMs/,
-    )
+    expect(() =>
+      store.complete("bad", "reservation", { status: 200, headers: [], body: "" }, Number.NaN),
+    ).toThrow(/ttlMs/)
   })
 
   test("an expired lock frees the key (a crashed handler can't wedge it forever)", async () => {
     const store = new MemoryIdempotencyStore()
-    expect(await store.begin("k", 20)).toEqual({ state: "new" })
+    expect((await store.begin("k", 20)).state).toBe("new")
     expect(await store.begin("k", 20)).toEqual({ state: "in_flight" })
     await Bun.sleep(40)
-    expect(await store.begin("k", 20)).toEqual({ state: "new" }) // lock expired
+    expect((await store.begin("k", 20)).state).toBe("new") // lock expired
   })
 
   test("refuses to construct in production unless explicitly allowed", () => {

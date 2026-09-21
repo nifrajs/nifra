@@ -40,6 +40,7 @@ test("editing a module a route imports refreshes SSR output without touching the
     routesDir,
     clientModule: join(root, "client.ts"),
     port: 0,
+    poll: true,
     createApp: async (_entry, load) => {
       const mod = (await load(join(routesDir, "index.tsx"))) as { marker: string }
       return { fetch: () => new Response(mod.marker) }

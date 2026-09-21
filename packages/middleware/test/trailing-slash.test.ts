@@ -10,7 +10,22 @@ describe("trailing slash middleware", () => {
 
     const res = await app.fetch(new Request("http://x/docs/?a=1"))
     expect(res.status).toBe(308)
-    expect(res.headers.get("location")).toBe("http://x/docs?a=1")
+    expect(res.headers.get("location")).toBe("/docs?a=1")
+  })
+
+  test("trimTrailingSlash never reflects the request Host into Location", async () => {
+    const app = server()
+      .use(trimTrailingSlash())
+      .get("/docs", () => "ok")
+    const res = await app.fetch(
+      new Request("http://evil.example/docs/", { headers: { host: "evil.example" } }),
+    )
+    expect(res.headers.get("location")).toBe("/docs")
+
+    const networkPath = await app.fetch(
+      new Request("http://evil.example//attacker/", { headers: { host: "evil.example" } }),
+    )
+    expect(networkPath.headers.get("location")).toBe("/.//attacker")
   })
 
   test("trimTrailingSlash rewrite mode routes internally", async () => {
@@ -31,7 +46,7 @@ describe("trailing slash middleware", () => {
 
     const docs = await app.fetch(new Request("http://x/docs"))
     expect(docs.status).toBe(308)
-    expect(docs.headers.get("location")).toBe("http://x/docs/")
+    expect(docs.headers.get("location")).toBe("/docs/")
 
     const css = await app.fetch(new Request("http://x/app.css"))
     expect(css.status).toBe(200)

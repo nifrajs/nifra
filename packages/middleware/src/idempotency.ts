@@ -22,7 +22,7 @@ export interface IdempotencyRecord {
 }
 
 export type IdempotencyClaim =
-  | { readonly state: "new" }
+  | { readonly state: "new"; readonly reservation: string }
   | { readonly state: "in_flight" }
   | { readonly state: "replay"; readonly record: IdempotencyRecord }
 
@@ -38,10 +38,15 @@ export interface IdempotencyStore {
    * The in-flight lock expires after `lockTtlMs` so a crashed handler can't wedge the key forever.
    */
   begin(key: string, lockTtlMs: number): Promise<IdempotencyClaim>
-  /** Store the completed response and release the lock (kept for `ttlMs`). */
-  complete(key: string, record: IdempotencyRecord, ttlMs: number): Promise<void>
-  /** Release the lock without storing (handler errored / response not cacheable). */
-  release(key: string): Promise<void>
+  /** Store the completed response only when `reservation` still owns the lock (kept for `ttlMs`). */
+  complete(
+    key: string,
+    reservation: string,
+    record: IdempotencyRecord,
+    ttlMs: number,
+  ): Promise<boolean>
+  /** Release only the lock owned by `reservation` (handler errored / response not cacheable). */
+  release(key: string, reservation: string): Promise<boolean>
 }
 
 export interface MemoryIdempotencyStoreOptions {
@@ -54,7 +59,7 @@ export interface MemoryIdempotencyStoreOptions {
 }
 
 type Entry =
-  | { readonly kind: "lock"; readonly expiresAt: number }
+  | { readonly kind: "lock"; readonly reservation: string; readonly expiresAt: number }
   | { readonly kind: "record"; readonly record: IdempotencyRecord; readonly expiresAt: number }
 
 const KEY_ENCODER = new TextEncoder()
@@ -137,21 +142,38 @@ export class MemoryIdempotencyStore implements IdempotencyStore {
       )
     }
     // Free (or expired): take the lock. Synchronous Map write ⇒ atomic on a single instance.
-    this.reserve(key, { kind: "lock", expiresAt: now + lockTtlMs })
-    return Promise.resolve({ state: "new" })
+    const reservation = crypto.randomUUID()
+    this.reserve(key, { kind: "lock", reservation, expiresAt: now + lockTtlMs })
+    return Promise.resolve({ state: "new", reservation })
   }
 
-  complete(key: string, record: IdempotencyRecord, ttlMs: number): Promise<void> {
+  complete(
+    key: string,
+    reservation: string,
+    record: IdempotencyRecord,
+    ttlMs: number,
+  ): Promise<boolean> {
     this.validateKey(key)
     assertPositiveTtl(ttlMs, "ttlMs")
-    this.reserve(key, { kind: "record", record, expiresAt: Date.now() + ttlMs })
-    return Promise.resolve()
+    const entry = this.entries.get(key)
+    if (entry === undefined || entry.kind !== "lock" || entry.reservation !== reservation) {
+      return Promise.resolve(false)
+    }
+    if (entry.expiresAt <= Date.now()) {
+      this.entries.delete(key)
+      return Promise.resolve(false)
+    }
+    this.entries.set(key, { kind: "record", record, expiresAt: Date.now() + ttlMs })
+    return Promise.resolve(true)
   }
 
-  release(key: string): Promise<void> {
+  release(key: string, reservation: string): Promise<boolean> {
     const entry = this.entries.get(key)
-    if (entry !== undefined && entry.kind === "lock") this.entries.delete(key)
-    return Promise.resolve()
+    if (entry === undefined || entry.kind !== "lock" || entry.reservation !== reservation) {
+      return Promise.resolve(false)
+    }
+    this.entries.delete(key)
+    return Promise.resolve(true)
   }
 }
 
@@ -405,7 +427,7 @@ export function idempotency(options: IdempotencyOptions): Middleware {
       ? (req: Request): Promise<string | null> | null =>
           defaultIdempotencyKey(req, header, principalHeaders)
       : (req: Request): string | null | Promise<string | null> => custom(req, header)
-  const claimed = new WeakMap<Request, string>()
+  const claimed = new WeakMap<Request, { readonly key: string; readonly reservation: string }>()
 
   const middleware: Middleware = {
     name: "idempotency",
@@ -436,15 +458,16 @@ export function idempotency(options: IdempotencyOptions): Middleware {
           },
         })
       }
-      claimed.set(req, key)
+      if (claim.state !== "new") return undefined
+      claimed.set(req, { key, reservation: claim.reservation })
       return undefined
     },
     async onResponse(res, req) {
-      const key = claimed.get(req)
-      if (key === undefined) return res // not a claimed request (safe method / no key / a replay)
+      const claim = claimed.get(req)
+      if (claim === undefined) return res // not a claimed request (safe method / no key / a replay)
       claimed.delete(req)
       if (!shouldCache(res)) {
-        await store.release(key)
+        await store.release(claim.key, claim.reservation)
         return res
       }
       // Buffer the body (consumes `res`), so a fresh Response is returned in its place.
@@ -452,16 +475,21 @@ export function idempotency(options: IdempotencyOptions): Middleware {
       try {
         captured = await captureBody(res, maxBytes)
       } catch (err) {
-        await store.release(key)
+        await store.release(claim.key, claim.reservation)
         throw err
       }
       if (!("bytes" in captured)) {
-        await store.release(key) // too large to store - return it, but don't cache
+        await store.release(claim.key, claim.reservation) // too large to store - return it, but don't cache
         return captured.response
       }
       const bytes = captured.bytes
       const headers = [...captured.response.headers].filter(([name]) => name !== "set-cookie")
-      await store.complete(key, { status: res.status, headers, body: toBase64(bytes) }, ttlMs)
+      await store.complete(
+        claim.key,
+        claim.reservation,
+        { status: res.status, headers, body: toBase64(bytes) },
+        ttlMs,
+      )
       return captured.response
     },
   }

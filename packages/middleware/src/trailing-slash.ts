@@ -34,6 +34,13 @@ function withPath(req: Request, path: string): URL {
   return url
 }
 
+const relativeLocation = (url: URL): string => {
+  // A path beginning with `//` is parsed as a network-path reference and can still redirect to a
+  // different host. Prefix it with `/.` so URL resolution keeps the request authority.
+  const pathname = url.pathname.startsWith("//") ? `/.${url.pathname}` : url.pathname
+  return `${pathname}${url.search}`
+}
+
 function route(
   req: Request,
   url: URL,
@@ -42,7 +49,12 @@ function route(
 ) {
   return mode === "rewrite"
     ? new Request(url.toString(), req)
-    : new Response(null, { status, headers: { location: url.toString() } })
+    : // Redirects need no authority. Using the request's Host here would reflect an untrusted Host
+      // header into an absolute open redirect before the adapter's host policy has a chance to run.
+      new Response(null, {
+        status,
+        headers: { location: relativeLocation(url) },
+      })
 }
 
 function methodsOf(methods: readonly string[] | undefined): ReadonlySet<string> {

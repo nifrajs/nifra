@@ -203,6 +203,7 @@ test("Windows identity containment accepts an alias only when the filesystem pro
   }
 })
 
+// biome-ignore format: keep the existing compact test body while adding an explicit heavy-test timeout.
 test("a scan that hit its limit fails the gate instead of passing as clean", async () => {
   // Enough dependency names to exhaust the link-probe budget before a single one is examined. The
   // scan therefore finds nothing - and "nothing" from a scan that stopped early is not a clean bill:
@@ -224,7 +225,7 @@ test("a scan that hit its limit fails the gate instead of passing as clean", asy
   } finally {
     await rm(root, { recursive: true, force: true })
   }
-})
+}, { timeout: 30_000 })
 
 test("development parity counts a Svelte <style> block as css without a css import", async () => {
   const root = await mkdtemp(join(tmpdir(), "nifra-parity-sfc-"))

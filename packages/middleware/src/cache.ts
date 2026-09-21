@@ -140,34 +140,117 @@ function defaultKey(req: Request, vary: readonly string[]): string {
   return key
 }
 
-async function readBytesCapped(res: Response, maxBytes: number): Promise<Uint8Array | null> {
-  const body = res.clone().body
-  if (body === null) return new Uint8Array()
-  const reader = body.getReader()
+type ReadBytes =
+  | { readonly bytes: Uint8Array; readonly response: Response }
+  | { readonly response: Response }
+
+interface ChunkReader {
+  read(): Promise<{ readonly done: boolean; readonly value?: Uint8Array }>
+  cancel(reason?: unknown): Promise<void>
+  releaseLock(): void
+}
+
+const concatBytes = (chunks: readonly Uint8Array[], total: number): Uint8Array => {
+  const out = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    out.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return out
+}
+
+function replayFrom(res: Response, chunks: readonly Uint8Array[], reader: ChunkReader): Response {
+  let released = false
+  const release = (): void => {
+    if (!released) {
+      released = true
+      reader.releaseLock()
+    }
+  }
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk)
+    },
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read()
+        if (done || value === undefined) {
+          release()
+          controller.close()
+        } else {
+          controller.enqueue(value)
+        }
+      } catch (error) {
+        release()
+        controller.error(error)
+      }
+    },
+    cancel: (reason) => reader.cancel(reason).finally(release),
+  })
+  return new Response(stream, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: res.headers,
+  })
+}
+
+async function readBytesCapped(res: Response, maxBytes: number): Promise<ReadBytes> {
+  const body = res.body
+  if (body === null) {
+    return {
+      bytes: new Uint8Array(),
+      response: new Response(null, {
+        status: res.status,
+        statusText: res.statusText,
+        headers: res.headers,
+      }),
+    }
+  }
+  const reader = body.getReader() as unknown as ChunkReader
   const chunks: Uint8Array[] = []
   let total = 0
   try {
     while (true) {
       const { done, value } = await reader.read()
       if (done) {
-        const out = new Uint8Array(total)
-        let offset = 0
-        for (const chunk of chunks) {
-          out.set(chunk, offset)
-          offset += chunk.byteLength
+        reader.releaseLock()
+        const bytes = concatBytes(chunks, total)
+        return {
+          bytes,
+          response: new Response(bytes.byteLength === 0 ? null : bytes, {
+            status: res.status,
+            statusText: res.statusText,
+            headers: res.headers,
+          }),
         }
-        return out
       }
+      if (value === undefined) return { response: replayFrom(res, chunks, reader) }
       total += value.byteLength
       if (total > maxBytes) {
-        await reader.cancel()
-        return null
+        return { response: replayFrom(res, chunks.concat([value]), reader) }
       }
       chunks.push(value)
     }
   } catch {
-    return null
+    return { response: replayFrom(res, chunks, reader) }
   }
+}
+
+function responseVary(headers: Headers): readonly string[] {
+  const value = headers.get("vary")
+  if (value === null) return []
+  return value
+    .split(",")
+    .map((part) => part.trim().toLowerCase())
+    .filter((part) => part !== "")
+}
+
+function responseVaryMatchesKey(headers: Headers, configured: readonly string[]): boolean {
+  const declared = responseVary(headers)
+  if (declared.includes("*")) return false
+  const configuredSet = new Set(configured.map((header) => header.toLowerCase()))
+  return declared.every((header) => configuredSet.has(header))
 }
 
 function withStatusHeader(
@@ -210,6 +293,7 @@ export function cache(options: CacheOptions): Middleware {
     throw new Error("cache: cacheStatusHeader is empty")
   }
   const hits = new WeakSet<Request>()
+  const requestKeys = new WeakMap<Request, string>()
   const hasAuthentication = (req: Request): boolean =>
     authenticatedHeaders.some((header) => req.headers.has(header))
 
@@ -221,6 +305,7 @@ export function cache(options: CacheOptions): Middleware {
         return undefined
       }
       const key = keyOf(req)
+      requestKeys.set(req, key)
       const entry = await store.get(key)
       if (entry === undefined) return undefined
       // Never replay a personalized entry before route-scoped authentication runs. Public entries
@@ -252,6 +337,7 @@ export function cache(options: CacheOptions): Middleware {
     async onResponse(res, req) {
       if (hits.has(req)) {
         hits.delete(req)
+        requestKeys.delete(req)
         return res
       }
       if (!methods.has(req.method.toUpperCase())) return res
@@ -263,6 +349,12 @@ export function cache(options: CacheOptions): Middleware {
         return withStatusHeader(res, cacheStatusHeader, "BYPASS")
       }
       if (!cacheSetCookie && res.headers.has("set-cookie")) {
+        return withStatusHeader(res, cacheStatusHeader, "BYPASS")
+      }
+      // A response-declared Vary must be represented in the lookup key. If the caller did not opt
+      // those request headers into `vary`, bypass storage instead of replaying one representation to
+      // another request. `Vary: *` is never cacheable by a shared cache.
+      if (!responseVaryMatchesKey(res.headers, vary)) {
         return withStatusHeader(res, cacheStatusHeader, "BYPASS")
       }
       // Shared-cache safety (RFC 9111 §3.5): never store a response to an authenticated request
@@ -279,15 +371,21 @@ export function cache(options: CacheOptions): Middleware {
       if (declared !== undefined && declared > maxBytes) {
         return withStatusHeader(res, cacheStatusHeader, "BYPASS")
       }
-      const body = await readBytesCapped(res, maxBytes)
-      if (body === null) return withStatusHeader(res, cacheStatusHeader, "BYPASS")
+      const captured = await readBytesCapped(res, maxBytes)
+      if (!("bytes" in captured)) {
+        return withStatusHeader(captured.response, cacheStatusHeader, "BYPASS")
+      }
+      const body = captured.bytes
+      const capturedResponse = captured.response
 
-      const headers = new Headers(res.headers)
+      const headers = new Headers(capturedResponse.headers)
       headers.delete("age")
       if (cacheStatusHeader !== false) headers.delete(cacheStatusHeader)
       appendVary(headers, vary)
       const now = Date.now()
-      await store.set(keyOf(req), {
+      const key = requestKeys.get(req) ?? keyOf(req)
+      requestKeys.delete(req)
+      await store.set(key, {
         status: res.status,
         statusText: res.statusText,
         headers: [...headers.entries()],
@@ -295,12 +393,12 @@ export function cache(options: CacheOptions): Middleware {
         expiresAt: now + ttlMs,
         storedAt: now,
       })
-      const outgoing = new Headers(res.headers)
+      const outgoing = new Headers(capturedResponse.headers)
       appendVary(outgoing, vary)
       if (cacheStatusHeader !== false) outgoing.set(cacheStatusHeader, "MISS")
-      return new Response(res.body, {
-        status: res.status,
-        statusText: res.statusText,
+      return new Response(capturedResponse.body, {
+        status: capturedResponse.status,
+        statusText: capturedResponse.statusText,
         headers: outgoing,
       })
     },

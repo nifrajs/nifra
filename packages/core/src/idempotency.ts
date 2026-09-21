@@ -240,7 +240,14 @@ async function boundedResponseBytes(response: Response, maxBytes: number): Promi
       if (done) break
       total += value.byteLength
       if (total > maxBytes) {
-        await reader.cancel()
+        // `Response.clone()` tees the body. Cancelling only the clone branch leaves the live branch
+        // unread, so a streaming producer can keep the tee pending forever. This path stores no
+        // response and the caller will replace it with a terminal error, so cancel both branches.
+        const liveBody = response.body
+        await Promise.allSettled([
+          reader.cancel(),
+          liveBody === null ? Promise.resolve() : liveBody.cancel(),
+        ])
         throw new IdempotencyResponseTooLargeError(maxBytes)
       }
       chunks.push(value)

@@ -36,6 +36,53 @@ describe("cache()", () => {
     expect(await (await app.fetch(fr)).json()).toEqual({ calls: 2, language: "fr" })
   })
 
+  test("bypasses storage when a response declares an unkeyed Vary header", async () => {
+    let calls = 0
+    const app = server()
+      .use(cache({ store: new MemoryResponseCache(), ttlMs: 60_000 }))
+      .get("/vary", () => {
+        calls += 1
+        return new Response(`v${calls}`, {
+          headers: { "content-type": "text/plain", vary: "accept-language" },
+        })
+      })
+    const first = await app.fetch(new Request("http://x/vary"))
+    const second = await app.fetch(new Request("http://x/vary"))
+    expect(first.headers.get("x-nifra-cache")).toBe("BYPASS")
+    expect(second.headers.get("x-nifra-cache")).toBe("BYPASS")
+    expect(await first.text()).toBe("v1")
+    expect(await second.text()).toBe("v2")
+  })
+
+  test("returns an oversized streamed response without waiting for the clone to drain", async () => {
+    const encoder = new TextEncoder()
+    const app = server()
+      .use(cache({ store: new MemoryResponseCache(), ttlMs: 60_000, maxBytes: 4 }))
+      .get(
+        "/stream",
+        () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(encoder.encode("12345"))
+              },
+              pull(controller) {
+                controller.enqueue(encoder.encode("67890"))
+                controller.close()
+              },
+            }),
+          ),
+      )
+    const result = await Promise.race([
+      app.fetch(new Request("http://x/stream")),
+      Bun.sleep(250).then(() => {
+        throw new Error("cache response timed out")
+      }),
+    ])
+    expect(result.headers.get("x-nifra-cache")).toBe("BYPASS")
+    expect(await result.text()).toBe("1234567890")
+  })
+
   test("respects request and response cache-control plus Set-Cookie by default", async () => {
     let calls = 0
     const app = server()
