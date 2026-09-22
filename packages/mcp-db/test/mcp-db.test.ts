@@ -16,6 +16,26 @@ function seededDb(): Database {
   return db
 }
 
+async function removeDirectoryAfterWorkerExit(directory: string): Promise<void> {
+  // A forcibly terminated SQLite worker can release its file handle asynchronously on Windows.
+  const cleanupDeadline = Date.now() + 1_000
+  for (;;) {
+    try {
+      rmSync(directory, { recursive: true, force: true })
+      return
+    } catch (error) {
+      const code = (error as { code?: string }).code
+      if (
+        (code !== "EBUSY" && code !== "EACCES" && code !== "EPERM" && code !== "ENOTEMPTY") ||
+        Date.now() >= cleanupDeadline
+      ) {
+        throw error
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+  }
+}
+
 async function call(
   server: { fetch(request: Request): Promise<Response> },
   name: string,
@@ -531,7 +551,7 @@ describe("query execution lanes", () => {
     } finally {
       await served.close?.()
       db.close()
-      rmSync(directory, { recursive: true, force: true })
+      await removeDirectoryAfterWorkerExit(directory)
     }
   })
 
