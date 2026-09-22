@@ -1,5 +1,5 @@
 import { O_APPEND, O_CREAT, O_NOFOLLOW, O_RDONLY, O_WRONLY } from "node:constants"
-import { mkdir, open, rename, unlink, writeFile } from "node:fs/promises"
+import { type FileHandle, lstat, mkdir, open, rename, unlink, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 
 const DEFAULT_MAX_SESSION_ENTRIES = 4_096
@@ -101,7 +101,7 @@ export class FileSessionStore implements SessionStore {
       if (Buffer.byteLength(line, "utf8") > this.maxEntryBytes)
         throw new RangeError("session store: event exceeds maxEntryBytes")
       const path = this.pathFor(sessionId)
-      const file = await open(path, O_APPEND | O_CREAT | O_WRONLY | O_NOFOLLOW, 0o600)
+      const file = await openSessionFile(path, O_APPEND | O_CREAT | O_WRONLY, 0o600)
       try {
         await file.writeFile(`${line}\n`, "utf8")
       } finally {
@@ -182,7 +182,7 @@ export class FileSessionStore implements SessionStore {
 
   private async compactIfNeeded(sessionId: string): Promise<void> {
     const path = this.pathFor(sessionId)
-    const file = await open(path, O_RDONLY | O_NOFOLLOW)
+    const file = await openSessionFile(path, O_RDONLY)
     let size: number
     try {
       size = (await file.stat()).size
@@ -222,7 +222,7 @@ export class FileSessionStore implements SessionStore {
     minimumLines: number,
     maxBytes: number,
   ): Promise<string> {
-    const file = await open(path, O_RDONLY | O_NOFOLLOW)
+    const file = await openSessionFile(path, O_RDONLY)
     try {
       const size = (await file.stat()).size
       let end = size
@@ -375,6 +375,38 @@ export class ContextWindow {
     ]
     const after = this.tokens
     return { before, after, removed: omitted.length, reason }
+  }
+}
+
+/**
+ * Open a session file without following a final-component symlink. Windows Bun does not support
+ * the POSIX `O_NOFOLLOW` flag, so it gets a bounded lstat/open/lstat guard instead; the descriptor is
+ * checked before any caller write or read. POSIX keeps the kernel-enforced flag for the race-free path.
+ */
+async function openSessionFile(path: string, flags: number, mode?: number): Promise<FileHandle> {
+  if (process.platform !== "win32") {
+    return mode === undefined
+      ? open(path, flags | O_NOFOLLOW)
+      : open(path, flags | O_NOFOLLOW, mode)
+  }
+  await rejectSessionSymlink(path)
+  const file = mode === undefined ? await open(path, flags) : await open(path, flags, mode)
+  try {
+    await rejectSessionSymlink(path)
+    return file
+  } catch (error) {
+    await file.close()
+    throw error
+  }
+}
+
+async function rejectSessionSymlink(path: string): Promise<void> {
+  try {
+    if ((await lstat(path)).isSymbolicLink())
+      throw new Error("session store: refusing a symbolic-link session file")
+  } catch (error) {
+    if (isNotFound(error)) return
+    throw error
   }
 }
 
