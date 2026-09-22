@@ -8,7 +8,7 @@
       "hydrationHead": "",
       "bundleUrl": "/assets/fw-react.client.js",
       "bytesRaw": 195449,
-      "bytesGzip": 61984
+      "bytesGzip": 61981
     },
     {
       "id": "preact",

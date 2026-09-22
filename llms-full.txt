@@ -5030,7 +5030,9 @@ export const cssLoading = "deferred"
 // cssCodeSplit: false emits one content-hashed stylesheet, so lazy module prefetch cannot attach a
 // new stylesheet for every route. cssLoading: "deferred" fetches that file with media="print"; the
 // generated client promotes it to media="all" after load/error/timeout and before hydration.
-//
+// `nifra build` selects Vite automatically for this Vite-only output policy. The default stays
+// backward-compatible: split CSS + blocking links.
+// `cssLoading: "deferred"` must be paired with `cssCodeSplit: false` on Vite.
 ```
 
 This is opt-in and Vite-specific. Nifra rejects `cssLoading: "deferred"` with split
