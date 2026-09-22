@@ -44,8 +44,8 @@ function failingBackend(message: string): AgentBackend {
 }
 
 describe("coding agent RPC", () => {
-  test("rejects remote binding unless explicitly enabled", () => {
-    expect(
+  test("rejects remote binding unless explicitly enabled", async () => {
+    await expect(
       new CodingAgentRpcServer({
         hostname: "0.0.0.0",
         cwd: process.cwd(),
@@ -54,8 +54,8 @@ describe("coding agent RPC", () => {
     ).rejects.toThrow("remote binding")
   })
 
-  test("rejects error-stack diagnostics for remote binding", () => {
-    expect(
+  test("rejects error-stack diagnostics for remote binding", async () => {
+    await expect(
       new CodingAgentRpcServer({
         hostname: "0.0.0.0",
         allowRemote: true,
@@ -66,8 +66,8 @@ describe("coding agent RPC", () => {
     ).rejects.toThrow("exposeErrorStacks")
   })
 
-  test("requires a strong explicit token for remote binding", () => {
-    expect(
+  test("requires a strong explicit token for remote binding", async () => {
+    await expect(
       new CodingAgentRpcServer({
         hostname: "0.0.0.0",
         allowRemote: true,

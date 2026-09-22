@@ -232,6 +232,19 @@ function safeEnv(
     "LC_ALL",
     "TERM",
     "CI",
+    ...(process.platform === "win32"
+      ? [
+          "SystemRoot",
+          "WINDIR",
+          "TEMP",
+          "TMP",
+          "USERPROFILE",
+          "LOCALAPPDATA",
+          "APPDATA",
+          "COMSPEC",
+          "PATHEXT",
+        ]
+      : []),
     ...Object.keys(overrides ?? {}),
   ])) {
     const value =

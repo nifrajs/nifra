@@ -336,7 +336,27 @@ function workerError(message: WorkerMessage): Error {
 
 function filteredEnv(): Record<string, string> {
   const result: Record<string, string> = {}
-  for (const name of ["PATH", "HOME", "LANG", "LC_ALL", "TERM"]) {
+  const names = [
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "TERM",
+    ...(process.platform === "win32"
+      ? [
+          "SystemRoot",
+          "WINDIR",
+          "TEMP",
+          "TMP",
+          "USERPROFILE",
+          "LOCALAPPDATA",
+          "APPDATA",
+          "COMSPEC",
+          "PATHEXT",
+        ]
+      : []),
+  ]
+  for (const name of names) {
     const value = process.env[name]
     if (value !== undefined) result[name] = value
   }

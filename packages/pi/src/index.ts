@@ -828,7 +828,27 @@ function filteredEnv(
   values: Readonly<Record<string, string | undefined>> | undefined,
 ): Record<string, string> {
   const result: Record<string, string> = {}
-  const names = new Set(["PATH", "HOME", "LANG", "LC_ALL", "TERM", ...Object.keys(values ?? {})])
+  const names = new Set([
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "TERM",
+    ...(process.platform === "win32"
+      ? [
+          "SystemRoot",
+          "WINDIR",
+          "TEMP",
+          "TMP",
+          "USERPROFILE",
+          "LOCALAPPDATA",
+          "APPDATA",
+          "COMSPEC",
+          "PATHEXT",
+        ]
+      : []),
+    ...Object.keys(values ?? {}),
+  ])
   for (const name of names) {
     const value =
       values !== undefined && Object.hasOwn(values, name) ? values[name] : process.env[name]
