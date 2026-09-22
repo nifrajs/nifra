@@ -233,23 +233,28 @@ const css = `
   }
   .hero-contract {
     position: relative;
-    align-self: stretch;
+    align-self: center;
     display: flex;
     flex-direction: column;
     justify-content: center;
     min-width: 0;
+    width: 100%;
     max-width: 470px;
     margin-left: auto;
-    padding: 14px 0 10px 42px;
+    padding: 28px 30px 26px 58px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow);
   }
   .hero-contract::before {
     content: "";
     position: absolute;
-    top: 74px;
-    bottom: 64px;
-    left: 15px;
+    top: 108px;
+    bottom: 48px;
+    left: 29px;
     width: 1px;
-    background: linear-gradient(to bottom, transparent, var(--line-2) 12%, var(--line-2) 88%, transparent);
+    background: linear-gradient(to bottom, transparent, var(--line-2) 10%, var(--line-2) 90%, transparent);
   }
   .hero-contract-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
   .hero-contract-head .kicker { margin: 0; color: var(--green-2); }
@@ -265,7 +270,7 @@ const css = `
     text-transform: uppercase;
   }
   .hero-contract-status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px var(--green-soft); }
-  .hero-contract h2 { max-width: 360px; margin: 16px 0 22px; font-size: clamp(25px, 3vw, 34px); line-height: 1.1; letter-spacing: -0.025em; }
+  .hero-contract h2 { max-width: 360px; margin: 15px 0 24px; font-size: clamp(24px, 2.5vw, 31px); line-height: 1.12; letter-spacing: -0.025em; }
   .hero-contract-flow { display: grid; gap: 16px; }
   .hero-contract-step { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: center; gap: 12px; min-width: 0; }
   .hero-contract-mark {
@@ -822,8 +827,8 @@ const css = `
     .hero .install-widget { grid-column: 1 / -1; width: 100%; justify-content: center; }
   .hero .hero-actions .button { width: 100%; min-width: 0; justify-content: center; padding: 0 12px; }
   .hero-fineprint { display: none; }
-  .hero-contract { width: 100%; padding: 4px 0 0 34px; }
-  .hero-contract::before { top: 64px; bottom: 48px; left: 11px; }
+  .hero-contract { width: 100%; padding: 24px 20px 22px 52px; }
+  .hero-contract::before { top: 96px; bottom: 44px; left: 25px; }
   .hero-contract-head { align-items: flex-start; }
   .hero-contract-status { font-size: 9px; }
   .hero-contract h2 { margin: 14px 0 20px; font-size: 27px; }
