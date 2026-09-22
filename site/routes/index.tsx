@@ -563,92 +563,58 @@ export default function Home() {
             No generated SDK. No stale route docs. No unproven routes. No lock-in.
           </p>
         </div>
-        <section className="agent-graph" aria-label="Nifra agent loop">
-          <div className="agent-graph-head">
-            <span className="agent-graph-kicker">
-              <span className="agent-led" />
-              agent loop
-            </span>
-            <span className="agent-graph-route">
-              live workspace <b aria-hidden="true">→</b> proof
+        <section className="hero-contract" aria-labelledby="hero-contract-title">
+          <div className="hero-contract-head">
+            <span className="kicker">Contract in · proof out</span>
+            <span className="hero-contract-status">
+              <span className="hero-contract-status-dot" aria-hidden="true" /> live
             </span>
           </div>
-          <div className="agent-graph-stage">
-            <svg
-              className="agent-graph-svg"
-              viewBox="0 0 560 560"
-              preserveAspectRatio="none"
-              aria-hidden="true"
-            >
-              <defs>
-                <linearGradient id="agent-graph-gradient" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0" stopColor="var(--green-2)" />
-                  <stop offset="1" stopColor="var(--green)" />
-                </linearGradient>
-                <marker
-                  id="agent-graph-arrow"
-                  viewBox="0 0 10 10"
-                  refX="8"
-                  refY="5"
-                  markerWidth="5"
-                  markerHeight="5"
-                  orient="auto-start-reverse"
-                >
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
-                </marker>
-              </defs>
-              <path
-                className="agent-graph-path agent-graph-path-main"
-                d="M 84 82 C 220 76 342 126 426 166 S 208 248 144 278 S 302 346 408 378 S 292 458 250 512"
-              />
-              <path
-                className="agent-graph-path agent-graph-path-flow"
-                d="M 84 82 C 220 76 342 126 426 166 S 208 248 144 278 S 302 346 408 378 S 292 458 250 512"
-              />
-              <path
-                className="agent-graph-path agent-graph-path-return"
-                d="M 250 512 C 88 546 34 408 56 290 C 66 222 70 146 84 82"
-                markerEnd="url(#agent-graph-arrow)"
-              />
-              <circle className="agent-graph-dot" cx="84" cy="82" r="5" />
-              <circle className="agent-graph-dot" cx="426" cy="166" r="5" />
-              <circle className="agent-graph-dot" cx="144" cy="278" r="5" />
-              <circle className="agent-graph-dot" cx="408" cy="378" r="5" />
-              <circle className="agent-graph-dot agent-graph-dot-final" cx="250" cy="512" r="7" />
-            </svg>
-            <div className="agent-graph-source">
-              <span className="agent-graph-source-mark" aria-hidden="true">
-                ⌘
+          <h2 id="hero-contract-title">A route leaves the editor with evidence.</h2>
+          <div className="hero-contract-flow">
+            <div className="hero-contract-step">
+              <span className="hero-contract-mark" aria-hidden="true">
+                01
               </span>
-              <span>
-                <strong>live workspace</strong>
-                <small>routes · schemas · policy</small>
-              </span>
+              <div>
+                <span className="hero-contract-label">schema</span>
+                <code>{"t.object({ name: t.string() })"}</code>
+              </div>
             </div>
-            {AGENT_LOOP.map((item, index) => (
-              <article
-                className={`agent-node agent-node-${index + 1}${index === AGENT_LOOP.length - 1 ? " agent-node-final" : ""}`}
-                key={item.command}
-              >
-                <div className="agent-node-head">
-                  <span className="agent-node-index">{item.step}</span>
-                  <code>{item.command}</code>
-                  <span className="agent-node-phase">{item.phase}</span>
-                </div>
-                <h2>{item.title}</h2>
-                <p>{item.body}</p>
-              </article>
-            ))}
+            <div className="hero-contract-step">
+              <span className="hero-contract-mark" aria-hidden="true">
+                02
+              </span>
+              <div>
+                <span className="hero-contract-label">route</span>
+                <code>POST /users</code>
+              </div>
+            </div>
+            <div className="hero-contract-step">
+              <span className="hero-contract-mark" aria-hidden="true">
+                03
+              </span>
+              <div>
+                <span className="hero-contract-label">compile gate</span>
+                <code>nifra_check</code>
+              </div>
+            </div>
+            <div className="hero-contract-step hero-contract-step-final">
+              <span className="hero-contract-mark" aria-hidden="true">
+                04
+              </span>
+              <div>
+                <span className="hero-contract-label">security gate</span>
+                <code>
+                  nifra_assure <span aria-hidden="true">✓</span>
+                </code>
+              </div>
+            </div>
           </div>
-          <div className="agent-graph-foot">
-            <span className="agent-graph-proof" aria-hidden="true">
-              ✓
-            </span>
-            <span>
-              <strong>nifra_assure</strong> is the final gate
-            </span>
-            <span className="agent-graph-foot-note">security evidence before ship</span>
-          </div>
+          <p className="hero-contract-note">
+            One live contract powers validation, types, clients, and the release proof your agents
+            cannot skip.
+          </p>
         </section>
       </section>
 
@@ -675,6 +641,37 @@ export default function Home() {
             line of adapter code.
           </span>
         </div>
+      </section>
+
+      <section className="agent-lifecycle" aria-labelledby="agent-lifecycle-title">
+        <div className="agent-lifecycle-head">
+          <span className="kicker">The agent lifecycle</span>
+          <h2 id="agent-lifecycle-title">Every AI edit follows the live contract.</h2>
+          <p>
+            Context in, verified change out. Each command reads the current workspace and leaves a
+            clearer handoff for the next one.
+          </p>
+        </div>
+        <ol className="agent-lifecycle-list">
+          {AGENT_LOOP.map((item, index) => (
+            <li
+              className={`agent-lifecycle-step${index === AGENT_LOOP.length - 1 ? " agent-lifecycle-step-final" : ""}`}
+              key={item.command}
+            >
+              <span className="agent-lifecycle-index" aria-hidden="true">
+                {item.step}
+              </span>
+              <div className="agent-lifecycle-copy">
+                <div className="agent-lifecycle-meta">
+                  <code>{item.command}</code>
+                  <span>{item.phase}</span>
+                </div>
+                <h3>{item.title}</h3>
+                <p>{item.body}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
       </section>
 
       {/* PROOF STRIP */}

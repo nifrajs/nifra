@@ -807,6 +807,32 @@ function initBot(): void {
   container.dataset.open ||= "false"
   panel.hidden = container.dataset.open !== "true"
   restorePosition()
+  const hero = document.getElementById("hero")
+  if (hero && window.location.pathname === "/") {
+    const setDeferred = (deferred: boolean): void => {
+      container.classList.toggle("nifra-bot-home-deferred", deferred)
+      container.setAttribute("aria-hidden", deferred ? "true" : "false")
+    }
+    if (typeof IntersectionObserver === "function") {
+      const observer = new IntersectionObserver(
+        ([entry]) => setDeferred(Boolean(entry?.isIntersecting)),
+        { threshold: 0.12 },
+      )
+      observer.observe(hero)
+    } else {
+      let visibilityFrame = 0
+      const syncVisibility = (): void => {
+        visibilityFrame = 0
+        setDeferred(hero.getBoundingClientRect().bottom > 48)
+      }
+      const onScroll = (): void => {
+        if (visibilityFrame !== 0) return
+        visibilityFrame = requestAnimationFrame(syncVisibility)
+      }
+      syncVisibility()
+      window.addEventListener("scroll", onScroll, { passive: true })
+    }
+  }
   cacheTipTargets()
   requestAnimationFrame(forceTip)
 }

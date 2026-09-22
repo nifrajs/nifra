@@ -31,22 +31,6 @@ const css = `
     --code-string: #0d9488;
     --code-comment: #64748b;
     --code-literal: #0284c7;
-    --agent-bg: #ffffff;
-    --agent-border: #e2e8f0;
-    --agent-fg: #0f172a;
-    --agent-muted: #475569;
-    --agent-head-fg: #64748b;
-    --agent-grid-bg: #cbd5e1;
-    --agent-step-bg: #ffffff;
-    --agent-code-bg: #e0f2fe;
-    --agent-code-border: rgba(6, 182, 212, 0.2);
-    --agent-code-fg: #0369a1;
-    --agent-accent: #6366f1;
-    --agent-phase-bg: rgba(99, 102, 241, 0.08);
-    --agent-phase-fg: #4f46e5;
-    --agent-final-bg: linear-gradient(135deg, rgba(99, 102, 241, 0.07), rgba(6, 182, 212, 0.08));
-    --agent-final-border: rgba(99, 102, 241, 0.24);
-    --agent-shadow: 0 20px 40px rgba(99, 102, 241, 0.05);
     --radius: 12px;
     --radius-lg: 18px;
   }
@@ -78,22 +62,6 @@ const css = `
     --code-string: #34d399;
     --code-comment: #6b7280;
     --code-literal: #60a5fa;
-    --agent-bg: #0b0f19;
-    --agent-border: #1f2937;
-    --agent-fg: #f3f4f6;
-    --agent-muted: #9ca3af;
-    --agent-head-fg: #6b7280;
-    --agent-grid-bg: #1f2937;
-    --agent-step-bg: #0b0f19;
-    --agent-code-bg: rgba(34, 211, 238, 0.08);
-    --agent-code-border: rgba(34, 211, 238, 0.15);
-    --agent-code-fg: #22d3ee;
-    --agent-accent: #a78bfa;
-    --agent-phase-bg: rgba(167, 139, 250, 0.1);
-    --agent-phase-fg: #c4b5fd;
-    --agent-final-bg: linear-gradient(135deg, rgba(167, 139, 250, 0.12), rgba(34, 211, 238, 0.07));
-    --agent-final-border: rgba(167, 139, 250, 0.3);
-    --agent-shadow: 0 20px 40px rgba(167, 139, 250, 0.12);
   }
   /* Theme toggle (top-right): sun in light, moon in dark. */
   .theme-toggle {
@@ -263,105 +231,81 @@ const css = `
   .hero-fineprint {
     margin: -8px 0 0; color: var(--muted); font-family: ${MONO}; font-size: 12px;
   }
-  .agent-led {
-    width: 8px; height: 8px; border-radius: 50%; background: var(--agent-accent);
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--agent-accent) 18%, transparent);
+  .hero-contract {
+    position: relative;
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+    max-width: 470px;
+    margin-left: auto;
+    padding: 14px 0 10px 42px;
   }
-  .agent-graph {
-    position: relative; min-width: 0; padding: 2px 0 0; color: var(--agent-fg); isolation: isolate;
+  .hero-contract::before {
+    content: "";
+    position: absolute;
+    top: 74px;
+    bottom: 64px;
+    left: 15px;
+    width: 1px;
+    background: linear-gradient(to bottom, transparent, var(--line-2) 12%, var(--line-2) 88%, transparent);
   }
-  .agent-graph::before {
-    content: ""; position: absolute; z-index: -1; pointer-events: none;
-    inset: 4% -12% 5% -14%;
-    background: radial-gradient(ellipse at 58% 42%, rgba(99, 102, 241, 0.14), transparent 62%);
-    opacity: 0.9;
+  .hero-contract-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .hero-contract-head .kicker { margin: 0; color: var(--green-2); }
+  .hero-contract-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted);
+    font-family: ${MONO};
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
-  .agent-graph-head {
-    display: flex; align-items: center; justify-content: space-between; gap: 18px;
-    padding: 0 0 16px; color: var(--agent-head-fg); font-family: ${MONO}; font-size: 11px;
-    font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  .hero-contract-status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px var(--green-soft); }
+  .hero-contract h2 { max-width: 360px; margin: 16px 0 22px; font-size: clamp(25px, 3vw, 34px); line-height: 1.1; letter-spacing: -0.025em; }
+  .hero-contract-flow { display: grid; gap: 16px; }
+  .hero-contract-step { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: center; gap: 12px; min-width: 0; }
+  .hero-contract-mark {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--line-2);
+    border-radius: 50%;
+    background: var(--bg);
+    color: var(--muted);
+    font-family: ${MONO};
+    font-size: 9px;
+    font-weight: 800;
   }
-  .agent-graph-kicker { display: inline-flex; align-items: center; gap: 9px; color: var(--agent-fg); }
-  .agent-graph-route { color: var(--agent-muted); font-size: 10px; font-weight: 600; white-space: nowrap; }
-  .agent-graph-route b { color: var(--agent-accent); padding: 0 4px; }
-  .agent-graph-stage {
-    position: relative; min-height: 560px; isolation: isolate;
-  }
-  .agent-graph-stage::before {
-    content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
-    background-image: radial-gradient(circle, var(--agent-grid-bg) 1px, transparent 1.5px);
-    background-size: 18px 18px; mask-image: radial-gradient(ellipse at 55% 46%, #000 0%, transparent 72%);
-    opacity: 0.34;
-  }
-  .agent-graph-svg {
-    position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; overflow: visible;
-    pointer-events: none;
-  }
-  .agent-graph-path {
-    fill: none; stroke: var(--agent-accent); stroke-linecap: round; stroke-linejoin: round;
-  }
-  .agent-graph-path-main { stroke-width: 1.25; opacity: 0.28; }
-  .agent-graph-path-flow {
-    stroke: url(#agent-graph-gradient); stroke-width: 2.5; stroke-dasharray: 1 17;
-    animation: agent-flow 3.8s linear infinite; opacity: 0.95;
-  }
-  .agent-graph-path-return { stroke-width: 1; stroke-dasharray: 3 9; opacity: 0.25; color: var(--agent-accent); }
-  .agent-graph-dot { fill: var(--agent-bg); stroke: var(--agent-accent); stroke-width: 1.5; opacity: 0.72; }
-  .agent-graph-dot-final { fill: var(--green); stroke: var(--green); opacity: 1; }
-  @keyframes agent-flow { to { stroke-dashoffset: -36; } }
-  .agent-graph-source {
-    position: absolute; top: 2px; left: 0; z-index: 2; display: flex; align-items: center; gap: 10px;
-    color: var(--agent-fg); font-family: ${MONO};
-  }
-  .agent-graph-source-mark {
-    display: grid; place-items: center; width: 30px; height: 30px; flex: 0 0 auto;
-    border: 1px solid var(--agent-border); border-radius: 50%; background: var(--agent-bg);
-    color: var(--agent-accent); font-size: 15px; box-shadow: 0 0 0 5px var(--agent-phase-bg);
-  }
-  .agent-graph-source strong { display: block; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; }
-  .agent-graph-source small { display: block; margin-top: 2px; color: var(--agent-muted); font-size: 10px; }
-  .agent-node {
-    position: absolute; z-index: 2; width: min(270px, 54%); min-width: 0; transition: color 0.2s ease;
-  }
-  .agent-node:hover { color: var(--agent-fg); }
-  .agent-node-1 { top: 12%; left: 0; }
-  .agent-node-2 { top: 26%; right: 0; }
-  .agent-node-3 { top: 45%; left: 5%; }
-  .agent-node-4 { top: 63%; right: 0; }
-  .agent-node-5 { top: 81%; left: 21%; width: min(300px, 58%); }
-  .agent-node-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .agent-node-index {
-    display: grid; place-items: center; width: 25px; height: 25px; flex: 0 0 auto;
-    border: 1px solid var(--agent-border); border-radius: 50%; background: var(--agent-bg);
-    color: var(--agent-accent); font-family: ${MONO}; font-size: 10px; font-weight: 800;
-  }
-  .agent-node code {
-    min-width: 0; overflow: hidden; color: var(--agent-code-fg); font-family: ${MONO}; font-size: 11px;
-    text-overflow: ellipsis; white-space: nowrap;
-  }
-  .agent-node-phase {
-    margin-left: auto; color: var(--agent-phase-fg); font-family: ${MONO}; font-size: 9px;
-    font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap;
-  }
-  .agent-node h2 { margin: 8px 0 0; color: var(--agent-fg); font-size: 17px; line-height: 1.2; letter-spacing: -0.01em; }
-  .agent-node p { max-width: 270px; margin: 5px 0 0; color: var(--agent-muted); font-size: 12px; line-height: 1.45; }
-  .agent-node-final .agent-node-index {
-    color: var(--agent-code-fg); border-color: var(--agent-final-border);
-    box-shadow: 0 0 0 5px var(--agent-phase-bg);
-  }
-  .agent-node-final h2 { color: var(--agent-code-fg); }
-  .agent-graph-foot {
-    display: flex; align-items: center; gap: 8px; min-height: 40px; padding-top: 12px;
-    border-top: 1px solid var(--agent-border); color: var(--agent-muted); font-family: ${MONO};
-    font-size: 10px; line-height: 1.3; text-transform: uppercase; letter-spacing: 0.04em;
-  }
-  .agent-graph-foot strong { color: var(--agent-fg); font-weight: 700; }
-  .agent-graph-proof {
-    display: grid; place-items: center; width: 18px; height: 18px; flex: 0 0 auto;
-    border-radius: 50%; color: var(--agent-bg); background: var(--agent-code-fg); font-size: 11px; font-weight: 900;
-  }
-  .agent-graph-foot-note { margin-left: auto; color: var(--agent-head-fg); white-space: nowrap; }
-
+  .hero-contract-step > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; min-width: 0; }
+  .hero-contract-label { color: var(--muted); font-family: ${MONO}; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+  .hero-contract-step code { min-width: 0; overflow-wrap: anywhere; color: var(--fg); font-family: ${MONO}; font-size: clamp(13px, 1.3vw, 15px); font-weight: 700; }
+  .hero-contract-step-final .hero-contract-mark { border-color: var(--green); background: var(--green-soft); color: var(--green-2); }
+  .hero-contract-step-final code { color: var(--green-2); }
+  .hero-contract-note { max-width: 390px; margin: 24px 0 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+  .agent-lifecycle { display: grid; grid-template-columns: minmax(230px, 0.72fr) minmax(0, 1.28fr); gap: clamp(40px, 7vw, 110px); align-items: start; margin: 0 auto 92px; padding: 76px 0 0; border-top: 1px solid var(--line); }
+  .agent-lifecycle-head { position: sticky; top: 92px; max-width: 330px; }
+  .agent-lifecycle-head h2 { margin: 12px 0 14px; font-size: clamp(28px, 3vw, 42px); line-height: 1.08; letter-spacing: -0.03em; }
+  .agent-lifecycle-head p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.6; }
+  .agent-lifecycle-list { position: relative; display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+  .agent-lifecycle-list::before { content: ""; position: absolute; top: 14px; bottom: 20px; left: 15px; width: 1px; background: var(--line-2); }
+  .agent-lifecycle-step { position: relative; display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 18px; min-width: 0; padding: 0 0 36px; }
+  .agent-lifecycle-step:last-child { padding-bottom: 0; }
+  .agent-lifecycle-index { position: relative; z-index: 1; display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--line-2); border-radius: 50%; background: var(--bg); color: var(--muted); font-family: ${MONO}; font-size: 10px; font-weight: 800; }
+  .agent-lifecycle-copy { min-width: 0; padding-top: 2px; }
+  .agent-lifecycle-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-width: 0; }
+  .agent-lifecycle-meta code { color: var(--green-2); font-family: ${MONO}; font-size: 12px; font-weight: 700; }
+  .agent-lifecycle-meta span { color: var(--muted); font-family: ${MONO}; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
+  .agent-lifecycle-copy h3 { margin: 8px 0 5px; color: var(--fg); font-size: 19px; line-height: 1.2; letter-spacing: -0.015em; }
+  .agent-lifecycle-copy p { max-width: 520px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+  .agent-lifecycle-step-final .agent-lifecycle-index { border-color: var(--green); background: var(--green-soft); color: var(--green-2); }
+  .agent-lifecycle-step-final .agent-lifecycle-meta code, .agent-lifecycle-step-final .agent-lifecycle-copy h3 { color: var(--green-2); }
   /* ---- benchmark bars ---- */
   .bench-card {
     border: 1px solid var(--line); border-radius: var(--radius-lg);
@@ -840,10 +784,13 @@ const css = `
     .feature-showcase.reverse { grid-template-columns: 1fr; }
     .feature-showcase.reverse .feature-info { order: 1; }
     .feature-showcase.reverse .code-window { order: 2; }
-    .hero { grid-template-columns: 1fr; gap: 34px; padding: 64px 0 56px; }
-    .hero-copy { align-items: center; text-align: center; max-width: 820px; margin: 0 auto; gap: 24px; }
-    .hero-actions { justify-content: center; }
-    .proof { grid-template-columns: repeat(2, 1fr); margin-bottom: 76px; }
+  .hero { grid-template-columns: 1fr; gap: 34px; padding: 64px 0 56px; }
+  .hero-copy { align-items: center; text-align: center; max-width: 820px; margin: 0 auto; gap: 24px; }
+  .hero-actions { justify-content: center; }
+  .hero-contract { width: min(100%, 620px); max-width: none; margin: 0 auto; padding-left: 42px; text-align: left; }
+  .agent-lifecycle { grid-template-columns: 1fr; gap: 42px; padding-top: 60px; }
+  .agent-lifecycle-head { position: static; max-width: 620px; }
+  .proof { grid-template-columns: repeat(2, 1fr); margin-bottom: 76px; }
     .proof-item:nth-child(2) { border-right: none; }
     .proof-item:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
     .timeline::before { left: 20px; }
@@ -873,31 +820,27 @@ const css = `
       align-items: stretch; width: min(100%, 340px);
     }
     .hero .install-widget { grid-column: 1 / -1; width: 100%; justify-content: center; }
-    .hero .hero-actions .button { width: 100%; min-width: 0; justify-content: center; padding: 0 12px; }
-    .hero-fineprint { display: none; }
-    .agent-graph { width: 100%; }
-    .agent-graph-head { padding-bottom: 12px; font-size: 10px; }
-    .agent-graph-route { font-size: 9px; }
-    .agent-graph-stage { min-height: 620px; }
-    .agent-graph-stage::before { background-size: 15px 15px; }
-    .agent-graph-path-return { display: none; }
-    .agent-graph-source { left: 8px; }
-    .agent-node {
-      left: 38px !important; right: auto !important; width: calc(100% - 38px);
-    }
-    .agent-node-1 { top: 13%; }
-    .agent-node-2 { top: 30%; }
-    .agent-node-3 { top: 47%; }
-    .agent-node-4 { top: 64%; }
-    .agent-node-5 { top: 81%; width: calc(100% - 38px); }
-    .agent-node-head { gap: 6px; }
-    .agent-node-index { width: 24px; height: 24px; font-size: 9px; }
-    .agent-node code { font-size: 10px; }
-    .agent-node-phase { font-size: 8px; }
-    .agent-node h2 { margin-top: 6px; font-size: 14px; }
-    .agent-node p { display: none; }
-    .agent-graph-foot { min-height: 40px; padding-top: 10px; font-size: 9px; }
-    .agent-graph-foot-note { display: none; }
+  .hero .hero-actions .button { width: 100%; min-width: 0; justify-content: center; padding: 0 12px; }
+  .hero-fineprint { display: none; }
+  .hero-contract { width: 100%; padding: 4px 0 0 34px; }
+  .hero-contract::before { top: 64px; bottom: 48px; left: 11px; }
+  .hero-contract-head { align-items: flex-start; }
+  .hero-contract-status { font-size: 9px; }
+  .hero-contract h2 { margin: 14px 0 20px; font-size: 27px; }
+  .hero-contract-flow { gap: 14px; }
+  .hero-contract-step { grid-template-columns: 24px minmax(0, 1fr); gap: 10px; }
+  .hero-contract-mark { width: 24px; height: 24px; font-size: 8px; }
+  .hero-contract-step > div { display: grid; gap: 3px; }
+  .hero-contract-step code { font-size: 13px; }
+  .hero-contract-note { margin-top: 20px; font-size: 12px; }
+  .agent-lifecycle { gap: 30px; margin-bottom: 72px; padding-top: 48px; }
+  .agent-lifecycle-head h2 { font-size: 30px; }
+  .agent-lifecycle-head p { font-size: 14px; }
+  .agent-lifecycle-step { grid-template-columns: 28px minmax(0, 1fr); gap: 14px; padding-bottom: 30px; }
+  .agent-lifecycle-list::before { left: 13px; }
+  .agent-lifecycle-index { width: 28px; height: 28px; font-size: 9px; }
+  .agent-lifecycle-copy h3 { font-size: 17px; }
+  .agent-lifecycle-copy p { font-size: 12.5px; }
     .cta .hero-actions { flex-direction: column; align-items: center; }
     .cta .install-widget, .cta .hero-actions .button { width: min(100%, 340px); justify-content: center; }
     .proof, .feature-grid { grid-template-columns: 1fr; }
@@ -1190,7 +1133,12 @@ const css = `
     max-width: min(360px, calc(100vw - 28px));
   }
   .nifra-bot-container:not(.dragging) {
-    transition: left 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), top 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+    transition: left 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), top 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.25s ease, visibility 0.25s ease, transform 0.25s ease;
+  }
+  .nifra-bot-container.nifra-bot-home-deferred {
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(12px);
   }
   .nifra-bot-panel {
     pointer-events: auto;
@@ -2076,7 +2024,7 @@ export default function Layout(props: { children?: ReactNode }) {
         </div>
       </footer>
 
-      <script type="module" src="/assets/nifra-bot.client.js?v=4" />
+      <script type="module" src="/assets/nifra-bot.client.js?v=5" />
     </div>
   )
 }
