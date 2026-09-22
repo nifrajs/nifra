@@ -1,4 +1,4 @@
-import { O_APPEND, O_CREAT, O_NOFOLLOW, O_RDONLY, O_WRONLY } from "node:constants"
+import { constants as FS_CONSTANTS } from "node:fs"
 import { type FileHandle, lstat, mkdir, open, rename, unlink, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 
@@ -6,6 +6,14 @@ const DEFAULT_MAX_SESSION_ENTRIES = 4_096
 const DEFAULT_MAX_SESSION_BYTES = 8 * 1024 * 1024
 const MAX_SESSION_ENTRIES = 100_000
 const MAX_SESSION_BYTES = 128 * 1024 * 1024
+// `node:constants` does not expose the POSIX-only named export on Windows in Bun.
+// Read it from the platform-safe `node:fs` constants object and fall back to zero;
+// the Windows open path uses its lstat/open/lstat guard instead of this flag.
+const O_APPEND = FS_CONSTANTS.O_APPEND
+const O_CREAT = FS_CONSTANTS.O_CREAT
+const O_RDONLY = FS_CONSTANTS.O_RDONLY
+const O_WRONLY = FS_CONSTANTS.O_WRONLY
+const O_NOFOLLOW = FS_CONSTANTS.O_NOFOLLOW ?? 0
 
 export interface SessionLogEntry {
   readonly version: 1
