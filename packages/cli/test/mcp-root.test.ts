@@ -129,7 +129,8 @@ describe("pathsFromRootsResult", () => {
         ...many,
       ],
     })
-    expect(paths).toContain("/nifra-duplicate")
+    // `fileURLToPath` returns the host-native absolute path (including `D:\\` on Windows).
+    expect(paths).toContain(resolve("/nifra-duplicate"))
     expect(paths).not.toContain("/tmp/\0nifra")
     expect(paths.length).toBeLessThanOrEqual(64)
     expect(new Set(paths).size).toBe(paths.length)
