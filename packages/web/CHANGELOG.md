@@ -1,5 +1,19 @@
 # @nifrajs/web
 
+## 3.5.0
+
+### Minor Changes
+
+- ac27343: Add a per-request `nonce` resolver to `createWebApp`. Nonces flow through framework-owned document scripts, status pages, error pages, and 404s; nonce-bearing responses are marked `private, no-store` so request-specific CSP values are not replayed from caches.
+
+### Patch Changes
+
+- 6046984: Close fresh security and correctness gaps in table allowlists, ISR/cache behavior, streamed response capture, idempotency ownership, and canonical redirects.
+- Updated dependencies [6046984]
+- Updated dependencies [d5b7c22]
+  - @nifrajs/core@3.5.0
+  - @nifrajs/island-trigger@3.5.0
+
 ## 3.4.0
 
 ### Minor Changes

@@ -1,5 +1,7 @@
 # @nifrajs/agent-protocol
 
+## 3.5.0
+
 ## 3.4.0
 
 ### Patch Changes

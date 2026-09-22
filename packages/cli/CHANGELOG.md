@@ -1,5 +1,25 @@
 # @nifrajs/cli
 
+## 3.5.0
+
+### Patch Changes
+
+- 6430334: Add the provider-neutral, content-free review report contract and expose `nifra review` through the CLI, authenticated agent RPC, and Workbench-safe view projections.
+- Updated dependencies [6046984]
+- Updated dependencies [ac27343]
+- Updated dependencies [d5b7c22]
+- Updated dependencies [6430334]
+- Updated dependencies [82c3018]
+  - @nifrajs/core@3.5.0
+  - @nifrajs/web@3.5.0
+  - @nifrajs/agent-review@3.5.0
+  - @nifrajs/schema@3.5.0
+  - @nifrajs/testing@3.5.0
+  - @nifrajs/client@3.5.0
+  - @nifrajs/mcp@3.5.0
+  - @nifrajs/runner@3.5.0
+  - create-nifra@3.5.0
+
 ## 3.4.0
 
 ### Patch Changes

@@ -1,5 +1,20 @@
 # @nifrajs/coding-agent
 
+## 3.5.0
+
+### Patch Changes
+
+- 6430334: Add the provider-neutral, content-free review report contract and expose `nifra review` through the CLI, authenticated agent RPC, and Workbench-safe view projections.
+- 322786e: Keep the session store loadable on Windows by reading file-open flags from the platform-safe filesystem constants.
+- Updated dependencies [6430334]
+- Updated dependencies [82c3018]
+- Updated dependencies [e95cd7e]
+  - @nifrajs/agent-review@3.5.0
+  - @nifrajs/jobs@3.5.0
+  - @nifrajs/pi@3.5.0
+  - @nifrajs/agent@3.5.0
+  - @nifrajs/agent-protocol@3.5.0
+
 ## 3.4.0
 
 ### Patch Changes

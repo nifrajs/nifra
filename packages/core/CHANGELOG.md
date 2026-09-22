@@ -1,5 +1,12 @@
 # @nifrajs/core
 
+## 3.5.0
+
+### Patch Changes
+
+- 6046984: Close fresh security and correctness gaps in table allowlists, ISR/cache behavior, streamed response capture, idempotency ownership, and canonical redirects.
+- d5b7c22: Harden request boundaries, error handling, resource limits, signing, and cross-runtime adapters for safer production releases.
+
 ## 3.4.0
 
 ### Patch Changes

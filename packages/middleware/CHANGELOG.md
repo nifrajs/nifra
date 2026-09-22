@@ -1,5 +1,13 @@
 # @nifrajs/middleware
 
+## 3.5.0
+
+### Patch Changes
+
+- 6046984: Close fresh security and correctness gaps in table allowlists, ISR/cache behavior, streamed response capture, idempotency ownership, and canonical redirects.
+- Updated dependencies [82c3018]
+  - @nifrajs/schema@3.5.0
+
 ## 3.4.0
 
 ### Patch Changes

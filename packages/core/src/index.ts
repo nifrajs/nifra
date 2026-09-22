@@ -16,7 +16,7 @@
  * read its own package.json at runtime. `scripts/version.ts` rewrites it on every release bump and
  * `check:publish` asserts it equals `@nifrajs/core`'s package version.
  */
-export const VERSION = "3.4.0" as const
+export const VERSION = "3.5.0" as const
 
 export type Version = typeof VERSION
 
