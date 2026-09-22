@@ -123,10 +123,10 @@ export default function FullstackBunGuide() {
       <h2>Deploying - and the runtime escape hatch</h2>
       <p>
         <code>nifra build</code> produces the production server. On Bun, our published benchmarks
-        put the framework at 101% of a hand-rolled <code>Bun.serve</code> baseline - the layer costs
-        nothing measurable. And because runtimes are adapters, the same app deploys to Node, Deno,
-        or edge workers unchanged if your infrastructure demands it. Numbers and methodology:{" "}
-        <a href="/benchmarks">benchmarks</a>.
+        put the framework at 108% of a hand-rolled <code>Bun.serve</code> baseline on GET - the
+        layer costs nothing measurable. And because runtimes are adapters, the same app deploys to
+        Node, Deno, or edge workers unchanged if your infrastructure demands it. Numbers and
+        methodology: <a href="/benchmarks">benchmarks</a>.
       </p>
 
       <h2>Where to go next</h2>

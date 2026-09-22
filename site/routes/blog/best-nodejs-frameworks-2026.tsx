@@ -78,9 +78,9 @@ export default function BestNodeFrameworks() {
         </tbody>
       </table>
       <p>
-        Read it honestly: Nifra and Fastify are the speed class - level on the GET (treat it as a
-        tie), Nifra ~12% ahead on the validated POST. Express costs you roughly 40% of your ceiling
-        and nobody migrates off it for speed alone. Full tables:{" "}
+        Read it honestly: Nifra and Fastify are the same speed class - Nifra leads on the current
+        GET snapshot and is ~8% ahead on the validated POST. Express costs you roughly 40% of your
+        ceiling and nobody migrates off it for speed alone. Full tables:{" "}
         <a href="/benchmarks">benchmarks</a>.
       </p>
 

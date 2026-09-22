@@ -268,19 +268,19 @@
   "proof": [
     {
       "value": "25×",
-      "label": "full-stack SSR vs Next.js (Node, dynamic, same machine)"
+      "label": "dynamic SSR vs Next.js (React on Node, same machine)"
     },
     {
-      "value": "131k",
-      "label": "req/s on Bun - 101% of the raw-runtime ceiling, ahead of Elysia"
+      "value": "143k",
+      "label": "GET req/s on Bun - 108% of the raw-runtime ceiling"
     },
     {
       "value": "5 + 4",
-      "label": "UI frameworks · runtimes, from one app"
+      "label": "UI frameworks + runtime families, from one app"
     },
     {
-      "value": "15 KB",
-      "label": "a typed full-stack base - MCP, WS, SSE, typed client - not just a router"
+      "value": "55",
+      "label": "typed packages, all optional"
     }
   ],
   "ssrTables": [

@@ -42,7 +42,7 @@ export default function BestBunFrameworks() {
             <td>Nifra</td>
             <td>Full-stack: API + SSR for React/Vue/Svelte/Solid/Preact</td>
             <td>Inferred from server, zero codegen, reaches loaders/pages</td>
-            <td>101% of a raw Bun.serve baseline on GET; 105% of Elysia on validated POST</td>
+            <td>108% of a raw Bun.serve baseline on GET; 106% of Elysia on validated POST</td>
             <td>API + frontend are one product; AI agents write real code</td>
           </tr>
           <tr>

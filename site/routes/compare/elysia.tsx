@@ -30,12 +30,13 @@ export default function VsElysia() {
       <ul>
         <li>
           On <strong>Bun</strong>, Nifra runs level with Elysia on <code>GET /users/:id</code> at
-          101% of a hand-rolled <code>Bun.serve</code> baseline - the framework layer costs nothing
-          measurable - and 105% of Elysia on the validated <code>POST</code>.
+          108% of a hand-rolled <code>Bun.serve</code> baseline on GET - the framework layer costs
+          nothing measurable - and 106% of Elysia on the validated <code>POST</code>.
         </li>
         <li>
           In the <strong>realistic middleware shape</strong> (security headers + CORS + request-id
-          on every request), Nifra runs at 103% of Elysia on GET and 108% on POST.
+          on every request), Nifra runs at 101% of Elysia on GET and 97% on POST in the current Bun
+          snapshot.
         </li>
         <li>
           On <strong>Deno</strong>, Nifra leads every measured framework, Elysia included, on both

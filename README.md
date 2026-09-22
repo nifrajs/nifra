@@ -215,8 +215,8 @@ Vue, Solid, Svelte, and Preact without changing the route/data model.
 
 Published benchmarks are reproducible and include the rows where Nifra loses:
 
-- **Bun:** ~131k req/s on the published HTTP matrix.
-- **Node:** ~12% ahead of Fastify on the validated POST workload in the current matrix.
+- **Bun:** ~143k req/s on the published `GET /users/:id` HTTP matrix.
+- **Node:** ~8% ahead of Fastify on the validated POST workload in the current matrix.
 - **SSR:** React rendered per request at up to ~25× the compared Next.js workload on the same machine.
 
 See the [benchmark methodology and full results](https://nifra.dev/benchmarks), or run

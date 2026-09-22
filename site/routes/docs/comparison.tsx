@@ -126,13 +126,13 @@ export default function Comparison() {
           regex), but a router is <b>~1% of a real request</b> - the time goes to middleware, validation,
           context, and serialization. In the current matrix (median of 5 full runs) Nifra{" "}
           <b>tops the framework field on Bun</b> - level with Elysia on <code>GET /users/:id</code> at
-          101% of the raw-runtime ceiling, 105% of Elysia on the validated <code>POST</code> - and{" "}
+          108% of the raw-runtime ceiling, 106% of Elysia on the validated <code>POST</code> - and{" "}
           <b>leads every framework on Deno</b> on both workloads. On <b>Node</b> it{" "}
-          <b>leads the framework field too</b> - ahead of Fastify by ~12% on the validated{" "}
-          <code>POST</code> (96% of the raw-Node ceiling) and level-to-ahead on GET, with Elysia, Hono,
+          <b>leads the framework field too</b> - ahead of Fastify by ~8% on the validated{" "}
+          <code>POST</code> (92% of the raw-Node ceiling) and ahead on GET, with Elysia, Hono,
           and Express behind. In the realistic shape (security headers + CORS +
           bearer auth + cookies + validated query/body + a ~2.4&nbsp;KB JSON response, measured with{" "}
-          <code>oha</code>) Nifra runs at <b>103% of Elysia on GET and 108% on POST</b>. Treat benchmark
+          <code>oha</code>) Nifra runs at <b>101% of Elysia on GET and 97% on POST</b>. Treat benchmark
           rows as same-run evidence, not a permanent law of nature.
         </li>
         <li>

@@ -92,7 +92,7 @@ export default function BunVsNode() {
         adapter: develop and deploy on Node today, move the identical code to Bun when the
         throughput matters (or Deno, or edge workers). The numbers above are that story measured -
         nobody rewrote anything between the two columns. On Node, Nifra runs level-to-ahead of
-        Fastify (<a href="/compare/fastify">details</a>); on Bun it serves at 101% of a hand-rolled{" "}
+        Fastify (<a href="/compare/fastify">details</a>); on Bun it serves at 108% of a hand-rolled{" "}
         <code>Bun.serve</code> baseline - so you are not paying a framework tax on either side.
       </p>
 

@@ -6,7 +6,7 @@ export const meta = compareMeta(
   "fastify",
   "Nifra vs Fastify",
   "Nifra vs Fastify - Node's speed king vs a typed full-stack",
-  "Nifra vs Fastify compared honestly: ahead on Node in our published benchmark (~12% on the validated POST, level on GET), what each gives you beyond raw throughput, and why the same Nifra app runs unchanged - and much faster - on Bun.",
+  "Nifra vs Fastify compared honestly: ahead on Node in our published benchmark (~8% on the validated POST, ahead on GET), what each gives you beyond raw throughput, and why the same Nifra app runs unchanged - and much faster - on Bun.",
 )
 
 export default function VsFastify() {
@@ -24,7 +24,7 @@ export default function VsFastify() {
       <h2>The Node numbers</h2>
       <p>
         On identical workloads, Nifra leads the framework field on Node. On the schema-validated{" "}
-        <code>POST</code> it runs ~12% ahead of Fastify, at 96% of a raw <code>node:http</code>{" "}
+        <code>POST</code> it runs ~8% ahead of Fastify, at 92% of a raw <code>node:http</code>{" "}
         baseline - validation included. On the path-param <code>GET</code> the two are level,
         trading places run to run; treat that one as a tie. Behind them: Elysia, Express, Hono.
         Every row, the methodology, and the harness itself are public on the{" "}
@@ -35,9 +35,10 @@ export default function VsFastify() {
       <p>
         A Nifra app is runtime-portable: the identical code deploys to Node, Bun, Deno, or edge
         workers through adapters. The same benchmarked app on Bun serves several times the Node
-        throughput, at 101% of a hand-rolled <code>Bun.serve</code> baseline - the framework layer
-        measurably costs nothing there. If your Node service is CPU-bound on request handling, the
-        cheapest optimization may be a runtime switch that changes zero lines of application code.
+        throughput, at 108% of a hand-rolled <code>Bun.serve</code> baseline on the published GET -
+        the framework layer measurably costs nothing there. If your Node service is CPU-bound on
+        request handling, the cheapest optimization may be a runtime switch that changes zero lines
+        of application code.
       </p>
 
       <h2>Beyond throughput</h2>

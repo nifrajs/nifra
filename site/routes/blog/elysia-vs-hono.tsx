@@ -95,8 +95,8 @@ export default function ElysiaVsHono() {
       <p>
         Both stop at the API boundary. If you also own the frontend, Nifra extends the typed
         contract through SSR loaders, pages, and server functions (React/Vue/Svelte/Solid/Preact),
-        matches or beats Elysia's throughput in our published Bun runs (101% of the raw{" "}
-        <code>Bun.serve</code> ceiling on GET, 105% of Elysia on validated POST), runs on all the
+        matches or beats Elysia's throughput in our published Bun runs (108% of the raw{" "}
+        <code>Bun.serve</code> ceiling on GET, 106% of Elysia on validated POST), runs on all the
         same runtimes, and ships its docs as a <a href="/blog/docs-as-mcp">live MCP server</a> for
         AI coding agents. Head-to-heads: <a href="/compare/elysia">vs Elysia</a> ·{" "}
         <a href="/compare/hono">vs Hono</a>.
