@@ -283,30 +283,35 @@ const AGENT_LOOP = [
   {
     step: "01",
     command: "nifra_context",
+    phase: "context",
     title: "Read the live app",
     body: "Routes, schemas, middleware, and conventions - the real API surface, not stale docs.",
   },
   {
     step: "02",
     command: "nifra_scaffold",
+    phase: "scaffold",
     title: "Write in the right place",
     body: "URL patterns resolve to framework-correct files, handlers, loaders, and typed clients.",
   },
   {
     step: "03",
     command: "nifra_run",
+    phase: "runtime",
     title: "Verify the behavior",
     body: "HTTP, SSR, and WebSocket checks run against the current workspace.",
   },
   {
     step: "04",
     command: "nifra_check",
+    phase: "contract",
     title: "Block drift",
     body: "Typecheck and route-contract checks, with the fix suggested, before CI goes green.",
   },
   {
     step: "05",
     command: "nifra_assure",
+    phase: "assurance",
     title: "Prove the security posture",
     body: "Policy classifies every route - an unauthenticated write fails the build, named.",
   },
@@ -558,26 +563,51 @@ export default function Home() {
             No generated SDK. No stale route docs. No unproven routes. No lock-in.
           </p>
         </div>
-        <div className="agent-board">
-          <div className="agent-board-head">
-            <span className="agent-led" />
-            <span>agent loop</span>
+        <section className="agent-board" aria-label="Nifra agent loop">
+          <div className="agent-board-top">
+            <div className="agent-board-head">
+              <span className="agent-led" />
+              <span>agent loop</span>
+              <span className="agent-board-mode">live contract</span>
+            </div>
+            <div className="agent-board-meta">
+              <span>
+                context <b aria-hidden="true">→</b> change <b aria-hidden="true">→</b> proof
+              </span>
+              <code>5 steps</code>
+            </div>
           </div>
-          <div className="agent-board-grid">
-            {AGENT_LOOP.map((item) => (
-              <article className="agent-step" key={item.command}>
-                <span className="agent-step-no">{item.step}</span>
-                <div>
+          <ol className="agent-board-grid">
+            {AGENT_LOOP.map((item, index) => (
+              <li
+                className={`agent-step${index === AGENT_LOOP.length - 1 ? " agent-step-final" : ""}`}
+                key={item.command}
+              >
+                <div className="agent-step-rail" aria-hidden="true">
+                  <span className="agent-step-no">{item.step}</span>
+                  {index < AGENT_LOOP.length - 1 ? <span className="agent-step-line" /> : null}
+                </div>
+                <div className="agent-step-body">
                   <div className="agent-step-head">
                     <code>{item.command}</code>
-                    <h2>{item.title}</h2>
+                    <span className="agent-step-phase">{item.phase}</span>
                   </div>
+                  <h2>{item.title}</h2>
                   <p>{item.body}</p>
                 </div>
-              </article>
+              </li>
             ))}
+          </ol>
+          <div className="agent-board-foot">
+            <span className="agent-foot-mark" aria-hidden="true">
+              ✓
+            </span>
+            <span>
+              <strong>assurance gate</strong> keeps the route provable
+            </span>
+            <code>nifra_assure</code>
           </div>
-        </div>
+        </section>
       </section>
 
       {/* VALUE ROW - lead with the why */}
