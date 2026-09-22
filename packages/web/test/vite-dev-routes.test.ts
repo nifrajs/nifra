@@ -26,6 +26,18 @@ afterEach(async () => {
 const page = async (): Promise<string> =>
   (await fetch(`http://127.0.0.1:${server?.port ?? 0}/`)).text()
 
+const waitForPage = async (matches: (body: string) => boolean): Promise<string> => {
+  // Vite's polling watcher is asynchronous. Leave room for a loaded full-suite CI runner to
+  // deliver add/unlink events instead of turning a slow notification into a flaky assertion.
+  const deadline = Date.now() + 15_000
+  let body = await page()
+  while (!matches(body) && Date.now() < deadline) {
+    await Bun.sleep(50)
+    body = await page()
+  }
+  return body
+}
+
 test("Vite route add and unlink events refresh both manifests without restart", async () => {
   server = await createViteDevServer({
     root,
@@ -44,10 +56,8 @@ test("Vite route add and unlink events refresh both manifests without restart", 
 
   const about = join(routesDir, "about.tsx")
   writeFileSync(about, "export default function About() { return null }\n")
-  for (let i = 0; i < 80 && !(await page()).includes("about"); i++) await Bun.sleep(50)
-  expect(await page()).toContain("about")
+  expect(await waitForPage((body) => body.includes("about"))).toContain("about")
 
   rmSync(about)
-  for (let i = 0; i < 80 && (await page()).includes("about"); i++) await Bun.sleep(50)
-  expect(await page()).not.toContain("about")
+  expect(await waitForPage((body) => !body.includes("about"))).not.toContain("about")
 }, 60_000)
