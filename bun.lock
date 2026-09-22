@@ -759,6 +759,9 @@
       "dependencies": {
         "@nifrajs/core": "workspace:*",
       },
+      "devDependencies": {
+        "@nifrajs/schema": "workspace:*",
+      },
     },
     "packages/workers": {
       "name": "@nifrajs/workers",

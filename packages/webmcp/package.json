@@ -39,6 +39,9 @@
   "dependencies": {
     "@nifrajs/core": "workspace:*"
   },
+  "devDependencies": {
+    "@nifrajs/schema": "workspace:*"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/nifrajs/nifra.git",
