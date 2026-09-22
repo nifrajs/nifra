@@ -563,49 +563,91 @@ export default function Home() {
             No generated SDK. No stale route docs. No unproven routes. No lock-in.
           </p>
         </div>
-        <section className="agent-board" aria-label="Nifra agent loop">
-          <div className="agent-board-top">
-            <div className="agent-board-head">
+        <section className="agent-graph" aria-label="Nifra agent loop">
+          <div className="agent-graph-head">
+            <span className="agent-graph-kicker">
               <span className="agent-led" />
-              <span>agent loop</span>
-              <span className="agent-board-mode">live contract</span>
-            </div>
-            <div className="agent-board-meta">
-              <span>
-                context <b aria-hidden="true">→</b> change <b aria-hidden="true">→</b> proof
-              </span>
-              <code>5 steps</code>
-            </div>
+              agent loop
+            </span>
+            <span className="agent-graph-route">
+              live workspace <b aria-hidden="true">→</b> proof
+            </span>
           </div>
-          <ol className="agent-board-grid">
+          <div className="agent-graph-stage">
+            <svg
+              className="agent-graph-svg"
+              viewBox="0 0 560 560"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <defs>
+                <linearGradient id="agent-graph-gradient" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0" stopColor="var(--green-2)" />
+                  <stop offset="1" stopColor="var(--green)" />
+                </linearGradient>
+                <marker
+                  id="agent-graph-arrow"
+                  viewBox="0 0 10 10"
+                  refX="8"
+                  refY="5"
+                  markerWidth="5"
+                  markerHeight="5"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+                </marker>
+              </defs>
+              <path
+                className="agent-graph-path agent-graph-path-main"
+                d="M 84 82 C 220 76 342 126 426 166 S 208 248 144 278 S 302 346 408 378 S 292 458 250 512"
+              />
+              <path
+                className="agent-graph-path agent-graph-path-flow"
+                d="M 84 82 C 220 76 342 126 426 166 S 208 248 144 278 S 302 346 408 378 S 292 458 250 512"
+              />
+              <path
+                className="agent-graph-path agent-graph-path-return"
+                d="M 250 512 C 88 546 34 408 56 290 C 66 222 70 146 84 82"
+                markerEnd="url(#agent-graph-arrow)"
+              />
+              <circle className="agent-graph-dot" cx="84" cy="82" r="5" />
+              <circle className="agent-graph-dot" cx="426" cy="166" r="5" />
+              <circle className="agent-graph-dot" cx="144" cy="278" r="5" />
+              <circle className="agent-graph-dot" cx="408" cy="378" r="5" />
+              <circle className="agent-graph-dot agent-graph-dot-final" cx="250" cy="512" r="7" />
+            </svg>
+            <div className="agent-graph-source">
+              <span className="agent-graph-source-mark" aria-hidden="true">
+                ⌘
+              </span>
+              <span>
+                <strong>live workspace</strong>
+                <small>routes · schemas · policy</small>
+              </span>
+            </div>
             {AGENT_LOOP.map((item, index) => (
-              <li
-                className={`agent-step${index === AGENT_LOOP.length - 1 ? " agent-step-final" : ""}`}
+              <article
+                className={`agent-node agent-node-${index + 1}${index === AGENT_LOOP.length - 1 ? " agent-node-final" : ""}`}
                 key={item.command}
               >
-                <div className="agent-step-rail" aria-hidden="true">
-                  <span className="agent-step-no">{item.step}</span>
-                  {index < AGENT_LOOP.length - 1 ? <span className="agent-step-line" /> : null}
+                <div className="agent-node-head">
+                  <span className="agent-node-index">{item.step}</span>
+                  <code>{item.command}</code>
+                  <span className="agent-node-phase">{item.phase}</span>
                 </div>
-                <div className="agent-step-body">
-                  <div className="agent-step-head">
-                    <code>{item.command}</code>
-                    <span className="agent-step-phase">{item.phase}</span>
-                  </div>
-                  <h2>{item.title}</h2>
-                  <p>{item.body}</p>
-                </div>
-              </li>
+                <h2>{item.title}</h2>
+                <p>{item.body}</p>
+              </article>
             ))}
-          </ol>
-          <div className="agent-board-foot">
-            <span className="agent-foot-mark" aria-hidden="true">
+          </div>
+          <div className="agent-graph-foot">
+            <span className="agent-graph-proof" aria-hidden="true">
               ✓
             </span>
             <span>
-              <strong>assurance gate</strong> keeps the route provable
+              <strong>nifra_assure</strong> is the final gate
             </span>
-            <code>nifra_assure</code>
+            <span className="agent-graph-foot-note">security evidence before ship</span>
           </div>
         </section>
       </section>

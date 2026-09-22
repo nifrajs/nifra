@@ -263,103 +263,104 @@ const css = `
   .hero-fineprint {
     margin: -8px 0 0; color: var(--muted); font-family: ${MONO}; font-size: 12px;
   }
-  .agent-board {
-    position: relative; border: 1px solid var(--agent-border); border-radius: 22px;
-    background: var(--agent-bg); color: var(--agent-fg); box-shadow: var(--agent-shadow);
-    overflow: hidden; isolation: isolate;
-  }
-  .agent-board::before {
-    content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
-    background: radial-gradient(circle at 92% 0%, rgba(99, 102, 241, 0.13), transparent 34%),
-      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 42%);
-  }
-  .agent-board-top { border-bottom: 1px solid var(--agent-border); }
-  .agent-board-mode {
-    margin-left: auto; color: var(--agent-code-fg); font-size: 10px; letter-spacing: 0.08em;
-    font-weight: 700; text-transform: uppercase;
-  }
-  .agent-board-meta {
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    padding: 0 18px 14px; color: var(--agent-muted); font-family: ${MONO}; font-size: 10px;
-    letter-spacing: 0.04em; text-transform: uppercase;
-  }
-  .agent-board-meta b { color: var(--agent-accent); font-weight: 700; padding: 0 4px; }
-  .agent-board-meta code {
-    color: var(--agent-head-fg); font-family: inherit; font-size: inherit; white-space: nowrap;
-  }
-  .agent-board-head {
-    display: flex; align-items: center; gap: 9px; padding: 17px 18px 10px;
-    font-family: ${MONO}; font-size: 12px; font-weight: 700; letter-spacing: 0.06em;
-    text-transform: uppercase; color: var(--agent-head-fg);
-  }
   .agent-led {
     width: 8px; height: 8px; border-radius: 50%; background: var(--agent-accent);
     box-shadow: 0 0 0 4px color-mix(in srgb, var(--agent-accent) 18%, transparent);
   }
-  .agent-board-grid {
-    display: grid; grid-template-columns: 1fr; gap: 0; margin: 0; padding: 14px 14px 10px;
-    list-style: none;
+  .agent-graph {
+    position: relative; min-width: 0; padding: 2px 0 0; color: var(--agent-fg); isolation: isolate;
   }
-  .agent-step {
-    display: grid; grid-template-columns: 34px 1fr; gap: 12px; min-width: 0;
-    background: transparent;
+  .agent-graph::before {
+    content: ""; position: absolute; z-index: -1; pointer-events: none;
+    inset: 4% -12% 5% -14%;
+    background: radial-gradient(ellipse at 58% 42%, rgba(99, 102, 241, 0.14), transparent 62%);
+    opacity: 0.9;
   }
-  .agent-step-rail { position: relative; display: flex; justify-content: center; }
-  .agent-step-line {
-    position: absolute; top: 30px; bottom: 0; width: 1px;
-    background: linear-gradient(180deg, var(--agent-accent), var(--agent-grid-bg));
-    opacity: 0.55;
+  .agent-graph-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 18px;
+    padding: 0 0 16px; color: var(--agent-head-fg); font-family: ${MONO}; font-size: 11px;
+    font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
   }
-  .agent-step-no {
-    position: relative; z-index: 1; display: grid; place-items: center; width: 28px; height: 28px;
+  .agent-graph-kicker { display: inline-flex; align-items: center; gap: 9px; color: var(--agent-fg); }
+  .agent-graph-route { color: var(--agent-muted); font-size: 10px; font-weight: 600; white-space: nowrap; }
+  .agent-graph-route b { color: var(--agent-accent); padding: 0 4px; }
+  .agent-graph-stage {
+    position: relative; min-height: 560px; isolation: isolate;
+  }
+  .agent-graph-stage::before {
+    content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+    background-image: radial-gradient(circle, var(--agent-grid-bg) 1px, transparent 1.5px);
+    background-size: 18px 18px; mask-image: radial-gradient(ellipse at 55% 46%, #000 0%, transparent 72%);
+    opacity: 0.34;
+  }
+  .agent-graph-svg {
+    position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; overflow: visible;
+    pointer-events: none;
+  }
+  .agent-graph-path {
+    fill: none; stroke: var(--agent-accent); stroke-linecap: round; stroke-linejoin: round;
+  }
+  .agent-graph-path-main { stroke-width: 1.25; opacity: 0.28; }
+  .agent-graph-path-flow {
+    stroke: url(#agent-graph-gradient); stroke-width: 2.5; stroke-dasharray: 1 17;
+    animation: agent-flow 3.8s linear infinite; opacity: 0.95;
+  }
+  .agent-graph-path-return { stroke-width: 1; stroke-dasharray: 3 9; opacity: 0.25; color: var(--agent-accent); }
+  .agent-graph-dot { fill: var(--agent-bg); stroke: var(--agent-accent); stroke-width: 1.5; opacity: 0.72; }
+  .agent-graph-dot-final { fill: var(--green); stroke: var(--green); opacity: 1; }
+  @keyframes agent-flow { to { stroke-dashoffset: -36; } }
+  .agent-graph-source {
+    position: absolute; top: 2px; left: 0; z-index: 2; display: flex; align-items: center; gap: 10px;
+    color: var(--agent-fg); font-family: ${MONO};
+  }
+  .agent-graph-source-mark {
+    display: grid; place-items: center; width: 30px; height: 30px; flex: 0 0 auto;
     border: 1px solid var(--agent-border); border-radius: 50%; background: var(--agent-bg);
-    font-family: ${MONO}; font-size: 10px; font-weight: 800; color: var(--agent-accent);
+    color: var(--agent-accent); font-size: 15px; box-shadow: 0 0 0 5px var(--agent-phase-bg);
   }
-  .agent-step-body {
-    min-width: 0; padding: 1px 4px 15px 0; margin-bottom: 10px;
-    border-bottom: 1px solid var(--agent-border);
+  .agent-graph-source strong { display: block; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; }
+  .agent-graph-source small { display: block; margin-top: 2px; color: var(--agent-muted); font-size: 10px; }
+  .agent-node {
+    position: absolute; z-index: 2; width: min(270px, 54%); min-width: 0; transition: color 0.2s ease;
   }
-  .agent-step-head { display: flex; align-items: center; gap: 9px; min-width: 0; }
-  .agent-step code {
-    display: inline-block; min-width: 0; margin: 0; color: var(--agent-code-fg);
-    font-family: ${MONO}; font-size: 12px; background: var(--agent-code-bg);
-    border: 1px solid var(--agent-code-border); border-radius: 5px; padding: 1px 7px;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  .agent-node:hover { color: var(--agent-fg); }
+  .agent-node-1 { top: 12%; left: 0; }
+  .agent-node-2 { top: 26%; right: 0; }
+  .agent-node-3 { top: 45%; left: 5%; }
+  .agent-node-4 { top: 63%; right: 0; }
+  .agent-node-5 { top: 81%; left: 21%; width: min(300px, 58%); }
+  .agent-node-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .agent-node-index {
+    display: grid; place-items: center; width: 25px; height: 25px; flex: 0 0 auto;
+    border: 1px solid var(--agent-border); border-radius: 50%; background: var(--agent-bg);
+    color: var(--agent-accent); font-family: ${MONO}; font-size: 10px; font-weight: 800;
   }
-  .agent-step-phase {
-    margin-left: auto; color: var(--agent-phase-fg); background: var(--agent-phase-bg);
-    border-radius: 999px; padding: 3px 7px; font-family: ${MONO}; font-size: 9px;
-    font-weight: 700; letter-spacing: 0.08em; line-height: 1; text-transform: uppercase;
+  .agent-node code {
+    min-width: 0; overflow: hidden; color: var(--agent-code-fg); font-family: ${MONO}; font-size: 11px;
+    text-overflow: ellipsis; white-space: nowrap;
   }
-  .agent-step h2 {
-    margin: 9px 0 0; color: var(--agent-fg); font-size: 15px; line-height: 1.25; letter-spacing: 0;
+  .agent-node-phase {
+    margin-left: auto; color: var(--agent-phase-fg); font-family: ${MONO}; font-size: 9px;
+    font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap;
   }
-  .agent-step p {
-    margin: 4px 0 0; color: var(--agent-muted); font-size: 12px; line-height: 1.45;
-  }
-  .agent-step-final .agent-step-no {
+  .agent-node h2 { margin: 8px 0 0; color: var(--agent-fg); font-size: 17px; line-height: 1.2; letter-spacing: -0.01em; }
+  .agent-node p { max-width: 270px; margin: 5px 0 0; color: var(--agent-muted); font-size: 12px; line-height: 1.45; }
+  .agent-node-final .agent-node-index {
     color: var(--agent-code-fg); border-color: var(--agent-final-border);
-    box-shadow: 0 0 0 4px var(--agent-phase-bg);
+    box-shadow: 0 0 0 5px var(--agent-phase-bg);
   }
-  .agent-step-final .agent-step-body {
-    padding: 12px 12px 14px; margin: -1px 0 4px; border: 1px solid var(--agent-final-border);
-    border-radius: 12px; background: var(--agent-final-bg);
+  .agent-node-final h2 { color: var(--agent-code-fg); }
+  .agent-graph-foot {
+    display: flex; align-items: center; gap: 8px; min-height: 40px; padding-top: 12px;
+    border-top: 1px solid var(--agent-border); color: var(--agent-muted); font-family: ${MONO};
+    font-size: 10px; line-height: 1.3; text-transform: uppercase; letter-spacing: 0.04em;
   }
-  .agent-board-foot {
-    display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 10px 18px;
-    border-top: 1px solid var(--agent-border); color: var(--agent-muted);
-    font-size: 11px; line-height: 1.3;
-  }
-  .agent-board-foot strong { color: var(--agent-fg); font-weight: 700; }
-  .agent-foot-mark {
+  .agent-graph-foot strong { color: var(--agent-fg); font-weight: 700; }
+  .agent-graph-proof {
     display: grid; place-items: center; width: 18px; height: 18px; flex: 0 0 auto;
-    border-radius: 50%; color: var(--agent-bg); background: var(--agent-code-fg);
-    font-size: 11px; font-weight: 900;
+    border-radius: 50%; color: var(--agent-bg); background: var(--agent-code-fg); font-size: 11px; font-weight: 900;
   }
-  .agent-board-foot code {
-    margin-left: auto; color: var(--agent-code-fg); font-family: ${MONO}; font-size: 10px;
-    white-space: nowrap;
-  }
+  .agent-graph-foot-note { margin-left: auto; color: var(--agent-head-fg); white-space: nowrap; }
 
   /* ---- benchmark bars ---- */
   .bench-card {
@@ -874,19 +875,29 @@ const css = `
     .hero .install-widget { grid-column: 1 / -1; width: 100%; justify-content: center; }
     .hero .hero-actions .button { width: 100%; min-width: 0; justify-content: center; padding: 0 12px; }
     .hero-fineprint { display: none; }
-    .agent-board { width: 100%; border-radius: 18px; }
-    .agent-board-head { padding: 14px 14px 9px; }
-    .agent-board-meta { padding: 0 14px 11px; font-size: 9px; }
-    .agent-board-grid { padding: 10px 12px 6px; }
-    .agent-step { grid-template-columns: 28px 1fr; gap: 9px; }
-    .agent-step-no { width: 24px; height: 24px; font-size: 9px; }
-    .agent-step-line { top: 26px; }
-    .agent-step-body { padding-bottom: 10px; margin-bottom: 7px; }
-    .agent-step h2 { margin-top: 6px; font-size: 14px; }
-    .agent-step p { display: none; }
-    .agent-step-final .agent-step-body { padding: 10px; }
-    .agent-board-foot { min-height: 42px; padding: 9px 14px; font-size: 10px; }
-    .agent-board-foot code { display: none; }
+    .agent-graph { width: 100%; }
+    .agent-graph-head { padding-bottom: 12px; font-size: 10px; }
+    .agent-graph-route { font-size: 9px; }
+    .agent-graph-stage { min-height: 620px; }
+    .agent-graph-stage::before { background-size: 15px 15px; }
+    .agent-graph-path-return { display: none; }
+    .agent-graph-source { left: 8px; }
+    .agent-node {
+      left: 38px !important; right: auto !important; width: calc(100% - 38px);
+    }
+    .agent-node-1 { top: 13%; }
+    .agent-node-2 { top: 30%; }
+    .agent-node-3 { top: 47%; }
+    .agent-node-4 { top: 64%; }
+    .agent-node-5 { top: 81%; width: calc(100% - 38px); }
+    .agent-node-head { gap: 6px; }
+    .agent-node-index { width: 24px; height: 24px; font-size: 9px; }
+    .agent-node code { font-size: 10px; }
+    .agent-node-phase { font-size: 8px; }
+    .agent-node h2 { margin-top: 6px; font-size: 14px; }
+    .agent-node p { display: none; }
+    .agent-graph-foot { min-height: 40px; padding-top: 10px; font-size: 9px; }
+    .agent-graph-foot-note { display: none; }
     .cta .hero-actions { flex-direction: column; align-items: center; }
     .cta .install-widget, .cta .hero-actions .button { width: min(100%, 340px); justify-content: center; }
     .proof, .feature-grid { grid-template-columns: 1fr; }
