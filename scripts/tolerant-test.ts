@@ -73,17 +73,27 @@ if (hasFailLine || nonZeroFailCount || nonZeroErrorCount) {
   // GitHub hides step logs from anonymous viewers. Keep the gate strict while surfacing the bounded
   // failure names through annotations so a failed platform job remains diagnosable without log access.
   if (process.env.GITHUB_ACTIONS === "true") {
-    const failureLines = normalized
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(
-        (line) =>
-          line.length > 0 &&
-          (/\(fail\)|[✗✕×]/u.test(line) || /^# Unhandled error|^error:/i.test(line)),
-      )
-      .slice(0, 32)
+    const lines = normalized.split("\n")
+    const failureLines: string[] = []
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index]?.trim() ?? ""
+      if (
+        line.length === 0 ||
+        !(/\(fail\)|[✗✕×]/u.test(line) || /^# Unhandled error|^error:/i.test(line))
+      ) {
+        continue
+      }
+      // Bun prints the test file and error details around an unhandled-error marker. Include a
+      // small bounded window so anonymous GitHub annotations identify the owning test file.
+      const start = /^# Unhandled error/i.test(line) ? Math.max(0, index - 4) : index
+      const end = /^# Unhandled error/i.test(line) ? Math.min(lines.length, index + 8) : index + 1
+      for (const candidate of lines.slice(start, end).map((entry) => entry.trim())) {
+        if (candidate.length > 0 && !failureLines.includes(candidate)) failureLines.push(candidate)
+      }
+      if (failureLines.length >= 32) break
+    }
     const summary = normalized.match(/Ran \d+ tests? across \d+ files?\./)?.[0]
-    const diagnostics = failureLines.length > 0 ? failureLines : [summary ?? `bun exited ${status}`]
+    const diagnostics = [summary ?? `bun exited ${status}`, ...failureLines].slice(0, 32)
     for (const line of diagnostics) {
       process.stdout.write(
         `::error title=Test failure::${encodeCommandValue(line.slice(0, 512))}\n`,
