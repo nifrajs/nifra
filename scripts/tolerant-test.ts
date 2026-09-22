@@ -78,17 +78,19 @@ if (hasFailLine || nonZeroFailCount || nonZeroErrorCount) {
       .map((line) => line.trim())
       .filter((line) => line.length > 0 && !line.startsWith("::"))
     const summary = normalized.match(/Ran \d+ tests? across \d+ files?\./)?.[0]
-    // The tail contains Bun's final failure blocks even when the Windows reporter emits no
-    // `(fail)` marker. Keep it bounded and strip workflow commands before emitting annotations.
-    const tail = outputLines.slice(-31)
-    const diagnostics = [summary ?? `bun exited ${status}`, ...tail].filter(
+    // Keep only bounded, structural diagnostics. Never forward arbitrary source or test output to
+    // GitHub annotations, which are visible outside the authenticated workflow log.
+    const safeLines = outputLines.filter(
+      (line) =>
+        /\(fail\)|[✗✕×]/u.test(line) ||
+        /(?:^|[/\\])[^\s]+\.test\.[a-z]+:/.test(line) ||
+        /^(?:# Unhandled error|(?:[A-Za-z]*Error|error:|Ran \d+ tests?))/i.test(line),
+    )
+    const diagnostics = [summary ?? `bun exited ${status}`, ...safeLines.slice(-31)].filter(
       (line, index, all) => all.indexOf(line) === index,
     )
-    for (const line of diagnostics) {
-      process.stdout.write(
-        `::error title=Test failure::${encodeCommandValue(line.slice(0, 512))}\n`,
-      )
-    }
+    const diagnosticText = diagnostics.join("\n").slice(0, 4_000)
+    process.stdout.write(`::error title=Test failure::${encodeCommandValue(diagnosticText)}\n`)
     const stepSummary = process.env.GITHUB_STEP_SUMMARY
     if (stepSummary !== undefined) {
       try {
