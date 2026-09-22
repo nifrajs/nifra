@@ -1,5 +1,12 @@
 # @nifrajs/pi
 
+## 3.5.0
+
+### Patch Changes
+
+- e95cd7e: Preserve the Windows runtime environment required by Pi child processes when applying the host's filtered environment policy.
+  - @nifrajs/agent-protocol@3.5.0
+
 ## 3.4.0
 
 ### Patch Changes

@@ -1,5 +1,22 @@
 # @nifrajs/testing
 
+## 3.5.0
+
+### Minor Changes
+
+- 82c3018: Add content-free dead-letter projections (`toDeadLetterView`, `toQueueHealth`) for queue triage without exposing payloads or error text; an OpenAPI 3.x inventory importer (`importOpenAPI`, `diffOpenApiInventory`) so export/import roundtrips prove the route table survives in CI; and a seeded hostile prediction/projection lab (`runPredictionLab`, `assertPredictionLab`) covering stale versions, expiry, prototype-grafting and non-atomic patches, commit conflicts, rollback paths, and WebMCP/MCP projection parity. `nifra check` also flags hand-rolled `EventSource`/`WebSocket` to the app's own API under the existing typed-client rule.
+
+### Patch Changes
+
+- Updated dependencies [6046984]
+- Updated dependencies [d5b7c22]
+  - @nifrajs/core@3.5.0
+  - @nifrajs/agent@3.5.0
+  - @nifrajs/client@3.5.0
+  - @nifrajs/mcp@3.5.0
+  - @nifrajs/mock@3.5.0
+  - @nifrajs/webmcp@3.5.0
+
 ## 3.4.0
 
 ### Patch Changes

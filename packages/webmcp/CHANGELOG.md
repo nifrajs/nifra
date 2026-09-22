@@ -1,5 +1,13 @@
 # @nifrajs/webmcp
 
+## 3.5.0
+
+### Patch Changes
+
+- Updated dependencies [6046984]
+- Updated dependencies [d5b7c22]
+  - @nifrajs/core@3.5.0
+
 ## 3.4.0
 
 ### Minor Changes
