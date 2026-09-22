@@ -67,6 +67,21 @@ if (!completedRun) {
 const hasFailLine = /\(fail\)/.test(captured)
 const nonZeroFailCount = /^\s*[1-9]\d* fail\b/m.test(captured)
 if (hasFailLine || nonZeroFailCount) {
+  // GitHub hides step logs from anonymous viewers. Keep the gate strict while surfacing the bounded
+  // failure names through annotations so a failed platform job remains diagnosable without log access.
+  if (process.env.GITHUB_ACTIONS === "true") {
+    for (const line of captured
+      .split(/\r?\n/)
+      .filter((candidate) => candidate.includes("(fail)"))
+      .slice(0, 32)) {
+      const message = line
+        .slice(0, 512)
+        .replace(/%/g, "%25")
+        .replace(/\r/g, "%0D")
+        .replace(/\n/g, "%0A")
+      console.error(`::error title=Test failure::${message}`)
+    }
+  }
   console.error(`[tolerant-test] real test failures present; exiting ${status}.`)
   process.exit(status)
 }
