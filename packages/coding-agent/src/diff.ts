@@ -72,9 +72,47 @@ export async function readProjectDiff(options: ProjectDiffOptions): Promise<Proj
 
 function safeEnv(): Record<string, string> {
   const result: Record<string, string> = {}
-  for (const name of ["PATH", "HOME", "LANG", "LC_ALL", "TERM", "GIT_PAGER"]) {
-    const value = name === "GIT_PAGER" ? "cat" : process.env[name]
+  const names = [
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "TERM",
+    "GIT_PAGER",
+    ...(process.platform === "win32"
+      ? [
+          "SystemRoot",
+          "WINDIR",
+          "TEMP",
+          "TMP",
+          "USERPROFILE",
+          "LOCALAPPDATA",
+          "APPDATA",
+          "COMSPEC",
+          "PATHEXT",
+          "BUN_INSTALL",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "USERNAME",
+          "USERDOMAIN",
+          "ProgramData",
+          "ProgramFiles",
+          "ProgramFiles(x86)",
+        ]
+      : []),
+  ]
+  for (const name of names) {
+    const value = name === "GIT_PAGER" ? "cat" : readEnv(name)
     if (value !== undefined) result[name] = value
   }
   return result
+}
+
+function readEnv(name: string): string | undefined {
+  const exact = process.env[name]
+  if (exact !== undefined || process.platform !== "win32") return exact
+  const key = Object.keys(process.env).find(
+    (candidate) => candidate.toLowerCase() === name.toLowerCase(),
+  )
+  return key === undefined ? undefined : process.env[key]
 }

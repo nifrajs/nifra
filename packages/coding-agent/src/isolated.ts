@@ -353,12 +353,29 @@ function filteredEnv(): Record<string, string> {
           "APPDATA",
           "COMSPEC",
           "PATHEXT",
+          "BUN_INSTALL",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "USERNAME",
+          "USERDOMAIN",
+          "ProgramData",
+          "ProgramFiles",
+          "ProgramFiles(x86)",
         ]
       : []),
   ]
   for (const name of names) {
-    const value = process.env[name]
+    const value = readEnv(name)
     if (value !== undefined) result[name] = value
   }
   return result
+}
+
+function readEnv(name: string): string | undefined {
+  const exact = process.env[name]
+  if (exact !== undefined || process.platform !== "win32") return exact
+  const key = Object.keys(process.env).find(
+    (candidate) => candidate.toLowerCase() === name.toLowerCase(),
+  )
+  return key === undefined ? undefined : process.env[key]
 }

@@ -19,6 +19,7 @@
  * here: test pass/fail.
  */
 import { spawn } from "node:child_process"
+import { appendFileSync } from "node:fs"
 
 const dirs = process.argv.slice(2)
 if (dirs.length === 0) {
@@ -53,7 +54,8 @@ if (status === 0) process.exit(0)
 // completed-run summary is never the quirk - it is a run that executed no tests (a bad flag or path).
 // Fail it loudly rather than mask a zero-tests run as a pass: an invalid `--coverage=false` once made
 // `bun test` print usage and exit non-zero having run nothing, and this wrapper reported green.
-const completedRun = /\bRan \d+ tests? across \d+ files?/.test(captured)
+const normalized = stripAnsi(captured).replace(/\r\n?/g, "\n")
+const completedRun = /\bRan \d+ tests? across \d+ files?\./.test(normalized)
 if (!completedRun) {
   console.error(
     `[tolerant-test] bun exited ${status} without completing a test run (no summary) - failing, not ` +
@@ -64,22 +66,41 @@ if (!completedRun) {
 
 // Non-zero exit: distinguish a REAL failure from the shutdown-rejection quirk. Either signal means a real
 // failure, and both err toward failing (a stray match fails the suite rather than masking a problem).
-const hasFailLine = /\(fail\)/.test(captured)
-const nonZeroFailCount = /^\s*[1-9]\d* fail\b/m.test(captured)
-if (hasFailLine || nonZeroFailCount) {
+const hasFailLine = /\(fail\)/.test(normalized)
+const nonZeroFailCount = /^\s*[1-9]\d*\s+fail\b/m.test(normalized)
+const nonZeroErrorCount = /^\s*[1-9]\d*\s+errors?\b/m.test(normalized)
+if (hasFailLine || nonZeroFailCount || nonZeroErrorCount) {
   // GitHub hides step logs from anonymous viewers. Keep the gate strict while surfacing the bounded
   // failure names through annotations so a failed platform job remains diagnosable without log access.
   if (process.env.GITHUB_ACTIONS === "true") {
-    for (const line of captured
-      .split(/\r?\n/)
-      .filter((candidate) => candidate.includes("(fail)"))
-      .slice(0, 32)) {
-      const message = line
-        .slice(0, 512)
-        .replace(/%/g, "%25")
-        .replace(/\r/g, "%0D")
-        .replace(/\n/g, "%0A")
-      console.error(`::error title=Test failure::${message}`)
+    const failureLines = normalized
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(
+        (line) =>
+          line.length > 0 &&
+          (/\(fail\)|[✗✕×]/u.test(line) || /^# Unhandled error|^error:/i.test(line)),
+      )
+      .slice(0, 32)
+    const summary = normalized.match(/Ran \d+ tests? across \d+ files?\./)?.[0]
+    const diagnostics = failureLines.length > 0 ? failureLines : [summary ?? `bun exited ${status}`]
+    for (const line of diagnostics) {
+      process.stdout.write(
+        `::error title=Test failure::${encodeCommandValue(line.slice(0, 512))}\n`,
+      )
+    }
+    const stepSummary = process.env.GITHUB_STEP_SUMMARY
+    if (stepSummary !== undefined) {
+      try {
+        appendFileSync(
+          stepSummary,
+          `### Test failures\n\n${diagnostics.map((line) => `- ${line}`).join("\n")}\n`,
+          "utf8",
+        )
+      } catch {
+        // The annotation is the primary diagnostic channel; a read-only summary must not change
+        // the strict test result.
+      }
     }
   }
   console.error(`[tolerant-test] real test failures present; exiting ${status}.`)
@@ -91,3 +112,15 @@ console.error(
     "quirk (see packages/web/test/deferred.test.ts). Treating as pass.",
 )
 process.exit(0)
+
+function encodeCommandValue(value: string): string {
+  return value.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A")
+}
+
+function stripAnsi(value: string): string {
+  const ansiEscape = String.fromCharCode(27)
+  return value
+    .split(ansiEscape)
+    .map((part, index) => (index === 0 ? part : part.replace(/^\[[0-?]*[ -/]*[@-~]/, "")))
+    .join("")
+}

@@ -845,16 +845,32 @@ function filteredEnv(
           "APPDATA",
           "COMSPEC",
           "PATHEXT",
+          "BUN_INSTALL",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "USERNAME",
+          "USERDOMAIN",
+          "ProgramData",
+          "ProgramFiles",
+          "ProgramFiles(x86)",
         ]
       : []),
     ...Object.keys(values ?? {}),
   ])
   for (const name of names) {
-    const value =
-      values !== undefined && Object.hasOwn(values, name) ? values[name] : process.env[name]
+    const value = values !== undefined && Object.hasOwn(values, name) ? values[name] : readEnv(name)
     if (value !== undefined) result[name] = value
   }
   return result
+}
+
+function readEnv(name: string): string | undefined {
+  const exact = process.env[name]
+  if (exact !== undefined || process.platform !== "win32") return exact
+  const key = Object.keys(process.env).find(
+    (candidate) => candidate.toLowerCase() === name.toLowerCase(),
+  )
+  return key === undefined ? undefined : process.env[key]
 }
 
 function failedStream(error: unknown): AgentEventStream {
