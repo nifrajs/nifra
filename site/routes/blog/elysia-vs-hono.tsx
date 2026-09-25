@@ -1,3 +1,10 @@
+import {
+  formatPercent,
+  formatRps,
+  httpWorkloadRps,
+  percentOf,
+  runtimeCeilingPercent,
+} from "../../data/benchmarks"
 import { postMeta } from "../../meta"
 
 export const hydrate = false
@@ -7,6 +14,10 @@ export const meta = postMeta(
   "Elysia vs Hono in 2026: which Bun framework fits · Nifra",
   "Elysia vs Hono compared honestly - throughput on identical workloads, typed clients (Eden vs hc), validation, portability - with measured numbers and a disclosed bias: we build Nifra, a third option.",
 )
+
+function httpValue(runtime: string, framework: string, workload: "getUsers" | "postUsers"): string {
+  return formatRps(httpWorkloadRps(runtime, framework, workload))
+}
 
 export default function ElysiaVsHono() {
   return (
@@ -38,22 +49,28 @@ export default function ElysiaVsHono() {
         <tbody>
           <tr>
             <td>Bun · GET /users/:id</td>
-            <td>130,219 req/s</td>
-            <td>97,628 req/s</td>
+            <td>{httpValue("Bun", "Elysia", "getUsers")} req/s</td>
+            <td>{httpValue("Bun", "Hono", "getUsers")} req/s</td>
           </tr>
           <tr>
             <td>Bun · POST (validated)</td>
-            <td>93,818 req/s</td>
-            <td>74,616 req/s</td>
+            <td>{httpValue("Bun", "Elysia", "postUsers")} req/s</td>
+            <td>{httpValue("Bun", "Hono", "postUsers")} req/s</td>
           </tr>
           <tr>
             <td>Node · GET /users/:id</td>
-            <td>67,525 req/s</td>
-            <td>42,227 req/s</td>
+            <td>{httpValue("Node", "Elysia", "getUsers")} req/s</td>
+            <td>{httpValue("Node", "Hono", "getUsers")} req/s</td>
           </tr>
           <tr>
-            <td>Deno · both workloads</td>
-            <td colSpan={2}>Elysia ahead in our runs</td>
+            <td>Deno · GET /users/:id</td>
+            <td>{httpValue("Deno", "Elysia", "getUsers")} req/s</td>
+            <td>{httpValue("Deno", "Hono", "getUsers")} req/s</td>
+          </tr>
+          <tr>
+            <td>Deno · POST (validated)</td>
+            <td>{httpValue("Deno", "Elysia", "postUsers")} req/s</td>
+            <td>{httpValue("Deno", "Hono", "postUsers")} req/s</td>
           </tr>
         </tbody>
       </table>
@@ -95,11 +112,18 @@ export default function ElysiaVsHono() {
       <p>
         Both stop at the API boundary. If you also own the frontend, Nifra extends the typed
         contract through SSR loaders, pages, and server functions (React/Vue/Svelte/Solid/Preact),
-        matches or beats Elysia's throughput in our published Bun runs (108% of the raw{" "}
-        <code>Bun.serve</code> ceiling on GET, 106% of Elysia on validated POST), runs on all the
-        same runtimes, and ships its docs as a <a href="/blog/docs-as-mcp">live MCP server</a> for
-        AI coding agents. Head-to-heads: <a href="/compare/elysia">vs Elysia</a> ·{" "}
-        <a href="/compare/hono">vs Hono</a>.
+        matches or beats Elysia's throughput in our published Bun runs ({" "}
+        {formatPercent(runtimeCeilingPercent("Bun"))} of the raw <code>Bun.serve</code> ceiling on
+        GET,{" "}
+        {formatPercent(
+          percentOf(
+            httpWorkloadRps("Bun", "Nifra", "postUsers"),
+            httpWorkloadRps("Bun", "Elysia", "postUsers"),
+          ),
+        )}{" "}
+        of Elysia on validated POST), runs on all the same runtimes, and ships its docs as a{" "}
+        <a href="/blog/docs-as-mcp">live MCP server</a> for AI coding agents. Head-to-heads:{" "}
+        <a href="/compare/elysia">vs Elysia</a> · <a href="/compare/hono">vs Hono</a>.
       </p>
     </article>
   )

@@ -1,4 +1,4 @@
-import { HTTP_WORKLOADS } from "../../data/benchmarks"
+import { formatRatio, formatRps, httpWorkloadRps } from "../../data/benchmarks"
 import { postMeta } from "../../meta"
 
 export const hydrate = false
@@ -10,11 +10,7 @@ export const meta = postMeta(
 )
 
 function httpValue(runtime: string, name: string, workload: "getUsers" | "postUsers"): string {
-  return (
-    HTTP_WORKLOADS.find((table) => table.title === runtime)?.rows.find(
-      (row) => row.name === name,
-    )?.[workload] ?? "n/a"
-  )
+  return formatRps(httpWorkloadRps(runtime, name, workload))
 }
 
 export default function TypescriptApiFramework() {
@@ -108,7 +104,7 @@ export default function TypescriptApiFramework() {
             <td>Inferred (hc)</td>
             <td>No</td>
             <td>Opt-in middleware</td>
-            <td>32,332</td>
+            <td>{httpValue("Node", "Hono", "postUsers")}</td>
           </tr>
           <tr>
             <td>NestJS</td>
@@ -146,8 +142,13 @@ export default function TypescriptApiFramework() {
           client extends beyond fetch calls into SSR loaders, pages, and server functions for
           React/Vue/Svelte/Solid/Preact, validation is the default, and the API surface ships as a{" "}
           <a href="/blog/docs-as-mcp">live MCP server</a> so AI agents write against your real
-          contract. Fastest of the set in our Node runs, and the same app moves to Bun for ~2x (
-          <a href="/blog/bun-vs-node">measured</a>).
+          contract. Fastest of the set in our Node runs, and the with the same app delivering about{" "}
+          {formatRatio(
+            httpWorkloadRps("Bun", "Nifra", "getUsers"),
+            httpWorkloadRps("Node", "Nifra", "getUsers"),
+          )}{" "}
+          as many GET /users/:id requests per second on Bun as Node (
+          <a href="/blog/bun-vs-node">measured on the same code</a>).
         </li>
       </ul>
 
@@ -157,7 +158,7 @@ export default function TypescriptApiFramework() {
         answer is "nothing until runtime", you are at Level 1 with extra steps. Then POST a
         malformed body at a typed endpoint. If it reaches your handler, you are missing Level 3. Ten
         minutes, and it filters the field faster than any comparison table - including this one. (
-        <code>bunx create-nifra my-app</code> if you want to run it on ours first.)
+        <code>bun create nifra my-app</code> if you want to run it on ours first.)
       </p>
     </article>
   )

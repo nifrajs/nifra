@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { server, silentLogger } from "@nifrajs/core"
+import { nodeDirect } from "@nifrajs/core/node-direct"
+import type { NodeResponseContext } from "@nifrajs/core/server"
 import { cors } from "../src/index.ts"
 
 const origin = (value: string) => ({ headers: { origin: value } })
@@ -141,5 +143,39 @@ describe("cors", () => {
     await middleware.onResponseHeaders!(headers, request, 200)
     expect(headers.get("access-control-allow-origin")).toBe("https://app.com")
     expect(headers.get("access-control-allow-credentials")).toBe("true")
+
+    const nodeResponse: NodeResponseContext = {
+      status: 200,
+      headers: { Vary: "Accept" },
+      headersAreLowercase: false,
+      cookies: undefined,
+      body: "ok",
+    }
+    await middleware.onNodeResponseHeaders!(nodeResponse, request)
+    expect(nodeResponse.headers?.vary).toBe("Accept, Origin")
+
+    const noVaryResponse: NodeResponseContext = {
+      status: 200,
+      headers: { "x-other": "1" },
+      headersAreLowercase: false,
+      cookies: undefined,
+      body: "ok",
+    }
+    await middleware.onNodeResponseHeaders!(noVaryResponse, request)
+    expect(noVaryResponse.headers?.vary).toBe("Origin")
+  })
+
+  test("Node-direct twin preserves CORS headers without a Web response", async () => {
+    const app = server()
+      .use(nodeDirect())
+      .use(cors({ origin: "https://app.com", credentials: true, exposedHeaders: ["x-total"] }))
+      .get("/", () => ({ ok: true }))
+    const outcome = await app.resolveNode(new Request("http://x/", origin("https://app.com")))
+    expect(outcome.kind).toBe("json")
+    if (outcome.kind !== "json") return
+    expect(outcome.headers?.["access-control-allow-origin"]).toBe("https://app.com")
+    expect(outcome.headers?.["access-control-allow-credentials"]).toBe("true")
+    expect(outcome.headers?.["access-control-expose-headers"]).toBe("x-total")
+    expect(outcome.headers?.vary).toBe("Origin")
   })
 })

@@ -1,12 +1,15 @@
+import { MULTIPLIERS } from "../../data/benchmarks"
 import { compareMeta } from "../../meta"
 
 export const hydrate = false
+
+const REACT_SSR_MULTIPLIER = MULTIPLIERS.find((item) => item.fw === "React")?.mult ?? "n/a"
 
 export const meta = compareMeta(
   "nextjs",
   "Nifra vs Next.js",
   "Nifra vs Next.js - a faster, typed, multi-runtime alternative",
-  "Nifra vs Next.js compared honestly: server rendering throughput (25x in reproducible benchmarks), end-to-end types without codegen, five UI frameworks instead of one, and where Next.js is still the right choice.",
+  `Nifra vs Next.js compared honestly: server rendering throughput (${REACT_SSR_MULTIPLIER} in reproducible benchmarks), end-to-end types without codegen, five UI frameworks instead of one, and where Next.js is still the right choice.`,
 )
 
 export default function VsNextjs() {
@@ -37,7 +40,7 @@ export default function VsNextjs() {
           </tr>
           <tr>
             <td>Server rendering</td>
-            <td>25x throughput in our published benchmark</td>
+            <td>{REACT_SSR_MULTIPLIER} throughput in our published benchmark</td>
             <td>Baseline (see methodology below)</td>
           </tr>
           <tr>
@@ -63,14 +66,14 @@ export default function VsNextjs() {
         </tbody>
       </table>
 
-      <h2>The 25x number, honestly</h2>
+      <h2>The {REACT_SSR_MULTIPLIER} number, honestly</h2>
       <p>
         In our reproducible SSR benchmark - the same dynamic page, server-rendered by each
-        framework's production build on its default runtime - Nifra with React serves roughly 25x
-        the requests per second of Next.js. The harness lives in the Nifra repo, publishes its
-        methodology, and includes rows Nifra does not win. That gap is not React being slow: it is
-        the cost of the meta-framework layer around the render. Full tables and per-framework
-        results are on the <a href="/benchmarks">benchmarks page</a>.
+        framework's production build on its default runtime - Nifra with React serves roughly{" "}
+        {REACT_SSR_MULTIPLIER} as many requests per second as Next.js. The harness lives in the
+        Nifra repo, publishes its methodology, and includes rows Nifra does not win. That gap is not
+        React being slow: it is the cost of the meta-framework layer around the render. Full tables
+        and per-framework results are on the <a href="/benchmarks">benchmarks page</a>.
       </p>
 
       <h2>Where Next.js is the right choice</h2>
@@ -115,7 +118,7 @@ export default function VsNextjs() {
 
       <h2>Try the migration path</h2>
       <p>
-        <code>bunx create-nifra my-app --template site --framework react</code> scaffolds the
+        <code>bun create nifra my-app --template site --framework react</code> scaffolds the
         full-stack shape: file-based routes, typed loaders, server functions, and a typed client.
         The <a href="/docs/migrate-frontend">migration guide</a> covers moving an existing app; the
         full capability-by-capability breakdown is in{" "}

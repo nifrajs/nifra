@@ -1,3 +1,9 @@
+import {
+  formatPercent,
+  httpWorkloadRps,
+  percentOf,
+  runtimeCeilingPercent,
+} from "../../data/benchmarks"
 import { postMeta } from "../../meta"
 
 export const hydrate = false
@@ -42,7 +48,16 @@ export default function BestBunFrameworks() {
             <td>Nifra</td>
             <td>Full-stack: API + SSR for React/Vue/Svelte/Solid/Preact</td>
             <td>Inferred from server, zero codegen, reaches loaders/pages</td>
-            <td>108% of a raw Bun.serve baseline on GET; 106% of Elysia on validated POST</td>
+            <td>
+              {formatPercent(runtimeCeilingPercent("Bun"))} of a raw Bun.serve baseline on GET;{" "}
+              {formatPercent(
+                percentOf(
+                  httpWorkloadRps("Bun", "Nifra", "postUsers"),
+                  httpWorkloadRps("Bun", "Elysia", "postUsers"),
+                ),
+              )}{" "}
+              of Elysia on validated POST
+            </td>
             <td>API + frontend are one product; AI agents write real code</td>
           </tr>
           <tr>
@@ -109,7 +124,7 @@ export default function BestBunFrameworks() {
         </li>
         <li>
           Full-stack product, typed end-to-end, AI-assisted development → <strong>Nifra</strong> (
-          <code>bunx create-nifra my-app</code>)
+          <code>bun create nifra my-app</code>)
         </li>
       </ul>
       <p>

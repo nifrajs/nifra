@@ -27,6 +27,11 @@
       "bun": "./src/detector.ts",
       "types": "./dist/detector.d.ts",
       "default": "./dist/detector.js"
+    },
+    "./routing": {
+      "bun": "./src/routing.ts",
+      "types": "./dist/routing.d.ts",
+      "default": "./dist/routing.js"
     }
   },
   "files": [

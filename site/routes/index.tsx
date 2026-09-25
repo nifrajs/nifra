@@ -1,7 +1,9 @@
-import { HERO_SSR, HTTP_BENCH, PROOF } from "../data/benchmarks"
+import { HERO_SSR, HTTP_BENCH, MULTIPLIERS, PROOF } from "../data/benchmarks"
 import { CodeBlock } from "../highlight"
 import { HOME_COUNTER_ENTRY } from "../islands/entries"
 import { pageMeta, softwareApplication } from "../meta"
+
+const MAX_SSR_MULTIPLIER = `${Math.max(...MULTIPLIERS.map((item) => Number.parseFloat(item.mult)))}×`
 
 export const meta = pageMeta(
   "Nifra - the TypeScript framework for AI-edited codebases",
@@ -917,9 +919,10 @@ export default function Home() {
           <span className="kicker">Performance &amp; Speed</span>
           <h2>Screamingly fast, frontend and backend.</h2>
           <p>
-            Nifra runs close to raw Bun/Node speed. Full-stack SSR renders 4× to 25× faster than
-            standard meta-frameworks on Node, while the backend router matches the fastest Node
-            frameworks - tens of thousands of requests per second on a single core.
+            Nifra runs close to raw Bun/Node speed. Full-stack SSR reaches up to{" "}
+            {MAX_SSR_MULTIPLIER} the throughput of comparable meta-frameworks on Node, while the
+            backend router matches the fastest Node frameworks - tens of thousands of requests per
+            second on a single core.
           </p>
         </div>
 

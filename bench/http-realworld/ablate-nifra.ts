@@ -35,6 +35,7 @@
  */
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/core/server"
 import { serve } from "@nifrajs/node"
+import { responseObserver } from "../../packages/core/dist/response-observer.js"
 import { server, status } from "../../packages/core/dist/server.js"
 import { cors, securityHeaders } from "../../packages/middleware/dist/index.js"
 
@@ -115,6 +116,9 @@ type AnyApp = any
 type AnyCtx = any
 let app: AnyApp = server()
 if (hasSec) app = app.use(securityHeaders())
+// The synthetic lite hooks use the same response-observer contract as the real CORS middleware.
+// Install its runtime explicitly so this diagnostic ladder can price the hook path by itself.
+if (liteMode !== undefined) app = app.use(responseObserver())
 if (hasCors) {
   if (liteMode === undefined) {
     app = app.use(cors({ origin: ["https://app.example.com"], credentials: true }))

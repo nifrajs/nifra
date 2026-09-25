@@ -30,8 +30,9 @@ const envInt = (name: string, dflt: number, min = 1): number => {
   return Number.isInteger(n) && n >= min ? n : dflt
 }
 const CONNECTIONS = envInt("BENCH_CONNS", 50)
-const DURATION_S = envInt("BENCH_DURATION_S", 4)
-const WARMUP_S = envInt("BENCH_WARMUP_S", 2, 0)
+const REQUESTS_PER_SAMPLE = envInt("BENCH_REQUESTS", 100_000)
+const SCALE_PCT = envInt("BENCH_SCALE", 100)
+const WARMUP = envInt("BENCH_WARMUP", 1, 0)
 const RUNS = envInt("BENCH_RUNS", 3)
 const BASE_PORT = 3600
 
@@ -214,29 +215,43 @@ function field(obj: unknown, key: string): unknown {
     : undefined
 }
 
-function parseOha(raw: string): Measure {
+function parseOha(raw: string, expectedRequests: number): Measure {
   let json: unknown
   try {
     json = JSON.parse(raw)
   } catch {
     throw new Error(`oha: output was not JSON: ${raw.slice(0, 160)}`)
   }
-  const rps = finiteNumber(field(field(json, "summary"), "requestsPerSec"))
+  const summary = field(json, "summary")
+  const rps = finiteNumber(field(summary, "requestsPerSec"))
   const lat = field(json, "latencyPercentiles")
   const p50 = finiteNumber(field(lat, "p50"))
   const p99 = finiteNumber(field(lat, "p99"))
-  if (rps === undefined || p50 === undefined || p99 === undefined) {
+  const successRate = finiteNumber(field(summary, "successRate"))
+  const okRequests = finiteNumber(field(field(json, "statusCodeDistribution"), "200"))
+  if (
+    rps === undefined ||
+    p50 === undefined ||
+    p99 === undefined ||
+    successRate === undefined ||
+    okRequests === undefined
+  ) {
     throw new Error(`oha: unexpected JSON shape: ${raw.slice(0, 200)}`)
+  }
+  if (successRate !== 1 || okRequests !== expectedRequests) {
+    throw new Error(
+      `oha: invalid sample (successRate=${successRate}, HTTP 200=${okRequests}/${expectedRequests})`,
+    )
   }
   return { rps: Math.round(rps), p50ms: p50 * 1000, p99ms: p99 * 1000 }
 }
 
-async function runOha(url: string, w: Workload, durationS: number): Promise<Measure> {
+async function runOha(url: string, w: Workload, requests: number): Promise<Measure> {
   const args = [
     "-c",
     String(CONNECTIONS),
-    "-z",
-    `${durationS}s`,
+    "-n",
+    String(requests),
     "--no-tui",
     "--output-format",
     "json",
@@ -258,12 +273,16 @@ async function runOha(url: string, w: Workload, durationS: number): Promise<Meas
     proc.exited,
   ])
   if (code !== 0) throw new Error(`oha exited ${code}: ${err.slice(0, 200)}`)
-  return parseOha(out)
+  return parseOha(out, requests)
 }
 
-async function sample(url: string, w: Workload): Promise<{ median: Measure; best: Measure }> {
+async function sample(
+  url: string,
+  w: Workload,
+  requests: number,
+): Promise<{ median: Measure; best: Measure }> {
   const runs: Measure[] = []
-  for (let i = 0; i < RUNS; i++) runs.push(await runOha(url, w, DURATION_S))
+  for (let i = 0; i < RUNS; i++) runs.push(await runOha(url, w, requests))
   const sorted = [...runs].sort((a, b) => a.rps - b.rps)
   const median = sorted[sorted.length >> 1] ?? ZERO
   const best = sorted[sorted.length - 1] ?? ZERO
@@ -289,6 +308,7 @@ async function waitReady(base: string, timeoutMs: number): Promise<void> {
 
 type Results = Record<string, Record<string, Record<string, Measure>>>
 const results: Results = {}
+const failures: string[] = []
 
 const argv = process.argv.slice(2)
 const jsonMode = argv.includes("--json")
@@ -315,13 +335,18 @@ for (const section of sections) {
       proc = Bun.spawn([...target.spawn(port)], { stdout: "ignore", stderr: "inherit" })
       await waitReady(base, 8000)
       for (const w of target.workloads ?? WORKLOADS) {
-        // oha with `-z 0s` exits before collecting percentiles - a zero warmup means "no warmup".
-        if (WARMUP_S > 0) await runOha(`${base}${w.path}`, w, WARMUP_S)
-        const { median } = await sample(`${base}${w.path}`, w)
+        const requests = Math.max(500, Math.round((REQUESTS_PER_SAMPLE * SCALE_PCT) / 100))
+        // Count-bounded samples finish in-flight POSTs cleanly; duration cutoffs can leave Deno.serve
+        // degraded for later workloads. Warmup uses the same request path at 20% load.
+        if (WARMUP > 0) {
+          await runOha(`${base}${w.path}`, w, Math.max(500, Math.round(requests / 5)))
+        }
+        const { median } = await sample(`${base}${w.path}`, w, requests)
         fwResults[w.name] = median
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
+      failures.push(`${section.runtime}/${target.framework}: ${msg}`)
       console.error(`  ${section.runtime}/${target.framework}: ${msg}`)
     } finally {
       proc?.kill()
@@ -329,6 +354,11 @@ for (const section of sections) {
       await Bun.sleep(1500)
     }
   }
+}
+if (failures.length > 0) {
+  throw new Error(
+    `benchmark results are invalid; ${failures.length} target(s) failed: ${failures.join("; ")}`,
+  )
 }
 
 function pad(s: string, n: number): string {
@@ -354,7 +384,8 @@ const meta = {
   deno: toolVersion("deno", "--version"),
   oha: toolVersion("oha", "--version"),
   runs: RUNS,
-  durationS: DURATION_S,
+  requestsPerRun: Math.max(500, Math.round((REQUESTS_PER_SAMPLE * SCALE_PCT) / 100)),
+  scalePct: SCALE_PCT,
   connections: CONNECTIONS,
 }
 
@@ -365,7 +396,7 @@ if (jsonMode) {
 
 const versions = `Bun ${meta.bun} · Node ${meta.node} · Deno ${meta.deno}`
 console.log(
-  `\nRealistic-shape HTTP throughput (auth + security headers + CORS + request-id + cookie) - oha, median-of-${RUNS} × ${DURATION_S}s @ ${CONNECTIONS} conns  (${versions})\nRatios on the same run are the signal; absolutes are indicative only.\n`,
+  `\nRealistic-shape HTTP throughput (auth + security headers + CORS + request-id + cookie) - oha, median-of-${RUNS} count-bounded samples (${meta.requestsPerRun} requests/workload @ ${CONNECTIONS} conns)  (${versions})\nRatios on the same run are the signal; absolutes are indicative only.\n`,
 )
 
 for (const section of sections) {

@@ -63,8 +63,7 @@ test("a marked all-lowercase record ships exactly its own names, and no symbol l
       }),
   )
   // The mark is a symbol key: `Object.keys` never sees it, so it cannot become a header line.
-  // (Node writes its own canonical spelling for the two framing headers it manages itself.)
-  expect(names.sort()).toEqual(["Content-Length", "Content-Type", "x-own", "x-portable"])
+  expect(names.sort()).toEqual(["content-length", "content-type", "x-own", "x-portable"])
 })
 
 test("a mixed-case name is still lowercased on the wire when a portable hook is installed", async () => {
@@ -83,6 +82,36 @@ test("a mixed-case name is still lowercased on the wire when a portable hook is 
   expect(names).not.toContain("X-Mixed-Case")
 })
 
+test("an explicitly framed lowercase record keeps one lowercase framing pair", async () => {
+  const names = await wireNames(
+    server({ logger: silentLogger }).get("/", (c) => {
+      c.set.headers["content-type"] = "application/vnd.nifra+json"
+      c.set.headers["content-length"] = "999"
+      return { ok: true }
+    }),
+  )
+  expect(names.filter((name) => name === "content-type")).toHaveLength(1)
+  expect(names.filter((name) => name === "content-length")).toHaveLength(1)
+  expect(names).not.toContain("Content-Type")
+  expect(names).not.toContain("Content-Length")
+})
+
+test("a frozen lowercase record uses the normalization fallback", async () => {
+  const names = await wireNames(
+    server({ logger: silentLogger })
+      .use({
+        name: "freeze-native-record",
+        onResponse: (response) => response,
+        onNodeResponse: (response: NodeResponseContext) => {
+          if (response.headers !== undefined) Object.freeze(response.headers)
+        },
+      })
+      .get("/", () => ({ ok: true })),
+  )
+  expect(names).toContain("content-type")
+  expect(names).toContain("content-length")
+})
+
 test("a hookless app's declared statics ship their names, marked without any scan", async () => {
   const names = await wireNames(
     server({ logger: silentLogger })
@@ -93,7 +122,7 @@ test("a hookless app's declared statics ship their names, marked without any sca
       }),
   )
   // Declared names are lowercased at registration, so the wire spelling is the lowercase one.
-  expect(names.sort()).toEqual(["Content-Length", "Content-Type", "x-own", "x-static"])
+  expect(names.sort()).toEqual(["content-length", "content-type", "x-own", "x-static"])
 })
 
 test("a hookless app's mixed-case c.set write is still lowercased - the merge withholds the mark", async () => {

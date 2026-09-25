@@ -6,6 +6,7 @@ import {
 import type { AnyServer } from "./server/server.ts"
 
 export type {
+  NodeResponseBodyHook,
   ResponseBodyHook,
   ResponseHeadersHook,
   ResponseObserverMethods,

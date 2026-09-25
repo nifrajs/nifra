@@ -134,8 +134,26 @@ export function mergeStaticHeaderRecord<V>(
   markLowercase = false,
 ): Record<string, V | string> {
   const merged: Record<string, V | string> = { ...statics }
+  const ownNames = Object.keys(own)
+
+  // The common Node-native route has one request-owned lower-case header (usually the request id)
+  // on top of a few static defaults. Keep the static-first property order, but avoid the generic
+  // case-folding loop and its per-name helper calls for that shape. A mixed-case name, an undefined
+  // value, or multiple names falls through to the full collision-aware path below.
+  if (ownNames.length === 1) {
+    const name = ownNames[0]!
+    const value = own[name] as V
+    if (value !== undefined && name.toLowerCase() === name) {
+      if (name === "__proto__") store(merged, name, value)
+      else merged[name] = value
+      if (markLowercase)
+        markLowercaseHeaderKeys(merged as Record<string, string | readonly string[]>)
+      return merged
+    }
+  }
+
   let allLowercase = true
-  for (const name of Object.keys(own)) {
+  for (const name of ownNames) {
     const value = own[name] as V
     if (value === undefined) continue
     const lower = name.toLowerCase()

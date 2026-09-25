@@ -10,6 +10,7 @@
  */
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { assertBenchmarkPublishable } from "../publish-guard.ts"
 import { httpRealworldFromResults, writeSiteBench } from "../site-bench.ts"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -64,7 +65,8 @@ interface Meta {
   readonly deno: string
   readonly oha: string
   readonly runs: number
-  readonly durationS: number
+  readonly requestsPerRun: number
+  readonly scalePct: number
   readonly connections: number
 }
 type Results = Record<string, Record<string, Record<string, Measure>>>
@@ -187,6 +189,8 @@ function splice(doc: string, marker: string, content: string): string {
 const { runtime, runs, write } = parseArgs(process.argv.slice(2))
 const runtimes = runtime ? [runtime] : ["bun", "node", "deno"]
 
+if (write) await assertBenchmarkPublishable()
+
 const samples: Results[] = []
 let meta: Meta | undefined
 for (let i = 0; i < runs; i++) {
@@ -196,6 +200,7 @@ for (let i = 0; i < runs; i++) {
   samples.push(results)
 }
 if (meta === undefined) throw new Error("no successful runs")
+if (write) await assertBenchmarkPublishable(meta)
 
 const merged: Results = {}
 for (const rt of runtimes) {
@@ -218,7 +223,7 @@ for (const rt of runtimes) {
   }
 }
 
-const metaLine = `_Median of **${runs}** full-matrix runs (each a median of ${meta.runs} × ${meta.durationS}s oha samples @ ${meta.connections} connections) · Bun ${meta.bun} · Node ${meta.node} · Deno ${meta.deno} · oha ${meta.oha}. Read the same-run ratios, not the absolutes._`
+const metaLine = `_Median of **${runs}** full-matrix runs (each a median of ${meta.runs} count-bounded oha samples, ${meta.requestsPerRun} requests/workload @ ${meta.connections} connections) · Bun ${meta.bun} · Node ${meta.node} · Deno ${meta.deno} · oha ${meta.oha}. Read the same-run ratios, not the absolutes._`
 
 if (!write) {
   console.log(`\n${metaLine}\n`)

@@ -25,6 +25,8 @@ const CONNECTIONS = envInt("BENCH_CONNS", 50)
 const SCALE_PCT = envInt("BENCH_SCALE", 100)
 const WARMUP = envInt("BENCH_WARMUP", 1, 0) // 0 skips the warmup run
 const RUNS = envInt("BENCH_RUNS", 3)
+/** Rotates framework order within each runtime section to balance host-load drift. */
+const TARGET_ORDER_OFFSET = envInt("BENCH_TARGET_OFFSET", 0, 0)
 const BASE_PORT = 3400
 
 interface Workload {
@@ -179,19 +181,33 @@ function field(obj: unknown, key: string): unknown {
  * output, so validate the shape rather than trusting property access. oha reports
  * latencies in SECONDS; we convert to ms here.
  */
-function parseOha(raw: string): Measure {
+function parseOha(raw: string, expectedRequests: number): Measure {
   let json: unknown
   try {
     json = JSON.parse(raw)
   } catch {
     throw new Error(`oha: output was not JSON: ${raw.slice(0, 160)}`)
   }
-  const rps = finiteNumber(field(field(json, "summary"), "requestsPerSec"))
+  const summary = field(json, "summary")
+  const rps = finiteNumber(field(summary, "requestsPerSec"))
   const lat = field(json, "latencyPercentiles")
   const p50 = finiteNumber(field(lat, "p50"))
   const p99 = finiteNumber(field(lat, "p99"))
-  if (rps === undefined || p50 === undefined || p99 === undefined) {
+  const successRate = finiteNumber(field(summary, "successRate"))
+  const okRequests = finiteNumber(field(field(json, "statusCodeDistribution"), "200"))
+  if (
+    rps === undefined ||
+    p50 === undefined ||
+    p99 === undefined ||
+    successRate === undefined ||
+    okRequests === undefined
+  ) {
     throw new Error(`oha: unexpected JSON shape: ${raw.slice(0, 200)}`)
+  }
+  if (successRate !== 1 || okRequests !== expectedRequests) {
+    throw new Error(
+      `oha: invalid sample (successRate=${successRate}, HTTP 200=${okRequests}/${expectedRequests})`,
+    )
   }
   return { rps: Math.round(rps), p50ms: p50 * 1000, p99ms: p99 * 1000 }
 }
@@ -223,7 +239,7 @@ async function runOha(url: string, w: Workload, requests: number): Promise<Measu
     proc.exited,
   ])
   if (code !== 0) throw new Error(`oha exited ${code}: ${err.slice(0, 200)}`)
-  return parseOha(out)
+  return parseOha(out, requests)
 }
 
 /** Median req/s across N runs (best reported too). The median resists outliers; a
@@ -261,6 +277,7 @@ async function waitReady(base: string, timeoutMs: number): Promise<void> {
 // results[runtime][framework][workload] = median Measure
 type Results = Record<string, Record<string, Record<string, Measure>>>
 const results: Results = {}
+const failures: string[] = []
 
 const argv = process.argv.slice(2)
 // `--json` emits one machine-readable line (consumed by aggregate.ts to median across runs); the
@@ -278,7 +295,9 @@ for (const section of sections) {
   const sectionResults: Record<string, Record<string, Measure>> = {}
   results[section.runtime] = sectionResults
   let port = BASE_PORT
-  for (const target of section.targets) {
+  const offset = section.targets.length > 0 ? TARGET_ORDER_OFFSET % section.targets.length : 0
+  const targetOrder = [...section.targets.slice(offset), ...section.targets.slice(0, offset)]
+  for (const target of targetOrder) {
     port += 1
     // Pin IPv4 loopback. `localhost` can resolve to ::1 first; Deno's default listener is IPv4-only on
     // this box, which made oha report connection-refused errors even though a browser/curl fallback
@@ -301,12 +320,17 @@ for (const section of sections) {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       console.error(`  ${section.runtime}/${target.framework}: ${msg}`)
+      failures.push(`${section.runtime}/${target.framework}: ${msg}`)
     } finally {
       proc?.kill()
       await proc?.exited
       await Bun.sleep(1500) // allow CPU to cool down and ports to clear
     }
   }
+}
+
+if (failures.length > 0) {
+  throw new Error(`benchmark results are invalid; ${failures.join("; ")}`)
 }
 
 function pad(s: string, n: number): string {
@@ -319,7 +343,7 @@ function toolVersion(cmd: string, arg: string): string {
     if (!r.success) return "unknown"
     const first = new TextDecoder().decode(r.stdout).trim().split(/\r?\n/)[0]?.trim()
     if (first === undefined || first === "") return "unknown"
-    // `oha --version` => "oha 1.14.0"; `deno --version` => "deno 2.8.1"; `node --version` => "v26.0.0".
+    // `oha --version` => "oha 1.14.0"; `deno --version` => "deno 2.9.7"; `node --version` => "v26.10.0".
     if (cmd === "oha" || cmd === "deno") return first.split(/\s+/)[1] ?? first
     return first
   } catch {

@@ -1467,6 +1467,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Allocation-light request view used by Node-native header middleware.
 - **NodeRequestHook** _(type)_ - `type NodeRequestHook = ( request: NodeRequestContext, platform?: Platform, ) => MaybePromise<Response | undefined>`
   Native equivalent of a paired `onRequest` hook. It may short-circuit, but cannot rewrite a request.
+- **NodeResponseBodyHook** _(type)_ - `type NodeResponseBodyHook = ( body: string | Uint8Array, response: NodeResponseContext, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
+  Native equivalent of a paired `onResponseBody` hook - the body tier's twin, mirroring what `onNodeResponseHeaders` is to `onResponseHeaders`. It receives the same already-serialized bytes the portable hook would (never `null` - bodiless renders skip the twin exactly as they skip the portable hook) …
 - **NodeResponseContext** _(interface)_ - `interface NodeResponseContext`
   Response view used by Node-direct middleware. Header hooks mutate `headers`; a BODY hook (adapted from the portable `onResponseBody`) may replace `body` - the already-serialized bytes the direct writer is about to send - and, through its structured replacement, the status (an ETag 304 being the can…
 - **NodeResponseHook** _(type)_ - `type NodeResponseHook = ( response: NodeResponseContext, req: NodeRequestContext, ) => MaybePromise<void>`
@@ -2412,6 +2414,8 @@ Every public export of every package and documented subpath - name, kind, signat
 
 ### `@nifrajs/core/response-observer`
 
+- **NodeResponseBodyHook** _(type)_ - `type NodeResponseBodyHook = ( body: string | Uint8Array, response: NodeResponseContext, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
+  Native equivalent of a paired `onResponseBody` hook - the body tier's twin, mirroring what `onNodeResponseHeaders` is to `onResponseHeaders`. It receives the same already-serialized bytes the portable hook would (never `null` - bodiless renders skip the twin exactly as they skip the portable hook) …
 - **ResponseBodyHook** _(type)_ - `type ResponseBodyHook = ( body: string | Uint8Array, headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
   A portable post-serialization body hook - the Fastify-`onSend`-shaped tier. The hook receives the FINAL framework-serialized bytes plus the header view, and may return replacement bytes (`undefined` keeps the body unchanged). It runs at the framework's cheapest point on every runtime: the bytes are…
 - **ResponseHeadersHook** _(type)_ - `type ResponseHeadersHook = ( headers: ResponseHeadersView, req: NodeRequestContext, status: number, ) => MaybePromise<void>`
@@ -3032,6 +3036,17 @@ _No named exports (side-effect entrypoint)._
 - **LocaleDetectorOptions** _(interface)_ - `interface LocaleDetectorOptions`
 - **localeDetector** _(function)_ - `localeDetector: (options: LocaleDetectorOptions) => import("@nifrajs/core").ContextPlugin<LocaleContext>`
   Detect the request's locale and expose it as `c.locale` / `c.localeSource`.
+
+### `@nifrajs/i18n/routing`
+
+- **HreflangLink** _(interface)_ - `interface HreflangLink`
+  One `hreflang` alternate: an absolute URL plus the tag search engines match on.
+- **I18nRoutingOptions** _(interface)_ - `interface I18nRoutingOptions`
+- **LocalizedRouter** _(interface)_ - `interface LocalizedRouter`
+- **UnlocalizedPath** _(interface)_ - `interface UnlocalizedPath`
+  A pathname with its locale prefix removed (or not, when it carries none).
+- **defineI18nRouting** _(function)_ - `defineI18nRouting: (options: I18nRoutingOptions) => LocalizedRouter`
+  Define the app's locale-prefixed URL scheme once (validated here, so the hot path never re-checks), and get the four path operations bound to it.
 
 ## @nifrajs/image
 
@@ -5070,6 +5085,23 @@ _No named exports (side-effect entrypoint)._
 - **viteServerOnlyReplacement** _(function)_ - `viteServerOnlyReplacement: (source: string) => string`
   Vite dev serves native ESM, so the Bun/CommonJS proxy above is invalid there. Emit inert ESM bindings derived from the source's public names while discarding the implementation and imports. An unsupported exotic export fails closed at ESM link time; server code is never served as fallback.
 
+### `@nifrajs/web/pwa-manifest`
+
+- **ManifestDir** _(type)_ - `type ManifestDir = "ltr" | "rtl" | "auto"`
+- **ManifestDisplay** _(type)_ - `type ManifestDisplay = "fullscreen" | "standalone" | "minimal-ui" | "browser"`
+  `@nifrajs/web/pwa-manifest` - a Web App Manifest builder, the declarative half of PWA next to `@nifrajs/web/service-worker`'s generated worker. Pure + runtime-agnostic: describe the app and get the `manifest.json` bytes to serve (typically `app.get("/manifest.webmanifest", ...)` with `content-type:…
+- **ManifestIcon** _(interface)_ - `interface ManifestIcon`
+- **ManifestPurpose** _(type)_ - `type ManifestPurpose = "any" | "maskable" | "monochrome"`
+- **ManifestScreenshot** _(interface)_ - `interface ManifestScreenshot`
+- **ManifestShortcut** _(interface)_ - `interface ManifestShortcut`
+- **PwaManifestOptions** _(interface)_ - `interface PwaManifestOptions`
+- **manifestLink** _(function)_ - `manifestLink: (href?: string) => string`
+  The `<link rel="manifest">` tag for the document head.
+- **pwaManifest** _(function)_ - `pwaManifest: (options: PwaManifestOptions) => Record<string, unknown>`
+  Build the manifest document object (pass through `JSON.stringify` to serve it).
+- **serializeManifest** _(function)_ - `serializeManifest: (manifest: Record<string, unknown>) => string`
+  Serialize a manifest document to servable JSON (stable key order, no whitespace).
+
 ### `@nifrajs/web/route-manifest`
 
 - **RenderMode** _(type)_ - `type RenderMode = "static" | "isr" | "ssr"`
@@ -5823,6 +5855,8 @@ _No named exports (side-effect entrypoint)._
   Allocation-light request view used by Node-native header middleware.
 - **NodeRequestHook** _(type)_ - `type NodeRequestHook = ( request: NodeRequestContext, platform?: Platform, ) => MaybePromise<Response | undefined>`
   Native equivalent of a paired `onRequest` hook. It may short-circuit, but cannot rewrite a request.
+- **NodeResponseBodyHook** _(type)_ - `type NodeResponseBodyHook = ( body: string | Uint8Array, response: NodeResponseContext, req: NodeRequestContext, status: number, ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>`
+  Native equivalent of a paired `onResponseBody` hook - the body tier's twin, mirroring what `onNodeResponseHeaders` is to `onResponseHeaders`. It receives the same already-serialized bytes the portable hook would (never `null` - bodiless renders skip the twin exactly as they skip the portable hook) …
 - **NodeResponseContext** _(interface)_ - `interface NodeResponseContext`
   Response view used by Node-direct middleware. Header hooks mutate `headers`; a BODY hook (adapted from the portable `onResponseBody`) may replace `body` - the already-serialized bytes the direct writer is about to send - and, through its structured replacement, the status (an ETag 304 being the can…
 - **NodeResponseHook** _(type)_ - `type NodeResponseHook = ( response: NodeResponseContext, req: NodeRequestContext, ) => MaybePromise<void>`

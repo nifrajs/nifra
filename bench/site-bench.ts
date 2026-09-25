@@ -3,8 +3,8 @@
  * `site/data/benchmarks.json` (a single source of truth); a bench run calls `writeSiteBench(slice)`
  * here to merge its slice in, so the published numbers can't drift from the latest run.
  *
- * Each suite owns whole slices: `bench:http:update` → `http`; `bench:ssr` → `heroSsr`/`frontend`/
- * `multipliers`; `bench:size` → `bundle`. A merge replaces only the slices passed, leaving the rest.
+ * Each suite writes only the result slices it measured; partial updates leave other published
+ * slices intact. The website tables and comparison articles consume this same dataset.
  */
 
 import { join } from "node:path"

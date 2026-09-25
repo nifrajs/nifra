@@ -1073,6 +1073,59 @@ test("SECURITY: an UNDERSTATED Content-Length cannot smuggle a body past the cap
   expect(handlerRan).toBe(false)
 })
 
+test("parser errors release a response that closes before finish", async () => {
+  const originalWrite = NodeServerResponse.prototype.write
+  let emittedClose = false
+  NodeServerResponse.prototype.write = function (
+    this: NodeServerResponse,
+    ...args: Parameters<typeof originalWrite>
+  ): boolean {
+    const wrote = originalWrite.apply(this, args)
+    if (!emittedClose) {
+      emittedClose = true
+      this.emit("close")
+      return false
+    }
+    return wrote
+  } as typeof originalWrite
+
+  let socket: ReturnType<typeof connect> | undefined
+  try {
+    const app = server().get(
+      "/slow",
+      () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("partial"))
+            },
+          }),
+          { headers: { "content-type": "text/plain" } },
+        ),
+    )
+    running = await serve(app, { port: 0 })
+    socket = connect(running.port, "127.0.0.1")
+    socket.on("error", () => {})
+    await new Promise<void>((resolve) => socket?.once("connect", resolve))
+    const responseStarted = new Promise<void>((resolve) => socket?.once("data", () => resolve()))
+    const socketClosed = new Promise<void>((resolve) => socket?.once("close", () => resolve()))
+    socket.write("GET /slow HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n")
+    await responseStarted
+
+    // A malformed pipelined request must close the socket once the already-dispatched response has
+    // emitted `close`; waiting for `finish` alone leaves the active counter stuck at one.
+    socket.write("GET / HTTP/1.1\r\nHost: x\r\nBad Header\r\n\r\n")
+    const closed = await Promise.race([
+      socketClosed.then(() => true),
+      Bun.sleep(250).then(() => false),
+    ])
+    expect(closed).toBe(true)
+  } finally {
+    socket?.destroy()
+    NodeServerResponse.prototype.write = originalWrite
+  }
+})
+
 test("SECURITY: an oversized STREAMED (chunked) body is capped before the handler runs", async () => {
   // No Content-Length → the lazy source exposes the live stream, and nifra's streaming byte-cap must
   // cancel it once over the cap. We assert the SERVER-SIDE property (the handler never sees the

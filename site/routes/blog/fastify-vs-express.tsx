@@ -1,3 +1,4 @@
+import { formatRatio, formatRps, httpWorkloadRps } from "../../data/benchmarks"
 import { postMeta } from "../../meta"
 
 export const hydrate = false
@@ -5,8 +6,12 @@ export const hydrate = false
 export const meta = postMeta(
   "fastify-vs-express",
   "Fastify vs Express in 2026: measured, not vibes · Nifra",
-  "Fastify vs Express compared with fresh benchmark numbers - throughput, validation, typing, ecosystem - plus when neither is the right answer. Includes our disclosed bias: we build nifra.",
+  "Fastify vs Express compared with current benchmark results - throughput, validation, typing, ecosystem - plus when neither is the right answer. Includes our disclosed bias: we build Nifra.",
 )
+
+function httpValue(framework: string, workload: "getUsers" | "postUsers"): string {
+  return formatRps(httpWorkloadRps("Node", framework, workload))
+}
 
 export default function FastifyVsExpress() {
   return (
@@ -20,9 +25,10 @@ export default function FastifyVsExpress() {
       </p>
 
       <p className="lead">
-        The eternal Node question, answered with measurements instead of vibes: Fastify is roughly
-        1.4-1.7x Express in our published runs, has real validation built in, and its plugin system
-        is better engineered. Express still wins on ubiquity. Details, then the verdict.
+        The eternal Node question, answered with measurements instead of vibes: Fastify has higher
+        measured throughput than Express in our current published run, has real validation built in,
+        and its plugin system is better engineered. Express still wins on ubiquity. Details, then
+        the verdict.
       </p>
 
       <h2>Throughput</h2>
@@ -37,21 +43,21 @@ export default function FastifyVsExpress() {
         <tbody>
           <tr>
             <td>GET /users/:id</td>
-            <td>44,176 req/s</td>
-            <td>73,663 req/s</td>
+            <td>{httpValue("Express", "getUsers")} req/s</td>
+            <td>{httpValue("Fastify", "getUsers")} req/s</td>
           </tr>
           <tr>
             <td>POST /users (validated)</td>
-            <td>37,883 req/s</td>
-            <td>53,442 req/s</td>
+            <td>{httpValue("Express", "postUsers")} req/s</td>
+            <td>{httpValue("Fastify", "postUsers")} req/s</td>
           </tr>
         </tbody>
       </table>
       <p>
-        (oha @ 50 conns, Node 26, identical route semantics; Express validates with its usual
+        (oha @ 50 conns, Node 26.10.0, identical route semantics; Express validates with its usual
         middleware, Fastify with compiled JSON Schema. Full methodology + every framework we
         measure: <a href="/benchmarks">benchmarks</a>.) A raw <code>node:http</code> baseline does
-        ~71-80k on the GET in the same runs - Express costs you close to half the runtime's ceiling.
+        measured 48,376 GET req/s in the same runs.
       </p>
 
       <h2>Beyond speed</h2>
@@ -78,9 +84,9 @@ export default function FastifyVsExpress() {
 
       <h2>Verdict</h2>
       <p>
-        New backend-only Node service: <strong>Fastify</strong>, and it isn't close - you get ~1.5x
-        the throughput and validation as a first-class citizen. Existing Express app that works:
-        keep it; migrations rarely pay for themselves on speed alone.
+        New backend-only Node service: <strong>Fastify</strong>, and it isn't close - you get higher
+        measured throughput and validation as a first-class citizen. Existing Express app that
+        works: keep it; migrations rarely pay for themselves on speed alone.
       </p>
 
       <h2>When neither is the answer</h2>
@@ -89,9 +95,15 @@ export default function FastifyVsExpress() {
         crosses that boundary saves more engineering time than any req/s number: Nifra infers the
         entire client from the server's TypeScript type (zero codegen), serves SSR for five UI
         frameworks, validates by default, and in the same benchmark runs level-to-ahead of Fastify
-        on Node (<a href="/compare/fastify">the honest head-to-head</a>) while moving to Bun
-        unchanged for ~2x more (<a href="/blog/bun-vs-node">measured</a>). Different category, same
-        speed class - worth knowing it exists before defaulting.
+        on Node (<a href="/compare/fastify">the honest head-to-head</a>) while the same app delivers
+        about{" "}
+        {formatRatio(
+          httpWorkloadRps("Bun", "Nifra", "getUsers"),
+          httpWorkloadRps("Node", "Nifra", "getUsers"),
+        )}{" "}
+        as many GET /users/:id requests per second on Bun as Node (
+        <a href="/blog/bun-vs-node">measured on the same code</a>). Different category, same speed
+        class - worth knowing it exists before defaulting.
       </p>
     </article>
   )

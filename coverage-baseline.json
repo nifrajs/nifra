@@ -3,21 +3,101 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/a2a/src/index.ts": {
+    "functions": 80,
+    "lines": 87.0712401055409
+  },
+  "packages/ag-ui/src/index.ts": {
+    "functions": 86.36363636363636,
+    "lines": 96.18874773139746
+  },
+  "packages/agent-app/src/client.ts": {
+    "functions": 84.375,
+    "lines": 81.49466192170819
+  },
+  "packages/agent-app/src/transport.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/agent-app/src/view-models.ts": {
+    "functions": 77.77777777777779,
+    "lines": 91.51515151515152
+  },
+  "packages/agent-protocol/src/index.ts": {
+    "functions": 95.65217391304348,
+    "lines": 96.25
+  },
+  "packages/agent-protocol/src/orchestration.ts": {
+    "functions": 95.23809523809523,
+    "lines": 97.30941704035875
+  },
+  "packages/agent-protocol/src/run-lifecycle.ts": {
+    "functions": 80.95238095238095,
+    "lines": 94.0909090909091
+  },
+  "packages/agent-protocol/src/transport-policy.ts": {
+    "functions": 100,
+    "lines": 93.84615384615384
+  },
+  "packages/agent-review/src/canonical.ts": {
+    "functions": 86.36363636363636,
+    "lines": 89.60000000000001
+  },
+  "packages/agent-review/src/compose.ts": {
+    "functions": 88.88888888888889,
+    "lines": 94.21487603305785
+  },
+  "packages/agent-review/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/agent-review/src/parser.ts": {
+    "functions": 98.38709677419355,
+    "lines": 100
+  },
+  "packages/agent-review/src/types.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/agent-telemetry/src/index.ts": {
     "functions": 95.45454545454545,
     "lines": 100
   },
+  "packages/agent-telemetry/src/run.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/agent/src/context.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/agent/src/deployment.ts": {
+    "functions": 94.44444444444444,
+    "lines": 97.87798408488064
+  },
   "packages/agent/src/events.ts": {
-    "functions": 77.77777777777779,
-    "lines": 84.78260869565217
+    "functions": 88.88888888888889,
+    "lines": 96
   },
   "packages/agent/src/execution-policy.ts": {
-    "functions": 90.9090909090909,
-    "lines": 95.51282051282051
+    "functions": 91.30434782608695,
+    "lines": 96.22641509433963
+  },
+  "packages/agent/src/gateway.ts": {
+    "functions": 77.77777777777779,
+    "lines": 91.45077720207254
   },
   "packages/agent/src/index.ts": {
-    "functions": 92.10526315789474,
-    "lines": 95.67779960707269
+    "functions": 98.24561403508771,
+    "lines": 100
+  },
+  "packages/agent/src/mount.ts": {
+    "functions": 86.66666666666667,
+    "lines": 82.32323232323232
+  },
+  "packages/agent/src/registry.ts": {
+    "functions": 100,
+    "lines": 100
   },
   "packages/auth/src/authorization.ts": {
     "functions": 100,
@@ -63,111 +143,119 @@
     "functions": 100,
     "lines": 100
   },
-  "packages/cli/test/.nifra-capability-fixtures-YQsdys/check-firewall/backend.ts": {
+  "packages/cli/test/.nifra-capability-fixtures-jnjwkm/check-firewall/backend.ts": {
     "functions": 0,
     "lines": 100
   },
-  "packages/cli/test/.nifra-capability-fixtures-YQsdys/check-firewall/nifra.assurance.ts": {
+  "packages/cli/test/.nifra-capability-fixtures-jnjwkm/check-firewall/nifra.assurance.ts": {
     "functions": 100,
     "lines": 100
   },
-  "packages/cli/test/.nifra-capability-fixtures-YQsdys/check-firewall/read-adapter.ts": {
+  "packages/cli/test/.nifra-capability-fixtures-jnjwkm/check-firewall/read-adapter.ts": {
     "functions": 100,
     "lines": 100
   },
-  "packages/cli/test/.nifra-capability-fixtures-YQsdys/check-firewall/repo.ts": {
+  "packages/cli/test/.nifra-capability-fixtures-jnjwkm/check-firewall/repo.ts": {
     "functions": 100,
     "lines": 100
   },
-  "packages/cli/test/.nifra-capability-fixtures-YQsdys/lock-gate/backend.ts": {
+  "packages/cli/test/.nifra-capability-fixtures-jnjwkm/lock-gate/backend.ts": {
     "functions": 0,
     "lines": 100
   },
-  "packages/cli/test/.nifra-capability-fixtures-YQsdys/lock-gate/nifra.assurance.ts": {
+  "packages/cli/test/.nifra-capability-fixtures-jnjwkm/lock-gate/nifra.assurance.ts": {
     "functions": 100,
     "lines": 100
   },
-  "packages/cli/test/.nifra-capability-fixtures-YQsdys/lock-gate/repo.ts": {
+  "packages/cli/test/.nifra-capability-fixtures-jnjwkm/lock-gate/repo.ts": {
     "functions": 100,
     "lines": 100
   },
-  "packages/cli/test/.nifra-levels-fixtures-Eq6c4C/gap-CjposE/backend.ts": {
+  "packages/cli/test/.nifra-levels-fixtures-5W3fEA/gap-RM8uks/backend.ts": {
     "functions": 50,
     "lines": 100
   },
-  "packages/cli/test/.nifra-levels-fixtures-Eq6c4C/gap-CjposE/nifra.assurance.ts": {
+  "packages/cli/test/.nifra-levels-fixtures-5W3fEA/gap-RM8uks/nifra.assurance.ts": {
     "functions": 100,
     "lines": 100
   },
-  "packages/cli/test/.nifra-levels-fixtures-Eq6c4C/gate-neAwet/backend.ts": {
+  "packages/cli/test/.nifra-levels-fixtures-5W3fEA/gate-DNqdf0/backend.ts": {
     "functions": 50,
     "lines": 100
   },
-  "packages/cli/test/.nifra-levels-fixtures-Eq6c4C/gate-neAwet/nifra.assurance.ts": {
+  "packages/cli/test/.nifra-levels-fixtures-5W3fEA/gate-DNqdf0/nifra.assurance.ts": {
     "functions": 100,
     "lines": 100
   },
-  "packages/cli/test/.nifra-levels-fixtures-Eq6c4C/l1-DseTIu/backend.ts": {
+  "packages/cli/test/.nifra-levels-fixtures-5W3fEA/l1-ueyleK/backend.ts": {
     "functions": 50,
     "lines": 100
   },
-  "packages/cli/test/.nifra-levels-fixtures-Eq6c4C/l1-DseTIu/nifra.assurance.ts": {
+  "packages/cli/test/.nifra-levels-fixtures-5W3fEA/l1-ueyleK/nifra.assurance.ts": {
     "functions": 100,
     "lines": 100
   },
-  "packages/cli/test/.nifra-levels-fixtures-Eq6c4C/l4-hh2nOz/backend.ts": {
+  "packages/cli/test/.nifra-levels-fixtures-5W3fEA/l4-3am935/backend.ts": {
     "functions": 50,
     "lines": 100
   },
-  "packages/cli/test/.nifra-levels-fixtures-Eq6c4C/l4-hh2nOz/nifra.assurance.ts": {
+  "packages/cli/test/.nifra-levels-fixtures-5W3fEA/l4-3am935/nifra.assurance.ts": {
     "functions": 100,
     "lines": 100
   },
-  "packages/cli/test/.nifra-verification-golden-jZfBsK/full-4DIuVG/backend.ts": {
+  "packages/cli/test/.nifra-levels-fixtures-5W3fEA/shell-evidence-3Mw3Hc/backend.ts": {
+    "functions": 33.33333333333333,
+    "lines": 100
+  },
+  "packages/cli/test/.nifra-levels-fixtures-5W3fEA/shell-evidence-3Mw3Hc/nifra.assurance.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/cli/test/.nifra-verification-golden-D1x95h/full-D9HmRz/backend.ts": {
+    "functions": 0,
+    "lines": 100
+  },
+  "packages/cli/test/.nifra-verification-golden-D1x95h/full-D9HmRz/nifra.assurance.ts": {
+    "functions": 0,
+    "lines": 100
+  },
+  "packages/cli/test/.nifra-verification-golden-D1x95h/full-JeJKDp/backend.ts": {
     "functions": 50,
     "lines": 100
   },
-  "packages/cli/test/.nifra-verification-golden-jZfBsK/full-4DIuVG/nifra.assurance.ts": {
+  "packages/cli/test/.nifra-verification-golden-D1x95h/full-JeJKDp/nifra.assurance.ts": {
     "functions": 100,
     "lines": 100
   },
-  "packages/cli/test/.nifra-verification-golden-jZfBsK/full-9E5ilB/backend.ts": {
+  "packages/cli/test/.nifra-verification-golden-D1x95h/full-pHMU3F/backend.ts": {
     "functions": 0,
     "lines": 100
   },
-  "packages/cli/test/.nifra-verification-golden-jZfBsK/full-9E5ilB/nifra.assurance.ts": {
+  "packages/cli/test/.nifra-verification-golden-D1x95h/full-pHMU3F/nifra.assurance.ts": {
     "functions": 0,
     "lines": 100
   },
-  "packages/cli/test/.nifra-verification-golden-jZfBsK/full-FOn5PY/backend.ts": {
+  "packages/cli/test/.nifra-verification-golden-D1x95h/full-vD24Ig/backend.ts": {
     "functions": 0,
     "lines": 100
   },
-  "packages/cli/test/.nifra-verification-golden-jZfBsK/full-FOn5PY/nifra.assurance.ts": {
+  "packages/cli/test/.nifra-verification-golden-D1x95h/full-vD24Ig/nifra.assurance.ts": {
     "functions": 0,
     "lines": 100
   },
-  "packages/cli/test/.nifra-verification-golden-jZfBsK/full-impWn3/backend.ts": {
-    "functions": 0,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-verification-golden-jZfBsK/full-impWn3/nifra.assurance.ts": {
-    "functions": 0,
-    "lines": 100
-  },
-  "packages/cli/test/.nifra-verification-golden-jZfBsK/full-Kxdzfh/backend.ts": {
+  "packages/cli/test/.nifra-verification-golden-D1x95h/full-znglQd/backend.ts": {
     "functions": 50,
     "lines": 100
   },
-  "packages/cli/test/.nifra-verification-golden-jZfBsK/full-Kxdzfh/nifra.assurance.ts": {
+  "packages/cli/test/.nifra-verification-golden-D1x95h/full-znglQd/nifra.assurance.ts": {
     "functions": 100,
     "lines": 100
   },
-  "packages/cli/test/.nifra-verification-golden-jZfBsK/full-vxMLW4/backend.ts": {
+  "packages/cli/test/.nifra-verification-golden-D1x95h/full-ZXeI6A/backend.ts": {
     "functions": 0,
     "lines": 100
   },
-  "packages/cli/test/.nifra-verification-golden-jZfBsK/full-vxMLW4/nifra.assurance.ts": {
+  "packages/cli/test/.nifra-verification-golden-D1x95h/full-ZXeI6A/nifra.assurance.ts": {
     "functions": 0,
     "lines": 100
   },
@@ -199,13 +287,173 @@
     "functions": 100,
     "lines": 98.4126984126984
   },
+  "packages/coding-agent/src/approvals.ts": {
+    "functions": 89.47368421052632,
+    "lines": 82.1917808219178
+  },
+  "packages/coding-agent/src/capabilities.ts": {
+    "functions": 100,
+    "lines": 97.72727272727273
+  },
+  "packages/coding-agent/src/cli.ts": {
+    "functions": 57.14285714285714,
+    "lines": 31.28834355828221
+  },
+  "packages/coding-agent/src/context.ts": {
+    "functions": 0,
+    "lines": 1.1764705882352942
+  },
+  "packages/coding-agent/src/deployment-adapters.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/coding-agent/src/diff.ts": {
+    "functions": 66.66666666666666,
+    "lines": 67.3913043478261
+  },
+  "packages/coding-agent/src/errors.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/coding-agent/src/extensions.ts": {
+    "functions": 69.23076923076923,
+    "lines": 83.75
+  },
+  "packages/coding-agent/src/handoffs.ts": {
+    "functions": 88.23529411764706,
+    "lines": 98.62068965517241
+  },
+  "packages/coding-agent/src/healing.ts": {
+    "functions": 83.33333333333334,
+    "lines": 100
+  },
+  "packages/coding-agent/src/host.ts": {
+    "functions": 68.08510638297872,
+    "lines": 89.76833976833977
+  },
+  "packages/coding-agent/src/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/coding-agent/src/isolated.ts": {
+    "functions": 82.75862068965517,
+    "lines": 97.10144927536231
+  },
+  "packages/coding-agent/src/native.ts": {
+    "functions": 82.22222222222221,
+    "lines": 88.83495145631069
+  },
+  "packages/coding-agent/src/orchestration/artifact-port.ts": {
+    "functions": 88.88888888888889,
+    "lines": 94.73684210526315
+  },
+  "packages/coding-agent/src/orchestration/catalog.ts": {
+    "functions": 85.71428571428571,
+    "lines": 100
+  },
+  "packages/coding-agent/src/orchestration/compile.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/coding-agent/src/orchestration/dispatch.ts": {
+    "functions": 92.85714285714286,
+    "lines": 100
+  },
+  "packages/coding-agent/src/orchestration/durable-jobs.ts": {
+    "functions": 96.15384615384616,
+    "lines": 97.43589743589743
+  },
+  "packages/coding-agent/src/orchestration/effect-key.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/coding-agent/src/orchestration/evidence-store.ts": {
+    "functions": 84.375,
+    "lines": 93.51851851851852
+  },
+  "packages/coding-agent/src/orchestration/hash.ts": {
+    "functions": 100,
+    "lines": 92.3076923076923
+  },
+  "packages/coding-agent/src/orchestration/host.ts": {
+    "functions": 93.54838709677419,
+    "lines": 98.85057471264368
+  },
+  "packages/coding-agent/src/orchestration/index.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/coding-agent/src/orchestration/policy.ts": {
+    "functions": 62.5,
+    "lines": 86.8421052631579
+  },
+  "packages/coding-agent/src/orchestration/recovery.ts": {
+    "functions": 80.95238095238095,
+    "lines": 96.49122807017544
+  },
+  "packages/coding-agent/src/orchestration/tracer.ts": {
+    "functions": 100,
+    "lines": 91.45299145299145
+  },
+  "packages/coding-agent/src/plans.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/coding-agent/src/presets.ts": {
+    "functions": 0,
+    "lines": 75.36231884057972
+  },
+  "packages/coding-agent/src/process.ts": {
+    "functions": 100,
+    "lines": 92.5
+  },
+  "packages/coding-agent/src/registry.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/coding-agent/src/replay.ts": {
+    "functions": 74.19354838709677,
+    "lines": 89.6797153024911
+  },
+  "packages/coding-agent/src/rpc.ts": {
+    "functions": 91.8918918918919,
+    "lines": 98.83551673944687
+  },
+  "packages/coding-agent/src/session-migration.ts": {
+    "functions": 96.42857142857143,
+    "lines": 100
+  },
+  "packages/coding-agent/src/sessions.ts": {
+    "functions": 94.54545454545455,
+    "lines": 98.32869080779945
+  },
+  "packages/coding-agent/src/subagents.ts": {
+    "functions": 78.57142857142857,
+    "lines": 100
+  },
+  "packages/coding-agent/src/tools.ts": {
+    "functions": 0,
+    "lines": 11.76470588235294
+  },
+  "packages/coding-agent/src/ui.ts": {
+    "functions": 87.5,
+    "lines": 96.34146341463415
+  },
+  "packages/coding-agent/src/verification.ts": {
+    "functions": 75,
+    "lines": 77.89473684210526
+  },
+  "packages/coding-agent/src/workflows.ts": {
+    "functions": 93.54838709677419,
+    "lines": 95.93023255813954
+  },
   "packages/content/src/fs.ts": {
     "functions": 100,
     "lines": 100
   },
   "packages/content/src/index.ts": {
     "functions": 94.73684210526315,
-    "lines": 85.2731591448931
+    "lines": 86.33093525179856
   },
   "packages/content/src/mdx.ts": {
     "functions": 100,
@@ -213,7 +461,7 @@
   },
   "packages/core/src/assurance.ts": {
     "functions": 100,
-    "lines": 84.28246013667426
+    "lines": 83.72591006423983
   },
   "packages/core/src/budget.ts": {
     "functions": 94.44444444444444,
@@ -247,9 +495,25 @@
     "functions": 94.73684210526315,
     "lines": 100
   },
+  "packages/core/src/durable-approval.ts": {
+    "functions": 92.5925925925926,
+    "lines": 98.53658536585365
+  },
+  "packages/core/src/durable-effect.ts": {
+    "functions": 96.55172413793103,
+    "lines": 100
+  },
   "packages/core/src/durable-execution.ts": {
-    "functions": 94.77611940298507,
-    "lines": 96.31901840490798
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/durable-saga.ts": {
+    "functions": 92.3076923076923,
+    "lines": 98.62778730703259
+  },
+  "packages/core/src/edge-kit.ts": {
+    "functions": 100,
+    "lines": 100
   },
   "packages/core/src/effect-ledger.ts": {
     "functions": 100,
@@ -268,8 +532,8 @@
     "lines": 100
   },
   "packages/core/src/evidence.ts": {
-    "functions": 85.18518518518519,
-    "lines": 91.71270718232044
+    "functions": 87.5,
+    "lines": 94.32314410480349
   },
   "packages/core/src/execution-policy.ts": {
     "functions": 100,
@@ -307,6 +571,14 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/core/src/internal/durable-shared.ts": {
+    "functions": 93.33333333333333,
+    "lines": 78.57142857142857
+  },
+  "packages/core/src/internal/durable-types.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/core/src/internal/effect-execution.ts": {
     "functions": 100,
     "lines": 100
@@ -319,7 +591,19 @@
     "functions": 90.9090909090909,
     "lines": 100
   },
+  "packages/core/src/internal/route-compiler.ts": {
+    "functions": 100,
+    "lines": 97.35099337748345
+  },
   "packages/core/src/internal/route-execution.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/internal/route-lanes.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/internal/route-program.ts": {
     "functions": 100,
     "lines": 100
   },
@@ -340,8 +624,8 @@
     "lines": 100
   },
   "packages/core/src/manifest.ts": {
-    "functions": 97.77777777777777,
-    "lines": 98.36448598130842
+    "functions": 100,
+    "lines": 98.37587006960557
   },
   "packages/core/src/mcp.ts": {
     "functions": 100,
@@ -371,6 +655,10 @@
     "functions": 100,
     "lines": 96.82539682539682
   },
+  "packages/core/src/response-observer.ts": {
+    "functions": 100,
+    "lines": 92
+  },
   "packages/core/src/router/pattern.ts": {
     "functions": 94.11764705882352,
     "lines": 96.94323144104804
@@ -383,6 +671,10 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/core/src/security/baseline.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/core/src/seo.ts": {
     "functions": 100,
     "lines": 100
@@ -391,9 +683,21 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/core/src/server/bare-error-lane.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/core/src/server/body-lane.ts": {
+    "functions": 78.57142857142857,
+    "lines": 91.42857142857143
+  },
   "packages/core/src/server/body.ts": {
     "functions": 88.88888888888889,
     "lines": 94.05940594059405
+  },
+  "packages/core/src/server/bridge-markers.ts": {
+    "functions": 100,
+    "lines": 100
   },
   "packages/core/src/server/client-ip.ts": {
     "functions": 100,
@@ -401,11 +705,11 @@
   },
   "packages/core/src/server/contract.ts": {
     "functions": 100,
-    "lines": 98.91304347826086
+    "lines": 99.07407407407408
   },
   "packages/core/src/server/cookies.ts": {
     "functions": 100,
-    "lines": 100
+    "lines": 99.48186528497409
   },
   "packages/core/src/server/edge.ts": {
     "functions": 100,
@@ -464,12 +768,12 @@
     "lines": 91.8918918918919
   },
   "packages/core/src/server/request-context.ts": {
-    "functions": 84.78260869565217,
-    "lines": 87.79342723004695
+    "functions": 88.23529411764706,
+    "lines": 87.79342723004694
   },
   "packages/core/src/server/respond.ts": {
-    "functions": 96,
-    "lines": 88.49557522123894
+    "functions": 96.15384615384616,
+    "lines": 88.70523415977961
   },
   "packages/core/src/server/response-contract-lane.ts": {
     "functions": 100,
@@ -479,13 +783,17 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/core/src/server/response-observer-runtime.ts": {
+    "functions": 94.44444444444444,
+    "lines": 90.52631578947368
+  },
   "packages/core/src/server/runtime-core.ts": {
     "functions": 100,
     "lines": 100
   },
   "packages/core/src/server/server.ts": {
-    "functions": 84.84848484848484,
-    "lines": 98.52045256744995
+    "functions": 82.96296296296296,
+    "lines": 98.8508749020632
   },
   "packages/core/src/server/sse.ts": {
     "functions": 94.73684210526315,
@@ -493,11 +801,15 @@
   },
   "packages/core/src/server/static-headers.ts": {
     "functions": 100,
-    "lines": 90.36144578313254
+    "lines": 90.52631578947368
   },
   "packages/core/src/server/transport-lane.ts": {
     "functions": 100,
     "lines": 99.01960784313727
+  },
+  "packages/core/src/server/validation.ts": {
+    "functions": 100,
+    "lines": 100
   },
   "packages/core/src/server/webhook.ts": {
     "functions": 100,
@@ -508,20 +820,20 @@
     "lines": 100
   },
   "packages/core/src/server/ws-bun.ts": {
-    "functions": 95.23809523809523,
+    "functions": 95.65217391304348,
     "lines": 100
   },
   "packages/core/src/single-copy.ts": {
-    "functions": 69.23076923076923,
-    "lines": 75.36764705882352
+    "functions": 78.78787878787878,
+    "lines": 87.5
   },
   "packages/core/src/tool-catalog.ts": {
     "functions": 100,
     "lines": 100
   },
   "packages/core/src/tool-contract.ts": {
-    "functions": 94.11764705882352,
-    "lines": 99.6078431372549
+    "functions": 97.05882352941177,
+    "lines": 99.80392156862746
   },
   "packages/core/src/transport-codec-rich.ts": {
     "functions": 100,
@@ -603,6 +915,10 @@
     "functions": 100,
     "lines": 95.97701149425288
   },
+  "packages/edge/src/index.ts": {
+    "functions": 95,
+    "lines": 100
+  },
   "packages/env/src/define.ts": {
     "functions": 100,
     "lines": 100
@@ -630,6 +946,30 @@
   "packages/events/src/registry.ts": {
     "functions": 100,
     "lines": 100
+  },
+  "packages/graphql/src/context.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/graphql/src/http.ts": {
+    "functions": 79.16666666666666,
+    "lines": 68.21428571428572
+  },
+  "packages/graphql/src/index.ts": {
+    "functions": 0,
+    "lines": 17.647058823529413
+  },
+  "packages/graphql/src/limits.ts": {
+    "functions": 100,
+    "lines": 74.39024390243902
+  },
+  "packages/graphql/src/pubsub.ts": {
+    "functions": 66.66666666666666,
+    "lines": 78.84615384615384
+  },
+  "packages/graphql/src/ws.ts": {
+    "functions": 69.56521739130434,
+    "lines": 70.76023391812866
   },
   "packages/i18n/src/detector.ts": {
     "functions": 100,
@@ -677,11 +1017,11 @@
   },
   "packages/image/src/server.ts": {
     "functions": 100,
-    "lines": 98.85057471264368
+    "lines": 99.13294797687861
   },
   "packages/image/src/sign.ts": {
     "functions": 100,
-    "lines": 97.61904761904762
+    "lines": 97.63779527559055
   },
   "packages/island-trigger/src/index.ts": {
     "functions": 92.85714285714286,
@@ -707,6 +1047,10 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/jobs/src/dead-letter-view.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/jobs/src/index.ts": {
     "functions": 100,
     "lines": 100
@@ -720,24 +1064,24 @@
     "lines": 100
   },
   "packages/mcp-db/src/index.ts": {
-    "functions": 97.5,
-    "lines": 92.58517034068137
+    "functions": 100,
+    "lines": 95.90834697217676
   },
   "packages/mcp/src/bridge.ts": {
     "functions": 100,
     "lines": 100
   },
   "packages/mcp/src/http.ts": {
-    "functions": 90.9090909090909,
-    "lines": 91.52542372881356
+    "functions": 91.8918918918919,
+    "lines": 97.42765273311898
   },
   "packages/mcp/src/index.ts": {
     "functions": 100,
     "lines": 100
   },
   "packages/mcp/src/protocol.ts": {
-    "functions": 93.10344827586206,
-    "lines": 97.6470588235294
+    "functions": 93.75,
+    "lines": 98.50374064837905
   },
   "packages/mcp/src/server.ts": {
     "functions": 100,
@@ -781,7 +1125,7 @@
   },
   "packages/middleware/src/cache.ts": {
     "functions": 92.3076923076923,
-    "lines": 99.53271028037383
+    "lines": 99.65034965034964
   },
   "packages/middleware/src/combine.ts": {
     "functions": 100,
@@ -789,7 +1133,7 @@
   },
   "packages/middleware/src/compression.ts": {
     "functions": 96.42857142857143,
-    "lines": 99.43181818181817
+    "lines": 99.43820224719101
   },
   "packages/middleware/src/conditional.ts": {
     "functions": 87.5,
@@ -841,7 +1185,7 @@
   },
   "packages/middleware/src/language.ts": {
     "functions": 100,
-    "lines": 97.26027397260275
+    "lines": 97.33333333333334
   },
   "packages/middleware/src/logger.ts": {
     "functions": 100,
@@ -865,11 +1209,11 @@
   },
   "packages/middleware/src/pretty-json.ts": {
     "functions": 89.47368421052632,
-    "lines": 99.23664122137404
+    "lines": 99.27536231884058
   },
   "packages/middleware/src/problem-details.ts": {
     "functions": 93.33333333333333,
-    "lines": 91.51515151515152
+    "lines": 91.61676646706587
   },
   "packages/middleware/src/range.ts": {
     "functions": 100,
@@ -907,13 +1251,17 @@
     "functions": 100,
     "lines": 87.5
   },
+  "packages/node/src/generated/bridge-markers.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/node/src/index.ts": {
-    "functions": 83.93782383419689,
-    "lines": 98.32402234636871
+    "functions": 84.42211055276381,
+    "lines": 98.42829076620825
   },
   "packages/node/src/node-stream.ts": {
-    "functions": 60,
-    "lines": 82.25806451612904
+    "functions": 85.71428571428571,
+    "lines": 91.01123595505618
   },
   "packages/otel/src/causality.ts": {
     "functions": 100,
@@ -951,17 +1299,25 @@
     "functions": 92.3076923076923,
     "lines": 98.21428571428571
   },
+  "packages/pi/extensions/nifra.ts": {
+    "functions": 100,
+    "lines": 92.3076923076923
+  },
+  "packages/pi/src/index.ts": {
+    "functions": 85.41666666666666,
+    "lines": 94.23328964613368
+  },
   "packages/prompt/src/index.ts": {
     "functions": 100,
     "lines": 100
   },
   "packages/proxy/src/index.ts": {
     "functions": 72.3404255319149,
-    "lines": 54.10122164048866
+    "lines": 55.63025210084034
   },
   "packages/proxy/src/node-stream.ts": {
     "functions": 0,
-    "lines": 3.571428571428571
+    "lines": 4.3478260869565215
   },
   "packages/proxy/src/undici.ts": {
     "functions": 20,
@@ -969,7 +1325,7 @@
   },
   "packages/runner/src/index.ts": {
     "functions": 100,
-    "lines": 98.91304347826086
+    "lines": 99.24242424242425
   },
   "packages/schema/src/adapter.ts": {
     "functions": 100,
@@ -983,8 +1339,12 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/schema/src/openapi-import.ts": {
+    "functions": 100,
+    "lines": 95
+  },
   "packages/schema/src/openapi.ts": {
-    "functions": 90.47619047619048,
+    "functions": 91.30434782608695,
     "lines": 100
   },
   "packages/schema/src/pagination.ts": {
@@ -1031,9 +1391,21 @@
     "functions": 96.82539682539682,
     "lines": 99.54545454545455
   },
+  "packages/testing/src/agent-certification.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/testing/src/agent-eval.ts": {
+    "functions": 80.55555555555556,
+    "lines": 74.80719794344472
+  },
   "packages/testing/src/certification.ts": {
-    "functions": 97.1830985915493,
-    "lines": 99.07621247113164
+    "functions": 98.64864864864865,
+    "lines": 100
+  },
+  "packages/testing/src/contract-lab.ts": {
+    "functions": 100,
+    "lines": 100
   },
   "packages/testing/src/cookies.ts": {
     "functions": 100,
@@ -1058,6 +1430,10 @@
   "packages/testing/src/index.ts": {
     "functions": 100,
     "lines": 100
+  },
+  "packages/testing/src/prediction-lab.ts": {
+    "functions": 94,
+    "lines": 96.12403100775194
   },
   "packages/testing/src/session.ts": {
     "functions": 100,
@@ -1301,15 +1677,19 @@
   },
   "packages/web/src/boundary.ts": {
     "functions": 88,
-    "lines": 98.95833333333334
+    "lines": 98.97435897435898
+  },
+  "packages/web/src/build-plan.ts": {
+    "functions": 94.23076923076923,
+    "lines": 94.41176470588235
   },
   "packages/web/src/build-vite.ts": {
     "functions": 100,
-    "lines": 95.16129032258065
+    "lines": 95.45454545454545
   },
   "packages/web/src/build.ts": {
-    "functions": 92.91338582677166,
-    "lines": 95.45913218970736
+    "functions": 92.5,
+    "lines": 95.23809523809523
   },
   "packages/web/src/bun-dev-entry.ts": {
     "functions": 100,
@@ -1320,12 +1700,16 @@
     "lines": 100
   },
   "packages/web/src/client.ts": {
-    "functions": 94.87179487179486,
-    "lines": 100
+    "functions": 96.29629629629629,
+    "lines": 99.15014164305948
   },
   "packages/web/src/conformance.ts": {
     "functions": 100,
     "lines": 100
+  },
+  "packages/web/src/css-contract.ts": {
+    "functions": 100,
+    "lines": 90
   },
   "packages/web/src/deferred.ts": {
     "functions": 100,
@@ -1345,15 +1729,15 @@
   },
   "packages/web/src/dev-ssr-graph.ts": {
     "functions": 100,
-    "lines": 98.48484848484848
+    "lines": 98.73417721518987
   },
   "packages/web/src/dev.ts": {
-    "functions": 93.54838709677419,
+    "functions": 96.7741935483871,
     "lines": 93.25396825396825
   },
   "packages/web/src/diagnostic.ts": {
     "functions": 94.44444444444444,
-    "lines": 96.5986394557823
+    "lines": 96.7741935483871
   },
   "packages/web/src/draft.ts": {
     "functions": 100,
@@ -1384,8 +1768,16 @@
     "lines": 100
   },
   "packages/web/src/index.ts": {
-    "functions": 96.82539682539682,
-    "lines": 99.36254980079681
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/internal/codegen.ts": {
+    "functions": 94.44444444444444,
+    "lines": 100
+  },
+  "packages/web/src/internal/fetcher-runtime.ts": {
+    "functions": 71.42857142857143,
+    "lines": 100
   },
   "packages/web/src/internal/head-attributes.ts": {
     "functions": 100,
@@ -1395,13 +1787,37 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/web/src/internal/identity-policy.ts": {
+    "functions": 100,
+    "lines": 97.14285714285714
+  },
   "packages/web/src/internal/js-string.ts": {
     "functions": 100,
     "lines": 100
   },
+  "packages/web/src/internal/page-execution.ts": {
+    "functions": 100,
+    "lines": 95.22998296422487
+  },
   "packages/web/src/internal/parity.ts": {
-    "functions": 97.6470588235294,
-    "lines": 96.5986394557823
+    "functions": 97.77777777777777,
+    "lines": 97.054698457223
+  },
+  "packages/web/src/internal/query-runtime.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/internal/render-document.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/internal/request-url.ts": {
+    "functions": 100,
+    "lines": 100
+  },
+  "packages/web/src/internal/runtime-contract.ts": {
+    "functions": 100,
+    "lines": 100
   },
   "packages/web/src/internal/script-types.ts": {
     "functions": 100,
@@ -1419,17 +1835,21 @@
     "functions": 100,
     "lines": 100
   },
+  "packages/web/src/internal/web-app.ts": {
+    "functions": 81.81818181818183,
+    "lines": 89.8876404494382
+  },
   "packages/web/src/islands.ts": {
     "functions": 100,
     "lines": 100
   },
   "packages/web/src/isr.ts": {
-    "functions": 98.21428571428571,
+    "functions": 98.30508474576271,
     "lines": 100
   },
   "packages/web/src/llms-txt.ts": {
     "functions": 100,
-    "lines": 95.86776859504133
+    "lines": 96.03174603174604
   },
   "packages/web/src/manifest.ts": {
     "functions": 100,
@@ -1438,6 +1858,10 @@
   "packages/web/src/module-graph.ts": {
     "functions": 100,
     "lines": 100
+  },
+  "packages/web/src/nano.ts": {
+    "functions": 95.65217391304348,
+    "lines": 99
   },
   "packages/web/src/navigation.ts": {
     "functions": 100,
@@ -1458,6 +1882,10 @@
   "packages/web/src/plugins/scss.ts": {
     "functions": 100,
     "lines": 100
+  },
+  "packages/web/src/plugins/stylex.ts": {
+    "functions": 96.96969696969697,
+    "lines": 95.80838323353294
   },
   "packages/web/src/plugins/svg.ts": {
     "functions": 100,
@@ -1511,6 +1939,10 @@
     "functions": 100,
     "lines": 91.83673469387756
   },
+  "packages/web/src/trusted-html.ts": {
+    "functions": 100,
+    "lines": 100
+  },
   "packages/web/test/fixtures/throws-on-load.ts": {
     "functions": 100,
     "lines": 100
@@ -1518,6 +1950,10 @@
   "packages/web/test/workspace-link.ts": {
     "functions": 100,
     "lines": 100
+  },
+  "packages/webmcp/src/index.ts": {
+    "functions": 96.07843137254902,
+    "lines": 88.47402597402598
   },
   "packages/workers/src/index.ts": {
     "functions": 100,

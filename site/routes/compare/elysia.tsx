@@ -1,3 +1,10 @@
+import {
+  formatPercent,
+  httpRealworldRps,
+  httpWorkloadRps,
+  percentOf,
+  runtimeCeilingPercent,
+} from "../../data/benchmarks"
 import { compareMeta } from "../../meta"
 
 export const hydrate = false
@@ -30,13 +37,33 @@ export default function VsElysia() {
       <ul>
         <li>
           On <strong>Bun</strong>, Nifra runs level with Elysia on <code>GET /users/:id</code> at
-          108% of a hand-rolled <code>Bun.serve</code> baseline on GET - the framework layer costs
-          nothing measurable - and 106% of Elysia on the validated <code>POST</code>.
+          {formatPercent(runtimeCeilingPercent("Bun"))} of a hand-rolled <code>Bun.serve</code>
+          baseline on GET - the framework layer costs nothing measurable - and{" "}
+          {formatPercent(
+            percentOf(
+              httpWorkloadRps("Bun", "Nifra", "postUsers"),
+              httpWorkloadRps("Bun", "Elysia", "postUsers"),
+            ),
+          )}{" "}
+          of Elysia on the validated <code>POST</code>.
         </li>
         <li>
           In the <strong>realistic middleware shape</strong> (security headers + CORS + request-id
-          on every request), Nifra runs at 101% of Elysia on GET and 97% on POST in the current Bun
-          snapshot.
+          on every request), Nifra runs at{" "}
+          {formatPercent(
+            percentOf(
+              httpRealworldRps("Bun", "Nifra", "get"),
+              httpRealworldRps("Bun", "Elysia", "get"),
+            ),
+          )}{" "}
+          of Elysia on GET and{" "}
+          {formatPercent(
+            percentOf(
+              httpRealworldRps("Bun", "Nifra", "post"),
+              httpRealworldRps("Bun", "Elysia", "post"),
+            ),
+          )}{" "}
+          on POST in the current Bun snapshot.
         </li>
         <li>
           On <strong>Deno</strong>, Nifra leads every measured framework, Elysia included, on both
@@ -116,7 +143,7 @@ export default function VsElysia() {
         </li>
       </ul>
       <p>
-        Start with <code>bunx create-nifra my-app</code> (backend) or <code>--template site</code>{" "}
+        Start with <code>bun create nifra my-app</code> (backend) or <code>--template site</code>{" "}
         (full-stack). Deeper capability comparison:{" "}
         <a href="/docs/comparison">the comparison doc</a>.
       </p>

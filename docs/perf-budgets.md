@@ -16,12 +16,12 @@ Absolute req/s moves with machine load, so the benchmark prints the delta and th
 only these generous ceilings. The measured stack is one `derive` (header read), one pass-through
 `beforeHandle`, and one pass-through `afterHandle` - it pins chaining cost, not any specific middleware.
 
-Latest local results (Bun 1.4.0, macOS arm64, 2026-09-13):
+Latest local results (Bun 1.4.2, macOS arm64, 2026-09-24):
 
 | Row | Throughput | Delta vs bare |
 |---|---|---|
-| bare route (`GET /users/:id`) | 3,257,594 req/s | - |
-| + `derive` + `beforeHandle` + `afterHandle` | 2,197,561 req/s | 32.5% / 148 ns per req |
+| bare route (`GET /users/:id`) | 2,752,672 req/s | - |
+| + `derive` + `beforeHandle` + `afterHandle` | 2,193,784 req/s | 20.3% / 93 ns per req |
 
 The check is release-plan-only (`workflowRequired: false`) because shared CI timing is noisy. A
 failure is a regression signal requiring an explained benchmark diff before the threshold moves.
@@ -47,5 +47,8 @@ it cannot prove the absence of every top-level side effect. `check:public-bounda
 authority for import legality and edge portability. The startup check is release-plan-only
 (`workflowRequired: false`) because process timing is noisy on shared CI.
 
-Baseline (2026-09-13, Bun 1.4.0, macOS arm64): 4.4 ms fresh-process import of
-`packages/edge/dist/index.js`.
+Baseline (2026-09-24, Bun 1.4.2, macOS arm64): `@nifrajs/edge` fresh-import median
+2.3 ms; `@nifrajs/workers` fresh-import median 1.7 ms (five Bun processes each).
+
+Separate core import measurement (30 fresh Bun processes): `@nifrajs/core` 4.148 ms,
+`@nifrajs/core/server` 4.079 ms, root delta 0.069 ms.

@@ -1,3 +1,4 @@
+import { formatRps, MULTIPLIERS, ssrFrameworkRps, ssrRps } from "../../data/benchmarks"
 import { postMeta } from "../../meta"
 
 export const hydrate = false
@@ -7,6 +8,8 @@ export const meta = postMeta(
   "Next.js alternatives in 2026 - what to use and when · Nifra",
   "An honest guide to Next.js alternatives in 2026: Remix, SvelteKit, Nuxt, SolidStart, Astro, and Nifra - who each is for, measured SSR throughput, and the cases where staying on Next.js is right.",
 )
+
+const REACT_SSR_MULTIPLIER = MULTIPLIERS.find((item) => item.fw === "React")?.mult ?? "n/a"
 
 export default function NextjsAlternatives() {
   return (
@@ -42,37 +45,40 @@ export default function NextjsAlternatives() {
         <tbody>
           <tr>
             <td>Nifra (ours)</td>
-            <td>27,186 (React) - 29,606 (Svelte)</td>
+            <td>
+              {formatRps(ssrRps("React", "node"))} (React) - {formatRps(ssrRps("Svelte", "node"))}{" "}
+              (Svelte)
+            </td>
             <td>React, Vue, Svelte, Solid, Preact</td>
             <td>Typed end-to-end, zero codegen, runtime-portable</td>
           </tr>
           <tr>
             <td>SolidStart</td>
-            <td>7,167</td>
+            <td>{formatRps(ssrFrameworkRps("SolidStart", "node"))}</td>
             <td>Solid</td>
             <td>Fine-grained reactivity, small bundles</td>
           </tr>
           <tr>
             <td>SvelteKit</td>
-            <td>7,566</td>
+            <td>{formatRps(ssrFrameworkRps("SvelteKit", "node"))}</td>
             <td>Svelte</td>
             <td>Best authoring ergonomics, small bundles</td>
           </tr>
           <tr>
             <td>Nuxt 4</td>
-            <td>2,784</td>
+            <td>{formatRps(ssrFrameworkRps("Nuxt", "node"))}</td>
             <td>Vue</td>
             <td>Vue's full-stack home, mature module ecosystem</td>
           </tr>
           <tr>
             <td>Remix</td>
-            <td>2,194</td>
+            <td>{formatRps(ssrFrameworkRps("Remix", "node"))}</td>
             <td>React</td>
             <td>Web-standards model, now merging into React Router</td>
           </tr>
           <tr>
             <td>Next.js</td>
-            <td>1,088</td>
+            <td>{formatRps(ssrFrameworkRps("Next.js", "node"))}</td>
             <td>React</td>
             <td>RSC, largest ecosystem, Vercel integration</td>
           </tr>
@@ -116,7 +122,7 @@ export default function NextjsAlternatives() {
       <p>
         Nifra is the pick when the API and frontend are one typed product: the client and loaders
         are inferred from the server's TypeScript (zero codegen), validation is on by default, SSR
-        runs ~25x Next.js in our harness, and the docs/types are a{" "}
+        runs {REACT_SSR_MULTIPLIER} Next.js in our harness, and the docs/types are a{" "}
         <a href="/blog/docs-as-mcp">live MCP server</a> so AI agents build against the real API. It
         is NOT the pick if you need RSC itself, or the largest possible ecosystem of React-specific
         integrations - that is still Next.js, and we say so in the{" "}
@@ -124,7 +130,7 @@ export default function NextjsAlternatives() {
       </p>
       <p>
         Try the shape in one command:{" "}
-        <code>bunx create-nifra my-app --template site --framework react</code> (or vue, svelte,
+        <code>bun create nifra my-app --template site --framework react</code> (or vue, svelte,
         solid, preact).
       </p>
     </article>

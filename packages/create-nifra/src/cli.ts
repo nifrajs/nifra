@@ -193,6 +193,8 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.2
       - run: bun install --frozen-lockfile
       # The gate, before the build. nifra.assurance.ts states what these routes must prove - an
       # unauthenticated write, a mutation with no body schema, a handler reaching a database it never

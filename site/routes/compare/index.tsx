@@ -7,7 +7,7 @@ const PAGES: ReadonlyArray<{ slug: string; title: string; summary: string }> = [
     slug: "nextjs",
     title: "Nifra vs Next.js",
     summary:
-      "25x SSR throughput in reproducible benchmarks, five UI frameworks instead of one, typed end-to-end without codegen - and why RSC-first apps should still pick Next.",
+      "Reproducible SSR benchmarks, five UI frameworks instead of one, typed end-to-end without codegen - and why RSC-first apps should still pick Next.",
   },
   {
     slug: "elysia",
@@ -25,7 +25,7 @@ const PAGES: ReadonlyArray<{ slug: string; title: string; summary: string }> = [
     slug: "fastify",
     title: "Nifra vs Fastify",
     summary:
-      "Ahead on Node in the current run - ~8% on the validated POST - and the same app unchanged on Bun runs several times faster. What each framework gives you beyond raw speed.",
+      "Current Node and Bun benchmark results, the same app across runtimes, and what each framework gives you beyond raw speed.",
   },
 ]
 

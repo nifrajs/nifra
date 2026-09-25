@@ -10,7 +10,7 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 
 ## Public entrypoints
 
-`@nifrajs/web` · `@nifrajs/web/build` · `@nifrajs/web/build-vite` · `@nifrajs/web/client` · `@nifrajs/web/conformance` · `@nifrajs/web/dev` · `@nifrajs/web/diagnostic` · `@nifrajs/web/fn` · `@nifrajs/web/fn-state` · `@nifrajs/web/fonts` · `@nifrajs/web/forms` · `@nifrajs/web/fs` · `@nifrajs/web/islands` · `@nifrajs/web/nano` · `@nifrajs/web/plugins/css-modules` · `@nifrajs/web/plugins/kit` · `@nifrajs/web/plugins/postcss` · `@nifrajs/web/plugins/scss` · `@nifrajs/web/plugins/stylex` · `@nifrajs/web/plugins/svg` · `@nifrajs/web/plugins/vite-leak-guard` · `@nifrajs/web/plugins/vite-server-fn` · `@nifrajs/web/plugins/vite-server-only` · `@nifrajs/web/route-manifest` · `@nifrajs/web/server-only` · `@nifrajs/web/service-worker` · `@nifrajs/web/vite`
+`@nifrajs/web` · `@nifrajs/web/build` · `@nifrajs/web/build-vite` · `@nifrajs/web/client` · `@nifrajs/web/conformance` · `@nifrajs/web/dev` · `@nifrajs/web/diagnostic` · `@nifrajs/web/fn` · `@nifrajs/web/fn-state` · `@nifrajs/web/fonts` · `@nifrajs/web/forms` · `@nifrajs/web/fs` · `@nifrajs/web/islands` · `@nifrajs/web/nano` · `@nifrajs/web/plugins/css-modules` · `@nifrajs/web/plugins/kit` · `@nifrajs/web/plugins/postcss` · `@nifrajs/web/plugins/scss` · `@nifrajs/web/plugins/stylex` · `@nifrajs/web/plugins/svg` · `@nifrajs/web/plugins/vite-leak-guard` · `@nifrajs/web/plugins/vite-server-fn` · `@nifrajs/web/plugins/vite-server-only` · `@nifrajs/web/pwa-manifest` · `@nifrajs/web/route-manifest` · `@nifrajs/web/server-only` · `@nifrajs/web/service-worker` · `@nifrajs/web/vite`
 
 ## Key exports
 
@@ -29,7 +29,7 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 - **buildClient** _(function)_ - `buildClient: (options: BuildClientOptions) => Promise<BuildManifest>` · from `@nifrajs/web/build`
 - **buildClientVite** _(function)_ - `buildClientVite: (options: BuildClientViteOptions) => Promise<BuildManifest>` · from `@nifrajs/web/build-vite`
 
-_…and 410 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 420 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 

@@ -1,5 +1,8 @@
 import { withResponseObserver } from "@nifrajs/core/response-observer"
-import type { Middleware } from "@nifrajs/core/server"
+import type { Middleware, NodeRequestContext, NodeResponseContext } from "@nifrajs/core/server"
+import { setNodeHeader } from "./_utils.ts"
+
+const BUN_NATIVE_REQUEST_SAFE = Symbol.for("@nifrajs/core/bun-native-request-safe")
 
 export interface CorsOptions {
   /** Allowed origin(s): `"*"`, an exact origin, a list, or a predicate. Default `"*"`. */
@@ -38,6 +41,23 @@ function resolveAllowOrigin(
   return option === requestOrigin ? requestOrigin : null
 }
 
+function nodeHeader(
+  headers: Readonly<Record<string, string | readonly string[]>> | undefined,
+  name: string,
+  headersAreLowercase: boolean | undefined,
+): string | null {
+  if (headers === undefined) return null
+  const direct = headers[name]
+  if (direct !== undefined) return typeof direct === "string" ? direct : direct.join(", ")
+  if (headersAreLowercase) return null
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() !== name) continue
+    const value = headers[key]
+    return value === undefined ? null : typeof value === "string" ? value : value.join(", ")
+  }
+  return null
+}
+
 /**
  * CORS as a {@link Middleware}. Preflight (`OPTIONS` + `Access-Control-Request-Method`)
  * short-circuits to `204` via `onRequest`; the origin/credentials headers are added in
@@ -59,7 +79,7 @@ export function cors(options: CorsOptions = {}): Middleware {
   const exposedHeaders = options.exposedHeaders?.join(", ")
   const maxAge = options.maxAge
 
-  return withResponseObserver({
+  const middleware = withResponseObserver({
     name: "cors",
     onRequest(req) {
       const isPreflight =
@@ -96,5 +116,19 @@ export function cors(options: CorsOptions = {}): Middleware {
       if (credentials) headers.set("access-control-allow-credentials", "true")
       if (exposedHeaders !== undefined) headers.set("access-control-expose-headers", exposedHeaders)
     },
-  })
+    onNodeResponseHeaders(response: NodeResponseContext, req: NodeRequestContext) {
+      const allowOrigin = resolveAllowOrigin(origin, req.header("origin"))
+      if (allowOrigin === null) return
+      setNodeHeader(response, "access-control-allow-origin", allowOrigin)
+      if (allowOrigin !== "*") {
+        const vary = nodeHeader(response.headers, "vary", response.headersAreLowercase)
+        setNodeHeader(response, "vary", vary === null || vary === "" ? "Origin" : `${vary}, Origin`)
+      }
+      if (credentials) setNodeHeader(response, "access-control-allow-credentials", "true")
+      if (exposedHeaders !== undefined)
+        setNodeHeader(response, "access-control-expose-headers", exposedHeaders)
+    },
+  } satisfies Middleware)
+  Object.defineProperty(middleware, BUN_NATIVE_REQUEST_SAFE, { value: true })
+  return middleware
 }

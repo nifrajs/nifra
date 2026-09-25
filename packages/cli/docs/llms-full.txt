@@ -28,6 +28,27 @@ with just a typed backend - like Hono or Elysia - and the client infers its type
 codegen. Add a full-stack UI, a bounded agent runtime, or page-local WebMCP when you need one:
 the same contracts drive all of them across Bun, Node, Deno, and the edge.
 
+### Start a project
+
+The API starter is the shortest path to a running Nifra app. It includes the server entry,
+scripts, and a working example:
+
+`bun create nifra my-app
+cd my-app
+bun install
+bun run dev`
+
+To start with a full-stack React app instead, scaffold the `site` template. It
+includes the web runtime, renderer, and typed client used by the loader examples below:
+
+`bun create nifra my-app --template site --framework react
+cd my-app
+bun install
+bun run dev`
+
+See the [CLI guide](/docs/cli) for other templates, UI frameworks, and deploy
+targets.
+
 ### One app, two agent loops
 
 A coding agent can inspect the live project, change it, run real requests, and prove the result.
@@ -36,7 +57,10 @@ state change, and reconcile it with the server. Both use the same typed capabili
 verification boundary. Start with the [agent layer](/docs/agents) or the
 [WebMCP & predictive UI guide](/docs/webmcp) when you are ready to add them.
 
-### Install
+### A backend-only alternative
+
+If you are adding only an API to an existing project, install the core package directly. The
+scaffold above is not required for a backend-only app.
 
 `bun add @nifrajs/core`
 
@@ -58,7 +82,10 @@ server()
 ### An end-to-end-typed client
 
 The server's types flow to the client - no schema duplication, no codegen - behind a
-never-throwing `{ data, error }` result.
+never-throwing `{ data, error }` result. Add the client package when wiring a
+separate frontend; the full-stack template already includes it.
+
+`bun add @nifrajs/client`
 
 ```ts
 import { client } from "@nifrajs/client"
@@ -72,9 +99,10 @@ const { data, error } = await api.users({ id: "7" }).get()
 
 ### Loaders & the full stack
 
-Route loaders call your backend in-process during SSR; `actions` handle
-mutations. Add streaming, `defer()`, optimistic UI, and a keyed query cache as
-you grow. The data model is framework-agnostic, so the renderer stays replaceable.
+In the `site` template, route loaders call your backend in-process during SSR;
+`actions` handle mutations. Add streaming, `defer()`, optimistic UI,
+and a keyed query cache as you grow. The data model is framework-agnostic, so the renderer
+stays replaceable.
 
 ```ts
 // A route's loader runs on the server (in-process during SSR, no network),
@@ -197,16 +225,34 @@ to full-stack later without a rewrite.
 
 -
 **Throughput - the realistic case.** Router micro-benchmarks flatter Hono (a single compiled
-regex), but a router is **~1% of a real request** - the time goes to middleware, validation,
+regex), but a real request also pays for middleware and validation,
 context, and serialization. In the current matrix (median of 5 full runs) Nifra
 **tops the framework field on Bun** - level with Elysia on `GET /users/:id` at
-108% of the raw-runtime ceiling, 106% of Elysia on the validated `POST` - and
+percentOf(
+httpWorkloadRps("Bun", "Nifra", "postUsers"),
+httpWorkloadRps("Bun", "Elysia", "postUsers"),
+of Elysia on the validated `POST` - and
 **leads every framework on Deno** on both workloads. On **Node** it
-**leads the framework field too** - ahead of Fastify by ~8% on the validated
-`POST` (92% of the raw-Node ceiling) and ahead on GET, with Elysia, Hono,
+**leads the framework field too** - at
+percentOf(
+httpWorkloadRps("Node", "Nifra", "postUsers"),
+httpWorkloadRps("Node", "Fastify", "postUsers"),
+of Fastify on the validated `POST` ({formatPercent(
+percentOf(
+httpWorkloadRps("Node", "Nifra", "postUsers"),
+httpWorkloadRps("Node", "node-raw", "postUsers"),
+)} of the raw-Node ceiling) and ahead on GET, with Elysia, Hono,
 and Express behind. In the realistic shape (security headers + CORS +
 bearer auth + cookies + validated query/body + a ~2.4 KB JSON response, measured with
-`oha`) Nifra runs at **101% of Elysia on GET and 97% on POST**. Treat benchmark
+`oha`) Nifra runs at **{formatPercent(
+percentOf(
+httpRealworldRps("Bun", "Nifra", "get"),
+httpRealworldRps("Bun", "Elysia", "get"),
+)} of Elysia on GET and {formatPercent(
+percentOf(
+httpRealworldRps("Bun", "Nifra", "post"),
+httpRealworldRps("Bun", "Elysia", "post"),
+)} on POST**. Treat benchmark
 rows as same-run evidence, not a permanent law of nature.
 
 -
@@ -2047,10 +2093,9 @@ const app = server().use(responseObserver()).use(serverName("nifra"))
 ```
 
 Why this matters on Node: a full `onResponse(res: Response)` hook needs real Web
-objects, and building them costs several microseconds per request - registering even one
-drops a realistic Node app from ~95% to ~70% of a raw `node:http` server's
-throughput (it was worse before the lazy bridge below). `onResponseHeaders` never
-pays that: the built-ins that use it (`cors`, static `cacheControl`,
+objects, and building them adds work per request. A full hook can close the direct-writer
+path; `onResponseHeaders` avoids materializing a full Web response for header-only
+changes. The built-ins that use it (`cors`, static `cacheControl`,
 `language`) keep the direct writer at full speed.
 
 ### Fixed headers: declare them, don't hook them
@@ -2082,8 +2127,8 @@ hooks: a declaration made after one cannot precede it, so it degrades to an ordi
 `onResponseHeaders` hook to keep registration order honest.
 
 `securityHeaders()` and the default `poweredBy()` ship this way -
-**measured +11% on a bare Bun GET** against the same headers written by a hook, byte-identical
-on the wire (pinned by parity suites on Bun, Node, and Deno). A route whose headers depend on
+They avoid the full response hook while producing headers that stay byte-identical on the
+wire (pinned by parity suites on Bun, Node, and Deno). A route whose headers depend on
 the request keeps `onResponseHeaders`: that is why `cors` (origin
 reflection) and conditional `cacheControl` are still hooks.
 
@@ -2092,8 +2137,9 @@ reflection) and conditional `cacheControl` are still hooks.
 receives the FINAL framework-serialized bytes (plus the same header view and status) and
 may return replacement bytes - on every runtime the bytes are already resident before any
 Web `Response` exists, so nothing is drained. A body-hashing middleware
-benchmarks at ~92% of a raw `node:http` server this way - Fastify-class - vs
-~50% through the full `onResponse` contract. Handler-returned raw
+avoids materializing a Web `Response` and keeps body handling on the portable
+byte path. The full `onResponse` contract remains available when an extension
+needs a complete response. Handler-returned raw
 `Response`s (proxied fetch, SSE, streamed SSR) are skipped by contract.
 
 -
@@ -7430,8 +7476,8 @@ export async function loader({ params }) { return { post: await getPost(params.s
 app.
 
 -
-**Much faster SSR** - Nifra renders ~25× Next.js, ~7× Nuxt, ~4× SvelteKit/SolidStart on
-dynamic pages, with a fraction of the client JS. See [benchmarks](/benchmarks).
+**Much faster SSR** - the current dynamic-page snapshot reports Nifra at
+of the client JavaScript. See [benchmarks](/benchmarks).
 
 -
 **End-to-end types with no codegen**, the same app on Bun / Node / Deno / the edge, and a
@@ -11925,7 +11971,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/core
 
-`AdmissionController`, `AdmissionDecision`, `AnyServer`, `commonSecretPatterns`, `Context`, `ContextPlugin`, `cookieNamePrefix`, `CookieOptions`, `CookieSecret`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `DefinePluginResult`, `defineRouterPlugin`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FetchApp`, `FRAMEWORK_NAME`, `FrameworkError`, `FrameworkName`, `Handler`, `hasDuplicateCookie`, `IdentityPlugin`, `InferInput`, `InferOutput`, `isSameOriginPath`, `isSameOriginRequest`, `jsonLogger`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `LogFields`, `Logger`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `METHODS`, `Middleware`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `Params`, `parseCookies`, `pathnameOf`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `Prettify`, `PromptArgument`, `PromptMessage`, `redactLogFields`, `RedactOptions`, `Registry`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `Router`, `RouterMatch`, `RouteSchema`, `RunningServer`, `ScheduledController`, `ScheduledHandler`, `serializeCookie`, `server`, `Server`, `ServerOptions`, `signValue`, `silentLogger`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `status`, `StatusResponse`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `ToolAnnotations`, `toVercelHandler`, `TypedSSEStream`, `unsignValue`, `UrlParts`, `urlPartsOf`, `ValidationOutcome`, `VercelHandler`, `Version`, `VERSION`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`
+`AdmissionController`, `AdmissionDecision`, `AnyServer`, `commonSecretPatterns`, `Context`, `ContextPlugin`, `cookieNamePrefix`, `CookieOptions`, `CookieSecret`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `DefinePluginResult`, `defineRouterPlugin`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FetchApp`, `FRAMEWORK_NAME`, `FrameworkError`, `FrameworkName`, `Handler`, `hasDuplicateCookie`, `IdentityPlugin`, `InferInput`, `InferOutput`, `isSameOriginPath`, `isSameOriginRequest`, `jsonLogger`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `LogFields`, `Logger`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `METHODS`, `Middleware`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `Params`, `parseCookies`, `pathnameOf`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `Prettify`, `PromptArgument`, `PromptMessage`, `redactLogFields`, `RedactOptions`, `Registry`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `Router`, `RouterMatch`, `RouteSchema`, `RunningServer`, `ScheduledController`, `ScheduledHandler`, `serializeCookie`, `server`, `Server`, `ServerOptions`, `signValue`, `silentLogger`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `status`, `StatusResponse`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `ToolAnnotations`, `toVercelHandler`, `TypedSSEStream`, `unsignValue`, `UrlParts`, `urlPartsOf`, `ValidationOutcome`, `VercelHandler`, `Version`, `VERSION`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`
 
 ## @nifrajs/cron
 

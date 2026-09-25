@@ -66,6 +66,8 @@ export interface NodeResponseContext {
   /** Mutable ONLY through a body hook's replacement object (e.g. an ETag 304); header hooks read. */
   status: number
   headers: Record<string, string | readonly string[]> | undefined
+  /** True when core has proved the record uses lowercase wire names before native hooks run. */
+  readonly headersAreLowercase?: boolean
   readonly cookies: readonly string[] | undefined
   /** The framework-serialized body bytes (`null` for a bodiless render). Replaceable by body hooks. */
   body: string | Uint8Array | null
@@ -88,6 +90,30 @@ export interface ResponseBodyReplacement {
 export type ResponseBodyHook = (
   body: string | Uint8Array,
   headers: ResponseHeadersView,
+  req: NodeRequestContext,
+  status: number,
+) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>
+
+/**
+ * Native equivalent of a paired `onResponseBody` hook - the body tier's twin, mirroring what
+ * `onNodeResponseHeaders` is to `onResponseHeaders`. It receives the same already-serialized bytes
+ * the portable hook would (never `null` - bodiless renders skip the twin exactly as they skip the
+ * portable hook) plus the outcome record itself, so a twin that only reads the bytes and writes
+ * headers pays no header-view allocation. It returns through the same replacement channel
+ * (`undefined` keeps the body; bytes or a `{ body, status }` replacement is applied by the shared
+ * `applyBodyReplacement`), so a twin and its portable hook are observably identical.
+ *
+ * Header writes go straight to `response.headers`, whose contract is the lowercase wire spelling
+ * (the same contract `setNodeHeader` documents): a plain assignment of a name like `__proto__`
+ * hits the inherited setter and is an inert no-op rather than pollution - `c.set.headers` behaves
+ * the same way - so a header that must round-trip under that name needs `defineProperty`. The
+ * twin must preserve its portable hook's observable header/body/status semantics; direct `body`
+ * or `status` writes outside the return channel are still honored deterministically by the finish
+ * step, but they have no portable equivalent, so prefer the return.
+ */
+export type NodeResponseBodyHook = (
+  body: string | Uint8Array,
+  response: NodeResponseContext,
   req: NodeRequestContext,
   status: number,
 ) => MaybePromise<string | Uint8Array | ResponseBodyReplacement | undefined>

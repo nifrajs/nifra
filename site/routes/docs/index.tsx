@@ -48,6 +48,32 @@ export default function Docs() {
         the same contracts drive all of them across Bun, Node, Deno, and the edge.
       </p>
 
+      <h2>Start a project</h2>
+      <p>
+        The API starter is the shortest path to a running Nifra app. It includes the server entry,
+        scripts, and a working example:
+      </p>
+      <pre className="code">
+        <code>{`bun create nifra my-app
+cd my-app
+bun install
+bun run dev`}</code>
+      </pre>
+      <p>
+        To start with a full-stack React app instead, scaffold the <code>site</code> template. It
+        includes the web runtime, renderer, and typed client used by the loader examples below:
+      </p>
+      <pre className="code">
+        <code>{`bun create nifra my-app --template site --framework react
+cd my-app
+bun install
+bun run dev`}</code>
+      </pre>
+      <p>
+        See the <a href="/docs/cli">CLI guide</a> for other templates, UI frameworks, and deploy
+        targets.
+      </p>
+
       <h2>One app, two agent loops</h2>
       <p>
         A coding agent can inspect the live project, change it, run real requests, and prove the result.
@@ -57,7 +83,11 @@ export default function Docs() {
         <a href="/docs/webmcp">WebMCP &amp; predictive UI guide</a> when you are ready to add them.
       </p>
 
-      <h2>Install</h2>
+      <h2>A backend-only alternative</h2>
+      <p>
+        If you are adding only an API to an existing project, install the core package directly. The
+        scaffold above is not required for a backend-only app.
+      </p>
       <pre className="code">
         <code>bun add @nifrajs/core</code>
       </pre>
@@ -73,15 +103,20 @@ export default function Docs() {
       <h2>An end-to-end-typed client</h2>
       <p>
         The server's types flow to the client - no schema duplication, no codegen - behind a
-        never-throwing <code>{"{ data, error }"}</code> result.
+        never-throwing <code>{"{ data, error }"}</code> result. Add the client package when wiring a
+        separate frontend; the full-stack template already includes it.
       </p>
+      <pre className="code">
+        <code>bun add @nifrajs/client</code>
+      </pre>
       <CodeBlock code={CLIENT} />
 
       <h2>Loaders &amp; the full stack</h2>
       <p>
-        Route loaders call your backend in-process during SSR; <code>actions</code> handle
-        mutations. Add streaming, <code>defer()</code>, optimistic UI, and a keyed query cache as
-        you grow. The data model is framework-agnostic, so the renderer stays replaceable.
+        In the <code>site</code> template, route loaders call your backend in-process during SSR;{" "}
+        <code>actions</code> handle mutations. Add streaming, <code>defer()</code>, optimistic UI,
+        and a keyed query cache as you grow. The data model is framework-agnostic, so the renderer
+        stays replaceable.
       </p>
       <CodeBlock code={LOADER} />
 

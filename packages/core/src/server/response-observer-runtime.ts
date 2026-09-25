@@ -1,5 +1,6 @@
 import type {
   NodeRequestContext,
+  NodeResponseBodyHook,
   NodeResponseHook,
   ResponseBodyHook,
   ResponseHeadersHook,
@@ -12,18 +13,30 @@ import { applyBodyReplacement, withReplacedBody } from "./response-hooks.ts"
 type MaybePromise<T> = T | Promise<T>
 type WebResponseHook = (response: Response, req: Request) => MaybePromise<Response>
 
-export type { ResponseBodyHook, ResponseHeadersHook } from "./node-outcome-hook.ts"
+export type {
+  NodeResponseBodyHook,
+  ResponseBodyHook,
+  ResponseHeadersHook,
+} from "./node-outcome-hook.ts"
 
 export interface ResponseObserverHost {
   assertConfigurable(operation: string): void
-  addResponseHook(web: WebResponseHook, node: NodeResponseHook | undefined): void
+  addResponseHook(
+    web: WebResponseHook,
+    node: NodeResponseHook | undefined,
+    headerOnly?: boolean,
+  ): void
   enableResponseBodyTagging(): object
   responseBodyOwners(): ReadonlySet<object>
 }
 
 export interface ResponseObserverMethods {
-  onResponseHeaders(fn: ResponseHeadersHook): this
-  onResponseBody(fn: ResponseBodyHook): this
+  /**
+   * Register a portable header hook. `node` is an optional equivalent for the Node-direct record;
+   * it must preserve the portable hook's observable header semantics.
+   */
+  onResponseHeaders(fn: ResponseHeadersHook, node?: NodeResponseHook): this
+  onResponseBody(fn: ResponseBodyHook, node?: NodeResponseBodyHook): this
   onResponseRaw(fn: (response: Response, req: Request) => MaybePromise<Response>): this
 }
 
@@ -81,7 +94,11 @@ export function createResponseObserverRuntime(): ResponseObserverRuntime {
   return {
     install(host) {
       return {
-        onResponseHeaders(this: ResponseObserverMethods, fn): ResponseObserverMethods {
+        onResponseHeaders(
+          this: ResponseObserverMethods,
+          fn: ResponseHeadersHook,
+          node?: NodeResponseHook,
+        ): ResponseObserverMethods {
           host.assertConfigurable("onResponseHeaders()")
           host.addResponseHook(
             (response, req) => {
@@ -89,11 +106,16 @@ export function createResponseObserverRuntime(): ResponseObserverRuntime {
               const out = fn(view.headers, view.request, response.status)
               return out instanceof Promise ? out.then(() => view.response) : view.response
             },
-            (response, req) => fn(recordHeadersView(response), req, response.status),
+            node ?? ((response, req) => fn(recordHeadersView(response), req, response.status)),
+            true,
           )
           return this
         },
-        onResponseBody(this: ResponseObserverMethods, fn): ResponseObserverMethods {
+        onResponseBody(
+          this: ResponseObserverMethods,
+          fn: ResponseBodyHook,
+          node?: NodeResponseBodyHook,
+        ): ResponseObserverMethods {
           host.assertConfigurable("onResponseBody()")
           host.enableResponseBodyTagging()
           host.addResponseHook(
@@ -108,12 +130,18 @@ export function createResponseObserverRuntime(): ResponseObserverRuntime {
             },
             (response, req) => {
               if (response.body === null) return undefined
-              const out = fn(response.body, recordHeadersView(response), req, response.status)
+              // An author-supplied twin sees the same bytes and returns through the same
+              // replacement channel; only the header-view allocation is skipped.
+              const out =
+                node === undefined
+                  ? fn(response.body, recordHeadersView(response), req, response.status)
+                  : node(response.body, response, req, response.status)
               if (out instanceof Promise)
                 return out.then((replaced) => applyBodyReplacement(response, replaced))
               applyBodyReplacement(response, out)
               return undefined
             },
+            false,
           )
           return this
         },
@@ -126,6 +154,7 @@ export function createResponseObserverRuntime(): ResponseObserverRuntime {
                 ? fn(response, req)
                 : response,
             () => undefined,
+            false,
           )
           return this
         },

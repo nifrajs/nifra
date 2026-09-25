@@ -109,6 +109,7 @@ export {
   type NifraPlugin,
   type NodeRequestContext,
   type NodeRequestHook,
+  type NodeResponseBodyHook,
   type NodeResponseContext,
   type NodeResponseHook,
   type NodeServeOutcome,

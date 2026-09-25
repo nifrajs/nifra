@@ -76,10 +76,19 @@ See the [WebMCP and predictive UI guide](https://nifra.dev/docs/webmcp) and the
 ## Start with a typed backend
 
 ```sh
-bun create nifra my-app            # choose a UI library, runtime, DB, auth, and CI
+bun create nifra my-app # scaffold the API starter
+cd my-app
+bun install
+bun run dev
 ```
 
-Or start with a backend only:
+For a full-stack React app with SSR:
+
+```sh
+bun create nifra my-app --template site --framework react
+```
+
+Or add a backend to an existing project:
 
 ```sh
 bun add @nifrajs/core @nifrajs/schema @nifrajs/client
@@ -213,14 +222,14 @@ The app lifecycle is `app.fetch(Request): Promise<Response>`. Define it once and
 Deno, Cloudflare Workers/Pages, or Vercel Edge with a small adapter. The web layer supports React,
 Vue, Solid, Svelte, and Preact without changing the route/data model.
 
-Published benchmarks are reproducible and include the rows where Nifra loses:
+The published snapshot in [`site/data/benchmarks.json`](./site/data/benchmarks.json) is the source
+of truth for the website tables and benchmark comparison articles. The benchmark suites merge fresh
+results into it through [`bench/site-bench.ts`](./bench/site-bench.ts). The public tables include
+rows where Nifra loses and keep bare HTTP, middleware-shaped HTTP, dynamic SSR, and cacheable SSR
+results separate.
 
-- **Bun:** ~143k req/s on the published `GET /users/:id` HTTP matrix.
-- **Node:** ~8% ahead of Fastify on the validated POST workload in the current matrix.
-- **SSR:** React rendered per request at up to ~25× the compared Next.js workload on the same machine.
-
-See the [benchmark methodology and full results](https://nifra.dev/benchmarks), or run
-`bun run bench:http` and `bun run bench:ssr` yourself.
+See [benchmark methodology and full results](https://nifra.dev/benchmarks), and run
+`bun run bench:http` / `bun run bench:ssr` yourself.
 
 ## Batteries (55 packages, all typed, all optional)
 

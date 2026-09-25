@@ -231,10 +231,9 @@ export default function Plugins() {
       <CodeBlock code={PORTABLE_HOOK} />
       <p>
         Why this matters on Node: a full <code>onResponse(res: Response)</code> hook needs real Web
-        objects, and building them costs several microseconds per request - registering even one
-        drops a realistic Node app from ~95% to ~70% of a raw <code>node:http</code> server's
-        throughput (it was worse before the lazy bridge below). <code>onResponseHeaders</code> never
-        pays that: the built-ins that use it (<code>cors</code>, static <code>cacheControl</code>,{" "}
+        objects, and building them adds work per request. A full hook can close the direct-writer
+        path; <code>onResponseHeaders</code> avoids materializing a full Web response for header-only
+        changes. The built-ins that use it (<code>cors</code>, static <code>cacheControl</code>,{" "}
         <code>language</code>) keep the direct writer at full speed.
       </p>
 
@@ -260,8 +259,8 @@ export default function Plugins() {
       </p>
       <p>
         <code>securityHeaders()</code> and the default <code>poweredBy()</code> ship this way -{" "}
-        <b>measured +11% on a bare Bun GET</b> against the same headers written by a hook, byte-identical
-        on the wire (pinned by parity suites on Bun, Node, and Deno). A route whose headers depend on
+        They avoid the full response hook while producing headers that stay byte-identical on the
+        wire (pinned by parity suites on Bun, Node, and Deno). A route whose headers depend on
         the request keeps <code>onResponseHeaders</code>: that is why <code>cors</code> (origin
         reflection) and conditional <code>cacheControl</code> are still hooks.
       </p>
@@ -271,8 +270,9 @@ export default function Plugins() {
           receives the FINAL framework-serialized bytes (plus the same header view and status) and
           may return replacement bytes - on every runtime the bytes are already resident before any
           Web <code>Response</code> exists, so nothing is drained. A body-hashing middleware
-          benchmarks at ~92% of a raw <code>node:http</code> server this way - Fastify-class - vs
-          ~50% through the full <code>onResponse</code> contract. Handler-returned raw{" "}
+          avoids materializing a Web <code>Response</code> and keeps body handling on the portable
+          byte path. The full <code>onResponse</code> contract remains available when an extension
+          needs a complete response. Handler-returned raw{" "}
           <code>Response</code>s (proxied fetch, SSE, streamed SSR) are skipped by contract.
         </li>
         <li>

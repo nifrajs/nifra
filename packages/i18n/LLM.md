@@ -10,23 +10,26 @@ Framework-agnostic i18n for nifra - locale negotiation + a tiny ICU message form
 
 ## Public entrypoints
 
-`@nifrajs/i18n` · `@nifrajs/i18n/detector`
+`@nifrajs/i18n` · `@nifrajs/i18n/detector` · `@nifrajs/i18n/routing`
 
 ## Key exports
 
 - **createFormatter** _(function)_ - `createFormatter: (locale: string, messages: Messages) => Formatter` · from `@nifrajs/i18n`
+- **defineI18nRouting** _(function)_ - `defineI18nRouting: (options: I18nRoutingOptions) => LocalizedRouter` · from `@nifrajs/i18n/routing`
 - **localeDetector** _(function)_ - `localeDetector: (options: LocaleDetectorOptions) => import("@nifrajs/core").ContextPlugin<LocaleContext>` · from `@nifrajs/i18n/detector`
 - **negotiateLocale** _(function)_ - `negotiateLocale: (request: Request | LocaleParts, options: NegotiateOptions) => Locale` · from `@nifrajs/i18n`
 - **resolveLocale** _(function)_ - `resolveLocale: (request: Request | LocaleParts, options: NegotiateOptions) => ResolvedLocale` · from `@nifrajs/i18n`
 - **Formatter** _(interface)_ - `interface Formatter` · from `@nifrajs/i18n`
+- **HreflangLink** _(interface)_ - `interface HreflangLink` · from `@nifrajs/i18n/routing`
+- **I18nRoutingOptions** _(interface)_ - `interface I18nRoutingOptions` · from `@nifrajs/i18n/routing`
 - **LocaleContext** _(interface)_ - `interface LocaleContext` · from `@nifrajs/i18n/detector`
 - **LocaleDetectorOptions** _(interface)_ - `interface LocaleDetectorOptions` · from `@nifrajs/i18n/detector`
 - **LocaleParts** _(interface)_ - `interface LocaleParts` · from `@nifrajs/i18n`
+- **LocalizedRouter** _(interface)_ - `interface LocalizedRouter` · from `@nifrajs/i18n/routing`
 - **NegotiateOptions** _(interface)_ - `interface NegotiateOptions` · from `@nifrajs/i18n`
 - **ResolvedLocale** _(interface)_ - `interface ResolvedLocale` · from `@nifrajs/i18n`
-- **Locale** _(type)_ - `type Locale = string` · from `@nifrajs/i18n`
-- **LocaleSource** _(type)_ - `type LocaleSource = "query" | "cookie" | "header" | "default"` · from `@nifrajs/i18n`
-- **Messages** _(type)_ - `type Messages = Record<string, string>` · from `@nifrajs/i18n`
+
+_…and 4 more - see [`api-reference.md`](../../api-reference.md#nifrajsi18n) for the complete list._
 
 ## Footguns
 

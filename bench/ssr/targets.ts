@@ -157,7 +157,7 @@ export const SOLID_TABLE_B: readonly SsrBenchTarget[] = [
 
 /** Vue - nifra vs Nuxt. */
 export const VUE_TABLE_A: readonly SsrBenchTarget[] = [
-  nifraBun("nifra+vue", "nifra-vue", 4321),
+  nifraBun("nifra+vue", "nifra-vue", 54321),
   nifraNode("nifra+vue (node)", "nifra-vue", 4351),
   {
     name: "nuxt",
@@ -187,7 +187,7 @@ export const VUE_TABLE_B: readonly SsrBenchTarget[] = [
 
 /** Svelte - nifra vs SvelteKit. */
 export const SVELTE_TABLE_A: readonly SsrBenchTarget[] = [
-  nifraBun("nifra+svelte", "nifra-svelte", 4322),
+  nifraBun("nifra+svelte", "nifra-svelte", 54322),
   nifraNode("nifra+svelte (node)", "nifra-svelte", 4352),
   {
     name: "sveltekit",

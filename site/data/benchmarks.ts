@@ -105,3 +105,80 @@ export const HTTP_REALWORLD = ((data as { httpRealworld?: readonly HttpRealworld
   .httpRealworld ?? []) as readonly HttpRealworldTable[]
 export const BUNDLE = data.bundle as readonly BundleRow[]
 export const PROOF = data.proof as readonly ProofStat[]
+
+export type HttpWorkloadMetric = "getUsers" | "postUsers"
+export type HttpRealworldMetric = "get" | "post" | "body"
+
+function parseRps(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined
+  const parsed = Number(value.replaceAll(",", ""))
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+/** Read a measured bare HTTP workload from the canonical benchmark dataset. */
+export function httpWorkloadRps(
+  runtime: string,
+  framework: string,
+  workload: HttpWorkloadMetric,
+): number | undefined {
+  const value = HTTP_WORKLOADS.find((table) => table.title === runtime)?.rows.find(
+    (row) => row.name === framework,
+  )?.[workload]
+  return parseRps(value)
+}
+
+/** Read a measured HTTP workload with auth and middleware from the same dataset. */
+export function httpRealworldRps(
+  runtime: string,
+  framework: string,
+  workload: HttpRealworldMetric,
+): number | undefined {
+  const value = HTTP_REALWORLD.find((table) => table.title === runtime)?.rows.find(
+    (row) => row.name === framework,
+  )?.[workload]
+  return parseRps(value)
+}
+
+/** Read a Nifra SSR result for a UI framework and runtime. */
+export function ssrRps(framework: string, runtime: "bun" | "node"): number | undefined {
+  return SSR_TABLES.find((table) => table.framework === framework)?.rows.find(
+    (row) => row.nifra && row.runtime === runtime,
+  )?.rps
+}
+
+/** Read a named framework result from the canonical SSR tables. */
+export function ssrFrameworkRps(name: string, runtime: "bun" | "node"): number | undefined {
+  for (const table of SSR_TABLES) {
+    const result = table.rows.find((row) => row.name.startsWith(name) && row.runtime === runtime)
+    if (result) return result.rps
+  }
+  return undefined
+}
+
+/** The runtime-ceiling percentage reported by the HTTP suite. */
+export function runtimeCeilingPercent(runtime: string): number | undefined {
+  return HTTP_RUNTIME.find((row) => row.runtime === runtime)?.pctOfRaw
+}
+
+/** Round a measured value against its comparison value to a whole percentage. */
+export function percentOf(
+  value: number | undefined,
+  comparison: number | undefined,
+): number | undefined {
+  if (value === undefined || comparison === undefined || comparison === 0) return undefined
+  return Math.round((value / comparison) * 100)
+}
+
+/** Format benchmark values consistently in the site and its comparison articles. */
+export function formatRps(value: number | undefined): string {
+  return value === undefined ? "n/a" : value.toLocaleString("en-US")
+}
+
+export function formatPercent(value: number | undefined): string {
+  return value === undefined ? "n/a" : `${Math.round(value)}%`
+}
+
+export function formatRatio(value: number | undefined, comparison: number | undefined): string {
+  if (value === undefined || comparison === undefined || comparison === 0) return "n/a"
+  return `${(value / comparison).toFixed(1)}x`
+}

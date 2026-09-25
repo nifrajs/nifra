@@ -207,13 +207,23 @@ export function validateSsrHtml(html: string, target: SsrBenchTarget): void {
   }
 }
 
-export async function waitServerReady(base: string, timeoutMs: number): Promise<void> {
+export async function waitServerReady(
+  base: string,
+  timeoutMs: number,
+  childExitCode: () => number | null,
+): Promise<void> {
   const deadline = performance.now() + timeoutMs
   while (performance.now() < deadline) {
+    const exited = childExitCode()
+    if (exited !== null) throw new Error(`server exited before ready (exit code ${exited})`)
     try {
       const res = await fetch(base)
       if (res.ok) {
         await res.text()
+        const exitedAfterResponse = childExitCode()
+        if (exitedAfterResponse !== null) {
+          throw new Error(`server exited before ready (exit code ${exitedAfterResponse})`)
+        }
         return
       }
     } catch {
@@ -261,7 +271,7 @@ export async function measureTarget(target: SsrBenchTarget): Promise<SsrBenchRes
   })
 
   try {
-    await waitServerReady(base, 15_000)
+    await waitServerReady(base, 15_000, () => proc.exitCode)
     if (target.warmupCache === true) {
       await warmupCacheHits(base, SSR_BENCH_ISR_WARMUP_REQUESTS)
     }

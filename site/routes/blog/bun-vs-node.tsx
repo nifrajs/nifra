@@ -1,4 +1,11 @@
-import { HTTP_WORKLOADS } from "../../data/benchmarks"
+import {
+  formatPercent,
+  formatRatio,
+  formatRps,
+  httpWorkloadRps,
+  runtimeCeilingPercent,
+  ssrRps,
+} from "../../data/benchmarks"
 import { postMeta } from "../../meta"
 
 export const hydrate = false
@@ -6,15 +13,11 @@ export const hydrate = false
 export const meta = postMeta(
   "bun-vs-node",
   "Bun vs Node.js in 2026: same app, both runtimes, measured · Nifra",
-  "Bun vs Node.js compared with a control most benchmarks lack: the identical application, same framework, same routes, benchmarked on both runtimes. Where Bun's ~2x holds, where it shrinks, and when Node is still the right call.",
+  "Bun vs Node.js compared with a control most benchmarks lack: the identical application, same framework, same routes, benchmarked on both runtimes. See where Bun's advantage holds, where it shrinks, and when Node is still the right call.",
 )
 
 function httpValue(runtime: string, name: string, workload: "getUsers" | "postUsers"): string {
-  return (
-    HTTP_WORKLOADS.find((table) => table.title === runtime)?.rows.find(
-      (row) => row.name === name,
-    )?.[workload] ?? "n/a"
-  )
+  return formatRps(httpWorkloadRps(runtime, name, workload))
 }
 
 export default function BunVsNode() {
@@ -39,8 +42,8 @@ export default function BunVsNode() {
         <thead>
           <tr>
             <th>Workload (identical app)</th>
-            <th>Node 26</th>
-            <th>Bun 1.3</th>
+            <th>Node 26.10.0</th>
+            <th>Bun 1.4.2</th>
             <th>Bun advantage</th>
           </tr>
         </thead>
@@ -49,26 +52,46 @@ export default function BunVsNode() {
             <td>GET /users/:id</td>
             <td>{httpValue("Node", "Nifra", "getUsers")} req/s</td>
             <td>{httpValue("Bun", "Nifra", "getUsers")} req/s</td>
-            <td>~1.8x</td>
+            <td>
+              {formatRatio(
+                httpWorkloadRps("Bun", "Nifra", "getUsers"),
+                httpWorkloadRps("Node", "Nifra", "getUsers"),
+              )}
+            </td>
           </tr>
           <tr>
             <td>POST /users (validated)</td>
             <td>{httpValue("Node", "Nifra", "postUsers")} req/s</td>
             <td>{httpValue("Bun", "Nifra", "postUsers")} req/s</td>
-            <td>~1.6x</td>
+            <td>
+              {formatRatio(
+                httpWorkloadRps("Bun", "Nifra", "postUsers"),
+                httpWorkloadRps("Node", "Nifra", "postUsers"),
+              )}
+            </td>
           </tr>
           <tr>
             <td>SSR (React page, per request)</td>
-            <td>27,186 req/s</td>
-            <td>33,217 req/s</td>
-            <td>~1.2x</td>
+            <td>{formatRps(ssrRps("React", "node"))} req/s</td>
+            <td>{formatRps(ssrRps("React", "bun"))} req/s</td>
+            <td>{formatRatio(ssrRps("React", "bun"), ssrRps("React", "node"))}</td>
           </tr>
         </tbody>
       </table>
       <p>
         (oha @ 50 conns, medians, harness public - <a href="/benchmarks">all rows here</a>.) The
-        pattern is the honest headline: Bun's advantage is largest on raw HTTP work (~1.6-1.8x), and
-        shrinks as your own JavaScript dominates the request (~1.2x on SSR, and near-zero on a
+        pattern is the honest headline: Bun's advantage is largest on raw HTTP work (GET{" "}
+        {formatRatio(
+          httpWorkloadRps("Bun", "Nifra", "getUsers"),
+          httpWorkloadRps("Node", "Nifra", "getUsers"),
+        )}
+        , validated POST{" "}
+        {formatRatio(
+          httpWorkloadRps("Bun", "Nifra", "postUsers"),
+          httpWorkloadRps("Node", "Nifra", "postUsers"),
+        )}
+        ), and shrinks as your own JavaScript dominates the request (
+        {formatRatio(ssrRps("React", "bun"), ssrRps("React", "node"))} on SSR, and near-zero on a
         DB-bound endpoint where the runtime waits on Postgres either way).
       </p>
 
@@ -92,8 +115,9 @@ export default function BunVsNode() {
         adapter: develop and deploy on Node today, move the identical code to Bun when the
         throughput matters (or Deno, or edge workers). The numbers above are that story measured -
         nobody rewrote anything between the two columns. On Node, Nifra runs level-to-ahead of
-        Fastify (<a href="/compare/fastify">details</a>); on Bun it serves at 108% of a hand-rolled{" "}
-        <code>Bun.serve</code> baseline - so you are not paying a framework tax on either side.
+        Fastify (<a href="/compare/fastify">details</a>); on Bun it serves at{" "}
+        {formatPercent(runtimeCeilingPercent("Bun"))} of a hand-rolled <code>Bun.serve</code>{" "}
+        baseline - so you are not paying a framework tax on either side.
       </p>
 
       <h2>Verdict</h2>
@@ -101,7 +125,7 @@ export default function BunVsNode() {
         New project, no organizational constraint: start on Bun - the throughput and toolchain are
         real. Existing Node estate: stay until an endpoint is CPU-bound on request handling, then
         move that service. Either way, pick application code that is portable between them -{" "}
-        <code>bunx create-nifra my-app</code> is one way to get that for free.
+        <code>bun create nifra my-app</code> is one way to get that for free.
       </p>
     </article>
   )

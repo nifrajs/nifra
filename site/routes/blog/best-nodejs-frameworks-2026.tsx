@@ -1,4 +1,4 @@
-import { HTTP_WORKLOADS } from "../../data/benchmarks"
+import { formatRatio, formatRps, httpWorkloadRps } from "../../data/benchmarks"
 import { postMeta } from "../../meta"
 
 export const hydrate = false
@@ -10,11 +10,7 @@ export const meta = postMeta(
 )
 
 function httpValue(runtime: string, name: string, workload: "getUsers" | "postUsers"): string {
-  return (
-    HTTP_WORKLOADS.find((table) => table.title === runtime)?.rows.find(
-      (row) => row.name === name,
-    )?.[workload] ?? "n/a"
-  )
+  return formatRps(httpWorkloadRps(runtime, name, workload))
 }
 
 export default function BestNodeFrameworks() {
@@ -78,9 +74,11 @@ export default function BestNodeFrameworks() {
         </tbody>
       </table>
       <p>
-        Read it honestly: Nifra and Fastify are the same speed class - Nifra leads on the current
-        GET snapshot and is ~8% ahead on the validated POST. Express costs you roughly 40% of your
-        ceiling and nobody migrates off it for speed alone. Full tables:{" "}
+        Read it honestly: Nifra and Fastify are in the same speed class. This snapshot puts Nifra at{" "}
+        {httpValue("Node", "Nifra", "getUsers")} vs {httpValue("Node", "Fastify", "getUsers")} req/s
+        on GET and {httpValue("Node", "Nifra", "postUsers")} vs{" "}
+        {httpValue("Node", "Fastify", "postUsers")} req/s on validated POST. Express trails in this
+        same matrix; nobody migrates off it for speed alone. Full tables:{" "}
         <a href="/benchmarks">benchmarks</a>.
       </p>
 
@@ -122,7 +120,12 @@ export default function BestNodeFrameworks() {
         contract with zero codegen, SSR serves React/Vue/Svelte/Solid/Preact, validation is the
         default at every boundary, and the docs/types ship as a{" "}
         <a href="/blog/docs-as-mcp">live MCP server</a> for AI coding agents. And because runtimes
-        are adapters, the same app moves to Bun for roughly 2x the Node throughput -{" "}
+        are adapters, the same app moves to Bun for about{" "}
+        {formatRatio(
+          httpWorkloadRps("Bun", "Nifra", "getUsers"),
+          httpWorkloadRps("Node", "Nifra", "getUsers"),
+        )}{" "}
+        as many GET /users/:id requests per second as Node in this benchmark run -{" "}
         <a href="/blog/bun-vs-node">measured, same code</a> - or to Deno and edge workers. Honest
         caveat: youngest ecosystem on this page; first-party batteries instead of a decade of
         third-party plugins.
@@ -144,7 +147,7 @@ export default function BestNodeFrameworks() {
         </li>
         <li>
           Typed full-stack, fastest in our matrix, agent-native → <strong>Nifra</strong> (
-          <code>bunx create-nifra my-app</code>)
+          <code>bun create nifra my-app</code>)
         </li>
       </ul>
       <p>

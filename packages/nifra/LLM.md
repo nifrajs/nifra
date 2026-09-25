@@ -25,7 +25,7 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
 - **signValue** _(function)_ - `signValue: (value: string, secret: CookieSecret) => Promise<string>`
 
-_…and 103 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 104 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

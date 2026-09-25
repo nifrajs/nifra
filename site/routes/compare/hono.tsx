@@ -108,7 +108,7 @@ export default function VsHono() {
       </ul>
       <p>
         Full capability breakdown: <a href="/docs/comparison">the comparison doc</a>. Scaffold:{" "}
-        <code>bunx create-nifra my-app</code>.
+        <code>bun create nifra my-app</code>.
       </p>
     </article>
   )

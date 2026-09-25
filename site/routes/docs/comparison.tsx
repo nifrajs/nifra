@@ -1,3 +1,10 @@
+import {
+  formatPercent,
+  httpRealworldRps,
+  httpWorkloadRps,
+  percentOf,
+  runtimeCeilingPercent,
+} from "../../data/benchmarks"
 import { docsMeta } from "../../meta"
 
 // Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
@@ -123,16 +130,44 @@ export default function Comparison() {
       <ul>
         <li>
           <b>Throughput - the realistic case.</b> Router micro-benchmarks flatter Hono (a single compiled
-          regex), but a router is <b>~1% of a real request</b> - the time goes to middleware, validation,
+          regex), but a real request also pays for middleware and validation,
           context, and serialization. In the current matrix (median of 5 full runs) Nifra{" "}
-          <b>tops the framework field on Bun</b> - level with Elysia on <code>GET /users/:id</code> at
-          108% of the raw-runtime ceiling, 106% of Elysia on the validated <code>POST</code> - and{" "}
+          <b>tops the framework field on Bun</b> - level with Elysia on <code>GET /users/:id</code> at{" "}
+          {formatPercent(runtimeCeilingPercent("Bun"))} of the raw-runtime ceiling and{" "}
+          {formatPercent(
+            percentOf(
+              httpWorkloadRps("Bun", "Nifra", "postUsers"),
+              httpWorkloadRps("Bun", "Elysia", "postUsers"),
+            ),
+          )}{" "}
+          of Elysia on the validated <code>POST</code> - and{" "}
           <b>leads every framework on Deno</b> on both workloads. On <b>Node</b> it{" "}
-          <b>leads the framework field too</b> - ahead of Fastify by ~8% on the validated{" "}
-          <code>POST</code> (92% of the raw-Node ceiling) and ahead on GET, with Elysia, Hono,
+          <b>leads the framework field too</b> - at{" "}
+          {formatPercent(
+            percentOf(
+              httpWorkloadRps("Node", "Nifra", "postUsers"),
+              httpWorkloadRps("Node", "Fastify", "postUsers"),
+            ),
+          )}{" "}
+          of Fastify on the validated <code>POST</code> ({formatPercent(
+            percentOf(
+              httpWorkloadRps("Node", "Nifra", "postUsers"),
+              httpWorkloadRps("Node", "node-raw", "postUsers"),
+            ),
+          )} of the raw-Node ceiling) and ahead on GET, with Elysia, Hono,
           and Express behind. In the realistic shape (security headers + CORS +
           bearer auth + cookies + validated query/body + a ~2.4&nbsp;KB JSON response, measured with{" "}
-          <code>oha</code>) Nifra runs at <b>101% of Elysia on GET and 97% on POST</b>. Treat benchmark
+          <code>oha</code>) Nifra runs at <b>{formatPercent(
+            percentOf(
+              httpRealworldRps("Bun", "Nifra", "get"),
+              httpRealworldRps("Bun", "Elysia", "get"),
+            ),
+          )} of Elysia on GET and {formatPercent(
+            percentOf(
+              httpRealworldRps("Bun", "Nifra", "post"),
+              httpRealworldRps("Bun", "Elysia", "post"),
+            ),
+          )} on POST</b>. Treat benchmark
           rows as same-run evidence, not a permanent law of nature.
         </li>
         <li>

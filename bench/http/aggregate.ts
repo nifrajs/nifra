@@ -14,6 +14,7 @@
  */
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { assertBenchmarkPublishable } from "../publish-guard.ts"
 import {
   httpRuntimeFromResults,
   httpSliceFromNode,
@@ -99,12 +100,19 @@ function median(nums: number[]): number {
   return sorted[sorted.length >> 1] ?? 0
 }
 
-async function runOnce(runtime: string | undefined): Promise<{ meta: Meta; results: Results }> {
+async function runOnce(
+  runtime: string | undefined,
+  targetOrderOffset: number,
+): Promise<{ meta: Meta; results: Results }> {
   const args = ["run", RUN]
   if (runtime !== undefined) args.push(runtime)
   args.push("--json")
   if (FULL) args.push("--full") // forward so run.ts emits the same workload set aggregate expects
-  const proc = Bun.spawn(["bun", ...args], { stdout: "pipe", stderr: "inherit" })
+  const proc = Bun.spawn(["bun", ...args], {
+    stdout: "pipe",
+    stderr: "inherit",
+    env: { ...Bun.env, BENCH_TARGET_OFFSET: String(targetOrderOffset) },
+  })
   const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
   if (code !== 0) throw new Error(`run.ts exited ${code}`)
   // run.ts prints any per-target errors to stderr; the JSON is the last non-empty stdout line.
@@ -177,15 +185,24 @@ function splice(doc: string, marker: string, content: string): string {
 const { runtime, runs, write } = parseArgs(process.argv.slice(2))
 const runtimes = runtime ? [runtime] : ["bun", "node", "deno"]
 
+if (write) await assertBenchmarkPublishable()
+
 const samples: Results[] = []
 let meta: Meta | undefined
 for (let i = 0; i < runs; i++) {
   process.stderr.write(`run ${i + 1}/${runs}…\n`)
-  const { meta: m, results } = await runOnce(runtime)
-  meta ??= m
-  samples.push(results)
+  // Isolate each runtime in its own child process, and rotate order across repetitions. Running
+  // all runtime sections in one process leaves later runtimes exposed to a different host state.
+  const offset = runtime === undefined ? i % runtimes.length : 0
+  const runOrder = [...runtimes.slice(offset), ...runtimes.slice(0, offset)]
+  for (const rt of runOrder) {
+    const { meta: m, results } = await runOnce(runtime ?? rt, i)
+    meta ??= m
+    samples.push(results)
+  }
 }
 if (meta === undefined) throw new Error("no successful runs")
+if (write) await assertBenchmarkPublishable(meta)
 
 // Median across runs for every runtime/framework/workload cell.
 const merged: Results = {}

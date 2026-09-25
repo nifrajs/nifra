@@ -11,6 +11,7 @@ import type { Context, Platform, RouteSchema } from "./context.ts"
 import type { Logger } from "./logger.ts"
 import type {
   NodeRequestHook,
+  NodeResponseBodyHook,
   NodeResponseHook,
   ResponseBodyHook,
   ResponseHeadersHook,
@@ -303,6 +304,8 @@ export interface Middleware {
    * an optional `onNodeResponse` twin only when the hook must see a real `Response`.
    */
   readonly onResponseHeaders?: ResponseHeadersHook
+  /** Allocation-light Node-direct twin for a portable header-only hook; keep its wire semantics identical. */
+  readonly onNodeResponseHeaders?: NodeResponseHook
   /**
    * PORTABLE post-serialization body hook - the payload tier. Receives the final
    * framework-serialized bytes (already resident on every runtime; no stream is drained) plus the
@@ -310,6 +313,8 @@ export interface Middleware {
    * (proxies, SSE, streamed SSR) are skipped by contract - transforming those needs `onResponse`.
    */
   readonly onResponseBody?: ResponseBodyHook
+  /** Allocation-light Node-direct twin for a portable body hook; keep its wire semantics identical. */
+  readonly onNodeResponseBody?: NodeResponseBodyHook
   /**
    * Response transform for untagged/raw responses (streams, proxied fetches, and framework errors).
    * Framework-serialized payloads use `onResponseBody` and remain on the Node direct lane.

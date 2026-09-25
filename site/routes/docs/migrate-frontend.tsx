@@ -1,3 +1,4 @@
+import { MULTIPLIERS } from "../../data/benchmarks"
 import { docsMeta } from "../../meta"
 import { CodeBlock } from "../../highlight"
 
@@ -10,6 +11,10 @@ export const meta = docsMeta(
   "Nifra - Migrating from Next.js, Nuxt, SvelteKit & SolidStart",
   "Move from a meta-framework to Nifra: file routes, data loading, API routes, layouts, and SSG/ISR map across React (Next), Vue (Nuxt), Svelte (SvelteKit), and Solid (SolidStart).",
 )
+
+function ssrMultiplier(framework: string): string {
+  return MULTIPLIERS.find((item) => item.fw === framework)?.mult ?? "n/a"
+}
 
 const NEXT = `// Next.js - app/users/[id]/page.tsx
 export default async function Page({ params }) {
@@ -132,8 +137,10 @@ export default function MigrateFrontend() {
           app.
         </li>
         <li>
-          <b>Much faster SSR</b> - Nifra renders ~25× Next.js, ~7× Nuxt, ~4× SvelteKit/SolidStart on
-          dynamic pages, with a fraction of the client JS. See <a href="/benchmarks">benchmarks</a>.
+          <b>Much faster SSR</b> - the current dynamic-page snapshot reports Nifra at{" "}
+          {ssrMultiplier("React")} the throughput of Next.js, {ssrMultiplier("Vue")} Nuxt, and{" "}
+          {ssrMultiplier("Svelte")} SvelteKit / {ssrMultiplier("Solid")} SolidStart, with a fraction
+          of the client JavaScript. See <a href="/benchmarks">benchmarks</a>.
         </li>
         <li>
           <b>End-to-end types with no codegen</b>, the same app on Bun / Node / Deno / the edge, and a

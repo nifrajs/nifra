@@ -994,6 +994,43 @@ function activateAsyncContextFrame(): void {
   new AsyncLocalStorage()
 }
 
+interface ActiveResponseState {
+  readonly socket: { readonly destroyed: boolean; destroy(): void }
+  active: number
+  parserError: boolean
+}
+
+const ACTIVE_RESPONSE_STATE = Symbol("nifra.node.active-response-state")
+const ACTIVE_RESPONSE_RELEASED = Symbol("nifra.node.active-response-released")
+const ACTIVE_SOCKET_STATE = Symbol("nifra.node.active-socket-state")
+type TrackedSocket = {
+  readonly destroyed: boolean
+  destroy(): void
+  once(event: "close", listener: (this: TrackedSocket) => void): unknown
+  [ACTIVE_SOCKET_STATE]?: ActiveResponseState
+}
+type TrackedServerResponse = ServerResponse & {
+  [ACTIVE_RESPONSE_STATE]?: ActiveResponseState
+  [ACTIVE_RESPONSE_RELEASED]?: boolean
+}
+
+/** Shared finish/close listener - response state carries the per-response release bit. */
+function releaseActiveResponse(this: ServerResponse): void {
+  const response = this as TrackedServerResponse
+  const state = response[ACTIVE_RESPONSE_STATE]
+  if (state === undefined || response[ACTIVE_RESPONSE_RELEASED]) return
+  response[ACTIVE_RESPONSE_RELEASED] = true
+  state.active -= 1
+  if (state.parserError && state.active === 0 && !state.socket.destroyed) {
+    state.socket.destroy()
+  }
+}
+
+function clearActiveResponseState(this: TrackedSocket): void {
+  const state = this[ACTIVE_SOCKET_STATE]
+  if (state !== undefined) state.active = 0
+}
+
 export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeServer> {
   activateAsyncContextFrame()
   enableNodeDirect(app)
@@ -1007,24 +1044,19 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
   // discard the response for an already-dispatched request when an understated Content-Length
   // leaves surplus bytes that look like a malformed pipelined request. Keep the parser error
   // connection-scoped and close only after active responses finish, preserving response ordering.
-  const activeResponses = new WeakMap<object, Set<ServerResponse>>()
-  const parserErrorSockets = new WeakSet<object>()
   const server = createServer((nodeReq, nodeRes) => {
-    const socket = nodeReq.socket
-    let responses = activeResponses.get(socket)
-    if (responses === undefined) {
-      responses = new Set<ServerResponse>()
-      activeResponses.set(socket, responses)
+    const socket = nodeReq.socket as TrackedSocket
+    let responseState = socket[ACTIVE_SOCKET_STATE]
+    if (responseState === undefined) {
+      responseState = { socket, active: 0, parserError: false }
+      socket[ACTIVE_SOCKET_STATE] = responseState
+      socket.once("close", clearActiveResponseState)
     }
-    responses.add(nodeRes)
-    const releaseResponse = (): void => {
-      const current = activeResponses.get(socket)
-      if (current === undefined) return
-      current.delete(nodeRes)
-      if (current.size === 0) activeResponses.delete(socket)
-    }
-    nodeRes.once("finish", releaseResponse)
-    nodeRes.once("close", releaseResponse)
+    responseState.active += 1
+    ;(nodeRes as TrackedServerResponse)[ACTIVE_RESPONSE_STATE] = responseState
+    ;(nodeRes as TrackedServerResponse)[ACTIVE_RESPONSE_RELEASED] = false
+    nodeRes.once("finish", releaseActiveResponse)
+    nodeRes.once("close", releaseActiveResponse)
     inFlight += 1
     try {
       const handled = handle(app, nodeReq, nodeRes, protocol, staticState, hostPolicy)
@@ -1049,19 +1081,10 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
 
   server.on("clientError", (_error, socket) => {
     if (socket.destroyed) return
-    const responses = activeResponses.get(socket)
-    if (responses !== undefined && responses.size > 0) {
-      if (parserErrorSockets.has(socket)) return
-      parserErrorSockets.add(socket)
-      const closeWhenDrained = (): void => {
-        const current = activeResponses.get(socket)
-        if (current === undefined || current.size === 0) socket.destroy()
-      }
-      for (const response of responses) {
-        if (response.writableEnded || response.destroyed) closeWhenDrained()
-        else response.once("finish", closeWhenDrained)
-        response.once("close", closeWhenDrained)
-      }
+    const responseState = (socket as TrackedSocket)[ACTIVE_SOCKET_STATE]
+    if (responseState !== undefined && responseState.active > 0) {
+      if (responseState.parserError) return
+      responseState.parserError = true
       return
     }
     const body = "Bad Request"
@@ -1426,6 +1449,69 @@ function allHeaderKeysLowercase(record: Readonly<Record<string, unknown>>): bool
 }
 
 /**
+ * Store one wire header on a literal record. A literal `__proto__` name must not go through plain
+ * assignment - the inherited setter would silently swallow it - so it is defined as an own data
+ * property instead; every other name takes the fast plain store. Same guard core's portable header
+ * view makes over the same record, so a hook-set `__proto__` header round-trips to the wire
+ * exactly as it did through the old normalization copy.
+ */
+function storeWireHeader(
+  headers: Record<string, string | string[]>,
+  name: string,
+  value: string | string[],
+): void {
+  if (name === "__proto__") {
+    Object.defineProperty(headers, name, {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    })
+    return
+  }
+  headers[name] = value
+}
+
+/** True when an existing header slot can be replaced without throwing or invoking an accessor. */
+function canReplaceHeaderSlot(record: Readonly<Record<string, unknown>>, name: string): boolean {
+  const descriptor = Object.getOwnPropertyDescriptor(record, name)
+  return descriptor === undefined || ("writable" in descriptor && descriptor.writable === true)
+}
+
+/**
+ * A proven lowercase record can stay on the Node hot path when the writer only has to append its
+ * own framing headers. Non-default framing names and explicit lengths take the copy path: the old
+ * writer moved those names to the end of the record, and retaining that order keeps raw HTTP/1.1
+ * snapshots stable. Core's default JSON type is the one exception - it appends that value before
+ * this writer runs, so recognizing it lets the common hooked route retain the record and append
+ * length in place. An application that explicitly supplies the same default value is indistinguishable
+ * here and follows that same semantics-preserving fast path.
+ */
+function canWriteJsonHeadersInPlace(
+  source: Readonly<Record<string, string | readonly string[]>>,
+  cookies: readonly string[] | undefined,
+): source is Record<string, string | string[]> {
+  try {
+    if (!Object.isExtensible(source)) return false
+    if (Object.hasOwn(source, "content-length")) return false
+    if (Object.hasOwn(source, "content-type") && source["content-type"] !== JSON_CONTENT_TYPE) {
+      return false
+    }
+    if (
+      cookies !== undefined &&
+      cookies.length > 0 &&
+      !canReplaceHeaderSlot(source, "set-cookie")
+    ) {
+      return false
+    }
+    return true
+  } catch {
+    // A proxy or a hostile descriptor should use the same isolated fallback as mixed-case input.
+    return false
+  }
+}
+
+/**
  * Serialize a node-direct JSON outcome straight to the socket - no undici `Response`, no stream drain.
  * Mirrors `Response.json(data, { status, headers })` byte-for-byte: user headers are lowercased to
  * match undici's `Headers` normalization, the JSON `Content-Type` matches the host runtime's, and each
@@ -1438,31 +1524,37 @@ function writeJsonOutcome(
 ): void {
   // The outcome's record is the request's own (`c.set.headers`, already mutated by any native
   // response hooks), and its writers - middleware twins and the framework's own additions - emit
-  // lowercase names. Confirmed either by core's mark (the native response walk already looked at
-  // these keys, so re-walking them here is the same pass twice) or, when the record never went
-  // through that walk, by the scan below. Either way the record is then used as-is and the additions
-  // below mutate it in place; nothing reads it after the write. Only a mixed-case key (a user's
-  // hand-set `X-Foo`) pays the normalization copy, keeping the wire byte-identical to undici's
-  // `Headers` lowercasing on every other runtime.
-  let headers: Record<string, string | string[]>
+  // lowercase names. Whether a name needs folding is answered either by core's mark (the native
+  // response walk already looked at these keys, so re-walking them here is the same pass twice)
+  // or, when the record never went through that walk, by the scan below.
+  //
+  // A proven lowercase, extensible record is owned by this request. Keep it in place and append
+  // lowercase framing names directly; the old uppercase rename paid two deletes and demoted the
+  // record to dictionary mode. Mixed-case, frozen, and explicitly framed records take an isolated
+  // copy below, preserving the old source order and protecting caller-owned objects.
   const source = outcome.headers
-  if (source === undefined) {
-    // A route that set no headers gets a record the FRAMEWORK alone fills - content-type,
-    // content-length, set-cookie - so no attacker-influenced name can reach it and the
-    // null-prototype guard the normalization branch needs buys nothing here. It does cost: a
-    // null-prototype object never enters V8's fast property mode, and Node's `_storeHeader` walks
-    // this record key by key on every response (measured at over twice fastify's share of the same
-    // frame on a bare route). A literal keeps it in fast mode.
-    headers = {}
-  } else if (
+  const lowercase =
+    source === undefined ||
     (source as Record<symbol, unknown>)[LOWERCASE_HEADER_KEYS] === true ||
     allHeaderKeysLowercase(source)
-  ) {
-    headers = source as Record<string, string | string[]>
-  } else {
-    headers = Object.create(null) as Record<string, string | string[]>
-    for (const [key, value] of Object.entries(source)) {
-      headers[key.toLowerCase()] = value as string | string[]
+  const inPlace =
+    source === undefined || (lowercase && canWriteJsonHeadersInPlace(source, outcome.cookies))
+  const headers: Record<string, string | string[]> =
+    inPlace && source !== undefined ? (source as Record<string, string | string[]>) : {}
+  let contentType: string | string[] | undefined
+  let hasLength = false
+  if (!inPlace && source !== undefined) {
+    for (const key of Object.keys(source)) {
+      const lower = lowercase ? key : key.toLowerCase()
+      if (lower === "content-type") {
+        contentType = source[key] as string | string[]
+        continue
+      }
+      if (lower === "content-length") {
+        hasLength = true
+        continue
+      }
+      storeWireHeader(headers, lower, source[key] as string | string[])
     }
   }
   // A `null` body is a 204/no-content render - `new Response(null)` carries no Content-Type, so we add
@@ -1471,25 +1563,23 @@ function writeJsonOutcome(
   // without it Node falls back to chunked framing, which costs extra wire bytes and client parsing
   // on every response (and no other runtime chunks a buffered JSON body).
   if (outcome.body !== null) {
-    if (headers["content-type"] === undefined) headers["Content-Type"] = JSON_CONTENT_TYPE
-    else {
-      headers["Content-Type"] = headers["content-type"]
-      delete headers["content-type"]
+    if (inPlace) {
+      if (!Object.hasOwn(headers, "content-type")) headers["content-type"] = JSON_CONTENT_TYPE
+      headers["content-length"] = String(Buffer.byteLength(outcome.body))
+    } else {
+      storeWireHeader(headers, "content-type", contentType ?? JSON_CONTENT_TYPE)
+      storeWireHeader(headers, "content-length", String(Buffer.byteLength(outcome.body)))
     }
-    headers["Content-Length"] = String(Buffer.byteLength(outcome.body))
-    delete headers["content-length"]
   } else if (isBodylessStatus(outcome.status)) {
-    // 204/205/304 never carry a payload; discard a user/native-hook length even when the body is
-    // already represented as null so the direct writer cannot advertise bytes that will not ship.
-    delete headers["content-length"]
-    delete headers["Content-Length"]
-  } else if (!isHead && headers["content-length"] === undefined) {
+    // 204/205/304 never carry a payload; a user/native-hook length is dropped rather than copied,
+    // so the direct writer cannot advertise bytes that will not ship.
+  } else if (!isHead && !hasLength) {
     // A body-less render at a status that MAY carry a body - a `redirect()`, above all. Node frames
     // a `writeHead` + bare `end()` as chunked, so the shortest response the framework emits went out
     // with a chunk terminator and no length, where every Web-native runtime sends `content-length: 0`.
     // Declared here so the wire matches them. HEAD is excluded: its length describes the GET's body,
     // which this lane does not know.
-    headers["Content-Length"] = "0"
+    headers["content-length"] = "0"
   }
   if (outcome.cookies !== undefined && outcome.cookies.length > 0) {
     headers["set-cookie"] = [...outcome.cookies]

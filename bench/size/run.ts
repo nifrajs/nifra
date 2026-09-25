@@ -278,21 +278,23 @@ console.log(typeof composeReviewReport, typeof digestReviewReport)`,
 // shared core kernel (bare 25.6 -> 26.2). This is deliberately accepted as a uniform seam cost: the
 // safer status/validation path replaces per-request Response construction and does not make any
 // optional package reachable. The ceilings below retain the same ~0.2 KB headroom over the measured
-// matrix; a further shared-kernel increase still fails all affected rows together. The fused
-// derive/before/after lifecycle lanes add ~0.2 KB gzip to the shared server kernel, accepted here
-// alongside the measured hot-path win for middleware-heavy routes.
+// matrix; a further shared-kernel increase still fails all affected rows together. Fused
+// derive/before/after lifecycle lanes plus the opt-in Node body-hook twin add ~0.5 KB gzip to
+// the shared server kernel, accepted here alongside the measured hot-path win on middleware-heavy
+// routes. Reprice every affected row from the current deterministic matrix with the usual ~0.2 KB
+// headroom; the budget remains a regression tripwire for later kernel growth.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // The 2026-09-20 security pass adds bounded WebSocket admission/request-hook handling and
   // duplicate-cookie detection to the shared kernel. Reprice every core row together with the
   // measured post-hardening footprint; optional rows must not receive a special exemption.
-  "nifra-bare": 27.1,
+  "nifra-bare": 27.8,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 30.2,
-  "nifra-effect-ledger": 29.0,
-  "nifra-mcp": 27.3,
-  "nifra-sse": 27.8,
-  "nifra-valibot": 28.1,
-  "nifra-typebox-t": 56.9,
+  "nifra-idempotency": 31.0,
+  "nifra-effect-ledger": 29.7,
+  "nifra-mcp": 28.1,
+  "nifra-sse": 28.6,
+  "nifra-valibot": 28.9,
+  "nifra-typebox-t": 57.7,
   // Review-leaf ceiling: measured 5.0 KB gz + ~0.2 KB headroom, same rule as every other row.
   "nifra-agent-review": 5.2,
 }

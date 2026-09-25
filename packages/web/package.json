@@ -69,6 +69,11 @@
       "types": "./dist/service-worker.d.ts",
       "default": "./dist/service-worker.js"
     },
+    "./pwa-manifest": {
+      "bun": "./src/pwa-manifest.ts",
+      "types": "./dist/pwa-manifest.d.ts",
+      "default": "./dist/pwa-manifest.js"
+    },
     "./server-only": {
       "bun": "./src/server-only.ts",
       "types": "./dist/server-only.d.ts",

@@ -54,9 +54,9 @@ function SsrRows({ rows }: { rows: readonly SsrTableRow[] }) {
 type HttpRow = HttpWorkloadTable["rows"][number]
 type RuntimeTable = HttpWorkloadTable
 
-// Bun/Deno: median of 5 full-matrix runs; Node: median-of-3 section run of 2026-08-04 (after the
-// Node serving optimizations). Bun 1.3.14 · Node 26 · Deno 2.8 · oha @ 50 conns. Read same-run
-// ratios, not absolutes. `bun-native`/`node-raw`/`deno-raw` are the runtime ceilings (no framework)
+// Captured 2026-09-24: median of 3 full-matrix runs per runtime; targeted Bun bare and Node realistic rows use seven-run medians. Bun 1.4.2 · Node 26.10.0 ·
+// Deno 2.9.7 · oha @ 50 conns. Read same-run ratios, not absolutes. `bun-native`/`node-raw`/
+// `deno-raw` are the runtime ceilings (no framework)
 // the framework rows chase - one ceiling row per runtime.
 const HTTP: ReadonlyArray<RuntimeTable> = HTTP_WORKLOADS
 
@@ -140,9 +140,11 @@ export default function Benchmarks() {
     <div className="bench">
       <h1 className="page">Benchmarks</h1>
       <p className="lead">
-        Local <code>oha</code> runs on the same machine, same window, same runtime version. Read
-        ratios inside a section before absolutes: laptop thermals and warmup move raw req/s more
-        than the framework order. Reproduce with <code>bun run bench:ssr</code> and{" "}
+        Captured 2026-09-24 on macOS arm64 with Bun 1.4.2, Node 26.10.0, and Deno 2.9.7. Each
+        runtime uses the same-machine <code>oha</code> setup with 50 connections and the median of
+        three full-matrix runs; targeted Bun bare and Node realistic rows use seven-run medians.
+        Compare ratios inside each runtime before raw request rates because laptop thermals and
+        warmup move absolute throughput. Reproduce with <code>bun run bench:ssr</code> and{" "}
         <code>bun run bench:http</code>.
       </p>
 

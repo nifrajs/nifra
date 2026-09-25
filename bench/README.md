@@ -1,5 +1,7 @@
 # Benchmarks
 
+Both HTTP benchmark aggregators refuse `--write` unless Bun, Node, and Deno match `.tool-versions` and the one-minute host load is at or below half the logical CPU count.
+
 The benchmark **code** lives here; the **results** are not committed. Absolute req/s moves with
 machine load (thermal state, other processes), so numbers are only meaningful as same-run ratios on
 your own idle machine - a committed snapshot would just be misleading. Run them yourself:
@@ -46,7 +48,7 @@ read - which on nifra disqualifies every fused fast lane, so it measures the gen
 A third workload adds one body-observing middleware (an `x-body-hash` over the final serialized
 body) through each framework's own idiomatic body tier (nifra `onResponseBody`, Fastify `onSend`,
 Elysia `mapResponse`, Hono drain-and-rebuild, Express `res.json` wrap, inline for the raw ceilings) -
-the cost a header-only comparison can't show. Compare a framework's ratio across both suites to see
+the cost a header-only comparison can't show. Both HTTP matrices use count-bounded `oha` samples, and the realistic runner fails closed unless every request returns HTTP 200. Duration cutoffs can cancel in-flight POSTs and trigger Deno.serve slowdowns. Compare a framework's ratio across both suites to see
 its fast-path premium directly.
 
 `bench/http/route-count.ts` is the general-pipeline baseline. It runs each 1/10/50/200-route row in

@@ -5,7 +5,10 @@
  *
  * With the optional `body` arg, adds ONE body-observing middleware (an `x-body-hash` header over
  * the final serialized body) via nifra's `onResponseBody` payload tier - the body-hash workload's
- * nifra row (the peers' rows live in serve-node.ts as `*-body`).
+ * nifra row (the peers' rows live in serve-node.ts as `*-body`). The portable hook carries the
+ * row on every runtime; the paired Node-direct twin (same bytes in, same header out, no
+ * header-view allocation) carries it on the measured Node lane - the same twin pattern the CORS
+ * middleware uses, and what idiomatic perf-sensitive body middleware looks like.
  *
  *   node <bundled serve-node-nifra.js> <port> [body]
  */
@@ -28,13 +31,21 @@ function hash(s: string): string {
 
 const app = makeNifraApp()
 if (process.argv[3] === "body") {
-  app.use(responseObserver()).onResponseBody((body, headers) => {
-    headers.set(
-      "x-body-hash",
-      hash(typeof body === "string" ? body : new TextDecoder().decode(body)),
-    )
-    return undefined
-  })
+  app.use(responseObserver()).onResponseBody(
+    (body, headers) => {
+      headers.set(
+        "x-body-hash",
+        hash(typeof body === "string" ? body : new TextDecoder().decode(body)),
+      )
+      return undefined
+    },
+    (body, res) => {
+      res.headers ??= {}
+      res.headers["x-body-hash"] =
+        typeof body === "string" ? hash(body) : hash(new TextDecoder().decode(body))
+      return undefined
+    },
+  )
 }
 
 await serve(app, { port })
