@@ -181,6 +181,33 @@ describe("runRequest", () => {
   })
 })
 
+test("accepts Fetch body types and rejects arbitrary primitives", async () => {
+  const bodyApp: AppLike = { fetch: () => Response.json({ ok: true }) }
+  const bodies: unknown[] = [
+    null,
+    "plain text",
+    new Blob(["blob"]),
+    new ArrayBuffer(1),
+    new Uint8Array([1]),
+    new URLSearchParams({ q: "x" }),
+    new FormData(),
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.close()
+      },
+    }),
+  ]
+  for (const body of bodies) {
+    const result = await runRequest(bodyApp, { method: "POST", path: "/", body })
+    expect(result.error).toBeUndefined()
+    expect(result.status).toBe(200)
+  }
+
+  const invalid = await runRequest(bodyApp, { method: "POST", path: "/", body: 42 })
+  expect(invalid.ok).toBe(false)
+  expect(invalid.error?.message).toContain("Fetch Request body")
+})
+
 describe("runApp", () => {
   test("runs a batch in order, one result each, continuing past a crash", async () => {
     const results = await runApp(echoApp, [
