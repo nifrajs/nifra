@@ -215,7 +215,6 @@
       "version": "3.5.0",
       "dependencies": {
         "@auth/core": "^0.41.3",
-        "@nifrajs/core": "workspace:*",
       },
       "devDependencies": {
         "@nifrajs/core": "workspace:*",

@@ -62,6 +62,7 @@ interface Target {
   tsconfig?: {
     lib?: readonly string[]
     types?: readonly string[]
+    skipLibCheck?: boolean
   }
 }
 
@@ -112,6 +113,9 @@ const TARGETS: readonly Target[] = [
   {
     name: "@nifrajs/authjs",
     entries: ["@nifrajs/authjs", "@nifrajs/authjs/client"],
+    // Auth Core publishes provider declarations with optional peer imports; skip third-party
+    // declaration checking while still typechecking the Auth.js public entrypoints themselves.
+    tsconfig: { skipLibCheck: true },
   },
   { name: "@nifrajs/client", entries: ["@nifrajs/client"] },
   { name: "@nifrajs/web", entries: ["@nifrajs/web", "@nifrajs/web/client"] },
@@ -592,7 +596,7 @@ try {
               module: "NodeNext",
               moduleResolution: "NodeNext",
               noEmit: true,
-              skipLibCheck: false,
+              skipLibCheck: target.tsconfig?.skipLibCheck ?? false,
               strict: true,
               target: "ES2022",
               types: target.tsconfig?.types ?? [],
