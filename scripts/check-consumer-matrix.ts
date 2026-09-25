@@ -109,6 +109,10 @@ const TARGETS: readonly Target[] = [
     tsconfig: { lib: ["ES2022", "DOM", "DOM.Iterable"], types: ["bun", "node"] },
   },
   { name: "@nifrajs/core", entries: ["@nifrajs/core", "@nifrajs/core/server"] },
+  {
+    name: "@nifrajs/authjs",
+    entries: ["@nifrajs/authjs", "@nifrajs/authjs/client"],
+  },
   { name: "@nifrajs/client", entries: ["@nifrajs/client"] },
   { name: "@nifrajs/web", entries: ["@nifrajs/web", "@nifrajs/web/client"] },
   {
