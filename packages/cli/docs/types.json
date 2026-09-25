@@ -1582,6 +1582,18 @@
     "signature": "export type AttributeValue = string | number | boolean;"
   },
   {
+    "name": "AuthClient",
+    "kind": "interface",
+    "package": "@nifrajs/authjs",
+    "signature": "export interface AuthClient {\n    /** The Auth.js session, or `null` when unauthenticated. Usable anywhere `fetch` runs. */\n    getSession(init?: RequestInit): Promise<Session | null>;\n    /** Start an OAuth/OIDC sign-in (browser only): navigates to the provider via Auth.js. */\n    signIn(providerId: string, options?: SignInOptions): void;\n    /** Sign out via the CSRF-protected endpoint, then navigate (unless `redirect: false`). */\n    signOut(options?: SignOutOptions): Promise<void>;\n}"
+  },
+  {
+    "name": "AuthClientOptions",
+    "kind": "interface",
+    "package": "@nifrajs/authjs",
+    "signature": "export interface AuthClientOptions {\n    /** Auth.js mount path. Default `\"/api/auth\"`. */\n    readonly basePath?: string;\n    /** `fetch` implementation. Default global `fetch` - override in tests or to forward headers. */\n    readonly fetch?: typeof fetch;\n}"
+  },
+  {
     "name": "authed",
     "kind": "function",
     "package": "@nifrajs/better-auth",
@@ -1594,6 +1606,33 @@
     "package": "@nifrajs/better-auth",
     "signature": "export interface AuthedOptions<User> {\n    /** Require a resolvable tenant. When set and no tenant resolves, fail closed with `403`. */\n    readonly requireTenant?: boolean;\n    /** Browser redirect target (`302`) for a missing session, instead of the default `401` JSON. Same-origin. */\n    readonly redirectTo?: string;\n    /** Resolve the tenant id from the user. Default: `user.tenantId ?? user.orgId` (string-valued only). */\n    readonly tenantOf?: (user: User) => string | undefined;\n}",
     "doc": "/**\n * Options for {@link requirePrincipal} / {@link authed}.\n */"
+  },
+  {
+    "name": "AuthGuardOptions",
+    "kind": "interface",
+    "package": "@nifrajs/authjs",
+    "signature": "export interface AuthGuardOptions {\n    readonly redirectTo?: string;\n    /** Secret override for this call. */\n    readonly secret?: string | string[];\n    /** Platform binding object used when `config.secret` is not present. */\n    readonly env?: unknown;\n    /** Secret key in `env`; defaults to `AUTH_SECRET`. */\n    readonly secretEnv?: string;\n}",
+    "doc": "/** What a guard does when the check fails: 302 to `redirectTo` (same-origin path), else 401 JSON. */"
+  },
+  {
+    "name": "authjs",
+    "kind": "function",
+    "package": "@nifrajs/authjs",
+    "signature": "export declare function authjs(config: AuthJSConfig, options?: AuthJSOptions): import(\"@nifrajs/core\").IdentityPlugin<never>;",
+    "doc": "/**\n * Mount an Auth.js instance into a nifra app: serves `${basePath}/*` (default `/api/auth/*`) for\n * `GET` + `POST`, so sign-in, OAuth callbacks, session, sign-out, and CSRF all run on your server\n * through `@auth/core` itself. A type-IDENTITY plugin (see `defineIdentityPlugin`): mounting never\n * changes the route registry's type, so the typed client keeps working below the mount.\n *\n * Idempotent (named `\"authjs\"` - applying twice mounts once).\n */"
+  },
+  {
+    "name": "AuthJSConfig",
+    "kind": "type",
+    "package": "@nifrajs/authjs",
+    "signature": "export type AuthJSConfig = Omit<AuthConfig, \"raw\">;",
+    "doc": "/** The Auth.js config this integration drives - everything `@auth/core` accepts except `raw`. */"
+  },
+  {
+    "name": "AuthJSOptions",
+    "kind": "interface",
+    "package": "@nifrajs/authjs",
+    "signature": "export interface AuthJSOptions {\n    /** Mount path for Auth.js routes. Defaults to `config.basePath`, then `\"/api/auth\"`. */\n    readonly basePath?: string;\n    /** Public origin for deployments behind a proxy (e.g. `\"https://app.example.com\"`).\n     * When set, Auth.js URLs are rewritten onto it. Forwarded headers are ignored for this\n     * canonical origin. */\n    readonly authUrl?: string;\n    /** Trust proxy-provided `x-forwarded-*` headers when `authUrl` is absent. Default `false`.\n     * Enable only when the deployment strips and replaces those headers at a trusted proxy. */\n    readonly trustProxy?: boolean;\n    /** Session secret. Falls back to the `secretEnv` platform binding, then `process.env`. Missing\n     * everywhere fails loud (500) on first use - Auth.js cannot sign cookies without it. */\n    readonly secret?: string;\n    /** Platform-binding name carrying the secret on edge runtimes (no `process.env` there).\n     * Default `\"AUTH_SECRET\"`. */\n    readonly secretEnv?: string;\n}"
   },
   {
     "name": "AuthorizationRequest",
@@ -1621,6 +1660,31 @@
     "package": "@nifrajs/agent-app",
     "signature": "export type AuthProvider = () => string | undefined | Promise<string | undefined>;",
     "doc": "/** Returns a bearer token for the next request, or `undefined` for an unauthenticated call. */"
+  },
+  {
+    "name": "AuthSession",
+    "kind": "interface",
+    "package": "@nifrajs/web-react",
+    "signature": "export interface AuthSession {\n    readonly status: AuthStatus;\n    readonly session: Session | null;\n    /** Re-read the session from the server (after an out-of-band change, for example). */\n    readonly refresh: () => Promise<void>;\n    readonly signIn: (providerId: string, options?: SignInOptions) => void;\n    readonly signOut: (options?: SignOutOptions) => Promise<void>;\n}"
+  },
+  {
+    "name": "AuthSessionProvider",
+    "kind": "function",
+    "package": "@nifrajs/web-react",
+    "signature": "export declare function AuthSessionProvider(props: AuthSessionProviderProps): ReactNode;",
+    "doc": "/** Provide the Auth.js session to the subtree. Memoized on client + seed; refresh re-reads. */"
+  },
+  {
+    "name": "AuthSessionProviderProps",
+    "kind": "interface",
+    "package": "@nifrajs/web-react",
+    "signature": "export interface AuthSessionProviderProps {\n    /** Shared client (base path, custom fetch). Default `createAuthClient()`. */\n    readonly client?: AuthClient;\n    /** SSR seed from a loader (`await getSession(request, config)`). `undefined` (default) fetches\n     * on mount instead - the subtree renders `loading` until it resolves. */\n    readonly initialSession?: Session | null;\n    readonly children?: ReactNode;\n}"
+  },
+  {
+    "name": "AuthStatus",
+    "kind": "type",
+    "package": "@nifrajs/web-react",
+    "signature": "export type AuthStatus = \"loading\" | \"authenticated\" | \"unauthenticated\";"
   },
   {
     "name": "autoReflectJsonSchema",
@@ -4243,6 +4307,13 @@
     "signature": "export declare function createApprovalCoordinator(options: ApprovalCoordinatorOptions): ApprovalCoordinator;"
   },
   {
+    "name": "createAuthClient",
+    "kind": "function",
+    "package": "@nifrajs/authjs",
+    "signature": "export declare function createAuthClient(options?: AuthClientOptions): AuthClient;",
+    "doc": "/** Create the client. Stateless - every call hits the endpoints, so servers stay authoritative. */"
+  },
+  {
     "name": "createCache",
     "kind": "function",
     "package": "@nifrajs/cache",
@@ -6106,6 +6177,27 @@
     "doc": "/** Runtime handles for a concurrent boundary batch. `initial` is renderable immediately. */"
   },
   {
+    "name": "E2EApp",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface E2EApp {\n    fetch(request: Request): Response | Promise<Response>;\n}",
+    "doc": "/** The minimal shape a nifra `server()` app satisfies - its own `fetch`. */"
+  },
+  {
+    "name": "E2EPaths",
+    "kind": "type",
+    "package": "@nifrajs/testing",
+    "signature": "export type E2EPaths<App> = App extends Server<infer R, infer _Ctx> ? keyof R & string : never;",
+    "doc": "/** Every route path the app declares - constrains `e2eUrl`, so a wrong path is a type error. */"
+  },
+  {
+    "name": "e2eUrl",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function e2eUrl<App>(baseUrl: string, path: E2EPaths<App>): string;",
+    "doc": "/**\n * Join `baseUrl` and a declared route path. The path is checked against the app's registry, so\n * `page.goto(e2eUrl<typeof app>(www.baseUrl, \"/dashbord\"))` fails typecheck instead of 404ing\n * mid-suite - the same guarantee `formFor` gives form fields.\n */"
+  },
+  {
     "name": "EdgeContext",
     "kind": "interface",
     "package": "@nifrajs/edge",
@@ -7499,6 +7591,13 @@
     "kind": "function",
     "package": "@nifrajs/cli",
     "signature": "export declare function getFixRecipe(id: string): FixRecipe | undefined;"
+  },
+  {
+    "name": "getSession",
+    "kind": "function",
+    "package": "@nifrajs/authjs",
+    "signature": "export declare function getSession(req: Request, config: AuthJSConfig, options?: AuthGuardOptions): Promise<Session | null>;",
+    "doc": "/**\n * Resolve the Auth.js session for a request - `null` when unauthenticated. Takes the raw `Request`\n * so it works in handlers (`c.req`), loaders/actions (`request`), and middleware. Mirrors the\n * session-callback interception `@hono/auth-js` uses: the full `{ session, user }` flows through\n * your configured `callbacks.session` first.\n */"
   },
   {
     "name": "getSession",
@@ -13744,6 +13843,13 @@
     "doc": "/** Require an application/data-layer policy to allow an action. A denied request throws a plain\n * `status(403)` render - the same control-flow signal a guard throws, on the same rendering lane as a\n * returned one, so the denial never builds a `Response`. Like the guards, it throws because it is\n * called for effect from inside the work it protects; where the caller can return, return\n * `status(403, ...)` instead. */"
   },
   {
+    "name": "requireAuthUser",
+    "kind": "function",
+    "package": "@nifrajs/authjs",
+    "signature": "export declare function requireAuthUser(req: Request, config: AuthJSConfig, options?: AuthGuardOptions): Promise<NonNullable<Session[\"user\"]>>;",
+    "doc": "/**\n * Require an authenticated user. Returns `session.user`; otherwise throws a `status(...)` render\n * (302/401) - control flow, caught by nifra's plain-data lane like `@nifrajs/auth` guards. Call at\n * the top of a protected handler/loader/action.\n */"
+  },
+  {
     "name": "requirePeer",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -15975,6 +16081,12 @@
     "signature": "export interface ServeDatabaseAsMcpOptions {\n    /**\n     * REQUIRED allowlist of tables the MCP surface may see. `list_tables`/`describe_table` are\n     * restricted to it and `run_query` plans are verified against it. Empty array → construction\n     * throws; expose nothing by accident, ever.\n     */\n    readonly tables: readonly string[];\n    /** Enable the `run_query` tool. Omitted → schema tools only. */\n    readonly runQuery?: RunQueryOptions;\n    /** MCP server identity (defaults: name `nifra-db`, version `1.0.0`). */\n    readonly name?: string;\n    readonly version?: string;\n    /**\n     * Set `PRAGMA query_only = ON` on the connection at construction (default true). Disable ONLY\n     * when the same connection must also serve writes elsewhere in the app - with it disabled,\n     * `run_query` still gates on SELECT/WITH + plan verification, but the engine-level guarantee is\n     * yours to provide (e.g. open a second, read-only connection for the MCP mount - preferred).\n     */\n    readonly enforceQueryOnly?: boolean;\n}"
   },
   {
+    "name": "ServedTestApp",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface ServedTestApp {\n    /** Origin serving the app, e.g. `\"http://127.0.0.1:43127\"`. Hand it to {@link e2eUrl}. */\n    readonly baseUrl: string;\n    /** Stop accepting connections and drain in-flight requests. Idempotent. */\n    readonly stop: () => Promise<void>;\n}"
+  },
+  {
     "name": "ServeOptions",
     "kind": "interface",
     "package": "@nifrajs/deno",
@@ -16253,6 +16365,19 @@
     "package": "@nifrajs/node",
     "signature": "export interface ServeStaticOptions {\n    /** Directory to read files from - an absolute path or a `file://` URL (`new URL(\"./assets/\", import.meta.url)`). */\n    readonly dir: string | URL;\n    /** URL prefix these files are served under. Default `\"/assets\"`. Use `\"/\"` to serve the whole dir. */\n    readonly prefix?: string;\n    /** Emit `cache-control: public, max-age=31536000, immutable` - correct for content-hashed files. Default `true`. */\n    readonly immutable?: boolean;\n    /** Extra headers merged onto every served file. */\n    readonly headers?: Readonly<Record<string, string>>;\n    /**\n     * Whether a path with a dot-leading segment (`/.env`, `/.git/config`, `/.hidden/app.js`) is\n     * served. Default `\"deny\"`: answered `404` - the same response as a missing file, so probing\n     * can't distinguish \"hidden\" from \"absent\". Dotfiles land in build output by accident, not by\n     * design (`.env` next to the bundle, a `.git` dir in a copied tree), so serving them is opt-in.\n     * Set `\"allow\"` if the directory deliberately contains them (e.g. `/.well-known`).\n     */\n    readonly dotfiles?: \"deny\" | \"allow\";\n}",
     "doc": "/**\n * Serve static files from a directory (e.g. the client build) under a URL prefix - so a self-hosted\n * Node deploy doesn't need a CDN or a hand-rolled `/assets/*` handler. (On Cloudflare/Vercel the\n * platform serves assets; this is for `node server.js`.)\n */"
+  },
+  {
+    "name": "serveTestApp",
+    "kind": "function",
+    "package": "@nifrajs/testing",
+    "signature": "export declare function serveTestApp(app: E2EApp, options?: ServeTestAppOptions): Promise<ServedTestApp>;",
+    "doc": "/**\n * Serve an app on an ephemeral port for one browser test. The server is `@nifrajs/node`\n * (an optional peer - install it in devDependencies); when it is absent this throws a plain\n * error naming the missing package instead of a module-resolution crash.\n */"
+  },
+  {
+    "name": "ServeTestAppOptions",
+    "kind": "interface",
+    "package": "@nifrajs/testing",
+    "signature": "export interface ServeTestAppOptions {\n    /** Port to bind. Default `0` (ephemeral - read the real one off {@link ServedTestApp.baseUrl}). */\n    readonly port?: number;\n    /** Interface to bind. Default `\"127.0.0.1\"`. */\n    readonly hostname?: string;\n}"
   },
   {
     "name": "ServiceWorkerManifest",
@@ -16599,11 +16724,30 @@
     "signature": "export interface SignImageUrlOptions {\n    /** HMAC secret - must match the handler's `signing.secret`. */\n    readonly secret: string;\n    /** Seconds until the URL expires (adds `&exp=`). Omit for a stable, cacheable-forever signed URL. */\n    readonly expiresIn?: number;\n}"
   },
   {
+    "name": "SignInOptions",
+    "kind": "interface",
+    "package": "@nifrajs/authjs",
+    "signature": "export interface SignInOptions {\n    /** Where the provider returns afterwards. Default the current page. */\n    readonly callbackUrl?: string;\n}"
+  },
+  {
+    "name": "signInUrl",
+    "kind": "function",
+    "package": "@nifrajs/authjs",
+    "signature": "export declare function signInUrl(providerId: string, options: {\n    readonly basePath?: string;\n    readonly callbackUrl: string;\n}): string;",
+    "doc": "/** Build `/api/auth/signin/:provider?callbackUrl=…` without touching `window` (testable). */"
+  },
+  {
     "name": "signNifraManifest",
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function signNifraManifest(manifest: NifraManifest, signer: NifraManifestSigner): Promise<NifraManifestSignature>;",
     "doc": "/** Sign without handling private keys: the operator-supplied signer may call KMS/HSM/local WebCrypto. */"
+  },
+  {
+    "name": "SignOutOptions",
+    "kind": "interface",
+    "package": "@nifrajs/authjs",
+    "signature": "export interface SignOutOptions {\n    /** Where to land after sign-out. Default `\"/\"`. Set `redirect: false` to stay put. */\n    readonly callbackUrl?: string;\n    readonly redirect?: boolean;\n}"
   },
   {
     "name": "signValue",
@@ -18622,6 +18766,13 @@
     "kind": "function",
     "package": "nifra",
     "signature": "export declare function urlPartsOf(url: string): UrlParts;"
+  },
+  {
+    "name": "useAuthSession",
+    "kind": "function",
+    "package": "@nifrajs/web-react",
+    "signature": "export declare function useAuthSession(): AuthSession;",
+    "doc": "/** Read the Auth.js session (`{ status, session }`). Throws if no `<AuthSessionProvider>` is above. */"
   },
   {
     "name": "useBlocker",

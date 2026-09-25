@@ -48,6 +48,50 @@ const hasUpperAscii = (value: string): boolean => {
 
 const lowerName = (value: string): string => (hasUpperAscii(value) ? value.toLowerCase() : value)
 
+/** Locale names become URL path segments; reject delimiters and control characters up front. */
+function isSafeLocaleSegment(value: string): boolean {
+  if (value === "" || value === "." || value === ".." || value.includes("%")) return false
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i)
+    if (
+      code <= 0x1f ||
+      code === 0x7f ||
+      code === 0x20 ||
+      value[i] === "/" ||
+      value[i] === "\\" ||
+      value[i] === "?" ||
+      value[i] === "#"
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+/** Normalize and validate the origin used in absolute alternate links. */
+function normalizeOrigin(origin: string): string {
+  if (origin.trim() !== origin) {
+    throw new Error("defineI18nRouting: origin must be an absolute http(s) origin")
+  }
+  let url: URL
+  try {
+    url = new URL(origin)
+  } catch {
+    throw new Error("defineI18nRouting: origin must be an absolute http(s) origin")
+  }
+  if (
+    (url.protocol !== "http:" && url.protocol !== "https:") ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.pathname !== "/" ||
+    url.search !== "" ||
+    url.hash !== ""
+  ) {
+    throw new Error("defineI18nRouting: origin must be an absolute http(s) origin")
+  }
+  return url.origin
+}
+
 /** Split `/fr/about?x=1#y` into path segments plus the untouched query/hash tail. A path
  * missing its leading slash is normalized first - request pathnames always carry one, and link
  * builders should not emit `fr/about` from a typo. */
@@ -131,9 +175,17 @@ export function defineI18nRouting(options: I18nRoutingOptions): LocalizedRouter 
   // keep the canonical form (`/FR/...` reads as `"fr"` but links are built as `/fr/...`).
   const byLower = new Map<string, Locale>()
   for (const locale of locales) {
+    if (!isSafeLocaleSegment(locale)) {
+      throw new Error(
+        `defineI18nRouting: locale ${JSON.stringify(locale)} must be one safe URL path segment`,
+      )
+    }
     const lower = lowerName(locale)
     const clash = byLower.get(lower)
-    if (clash !== undefined && clash !== locale) {
+    if (clash !== undefined) {
+      if (clash === locale) {
+        throw new Error(`defineI18nRouting: duplicate locale ${JSON.stringify(locale)}`)
+      }
       throw new Error(
         `defineI18nRouting: locales ${JSON.stringify(clash)} and ${JSON.stringify(locale)} differ only by case`,
       )
@@ -168,6 +220,7 @@ export function defineI18nRouting(options: I18nRoutingOptions): LocalizedRouter 
   const getPathLocale = (path: string): Locale | undefined => matchFirst(splitTail(path).segments)
 
   const hreflangLinks = (path: string, origin: string): readonly HreflangLink[] => {
+    const normalizedOrigin = normalizeOrigin(origin)
     const { segments, suffix, trailingSlash } = splitTail(path)
     const rest = matchFirst(segments) === undefined ? segments : segments.slice(1)
     const base = joinBare(rest, "", trailingSlash)
@@ -175,13 +228,13 @@ export function defineI18nRouting(options: I18nRoutingOptions): LocalizedRouter 
     for (const locale of locales) {
       const href =
         locale === defaultLocale && !prefixDefault
-          ? `${origin}${base}${suffix}`
-          : `${origin}/${locale}${base}${suffix}`
+          ? `${normalizedOrigin}${base}${suffix}`
+          : `${normalizedOrigin}/${locale}${base}${suffix}`
       links.push({ hreflang: locale, href })
     }
     const fallback = prefixDefault
-      ? `${origin}/${defaultLocale}${base}${suffix}`
-      : `${origin}${base}${suffix}`
+      ? `${normalizedOrigin}/${defaultLocale}${base}${suffix}`
+      : `${normalizedOrigin}${base}${suffix}`
     links.push({ hreflang: "x-default", href: fallback })
     return links
   }

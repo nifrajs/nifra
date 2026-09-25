@@ -43,7 +43,11 @@ describe("pwaManifest", () => {
 
   test("fails loud on invalid input", () => {
     expect(() => pwaManifest({})).toThrow(/name \/ short_name/)
+    expect(() => pwaManifest({ name: "   " })).toThrow(/name must not be empty/)
+    expect(() => pwaManifest({ short_name: "\t" })).toThrow(/short_name must not be empty/)
     expect(() => pwaManifest({ name: "N", start_url: "" })).toThrow(/start_url/)
+    expect(() => pwaManifest({ name: "N", start_url: "//evil.test/app" })).toThrow(/start_url/)
+    expect(() => pwaManifest({ name: "N", start_url: "javascript:alert(1)" })).toThrow(/start_url/)
     expect(() => pwaManifest({ name: "N", start_url: "not a url" })).toThrow(/path or URL/)
     expect(() => pwaManifest({ name: "N", display: "weird" as never })).toThrow(/display/)
     expect(() => pwaManifest({ name: "N", dir: "sideways" as never })).toThrow(/dir/)

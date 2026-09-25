@@ -27,6 +27,7 @@ const LIBRARY_PACKAGE_DIRS = [
   "schema",
   "middleware",
   "auth",
+  "authjs",
   "better-auth",
   "i18n",
   "image",

@@ -79,6 +79,24 @@ await assertAdversarialContract(app, {
   only: failure.replay.caseId,
 })`
 
+const E2E = `import { chromium } from "@playwright/test"
+// doc-check: skip - Playwright is an optional peer dependency; run with @playwright/test installed.
+import { e2eUrl, serveTestApp } from "@nifrajs/testing/e2e"
+import { testSession } from "@nifrajs/testing"
+import { app } from "../src/app"
+
+// API flows stay in-process (fast, typed, no socket); only rendering goes to a browser.
+const { client, cookies } = testSession<typeof app>(app)
+await client.auth.login.post({ email: "ada@x.com", password: "secret" })
+
+const www = await serveTestApp(app)
+const page = await (await chromium.launch()).newPage({
+  extraHTTPHeaders: { Cookie: cookies.header() }, // the session crosses into the browser
+})
+await page.goto(e2eUrl<typeof app>(www.baseUrl, "/dashboard")) // typo'd path won't compile
+await page.getByRole("heading").isVisible()
+await www.stop()`
+
 export default function ContractTesting() {
   return (
     <div className="prose">
@@ -174,6 +192,17 @@ export default function ContractTesting() {
         are enough to replay deterministically.
       </p>
       <CodeBlock code={REPLAY} lang="ts" />
+
+      <h2>Browser end-to-end</h2>
+      <p>
+        API flows stay in-process through <code>testSession</code> - typed, cookie-aware, no
+        socket. What in-process cannot do (real navigation, real rendering) goes to a real
+        browser: <code>serveTestApp</code> binds the app to an ephemeral port,{" "}
+        <code>e2eUrl</code> typechecks the visited path against the route registry, and the
+        session jar crosses into the browser as a <code>Cookie</code> header. Bring Playwright
+        (or Vitest Browser) for the browser itself - nifra supplies the glue, not another runner.
+      </p>
+      <CodeBlock code={E2E} lang="ts" />
 
       <blockquote>
         <p>

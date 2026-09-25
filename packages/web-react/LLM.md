@@ -10,10 +10,11 @@ React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babe
 
 ## Public entrypoints
 
-`@nifrajs/web-react` · `@nifrajs/web-react/await` · `@nifrajs/web-react/client` · `@nifrajs/web-react/content` · `@nifrajs/web-react/fetcher` · `@nifrajs/web-react/fn` · `@nifrajs/web-react/i18n` · `@nifrajs/web-react/image` · `@nifrajs/web-react/island` · `@nifrajs/web-react/query` · `@nifrajs/web-react/router`
+`@nifrajs/web-react` · `@nifrajs/web-react/auth` · `@nifrajs/web-react/await` · `@nifrajs/web-react/client` · `@nifrajs/web-react/content` · `@nifrajs/web-react/fetcher` · `@nifrajs/web-react/fn` · `@nifrajs/web-react/i18n` · `@nifrajs/web-react/image` · `@nifrajs/web-react/island` · `@nifrajs/web-react/query` · `@nifrajs/web-react/router`
 
 ## Key exports
 
+- **AuthSessionProvider** _(function)_ - `AuthSessionProvider: (props: AuthSessionProviderProps) => ReactNode` · from `@nifrajs/web-react/auth`
 - **Await** _(function)_ - `Await: <T>(props: AwaitProps<T>) => ReactNode` · from `@nifrajs/web-react/await`
 - **Content** _(function)_ - `Content: ({ html, as, ...rest }: ContentProps) => ReactElement` · from `@nifrajs/web-react/content`
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-react/client`
@@ -26,10 +27,9 @@ React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babe
 - **Navigate** _(function)_ - `Navigate: ({ to, replace }: NavigateProps) => null` · from `@nifrajs/web-react/router`
 - **QueryClientProvider** _(function)_ - `QueryClientProvider: (props: { readonly client: QueryClient; readonly children?: ReactNode; }) => ReactNode` · from `@nifrajs/web-react/query`
 - **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-react/fetcher`
-- **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Blocker` · from `@nifrajs/web-react/router`
-- **useFetcher** _(function)_ - `useFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-react/fetcher`
+- **useAuthSession** _(function)_ - `useAuthSession: () => AuthSession` · from `@nifrajs/web-react/auth`
 
-_…and 46 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
+_…and 52 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
 
 ## Footguns
 

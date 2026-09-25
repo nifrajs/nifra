@@ -36,6 +36,18 @@ describe("defineI18nRouting", () => {
     expect(r.localizePathname("/FR/about", "fr")).toBe("/fr/about")
   })
 
+  test("rejects duplicate or unsafe locale path segments", () => {
+    expect(() => defineI18nRouting({ locales: ["en", "en"], defaultLocale: "en" })).toThrow(
+      /duplicate locale/,
+    )
+    expect(() => defineI18nRouting({ locales: ["en/us"], defaultLocale: "en/us" })).toThrow(
+      /safe URL path segment/,
+    )
+    expect(() => defineI18nRouting({ locales: [""], defaultLocale: "" })).toThrow(
+      /safe URL path segment/,
+    )
+  })
+
   test("prefixDefaultLocale prefixes everything including the default", () => {
     const r = defineI18nRouting({
       locales: ["en", "fr"],
@@ -100,5 +112,14 @@ describe("defineI18nRouting", () => {
       { hreflang: "fr", href: "https://x.com/fr/" },
       { hreflang: "x-default", href: "https://x.com/en/" },
     ])
+  })
+
+  test("normalizes and validates hreflang origins", () => {
+    const r = urls()
+    expect(r.hreflangLinks("/about", "https://x.com/")[0]?.href).toBe("https://x.com/about")
+    expect(() => r.hreflangLinks("/about", "https://x.com/base")).toThrow(
+      /absolute http\(s\) origin/,
+    )
+    expect(() => r.hreflangLinks("/about", "//evil.example")).toThrow(/absolute http\(s\) origin/)
   })
 })

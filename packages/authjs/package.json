@@ -1,0 +1,62 @@
+{
+  "name": "@nifrajs/authjs",
+  "version": "3.5.0",
+  "description": "Official Auth.js integration for nifra - mount Auth.js (OAuth, OIDC, credentials, WebAuthn-ready) into a nifra app, read sessions in handlers and loaders, guard routes, and drive it all from any frontend.",
+  "keywords": [
+    "bun",
+    "typescript",
+    "nifra",
+    "auth",
+    "authjs",
+    "oauth",
+    "oidc",
+    "session"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "bun": "./src/client.ts",
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@auth/core": "^0.41.3",
+    "@nifrajs/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "@nifrajs/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@nifrajs/core": "workspace:*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifrajs/nifra.git",
+    "directory": "packages/authjs"
+  },
+  "bugs": {
+    "url": "https://github.com/nifrajs/nifra/issues"
+  },
+  "homepage": "https://github.com/nifrajs/nifra#readme"
+}

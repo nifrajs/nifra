@@ -37,6 +37,11 @@
       "bun": "./src/zod.ts",
       "types": "./dist/zod.d.ts",
       "default": "./dist/zod.js"
+    },
+    "./e2e": {
+      "bun": "./src/e2e.ts",
+      "types": "./dist/e2e.d.ts",
+      "default": "./dist/e2e.js"
     }
   },
   "files": [
@@ -57,10 +62,14 @@
     "@nifrajs/webmcp": "workspace:*"
   },
   "peerDependencies": {
-    "zod": ">=4.0.0"
+    "zod": ">=4.0.0",
+    "@nifrajs/node": ">=3.5.0"
   },
   "peerDependenciesMeta": {
     "zod": {
+      "optional": true
+    },
+    "@nifrajs/node": {
       "optional": true
     }
   },

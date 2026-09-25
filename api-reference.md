@@ -663,6 +663,37 @@ Every public export of every package and documented subpath - name, kind, signat
 - **requireUser** _(function)_ - `requireUser: <Data extends Record<string, unknown>, K extends keyof Data>(session: Session<Data>, key: K, options?: GuardOptions) => NonNullable<Data[K]>`
   Require a specific session key (e.g. the `userId` a login set) to be present. Returns its value (narrowed non-nullish); otherwise throws like {@link requireSession}. The common "who is the user" guard: `const userId = requireUser(await sessions.get(c), "userId", { redirectTo: "/login" })`.
 
+## @nifrajs/authjs
+
+### `@nifrajs/authjs`
+
+- **AuthGuardOptions** _(interface)_ - `interface AuthGuardOptions`
+  What a guard does when the check fails: 302 to `redirectTo` (same-origin path), else 401 JSON.
+- **AuthJSConfig** _(type)_ - `type AuthJSConfig = Omit<AuthConfig, "raw">`
+  The Auth.js config this integration drives - everything `@auth/core` accepts except `raw`.
+- **AuthJSOptions** _(interface)_ - `interface AuthJSOptions`
+- **Session** _(interface)_ - `interface Session`
+  The active session of the logged in user.
+- **authjs** _(function)_ - `authjs: (config: AuthJSConfig, options?: AuthJSOptions) => import("@nifrajs/core").IdentityPlugin<never>`
+  Mount an Auth.js instance into a nifra app: serves `${basePath}/*` (default `/api/auth/*`) for `GET` + `POST`, so sign-in, OAuth callbacks, session, sign-out, and CSRF all run on your server through `@auth/core` itself. A type-IDENTITY plugin (see `defineIdentityPlugin`): mounting never changes the…
+- **getSession** _(function)_ - `getSession: (req: Request, config: AuthJSConfig, options?: AuthGuardOptions) => Promise<Session | null>`
+  Resolve the Auth.js session for a request - `null` when unauthenticated. Takes the raw `Request` so it works in handlers (`c.req`), loaders/actions (`request`), and middleware. Mirrors the session-callback interception `@hono/auth-js` uses: the full `{ session, user }` flows through your configured…
+- **requireAuthUser** _(function)_ - `requireAuthUser: (req: Request, config: AuthJSConfig, options?: AuthGuardOptions) => Promise<NonNullable<Session["user"]>>`
+  Require an authenticated user. Returns `session.user`; otherwise throws a `status(...)` render (302/401) - control flow, caught by nifra's plain-data lane like `@nifrajs/auth` guards. Call at the top of a protected handler/loader/action.
+
+### `@nifrajs/authjs/client`
+
+- **AuthClient** _(interface)_ - `interface AuthClient`
+- **AuthClientOptions** _(interface)_ - `interface AuthClientOptions`
+- **Session** _(interface)_ - `interface Session`
+  The active session of the logged in user.
+- **SignInOptions** _(interface)_ - `interface SignInOptions`
+- **SignOutOptions** _(interface)_ - `interface SignOutOptions`
+- **createAuthClient** _(function)_ - `createAuthClient: (options?: AuthClientOptions) => AuthClient`
+  Create the client. Stateless - every call hits the endpoints, so servers stay authoritative.
+- **signInUrl** _(function)_ - `signInUrl: (providerId: string, options: { readonly basePath?: string; readonly callbackUrl: string; }) => string`
+  Build `/api/auth/signin/:provider?callbackUrl=…` without touching `window` (testable).
+
 ## @nifrajs/aws-lambda
 
 - **FetchHandler** _(interface)_ - `interface FetchHandler`
@@ -4190,6 +4221,19 @@ _No named exports (side-effect entrypoint)._
 - **runContractLabThroughAdapter** _(function)_ - `runContractLabThroughAdapter: (adapter: ContractLabRuntimeAdapter, app?: ContractLabHandler) => Promise<void>`
   Run the shared witnesses through a real HTTP adapter and always release its server.
 
+### `@nifrajs/testing/e2e`
+
+- **E2EApp** _(interface)_ - `interface E2EApp`
+  The minimal shape a nifra `server()` app satisfies - its own `fetch`.
+- **E2EPaths** _(type)_ - `type E2EPaths<App> = App extends Server<infer R, infer _Ctx> ? keyof R & string : never`
+  Every route path the app declares - constrains `e2eUrl`, so a wrong path is a type error.
+- **ServeTestAppOptions** _(interface)_ - `interface ServeTestAppOptions`
+- **ServedTestApp** _(interface)_ - `interface ServedTestApp`
+- **e2eUrl** _(function)_ - `e2eUrl: <App>(baseUrl: string, path: E2EPaths<App>) => string`
+  Join `baseUrl` and a declared route path. The path is checked against the app's registry, so `page.goto(e2eUrl<typeof app>(www.baseUrl, "/dashbord"))` fails typecheck instead of 404ing mid-suite - the same guarantee `formFor` gives form fields.
+- **serveTestApp** _(function)_ - `serveTestApp: (app: E2EApp, options?: ServeTestAppOptions) => Promise<ServedTestApp>`
+  Serve an app on an ephemeral port for one browser test. The server is `@nifrajs/node` (an optional peer - install it in devDependencies); when it is absent this throws a plain error naming the missing package instead of a module-resolution crash.
+
 ### `@nifrajs/testing/zod`
 
 - **zodJsonSchema** _(function)_ - `zodJsonSchema: (schema: unknown) => JsonSchema | undefined`
@@ -5245,6 +5289,18 @@ _No named exports (side-effect entrypoint)._
 
 - **reactAdapter** _(const)_ - `reactAdapter: RenderAdapter`
   The React server render adapter - pass to
+
+### `@nifrajs/web-react/auth`
+
+- **AuthSession** _(interface)_ - `interface AuthSession`
+- **AuthSessionProvider** _(function)_ - `AuthSessionProvider: (props: AuthSessionProviderProps) => ReactNode`
+  Provide the Auth.js session to the subtree. Memoized on client + seed; refresh re-reads.
+- **AuthSessionProviderProps** _(interface)_ - `interface AuthSessionProviderProps`
+- **AuthStatus** _(type)_ - `type AuthStatus = "loading" | "authenticated" | "unauthenticated"`
+- **Session** _(interface)_ - `interface Session`
+  The active session of the logged in user.
+- **useAuthSession** _(function)_ - `useAuthSession: () => AuthSession`
+  Read the Auth.js session (`{ status, session }`). Throws if no `<AuthSessionProvider>` is above.
 
 ### `@nifrajs/web-react/await`
 

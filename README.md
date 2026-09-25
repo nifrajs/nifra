@@ -231,7 +231,7 @@ results separate.
 See [benchmark methodology and full results](https://nifra.dev/benchmarks), and run
 `bun run bench:http` / `bun run bench:ssr` yourself.
 
-## Batteries (55 packages, all typed, all optional)
+## Batteries (56 packages, all typed, all optional)
 
 The package map is organized by job:
 

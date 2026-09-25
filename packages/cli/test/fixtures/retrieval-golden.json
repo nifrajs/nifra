@@ -91,7 +91,7 @@
   {
     "query": "auth session",
     "kind": "types",
-    "accept": ["Session", "SessionManager", "AuthPlugin"],
+    "accept": ["Session", "SessionManager", "AuthPlugin", "authjs"],
     "within": 3
   },
   {

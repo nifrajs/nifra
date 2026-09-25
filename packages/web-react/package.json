@@ -58,6 +58,11 @@
       "types": "./dist/i18n.d.ts",
       "default": "./dist/i18n.js"
     },
+    "./auth": {
+      "bun": "./src/auth.ts",
+      "types": "./dist/auth.d.ts",
+      "default": "./dist/auth.js"
+    },
     "./image": {
       "bun": "./src/image.ts",
       "types": "./dist/image.d.ts",
@@ -88,6 +93,7 @@
   },
   "dependencies": {
     "@nifrajs/core": "workspace:*",
+    "@nifrajs/authjs": "workspace:*",
     "@nifrajs/i18n": "workspace:*",
     "@nifrajs/image": "workspace:*",
     "@nifrajs/web": "workspace:*"

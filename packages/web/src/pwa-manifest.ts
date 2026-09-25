@@ -81,7 +81,7 @@ function defaultScope(start_url: string): string {
   } catch {
     throw new Error(`pwaManifest: start_url ${JSON.stringify(start_url)} is not a path or URL`)
   }
-  if (url.origin === "null") {
+  if (url.origin === "null" || (url.protocol !== "http:" && url.protocol !== "https:")) {
     throw new Error(`pwaManifest: start_url ${JSON.stringify(start_url)} is not a path or URL`)
   }
   const dir = url.pathname.endsWith("/")
@@ -110,6 +110,12 @@ export function pwaManifest(options: PwaManifestOptions): Record<string, unknown
   if (name === undefined && short_name === undefined) {
     throw new Error("pwaManifest: one of name / short_name is required")
   }
+  if (name !== undefined && name.trim() === "") {
+    throw new Error("pwaManifest: name must not be empty")
+  }
+  if (short_name !== undefined && short_name.trim() === "") {
+    throw new Error("pwaManifest: short_name must not be empty")
+  }
   const display = options.display ?? "standalone"
   if (
     display !== "fullscreen" &&
@@ -128,7 +134,9 @@ export function pwaManifest(options: PwaManifestOptions): Record<string, unknown
     throw new Error(`pwaManifest: unknown dir ${JSON.stringify(options.dir)}`)
   }
   const start_url = options.start_url ?? "/"
-  if (start_url === "") throw new Error("pwaManifest: start_url must not be empty")
+  if (start_url === "" || start_url.startsWith("//")) {
+    throw new Error("pwaManifest: start_url must be a relative path or absolute URL")
+  }
   const manifest: Record<string, unknown> = {}
   if (name !== undefined) manifest.name = name
   if (short_name !== undefined) manifest.short_name = short_name

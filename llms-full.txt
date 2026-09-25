@@ -3179,9 +3179,12 @@ opt-out.
 
 > Turnkey auth with @nifrajs/better-auth (OAuth, magic links, 2FA), or signed-cookie + server-store sessions, route guards, and CSRF with @nifrajs/auth.
 
-Two paths. **[@nifrajs/better-auth](#better-auth)** is turnkey - mount
+Three paths. **[@nifrajs/better-auth](#better-auth)** is turnkey - mount
 [Better Auth](https://better-auth.com) (OAuth, magic links, 2FA, …) into your app in
-one line. **[@nifrajs/auth](#sessions)** is the framework half - **signed-cookie or
+one line. **[@nifrajs/authjs](#authjs)** mounts
+[Auth.js](https://authjs.dev) (OAuth/OIDC providers, credentials, WebAuthn-ready)
+the same way, with a framework-agnostic client plus React bindings.
+**[@nifrajs/auth](#sessions)** is the framework half - **signed-cookie or
 server-store sessions**, **route guards**, and **CSRF** - when you want to own identity
 yourself. Nifra owns the _session_; you bring (or mount) the _who_.
 
@@ -3197,26 +3200,56 @@ your Nifra server. Read the session with `getSession(auth, request)` (typed
 your tests need no database - and your Better Auth types flow through by inference.
 
 ```ts
-// doc-check: skip - needs the third-party `better-auth` package + your `db`; install it to run this.
-// auth.ts - your configured Better Auth instance (database, providers, …):
-import { betterAuth as createBetterAuth } from "better-auth"
-export const auth = createBetterAuth({ database: db, emailAndPassword: { enabled: true } })
-
-// server.ts - ONE use() mounts every Better Auth endpoint at /api/auth/*:
-import { betterAuth, getSession, requireSession } from "@nifrajs/better-auth"
-const app = server()
-  .use(betterAuth(auth))                                       // sign-in/up/out, OAuth, 2FA, session…
-  .get("/me", async (c) => (await requireSession(auth, c.req)).user)  // typed; 401 when signed out
-
-// In a loader/action, read the session from the raw Request:
-export async function loader({ request }) {
-  const session = await getSession(auth, request)              // { user, session } | null - typed
-  const { user } = await requireSession(auth, request, { redirectTo: "/login" })  // or guard it
-  return { user }
-}
+// doc-check: skip - needs the third-party
 ```
 
 Prefer to own identity (custom password/OAuth, Lucia, …)? Use the session primitives below.
+
+### Auth.js, mounted natively
+
+`@nifrajs/authjs` is the official [Auth.js](https://authjs.dev)
+integration: `authjs(config)` serves `/api/auth/*` (sign-in, OAuth
+callbacks, session, sign-out, CSRF) through `@auth/core` itself - PKCE, state,
+and token verification stay Auth.js's job, never a reimplementation. Read the session with
+`getSession(request, config)` (typed `Session | null`, works in
+handlers and loaders) or guard with `requireAuthUser(request, config)` (returns
+the user, or throws a 401/redirect). The frontend half is a framework-agnostic client
+(`createAuthClient()` - session, sign-in, sign-out) plus
+`<AuthSessionProvider>` / `useAuthSession()` in
+`@nifrajs/web-react/auth`.
+
+```ts
+// doc-check: skip - needs `@auth/core` providers + AUTH_SECRET; install them to run this.
+// auth.ts - your Auth.js config (any @auth/core provider: GitHub, Google, Credentials, …):
+import { authjs, getSession, requireAuthUser } from "@nifrajs/authjs"
+import GitHub from "@auth/core/providers/github"
+export const authConfig = {
+  providers: [GitHub({ clientId: process.env.GITHUB_ID! })],
+  secret: process.env.AUTH_SECRET!,
+  trustHost: true, // or authUrl behind a proxy
+}
+
+// server.ts - ONE use() mounts every Auth.js endpoint at /api/auth/*:
+export const app = server()
+  .use(authjs(authConfig))                                     // sign-in, OAuth callbacks, session…
+  .get("/me", async (c) => ({ user: (await getSession(c.req, authConfig))?.user ?? null }))
+
+// Guard it - or read it in a loader from the raw Request:
+export async function loader({ request }) {
+  const user = await requireAuthUser(request, authConfig, { redirectTo: "/login" })
+  return { user }
+}
+
+// Frontend - any framework via the agnostic client, or React bindings:
+// import { createAuthClient } from "@nifrajs/authjs/client"
+// await createAuthClient().signIn("github")
+// import { AuthSessionProvider, useAuthSession } from "@nifrajs/web-react/auth"
+```
+
+Secrets resolve per request - explicit `secret`, then the `AUTH_SECRET`
+platform binding (edge-safe), then `process.env` - and a missing secret fails loud
+instead of signing with nothing. Behind a proxy, pass `authUrl` (or
+`trustHost`) so redirects and cookies use the public origin.
 
 ### Set up a session manager
 
@@ -8128,6 +8161,35 @@ await assertAdversarialContract(app, {
 })
 ```
 
+### Browser end-to-end
+
+API flows stay in-process through `testSession` - typed, cookie-aware, no
+socket. What in-process cannot do (real navigation, real rendering) goes to a real
+browser: `serveTestApp` binds the app to an ephemeral port,
+`e2eUrl` typechecks the visited path against the route registry, and the
+session jar crosses into the browser as a `Cookie` header. Bring Playwright
+(or Vitest Browser) for the browser itself - nifra supplies the glue, not another runner.
+
+```ts
+import { chromium } from "@playwright/test"
+// doc-check: skip - Playwright is an optional peer dependency; run with @playwright/test installed.
+import { e2eUrl, serveTestApp } from "@nifrajs/testing/e2e"
+import { testSession } from "@nifrajs/testing"
+import { app } from "../src/app"
+
+// API flows stay in-process (fast, typed, no socket); only rendering goes to a browser.
+const { client, cookies } = testSession<typeof app>(app)
+await client.auth.login.post({ email: "ada@x.com", password: "secret" })
+
+const www = await serveTestApp(app)
+const page = await (await chromium.launch()).newPage({
+  extraHTTPHeaders: { Cookie: cookies.header() }, // the session crosses into the browser
+})
+await page.goto(e2eUrl<typeof app>(www.baseUrl, "/dashboard")) // typo'd path won't compile
+await page.getByRole("heading").isVisible()
+await www.stop()
+```
+
 The response-conformance pass executes handlers, including POST/DELETE handlers. Run it with
 isolated fixtures and a test database. Never point a contract laboratory at production.
 
@@ -9008,6 +9070,42 @@ one cheap read instead of the whole corpus. For the wider framework: the repo's
 [`AGENTS.md`](../../AGENTS.md) is the copy-paste quick reference, and
 [`llms-full.txt`](../../llms-full.txt) is the full machine-readable corpus. Run `nifra check` as the
 done-gate, or `nifra mcp` to give the agent live project tools.
+
+## `@nifrajs/authjs`
+
+Official [Auth.js](https://authjs.dev) integration for nifra - backend mount, session helpers,
+route guards, a framework-agnostic client, and React bindings.
+
+```ts
+import { authjs, getSession, requireAuthUser } from "@nifrajs/authjs"
+import GitHub from "@auth/core/providers/github"
+
+const authConfig = {
+  providers: [GitHub({ clientId: process.env.GITHUB_ID! })],
+  secret: process.env.AUTH_SECRET!,
+  trustHost: true,
+}
+
+export const app = server()
+  .use(authjs(authConfig)) // serves /api/auth/* (sign-in, callbacks, session, sign-out)
+  .get("/me", async (c) => ({ user: (await getSession(c.req, authConfig))?.user ?? null }))
+```
+
+- `authjs(config, options?)` - identity plugin mounting Auth.js at `/api/auth/*` (GET + POST).
+  Secrets resolve per request (explicit → platform binding → `process.env`); missing fails loud.
+- `getSession(req, config)` - `Session | null`, usable in handlers and loaders.
+- `requireAuthUser(req, config, { redirectTo? })` - returns the user or throws a 401/redirect.
+- `@nifrajs/authjs/client` - `createAuthClient()` (session, sign-in, sign-out) for any frontend.
+- `@nifrajs/web-react/auth` - `<AuthSessionProvider>` + `useAuthSession()`.
+
+Auth.js itself does the security-critical work (PKCE, state, token verification); this package
+is the nifra-shaped surface over `@auth/core`. See `/docs/auth` (Auth.js section) for the full
+guide, including proxies (`authUrl`) and edge secret bindings.
+
+## For AI agents
+
+Start with [`LLM.md`](./LLM.md) - this package's contract card. For the wider framework, see the
+repository [`llms-full.txt`](../../llms-full.txt) corpus.
 
 ## @nifrajs/aws-lambda
 
@@ -11944,6 +12042,10 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 ## @nifrajs/auth
 
 `AuthorizationRequest`, `Authorizer`, `createSessions`, `csrf`, `CsrfOptions`, `GuardOptions`, `isAuthorized`, `KVNamespaceLike`, `KVSessionStore`, `MemorySessionStore`, `MemorySessionStoreOptions`, `requireAuthorization`, `requireSession`, `requireUser`, `Session`, `SessionContext`, `SessionCookieOptions`, `SessionManager`, `SessionOptions`, `SessionRecord`, `SessionStore`
+
+## @nifrajs/authjs
+
+`app`, `AuthGuardOptions`, `authjs`, `AuthJSConfig`, `AuthJSOptions`, `getSession`, `requireAuthUser`, `Session`
 
 ## @nifrajs/aws-lambda
 

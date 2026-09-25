@@ -11,7 +11,7 @@ export const meta = docsMeta(
   "Turnkey auth with @nifrajs/better-auth (OAuth, magic links, 2FA), or signed-cookie + server-store sessions, route guards, and CSRF with @nifrajs/auth.",
 )
 
-const BETTERAUTH = `// doc-check: skip - needs the third-party \`better-auth\` package + your \`db\`; install it to run this.
+const BETTERAUTH = `// doc-check: skip - needs the third-party `better-auth` package + your `db`; install it to run this.
 // auth.ts - your configured Better Auth instance (database, providers, …):
 import { betterAuth as createBetterAuth } from "better-auth"
 export const auth = createBetterAuth({ database: db, emailAndPassword: { enabled: true } })
@@ -28,6 +28,32 @@ export async function loader({ request }) {
   const { user } = await requireSession(auth, request, { redirectTo: "/login" })  // or guard it
   return { user }
 }`
+
+const AUTHJS = `// doc-check: skip - needs \`@auth/core\` providers + AUTH_SECRET; install them to run this.
+// auth.ts - your Auth.js config (any @auth/core provider: GitHub, Google, Credentials, …):
+import { authjs, getSession, requireAuthUser } from "@nifrajs/authjs"
+import GitHub from "@auth/core/providers/github"
+export const authConfig = {
+  providers: [GitHub({ clientId: process.env.GITHUB_ID! })],
+  secret: process.env.AUTH_SECRET!,
+  trustHost: true, // or authUrl behind a proxy
+}
+
+// server.ts - ONE use() mounts every Auth.js endpoint at /api/auth/*:
+export const app = server()
+  .use(authjs(authConfig))                                     // sign-in, OAuth callbacks, session…
+  .get("/me", async (c) => ({ user: (await getSession(c.req, authConfig))?.user ?? null }))
+
+// Guard it - or read it in a loader from the raw Request:
+export async function loader({ request }) {
+  const user = await requireAuthUser(request, authConfig, { redirectTo: "/login" })
+  return { user }
+}
+
+// Frontend - any framework via the agnostic client, or React bindings:
+// import { createAuthClient } from "@nifrajs/authjs/client"
+// await createAuthClient().signIn("github")
+// import { AuthSessionProvider, useAuthSession } from "@nifrajs/web-react/auth"`
 
 const SETUP = `// auth.ts - one session manager. LAZY so a route module can import it without shipping it to the
 // browser (see the warning below). Store mode keeps data server-side; cookie mode (no store) is stateless.
@@ -78,9 +104,12 @@ export default function Auth() {
     <div className="prose">
       <h1 className="page">Auth &amp; sessions</h1>
       <p className="lead">
-        Two paths. <b><a href="#better-auth">@nifrajs/better-auth</a></b> is turnkey - mount{" "}
+        Three paths. <b><a href="#better-auth">@nifrajs/better-auth</a></b> is turnkey - mount{" "}
         <a href="https://better-auth.com">Better Auth</a> (OAuth, magic links, 2FA, …) into your app in
-        one line. <b><a href="#sessions">@nifrajs/auth</a></b> is the framework half - <b>signed-cookie or
+        one line. <b><a href="#authjs">@nifrajs/authjs</a></b> mounts{" "}
+        <a href="https://authjs.dev">Auth.js</a> (OAuth/OIDC providers, credentials, WebAuthn-ready)
+        the same way, with a framework-agnostic client plus React bindings.{" "}
+        <b><a href="#sessions">@nifrajs/auth</a></b> is the framework half - <b>signed-cookie or
         server-store sessions</b>, <b>route guards</b>, and <b>CSRF</b> - when you want to own identity
         yourself. Nifra owns the <i>session</i>; you bring (or mount) the <i>who</i>.
       </p>
@@ -99,6 +128,27 @@ export default function Auth() {
       <CodeBlock code={BETTERAUTH} />
       <p>
         Prefer to own identity (custom password/OAuth, Lucia, …)? Use the session primitives below.
+      </p>
+
+      <h2 id="authjs">Auth.js, mounted natively</h2>
+      <p>
+        <code>@nifrajs/authjs</code> is the official <a href="https://authjs.dev">Auth.js</a>{" "}
+        integration: <code>authjs(config)</code> serves <code>/api/auth/*</code> (sign-in, OAuth
+        callbacks, session, sign-out, CSRF) through <code>@auth/core</code> itself - PKCE, state,
+        and token verification stay Auth.js's job, never a reimplementation. Read the session with{" "}
+        <code>getSession(request, config)</code> (typed <code>Session | null</code>, works in
+        handlers and loaders) or guard with <code>requireAuthUser(request, config)</code> (returns
+        the user, or throws a 401/redirect). The frontend half is a framework-agnostic client
+        (<code>createAuthClient()</code> - session, sign-in, sign-out) plus{" "}
+        <code>&lt;AuthSessionProvider&gt;</code> / <code>useAuthSession()</code> in{" "}
+        <code>@nifrajs/web-react/auth</code>.
+      </p>
+      <CodeBlock code={AUTHJS} />
+      <p>
+        Secrets resolve per request - explicit <code>secret</code>, then the <code>AUTH_SECRET</code>{" "}
+        platform binding (edge-safe), then <code>process.env</code> - and a missing secret fails loud
+        instead of signing with nothing. Behind a proxy, pass <code>authUrl</code> (or{" "}
+        <code>trustHost</code>) so redirects and cookies use the public origin.
       </p>
 
       <h2 id="sessions">Set up a session manager</h2>
