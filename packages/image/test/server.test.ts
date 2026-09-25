@@ -261,7 +261,7 @@ describe("local source SSRF guards", () => {
 describe("remote source SSRF guards", () => {
   const png = makePng(4, 4)
   const okFetch = (async () =>
-    new Response(png, {
+    new Response(png.slice(), {
       status: 200,
       headers: { "content-type": "image/png" },
     })) as unknown as typeof fetch
@@ -615,7 +615,7 @@ describe("concurrency", () => {
     const stalled = deferred()
     const stalling = (async () => {
       await stalled.promise
-      return new Response(makePng(4, 4), { headers: { "content-type": "image/png" } })
+      return new Response(makePng(4, 4).slice(), { headers: { "content-type": "image/png" } })
     }) as unknown as typeof fetch
 
     const h = createImageHandler({

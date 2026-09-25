@@ -101,7 +101,7 @@ function canonical(value: unknown): string {
 function witnessRequest(origin: string, witness: ContractLabWitness): Request {
   return new Request(`${origin}${witness.request.path}`, {
     method: witness.request.method,
-    headers: witness.request.headers,
+    ...(witness.request.headers === undefined ? {} : { headers: witness.request.headers }),
     ...(witness.request.body === undefined ? {} : { body: witness.request.body }),
   })
 }

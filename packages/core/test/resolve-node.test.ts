@@ -773,7 +773,9 @@ describe("resolveNode - migrated body-tier middleware stay native", () => {
     expect(outcome.headers?.["content-encoding"]).toBe("gzip")
     expect(outcome.body).toBeInstanceOf(Uint8Array)
     const text = await new Response(
-      new Response(outcome.body as Uint8Array).body?.pipeThrough(new DecompressionStream("gzip")),
+      new Response((outcome.body as Uint8Array).slice()).body?.pipeThrough(
+        new DecompressionStream("gzip"),
+      ),
     ).text()
     expect(JSON.parse(text)).toEqual({ data: big })
   })

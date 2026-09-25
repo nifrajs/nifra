@@ -586,7 +586,12 @@ function nodeOutcomeToResponse(outcome: NodeServeOutcome): Response {
       if (pairs[i]?.[0].toLowerCase() === "content-length") pairs.splice(i, 1)
     }
   }
-  const body = isBodylessStatus(outcome.status) ? null : outcome.body
+  const body =
+    isBodylessStatus(outcome.status) || outcome.body === null
+      ? null
+      : typeof outcome.body === "string"
+        ? outcome.body
+        : outcome.body.slice()
   const response = new FastResponse(body, {
     status: outcome.status,
     headers: pairs,
@@ -2037,7 +2042,8 @@ function makeWebRequest(
   const init: RequestInit & { duplex?: "half" } = { method, headers }
   if (method !== "GET" && method !== "HEAD") {
     // Stream the body in; `duplex: "half"` is required for a streamed request body.
-    init.body = body ?? claimableWebStream(req, "drain")
+    init.body =
+      body instanceof Uint8Array ? body.slice() : (body ?? claimableWebStream(req, "drain"))
     init.duplex = "half"
   }
   return new Request(url, init)

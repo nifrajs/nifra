@@ -173,7 +173,7 @@ async function etagRawResponse(
   // The body was consumed and rebuilt from bytes. Re-derive framing at the serving adapter
   // instead of trusting a stale upstream declaration.
   headers.delete("content-length")
-  return new Response(read.bytes, {
+  return new Response(read.bytes.slice(), {
     status: response.status,
     statusText: response.statusText,
     headers,

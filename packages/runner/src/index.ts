@@ -87,6 +87,19 @@ function isJsonBody(body: unknown): body is Record<string, unknown> | unknown[] 
   return true
 }
 
+type RequestBody = Exclude<RequestInit["body"], undefined>
+
+/** Runtime-check the non-JSON body shapes advertised by RequestSpec before crossing Fetch's API. */
+function isRequestBody(body: unknown): body is RequestBody {
+  if (body === null || typeof body === "string") return true
+  if (typeof Blob !== "undefined" && body instanceof Blob) return true
+  if (typeof ArrayBuffer !== "undefined" && body instanceof ArrayBuffer) return true
+  if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView(body)) return true
+  if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) return true
+  if (typeof FormData !== "undefined" && body instanceof FormData) return true
+  return typeof ReadableStream !== "undefined" && body instanceof ReadableStream
+}
+
 function buildRequest(spec: RequestSpec, origin: string): Request {
   const method = (spec.method ?? "GET").toUpperCase()
   const url = /^https?:\/\//i.test(spec.path) ? spec.path : new URL(spec.path, origin).toString()
@@ -99,7 +112,10 @@ function buildRequest(spec: RequestSpec, origin: string): Request {
       if (!headers.has("content-type")) headers.set("content-type", "application/json")
       init.body = JSON.stringify(spec.body)
     } else {
-      init.body = spec.body as RequestInit["body"]
+      if (!isRequestBody(spec.body)) {
+        throw new TypeError("@nifrajs/runner: body must be a Fetch Request body")
+      }
+      init.body = spec.body
     }
   }
   return new Request(url, init)

@@ -193,7 +193,7 @@ const toRequest = (event: LambdaEvent, maxBodyBytes: number): Request | Response
 
   return body === undefined
     ? new Request(url, { method, headers })
-    : new Request(url, { method, headers, body })
+    : new Request(url, { method, headers, body: body.slice() })
 }
 
 /**

@@ -218,7 +218,7 @@ async function readBytesCapped(res: Response, maxBytes: number): Promise<ReadByt
         const bytes = concatBytes(chunks, total)
         return {
           bytes,
-          response: new Response(bytes.byteLength === 0 ? null : bytes, {
+          response: new Response(bytes.byteLength === 0 ? null : bytes.slice(), {
             status: res.status,
             statusText: res.statusText,
             headers: res.headers,

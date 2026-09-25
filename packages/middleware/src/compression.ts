@@ -140,7 +140,7 @@ async function compressRawBody(
     while (total < threshold) {
       const { done, value } = await reader.read()
       if (done) {
-        return new Response(concat(buffered, total), {
+        return new Response(concat(buffered, total).slice(), {
           status: response.status,
           statusText: response.statusText,
           headers: response.headers,

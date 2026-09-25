@@ -278,7 +278,7 @@ async function handle(req: Request, cfg: ResolvedConfig): Promise<Response> {
     if (ifNoneMatch(req, etag)) return new Response(null, { status: 304, headers })
     // HEAD: identical headers, no body.
     if (req.method === "HEAD") return new Response(null, { status: 200, headers })
-    return new Response(out.bytes, { status: 200, headers })
+    return new Response(out.bytes.slice(), { status: 200, headers })
   } catch (err) {
     if (err instanceof ImageProcessingError) {
       if (err.kind === "too_large") return errorResponse(413, "source_too_large")

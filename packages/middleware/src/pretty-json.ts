@@ -176,7 +176,7 @@ async function prettyRawResponse(
   try {
     parsed = JSON.parse(peeked.text)
   } catch {
-    return new Response(peeked.bytes, {
+    return new Response(peeked.bytes.slice(), {
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,

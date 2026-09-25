@@ -29,6 +29,7 @@
  */
 
 import { Readable } from "node:stream"
+import type { ReadableStream as NodeWebReadableStream } from "node:stream/web"
 import { type Dispatcher, request as undiciRequest } from "undici"
 import type { NativeProxyTransport, ProxyTransport, ProxyUpstreamResponse } from "./index.ts"
 import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
@@ -74,7 +75,12 @@ function toHeaders(raw: Readonly<Record<string, string | string[] | undefined>>)
 
 function requestBody(body: ReadableStream<Uint8Array> | null): Readable | null {
   if (body === null) return null
-  return claimNodeStream(body) ?? Readable.fromWeb(body)
+  // Node's `fromWeb` declaration is tied to its own stream generic; the runtime value is the
+  // Web stream supplied by Fetch, so this adapter boundary deliberately bridges the declarations.
+  return (
+    claimNodeStream(body) ??
+    Readable.fromWeb(body as unknown as NodeWebReadableStream<Uint8Array<ArrayBufferLike>>)
+  )
 }
 
 /** Create an undici-backed {@link ProxyTransport}. */

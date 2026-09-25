@@ -66,7 +66,8 @@ function toWebRequest(req: IncomingMessage): Request {
   }
   const init: RequestInit & { duplex?: "half" } = { method, headers }
   if (method !== "GET" && method !== "HEAD") {
-    init.body = Readable.toWeb(req) as ReadableStream<Uint8Array>
+    // Node's Web-stream declaration is distinct from the DOM BodyInit declaration used by Request.
+    init.body = Readable.toWeb(req) as unknown as BodyInit
     init.duplex = "half"
   }
   return new Request(url, init)

@@ -272,7 +272,8 @@ function responseWithBody(
   res: Response,
   body: Uint8Array | ReadableStream<Uint8Array> | null,
 ): Response {
-  return new Response(body, {
+  const safeBody = body instanceof Uint8Array ? body.slice() : body
+  return new Response(safeBody, {
     status: res.status,
     statusText: res.statusText,
     headers: res.headers,
@@ -354,7 +355,8 @@ async function captureBody(
 function replay(record: IdempotencyRecord): Response {
   const headers = new Headers(record.headers as Array<[string, string]>)
   headers.set("idempotent-replayed", "true")
-  return new Response(bodyFor(fromBase64(record.body)), { status: record.status, headers })
+  const body = bodyFor(fromBase64(record.body))
+  return new Response(body === null ? null : body.slice(), { status: record.status, headers })
 }
 
 const DEFAULT_PRINCIPAL_HEADERS = ["authorization", "cookie", "x-api-key"] as const

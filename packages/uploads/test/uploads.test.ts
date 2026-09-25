@@ -113,7 +113,7 @@ describe("validateUpload", () => {
   })
 
   test("reads a Blob to bytes when under the cap", async () => {
-    const r = await validateUpload(new Blob([PNG]), { maxBytes: 1000 })
+    const r = await validateUpload(new Blob([PNG.slice()]), { maxBytes: 1000 })
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.bytes.byteLength).toBe(PNG.byteLength)
   })

@@ -91,8 +91,8 @@ function shouldReturnNotModified(request: Request, options: RangeResponseOptions
   )
 }
 
-function responseBody(bytes: Uint8Array, request: Request): Uint8Array | null {
-  return request.method === "HEAD" ? null : bytes
+function responseBody(bytes: Uint8Array, request: Request): Uint8Array<ArrayBuffer> | null {
+  return request.method === "HEAD" ? null : new Uint8Array(bytes)
 }
 
 function multipartBytes(

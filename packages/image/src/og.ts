@@ -233,5 +233,5 @@ export async function ogImageResponse(
   })
   if (ifNoneMatch(request, etag)) return new Response(null, { status: 304, headers })
   if (request?.method === "HEAD") return new Response(null, { status: 200, headers })
-  return new Response(bytes, { status: 200, headers })
+  return new Response(bytes.slice(), { status: 200, headers })
 }

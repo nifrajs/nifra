@@ -100,7 +100,7 @@ describe("readImageDimensions", () => {
   })
 
   test("truncates to maxBytes (header is enough)", async () => {
-    expect(await readImageDimensions(new Blob([gif(7, 9)]), 10)).toEqual({
+    expect(await readImageDimensions(new Blob([gif(7, 9).slice()]), 10)).toEqual({
       width: 7,
       height: 9,
       format: "gif",
