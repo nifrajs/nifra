@@ -283,18 +283,22 @@ console.log(typeof composeReviewReport, typeof digestReviewReport)`,
 // the shared server kernel, accepted here alongside the measured hot-path win on middleware-heavy
 // routes. Reprice every affected row from the current deterministic matrix with the usual ~0.2 KB
 // headroom; the budget remains a regression tripwire for later kernel growth.
+// The 2026-09-28 assurance/auth route program and composed evidence checks add the next measured shared
+// kernel batch: 1.9 KB gzip on the bare row, with optional rows moving by the same reachable core
+// footprint. Core, middleware, and edge-startup gates remain separate required evidence; this is a
+// narrow repricing of measured feature cost, not an exemption for unbounded growth.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // The 2026-09-20 security pass adds bounded WebSocket admission/request-hook handling and
   // duplicate-cookie detection to the shared kernel. Reprice every core row together with the
   // measured post-hardening footprint; optional rows must not receive a special exemption.
-  "nifra-bare": 27.8,
+  "nifra-bare": 29.9,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 31.0,
-  "nifra-effect-ledger": 29.7,
-  "nifra-mcp": 28.1,
-  "nifra-sse": 28.6,
-  "nifra-valibot": 28.9,
-  "nifra-typebox-t": 57.7,
+  "nifra-idempotency": 33.1,
+  "nifra-effect-ledger": 31.9,
+  "nifra-mcp": 30.2,
+  "nifra-sse": 30.7,
+  "nifra-valibot": 31.0,
+  "nifra-typebox-t": 59.8,
   // Review-leaf ceiling: measured 5.0 KB gz + ~0.2 KB headroom, same rule as every other row.
   "nifra-agent-review": 5.2,
 }

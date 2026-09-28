@@ -69,6 +69,8 @@ jobs:
 
       - name: Install
         run: bun install --frozen-lockfile
+      - name: Release verification
+        run: bun run verify:release
 
       - name: Version Packages PR / publish to npm
         id: changesets
