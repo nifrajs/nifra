@@ -99,20 +99,24 @@ describe("SDK generation", () => {
   })
 
   if (Bun.which("go") !== null) {
-    test("generated Go compiles with the standard library", async () => {
-      const dir = await mkdtemp(join(tmpdir(), "nifra-sdk-"))
-      try {
-        await Bun.write(join(dir, "go.mod"), "module example.com/nifra-sdk\n\ngo 1.22\n")
-        await Bun.write(join(dir, "nifra_sdk.go"), renderSdk(document, "go"))
-        const process = Bun.spawn(["go", "test", "./..."], {
-          cwd: dir,
-          stdout: "pipe",
-          stderr: "pipe",
-        })
-        expect(await process.exited).toBe(0)
-      } finally {
-        await rm(dir, { recursive: true, force: true })
-      }
-    })
+    test(
+      "generated Go compiles with the standard library",
+      async () => {
+        const dir = await mkdtemp(join(tmpdir(), "nifra-sdk-"))
+        try {
+          await Bun.write(join(dir, "go.mod"), "module example.com/nifra-sdk\n\ngo 1.22\n")
+          await Bun.write(join(dir, "nifra_sdk.go"), renderSdk(document, "go"))
+          const process = Bun.spawn(["go", "test", "./..."], {
+            cwd: dir,
+            stdout: "pipe",
+            stderr: "pipe",
+          })
+          expect(await process.exited).toBe(0)
+        } finally {
+          await rm(dir, { recursive: true, force: true })
+        }
+      },
+      { timeout: 30_000 },
+    )
   }
 })
