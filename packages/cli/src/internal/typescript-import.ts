@@ -192,6 +192,15 @@ function normalizedPath(path: string): string {
   return resolve(path).replaceAll("\\", "/")
 }
 
+function canonicalRoot(root: string): string {
+  try {
+    return normalizedPath(realpathSync(root))
+  } catch {
+    // Virtual project roots may not exist yet; the resolved spelling is still the best identity.
+    return normalizedPath(root)
+  }
+}
+
 function pathVariants(path: string): readonly string[] {
   const normalized = normalizedPath(path)
   const variants = new Set<string>([normalized])
@@ -337,13 +346,17 @@ async function createTypeScript7Session(
   const astModule = requiredRecord(await import(pathToFileURL(astPath).href), "ast")
   const asyncModule = requiredRecord(await import(pathToFileURL(asyncPath).href), "async")
   const API = requiredConstructor(asyncModule.API, "async.API")
-  const { files, paths } = sourceEntries(root, sourceIndex)
+  // Windows can return a DOS 8.3 spelling from os.tmpdir() (for example RUNNER~1), while the
+  // TypeScript 7 project service resolves the same directory to its long spelling. Keep cwd,
+  // virtual files, and open files on one canonical path identity so project discovery is stable.
+  const sessionRoot = canonicalRoot(root)
+  const { files, paths } = sourceEntries(sessionRoot, sourceIndex)
   const sourceCache = new Map<string, TypeScript7SourceFile>()
   const sourceByContent = new Map<string, TypeScript7SourceFile>()
   const projects = new Map<string, TypeScript7Project>()
 
   const api = new API({
-    cwd: root,
+    cwd: sessionRoot,
     fs: createVirtualFileSystem(files),
   })
   let snapshot: TypeScript7Snapshot | undefined
@@ -352,8 +365,8 @@ async function createTypeScript7Session(
   try {
     snapshot = await api.updateSnapshot({
       openFiles: paths,
-      ...(existsSync(sourceIndex?.projectConfig ?? join(root, "tsconfig.json"))
-        ? { openProject: sourceIndex?.projectConfig ?? join(root, "tsconfig.json") }
+      ...(existsSync(sourceIndex?.projectConfig ?? join(sessionRoot, "tsconfig.json"))
+        ? { openProject: sourceIndex?.projectConfig ?? join(sessionRoot, "tsconfig.json") }
         : {}),
     })
     configuredProject =
@@ -424,7 +437,7 @@ async function createTypeScript7Session(
     if (typeof _fileName !== "string" || typeof sourceText !== "string") {
       throw new TypeError("TypeScript 7 createSourceFile received invalid arguments")
     }
-    const absolute = isAbsolute(_fileName) ? _fileName : resolve(root, _fileName)
+    const absolute = isAbsolute(_fileName) ? _fileName : resolve(sessionRoot, _fileName)
     const cached = pathVariants(absolute)
       .map((variant) => sourceCache.get(variant))
       .find((source): source is TypeScript7SourceFile => source !== undefined)
