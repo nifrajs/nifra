@@ -86,6 +86,25 @@ function lengthedRequest(path: string, payload: string, declared?: number): Requ
 }
 
 describe("body validation", () => {
+  test("rejects unsupported transport and validation-order settings at registration", () => {
+    expect(() => server().post("/wire", { wire: "json" as never }, () => null)).toThrow(
+      /wire must be "raw"/,
+    )
+    expect(() => server().post("/wire-body", { wire: "raw", body: userBody }, () => null)).toThrow(
+      /cannot be combined with a body schema/,
+    )
+    expect(() =>
+      server().post("/order", { validationOrder: "before-auth" as never }, () => null),
+    ).toThrow(/validationOrder is invalid/)
+    expect(() =>
+      server().post(
+        "/idempotent",
+        { idempotency: { scope: "request", namespace: "schema-test" } },
+        () => null,
+      ),
+    ).toThrow(/\.use\(idempotency\(\)\)/)
+  })
+
   test("invalid route body limits fail closed at registration", () => {
     for (const bodyLimit of [-1, Number.NaN, Number.POSITIVE_INFINITY, 1.5]) {
       try {
@@ -282,6 +301,46 @@ describe("body validation", () => {
 })
 
 describe("c.boundedBody / c.boundedJson (schema-less body cap)", () => {
+  test("wire raw routes expose protocol bytes without JSON parsing", async () => {
+    const app = server().post(
+      "/webhook",
+      { wire: "raw" },
+      async (c) => new Response(await c.req.text(), { status: 202 }),
+    )
+    const response = await app.fetch(
+      new Request("http://localhost/webhook", {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: "signed-payload",
+      }),
+    )
+    expect(response.status).toBe(202)
+    expect(await response.text()).toBe("signed-payload")
+  })
+
+  test("wire raw routes keep the finite transport cap", async () => {
+    const app = server({ maxBodyBytes: 4 }).post(
+      "/webhook",
+      { wire: "raw" },
+      async (c) => new Response(await c.req.arrayBuffer()),
+    )
+    const response = await app.fetch(
+      new Request("http://localhost/webhook", {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: new Uint8Array([1, 2, 3, 4, 5]),
+      }),
+    )
+    expect(response.status).toBe(413)
+    expect(await response.json()).toEqual({ ok: false, error: "payload_too_large" })
+  })
+
+  test("wire raw rejects a buffered body schema at registration", () => {
+    expect(() =>
+      server().post("/invalid-wire", { wire: "raw", body: userBody }, () => ({ ok: true })),
+    ).toThrow(RouteConfigError)
+  })
+
   test("boundedBody returns the raw bytes under the cap", async () => {
     const app = server().post("/raw", async (c) => ({ len: (await c.boundedBody()).byteLength }))
     const res = await app.fetch(

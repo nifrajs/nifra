@@ -1,4 +1,5 @@
 import { RESERVED_KEY_READOUT, reservedKeyFor } from "@nifrajs/client"
+import { RoutePatternOverlapLimitError, routePatternOverlap } from "@nifrajs/core"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { commentBlockHasMarker } from "./comment-markers.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
@@ -23,6 +24,7 @@ import type { CheckRule, RuleContext } from "./index.ts"
 
 /** Opt-out pragma for a route deliberately served only to NON-typed-client consumers. */
 const RESERVED_SEGMENT_PRAGMA = "nifra-expect reserved-segment"
+const ROUTE_OVERLAP_PRAGMA = "nifra-expect route-overlap"
 
 interface StaticRouteFact {
   readonly file: string
@@ -140,4 +142,97 @@ export const duplicateRouteRule: CheckRule = {
   },
 }
 
-export const routeRules = Object.freeze([reservedSegmentRule, duplicateRouteRule])
+/**
+ * NF-C024: two different same-method route patterns in one source file accept at least one of the
+ * same paths. This is deliberately file-scoped, like NF-C019: the static scanner cannot prove
+ * which application instance owns routes collected from different files in a monorepo.
+ */
+export const overlappingRouteRule: CheckRule = {
+  code: "NF-C024",
+  title: "Overlapping route registration",
+  async scan(ctx) {
+    const findings: Diagnostic[] = []
+    const linesByFile = new Map<string, readonly string[]>()
+    const byFile = new Map<string, StaticRouteFact[]>()
+    for (const route of routeFacts(ctx)) {
+      const routes = byFile.get(route.file)
+      if (routes === undefined) byFile.set(route.file, [route])
+      else routes.push(route)
+    }
+
+    for (const [file, routes] of byFile) {
+      const lines = (): readonly string[] => {
+        let value = linesByFile.get(file)
+        if (value === undefined) {
+          value = (ctx.project.source.read(file) ?? "").split("\n")
+          linesByFile.set(file, value)
+        }
+        return value
+      }
+
+      for (let laterIndex = 0; laterIndex < routes.length; laterIndex += 1) {
+        const later = routes[laterIndex]!
+        const laterKey = `${later.method} ${later.path}`
+        for (let earlierIndex = 0; earlierIndex < laterIndex; earlierIndex += 1) {
+          const earlier = routes[earlierIndex]!
+          if (earlier.method !== later.method || `${earlier.method} ${earlier.path}` === laterKey)
+            continue
+          if (commentBlockHasMarker(lines(), later.line, ROUTE_OVERLAP_PRAGMA)) continue
+          if (commentBlockHasMarker(lines(), earlier.line, ROUTE_OVERLAP_PRAGMA)) continue
+
+          let witness: string | undefined
+          try {
+            witness = routePatternOverlap(earlier.path, later.path)
+          } catch (error) {
+            if (error instanceof RoutePatternOverlapLimitError) {
+              findings.push(
+                diagnostic({
+                  code: "NF-C025",
+                  severity: "error",
+                  file: later.file,
+                  line: later.line,
+                  message: `${laterKey} could not be proven disjoint from ${earlier.method} ${earlier.path}; bounded route-overlap analysis exceeded its safety budget - simplify the patterns or add the ${ROUTE_OVERLAP_PRAGMA} comment only after manual review`,
+                  evidence: [
+                    `${earlier.method} ${earlier.path}`,
+                    `${later.method} ${later.path}`,
+                    `first registration: line ${earlier.line}`,
+                  ],
+                  verify: "nifra check --lints-only",
+                }),
+              )
+            }
+            // The primary route parser diagnostic owns malformed route patterns. A secondary lint
+            // must remain total and never turn an invalid route into a checker crash.
+            continue
+          }
+          if (witness === undefined) continue
+
+          findings.push(
+            diagnostic({
+              code: "NF-C024",
+              severity: "error",
+              file: later.file,
+              line: later.line,
+              message: `${laterKey} overlaps ${earlier.method} ${earlier.path} (first at line ${earlier.line}); witness path: ${witness} - make the patterns disjoint, order them intentionally with a pragma, or add the ${ROUTE_OVERLAP_PRAGMA} comment above either registration`,
+              evidence: [
+                `${earlier.method} ${earlier.path}`,
+                `${later.method} ${later.path}`,
+                `witness: ${witness}`,
+                `first registration: line ${earlier.line}`,
+              ],
+              verify: "nifra check --lints-only",
+            }),
+          )
+          break
+        }
+      }
+    }
+    return findings
+  },
+}
+
+export const routeRules = Object.freeze([
+  reservedSegmentRule,
+  duplicateRouteRule,
+  overlappingRouteRule,
+])

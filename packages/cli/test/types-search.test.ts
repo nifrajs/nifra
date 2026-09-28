@@ -57,6 +57,28 @@ describe("types-search", () => {
     expect(names).toContain("rateLimit")
   })
 
+  test("query search splits PascalCase names for multi-term intent", () => {
+    const matches = searchTypes(
+      [
+        {
+          name: "AuthSession",
+          kind: "interface",
+          package: "@nifrajs/auth",
+          signature: "export interface AuthSession {}",
+        },
+        {
+          name: "AuthClient",
+          kind: "interface",
+          package: "@nifrajs/auth",
+          signature: "export interface AuthClient {}",
+        },
+      ],
+      "auth session",
+      1,
+    )
+    expect(matches[0]?.name).toBe("AuthSession")
+  })
+
   test("no name + no query → a per-package index", () => {
     const out = renderTypesResult(TYPES, undefined, undefined, 5)
     expect(out).toContain("# nifra types")

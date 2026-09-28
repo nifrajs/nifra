@@ -11,6 +11,7 @@ import type {
   TransitiveServerImportFinding,
 } from "./check-scan.ts"
 import type { DoctorResult } from "./doctor.ts"
+import type { TypeScriptSession } from "./internal/typescript-import.ts"
 import type { PipelineReport } from "./pipeline-report.ts"
 import type { RulePack, SourceIndex } from "./rules/index.ts"
 
@@ -47,6 +48,10 @@ export interface ContractCheckFacts {
 export interface ProjectCheckFacts {
   readonly typecheck: CheckTypecheckResult
   readonly sqlCompilerAvailable: boolean
+  /** Set when a project TypeScript install is present but outside the scanner adapter range. */
+  readonly unsupportedTypeScriptVersion?: string
+  /** Shared syntax/checker session for built-in rules; omitted from serialized check output. */
+  readonly typescriptSession?: TypeScriptSession
   readonly checkConfigError?: string
   readonly checkConfigWarnings: readonly string[]
   readonly contracts: ContractCheckFacts

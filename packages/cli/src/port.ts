@@ -242,8 +242,9 @@ const WS_ROUTE = /\.ws\s*\(/g
 const WS_HUB = /(?<![.\w$])createWebSocketHub\b/
 // `Bun.` / `Deno.` runtime globals. `(?<![.\w$])` rejects `myBun.x`, `globalThis.Bun` stays a real use
 // (we want it), and `obj.Bun.` won't match because the char before `Bun` would be `.`.
-const BUN_GLOBAL = /(?<![.\w$])Bun\s*\./g
-const DENO_GLOBAL = /(?<![.\w$])Deno\s*\./g
+const BUN_GLOBAL = /(?<![.\w$])(?:globalThis\.)?Bun\s*\./g
+const DENO_GLOBAL = /(?<![.\w$])(?:globalThis\.)?Deno\s*\./g
+const BUN_MODULE_IMPORT = /(?:from|import)\s*\(?\s*["'`]bun(?:\/[^"'`]*)?["'`]/g
 // `node:` builtin specifier in any import/require/export-from form.
 const NODE_BUILTIN = /(?:from|import|require)\s*\(?\s*["'`](node:[A-Za-z0-9/_-]+)["'`]/g
 
@@ -298,8 +299,12 @@ export function scanFileForFeatures(file: string, content: string, state: ScanSt
   // WS routes are collected unconditionally; the hub-presence post-pass decides whether they're a hazard.
   pushHits(add("in-process-websocket"), file, content, code, WS_ROUTE)
   pushHits(add("bun-runtime-api"), file, content, code, BUN_GLOBAL)
+  pushHits(add("bun-runtime-api"), file, content, code, BUN_MODULE_IMPORT)
   pushHits(add("deno-runtime-api"), file, content, code, DENO_GLOBAL)
   pushHits(add("node-builtin"), file, content, code, NODE_BUILTIN)
+  for (const evidence of state.evidence.values()) {
+    evidence.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)
+  }
 }
 
 // Mirror nifra check/doctor's ignore set: deps, build output, generated/per-runtime dist dirs, VCS.

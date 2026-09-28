@@ -11,6 +11,11 @@
 export { FrameworkError, RouteConfigError, type RouteConfigErrorCode } from "./errors.ts"
 export { FRAMEWORK_NAME, type FrameworkName } from "./internal/brand.ts"
 export { isSameOriginRequest } from "./internal/same-origin.ts"
+export {
+  ROUTE_PATTERN_OVERLAP_MAX_STATES,
+  RoutePatternOverlapLimitError,
+  routePatternOverlap,
+} from "./router/overlap.ts"
 export { METHODS, type Method, Router, type RouterMatch } from "./router/router.ts"
 export type {
   InferInput,
@@ -21,6 +26,18 @@ export type {
   StandardTypes,
   ValidationOutcome,
 } from "./schema/standard.ts"
+export {
+  type AuthenticationFailure,
+  type AuthenticationFailureReason,
+  type AuthenticationInput,
+  type AuthenticationResult,
+  type AuthenticationStage,
+  type AuthenticationSuccess,
+  type AuthHeaders,
+  type AuthMaybePromise,
+  authenticated,
+  rejected,
+} from "./server/auth.ts"
 export type {
   Context,
   Params,
@@ -93,6 +110,9 @@ export {
   type McpPromptDescriptor,
   type McpResourceDescriptor,
   type Middleware,
+  type MountableApp,
+  type MountFetchOptions,
+  type MountOptions,
   type NifraFeatureVersion,
   type NifraPlugin,
   type NodeRequestContext,

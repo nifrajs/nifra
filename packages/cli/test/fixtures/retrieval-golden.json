@@ -87,11 +87,16 @@
     "accept": ["RouteSchema", "RouteEntry", "RouteModule"],
     "within": 3
   },
-  { "query": "mcp tool", "kind": "types", "accept": ["ToolAnnotations", "mcp"], "within": 3 },
+  {
+    "query": "mcp tool",
+    "kind": "types",
+    "accept": ["ToolAnnotations", "McpTool", "mcpToolDescriptor", "mcp"],
+    "within": 3
+  },
   {
     "query": "auth session",
     "kind": "types",
-    "accept": ["Session", "SessionManager", "AuthPlugin", "authjs"],
+    "accept": ["Session", "SessionManager", "AuthPlugin", "AuthSession", "authjs"],
     "within": 3
   },
   {
@@ -109,13 +114,19 @@
   {
     "query": "proxy upstream",
     "kind": "types",
-    "accept": ["ProxyOptions", "ProxyTransport"],
+    "accept": ["ProxyOptions", "ProxyTransport", "ProxyUpstreamResponse", "ProxyUpstreamRequest"],
     "within": 3
   },
   {
     "query": "typed client",
     "kind": "types",
-    "accept": ["ClientRouterOptions", "ClientAction", "CLIENT_ENTRY_PATH"],
+    "accept": [
+      "ClientRouterOptions",
+      "ClientAction",
+      "CLIENT_ENTRY_PATH",
+      "BuildClientOptions",
+      "buildClientVite"
+    ],
     "within": 3
   }
 ]

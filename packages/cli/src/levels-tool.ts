@@ -36,6 +36,17 @@ export interface VerificationLevelsResult {
   /** Highest level whose whole ladder holds; -1 when even L0 fails. */
   readonly achieved: number
   readonly levels: readonly VerificationLevelStatus[]
+  /** Response/error runtime enforcement is reported separately from the cumulative L0-L4 ladder. */
+  readonly responseContracts: ResponseContractStatus
+}
+
+export interface ResponseContractStatus {
+  readonly declared: number
+  readonly enforced: number
+  readonly warnOnly: number
+  readonly typedOnly: number
+  readonly status: "none" | "partial" | "enforced"
+  readonly reasons: readonly string[]
 }
 
 export interface CollectLevelsOptions {
@@ -82,7 +93,7 @@ export async function collectVerificationLevels(
     ] as const) {
       statuses.push({ level, name, ok: false, reasons: [reason] })
     }
-    return finalize(statuses)
+    return finalize(statuses, [])
   }
   const config = verification.config
 
@@ -197,17 +208,43 @@ export async function collectVerificationLevels(
     reasons: l4Reasons,
   })
 
-  return finalize(statuses)
+  return finalize(statuses, assurance.routes)
 }
 
 function finalize(
   statuses: readonly { level: number; name: string; ok: boolean; reasons: string[] }[],
+  routes: readonly { readonly responseContract?: "enforce" | "warn" | "unchecked" }[],
 ): VerificationLevelsResult {
   // Cumulative: the achieved level is the last rung with every rung below it also holding.
   let achieved = -1
   for (const status of statuses) {
     if (!status.ok) break
     achieved = status.level
+  }
+  const declared = routes.filter((route) => route.responseContract !== undefined)
+  const enforced = declared.filter((route) => route.responseContract === "enforce").length
+  const warnOnly = declared.filter((route) => route.responseContract === "warn").length
+  const typedOnly = declared.filter((route) => route.responseContract === "unchecked").length
+  const responseContracts: ResponseContractStatus = {
+    declared: declared.length,
+    enforced,
+    warnOnly,
+    typedOnly,
+    status:
+      declared.length === 0 ? "none" : typedOnly === 0 && warnOnly === 0 ? "enforced" : "partial",
+    reasons:
+      declared.length === 0
+        ? ["no response/error schemas declared"]
+        : [
+            ...(typedOnly > 0
+              ? [
+                  `${typedOnly} declared route(s) are typed-only; install responseContract("enforce")`,
+                ]
+              : []),
+            ...(warnOnly > 0
+              ? [`${warnOnly} declared route(s) are warn-only and still send the original payload`]
+              : []),
+          ],
   }
   return Object.freeze({
     achieved,
@@ -216,6 +253,10 @@ function finalize(
         Object.freeze({ ...status, reasons: Object.freeze([...status.reasons]) }),
       ),
     ),
+    responseContracts: Object.freeze({
+      ...responseContracts,
+      reasons: Object.freeze([...responseContracts.reasons]),
+    }),
   })
 }
 
@@ -233,6 +274,10 @@ export async function runLevels(
       console.log(`${mark} L${status.level} ${status.name}`)
       for (const reason of status.reasons) console.log(`    - ${reason}`)
     }
+    console.log(
+      `[nifra] response contracts: ${result.responseContracts.status} (${result.responseContracts.enforced} enforced, ${result.responseContracts.warnOnly} warn-only, ${result.responseContracts.typedOnly} typed-only)`,
+    )
+    for (const reason of result.responseContracts.reasons) console.log(`    - ${reason}`)
     console.log(
       result.achieved < 0
         ? "[nifra] verification level: none (L0 failing)"

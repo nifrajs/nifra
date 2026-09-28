@@ -376,7 +376,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     const entryPreloads = hydrate
       ? `<link rel="modulepreload" href="${escapeAttr(clientEntry ?? "")}">${preloadLinks}`
       : ""
-    slot.shellPre = `<!doctype html><html${htmlAttrs}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${hydrationGuard}<title>${escapeHtml(head?.title ?? title)}</title>${headTags(head)}${styleLinks}${entryPreloads}`
+    slot.shellPre = `<!doctype html><html${htmlAttrs}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${hydrationGuard}<title>${escapeHtml(head?.title ?? title)}</title>${headTags(head, nonce)}${styleLinks}${entryPreloads}`
     slot.shellPost = `${islandPreloads}${hydrationHead}</head><body><div id="${escapeAttr(rootId)}"${rootMarker}>`
     // Island bundles load regardless of `hydrate` - a static page (hydrate:false) ships no framework
     // client but can still mount no-framework islands (`@nifrajs/web/islands`).
@@ -1013,9 +1013,11 @@ function assertExecutableScriptType(type: string): void {
  * or close the tag early. String concatenation (no intermediate `.map()` arrays + spread) - parity with
  * the already concat-based preloadLinks/styleLinks/islandPreloads loops; byte-identical output. Result
  * is memoized only for objects observed as static meta exports (serialized once per route). */
-function headTags(head: Meta | undefined): string {
+function headTags(head: Meta | undefined, documentNonce?: string): string {
   if (head === undefined) return ""
-  const cacheable = isStaticMeta(head)
+  // Executable head metadata carries a caller-chosen nonce, so never cache it by object identity. A
+  // static route object may otherwise retain one request's nonce and replay it on another document.
+  const cacheable = isStaticMeta(head) && (head.unsafeScript?.length ?? 0) === 0
   if (cacheable) {
     const cached = headTagsCache.get(head)
     if (cached !== undefined) return cached
@@ -1056,6 +1058,11 @@ function headTags(head: Meta | undefined): string {
       // attribute and inject markup. Measured: `type: '"><img src=x onerror=alert(1)>'` reached the
       // document. An injection in the slot whose whole purpose is to make script emission trustworthy.
       assertExecutableScriptType(s.type)
+      if (documentNonce !== undefined && s.nonce !== documentNonce) {
+        throw new TypeError(
+          "[nifra/web] executable head scripts must use the same CSP nonce as the document",
+        )
+      }
       out += `<script type="${s.type}" nonce="${escapeAttr(s.nonce)}" data-nifra>${escapeScriptContent(s.content)}</script>`
     }
   if (cacheable) headTagsCache.set(head, out)

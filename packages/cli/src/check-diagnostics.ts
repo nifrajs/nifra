@@ -419,6 +419,9 @@ export async function collectCheckDiagnostics(
     root: cwd,
     sources: projectFacts.source,
     project: projectFacts,
+    ...(projectFacts.check.typescriptSession === undefined
+      ? {}
+      : { typescriptSession: projectFacts.check.typescriptSession }),
   }
 
   const builtInRules = [

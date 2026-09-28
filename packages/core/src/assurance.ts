@@ -163,6 +163,11 @@ export interface AssuranceEvaluationOptions {
    * `config.capabilities.definitions`.
    */
   readonly definitions?: readonly CapabilityDefinition[]
+  /**
+   * An already-composed reflection view. Web applications use this to evaluate page routes and
+   * mounted API routes as one public surface without reflecting only the outer shell.
+   */
+  readonly routes?: readonly ReflectedRoute[]
 }
 
 /** Selector keys that cannot be resolved from reflection alone. */
@@ -245,6 +250,8 @@ export interface AssuredRoute {
   readonly evidence: readonly AssuranceEvidence[]
   readonly missing: readonly string[]
   readonly forbidden: readonly string[]
+  /** Whether a declared response/error schema is enforced at runtime for this route. */
+  readonly responseContract?: "enforce" | "warn" | "unchecked"
 }
 
 export interface AssuranceReport {
@@ -671,7 +678,7 @@ export function evaluateRouteAssurance(
   }
   const findings: AssuranceFinding[] = []
   const routes: AssuredRoute[] = []
-  const reflected = reflectRoutes(source)
+  const reflected = options?.routes ?? reflectRoutes(source)
 
   if (reflected.length === 0 && policy.allowEmpty !== true) {
     findings.push({
@@ -697,7 +704,16 @@ export function evaluateRouteAssurance(
           message: `${route.method} ${route.path} is not classified by an assurance rule`,
         })
       }
-      routes.push({ method: route.method, path: route.path, evidence, missing: [], forbidden: [] })
+      routes.push({
+        method: route.method,
+        path: route.path,
+        evidence,
+        missing: [],
+        forbidden: [],
+        ...(route.schema?.response !== undefined || route.schema?.errors !== undefined
+          ? { responseContract: route.responseContract ?? "unchecked" }
+          : {}),
+      })
       continue
     }
 
@@ -767,6 +783,9 @@ export function evaluateRouteAssurance(
       evidence,
       missing: Object.freeze(missing),
       forbidden: Object.freeze(forbidden),
+      ...(route.schema?.response !== undefined || route.schema?.errors !== undefined
+        ? { responseContract: route.responseContract ?? "unchecked" }
+        : {}),
     })
   }
 

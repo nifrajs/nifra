@@ -29,7 +29,7 @@ import {
 import { checkContractsLock, DEFAULT_CONTRACTS_LOCK } from "./contracts.ts"
 import { type Diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
 import { createSourceFacts } from "./internal/source-facts.ts"
-import { importProjectTypeScript, type TypeScriptApi } from "./internal/typescript-import.ts"
+import { loadProjectTypeScript, type TypeScriptApi } from "./internal/typescript-import.ts"
 // Type-only: `pipeline-report.ts` imports this module's source scanners, so a value import here would
 // close a cycle. Doctor is what actually runs the collector (see the `pipeline` rule below).
 import type { ContractCheckFacts, ProjectFactsSeed } from "./project-facts.ts"
@@ -279,10 +279,6 @@ async function buildProjectScan(
     error: checkConfigError,
     warnings: checkConfigWarnings,
   } = await loadCheckConfig(cwd)
-  const sqlCompiler = await (opts.loadTypeScript ?? (() => importProjectTypeScript(cwd)))()
-  const sourceFacts = sqlCompiler === undefined ? undefined : createSourceFacts(sqlCompiler)
-  const sqlImports = sqlCompiler === undefined ? undefined : createProjectSqlImports(cwd)
-
   const [typecheckResult, _, doctor, manifestDrift, contracts] = await Promise.all([
     opts.lintsOnly
       ? Promise.resolve<TypecheckResult>({ ran: false, ok: true, note: "lints-only mode" })
@@ -291,66 +287,85 @@ async function buildProjectScan(
       sourceFiles.push({ file: rel, content })
       fetches.push(...scanFetchText(rel, content, checkConfig.externalMounts))
       streams.push(...scanStreamText(rel, content, checkConfig.externalMounts))
-      staticRoutes.push(...scanStaticRouteText(rel, content, sourceFacts))
       untypedClients.push(...scanUntypedClient(rel, content))
       removedImports.push(...scanRemovedImports(rel, content))
       if (ROUTE_FILE.test(rel)) routeModules.push({ rel, content })
-      responseRoutes.push(...scanResponseRoutes(rel, content, sourceFacts))
-      if (sqlCompiler !== undefined)
-        interpolatedSql.push(...scanInterpolatedSql(rel, content, sqlCompiler, sqlImports))
     }),
     import("./doctor.ts").then((m) => m.collectDoctorResult(cwd)),
     scanServerManifestDrift(cwd),
     collectContractFacts(cwd),
   ])
 
-  const resolveModule: ModuleResolver = (fromFile, specifier) => {
-    try {
-      const fromAbs = isAbsolute(fromFile) ? fromFile : join(cwd, fromFile)
-      return Bun.resolveSync(specifier, dirname(fromAbs))
-    } catch {
-      return undefined
-    }
-  }
-  const readModule: ModuleReader = (absPath) => {
-    try {
-      return readFileSync(absPath, "utf8")
-    } catch {
-      return undefined
-    }
-  }
-  for (const { rel, content } of routeModules) {
-    serverImports.push(
-      ...resolveServerOnlyChains(rel, content, resolveModule, readModule, sourceFacts),
-    )
-  }
-
+  // TypeScript 7's unstable API materializes source files through one project session. Build the
+  // source index first so every syntax-backed scanner (including the independent rule registry)
+  // shares that session instead of spawning one compiler process per rule.
   const source = sourceIndex(sourceFiles)
-  const facts: ProjectFactsSeed = {
-    source,
-    routes: staticRoutes,
-    importGraph: serverImports,
-    packages: { doctor, manifestDrift },
-    ...(doctor.pipeline === undefined ? {} : { pipeline: doctor.pipeline }),
-    policies: { checkConfig, rulePacks: [] },
-    check: {
-      typecheck: typecheckResult,
-      sqlCompilerAvailable: sqlCompiler !== undefined,
-      ...(checkConfigError === undefined ? {} : { checkConfigError }),
-      checkConfigWarnings,
-      contracts,
-    },
-    sourceFindings: {
-      fetches,
-      streams,
-      untypedClients,
-      removedImports,
-      responseRoutes,
-      interpolatedSql,
-    },
-  }
-  return {
-    facts,
+  const loadedTypeScript = await loadProjectTypeScript(cwd, opts.loadTypeScript, source)
+  try {
+    const sqlCompiler = loadedTypeScript.compiler
+    const sourceFacts = sqlCompiler === undefined ? undefined : createSourceFacts(sqlCompiler)
+    const sqlImports = sqlCompiler === undefined ? undefined : createProjectSqlImports(cwd)
+    for (const { file, content } of sourceFiles) {
+      staticRoutes.push(...scanStaticRouteText(file, content, sourceFacts))
+      responseRoutes.push(...scanResponseRoutes(file, content, sourceFacts))
+      if (sqlCompiler !== undefined)
+        interpolatedSql.push(...scanInterpolatedSql(file, content, sqlCompiler, sqlImports))
+    }
+
+    const resolveModule: ModuleResolver = (fromFile, specifier) => {
+      try {
+        const fromAbs = isAbsolute(fromFile) ? fromFile : join(cwd, fromFile)
+        return Bun.resolveSync(specifier, dirname(fromAbs))
+      } catch {
+        return undefined
+      }
+    }
+    const readModule: ModuleReader = (absPath) => {
+      try {
+        return readFileSync(absPath, "utf8")
+      } catch {
+        return undefined
+      }
+    }
+    for (const { rel, content } of routeModules) {
+      serverImports.push(
+        ...resolveServerOnlyChains(rel, content, resolveModule, readModule, sourceFacts),
+      )
+    }
+
+    const facts: ProjectFactsSeed = {
+      source,
+      routes: staticRoutes,
+      importGraph: serverImports,
+      packages: { doctor, manifestDrift },
+      ...(doctor.pipeline === undefined ? {} : { pipeline: doctor.pipeline }),
+      policies: { checkConfig, rulePacks: [] },
+      check: {
+        typecheck: typecheckResult,
+        sqlCompilerAvailable: sqlCompiler !== undefined,
+        ...(loadedTypeScript.unsupported === undefined
+          ? {}
+          : { unsupportedTypeScriptVersion: loadedTypeScript.unsupported.version }),
+        ...(loadedTypeScript.session === undefined
+          ? {}
+          : { typescriptSession: loadedTypeScript.session }),
+        ...(checkConfigError === undefined ? {} : { checkConfigError }),
+        checkConfigWarnings,
+        contracts,
+      },
+      sourceFindings: {
+        fetches,
+        streams,
+        untypedClients,
+        removedImports,
+        responseRoutes,
+        interpolatedSql,
+      },
+    }
+    return { facts }
+  } catch (error) {
+    await loadedTypeScript.session?.close()
+    throw error
   }
 }
 
@@ -362,7 +377,11 @@ export async function collectCheckResult(
   opts: CheckCollectionOptions = {},
 ): Promise<CheckResult> {
   const scan = await buildProjectScan(cwd, opts)
-  return collectCheckDiagnostics(cwd, scan, opts)
+  try {
+    return await collectCheckDiagnostics(cwd, scan, opts)
+  } finally {
+    await scan.facts.check.typescriptSession?.close()
+  }
 }
 
 /** The named rule sections of the human report, in print order. A rule absent from this list is NOT
@@ -415,6 +434,11 @@ export function renderCheckReport(result: CheckResult): string[] {
     lines.push(
       `• intentional external mounts (not typed-client checked): ${result.externalMounts.join(", ")}`,
     )
+  }
+  const deduplicated = result.identityPreflight?.deduplicated ?? []
+  if (deduplicated.length > 0) {
+    const packages = deduplicated.map((finding) => finding.package).join(", ")
+    lines.push(`• identity-sensitive duplicate installs handled by singleCopy: ${packages}`)
   }
   if (result.ruleOverrides !== undefined) {
     const active = Object.entries(result.ruleOverrides).map(([rule, override]) => {

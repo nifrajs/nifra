@@ -90,3 +90,29 @@ export function e2eUrl<App>(baseUrl: string, path: E2EPaths<App>): string {
   }
   return resolved.href
 }
+
+/**
+ * Build a real WebSocket URL for an adapter-backed test server. The path uses the same-origin guard as
+ * {@link e2eUrl}; `http`/`https` are translated to `ws`/`wss` so callers cannot accidentally dial an
+ * HTTP URL with a WebSocket client or escape the test server origin.
+ */
+export function e2eWebSocket<App>(baseUrl: string, path: E2EPaths<App>): string {
+  if (!isSameOriginPath(path)) {
+    throw new TypeError("@nifrajs/testing/e2e: WebSocket path must be same-origin absolute path")
+  }
+  const base = new URL(baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`)
+  if (
+    base.protocol !== "http:" &&
+    base.protocol !== "https:" &&
+    base.protocol !== "ws:" &&
+    base.protocol !== "wss:"
+  ) {
+    throw new TypeError("@nifrajs/testing/e2e: unsupported WebSocket base URL protocol")
+  }
+  const resolved = new URL(path, base)
+  if (resolved.origin !== base.origin) {
+    throw new TypeError("@nifrajs/testing/e2e: WebSocket path escaped test app origin")
+  }
+  resolved.protocol = base.protocol === "https:" || base.protocol === "wss:" ? "wss:" : "ws:"
+  return resolved.href
+}

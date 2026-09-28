@@ -191,6 +191,44 @@ describe("collectDoctorResult - project-level import vs declared-deps diff", () 
     }
   })
 
+  test("reports the explicit production boundary for a workspace root", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-workspace-scope-"))
+    try {
+      await mkdir(join(dir, "packages", "app", "src"), { recursive: true })
+      await mkdir(join(dir, "packages", "app", "test"), { recursive: true })
+      await mkdir(join(dir, "bench"), { recursive: true })
+      await mkdir(join(dir, "packages", "create-nifra", "template-site"), { recursive: true })
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "workspace", private: true, workspaces: ["packages/*", "bench"] }),
+      )
+      await writeFile(join(dir, "packages", "app", "package.json"), JSON.stringify({ name: "app" }))
+      await writeFile(join(dir, "packages", "app", "src", "x.ts"), "export const x = 1\n")
+      await writeFile(join(dir, "packages", "app", "test", "x.test.ts"), 'import "test-only-pkg"\n')
+      await writeFile(join(dir, "bench", "x.ts"), 'import "bench-only-pkg"\n')
+      await writeFile(
+        join(dir, "packages", "create-nifra", "template-site", "x.ts"),
+        'import "template-only-pkg"\n',
+      )
+
+      const result = await collectDoctorResult(dir)
+      expect(result.ok).toBe(true)
+      expect(result.findings).toEqual([])
+      expect(result.scanScope).toEqual({
+        kind: "workspace-production",
+        includeTests: false,
+        excluded: [
+          "**/test/**",
+          "**/test-node/**",
+          "bench/**",
+          "packages/create-nifra/template*/**",
+        ],
+      })
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   test("auto-fix writes the owning workspace manifest", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-workspace-fix-"))
     try {

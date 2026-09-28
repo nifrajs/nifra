@@ -1,56 +1,146 @@
 /**
  * The one place the CLI imports TypeScript from.
  *
- * The interpolated-SQL rule parses source with the TypeScript compiler, because the regex it replaced
- * could not tell `sql\`… ${id} …\`` (bound) from a plain template (injectable) without guessing at
- * string and comment boundaries. That is the right tool, but it is a ~25 MB dependency, and the CLI's
- * own typecheck step already treats `tsc` as something the PROJECT provides rather than something the
- * CLI ships. Making it a hard dependency would have contradicted that for every install.
- *
- * So it is an optional peer, resolved at the moment the rule runs. Every Nifra project has TypeScript
- * - the templates all ship a `typecheck` script - so this resolves in practice; the point is that an
- * install does not pay for it.
+ * The CLI supports the legacy compiler API shipped by TypeScript 5 and 6 and the
+ * split API shipped by TypeScript 7. The scanners only need a small AST surface,
+ * so TypeScript 7 is presented through a compatibility facade rather than leaking
+ * either compiler's concrete types through the rule registry.
  */
 
-import { existsSync } from "node:fs"
-import { dirname, join } from "node:path"
+import { existsSync, readFileSync, realpathSync } from "node:fs"
+import { dirname, isAbsolute, join, resolve } from "node:path"
+import { pathToFileURL } from "node:url"
+import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 
-/** The slice of the compiler the SQL scanner uses. Structural, so the peer stays optional. */
+/** The legacy compiler API used by the syntax-only scanners and the compatibility facade. */
 export type TypeScriptApi = typeof import("typescript")
 
+export const NIFRA_TS_UNSUPPORTED = "NIFRA_TS_UNSUPPORTED" as const
+
+/** A project compiler was found, but its API is outside the scanner adapter's supported range. */
+export class UnsupportedTypeScriptError extends Error {
+  readonly code = NIFRA_TS_UNSUPPORTED
+  readonly version: string
+
+  constructor(version: string) {
+    super(unsupportedTypeScriptMessage(version))
+    this.name = "UnsupportedTypeScriptError"
+    this.version = version
+  }
+}
+
+export function isUnsupportedTypeScriptError(error: unknown): error is UnsupportedTypeScriptError {
+  if (error instanceof UnsupportedTypeScriptError) return true
+  if (typeof error !== "object" || error === null) return false
+  const candidate = error as {
+    readonly code?: unknown
+    readonly version?: unknown
+    readonly message?: unknown
+  }
+  return (
+    candidate.code === NIFRA_TS_UNSUPPORTED &&
+    typeof candidate.version === "string" &&
+    typeof candidate.message === "string"
+  )
+}
+
+export function unsupportedTypeScriptMessage(version: string): string {
+  return `${NIFRA_TS_UNSUPPORTED}: TypeScript ${version} is outside the compiler API versions supported by Nifra scanners. Use TypeScript 5, 6, or 7, or pin the project to TypeScript 6 (for example, \`bun add -d typescript@^6\`).`
+}
+
+export function unsupportedTypeScriptDiagnostic(version: string): Diagnostic {
+  return diagnostic({
+    code: NIFRA_TS_UNSUPPORTED,
+    severity: "error",
+    message: unsupportedTypeScriptMessage(version),
+    fix: {
+      recipe: "toolchain.install-typescript",
+      command: "bun add -d typescript@^6",
+    },
+    verify: "nifra check --lints-only",
+  })
+}
+
+/** Source files supplied to the TypeScript 7 virtual file system. */
+export interface TypeScriptSourceIndex {
+  readonly files: readonly string[]
+  read(file: string): string | undefined
+  /** Optional temporary project config used by semantic adapters (for example OpenAPI probes). */
+  readonly projectConfig?: string
+}
+
+/** A compiler plus the process/session that owns it. */
+export interface TypeScriptSession {
+  readonly compiler: TypeScriptApi
+  /** TypeScript 7's asynchronous semantic API, present when a project program was opened. */
+  readonly semantic?: TypeScriptSemanticSession
+  close(): Promise<void>
+}
+
+export interface TypeScriptSemanticSession {
+  readonly checker: unknown
+  readonly getCheckerForFile: (file: string) => Promise<unknown | undefined>
+  readonly getSourceFile: (file: string) => Promise<unknown | undefined>
+  readonly typeFlags: Readonly<Record<string, unknown>>
+  readonly symbolFlags: Readonly<Record<string, unknown>>
+  readonly signatureKind: Readonly<Record<string, unknown>>
+}
+
 /**
- * Is this module actually the compiler, rather than something else published under the same name?
- *
- * The `typescript` package name also carries small non-compiler entry points (a version stub, for
- * one), and a resolver that falls back to a global download cache can hand one of those back. They
- * import cleanly and then explode on first use - `undefined is not an object (evaluating
- * 'ts.ScriptKind.TSX')` deep inside a scan - which reads as a Nifra bug rather than as "the compiler
- * we loaded is not a compiler". Checking the two members every caller needs turns that into a
- * resolution miss, which the fallbacks below already know how to handle.
+ * Is this module actually the legacy compiler, rather than TypeScript 7's version
+ * entry point or another package published under the same name?
  */
 function isCompiler(module: unknown): module is TypeScriptApi {
   if (typeof module !== "object" || module === null) return false
   const api = module as Partial<TypeScriptApi>
-  return typeof api.createSourceFile === "function" && api.ScriptKind !== undefined
+  return (
+    typeof api.createSourceFile === "function" &&
+    api.ScriptKind !== undefined &&
+    typeof api.forEachChild === "function"
+  )
 }
 
 /** Unwrap the CJS default interop wrapper, so both `import * as ts` shapes look the same. */
 function compilerOf(module: unknown): TypeScriptApi | undefined {
   if (isCompiler(module)) return module
-  const wrapped = (module as { default?: unknown } | undefined)?.default
+  const wrapped = (module as { readonly default?: unknown } | undefined)?.default
   return isCompiler(wrapped) ? wrapped : undefined
 }
 
-/**
- * Import TypeScript from the CLI's own dependency tree, or `undefined` when it is not installed.
- *
- * Only a RESOLUTION failure is absence. A compiler that resolves and then fails while evaluating is a
- * broken install, not a missing one, and telling that user to install what they already have sends
- * them the wrong way - so that error is rethrown for the caller to report.
- */
-export async function importTypeScript(): Promise<TypeScriptApi | undefined> {
+function versionOf(module: unknown): string | undefined {
+  if (typeof module !== "object" || module === null) return undefined
+  const version = (module as { readonly version?: unknown }).version
+  if (typeof version === "string") return version
+  const wrapped = (module as { readonly default?: unknown }).default
+  if (typeof wrapped !== "object" || wrapped === null) return undefined
+  const wrappedVersion = (wrapped as { readonly version?: unknown }).version
+  return typeof wrappedVersion === "string" ? wrappedVersion : undefined
+}
+
+function majorVersion(version: string): number | undefined {
+  const match = /^(\d+)(?:\.|$)/.exec(version.trim())
+  if (match === null) return undefined
+  const major = Number.parseInt(match[1]!, 10)
+  return Number.isSafeInteger(major) ? major : undefined
+}
+
+/** Keep unknown fixture versions usable, but reject known compiler majors outside 5/6/7. */
+function isUnsupportedVersion(version: string): boolean {
+  const major = majorVersion(version)
+  return major !== undefined && major > 0 && major !== 5 && major !== 6 && major !== 7
+}
+
+function packageVersion(packageRoot: string): string | undefined {
+  const parsed: unknown = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"))
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined
+  const version = (parsed as { readonly version?: unknown }).version
+  return typeof version === "string" ? version : undefined
+}
+
+/** Import TypeScript from the CLI's own dependency tree, or `undefined` when it is not installed. */
+async function importTypeScriptModule(): Promise<unknown | undefined> {
   try {
-    return compilerOf(await import("typescript"))
+    return await import("typescript")
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause)
     if (/cannot find (?:package|module)|ERR_MODULE_NOT_FOUND/i.test(message)) return undefined
@@ -58,55 +148,460 @@ export async function importTypeScript(): Promise<TypeScriptApi | undefined> {
   }
 }
 
+/** Import the CLI's own TypeScript only for legacy callers. Project loads use the adapter below. */
+export async function importTypeScript(): Promise<TypeScriptApi | undefined> {
+  const module = await importTypeScriptModule()
+  if (module === undefined) return undefined
+  const version = versionOf(module)
+  if (version !== undefined && isUnsupportedVersion(version))
+    throw new UnsupportedTypeScriptError(version)
+  return compilerOf(module)
+}
+
+function packageRootForResolvedEntry(entry: string): string {
+  return dirname(dirname(entry))
+}
+
+interface ResolvedProjectTypeScript {
+  readonly packageRoot: string
+  readonly entry: string
+  readonly version: string | undefined
+}
+
 /**
- * Find the project's compiler the way module resolution would: `node_modules/typescript` in `root`,
- * then each parent directory up to the filesystem root - the same walk the typecheck gate uses to
- * find `tsc`, so both gates agree on which compiler the project has.
- *
- * The walk is deliberate, not a fallback for a missing resolver. `Bun.resolveSync` memoizes a
- * specifier for the life of the process AND auto-installs from the global download cache when the
- * project has none, so a long-lived process (the MCP server) that first resolved `typescript` before
- * `bun install` kept handing back that cache entry afterwards - the typecheck went phantom until the
- * server was restarted. A filesystem probe is re-answered every call, so an install that lands
- * mid-session is picked up on the next scan.
+ * Find the project's compiler the way module resolution would: `node_modules/typescript` in
+ * `root`, then each parent directory up to the filesystem root. This filesystem probe is
+ * deliberate: Bun's resolver can memoize a missing package for a long-lived MCP process.
  */
-function resolveProjectTypeScript(root: string): string | undefined {
+function resolveProjectTypeScript(root: string): ResolvedProjectTypeScript | undefined {
   let dir = root
   while (true) {
-    const pkg = join(dir, "node_modules", "typescript")
-    // `lib/typescript.js` is the compiler entry across every published major; probing it directly
-    // (rather than importing the directory) keeps a package whose main entry is a stub out of play.
-    const entry = join(pkg, "lib", "typescript.js")
-    if (existsSync(entry)) return entry
-    if (existsSync(join(pkg, "package.json"))) return pkg
+    const packageRoot = join(dir, "node_modules", "typescript")
+    const entry = join(packageRoot, "lib", "typescript.js")
+    if (existsSync(entry)) return { packageRoot, entry, version: packageVersion(packageRoot) }
+    if (existsSync(join(packageRoot, "package.json"))) {
+      return { packageRoot, entry: packageRoot, version: packageVersion(packageRoot) }
+    }
     const parent = dirname(dir)
     if (parent === dir) return undefined
     dir = parent
   }
 }
 
-/**
- * Import TypeScript resolved from the PROJECT root first, falling back to the CLI's own dependency
- * tree. A bare `import("typescript")` resolves relative to this file - the CLI's install - so a
- * globally-installed or bunx-run CLI could miss the project's compiler (or load a different major)
- * depending on where the CLI happened to live, while the project's own `typescript` sat unused in
- * its node_modules. Resolving from `root` makes the verdicts a function of the project, not of how
- * the CLI was installed - the same cwd-invariance the typecheck gate's tsc resolution has.
- */
-export async function importProjectTypeScript(root: string): Promise<TypeScriptApi | undefined> {
-  const resolved = resolveProjectTypeScript(root)
-  // Not installed in the project (or installed without a compiler entry): fall back to the CLI's own
-  // tree, which keeps the previous behavior as the floor.
-  if (resolved === undefined) return importTypeScript()
+function normalizedPath(path: string): string {
+  return resolve(path).replaceAll("\\", "/")
+}
+
+function pathVariants(path: string): readonly string[] {
+  const normalized = normalizedPath(path)
+  const variants = new Set<string>([normalized])
   try {
-    const compiler = compilerOf(await import(resolved))
-    return compiler ?? (await importTypeScript())
-  } catch (cause) {
-    // Same contract as importTypeScript: a compiler that RESOLVES and then fails evaluating is a
-    // broken install, not a missing one - rethrow rather than silently checking with another copy.
-    const message = cause instanceof Error ? cause.message : String(cause)
-    if (/cannot find (?:package|module)|ERR_MODULE_NOT_FOUND/i.test(message))
-      return importTypeScript()
-    throw cause
+    variants.add(normalizedPath(realpathSync(path)))
+  } catch {
+    // Virtual fixture files do not exist on disk; their normalized path is sufficient.
+  }
+  return [...variants]
+}
+
+interface TypeScript7Node {
+  readonly kind: number
+  readonly pos: number
+  readonly end: number
+  readonly text?: string
+  forEachChild<T>(
+    visit: (node: TypeScript7Node) => T,
+    visitNodes?: (nodes: unknown) => T,
+  ): T | undefined
+  getStart(sourceFile?: TypeScript7SourceFile): number
+  getText(sourceFile?: TypeScript7SourceFile): string
+}
+
+interface TypeScript7SourceFile extends TypeScript7Node {
+  readonly fileName: string
+  readonly text: string
+  readonly statements: readonly TypeScript7Node[]
+  getLineAndCharacterOfPosition(position: number): {
+    readonly line: number
+    readonly character: number
+  }
+}
+
+interface TypeScript7Program {
+  getSourceFile(file: string): Promise<TypeScript7SourceFile | undefined>
+  getSyntacticDiagnostics(file?: string): Promise<readonly unknown[]>
+}
+
+interface TypeScript7Project {
+  readonly configFileName: string
+  readonly rootFiles: readonly string[]
+  readonly program: TypeScript7Program
+  readonly checker: unknown
+}
+
+interface TypeScript7Snapshot {
+  getProject(configFileName: string): TypeScript7Project | undefined
+  getDefaultProjectForFile(file: string): Promise<TypeScript7Project | undefined>
+  dispose(): Promise<void> | void
+}
+
+interface TypeScript7Api {
+  updateSnapshot(params: {
+    readonly openFiles: readonly string[]
+    readonly openProject?: string
+  }): Promise<TypeScript7Snapshot>
+  close(): Promise<void>
+}
+
+interface TypeScript7ApiModule {
+  readonly API: new (options?: Record<string, unknown>) => TypeScript7Api
+}
+
+type UnknownRecord = Record<string, unknown>
+
+function requiredRecord(value: unknown, label: string): UnknownRecord {
+  if (typeof value !== "object" || value === null)
+    throw new Error(`TypeScript 7 ${label} export is invalid`)
+  return value as UnknownRecord
+}
+
+function requiredConstructor(value: unknown, label: string): TypeScript7ApiModule["API"] {
+  if (typeof value !== "function") throw new Error(`TypeScript 7 ${label} export is invalid`)
+  return value as TypeScript7ApiModule["API"]
+}
+
+function requiredNumberMap(module: UnknownRecord, name: string): UnknownRecord {
+  return requiredRecord(module[name], name)
+}
+
+function hasNodeKind(node: unknown, kinds: ReadonlySet<number>): boolean {
+  if (typeof node !== "object" || node === null) return false
+  const kind = (node as { readonly kind?: unknown }).kind
+  return typeof kind === "number" && kinds.has(kind)
+}
+
+function syntaxKinds(module: UnknownRecord, names: readonly string[]): ReadonlySet<number> {
+  const syntaxKind = requiredNumberMap(module, "SyntaxKind")
+  const values = names.flatMap((name) => {
+    const value = syntaxKind[name]
+    return typeof value === "number" ? [value] : []
+  })
+  return new Set(values)
+}
+
+function createVirtualFileSystem(sourceFiles: ReadonlyMap<string, string>): UnknownRecord {
+  const lookup = (fileName: string): string | undefined => {
+    for (const variant of pathVariants(fileName)) {
+      const content = sourceFiles.get(variant)
+      if (content !== undefined) return content
+    }
+    return undefined
+  }
+  return {
+    readFile: (fileName: string): string | undefined => lookup(fileName),
+    fileExists: (fileName: string): boolean | undefined =>
+      lookup(fileName) !== undefined || undefined,
+  }
+}
+
+function sourceEntries(
+  root: string,
+  sourceIndex: TypeScriptSourceIndex | undefined,
+): { readonly files: Map<string, string>; readonly paths: string[] } {
+  const files = new Map<string, string>()
+  if (sourceIndex === undefined) return { files, paths: [] }
+  const paths: string[] = []
+  for (const file of sourceIndex.files) {
+    const content = sourceIndex.read(file)
+    if (content === undefined) continue
+    const absolute = isAbsolute(file) ? file : resolve(root, file)
+    paths.push(absolute)
+    for (const variant of pathVariants(absolute)) files.set(variant, content)
+  }
+  return { files, paths: [...new Set(paths)] }
+}
+
+/** Build a TypeScript 7 facade over unstable/ast and the async project API. */
+async function createTypeScript7Session(
+  root: string,
+  packageRoot: string,
+  version: string,
+  sourceIndex: TypeScriptSourceIndex | undefined,
+): Promise<TypeScriptSession> {
+  // Resolve subpaths from the exact package installation selected above. Resolving from `root`
+  // alone can select a different hoisted TypeScript copy when this loader is used from a CLI that
+  // has its own peer installation.
+  const packageResolveRoot = dirname(packageRoot)
+  const astPath = Bun.resolveSync("typescript/unstable/ast", packageResolveRoot)
+  const asyncPath = Bun.resolveSync("typescript/unstable/async", packageResolveRoot)
+  const astModule = requiredRecord(await import(pathToFileURL(astPath).href), "ast")
+  const asyncModule = requiredRecord(await import(pathToFileURL(asyncPath).href), "async")
+  const API = requiredConstructor(asyncModule.API, "async.API")
+  const { files, paths } = sourceEntries(root, sourceIndex)
+  const sourceCache = new Map<string, TypeScript7SourceFile>()
+  const sourceByContent = new Map<string, TypeScript7SourceFile>()
+  const projects = new Map<string, TypeScript7Project>()
+
+  const api = new API({
+    cwd: root,
+    fs: createVirtualFileSystem(files),
+  })
+  let snapshot: TypeScript7Snapshot | undefined
+  let configuredProject: TypeScript7Project | undefined
+  let closed = false
+  try {
+    snapshot = await api.updateSnapshot({
+      openFiles: paths,
+      ...(existsSync(sourceIndex?.projectConfig ?? join(root, "tsconfig.json"))
+        ? { openProject: sourceIndex?.projectConfig ?? join(root, "tsconfig.json") }
+        : {}),
+    })
+    configuredProject =
+      sourceIndex?.projectConfig === undefined
+        ? undefined
+        : snapshot.getProject(sourceIndex.projectConfig)
+    if (sourceIndex?.projectConfig !== undefined && configuredProject === undefined) {
+      throw new Error(`TypeScript 7 could not open project config ${sourceIndex.projectConfig}`)
+    }
+    for (const path of paths) {
+      const project = configuredProject ?? (await snapshot.getDefaultProjectForFile(path))
+      if (project === undefined) {
+        throw new Error(`TypeScript 7 could not create a project for source file ${path}`)
+      }
+      projects.set(normalizedPath(path), project)
+      const source = await project.program.getSourceFile(path)
+      if (source === undefined) {
+        throw new Error(`TypeScript 7 could not load project source file ${path}`)
+      }
+      for (const variant of pathVariants(path)) sourceCache.set(variant, source)
+      sourceCache.set(normalizedPath(source.fileName), source)
+      sourceByContent.set(source.text, source)
+      const diagnostics = await project.program.getSyntacticDiagnostics(path)
+      // Legacy scanners use parseDiagnostics to avoid interpreting recovery nodes. The remote
+      // TypeScript 7 source object is extensible in current releases; define the same optional
+      // property without copying source text or changing node identities.
+      try {
+        Object.defineProperty(source, "parseDiagnostics", {
+          configurable: true,
+          enumerable: false,
+          value: diagnostics,
+        })
+      } catch {
+        // A future remote source implementation may be sealed. The scanner remains conservative
+        // for files whose syntax diagnostics are not observable through the compatibility object.
+      }
+    }
+  } catch (error) {
+    await snapshot?.dispose()
+    await api.close()
+    throw error
+  }
+
+  const functionLikeKinds = syntaxKinds(astModule, [
+    "FunctionDeclaration",
+    "FunctionExpression",
+    "ArrowFunction",
+    "MethodDeclaration",
+    "GetAccessor",
+    "SetAccessor",
+    "Constructor",
+    "MethodSignature",
+    "CallSignature",
+    "ConstructSignature",
+    "IndexSignature",
+    "FunctionType",
+    "ConstructorType",
+    "JSDocFunctionType",
+    "JSDocSignature",
+  ])
+  const parameterKinds = syntaxKinds(astModule, ["Parameter"])
+  const stringLiteralKinds = syntaxKinds(astModule, [
+    "StringLiteral",
+    "NoSubstitutionTemplateLiteral",
+  ])
+
+  const createSourceFile = (_fileName: unknown, sourceText: unknown): unknown => {
+    if (typeof _fileName !== "string" || typeof sourceText !== "string") {
+      throw new TypeError("TypeScript 7 createSourceFile received invalid arguments")
+    }
+    const absolute = isAbsolute(_fileName) ? _fileName : resolve(root, _fileName)
+    const cached = pathVariants(absolute)
+      .map((variant) => sourceCache.get(variant))
+      .find((source): source is TypeScript7SourceFile => source !== undefined)
+    if (cached !== undefined && cached.text === sourceText) return cached
+    const byContent = sourceByContent.get(sourceText)
+    if (byContent !== undefined) return byContent
+    throw new Error(`TypeScript 7 source file was not preloaded: ${_fileName}`)
+  }
+  const forEachChild = (node: unknown, visit: unknown): unknown => {
+    if (typeof visit !== "function")
+      throw new TypeError("TypeScript 7 forEachChild visitor is invalid")
+    if (typeof node !== "object" || node === null)
+      throw new TypeError("TypeScript 7 node is invalid")
+    const childVisitor = visit as (child: TypeScript7Node) => unknown
+    return (node as TypeScript7Node).forEachChild(childVisitor)
+  }
+  const isFunctionLike = (node: unknown): boolean => hasNodeKind(node, functionLikeKinds)
+  const isParameter = (node: unknown): boolean => hasNodeKind(node, parameterKinds)
+  const isStringLiteralLike = (node: unknown): boolean => hasNodeKind(node, stringLiteralKinds)
+
+  const facade: UnknownRecord = {
+    ...astModule,
+    version,
+    createSourceFile,
+    forEachChild,
+    isFunctionLike,
+    isParameter,
+    isStringLiteralLike,
+  }
+  const compiler = Object.freeze(facade) as unknown as TypeScriptApi
+
+  const firstProject = projects.values().next().value as TypeScript7Project | undefined
+  const semantic =
+    firstProject === undefined
+      ? undefined
+      : ({
+          checker: firstProject.checker,
+          getCheckerForFile: async (file: string): Promise<unknown | undefined> => {
+            const project =
+              projects.get(normalizedPath(file)) ??
+              configuredProject ??
+              (await snapshot!.getDefaultProjectForFile(file))
+            return project?.checker
+          },
+          getSourceFile: async (file: string): Promise<unknown | undefined> => {
+            const project =
+              projects.get(normalizedPath(file)) ??
+              configuredProject ??
+              (await snapshot!.getDefaultProjectForFile(file))
+            return project?.program.getSourceFile(file)
+          },
+          typeFlags: requiredNumberMap(asyncModule, "TypeFlags"),
+          symbolFlags: requiredNumberMap(asyncModule, "SymbolFlags"),
+          signatureKind: requiredNumberMap(asyncModule, "SignatureKind"),
+        } satisfies TypeScriptSemanticSession)
+
+  const close = async (): Promise<void> => {
+    if (closed) return
+    closed = true
+    await snapshot?.dispose()
+    await api.close()
+  }
+  return {
+    compiler,
+    ...(semantic === undefined ? {} : { semantic }),
+    close,
+  }
+}
+
+function legacySession(compiler: TypeScriptApi): TypeScriptSession {
+  return { compiler, close: async () => {} }
+}
+
+interface ResolvedLoad {
+  readonly session: TypeScriptSession | undefined
+  readonly unsupported: UnsupportedTypeScriptError | undefined
+}
+
+async function resolveProjectSession(
+  root: string,
+  sourceIndex: TypeScriptSourceIndex | undefined,
+): Promise<ResolvedLoad> {
+  const resolved = resolveProjectTypeScript(root)
+  if (resolved === undefined) {
+    const module = await importTypeScriptModule()
+    if (module === undefined) return { session: undefined, unsupported: undefined }
+    const version = versionOf(module)
+    if (version !== undefined && isUnsupportedVersion(version))
+      throw new UnsupportedTypeScriptError(version)
+    if (majorVersion(version ?? "") === 7) {
+      const entry = Bun.resolveSync("typescript", import.meta.dir)
+      return {
+        session: await createTypeScript7Session(
+          root,
+          packageRootForResolvedEntry(entry),
+          version ?? "7",
+          sourceIndex,
+        ),
+        unsupported: undefined,
+      }
+    }
+    const compiler = compilerOf(module)
+    return {
+      session: compiler === undefined ? undefined : legacySession(compiler),
+      unsupported: undefined,
+    }
+  }
+  if (resolved.version !== undefined && isUnsupportedVersion(resolved.version)) {
+    throw new UnsupportedTypeScriptError(resolved.version)
+  }
+  const major = resolved.version === undefined ? undefined : majorVersion(resolved.version)
+  if (major === 7) {
+    return {
+      session: await createTypeScript7Session(
+        root,
+        resolved.packageRoot,
+        resolved.version ?? "7",
+        sourceIndex,
+      ),
+      unsupported: undefined,
+    }
+  }
+  const module = await import(pathToFileURL(resolved.entry).href)
+  const version = resolved.version ?? versionOf(module)
+  if (version !== undefined && isUnsupportedVersion(version))
+    throw new UnsupportedTypeScriptError(version)
+  const compiler = compilerOf(module)
+  if (compiler === undefined) {
+    throw new Error(
+      `TypeScript package at ${resolved.packageRoot} does not expose the legacy compiler API`,
+    )
+  }
+  return { session: legacySession(compiler), unsupported: undefined }
+}
+
+/**
+ * Import TypeScript resolved from the PROJECT root first, with TypeScript 7's package exports
+ * selected explicitly. A project TypeScript 7 install never falls back to the CLI's compiler.
+ */
+export async function importProjectTypeScript(
+  root: string,
+  sourceIndex?: TypeScriptSourceIndex,
+): Promise<TypeScriptApi | undefined> {
+  const loaded = await resolveProjectSession(root, sourceIndex)
+  return loaded.session?.compiler
+}
+
+export interface ProjectTypeScriptLoad {
+  readonly compiler: TypeScriptApi | undefined
+  readonly session: TypeScriptSession | undefined
+  readonly unsupported: UnsupportedTypeScriptError | undefined
+}
+
+/** Load a project compiler for scanners while preserving a structured unsupported-toolchain result. */
+export async function loadProjectTypeScript(
+  root: string,
+  load?: () => Promise<TypeScriptApi | undefined>,
+  sourceIndex?: TypeScriptSourceIndex,
+): Promise<ProjectTypeScriptLoad> {
+  try {
+    if (load !== undefined) {
+      const compiler = await load()
+      return {
+        compiler,
+        session: compiler === undefined ? undefined : legacySession(compiler),
+        unsupported: undefined,
+      }
+    }
+    const resolved = await resolveProjectSession(root, sourceIndex)
+    return {
+      compiler: resolved.session?.compiler,
+      session: resolved.session,
+      unsupported: resolved.unsupported,
+    }
+  } catch (error) {
+    if (isUnsupportedTypeScriptError(error)) {
+      return { compiler: undefined, session: undefined, unsupported: error }
+    }
+    throw error
   }
 }

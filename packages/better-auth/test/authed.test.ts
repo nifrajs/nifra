@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { authed, type Principal, requirePrincipal } from "@nifrajs/better-auth"
+import { authed, type Principal, requirePrincipal, requireSession } from "@nifrajs/better-auth"
 import { server } from "@nifrajs/core"
+import { NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
 import { defineContract, implement } from "@nifrajs/core/contract"
+import { reflectRoutes } from "@nifrajs/core/reflection"
+import { t } from "@nifrajs/schema"
 import { isResponseResult } from "../../core/src/server/runtime-core.ts"
 
 /**
@@ -55,6 +58,21 @@ const rejectionOf = (thrown: unknown) => {
 }
 
 describe("authed() plugin - fail closed", () => {
+  test("publishes authenticated assurance evidence for downstream routes", () => {
+    const app = server()
+      .use(authed(plainAuth))
+      .get("/me", (c) => ({ id: c.principal.userId }))
+
+    expect(reflectRoutes(app)[0]?.assurance).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: NIFRA_ASSURANCE.AUTHENTICATED,
+          source: "better-auth",
+        }),
+      ]),
+    )
+  })
+
   test("no session -> 401 and the handler does NOT run", async () => {
     let ran = false
     const app = server()
@@ -240,6 +258,138 @@ describe("requirePrincipal() direct guard", () => {
       expect(rejection.plain?.status).toBe(302)
       expect(rejection.toResponse().headers.get("location")).toBe("/login")
     }
+  })
+
+  test("checks the session before reading a protected request body", async () => {
+    const app = server()
+      .use(authed(plainAuth))
+      .post("/write", { body: t.object({ name: t.string() }) }, (c) => ({ name: c.body.name }))
+    let bodyReads = 0
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("{}"))
+        controller.close()
+      },
+      pull() {
+        bodyReads += 1
+      },
+    })
+    const unauthenticated = await app.fetch(
+      new Request("http://x/write", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+        duplex: "half",
+      } as RequestInit),
+    )
+    expect(unauthenticated.status).toBe(401)
+    expect(bodyReads).toBe(0)
+
+    const malformed = await app.fetch(
+      new Request("http://x/write", {
+        method: "POST",
+        headers: { cookie: "session=valid", "content-type": "application/json" },
+        body: "{}",
+      }),
+    )
+    expect(malformed.status).toBe(422)
+  })
+
+  test("provider failures and malformed sessions fail closed as 503", async () => {
+    const failingAuth = {
+      handler: async (): Promise<Response> => Response.json({ ok: true }),
+      api: {
+        getSession: async (): Promise<never> => {
+          throw new Error("database unavailable")
+        },
+      },
+      options: { basePath: "/api/auth" },
+    }
+    const malformedAuth = {
+      handler: async (): Promise<Response> => Response.json({ ok: true }),
+      api: {
+        getSession: async () => ({ user: { id: "" }, session: { id: "s1" } }),
+      },
+      options: { basePath: "/api/auth" },
+    }
+    const failing = server()
+      .use(authed(failingAuth))
+      .get("/private", () => ({ ok: true }))
+    const malformed = server()
+      .use(authed(malformedAuth))
+      .get("/private", () => ({ ok: true }))
+    expect((await failing.fetch(withCookie("/private"))).status).toBe(503)
+    expect((await malformed.fetch(withCookie("/private"))).status).toBe(503)
+  })
+
+  test("whitespace-only identity fields fail closed as 503", async () => {
+    const malformedAuth = {
+      handler: async (): Promise<Response> => Response.json({ ok: true }),
+      api: {
+        getSession: async ({ headers }: { headers: Headers }) =>
+          headers.get("cookie") === "session=valid"
+            ? { user: { id: "   " }, session: { id: "s1" } }
+            : null,
+      },
+      options: { basePath: "/api/auth" },
+    }
+    const malformedSessionIdAuth = {
+      handler: async (): Promise<Response> => Response.json({ ok: true }),
+      api: {
+        getSession: async ({ headers }: { headers: Headers }) =>
+          headers.get("cookie") === "session=valid"
+            ? { user: { id: "u1" }, session: { id: "\t\n" } }
+            : null,
+      },
+      options: { basePath: "/api/auth" },
+    }
+    const userId = server()
+      .use(authed(malformedAuth))
+      .get("/private", () => ({ ok: true }))
+    const sessionId = server()
+      .use(authed(malformedSessionIdAuth))
+      .get("/private", () => ({ ok: true }))
+    expect((await userId.fetch(withCookie("/private"))).status).toBe(503)
+    expect((await sessionId.fetch(withCookie("/private"))).status).toBe(503)
+  })
+
+  test("malformed session records and tenant mappings fail closed as 503", async () => {
+    const malformedRecordAuth = {
+      handler: async (): Promise<Response> => Response.json({ ok: true }),
+      api: {
+        getSession: async () => ({ user: null, session: { id: "s1" } }),
+      },
+      options: { basePath: "/api/auth" },
+    }
+    const malformedTenantAuth = {
+      handler: async (): Promise<Response> => Response.json({ ok: true }),
+      api: {
+        getSession: async () => ({ user: { id: "u1" }, session: { id: "s1" } }),
+      },
+      options: { basePath: "/api/auth" },
+    }
+    const malformedRecord = server()
+      .use(authed(malformedRecordAuth))
+      .get("/private", () => ({ ok: true }))
+    const malformedTenant = server()
+      .use(
+        authed(malformedTenantAuth, {
+          tenantOf: () => 42 as unknown as string,
+        }),
+      )
+      .get("/private", () => ({ ok: true }))
+
+    expect((await malformedRecord.fetch(withCookie("/private"))).status).toBe(503)
+    expect((await malformedTenant.fetch(withCookie("/private"))).status).toBe(503)
+  })
+
+  test("rejects an invalid redirect configuration before a valid session can bypass it", async () => {
+    expect(() =>
+      requireSession(plainAuth, withCookie("/x"), { redirectTo: "//evil.example" }),
+    ).toThrow(/same-origin path/)
+    expect(() => authed(plainAuth, { redirectTo: "https://evil.example" })).toThrow(
+      /same-origin path/,
+    )
   })
 })
 

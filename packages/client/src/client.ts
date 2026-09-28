@@ -1,9 +1,15 @@
 import { NIFRA_BINARY_HEADER } from "@nifrajs/core/binary"
 import type { ContractShape, RegistryFor } from "@nifrajs/core/contract"
 import {
+  type BackendEvidenceProvider,
   type BackendMount,
   type BackendMountHandler,
+  type BackendWebSocketMountHandler,
+  type BackendWebSocketRuntimeProvider,
+  NIFRA_BACKEND_EVIDENCE,
   NIFRA_BACKEND_MOUNT,
+  NIFRA_BACKEND_WS_MOUNT,
+  NIFRA_BACKEND_WS_RUNTIME,
 } from "@nifrajs/core/mount"
 import {
   assertTransportTextBounded,
@@ -21,6 +27,8 @@ import type { ApiError, Result } from "./result.ts"
 import type { Subscription, Treaty, TreatyFromRegistry } from "./treaty.ts"
 import { ResponseContractViolation, withResponseValidation } from "./validate-responses.ts"
 import { NO_SOCKET, openWebSocket } from "./ws.ts"
+
+const CORE_WS_RUNTIME = Symbol.for("@nifrajs/core/get-ws-runtime")
 
 /**
  * The RESERVED proxy keys, resolved before path segments (see `resolveSegment` and the `then`
@@ -262,6 +270,38 @@ export function inProcessClient<
   ;(bridge as { [LOCAL_FETCH]?: true })[LOCAL_FETCH] = true
   const mount: BackendMountHandler = (request, platform) =>
     Promise.resolve((app.fetch as BackendMountHandler)(request, platform))
+  const evidenceProvider: BackendEvidenceProvider = async () => {
+    const { snapshotProjectEvidence } = await import("@nifrajs/core/evidence")
+    return snapshotProjectEvidence(app)
+  }
+  const resolveWebSocketUpgrade = (
+    app as {
+      resolveWebSocketUpgrade?: BackendWebSocketMountHandler
+    }
+  ).resolveWebSocketUpgrade
+  const getWebSocketRuntime = (app as Record<symbol, unknown>)[CORE_WS_RUNTIME]
+  const runtimeProvider =
+    typeof getWebSocketRuntime === "function"
+      ? (getWebSocketRuntime as () => unknown).bind(app)
+      : undefined
+  if (typeof resolveWebSocketUpgrade === "function") {
+    ;(
+      mount as BackendMountHandler & {
+        [NIFRA_BACKEND_WS_MOUNT]?: BackendWebSocketMountHandler
+      }
+    )[NIFRA_BACKEND_WS_MOUNT] = (request, platform) =>
+      resolveWebSocketUpgrade.call(app, request, platform)
+  }
+  if (runtimeProvider !== undefined) {
+    ;(
+      mount as BackendMountHandler & {
+        [NIFRA_BACKEND_WS_RUNTIME]?: BackendWebSocketRuntimeProvider
+      }
+    )[NIFRA_BACKEND_WS_RUNTIME] = runtimeProvider
+  }
+  ;(mount as BackendMountHandler & { [NIFRA_BACKEND_EVIDENCE]?: BackendEvidenceProvider })[
+    NIFRA_BACKEND_EVIDENCE
+  ] = evidenceProvider
   // NO_SOCKET marks the options so a typed `.ws()` call fails with a real explanation - an
   // in-process app has no socket to upgrade - instead of dialing ws://nifra.internal into the void.
   const proxy = client<App>("http://nifra.internal", {
@@ -274,6 +314,21 @@ export function inProcessClient<
   return new Proxy(proxy as object, {
     get(targetProxy, key, receiver) {
       if (key === NIFRA_BACKEND_MOUNT) return mount
+      if (key === NIFRA_BACKEND_EVIDENCE) return evidenceProvider
+      if (key === NIFRA_BACKEND_WS_MOUNT) {
+        return (
+          mount as BackendMountHandler & {
+            [NIFRA_BACKEND_WS_MOUNT]?: BackendWebSocketMountHandler
+          }
+        )[NIFRA_BACKEND_WS_MOUNT]
+      }
+      if (key === NIFRA_BACKEND_WS_RUNTIME) {
+        return (
+          mount as BackendMountHandler & {
+            [NIFRA_BACKEND_WS_RUNTIME]?: BackendWebSocketRuntimeProvider
+          }
+        )[NIFRA_BACKEND_WS_RUNTIME]
+      }
       return Reflect.get(targetProxy, key, receiver)
     },
   }) as InProcessClient<App>

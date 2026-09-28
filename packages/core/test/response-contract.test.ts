@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import * as z from "zod"
 import { t } from "../../schema/src/index.ts"
-import { type AnyServer, type LogFields, type Logger, server, silentLogger } from "../src/index.ts"
+import {
+  type AnyServer,
+  type LogFields,
+  type Logger,
+  server,
+  silentLogger,
+  status,
+} from "../src/index.ts"
 import { checkResponseContract, responseContract } from "../src/server/response-contract-lane.ts"
 
 /**
@@ -129,6 +136,37 @@ describe('responseContract: "enforce"', () => {
     const res = await app.fetch(new Request("http://t/redirect"))
     expect(res.status).toBe(302)
     expect(res.headers.get("location")).toBe("/")
+  })
+
+  test("enforces a declared error contract on status() responses", async () => {
+    const app = server()
+      .use(responseContract("enforce"))
+      .get("/missing", { errors: { 404: STRIPPING as never } }, () => status(404, LEAK) as never)
+    const res = await app.fetch(new Request("http://t/missing"))
+    expect(res.status).toBe(404)
+    const body = await res.text()
+    expect(JSON.parse(body)).toEqual({ id: "u1", name: "Ada" })
+    expect(body).not.toContain("SECRET")
+  })
+
+  test("uses the success contract for status(200) responses", async () => {
+    const app = server()
+      .use(responseContract("enforce"))
+      .get("/ok", { response: STRIPPING as never }, () => status(200, LEAK) as never)
+    const res = await app.fetch(new Request("http://t/ok"))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ id: "u1", name: "Ada" })
+  })
+
+  test("enforces error contracts when a status result is thrown", async () => {
+    const app = server()
+      .use(responseContract("enforce"))
+      .get("/missing", { errors: { 404: STRIPPING as never } }, () => {
+        throw status(404, LEAK)
+      })
+    const res = await app.fetch(new Request("http://t/missing"))
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ id: "u1", name: "Ada" })
   })
 })
 

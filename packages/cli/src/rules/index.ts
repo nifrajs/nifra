@@ -1,6 +1,8 @@
 import type { Diagnostic } from "../diagnostics.ts"
+import type { TypeScriptSession } from "../internal/typescript-import.ts"
 import type { ProjectFacts } from "../project-facts.ts"
 import { isBuiltInCode } from "./codes.ts"
+import { releaseRuleTypeScript, retainRuleTypeScript } from "./typescript.ts"
 
 export type { ProjectFacts } from "../project-facts.ts"
 
@@ -18,6 +20,8 @@ export interface RuleContext {
   readonly root: string
   readonly sources: SourceIndex
   readonly project: ProjectFacts
+  /** One compiler session shared by every AST-backed rule in a check. */
+  readonly typescriptSession?: TypeScriptSession
 }
 
 export interface CheckRule {
@@ -155,12 +159,21 @@ export async function runRuleRegistry(
 ): Promise<Diagnostic[]> {
   const rules = [...builtIns, ...validateRulePacks(packs).flatMap((pack) => pack.rules)]
   const out: Diagnostic[] = []
-  for (const rule of rules) {
-    if (isBuiltInCode(rule.code) === false && rule.code.startsWith("NF-")) {
-      throw new Error(`application rule pack code ${rule.code} uses the reserved NF- prefix`)
+  const ownsTypeScriptSession =
+    ctx.typescriptSession === undefined &&
+    ctx.project.check.unsupportedTypeScriptVersion === undefined &&
+    rules.some((rule) => isBuiltInCode(rule.code) || rule.code.startsWith("NF-"))
+  if (ownsTypeScriptSession) retainRuleTypeScript(ctx)
+  try {
+    for (const rule of rules) {
+      if (isBuiltInCode(rule.code) === false && rule.code.startsWith("NF-")) {
+        throw new Error(`application rule pack code ${rule.code} uses the reserved NF- prefix`)
+      }
+      const findings = await rule.scan(ctx)
+      out.push(...findings)
     }
-    const findings = await rule.scan(ctx)
-    out.push(...findings)
+  } finally {
+    if (ownsTypeScriptSession) await releaseRuleTypeScript(ctx)
   }
   return out
 }

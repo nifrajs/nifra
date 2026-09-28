@@ -14,10 +14,12 @@ export {
   type AdversarialContractReport,
   type AdversarialContractResult,
   assertAdversarialContract,
+  type ContractAuthContext,
   type ContractCaseContext,
   type ContractCaseKind,
   type ContractCoverageGap,
   type ContractCoverageGapCode,
+  type ContractExpectedResponse,
   type ContractReplay,
   type ContractRuntime,
   type ContractTarget,
@@ -105,6 +107,18 @@ export {
   runContractLabThroughAdapter,
 } from "./contract-lab.ts"
 export { type CookieJar, cookieJar } from "./cookies.ts"
+export {
+  assertDataAdapterConformance,
+  DataAdapterConformanceError,
+  type DataAdapterConformanceReport,
+  type DataAdapterConformanceTarget,
+  type DataConformanceCheck,
+  type DataConformanceFailure,
+  type DataConformancePage,
+  type DataConformanceScope,
+  type DataConformanceTransaction,
+  runDataAdapterConformance,
+} from "./data-conformance.ts"
 export {
   createFailureLab,
   type FailureDirective,

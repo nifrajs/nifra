@@ -62,6 +62,15 @@ export type Params<Path extends string> = Prettify<RawParams<Path>>
 
 /** Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…). */
 export interface RouteSchema {
+  /** Explicit external-protocol mode. The handler owns raw `c.req` parsing/streaming; no JSON body
+   * parser or schema-driven 422 path is installed. A finite transport cap still applies by default. */
+  readonly wire?: "raw"
+  /**
+   * Choose trust-boundary order for sensitive routes. Public routes validate first by default;
+   * routes with `authenticate()` default to auth first. `validate-before-auth` is an explicit
+   * compatibility escape hatch, while `auth-before-validation` can reject without parsing the body.
+   */
+  readonly validationOrder?: "validate-before-auth" | "auth-before-validation"
   /** Transport body cap for this route. Defaults to the server's maxBodyBytes. Use a finite
    * smaller/larger limit for a specific endpoint. The 'unlimited' value is an explicit
    * streaming/upload exemption and requires a non-empty bodyLimitReason for auditability.

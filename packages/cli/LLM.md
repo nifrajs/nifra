@@ -58,4 +58,5 @@ _…and 67 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) fo
 - nifra sync-routes [--json] - Regenerate nifra-routes.d.ts so typed navigation follows route search schemas.
 - nifra prove [--file <value>] [--min <value>] [--json] - Build the static verification work graph, plan the cheapest proofs for the changed files, and report a machine-checkable stop condition.
 - nifra replay <file> - Validate a token-only verification metadata file and dispatch it against its gate.
+- nifra smoke [--fixture <value>] [--in-process] [--json] - Run the declared production SSR, mounted-API, 404, header, auth, contract, and hydration smoke checks.
 - nifra port [--target <value>] [--json] [--ci] [--strict] - Print a feature by deploy-target portability matrix with file:line evidence and gate against an unsupported target.

@@ -43,6 +43,25 @@ describe("selectRouteLanes", () => {
     })
   })
 
+  test("disables fused lanes for auth-before-validation routes", () => {
+    const lanes = selectRouteLanes({
+      ...base,
+      schema: {
+        body: t.object({ name: t.string() }),
+        validationOrder: "auth-before-validation",
+      },
+      derives: 1,
+      beforeHandle: 1,
+    })
+    expect(lanes).toMatchObject({
+      lane: "lifecycle",
+      bare: false,
+      bodyOnly: false,
+      fusedBody: false,
+      fusedLane: undefined,
+    })
+  })
+
   test("drops a fused lane when idempotency or response enforcement needs the generic path", () => {
     const idempotent = selectRouteLanes({
       ...base,

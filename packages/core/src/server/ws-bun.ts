@@ -18,6 +18,8 @@ import type { BunWsHandlers } from "./ws-hook.ts"
  * `upgrade()`-seeded user data, and the memoized portable {@link NifraWebSocket} wrapper. */
 export interface BunWsData {
   readonly handler: WebSocketHandler
+  /** Mounted/modern upgrades carry this registry; old/manual fixtures may omit it. */
+  readonly pubsub?: TopicRegistry
   data: unknown
   nifra?: NifraWebSocket
 }
@@ -57,6 +59,9 @@ function wrapBunSocket(
   nativePubsub: boolean,
 ): NifraWebSocket {
   let ws!: NifraWebSocket
+  // Mounted child apps carry their own TopicRegistry in the upgrade outcome. Keep the argument as a
+  // fallback for old/manual Bun upgrades, but use the per-connection registry for composed mounts.
+  const pubsub = raw.data.pubsub ?? topics
   const reportError = (error: unknown): void => reportWsError(error, ws, handler)
   const send = createWebSocketSender(
     (data) => {
@@ -75,10 +80,10 @@ function wrapBunSocket(
     },
     subscribe: nativePubsub
       ? (topic) => raw.subscribe(topic)
-      : (topic) => topics.subscribe(topic, ws),
+      : (topic) => pubsub.subscribe(topic, ws),
     unsubscribe: nativePubsub
       ? (topic) => raw.unsubscribe(topic)
-      : (topic) => topics.unsubscribe(topic, ws),
+      : (topic) => pubsub.unsubscribe(topic, ws),
     get data() {
       return raw.data.data
     },
@@ -151,7 +156,7 @@ export function createBunWsHandlers(topics: TopicRegistry, nativePubsub = false)
       const nifra = ws.data.nifra ?? wrapBunSocket(ws, topics, ws.data.handler, nativePubsub)
       // Registry mode: drop topic subscriptions so it never holds a dead socket. Native mode: Bun
       // unsubscribes the socket from every topic on close, so there is nothing to sweep here.
-      if (!nativePubsub) topics.unsubscribeAll(nifra)
+      if (!nativePubsub) (ws.data.pubsub ?? topics).unsubscribeAll(nifra)
       dispatchWsCallback(() => ws.data.handler.close?.(nifra, code, reason), nifra, ws.data.handler)
     },
   }

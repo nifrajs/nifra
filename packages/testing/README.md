@@ -154,6 +154,32 @@ if (!report.ok || !(await verifyAdapterCertification(report))) throw new Error("
 Run profiles only against disposable namespaces. The certification module is structural and
 dependency-free, so adapter packages keep it in test/CI and acquire no production runtime dependency.
 
+### Data-adapter conformance
+
+For database or durable data adapters, use `runDataAdapterConformance` or
+`assertDataAdapterConformance` with adapter-specific operations. The harness proves tenant/RLS
+isolation, rejected-transaction rollback, cancellation, cursor pagination, backup/restore, and
+visibility across two adapter handles. It keeps scope tokens opaque and never inspects SQL, provider
+credentials, or row values beyond the supplied stable key:
+
+```ts
+const report = await runDataAdapterConformance({
+  createAdapter: (instance) => createAdapterForTest(instance),
+  seed,
+  read,
+  write,
+  transaction,
+  page,
+  snapshot,
+  restore,
+  rowKey: (row) => row.id,
+})
+if (!report.ok) throw new Error("adapter is not production-conformant")
+```
+
+Run it against disposable namespaces in CI. An in-memory adapter should intentionally fail the
+multi-instance check unless it is backed by a shared durable store.
+
 ## Stateful sessions
 
 [`@nifrajs/client`](../client)'s **`testClient`** is already the typed, no-network in-process request

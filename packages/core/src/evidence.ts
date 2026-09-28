@@ -50,6 +50,7 @@ export interface ProjectEvidenceRoute {
   readonly method: string
   readonly path: string
   readonly schema?: ProjectEvidenceSchema
+  readonly responseContract?: "warn" | "enforce"
   readonly assurance?: readonly AssuranceEvidence[]
   readonly capabilities?: readonly string[]
   readonly family?: boolean
@@ -108,6 +109,13 @@ export interface ProjectEvidenceOptions {
   readonly routes?: readonly ReflectedRoute[]
   /** Optional static source locations keyed by `${METHOD}\n${path}`. */
   readonly sourceLocations?: ReadonlyMap<string, readonly ProjectEvidenceSourceLocation[]>
+}
+
+/** One token-only evidence snapshot in a composed application surface. */
+export interface ProjectEvidenceCompositionPart {
+  readonly evidence: ProjectEvidenceSnapshot
+  /** Public pathname prefix to add when the child receives a stripped mount request. */
+  readonly pathPrefix?: string
 }
 
 const recordOf = (value: unknown): Readonly<Record<string, unknown>> | undefined =>
@@ -198,6 +206,7 @@ function evidenceRouteOf(
     method: route.method.toUpperCase(),
     path: route.path,
     ...(schema !== undefined ? { schema } : {}),
+    ...(route.responseContract === undefined ? {} : { responseContract: route.responseContract }),
     ...(route.assurance !== undefined ? { assurance: assuranceEvidenceOf(route.assurance) } : {}),
     ...(route.capabilities !== undefined
       ? { capabilities: Object.freeze([...route.capabilities].sort()) }
@@ -268,6 +277,169 @@ function capabilitiesOf(
   })
 }
 
+const composedPath = (prefix: string, path: string): string => {
+  if (path === "*") return path
+  if (!path.startsWith("/"))
+    throw new TypeError(`project evidence: route path must start with "/": ${path}`)
+  if (prefix === "") return path
+  if (!prefix.startsWith("/")) {
+    throw new TypeError(`project evidence: path prefix must start with "/": ${prefix}`)
+  }
+  const normalized = prefix === "/" ? "" : prefix.replace(/\/+$/, "")
+  return normalized === "" ? path : path === "/" ? normalized : `${normalized}${path}`
+}
+
+function remapEvidenceSnapshot(
+  evidence: ProjectEvidenceSnapshot,
+  pathPrefix: string,
+): ProjectEvidenceSnapshot {
+  if (evidence.version !== 1) throw new Error("project evidence: unsupported snapshot version")
+  const route = (
+    method: string,
+    path: string,
+  ): { readonly method: string; readonly path: string } => ({
+    method: method.toUpperCase(),
+    path: composedPath(pathPrefix, path),
+  })
+  const routes = evidence.routes.map((item) => {
+    const key = route(item.method, item.path)
+    return Object.freeze({ ...item, ...key })
+  })
+  const assurance =
+    evidence.assurance === undefined
+      ? undefined
+      : Object.freeze({
+          ok: evidence.assurance.ok,
+          routes: Object.freeze(
+            evidence.assurance.routes.map((item) =>
+              Object.freeze({ ...item, ...route(item.method, item.path) }),
+            ),
+          ),
+          findings: Object.freeze(
+            evidence.assurance.findings.map((item) =>
+              Object.freeze({ ...item, ...route(item.method, item.path) }),
+            ),
+          ),
+        })
+  const capabilities =
+    evidence.capabilities === undefined
+      ? undefined
+      : Object.freeze({
+          ok: evidence.capabilities.ok,
+          routes: Object.freeze(
+            evidence.capabilities.routes.map((item) =>
+              Object.freeze({ ...item, ...route(item.method, item.path) }),
+            ),
+          ),
+          findings: Object.freeze(
+            evidence.capabilities.findings.map((item) =>
+              Object.freeze({ ...item, ...route(item.method, item.path) }),
+            ),
+          ),
+        })
+  return Object.freeze({
+    version: 1,
+    routes: Object.freeze(routes),
+    ...(assurance === undefined ? {} : { assurance }),
+    ...(capabilities === undefined ? {} : { capabilities }),
+  })
+}
+
+function routeKeyForEvidence(method: string, path: string): string {
+  return `${method.toUpperCase()}\n${path}`
+}
+
+function validateComposedReportRoutes(
+  report: ProjectEvidenceAssurance | ProjectEvidenceCapabilities,
+  routeKeys: ReadonlySet<string>,
+  kind: "assurance" | "capabilities",
+): void {
+  for (const route of report.routes) {
+    if (!routeKeys.has(routeKeyForEvidence(route.method, route.path))) {
+      throw new Error(
+        `project evidence: ${kind} route ${route.method} ${route.path} is not present in the composed route set`,
+      )
+    }
+  }
+}
+
+/**
+ * Compose page and mounted-app evidence into one deterministic snapshot.
+ *
+ * This is an offline operation. It carries route contracts, assurance/capability tokens, and source
+ * locations only; it never invokes handlers or copies request/business data. A duplicate public
+ * method+path or a report that no longer describes a composed route is rejected rather than silently
+ * dropping one side of the trust boundary.
+ */
+export function composeProjectEvidence(
+  parts: readonly ProjectEvidenceCompositionPart[],
+): ProjectEvidenceSnapshot {
+  const routes: ProjectEvidenceRoute[] = []
+  const routeKeys = new Set<string>()
+  const assuranceReports: ProjectEvidenceAssurance[] = []
+  const capabilityReports: ProjectEvidenceCapabilities[] = []
+
+  for (const part of parts) {
+    const prefix = part.pathPrefix ?? ""
+    const mapped = remapEvidenceSnapshot(part.evidence, prefix)
+    for (const route of mapped.routes) {
+      const key = routeKeyForEvidence(route.method, route.path)
+      if (routeKeys.has(key)) {
+        throw new Error(`project evidence: duplicate composed route ${route.method} ${route.path}`)
+      }
+      routeKeys.add(key)
+      routes.push(route)
+    }
+    if (mapped.assurance !== undefined) assuranceReports.push(mapped.assurance)
+    if (mapped.capabilities !== undefined) capabilityReports.push(mapped.capabilities)
+  }
+
+  const assurance =
+    assuranceReports.length === 0
+      ? undefined
+      : Object.freeze({
+          ok: assuranceReports.every((report) => report.ok),
+          routes: sortByRoute(assuranceReports.flatMap((report) => report.routes)),
+          findings: Object.freeze(
+            assuranceReports
+              .flatMap((report) => report.findings)
+              .sort(
+                (a, b) =>
+                  a.path.localeCompare(b.path) ||
+                  a.method.localeCompare(b.method) ||
+                  a.code.localeCompare(b.code),
+              ),
+          ),
+        })
+  const capabilities =
+    capabilityReports.length === 0
+      ? undefined
+      : Object.freeze({
+          ok: capabilityReports.every((report) => report.ok),
+          routes: sortByRoute(capabilityReports.flatMap((report) => report.routes)),
+          findings: Object.freeze(
+            capabilityReports
+              .flatMap((report) => report.findings)
+              .sort(
+                (a, b) =>
+                  a.path.localeCompare(b.path) ||
+                  a.method.localeCompare(b.method) ||
+                  a.code.localeCompare(b.code),
+              ),
+          ),
+        })
+  if (assurance !== undefined) validateComposedReportRoutes(assurance, routeKeys, "assurance")
+  if (capabilities !== undefined)
+    validateComposedReportRoutes(capabilities, routeKeys, "capabilities")
+
+  return Object.freeze({
+    version: 1,
+    routes: sortByRoute(routes),
+    ...(assurance === undefined ? {} : { assurance }),
+    ...(capabilities === undefined ? {} : { capabilities }),
+  })
+}
+
 function schemaPartToReflection(
   value: ProjectEvidenceSchemaPart | undefined,
 ): SchemaReflection | undefined {
@@ -311,12 +483,14 @@ function schemaFromEvidence(schema: ProjectEvidenceSchema | undefined): Reflecte
 export function reflectedRoutesFromEvidence(
   evidence: ProjectEvidenceSnapshot,
 ): readonly ReflectedRoute[] {
+  if (evidence.version !== 1) throw new Error("project evidence: unsupported snapshot version")
   return evidence.routes.map((route) => {
     const schema = schemaFromEvidence(route.schema)
     return {
       method: route.method,
       path: route.path,
       ...(schema !== undefined ? { schema } : {}),
+      ...(route.responseContract === undefined ? {} : { responseContract: route.responseContract }),
       ...(route.assurance !== undefined ? { assurance: route.assurance } : {}),
       ...(route.capabilities !== undefined ? { capabilities: route.capabilities } : {}),
       ...(route.family === true ? { family: true } : {}),

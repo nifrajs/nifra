@@ -32,6 +32,33 @@ async function project(name: string, path = "/health"): Promise<string> {
   return cwd
 }
 
+async function webProject(name: string): Promise<string> {
+  const cwd = join(FIXTURES, name)
+  await mkdir(cwd, { recursive: true })
+  await writeFile(
+    join(cwd, "web.ts"),
+    [
+      `import { inProcessClient } from "@nifrajs/client"`,
+      `import { server } from "@nifrajs/core"`,
+      `import { createWebApp } from "@nifrajs/web"`,
+      `const backend = server().get("/health", () => ({ ok: true }))`,
+      `const adapter = { renderToStream: () => new ReadableStream<Uint8Array>() }`,
+      `export const app = createWebApp({ adapter, manifest: { routes: [], layouts: {}, errors: {} }, clientEntry: "/c.js", api: inProcessClient(backend), apiStrip: true })`,
+      "",
+    ].join("\n"),
+  )
+  await writeFile(
+    join(cwd, "nifra.assurance.ts"),
+    [
+      `import { defineAssuranceConfig } from "@nifrajs/core/assurance"`,
+      `import { app } from "./web.ts"`,
+      `export default defineAssuranceConfig({ source: app, policy: { rules: [{ name: "all", match: {}, require: [] }] }, manifest: {} })`,
+      "",
+    ].join("\n"),
+  )
+  return cwd
+}
+
 describe("nifra manifest", () => {
   test("emits byte-identical, hash-verified artifacts", async () => {
     const cwd = await project("emit")
@@ -41,6 +68,18 @@ describe("nifra manifest", () => {
     expect((await parseNifraManifest(first, path)).routes[0]?.path).toBe("/health")
     expect(await runManifestEmit(cwd)).toBe(true)
     expect(await Bun.file(path).text()).toBe(first)
+  })
+
+  test("manifest emission consumes composed page and mounted API evidence", async () => {
+    const cwd = await webProject("composed-web")
+    expect(await runManifestEmit(cwd)).toBe(true)
+    const manifest = await parseNifraManifest(
+      await Bun.file(join(cwd, DEFAULT_MANIFEST_FILE)).text(),
+      join(cwd, DEFAULT_MANIFEST_FILE),
+    )
+    expect(manifest.routes.map((route) => `${route.method} ${route.path}`)).toContain(
+      "GET /api/health",
+    )
   })
 
   test("diff rejects a removed route and tampered artifacts", async () => {

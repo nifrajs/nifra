@@ -10,6 +10,7 @@ import {
   type ModuleReader,
   type ModuleResolver,
   parseStaticImports,
+  renderCheckReport,
   resolveServerOnlyChains,
   scanFetchText,
   scanInterpolatedSql,
@@ -581,6 +582,55 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
         expect(copy.absolutePath !== undefined && isAbsolute(copy.absolutePath)).toBe(true)
         expect(copy.importers.length).toBeGreaterThan(0)
       }
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("single-copy declarations report handled duplicates without a duplicate-install diagnostic", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-dedup-"))
+    try {
+      const app = join(dir, "packages", "app")
+      await mkdir(join(app, "src"), { recursive: true })
+      await mkdir(join(dir, "node_modules", "@nifrajs", "core"), { recursive: true })
+      await mkdir(join(app, "node_modules", "@nifrajs", "core"), { recursive: true })
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({
+          name: "workspace",
+          private: true,
+          workspaces: ["packages/*"],
+          dependencies: { "@nifrajs/core": "1.12.0" },
+          nifra: { singleCopy: ["@nifrajs/core"] },
+        }),
+      )
+      await writeFile(
+        join(app, "package.json"),
+        JSON.stringify({
+          name: "app",
+          dependencies: { "@nifrajs/core": "1.12.0" },
+          nifra: { singleCopy: ["@nifrajs/core"] },
+        }),
+      )
+      await writeFile(join(app, "src", "x.ts"), 'import { server } from "@nifrajs/core"')
+      for (const copy of [dir, app]) {
+        await writeFile(
+          join(copy, "node_modules", "@nifrajs", "core", "package.json"),
+          JSON.stringify({ name: "@nifrajs/core", version: "1.12.0" }),
+        )
+      }
+
+      const result = await collectCheckResult(dir, { lintsOnly: true })
+
+      expect(result.ok).toBe(true)
+      expect(result.diagnostics.some((d) => d.rule === "duplicate-install")).toBe(false)
+      expect(result.identityPreflight?.duplicates).toEqual([])
+      expect(result.identityPreflight?.deduplicated.map((finding) => finding.package)).toEqual([
+        "@nifrajs/core",
+      ])
+      expect(renderCheckReport(result).join("\n")).toContain(
+        "identity-sensitive duplicate installs handled by singleCopy: @nifrajs/core",
+      )
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

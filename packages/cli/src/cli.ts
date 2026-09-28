@@ -151,7 +151,7 @@ Usage:
                                          request field or a removed response field breaks; widening a
                                          request enum or adding a response field doesn't) and fails
                                          closed. Exits non-zero on any breaking change - run it in CI.
-  nifra sdk     --lang <python|go> [--out <file>]
+  nifra sdk     --lang <python|go> [--out <file>] [--strict]
                                          Generate a deterministic non-TypeScript SDK from backend.ts.
   nifra assure  [--config <file>] [--json]  Route-assurance report. Human table by default; --json emits
                                          the {ok, routes, findings} report for agents.
@@ -930,7 +930,11 @@ async function main(): Promise<void> {
     }
     try {
       const { runSdk } = await import("./sdk.ts")
-      await runSdk(process.cwd(), { language, ...(out !== undefined ? { out } : {}) })
+      await runSdk(process.cwd(), {
+        language,
+        ...(out !== undefined ? { out } : {}),
+        ...(argv.includes("--strict") ? { strict: true } : {}),
+      })
     } catch (err) {
       console.error(formatCliError(err))
       process.exitCode = 1

@@ -124,6 +124,71 @@ describe("NF-C019 duplicate route registration", () => {
   })
 })
 
+describe("NF-C024 overlapping route registration", () => {
+  test("flags same-method parameter and static routes with a witness", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend(['  .get("/users/:id", () => ({}))', '  .get("/users/me", () => ({}))']),
+    )
+    const overlaps = findings.filter((f) => f.code === "NF-C024")
+    expect(overlaps).toHaveLength(1)
+    expect(overlaps[0]?.severity).toBe("error")
+    expect(overlaps[0]?.message).toContain("witness path: /users/me")
+    expect(overlaps[0]?.verify).toBe("nifra check --lints-only")
+  })
+
+  test("flags wildcard and nested parameter routes", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend(['  .get("/files/*path", () => ({}))', '  .get("/files/:name/edit", () => ({}))']),
+    )
+    expect(findings.filter((f) => f.code === "NF-C024")).toHaveLength(1)
+  })
+
+  test("does not compare different methods or disjoint routes", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend([
+        '  .get("/users/:id", () => ({}))',
+        '  .post("/users/me", () => ({}))',
+        '  .get("/teams/:id", () => ({}))',
+      ]),
+    )
+    expect(findings.filter((f) => f.code === "NF-C024")).toEqual([])
+  })
+
+  test("supports a route-local suppression pragma", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend([
+        '  .get("/users/:id", () => ({}))',
+        "  // nifra-expect route-overlap",
+        '  .get("/users/me", () => ({}))',
+      ]),
+    )
+    expect(findings.filter((f) => f.code === "NF-C024")).toEqual([])
+  })
+
+  test("does not crash on malformed route facts", async () => {
+    const facts = projectFacts("x", "")
+    const findings = await runRuleRegistry(
+      {
+        root: "/tmp/project",
+        sources: facts.source,
+        project: {
+          ...facts,
+          routes: [
+            { file: "x", line: 1, method: "GET", path: "users/:id", snippet: "" },
+            { file: "x", line: 2, method: "GET", path: "/users/:id", snippet: "" },
+          ],
+        },
+      },
+      routeRules,
+    )
+    expect(findings.filter((f) => f.code === "NF-C024")).toEqual([])
+  })
+})
+
 test("route rules are total over malformed project facts", async () => {
   const facts = projectFacts("x", "")
   const findings = await runRuleRegistry(

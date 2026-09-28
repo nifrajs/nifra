@@ -1,7 +1,7 @@
 import type * as TSApi from "typescript"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
-import { importProjectTypeScript } from "../internal/typescript-import.ts"
 import type { CheckRule, SourceIndex } from "./index.ts"
+import { loadRuleTypeScript } from "./typescript.ts"
 
 /**
  * NF-C020 - the island cleanup lint. An island enhancer (`@nifrajs/web/islands`) runs once and must
@@ -126,7 +126,9 @@ export const islandCleanupRule: CheckRule = {
   code: "NF-C020",
   title: "Island enhancer cleanup check",
   async scan(ctx) {
-    const ts = await importProjectTypeScript(ctx.root)
+    const loaded = await loadRuleTypeScript(ctx)
+    if (loaded.diagnostics !== undefined) return loaded.diagnostics
+    const ts = loaded.compiler
     if (ts === undefined) {
       return [
         diagnostic({

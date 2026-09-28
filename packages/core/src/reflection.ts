@@ -42,6 +42,10 @@ export interface SchemaReflection {
 }
 
 export interface ReflectedRouteSchema {
+  /** Explicit external-protocol mode; the handler owns raw request parsing. */
+  readonly wire?: "raw"
+  /** Validation/authentication ordering selected for this route. */
+  readonly validationOrder?: "validate-before-auth" | "auth-before-validation"
   /** Effective transport body policy; surfaced so upload/streaming exemptions are auditable. */
   readonly bodyLimit?: number | "unlimited"
   readonly bodyLimitReason?: string
@@ -61,6 +65,8 @@ export interface ReflectedRoute {
   readonly method: string
   readonly path: string
   readonly schema?: ReflectedRouteSchema
+  /** Runtime response-contract mode, when a response-contract plugin covered the route. */
+  readonly responseContract?: "warn" | "enforce"
   readonly assurance?: readonly AssuranceEvidence[]
   readonly capabilities?: readonly string[]
   /** Set when the route is a declared dynamic route family (a runtime-resolved template like
@@ -179,6 +185,11 @@ const reflectedRouteSchema = (value: unknown): ReflectedRouteSchema | undefined 
     }
   }
   return {
+    ...(schema.wire === "raw" ? { wire: "raw" as const } : {}),
+    ...(schema.validationOrder === "auth-before-validation" ||
+    schema.validationOrder === "validate-before-auth"
+      ? { validationOrder: schema.validationOrder }
+      : {}),
     ...(schema.bodyLimit === "unlimited" || typeof schema.bodyLimit === "number"
       ? { bodyLimit: schema.bodyLimit }
       : {}),
@@ -242,6 +253,9 @@ export function reflectRoutes(source: unknown): readonly ReflectedRoute[] {
       method: route.method.toUpperCase(),
       path: route.path,
       ...(schema !== undefined ? { schema } : {}),
+      ...(route.responseContract === "warn" || route.responseContract === "enforce"
+        ? { responseContract: route.responseContract }
+        : {}),
       ...(assurance !== undefined ? { assurance } : {}),
       ...(capabilities.length > 0 ? { capabilities } : {}),
       ...(route.family === true ? { family: true } : {}),

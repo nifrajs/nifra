@@ -1,8 +1,13 @@
+import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import {
   type AnyServer,
+  type AuthenticationInput,
+  type AuthHeaders,
+  authenticated,
   defineIdentityPlugin,
   isSameOriginPath,
   type ResponseResult,
+  rejected,
   type Server,
   status,
 } from "@nifrajs/core/server"
@@ -84,8 +89,8 @@ export function betterAuth(auth: BetterAuthLike, options: BetterAuthOptions = {}
 
 /**
  * Resolve the better-auth session for a request - a thin, typed wrapper over `auth.api.getSession`.
- * Returns `null` when unauthenticated. Takes the raw `Request` so it works in both server handlers
- * (`c.req`) and web loaders/actions (`request`).
+ * Returns `null` when unauthenticated. Accepts a raw `Request` for handlers/loaders, native
+ * `Headers`, or the body-blind `AuthHeaders` capsule supplied by `authenticate()`.
  *
  * ```ts
  * const session = await getSession(auth, c.req) // typed: { user, session } | null
@@ -94,11 +99,21 @@ export function betterAuth(auth: BetterAuthLike, options: BetterAuthOptions = {}
  */
 export function getSession<A extends BetterAuthLike>(
   auth: A,
-  request: Request,
+  input: Request | Headers | AuthHeaders,
 ): Promise<SessionOf<A> | null> {
-  // `auth` is the concrete `A`, so `getSession`'s real return type is recovered by `SessionOf<A>`;
-  // the cast bridges the erased `Promise<unknown>` view inside this generic body.
-  return auth.api.getSession({ headers: request.headers }) as Promise<SessionOf<A> | null>
+  // Always give the provider a detached Headers object. That keeps the authentication boundary
+  // body-blind and prevents a provider from mutating the request's live header view. The
+  // AuthenticationInput capsule intentionally is not a Headers instance, so this copy is also the
+  // adapter between the narrow core auth API and better-auth's native `{ headers: Headers }` shape.
+  const source = "headers" in input ? input.headers : input
+  const headers = new Headers()
+  source.forEach((value, name) => {
+    headers.append(name, value)
+  })
+  const result = auth.api.getSession({ headers }) as Promise<SessionOf<A> | null | undefined>
+  // Some adapters use `undefined` for an absent session even though better-auth documents `null`.
+  // Normalize both forms so every caller has one fail-closed branch.
+  return result.then((session) => (session == null ? null : session))
 }
 
 /**
@@ -112,15 +127,17 @@ export interface RequireSessionOptions {
 const rejection = (options: RequireSessionOptions): ResponseResult => {
   const to = options.redirectTo
   if (to === undefined) return status(401, { ok: false, error: "unauthorized" })
+  return status(302, undefined, { headers: { location: to } })
+}
+
+function assertSafeRedirectTo(to: string | undefined, owner: "requireSession" | "authed"): void {
+  if (to === undefined || isSameOriginPath(to)) return
   // The kernel's same-origin predicate, shared with `@nifrajs/web`'s `redirect` and the
   // `@nifrajs/auth` guards: a single leading "/", never "//host", an absolute URL, or a form a URL
   // parser resolves off-origin. `redirectTo` is dev-authored, so a bad value is a config bug - fail loud.
-  if (!isSameOriginPath(to)) {
-    throw new Error(
-      `[nifra/better-auth] requireSession redirectTo must be a same-origin path beginning with "/" - never "//", a backslash, or a control character (got ${JSON.stringify(to)})`,
-    )
-  }
-  return status(302, undefined, { headers: { location: to } })
+  throw new Error(
+    `[nifra/better-auth] ${owner} redirectTo must be a same-origin path beginning with "/" - never "//", a backslash, or a control character (got ${JSON.stringify(to)})`,
+  )
 }
 
 /**
@@ -137,6 +154,7 @@ export async function requireSession<A extends BetterAuthLike>(
   request: Request,
   options: RequireSessionOptions = {},
 ): Promise<SessionOf<A>> {
+  assertSafeRedirectTo(options.redirectTo, "requireSession")
   const session = await getSession(auth, request)
   if (session !== null) return session
   throw rejection(options)
@@ -197,6 +215,72 @@ export type WithPrincipal<S extends AnyServer, P> =
 
 const forbidden = (): ResponseResult => status(403, { ok: false, error: "forbidden" })
 
+type PrincipalMapping<A extends BetterAuthLike, RequireTenant extends boolean> =
+  | {
+      readonly kind: "authenticated"
+      readonly principal: PrincipalFor<SessionUserOf<A>, RequireTenant>
+    }
+  | { readonly kind: "forbidden" }
+
+function recordOf(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
+/**
+ * Validate and map a provider session before it becomes trusted handler context. A concrete
+ * better-auth type is useful to application code, but it cannot replace these runtime checks: a
+ * broken database adapter or a forged test double must never produce a principal with an empty id.
+ */
+function principalFromSession<
+  A extends BetterAuthLike,
+  const RequireTenant extends boolean = false,
+>(
+  session: SessionOf<A>,
+  options?: AuthedOptions<SessionUserOf<A>> & { readonly requireTenant?: RequireTenant },
+): PrincipalMapping<A, RequireTenant> {
+  const sessionRecord = recordOf(session)
+  const userRecord = recordOf(sessionRecord?.user)
+  const sessionFields = recordOf(sessionRecord?.session)
+  const userId = userRecord?.id
+  const sessionId = sessionFields?.id
+  if (
+    userRecord === undefined ||
+    typeof userId !== "string" ||
+    userId.trim().length === 0 ||
+    sessionFields === undefined ||
+    typeof sessionId !== "string" ||
+    sessionId.trim().length === 0
+  ) {
+    throw new Error("better-auth returned an invalid session")
+  }
+
+  const user = sessionRecord?.user as SessionUserOf<A>
+  const resolveTenant =
+    options?.tenantOf ??
+    ((value: SessionUserOf<A>): string | undefined => {
+      const record = value as { readonly tenantId?: unknown; readonly orgId?: unknown }
+      const candidate = record.tenantId ?? record.orgId
+      return typeof candidate === "string" ? candidate : undefined
+    })
+  const resolved = resolveTenant(user) as unknown
+  if (resolved !== undefined && typeof resolved !== "string") {
+    throw new Error("better-auth returned an invalid tenant")
+  }
+  const tenantId =
+    resolved === undefined || resolved.trim().length === 0 ? undefined : (resolved as string)
+
+  if (options?.requireTenant === true && tenantId === undefined) return { kind: "forbidden" }
+
+  const principal: Principal<SessionUserOf<A>> =
+    tenantId === undefined ? { user, userId, sessionId } : { user, userId, sessionId, tenantId }
+  return {
+    kind: "authenticated",
+    principal: principal as PrincipalFor<SessionUserOf<A>, RequireTenant>,
+  }
+}
+
 /**
  * Resolve the better-auth session and map it to a {@link Principal}, or **throw a Nifra `ResponseResult`** so the
  * handler never runs unauthenticated:
@@ -228,38 +312,14 @@ export async function requirePrincipal<
   )
   // better-auth sessions are `{ user: { id: string, ... }, session: { id: string, ... } }`; view the
   // fields we map. The concrete user type flows through `SessionUserOf<A>` for `principal.user`.
-  const view = session as unknown as {
-    readonly user: SessionUserOf<A>
-    readonly session: { readonly id: string }
-  }
-  const user = view.user
-  const userId = (user as { readonly id: string }).id
-  const sessionId = view.session.id
-
-  const resolveTenant =
-    options?.tenantOf ??
-    ((u: SessionUserOf<A>): string | undefined => {
-      const record = u as { readonly tenantId?: unknown; readonly orgId?: unknown }
-      const value = record.tenantId ?? record.orgId
-      return typeof value === "string" ? value : undefined
-    })
-  // A blank tenant is NOT a resolved tenant: a NOT-NULL column defaulted to "" (or a custom `tenantOf`
-  // returning "") must fail closed under `requireTenant`, never bind the principal to an empty tenant.
-  const resolved = resolveTenant(user)
-  const tenantId = resolved === undefined || resolved === "" ? undefined : resolved
-
-  if (options?.requireTenant === true && tenantId === undefined) throw forbidden()
-
-  // Build the principal without ever assigning `tenantId: undefined` (exactOptionalPropertyTypes). The
-  // single cast maps our own constructed object onto the conditional `PrincipalFor` return - the runtime
-  // shape is exactly the mapped session, no untrusted data crosses here.
-  const principal: Principal<SessionUserOf<A>> =
-    tenantId === undefined ? { user, userId, sessionId } : { user, userId, sessionId, tenantId }
-  return principal as PrincipalFor<SessionUserOf<A>, RequireTenant>
+  const mapped = principalFromSession(session, options)
+  if (mapped.kind === "forbidden") throw forbidden()
+  return mapped.principal
 }
 
 /**
- * A nifra plugin that derives a fail-closed {@link Principal} onto every downstream handler as
+ * A nifra plugin that authenticates the request before untrusted input validation and threads a
+ * fail-closed {@link Principal} onto every downstream handler as
  * `c.principal`. After `server().use(authed(auth))`, `c.principal.user` / `c.principal.userId` are typed
  * and **non-null** - a handler CANNOT run without an authenticated caller, so the guard can't be
  * forgotten. Works in both modes:
@@ -267,7 +327,7 @@ export async function requirePrincipal<
  * ```ts
  * // inline
  * const app = server().use(authed(auth)).get("/me", (c) => ({ id: c.principal.userId }))
- * // contract-first (the pre-applied derive threads `principal` into the contract's handlers)
+ * // contract-first (the pre-applied auth stage threads `principal` into the contract's handlers)
  * const api = implement(contract, handlers, server().use(authed(auth, { requireTenant: true })))
  * ```
  *
@@ -277,7 +337,7 @@ export async function requirePrincipal<
  * a `& { pluginName }` intersection that defeats the generic inference of `use`'s context-threading
  * overload and collapses the server - and its typed client - to `any` (see `@nifrajs/core` plugin docs).
  * Threading a NON-NULL principal is the whole point, so `authed` stays unnamed and generic. Applying it
- * twice simply derives twice (the second resolve overwrites with the same value); scope it once per app.
+ * twice simply installs two auth stages; scope it once per app so the policy is unambiguous.
  */
 export function authed<A extends BetterAuthLike, const RequireTenant extends boolean = false>(
   auth: A,
@@ -285,8 +345,36 @@ export function authed<A extends BetterAuthLike, const RequireTenant extends boo
 ): <S extends AnyServer>(
   app: S,
 ) => WithPrincipal<S, PrincipalFor<SessionUserOf<A>, RequireTenant>> {
-  return <S extends AnyServer>(app: S) =>
-    app.derive(async (c: { readonly req: Request }) => ({
-      principal: await requirePrincipal(auth, c.req, options),
-    })) as unknown as WithPrincipal<S, PrincipalFor<SessionUserOf<A>, RequireTenant>>
+  assertSafeRedirectTo(options?.redirectTo, "authed")
+  const plugin = <S extends AnyServer>(app: S) =>
+    app.authenticate({
+      id: "better-auth",
+      mode: "async",
+      run: async (input: AuthenticationInput<unknown>) => {
+        try {
+          const session = await getSession(auth, input.headers)
+          if (session === null) {
+            return rejected(
+              "unauthenticated",
+              rejection(
+                options?.redirectTo === undefined ? {} : { redirectTo: options.redirectTo },
+              ),
+            )
+          }
+          const mapped = principalFromSession(session, options)
+          if (mapped.kind === "forbidden") return rejected("forbidden")
+          return authenticated(mapped.principal)
+        } catch {
+          // Provider failures, malformed rows, and malformed custom tenant resolvers all fail closed
+          // without leaking database/auth detail to the client. The core stage turns this into a
+          // stable 503, while 401/403 remain reserved for the two intentional policy decisions.
+          return rejected("unavailable")
+        }
+      },
+    }) as unknown as WithPrincipal<S, PrincipalFor<SessionUserOf<A>, RequireTenant>>
+  return withRouteAssurance(plugin, {
+    id: NIFRA_ASSURANCE.AUTHENTICATED,
+    source: "better-auth",
+    scope: "subsequent",
+  })
 }

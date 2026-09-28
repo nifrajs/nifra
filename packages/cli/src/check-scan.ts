@@ -10,7 +10,11 @@ import { dirname, isAbsolute, join, resolve, sep } from "node:path"
 import { Glob } from "bun"
 import type * as TSApi from "typescript"
 import type { SourceFacts } from "./internal/source-facts.ts"
-import { importProjectTypeScript, type TypeScriptApi } from "./internal/typescript-import.ts"
+import {
+  loadProjectTypeScript,
+  type TypeScriptApi,
+  type TypeScriptSourceIndex,
+} from "./internal/typescript-import.ts"
 import { commentBlockMarkerReason } from "./rules/comment-markers.ts"
 
 export interface SourceFinding {
@@ -1272,14 +1276,25 @@ export function scanInterpolatedSql(
  * answer a security rule must never give when it did not run.
  */
 export async function scanProjectSql(cwd: string): Promise<SourceFinding[] | undefined> {
-  const ts = await importProjectTypeScript(cwd)
-  if (ts === undefined) return undefined
+  const sourceFiles: Array<{ readonly file: string; readonly content: string }> = []
+  await walkSource(cwd, (file, content) => sourceFiles.push({ file, content }))
+  const contents = new Map(sourceFiles.map(({ file, content }) => [file, content]))
+  const sourceIndex: TypeScriptSourceIndex = {
+    files: sourceFiles.map(({ file }) => file),
+    read: (file) => contents.get(file),
+  }
+  const loaded = await loadProjectTypeScript(cwd, undefined, sourceIndex)
+  if (loaded.compiler === undefined) return undefined
   const out: SourceFinding[] = []
   const imports = createProjectSqlImports(cwd)
-  await walkSource(cwd, (rel, content) =>
-    out.push(...scanInterpolatedSql(rel, content, ts, imports)),
-  )
-  return out.sort(bySite)
+  try {
+    for (const { file, content } of sourceFiles) {
+      out.push(...scanInterpolatedSql(file, content, loaded.compiler, imports))
+    }
+    return out.sort(bySite)
+  } finally {
+    await loaded.session?.close()
+  }
 }
 
 /** A declaration file. Excluded from cross-module resolution: `declare const X: string` has no
@@ -1767,7 +1782,11 @@ async function gitIgnored(cwd: string, rels: readonly string[]): Promise<Set<str
 export async function walkSource(
   cwd: string,
   visit: (rel: string, content: string) => void,
-  opts: { readonly includeTests?: boolean } = {},
+  opts: {
+    readonly includeTests?: boolean
+    /** Additional project-relative paths to exclude from this scan. */
+    readonly ignore?: (relativePath: string) => boolean
+  } = {},
 ): Promise<void> {
   const skip = opts.includeTests === true ? IGNORED_DIR : IGNORED
   // List candidates first (cheap - no reads), drop the built-in ignores, then exclude gitignored paths in
@@ -1775,7 +1794,7 @@ export async function walkSource(
   const rels: string[] = []
   for await (const rawRel of new Glob("**/*.{ts,tsx,mts,cts}").scan({ cwd, dot: false })) {
     const rel = normalizeProjectPath(rawRel)
-    if (!skip.test(rel)) rels.push(rel)
+    if (!skip.test(rel) && (opts.ignore === undefined || !opts.ignore(rel))) rels.push(rel)
   }
   const ignored = await gitIgnored(cwd, rels)
   for (const rel of rels) {

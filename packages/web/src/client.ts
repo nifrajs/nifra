@@ -20,6 +20,19 @@ import {
 } from "./navigation.ts"
 import type { ClientRouter } from "./router.ts"
 
+/** Read the nonce carried by the current server-rendered document, if any. */
+export function currentDocumentNonce(): string | undefined {
+  if (typeof document === "undefined") return undefined
+  const documentLike = document as unknown as {
+    querySelector?: (selector: string) => Element | null
+  }
+  const script = documentLike.querySelector?.("script[nonce]")
+  if (script === null || script === undefined) return undefined
+  const property = (script as Element & { readonly nonce?: unknown }).nonce
+  if (typeof property === "string" && property !== "") return property
+  return script.getAttribute("nonce") ?? undefined
+}
+
 /**
  * Everything the generated client entry needs, re-exported here so that entry imports ONE module and
  * that module is DOM-only. It used to take these from `@nifrajs/web`, whose graph includes `renderPage`
@@ -532,6 +545,7 @@ export function installHistory(
  * the first navigation cleanly takes over from the server-rendered head.
  */
 export function applyHead(head: Meta): void {
+  const documentNonce = currentDocumentNonce()
   if (head.title !== undefined) document.title = head.title
   // `<html lang>`/`<html dir>` - applied AUTHORITATIVELY (unlike `title`, which is left alone when the
   // route omits it), mirroring the SSR shell's defaulting exactly: `lang` falls back to `"en"`, `dir` is
@@ -582,6 +596,11 @@ export function applyHead(head: Meta): void {
     if (!EXECUTABLE_SCRIPT_TYPES.has(s.type)) {
       throw new TypeError(
         `[nifra/web] unsupported executable script type ${JSON.stringify(s.type)}`,
+      )
+    }
+    if (documentNonce !== undefined && s.nonce !== documentNonce) {
+      throw new TypeError(
+        "[nifra/web] executable head scripts must use the same CSP nonce as the document",
       )
     }
     const el = document.createElement("script")

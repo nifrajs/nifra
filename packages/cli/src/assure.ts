@@ -92,10 +92,24 @@ export async function loadAssuranceConfig(
 
 export function formatAssuranceReport(report: AssuranceReport): string {
   if (report.ok) {
+    const contracted = report.routes.filter((route) => route.responseContract !== undefined)
+    const enforced = contracted.filter((route) => route.responseContract === "enforce").length
+    const warned = contracted.filter((route) => route.responseContract === "warn").length
+    const unchecked = contracted.filter((route) => route.responseContract === "unchecked").length
+    const runtimeContract =
+      contracted.length === 0
+        ? " No declared response/error schemas were found."
+        : " Runtime response contracts: " +
+          enforced +
+          " enforced, " +
+          warned +
+          " warn-only, " +
+          unchecked +
+          " typed-only."
     const capability = report.capabilities
       ? ` Capability assurance covered ${report.capabilities.routes.length} route${report.capabilities.routes.length === 1 ? "" : "s"}.`
       : ""
-    return `✓ route assurance: ${report.routes.length} route${report.routes.length === 1 ? "" : "s"} classified; all required evidence is present.${capability}`
+    return `✓ route assurance: ${report.routes.length} route${report.routes.length === 1 ? "" : "s"} classified; all required evidence is present.${capability}${runtimeContract}`
   }
   const messages = [
     ...report.findings.map((finding) => finding.message),

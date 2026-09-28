@@ -385,6 +385,21 @@ test("unsafeInlineScript makes executable code explicit and nonce-bound", async 
   )
 })
 
+test("request-bound document nonces reject stale executable head descriptors", () => {
+  expect(() =>
+    renderPage({
+      adapter: stub,
+      chain: [null],
+      data: null,
+      clientEntry: "/c.js",
+      nonce: "request-nonce",
+      head: {
+        unsafeScript: [{ unsafe: true, type: "module", nonce: "stale-nonce", content: "boot()" }],
+      },
+    }),
+  ).toThrow(/same CSP nonce/)
+})
+
 test("the executable slot's type is an allowlist, not an escaped value", async () => {
   // `nonce` was escaped and `type` was not, in the same template literal. `unsafeScript` is a public
   // field and the helper is only a convenience, so a hand-built descriptor closed the attribute and

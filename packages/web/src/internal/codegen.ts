@@ -86,7 +86,7 @@ export function generateClientEntry(
     // `/client`, never the root: the root's graph carries the server (renderPage, the static-file
     // server), and Vite's dev server evaluates what it is given instead of tree-shaking it.
     'import { createClientRouter, createMatcher, mergeHeads, resolveMeta } from "@nifrajs/web/client"',
-    'import { applyHead, installForms, installHistory, signalHydrated, waitForStyles } from "@nifrajs/web/client"',
+    'import { applyHead, currentDocumentNonce, installForms, installHistory, signalHydrated, waitForStyles } from "@nifrajs/web/client"',
     // Namespace import: `errorBoundary` is optional (an adapter may not export it). A namespace member
     // access yields `undefined` if absent - unlike a named import, which would be a link error.
     `import * as __adapter from ${JSON.stringify(clientModule)}`,
@@ -237,7 +237,8 @@ export function generateClientEntry(
     "    if (!s.pending) {",
     // `origin: location.origin` matches the SSR `originOf(req)` (both are `URL.origin` for the same
     // page URL), so a soft-nav re-resolves the SAME absolute canonical/og:url - no head drift.
-    "      const args = { data: s.data, params: s.params, origin: location.origin }",
+    "      const nonce = currentDocumentNonce()",
+    "      const args = { data: s.data, params: s.params, origin: location.origin, ...(nonce === undefined ? {} : { nonce }) }",
     "      applyHead(mergeHeads((metas[s.routeId] ?? [undefined]).map((m) => resolveMeta(m, args))))",
     "    }",
     "  })",

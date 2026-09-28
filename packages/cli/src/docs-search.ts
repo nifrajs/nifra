@@ -10,7 +10,7 @@
  * embedding infra would be complexity without a payoff.
  */
 
-import { countBodyHits, queryTermGroups, tokenize, tokenSetHas } from "./search-terms.ts"
+import { countBodyHits, queryTermGroups, tokenize, tokenSetScore } from "./search-terms.ts"
 
 export interface DocSection {
   readonly heading: string
@@ -83,10 +83,17 @@ export function searchSections(
     const prepared =
       "headingTokens" in section && "bodyLower" in section ? section : prepareSection(section)
     let score = 0
+    let matchedTerms = 0
     for (const term of terms) {
-      if (tokenSetHas(prepared.headingTokens, term)) score += 8
-      score += countBodyHits(prepared.bodyLower, term, 5)
+      const headingScore = tokenSetScore(prepared.headingTokens, term)
+      if (headingScore > 0) score += 8 + headingScore * 12
+      const bodyHits = countBodyHits(prepared.bodyLower, term, 5)
+      if (headingScore > 0 || bodyHits > 0) matchedTerms += 1
+      score += bodyHits
     }
+    // A result that matches every query concept should beat a section that only happens to repeat
+    // one highly frequent word, even when that single word appears in a curated heading.
+    score += matchedTerms * 26
     if (score > 0) scored.push({ heading: section.heading, body: section.body, score })
   }
   return scored.sort((a, b) => b.score - a.score).slice(0, limit)

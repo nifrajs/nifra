@@ -153,6 +153,23 @@ describe("templates: the app root composes rather than registers", () => {
   }
 })
 
+describe("templates: declared responses are enforced at runtime", () => {
+  const appFiles = [
+    "template/src/app.ts",
+    "template-batteries/src/app.ts",
+    "template-site/backend.ts",
+    "template-isr/backend.ts",
+  ]
+
+  for (const file of appFiles) {
+    test(`${file} installs response-contract enforcement before route composition`, async () => {
+      const source = await readFile(join(TEMPLATES_DIR, file), "utf8")
+      expect(source).toContain('from "@nifrajs/core/response-contract"')
+      expect(source).toContain('.use(responseContract("enforce"))')
+    })
+  }
+})
+
 /**
  * A template that ships `nifra.assurance.ts` ships an ARMED gate: the policy refuses an unauthenticated
  * write, an unbounded mutation, and a route reaching a database it never declared.

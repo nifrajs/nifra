@@ -139,7 +139,7 @@ exports[`verification golden output: nifra check dirty project: --json 1`] = `
 }"
 `;
 
-exports[`verification golden output: nifra assure full assurance project: human report 1`] = `"✓ route assurance: 1 route classified; all required evidence is present. Capability assurance covered 1 route."`;
+exports[`verification golden output: nifra assure full assurance project: human report 1`] = `"✓ route assurance: 1 route classified; all required evidence is present. Capability assurance covered 1 route. No declared response/error schemas were found."`;
 
 exports[`verification golden output: nifra assure full assurance project: --json 1`] = `
 "{
@@ -184,6 +184,8 @@ exports[`verification golden output: nifra levels full assurance project: human 
 ✓ L2 capability lockfile
 ✓ L3 route manifest
 ✓ L4 invariant-tested
+[nifra] response contracts: none (0 enforced, 0 warn-only, 0 typed-only)
+    - no response/error schemas declared
 [nifra] verification level: L4"
 `;
 
@@ -221,7 +223,17 @@ exports[`verification golden output: nifra levels full assurance project: --json
       "ok": true,
       "reasons": []
     }
-  ]
+  ],
+  "responseContracts": {
+    "declared": 0,
+    "enforced": 0,
+    "warnOnly": 0,
+    "typedOnly": 0,
+    "status": "none",
+    "reasons": [
+      "no response/error schemas declared"
+    ]
+  }
 }"
 `;
 
@@ -235,5 +247,7 @@ exports[`verification golden output: nifra levels plain project (no config): lad
     - [nifra] route assurance config not found: <cwd>/nifra.assurance.ts - create nifra.assurance.ts with a default defineAssuranceConfig({ source, policy }) export.
 ✗ L4 invariant-tested
     - [nifra] route assurance config not found: <cwd>/nifra.assurance.ts - create nifra.assurance.ts with a default defineAssuranceConfig({ source, policy }) export.
+[nifra] response contracts: none (0 enforced, 0 warn-only, 0 typed-only)
+    - no response/error schemas declared
 [nifra] verification level: L0"
 `;

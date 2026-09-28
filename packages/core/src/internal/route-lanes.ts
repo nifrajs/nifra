@@ -31,6 +31,7 @@ export interface RouteLaneSelection {
 
 export function selectRouteLanes(options: {
   readonly schema: RouteSchema | undefined
+  readonly hasAuth?: boolean
   readonly hasIdempotency: boolean
   readonly hasLedger: boolean
   readonly hasResponseContract: boolean
@@ -56,7 +57,11 @@ export function selectRouteLanes(options: {
     defaultOnValidationError,
   } = options
 
+  const authBeforeValidation =
+    options.hasAuth === true || schema?.validationOrder === "auth-before-validation"
+
   const bare =
+    !authBeforeValidation &&
     schema?.params === undefined &&
     schema?.headers === undefined &&
     schema?.body === undefined &&
@@ -76,6 +81,7 @@ export function selectRouteLanes(options: {
   // exactly `validationError(issues)`, so any recovery semantics keep the generic lane.
   const fusedQuery =
     !bare &&
+    !authBeforeValidation &&
     !hasResponseContract &&
     schema?.query !== undefined &&
     schema.body === undefined &&
@@ -92,6 +98,7 @@ export function selectRouteLanes(options: {
     around === 0
 
   const bodyOnly =
+    !authBeforeValidation &&
     !hasResponseContract &&
     schema?.body !== undefined &&
     schema.query === undefined &&
@@ -104,6 +111,7 @@ export function selectRouteLanes(options: {
 
   const fusedBody =
     !bare &&
+    !authBeforeValidation &&
     bodyOnly &&
     schema.onValidationError === undefined &&
     !defaultOnValidationError &&
@@ -111,21 +119,23 @@ export function selectRouteLanes(options: {
     !hasLedger &&
     around === 0
 
-  const lane: RouteExecutionLane = bare
-    ? "bare"
-    : bodyOnly
-      ? "body"
-      : !hasResponseContract &&
-          schema?.body === undefined &&
-          schema?.query !== undefined &&
-          schema.params === undefined &&
-          schema.headers === undefined &&
-          derives === 0 &&
-          beforeHandle === 0 &&
-          afterHandle === 0 &&
-          onError === 0
-        ? "query"
-        : "lifecycle"
+  const lane: RouteExecutionLane = authBeforeValidation
+    ? "lifecycle"
+    : bare
+      ? "bare"
+      : bodyOnly
+        ? "body"
+        : !hasResponseContract &&
+            schema?.body === undefined &&
+            schema?.query !== undefined &&
+            schema.params === undefined &&
+            schema.headers === undefined &&
+            derives === 0 &&
+            beforeHandle === 0 &&
+            afterHandle === 0 &&
+            onError === 0
+          ? "query"
+          : "lifecycle"
 
   // Lifecycle routes with no params schema are the common middleware shape: derive/before plus an
   // optional query or body schema. Select their complete validation stage at registration so the
@@ -152,6 +162,7 @@ export function selectRouteLanes(options: {
   // body schema are routed to the `body-derive-before` / `body-derive-before-after` lane below.
   const lifecycleHookLane =
     lane === "lifecycle" &&
+    !authBeforeValidation &&
     !hasResponseContract &&
     !hasDecorations &&
     !hasIdempotency &&
@@ -177,6 +188,7 @@ export function selectRouteLanes(options: {
   // win `fusedBody` already gives for the no-hooks body shape.
   const fusedBodyLifecycle =
     lane === "lifecycle" &&
+    !authBeforeValidation &&
     schema?.body !== undefined &&
     schema?.query === undefined &&
     schema?.params === undefined &&

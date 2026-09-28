@@ -107,4 +107,31 @@ describe("reflectRoutes - dynamic route family (schema.family)", () => {
     const app = server().get("/api/health", () => ({ ok: true }))
     expect(reflectRoutes(app).find((r) => r.path === "/api/health")?.family).toBeUndefined()
   })
+
+  test("reflects raw wire mode and validation ordering", () => {
+    const app = server().post(
+      "/webhook",
+      { wire: "raw", validationOrder: "auth-before-validation" },
+      () => new Response("ok"),
+    )
+    const route = reflectRoutes(app)[0]
+    expect(route?.schema).toEqual({
+      wire: "raw",
+      validationOrder: "auth-before-validation",
+    })
+  })
+
+  test("omits invalid route metadata instead of inventing policy", () => {
+    const route = reflectRoutes([
+      {
+        method: "POST",
+        path: "/webhook",
+        schema: {
+          wire: "json",
+          validationOrder: "before-auth",
+        },
+      },
+    ])[0]
+    expect(route?.schema).toEqual({})
+  })
 })

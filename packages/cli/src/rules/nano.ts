@@ -1,7 +1,7 @@
 import type * as TSApi from "typescript"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
-import { importProjectTypeScript } from "../internal/typescript-import.ts"
 import type { CheckRule, SourceIndex } from "./index.ts"
+import { loadRuleTypeScript } from "./typescript.ts"
 
 /**
  * The nano lane lints (`@nifrajs/web/nano`). nano is deliberately explicit - every reactive edge is a
@@ -165,7 +165,9 @@ export const nanoBindCleanupRule: CheckRule = {
   code: "NF-C021",
   title: "nano binding cleanup check",
   async scan(ctx) {
-    const ts = await importProjectTypeScript(ctx.root)
+    const loaded = await loadRuleTypeScript(ctx)
+    if (loaded.diagnostics !== undefined) return loaded.diagnostics
+    const ts = loaded.compiler
     if (ts === undefined) return [toolchainMissing("NF-C021")]
     const findings: Diagnostic[] = []
     for (const file of ctx.project.source.files) {
@@ -205,7 +207,9 @@ export const nanoListKeyRule: CheckRule = {
   code: "NF-C022",
   title: "nano bindList key check",
   async scan(ctx) {
-    const ts = await importProjectTypeScript(ctx.root)
+    const loaded = await loadRuleTypeScript(ctx)
+    if (loaded.diagnostics !== undefined) return loaded.diagnostics
+    const ts = loaded.compiler
     if (ts === undefined) return [toolchainMissing("NF-C022")]
     const findings: Diagnostic[] = []
     for (const file of ctx.project.source.files) {
@@ -246,7 +250,9 @@ export const nanoComputedDepsRule: CheckRule = {
   code: "NF-C023",
   title: "nano computed deps check",
   async scan(ctx) {
-    const ts = await importProjectTypeScript(ctx.root)
+    const loaded = await loadRuleTypeScript(ctx)
+    if (loaded.diagnostics !== undefined) return loaded.diagnostics
+    const ts = loaded.compiler
     if (ts === undefined) return [toolchainMissing("NF-C023")]
     const findings: Diagnostic[] = []
     for (const file of ctx.project.source.files) {

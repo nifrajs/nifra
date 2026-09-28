@@ -16,7 +16,7 @@ import {
   snapshotCapabilities,
   validCapabilityId,
 } from "@nifrajs/core/capabilities"
-import { reflectRoutes } from "@nifrajs/core/reflection"
+import { type ReflectedRoute, reflectRoutes } from "@nifrajs/core/reflection"
 import { scanStaticRouteText, stripComments, walkSource } from "./check.ts"
 
 const EFFECT_IMPORT =
@@ -317,6 +317,7 @@ export async function collectCapabilityProjectReport(
   cwd: string,
   source: unknown,
   policyInput: CapabilityPolicy,
+  options: { readonly routes?: readonly ReflectedRoute[] } = {},
 ): Promise<CapabilityProjectReport> {
   const policy = defineCapabilityPolicy(policyInput)
   const sources = await readSources(cwd)
@@ -332,7 +333,8 @@ export async function collectCapabilityProjectReport(
   const evidenceRoutes = []
   const violations: CapabilityImportViolation[] = []
   const truncations: CapabilityProvenanceTruncation[] = []
-  for (const route of reflectRoutes(source)) {
+  const reflectedRoutes = options.routes ?? reflectRoutes(source)
+  for (const route of reflectedRoutes) {
     const modules = new Set(automatic.get(routeKey(route.method, route.path)) ?? [])
     for (const association of policy.provenance.routeModules ?? []) {
       if (
@@ -394,7 +396,10 @@ export async function collectCapabilityProjectReport(
     }
   }
 
-  const evaluated = evaluateCapabilityAssurance(source, policy, { routes: evidenceRoutes })
+  const evaluated = evaluateCapabilityAssurance(source, policy, {
+    routes: evidenceRoutes,
+    reflectedRoutes,
+  })
   const report: CapabilityAssuranceReport =
     violations.length === 0 && truncations.length === 0 && unmatchedSeams.length === 0
       ? evaluated

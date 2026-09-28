@@ -4,6 +4,68 @@ import { server } from "../src/index.ts"
 import { responseContract } from "../src/server/response-contract-lane.ts"
 
 describe("mountFetch", () => {
+  test("composed mounts run before parent catch-all routes", async () => {
+    const app = server()
+      .mount({
+        path: "/api",
+        app: { fetch: () => Response.json({ source: "mount" }) },
+      })
+      .get("/*", () => ({ source: "page" }))
+
+    const response = await app.fetch(new Request("http://test/api/health"))
+    expect(await response.json()).toEqual({ source: "mount" })
+  })
+
+  test("priority and safe 404 fallthrough select the next same-prefix mount", async () => {
+    let fallbackCalls = 0
+    const app = server()
+      .mount({
+        path: "/api",
+        priority: 10,
+        fallbackOn: 404,
+        app: { fetch: () => new Response(null, { status: 404 }) },
+      })
+      .mount({
+        path: "/api",
+        priority: 0,
+        app: {
+          fetch: () => {
+            fallbackCalls += 1
+            return Response.json({ source: "fallback" })
+          },
+        },
+      })
+
+    const response = await app.fetch(new Request("http://test/api/item"))
+    expect(await response.json()).toEqual({ source: "fallback" })
+    expect(fallbackCalls).toBe(1)
+  })
+
+  test("never retries a non-replayable body mount after a 404", async () => {
+    let nextCalls = 0
+    const app = server()
+      .mount({
+        path: "/webhook",
+        fallbackOn: 404,
+        app: { fetch: () => new Response(null, { status: 404 }) },
+      })
+      .mount({
+        path: "/webhook",
+        app: {
+          fetch: () => {
+            nextCalls += 1
+            return Response.json({ source: "second" })
+          },
+        },
+      })
+
+    const response = await app.fetch(
+      new Request("http://test/webhook", { method: "POST", body: "payload" }),
+    )
+    expect(response.status).toBe(404)
+    expect(nextCalls).toBe(0)
+  })
+
   test("matches a prefix and optionally strips it before invocation", async () => {
     const seen: string[] = []
     const app = server()

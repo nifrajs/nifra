@@ -23,6 +23,7 @@ import type { ManifestEmitCommandResult } from "./manifest-tool.ts"
 import { collectPortResult, type PortResult, renderReport } from "./port.ts"
 import type { ReplayResult } from "./replay.ts"
 import { reviewSpec } from "./review.ts"
+import type { SmokeReport } from "./smoke.ts"
 import type { StylexMigrationResult } from "./stylex-migrate.ts"
 import {
   collectProjectWorkGraph,
@@ -376,6 +377,13 @@ interface PortInput {
   readonly dir?: string | undefined
 }
 
+interface SmokeInput {
+  readonly fixture?: string | undefined
+  readonly inProcess?: boolean | undefined
+  readonly json?: boolean | undefined
+  readonly dir?: string | undefined
+}
+
 interface CheckCommandOutput extends CheckResult {}
 interface AssureCommandOutput {
   readonly report?: unknown
@@ -429,6 +437,8 @@ interface SyncCommandOutput {
   readonly ok: true
   readonly results: readonly unknown[]
 }
+
+interface SmokeCommandOutput extends SmokeReport {}
 
 const CHECK_SCHEMA = input<CheckInput>(
   objectSchema({
@@ -785,6 +795,23 @@ const PORT_SCHEMA = input<PortInput>(
     return {
       target: optionalString(raw.target, "target"),
       ...parseBooleanFlags(raw, ["json", "ci", "strict"]),
+      ...(raw.dir === undefined ? {} : { dir: raw.dir }),
+    }
+  },
+)
+
+const SMOKE_SCHEMA = input<SmokeInput>(
+  objectSchema({
+    fixture: { type: "string" },
+    inProcess: { type: "boolean" },
+    json: { type: "boolean" },
+    dir: { type: "string" },
+  }),
+  (value) => {
+    const raw = withDir(record(value))
+    return {
+      fixture: optionalString(raw.fixture, "fixture"),
+      ...parseBooleanFlags(raw, ["inProcess", "json"]),
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
     }
   },
@@ -1493,6 +1520,34 @@ const replaySpec: CommandSpec<ReplayInput, ReplayResult> = {
   success: (out) => out.ok,
 }
 
+const smokeSpec: CommandSpec<SmokeInput, SmokeCommandOutput> = {
+  name: "smoke",
+  summary:
+    "Run the declared production SSR, mounted-API, 404, header, auth, contract, and hydration smoke checks.",
+  input: SMOKE_SCHEMA,
+  output: output({ type: "object" }),
+  transports: ["cli", "mcp"],
+  stability: "stable",
+  argv: {
+    flags: [
+      { name: "fixture", field: "fixture", type: "string" },
+      { name: "in-process", field: "inProcess", type: "boolean" },
+      { name: "json", field: "json", type: "boolean" },
+    ],
+  },
+  async run(value, ctx) {
+    const { loadSmokeFixture, runSmoke } = await import("./smoke.ts")
+    const fixture = await loadSmokeFixture(ctx.cwd, value.fixture)
+    return runSmoke(fixture, { inProcess: value.inProcess === true })
+  },
+  render: (out) =>
+    out.checks.map(
+      (check) =>
+        `${check.status === "pass" ? "✓" : check.status === "skip" ? "•" : "✖"} ${check.id}${check.message === undefined ? "" : ` - ${check.message}`}`,
+    ),
+  success: (out) => out.ok,
+}
+
 const portSpec: CommandSpec<PortInput, PortResult> = {
   name: "port",
   summary:
@@ -1555,6 +1610,7 @@ export const commandSpecs = Object.freeze([
   syncRoutesSpec,
   proveSpec,
   replaySpec,
+  smokeSpec,
   portSpec,
 ] as const)
 

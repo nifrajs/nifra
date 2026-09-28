@@ -136,6 +136,18 @@ evaluateRouteAssurance(app, policy).ok // pure reflection-time evaluation
 
 ESM-only; requires Bun at runtime. MIT.
 
+### Contract enforcement and application scale
+
+The 95-100 figure is a TypeScript compiler limit for one fluent expression, not a runtime route
+limit. A 300+ route application should use domain groups merged into a small root or a
+contract-first registry.
+
+`response` and `errors` are typed by default but are not runtime enforcement by themselves. Install
+`responseContract("enforce")` before the routes it should cover to validate JSON/status payloads and
+prevent extra fields from reaching the wire. `warn` preserves the original payload during migration.
+Raw `Response`, streams, redirects, and `mountFetch` remain explicit transport escape hatches and
+must be governed by assurance/static review.
+
 ## For AI agents
 
 Start with [`LLM.md`](./LLM.md) - this package's contract card (the exports you call + its footguns),

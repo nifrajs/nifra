@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
-import { e2eUrl, serveTestApp } from "../src/e2e.ts"
+import { websocket } from "@nifrajs/core/ws"
+import { e2eUrl, e2eWebSocket, serveTestApp } from "../src/e2e.ts"
 import { testSession } from "../src/session.ts"
 
 const app = server()
@@ -11,6 +12,12 @@ const app = server()
   .get("/me", (c) => ({ user: c.cookies.sid ?? null }))
   .get("/", () => new Response("<h1>hi</h1>", { headers: { "content-type": "text/html" } }))
 
+const wsApp = server()
+  .use(websocket())
+  .ws("/echo", {
+    message: (socket, data) => socket.send(data),
+  })
+
 describe("serveTestApp", () => {
   test("serves pages over a real socket and stops cleanly", async () => {
     const www = await serveTestApp(app)
@@ -20,6 +27,24 @@ describe("serveTestApp", () => {
     expect(await response.text()).toBe("<h1>hi</h1>")
     await www.stop()
     await expect(fetch(new URL("/", www.baseUrl))).rejects.toThrow()
+  })
+
+  test("exercises a real WebSocket through the adapter", async () => {
+    const www = await serveTestApp(wsApp)
+    try {
+      const received = await new Promise<string>((resolve, reject) => {
+        const socket = new WebSocket(e2eWebSocket<typeof wsApp>(www.baseUrl, "/echo"))
+        socket.onopen = () => socket.send("hello")
+        socket.onmessage = (event) => {
+          resolve(String(event.data))
+          socket.close()
+        }
+        socket.onerror = () => reject(new Error("WebSocket test connection failed"))
+      })
+      expect(received).toBe("hello")
+    } finally {
+      await www.stop()
+    }
   })
 
   test("a testSession jar crosses into the browser via the Cookie header", async () => {
@@ -53,6 +78,21 @@ describe("e2eUrl", () => {
       /same-origin/,
     )
     expect(() => e2eUrl<typeof app>("http://127.0.0.1:1", "/\\evil.example" as never)).toThrow(
+      /same-origin/,
+    )
+  })
+})
+
+describe("e2eWebSocket", () => {
+  test("converts the real server origin and preserves the declared path", () => {
+    expect(e2eWebSocket<typeof app>("http://127.0.0.1:43127/", "/me")).toBe(
+      "ws://127.0.0.1:43127/me",
+    )
+    expect(e2eWebSocket<typeof app>("https://example.test", "/me")).toBe("wss://example.test/me")
+  })
+
+  test("rejects an origin escape", () => {
+    expect(() => e2eWebSocket<typeof app>("http://127.0.0.1:1", "//evil.example" as never)).toThrow(
       /same-origin/,
     )
   })

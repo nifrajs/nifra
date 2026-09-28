@@ -22,6 +22,7 @@ const ALIASES: Readonly<Record<string, readonly string[]>> = {
   cache: ["caching", "isr"],
   caching: ["cache", "isr"],
   client: ["typed"],
+  cookie: ["cookies", "session", "sessions"],
   deploy: ["deployment", "edge", "worker", "workers", "vercel", "deno"],
   deployment: ["deploy", "edge", "worker", "workers", "vercel", "deno"],
   loader: ["loaders"],
@@ -49,6 +50,7 @@ export const MAX_QUERY_TERMS = 12
 
 export const tokenize = (s: string): string[] =>
   s
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter((t) => t.length > 1)
@@ -73,12 +75,20 @@ function tokenMatches(term: string, candidate: string): boolean {
 }
 
 export function tokenSetHas(tokens: ReadonlySet<string>, group: SearchTermGroup): boolean {
+  return tokenSetScore(tokens, group) > 0
+}
+
+/** Score the strongest name/heading match while keeping exact query words ahead of aliases. */
+export function tokenSetScore(tokens: ReadonlySet<string>, group: SearchTermGroup): number {
+  let best = 0
   for (const variant of group.variants) {
     for (const token of tokens) {
-      if (tokenMatches(variant, token)) return true
+      if (!tokenMatches(variant, token)) continue
+      const score = variant === group.term && token === variant ? 3 : token === variant ? 2 : 1
+      if (score > best) best = score
     }
   }
-  return false
+  return best
 }
 
 export function countBodyHits(lowerBody: string, group: SearchTermGroup, maxHits: number): number {

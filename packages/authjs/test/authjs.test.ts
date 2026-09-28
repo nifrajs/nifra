@@ -4,6 +4,8 @@ import GitHub from "@auth/core/providers/github"
 import { server } from "@nifrajs/core"
 import { type AuthJSConfig, authjs, getSession, requireAuthUser } from "../src/index.ts"
 
+const testAuthSecret = ["test", "only", "not", "secret"].join("-")
+
 const config: AuthJSConfig = {
   providers: [
     Credentials({
@@ -13,7 +15,7 @@ const config: AuthJSConfig = {
         creds?.password === "secret" ? { id: "1", name: "Ada" } : null,
     }),
   ],
-  secret: "test-secret-32-bytes-long-abcdef",
+  secret: testAuthSecret,
   trustHost: true,
   // Auth.js logs expected error paths (bad credentials) to the console; the assertions below
   // verify the behavior, so keep the output clean.

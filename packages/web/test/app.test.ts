@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test"
 import { inProcessClient } from "@nifrajs/client"
 import { server } from "@nifrajs/core"
-import { NIFRA_BACKEND_MOUNT } from "@nifrajs/core/mount"
+import { snapshotProjectEvidence } from "@nifrajs/core/evidence"
+import { NIFRA_BACKEND_EVIDENCE, NIFRA_BACKEND_MOUNT } from "@nifrajs/core/mount"
 import {
+  createNonceResolver,
   createWebApp,
   defer,
   enumerateStaticRoutes,
@@ -11,6 +13,8 @@ import {
   type RouteEntry,
   redirect,
   revalidate,
+  unsafeInlineScript,
+  webProjectEvidence,
 } from "../src/index.ts"
 
 // The in-process backend mount target - the symbol-keyed `BackendMount` shape `inProcessClient(app)`
@@ -110,6 +114,101 @@ test("createWebApp resolves a fresh CSP nonce for documents, including 404 pages
   expect(notFound).toContain('nonce="nonce-3"')
   expect(adapterNonces).toEqual(["nonce-1", "nonce-2", "nonce-3"])
   expect(seen).toEqual(["http://x/:typed", "http://x/:typed", "http://x/missing:typed"])
+})
+
+test("createNonceResolver shares the document nonce with its CSP header callback", async () => {
+  const resolver = createNonceResolver({
+    header: ({ nonce }) => `default-src 'self'; script-src 'self' 'nonce-${nonce}'`,
+  })
+  const app = createWebApp({
+    adapter: stub,
+    clientEntry: "/c.js",
+    manifest: fullManifest(),
+    nonce: resolver,
+  })
+
+  const firstResponse = await app.fetch(new Request("http://x/"))
+  const first = await firstResponse.text()
+  const firstNonce = first.match(/<script nonce="([^"]+)"/)?.[1]
+  expect(firstNonce).toBeTruthy()
+  expect(firstResponse.headers.get("content-security-policy")).toBe(
+    `default-src 'self'; script-src 'self' 'nonce-${firstNonce}'`,
+  )
+
+  const secondResponse = await app.fetch(new Request("http://x/"))
+  const second = await secondResponse.text()
+  const secondNonce = second.match(/<script nonce="([^"]+)"/)?.[1]
+  expect(secondNonce).toBeTruthy()
+  expect(secondNonce).not.toBe(firstNonce)
+  expect(secondResponse.headers.get("content-security-policy")).toBe(
+    `default-src 'self'; script-src 'self' 'nonce-${secondNonce}'`,
+  )
+
+  const dataResponse = await app.fetch(
+    new Request("http://x/", { headers: { "x-nifra-data": "1" } }),
+  )
+  expect(dataResponse.headers.get("content-security-policy")).toBeNull()
+  expect(await dataResponse.text()).not.toContain("nonce=")
+})
+
+test("createNonceResolver default nonce uses the CSP nonce-source alphabet", async () => {
+  const resolver = createNonceResolver()
+  const value = await resolver({ request: new Request("http://x/"), env: undefined })
+  expect(value).toMatch(/^[A-Za-z0-9+/]+={0,2}$/)
+  expect(value).toHaveLength(32)
+})
+
+test("createNonceResolver shares an in-flight nonce for one request", async () => {
+  let calls = 0
+  const resolver = createNonceResolver({
+    generate: async () => {
+      calls += 1
+      await Promise.resolve()
+      return "shared-nonce"
+    },
+  })
+  const request = new Request("http://x/")
+  const context = { request, env: undefined }
+  const [first, second] = await Promise.all([resolver(context), resolver(context)])
+  expect(first).toBe("shared-nonce")
+  expect(second).toBe(first)
+  expect(calls).toBe(1)
+})
+
+test("createWebApp exposes the resolved request nonce to route metadata", async () => {
+  const manifest: Manifest = {
+    routes: [
+      {
+        id: "index",
+        pattern: "/",
+        layoutIds: [],
+        file: "index.tsx",
+        load: async () => ({
+          default: "home",
+          meta: (args) => {
+            const nonce = args.nonce
+            return nonce === undefined
+              ? {}
+              : { unsafeScript: [unsafeInlineScript("metaBoot()", { nonce })] }
+          },
+        }),
+      },
+    ],
+    layouts: {},
+  }
+  const app = createWebApp({
+    adapter: stub,
+    clientEntry: "/c.js",
+    manifest,
+    nonce: createNonceResolver(),
+  })
+
+  const html = await (await app.fetch(new Request("http://x/"))).text()
+  const frameworkNonce = html.match(/<script nonce="([^"]+)"/)?.[1]
+  expect(frameworkNonce).toBeTruthy()
+  expect(html).toContain(
+    `<script type="module" nonce="${frameworkNonce}" data-nifra>metaBoot()</script>`,
+  )
 })
 
 test("createWebApp resolves params, runs the loader, and wraps in the layout chain", async () => {
@@ -1110,4 +1209,127 @@ test("createWebApp: a non-mountable api (no .fetch) leaves the app pages-only (n
   const res = await app.fetch(new Request("http://x/api/none"))
   expect(res.status).toBe(404)
   expect(await res.text()).toContain("chain=") // page 404, not a backend dispatch
+})
+
+test("webProjectEvidence composes page and stripped API routes", async () => {
+  const backend = server().get("/health", () => ({ ok: true }))
+  const app = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api: inProcessClient(backend),
+    apiStrip: true,
+  })
+  const evidence = await webProjectEvidence(app)
+  const routes = evidence.routes.map((route) => `${route.method} ${route.path}`)
+  expect(routes).toContain("GET /api/health")
+  expect(routes).toContain("GET /*")
+})
+
+test("webProjectEvidence uses the same frozen mount configuration as dispatch", async () => {
+  const child = server().get("/health", () => ({ ok: true }))
+  const mounted = {
+    fetch: child.fetch.bind(child),
+    [NIFRA_BACKEND_EVIDENCE]: () => snapshotProjectEvidence(child),
+  }
+  const mount = { path: "/stable", app: mounted, stripPrefix: true }
+  const app = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    mounts: [mount],
+  })
+
+  mount.path = "/mutated"
+  const evidence = await webProjectEvidence(app)
+  expect(evidence.routes).toContainEqual(
+    expect.objectContaining({ method: "GET", path: "/stable/health" }),
+  )
+  expect(evidence.routes).not.toContainEqual(
+    expect.objectContaining({ method: "GET", path: "/mutated/health" }),
+  )
+})
+
+test("webProjectEvidence fails closed when a mounted app has no evidence provider", async () => {
+  const app = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    mounts: [{ path: "/external", app: { fetch: () => Response.json({ ok: true }) } }],
+  })
+  await expect(webProjectEvidence(app)).rejects.toThrow(/no token-only evidence provider/)
+})
+
+test("webProjectEvidence composes wildcard mounts and rejects an API without evidence", async () => {
+  const child = server().get("/", () => ({ child: true }))
+  const childMount = {
+    fetch: (request: Request) => child.fetch(request),
+    [NIFRA_BACKEND_EVIDENCE]: async () => {
+      const { snapshotProjectEvidence } = await import("@nifrajs/core/evidence")
+      return snapshotProjectEvidence(child)
+    },
+  }
+  const app = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    mounts: [
+      {
+        path: "/external/*",
+        stripPrefix: true,
+        app: childMount,
+      },
+    ],
+  })
+  const evidence = await webProjectEvidence(app)
+  expect(evidence.routes).toContainEqual(
+    expect.objectContaining({ method: "GET", path: "/external" }),
+  )
+
+  const apiWithoutEvidence = {
+    fetch: (request: Request) => Response.json({ path: new URL(request.url).pathname }),
+    [NIFRA_BACKEND_MOUNT]: (request: Request) =>
+      Response.json({ path: new URL(request.url).pathname }),
+  }
+  const apiApp = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api: apiWithoutEvidence,
+  })
+  await expect(webProjectEvidence(apiApp)).rejects.toThrow(
+    /auto-mounted API.*no token-only evidence/,
+  )
+})
+
+test("webProjectEvidence detects cyclic mounted evidence and validates its input", async () => {
+  let parent: unknown
+  const child = {
+    fetch: () => Response.json({ ok: true }),
+    [NIFRA_BACKEND_EVIDENCE]: () => webProjectEvidence(parent),
+  }
+  const app = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    mounts: [{ path: "/child", app: child }],
+  })
+  parent = app
+  await expect(webProjectEvidence(app)).rejects.toThrow(/cyclic composed assurance evidence mount/)
+  await expect(webProjectEvidence({})).rejects.toThrow(/expected an app created by createWebApp/)
+})
+
+test("serves both generated machine-readable guidance routes", async () => {
+  const app = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    publishLocalGuidelines: true,
+  })
+  const short = await app.fetch(new Request("http://x/llms.txt"))
+  const full = await app.fetch(new Request("http://x/llms-full.txt"))
+  expect(short.status).toBe(200)
+  expect(full.status).toBe(200)
+  expect(short.headers.get("content-type")).toContain("text/plain")
+  expect(full.headers.get("content-type")).toContain("text/plain")
 })

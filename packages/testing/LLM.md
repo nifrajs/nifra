@@ -19,6 +19,7 @@ Contract-derived adversarial tests, runtime-matrix response conformance, and coo
 - **assertAgentEval** _(function)_ - `assertAgentEval: (report: AgentEvalCompositionReport) => void` · from `@nifrajs/testing`
 - **assertAgentEvalBaseline** _(function)_ - `assertAgentEvalBaseline: (baseline: AgentEvalReport, current: AgentEvalReport, options?: BaselineOptions) => Promise<BaselineComparison>` · from `@nifrajs/testing`
 - **assertAgentFailureMatrix** _(function)_ - `assertAgentFailureMatrix: (report: AgentFailureMatrixReport) => void` · from `@nifrajs/testing`
+- **assertDataAdapterConformance** _(function)_ - `assertDataAdapterConformance: <Adapter, Row, Snapshot, Cursor = string>(target: DataAdapterConformanceTarget<Adapter, Row, Snapshot, Cursor…` · from `@nifrajs/testing`
 - **assertIncidentReplays** _(function)_ - `assertIncidentReplays: (app: AppLike, capsule: IncidentCapsule, options?: ReplayIncidentOptions) => Promise<void>` · from `@nifrajs/testing`
 - **assertPredictionLab** _(function)_ - `assertPredictionLab: (options?: PredictionLabOptions) => Promise<PredictionLabReport>` · from `@nifrajs/testing`
 - **assertTrajectoryInvariants** _(function)_ - `assertTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => void` · from `@nifrajs/testing`
@@ -27,9 +28,8 @@ Contract-derived adversarial tests, runtime-matrix response conformance, and coo
 - **certifyAdapter** _(function)_ - `certifyAdapter: <Adapter>(options: { readonly profile: AdapterCertificationProfile<Adapter>; readonly adapterId: string; readonly target?: …` · from `@nifrajs/testing`
 - **checkTrajectoryInvariants** _(function)_ - `checkTrajectoryInvariants: (result: AgentRunResult<unknown>, options?: TrajectoryInvariantOptions) => readonly TrajectoryInvariantResult[]` · from `@nifrajs/testing`
 - **compareAgentEvalBaseline** _(function)_ - `compareAgentEvalBaseline: (baseline: AgentEvalReport, current: AgentEvalReport, options?: BaselineOptions) => Promise<BaselineComparison>` · from `@nifrajs/testing`
-- **cookieJar** _(function)_ - `cookieJar: () => CookieJar` · from `@nifrajs/testing`
 
-_…and 157 more - see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
+_…and 170 more - see [`api-reference.md`](../../api-reference.md#nifrajstesting) for the complete list._
 
 ## Footguns
 

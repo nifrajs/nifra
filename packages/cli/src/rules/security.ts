@@ -1,8 +1,8 @@
 import type * as TSApi from "typescript"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
-import { importProjectTypeScript } from "../internal/typescript-import.ts"
 import { commentBlockHasMarker } from "./comment-markers.ts"
 import type { CheckRule, SourceIndex } from "./index.ts"
+import { loadRuleTypeScript } from "./typescript.ts"
 
 /**
  * A security rule that cannot run says so as an advisory finding instead of silently returning no
@@ -53,6 +53,23 @@ function secretComparisonSeverity(file: string): "error" | "warn" {
   if (/(?:^|\/)server\//.test(path) || /(?:^|\/)backend\.[cm]?[tj]s$/.test(path)) return "error"
   if (/\.[tj]sx$/.test(path) || /(?:^|\/)routes\//.test(path)) return "warn"
   return "error"
+}
+
+const CONFIRMATION_NAME =
+  /^(?:confirm|confirmation|confirmPassword|passwordConfirmation|passwordConfirm|passwordRepeat|repeatPassword)$/i
+
+/** Client form confirmation compares two values already held by the browser, not secret material. */
+function isClientConfirmationPair(
+  file: string,
+  left: string | undefined,
+  right: string | undefined,
+): boolean {
+  if (secretComparisonSeverity(file) !== "warn") return false
+  const names = [left, right]
+  return (
+    names.some((name) => name?.toLowerCase() === "password") &&
+    names.some((name) => name !== undefined && CONFIRMATION_NAME.test(name))
+  )
 }
 
 function nameOf(ts: typeof TSApi, node: TSApi.Node): string | undefined {
@@ -127,7 +144,9 @@ export const secretComparisonRule: CheckRule = {
   code: "NF-S002",
   title: "Non-constant-time secret comparison",
   async scan(ctx) {
-    const ts = await importProjectTypeScript(ctx.root)
+    const loaded = await loadRuleTypeScript(ctx)
+    if (loaded.diagnostics !== undefined) return loaded.diagnostics
+    const ts = loaded.compiler
     if (ts === undefined) return didNotRun("NF-S002", "Non-constant-time secret comparison scan")
     const findings: Diagnostic[] = []
     for (const file of ctx.project.source.files) {
@@ -148,8 +167,9 @@ export const secretComparisonRule: CheckRule = {
           const left = secretName(ts, node.left)
           const right = secretName(ts, node.right)
           if (
-            (left !== undefined && SECRET.test(left)) ||
-            (right !== undefined && SECRET.test(right))
+            ((left !== undefined && SECRET.test(left)) ||
+              (right !== undefined && SECRET.test(right))) &&
+            !isClientConfirmationPair(file, left, right)
           ) {
             const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
             const reviewed = hasReview(lines, line)
@@ -188,7 +208,9 @@ export const piiLogRule: CheckRule = {
   code: "NF-S003",
   title: "Sensitive value in log call",
   async scan(ctx) {
-    const ts = await importProjectTypeScript(ctx.root)
+    const loaded = await loadRuleTypeScript(ctx)
+    if (loaded.diagnostics !== undefined) return loaded.diagnostics
+    const ts = loaded.compiler
     if (ts === undefined) return didNotRun("NF-S003", "Sensitive-value-in-log scan")
     const findings: Diagnostic[] = []
     for (const file of ctx.project.source.files) {
@@ -236,7 +258,9 @@ export const failOpenGateRule: CheckRule = {
   code: "NF-S001",
   title: "Fail-open gate",
   async scan(ctx) {
-    const ts = await importProjectTypeScript(ctx.root)
+    const loaded = await loadRuleTypeScript(ctx)
+    if (loaded.diagnostics !== undefined) return loaded.diagnostics
+    const ts = loaded.compiler
     if (ts === undefined) return didNotRun("NF-S001", "Fail-open gate scan")
     const findings: Diagnostic[] = []
     for (const file of ctx.project.source.files) {
@@ -317,7 +341,9 @@ export const corsOriginPredicateRule: CheckRule = {
   code: "NF-S004",
   title: "CORS origin predicate ignores the origin",
   async scan(ctx) {
-    const ts = await importProjectTypeScript(ctx.root)
+    const loaded = await loadRuleTypeScript(ctx)
+    if (loaded.diagnostics !== undefined) return loaded.diagnostics
+    const ts = loaded.compiler
     if (ts === undefined) return didNotRun("NF-S004", "CORS origin predicate scan")
     const findings: Diagnostic[] = []
     for (const file of ctx.project.source.files) {
@@ -378,7 +404,9 @@ export const externalRedirectRule: CheckRule = {
   code: "NF-S005",
   title: "External redirect opt-out",
   async scan(ctx) {
-    const ts = await importProjectTypeScript(ctx.root)
+    const loaded = await loadRuleTypeScript(ctx)
+    if (loaded.diagnostics !== undefined) return loaded.diagnostics
+    const ts = loaded.compiler
     if (ts === undefined) return didNotRun("NF-S005", "External redirect opt-out scan")
     const findings: Diagnostic[] = []
     for (const file of ctx.project.source.files) {
@@ -435,7 +463,9 @@ export const assuranceEscapeHatchRule: CheckRule = {
   code: "NF-S006",
   title: "Security escape hatch enabled",
   async scan(ctx) {
-    const ts = await importProjectTypeScript(ctx.root)
+    const loaded = await loadRuleTypeScript(ctx)
+    if (loaded.diagnostics !== undefined) return loaded.diagnostics
+    const ts = loaded.compiler
     if (ts === undefined) return didNotRun("NF-S006", "Security escape hatch scan")
     const findings: Diagnostic[] = []
     for (const file of ctx.project.source.files) {
@@ -478,7 +508,9 @@ export const unprefixedSecureCookieRule: CheckRule = {
   code: "NF-S007",
   title: "Secure cookie without a __Host-/__Secure- prefix",
   async scan(ctx) {
-    const ts = await importProjectTypeScript(ctx.root)
+    const loaded = await loadRuleTypeScript(ctx)
+    if (loaded.diagnostics !== undefined) return loaded.diagnostics
+    const ts = loaded.compiler
     if (ts === undefined) return didNotRun("NF-S007", "Secure cookie prefix scan")
     const findings: Diagnostic[] = []
     for (const file of ctx.project.source.files) {

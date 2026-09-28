@@ -17,6 +17,7 @@ import type {
   ResponseHeadersHook,
 } from "./node-outcome-hook.ts"
 import type { MaybePromise, OnRequestResult } from "./server.ts"
+import type { WebSocketUpgradeOutcome } from "./websocket.ts"
 
 /**
  * The outcome of a capacity-admission decision. `admitted` requests carry a `release` the server calls
@@ -170,10 +171,37 @@ export type FetchHandler<Env = unknown> = (
   platform?: Platform<Env>,
 ) => MaybePromise<Response>
 
+/** A fetch app that may also participate in adapter-owned WebSocket upgrades when mounted. */
+export interface MountableApp<Env = unknown> {
+  readonly fetch: FetchHandler<Env>
+  readonly resolveWebSocketUpgrade?: (
+    request: Request,
+    platform?: Platform<Env>,
+  ) => MaybePromise<WebSocketUpgradeOutcome>
+}
+
+/** Options for a first-class composed mount. */
+export interface MountOptions<Env = unknown> {
+  /** Absolute pathname prefix, optionally ending in `/*`. */
+  readonly path: string
+  /** The child app. Its HTTP fetch and optional WebSocket resolver share the mount. */
+  readonly app: MountableApp<Env>
+  /** Rewrite the child request to remove `path` before dispatch. Default: false. */
+  readonly stripPrefix?: boolean
+  /** Higher values run first; ties use the most specific path, then declaration order. */
+  readonly priority?: number
+  /** For safe replayable methods only, try the next matching mount when this one returns 404. */
+  readonly fallbackOn?: 404
+}
+
 /** Options for a legacy fetch-handler mount. */
 export interface MountFetchOptions {
   /** Remove the mount prefix before invoking the legacy handler. Default: false. */
   readonly stripPrefix?: boolean
+  /** Higher values run first; ties use the most specific path, then declaration order. */
+  readonly priority?: number
+  /** For safe replayable methods only, try the next matching legacy mount when it returns 404. */
+  readonly fallbackOn?: 404
 }
 
 /** A callback awaited after the Bun server has drained and stopped. */
@@ -206,6 +234,8 @@ export interface RouteDescriptor {
   readonly method: Method
   readonly path: string
   readonly schema: RouteSchema | undefined
+  /** Runtime response-contract mode captured when this route was registered. */
+  readonly responseContract?: "warn" | "enforce"
   /** Effective enforcement evidence, populated only during reflection/introspection. */
   readonly assurance?: readonly AssuranceEvidence[]
   /** Normalized declared effect tokens, populated only when the route declares any. */

@@ -48,7 +48,7 @@ import {
 } from "../schema/standard.ts"
 import { INSTALL_RESPONSE_CONTRACT } from "./install.ts"
 import type { IdentityPlugin } from "./plugin.ts"
-import { isResponseResult } from "./runtime-core.ts"
+import { isResponseResult, status } from "./runtime-core.ts"
 import type { AnyServer } from "./server.ts"
 
 /**
@@ -61,6 +61,12 @@ import type { AnyServer } from "./server.ts"
  * app's bundle entirely rather than shipping a disabled branch to everyone.
  */
 export type ResponseContractMode = "warn" | "enforce"
+
+/** Success and status-specific error schemas captured by one route at registration time. */
+export interface ResponseContractDefinition {
+  readonly response?: StandardSchemaV1
+  readonly errors?: Readonly<Record<number, StandardSchemaV1>>
+}
 
 /** The outcome of checking one handler result against its declared response schema. */
 export type ResponseContractOutcome =
@@ -91,22 +97,63 @@ export function checkResponseContract(
   result: unknown,
   mode: "warn" | "enforce",
 ): ResponseContractOutcome | Promise<ResponseContractOutcome> {
+  return checkRouteResponseContract({ response: schema }, result, mode)
+}
+
+/**
+ * Check a route's success or status-specific error payload. Plain `status()` results retain their
+ * status while enforcement replaces only the body with the validator's output. Raw `Response`
+ * remains an explicit transport escape hatch because inspecting it would consume streams or alter
+ * redirects; assurance/static checks must govern that path separately.
+ */
+export function checkRouteResponseContract(
+  definition: ResponseContractDefinition,
+  result: unknown,
+  mode: "warn" | "enforce",
+): ResponseContractOutcome | Promise<ResponseContractOutcome> {
+  const plain = isResponseResult(result) ? result.plain : undefined
+  if (plain !== undefined) {
+    const schema =
+      plain.status >= 200 && plain.status < 300
+        ? definition.response
+        : definition.errors?.[plain.status]
+    if (schema === undefined) return { kind: "ok", value: result }
+    return validateContract(schema, plain.body, mode, (value) =>
+      status(
+        plain.status,
+        value,
+        plain.headers === undefined ? undefined : { headers: plain.headers },
+      ),
+    )
+  }
+
   // A handler may return a raw Response as deliberate control flow (a redirect, a stream). There is no
   // JSON payload to hold to the contract, and re-serializing one would corrupt it. A `status(...)` is
-  // the same control flow in plain-data form: the contract describes the route's SUCCESS payload, so
-  // holding an early exit (a 401 body, say) to it would fail every guarded route that declares one.
-  if (result instanceof Response || result === undefined || isResponseResult(result))
-    return { kind: "ok", value: result }
+  // intentionally handled above because its plain body and status remain available without consuming
+  // a stream. An absent body has nothing to validate.
+  if (result instanceof Response || result === undefined) return { kind: "ok", value: result }
+  const schema = definition.response
+  if (schema === undefined) return { kind: "ok", value: result }
+  return validateContract(schema, result, mode, (value) => value)
+}
+
+function validateContract(
+  schema: StandardSchemaV1,
+  result: unknown,
+  mode: "warn" | "enforce",
+  replace: (value: unknown) => unknown,
+): ResponseContractOutcome | Promise<ResponseContractOutcome> {
   const settled = schema["~standard"].validate(result)
   return settled instanceof Promise
-    ? settled.then((r) => interpret(r, result, mode))
-    : interpret(settled, result, mode)
+    ? settled.then((r) => interpret(r, result, mode, replace))
+    : interpret(settled, result, mode, replace)
 }
 
 function interpret(
   settled: StandardResult<unknown>,
   result: unknown,
   mode: "warn" | "enforce",
+  replace: (value: unknown) => unknown,
 ): ResponseContractOutcome {
   if (settled.issues !== undefined) {
     const message = `response does not satisfy its declared contract: ${formatStandardIssues(settled.issues)}`
@@ -117,7 +164,7 @@ function interpret(
       : { kind: "violation", message }
   }
   const dropped = droppedKeys(result, settled.value)
-  if (mode === "enforce") return { kind: "ok", value: settled.value }
+  if (mode === "enforce") return { kind: "ok", value: replace(settled.value) }
   return dropped.length === 0
     ? { kind: "ok", value: result }
     : {
@@ -134,7 +181,7 @@ function interpret(
 export interface ResponseContractRuntime {
   readonly mode: ResponseContractMode
   check(
-    schema: StandardSchemaV1,
+    definition: ResponseContractDefinition,
     result: unknown,
   ): ResponseContractOutcome | Promise<ResponseContractOutcome>
 }
@@ -161,7 +208,7 @@ interface ResponseContractInstallable {
 export function responseContract(mode: ResponseContractMode = "warn"): IdentityPlugin {
   const runtime: ResponseContractRuntime = {
     mode,
-    check: (schema, result) => checkResponseContract(schema, result, mode),
+    check: (definition, result) => checkRouteResponseContract(definition, result, mode),
   }
   const apply = <S extends AnyServer>(app: S): S => {
     ;(app as unknown as ResponseContractInstallable)[INSTALL_RESPONSE_CONTRACT](runtime)

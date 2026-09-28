@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test"
+import { inProcessClient } from "@nifrajs/client"
 import { NIFRA_BACKEND_MOUNT } from "@nifrajs/core/mount"
+import { server } from "@nifrajs/core/server"
+import { websocket } from "@nifrajs/core/ws"
+import { cors } from "../../middleware/src/index.ts"
 import { createWebApp, type Manifest, type RenderAdapter } from "../src/index.ts"
 
 const streamOf = (s: string): ReadableStream<Uint8Array> =>
@@ -151,4 +155,173 @@ test("stripPrefix on a mount rewrites the path the sub-app sees", async () => {
     ],
   })
   expect(await pathSeenBy(app, "/webhooks/stripe")).toEqual("/stripe")
+})
+
+test("createWebApp composes the backend WebSocket mount with the request path", async () => {
+  const backend = server()
+    .use(websocket())
+    .ws<{ path: string }>("/api/echo", {
+      upgrade: (c) => ({ path: new URL(c.req.url).pathname }),
+      open: (ws) => ws.send(ws.data.path),
+    })
+  const app = createWebApp({
+    adapter: stub,
+    manifest: manifest(),
+    clientEntry: "/c.js",
+    api: inProcessClient(backend),
+  })
+
+  const outcome = await app.resolveWebSocketUpgrade(
+    new Request("http://x/api/echo", { headers: { upgrade: "websocket" } }),
+  )
+  expect(outcome.kind).toBe("upgrade")
+  if (outcome.kind !== "upgrade") return
+  expect(outcome.data).toEqual({ path: "/api/echo" })
+
+  const running = app.listen(0)
+  try {
+    const message = await new Promise<string>((resolve, reject) => {
+      const socket = new WebSocket(`ws://127.0.0.1:${running.port}/api/echo`)
+      const timer = setTimeout(() => reject(new Error("WebSocket mount timeout")), 4_000)
+      socket.addEventListener("message", (event) => {
+        clearTimeout(timer)
+        socket.close()
+        resolve(String(event.data))
+      })
+      socket.addEventListener("error", () => {
+        clearTimeout(timer)
+        reject(new Error("WebSocket mount connection failed"))
+      })
+    })
+    expect(message).toBe("/api/echo")
+  } finally {
+    running.stop(true)
+  }
+
+  const standaloneBackend = server()
+    .use(websocket())
+    .ws<{ path: string }>("/echo", {
+      upgrade: (c) => ({ path: new URL(c.req.url).pathname }),
+    })
+  const stripped = createWebApp({
+    adapter: stub,
+    manifest: manifest(),
+    clientEntry: "/c.js",
+    api: inProcessClient(standaloneBackend),
+    apiStrip: true,
+  })
+  const strippedOutcome = await stripped.resolveWebSocketUpgrade(
+    new Request("http://x/api/echo", { headers: { upgrade: "websocket" } }),
+  )
+  expect(strippedOutcome.kind).toBe("upgrade")
+  if (strippedOutcome.kind !== "upgrade") return
+  expect(strippedOutcome.data).toEqual({ path: "/echo" })
+})
+
+test("a mounted CORS middleware answers preflight before the page router", async () => {
+  const api = server()
+    .use(cors({ origin: "https://client.example" }))
+    .post("/api/data", () => ({ ok: true }))
+  const app = createWebApp({
+    adapter: stub,
+    manifest: manifest(),
+    clientEntry: "/c.js",
+    mounts: [{ path: "/api", app: api }],
+  })
+
+  const response = await app.fetch(
+    new Request("http://x/api/data", {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://client.example",
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "content-type",
+      },
+    }),
+  )
+  expect(response.status).toBe(204)
+  expect(response.headers.get("access-control-allow-origin")).toBe("https://client.example")
+  expect(response.headers.get("access-control-allow-methods")).toContain("POST")
+  expect(response.headers.get("access-control-allow-headers")).toBe("content-type")
+})
+
+test("createWebApp preserves parent/child hook order around a mounted response", async () => {
+  const order: string[] = []
+  const child = server()
+    .onRequest(() => {
+      order.push("child-request")
+    })
+    .onResponse((response) => {
+      order.push("child-response")
+      return response
+    })
+    .get("/api/health", () => ({ ok: true }))
+  const app = createWebApp({
+    adapter: stub,
+    manifest: manifest(),
+    clientEntry: "/c.js",
+    use: (parent) => {
+      parent.onRequest(() => {
+        order.push("parent-request")
+      })
+      parent.onResponse((response) => {
+        order.push("parent-response")
+        return response
+      })
+    },
+    mounts: [{ path: "/api", app: child }],
+  })
+
+  const response = await app.fetch(new Request("http://x/api/health"))
+  expect(response.status).toBe(200)
+  expect(await response.json()).toEqual({ ok: true })
+  expect(order).toEqual(["parent-request", "child-request", "child-response", "parent-response"])
+})
+
+test("createWebApp honors mount priority and safe GET 404 fallthrough", async () => {
+  const seen: string[] = []
+  const app = createWebApp({
+    adapter: stub,
+    manifest: manifest(),
+    clientEntry: "/c.js",
+    mounts: [
+      {
+        path: "/api",
+        priority: 10,
+        fallbackOn: 404,
+        app: {
+          fetch: () => {
+            seen.push("high")
+            return new Response("high", { status: 404 })
+          },
+        },
+      },
+      {
+        path: "/api",
+        priority: 0,
+        fallbackOn: 404,
+        app: {
+          fetch: () => {
+            seen.push("middle")
+            return new Response("middle", { status: 404 })
+          },
+        },
+      },
+      {
+        path: "/api",
+        priority: -1,
+        app: {
+          fetch: () => {
+            seen.push("fallback")
+            return new Response("fallback")
+          },
+        },
+      },
+    ],
+  })
+
+  const response = await app.fetch(new Request("http://x/api/health"))
+  expect(response.status).toBe(200)
+  expect(await response.text()).toBe("fallback")
+  expect(seen).toEqual(["high", "middle", "fallback"])
 })

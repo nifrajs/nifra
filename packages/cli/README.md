@@ -16,7 +16,9 @@ nifra assure  [--config <file>] [--json]  Gate reflected routes against enforcem
 nifra capabilities check [--json]        Gate effect provenance + the reviewed capability lockfile.
 nifra manifest emit [--sign <key-ref>]   Emit the hash-verified route trust artifact after assurance.
 nifra manifest diff <before> <after>      Block promotion on contract/governance regressions.
-nifra sdk     --lang <python|go>         Generate a deterministic non-TypeScript SDK from `backend.ts`.
+nifra sdk     --lang <python|go> [--strict]
+                                          Generate typed Python dataclass or Go SDK from `backend.ts`; strict mode
+                                          fails on opaque schemas and unsupported SSE contracts.
 nifra doctor  [--json] [--auto-fix]       Catch undeclared imports and duplicate Nifra/React installs.
 ```
 
@@ -46,6 +48,15 @@ Ed25519 sidecar, so the private key can stay inside KMS/HSM infrastructure.
 At promotion time, `nifra manifest diff previous.json candidate.json` hash-verifies both files and exits
 non-zero on a breaking API change, removed assurance, expanded effect, lost provenance coverage, or
 increased data sensitivity. This is separate from the frontend asset `dist/manifest.json`.
+
+## `nifra verify` - verification tiers
+
+`nifra check` is the fast project done-gate: TypeScript plus static contract and boundary diagnostics.
+It is not a release claim. `nifra verify` runs the ordered local verification plan; its default mode
+is the feedback plan and reports which release gates it omits. CI and release automation should run
+`nifra verify --release` (or `bun run check:release`), which includes build, coverage, corpus,
+consumer, publish, and cross-runtime gates. Run `nifra port --ci --target <target>` for an app's
+resolved deployment target; CI never guesses a target when none is configured.
 
 ## `nifra check` - the drift gate (run as "done")
 

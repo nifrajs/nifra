@@ -79,6 +79,16 @@ describe("defineContract - validation (L2)", () => {
   })
 
   test("rejects invalid operation body-limit exemptions at contract definition", () => {
+    expect(
+      defineContract({
+        upload: {
+          method: "POST",
+          path: "/upload",
+          bodyLimit: "unlimited",
+          bodyLimitReason: "streamed by the transport",
+        },
+      }).upload.bodyLimit,
+    ).toBe("unlimited")
     expect(() =>
       defineContract({ upload: { method: "POST", path: "/upload", bodyLimit: "unlimited" } }),
     ).toThrow(RouteConfigError)
@@ -222,5 +232,41 @@ describe("implement(contract, handlers, app) - the middleware seam", () => {
 
     expect(host.routes().map(({ method, path }) => `${method} ${path}`)).toEqual(["GET /taken"])
     expect((await host.fetch(new Request("http://x/added"))).status).toBe(404)
+  })
+
+  test("rejects raw JSON contracts and invalid validation ordering", () => {
+    expect(() =>
+      defineContract({
+        webhook: { method: "POST", path: "/webhook", wire: "json" as never },
+      }),
+    ).toThrow(RouteConfigError)
+    expect(() =>
+      defineContract({
+        webhook: { method: "POST", path: "/webhook", wire: "raw", body: passThrough },
+      }),
+    ).toThrow(RouteConfigError)
+    expect(() =>
+      defineContract({
+        webhook: {
+          method: "POST",
+          path: "/webhook",
+          validationOrder: "before-auth" as never,
+        },
+      }),
+    ).toThrow(RouteConfigError)
+  })
+
+  test("carries raw wire mode and validation ordering onto the route descriptor", () => {
+    const contract = defineContract({
+      webhook: {
+        method: "POST",
+        path: "/webhook",
+        wire: "raw",
+        validationOrder: "auth-before-validation",
+      },
+    })
+    const app = implement(contract, { webhook: () => new Response("ok") })
+    expect(app.routes()[0]?.schema?.wire).toBe("raw")
+    expect(app.routes()[0]?.schema?.validationOrder).toBe("auth-before-validation")
   })
 })

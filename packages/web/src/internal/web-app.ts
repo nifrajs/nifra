@@ -1,9 +1,13 @@
 import {
+  type BackendEvidenceProvider,
   type BackendMount,
-  type BackendMountHandler,
+  type BackendWebSocketMountHandler,
+  NIFRA_BACKEND_EVIDENCE,
   NIFRA_BACKEND_MOUNT,
+  NIFRA_BACKEND_WS_MOUNT,
+  NIFRA_BACKEND_WS_RUNTIME,
 } from "@nifrajs/core/mount"
-import type { Platform } from "@nifrajs/core/server"
+import type { MountableApp, MountOptions } from "@nifrajs/core/server"
 import { type ServerOptions, server } from "@nifrajs/core/server"
 import type { CssLoadingMode } from "../css-contract.ts"
 import { generateLlmsTxt } from "../llms-txt.ts"
@@ -122,10 +126,10 @@ export interface CreateWebAppOptions<Env = unknown> {
    */
   readonly mounts?: ReadonlyArray<{
     readonly path: string
-    readonly app: {
-      fetch(request: Request, platform?: Platform<Env>): Response | Promise<Response>
-    }
+    readonly app: MountableApp<Env>
     readonly stripPrefix?: boolean
+    readonly priority?: number
+    readonly fallbackOn?: 404
   }>
   /** Secret for **draft / preview mode** (see `enableDraft`). When set, a request carrying a valid
    * signed `__nifra_draft` cookie gets `ctx.draft === true` in loaders/actions (else always `false`).
@@ -205,23 +209,43 @@ interface RouteContext<Env = unknown> {
  * The `Request` is rebuilt rather than mutated (`url` is read-only), preserving method, headers, body,
  * and duplex streaming - the body is passed through unread, so a large or streamed upload is untouched.
  */
-function stripMountPrefix(request: Request, prefix: string): Request {
-  const url = new URL(request.url)
-  const rest = url.pathname.slice(prefix.length)
-  url.pathname = rest === "" ? "/" : rest
-  // `url.href`, not the `URL`: this type set only declares the string and Request overloads.
-  return new Request(url.href, request)
-}
-
 /**
  * Resolve the explicit symbol-keyed backend mount interface. The symbol seam forwards platform
  * context without making web depend on client.
  */
-function backendMountOf<Env>(api: unknown): BackendMountHandler<Env> | undefined {
+function backendMountOf<Env>(api: unknown): MountableApp<Env> | undefined {
   if ((typeof api !== "object" && typeof api !== "function") || api === null) return undefined
   const explicit = (api as Partial<BackendMount<Env>>)[NIFRA_BACKEND_MOUNT]
   if (typeof explicit !== "function") return undefined
-  return (request, platform) => explicit.call(api, request, platform)
+  const websocket = (api as Partial<BackendMount<Env>>)[NIFRA_BACKEND_WS_MOUNT]
+  const runtime = (api as Partial<BackendMount<Env>>)[NIFRA_BACKEND_WS_RUNTIME]
+  const evidence = (api as Partial<BackendMount<Env>>)[NIFRA_BACKEND_EVIDENCE]
+  const mount: {
+    fetch: MountableApp<Env>["fetch"]
+    resolveWebSocketUpgrade?: BackendWebSocketMountHandler<Env>
+    [NIFRA_BACKEND_WS_RUNTIME]?: NonNullable<BackendMount<Env>[typeof NIFRA_BACKEND_WS_RUNTIME]>
+    [NIFRA_BACKEND_EVIDENCE]?: BackendEvidenceProvider
+  } = {
+    fetch: (request, platform) => explicit.call(api, request, platform),
+  }
+  if (typeof websocket === "function") {
+    mount.resolveWebSocketUpgrade = (request, platform) => websocket.call(api, request, platform)
+  }
+  if (typeof runtime === "function") mount[NIFRA_BACKEND_WS_RUNTIME] = runtime
+  if (typeof evidence === "function") mount[NIFRA_BACKEND_EVIDENCE] = evidence
+  return mount
+}
+
+function evidenceProviderOf(value: unknown): BackendEvidenceProvider | undefined {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) return undefined
+  const provider = (value as { [NIFRA_BACKEND_EVIDENCE]?: unknown })[NIFRA_BACKEND_EVIDENCE]
+  return typeof provider === "function" ? (provider as BackendEvidenceProvider) : undefined
+}
+
+function mountPathPrefix(path: string): string {
+  const withoutWildcard = path.endsWith("/*") ? path.slice(0, -2) : path
+  if (withoutWildcard === "" || withoutWildcard === "/") return ""
+  return withoutWildcard.replace(/\/+$/, "")
 }
 
 function requestPathOf(request: Request): string {
@@ -259,43 +283,39 @@ export function createWebApp<Env = unknown>(
   // `beforeHandle`, assurance evidence) actually bind to them - see the `use` option. A caller
   // cannot do this after the fact: by the time this function returns, the routes are declared.
   options.use?.(app)
+  // A resolver created by `createNonceResolver({ header })` carries a paired response hook. Register it
+  // after caller middleware so its request-specific CSP value is the last default applied to a page.
+  const nonceResponse = options.nonce?.onResponse
+  if (nonceResponse !== undefined) app.onResponse(nonceResponse)
   // Auto-mount the in-process backend over HTTP at `apiPrefix` (default `/api`), BEFORE page routing.
-  // `onRequest` runs on the raw request ahead of the router, so this wins over the page wildcard `/*`
-  // for every method (POST/GET/PUT/…) - not just the GET page routes - and a backend 404 (`/api/none`)
-  // surfaces as the backend's own response, never the page 404. We dispatch the SAME `Request` object
-  // (its body unread) so streamed/large bodies pass through untouched; the backend defines its routes
-  // at the full prefixed path (`server().post("/api/sync", …)`), matching the `inProcessClient` call
-  // sites. `apiPrefix: ""` opts out; a non-mountable `api` (no symbol mount) is left pages-only. The hook
-  // is registered ONLY when both hold, so a pages-only app keeps core's synchronous no-hook fast path.
+  // Core's pre-route mount seam runs before the page wildcard `/*`; parent request hooks run first,
+  // child request hooks run inside the mount, and parent response hooks still wrap the result.
+  // The mount handles every HTTP method and preserves backend 404 responses instead of letting the
+  // page catch-all render them. We dispatch the same `Request` object (its body unread), so
+  // streamed/large bodies pass through untouched. The backend defines full prefixed paths
+  // (`server().post("/api/sync", …)`) unless `apiStrip` is enabled. `apiPrefix: ""` opts out;
+  // a non-mountable `api` remains loader-only and pages-only apps keep the no-mount fast path.
   const apiPrefix = options.apiPrefix ?? "/api"
   const apiStrip = options.apiStrip === true
   const mountedApi = backendMountOf<Env>(api)
   // Longest path first, so a more specific mount (`/api/auth`) is tried before a broader one (`/api`)
   // regardless of the order they were declared in.
-  const mounts = [...(options.mounts ?? [])].sort((a, b) => b.path.length - a.path.length)
-  const underPrefix = (pathname: string, prefix: string): boolean =>
-    pathname === prefix || pathname.startsWith(`${prefix}/`)
-
-  if (mounts.length > 0 || (apiPrefix !== "" && mountedApi !== undefined)) {
-    app.onRequest((req, platform) => {
-      const { pathname } = urlPartsFor(req)
-      // Sub-app mounts win over the backend prefix: they are the more specific declaration, and an
-      // auth handler mounted at `/api/auth` must not be swallowed by the backend mounted at `/api`.
-      for (const mount of mounts) {
-        if (!underPrefix(pathname, mount.path)) continue
-        return mount.app.fetch(
-          mount.stripPrefix === true ? stripMountPrefix(req, mount.path) : req,
-          platform,
-        )
-      }
-      // Exactly the prefix (`/api`) or a sub-path (`/api/…`) - NOT a sibling like `/apixyz` that merely
-      // shares the prefix as a string head. Dispatch the original `req` (body intact) to the backend.
-      if (mountedApi !== undefined && apiPrefix !== "" && underPrefix(pathname, apiPrefix)) {
-        return mountedApi(apiStrip ? stripMountPrefix(req, apiPrefix) : req, platform)
-      }
-      return undefined // not an API path → continue to page routing
-    })
+  const configuredMounts: readonly MountOptions<Env>[] = Object.freeze(
+    (options.mounts ?? []).map(
+      (mount): MountOptions<Env> => ({
+        path: mount.path,
+        app: mount.app,
+        ...(mount.stripPrefix === undefined ? {} : { stripPrefix: mount.stripPrefix }),
+        ...(mount.priority === undefined ? {} : { priority: mount.priority }),
+        ...(mount.fallbackOn === undefined ? {} : { fallbackOn: mount.fallbackOn }),
+      }),
+    ),
+  )
+  const mounts: Array<MountOptions<Env>> = [...configuredMounts]
+  if (mountedApi !== undefined && apiPrefix !== "") {
+    mounts.push({ path: apiPrefix, app: mountedApi, stripPrefix: apiStrip })
   }
+  for (const mount of mounts) app.mount(mount)
   const pageExecutor = createPageRequestExecutor<Env>({
     adapter,
     manifest,
@@ -343,5 +363,66 @@ export function createWebApp<Env = unknown>(
     pageExecutor.notFound(c.req, c.env, requestPathOf(c.req)),
   )
 
+  let evidenceComposing = false
+  const evidenceProvider: BackendEvidenceProvider = async () => {
+    if (evidenceComposing) {
+      throw new Error("[nifra/web] cyclic composed assurance evidence mount")
+    }
+    evidenceComposing = true
+    try {
+      const { composeProjectEvidence, snapshotProjectEvidence } = await import(
+        "@nifrajs/core/evidence"
+      )
+      const parts: Array<{
+        readonly evidence: import("@nifrajs/core/evidence").ProjectEvidenceSnapshot
+        readonly pathPrefix?: string
+      }> = [{ evidence: snapshotProjectEvidence(app) }]
+      for (const mount of configuredMounts) {
+        const provider = evidenceProviderOf(mount.app)
+        if (provider === undefined) {
+          throw new Error(
+            `[nifra/web] cannot compose assurance evidence: mount "${mount.path}" has no token-only evidence provider`,
+          )
+        }
+        parts.push({
+          evidence: await provider.call(mount.app),
+          ...(mount.stripPrefix === true ? { pathPrefix: mountPathPrefix(mount.path) } : {}),
+        })
+      }
+      if (mountedApi !== undefined && apiPrefix !== "") {
+        const provider = evidenceProviderOf(api)
+        if (provider === undefined) {
+          throw new Error(
+            `[nifra/web] cannot compose assurance evidence: auto-mounted API at "${apiPrefix}" has no token-only evidence provider`,
+          )
+        }
+        parts.push({
+          evidence: await provider.call(api),
+          ...(apiStrip ? { pathPrefix: mountPathPrefix(apiPrefix) } : {}),
+        })
+      }
+      return composeProjectEvidence(parts)
+    } finally {
+      evidenceComposing = false
+    }
+  }
+  Object.defineProperty(app, NIFRA_BACKEND_EVIDENCE, {
+    configurable: false,
+    enumerable: false,
+    value: evidenceProvider,
+    writable: false,
+  })
+
   return app
+}
+
+/** Resolve one composed, token-only evidence snapshot for a web app and its mounted surfaces. */
+export async function webProjectEvidence(
+  source: unknown,
+): Promise<import("@nifrajs/core/evidence").ProjectEvidenceSnapshot> {
+  const provider = evidenceProviderOf(source)
+  if (provider === undefined) {
+    throw new TypeError("webProjectEvidence(): expected an app created by createWebApp")
+  }
+  return provider.call(source)
 }

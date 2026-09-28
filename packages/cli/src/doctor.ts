@@ -176,6 +176,8 @@ export interface DoctorResult {
   readonly toolingDrift?: ToolingDrift
   /** Static production-readiness evidence for the selected deploy target. */
   readonly readiness?: DoctorReadiness
+  /** The explicit source boundary used by the dependency scan. */
+  readonly scanScope?: DoctorScanScope
   /**
    * Which bundler this app's `dev`/`build` phases run on, read statically, plus the config hazards
    * that exist only because there are two. Absent when the directory is not a nifra app.
@@ -189,6 +191,12 @@ export interface DoctorResult {
   readonly fixed?: readonly DoctorAppliedFix[]
   /** Findings that were safe to report but not safe to write automatically. */
   readonly skippedFixes?: readonly DoctorSkippedFix[]
+}
+
+export interface DoctorScanScope {
+  readonly kind: "standalone" | "workspace-production"
+  readonly includeTests: boolean
+  readonly excluded: readonly string[]
 }
 
 export type DoctorReadinessStatus = "configured" | "absent" | "not-applicable"
@@ -751,9 +759,29 @@ export async function collectDoctorResult(
   const scopes = await doctorPackageScopes(cwd, pkg)
 
   const findings: DoctorFinding[] = []
-  // `includeTests`: tests are part of the typechecked surface, so an import they declare nowhere is a
-  // real break. Excluding them is what let an undeclared `zod` in a `*.test.ts` pass doctor, pass a
-  // hoisted local `tsc`, and then fail CI on a clean install with `TS2307: Cannot find module 'zod'`.
+  // A standalone app owns its tests, so they remain in the declaration check. A workspace root owns
+  // the published package source while its root devDependencies intentionally own shared tests,
+  // benchmarks, and scaffold copy-surfaces. Keep that boundary explicit instead of reporting a
+  // monorepo-wide false failure or silently dropping files from the result.
+  const workspaceProduction = workspacePatterns(pkg).length > 0
+  const scanScope: DoctorScanScope = Object.freeze({
+    kind: workspaceProduction ? "workspace-production" : "standalone",
+    includeTests: !workspaceProduction,
+    excluded: workspaceProduction
+      ? Object.freeze([
+          "**/test/**",
+          "**/test-node/**",
+          "bench/**",
+          "packages/create-nifra/template*/**",
+        ])
+      : Object.freeze([]),
+  })
+  const workspaceSurface = (rel: string): boolean =>
+    workspaceProduction &&
+    (/(^|\/)(?:test|test-node)\//.test(rel) ||
+      rel === "bench" ||
+      rel.startsWith("bench/") ||
+      rel.startsWith("packages/create-nifra/template"))
   await walkSource(
     cwd,
     (rel, content) => {
@@ -762,7 +790,7 @@ export async function collectDoctorResult(
         findings.push({ file: f.file, line: f.line, package: f.snippet })
       }
     },
-    { includeTests: true },
+    { includeTests: scanScope.includeTests, ignore: workspaceSurface },
   )
   findings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)
   const identity = await collectAllDuplicateInstalls(cwd, pkg)
@@ -791,6 +819,7 @@ export async function collectDoctorResult(
     ...(identity.truncated ? { identityScanTruncated: true } : {}),
     staleDists,
     readiness,
+    scanScope,
     ...(toolingDrift !== undefined ? { toolingDrift } : {}),
     ...(pipeline.ran ? { pipeline } : {}),
   }
@@ -921,6 +950,14 @@ export async function runDoctor(
       console.log(`${f.severity === "error" ? "✗" : "⚠"} ${f.file}:${f.line ?? 0}  ${f.message}`)
       console.log(`      fix: ${f.fix}\n`)
     }
+  }
+  if (result.scanScope !== undefined) {
+    console.log(
+      `• dependency scan scope: ${result.scanScope.kind} (${result.scanScope.includeTests ? "includes tests" : "production package source only"})`,
+    )
+    if (result.scanScope.excluded.length > 0)
+      console.log(`  excluded: ${result.scanScope.excluded.join(", ")}`)
+    console.log("")
   }
   // Advisory, printed regardless of ok: a stale linked dist doesn't fail doctor, but silently eating
   // it costs an hour of misdiagnosis when the dev server 500s inside the package.

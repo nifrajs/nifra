@@ -147,6 +147,16 @@ test("buildManifest rejects duplicate routes at boot", () => {
   )
 })
 
+test("buildManifest rejects overlapping route patterns at boot", () => {
+  expect(() => buildManifest(["users/[id].tsx", "users/me.tsx"], fakeImporter)).toThrow(
+    /overlapping routes.*users\/\[id\]\.tsx.*\/users\/:id.*users\/me\.tsx.*\/users\/me/,
+  )
+})
+
+test("buildManifest keeps disjoint dynamic route patterns", () => {
+  expect(() => buildManifest(["users/[id].tsx", "teams/[id].tsx"], fakeImporter)).not.toThrow()
+})
+
 test("a route's load() resolves its module", async () => {
   const m = buildManifest(["index.tsx"], fakeImporter)
   const first = m.routes[0]

@@ -4,6 +4,7 @@
  * the filesystem and feeds `buildManifest`; everything here is pure logic, so it stays
  * portable (no fs, no DOM) and fully unit-testable. Edge deploys pre-build the manifest.
  */
+import { routePatternOverlap } from "@nifrajs/core"
 import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import type { BoundaryDescriptor, BoundaryRegistration } from "./boundary.ts"
 
@@ -189,6 +190,8 @@ export interface Meta {
 export interface MetaArgs<Data = unknown> {
   readonly data: Data
   readonly params: Record<string, string>
+  /** The resolved document CSP nonce, when this render uses per-request nonce protection. */
+  readonly nonce?: string
   /**
    * The site origin - scheme + host (+ port), e.g. `"https://news.example.com"`, **with no trailing
    * slash**. The single piece of server/env knowledge `meta()` otherwise can't see: it runs in BOTH
@@ -619,6 +622,14 @@ export function buildManifest(
         throw new Error(
           `[nifra/web] duplicate route: "${file}" and "${existing}" both map to "${pattern}"`,
         )
+      }
+      for (const previous of routes) {
+        const witness = routePatternOverlap(previous.pattern, pattern)
+        if (witness !== undefined) {
+          throw new Error(
+            `[nifra/web] overlapping routes: "${previous.file}" (${previous.pattern}) and "${file}" (${pattern}) both match "${witness}"; make the patterns disjoint or remove one route`,
+          )
+        }
       }
       byPattern.set(pattern, file)
       const layoutParams = layoutDirsForFile.map((dir) =>

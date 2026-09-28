@@ -34,6 +34,10 @@ export interface OperationDef {
   /** Optional request-header schema (header names are normalized to lower-case). */
   readonly headers?: StandardSchemaV1
   readonly body?: StandardSchemaV1
+  /** Explicit external-protocol mode; raw bytes/text are read by the handler from `c.req`. */
+  readonly wire?: "raw"
+  /** Run derive/beforeHandle authentication before body/query validation on sensitive routes. */
+  readonly validationOrder?: "validate-before-auth" | "auth-before-validation"
   readonly query?: StandardSchemaV1
   readonly response?: StandardSchemaV1
   /** Declared effect tokens, carried into route reflection and capability assurance. */
@@ -267,6 +271,28 @@ export function defineContract<const C extends ContractShape>(contract: C): C {
         )
       }
     }
+    if (op.wire !== undefined && op.wire !== "raw") {
+      throw new RouteConfigError(
+        "INVALID_WIRE",
+        `operation "${name}": wire must be "raw" when specified`,
+      )
+    }
+    if (op.wire === "raw" && op.body !== undefined) {
+      throw new RouteConfigError(
+        "INVALID_WIRE",
+        `operation "${name}": wire: "raw" cannot be combined with a body schema`,
+      )
+    }
+    if (
+      op.validationOrder !== undefined &&
+      op.validationOrder !== "validate-before-auth" &&
+      op.validationOrder !== "auth-before-validation"
+    ) {
+      throw new RouteConfigError(
+        "INVALID_VALIDATION_ORDER",
+        `operation "${name}": validationOrder is invalid`,
+      )
+    }
     const key = `${method} ${op.path}`
     if (seen.has(key)) {
       throw new RouteConfigError("DUPLICATE_ROUTE", `duplicate operation route: ${key}`)
@@ -350,6 +376,8 @@ export function implement<
       op.params !== undefined ||
       op.headers !== undefined ||
       op.body !== undefined ||
+      op.wire !== undefined ||
+      op.validationOrder !== undefined ||
       op.query !== undefined ||
       op.response !== undefined ||
       (errors !== undefined && Object.keys(errors).length > 0) ||
@@ -363,6 +391,8 @@ export function implement<
             ...(op.params !== undefined ? { params: op.params } : {}),
             ...(op.headers !== undefined ? { headers: op.headers } : {}),
             ...(op.body !== undefined ? { body: op.body } : {}),
+            ...(op.wire !== undefined ? { wire: op.wire } : {}),
+            ...(op.validationOrder !== undefined ? { validationOrder: op.validationOrder } : {}),
             ...(op.query !== undefined ? { query: op.query } : {}),
             ...(op.response !== undefined ? { response: op.response } : {}),
             ...(errors !== undefined && Object.keys(errors).length > 0 ? { errors } : {}),

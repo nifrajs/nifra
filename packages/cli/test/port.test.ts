@@ -94,6 +94,16 @@ describe("scanFileForFeatures - detects each feature from its real signal", () =
     expect(state.evidence.get("bun-runtime-api")?.map((e) => e.line)).toEqual([1, 2])
   })
 
+  test("bun-runtime-api: aliased bun imports and globalThis.Bun", () => {
+    const src = [
+      'import { serve as bunServe } from "bun"',
+      "globalThis.Bun.file('./x')",
+      "bunServe({ fetch: app.fetch })",
+    ].join("\n")
+    const state = scanOne("server.ts", src)
+    expect(state.evidence.get("bun-runtime-api")?.map((e) => e.line)).toEqual([1, 2])
+  })
+
   test("deno-runtime-api: Deno.* globals", () => {
     const src = "const port = Number(Deno.env.get('PORT') ?? '3000')"
     const state = scanOne("server-deno.ts", src)

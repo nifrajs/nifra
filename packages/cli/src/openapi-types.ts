@@ -8,11 +8,15 @@
 
 import { existsSync } from "node:fs"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import { dirname, join, resolve } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
 import type { JsonSchema } from "@nifrajs/core/reflection"
 import type * as TSApi from "typescript"
-import { importProjectTypeScript, type TypeScriptApi } from "./internal/typescript-import.ts"
+import {
+  loadProjectTypeScript,
+  type TypeScriptApi,
+  type TypeScriptSemanticSession,
+  type TypeScriptSession,
+} from "./internal/typescript-import.ts"
 
 export interface InferredOpenAPIResponse {
   readonly description?: string
@@ -137,6 +141,254 @@ function propertyType(checker: TypeChecker, type: Type, name: string): Type | un
     : checker.getTypeOfSymbolAtLocation(property, declaration)
 }
 
+interface TypeScript7Node {
+  readonly kind: number
+  readonly pos: number
+  readonly end: number
+  getStart(sourceFile?: TypeScript7SourceFile): number
+  getText(sourceFile?: TypeScript7SourceFile): string
+}
+
+interface TypeScript7SourceFile extends TypeScript7Node {
+  readonly fileName: string
+}
+
+interface TypeScript7Symbol {
+  readonly name: string
+  readonly flags: number
+}
+
+interface TypeScript7Type {
+  readonly flags: number
+  readonly value?: string | number | boolean | bigint
+  getTypes(): Promise<readonly TypeScript7Type[] | undefined>
+  getSymbol(): Promise<TypeScript7Symbol | undefined>
+}
+
+interface TypeScript7Checker {
+  getTypeAtPosition(file: string, position: number): Promise<TypeScript7Type | undefined>
+  getTypeOfSymbol(symbol: TypeScript7Symbol): Promise<TypeScript7Type | undefined>
+  getTypeOfSymbolAtLocation(
+    symbol: TypeScript7Symbol,
+    location: TypeScript7Node,
+  ): Promise<TypeScript7Type>
+  getPropertiesOfType(type: TypeScript7Type): Promise<readonly TypeScript7Symbol[]>
+  getPropertyOfType(type: TypeScript7Type, name: string): Promise<TypeScript7Symbol | undefined>
+  getDeclaredTypeOfSymbol(symbol: TypeScript7Symbol): Promise<TypeScript7Type>
+  getApparentType(type: TypeScript7Type): Promise<TypeScript7Type | undefined>
+  getSignaturesOfType(type: TypeScript7Type, kind: number): Promise<readonly unknown[]>
+  getTypeArguments(type: TypeScript7Type): Promise<readonly TypeScript7Type[]>
+  getNonNullableType(type: TypeScript7Type): Promise<TypeScript7Type | undefined>
+  typeToString(type: TypeScript7Type): Promise<string>
+  isTupleType(type: TypeScript7Type): Promise<boolean>
+  isArrayType(type: TypeScript7Type): Promise<boolean>
+}
+
+const semanticChecker = async (
+  semantic: TypeScriptSemanticSession,
+  file: string,
+): Promise<TypeScript7Checker> =>
+  ((await semantic.getCheckerForFile(file)) ?? semantic.checker) as TypeScript7Checker
+
+const semanticSource = async (
+  semantic: TypeScriptSemanticSession,
+  file: string,
+): Promise<TypeScript7SourceFile | undefined> =>
+  (await semantic.getSourceFile(file)) as TypeScript7SourceFile | undefined
+
+function semanticFlag(semantic: TypeScriptSemanticSession, name: string): number {
+  const value = semantic.typeFlags[name]
+  if (typeof value !== "number") throw new Error(`TypeScript 7 TypeFlags.${name} is unavailable`)
+  return value
+}
+
+function semanticSymbolFlag(semantic: TypeScriptSemanticSession, name: string): number {
+  const value = semantic.symbolFlags[name]
+  if (typeof value !== "number") throw new Error(`TypeScript 7 SymbolFlags.${name} is unavailable`)
+  return value
+}
+
+function semanticSignatureKind(semantic: TypeScriptSemanticSession, name: string): number {
+  const value = semantic.signatureKind[name]
+  if (typeof value !== "number")
+    throw new Error(`TypeScript 7 SignatureKind.${name} is unavailable`)
+  return value
+}
+
+async function schemaForType7(
+  semantic: TypeScriptSemanticSession,
+  checker: TypeScript7Checker,
+  input: TypeScript7Type,
+  seen: Set<TypeScript7Type>,
+  depth: number,
+): Promise<JsonSchema | undefined> {
+  if (depth > 20 || seen.has(input)) return undefined
+  const anyFlag = semanticFlag(semantic, "Any")
+  const unknownFlag = semanticFlag(semantic, "Unknown")
+  const neverFlag = semanticFlag(semantic, "Never")
+  const undefinedFlag = semanticFlag(semantic, "Undefined")
+  const voidFlag = semanticFlag(semantic, "Void")
+  const stringLiteralFlag = semanticFlag(semantic, "StringLiteral")
+  const numberLiteralFlag = semanticFlag(semantic, "NumberLiteral")
+  const booleanLiteralFlag = semanticFlag(semantic, "BooleanLiteral")
+  const stringLikeFlag = semanticFlag(semantic, "StringLike")
+  const numberLikeFlag = semanticFlag(semantic, "NumberLike")
+  const booleanLikeFlag = semanticFlag(semantic, "BooleanLike")
+  const bigintLikeFlag = semanticFlag(semantic, "BigIntLike")
+  const nullFlag = semanticFlag(semantic, "Null")
+  const unionFlag = semanticFlag(semantic, "Union")
+  const objectFlag = semanticFlag(semantic, "Object")
+
+  if ((input.flags & (anyFlag | unknownFlag)) !== 0) return undefined
+  if ((input.flags & neverFlag) !== 0) return undefined
+  if ((input.flags & (undefinedFlag | voidFlag)) !== 0) return undefined
+  if ((input.flags & stringLiteralFlag) !== 0 && typeof input.value === "string") {
+    return { const: input.value }
+  }
+  if ((input.flags & numberLiteralFlag) !== 0 && typeof input.value === "number") {
+    return { const: input.value }
+  }
+  if ((input.flags & booleanLiteralFlag) !== 0) {
+    return { const: (await checker.typeToString(input)) === "true" }
+  }
+  if ((input.flags & stringLikeFlag) !== 0) return { type: "string" }
+  if ((input.flags & numberLikeFlag) !== 0) return { type: "number" }
+  if ((input.flags & booleanLikeFlag) !== 0) return { type: "boolean" }
+  if ((input.flags & bigintLikeFlag) !== 0) return { type: "integer" }
+  if ((input.flags & nullFlag) !== 0) return { type: "null" }
+
+  if ((input.flags & unionFlag) !== 0) {
+    const members = (await input.getTypes()) ?? []
+    const schemas = (
+      await Promise.all(
+        members.map((member) => schemaForType7(semantic, checker, member, seen, depth + 1)),
+      )
+    ).filter((schema): schema is JsonSchema => schema !== undefined)
+    if (schemas.length === 0) return undefined
+    if (schemas.length === 1) return schemas[0]
+    return { anyOf: schemas }
+  }
+
+  if (await checker.isTupleType(input)) {
+    const elements = (
+      await Promise.all(
+        (
+          await checker.getTypeArguments(input)
+        ).map((member) => schemaForType7(semantic, checker, member, seen, depth + 1)),
+      )
+    ).filter((schema): schema is JsonSchema => schema !== undefined)
+    return elements.length === 0 ? undefined : { type: "array", prefixItems: elements }
+  }
+  if (await checker.isArrayType(input)) {
+    const [element] = await checker.getTypeArguments(input)
+    const items =
+      element === undefined
+        ? undefined
+        : await schemaForType7(semantic, checker, element, seen, depth + 1)
+    return items === undefined ? { type: "array" } : { type: "array", items }
+  }
+
+  const symbol = await input.getSymbol()
+  if (symbol?.name === "Date") return { type: "string", format: "date-time" }
+  if ((input.flags & objectFlag) === 0) return undefined
+
+  seen.add(input)
+  try {
+    const properties: Record<string, JsonSchema> = {}
+    const required: string[] = []
+    for (const property of await checker.getPropertiesOfType(input)) {
+      const propertyType = await checker.getTypeOfSymbol(property)
+      if (propertyType === undefined) return undefined
+      if (
+        (await checker.getSignaturesOfType(propertyType, semanticSignatureKind(semantic, "Call")))
+          .length > 0
+      )
+        continue
+      const propertySchema = await schemaForType7(semantic, checker, propertyType, seen, depth + 1)
+      if (propertySchema === undefined) return undefined
+      properties[property.name] = propertySchema
+      if ((property.flags & semanticSymbolFlag(semantic, "Optional")) === 0) {
+        required.push(property.name)
+      }
+    }
+    if (Object.keys(properties).length === 0) return { type: "object" }
+    return {
+      type: "object",
+      properties,
+      ...(required.length > 0 ? { required } : {}),
+    }
+  } finally {
+    seen.delete(input)
+  }
+}
+
+async function inferOpenAPIResponses7(
+  semantic: TypeScriptSemanticSession,
+  probePath: string,
+  warnings: string[],
+): Promise<OpenAPITypeInferenceResult> {
+  const source = await semanticSource(semantic, probePath)
+  if (source === undefined) {
+    warnings.push("could not create the TypeScript 7 response-inference probe")
+    return { responses: {}, warnings }
+  }
+  const checker = await semanticChecker(semantic, probePath)
+  const registryPosition = source.getText().indexOf("__nifra_registry")
+  if (registryPosition < 0) {
+    warnings.push("backend does not expose a typed Nifra server registry")
+    return { responses: {}, warnings }
+  }
+  const registry = await checker.getTypeAtPosition(probePath, registryPosition)
+  if (registry === undefined) {
+    warnings.push("backend does not expose a typed Nifra server registry")
+    return { responses: {}, warnings }
+  }
+  const responses: Record<string, Record<string, InferredOpenAPIResponse>> = {}
+  for (const pathSymbol of await checker.getPropertiesOfType(registry)) {
+    const methods = await checker.getTypeOfSymbol(pathSymbol)
+    if (methods === undefined) continue
+    for (const methodSymbol of await checker.getPropertiesOfType(methods)) {
+      if (methodSymbol.name === "WS") continue
+      const info = await checker.getTypeOfSymbol(methodSymbol)
+      if (info === undefined) continue
+      const responseSymbol = await checker.getPropertyOfType(info, "responses")
+      if (responseSymbol === undefined) continue
+      const responseType = await checker.getTypeOfSymbol(responseSymbol)
+      if (responseType === undefined) continue
+      const nonNullable = await checker.getNonNullableType(responseType)
+      if (nonNullable === undefined) continue
+      const routeResponses: Record<string, InferredOpenAPIResponse> = {}
+      const responseMap = (await checker.getApparentType(nonNullable)) ?? nonNullable
+      for (const property of await checker.getPropertiesOfType(responseMap)) {
+        if (!/^[1-5][0-9]{2}$/.test(property.name)) continue
+        const bodyType = await checker.getTypeOfSymbol(property)
+        if (bodyType === undefined) continue
+        const schema = await schemaForType7(semantic, checker, bodyType, new Set(), 0)
+        if (schema === undefined) {
+          const bodylessStatus = ["204", "205", "304"].includes(property.name)
+          const bodylessType =
+            (bodyType.flags &
+              (semanticFlag(semantic, "Undefined") | semanticFlag(semantic, "Void"))) !==
+            0
+          if (bodylessStatus && bodylessType) {
+            routeResponses[property.name] = {}
+            continue
+          }
+          warnings.push(
+            `response ${property.name} has an unsupported or opaque TypeScript body (${await checker.typeToString(bodyType)})`,
+          )
+          continue
+        }
+        routeResponses[property.name] = { schema }
+      }
+      if (Object.keys(routeResponses).length > 0) {
+        responses[`${methodSymbol.name.toUpperCase()} ${pathSymbol.name}`] = routeResponses
+      }
+    }
+  }
+  return { responses, warnings }
+}
+
 function responseEntries(
   ts: TypeScriptApi,
   checker: TypeChecker,
@@ -174,23 +426,68 @@ export async function inferOpenAPIResponses(root: string): Promise<OpenAPITypeIn
   const backendPath = resolve(root, "backend.ts")
   if (!existsSync(backendPath)) return { responses: {}, warnings }
 
-  const ts = await importProjectTypeScript(root)
-  if (ts === undefined) {
-    warnings.push("TypeScript is not installed; response inference was skipped")
-    return { responses: {}, warnings }
-  }
-
-  const temp = await mkdtemp(join(tmpdir(), "nifra-openapi-"))
-  const probePath = join(temp, "probe.ts")
+  // TypeScript 7's project checker only resolves node handles inside a configured project's root.
+  // Keep both the probe and a short-lived extending config at the project root, then remove them.
+  const temp = await mkdtemp(join(root, ".nifra-openapi-"))
+  const tempName = basename(temp)
+  const probePath = join(root, `.${tempName}.ts`)
+  const probeConfigPath = join(root, `.${tempName}.tsconfig.json`)
   const probe = [
     'import type { Server as __NifraServer } from "@nifrajs/core/server"',
     `import { backend as __nifra_backend } from ${JSON.stringify(backendPath)}`,
     "type __NifraRegistry = typeof __nifra_backend extends __NifraServer<infer R, any, any> ? R : never",
     "declare const __nifra_registry: __NifraRegistry",
   ].join("\n")
+  let session: TypeScriptSession | undefined
 
   try {
     await writeFile(probePath, probe, "utf8")
+    await writeFile(
+      probeConfigPath,
+      JSON.stringify(
+        existsSync(join(root, "tsconfig.json"))
+          ? {
+              extends: "./tsconfig.json",
+              compilerOptions: { allowImportingTsExtensions: true },
+              include: ["backend.ts", basename(probePath)],
+            }
+          : {
+              compilerOptions: {
+                module: "ESNext",
+                moduleResolution: "Bundler",
+                allowImportingTsExtensions: true,
+                skipLibCheck: true,
+              },
+              include: ["backend.ts", basename(probePath)],
+            },
+      ),
+      "utf8",
+    )
+    const backendContent = await Bun.file(backendPath).text()
+    const contents = new Map<string, string>([
+      [backendPath, backendContent],
+      [probePath, probe],
+    ])
+    const loaded = await loadProjectTypeScript(root, undefined, {
+      files: [backendPath, probePath],
+      read: (file) => contents.get(resolve(file)),
+      projectConfig: probeConfigPath,
+    })
+    session = loaded.session
+    if (loaded.unsupported !== undefined) {
+      warnings.push(
+        `TypeScript ${loaded.unsupported.version} is outside the supported OpenAPI reflection API`,
+      )
+      return { responses: {}, warnings }
+    }
+    const ts = loaded.compiler
+    if (ts === undefined) {
+      warnings.push("TypeScript is not installed; response inference was skipped")
+      return { responses: {}, warnings }
+    }
+    if (loaded.session?.semantic !== undefined) {
+      return await inferOpenAPIResponses7(loaded.session.semantic, probePath, warnings)
+    }
     const configPath = ts.findConfigFile(root, ts.sys.fileExists, "tsconfig.json")
     let options: TSApi.CompilerOptions = {
       noEmit: true,
@@ -256,6 +553,9 @@ export async function inferOpenAPIResponses(root: string): Promise<OpenAPITypeIn
     }
     return { responses, warnings }
   } finally {
+    await session?.close()
+    await rm(probePath, { force: true })
+    await rm(probeConfigPath, { force: true })
     await rm(temp, { recursive: true, force: true })
   }
 }

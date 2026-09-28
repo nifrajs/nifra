@@ -18,7 +18,7 @@
  */
 import type { RequestBudget } from "../budget.ts"
 import type { RequestLedger } from "../ledger.ts"
-import type { StandardSchemaV1 } from "../schema/standard.ts"
+import type { AuthenticationStage } from "../server/auth.ts"
 import { UNLIMITED_BODY_BYTES } from "../server/body.ts"
 import type { Platform, RouteSchema } from "../server/context.ts"
 import type { ResolvedIdempotency } from "../server/idempotency-lane.ts"
@@ -26,7 +26,10 @@ import type { EffectLedgerRuntime, ResolvedEffectLedger } from "../server/ledger
 import type { ProtoPoisoning } from "../server/proto-guard.ts"
 import type { Registry } from "../server/registry.ts"
 import { RequestContext } from "../server/request-context.ts"
-import type { ResponseContractRuntime } from "../server/response-contract-lane.ts"
+import type {
+  ResponseContractDefinition,
+  ResponseContractRuntime,
+} from "../server/response-contract-lane.ts"
 import type { HandlerResult, ResponseResult } from "../server/runtime-core.ts"
 import type { CtxSet, MaybePromise, RawContext, RequestSource, Server } from "../server/server.ts"
 import type { RouteProgram } from "./route-program.ts"
@@ -35,6 +38,8 @@ export type InternalHandler = (ctx: RawContext) => MaybePromise<HandlerResult>
 
 /** A `derive` computes per-request context extensions; stored path-erased. */
 export type RawDerive = (ctx: RawContext) => MaybePromise<object>
+/** A route-scoped authentication provider, stored path-erased after registration. */
+export type RawAuthStage = AuthenticationStage<unknown, unknown>
 export type RawBeforeHandle = (ctx: RawContext) => MaybePromise<unknown>
 export type RawAfterHandle = (result: unknown, ctx: RawContext) => MaybePromise<unknown>
 export type RawErrorHandler = (error: unknown, ctx: RawContext) => MaybePromise<unknown>
@@ -311,10 +316,15 @@ export interface RouteEntry {
    * at registration; `undefined` = not checked (the default, and the only state in which the route can
    * still take the fused/native lanes). */
   readonly responseContract:
-    | { readonly runtime: ResponseContractRuntime; readonly schema: StandardSchemaV1 }
+    | {
+        readonly runtime: ResponseContractRuntime
+        readonly definition: ResponseContractDefinition
+      }
     | undefined
   /** Per-request context extensions captured at registration (order-scoped). */
   readonly derives: ReadonlyArray<RawDerive>
+  /** Dedicated auth stages run before validation; ordinary derives keep their existing order. */
+  readonly authStages: ReadonlyArray<RawAuthStage>
   /** Static context extensions captured at registration. */
   readonly decorations: Record<PropertyKey, unknown>
   /** Whether {@link decorations} has any keys - precomputed so the hot path skips a no-op

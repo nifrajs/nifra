@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { type StandardSchemaV1, server } from "@nifrajs/core"
+import { type StandardSchemaV1, server, status } from "@nifrajs/core"
 import { t } from "@nifrajs/schema"
 import {
   AdversarialContractError,
@@ -8,6 +8,71 @@ import {
 } from "../src/index.ts"
 
 describe("contract laboratory", () => {
+  test("auth-context witnesses validate guard responses against status-specific contracts", async () => {
+    const app = server()
+      .use({
+        name: "auth-guard",
+        beforeHandle: (context) =>
+          context.req.headers.get("authorization") === "Bearer test"
+            ? undefined
+            : status(401, { error: "unauthorized" }),
+      })
+      .get(
+        "/private",
+        {
+          response: t.object({ ok: t.boolean() }),
+          errors: { 401: t.object({ error: t.string() }) },
+        },
+        () => ({ ok: true }),
+      )
+    const seen: string[] = []
+    const prepare = (request: Request, context: { auth?: "authenticated" | "unauthenticated" }) => {
+      seen.push(context.auth ?? "default")
+      if (context.auth !== "authenticated") return request
+      const headers = new Headers(request.headers)
+      headers.set("authorization", "Bearer test")
+      return new Request(request, { headers })
+    }
+
+    const authenticated = await runAdversarialContract(app, {
+      witnesses: {
+        "GET /private": {
+          auth: "authenticated",
+          expected: { status: 200, body: { ok: true } },
+        },
+      },
+      prepareRequest: prepare,
+    })
+    expect(authenticated.ok).toBe(true)
+
+    const unauthenticated = await runAdversarialContract(app, {
+      witnesses: {
+        "GET /private": {
+          auth: "unauthenticated",
+          expected: { status: 401, body: { error: "unauthorized" } },
+        },
+      },
+      prepareRequest: prepare,
+    })
+    expect(unauthenticated.ok).toBe(true)
+    expect(unauthenticated.results[0]?.message).toContain("declared contract")
+    expect(seen).toContain("authenticated")
+    expect(seen).toContain("unauthenticated")
+  })
+
+  test("status witness without a declared error contract is a coverage gap", async () => {
+    const app = server().get("/private", { response: t.object({ ok: t.boolean() }) }, () =>
+      status(404, { error: "not_found" }),
+    )
+    const report = await runAdversarialContract(app, {
+      witnesses: { "GET /private": { expected: { status: 404 } } },
+    })
+    expect(report.ok).toBe(false)
+    expect(report.gaps).toContainEqual(
+      expect.objectContaining({ code: "NO_STATUS_CONTRACT", route: "GET /private" }),
+    )
+  })
+
   test("synthesizes witnesses, proves nested hostile mutations, and validates responses", async () => {
     const body = t.object({
       name: t.string({ minLength: 2, maxLength: 20 }),
@@ -172,7 +237,7 @@ describe("contract laboratory", () => {
     const failed = await runAdversarialContract(repaired, {
       seed: 99,
       validateResponses: false,
-      maxMutationsPerInput: 1,
+      maxMutationsPerInput: 8,
     })
     expect(failed.ok).toBe(false)
     expect(failed.failures[0]).toMatchObject({
@@ -246,5 +311,56 @@ describe("contract laboratory", () => {
     expect(duplicateRuntime.gaps).toContainEqual(
       expect.objectContaining({ code: "INVALID_RUNTIME" }),
     )
+  })
+
+  test("formats failure details for both targeted and contract-level gaps", () => {
+    const error = new AdversarialContractError({
+      ok: false,
+      seed: 17,
+      routeCount: 1,
+      targetCount: 1,
+      runtimeCount: 1,
+      results: [],
+      failures: [
+        {
+          id: "case-1",
+          route: "GET /private",
+          runtime: "in-process",
+          kind: "input-rejection",
+          target: "body",
+          ok: false,
+          message: "unexpected acceptance",
+          replay: { seed: 17, caseId: "case-1", runtime: "in-process" },
+        },
+      ],
+      gaps: [
+        { route: "GET /private", target: "body", code: "NO_WITNESS", message: "body witness" },
+        { code: "NO_RUNTIME", message: "runtime missing" },
+      ],
+      advisories: [],
+      counts: { passed: 0, failed: 1, gaps: 2 },
+    })
+
+    expect(error.name).toBe("AdversarialContractError")
+    expect(error.message).toContain("in-process: case-1")
+    expect(error.message).toContain("GET /private body: body witness")
+    expect(error.message).toContain("contract: runtime missing")
+  })
+
+  test("shrinks an accepted hostile object through every property", async () => {
+    const app = server().post(
+      "/shrink",
+      { body: t.object({ first: t.string(), second: t.string() }) },
+      () => ({ ok: true }),
+    )
+    const report = await runAdversarialContract(app, {
+      validateResponses: false,
+      maxMutationsPerInput: 8,
+      maxShrinkAttempts: 8,
+      isRejected: () => false,
+    })
+
+    expect(report.ok).toBe(false)
+    expect(report.failures.some((failure) => (failure.shrinkSteps ?? 0) > 0)).toBe(true)
   })
 })

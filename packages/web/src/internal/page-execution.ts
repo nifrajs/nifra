@@ -19,6 +19,7 @@ import type {
   RouteEntry,
   RouteModule,
 } from "../manifest.ts"
+import type { NonceResolver } from "../nonce.ts"
 import type { RenderAdapter } from "../render-seam.ts"
 import {
   createMatcher,
@@ -51,11 +52,7 @@ import {
 } from "./render-document.ts"
 import { urlPartsFor } from "./request-url.ts"
 
-/** Resolve the CSP nonce for one document request. Return `undefined` to omit nonce attributes. */
-export type NonceResolver<Env = unknown> = (ctx: {
-  readonly request: Request
-  readonly env: Env
-}) => string | undefined | Promise<string | undefined>
+export type { NonceResolver } from "../nonce.ts"
 
 /** Structural context supplied by the core server to one page route handler. */
 export interface PageRouteContext<Env = unknown> {
@@ -489,12 +486,13 @@ export function createPageRequestExecutor<Env = unknown>(
       })
     }
 
+    const nonce = options.nonce === undefined ? undefined : await resolveNonce(req, env)
     const { chain, head } = resolveChainAndHead(layoutModules, mod, {
       data,
       params,
       origin: originOf(req),
+      ...(nonce === undefined ? {} : { nonce }),
     })
-    const nonce = options.nonce === undefined ? undefined : await resolveNonce(req, env)
     try {
       return await renderPageResult({
         adapter,
@@ -730,12 +728,13 @@ export function createPageRequestExecutor<Env = unknown>(
             search,
           })
         : null
+      const nonce = options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env)
       const { chain, head } = resolveChainAndHead(layoutModules, mod, {
         data,
         params: c.params,
         origin: originOf(c.req),
+        ...(nonce === undefined ? {} : { nonce }),
       })
-      const nonce = options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env)
       return renderPageResult({
         adapter,
         chain,

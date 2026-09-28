@@ -19,7 +19,12 @@ import {
   type AssuranceReport,
   evaluateRouteAssurance,
 } from "@nifrajs/core/assurance"
-import { type ProjectEvidenceSnapshot, snapshotProjectEvidence } from "@nifrajs/core/evidence"
+import {
+  type ProjectEvidenceSnapshot,
+  reflectedRoutesFromEvidence,
+  snapshotProjectEvidence,
+} from "@nifrajs/core/evidence"
+import { type BackendEvidenceProvider, NIFRA_BACKEND_EVIDENCE } from "@nifrajs/core/mount"
 import {
   type CapabilityProjectReport,
   collectCapabilityProjectReport,
@@ -60,6 +65,13 @@ export interface ProjectVerification {
   check(): Promise<CheckResult>
 }
 
+function evidenceProviderOf(source: unknown): BackendEvidenceProvider | undefined {
+  if ((typeof source !== "object" && typeof source !== "function") || source === null)
+    return undefined
+  const provider = (source as { [NIFRA_BACKEND_EVIDENCE]?: unknown })[NIFRA_BACKEND_EVIDENCE]
+  return typeof provider === "function" ? (provider as BackendEvidenceProvider) : undefined
+}
+
 /**
  * Run each verification policy once and return the unified value. The config is loaded (and reflected)
  * a single time; the resulting route-assurance + capability evidence is both returned for the assurance
@@ -87,18 +99,41 @@ export async function collectProjectVerification(
     } else {
       config = await loadAssuranceConfig(cwd, options.config)
     }
-    routeAssurance = evaluateRouteAssurance(config.source, config.policy, {
-      ...(config.capabilities !== undefined
-        ? { definitions: config.capabilities.definitions }
-        : {}),
-    })
-    if (config.capabilities !== undefined) {
-      capability = await collectCapabilityProjectReport(cwd, config.source, config.capabilities)
+    const composedProvider = evidenceProviderOf(config.source)
+    const composedEvidence =
+      composedProvider === undefined ? undefined : await composedProvider.call(config.source)
+    if (composedEvidence === undefined) {
+      routeAssurance = evaluateRouteAssurance(config.source, config.policy, {
+        ...(config.capabilities !== undefined
+          ? { definitions: config.capabilities.definitions }
+          : {}),
+      })
+      if (config.capabilities !== undefined) {
+        capability = await collectCapabilityProjectReport(cwd, config.source, config.capabilities)
+      }
+      evidence = snapshotProjectEvidence(config.source, {
+        ...(routeAssurance !== undefined ? { assurance: routeAssurance } : {}),
+        ...(capability !== undefined ? { capabilities: capability.report } : {}),
+      })
+    } else {
+      const reflectedRoutes = reflectedRoutesFromEvidence(composedEvidence)
+      routeAssurance = evaluateRouteAssurance(config.source, config.policy, {
+        ...(config.capabilities !== undefined
+          ? { definitions: config.capabilities.definitions }
+          : {}),
+        routes: reflectedRoutes,
+      })
+      if (config.capabilities !== undefined) {
+        capability = await collectCapabilityProjectReport(cwd, config.source, config.capabilities, {
+          routes: reflectedRoutes,
+        })
+      }
+      evidence = snapshotProjectEvidence(config.source, {
+        routes: reflectedRoutes,
+        ...(routeAssurance !== undefined ? { assurance: routeAssurance } : {}),
+        ...(capability !== undefined ? { capabilities: capability.report } : {}),
+      })
     }
-    evidence = snapshotProjectEvidence(config.source, {
-      ...(routeAssurance !== undefined ? { assurance: routeAssurance } : {}),
-      ...(capability !== undefined ? { capabilities: capability.report } : {}),
-    })
   } catch (error) {
     configError = error
     config = undefined

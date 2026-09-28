@@ -31,6 +31,7 @@ import {
   type InternalHandler,
   type RawAfterHandle,
   type RawAround,
+  type RawAuthStage,
   type RawBeforeHandle,
   type RawDerive,
   type RawErrorHandler,
@@ -48,6 +49,7 @@ import type {
   StandardResult,
   StandardSchemaV1,
 } from "../schema/standard.ts"
+import type { AuthenticationStage } from "./auth.ts"
 import { emitRequestErrorLog, renderBareError } from "./bare-error-lane.ts"
 import {
   assertByteLimit,
@@ -125,8 +127,10 @@ export type {
   ResponseHeadersView,
 }
 
+import { NIFRA_BACKEND_WS_RUNTIME } from "../mount.ts"
 import type { IdempotencyRuntime } from "./idempotency-lane.ts"
 import {
+  GET_WS_RUNTIME,
   INSTALL_EFFECT_LEDGER,
   INSTALL_IDEMPOTENCY,
   INSTALL_MCP,
@@ -162,7 +166,9 @@ import type {
   McpPromptDescriptor,
   McpResourceDescriptor,
   Middleware,
+  MountableApp,
   MountFetchOptions,
+  MountOptions,
   PromptArgument,
   PromptMessage,
   ResponseFinalization,
@@ -279,7 +285,10 @@ interface BunUpgradeServer {
   requestIP(request: Request): { readonly address: string } | null
 }
 
-type MountedFetchHandler = (request: Request, platform?: Platform) => MaybePromise<Response>
+type MountedFetchHandler<Env = unknown> = (
+  request: Request,
+  platform?: Platform<Env>,
+) => MaybePromise<Response>
 
 /** Structural native mount contract. The serving adapter owns the concrete Node request/response
  * types; the kernel only selects a handler after proving that taking this lane cannot skip its
@@ -297,10 +306,18 @@ interface NativeMountSelection {
   readonly stripPrefix: boolean
 }
 
-interface FetchMount {
+interface FetchMount<Env = unknown> {
   readonly path: string
-  readonly handler: MountedFetchHandler
+  readonly handler: MountedFetchHandler<Env>
+  readonly resolveWebSocketUpgrade?: (
+    request: Request,
+    platform?: Platform<Env>,
+  ) => MaybePromise<WebSocketUpgradeOutcome>
   readonly stripPrefix: boolean
+  readonly priority: number
+  readonly fallbackOn404: boolean
+  readonly beforeRoutes: boolean
+  readonly order: number
 }
 
 /** The socket peer Bun observed, as a `Platform` for the request lifecycle (`undefined` if unknown).
@@ -418,7 +435,9 @@ export type {
   McpPromptDescriptor,
   McpResourceDescriptor,
   Middleware,
+  MountableApp,
   MountFetchOptions,
+  MountOptions,
   PromptArgument,
   PromptMessage,
   ResponseFinalization,
@@ -492,6 +511,18 @@ function normalizeMountPrefix(path: string): string {
 
 function underMountPrefix(pathname: string, prefix: string): boolean {
   return prefix === "/" || pathname === prefix || pathname.startsWith(`${prefix}/`)
+}
+
+function mountPriorityOf(priority: number | undefined): number {
+  if (priority === undefined) return 0
+  if (!Number.isSafeInteger(priority)) {
+    throw new TypeError("mount priority must be a safe integer")
+  }
+  return priority
+}
+
+function compareMounts<Env>(a: FetchMount<Env>, b: FetchMount<Env>): number {
+  return b.priority - a.priority || b.path.length - a.path.length || a.order - b.order
 }
 
 function stripMountPrefix(request: Request, prefix: string): Request {
@@ -668,6 +699,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /** WebSocket routes, matched separately at upgrade time (a GET + `Upgrade: websocket`). */
   private readonly wsRouter: Router<WsEntry>
   private wsRouteCount: number
+  /** Mounted child apps that expose a WebSocket upgrade resolver. */
+  private wsMountCount: number
   /** In-process pub/sub backing `ws.subscribe(topic)` + `app.publish(topic, data)` (single-instance).
    * Created by the first `app.ws()` via the `@nifrajs/core/ws` runtime - `undefined` until then, so a
    * no-WebSocket app never constructs (or bundles) it. */
@@ -698,7 +731,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private readonly deadlineAdmissionOptions: DeadlineAdmissionOptions
   private readonly gracefulSignals: boolean
   private readonly stopHooks: StopHook[]
-  private readonly fetchMounts: FetchMount[]
+  private readonly fetchMounts: FetchMount<EnvOf<Ctx>>[]
+  private mountOrder: number
+  /** Number of composed mounts that must run before the parent route table. Keeps legacy mounts off the hot path. */
+  private preRouteMountCount: number
   /** Capacity-admission gate; `undefined` = off (the request path pays nothing). */
   private readonly capacityGate: AdmissionController | undefined
   private readonly onCapabilityUse: ((event: CapabilityUseEvent) => void) | undefined
@@ -726,6 +762,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private bunServer: RunningServer | undefined
   private sealed: boolean
   private readonly derives: RawDerive[]
+  /** Dedicated authentication stages captured by subsequent routes. */
+  private readonly authStages: RawAuthStage[]
   private readonly decorations: Record<string, unknown>
   private readonly beforeHandleHooks: RawBeforeHandle[]
   private readonly afterHandleHooks: RawAfterHandle[]
@@ -785,6 +823,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.catalog = new RouteCatalog()
     this.wsRouter = new Router<WsEntry>()
     this.wsRouteCount = 0
+    this.wsMountCount = 0
     this.topics = undefined
     const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
     assertByteLimit(maxBodyBytes, "maxBodyBytes")
@@ -815,6 +854,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.gracefulSignals = options.gracefulSignals ?? false
     this.stopHooks = []
     this.fetchMounts = []
+    this.mountOrder = 0
+    this.preRouteMountCount = 0
     this.capacityGate = options.admission
     this.onCapabilityUse = options.onCapabilityUse
     this.capabilityInterceptors = []
@@ -837,6 +878,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       beginHookAudit(this, options.unusedScopedHooks ?? "warn", options.logger !== undefined)
     }
     this.derives = []
+    this.authStages = []
     this.decorations = {}
     this.beforeHandleHooks = []
     this.afterHandleHooks = []
@@ -896,13 +938,73 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): this {
     this.assertConfigurable("mountFetch()")
     if (typeof handler !== "function") throw new TypeError("mountFetch handler must be a function")
-    const mount: FetchMount = {
+    const mount: FetchMount<EnvOf<Ctx>> = {
       path: normalizeMountPrefix(path),
-      handler: handler as MountedFetchHandler,
+      handler: handler as MountedFetchHandler<EnvOf<Ctx>>,
       stripPrefix: options.stripPrefix === true,
+      priority: mountPriorityOf(options.priority),
+      fallbackOn404: options.fallbackOn === 404,
+      beforeRoutes: false,
+      order: this.mountOrder++,
     }
     this.fetchMounts.push(mount)
-    this.fetchMounts.sort((a, b) => b.path.length - a.path.length)
+    this.fetchMounts.sort(compareMounts)
+    return this
+  }
+
+  /**
+   * Compose a child fetch app under a literal path prefix.
+   *
+   * Composed mounts run after the app-global request phase and before the parent's route table. This
+   * makes them safe to use in an SSR shell whose `/*` page route would otherwise swallow an API mount.
+   * If the child exposes `resolveWebSocketUpgrade`, the same mount also participates in adapter-owned
+   * WebSocket upgrades; the serving adapter still upgrades its original socket, while the child sees
+   * the mounted request path (stripped when requested).
+   *
+   * `fallbackOn: 404` is deliberately limited to GET/HEAD/OPTIONS at dispatch time. Those methods are
+   * replayable without buffering an untrusted request body; POST/PUT/PATCH and streaming requests
+   * never get retried after a child has had a chance to consume them.
+   */
+  mount(options: MountOptions<EnvOf<Ctx>>): this {
+    this.assertConfigurable("mount()")
+    if (options === null || typeof options !== "object") {
+      throw new TypeError("mount() requires { path, app }")
+    }
+    if (options.app === null || typeof options.app !== "object") {
+      throw new TypeError("mount() app must be an object with fetch()")
+    }
+    if (typeof options.app.fetch !== "function") {
+      throw new TypeError("mount() app.fetch must be a function")
+    }
+    const resolver =
+      typeof options.app.resolveWebSocketUpgrade === "function"
+        ? options.app.resolveWebSocketUpgrade.bind(options.app)
+        : undefined
+    const mount: FetchMount<EnvOf<Ctx>> = {
+      path: normalizeMountPrefix(options.path),
+      handler: options.app.fetch.bind(options.app) as MountedFetchHandler<EnvOf<Ctx>>,
+      ...(resolver === undefined ? {} : { resolveWebSocketUpgrade: resolver }),
+      stripPrefix: options.stripPrefix === true,
+      priority: mountPriorityOf(options.priority),
+      fallbackOn404: options.fallbackOn === 404,
+      beforeRoutes: true,
+      order: this.mountOrder++,
+    }
+    this.fetchMounts.push(mount)
+    this.fetchMounts.sort(compareMounts)
+    this.preRouteMountCount += 1
+    if (resolver !== undefined) {
+      this.wsMountCount += 1
+      // Bun needs a websocket callback table in the parent process. A composed Nifra server exposes
+      // its installed runtime through this internal seam; adapters that wire standard sockets use
+      // the resolver outcome's own `attach` and do not need this copy.
+      const appSymbols = options.app as unknown as Record<symbol, unknown>
+      const getRuntime = appSymbols[GET_WS_RUNTIME] ?? appSymbols[NIFRA_BACKEND_WS_RUNTIME]
+      if (this.wsRuntime === undefined && typeof getRuntime === "function") {
+        const runtime = (getRuntime as () => WsRuntime | undefined).call(options.app)
+        if (runtime !== undefined) this.wsRuntime = runtime
+      }
+    }
     return this
   }
 
@@ -940,6 +1042,33 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * by none before; one added after the last route reaches nothing
    * (see {@link ServerOptions.unusedScopedHooks}).
    */
+  /**
+   * Register a dedicated authentication stage for subsequent routes.
+   *
+   * Unlike `derive`, this stage receives a body-blind authentication capsule and is compiled before
+   * route validation. Keeping it separate prevents an unrelated derive from accidentally becoming a
+   * security gate and lets the route compiler retain a protected fast lane.
+   */
+  authenticate<Principal>(
+    stage: AuthenticationStage<Principal, EnvOf<Ctx>>,
+  ): Server<R, Ctx & { readonly principal: Principal }, HookOutput> {
+    this.assertConfigurable("authenticate()")
+    if (stage === null || typeof stage !== "object") {
+      throw new TypeError("authenticate() requires an authentication stage")
+    }
+    if (typeof stage.id !== "string" || stage.id.trim() === "") {
+      throw new TypeError("authenticate() stage id must be a non-empty string")
+    }
+    if (typeof stage.run !== "function") {
+      throw new TypeError("authenticate() stage run must be a function")
+    }
+    if (stage.mode !== undefined && stage.mode !== "sync" && stage.mode !== "async") {
+      throw new TypeError('authenticate() stage mode must be "sync" or "async"')
+    }
+    this.authStages.push(stage as unknown as RawAuthStage)
+    return this as unknown as Server<R, Ctx & { readonly principal: Principal }, HookOutput>
+  }
+
   decorate<const K extends string, V>(key: K, value: V): Server<R, Ctx & Record<K, V>, HookOutput> {
     this.assertConfigurable("decorate()")
     this.decorations[key] = value
@@ -1718,6 +1847,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         idempotencyRuntime: this.idempotencyRuntime,
         responseContractRuntime: this.responseContractRuntime,
         derives: this.derives,
+        authStages: this.authStages,
         beforeHandleHooks: this.beforeHandleHooks,
         afterHandleHooks: this.afterHandleHooks,
         onErrorHooks: this.onErrorHooks,
@@ -1837,6 +1967,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       schema,
       handler: handler as unknown as InternalHandler,
       derives: this.derives,
+      authStages: compiled.authStages,
       beforeHandle: this.beforeHandleHooks,
       afterHandle: this.afterHandleHooks,
       onError: this.onErrorHooks,
@@ -1865,6 +1996,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       ledgered,
       responseContract,
       derives: [...this.derives],
+      authStages: [...compiled.authStages],
       decorations: routeDecorations,
       hasDecorations,
       beforeHandle: [...this.beforeHandleHooks],
@@ -1879,6 +2011,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       method,
       path,
       schema,
+      ...(responseContract === undefined
+        ? {}
+        : { responseContract: responseContract.runtime.mode }),
       ...(capabilities.length > 0 ? { capabilities } : {}),
       ...(schema?.family === true ? { family: true } : {}),
     }
@@ -1974,6 +2109,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   [INSTALL_WS](runtime: WsRuntime): void {
     this.assertConfigurable("websocket()")
     this.wsRuntime = runtime
+  }
+
+  /** @internal Bun's parent dispatcher uses this when a child Nifra app is mounted. */
+  [GET_WS_RUNTIME](): WsRuntime | undefined {
+    return this.wsRuntime
   }
 
   /**
@@ -2716,7 +2856,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     req: Request,
     platform?: Platform<EnvOf<Ctx>>,
   ): MaybePromise<WebSocketUpgradeOutcome> {
-    if (this.wsRouteCount === 0) return WS_PASS
+    if (this.wsRouteCount === 0 && this.wsMountCount === 0) return WS_PASS
     if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return WS_PASS
 
     const timeoutMs =
@@ -2815,7 +2955,58 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
     }
 
-    if (this.onRequestHooks.length === 0) return resolveMatched(req)
+    const resolveMounted = (request: Request): MaybePromise<WebSocketUpgradeOutcome> => {
+      const pathname = urlPartsOf(request.url).pathname
+      const dispatch = (start: number): MaybePromise<WebSocketUpgradeOutcome> => {
+        let selected: FetchMount<EnvOf<Ctx>> | undefined
+        let selectedIndex = start
+        for (let i = start; i < this.fetchMounts.length; i++) {
+          const candidate = this.fetchMounts[i]!
+          if (
+            candidate.resolveWebSocketUpgrade !== undefined &&
+            underMountPrefix(pathname, candidate.path)
+          ) {
+            selected = candidate
+            selectedIndex = i
+            break
+          }
+        }
+        if (selected === undefined) return WS_PASS
+        const childRequest = selected.stripPrefix
+          ? stripMountPrefix(request, selected.path)
+          : request
+        let child: MaybePromise<WebSocketUpgradeOutcome>
+        try {
+          child = selected.resolveWebSocketUpgrade!(childRequest, platform)
+        } catch {
+          return { kind: "reject", response: jsonError(500, "internal_error") }
+        }
+        const settle = (outcome: WebSocketUpgradeOutcome): MaybePromise<WebSocketUpgradeOutcome> =>
+          outcome.kind === "pass" ||
+          (outcome.kind === "reject" && outcome.response.status === 404 && selected!.fallbackOn404)
+            ? dispatch(selectedIndex + 1)
+            : outcome
+        return child instanceof Promise ? child.then(settle) : settle(child)
+      }
+      return dispatch(0)
+    }
+
+    const resolveRoutes = (request: Request): MaybePromise<WebSocketUpgradeOutcome> => {
+      const local = resolveMatched(request)
+      if (local instanceof Promise) {
+        return local.then((outcome) =>
+          outcome.kind === "pass" ? resolveMounted(request) : outcome,
+        )
+      }
+      return local.kind === "pass" ? resolveMounted(request) : local
+    }
+
+    const resolveWithDeadline = (request: Request): MaybePromise<WebSocketUpgradeOutcome> => {
+      const outcome = resolveRoutes(request)
+      return outcome instanceof Promise ? bounded(outcome, onTimeout) : outcome
+    }
+
+    if (this.onRequestHooks.length === 0) return resolveWithDeadline(req)
     let hooked: MaybePromise<Request | Response>
     try {
       hooked = this.runWebSocketRequestHooks(req, platform)
@@ -2825,13 +3016,13 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (!(hooked instanceof Promise)) {
       return hooked instanceof Response
         ? { kind: "reject", response: hooked }
-        : resolveMatched(hooked)
+        : resolveWithDeadline(hooked)
     }
     const pending = hooked.then(
       (result) =>
         result instanceof Response
           ? { kind: "reject" as const, response: result }
-          : resolveMatched(result),
+          : resolveWithDeadline(result),
       () => ({ kind: "reject" as const, response: jsonError(500, "internal_error") }),
     )
     return bounded(
@@ -2851,7 +3042,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (o.kind === "pass")
         return this.fetch(req, bunPeerPlatform(server, req) as Platform<EnvOf<Ctx>>)
       if (o.kind === "reject") return o.response
-      return server.upgrade(req, { data: { handler: o.handler, data: o.data } })
+      return server.upgrade(req, {
+        data: { handler: o.handler, data: o.data, pubsub: o.pubsub },
+      })
         ? undefined
         : jsonError(426, "upgrade_required")
     }
@@ -2873,15 +3066,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * whose `clientIp` is the derived caller. Only called when a trust declaration is configured. */
   private deriveClientIp(
     source: RequestSource,
-    platform: Platform | undefined,
-  ): Platform | undefined {
+    platform: Platform<EnvOf<Ctx>> | undefined,
+  ): Platform<EnvOf<Ctx>> | undefined {
     const derived = resolveClientIp(platform?.clientIp, requestOf(source), this.clientIpTrust)
     return { ...platform, clientIp: derived }
   }
 
   private dispatch<T>(
     source: RequestSource,
-    platform: Platform | undefined,
+    platform: Platform<EnvOf<Ctx>> | undefined,
     finalize: (result: unknown, set: CtxSet) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
@@ -2909,7 +3102,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * Web `Request`; arbitrary request rewrites and full Web hooks use {@link runWithOnRequest}. */
   private runWithNodeRequest<T>(
     source: RequestSource,
-    platform: Platform | undefined,
+    platform: Platform<EnvOf<Ctx>> | undefined,
     finalize: (result: unknown, set: CtxSet) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
@@ -2943,7 +3136,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     nextIndex: number,
     request: NodeRequestContext,
     source: RequestSource,
-    platform: Platform | undefined,
+    platform: Platform<EnvOf<Ctx>> | undefined,
     finalize: (result: unknown, set: CtxSet) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
@@ -2971,7 +3164,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    */
   private runWithOnRequest<T>(
     source: RequestSource,
-    platform: Platform | undefined,
+    platform: Platform<EnvOf<Ctx>> | undefined,
     finalize: (result: unknown, set: CtxSet) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
@@ -3018,7 +3211,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     nextIndex: number,
     originalRequest: Request,
     sourceAtAwait: RequestSource,
-    platform: Platform | undefined,
+    platform: Platform<EnvOf<Ctx>> | undefined,
     finalize: (result: unknown, set: CtxSet) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
@@ -3112,7 +3305,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    */
   private routeAndRun<T>(
     source: RequestSource,
-    platform: Platform | undefined,
+    platform: Platform<EnvOf<Ctx>> | undefined,
     finalize: (result: unknown, set: CtxSet) => T,
     wrapResponse: (response: Response | ResponseResult) => T,
     onTimeout: () => T,
@@ -3156,9 +3349,21 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         search = searchStart === -1 ? "" : rawUrl.slice(searchStart, searchEnd)
       }
     }
+    // Explicit composed mounts run before the parent's route table. This is what lets an SSR shell
+    // mount an API at `/api` without its catch-all page route swallowing the request. Legacy
+    // `mountFetch()` stays behind typed routes and is checked in the existing branch below.
+    if (this.preRouteMountCount > 0) {
+      const mounted = this.fetchMount(pathname, source, platform, true)
+      if (mounted !== undefined) {
+        return mounted instanceof Promise
+          ? mounted.then((response) => wrapResponse(response))
+          : wrapResponse(mounted)
+      }
+    }
+
     const match = this.catalog.find(source.method, pathname)
     if (!match.found) {
-      const mounted = this.fetchMount(pathname, source, platform)
+      const mounted = this.fetchMount(pathname, source, platform, false)
       if (mounted !== undefined) {
         return mounted instanceof Promise
           ? mounted.then((response) => wrapResponse(response))
@@ -3197,17 +3402,46 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private fetchMount(
     pathname: string,
     source: RequestSource,
-    platform: Platform | undefined,
+    platform: Platform<EnvOf<Ctx>> | undefined,
+    beforeRoutes: boolean,
   ): MaybePromise<Response> | undefined {
-    for (const mount of this.fetchMounts) {
-      if (!underMountPrefix(pathname, mount.path)) continue
-      const request = requestOf(source)
-      return mount.handler(
-        mount.stripPrefix ? stripMountPrefix(request, mount.path) : request,
-        platform,
-      )
+    const request = requestOf(source)
+    let first = -1
+    for (let i = 0; i < this.fetchMounts.length; i++) {
+      const mount = this.fetchMounts[i]!
+      if (mount.beforeRoutes !== beforeRoutes || !underMountPrefix(pathname, mount.path)) continue
+      first = i
+      break
     }
-    return undefined
+    if (first === -1) return undefined
+
+    // A request body is a one-shot stream. Only methods whose request semantics are replayable are
+    // eligible for 404 fallthrough; this intentionally refuses POST/PUT/PATCH even when the body is
+    // empty because an adapter may expose a delayed stream or a protocol-specific side effect.
+    const replayable =
+      source.method === "GET" || source.method === "HEAD" || source.method === "OPTIONS"
+    const dispatch = (index: number, fallback?: Response): MaybePromise<Response> => {
+      let mount: FetchMount<EnvOf<Ctx>> | undefined
+      for (let i = index; i < this.fetchMounts.length; i++) {
+        const candidate = this.fetchMounts[i]!
+        if (candidate.beforeRoutes === beforeRoutes && underMountPrefix(pathname, candidate.path)) {
+          mount = candidate
+          index = i
+          break
+        }
+      }
+      if (mount === undefined) return fallback ?? jsonError(404, "not_found")
+      const childRequest = mount.stripPrefix ? stripMountPrefix(request, mount.path) : request
+      const outcome = mount.handler(childRequest, platform)
+      if (!replayable || !mount.fallbackOn404) return outcome
+      if (outcome instanceof Promise) {
+        return outcome.then((response) =>
+          response.status === 404 ? dispatch(index + 1, response) : response,
+        )
+      }
+      return outcome.status === 404 ? dispatch(index + 1, outcome) : outcome
+    }
+    return dispatch(first)
   }
 
   /** Run a route that has already been matched by the runtime or Nifra's portable router. */
@@ -5263,7 +5497,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     try {
       const contract = entry.responseContract
       if (contract === undefined) return finalize(result, responseSet(ctx))
-      const checked = contract.runtime.check(contract.schema, result)
+      const checked = contract.runtime.check(contract.definition, result)
       if (checked instanceof Promise) {
         return checked.then(
           (outcome) => this.finishContractOutcome(ctx, finalize, wrapResponse, outcome),
@@ -5323,7 +5557,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (err instanceof Response) return wrapResponse(err)
     // Same rule for a thrown `status(...)`, but through `finalize` rather than `wrapResponse`: the
     // value is still plain data, so the ordinary JSON lane renders it and no `Response` is built.
-    if (isResponseResult(err)) return finalize(err, responseSet(ctx))
+    if (isResponseResult(err))
+      return this.finishLifecycleContract(entry, ctx, finalize, wrapResponse, err)
     if (entry.onError.length === 0) {
       // Never crash the server or leak internals. The client gets a flat 500; the detail goes to the
       // (redacting) logger. Body-read failures and around-hook failures land here too.
@@ -5547,6 +5782,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (
       (this.onRequestHooks.length > 0 && !this.bunNativeRequestHooksSafe) ||
       this.wsRouteCount > 0 ||
+      this.wsMountCount > 0 ||
+      this.preRouteMountCount > 0 ||
       this.clientIpTrust !== undefined
     ) {
       return undefined
@@ -5658,11 +5895,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // because wsRouteCount > 0 means ws() ran, and ws() requires the runtime at registration.
     // Native pub/sub when the app has WS routes and none validate outbound frames: `ws.subscribe` and
     // `app.publish` go through Bun's own (uWebSockets) broadcast instead of the JS registry loop.
-    const nativePubsub = this.wsRouteCount > 0 && !this.wsHasValidatedSend
-    const wsHandlers =
-      this.wsRouteCount === 0
-        ? undefined
-        : (this.wsRuntime as WsRuntime).bunHandlers(this.topics as TopicRegistry, nativePubsub)
+    const hasWebSockets = this.wsRouteCount > 0 || this.wsMountCount > 0
+    if (hasWebSockets && this.wsRuntime === undefined) {
+      throw new FrameworkError(
+        "INVALID_WS_RUNTIME",
+        "a Bun server with mounted WebSocket routes needs the websocket() runtime installed on the parent or child app",
+      )
+    }
+    // Native pub/sub is safe only when every upgrade belongs to this app. A mounted child owns a
+    // different TopicRegistry, so force the per-connection JS dispatcher and carry that registry in
+    // the upgrade outcome instead of accidentally broadcasting child sockets through the parent.
+    const nativePubsub =
+      this.wsRouteCount > 0 && this.wsMountCount === 0 && !this.wsHasValidatedSend
+    const wsHandlers = !hasWebSockets
+      ? undefined
+      : (this.wsRuntime as WsRuntime).bunHandlers(
+          this.topics ?? (this.wsRuntime as WsRuntime).createTopics(),
+          nativePubsub,
+        )
     const reusePort = options?.reusePort === true
     // Spread rather than pass `hostname: undefined` - Bun treats an explicit undefined as a value
     // on some option paths, and omitting is what selects its 0.0.0.0 default.

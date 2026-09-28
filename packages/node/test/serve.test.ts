@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 import { ServerResponse as NodeServerResponse } from "node:http"
 import { connect } from "node:net"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/core"
-import { server } from "@nifrajs/core"
+import { authenticated, server } from "@nifrajs/core"
 import { responseObserver } from "@nifrajs/core/response-observer"
 import { status } from "@nifrajs/core/server"
 import { compression } from "@nifrajs/middleware"
@@ -97,6 +97,55 @@ test("serves GET (JSON) + POST (body), resolves the bound port", async () => {
     body: JSON.stringify({ hi: "there" }),
   })
   expect(await echoed.json()).toEqual({ hi: "there" })
+})
+
+test("Node adapter runs the dedicated auth stage before body validation", async () => {
+  let validations = 0
+  const guarded = server()
+    .authenticate({
+      id: "node-auth-test",
+      mode: "sync",
+      run: (input) =>
+        input.headers.get("authorization") === "Bearer good"
+          ? authenticated({ userId: "u1" })
+          : { kind: "rejected", reason: "unauthenticated" as const },
+    })
+    .post(
+      "/private",
+      {
+        body: {
+          "~standard": {
+            version: 1,
+            vendor: "nifra-node-auth-test",
+            validate(value: unknown) {
+              validations += 1
+              return nameBody["~standard"].validate(value)
+            },
+          },
+        },
+      },
+      (c) => ({ userId: c.principal.userId, body: c.body }),
+    )
+
+  running = await serve(guarded, { port: 0 })
+  const base = `http://127.0.0.1:${running.port}`
+
+  const denied = await fetch(`${base}/private`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "not-json",
+  })
+  expect(denied.status).toBe(401)
+  expect(validations).toBe(0)
+
+  const allowed = await fetch(`${base}/private`, {
+    method: "POST",
+    headers: { authorization: "Bearer good", "content-type": "application/json" },
+    body: JSON.stringify({ name: "Ada" }),
+  })
+  expect(allowed.status).toBe(200)
+  expect(await allowed.json()).toEqual({ userId: "u1", body: { name: "Ada" } })
+  expect(validations).toBe(1)
 })
 
 test("allowedHosts rejects an untrusted Host on both fast GET and POST paths", async () => {

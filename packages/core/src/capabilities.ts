@@ -29,7 +29,7 @@ import {
   effectLedgerOf,
   normalizeEffectMetadata,
 } from "./ledger.ts"
-import { reflectRoutes } from "./reflection.ts"
+import { type ReflectedRoute, reflectRoutes } from "./reflection.ts"
 
 export type {
   AroundCapabilityOptions,
@@ -152,6 +152,8 @@ export interface RouteCapabilityEvidence {
 
 export interface CapabilityEvidenceSet {
   readonly routes: readonly RouteCapabilityEvidence[]
+  /** Optional already-composed route reflection for mounted application surfaces. */
+  readonly reflectedRoutes?: readonly ReflectedRoute[]
 }
 
 export type CapabilityFindingCode =
@@ -344,7 +346,7 @@ export function evaluateCapabilityAssurance(
   const findings: CapabilityFinding[] = []
   const routes: AssuredCapabilityRoute[] = []
 
-  for (const route of reflectRoutes(source)) {
+  for (const route of evidenceSet.reflectedRoutes ?? reflectRoutes(source)) {
     const declared = route.capabilities ?? []
     const supplied = evidenceByRoute.get(routeKey(route.method, route.path))
     const covered = supplied?.covered === true

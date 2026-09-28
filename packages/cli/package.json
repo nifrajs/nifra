@@ -86,7 +86,7 @@
   },
   "homepage": "https://github.com/nifrajs/nifra#readme",
   "peerDependencies": {
-    "typescript": "^5.0.0 || ^6.0.0"
+    "typescript": "^5.0.0 || ^6.0.0 || ^7.0.0"
   },
   "peerDependenciesMeta": {
     "typescript": {
@@ -94,6 +94,8 @@
     }
   },
   "devDependencies": {
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "typescript5": "npm:typescript@5.9.3",
+    "typescript7": "npm:typescript@7.0.2"
   }
 }

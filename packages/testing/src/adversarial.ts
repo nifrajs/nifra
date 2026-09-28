@@ -26,6 +26,7 @@ type HeaderSource = ConstructorParameters<typeof Headers>[0]
 type InputTarget = "body" | "query"
 export type ContractTarget = "body" | "query" | "response"
 export type ContractCaseKind = "input-rejection" | "response-conformance"
+export type ContractAuthContext = "authenticated" | "unauthenticated"
 
 /** Anything that exposes reflected routes and a Web-standard in-process fetch handler. */
 export interface ContractTestApp {
@@ -45,6 +46,18 @@ export interface ContractWitness {
   readonly query?: unknown
   readonly body?: unknown
   readonly headers?: HeaderSource
+  /** Explicit auth state for the prepareRequest hook; the harness never invents credentials. */
+  readonly auth?: ContractAuthContext
+  /** Expected response for a guard/error witness. Omit for the normal success witness. */
+  readonly expected?: ContractExpectedResponse
+}
+
+export interface ContractExpectedResponse {
+  readonly status: number
+  readonly contentType?: "json" | "text"
+  readonly headers?: Readonly<Record<string, string>>
+  /** When present, the decoded body is compared byte-structure-wise to this value. */
+  readonly body?: unknown
 }
 
 /** Stable context passed to request/rejection hooks. It contains no request payloads or secrets. */
@@ -55,6 +68,7 @@ export interface ContractCaseContext {
   readonly runtime: string
   readonly kind: ContractCaseKind
   readonly target: ContractTarget
+  readonly auth?: ContractAuthContext
   readonly mutation?: string
 }
 
@@ -121,6 +135,7 @@ export type ContractCoverageGapCode =
   | "WITNESS_TOO_LARGE"
   | "UNSUPPORTED_BODY_METHOD"
   | "NO_REJECTED_MUTATION"
+  | "NO_STATUS_CONTRACT"
   | "NO_RUNTIME"
   | "INVALID_RUNTIME"
   | "CASE_NOT_FOUND"
@@ -257,6 +272,19 @@ const jsonClone = (value: unknown): unknown => {
   return JSON.parse(serialized) as unknown
 }
 
+const canonical = (value: unknown): string => {
+  if (value === undefined) return "undefined"
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`
+  if (value !== null && typeof value === "object") {
+    const record = value as Readonly<Record<string, unknown>>
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`)
+      .join(",")}}`
+  }
+  return JSON.stringify(value)
+}
+
 const valueSize = (value: unknown): number => new TextEncoder().encode(JSON.stringify(value)).length
 
 const displayPath = (target: InputTarget, path: readonly (string | number)[]): string =>
@@ -268,7 +296,14 @@ const displayPath = (target: InputTarget, path: readonly (string | number)[]): s
 const mutationId = (routeKey: string, target: InputTarget, mutation: Mutation): string =>
   `${routeKey} :: ${displayPath(target, mutation.path)} :: ${mutation.reason}`
 
-const responseId = (routeKey: string): string => `${routeKey} :: response-conformance`
+const responseId = (routeKey: string, witness: ContractWitness): string => {
+  if (witness.auth === undefined && witness.expected === undefined) {
+    return `${routeKey} :: response-conformance`
+  }
+  const auth = witness.auth ?? "default"
+  const status = witness.expected?.status ?? "success"
+  return `${routeKey} :: ${auth} :: ${status} :: response-conformance`
+}
 
 const typeKind = (value: unknown): string => {
   if (value === null) return "null"
@@ -721,6 +756,7 @@ async function executeRejection(
     runtime: runtime.name,
     kind: "input-rejection",
     target,
+    ...(laboratory.witness.auth === undefined ? {} : { auth: laboratory.witness.auth }),
     mutation: `${displayPath(target, mutation.path)} ${mutation.reason}`,
   }
   try {
@@ -868,7 +904,12 @@ async function buildLaboratories(
       if (resolved.ok) query = resolved.input
       else gaps.push(resolved.gap)
     }
-    if (options.validateResponses !== false && route.schema?.response !== undefined)
+    const expectedStatus = witness.expected?.status
+    const expectedResponseSchema =
+      expectedStatus !== undefined && (expectedStatus < 200 || expectedStatus >= 300)
+        ? route.schema?.errors?.[expectedStatus]
+        : route.schema?.response
+    if (options.validateResponses !== false && expectedResponseSchema !== undefined)
       targetCount += 1
 
     const allInputsResolved =
@@ -1027,10 +1068,25 @@ export async function runAdversarialContract(
       }
     }
 
-    const responseSchema = laboratory.route.schema?.response
-    if (options.validateResponses === false || responseSchema === undefined) continue
-    const id = responseId(laboratory.routeKey)
+    const expected = laboratory.witness.expected
+    const responseSchema =
+      expected !== undefined && (expected.status < 200 || expected.status >= 300)
+        ? laboratory.route.schema?.errors?.[expected.status]
+        : laboratory.route.schema?.response
+    if (options.validateResponses === false) continue
+    const id = responseId(laboratory.routeKey, laboratory.witness)
     if (only !== undefined && !only.has(id)) continue
+    if (responseSchema === undefined) {
+      if (expected !== undefined && (expected.status < 200 || expected.status >= 300)) {
+        gaps.push({
+          route: laboratory.routeKey,
+          target: "response",
+          code: "NO_STATUS_CONTRACT",
+          message: `expected status ${expected.status} has no declared error response contract`,
+        })
+      }
+      continue
+    }
     if (responseSchema.standard === undefined) {
       gaps.push({
         route: laboratory.routeKey,
@@ -1053,6 +1109,7 @@ export async function runAdversarialContract(
         runtime: runtime.name,
         kind: "response-conformance",
         target: "response",
+        ...(laboratory.witness.auth === undefined ? {} : { auth: laboratory.witness.auth }),
       }
       const base = {
         id,
@@ -1069,13 +1126,15 @@ export async function runAdversarialContract(
         )
         const response = await runtime.fetch(request)
         const status = response.status
-        if (!response.ok) {
+        if (expected === undefined ? !response.ok : response.status !== expected.status) {
           await discardResponse(response)
           results.push(
             resultForFailure(
               { ...base, status },
               seed,
-              `valid witness returned non-success status ${status}`,
+              expected === undefined
+                ? `valid witness returned non-success status ${status}`
+                : `expected status ${expected.status}, received ${status}`,
             ),
           )
           continue
@@ -1083,7 +1142,12 @@ export async function runAdversarialContract(
         const text = await response.text()
         let value: unknown
         try {
-          value = text.length === 0 ? undefined : (JSON.parse(text) as unknown)
+          value =
+            expected?.contentType === "text"
+              ? text
+              : text.length === 0
+                ? undefined
+                : (JSON.parse(text) as unknown)
         } catch {
           results.push(
             resultForFailure(
@@ -1093,6 +1157,26 @@ export async function runAdversarialContract(
             ),
           )
           continue
+        }
+        if (expected !== undefined) {
+          const expectedContentType =
+            expected.contentType === "text" ? "text/plain" : "application/json"
+          const actualContentType = response.headers.get("content-type")?.split(";", 1)[0] ?? ""
+          const headersMatch = Object.entries(expected.headers ?? {}).every(
+            ([name, headerValue]) => response.headers.get(name) === headerValue,
+          )
+          const bodyMatch =
+            !Object.hasOwn(expected, "body") || canonical(value) === canonical(expected.body)
+          if (actualContentType !== expectedContentType || !headersMatch || !bodyMatch) {
+            results.push(
+              resultForFailure(
+                { ...base, status },
+                seed,
+                `expected response envelope ${expectedContentType} ${canonical(expected.body)}, received ${actualContentType || "(missing content type)"} ${canonical(value)}`,
+              ),
+            )
+            continue
+          }
         }
         const validation = await responseSchema.standard["~standard"].validate(value)
         if (validation.issues !== undefined) {
@@ -1153,12 +1237,16 @@ export async function runAdversarialContract(
   if (
     options.validateResponses !== false &&
     routes.length > 0 &&
-    !laboratories.some((laboratory) => laboratory.route.schema?.response !== undefined)
+    !laboratories.some(
+      (laboratory) =>
+        laboratory.route.schema?.response !== undefined ||
+        Object.keys(laboratory.route.schema?.errors ?? {}).length > 0,
+    )
   ) {
     advisories.push(
-      "validateResponses is on, but no selected route declares a `response` schema, so response " +
+      "validateResponses is on, but no selected route declares a `response` or status-specific `errors` schema, so response " +
         "conformance checked 0 targets. Response types inferred from a handler's return are a client-side " +
-        "contract only - declare `response:` on the routes you want the laboratory to verify.",
+        "contract only - declare `response:` or `errors:` on the routes you want the laboratory to verify.",
     )
   }
   return {

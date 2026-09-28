@@ -85,6 +85,25 @@ test("waitForStyles resolves CSS errors and never leaves media in print", async 
   expect(link.getAttribute("data-nifra-css-state")).toBe("error")
 })
 
+test("treats a tearing-down stylesheet as pending and reuses its terminal state", async () => {
+  const link = new FakeLink("/assets/tearing-down.css")
+  Object.defineProperty(link, "sheet", {
+    configurable: true,
+    get() {
+      throw new Error("document is tearing down")
+    },
+  })
+  document.links = [link]
+  const waiting = waitForStyles({ timeoutMs: 100 })
+  link.dispatchEvent(new Event("error"))
+  await waiting
+  expect(link.getAttribute("data-nifra-css-state")).toBe("error")
+
+  document.links = [link]
+  await waitForStyles({ timeoutMs: 100 })
+  expect(link.media).toBe("all")
+})
+
 test("waitForStyles fails open after its bounded timeout", async () => {
   const link = new FakeLink("/assets/slow.css")
   document.links = [link]

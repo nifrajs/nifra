@@ -121,6 +121,7 @@ export {
   type CreateWebAppOptions,
   createWebApp,
   type NonceResolver,
+  webProjectEvidence,
 } from "./internal/web-app.ts"
 // ISR (incremental static regeneration): a pluggable cache store + the `withISR` stale-while-revalidate
 // wrapper for rendered SSR responses.
@@ -196,6 +197,14 @@ export {
   setBlockerController,
   setBrowserNavigate,
 } from "./navigation.ts"
+export {
+  type CreateNonceResolverOptions,
+  createNonceResolver,
+  type NonceContext,
+  type NonceGenerator,
+  type NonceHeader,
+  type NonceHeaderContext,
+} from "./nonce.ts"
 // public/ - user-authored static files, served identically in dev and production by one handler.
 export {
   type PublicDirCache,

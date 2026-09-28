@@ -14,12 +14,14 @@ import type { EffectLifecycleObserver } from "../effect-lifecycle.ts"
 import { RouteConfigError } from "../errors.ts"
 import { type CompiledRoutePattern, compileRoutePattern } from "../router/pattern.ts"
 import type { Method } from "../router/router.ts"
-import type { StandardSchemaV1 } from "../schema/standard.ts"
 import { assertByteLimit } from "../server/body.ts"
 import type { RouteSchema } from "../server/context.ts"
 import type { IdempotencyRuntime, ResolvedIdempotency } from "../server/idempotency-lane.ts"
 import type { EffectLedgerRuntime, ResolvedEffectLedger } from "../server/ledger-lane.ts"
-import type { ResponseContractRuntime } from "../server/response-contract-lane.ts"
+import type {
+  ResponseContractDefinition,
+  ResponseContractRuntime,
+} from "../server/response-contract-lane.ts"
 import {
   CAPABILITY_GUARD,
   type CapabilityUseEvent,
@@ -37,6 +39,7 @@ import {
 import type {
   RawAfterHandle,
   RawAround,
+  RawAuthStage,
   RawBeforeHandle,
   RawDerive,
   RawErrorHandler,
@@ -55,6 +58,7 @@ export interface RouteCompilerContext {
   readonly idempotencyRuntime: IdempotencyRuntime | undefined
   readonly responseContractRuntime: ResponseContractRuntime | undefined
   readonly derives: readonly RawDerive[]
+  readonly authStages: readonly RawAuthStage[]
   readonly beforeHandleHooks: readonly RawBeforeHandle[]
   readonly afterHandleHooks: readonly RawAfterHandle[]
   readonly onErrorHooks: readonly RawErrorHandler[]
@@ -72,10 +76,12 @@ export interface CompiledRouteOptions {
   readonly idempotent: ResolvedIdempotency | undefined
   readonly ledgered: ResolvedEffectLedger | undefined
   readonly responseContract:
-    | { readonly runtime: ResponseContractRuntime; readonly schema: StandardSchemaV1 }
+    | { readonly runtime: ResponseContractRuntime; readonly definition: ResponseContractDefinition }
     | undefined
   readonly lanes: RouteLaneSelection
   readonly routeAssurance: readonly AssuranceDeclaration[]
+  readonly authStages: readonly RawAuthStage[]
+  readonly authenticated: boolean
 }
 
 /** Resolve all registration-time policy and lane facts for one route. */
@@ -90,6 +96,25 @@ export function compileRouteOptions(
   let bodyLimit: number | undefined = context.maxBodyBytes
   const invalidBodyLimit = (message: string): never => {
     throw new RouteConfigError("INVALID_BODY_LIMIT", `route ${method} ${path}: ${message}`)
+  }
+  if (schema?.wire !== undefined && schema.wire !== "raw") {
+    throw new RouteConfigError("INVALID_WIRE", `route ${method} ${path}: wire must be "raw"`)
+  }
+  if (schema?.wire === "raw" && schema.body !== undefined) {
+    throw new RouteConfigError(
+      "INVALID_WIRE",
+      `route ${method} ${path}: wire: "raw" cannot be combined with a body schema`,
+    )
+  }
+  if (
+    schema?.validationOrder !== undefined &&
+    schema.validationOrder !== "validate-before-auth" &&
+    schema.validationOrder !== "auth-before-validation"
+  ) {
+    throw new RouteConfigError(
+      "INVALID_VALIDATION_ORDER",
+      `route ${method} ${path}: validationOrder is invalid`,
+    )
   }
   if (schema?.bodyLimitReason !== undefined && schema.bodyLimit !== "unlimited") {
     invalidBodyLimit('bodyLimitReason is only valid with bodyLimit: "unlimited"')
@@ -124,11 +149,13 @@ export function compileRouteOptions(
     )
   }
 
-  const authenticated = assuranceEvidenceFor(
-    [...context.activeAssurance, ...handlerAssurance, ...context.globalAssurance],
-    method,
-    path,
-  ).some((evidence) => evidence.id === NIFRA_ASSURANCE_IDS.AUTHENTICATED)
+  const authenticated =
+    context.authStages.length > 0 ||
+    assuranceEvidenceFor(
+      [...context.activeAssurance, ...handlerAssurance, ...context.globalAssurance],
+      method,
+      path,
+    ).some((evidence) => evidence.id === NIFRA_ASSURANCE_IDS.AUTHENTICATED)
   const routeDecorations: Record<PropertyKey, unknown> = { ...context.decorations }
   if (capabilities.length > 0) {
     routeDecorations[CAPABILITY_GUARD] = createCapabilityGuard(
@@ -155,12 +182,20 @@ export function compileRouteOptions(
     context.maxBodyBytes,
   )
   const ledgered = context.effectLedgerRuntime?.resolve(capabilities, method, path)
+  const responseDefinition =
+    schema?.response !== undefined || schema?.errors !== undefined
+      ? {
+          ...(schema.response === undefined ? {} : { response: schema.response }),
+          ...(schema.errors === undefined ? {} : { errors: schema.errors }),
+        }
+      : undefined
   const contracted =
-    context.responseContractRuntime !== undefined && schema?.response !== undefined
-      ? { runtime: context.responseContractRuntime, schema: schema.response }
+    context.responseContractRuntime !== undefined && responseDefinition !== undefined
+      ? { runtime: context.responseContractRuntime, definition: responseDefinition }
       : undefined
   const lanes = selectRouteLanes({
     schema,
+    hasAuth: context.authStages.length > 0,
     hasIdempotency: idempotent !== undefined,
     hasLedger: ledgered !== undefined,
     hasResponseContract: contracted !== undefined,
@@ -174,7 +209,7 @@ export function compileRouteOptions(
   })
 
   const routeAssurance: AssuranceDeclaration[] = [...context.activeAssurance, ...handlerAssurance]
-  if (contracted?.runtime.mode === "enforce" && schema?.response !== undefined) {
+  if (contracted?.runtime.mode === "enforce") {
     routeAssurance.push(
       Object.freeze({
         id: NIFRA_ASSURANCE_IDS.RESPONSE_CONTRACT,
@@ -217,6 +252,19 @@ export function compileRouteOptions(
       }),
     )
   }
+  if (context.authStages.length > 0) {
+    // `authenticate()` is an actual runtime enforcement stage, not a route assertion. Publish its
+    // proof directly so a core-authenticated route cannot accidentally become assurance
+    // classification-only when it is not using an integration plugin such as better-auth.
+    routeAssurance.push(
+      Object.freeze({
+        id: NIFRA_ASSURANCE_IDS.AUTHENTICATED,
+        source: "nifra.authenticate",
+        scope: "plugin",
+        provenance: "runtime" as const,
+      }),
+    )
+  }
 
   return {
     pattern,
@@ -230,5 +278,7 @@ export function compileRouteOptions(
     responseContract: contracted,
     lanes,
     routeAssurance: Object.freeze(routeAssurance),
+    authStages: Object.freeze([...context.authStages]),
+    authenticated,
   }
 }

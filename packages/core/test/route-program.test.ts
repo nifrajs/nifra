@@ -28,6 +28,65 @@ const stringRecord = (name: string): StandardSchemaV1<unknown, Record<string, st
   })
 
 describe("general route program", () => {
+  test("auth-before-validation rejects before invoking a body validator", async () => {
+    let validations = 0
+    const order: string[] = []
+    const body = schema(() => {
+      validations += 1
+      return { issues: [{ message: "body rejected" }] }
+    })
+    const app = server()
+      .derive(() => {
+        order.push("derive")
+        return { principal: "u1" }
+      })
+      .beforeHandle(() => {
+        order.push("before")
+        return new Response("forbidden", { status: 403 })
+      })
+      .post("/sensitive", { body, validationOrder: "auth-before-validation" }, () => ({
+        shouldNotRun: true,
+      }))
+
+    const response = await app.fetch(
+      new Request("http://x/sensitive", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }),
+    )
+    expect(response.status).toBe(403)
+    expect(validations).toBe(0)
+    expect(order).toEqual(["derive", "before"])
+  })
+
+  test("default validation order preserves 422-before-auth behavior", async () => {
+    let validations = 0
+    let beforeRuns = 0
+    const body = schema(() => {
+      validations += 1
+      return { issues: [{ message: "body rejected" }] }
+    })
+    const app = server()
+      .derive(() => ({ principal: "u1" }))
+      .beforeHandle(() => {
+        beforeRuns += 1
+        return new Response("forbidden", { status: 403 })
+      })
+      .post("/sensitive", { body }, () => ({ shouldNotRun: true }))
+
+    const response = await app.fetch(
+      new Request("http://x/sensitive", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }),
+    )
+    expect(response.status).toBe(422)
+    expect(validations).toBe(1)
+    expect(beforeRuns).toBe(0)
+  })
+
   test("freezes registration facts and snapshots route-local arrays", () => {
     const derive = () => ({ derived: true })
     const before = () => undefined

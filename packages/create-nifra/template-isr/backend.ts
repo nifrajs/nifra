@@ -1,3 +1,4 @@
+import { responseContract } from "@nifrajs/core/response-contract"
 import { server } from "@nifrajs/core/server"
 import {
   cors,
@@ -30,6 +31,7 @@ export const backend = server({
   requestTimeoutMs: 30_000,
   admission: createAdmissionController({ maxInFlight: 128, maxQueue: 0 }),
 })
+  .use(responseContract("enforce"))
   .use(securityHeaders())
   .use(
     cors({

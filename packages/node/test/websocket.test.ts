@@ -58,6 +58,21 @@ describe("@nifrajs/node WebSockets", () => {
     expect(await rt(`ws://127.0.0.1:${running.port}/echo`, ["hi"], 2)).toEqual(["welcome", "hi"])
   })
 
+  test("a mounted child WebSocket keeps its path and handler context", async () => {
+    const child = server()
+      .use(websocket())
+      .ws("/echo", {
+        open: (ws) => ws.send("child-ready"),
+        message: (ws, data) => ws.send(data),
+      })
+    const parent = server().mount({ path: "/api", app: child, stripPrefix: true })
+    running = await serve(parent, { port: 0 })
+    expect(await rt(`ws://127.0.0.1:${running.port}/api/echo`, ["child-ping"], 2)).toEqual([
+      "child-ready",
+      "child-ping",
+    ])
+  })
+
   test("guarded: accepts with token, threading data to ws.data", async () => {
     running = await serve(makeApp(), { port: 0 })
     expect(await rt(`ws://127.0.0.1:${running.port}/guarded?token=secret`, [], 1)).toEqual([

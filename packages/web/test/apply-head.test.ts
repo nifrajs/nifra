@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test"
-import { applyHead } from "../src/client.ts"
+import { applyHead, currentDocumentNonce } from "../src/client.ts"
 
 // `applyHead` applies `<html lang>`/`<html dir>` AUTHORITATIVELY, unlike `title` which it leaves alone
 // when a route omits it. That asymmetry is the whole point and the reason these tests exist: the SSR
@@ -47,8 +47,11 @@ const document = {
   title: "",
   documentElement: new FakeElement(),
   head: new FakeHead(),
+  querySelector: (selector: string): FakeElement | null =>
+    selector === "script[nonce]" ? nonceScript : null,
   createElement: (_tag: string) => new FakeElement(),
 }
+let nonceScript: FakeElement | null = null
 
 // Install the fake for THIS file only, and put back whatever was there. Assigning `globalThis.document`
 // at module scope leaks: bun runs a directory's test files in one process, so the fake outlives this file
@@ -69,6 +72,7 @@ afterEach(() => {
   document.documentElement.attrs.clear()
   document.head.children = []
   document.title = ""
+  nonceScript = null
 })
 
 test("a route's lang and dir reach <html>", () => {
@@ -206,4 +210,16 @@ test("the executable slot requires a nonce and a known type", () => {
       ],
     }),
   ).toThrow(/unsupported executable script type/)
+})
+
+test("soft navigation reads the document nonce and rejects a mismatched executable script", () => {
+  nonceScript = new FakeElement()
+  nonceScript.setAttribute("nonce", "document-nonce")
+  expect(currentDocumentNonce()).toBe("document-nonce")
+
+  expect(() =>
+    applyHead({
+      unsafeScript: [{ unsafe: true, type: "module", nonce: "route-nonce", content: "boot()" }],
+    }),
+  ).toThrow(/same CSP nonce/)
 })

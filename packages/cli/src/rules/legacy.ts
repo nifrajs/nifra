@@ -19,6 +19,7 @@ import {
   diagnosticWithCompatibility,
 } from "../diagnostics.ts"
 import type { DuplicateInstallFinding } from "../doctor.ts"
+import { unsupportedTypeScriptDiagnostic } from "../internal/typescript-import.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
 
 /** Legacy rule name → stable NF- code. Exported so `nifra.check.json` rule overrides can be keyed
@@ -467,7 +468,9 @@ const interpolatedSqlRule: CheckRule = {
   title: TITLES["interpolated-sql"]!,
   async scan(ctx) {
     const findings: Diagnostic[] = []
-    if (!ctx.project.check.sqlCompilerAvailable) {
+    if (ctx.project.check.unsupportedTypeScriptVersion !== undefined) {
+      findings.push(unsupportedTypeScriptDiagnostic(ctx.project.check.unsupportedTypeScriptVersion))
+    } else if (!ctx.project.check.sqlCompilerAvailable) {
       findings.push(
         legacyDiagnostic("interpolated-sql", {
           severity: "warning",
@@ -593,16 +596,6 @@ const doctorRules: readonly CheckRule[] = Object.freeze([
             fix: finding.remediation,
             evidence: copies,
             suggestion: duplicateSuggestion(finding),
-          }),
-        )
-      }
-      for (const finding of doctor.deduplicatedInstalls ?? []) {
-        const paths = finding.copies.map((copy) => copy.path).join("; ")
-        findings.push(
-          legacyDiagnostic("duplicate-install", {
-            severity: "warning",
-            message: `${finding.package} is installed at ${finding.copies.length} paths (${paths}) and is declared single-copy - nifra resolves every duplicate to this app's copy`,
-            fix: finding.remediation,
           }),
         )
       }

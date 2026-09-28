@@ -254,6 +254,33 @@ describe("NF-S002 severity by file role", () => {
     const findings = await scan("routes/session.server.ts", compare)
     expect(findings.find((f) => f.code === "NF-S002")?.severity).toBe("error")
   })
+
+  test("treats client-side password confirmation pairs as local validation", async () => {
+    const findings = await scan(
+      "components/ConfirmPassword.tsx",
+      [
+        "if (password !== confirm) return false",
+        "if (password !== confirmPassword) return false",
+        "if (input.password === input.passwordConfirmation) return true",
+        "if (password === expectedPassword) return false",
+      ].join("\n"),
+    )
+
+    expect(findings.filter((finding) => finding.code === "NF-S002").map((f) => f.line)).toEqual([4])
+    expect(findings.find((finding) => finding.code === "NF-S002")?.severity).toBe("warn")
+  })
+
+  test("does not weaken confirmation comparisons on the server", async () => {
+    const findings = await scan(
+      "routes/auth.server.ts",
+      "if (password !== confirmPassword) return false\nif (password === expectedPassword) return false",
+    )
+
+    expect(findings.filter((finding) => finding.code === "NF-S002").map((f) => f.line)).toEqual([
+      1, 2,
+    ])
+    expect(findings.every((finding) => finding.severity === "error")).toBe(true)
+  })
 })
 
 test("reviewed marker counts anywhere in the comment block above, not only 2 lines up", async () => {

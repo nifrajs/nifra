@@ -9,7 +9,7 @@
  * signature/doc body; no args → a per-package index of the available type names.
  */
 
-import { countBodyHits, queryTermGroups, tokenize, tokenSetHas } from "./search-terms.ts"
+import { countBodyHits, queryTermGroups, tokenize, tokenSetScore } from "./search-terms.ts"
 
 export interface TypeEntry {
   readonly name: string
@@ -63,10 +63,16 @@ export function searchTypes(
   for (const prepared of prepareTypes(types)) {
     const t = prepared.type
     let score = 0
+    let nameTermMatches = 0
     for (const term of terms) {
-      if (tokenSetHas(prepared.nameTokens, term)) score += 8
+      const nameScore = tokenSetScore(prepared.nameTokens, term)
+      if (nameScore > 0) {
+        nameTermMatches += 1
+        score += 8 + nameScore * 4
+      }
       score += countBodyHits(prepared.bodyLower, term, 4)
     }
+    score += nameTermMatches * 4
     if (score > 0) scored.push({ ...t, score })
   }
   return scored.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)).slice(0, limit)
