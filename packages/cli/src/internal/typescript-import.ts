@@ -314,8 +314,9 @@ function sourceEntries(
     const content = sourceIndex.read(file)
     if (content === undefined) continue
     const absolute = isAbsolute(file) ? file : resolve(root, file)
-    paths.push(absolute)
-    for (const variant of pathVariants(absolute)) files.set(variant, content)
+    const normalized = normalizedPath(absolute)
+    paths.push(normalized)
+    for (const variant of pathVariants(normalized)) files.set(variant, content)
   }
   return { files, paths: [...new Set(paths)] }
 }
