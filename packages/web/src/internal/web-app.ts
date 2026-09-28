@@ -245,7 +245,11 @@ function evidenceProviderOf(value: unknown): BackendEvidenceProvider | undefined
 function mountPathPrefix(path: string): string {
   const withoutWildcard = path.endsWith("/*") ? path.slice(0, -2) : path
   if (withoutWildcard === "" || withoutWildcard === "/") return ""
-  return withoutWildcard.replace(/\/+$/, "")
+  // Index-scan instead of `/\/+$/`: mount paths can be library input, and the
+  // unanchored-start trailing-run replacement can backtrack quadratically.
+  let end = withoutWildcard.length
+  while (end > 0 && withoutWildcard.charCodeAt(end - 1) === 47 /* '/' */) end--
+  return withoutWildcard.slice(0, end)
 }
 
 function requestPathOf(request: Request): string {

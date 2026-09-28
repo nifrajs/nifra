@@ -277,6 +277,14 @@ function capabilitiesOf(
   })
 }
 
+function trimTrailingSlashes(path: string): string {
+  // Index-scan instead of `/\/+$/`: path prefixes can be library input, and the
+  // unanchored-start trailing-run replacement can backtrack quadratically.
+  let end = path.length
+  while (end > 0 && path.charCodeAt(end - 1) === 47 /* '/' */) end--
+  return path.slice(0, end)
+}
+
 const composedPath = (prefix: string, path: string): string => {
   if (path === "*") return path
   if (!path.startsWith("/"))
@@ -285,7 +293,7 @@ const composedPath = (prefix: string, path: string): string => {
   if (!prefix.startsWith("/")) {
     throw new TypeError(`project evidence: path prefix must start with "/": ${prefix}`)
   }
-  const normalized = prefix === "/" ? "" : prefix.replace(/\/+$/, "")
+  const normalized = prefix === "/" ? "" : trimTrailingSlashes(prefix)
   return normalized === "" ? path : path === "/" ? normalized : `${normalized}${path}`
 }
 
