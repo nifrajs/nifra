@@ -306,9 +306,16 @@ export default function Troubleshooting() {
       <p>
         <strong>What it will not do:</strong> redirect across <em>versions</em>. If the two copies are{" "}
         <code>19.2.7</code> and <code>19.2.8</code>, the redirect is skipped and{" "}
-        <code>nifra check</code> still fails with <code>version-skew</code>. Silently collapsing a
-        version difference would trade a loud install problem for a quiet behavioural one; align the
-        ranges instead.
+        <code>nifra check</code> still fails with <code>version-skew</code> - for every declared
+        package, not only the built-in set. Silently collapsing a version difference would trade a loud
+        install problem for a quiet behavioural one; align the ranges instead.
+      </p>
+      <p>
+        The preloaded registrar never skips quietly either. A declared package it cannot collapse - a
+        version skew, or a linked file with no counterpart in your copy - prints one warning per
+        package naming both copies and both versions. To make that a startup failure, use the object
+        form <code>{`"singleCopy": { "packages": [...], "strict": true }`}</code> or set{" "}
+        <code>NIFRA_SINGLE_COPY_STRICT=1</code>.
       </p>
       <p>
         A declared duplicate is <strong>reported, not suppressed</strong>.{" "}

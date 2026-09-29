@@ -1,6 +1,6 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: SQL scanner fixtures intentionally contain literal interpolation syntax.
 import { describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { isAbsolute, join } from "node:path"
 import ts from "typescript"
@@ -633,6 +633,72 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
       )
     } finally {
       await rm(dir, { recursive: true, force: true })
+    }
+  })
+  test("a version skew in a declared non-framework package fails check; one version on two paths does not", async () => {
+    // A linked sibling checkout sharing a module-state package with the app: only the app's singleCopy
+    // declaration makes it identity-sensitive, and the declaration must bring it under the check.
+    const fixture = async (siblingVersion: string) => {
+      const ground = await mkdtemp(join(tmpdir(), "nifra-check-declared-"))
+      const app = join(ground, "app")
+      const sibling = join(ground, "sibling")
+      await mkdir(join(app, ".git"), { recursive: true })
+      await mkdir(join(app, "src"), { recursive: true })
+      await mkdir(join(app, "node_modules", "shared-state"), { recursive: true })
+      await mkdir(join(app, "node_modules", "@example"), { recursive: true })
+      await mkdir(join(sibling, ".git"), { recursive: true })
+      await mkdir(join(sibling, "node_modules", "shared-state"), { recursive: true })
+      await mkdir(join(sibling, "packages", "ui"), { recursive: true })
+      await writeFile(
+        join(app, "package.json"),
+        JSON.stringify({
+          name: "app",
+          dependencies: { "shared-state": "2.1.0", "@example/ui": "link:../sibling/packages/ui" },
+          nifra: { singleCopy: ["shared-state"] },
+        }),
+      )
+      await writeFile(join(app, "src", "x.ts"), 'import "shared-state"\nimport "@example/ui"\n')
+      await writeFile(
+        join(sibling, "packages", "ui", "package.json"),
+        JSON.stringify({ name: "@example/ui", dependencies: { "shared-state": siblingVersion } }),
+      )
+      await writeFile(
+        join(app, "node_modules", "shared-state", "package.json"),
+        JSON.stringify({ name: "shared-state", version: "2.1.0" }),
+      )
+      await writeFile(
+        join(sibling, "node_modules", "shared-state", "package.json"),
+        JSON.stringify({ name: "shared-state", version: siblingVersion }),
+      )
+      await symlink(join(sibling, "packages", "ui"), join(app, "node_modules", "@example", "ui"))
+      return { ground, app }
+    }
+
+    const skewed = await fixture("2.0.0")
+    try {
+      const result = await collectCheckResult(skewed.app, { lintsOnly: true })
+      const diagnostic = result.diagnostics.find((d) => d.rule === "duplicate-install")
+      expect(result.ok).toBe(false)
+      expect(diagnostic?.severity).toBe("error")
+      expect(diagnostic?.message).toContain("shared-state identity preflight found version-skew")
+      expect(diagnostic?.fix).toContain("Align dependency ranges")
+      expect(result.identityPreflight?.duplicates.map((finding) => finding.package)).toEqual([
+        "shared-state",
+      ])
+    } finally {
+      await rm(skewed.ground, { recursive: true, force: true })
+    }
+
+    const aligned = await fixture("2.1.0")
+    try {
+      const result = await collectCheckResult(aligned.app, { lintsOnly: true })
+      expect(result.diagnostics.some((d) => d.rule === "duplicate-install")).toBe(false)
+      expect(result.identityPreflight?.duplicates).toEqual([])
+      expect(result.identityPreflight?.deduplicated.map((finding) => finding.package)).toEqual([
+        "shared-state",
+      ])
+    } finally {
+      await rm(aligned.ground, { recursive: true, force: true })
     }
   })
 })

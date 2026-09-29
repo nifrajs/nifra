@@ -2792,6 +2792,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Set once the runtime plugin is installed, so a checker can tell "one copy" from "deduplicated".
 - **SINGLE_COPY_REGISTER_SPECIFIER** _(const)_ - `SINGLE_COPY_REGISTER_SPECIFIER: "@nifrajs/core/single-copy/register"`
   The public specifier a `bunfig.toml` preload must name to arm the runtime.
+- **SINGLE_COPY_STRICT_ENV** _(const)_ - `SINGLE_COPY_STRICT_ENV: "NIFRA_SINGLE_COPY_STRICT"`
+  Environment switch for strict mode when the declaration does not set it: `1` or `true`.
 - **SingleCopyOptions** _(interface)_ - `interface SingleCopyOptions`
 - **SingleCopyPlan** _(interface)_ - `interface SingleCopyPlan`
 - **SingleCopyPlugin** _(interface)_ - `interface SingleCopyPlugin`
@@ -2801,7 +2803,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **SingleCopyRegistration** _(interface)_ - `interface SingleCopyRegistration`
   Which unbundled phases have the resolver preloaded. Bundled phases never need it - nifra's build injects the plugin itself.
 - **SingleCopySkip** _(interface)_ - `interface SingleCopySkip`
-  A foreign copy deliberately left alone, and why - never silently dropped.
+  A foreign copy left alone, and why - never silently dropped.
 - **SingleCopySkipReason** _(type)_ - `type SingleCopySkipReason = "version-skew" | "no-counterpart"`
 - **matchesSingleCopyDeclaration** _(const)_ - `matchesSingleCopyDeclaration: (declared: readonly string[], name: string) => boolean`
   Match a package name against a declaration entry: an exact name, or a `@scope/*` prefix.
@@ -2811,6 +2813,8 @@ Every public export of every package and documented subpath - name, kind, signat
   The declaration, read from `package.json` - deliberately NOT from `nifra.config.ts`.
 - **readSingleCopyRegistration** _(function)_ - `readSingleCopyRegistration: (cwd: string) => SingleCopyRegistration`
   Read the runtime proof out of `bunfig.toml`.
+- **readSingleCopyStrict** _(function)_ - `readSingleCopyStrict: (cwd: string) => boolean`
+  Whether the declaration's object form asks for strict mode (`"strict": true`).
 - **registerSingleCopy** _(function)_ - `registerSingleCopy: (options?: SingleCopyOptions) => SingleCopyPlan`
   Install the plugin into the Bun RUNTIME. Import `@nifrajs/core/single-copy/register` from a `bunfig.toml` preload rather than calling this from application code: a resolver installed from inside a module cannot affect the imports that module already resolved.
 - **singleCopyPlugin** _(function)_ - `singleCopyPlugin: (options?: SingleCopyOptions) => SingleCopyPlugin`

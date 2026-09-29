@@ -644,8 +644,22 @@ const describeScope = (
   return `${outside.length} of these copies ${outside.length === 1 ? "is" : "are"} outside ${here}, so this fails every build in the workspace, including apps that never import the package. The scan is anchored on the workspace on purpose: a copy reached through a workspace-linked dependency cannot be seen from ${here} alone, and scoping to it would miss the case this check exists for. Fix the copies where they live, or declare the package single-copy.`
 }
 
-const identityTargets = (pkg: Record<string, unknown>): readonly string[] =>
-  dependencyNames(pkg).filter(isIdentitySensitivePackage).sort()
+/**
+ * The dependencies of `pkg` the scan compares across copies: the built-in identity-sensitive set plus
+ * every package the app declared single-copy. A declaration is a claim that one copy loads, so a
+ * declared package gets the same scrutiny as react - otherwise a version skew in it would be enforced
+ * at load time (the resolver refuses to redirect it) and never reported here. The match is core's
+ * `matchesSingleCopyDeclaration`, the one the resolver uses, so check and enforcement cover one set.
+ */
+const identityTargets = (
+  pkg: Record<string, unknown>,
+  declared: readonly string[],
+): readonly string[] =>
+  dependencyNames(pkg)
+    .filter(
+      (name) => isIdentitySensitivePackage(name) || matchesSingleCopyDeclaration(declared, name),
+    )
+    .sort()
 
 /** version-skew is a range problem: one reinstall from the root collapses it. */
 const VERSION_SKEW_REMEDIATION =
@@ -708,9 +722,10 @@ export async function collectIdentityParity(
     byPackage.set(name, copies)
   }
 
+  const singleCopy = singleCopyCoverage(requestedRoot, scanRoot)
   const targets = new Set<string>()
   for (const importer of importers) {
-    for (const name of identityTargets(importer.package)) {
+    for (const name of identityTargets(importer.package, singleCopy.declared)) {
       if (importer.package.name === name) continue
       targets.add(name)
       const copy = await resolvedInstalledCopy(importer.root, scanRoot, name)
@@ -732,7 +747,7 @@ export async function collectIdentityParity(
     const boundary = await linkedRepoBoundary(linkedRoot)
     const linkedTargets = new Set([
       ...targets,
-      ...(linkedPackage === undefined ? [] : identityTargets(linkedPackage)),
+      ...(linkedPackage === undefined ? [] : identityTargets(linkedPackage, singleCopy.declared)),
     ])
     for (const name of linkedTargets) {
       if (linkedPackage?.name === name) continue
@@ -741,7 +756,6 @@ export async function collectIdentityParity(
     }
   }
 
-  const singleCopy = singleCopyCoverage(requestedRoot, scanRoot)
   const findings: IdentityParityFinding[] = []
   const deduplicated: IdentityParityFinding[] = []
   for (const [name, copies] of [...byPackage.entries()].sort(([a], [b]) => a.localeCompare(b))) {
@@ -904,15 +918,21 @@ export function logicalStaticAssets(manifest: BuildManifestLike): readonly strin
   return [...logical].sort()
 }
 
+/**
+ * The one order parity puts route ids in, on both sides. Code-unit order, not `localeCompare`: the
+ * two disagree on `_` against `[` (`[lang]` sorts before `_404` by code unit, after it by locale), so
+ * a dev side sorted one way and a build side sorted the other failed the equality check for every app
+ * with a `_404` and a dynamic route. Code-unit order is also locale-independent, so the verdict cannot
+ * change with the machine running the build.
+ */
+export const compareRouteIds = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
+
 export function normalizeBuildManifest(manifest: BuildManifestLike): ParityManifest {
+  const routes = Object.entries(manifest.routes).sort(([a], [b]) => compareRouteIds(a, b))
   return {
     moduleGraph: {
-      routes: Object.keys(manifest.routes).sort(),
-      routeChunks: Object.fromEntries(
-        Object.entries(manifest.routes)
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([route, chunks]) => [route, chunks.length]),
-      ),
+      routes: routes.map(([route]) => route),
+      routeChunks: Object.fromEntries(routes.map(([route, chunks]) => [route, chunks.length])),
       // Allowlist, not denylist: the dev/prod module-graph contract is the JavaScript module graph
       // only. `js:entry` and `js:route:<id>:<n>` are the roles dev can reconstruct from source. Which
       // *non-JS* files a bundler emits (svg, woff2, an extracted stylesheet) is an output detail, not
@@ -928,7 +948,7 @@ export function normalizeBuildManifest(manifest: BuildManifestLike): ParityManif
 
 export function createDevelopmentParityManifest(input: DevelopmentParityInput): ParityManifest {
   const routes = Object.fromEntries(
-    Object.entries(input.routes).sort(([a], [b]) => a.localeCompare(b)),
+    Object.entries(input.routes).sort(([a], [b]) => compareRouteIds(a, b)),
   )
   const publicFiles = [...input.publicFiles].sort()
   return {
@@ -1079,9 +1099,28 @@ function explainParityDifference(
       parts.push(
         `chunks only in development=${JSON.stringify(assets.onlyDevelopment)} only in production=${JSON.stringify(assets.onlyProduction)}`,
       )
+    const counts = Object.keys(dev.routeChunks).filter(
+      (route) =>
+        Object.hasOwn(prod.routeChunks, route) &&
+        dev.routeChunks[route] !== prod.routeChunks[route],
+    )
+    if (counts.length > 0)
+      parts.push(
+        `route chunk counts differ: ${counts.map((route) => `${route} development=${dev.routeChunks[route]} production=${prod.routeChunks[route]}`).join(", ")}`,
+      )
+    // Same members, same counts: what is left is order. Name the field, because an ordering
+    // disagreement is a parity bug, not an app defect, and reads nothing like a missing chunk.
+    if (parts.length === 0 && !equal(dev.routes, prod.routes))
+      parts.push(
+        `route order differs: development=${JSON.stringify(dev.routes)} production=${JSON.stringify(prod.routes)}`,
+      )
+    if (parts.length === 0 && !equal(dev.emittedAssets, prod.emittedAssets))
+      parts.push(
+        `chunk order differs: development=${JSON.stringify(dev.emittedAssets)} production=${JSON.stringify(prod.emittedAssets)}`,
+      )
     if (parts.length === 0)
       parts.push(
-        `route chunk counts differ: development=${JSON.stringify(dev.routeChunks)} production=${JSON.stringify(prod.routeChunks)}`,
+        `route chunk order differs: development=${JSON.stringify(dev.routeChunks)} production=${JSON.stringify(prod.routeChunks)}`,
       )
     return `module-graph: ${parts.join("; ")}`
   }

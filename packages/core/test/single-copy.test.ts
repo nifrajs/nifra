@@ -7,6 +7,8 @@ import {
   planSingleCopy,
   readSingleCopyDeclaration,
   readSingleCopyRegistration,
+  readSingleCopyStrict,
+  SINGLE_COPY_STRICT_ENV,
   singleCopyPlugin,
 } from "../src/single-copy.ts"
 
@@ -99,8 +101,34 @@ test("readSingleCopyDeclaration reads a list, expands `true`, and ignores the re
   try {
     expect(readSingleCopyDeclaration(all.app)).toContain("react")
     expect(readSingleCopyDeclaration(all.app)).toContain("@nifrajs/*")
+    expect(readSingleCopyStrict(all.app)).toBe(false)
   } finally {
     await rm(all.ground, { recursive: true, force: true })
+  }
+})
+
+test("the object form declares the same list plus strict mode", async () => {
+  const strict = await linkedRepos("declaration-object", {
+    declaration: { packages: ["state"], strict: true },
+  })
+  try {
+    expect(readSingleCopyDeclaration(strict.app)).toEqual(["state"])
+    expect(readSingleCopyStrict(strict.app)).toBe(true)
+  } finally {
+    await rm(strict.ground, { recursive: true, force: true })
+  }
+  const lax = await linkedRepos("declaration-object-lax", { declaration: { packages: true } })
+  try {
+    expect(readSingleCopyDeclaration(lax.app)).toContain("@nifrajs/*")
+    expect(readSingleCopyStrict(lax.app)).toBe(false)
+  } finally {
+    await rm(lax.ground, { recursive: true, force: true })
+  }
+  const empty = await linkedRepos("declaration-object-empty", { declaration: { strict: true } })
+  try {
+    expect(readSingleCopyDeclaration(empty.app)).toBeUndefined()
+  } finally {
+    await rm(empty.ground, { recursive: true, force: true })
   }
 })
 
@@ -163,6 +191,13 @@ test("planSingleCopy redirects a linked repo's copy at the app's, and refuses ac
     const plan = planSingleCopy({ cwd: skewed.app })
     expect(plan.redirects).toHaveLength(0)
     expect(plan.skipped.map((skip) => skip.reason)).toEqual(["version-skew"])
+    expect(plan.skipped[0]).toMatchObject({
+      package: "state",
+      from: skewed.theirs,
+      to: skewed.ours,
+      fromVersion: "2.0.0",
+      toVersion: "1.0.0",
+    })
   } finally {
     await rm(skewed.ground, { recursive: true, force: true })
   }
@@ -395,5 +430,143 @@ test("the plugin builds even when the app has no duplicates to collapse", async 
     expect(plugin.name).toBe("nifra-single-copy")
   } finally {
     await rm(ground, { recursive: true, force: true })
+  }
+})
+
+/**
+ * Run `probe.ts` under a preload that registers the plugin (twice, to prove the warning is
+ * once-per-process), in a child - `Bun.plugin` is global and permanent.
+ */
+const runRegistered = async (
+  app: string,
+  env: Readonly<Record<string, string>> = {},
+): Promise<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }> => {
+  const register = JSON.stringify(join(import.meta.dir, "..", "src", "single-copy.ts"))
+  await writeFile(
+    join(app, "preload.ts"),
+    `import { registerSingleCopy } from ${register};\nregisterSingleCopy();\nregisterSingleCopy();\n`,
+  )
+  await writeFile(
+    join(app, "probe.ts"),
+    'import { seen } from "@example/ui"\nconsole.log(JSON.stringify(seen()))\n',
+  )
+  const childEnv: Record<string, string | undefined> = { ...process.env, ...env }
+  if (env[SINGLE_COPY_STRICT_ENV] === undefined) delete childEnv[SINGLE_COPY_STRICT_ENV]
+  const probe = Bun.spawnSync({
+    cmd: ["bun", "--preload", "./preload.ts", "./probe.ts"],
+    cwd: app,
+    env: childEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  return {
+    exitCode: probe.exitCode,
+    stdout: probe.stdout.toString().trim(),
+    stderr: probe.stderr.toString(),
+  }
+}
+
+const occurrences = (haystack: string, needle: string): number => haystack.split(needle).length - 1
+
+test("the registrar warns once per package on a version skew, naming both copies and versions", async () => {
+  const { ground, app, ours, theirs } = await linkedRepos("register-skew", {
+    declaration: ["state"],
+    siblingVersion: "2.0.0",
+  })
+  try {
+    const run = await runRegistered(app)
+    // Not strict: the app still starts, on two copies.
+    expect(run.exitCode).toBe(0)
+    expect(run.stdout).toBe("[]")
+    expect(
+      occurrences(run.stderr, "[nifra] single-copy: state is NOT deduplicated (version-skew)"),
+    ).toBe(1)
+    expect(run.stderr).toContain(`app copy: ${ours} (1.0.0)`)
+    expect(run.stderr).toContain(`linked copy: ${theirs} (2.0.0)`)
+    expect(run.stderr).toContain("align the dependency ranges")
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("strict mode refuses to start on a version skew, from package.json or the environment", async () => {
+  const declared = await linkedRepos("register-strict", {
+    declaration: { packages: ["state"], strict: true },
+    siblingVersion: "2.0.0",
+  })
+  try {
+    const run = await runRegistered(declared.app)
+    expect(run.exitCode).not.toBe(0)
+    // The throw happens in the preload, before the entry point runs.
+    expect(run.stdout).toBe("")
+    expect(run.stderr).toContain("state is NOT deduplicated (version-skew)")
+    expect(run.stderr).toContain("Strict mode is on")
+  } finally {
+    await rm(declared.ground, { recursive: true, force: true })
+  }
+  const viaEnv = await linkedRepos("register-strict-env", {
+    declaration: ["state"],
+    siblingVersion: "2.0.0",
+  })
+  try {
+    const run = await runRegistered(viaEnv.app, { [SINGLE_COPY_STRICT_ENV]: "1" })
+    expect(run.exitCode).not.toBe(0)
+    expect(run.stdout).toBe("")
+    expect(run.stderr).toContain("Strict mode is on")
+  } finally {
+    await rm(viaEnv.ground, { recursive: true, force: true })
+  }
+})
+
+test("the registrar stays silent when every declared copy collapses", async () => {
+  const { ground, app } = await linkedRepos("register-clean", {
+    declaration: { packages: ["state"], strict: true },
+  })
+  try {
+    const run = await runRegistered(app)
+    expect(run.exitCode).toBe(0)
+    expect(run.stdout).toBe("[]")
+    expect(run.stderr).toBe("")
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("a linked file with no counterpart in the app's copy is reported, and fails strict mode", async () => {
+  const withExtra = async (label: string, declaration: unknown) => {
+    const repos = await linkedRepos(label, { declaration })
+    // Same version, different layout: the linked copy ships a file the app's copy lacks, and the
+    // linked package imports it directly.
+    await writeFile(join(repos.theirs, "extra.js"), "export const extra = new Set();\n")
+    await writeFile(
+      join(repos.ground, "sibling", "packages", "ui", "index.js"),
+      'export { mark, seen } from "state"\nexport { extra } from "state/extra.js"\n',
+    )
+    return repos
+  }
+  const lax = await withExtra("register-no-counterpart", ["state"])
+  try {
+    const run = await runRegistered(lax.app)
+    expect(run.exitCode).toBe(0)
+    expect(run.stdout).toBe("[]")
+    expect(
+      occurrences(run.stderr, "[nifra] single-copy: state is NOT deduplicated (no-counterpart)"),
+    ).toBe(1)
+    expect(run.stderr).toContain(`linked copy: ${join(lax.theirs, "extra.js")} (1.0.0)`)
+    expect(run.stderr).toContain("extra.js has no file at the same path in the app's copy")
+  } finally {
+    await rm(lax.ground, { recursive: true, force: true })
+  }
+  const strict = await withExtra("register-no-counterpart-strict", {
+    packages: ["state"],
+    strict: true,
+  })
+  try {
+    const run = await runRegistered(strict.app)
+    expect(run.exitCode).not.toBe(0)
+    expect(run.stdout).toBe("")
+    expect(run.stderr).toContain("state is NOT deduplicated (no-counterpart)")
+  } finally {
+    await rm(strict.ground, { recursive: true, force: true })
   }
 })

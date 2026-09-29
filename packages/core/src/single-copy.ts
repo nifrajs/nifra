@@ -34,11 +34,18 @@
  *
  * Redirect across a VERSION difference. Two versions is a different defect (someone's range is wrong)
  * and silently serving 19.2.8 to a package that asked for 19.2.7 turns a loud install problem into a
- * quiet behavioural one. A version skew is left untouched, so `nifra check` still fails it.
+ * quiet behavioural one. A version skew is left untouched, so `nifra check` still fails it, and the
+ * preloaded registrar prints one warning per package naming both copies - or, in strict mode, refuses
+ * to start.
  *
  * @example Declare it in package.json, then preload the registrar in bunfig.toml.
  * ```json
  * { "nifra": { "singleCopy": ["react", "react-dom", "@nifrajs/*"] } }
+ * ```
+ * The object form adds strict mode: a copy that cannot be collapsed fails the preload instead of
+ * warning.
+ * ```json
+ * { "nifra": { "singleCopy": { "packages": ["react", "@nifrajs/*"], "strict": true } } }
  * ```
  * ```toml
  * preload = ["@nifrajs/core/single-copy/register"]
@@ -86,10 +93,23 @@ export interface SingleCopyRedirect {
   readonly version: string
 }
 
-/** A foreign copy deliberately left alone, and why - never silently dropped. */
+/**
+ * A foreign copy left alone, and why - never silently dropped.
+ *
+ * `version-skew`: the two copies advertise different versions, so no redirect is planned.
+ * `no-counterpart`: a redirect was planned, but a file the foreign copy loads has no file at the same
+ * relative path in the app's copy (the layouts differ), so that file loads from the foreign copy.
+ */
 export interface SingleCopySkip {
   readonly package: string
+  /** Absolute realpath of the foreign copy (or, for `no-counterpart`, the foreign file). */
   readonly from: string
+  /** Absolute realpath of the app's copy, when one is installed. */
+  readonly to?: string
+  /** Version the foreign copy advertises. */
+  readonly fromVersion?: string
+  /** Version the app's copy advertises. */
+  readonly toVersion?: string
   readonly reason: SingleCopySkipReason
   readonly detail: string
 }
@@ -108,7 +128,23 @@ export interface SingleCopyOptions {
   readonly cwd?: string
   /** Package names or `@scope/*` patterns. Defaults to the `nifra.singleCopy` declaration. */
   readonly packages?: readonly string[]
+  /**
+   * Throw instead of warning when a declared package keeps a second copy (a version skew, or a file
+   * with no counterpart in the app's copy). Read by {@link registerSingleCopy}; defaults to the
+   * declaration's `strict` flag, or {@link SINGLE_COPY_STRICT_ENV} set to `1`/`true`.
+   */
+  readonly strict?: boolean
+  /**
+   * Called for every skip: by {@link registerSingleCopy} for each planned `version-skew`, and by the
+   * plugin for each `no-counterpart` file it lets through at load time. Unset, the plugin stays silent
+   * (a bundle's duplicates are the identity preflight's to report); the registrar always warns, or
+   * throws in strict mode, and calls this as well.
+   */
+  readonly onSkip?: (skip: SingleCopySkip) => void
 }
+
+/** Environment switch for strict mode when the declaration does not set it: `1` or `true`. */
+export const SINGLE_COPY_STRICT_ENV = "NIFRA_SINGLE_COPY_STRICT"
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -133,18 +169,24 @@ const realpathOrSelf = (path: string): string => {
 const inside = (root: string, path: string): boolean =>
   path === root || path.startsWith(root.endsWith(sep) ? root : `${root}${sep}`)
 
+/** The raw `nifra.singleCopy` value from `package.json`, if any. */
+const singleCopyField = (cwd: string): unknown => {
+  const pkg = readJsonSync(join(resolve(cwd), "package.json"))
+  const nifra = pkg?.nifra
+  return isRecord(nifra) ? nifra.singleCopy : undefined
+}
+
 /**
  * The declaration, read from `package.json` - deliberately NOT from `nifra.config.ts`.
  *
  * `nifra check` holds a pre-load invariant: it never imports the app's config, because importing is
  * executing. A dedupe claim has to be verifiable by a checker that refuses to run the app, so it lives
- * in the one file every tool already parses. `true` means the built-in identity-sensitive set.
+ * in the one file every tool already parses. `true` means the built-in identity-sensitive set. The
+ * object form `{ "packages": [...] | true, "strict": true }` declares the same list plus strict mode.
  */
 export function readSingleCopyDeclaration(cwd: string): readonly string[] | undefined {
-  const pkg = readJsonSync(join(resolve(cwd), "package.json"))
-  const nifra = pkg?.nifra
-  if (!isRecord(nifra)) return undefined
-  const declared = nifra.singleCopy
+  const field = singleCopyField(cwd)
+  const declared = isRecord(field) ? field.packages : field
   if (declared === true) return IDENTITY_SENSITIVE_PACKAGES
   if (declared === false || declared === undefined) return undefined
   if (!Array.isArray(declared)) return undefined
@@ -152,6 +194,12 @@ export function readSingleCopyDeclaration(cwd: string): readonly string[] | unde
     (name): name is string => typeof name === "string" && name.length > 0,
   )
   return names.length > 0 ? names : undefined
+}
+
+/** Whether the declaration's object form asks for strict mode (`"strict": true`). */
+export function readSingleCopyStrict(cwd: string): boolean {
+  const field = singleCopyField(cwd)
+  return isRecord(field) && field.strict === true
 }
 
 /**
@@ -388,9 +436,13 @@ export function planSingleCopy(options: SingleCopyOptions = {}): SingleCopyPlan 
       const ours = installedCopy(root, name, rootBoundary)
       if (ours === undefined || ours.root === theirs.root) continue
       if (ours.version !== theirs.version) {
+        if (skipped.some((skip) => skip.from === theirs.root)) continue
         skipped.push({
           package: name,
           from: theirs.root,
+          to: ours.root,
+          fromVersion: theirs.version,
+          toVersion: ours.version,
           reason: "version-skew",
           detail: `${theirs.version} there, ${ours.version} here - redirecting would serve a version that copy did not ask for`,
         })
@@ -414,7 +466,7 @@ const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\
  * rich exports map. Guessing that `dist/server.js` is the `./server` subpath is guesswork that fails
  * on the first package whose map is not one-to-one; the counterpart path is a fact, and the two trees
  * hold the same version, so the layout matches by construction. When it does not, the file loads
- * untouched.
+ * untouched and is reported as a `no-counterpart` skip.
  */
 const counterpart = (redirect: SingleCopyRedirect, path: string): string | undefined => {
   const rel = relative(redirect.from, path)
@@ -501,6 +553,18 @@ export function singleCopyPlugin(options: SingleCopyOptions = {}): SingleCopyPlu
           if (target === undefined) continue
           return { contents: reexport(target), loader: "js" }
         }
+        const owner = plan.redirects.find((redirect) => inside(redirect.from, args.path))
+        if (owner !== undefined && options.onSkip !== undefined) {
+          options.onSkip({
+            package: owner.package,
+            from: args.path,
+            to: owner.to,
+            fromVersion: owner.version,
+            toVersion: owner.version,
+            reason: "no-counterpart",
+            detail: `${relative(owner.from, args.path)} has no file at the same path in the app's copy, so it loads from the linked copy and its module state is not shared`,
+          })
+        }
         // A runtime `onLoad` must always return an object - returning nothing fails the load rather
         // than falling through to the default. Hand back the file as it was, at its own path, so its
         // relative imports keep resolving exactly as they would have.
@@ -513,14 +577,97 @@ export function singleCopyPlugin(options: SingleCopyOptions = {}): SingleCopyPlu
 /** Set once the runtime plugin is installed, so a checker can tell "one copy" from "deduplicated". */
 export const SINGLE_COPY_ACTIVE = Symbol.for("nifra.single-copy.active")
 
+/** Packages already warned about in this process, so a second registrar (or file) stays quiet. */
+const WARNED = Symbol.for("nifra.single-copy.warned")
+/** Plans already installed in this process. A second identical plugin only adds a competing hook. */
+const INSTALLED = Symbol.for("nifra.single-copy.installed")
+
+const processSet = (key: symbol): Set<string> => {
+  const holder = globalThis as Record<symbol, Set<string> | undefined>
+  let set = holder[key]
+  if (set === undefined) {
+    set = new Set()
+    holder[key] = set
+  }
+  return set
+}
+
+const copyLine = (label: string, path: string | undefined, version: string | undefined): string =>
+  `  ${label}: ${path ?? "(not installed for the app)"}${version === undefined ? "" : ` (${version})`}`
+
+/** One report per package: both copies, both versions, the reason, and the fix. */
+const describeSkips = (name: string, skips: readonly SingleCopySkip[]): string => {
+  const first = skips[0]
+  const reason = first?.reason ?? "version-skew"
+  const lines = [
+    `[nifra] single-copy: ${name} is NOT deduplicated (${reason}) - a second copy loads, so its module state is not shared.`,
+    copyLine("app copy", first?.to, first?.toVersion),
+  ]
+  for (const skip of skips) {
+    lines.push(copyLine("linked copy", skip.from, skip.fromVersion))
+    lines.push(`  ${skip.detail}`)
+  }
+  lines.push(
+    reason === "version-skew"
+      ? "  Fix: align the dependency ranges so both trees install one version, then reinstall. nifra never redirects across versions."
+      : "  Fix: install the same build of the package in both trees (the file layouts differ), then reinstall.",
+  )
+  return lines.join("\n")
+}
+
+const strictFromEnv = (): boolean => {
+  const value = typeof process === "undefined" ? undefined : process.env[SINGLE_COPY_STRICT_ENV]
+  return value === "1" || value === "true"
+}
+
 /**
  * Install the plugin into the Bun RUNTIME. Import `@nifrajs/core/single-copy/register` from a
  * `bunfig.toml` preload rather than calling this from application code: a resolver installed from
  * inside a module cannot affect the imports that module already resolved.
+ *
+ * A declared package that keeps a second copy is never silent: each one gets a single warning per
+ * process naming both copies, both versions and the reason. In strict mode (`"strict": true` in the
+ * declaration, {@link SINGLE_COPY_STRICT_ENV}, or `options.strict`) a version skew throws here, before
+ * anything loads, and a `no-counterpart` file fails its own import.
  */
 export function registerSingleCopy(options: SingleCopyOptions = {}): SingleCopyPlan {
-  const plugin = singleCopyPlugin(options)
-  if (plugin.plan.declared.length > 0) Bun.plugin(plugin)
+  const root = realpathOrSelf(resolve(options.cwd ?? process.cwd()))
+  const strict = options.strict ?? (readSingleCopyStrict(root) || strictFromEnv())
+  const warned = processSet(WARNED)
+  const report = (name: string, skips: readonly SingleCopySkip[]): void => {
+    const message = describeSkips(name, skips)
+    if (strict)
+      throw new Error(`${message}\n  Strict mode is on, so this process refuses to start.`)
+    const key = `${skips[0]?.reason ?? ""}\0${name}`
+    if (warned.has(key)) return
+    warned.add(key)
+    console.warn(message)
+  }
+  const plugin = singleCopyPlugin({
+    ...options,
+    cwd: root,
+    onSkip: (skip) => {
+      options.onSkip?.(skip)
+      report(skip.package, [skip])
+    },
+  })
+  const byPackage = new Map<string, SingleCopySkip[]>()
+  for (const skip of plugin.plan.skipped) {
+    options.onSkip?.(skip)
+    const group = byPackage.get(skip.package) ?? []
+    group.push(skip)
+    byPackage.set(skip.package, group)
+  }
+  for (const [name, skips] of byPackage) report(name, skips)
+  // Installing twice (a preload listed twice, or an explicit call on top of the preload) would register
+  // two `onLoad` hooks for the same foreign files, and two hooks both answering one file stall the
+  // runtime loader. One install per root and declaration is the whole effect anyway.
+  const installed = processSet(INSTALLED)
+  const key = `${plugin.plan.root}\0${plugin.plan.declared.join("\0")}`
+  if (plugin.plan.declared.length > 0 && !installed.has(key)) {
+    installed.add(key)
+    Bun.plugin(plugin)
+  }
   ;(globalThis as Record<symbol, unknown>)[SINGLE_COPY_ACTIVE] = plugin.plan
   return plugin.plan
 }

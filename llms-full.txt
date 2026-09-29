@@ -5467,9 +5467,15 @@ without preloading is a real state, not a mistake -
 
 **What it will not do:** redirect across _versions_. If the two copies are
 `19.2.7` and `19.2.8`, the redirect is skipped and
-`nifra check` still fails with `version-skew`. Silently collapsing a
-version difference would trade a loud install problem for a quiet behavioural one; align the
-ranges instead.
+`nifra check` still fails with `version-skew` - for every declared
+package, not only the built-in set. Silently collapsing a version difference would trade a loud
+install problem for a quiet behavioural one; align the ranges instead.
+
+The preloaded registrar never skips quietly either. A declared package it cannot collapse - a
+version skew, or a linked file with no counterpart in your copy - prints one warning per
+package naming both copies and both versions. To make that a startup failure, use the object
+form `"singleCopy": { "packages": [...], "strict": true }` or set
+`NIFRA_SINGLE_COPY_STRICT=1`.
 
 A declared duplicate is **reported, not suppressed**.
 `nifra check` keeps printing the copies as a warning and
