@@ -192,9 +192,19 @@ function normalizedPath(path: string): string {
   return resolve(path).replaceAll("\\", "/")
 }
 
+function realPath(path: string): string {
+  try {
+    // Bun's portable realpath can preserve an 8.3 spelling on Windows; the native
+    // implementation resolves the same spelling used by the TypeScript 7 service.
+    return normalizedPath(realpathSync.native(path))
+  } catch {
+    return normalizedPath(realpathSync(path))
+  }
+}
+
 function canonicalRoot(root: string): string {
   try {
-    return normalizedPath(realpathSync(root))
+    return realPath(root)
   } catch {
     // Virtual project roots may not exist yet; the resolved spelling is still the best identity.
     return normalizedPath(root)
@@ -205,7 +215,7 @@ function pathVariants(path: string): readonly string[] {
   const normalized = normalizedPath(path)
   const variants = new Set<string>([normalized])
   try {
-    variants.add(normalizedPath(realpathSync(path)))
+    variants.add(realPath(path))
   } catch {
     // Virtual fixture files do not exist on disk; their normalized path is sufficient.
   }
@@ -297,7 +307,32 @@ function syntaxKinds(module: UnknownRecord, names: readonly string[]): ReadonlyS
   return new Set(values)
 }
 
-function createVirtualFileSystem(sourceFiles: ReadonlyMap<string, string>): UnknownRecord {
+function createVirtualFileSystem(
+  sourceFiles: ReadonlyMap<string, string>,
+  root: string,
+): UnknownRecord {
+  const rootPaths = pathVariants(root)
+  const virtualFiles = [...sourceFiles.keys()]
+  const virtualDirectories = new Set<string>()
+  let hasVirtualFileInRoot = false
+  for (const file of virtualFiles) {
+    const normalized = normalizedPath(file)
+    const rootPath = rootPaths.find(
+      (candidate) => normalized === candidate || normalized.startsWith(`${candidate}/`),
+    )
+    if (rootPath === undefined) continue
+    if (!hasVirtualFileInRoot) {
+      // Leave an empty overlay transparent so real project files remain discoverable.
+      for (const candidate of rootPaths) virtualDirectories.add(candidate)
+      hasVirtualFileInRoot = true
+    }
+    let directory = normalizedPath(dirname(normalized))
+    while (directory === rootPath || directory.startsWith(`${rootPath}/`)) {
+      virtualDirectories.add(directory)
+      if (directory === rootPath) break
+      directory = normalizedPath(dirname(directory))
+    }
+  }
   const lookup = (fileName: string): string | undefined => {
     for (const variant of pathVariants(fileName)) {
       const content = sourceFiles.get(variant)
@@ -309,6 +344,40 @@ function createVirtualFileSystem(sourceFiles: ReadonlyMap<string, string>): Unkn
     readFile: (fileName: string): string | undefined => lookup(fileName),
     fileExists: (fileName: string): boolean | undefined =>
       lookup(fileName) !== undefined || undefined,
+    directoryExists: (directoryName: string): boolean | undefined => {
+      const normalized = pathVariants(directoryName).find((variant) =>
+        virtualDirectories.has(variant),
+      )
+      return normalized === undefined ? undefined : true
+    },
+    getAccessibleEntries: (
+      directoryName: string,
+    ):
+      | { readonly files: readonly string[]; readonly directories: readonly string[] }
+      | undefined => {
+      const directory = pathVariants(directoryName).find((variant) =>
+        virtualDirectories.has(variant),
+      )
+      if (directory === undefined) return undefined
+      const prefix = directory.endsWith("/") ? directory : `${directory}/`
+      const files = new Set<string>()
+      const directories = new Set<string>()
+      for (const file of virtualFiles) {
+        const normalized = normalizedPath(file)
+        if (!normalized.startsWith(prefix)) continue
+        const remainder = normalized.slice(prefix.length)
+        const slash = remainder.indexOf("/")
+        if (slash === -1) files.add(remainder)
+        else directories.add(remainder.slice(0, slash))
+      }
+      return { files: [...files], directories: [...directories] }
+    },
+    realpath: (path: string): string | undefined => {
+      const normalized = pathVariants(path).find(
+        (variant) => sourceFiles.has(variant) || virtualDirectories.has(variant),
+      )
+      return normalized
+    },
   }
 }
 
@@ -351,13 +420,14 @@ async function createTypeScript7Session(
   // virtual files, and open files on one canonical path identity so project discovery is stable.
   const sessionRoot = canonicalRoot(root)
   const { files, paths } = sourceEntries(sessionRoot, sourceIndex)
+  const projectConfig = sourceIndex?.projectConfig ?? join(sessionRoot, "tsconfig.json")
   const sourceCache = new Map<string, TypeScript7SourceFile>()
   const sourceByContent = new Map<string, TypeScript7SourceFile>()
   const projects = new Map<string, TypeScript7Project>()
 
   const api = new API({
     cwd: sessionRoot,
-    fs: createVirtualFileSystem(files),
+    fs: createVirtualFileSystem(files, sessionRoot),
   })
   let snapshot: TypeScript7Snapshot | undefined
   let configuredProject: TypeScript7Project | undefined
@@ -365,16 +435,12 @@ async function createTypeScript7Session(
   try {
     snapshot = await api.updateSnapshot({
       openFiles: paths,
-      ...(existsSync(sourceIndex?.projectConfig ?? join(sessionRoot, "tsconfig.json"))
-        ? { openProject: sourceIndex?.projectConfig ?? join(sessionRoot, "tsconfig.json") }
-        : {}),
+      ...(existsSync(projectConfig) ? { openProject: projectConfig } : {}),
     })
     configuredProject =
-      sourceIndex?.projectConfig === undefined
-        ? undefined
-        : snapshot.getProject(sourceIndex.projectConfig)
+      sourceIndex?.projectConfig === undefined ? undefined : snapshot.getProject(projectConfig)
     if (sourceIndex?.projectConfig !== undefined && configuredProject === undefined) {
-      throw new Error(`TypeScript 7 could not open project config ${sourceIndex.projectConfig}`)
+      throw new Error(`TypeScript 7 could not open project config ${projectConfig}`)
     }
     for (const path of paths) {
       const project = configuredProject ?? (await snapshot.getDefaultProjectForFile(path))
