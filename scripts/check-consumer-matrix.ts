@@ -183,7 +183,7 @@ const TARGETS: readonly Target[] = [
   {
     name: "@nifrajs/proxy",
     entries: ["@nifrajs/proxy", "@nifrajs/proxy/undici"],
-    consumerDependencies: { "@types/node": "^25.0.0", undici: "^8.10.0" },
+    consumerDependencies: { "@types/node": "^25.0.0", undici: "^8.11.2" },
     typeProbe: "type RouterSearchProbe = Parameters<typeof entry0.createProxy>[0]",
     tsconfig: { types: ["node"] },
   },

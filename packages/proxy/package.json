@@ -37,7 +37,7 @@
     "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"
   },
   "peerDependencies": {
-    "undici": ">=7"
+    "undici": ">=7.29.1"
   },
   "peerDependenciesMeta": {
     "undici": {
@@ -47,7 +47,7 @@
   "devDependencies": {
     "@nifrajs/core": "workspace:*",
     "@nifrajs/node": "workspace:*",
-    "undici": "^8.10.0"
+    "undici": "^8.11.2"
   },
   "license": "MIT",
   "publishConfig": {
