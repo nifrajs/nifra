@@ -617,6 +617,38 @@ describe("respondMcpHttp - transport hardening", () => {
     }
   })
 
+  test("same-origin default survives a TLS-terminating proxy but never a downgrade", async () => {
+    const init = { jsonrpc: "2.0", id: 1, method: "initialize" }
+    const at = (url: string, origin: string): Request =>
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin },
+        body: JSON.stringify(init),
+      })
+    expect((await serve(at("http://app.test/mcp", "https://app.test"))).status).toBe(200)
+    expect((await serve(at("https://app.test/mcp", "http://app.test"))).status).toBe(403)
+    expect((await serve(at("http://app.test/mcp", "https://evil.test"))).status).toBe(403)
+  })
+
+  test("allowedHosts rejects a DNS-rebound Host even when its Origin matches", async () => {
+    const init = { jsonrpc: "2.0", id: 1, method: "initialize" }
+    const at = (url: string, headers: Record<string, string> = {}): Request =>
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify(init),
+      })
+    const allowedHosts = ["localhost", "127.0.0.1:3000"]
+    // Rebinding: the attacker's name resolves to 127.0.0.1, so Origin and Host both say rebind.test.
+    const rebound = at("http://rebind.test:3000/mcp", { origin: "http://rebind.test:3000" })
+    expect((await serve(rebound)).status).toBe(200)
+    expect((await serve(rebound, { allowedHosts })).status).toBe(403)
+    expect((await serve(at("http://rebind.test:3000/mcp"), { allowedHosts })).status).toBe(403)
+    expect((await serve(at("http://localhost:4000/mcp"), { allowedHosts })).status).toBe(200)
+    expect((await serve(at("http://127.0.0.1:3000/mcp"), { allowedHosts })).status).toBe(200)
+    expect((await serve(at("http://127.0.0.1:3001/mcp"), { allowedHosts })).status).toBe(403)
+  })
+
   test("rejects a non-finite body cap before reading the request", async () => {
     await expect(
       serve(post({ jsonrpc: "2.0", id: 1, method: "initialize" }), {

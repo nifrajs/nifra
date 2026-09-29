@@ -89,6 +89,12 @@ export interface ServeDatabaseAsMcpOptions {
    * yours to provide (e.g. open a second, read-only connection for the MCP mount - preferred).
    */
   readonly enforceQueryOnly?: boolean
+  /**
+   * Host allowlist for the HTTP transport (e.g. `["localhost", "127.0.0.1"]`). Set it when the server
+   * listens on localhost or a private network: the same-origin default alone does not stop a
+   * DNS-rebound browser page from reading the schema tools.
+   */
+  readonly allowedHosts?: readonly string[]
 }
 
 export class McpDbConfigError extends Error {
@@ -912,6 +918,7 @@ export function serveDatabaseAsMcp(
     name: options.name ?? "nifra-db",
     version: options.version ?? "1.0.0",
     tools,
+    ...(options.allowedHosts !== undefined ? { allowedHosts: options.allowedHosts } : {}),
   })
 
   const runQueryOptions = options.runQuery

@@ -16,7 +16,8 @@
  *
  * SECURITY: this has NO built-in authentication - once mounted, every tool is callable by anyone who can
  * reach the route. Browser access is same-origin by default; set `allowAnyOrigin: true` only for a
- * secret-free public server. If any tool mutates state or returns private data, gate the route yourself
+ * secret-free public server. Same-origin does not stop DNS rebinding: a server on localhost or a
+ * private network should also set `allowedHosts`. If any tool mutates state or returns private data, gate the route yourself
  * (check an `Authorization` header / session in the nifra handler before calling `mcp.fetch`).
  */
 
@@ -55,6 +56,8 @@ export interface CreateMcpServerOptions {
   readonly allowAnyOrigin?: boolean
   /** Origin allowlist for the DNS-rebinding guard. Set it to permit exact cross-origin clients. */
   readonly allowedOrigins?: readonly string[]
+  /** Host allowlist; set it for a server on localhost or a private network. See {@link McpHttpOptions}. */
+  readonly allowedHosts?: readonly string[]
   /** Shared state for one authenticated MCP session; prefer `resolveState` for multi-session hosts. */
   readonly state?: McpProtocolState
   /** Resolve a session-scoped request registry after per-message authorization. */
@@ -117,6 +120,7 @@ export function createMcpServer(opts: CreateMcpServerOptions): McpServer {
         ...(opts.maxResponseBytes !== undefined ? { maxResponseBytes: opts.maxResponseBytes } : {}),
         ...(opts.allowAnyOrigin === true ? { allowAnyOrigin: true } : {}),
         ...(opts.allowedOrigins !== undefined ? { allowedOrigins: opts.allowedOrigins } : {}),
+        ...(opts.allowedHosts !== undefined ? { allowedHosts: opts.allowedHosts } : {}),
         ...(opts.state === undefined ? {} : { state: opts.state }),
         ...(opts.resolveState === undefined ? {} : { resolveState: opts.resolveState }),
         ...(opts.authorizeMessage !== undefined ? { authorizeMessage: opts.authorizeMessage } : {}),

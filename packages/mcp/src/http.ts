@@ -41,6 +41,35 @@ const CORS_BASE: Record<string, string> = {
 }
 
 /**
+ * Same host, and an Origin scheme equal to or stronger than the request URL's: an `https:` page may reach
+ * an `http:` URL (a TLS-terminating proxy in front of the server), never the reverse. Mirrors core's
+ * `isSameOriginRequest`; inlined because `@nifrajs/core` is an optional peer of this transport.
+ */
+function isSameOrigin(origin: string, request: Request): boolean {
+  try {
+    const from = new URL(origin)
+    const own = new URL(request.url)
+    if (from.host !== own.host) return false
+    if (from.protocol === "https:") return own.protocol === "https:" || own.protocol === "http:"
+    if (from.protocol === "http:") return own.protocol === "http:"
+    return false
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The Host guard. A DNS-rebound page talks to the server under the attacker's hostname, so its Origin and
+ * the request URL agree and no Origin check can tell it apart - only the Host can. An entry with a port
+ * (`localhost:3000`) matches that host exactly; one without (`localhost`, `[::1]`) matches any port.
+ */
+function hostAllowed(request: Request, allowedHosts: readonly string[] | undefined): boolean {
+  if (allowedHosts === undefined) return true
+  const url = new URL(request.url)
+  return allowedHosts.includes(url.host) || allowedHosts.includes(url.hostname)
+}
+
+/**
  * Resolve the CORS/Origin headers for one request against the host's `allowedOrigins` policy, or `null`
  * when the request's `Origin` is present but not allowed - the caller then answers 403, per the
  * Streamable-HTTP DNS-rebinding rule ("Servers MUST validate the `Origin` header ... respond with 403").
@@ -53,12 +82,12 @@ function corsFor(
 ): Record<string, string> | null {
   if (allowAnyOrigin) return { ...CORS_BASE, "access-control-allow-origin": "*" }
   const origin = request.headers.get("origin")
-  // A caller with no Origin (curl, server-to-server) can't mount a DNS-rebinding attack - allow it.
+  // No Origin: curl, server-to-server, or a same-origin browser GET. `allowedHosts` covers the last one.
   if (origin === null) return { ...CORS_BASE, vary: "Origin" }
   if (allowedOrigins?.includes(origin)) {
     return { ...CORS_BASE, "access-control-allow-origin": origin, vary: "Origin" }
   }
-  if (allowedOrigins === undefined && origin === new URL(request.url).origin) {
+  if (allowedOrigins === undefined && isSameOrigin(origin, request)) {
     return { ...CORS_BASE, "access-control-allow-origin": origin, vary: "Origin" }
   }
   return null
@@ -100,6 +129,13 @@ export interface McpHttpOptions {
   readonly allowAnyOrigin?: boolean
   /** Origin allowlist for the DNS-rebinding guard. When set, only exact origins are accepted. */
   readonly allowedOrigins?: readonly string[]
+  /**
+   * Host allowlist - the DNS-rebinding guard for a server on localhost or a private network. A rebound
+   * page reaches the server under the attacker's hostname with a matching Origin, so the Origin check
+   * alone cannot stop it. Entries are `host[:port]`; without a port they match any port. Every request,
+   * with or without an Origin, whose Host is not listed gets 403. Example: `["localhost", "127.0.0.1"]`.
+   */
+  readonly allowedHosts?: readonly string[]
   /**
    * Shared request registry for one authenticated MCP session. Pass the same state to the
    * request that starts a tool call and its `notifications/cancelled` request. Do not share one
@@ -377,6 +413,9 @@ export async function respondMcpHttp(
   assertByteLimit(maxBodyBytes)
   const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES
   assertResponseLimit(maxResponseBytes)
+  if (!hostAllowed(request, options.allowedHosts)) {
+    return Response.json(rpcError(null, -32600, "host not allowed"), { status: 403 })
+  }
   const cors = corsFor(request, options.allowedOrigins, options.allowAnyOrigin === true)
   if (cors === null) {
     // Origin present but not allowlisted: reject before the body is ever read (DNS-rebinding guard). No
