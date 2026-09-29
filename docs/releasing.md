@@ -36,9 +36,10 @@ versions and runs the full release verification; the Windows job also runs for r
 Merge only after that PR, CI, CodeQL, and review are green.
 
 After the merge, the publish job checks GitHub's commit-to-pull-request association and proceeds only
-when the exact validated commit came from a merged `release/<name>` pull request. It publishes the
-already-versioned packages and performs registry/site smoke checks. Ordinary `main` merges are a
-no-op and cannot create a release PR or publish packages.
+when the exact validated commit came from a merged `release/<name>` pull request whose exact head
+commit has a successful `release-verification` check. Publishing and deployment are serialized across
+release runs. It publishes the already-versioned packages and performs registry/site smoke checks.
+Ordinary `main` merges are a no-op and cannot create a release PR or publish packages.
 
 Protect `main` with pull-request-only changes, required status checks, stale-review dismissal, and
 no force-push permission. Do not grant publish credentials to pull-request workflows.

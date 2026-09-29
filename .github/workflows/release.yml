@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.event.pull_request.number || github.event.workflow_run.id }}
+  group: release-${{ github.event_name == 'workflow_run' && 'publish' || github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
@@ -81,7 +81,7 @@ jobs:
           prs="$(gh api \
             --header 'Accept: application/vnd.github+json' \
             "repos/${REPOSITORY}/commits/${MERGE_SHA}/pulls")"
-          release_base_sha="$(jq -r \
+          release_pr="$(jq -c \
             --arg repository "$REPOSITORY" \
             '[ .[] |
               select(
@@ -90,14 +90,37 @@ jobs:
                 .base.repo.full_name == $repository and
                 (.head.ref | startswith("release/")) and
                 .head.repo.full_name == $repository
-              ) |
-              .base.sha
+              )
             ] | first // empty' <<<"$prs")"
-          if [[ ! "$release_base_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
-            echo "No valid merged release PR base SHA is associated with ${MERGE_SHA}; nothing to publish."
+          if [[ -z "$release_pr" || "$release_pr" == "null" ]]; then
+            echo "No merged release PR is associated with ${MERGE_SHA}; nothing to publish."
             echo "is_release=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
+          release_base_sha="$(jq -r '.base.sha // empty' <<<"$release_pr")"
+          release_head_sha="$(jq -r '.head.sha // empty' <<<"$release_pr")"
+          if [[ ! "$release_base_sha" =~ ^[0-9a-fA-F]{40}$ || ! "$release_head_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "Merged release PR metadata did not contain valid base and head SHAs; refusing to publish." >&2
+            exit 1
+          fi
+
+          release_checks="$(gh api \
+            --header 'Accept: application/vnd.github+json' \
+            "repos/${REPOSITORY}/commits/${release_head_sha}/check-runs")"
+          release_verification="$(jq -r \
+            --arg head_sha "$release_head_sha" \
+            'any(.check_runs[]?;
+              .name == "release-verification" and
+              .app.slug == "github-actions" and
+              .head_sha == $head_sha and
+              .conclusion == "success"
+            )' <<<"$release_checks")"
+          if [[ "$release_verification" != "true" ]]; then
+            echo "Merged release PR ${release_head_sha} has no successful release-verification check; refusing to publish." >&2
+            exit 1
+          fi
+
           echo "Validated merged release PR for ${MERGE_SHA}."
           echo "is_release=true" >> "$GITHUB_OUTPUT"
           echo "release_base_sha=$release_base_sha" >> "$GITHUB_OUTPUT"
