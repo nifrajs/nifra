@@ -7,6 +7,9 @@ import { stylexBunPlugin, stylexVitePlugin } from "../src/plugins/stylex.ts"
 
 const TMP_BASE = `${import.meta.dir}/.tmp-stylex-`
 const dirs: string[] = []
+// The Windows hosted runner can exceed Bun's 5s default for this two-stage build. If the
+// timeout fires first, afterEach removes the fixture while the pending build still reads it.
+const BUN_STYLEX_BUILD_TIMEOUT = process.platform === "win32" ? 90_000 : 30_000
 
 afterEach(() => {
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
@@ -66,36 +69,40 @@ const cssText = (directory: string): string =>
     .map((file) => readFileSync(join(directory, file), "utf8"))
     .join("\n")
 
-test("Bun StyleX plugin emits aggregate CSS and preserves the SSR fallback", async () => {
-  const fixture = scaffold()
-  const clientOut = join(fixture.root, "client")
-  const manifest = await buildClient({
-    routesDir: fixture.routes,
-    outDir: clientOut,
-    clientModule: fixture.client,
-    minify: false,
-    publicDir: false,
-    plugins: [stylexBunPlugin("dom")],
-  })
+test(
+  "Bun StyleX plugin emits aggregate CSS and preserves the SSR fallback",
+  async () => {
+    const fixture = scaffold()
+    const clientOut = join(fixture.root, "client")
+    const manifest = await buildClient({
+      routesDir: fixture.routes,
+      outDir: clientOut,
+      clientModule: fixture.client,
+      minify: false,
+      publicDir: false,
+      plugins: [stylexBunPlugin("dom")],
+    })
 
-  expect(manifest.css?.length).toBeGreaterThan(0)
-  expect(manifest.routeStyles?.index?.length).toBeGreaterThan(0)
-  expect(cssText(clientOut)).toContain("x78zum5")
+    expect(manifest.css?.length).toBeGreaterThan(0)
+    expect(manifest.routeStyles?.index?.length).toBeGreaterThan(0)
+    expect(cssText(clientOut)).toContain("x78zum5")
 
-  const serverOut = join(fixture.root, "server")
-  await buildServer({
-    routesDir: fixture.routes,
-    serverEntry: fixture.server,
-    outDir: serverOut,
-    clientEntry: manifest.entry,
-    target: "bun",
-    minify: false,
-    plugins: [stylexBunPlugin("ssr")],
-  })
-  const server = bundleText(serverOut)
-  expect(server).toContain('className: "x78zum5')
-  expect(server).not.toContain("@stylexjs/stylex")
-})
+    const serverOut = join(fixture.root, "server")
+    await buildServer({
+      routesDir: fixture.routes,
+      serverEntry: fixture.server,
+      outDir: serverOut,
+      clientEntry: manifest.entry,
+      target: "bun",
+      minify: false,
+      plugins: [stylexBunPlugin("ssr")],
+    })
+    const server = bundleText(serverOut)
+    expect(server).toContain('className: "x78zum5')
+    expect(server).not.toContain("@stylexjs/stylex")
+  },
+  { timeout: BUN_STYLEX_BUILD_TIMEOUT },
+)
 
 test("Vite StyleX plugin attributes virtual CSS to the route entry", async () => {
   const fixture = scaffold()
