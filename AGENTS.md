@@ -154,3 +154,9 @@ backend in `nifra dev` and in prod alike - no hand-dispatch in `server-bun.ts` /
 content-hashed, immutable assets). One `app.fetch` runs on Bun / Node / Deno / Cloudflare Pages /
 Vercel / any VPS. `prerenderRoutes` + `cloudflarePagesRoutes` (`@nifrajs/web/build`) emit the static
 output + `_routes.json`.
+
+## Release policy
+
+Prepare every release on a `release/<name>` branch. Run `bun run release:prepare` there so the one
+release pull request contains package versions, changelogs, lockfile, and generated artifacts. Never
+stage versioning on `main`, push directly to `main`, or create a second Version Packages pull request.
