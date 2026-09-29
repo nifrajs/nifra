@@ -83,6 +83,32 @@ describe("cors", () => {
     expect(noOrigin.headers.get("vary")).toContain("Origin")
   })
 
+  test("Vary: Origin is deduplicated and preserves the wildcard form", async () => {
+    const middleware = cors({ origin: "https://app.com" })
+    const request = {
+      method: "GET",
+      url: "http://x/",
+      header: (name: string) => (name === "origin" ? "https://app.com" : null),
+    }
+    const wildcard = new Headers({ vary: "*" })
+    await middleware.onResponseHeaders!(wildcard, request, 200)
+    expect(wildcard.get("vary")).toBe("*")
+
+    const existing = new Headers({ vary: "Accept-Encoding, origin" })
+    await middleware.onResponseHeaders!(existing, request, 200)
+    expect(existing.get("vary")).toBe("Accept-Encoding, origin")
+
+    const native: NodeResponseContext = {
+      status: 200,
+      headers: { vary: "*" },
+      headersAreLowercase: true,
+      cookies: undefined,
+      body: "ok",
+    }
+    await middleware.onNodeResponseHeaders!(native, request)
+    expect(native.headers?.vary).toBe("*")
+  })
+
   test("predicate origin", async () => {
     const app = server()
       .use(cors({ origin: (o) => o.endsWith(".trusted.com") }))

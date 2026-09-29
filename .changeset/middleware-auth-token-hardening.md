@@ -10,7 +10,8 @@ request URL, which is what a TLS-terminating proxy presents. A downgrade or anot
 rejected.
 
 `cors()` with an allowlist or predicate sends `Vary: Origin` on every response, including ones that
-carry no `Access-Control-Allow-Origin`.
+carry no `Access-Control-Allow-Origin`. An existing `Origin` member is not repeated, and `Vary: *` is
+kept as it is.
 
 `jwt()` and `verifyCsrfToken()` accept only canonical base64url signatures. `jwt()` and `bearer()`
 match the `Bearer` auth-scheme case-insensitively.
