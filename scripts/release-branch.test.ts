@@ -57,6 +57,7 @@ test("release workflow verifies release PRs and never invokes Version Packages a
   )
   expect(workflow).toContain("startsWith(github.event.pull_request.head.ref, 'release/')")
   expect(workflow).toContain("github.event_name == 'workflow_run' && 'publish'")
+  expect(workflow).toContain("queue: max")
   expect(workflow).toContain('.name == "release-verification"')
   expect(workflow).toContain("bun run release:check")
   expect(workflow).toContain("bun run changeset:publish")
