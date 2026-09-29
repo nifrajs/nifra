@@ -595,7 +595,14 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   for (const event of ["add", "unlink"] as const) {
     vite.watcher.on(event, (path) => {
       const filePath = normalizeFilePath(path)
-      if (pathInside(routesDir, filePath)) writeClientEntry()
+      if (pathInside(routesDir, filePath)) {
+        writeClientEntry()
+        // A newly added route is not in Vite's module graph yet, so invalidating only the
+        // route path cannot evict the cached generated entry that imports the route. Evict the
+        // generated entry after rewriting it before recreating the SSR app; this also prevents
+        // an unlink refresh from briefly loading an entry that still references the deleted file.
+        invalidateImporterClosure(resolvePath(root, DEV_ENTRY))
+      }
       refreshApp(filePath)
     })
   }
