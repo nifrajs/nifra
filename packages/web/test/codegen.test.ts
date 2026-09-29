@@ -3,11 +3,16 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import ts from "typescript"
+import { createMatcher } from "../src/client.ts"
 import {
   buildManifest,
+  createWebApp,
   generateClientEntry,
   generateRouteSearchTypes,
   generateServerManifest,
+  notFound,
+  type RenderAdapter,
+  ROUTE_GLOBAL,
   type RouteModule,
 } from "../src/index.ts"
 
@@ -264,4 +269,110 @@ test("generateRouteSearchTypes targets a custom module when asked", () => {
   const m = buildManifest(["index.tsx"], importer)
   const code = generateRouteSearchTypes(m, { resolve: (f) => `./${f}`, module: "@my/router" })
   expect(code).toContain('declare module "@my/router" {')
+})
+
+/**
+ * Run the generated entry's initial-route choice - the real emitted lines, not a copy - for a URL and
+ * the route id the server injected. The slice is asserted, not assumed: if the lines move or the
+ * `initial` fields change shape, this throws instead of silently testing nothing.
+ */
+const initialRoute = (
+  entry: string,
+  pathname: string,
+  serverRoute: string | undefined,
+): { readonly routeId: string; readonly params: Record<string, string> } => {
+  const lines = entry.split("\n")
+  const start = lines.findIndex((line) => line.startsWith("const patterns = ["))
+  const end = lines.findIndex((line) => line.startsWith("const terminal = "))
+  const fields = lines.filter((line) => /^ {2}(routeId|params): /.test(line))
+  if (start === -1 || end <= start || fields.length !== 2) {
+    throw new Error("the generated entry's initial-route choice moved - update this test with it")
+  }
+  const body = `${lines.slice(start, end + 1).join("\n")}\nreturn {\n${fields.join("\n")}\n}`
+  return new Function("createMatcher", "location", "window", body)(
+    createMatcher,
+    { pathname },
+    serverRoute === undefined ? {} : { [ROUTE_GLOBAL]: serverRoute },
+  )
+}
+
+test("a server-rendered status page outranks a URL that also matches a route pattern", () => {
+  const entry = generateClientEntry(
+    buildManifest(["index.tsx", "learn/[slug].tsx", "_404.tsx", "_410.tsx"], importer),
+    { clientModule: "@nifrajs/web-solid/client", resolve: (file) => `/routes/${file}` },
+  )
+  // notFound() from the loader: the URL still matches `learn/[slug]`, but the server rendered _404.
+  expect(initialRoute(entry, "/learn/bad-slug", "_404")).toEqual({ routeId: "_404", params: {} })
+  expect(initialRoute(entry, "/learn/gone", "_410")).toEqual({ routeId: "_410", params: {} })
+  // An ordinary route keeps the URL match (params decoded client-side).
+  expect(initialRoute(entry, "/learn/intro", "learn/[slug]")).toEqual({
+    routeId: "learn/[slug]",
+    params: { slug: "intro" },
+  })
+  // No pattern matches: the injected id is the only answer, as before.
+  expect(initialRoute(entry, "/nope/deeper", "_404")).toEqual({ routeId: "_404", params: {} })
+  // No injected id at all (a caller-rendered document): the URL match still wins.
+  expect(initialRoute(entry, "/learn/intro", undefined).routeId).toBe("learn/[slug]")
+})
+
+test("a routable `_`-prefixed id is not mistaken for a terminal status page", () => {
+  const entry = generateClientEntry(buildManifest(["_admin/[id].tsx", "_404.tsx"], importer), {
+    clientModule: "@nifrajs/web-solid/client",
+    resolve: (file) => `/routes/${file}`,
+  })
+  expect(initialRoute(entry, "/_admin/7", "_admin/[id]")).toEqual({
+    routeId: "_admin/[id]",
+    params: { id: "7" },
+  })
+})
+
+test("a loader's notFound() hydrates the _404 the server rendered, not the matched route", async () => {
+  // Both sides, end to end: the server's injected route id feeds the client's initial-route choice.
+  const manifest = buildManifest(
+    ["learn/[slug].tsx", "_404.tsx"],
+    (file) => async (): Promise<RouteModule> =>
+      file === "learn/[slug].tsx"
+        ? {
+            default: "learn",
+            loader: ({ params }: { params: Record<string, string> }) =>
+              params.slug === "intro" ? { title: "Intro" } : notFound(),
+          }
+        : { default: "the-404-page" },
+  )
+  const stub: RenderAdapter = {
+    renderToStream: (_chain, props) =>
+      new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode(`<p>${JSON.stringify(props.data)}</p>`))
+          c.close()
+        },
+      }),
+    hydrationHead: () => "",
+  }
+  const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js" })
+  const entry = generateClientEntry(manifest, {
+    clientModule: "@nifrajs/web-solid/client",
+    resolve: (file) => `/routes/${file}`,
+  })
+  const served = async (path: string) => {
+    const res = await app.fetch(new Request(`http://x${path}`))
+    const html = await res.text()
+    const injected = new RegExp(`window\\.${ROUTE_GLOBAL}=("[^"]*");`).exec(html)
+    if (injected === null) throw new Error(`no route id injected:\n${html.slice(0, 400)}`)
+    return { status: res.status, route: JSON.parse(injected[1] as string) as string }
+  }
+
+  const missing = await served("/learn/bad-slug")
+  expect(missing).toEqual({ status: 404, route: "_404" })
+  expect(initialRoute(entry, "/learn/bad-slug", missing.route)).toEqual({
+    routeId: "_404",
+    params: {},
+  })
+
+  const found = await served("/learn/intro")
+  expect(found).toEqual({ status: 200, route: "learn/[slug]" })
+  expect(initialRoute(entry, "/learn/intro", found.route)).toEqual({
+    routeId: "learn/[slug]",
+    params: { slug: "intro" },
+  })
 })

@@ -182,12 +182,19 @@ export function generateClientEntry(
     // Derive the initial route from the URL (correct on refresh/deep-link); fall back to the
     // server-injected route id for non-pattern routes (e.g. _404, which matches nothing).
     "const matched = createMatcher(patterns)(location.pathname)",
+    `const statusRoutes = ${JSON.stringify(statusRoutes)}`,
+    `const serverRoute = window.${ROUTE_GLOBAL} ?? ""`,
+    // A terminal status page the server rendered (`_404`, `_410`, ...) outranks the URL match: a
+    // loader that throws notFound() on `/learn/bad-slug` leaves a URL that still matches
+    // `learn/[slug]`, and hydrating that route with null data over the 404 markup is wrong. Membership
+    // in the status table, not a `_` prefix: `routes/_admin/index.tsx` is an ordinary routable id.
+    "const terminal = Object.values(statusRoutes).includes(serverRoute)",
     // Map any `{__nifra_deferred: id}` placeholder in the SSR data to the registry's promise, so the
     // component receives real promises to `<Await>` (a no-op when a page has no deferred data).
     MAP_DEFERRED_SOURCE,
     "const initial = {",
-    `  routeId: matched ? matched.routeId : (window.${ROUTE_GLOBAL} ?? ""),`,
-    "  params: matched ? matched.params : {},",
+    "  routeId: matched && !terminal ? matched.routeId : serverRoute,",
+    "  params: matched && !terminal ? matched.params : {},",
     // pathname + search (NOT just pathname): the SSR render threads `pathname+search` into
     // `useLocation`/`useSearchParams`, so the hydrating initial state must carry the query too or a
     // page reading the search string would hydrate-mismatch. The #hash is client-only (never SSR'd).
@@ -202,7 +209,6 @@ export function generateClientEntry(
     `  actionData: mapDeferred(window.${ACTION_GLOBAL}),`,
     "  pending: false,",
     "}",
-    `const statusRoutes = ${JSON.stringify(statusRoutes)}`,
     "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys, routeHooks })",
     "installHistory(router)",
     "installForms(router)",
