@@ -69,6 +69,9 @@ interface ViteLike {
   readonly moduleGraph?: ViteModuleGraph
   readonly watcher: {
     on(event: "change" | "add" | "unlink", cb: (path: string) => void): void
+    on(event: "ready", cb: () => void): void
+    /** Chokidar's ready state, used to handle a ready event emitted before this adapter attaches. */
+    readonly _readyEmitted?: boolean
   }
   close(): Promise<void>
 }
@@ -523,6 +526,22 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     },
     ...(options.define ? { define: options.define } : {}),
   })
+  // Vite resolves before chokidar necessarily finishes its initial scan. Do not expose the
+  // dev server until that scan is complete: a route created immediately after startup must be
+  // observed as a change, not folded into the ignored initial snapshot on slower filesystems.
+  const watcherReady = new Promise<void>((resolve) => {
+    let settled = false
+    const markReady = (): void => {
+      if (settled) return
+      settled = true
+      resolve()
+    }
+    vite.watcher.on("ready", markReady)
+    // createServer() can return after chokidar has emitted `ready`, especially on fast local
+    // filesystems. Chokidar exposes this state in its structural type so we can cover that case
+    // without a startup timeout or a false-positive partial directory snapshot.
+    if (vite.watcher._readyEmitted === true) markReady()
+  })
 
   const ssrLoad = (absolutePath: string): Promise<unknown> => vite.ssrLoadModule(absolutePath)
   // Published so an ADAPTER can reach this graph too. Route modules already load through it; an
@@ -580,6 +599,7 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
       refreshApp(filePath)
     })
   }
+  await watcherReady
 
   try {
     await listenOrExplain(server, port, "127.0.0.1")
