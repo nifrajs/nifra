@@ -59,7 +59,7 @@ async function measureMiddleware(
     bareOps: bareNs > 0 ? 1e9 / bareNs : 0,
     mwOps: mwNs > 0 ? 1e9 / mwNs : 0,
     overheadNs,
-    overheadPct: bareNs > 0 ? (overheadNs / bareNs) * 100 : Number.NaN,
+    overheadPct: bareNs > 0 ? ((mwNs - bareNs) / bareNs) * 100 : Number.NaN,
   }
 }
 
