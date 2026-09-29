@@ -3664,7 +3664,7 @@ _No named exports (side-effect entrypoint)._
 - **createEventLoopLagSampler** _(function)_ - `createEventLoopLagSampler: (resolutionMs?: number, monitor?: LoopDelayMonitor) => () => number`
   Event-loop-lag sampler. By default it measures timer drift using only Web/JS runtime primitives, so it works under Node ESM, Bun, Deno, and workers without a hidden CommonJS `require` fallback. An injected histogram remains available for deterministic tests or a runtime-native monitor. Each read re…
 - **csrf** _(function)_ - `csrf: (options: CsrfOptions) => Middleware`
-  Signed double-submit CSRF protection. A protected request must carry the same signed token in a cookie and a header, and must come from an allowed Origin/Referer unless `checkOrigin:false` is set.
+  Signed double-submit CSRF protection. A protected request must carry the same signed token in a cookie and in a header (or, for a plain HTML form, the {@link CsrfOptions.field} form field), and must come from an allowed Origin/Referer unless `checkOrigin:false` is set.
 - **durableCommand** _(function)_ - `durableCommand: (options: DurableCommandOptions) => IdentityPlugin`
   Journal every capability effect on the routes below it, and declare the evidence that says so.
 - **etag** _(function)_ - `etag: (options?: ETagOptions) => import("@nifrajs/core").IdentityPlugin<never>`
@@ -3674,7 +3674,7 @@ _No named exports (side-effect entrypoint)._
 - **idempotency** _(function)_ - `idempotency: (options: IdempotencyOptions) => Middleware`
   Idempotency-key middleware. Apply with `app.use(idempotency({ store }))`.
 - **ipRestriction** _(function)_ - `ipRestriction: (options: IpRestrictionOptions) => Middleware`
-  IP allow/deny middleware. It fails closed when no trustworthy client IP can be derived. Configure `clientIp`, `trustedProxies`, or a trusted single-IP `header`; unconfigured X-Forwarded-For is never trusted.
+  IP allow/deny middleware. It fails closed when no trustworthy client IP can be derived. By default the caller is the server-resolved `platform.clientIp` (socket peer, or the app's `clientIp` trust declaration); `clientIp`, `trustedProxies`, or a trusted single-IP `header` override it. Unconfigured …
 - **jwk** _(function)_ - `jwk: (key: JwtVerificationKey) => JwtKeyResolver`
 - **jwks** _(function)_ - `jwks: (options: JwksOptions) => JwtKeyResolver`
 - **jwt** _(function)_ - `jwt: <C extends JwtClaims = JwtClaims>(options: JwtOptions) => JwtPlugin<C>`

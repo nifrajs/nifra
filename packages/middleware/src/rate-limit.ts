@@ -1,5 +1,10 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
-import type { Middleware, NodeRequestContext, NodeResponseContext } from "@nifrajs/core/server"
+import type {
+  Middleware,
+  NodeRequestContext,
+  NodeResponseContext,
+  Platform,
+} from "@nifrajs/core/server"
 import { setNodeHeader, withHeaders } from "./_utils.ts"
 
 export interface RateLimitResult {
@@ -130,7 +135,8 @@ export interface RateLimitOptions {
   readonly windowMs: number
   /**
    * How many trusted reverse proxies sit in front of the app and append to `X-Forwarded-For`.
-   * Default `0`.
+   * Default `0`. Prefer the app-level `server({ clientIp: { trustedHops } })` declaration, which the
+   * default key already honors; this option is for a limiter that must read XFF on its own.
    *
    * The default key reads the client IP from `X-Forwarded-For` as the address your **edge** proxy
    * observed - the entry `trustedProxies` from the right (1 proxy → the rightmost hop; 2 → the
@@ -140,31 +146,40 @@ export interface RateLimitOptions {
    * ⚠️ With the default `0`, `X-Forwarded-For` is treated as fully client-controlled and **ignored**.
    * Reading the
    * *first* XFF hop - the old behavior - let any client mint a fresh bucket per request and defeat the
-   * limiter. Set `trustedProxies` (only safe behind a proxy you control that appends XFF), configure a
-   * trusted single-IP {@link header}, or supply a custom {@link key} (e.g. an authenticated user id).
+   * limiter.
    */
   readonly trustedProxies?: number
   /** Exact trusted single-IP header, e.g. an infra-set `x-real-ip`. Not read unless configured. */
   readonly header?: string
   /**
-   * Allow one shared bucket when no per-request key can be derived. Off by default because it lets one
-   * client consume the quota for everyone. Enable only for intentional global throttles.
+   * One shared bucket for every request that {@link header}/{@link trustedProxies} cannot key. Off by
+   * default because it lets one client consume the quota for everyone. Enable only for intentional
+   * global throttles; with neither `header` nor `trustedProxies` set, every request shares the bucket.
    */
   readonly allowGlobalKey?: boolean
   /**
-   * Bucket key for a request. Overrides the default XFF-based key entirely - set this for accurate
-   * per-client limiting (e.g. an authenticated user id, or a header your proxy sets). A `Middleware`
-   * can't see the socket IP (that needs the server instance).
+   * Bucket key for a request. Overrides the default key entirely - e.g. an authenticated user id.
+   * `platform.clientIp` is the caller the app's `clientIp` trust declaration derived (the socket peer
+   * when none is declared).
    */
-  readonly key?: (req: Request) => string
+  readonly key?: (req: Request, platform?: Platform) => string
 }
 
+/**
+ * The default bucket key. With nothing configured it is the caller IP the server resolved into
+ * `platform.clientIp` - the raw socket peer, or the app's `clientIp` trust declaration applied to the
+ * forwarding chain. `null` (no adapter-observed peer, e.g. a synthetic `app.fetch`) fails closed.
+ */
 function defaultKey(
   req: Request,
+  platform: Platform | undefined,
   trustedProxies: number,
   header: string | undefined,
   allowGlobalKey: boolean,
 ): string | null {
+  if (header === undefined && trustedProxies === 0 && !allowGlobalKey) {
+    return platform?.clientIp || null
+  }
   if (header !== undefined) {
     const ip = req.headers.get(header)
     if (ip !== null && ip.trim() !== "") return ip.trim()
@@ -188,10 +203,14 @@ function defaultKey(
 /** {@link defaultKey} against the allocation-light native request view - same logic, same order. */
 function nativeKey(
   req: NodeRequestContext,
+  platform: Platform | undefined,
   trustedProxies: number,
   header: string | undefined,
   allowGlobalKey: boolean,
 ): string | null {
+  if (header === undefined && trustedProxies === 0 && !allowGlobalKey) {
+    return platform?.clientIp || null
+  }
   if (header !== undefined) {
     const ip = req.header(header)
     if (ip !== null && ip.trim() !== "") return ip.trim()
@@ -226,18 +245,10 @@ export function rateLimit(options: RateLimitOptions): Middleware {
   const header = options.header?.trim().toLowerCase()
   if (header !== undefined && header.trim() === "") throw new Error("rateLimit: header is empty")
   const allowGlobalKey = options.allowGlobalKey === true
-  if (
-    options.key === undefined &&
-    header === undefined &&
-    trustedProxies === 0 &&
-    !allowGlobalKey
-  ) {
-    throw new Error(
-      "rateLimit: configure key, header, or trustedProxies; pass allowGlobalKey: true only for an intentional shared bucket",
-    )
-  }
   const keyOf =
-    options.key ?? ((req: Request) => defaultKey(req, trustedProxies, header, allowGlobalKey))
+    options.key ??
+    ((req: Request, platform?: Platform) =>
+      defaultKey(req, platform, trustedProxies, header, allowGlobalKey))
   const quota = new WeakMap<Request, { remaining: number; resetSeconds: number }>()
   // State for the Node twins, keyed by the NodeRequestContext identity (the same object is passed
   // to the request and response twins - the core identity contract that replaces `Request` keying).
@@ -271,8 +282,8 @@ export function rateLimit(options: RateLimitOptions): Middleware {
 
   const middleware: Middleware = {
     name: "rate-limit",
-    async onRequest(req) {
-      const outcome = await hitStore(keyOf(req))
+    async onRequest(req, platform) {
+      const outcome = await hitStore(keyOf(req, platform))
       if (outcome instanceof Response) return outcome
       quota.set(req, outcome.info)
       return outcome.reject
@@ -291,8 +302,10 @@ export function rateLimit(options: RateLimitOptions): Middleware {
     // takes a real `Request`, which is exactly the object the native lane avoids building.
     ...(options.key === undefined
       ? {
-          onNodeRequest: async (req: NodeRequestContext) => {
-            const outcome = await hitStore(nativeKey(req, trustedProxies, header, allowGlobalKey))
+          onNodeRequest: async (req: NodeRequestContext, platform?: Platform) => {
+            const outcome = await hitStore(
+              nativeKey(req, platform, trustedProxies, header, allowGlobalKey),
+            )
             if (outcome instanceof Response) return outcome
             nativeQuota.set(req, outcome.info)
             return outcome.reject

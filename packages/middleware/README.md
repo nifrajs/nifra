@@ -41,12 +41,16 @@ const app = server()
 - **`basicAuth(options)`** - Basic Auth plugin with constant-time static credential comparison or
   a custom verifier.
 - **`bearer(options)` / `apiKey(options)`** - token auth plugins with typed principals.
-- **`csrf({ secret })`** - signed double-submit CSRF protection plus Origin/Referer checking.
+- **`csrf({ secret })`** - signed double-submit CSRF protection plus Origin/Referer checking. The
+  token travels in the `x-csrf-token` header; set `field: "_csrf"` to also accept it from a plain
+  HTML form's hidden input (urlencoded or multipart, bodies up to `fieldMaxBytes`, default 64 KiB).
 - **`jwt(options)` + `verifyJwt()` / `tryVerifyJwt()` + `jwk()` / `jwks()`** - JWT auth
   with explicit algorithm allowlists, required expiration by default, issuer/audience checks,
   direct JWK, HTTPS JWKS, and an additive no-throw Result helper for manual verification.
-- **`ipRestriction(options)`** - allow/deny IPv4/IPv6 exact and CIDR matches. Fails closed unless
-  you provide `clientIp`, trusted proxy extraction, or a trusted single-IP header.
+- **`ipRestriction(options)`** - allow/deny IPv4/IPv6 exact and CIDR matches, judged against the
+  caller IP the server resolved (the socket peer, or the app's `clientIp` trust declaration). A
+  custom `clientIp`, `trustedProxies`, or trusted single-IP `header` overrides it; with no caller IP
+  it fails closed.
 - **`cors(options)`** - preflight handling + headers on *every* response (errors and
   404s included). Origin as `"*"` / exact / list / predicate. **Throws** if
   `credentials: true` is paired with `origin: "*"` (the browser rejects it).
@@ -54,9 +58,10 @@ const app = server()
   `Referrer-Policy` by default; opt-in HSTS and CSP. Every value is fixed, so they are **declared**
   (see below) rather than written by a hook - the app keeps its fused/native lanes.
 - **`rateLimit(options)`** - `429` + `Retry-After` + `RateLimit-*` headers, with a
-  pluggable `RateLimitStore`. Configure a trusted `key`, trusted single-IP `header`, or
-  `trustedProxies`; a missing key source fails closed instead of silently sharing one
-  bucket. The bundled `MemoryStore` **refuses to run in production** (a per-instance
+  pluggable `RateLimitStore`. The default bucket key is the caller IP the server resolved (the
+  socket peer, or the app's `clientIp` trust declaration behind a proxy); a custom `key`, trusted
+  single-IP `header`, or `trustedProxies` overrides it. With no caller IP it fails closed (`500`)
+  instead of silently sharing one bucket. The bundled `MemoryStore` **refuses to run in production** (a per-instance
   limiter is unsafe across instances) - provide a shared store (Redis, etc.) there.
 - **`cache({ store, ttlMs })` / `responseCache(...)`** - full response cache with a pluggable
   store, `Vary`-aware keys, `Age`, byte caps, and `Cache-Control` / `Set-Cookie` safety defaults.

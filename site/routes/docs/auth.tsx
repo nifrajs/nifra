@@ -223,29 +223,34 @@ export default function Auth() {
       <h2>Rate Limiting on Login</h2>
       <p>
         The rate-limit middleware (<code>@nifrajs/middleware</code>) protects against brute-force by enforcing
-        IP-based buckets. <b>Critical:</b> if your app is behind a reverse proxy (CDN, load balancer), you{" "}
-        <b>must</b> configure <code>trustedProxies</code> so the middleware reads the real client IP from{" "}
-        <code>X-Forwarded-For</code> instead of the proxy's IP (which would cause all users to share a rate
-        limit):
+        per-caller buckets keyed by <code>c.clientIp</code> - the socket peer by default. <b>Critical:</b> if
+        your app is behind a reverse proxy (CDN, load balancer), declare it with the server's{" "}
+        <code>clientIp</code> option so the caller is read from the forwarding chain instead of the proxy's
+        own address (which would put all users in one bucket). Never key on a raw{" "}
+        <code>X-Forwarded-For</code> value: a client writes whatever it likes there and gets a fresh bucket
+        per request.
       </p>
       <CodeBlock
-        code={`app.use(
-  rateLimit({
-    key: (c) => "login:" + c.req.header("x-forwarded-for") ?? c.req.header("cf-connecting-ip") ?? c.ip,
-    limit: 5,      // 5 attempts
-    window: 15 * 60 * 1000,  // per 15 minutes
-    onExceeded: (c) => new Response("Too many login attempts", { status: 429 }),
-  }),
-)
-.post("/login", …)`}
+        code={`import { server } from "@nifrajs/core/server"
+import { MemoryStore, rateLimit } from "@nifrajs/middleware"
+
+// One reverse proxy you operate appends the caller to X-Forwarded-For. Behind a CDN that overwrites
+// a single header instead, declare { header: "<that header>" }.
+const app = server({ clientIp: { trustedHops: 1 } })
+  .use(
+    rateLimit({
+      store: new MemoryStore(), // use a shared store (Redis, etc.) in production
+      max: 5, // 5 attempts
+      windowMs: 15 * 60 * 1000, // per 15 minutes
+    }),
+  )
+  .post("/login", …)`}
         lang="ts"
       />
       <p>
-        Without <code>trustedProxies</code> configured correctly, the middleware will fall back to the
-        proxy's IP address, and your entire user base will share a single rate-limit bucket - defeating
-        the protection. Check your proxy's documentation for how it sets{" "}
-        <code>X-Forwarded-For</code> (Cloudflare uses <code>cf-connecting-ip</code>, AWS ALB/NLB use{" "}
-        <code>x-forwarded-for</code>).
+        Declare only hops you actually run: a directly reachable app with <code>trustedHops</code> set lets
+        a client forge the forwarded address. Check your proxy's documentation for the header it sets
+        (Cloudflare sets <code>cf-connecting-ip</code>; AWS ALB appends to <code>x-forwarded-for</code>).
       </p>
     </div>
   )

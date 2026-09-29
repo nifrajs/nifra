@@ -165,9 +165,10 @@ const app = server()
   .use(jwt({ key: process.env.JWT_SECRET!, algorithms: ["HS256"], issuer: "my-app" }))
   // Signed double-submit CSRF (HMAC) + Origin/Referer check on unsafe methods. Secret must be >= 32 bytes.
   .use(csrf({ secret: process.env.CSRF_SECRET! }))
-  // Allow/deny by IPv4/IPv6 + CIDR. FAILS CLOSED with no trusted client IP; X-Forwarded-For is ignored
-  // unless trustedProxies > 0 (set it to the number of proxies you actually run in front of the app).
-  .use(ipRestriction({ allow: ["10.0.0.0/8", "::1"], trustedProxies: 1 }))
+  // Allow/deny by IPv4/IPv6 + CIDR, judged against c.clientIp: the socket peer, or the chain your
+  // server({ clientIp }) trust declaration names. FAILS CLOSED with no caller IP; a raw
+  // X-Forwarded-For is never believed.
+  .use(ipRestriction({ allow: ["10.0.0.0/8", "::1"] }))
   // Reject oversized bodies at the EDGE by Content-Length, before routing - fails closed (411) on a
   // length-less body. (The schema / c.boundedBody cap is the read-time guard; this is the cheap pre-filter.)
   .use(bodyLimit({ maxBytes: 1_000_000 }))`

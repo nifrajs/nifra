@@ -2697,9 +2697,10 @@ const app = server()
   .use(jwt({ key: process.env.JWT_SECRET!, algorithms: ["HS256"], issuer: "my-app" }))
   // Signed double-submit CSRF (HMAC) + Origin/Referer check on unsafe methods. Secret must be >= 32 bytes.
   .use(csrf({ secret: process.env.CSRF_SECRET! }))
-  // Allow/deny by IPv4/IPv6 + CIDR. FAILS CLOSED with no trusted client IP; X-Forwarded-For is ignored
-  // unless trustedProxies > 0 (set it to the number of proxies you actually run in front of the app).
-  .use(ipRestriction({ allow: ["10.0.0.0/8", "::1"], trustedProxies: 1 }))
+  // Allow/deny by IPv4/IPv6 + CIDR, judged against c.clientIp: the socket peer, or the chain your
+  // server({ clientIp }) trust declaration names. FAILS CLOSED with no caller IP; a raw
+  // X-Forwarded-For is never believed.
+  .use(ipRestriction({ allow: ["10.0.0.0/8", "::1"] }))
   // Reject oversized bodies at the EDGE by Content-Length, before routing - fails closed (411) on a
   // length-less body. (The schema / c.boundedBody cap is the read-time guard; this is the cheap pre-filter.)
   .use(bodyLimit({ maxBytes: 1_000_000 }))
@@ -3361,24 +3362,27 @@ the cookie will be rejected by the browser on non-HTTPS connections.
 ### Rate Limiting on Login
 
 The rate-limit middleware (`@nifrajs/middleware`) protects against brute-force by enforcing
-IP-based buckets. **Critical:** if your app is behind a reverse proxy (CDN, load balancer), you
-**must** configure `trustedProxies` so the middleware reads the real client IP from
-`X-Forwarded-For` instead of the proxy's IP (which would cause all users to share a rate
-limit):
+per-caller buckets keyed by `c.clientIp` - the socket peer by default. **Critical:** if
+your app is behind a reverse proxy (CDN, load balancer), declare it with the server's
+`clientIp` option so the caller is read from the forwarding chain instead of the proxy's
+own address (which would put all users in one bucket). Never key on a raw
+`X-Forwarded-For` value: a client writes whatever it likes there and gets a fresh bucket
+per request.
 
-"login:" + c.req.header("x-forwarded-for") ?? c.req.header("cf-connecting-ip") ?? c.ip,
-limit: 5,      // 5 attempts
-window: 15 * 60 * 1000,  // per 15 minutes
-onExceeded: (c) => new Response("Too many login attempts", { status: 429 }),
+" }.
+const app = server({ clientIp: { trustedHops: 1 } })
+.use(
+rateLimit({
+store: new MemoryStore(), // use a shared store (Redis, etc.) in production
+max: 5, // 5 attempts
+windowMs: 15 * 60 * 1000, // per 15 minutes
 .post("/login", …)
 lang="ts"
 />
 
-Without `trustedProxies` configured correctly, the middleware will fall back to the
-proxy's IP address, and your entire user base will share a single rate-limit bucket - defeating
-the protection. Check your proxy's documentation for how it sets
-`X-Forwarded-For` (Cloudflare uses `cf-connecting-ip`, AWS ALB/NLB use
-`x-forwarded-for`).
+Declare only hops you actually run: a directly reachable app with `trustedHops` set lets
+a client forge the forwarded address. Check your proxy's documentation for the header it sets
+(Cloudflare sets `cf-connecting-ip`; AWS ALB appends to `x-forwarded-for`).
 
 ## Nifra - images
 
@@ -7771,7 +7775,7 @@ O (jose)
 par-plus
 
 Rate limiting
-B forced-decision ctor
+B unspoofable default key
 3
 O
 3
@@ -7958,13 +7962,14 @@ bytes and strip EXIF/GPS by re-encode, where the others do size limits at best.
 
 #### Rate limiting, IP trust, load shedding
 
-The rate limiter&rsquo;s constructor refuses to run until you choose a key source, so the
-&ldquo;trust proxy = spoofable keys&rdquo; footgun is a construction-time error;
+The rate limiter keys on the caller IP the server resolved, never on a client-sent header, so
+the &ldquo;trust proxy = spoofable keys&rdquo; footgun has no default path; with no resolvable
+IP it fails closed instead of sharing one bucket.
 `X-Forwarded-For` is ignored at the default and counted from the right only when you
 declare trusted proxies. `c.clientIp` is the socket peer unless you pass an explicit
 trust config, and short chains fail closed. Admission sheds on live capacity evidence
 (in-flight count plus event-loop lag). Fastify&rsquo;s under-pressure is the only peer for load
-shedding; nothing else in the field forces the key decision or fails closed on IP trust.
+shedding; nothing else in the field defaults to an unspoofable key or fails closed on IP trust.
 
 ### Beyond parity - what none of the four ship
 
@@ -10570,7 +10575,13 @@ const tools = [
   }),
 ]
 
-const mcp = createMcpServer({ name: "orders", version: "1.0.0", tools })
+const mcp = createMcpServer({
+  name: "orders",
+  version: "1.0.0",
+  tools,
+  // Local or private-network server: refuse any other Host (DNS rebinding).
+  allowedHosts: ["localhost", "127.0.0.1", "[::1]"],
+})
 ```
 
 Mount `mcp.fetch` at `POST /mcp`. The package also exposes the JSON-RPC protocol and Streamable HTTP
@@ -10580,6 +10591,11 @@ hosts.
 MCP servers are same-origin for browser clients by default. Set an exact `allowedOrigins` list for
 known cross-origin clients, or set `allowAnyOrigin: true` only for a deliberately public,
 secret-free server. Authentication is still the host application's responsibility.
+
+The Origin check cannot stop DNS rebinding: a rebound page reaches the server under the attacker's
+hostname, so its Origin matches. For a server on localhost or a private network, set `allowedHosts`
+(`host` matches any port, `host:port` one port); every request with an unlisted Host gets 403.
+Unset, any Host is accepted.
 
 Clients that include `text/event-stream` in `Accept` receive progress notifications as they happen,
 followed by the final JSON-RPC response in the same stream. An SSE `GET /mcp` opens a cancellable
@@ -10607,6 +10623,8 @@ import { serveDatabaseAsMcp } from "@nifrajs/mcp-db"
 
 const mcp = serveDatabaseAsMcp(new Database("app.db"), {
   tables: ["habits", "entries"],
+  // Refuse any other Host, so a DNS-rebound browser page cannot read the schema tools.
+  allowedHosts: ["localhost", "127.0.0.1", "[::1]"],
 })
 ```
 
@@ -10666,12 +10684,16 @@ const app = server()
 - **`basicAuth(options)`** - Basic Auth plugin with constant-time static credential comparison or
   a custom verifier.
 - **`bearer(options)` / `apiKey(options)`** - token auth plugins with typed principals.
-- **`csrf({ secret })`** - signed double-submit CSRF protection plus Origin/Referer checking.
+- **`csrf({ secret })`** - signed double-submit CSRF protection plus Origin/Referer checking. The
+  token travels in the `x-csrf-token` header; set `field: "_csrf"` to also accept it from a plain
+  HTML form's hidden input (urlencoded or multipart, bodies up to `fieldMaxBytes`, default 64 KiB).
 - **`jwt(options)` + `verifyJwt()` / `tryVerifyJwt()` + `jwk()` / `jwks()`** - JWT auth
   with explicit algorithm allowlists, required expiration by default, issuer/audience checks,
   direct JWK, HTTPS JWKS, and an additive no-throw Result helper for manual verification.
-- **`ipRestriction(options)`** - allow/deny IPv4/IPv6 exact and CIDR matches. Fails closed unless
-  you provide `clientIp`, trusted proxy extraction, or a trusted single-IP header.
+- **`ipRestriction(options)`** - allow/deny IPv4/IPv6 exact and CIDR matches, judged against the
+  caller IP the server resolved (the socket peer, or the app's `clientIp` trust declaration). A
+  custom `clientIp`, `trustedProxies`, or trusted single-IP `header` overrides it; with no caller IP
+  it fails closed.
 - **`cors(options)`** - preflight handling + headers on *every* response (errors and
   404s included). Origin as `"*"` / exact / list / predicate. **Throws** if
   `credentials: true` is paired with `origin: "*"` (the browser rejects it).
@@ -10679,9 +10701,10 @@ const app = server()
   `Referrer-Policy` by default; opt-in HSTS and CSP. Every value is fixed, so they are **declared**
   (see below) rather than written by a hook - the app keeps its fused/native lanes.
 - **`rateLimit(options)`** - `429` + `Retry-After` + `RateLimit-*` headers, with a
-  pluggable `RateLimitStore`. Configure a trusted `key`, trusted single-IP `header`, or
-  `trustedProxies`; a missing key source fails closed instead of silently sharing one
-  bucket. The bundled `MemoryStore` **refuses to run in production** (a per-instance
+  pluggable `RateLimitStore`. The default bucket key is the caller IP the server resolved (the
+  socket peer, or the app's `clientIp` trust declaration behind a proxy); a custom `key`, trusted
+  single-IP `header`, or `trustedProxies` overrides it. With no caller IP it fails closed (`500`)
+  instead of silently sharing one bucket. The bundled `MemoryStore` **refuses to run in production** (a per-instance
   limiter is unsafe across instances) - provide a shared store (Redis, etc.) there.
 - **`cache({ store, ttlMs })` / `responseCache(...)`** - full response cache with a pluggable
   store, `Vary`-aware keys, `Age`, byte caps, and `Cache-Control` / `Set-Cookie` safety defaults.
@@ -10842,6 +10865,11 @@ per-component `openat` primitive; a process that can mutate the tree concurrentl
 create a local TOCTOU race. Mutable or attacker-writable static trees are therefore outside the
 adapter's guarantee. Store user-controlled files outside the static root and serve them through
 an application or object-storage path with its own validation policy.
+
+Every file carries a strong `ETag` (from mtime and size), `Last-Modified`, and
+`Accept-Ranges: bytes`. `If-None-Match` and `If-Modified-Since` get a bodyless 304; a single
+`Range` on GET gets 206 (or 416 when unsatisfiable), gated by `If-Range`. Multi-range requests get
+the whole file.
 
 ## Graceful shutdown on signals
 

@@ -167,6 +167,14 @@ describe("templates: declared responses are enforced at runtime", () => {
       expect(source).toContain('from "@nifrajs/core/response-contract"')
       expect(source).toContain('.use(responseContract("enforce"))')
     })
+
+    // Every middleware option is validated at construction, so a template whose `.use(...)` chain
+    // is misconfigured crashes the scaffold on its first import - before any route or check runs.
+    test(`${file} constructs its server on import`, async () => {
+      const mod = (await import(join(TEMPLATES_DIR, file))) as Record<string, unknown>
+      const app = (mod.app ?? mod.backend) as { fetch?: unknown } | undefined
+      expect(typeof app?.fetch).toBe("function")
+    })
   }
 })
 

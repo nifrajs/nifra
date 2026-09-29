@@ -1,5 +1,5 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
-import type { Middleware } from "@nifrajs/core/server"
+import type { Middleware, Platform } from "@nifrajs/core/server"
 import { jsonError, type MaybePromise } from "./_utils.ts"
 
 export type IpMatcher = string | ((ip: string, request: Request) => MaybePromise<boolean>)
@@ -7,9 +7,16 @@ export type IpMatcher = string | ((ip: string, request: Request) => MaybePromise
 export interface IpRestrictionOptions {
   readonly allow?: readonly IpMatcher[]
   readonly deny?: readonly IpMatcher[]
-  /** Preferred extraction hook when the adapter/app knows the peer address. */
-  readonly clientIp?: (request: Request) => MaybePromise<string | null | undefined>
-  /** Trusted proxy count for `X-Forwarded-For` extraction. Default: 0, so XFF is ignored. */
+  /**
+   * Custom extraction hook. Without it (and without `trustedProxies`/`header`), the caller is
+   * `platform.clientIp`: the socket peer, or the app's `clientIp` trust declaration applied to it.
+   */
+  readonly clientIp?: (
+    request: Request,
+    platform?: Platform,
+  ) => MaybePromise<string | null | undefined>
+  /** Trusted proxy count for `X-Forwarded-For` extraction. Default: 0, so XFF is ignored. Prefer the
+   * app-level `server({ clientIp: { trustedHops } })` declaration, which the default honors. */
   readonly trustedProxies?: number
   /** Exact trusted single-IP header, e.g. an infra-set `x-real-ip`. Not used unless configured. */
   readonly header?: string
@@ -114,10 +121,20 @@ function xForwardedClient(req: Request, trustedProxies: number): string | null {
 
 async function resolveClientIp(
   req: Request,
+  platform: Platform | undefined,
   options: IpRestrictionOptions,
 ): Promise<string | null> {
-  const custom = await options.clientIp?.(req)
+  const custom = await options.clientIp?.(req, platform)
   if (custom !== undefined && custom !== null) return custom
+  // Explicit proxy options fail closed on their own: falling back to the socket peer there would
+  // judge the proxy's address whenever the forwarded header went missing.
+  if (
+    options.clientIp === undefined &&
+    (options.trustedProxies ?? 0) === 0 &&
+    options.header === undefined
+  ) {
+    return platform?.clientIp || null
+  }
   const fromXff = xForwardedClient(req, options.trustedProxies ?? 0)
   if (fromXff !== null) return fromXff
   if (options.header !== undefined) {
@@ -152,9 +169,10 @@ async function matches(
 }
 
 /**
- * IP allow/deny middleware. It fails closed when no trustworthy client IP can be derived. Configure
- * `clientIp`, `trustedProxies`, or a trusted single-IP `header`; unconfigured X-Forwarded-For is never
- * trusted.
+ * IP allow/deny middleware. It fails closed when no trustworthy client IP can be derived. By default the
+ * caller is the server-resolved `platform.clientIp` (socket peer, or the app's `clientIp` trust
+ * declaration); `clientIp`, `trustedProxies`, or a trusted single-IP `header` override it. Unconfigured
+ * X-Forwarded-For is never trusted.
  */
 export function ipRestriction(options: IpRestrictionOptions): Middleware {
   const trustedProxies = options.trustedProxies ?? 0
@@ -174,8 +192,8 @@ export function ipRestriction(options: IpRestrictionOptions): Middleware {
   return withRouteAssurance<Middleware>(
     {
       name: "ip-restriction",
-      async onRequest(req) {
-        const ipText = await resolveClientIp(req, options)
+      async onRequest(req, platform) {
+        const ipText = await resolveClientIp(req, platform, options)
         if (ipText === null) return jsonError(403, error)
         const ip = parseIp(ipText)
         if (ip === null) return jsonError(403, error)
