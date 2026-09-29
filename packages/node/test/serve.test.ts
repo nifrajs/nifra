@@ -294,6 +294,38 @@ test("a Web-only onResponse hook bridges a bodyless outcome", async () => {
   expect(await res.text()).toBe("")
 })
 
+test("a hook that peeks at the body through req.clone() leaves it readable downstream", async () => {
+  const peeked: string[] = []
+  const app = server()
+    .use({
+      name: "peek",
+      async onRequest(req) {
+        peeked.push(await req.clone().text())
+        return undefined
+      },
+    })
+    .post("/text", async (c) => ({ got: await c.req.text() }))
+    .post("/json", async (c) => ({ got: await c.req.json() }))
+
+  running = await serve(app, { port: 0 })
+  const text = await fetch(`http://localhost:${running.port}/text`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: "_csrf=t&name=x",
+  })
+  expect(text.status).toBe(200)
+  expect(await text.json()).toEqual({ got: "_csrf=t&name=x" })
+
+  const json = await fetch(`http://localhost:${running.port}/json`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ a: 1 }),
+  })
+  expect(json.status).toBe(200)
+  expect(await json.json()).toEqual({ got: { a: 1 } })
+  expect(peeked).toEqual(["_csrf=t&name=x", '{"a":1}'])
+})
+
 test("native request middleware and c.header avoid the Web request path", async () => {
   let nativeCalls = 0
   const app = server()

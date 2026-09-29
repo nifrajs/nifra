@@ -59,6 +59,11 @@ create a local TOCTOU race. Mutable or attacker-writable static trees are theref
 adapter's guarantee. Store user-controlled files outside the static root and serve them through
 an application or object-storage path with its own validation policy.
 
+Every file carries a strong `ETag` (from mtime and size), `Last-Modified`, and
+`Accept-Ranges: bytes`. `If-None-Match` and `If-Modified-Since` get a bodyless 304; a single
+`Range` on GET gets 206 (or 416 when unsatisfiable), gated by `If-Range`. Multi-range requests get
+the whole file.
+
 ## Graceful shutdown on signals
 
 Opt in to SIGTERM/SIGINT handling so a `docker stop` / Ctrl-C drains in-flight requests

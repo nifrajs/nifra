@@ -909,10 +909,71 @@ function staticMatch(
   return { file }
 }
 
+/** Strong validator from mtime + size (the nginx scheme): rewriting a file changes at least one. */
+function staticEtag(size: number, mtimeMs: number): string {
+  return `"${Math.floor(mtimeMs).toString(16)}-${size.toString(16)}"`
+}
+
+/** `If-None-Match` uses the weak comparison (RFC 9110 section 13.1.2): a `W/` prefix is ignored. */
+function etagListMatches(header: string, etag: string): boolean {
+  for (const raw of header.split(",")) {
+    const candidate = raw.trim()
+    if (
+      candidate === "*" ||
+      (candidate.startsWith("W/") ? candidate.slice(2) : candidate) === etag
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+/** Whether the client's cached copy is current. `If-None-Match` wins over `If-Modified-Since`, whose
+ * HTTP-date only carries whole seconds. */
+function staticNotModified(headers: IncomingHttpHeaders, etag: string, mtimeMs: number): boolean {
+  const ifNoneMatch = headers["if-none-match"]
+  if (typeof ifNoneMatch === "string") return etagListMatches(ifNoneMatch, etag)
+  const ifModifiedSince = headers["if-modified-since"]
+  if (typeof ifModifiedSince !== "string") return false
+  const since = Date.parse(ifModifiedSince)
+  return !Number.isNaN(since) && Math.floor(mtimeMs / 1000) * 1000 <= since
+}
+
+/**
+ * One `bytes=` range as inclusive offsets, `"unsatisfiable"` (416), or `undefined` to send the whole
+ * file: no header, a malformed or multi-range one (RFC 9110 lets a server ignore Range), or an
+ * `If-Range` validator that no longer matches the file.
+ */
+function staticByteRange(
+  headers: IncomingHttpHeaders,
+  size: number,
+  etag: string,
+  lastModified: string,
+): readonly [number, number] | "unsatisfiable" | undefined {
+  const range = headers.range
+  if (typeof range !== "string") return undefined
+  const ifRange = headers["if-range"]
+  if (typeof ifRange === "string" && ifRange !== etag && ifRange !== lastModified) return undefined
+  const match = /^bytes=(\d*)-(\d*)$/.exec(range.trim())
+  if (match === null) return undefined
+  const first = match[1] as string
+  const last = match[2] as string
+  if (first === "") {
+    if (last === "") return undefined
+    const suffix = Number(last)
+    return suffix === 0 || size === 0 ? "unsatisfiable" : [Math.max(0, size - suffix), size - 1]
+  }
+  const start = Number(first)
+  if (start >= size) return "unsatisfiable"
+  const end = last === "" ? size - 1 : Math.min(Number(last), size - 1)
+  return end < start ? undefined : [start, end]
+}
+
 async function readStatic(
   file: string,
   state: StaticState,
   method: string,
+  requestHeaders: IncomingHttpHeaders,
 ): Promise<NodeServeOutcome> {
   let handle: Awaited<ReturnType<typeof open>> | undefined
   try {
@@ -934,26 +995,55 @@ async function readStatic(
       return { kind: "response", response: new Response("Not Found", { status: 404 }) }
     }
     const headers: Record<string, string> = { ...state.headers }
+    if (state.immutable && headers["cache-control"] === undefined) {
+      headers["cache-control"] = "public, max-age=31536000, immutable"
+    }
+    const etag = staticEtag(stat.size, stat.mtimeMs)
+    const lastModified = stat.mtime.toUTCString()
+    headers.etag ??= etag
+    headers["last-modified"] ??= lastModified
+    // Revalidation: a current cached copy costs a header-only 304 instead of the whole file.
+    if (staticNotModified(requestHeaders, etag, stat.mtimeMs)) {
+      await handle.close()
+      return { kind: "response", response: new Response(null, { status: 304, headers }) }
+    }
     headers["content-type"] =
       STATIC_CONTENT_TYPES[extname(file).toLowerCase()] ?? "application/octet-stream"
     // Never let a client sniff a served file into a more dangerous type (e.g. an .svg as active content).
     headers["x-content-type-options"] = "nosniff"
-    headers["content-length"] = String(stat.size)
-    if (state.immutable && headers["cache-control"] === undefined) {
-      headers["cache-control"] = "public, max-age=31536000, immutable"
+    headers["accept-ranges"] = "bytes"
+    // Range applies to GET only (RFC 9110 section 14.2); HEAD reports the whole representation.
+    const range =
+      method === "GET" ? staticByteRange(requestHeaders, stat.size, etag, lastModified) : undefined
+    if (range === "unsatisfiable") {
+      await handle.close()
+      headers["content-range"] = `bytes */${stat.size}`
+      delete headers["content-type"]
+      return { kind: "response", response: new Response(null, { status: 416, headers }) }
+    }
+    let status = 200
+    if (range !== undefined) {
+      status = 206
+      headers["content-range"] = `bytes ${range[0]}-${range[1]}/${stat.size}`
+      headers["content-length"] = String(range[1] - range[0] + 1)
+    } else {
+      headers["content-length"] = String(stat.size)
     }
     if (method === "HEAD") {
       await handle.close()
       return { kind: "response", response: new Response(null, { headers }) }
     }
-    const stream = handle.createReadStream()
+    const stream =
+      range === undefined
+        ? handle.createReadStream()
+        : handle.createReadStream({ start: range[0], end: range[1] })
     return {
       kind: "response",
       // Claimable rather than `Readable.toWeb`: served straight from disk to the socket when this
       // response reaches the writer untouched, and read as an ordinary Web stream by anything that
       // gets to it first (a middleware that rewrites or compresses the body, say), which refuses
       // the claim and takes the conversion instead.
-      response: new Response(claimableWebStream(stream), { headers }),
+      response: new Response(claimableWebStream(stream), { status, headers }),
     }
   } catch {
     await handle?.close().catch(() => {})
@@ -1261,7 +1351,7 @@ function handle(
     const matched = staticMatch(staticState, nodeReq.url ?? "/")
     if (matched !== "pass") {
       if ("reject" in matched) return writeResponseSafely(matched.reject, nodeRes, nodeReq.method)
-      return readStatic(matched.file, staticState, nodeReq.method ?? "GET").then(
+      return readStatic(matched.file, staticState, nodeReq.method ?? "GET", nodeReq.headers).then(
         (outcome) => writeOutcomeSafely(outcome, nodeRes, nodeReq.method),
         () => failWrite(nodeRes),
       )
@@ -1850,11 +1940,23 @@ class LazyNodeRequestSource implements NodeRequestSource {
    */
   private rawBodyBytes(): Promise<Uint8Array> {
     if (this.consumedBody !== undefined) return Promise.resolve(this.consumedBody)
-    const handed = this.bodyValue
+    const handed = this.handedBody()
     if (handed != null) {
       return new Response(handed).arrayBuffer().then((buffer) => new Uint8Array(buffer))
     }
     return this.readNodeBody()
+  }
+
+  /**
+   * The stream the Web `Request` was built on, or - once a hook's `req.clone()` teed it (which locks
+   * the original) - the branch that request kept. Reading the locked original threw, so a middleware
+   * that peeked at the body through a clone turned every downstream body read into a 500.
+   */
+  private handedBody(): ReadableStream<Uint8Array> | undefined {
+    const handed = this.bodyValue
+    if (handed == null || !handed.locked) return handed ?? undefined
+    const owner = this.requestValue as unknown as { readonly _real?: Request } | undefined
+    return owner?._real?.body ?? handed
   }
 
   /**
@@ -1867,7 +1969,7 @@ class LazyNodeRequestSource implements NodeRequestSource {
     const consumed = this.consumedBody
     if (consumed !== undefined) return streamOfBytes(consumed)
     this.bodyValue ??= claimableWebStream(this.nodeReq, "drain")
-    return this.bodyValue
+    return this.handedBody() ?? this.bodyValue
   }
 
   get request(): Request {
