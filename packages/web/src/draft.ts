@@ -21,7 +21,7 @@ import {
   signValue,
   unsignValue,
 } from "@nifrajs/core/server"
-import { timingSafeEqual } from "./internal/timing-safe-equal.ts"
+import { assertTokenSecret, timingSafeEqual } from "./internal/timing-safe-equal.ts"
 
 /** The cookie name nifra uses for draft/preview mode. */
 export const DRAFT_COOKIE = "__nifra_draft"
@@ -160,6 +160,9 @@ export interface PreviewEndpointOptions {
 export function previewEndpoint(
   options: PreviewEndpointOptions,
 ): (request: Request) => Promise<Response> {
+  // An empty token matches a link with no `?token=` at all, which would hand draft mode (and every
+  // unpublished page) to anyone. Refuse it at construction, where an unset env var surfaces at boot.
+  assertTokenSecret(options.secret, "previewEndpoint")
   const tokenParam = options.tokenParam ?? "token"
   const redirectParam = options.redirectParam ?? "to"
   const fallbackPath = options.fallbackPath ?? "/"

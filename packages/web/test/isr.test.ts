@@ -541,6 +541,15 @@ describe("revalidateEndpoint (on-demand purge)", () => {
     expect((await store.get(pageKey("/p")))?.body).toBe("cached") // untouched
   })
 
+  test("an empty secret is refused at construction, never matched against a missing header", () => {
+    const store = new MemoryCacheStore()
+    expect(() => revalidateEndpoint({ store, secret: "" })).toThrow(/non-empty secret/)
+    expect(() => revalidateEndpoint({ store, secret: "  " })).toThrow(/non-empty secret/)
+    expect(() => revalidateEndpoint({ store, secret: undefined as unknown as string })).toThrow(
+      /non-empty secret/,
+    )
+  })
+
   test("non-POST is 405; a missing/relative path is 400", async () => {
     const store = new MemoryCacheStore()
     const handler = revalidateEndpoint({ store, secret: "s" })

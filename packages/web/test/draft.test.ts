@@ -261,3 +261,10 @@ test("previewEndpoint honours custom param names and cookie options", async () =
   // The default param names no longer authorize once overridden.
   expect((await handler(new Request(`http://x/p?token=${PREVIEW_TOKEN}`))).status).toBe(401)
 })
+
+test("previewEndpoint refuses an empty token, which would match a link with no ?token=", () => {
+  expect(() => previewEndpoint({ secret: "", draftSecret: SECRET })).toThrow(/non-empty secret/)
+  expect(() =>
+    previewEndpoint({ secret: undefined as unknown as string, draftSecret: SECRET }),
+  ).toThrow(/non-empty secret/)
+})

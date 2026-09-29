@@ -7,7 +7,7 @@
  * This module is the store primitive; the SWR wrapper (`withISR`) builds on it next.
  */
 import { isDraftEnabled } from "./draft.ts"
-import { timingSafeEqual } from "./internal/timing-safe-equal.ts"
+import { assertTokenSecret, timingSafeEqual } from "./internal/timing-safe-equal.ts"
 
 /** A cached SSR response - the bytes + metadata a {@link CacheStore} persists. */
 export interface CachedResponse {
@@ -661,6 +661,9 @@ export interface RevalidateEndpointOptions {
 export function revalidateEndpoint(
   options: RevalidateEndpointOptions,
 ): (req: Request) => Promise<Response> {
+  // An empty secret matches a request that omits the header (`"" === ""`), so an unset env var passed
+  // through `?? ""` would open the purge to anyone. Refuse it at construction instead.
+  assertTokenSecret(options.secret, "revalidateEndpoint")
   const tokenHeader = options.tokenHeader ?? "x-nifra-revalidate-token"
   const keyOf = options.key ?? ((path: string, req: Request) => new URL(req.url).origin + path)
   return async (req) => {

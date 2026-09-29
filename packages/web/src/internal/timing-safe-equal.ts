@@ -22,3 +22,16 @@ export function timingSafeEqual(a: string, b: string): boolean {
   for (let i = 0; i < ba.length; i++) diff |= (ba[i] as number) ^ (bb[i] as number)
   return diff === 0
 }
+
+/**
+ * Boot-time guard for a shared bearer token checked with {@link timingSafeEqual}. A missing header or
+ * query parameter is compared as `""`, so an empty (or unset, then defaulted) secret would authorize
+ * every request that simply omits the token. Throws rather than letting that endpoint exist.
+ */
+export function assertTokenSecret(secret: unknown, label: string): asserts secret is string {
+  if (typeof secret !== "string" || secret.trim() === "") {
+    throw new TypeError(
+      `[nifra] ${label} requires a non-empty secret; an empty one would accept requests that omit the token`,
+    )
+  }
+}

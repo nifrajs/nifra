@@ -345,3 +345,46 @@ test("If-Modified-Since produces a 304 and If-Range guards partial answers", asy
     expect(await stale?.text()).toBe("0123456789")
   })
 })
+
+test("hides dot-segments other than .well-known", async () => {
+  await withDir(async (dir) => {
+    await writeFile(join(dir, ".env"), "SECRET=1")
+    await mkdir(join(dir, ".git"), { recursive: true })
+    await writeFile(join(dir, ".git", "config"), "[core]")
+    await mkdir(join(dir, ".well-known"), { recursive: true })
+    await writeFile(join(dir, ".well-known", "security.txt"), "Contact: x")
+    const serve = servePublicDir({ dir })
+
+    expect(await serve(get("/.env"))).toBeUndefined()
+    expect(await serve(get("/%2eenv"))).toBeUndefined()
+    expect(await serve(get("/.git/config"))).toBeUndefined()
+    expect(await (await serve(get("/.well-known/security.txt")))?.text()).toBe("Contact: x")
+  })
+})
+
+test("declares the media type from the extension and forbids sniffing", async () => {
+  await withDir(async (dir) => {
+    await writeFile(join(dir, "app.js"), "1")
+    await writeFile(join(dir, "font.WOFF2"), "1")
+    await writeFile(join(dir, "blob"), "1")
+    const serve = servePublicDir({ dir })
+
+    const js = await serve(get("/app.js"))
+    expect(js?.headers.get("content-type")).toBe("text/javascript; charset=utf-8")
+    expect(js?.headers.get("x-content-type-options")).toBe("nosniff")
+    expect((await serve(get("/font.WOFF2")))?.headers.get("content-type")).toBe("font/woff2")
+    expect((await serve(get("/blob")))?.headers.get("content-type")).toBe(
+      "application/octet-stream",
+    )
+  })
+})
+
+test("does not depend on the Bun global, so the Node and Deno adapters can serve public/", async () => {
+  // A `Bun.file` here once made every public/ hit throw `Bun is not defined` off Bun.
+  const source = await Bun.file(join(import.meta.dir, "..", "src", "public-dir.ts")).text()
+  const code = source
+    .split("\n")
+    .filter((line) => !/^\s*(\*|\/\/|\/\*)/.test(line))
+    .join("\n")
+  expect(code).not.toMatch(/\bBun\./)
+})

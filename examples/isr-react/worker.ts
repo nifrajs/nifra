@@ -55,7 +55,9 @@ export default {
     // On-demand purge (POST). `withISR` would pass a POST straight through anyway, but routing it
     // explicitly here keeps it independent of the app's route table.
     if (new URL(req.url).pathname === "/__nifra/revalidate") {
-      return revalidateEndpoint({ store, secret: env.REVALIDATE_SECRET ?? "" })(req)
+      // No secret configured means no purge endpoint - never an open one.
+      if (env.REVALIDATE_SECRET === undefined) return new Response("Not Found", { status: 404 })
+      return revalidateEndpoint({ store, secret: env.REVALIDATE_SECRET })(req)
     }
 
     const isr = withISR(app, { store, revalidate: 60, now: () => Date.now() })

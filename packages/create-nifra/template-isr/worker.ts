@@ -41,7 +41,9 @@ export default {
 
     // On-demand purge: POST /__nifra/revalidate?path=/ with the secret in x-nifra-revalidate-token.
     if (new URL(req.url).pathname === "/__nifra/revalidate") {
-      return revalidateEndpoint({ store, secret: env.REVALIDATE_SECRET ?? "" })(req)
+      // No secret configured means no purge endpoint - never an open one.
+      if (env.REVALIDATE_SECRET === undefined) return new Response("Not Found", { status: 404 })
+      return revalidateEndpoint({ store, secret: env.REVALIDATE_SECRET })(req)
     }
 
     // Cache GET documents stale-while-revalidate. Default 60s; a route's `export const revalidate`
