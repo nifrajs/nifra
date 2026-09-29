@@ -86,6 +86,57 @@ test("revalidation answers 304 from If-None-Match or If-Modified-Since", async (
   await older.arrayBuffer()
 })
 
+test("custom validator headers drive revalidation and ranges", async () => {
+  const lastModified = "Wed, 01 Jan 2020 00:00:00 GMT"
+  const base = await startWithStatic(undefined, {
+    // Header names are case-insensitive; these common canonical spellings must override defaults.
+    headers: { ETag: '"custom"', "Last-Modified": lastModified },
+  })
+  const first = await fetch(`${base}/assets/app.js`)
+  expect(first.headers.get("etag")).toBe('"custom"')
+  expect(first.headers.get("last-modified")).toBe(lastModified)
+  await first.arrayBuffer()
+
+  const byTag = await fetch(`${base}/assets/app.js`, {
+    headers: { "if-none-match": 'W/"custom"' },
+  })
+  expect(byTag.status).toBe(304)
+
+  const byDate = await fetch(`${base}/assets/app.js`, {
+    headers: { "if-modified-since": lastModified },
+  })
+  expect(byDate.status).toBe(304)
+
+  for (const validator of ['"custom"', lastModified]) {
+    const range = await fetch(`${base}/assets/app.js`, {
+      headers: { range: "bytes=0-6", "if-range": validator },
+    })
+    expect(range.status).toBe(206)
+    expect(await range.text()).toBe("console")
+  }
+
+  // A date If-Range is an exact match, not a freshness check: a later date is a different validator.
+  const later = await fetch(`${base}/assets/app.js`, {
+    headers: { range: "bytes=0-6", "if-range": "Thu, 02 Jan 2020 00:00:00 GMT" },
+  })
+  expect(later.status).toBe(200)
+  expect(await later.text()).toBe("console.log('hi')")
+})
+
+test("a weak custom ETag revalidates but never satisfies If-Range", async () => {
+  const base = await startWithStatic(undefined, { headers: { ETag: 'W/"custom"' } })
+  const revalidated = await fetch(`${base}/assets/app.js`, {
+    headers: { "if-none-match": '"custom"' },
+  })
+  expect(revalidated.status).toBe(304)
+
+  const ranged = await fetch(`${base}/assets/app.js`, {
+    headers: { range: "bytes=0-6", "if-range": 'W/"custom"' },
+  })
+  expect(ranged.status).toBe(200)
+  expect(await ranged.text()).toBe("console.log('hi')")
+})
+
 test("byte ranges answer 206, 416, or the whole file", async () => {
   const base = await startWithStatic()
   const get = (range: string, extra: Record<string, string> = {}) =>

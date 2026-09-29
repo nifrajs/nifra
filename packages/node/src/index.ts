@@ -841,6 +841,15 @@ interface StaticState {
   readonly denyDotfiles: boolean
 }
 
+function staticHeadersOf(
+  input: Readonly<Record<string, string>> | undefined,
+): Readonly<Record<string, string>> | undefined {
+  if (input === undefined) return undefined
+  const headers = Object.create(null) as Record<string, string>
+  for (const [name, value] of Object.entries(input)) headers[name.toLowerCase()] = value
+  return headers
+}
+
 function staticStateOf(options: ServeStaticOptions): StaticState {
   const root = resolve(typeof options.dir === "string" ? options.dir : fileURLToPath(options.dir))
   const raw = options.prefix ?? "/assets"
@@ -854,7 +863,7 @@ function staticStateOf(options: ServeStaticOptions): StaticState {
     root,
     prefix,
     immutable: options.immutable !== false,
-    headers: options.headers,
+    headers: staticHeadersOf(options.headers),
     denyDotfiles: options.dotfiles !== "allow",
   }
 }
@@ -914,29 +923,50 @@ function staticEtag(size: number, mtimeMs: number): string {
   return `"${Math.floor(mtimeMs).toString(16)}-${size.toString(16)}"`
 }
 
+function weakEtag(value: string): string {
+  return value.startsWith("W/") ? value.slice(2) : value
+}
+
 /** `If-None-Match` uses the weak comparison (RFC 9110 section 13.1.2): a `W/` prefix is ignored. */
 function etagListMatches(header: string, etag: string): boolean {
+  const comparable = weakEtag(etag)
   for (const raw of header.split(",")) {
     const candidate = raw.trim()
-    if (
-      candidate === "*" ||
-      (candidate.startsWith("W/") ? candidate.slice(2) : candidate) === etag
-    ) {
-      return true
-    }
+    if (candidate === "*" || weakEtag(candidate) === comparable) return true
   }
   return false
 }
 
 /** Whether the client's cached copy is current. `If-None-Match` wins over `If-Modified-Since`, whose
  * HTTP-date only carries whole seconds. */
-function staticNotModified(headers: IncomingHttpHeaders, etag: string, mtimeMs: number): boolean {
+function staticNotModified(
+  headers: IncomingHttpHeaders,
+  etag: string,
+  lastModified: number | undefined,
+): boolean {
   const ifNoneMatch = headers["if-none-match"]
   if (typeof ifNoneMatch === "string") return etagListMatches(ifNoneMatch, etag)
+  if (lastModified === undefined) return false
   const ifModifiedSince = headers["if-modified-since"]
   if (typeof ifModifiedSince !== "string") return false
   const since = Date.parse(ifModifiedSince)
-  return !Number.isNaN(since) && Math.floor(mtimeMs / 1000) * 1000 <= since
+  return Number.isFinite(since) && Math.floor(lastModified / 1000) * 1000 <= since
+}
+
+function staticIfRangeMatches(
+  value: string,
+  etag: string,
+  lastModified: number | undefined,
+): boolean {
+  const item = value.trim()
+  if (item.startsWith('"') || item.startsWith("W/")) {
+    return !item.startsWith("W/") && !etag.startsWith("W/") && item === etag
+  }
+  // A date validator must match Last-Modified exactly (RFC 9110 section 13.1.5), not merely be later:
+  // a file swapped for one with an older mtime would otherwise splice foreign bytes into a resume.
+  if (lastModified === undefined) return false
+  const date = Date.parse(item)
+  return Number.isFinite(date) && Math.floor(lastModified / 1000) === Math.floor(date / 1000)
 }
 
 /**
@@ -948,12 +978,14 @@ function staticByteRange(
   headers: IncomingHttpHeaders,
   size: number,
   etag: string,
-  lastModified: string,
+  lastModified: number | undefined,
 ): readonly [number, number] | "unsatisfiable" | undefined {
   const range = headers.range
   if (typeof range !== "string") return undefined
   const ifRange = headers["if-range"]
-  if (typeof ifRange === "string" && ifRange !== etag && ifRange !== lastModified) return undefined
+  if (typeof ifRange === "string" && !staticIfRangeMatches(ifRange, etag, lastModified)) {
+    return undefined
+  }
   const match = /^bytes=(\d*)-(\d*)$/.exec(range.trim())
   if (match === null) return undefined
   const first = match[1] as string
@@ -998,13 +1030,17 @@ async function readStatic(
     if (state.immutable && headers["cache-control"] === undefined) {
       headers["cache-control"] = "public, max-age=31536000, immutable"
     }
-    const etag = staticEtag(stat.size, stat.mtimeMs)
-    const lastModified = stat.mtime.toUTCString()
-    headers.etag ??= etag
-    headers["last-modified"] ??= lastModified
+    headers.etag ??= staticEtag(stat.size, stat.mtimeMs)
+    headers["last-modified"] ??= stat.mtime.toUTCString()
+    // Custom validators are response headers, not decoration: compare the exact values the client saw.
+    const etag = headers.etag
+    const parsedLastModified = Date.parse(headers["last-modified"])
+    const lastModified = Number.isFinite(parsedLastModified) ? parsedLastModified : undefined
     // Revalidation: a current cached copy costs a header-only 304 instead of the whole file.
-    if (staticNotModified(requestHeaders, etag, stat.mtimeMs)) {
+    if (staticNotModified(requestHeaders, etag, lastModified)) {
       await handle.close()
+      delete headers["content-length"]
+      delete headers["content-type"]
       return { kind: "response", response: new Response(null, { status: 304, headers }) }
     }
     headers["content-type"] =
@@ -1018,6 +1054,7 @@ async function readStatic(
     if (range === "unsatisfiable") {
       await handle.close()
       headers["content-range"] = `bytes */${stat.size}`
+      delete headers["content-length"]
       delete headers["content-type"]
       return { kind: "response", response: new Response(null, { status: 416, headers }) }
     }
