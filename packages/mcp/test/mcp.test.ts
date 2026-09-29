@@ -630,7 +630,7 @@ describe("respondMcpHttp - transport hardening", () => {
     expect((await serve(at("http://app.test/mcp", "https://evil.test"))).status).toBe(403)
   })
 
-  test("allowedHosts rejects a DNS-rebound Host even when its Origin matches", async () => {
+  test("allowedHosts validates and normalizes the inbound Host authority", async () => {
     const init = { jsonrpc: "2.0", id: 1, method: "initialize" }
     const at = (url: string, headers: Record<string, string> = {}): Request =>
       new Request(url, {
@@ -644,9 +644,25 @@ describe("respondMcpHttp - transport hardening", () => {
     expect((await serve(rebound)).status).toBe(200)
     expect((await serve(rebound, { allowedHosts })).status).toBe(403)
     expect((await serve(at("http://rebind.test:3000/mcp"), { allowedHosts })).status).toBe(403)
+
+    // A canonical request URL must not conceal the actual inbound Host header.
+    const masked = at("http://localhost:3000/mcp", {
+      host: "rebind.test:3000",
+      origin: "http://localhost:3000",
+    })
+    expect((await serve(masked, { allowedHosts })).status).toBe(403)
+
     expect((await serve(at("http://localhost:4000/mcp"), { allowedHosts })).status).toBe(200)
     expect((await serve(at("http://127.0.0.1:3000/mcp"), { allowedHosts })).status).toBe(200)
     expect((await serve(at("http://127.0.0.1:3001/mcp"), { allowedHosts })).status).toBe(403)
+    // Config is case-insensitive and an explicit default port matches URL canonicalization.
+    expect(
+      (await serve(at("http://localhost/mcp"), { allowedHosts: ["LOCALHOST:80"] })).status,
+    ).toBe(200)
+    expect(
+      (await serve(at("https://example.test/mcp"), { allowedHosts: ["EXAMPLE.TEST:443"] })).status,
+    ).toBe(200)
+    expect((await serve(at("http://[::1]:4000/mcp"), { allowedHosts: ["[::1]"] })).status).toBe(200)
   })
 
   test("rejects a non-finite body cap before reading the request", async () => {

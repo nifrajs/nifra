@@ -58,15 +58,71 @@ function isSameOrigin(origin: string, request: Request): boolean {
   }
 }
 
+interface HostAuthority {
+  readonly hostname: string
+  readonly port?: string
+}
+
+/** Parse a bare `host[:port]` authority without accepting userinfo, paths, whitespace, or fragments. */
+function parseHostAuthority(value: string): HostAuthority | undefined {
+  if (value.length === 0 || /[\r\n\s@/?#]/.test(value)) return undefined
+  let hostname: string
+  let port: string | undefined
+  if (value.startsWith("[")) {
+    const close = value.indexOf("]")
+    if (close === -1) return undefined
+    const address = value.slice(1, close)
+    if (address.length === 0 || !/^[0-9a-f:.%]+$/i.test(address)) return undefined
+    hostname = `[${address.toLowerCase()}]`
+    const rest = value.slice(close + 1)
+    if (rest !== "") {
+      if (!rest.startsWith(":")) return undefined
+      port = rest.slice(1)
+    }
+  } else {
+    const colon = value.indexOf(":")
+    if (colon === -1) {
+      hostname = value.toLowerCase()
+    } else {
+      if (value.indexOf(":", colon + 1) !== -1) return undefined
+      hostname = value.slice(0, colon).toLowerCase()
+      port = value.slice(colon + 1)
+    }
+    if (hostname.length === 0 || !/^[a-z0-9.-]+$/.test(hostname)) return undefined
+  }
+  if (port !== undefined) {
+    if (!/^\d{1,5}$/.test(port)) return undefined
+    const numeric = Number(port)
+    if (!Number.isSafeInteger(numeric) || numeric > 65_535) return undefined
+    port = String(numeric)
+  }
+  return port === undefined ? { hostname } : { hostname, port }
+}
+
+function defaultPort(protocol: string): string | undefined {
+  if (protocol === "http:") return "80"
+  if (protocol === "https:") return "443"
+  return undefined
+}
+
 /**
- * The Host guard. A DNS-rebound page talks to the server under the attacker's hostname, so its Origin and
- * the request URL agree and no Origin check can tell it apart - only the Host can. An entry with a port
- * (`localhost:3000`) matches that host exactly; one without (`localhost`, `[::1]`) matches any port.
+ * The Host guard. Prefer the inbound Host header: an adapter may deliberately build `request.url`
+ * with a canonical authority, but that must not hide the attacker-controlled Host this guard exists
+ * to check. An allowlist entry without a port matches any port; one with a port matches the effective
+ * port (so `localhost:80` matches an HTTP URL whose canonical form omits `:80`).
  */
 function hostAllowed(request: Request, allowedHosts: readonly string[] | undefined): boolean {
   if (allowedHosts === undefined) return true
   const url = new URL(request.url)
-  return allowedHosts.includes(url.host) || allowedHosts.includes(url.hostname)
+  const actual = parseHostAuthority(request.headers.get("host") ?? url.host)
+  if (actual === undefined) return false
+  const actualPort = actual.port ?? defaultPort(url.protocol)
+  for (const value of allowedHosts) {
+    const candidate = parseHostAuthority(value)
+    if (candidate === undefined || candidate.hostname !== actual.hostname) continue
+    if (candidate.port === undefined || candidate.port === actualPort) return true
+  }
+  return false
 }
 
 /**
