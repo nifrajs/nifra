@@ -182,10 +182,13 @@ export function serverFunctions(namespace: string, module: ServerFnModule): Iden
         // has happened yet, so rejecting here is a complete refusal.
         const request = c.req
         const contentType = request.headers.get("content-type") ?? ""
-        if (!contentType.includes("application/json")) {
+        const semi = contentType.indexOf(";")
+        const mediaType = (semi === -1 ? contentType : contentType.slice(0, semi)).trim()
+        if (mediaType.toLowerCase() !== "application/json") {
           // A form cannot send this content type cross-origin without a preflight. Rejecting anything
           // else is what makes form-driven CSRF against a server function impossible rather than
-          // merely unlikely.
+          // merely unlikely. Compare the media type, never search the header: `text/plain;
+          // x=application/json` contains the string but is a no-preflight `text/plain` request.
           return c.json({ ok: false, error: "unsupported_media_type" }, 415)
         }
         const origin = request.headers.get("origin")

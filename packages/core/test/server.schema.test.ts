@@ -182,6 +182,30 @@ describe("body validation", () => {
     expect((await app.fetch(req)).status).toBe(415)
   })
 
+  test("JSON is matched by media type, not by substring", async () => {
+    const app = server().post("/users", { body: userBody }, (c) => c.body)
+    const send = (contentType: string) =>
+      app.fetch(
+        new Request("http://localhost/users", {
+          method: "POST",
+          headers: { "content-type": contentType },
+          body: JSON.stringify({ name: "Ada" }),
+        }),
+      )
+    // A no-preflight text/plain request, even though the header contains "application/json".
+    expect((await send("text/plain; x=application/json")).status).toBe(415)
+    expect((await send("text/plain;application/json")).status).toBe(415)
+    for (const accepted of [
+      "application/json",
+      "application/json; charset=utf-8",
+      "Application/JSON; charset=UTF-8",
+      "application/vnd.api+json",
+      "application/merge-patch+json",
+    ]) {
+      expect((await send(accepted)).status).toBe(200)
+    }
+  })
+
   test("malformed JSON is rejected with 400 invalid_json", async () => {
     const app = server().post("/users", { body: userBody }, (c) => c.body)
     const req = new Request("http://localhost/users", {

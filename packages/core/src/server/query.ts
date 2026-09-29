@@ -110,6 +110,25 @@ export function queryObjectOf(search: string): Record<string, QueryValue> {
   return out
 }
 
+/**
+ * `application/json` or an `application/*+json` type, with or without parameters, compared as a media
+ * type rather than searched as a substring. A substring test also matches `text/plain; x=application/json`,
+ * whose essence is `text/plain` - a type a browser sends cross-origin with credentials and no preflight,
+ * so a JSON route would parse a body no CORS policy ever saw.
+ */
+export function isJsonMediaType(contentType: string): boolean {
+  // The two spellings every client sends, without slicing or lowercasing.
+  if (contentType === "application/json" || contentType === "application/json; charset=utf-8") {
+    return true
+  }
+  const semi = contentType.indexOf(";")
+  const essence = (semi === -1 ? contentType : contentType.slice(0, semi)).trim().toLowerCase()
+  return (
+    essence === "application/json" ||
+    (essence.startsWith("application/") && essence.endsWith("+json") && !essence.includes(" "))
+  )
+}
+
 /** `application/x-www-form-urlencoded`, with or without a charset suffix. */
 export function isUrlEncodedForm(contentType: string): boolean {
   return (

@@ -6,7 +6,7 @@
 import { drainCapped, hasTrustedBodyFraming, parseContentLength, RAW_BODY_READERS } from "./body.ts"
 import { plainError } from "./http.ts"
 import { guardParsedValue, type ProtoPoisoning, parseJsonGuarded } from "./proto-guard.ts"
-import { isUrlEncodedForm, readBoundedForm } from "./query.ts"
+import { isJsonMediaType, isUrlEncodedForm, readBoundedForm } from "./query.ts"
 import {
   headerOf,
   isResponseResult,
@@ -180,7 +180,7 @@ export function readBodyFramed<T>(
   onError: (err: unknown) => MaybePromise<T>,
 ): Promise<T> {
   const contentType = headerOf(source, "content-type") ?? ""
-  if (contentType !== "application/json" && !contentType.includes("application/json")) {
+  if (!isJsonMediaType(contentType)) {
     if (isUrlEncodedForm(contentType)) {
       return readBoundedForm(source, maxBodyBytes).then(
         (form) => (isResponseResult(form) ? wrapResponse(form) : onParsed(form)),

@@ -156,6 +156,19 @@ describe("cross-origin form posts cannot reach a server function", () => {
     expect(res.status).toBe(415)
   })
 
+  test("a text/plain type whose parameter spells application/json is refused", async () => {
+    // `fetch(url, { mode: "no-cors" })` may send this without a preflight: its media type is
+    // text/plain. No Origin here, so only the content-type guard stands in the way.
+    received = undefined
+    for (const name of ["echo", "ping"]) {
+      const res = await post(name, '{"text":"attacker"}', {
+        "content-type": "text/plain; x=application/json",
+      })
+      expect(res.status).toBe(415)
+    }
+    expect(received).toBeUndefined()
+  })
+
   test("multipart is refused too", async () => {
     const res = await post("echo", "--x--", {
       "content-type": "multipart/form-data; boundary=x",
