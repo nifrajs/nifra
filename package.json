@@ -87,6 +87,8 @@
     "format": "biome format --write .",
     "check": "bun run verify",
     "changeset": "changeset",
+    "release:prepare": "bun scripts/prepare-release.ts",
+    "release:check": "bun scripts/check-release-branch.ts",
     "changeset:version": "bun run scripts/version.ts",
     "changeset:publish": "bun run build && bun run gen:llms && bun run scripts/resolve-workspace-deps.ts && changeset publish && bun run scripts/point-latest.ts",
     "bench:p99": "bun run bench/ops/p99-mixed.ts",
