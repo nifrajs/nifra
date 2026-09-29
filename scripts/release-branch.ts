@@ -12,6 +12,18 @@ export const isReleaseBranch = (branch: string): boolean =>
 export const pendingChangesetFiles = (entries: readonly string[]): string[] =>
   entries.filter((entry) => entry.endsWith(".md") && entry !== "README.md").sort()
 
+export const releaseCheckBaseRef = (
+  mergeCheck: boolean,
+  releaseBaseSha: string | undefined,
+  githubBaseSha: string | undefined,
+): string => {
+  if (!mergeCheck) return githubBaseSha?.trim() || "HEAD~1"
+  const baseSha = releaseBaseSha?.trim()
+  if (baseSha === undefined || !/^[0-9a-f]{40}$/i.test(baseSha))
+    throw new Error("release:check --merge requires RELEASE_BASE_SHA to be a full commit SHA")
+  return baseSha
+}
+
 export const changedPublicPackageVersions = (
   base: readonly PackageManifest[],
   release: readonly PackageManifest[],

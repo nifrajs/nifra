@@ -7,6 +7,7 @@ import {
   isReleaseBranch,
   type PackageManifest,
   pendingChangesetFiles,
+  releaseCheckBaseRef,
 } from "./release-branch.ts"
 
 const isMergeCheck = process.argv.includes("--merge")
@@ -50,9 +51,9 @@ const readCurrentManifest = (path: string): PackageManifest | undefined => {
 
 const headRef = process.env.RELEASE_HEAD_SHA?.trim() || process.env.GITHUB_SHA?.trim() || "HEAD"
 const head = resolveCommit(headRef)
-const base = isMergeCheck
-  ? resolveCommit(`${head}^1`)
-  : resolveCommit(process.env.GITHUB_BASE_SHA?.trim() || "HEAD~1")
+const base = resolveCommit(
+  releaseCheckBaseRef(isMergeCheck, process.env.RELEASE_BASE_SHA, process.env.GITHUB_BASE_SHA),
+)
 
 if (!isMergeCheck) {
   const branch = process.env.GITHUB_HEAD_REF?.trim() || git(["branch", "--show-current"])
