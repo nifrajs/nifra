@@ -26,6 +26,7 @@ export const VERSION_SENSITIVE_TOOLS: ReadonlySet<string> = new Set([
   "nifra_check",
   "nifra_types",
   "nifra_docs",
+  "nifra_example",
   "nifra_assure",
   "nifra_contracts",
 ])

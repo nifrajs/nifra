@@ -9505,8 +9505,8 @@ claude mcp add nifra -- nifra mcp
 The server answers for the nifra the project installs. When the project has its own `@nifrajs/cli` at
 a different version than the `nifra` the client spawned (a global install, say), the session is handed
 to `./node_modules/.bin/nifra mcp`. When that is impossible, `nifra_check`, `nifra_types`,
-`nifra_docs`, `nifra_assure` and `nifra_contracts` refuse with the fix instead of describing a
-different release.
+`nifra_docs`, `nifra_example`, `nifra_assure` and `nifra_contracts` refuse with the fix instead of
+describing a different release.
 
 ## Structured verification
 

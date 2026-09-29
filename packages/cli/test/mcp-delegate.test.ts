@@ -163,9 +163,10 @@ describe("nifra mcp against a project on another nifra release", () => {
         call(4, "nifra_docs", { query: "routing" }),
         call(5, "nifra_assure"),
         call(6, "nifra_contracts"),
-        call(7, "nifra_learn"),
+        call(7, "nifra_example", { query: "upload" }),
+        call(8, "nifra_learn"),
       ],
-      [1, 2, 3, 4, 5, 6, 7],
+      [1, 2, 3, 4, 5, 6, 7, 8],
     )
     expect((answered[1]?.result as { serverInfo?: { name?: string } }).serverInfo?.name).toBe(
       "nifra",
@@ -176,6 +177,7 @@ describe("nifra mcp against a project on another nifra release", () => {
       [4, "nifra_docs"],
       [5, "nifra_assure"],
       [6, "nifra_contracts"],
+      [7, "nifra_example"],
     ] as const) {
       expect(isErrorOf(answered[id])).toBe(true)
       const text = textOf(answered[id])
@@ -184,8 +186,8 @@ describe("nifra mcp against a project on another nifra release", () => {
       expect(text).toContain(`bun add -d @nifrajs/cli@${PROJECT_VERSION}`)
     }
     // A release-independent tool still answers.
-    expect(isErrorOf(answered[7])).not.toBe(true)
-    expect(textOf(answered[7])).not.toContain("refused")
+    expect(isErrorOf(answered[8])).not.toBe(true)
+    expect(textOf(answered[8])).not.toContain("refused")
   }, 45_000)
 
   test("an already handed-off server that still disagrees refuses instead of handing off again", async () => {
