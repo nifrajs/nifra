@@ -1,9 +1,21 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { existsSync } from "node:fs"
-import { mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { MCP_CLI_VERSION } from "create-nifra/agent-files"
 import {
+  collectStaleMcpPins,
   type InitAgentsResult,
   initAgents,
   renderInitAgents,
@@ -283,6 +295,169 @@ describe("runInitAgents", () => {
   })
 })
 
+describe("initAgents --sync-mcp - re-pins the MCP launch and nothing else", () => {
+  const STALE = "3.1.0"
+  const pin = (version: string) => `@nifrajs/cli@${version}`
+  const launch = (version: string) => `bunx ${pin(version)} mcp`
+
+  // Hand-edited files a real app accumulates: CRLF, a second server, 4-space indent, non-ASCII prose,
+  // and stale-version mentions that are NOT the launch pin (an upgrade note, a later section).
+  const mcpJsonCrlf = (version: string) =>
+    [
+      "{",
+      '    "mcpServers": {',
+      `        "nifra": { "command": "bunx", "args": ["${pin(version)}", "mcp"] },`,
+      '        "other": { "command": "npx", "args": ["other-mcp@1.0.0"], "env": { "NOTE": "@nifrajs/cli@3.1.0 is not a pin here" } }',
+      "    }",
+      "}",
+      "",
+    ].join("\r\n")
+  const cursorJson = (version: string) =>
+    `{\n  "mcpServers": {\n    "nifra": {\n      "command": "bunx",\n      "args": [\n        "${pin(version)}",\n        "mcp"\n      ]\n    }\n  }\n}\n`
+  const claude = (version: string) =>
+    `# House rules ✓ café\n\nOur agent launches \`${launch(version)}\` - keep it that way.\n\nUpgraded from @nifrajs/cli@3.0.0 in June (history, not a launch).\n\n@AGENTS.md\n`
+  const agents = (version: string) =>
+    [
+      "# Conventions",
+      "",
+      `Before the upgrade we ran \`${launch(STALE)}\` by hand.`,
+      "",
+      "## MCP server",
+      "",
+      `This project ships a nifra MCP server - launch it with \`${launch(version)}\`.`,
+      "",
+      "## Release notes",
+      "",
+      `- 2026-06: \`${launch(STALE)}\` shipped.`,
+      "",
+    ].join("\n")
+
+  async function staleProject(): Promise<string> {
+    const dir = await freshDir()
+    await mkdir(join(dir, ".cursor"))
+    await writeFile(join(dir, ".mcp.json"), mcpJsonCrlf(STALE))
+    await writeFile(join(dir, ".cursor/mcp.json"), cursorJson(STALE))
+    await writeFile(join(dir, "CLAUDE.md"), claude(STALE))
+    await writeFile(join(dir, "AGENTS.md"), agents(STALE))
+    return dir
+  }
+  const snapshot = async (dir: string): Promise<Record<string, string>> =>
+    Object.fromEntries(
+      await Promise.all(
+        [".mcp.json", ".cursor/mcp.json", "CLAUDE.md", "AGENTS.md"].map(
+          async (rel) => [rel, await read(dir, rel)] as const,
+        ),
+      ),
+    )
+
+  test("a stale 3.1.0 pin is rewritten to the current version in all four files", async () => {
+    const dir = await staleProject()
+    const result = await initAgents(dir, { syncMcp: true })
+    expect(result.syncedTo).toBe(MCP_CLI_VERSION)
+    for (const path of [".mcp.json", ".cursor/mcp.json", "CLAUDE.md", "AGENTS.md"]) {
+      expect(actionFor(result, path)).toBe("synced")
+      expect(result.files.find((f) => f.path === path)?.note).toBe(`${STALE} -> ${MCP_CLI_VERSION}`)
+    }
+    const mcp = JSON.parse(await read(dir, ".mcp.json")) as {
+      mcpServers: Record<string, { args: string[] }>
+    }
+    expect(mcp.mcpServers.nifra?.args).toEqual([pin(MCP_CLI_VERSION), "mcp"])
+  })
+
+  test("every byte outside the pin stays as the user wrote it", async () => {
+    const dir = await staleProject()
+    await initAgents(dir, { syncMcp: true })
+    expect(await snapshot(dir)).toEqual({
+      ".mcp.json": mcpJsonCrlf(MCP_CLI_VERSION),
+      ".cursor/mcp.json": cursorJson(MCP_CLI_VERSION),
+      "CLAUDE.md": claude(MCP_CLI_VERSION),
+      // Only the `## MCP server` section is ours: the note above it and the release notes below keep 3.1.0.
+      "AGENTS.md": agents(MCP_CLI_VERSION),
+    })
+    expect(await read(dir, "AGENTS.md")).toContain(`Before the upgrade we ran \`${launch(STALE)}\``)
+    expect(await read(dir, "AGENTS.md")).toContain(`- 2026-06: \`${launch(STALE)}\` shipped.`)
+  })
+
+  test("running it twice is a no-op", async () => {
+    const dir = await staleProject()
+    await initAgents(dir, { syncMcp: true })
+    const once = await snapshot(dir)
+    const again = await initAgents(dir, { syncMcp: true })
+    expect(again.files.map((f) => f.action)).toEqual(["present", "present", "present", "present"])
+    expect(await snapshot(dir)).toEqual(once)
+    expect(renderInitAgents(again)).toContain("Nothing to re-pin")
+  })
+
+  test("pins to the nifra the project installs, not the running CLI", async () => {
+    const dir = await staleProject()
+    await mkdir(join(dir, "node_modules/@nifrajs/cli"), { recursive: true })
+    await writeFile(
+      join(dir, "node_modules/@nifrajs/cli/package.json"),
+      JSON.stringify({ name: "@nifrajs/cli", version: "3.4.2" }),
+    )
+    const result = await initAgents(dir, { syncMcp: true })
+    expect(result.syncedTo).toBe("3.4.2")
+    expect(await read(dir, ".cursor/mcp.json")).toBe(cursorJson("3.4.2"))
+    expect(await read(dir, "CLAUDE.md")).toBe(claude("3.4.2"))
+  })
+
+  test("creates nothing: absent files and files without a pin are reported, not repaired", async () => {
+    const dir = await freshDir()
+    await writeFile(join(dir, "AGENTS.md"), "# Conventions\n\nNo MCP section here.\n")
+    await writeFile(join(dir, "CLAUDE.md"), `Launch with bunx ${pin("latest")} mcp\n`)
+    const result = await initAgents(dir, { syncMcp: true })
+    expect(result.files.map((f) => f.action)).toEqual(["skipped", "skipped", "skipped", "skipped"])
+    expect(existsSync(join(dir, ".mcp.json"))).toBe(false)
+    expect(existsSync(join(dir, ".cursor"))).toBe(false)
+    expect(await read(dir, "AGENTS.md")).toBe("# Conventions\n\nNo MCP section here.\n")
+    expect(await read(dir, "CLAUDE.md")).toBe(`Launch with bunx ${pin("latest")} mcp\n`)
+  })
+
+  test("leaves a symlinked file alone and keeps the file mode of the ones it rewrites", async () => {
+    const dir = await staleProject()
+    await chmod(join(dir, "CLAUDE.md"), 0o600)
+    const target = join(dir, "real-agents.md")
+    await writeFile(target, agents(STALE))
+    await rm(join(dir, "AGENTS.md"))
+    await symlink(target, join(dir, "AGENTS.md"))
+    const result = await initAgents(dir, { syncMcp: true })
+    expect(actionFor(result, "AGENTS.md")).toBe("skipped")
+    expect(await readFile(target, "utf8")).toBe(agents(STALE))
+    expect((await stat(join(dir, "CLAUDE.md"))).mode & 0o777).toBe(0o600)
+  })
+
+  test("refuses --force alongside --sync-mcp", async () => {
+    const dir = await staleProject()
+    await expect(initAgents(dir, { syncMcp: true, force: true })).rejects.toThrow(
+      /--sync-mcp cannot be combined with --force/,
+    )
+    expect(await read(dir, "CLAUDE.md")).toBe(claude(STALE))
+  })
+
+  test("a plain init-agents run points a kept stale file at --sync-mcp", async () => {
+    const dir = await staleProject()
+    const result = await initAgents(dir)
+    expect(actionFor(result, "CLAUDE.md")).toBe("skipped")
+    expect(result.files.find((f) => f.path === "CLAUDE.md")?.note).toContain(
+      `pinned to ${STALE}; \`nifra init-agents --sync-mcp\` re-pins it to ${MCP_CLI_VERSION}`,
+    )
+    expect(await read(dir, "CLAUDE.md")).toBe(claude(STALE))
+  })
+
+  test("collectStaleMcpPins reads without writing", async () => {
+    const dir = await staleProject()
+    const before = await snapshot(dir)
+    expect(await collectStaleMcpPins(dir)).toEqual({
+      target: MCP_CLI_VERSION,
+      files: [".mcp.json", ".cursor/mcp.json", "CLAUDE.md", "AGENTS.md"].map((path) => ({
+        path,
+        pinned: [STALE],
+      })),
+    })
+    expect(await snapshot(dir)).toEqual(before)
+  })
+})
+
 // One end-to-end check that the dispatcher wires `nifra init-agents` and confines writes to the cwd.
 describe("CLI dispatch (subprocess)", () => {
   const CLI = join(import.meta.dir, "../src/cli.ts")
@@ -305,5 +480,23 @@ describe("CLI dispatch (subprocess)", () => {
     const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
     expect(code).toBe(0)
     expect(stdout).toContain("nifra init-agents")
+    expect(stdout).toContain("nifra init-agents --sync-mcp")
+  })
+
+  test("`nifra init-agents --sync-mcp` re-pins in the cwd and writes nothing new", async () => {
+    const dir = await freshDir()
+    await writeFile(join(dir, "CLAUDE.md"), "Launch `bunx @nifrajs/cli@3.1.0 mcp`.\n")
+    const proc = Bun.spawn([process.execPath, CLI, "init-agents", "--sync-mcp"], {
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
+    expect(code).toBe(0)
+    expect(stdout).toContain(`✓ re-pinned CLAUDE.md`)
+    expect(await read(dir, "CLAUDE.md")).toBe(
+      `Launch \`bunx @nifrajs/cli@${MCP_CLI_VERSION} mcp\`.\n`,
+    )
+    expect(existsSync(join(dir, ".mcp.json"))).toBe(false)
   })
 })

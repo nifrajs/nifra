@@ -47,7 +47,8 @@ export const MCP_SERVER_COMMAND = "bunx" as const
  * keeps respawning the stale binary even after a newer one is published (the MCP server silently runs
  * old code). Pinning the exact version makes the version part of the cache key, so each release fetches
  * fresh and a stale cache can never shadow it. The cost: an already-scaffolded app's `.mcp.json` freezes
- * at its scaffold-time version until `nifra init-agents` is re-run - an acceptable, deterministic trade.
+ * at its scaffold-time version until `nifra init-agents --sync-mcp` re-pins it to the nifra the project
+ * installs - an acceptable, deterministic trade.
  */
 export const MCP_CLI_VERSION: string = (
   JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {

@@ -4440,6 +4440,10 @@ nifra init-agents
 #   AGENTS.md          the same, in the vendor-neutral format
 
 # Then restart the agent so it picks the server up.
+
+# The server is pinned to an exact @nifrajs/cli. After upgrading nifra, re-pin it to the version the
+# project installs. Only that version string changes; every other byte of the four files is kept.
+nifra init-agents --sync-mcp
 ```
 
 The generated files are additive and the command will not overwrite an existing one, so it is

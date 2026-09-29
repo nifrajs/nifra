@@ -250,7 +250,8 @@ export interface ToolingDrift {
 export const driftNote = (drift: ToolingDrift): string =>
   `WARNING: this server runs nifra CLI ${drift.cli}, but the project installs ${drift.package} ${drift.project}. ` +
   "Types, checks, and docs may describe a different version than your code builds with. " +
-  "Fix: run the project's own CLI (`bunx --bun nifra mcp` from the project directory, or point the client at ./node_modules/.bin/nifra)."
+  `Fix: re-pin the project's MCP launch to the nifra it installs with \`${syncMcpCommand(drift.cli)}\` (run in the project directory), then restart the agent. ` +
+  "If this server is not launched from the project's .mcp.json, run the project's own CLI instead (`bunx --bun nifra mcp` from the project directory, or point the client at ./node_modules/.bin/nifra)."
 
 /** Feature-level agreement. Patch drift is not reported: it never changes the surface being described. */
 const featureVersion = (version: string): string => version.split(".").slice(0, 2).join(".")
@@ -285,15 +286,33 @@ export async function detectToolingDrift(
   root: string,
   cliVersion: string,
 ): Promise<ToolingDrift | undefined> {
+  const installed = await installedNifraVersion(root)
+  if (installed === undefined) return undefined
+  return featureVersion(installed.version) === featureVersion(cliVersion)
+    ? undefined
+    : { cli: cliVersion, project: installed.version, package: installed.package }
+}
+
+/**
+ * The nifra the project builds with: its `@nifrajs/cli` when installed, else its `@nifrajs/core`
+ * (`fixed` versioning keeps the two in lockstep, so either names the CLI that matches the project).
+ * The version drift detection compares against and the version `init-agents --sync-mcp` pins to.
+ */
+export async function installedNifraVersion(
+  root: string,
+): Promise<{ readonly package: string; readonly version: string } | undefined> {
   for (const name of ["@nifrajs/cli", "@nifrajs/core"]) {
-    const project = await installedVersion(root, name)
-    if (project === undefined) continue
-    return featureVersion(project) === featureVersion(cliVersion)
-      ? undefined
-      : { cli: cliVersion, project, package: name }
+    const version = await installedVersion(root, name)
+    if (version !== undefined) return { package: name, version }
   }
   return undefined
 }
+
+/** The command that re-pins a project's MCP launch to the nifra it installs. Named with the running
+ * CLI's own exact version: the binary printing this is the one known to have `--sync-mcp`, and it pins
+ * to the project's version, not its own. */
+export const syncMcpCommand = (cliVersion: string): string =>
+  `bunx @nifrajs/cli@${cliVersion} init-agents --sync-mcp`
 
 /** Tool names served from the bundled corpus; they do not depend on the project root. */
 const PROJECT_FREE_TOOLS = new Set(["nifra_docs", "nifra_example", "nifra_types", "nifra_learn"])

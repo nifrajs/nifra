@@ -115,6 +115,10 @@ Usage:
                                          and a "## MCP server" section in AGENTS.md. No-clobber by
                                          default (skips a file you've customized); --force overwrites the
                                          owned files. AGENTS.md is only appended to, never overwritten.
+  nifra init-agents --sync-mcp [--json]  Re-pin an existing app's MCP launch to the nifra the project
+                                         installs: rewrites only the @nifrajs/cli@x.y.z version in
+                                         .mcp.json, .cursor/mcp.json, CLAUDE.md and AGENTS.md's MCP
+                                         section - every other byte stays as it is. Creates nothing.
   nifra mcp [dir]                        Start an MCP server (stdio) exposing this project to a coding
                                          agent. The project root is [dir] when given, else resolved from
                                          cwd (marker walk-up + the client's MCP roots); tools refuse
@@ -910,6 +914,7 @@ async function main(): Promise<void> {
     await runInitAgents(process.cwd(), {
       json: argv.includes("--json"),
       force: argv.includes("--force"),
+      syncMcp: argv.includes("--sync-mcp"),
     })
     return
   }

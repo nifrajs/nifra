@@ -17,7 +17,11 @@ nifra init-agents
 #   CLAUDE.md          project conventions an agent reads on entry
 #   AGENTS.md          the same, in the vendor-neutral format
 
-# Then restart the agent so it picks the server up.`
+# Then restart the agent so it picks the server up.
+
+# The server is pinned to an exact @nifrajs/cli. After upgrading nifra, re-pin it to the version the
+# project installs. Only that version string changes; every other byte of the four files is kept.
+nifra init-agents --sync-mcp`
 
 const LOOP = `# 1. What is here?
 nifra_context           # routes, page routes, conventions - one call, unfiltered, as an index

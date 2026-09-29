@@ -10,6 +10,7 @@ import {
   collectDuplicateInstalls,
   collectStaleWorkspaceDists,
   packageOf,
+  runDoctor,
   scanUndeclaredImports,
 } from "../src/doctor.ts"
 
@@ -1057,6 +1058,72 @@ describe("collectDoctorResult - CLI-vs-project version drift", () => {
       await installCore(dir, "1.0.0")
       const result = await collectDoctorResult(dir)
       expect(result.toolingDrift).toBeUndefined()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  const printed = async (dir: string, cliVersion: string): Promise<string> => {
+    const lines: string[] = []
+    const log = console.log
+    console.log = (...args: unknown[]) => lines.push(args.join(" "))
+    try {
+      await runDoctor(dir, { cliVersion })
+    } finally {
+      console.log = log
+    }
+    return lines.join("\n")
+  }
+
+  test("the drift fix names the command that re-pins the project's MCP launch", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-drift-"))
+    try {
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "^2.11.0" } }),
+      )
+      await installCore(dir, "2.11.3")
+      expect(await printed(dir, "2.10.0")).toContain(
+        "`bunx @nifrajs/cli@2.10.0 init-agents --sync-mcp` re-pins the project's MCP launch",
+      )
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("flags an MCP launch pinned to a nifra the project no longer installs - advisory", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-doctor-pin-"))
+    try {
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "^2.11.0" } }),
+      )
+      await installCore(dir, "2.11.3")
+      await writeFile(
+        join(dir, ".mcp.json"),
+        JSON.stringify({
+          mcpServers: { nifra: { command: "bunx", args: ["@nifrajs/cli@2.4.0", "mcp"] } },
+        }),
+      )
+      // The CLI running doctor matches the project, so there is no drift - only the pin is stale.
+      const result = await collectDoctorResult(dir, { cliVersion: "2.11.3" })
+      expect(result.toolingDrift).toBeUndefined()
+      expect(result.staleMcpPins).toEqual({
+        target: "2.11.3",
+        files: [{ path: ".mcp.json", pinned: ["2.4.0"] }],
+      })
+      expect(result.ok).toBe(true)
+      const out = await printed(dir, "2.11.3")
+      expect(out).toContain(".mcp.json: @nifrajs/cli@2.4.0")
+      expect(out).toContain("`bunx @nifrajs/cli@2.11.3 init-agents --sync-mcp`")
+
+      await writeFile(
+        join(dir, ".mcp.json"),
+        JSON.stringify({
+          mcpServers: { nifra: { command: "bunx", args: ["@nifrajs/cli@2.11.3", "mcp"] } },
+        }),
+      )
+      expect((await collectDoctorResult(dir)).staleMcpPins).toBeUndefined()
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

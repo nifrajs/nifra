@@ -296,6 +296,9 @@ describe("detectToolingDrift - the CLI answering vs the nifra the project builds
           drift,
         ),
       ).toContain("nifra CLI 2.11.0")
+      expect(
+        rootInstructions({ root: dir, source: "cwd", isProject: true, clientRoots: null }, drift),
+      ).toContain("`bunx @nifrajs/cli@2.11.0 init-agents --sync-mcp`")
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

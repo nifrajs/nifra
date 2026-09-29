@@ -29,7 +29,8 @@ import {
   resolvedInstalledCopy,
 } from "@nifrajs/web/internal/parity"
 import { codePositionMask, type SourceFinding, stripComments, walkSource } from "./check.ts"
-import { detectToolingDrift, type ToolingDrift } from "./mcp-root.ts"
+import { collectStaleMcpPins, type StaleMcpPin } from "./init-agents.ts"
+import { detectToolingDrift, syncMcpCommand, type ToolingDrift } from "./mcp-root.ts"
 import { collectPipelineReport, type PipelineReport } from "./pipeline-report.ts"
 import { type ResolvedTarget, resolveTarget } from "./port.ts"
 import { buildScriptName } from "./workspace-link.ts"
@@ -174,6 +175,12 @@ export interface DoctorResult {
    * supplied and the feature versions disagree. Computed by {@link detectToolingDrift}.
    */
   readonly toolingDrift?: ToolingDrift
+  /**
+   * Agent files whose MCP launch pins an `@nifrajs/cli` other than the one the project installs, so
+   * the agent's server answers for a release the code no longer builds with. Advisory (never folded
+   * into `ok`). Present only when at least one file is stale. Computed by {@link collectStaleMcpPins}.
+   */
+  readonly staleMcpPins?: { readonly target: string; readonly files: readonly StaleMcpPin[] }
   /** Static production-readiness evidence for the selected deploy target. */
   readonly readiness?: DoctorReadiness
   /** The explicit source boundary used by the dependency scan. */
@@ -804,7 +811,8 @@ export async function collectDoctorResult(
   // pass its own version (e.g. the MCP server, which already annotates every result with the drift).
   const toolingDrift =
     opts.cliVersion !== undefined ? await detectToolingDrift(cwd, opts.cliVersion) : undefined
-  // `staleDists` and `toolingDrift` are advisory (see DoctorResult): they never fail `ok`.
+  const staleMcpPins = await collectStaleMcpPins(cwd).catch(() => undefined)
+  // `staleDists`, `toolingDrift` and `staleMcpPins` are advisory (see DoctorResult): they never fail `ok`.
   return {
     ok:
       findings.length === 0 &&
@@ -821,6 +829,7 @@ export async function collectDoctorResult(
     readiness,
     scanScope,
     ...(toolingDrift !== undefined ? { toolingDrift } : {}),
+    ...(staleMcpPins !== undefined && staleMcpPins.files.length > 0 ? { staleMcpPins } : {}),
     ...(pipeline.ran ? { pipeline } : {}),
   }
 }
@@ -1000,8 +1009,26 @@ export async function runDoctor(
         "its types, checks, and docs may describe a different version than your code builds with.",
     )
     console.log(
-      "      fix: run the project's own CLI (`bunx --bun nifra doctor` from the project directory, " +
+      `      fix: \`${syncMcpCommand(drift.cli)}\` re-pins the project's MCP launch to the nifra it installs; ` +
+        "for the CLI itself, run the project's own (`bunx --bun nifra doctor` from the project directory, " +
         "or ./node_modules/.bin/nifra)\n",
+    )
+  }
+  // Advisory: the agent's MCP server is launched from these pins, so a stale one answers for an old
+  // release even when the CLI running doctor matches the project.
+  if (result.staleMcpPins !== undefined) {
+    const { target, files } = result.staleMcpPins
+    console.log(
+      `⚠ the MCP launch pins a nifra other than the project's ${target} - an agent's nifra server answers for that release:`,
+    )
+    for (const file of files)
+      console.log(`    ${file.path}: @nifrajs/cli@${file.pinned.join(", ")}`)
+    const command =
+      opts.cliVersion !== undefined
+        ? syncMcpCommand(opts.cliVersion)
+        : "nifra init-agents --sync-mcp"
+    console.log(
+      `      fix: \`${command}\` rewrites only the pinned version, then restart the agent\n`,
     )
   }
   if (result.ok) {
