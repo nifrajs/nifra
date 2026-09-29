@@ -102,6 +102,28 @@ describe("rangeResponse()", () => {
     expect(await stale.text()).toBe("0123456789")
   })
 
+  test("a date If-Range keeps the range only on an exact Last-Modified match", async () => {
+    const body = new TextEncoder().encode("0123456789")
+    const lastModified = new Date("2020-01-01T00:00:00.000Z")
+    const send = (ifRange: string) =>
+      rangeResponse(
+        new Request("http://x/file.txt", { headers: { range: "bytes=2-5", "if-range": ifRange } }),
+        body,
+        { lastModified },
+      )
+
+    const exact = send("Wed, 01 Jan 2020 00:00:00 GMT")
+    expect(exact.status).toBe(206)
+    expect(await exact.text()).toBe("2345")
+
+    // A later date is a different validator, not a fresher one: the whole representation is sent.
+    for (const other of ["Thu, 02 Jan 2020 00:00:00 GMT", "Tue, 31 Dec 2019 00:00:00 GMT"]) {
+      const response = send(other)
+      expect(response.status).toBe(200)
+      expect(await response.text()).toBe("0123456789")
+    }
+  })
+
   test("keeps HEAD bodyless while preserving representation length", async () => {
     const response = rangeResponse(
       new Request("http://x/file.txt", { method: "HEAD", headers: { range: "bytes=2-5" } }),
