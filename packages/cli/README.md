@@ -164,6 +164,12 @@ Claude Code:
 claude mcp add nifra -- nifra mcp
 ```
 
+The server answers for the nifra the project installs. When the project has its own `@nifrajs/cli` at
+a different version than the `nifra` the client spawned (a global install, say), the session is handed
+to `./node_modules/.bin/nifra mcp`. When that is impossible, `nifra_check`, `nifra_types`,
+`nifra_docs`, `nifra_assure` and `nifra_contracts` refuse with the fix instead of describing a
+different release.
+
 ## Structured verification
 
 `nifra check --json` returns stable diagnostic codes and machine-actionable evidence. `nifra assure --json --strict` returns one versioned bundle with explicit pass, fail, and skip gate results plus a `green` or `red` verdict. Use `nifra fix --code NF-...` for a registered fix recipe, and `nifra contracts snapshot` to opt into route contract drift detection.

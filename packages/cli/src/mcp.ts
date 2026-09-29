@@ -29,7 +29,9 @@
  * `["mcp", "<dir>"]` to pin the project directory explicitly). The server does NOT silently trust its
  * spawn directory: the root is resolved via `./mcp-root.ts` (marker walk-up, the client's MCP `roots`,
  * fail-closed tools when no nifra project is found) and announced in `initialize` + on every project
- * tool result. The protocol is hand-rolled (newline-delimited JSON-RPC 2.0 over stdio), including
+ * tool result. A project that installs its own `@nifrajs/cli` at a different version gets the session
+ * handed to that CLI; when that is impossible the version-sensitive tools refuse rather than answer
+ * for the wrong release (see `./mcp-delegate.ts`). The protocol is hand-rolled (newline-delimited JSON-RPC 2.0 over stdio), including
  * standard MCP progress notifications and request cancellation - no SDK dependency, the same
  * minimal-surface choice as the rest of nifra. The pure dispatch lives in `./mcp-protocol.ts`; this
  * module is the I/O shell (stdin loop, tool wiring, the run subprocess).
@@ -41,6 +43,7 @@ import { loadDocsCorpus } from "./docs-search.ts"
 import { loadExamplesCorpus } from "./examples.ts"
 import type { LoadedApp } from "./load.ts"
 import { detectMonorepo, loadMonorepoApps } from "./load.ts"
+import { delegateToProjectCli, refuseVersionSensitive } from "./mcp-delegate.ts"
 import { docsTools } from "./mcp-docs-tools.ts"
 import {
   createMcpProtocolState,
@@ -217,6 +220,19 @@ export async function runMcpServer(
     throw new Error(`nifra mcp: directory not found: ${requested}`)
   }
   let rootState = await resolveRootState(requested, explicitDir !== undefined)
+  if (rootState.isProject) {
+    // Before anything reads stdin: a hand-off child inherits the descriptor and owns the session.
+    const exitCode = await delegateToProjectCli({
+      cwd,
+      root: rootState.root,
+      version,
+      args: explicitDir === undefined ? [] : [requested],
+    })
+    if (exitCode !== undefined) {
+      process.exitCode = exitCode
+      return
+    }
+  }
   let ctx = await createProjectContext(rootState.root)
   let drift: ToolingDrift | undefined = await detectToolingDrift(rootState.root, version)
   const serverInfo = { name: "nifra", version }
@@ -282,14 +298,23 @@ export async function runMcpServer(
       const allTools: McpTool[] = []
       for (const { name, cwd: appCwd } of appEntries) {
         const loader = createCachedAppLoader(appCwd)
-        const tools = [...projectTools(appCwd, loader), ...(await appDeclaredTools(loader))]
+        const tools = [
+          ...refuseVersionSensitive(projectTools(appCwd, loader), drift),
+          ...(await appDeclaredTools(loader)),
+        ]
         const ns = namespaceForApp(name, tools, { resources: [], prompts: [] })
         allTools.push(...ns.tools)
       }
-      activeTools = [...docsTools(loadDocsCorpus, loadExamplesCorpus, loadTypesCorpus), ...allTools]
+      activeTools = [
+        ...refuseVersionSensitive(
+          docsTools(loadDocsCorpus, loadExamplesCorpus, loadTypesCorpus),
+          drift,
+        ),
+        ...allTools,
+      ]
     } else {
       activeTools = [
-        ...projectTools(rootState.root, ctx.loadAppCached),
+        ...refuseVersionSensitive(projectTools(rootState.root, ctx.loadAppCached), drift),
         ...(await appDeclaredTools(ctx.loadAppCached)),
       ]
     }
