@@ -5,6 +5,7 @@ import {
   changedPublicPackageVersions,
   isReleaseBranch,
   pendingChangesetFiles,
+  releaseCheckBaseRef,
 } from "./release-branch.ts"
 
 describe("release branch policy", () => {
@@ -34,6 +35,18 @@ describe("release branch policy", () => {
         { name: "private-tool", version: "3.5.1", private: true },
       ]),
     ).toEqual([{ name: "@nifrajs/core", baseVersion: "3.5.0", releaseVersion: "3.5.1" }])
+  })
+
+  test("requires the associated pull request base SHA for merge checks", () => {
+    const baseSha = "a".repeat(40)
+    expect(releaseCheckBaseRef(true, baseSha, "ignored")).toBe(baseSha)
+    expect(() => releaseCheckBaseRef(true, undefined, "ignored")).toThrow(
+      "RELEASE_BASE_SHA to be a full commit SHA",
+    )
+    expect(() => releaseCheckBaseRef(true, "main", "ignored")).toThrow(
+      "RELEASE_BASE_SHA to be a full commit SHA",
+    )
+    expect(releaseCheckBaseRef(false, undefined, "base-sha")).toBe("base-sha")
   })
 })
 
