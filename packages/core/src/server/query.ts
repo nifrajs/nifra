@@ -117,8 +117,15 @@ export function queryObjectOf(search: string): Record<string, QueryValue> {
  * so a JSON route would parse a body no CORS policy ever saw.
  */
 export function isJsonMediaType(contentType: string): boolean {
-  // Every lowercase `application/json` spelling, parameters or not, without slicing or lowercasing.
-  if (contentType === "application/json") return true
+  // The spellings common clients send, by exact match.
+  if (
+    contentType === "application/json" ||
+    contentType === "application/json; charset=utf-8" ||
+    contentType === "application/json;charset=UTF-8"
+  ) {
+    return true
+  }
+  // Every other lowercase `application/json` spelling, parameters or not, without slicing or lowercasing.
   if (contentType.startsWith("application/json")) {
     let delimiter = 16
     while (delimiter < contentType.length) {
@@ -128,6 +135,20 @@ export function isJsonMediaType(contentType: string): boolean {
     }
     if (delimiter === contentType.length || contentType.charCodeAt(delimiter) === 59 /* ; */) {
       return true
+    }
+  }
+  // Lowercase `application/*+json` spellings by the same rules as the parse below, without allocating.
+  if (contentType.startsWith("application/")) {
+    const params = contentType.indexOf(";", 12)
+    let end = params === -1 ? contentType.length : params
+    while (end > 12) {
+      const char = contentType.charCodeAt(end - 1)
+      if (char !== 32 /* SP */ && char !== 9 /* HTAB */) break
+      end--
+    }
+    if (end >= 17 && contentType.startsWith("+json", end - 5)) {
+      const space = contentType.indexOf(" ", 12)
+      if (space === -1 || space >= end) return true
     }
   }
   const semi = contentType.indexOf(";")

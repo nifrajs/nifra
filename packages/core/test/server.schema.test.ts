@@ -199,6 +199,10 @@ describe("body validation", () => {
     expect((await send("application/json+x")).status).toBe(415)
     expect((await send("application/json garbage")).status).toBe(415)
     expect((await send("application/json\tgarbage")).status).toBe(415)
+    expect((await send("application/x +json")).status).toBe(415)
+    expect((await send("application/vnd.api+json garbage")).status).toBe(415)
+    expect((await send("application/vnd.api+jsonx")).status).toBe(415)
+    expect((await send("text/x+json")).status).toBe(415)
     for (const accepted of [
       "application/json",
       "application/json; charset=utf-8",
@@ -207,6 +211,9 @@ describe("body validation", () => {
       "Application/JSON; charset=UTF-8",
       "application/vnd.api+json",
       "application/merge-patch+json",
+      "application/problem+json; charset=utf-8",
+      "application/vnd.api+json ; ext=x",
+      "APPLICATION/VND.API+JSON",
     ]) {
       expect((await send(accepted)).status).toBe(200)
     }
