@@ -64,6 +64,10 @@ async function measureMiddleware(
 }
 
 const CHECK = process.argv.includes("--check")
+// Keep enough paired rounds for the median to outvote short-lived hosted-runner
+// scheduling noise without changing either release threshold.
+const MEASUREMENT_ROUNDS = 41
+const REQUESTS_PER_ROUND = 5000
 const MAX_OVERHEAD_PERCENT = 50
 const MAX_OVERHEAD_NS = 250
 const bare = server().get("/users/:id", (c) => ({ id: c.params.id }))
@@ -75,8 +79,8 @@ const withMiddleware = server()
 const { bareOps, mwOps, overheadNs, overheadPct } = await measureMiddleware(
   bare,
   withMiddleware,
-  21,
-  5000,
+  MEASUREMENT_ROUNDS,
+  REQUESTS_PER_ROUND,
 )
 console.log(`\n  in-process app.fetch() - Bun ${Bun.version}\n`)
 console.log(
