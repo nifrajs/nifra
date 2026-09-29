@@ -25,6 +25,15 @@
  */
 export type ClientIpTrust = { readonly trustedHops: number } | { readonly header: string }
 
+/**
+ * Marks a platform whose `clientIp` an enclosing nifra server already derived under its own `clientIp`
+ * trust declaration. A server that receives such a platform takes `clientIp` as-is instead of re-deriving
+ * it from the request's forwarding headers - an in-process call's `Request` is synthesized, so identity
+ * travels in the platform, never in headers a rebuilt request would lose. Only server code builds a
+ * platform; a client cannot set it.
+ */
+export const NIFRA_PLATFORM_CLIENT_IP_DERIVED = Symbol.for("@nifrajs/platform-client-ip-derived")
+
 function firstHeaderValue(req: Request, header: string): string | undefined {
   const raw = req.headers.get(header)
   if (raw === null) return undefined

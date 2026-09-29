@@ -1,4 +1,9 @@
-import type { ResponseResult } from "@nifrajs/core/server"
+import {
+  type BackendPlatformBinder,
+  NIFRA_BACKEND_BIND_PLATFORM,
+  NIFRA_PLATFORM_CLIENT_IP_DERIVED,
+} from "@nifrajs/core/mount"
+import type { Platform, ResponseResult } from "@nifrajs/core/server"
 import {
   type BoundaryRequestCtx,
   type BoundaryStates,
@@ -59,7 +64,42 @@ export interface PageRouteContext<Env = unknown> {
   readonly params: Record<string, string>
   readonly req: Request
   readonly env: Env
+  /** The visitor's IP as the serving app derived it; forwarded to a request-bound `ctx.api`. */
+  readonly clientIp?: string | undefined
+  readonly waitUntil?: (promise: Promise<unknown>) => void
 }
+
+/** The request-scoping seam of an in-process `api` (see `inProcessClient`), if it carries one. */
+function platformBinderOf(api: unknown): BackendPlatformBinder | undefined {
+  if ((typeof api !== "object" && typeof api !== "function") || api === null) return undefined
+  const bind = (api as { [NIFRA_BACKEND_BIND_PLATFORM]?: unknown })[NIFRA_BACKEND_BIND_PLATFORM]
+  return typeof bind === "function" ? (bind as BackendPlatformBinder) : undefined
+}
+
+/**
+ * The page request's platform identity for loader calls: `clientIp` (read lazily, so a backend that
+ * never reads `c.clientIp` never pays the socket lookup), `env` and `waitUntil` - and nothing else. The
+ * page request's headers (cookie, authorization) never travel; a loader passes them explicitly if it
+ * wants an authenticated call. The prototype marker tells the backend its `clientIp` is already derived,
+ * so its own trust declaration does not re-read forwarding headers the synthesized request does not
+ * carry; a spread copy drops both the getter and the marker, so it falls back to re-deriving.
+ */
+class LoaderPlatform {
+  readonly env: unknown
+  readonly waitUntil: ((promise: Promise<unknown>) => void) | undefined
+  readonly #c: PageRouteContext<unknown>
+  constructor(c: PageRouteContext<unknown>) {
+    this.#c = c
+    this.env = c.env
+    this.waitUntil = c.waitUntil
+  }
+  get clientIp(): string | undefined {
+    return this.#c.clientIp
+  }
+}
+;(LoaderPlatform.prototype as { [NIFRA_PLATFORM_CLIENT_IP_DERIVED]?: true })[
+  NIFRA_PLATFORM_CLIENT_IP_DERIVED
+] = true
 
 export interface PageExecutionOptions<Env = unknown> {
   readonly adapter: RenderAdapter
@@ -108,6 +148,12 @@ export function createPageRequestExecutor<Env = unknown>(
   options: PageExecutionOptions<Env>,
 ): PageRequestExecutor<Env> {
   const { adapter, manifest, clientEntry, api } = options
+  // Bound once per render, so every loader, action and boundary in that render shares one view of the
+  // in-process client carrying the visitor's platform. An `api` without the seam passes through as-is.
+  const bindApi = platformBinderOf(api)
+  // One view per render, shared by every loader, action and boundary it runs.
+  const apiFor = (c: PageRouteContext<Env>): unknown =>
+    bindApi === undefined ? api : bindApi.call(api, new LoaderPlatform(c) as Platform)
   const cssLoading = normalizeCssLoading(options.cssLoading ?? DEFAULT_CSS_LOADING)
   const titleOption = options.title === undefined ? {} : { title: options.title }
   const prerenderedSet = new Set(options.prerenderedPaths ?? [])
@@ -577,12 +623,13 @@ export function createPageRequestExecutor<Env = unknown>(
         let boundaryStates: BoundaryStates | undefined
         let layoutModules: LoadedLayoutModules | undefined
         let layoutRetained: readonly number[] = []
+        const requestApi = apiFor(c)
         try {
           const ctx: LoaderContext = {
             params: c.params,
             request: c.req,
             req: c.req,
-            api,
+            api: requestApi,
             env: c.env,
             draft,
             search: loaderSearch(mod.searchSchema, c.req),
@@ -606,7 +653,7 @@ export function createPageRequestExecutor<Env = unknown>(
               : startDynamicBoundaries(boundaryDefinitions, {
                   request: c.req,
                   params: c.params,
-                  api,
+                  api: requestApi,
                   env: c.env,
                   draft,
                   search: effectiveSearch,
@@ -682,11 +729,12 @@ export function createPageRequestExecutor<Env = unknown>(
           headers: { allow: "GET", "content-type": "text/plain; charset=utf-8" },
         })
       }
+      const requestApi = apiFor(c)
       const actionContext: LoaderContext = {
         params: c.params,
         request: c.req,
         req: c.req,
-        api,
+        api: requestApi,
         env: c.env,
         draft,
         search: loaderSearch(mod.searchSchema, c.req),
@@ -722,7 +770,7 @@ export function createPageRequestExecutor<Env = unknown>(
             params: c.params,
             request: c.req,
             req: c.req,
-            api,
+            api: requestApi,
             env: c.env,
             draft,
             search,

@@ -4,8 +4,10 @@ import {
   type BackendEvidenceProvider,
   type BackendMount,
   type BackendMountHandler,
+  type BackendPlatformBinder,
   type BackendWebSocketMountHandler,
   type BackendWebSocketRuntimeProvider,
+  NIFRA_BACKEND_BIND_PLATFORM,
   NIFRA_BACKEND_EVIDENCE,
   NIFRA_BACKEND_MOUNT,
   NIFRA_BACKEND_WS_MOUNT,
@@ -25,7 +27,11 @@ import {
 import { RESERVED_VERB_KEYS } from "./reserved.ts"
 import type { ApiError, Result } from "./result.ts"
 import type { Subscription, Treaty, TreatyFromRegistry } from "./treaty.ts"
-import { ResponseContractViolation, withResponseValidation } from "./validate-responses.ts"
+import {
+  type PlatformFetchFn,
+  ResponseContractViolation,
+  withResponseValidation,
+} from "./validate-responses.ts"
 import { NO_SOCKET, openWebSocket } from "./ws.ts"
 
 const CORE_WS_RUNTIME = Symbol.for("@nifrajs/core/get-ws-runtime")
@@ -44,7 +50,7 @@ const CORE_WS_RUNTIME = Symbol.for("@nifrajs/core/get-ws-runtime")
 const HTTP_VERBS: ReadonlySet<string> = new Set(RESERVED_VERB_KEYS)
 const BODY_VERBS: ReadonlySet<string> = new Set(["post", "put", "patch"])
 
-/** Marks a fetcher whose responses are same-process objects (see {@link inProcessClient}). */
+/** Marks client options whose transport returns same-process responses (see {@link inProcessClient}). */
 const LOCAL_FETCH = Symbol("nifra.local-fetch")
 
 /**
@@ -226,6 +232,15 @@ export function client(
  * The returned proxy also implements the explicit symbol-keyed {@link BackendMount} interface, so
  * `createWebApp({ api: inProcessClient(backend) })` can auto-mount the backend while forwarding the
  * outer runtime's `env` and `waitUntil`.
+ *
+ * **Loader calls inherit the page request's platform identity.** While `createWebApp` renders a page,
+ * each loader, action and boundary gets a `ctx.api` bound to that request's platform: the backend sees
+ * the visitor's `c.clientIp` (as the outer app derived it under its `clientIp` trust declaration),
+ * `c.env` and `c.waitUntil`. Read the caller through `c.clientIp` - identity travels in the platform,
+ * so rebuilding a `Request` never loses it. Only platform fields travel: the page request's `cookie`,
+ * `authorization` and other headers are NOT copied, so a loader call is anonymous unless the loader
+ * passes headers itself (`ctx.api.me.get({ headers: { cookie } })`). Used outside a page render
+ * (scripts, {@link testClient}), calls carry no platform, exactly as before.
  */
 const utf8 = new TextEncoder()
 
@@ -260,14 +275,11 @@ export function inProcessClient<
 >(app: App, options?: InProcessClientOptions): InProcessClient<App> {
   // The in-process bridge: the client speaks `fetch(url, init)` (the `FetchFn` shape) while the app's
   // own `fetch` takes a `Request`. It is the proxy's per-call transport; the symbol-keyed mount below
-  // is the platform-aware auto-mount path.
-  const direct: FetchFn = (url, init) => Promise.resolve(app.fetch(synthesizedRequest(url, init)))
+  // is the platform-aware auto-mount path. The optional third argument is the calling request's
+  // platform, supplied only by a view from the bind seam below; the unbound proxy never passes one.
+  const direct: PlatformFetchFn = (url, init, platform) =>
+    Promise.resolve((app.fetch as BackendMountHandler)(synthesizedRequest(url, init), platform))
   const bridge = options?.validateResponses === true ? withResponseValidation(app, direct) : direct
-  // Mark the bridge as same-process: its response bodies are memory the app already holds, so
-  // `parseBody` may use the native `Response.text()` read (measured ~23x cheaper than the streaming
-  // byte-cap reader) - the cap itself is still enforced on the result. Network fetchers are never
-  // marked; they keep the bounded-while-streaming read.
-  ;(bridge as { [LOCAL_FETCH]?: true })[LOCAL_FETCH] = true
   const mount: BackendMountHandler = (request, platform) =>
     Promise.resolve((app.fetch as BackendMountHandler)(request, platform))
   const evidenceProvider: BackendEvidenceProvider = async () => {
@@ -304,17 +316,28 @@ export function inProcessClient<
   ] = evidenceProvider
   // NO_SOCKET marks the options so a typed `.ws()` call fails with a real explanation - an
   // in-process app has no socket to upgrade - instead of dialing ws://nifra.internal into the void.
-  const proxy = client<App>("http://nifra.internal", {
-    ...options,
-    fetch: bridge,
-    [NO_SOCKET]: true,
-  } as ClientOptions)
+  // LOCAL_FETCH marks the transport as same-process: its response bodies are memory the app already
+  // holds, so `parseBody` may use the native `Response.text()` read (measured ~23x cheaper than the
+  // streaming byte-cap reader) - the cap itself is still enforced on the result. Network clients are
+  // never marked; they keep the bounded-while-streaming read.
+  const baseOptions = { ...options, [NO_SOCKET]: true, [LOCAL_FETCH]: true } as ClientOptions
+  const proxy = client<App>("http://nifra.internal", { ...baseOptions, fetch: bridge })
+  // Request scoping: a view whose every call carries one request's platform (clientIp/env/waitUntil),
+  // built by the page executor once per render. The view owns its own route tree because the tree's
+  // nodes close over their transport; the validator's router and every other per-client structure are
+  // shared. A view lives for one render, so its nodes skip the memo Maps a long-lived client keeps.
+  // Nothing here runs unless a render asks, so the unbound proxy's per-call path is unchanged.
+  const bindPlatform: BackendPlatformBinder = (platform) => {
+    const bound: FetchFn = (url, init) => bridge(url, init, platform)
+    return createProxy("http://nifra.internal", "", { ...baseOptions, fetch: bound }, false)
+  }
   // An outer Proxy intercepts only the explicit mount symbol, delegating every typed route segment
   // unchanged (`api.users({ id }).get()`).
   return new Proxy(proxy as object, {
     get(targetProxy, key, receiver) {
       if (key === NIFRA_BACKEND_MOUNT) return mount
       if (key === NIFRA_BACKEND_EVIDENCE) return evidenceProvider
+      if (key === NIFRA_BACKEND_BIND_PLATFORM) return bindPlatform
       if (key === NIFRA_BACKEND_WS_MOUNT) {
         return (
           mount as BackendMountHandler & {
@@ -803,12 +826,11 @@ async function parseBody(response: Response, options: ClientOptions): Promise<un
   // the transport path, so an app that set it there keeps the number it chose.
   const decodedBytes = options.transport?.maxBytes ?? options.maxDecodedBytes
   const bound = decodedBytes === undefined ? {} : { maxBytes: decodedBytes }
-  // In-process responses (the marked fetcher) hold their body as same-process memory the app
+  // In-process responses (the marked transport) hold their body as same-process memory the app
   // already allocated, so the streaming byte-cap reader protects nothing there - the native read
   // is ~23x cheaper and the SAME cap is enforced on the result (identical error). A network
-  // fetcher is never marked and keeps the bounded-while-streaming read.
-  const local =
-    (options.fetch as { readonly [LOCAL_FETCH]?: true } | undefined)?.[LOCAL_FETCH] === true
+  // client is never marked and keeps the bounded-while-streaming read.
+  const local = (options as { readonly [LOCAL_FETCH]?: true })[LOCAL_FETCH] === true
   if (
     contentType.startsWith("application/json") ||
     contentType.startsWith("application/vnd.nifra.")

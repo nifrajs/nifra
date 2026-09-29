@@ -2379,10 +2379,14 @@ Every public export of every package and documented subpath - name, kind, signat
   Structural mount capability exposed by an in-process typed client.
 - **BackendMountHandler** _(type)_ - `type BackendMountHandler<Env = unknown> = ( request: Request, platform?: Platform<Env>, ) => Response | Promise<Response>`
   Dispatch one already-materialized request into a backend with its outer runtime platform context.
+- **BackendPlatformBinder** _(type)_ - `type BackendPlatformBinder<Env = unknown> = (platform: Platform<Env>) => unknown`
+  Returns a view of an in-process typed client bound to one request's platform.
 - **BackendWebSocketMountHandler** _(type)_ - `type BackendWebSocketMountHandler<Env = unknown> = ( request: Request, platform?: Platform<Env>, ) => WebSocketUpgradeOutcome | Promise<WebSocketUpgradeOutcome>`
   Adapter-neutral WebSocket upgrade resolver for a mounted backend.
 - **BackendWebSocketRuntimeProvider** _(type)_ - `type BackendWebSocketRuntimeProvider = () => unknown`
   Opaque provider kept structural so public mount types do not expose the WS runtime internals.
+- **NIFRA_BACKEND_BIND_PLATFORM** _(const)_ - `NIFRA_BACKEND_BIND_PLATFORM: typeof NIFRA_BACKEND_BIND_PLATFORM`
+  Optional request-scoping seam carried by an in-process typed client. Called with one request's {@link Platform}, it returns a view of the same typed client whose calls dispatch with that platform, so a backend reached from an SSR loader sees the page visitor's `c.clientIp`, `c.env` and `c.waitUntil…
 - **NIFRA_BACKEND_EVIDENCE** _(const)_ - `NIFRA_BACKEND_EVIDENCE: typeof NIFRA_BACKEND_EVIDENCE`
   Optional offline assurance/evidence seam for composed applications.
 - **NIFRA_BACKEND_MOUNT** _(const)_ - `NIFRA_BACKEND_MOUNT: typeof NIFRA_BACKEND_MOUNT`
@@ -2391,6 +2395,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Optional symbol-keyed upgrade seam carried by an in-process client mount.
 - **NIFRA_BACKEND_WS_RUNTIME** _(const)_ - `NIFRA_BACKEND_WS_RUNTIME: typeof NIFRA_BACKEND_WS_RUNTIME`
   Internal runtime-provider seam used when an in-process WebSocket backend is mounted in Bun.
+- **NIFRA_PLATFORM_CLIENT_IP_DERIVED** _(const)_ - `NIFRA_PLATFORM_CLIENT_IP_DERIVED: typeof NIFRA_PLATFORM_CLIENT_IP_DERIVED`
+  Marks a platform whose `clientIp` an enclosing nifra server already derived under its own `clientIp` trust declaration. A server that receives such a platform takes `clientIp` as-is instead of re-deriving it from the request's forwarding headers - an in-process call's `Request` is synthesized, so i…
 
 ### `@nifrajs/core/node-direct`
 

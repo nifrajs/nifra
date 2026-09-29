@@ -58,7 +58,11 @@ import {
   type RawBodyReaders,
   UNLIMITED_BODY_BYTES,
 } from "./body.ts"
-import { type ClientIpTrust, resolveClientIp } from "./client-ip.ts"
+import {
+  type ClientIpTrust,
+  NIFRA_PLATFORM_CLIENT_IP_DERIVED,
+  resolveClientIp,
+} from "./client-ip.ts"
 import type { Context, Platform, ResponseControls, RouteSchema } from "./context.ts"
 import {
   hasLowercaseHeaderKeysMark,
@@ -3085,8 +3089,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // Resolve the trust declaration into the platform's `clientIp` ONCE, here at the shared funnel, so
     // `c.clientIp` (and every hook/derive downstream) sees the derived caller. No config ⇒ the raw
     // socket peer the adapter supplied passes through untouched (a one-property no-op on the hot path).
+    // A platform an enclosing nifra server already resolved (an in-process call from an SSR loader)
+    // keeps its `clientIp`: the synthesized request carries none of the visitor's forwarding headers.
     const resolved =
-      this.clientIpTrust === undefined ? platform : this.deriveClientIp(source, platform)
+      this.clientIpTrust === undefined ||
+      (platform as { [NIFRA_PLATFORM_CLIENT_IP_DERIVED]?: unknown } | undefined)?.[
+        NIFRA_PLATFORM_CLIENT_IP_DERIVED
+      ] === true
+        ? platform
+        : this.deriveClientIp(source, platform)
     // onRequest hooks may be async, so a hooked app takes the async path; with no hooks (the common
     // case) routing stays synchronous, letting a bare route resolve with no lifecycle promise at all.
     if (this.onRequestHooks.length === 0) {

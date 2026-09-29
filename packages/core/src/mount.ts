@@ -23,6 +23,16 @@ export const NIFRA_BACKEND_WS_RUNTIME = Symbol.for("@nifrajs/backend-ws-runtime"
 /** Optional offline assurance/evidence seam for composed applications. */
 export const NIFRA_BACKEND_EVIDENCE = Symbol.for("@nifrajs/backend-evidence")
 
+/**
+ * Optional request-scoping seam carried by an in-process typed client. Called with one request's
+ * {@link Platform}, it returns a view of the same typed client whose calls dispatch with that platform,
+ * so a backend reached from an SSR loader sees the page visitor's `c.clientIp`, `c.env` and
+ * `c.waitUntil`. The view carries platform fields only - never the page request's headers.
+ */
+export const NIFRA_BACKEND_BIND_PLATFORM = Symbol.for("@nifrajs/backend-bind-platform")
+
+export { NIFRA_PLATFORM_CLIENT_IP_DERIVED } from "./server/client-ip.ts"
+
 /** Dispatch one already-materialized request into a backend with its outer runtime platform context. */
 export type BackendMountHandler<Env = unknown> = (
   request: Request,
@@ -38,6 +48,9 @@ export type BackendWebSocketMountHandler<Env = unknown> = (
 /** Opaque provider kept structural so public mount types do not expose the WS runtime internals. */
 export type BackendWebSocketRuntimeProvider = () => unknown
 
+/** Returns a view of an in-process typed client bound to one request's platform. */
+export type BackendPlatformBinder<Env = unknown> = (platform: Platform<Env>) => unknown
+
 /** Produces token-only route/evidence facts; it is never called from request dispatch. */
 export type BackendEvidenceProvider = () =>
   | ProjectEvidenceSnapshot
@@ -49,4 +62,5 @@ export interface BackendMount<Env = unknown> {
   readonly [NIFRA_BACKEND_WS_MOUNT]?: BackendWebSocketMountHandler<Env>
   readonly [NIFRA_BACKEND_WS_RUNTIME]?: BackendWebSocketRuntimeProvider
   readonly [NIFRA_BACKEND_EVIDENCE]?: BackendEvidenceProvider
+  readonly [NIFRA_BACKEND_BIND_PLATFORM]?: BackendPlatformBinder<Env>
 }

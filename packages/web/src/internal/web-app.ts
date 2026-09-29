@@ -93,7 +93,15 @@ export interface CreateWebAppOptions<Env = unknown> {
    * mount interface from `@nifrajs/core/mount`; `createWebApp` also serves that backend over HTTP at
    * {@link apiPrefix} (default `/api`): a request whose pathname starts with the prefix is dispatched
    * before page routing with the same `env`/`waitUntil` platform context, and the backend's `Response`
-   * is returned untouched. The mount runs in `nifra dev` too. Pass `apiPrefix: ""` to disable it. */
+   * is returned untouched. The mount runs in `nifra dev` too. Pass `apiPrefix: ""` to disable it.
+   *
+   * **Request-scoped loader calls.** While a page renders, its loaders, actions and boundaries get a
+   * `ctx.api` bound to that request's platform identity: a backend handler reached through it sees the
+   * visitor's `c.clientIp` (derived under this app's `server.clientIp` trust declaration), `c.env` and
+   * `c.waitUntil`, so a per-caller rate limit or audit field keys on the real visitor. `c.clientIp` is
+   * the supported way to read the caller - identity travels in the platform, so rebuilding a `Request`
+   * does not lose it. Headers do NOT travel: the page request's `cookie` and `authorization` are never
+   * copied, so a loader call is anonymous unless the loader passes headers on the call itself. */
   readonly api?: unknown
   /** HTTP path prefix the {@link api} backend is auto-mounted at (default `"/api"`). A request whose
    * pathname is exactly the prefix or starts with `prefix + "/"` is dispatched to the backend before
