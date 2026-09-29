@@ -1,131 +1,151 @@
 name: Release
 
-# Automated, changeset-driven release. After CI passes on main this does ONE of two things:
+# Release preparation happens on a dedicated release/<name> branch. The release PR contains the
+# changeset version commit and is the only PR that may introduce a release. This workflow never
+# creates a second Version Packages PR and never writes to main from a pull_request run.
 #
-#   1. Pending changesets exist  → opens/updates a "Version Packages" PR that bumps the
-#      affected packages and writes their CHANGELOGs. Nothing is published yet.
-#   2. No pending changesets      → (i.e. the Version Packages PR was just merged) builds
-#      every package and publishes the changed ones to npm.
-#
-# Day-to-day flow:
-#   bun run changeset      # describe the bump (which packages, major/minor/patch)
-#   git push               # → CI runs; if it passes, the bot opens the "Version Packages" PR
-#   merge that PR          # → CI runs on the merge; if it passes, THIS workflow publishes to npm
-#
-# Because the merge is itself a push to main, the publish inherits that commit's CI result - a red
-# suite means no publish, with no separate approval step to remember.
-#
-# `changeset publish` replaces every internal `workspace:*` range with the concrete
-# resolved version in the published tarball (so no workspace: protocol leaks to npm -
-# the alpha.1/alpha.2 failure mode) and publishes in dependency order.
-#
-# ONE-TIME SETUP: add an `NPM_TOKEN` repo secret (npm automation token with publish
-# rights to the @nifrajs scope) under Settings → Secrets and variables → Actions.
-# Until that secret exists the publish step finds no auth and fails loudly only when
-# there is actually something to publish - there is no silent half-publish.
+# After a release PR merges, the workflow_run path only publishes the exact CI-validated merge SHA.
+# It is guarded by the GitHub API association between that SHA and a merged release PR, so an
+# ordinary main merge is a no-op.
 
-# Gated on CI, not on the push. `on: push` published whatever landed on main, whether or not the
-# checks passed - and the Version PR merging IS a push, so a red suite was one click from npm. That
-# was not theoretical: this repo sat for hours with six consecutive failing CI runs and a Version PR
-# ready to merge. Running after CI *concludes* and releasing only on success makes the checks a gate
-# instead of a report. A skipped or failed CI run simply never triggers this, which is the right
-# default for something that publishes.
 on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_run:
     workflows: [CI]
     branches: [main]
     types: [completed]
 
 permissions:
-  contents: write
-  pull-requests: write
-  id-token: write # required for npm provenance (see NPM_CONFIG_PROVENANCE below)
+  contents: read
 
-# Never run two releases concurrently - a second push mid-publish must wait, not race.
-concurrency: release-${{ github.event.workflow_run.head_branch }}
+concurrency:
+  group: release-${{ github.event.pull_request.number || github.event.workflow_run.id }}
+  cancel-in-progress: false
 
 jobs:
-  release:
-    # Fail closed: publish only a green CI run caused by a push to this repository's main branch.
-    # `workflow_run` can otherwise be triggered by a similarly named workflow or a fork, while the
-    # checkout below would still fetch the reported SHA and the job still holds publish credentials.
+  verify-release-pr:
+    name: release-verification
     if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'release/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout the proposed release
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.2
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Validate release branch and generated versions
+        run: bun run release:check
+
+      - name: Run full release verification
+        run: bun run verify:release
+
+  publish:
+    name: publish-release
+    if: >-
+      github.event_name == 'workflow_run' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: read
+      id-token: write
     steps:
-      # The commit CI actually validated, not whatever main points at now. Without this a push that
-      # lands while CI is still running would be published on the strength of the previous commit's
-      # checks - the exact gap this gate exists to close.
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Prove this is a merged release PR
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          MERGE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          prs="$(gh api \
+            --header 'Accept: application/vnd.github+json' \
+            "repos/${REPOSITORY}/commits/${MERGE_SHA}/pulls")"
+          release_pr="$(jq -r \
+            --arg repository "$REPOSITORY" \
+            'any(.[];
+              .merged_at != null and
+              .base.ref == "main" and
+              .base.repo.full_name == $repository and
+              (.head.ref | startswith("release/")) and
+              .head.repo.full_name == $repository
+            )' <<<"$prs")"
+          if [[ "$release_pr" != "true" ]]; then
+            echo "No merged release PR is associated with ${MERGE_SHA}; nothing to publish."
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Validated merged release PR for ${MERGE_SHA}."
+          echo "is_release=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the validated merge
+        if: steps.release.outputs.is_release == 'true'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
 
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - name: Set up Bun
+        if: steps.release.outputs.is_release == 'true'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.4.2 # keep installs identical to CI so the frozen lockfile remains reproducible
+          bun-version: 1.4.2
 
       - name: Install
+        if: steps.release.outputs.is_release == 'true'
         run: bun install --frozen-lockfile
-      - name: Release verification
-        run: bun run verify:release
 
-      - name: Version Packages PR / publish to npm
-        id: changesets
-        # v1.9.0. Pinned to a released commit, not a branch tip: an unreleased tip is code nobody has
-        # cut, reviewed as a release, or run anywhere - on the step that holds NPM_TOKEN. Staying on
-        # v1 is deliberate too; v2 renames every input below (version -> version-script, publish ->
-        # publish-script, ...) and drops the GITHUB_TOKEN env, so it would run with defaults instead.
-        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d
-        with:
-          version: bun run changeset:version
-          publish: bun run changeset:publish # = `bun run build && changeset publish`
-          commit: "chore: version packages"
-          title: "chore: version packages"
+      - name: Validate the merged release artifact
+        if: steps.release.outputs.is_release == 'true'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: bun run release:check --merge
+
+      - name: Publish versioned packages
+        if: steps.release.outputs.is_release == 'true'
+        run: bun run changeset:publish
+        env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          # Supply-chain provenance attestation: npm records a signed, publicly verifiable link
-          # from each tarball back to this workflow run and commit, so a consumer can prove the
-          # published bytes were built here and not injected by a leaked NPM_TOKEN. Requires the
-          # `id-token: write` permission above plus a `repository` field on every published
-          # package.json - `check:publish` enforces that precondition in CI, so a new package
-          # cannot silently break the publish. If a publish ever errors on provenance,
-          # commenting this line out is the safe fallback.
           NPM_CONFIG_PROVENANCE: "true"
 
-      # Verify the bytes npm serves after propagation. This cannot roll back a publish, so it is an
-      # alerting gate: a failed registry smoke turns the release red and leaves the published version
-      # intact for investigation.
       - name: Smoke test published registry packages
-        if: steps.changesets.outputs.published == 'true'
+        if: steps.release.outputs.is_release == 'true'
         run: |
-          version=$(node -p "require('./packages/core/package.json').version")
+          set -euo pipefail
+          version="$(node -p "require('./packages/core/package.json').version")"
           for attempt in 1 2 3; do
             if bun scripts/smoke.ts registry "$version"; then
               exit 0
             fi
-            if [ "$attempt" -lt 3 ]; then
+            if [[ "$attempt" -lt 3 ]]; then
               sleep 30
             fi
           done
-          echo "Registry smoke failed for @nifrajs/*@$version after 3 attempts" >&2
+          echo "Registry smoke failed for @nifrajs/*@${version} after 3 attempts" >&2
           exit 1
 
-      # After a REAL publish (not the Version-Packages-PR path), rebuild the site against the just-released
-      # workspace and deploy it to Cloudflare Pages. `changesets` sets `published: 'true'` only when it
-      # actually published to npm, so day-to-day pushes and the PR-open path never redeploy. The root
-      # `bun run build` already ran inside `changeset:publish`, so every @nifrajs/* the site imports is
-      # built in this checkout.
-      #
-      # ONE-TIME SETUP: add `CLOUDFLARE_API_TOKEN` (scope: Account · Cloudflare Pages · Edit) and
-      # `CLOUDFLARE_ACCOUNT_ID` repo secrets. `--branch main` makes it a PRODUCTION deploy (set to the
-      # site's Pages production branch if different). Only the frontend deploys here; the docs MCP is a
-      # separate Hetzner service (mcp.nifra.dev) and is not touched by this workflow.
       - name: Deploy site to Cloudflare Pages
-        if: steps.changesets.outputs.published == 'true'
+        if: steps.release.outputs.is_release == 'true'
         working-directory: site
         run: |
           bun run build
@@ -135,10 +155,11 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Probe production site
-        if: steps.changesets.outputs.published == 'true'
+        if: steps.release.outputs.is_release == 'true'
         run: |
+          set -euo pipefail
           for attempt in 1 2 3; do
-            if body=$(curl --fail --silent --show-error https://nifra.dev/); then
+            if body="$(curl --fail --silent --show-error https://nifra.dev/)"; then
               case "$body" in
                 *"<title>Nifra - the TypeScript framework for AI-edited codebases</title>"*)
                   echo "Production health probe passed"
@@ -146,9 +167,9 @@ jobs:
                   ;;
               esac
             fi
-            if [ "$attempt" -lt 3 ]; then
+            if [[ "$attempt" -lt 3 ]]; then
               sleep 20
             fi
           done
-          echo "Production health probe failed: expected the stable homepage marker" >&2
+          echo "Production health probe failed: expected stable homepage marker" >&2
           exit 1
