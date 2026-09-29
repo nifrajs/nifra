@@ -120,7 +120,12 @@ export function devtools(options?: DevToolsOptions | undefined) {
   // A one-shot JSON snapshot of the ring buffer, alongside the live SSE stream. The SSE path is for a
   // human watching the overlay; this is for an agent that made a request and wants to READ what happened.
   const statePath = `${endpoint}/state`
-  const enabled = options?.enabled ?? process.env.NODE_ENV === "development"
+  // Read through `globalThis`: a bare `process` is a ReferenceError on Workers without nodejs_compat,
+  // which would crash the app at construction instead of leaving devtools off.
+  const enabled =
+    options?.enabled ??
+    (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process?.env?.NODE_ENV ===
+      "development"
   const allowRemote = options?.allowRemote ?? false
   const allowedOrigins = new Set(options?.allowedOrigins ?? [])
   const pingIntervalMs = Math.max(1, options?.pingIntervalMs ?? 15_000)

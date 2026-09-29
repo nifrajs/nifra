@@ -9,6 +9,15 @@ import {
 } from "../src/index.ts"
 
 describe("devtools server middleware", () => {
+  test("never touches a bare `process` global (Workers without nodejs_compat)", async () => {
+    const source = await Bun.file(new URL("../src/index.ts", import.meta.url)).text()
+    const code = source
+      .split("\n")
+      .filter((line) => !/^\s*(\*|\/\/|\/\*)/.test(line))
+      .join("\n")
+    expect(code).not.toMatch(/(?<![.\w])process\./)
+  })
+
   test("captures events and streams via SSE", async () => {
     const app = server()
       .use(devtools({ enabled: true, maxEvents: 10 }))
