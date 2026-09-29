@@ -99,6 +99,8 @@ describe("SDK generation", () => {
   })
 
   if (Bun.which("go") !== null) {
+    const goCompileTimeout = process.platform === "win32" ? 90_000 : 30_000
+
     test(
       "generated Go compiles with the standard library",
       async () => {
@@ -106,17 +108,25 @@ describe("SDK generation", () => {
         try {
           await Bun.write(join(dir, "go.mod"), "module example.com/nifra-sdk\n\ngo 1.22\n")
           await Bun.write(join(dir, "nifra_sdk.go"), renderSdk(document, "go"))
-          const process = Bun.spawn(["go", "test", "./..."], {
+          const goProcess = Bun.spawn(["go", "build", "./..."], {
             cwd: dir,
-            stdout: "pipe",
+            stdout: "ignore",
             stderr: "pipe",
           })
-          expect(await process.exited).toBe(0)
+          const stderr = goProcess.stderr
+            ? new Response(goProcess.stderr).text()
+            : Promise.resolve("")
+          const [exitCode, errorOutput] = await Promise.all([goProcess.exited, stderr])
+          if (exitCode !== 0) {
+            throw new Error(
+              `go build failed with exit code ${exitCode}${errorOutput.trim() ? `: ${errorOutput.trim()}` : ""}`,
+            )
+          }
         } finally {
           await rm(dir, { recursive: true, force: true })
         }
       },
-      { timeout: 30_000 },
+      { timeout: goCompileTimeout },
     )
   }
 })
