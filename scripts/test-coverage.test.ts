@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { resolve } from "node:path"
 import {
   coverageReportPath,
   parseCoverageThreshold,
@@ -47,10 +48,11 @@ describe("coverage runner", () => {
   })
 
   test("resolves the default and explicit LCOV locations", () => {
-    expect(coverageReportPath([], "/workspace")).toBe("/workspace/coverage/lcov.info")
-    expect(coverageReportPath(["--coverage-dir=artifacts"], "/workspace")).toBe(
-      "/workspace/artifacts/lcov.info",
+    const cwd = resolve("coverage-test-workspace")
+    expect(coverageReportPath([], cwd)).toBe(resolve(cwd, "coverage", "lcov.info"))
+    expect(coverageReportPath(["--coverage-dir=artifacts"], cwd)).toBe(
+      resolve(cwd, "artifacts", "lcov.info"),
     )
-    expect(coverageReportPath(["--coverage-dir"], "/workspace")).toBeUndefined()
+    expect(coverageReportPath(["--coverage-dir"], cwd)).toBeUndefined()
   })
 })
