@@ -59,3 +59,23 @@ describe("csrf - same-origin default (no origins configured)", () => {
     expect(bad.status).toBe(403)
   })
 })
+
+describe("csrf - same-origin default", () => {
+  const run = handlerOf()
+
+  test("accepts an https page behind a TLS-terminating proxy (http request URL)", async () => {
+    expect(
+      await run("POST", { origin: "https://app.example" }, "http://app.example/x"),
+    ).toBeUndefined()
+    expect(
+      await run("POST", { referer: "https://app.example/form" }, "http://app.example/x"),
+    ).toBeUndefined()
+  })
+
+  test("rejects a scheme downgrade and a different host", async () => {
+    const downgrade = (await run("POST", { origin: "http://app.example" })) as Response
+    expect(downgrade.status).toBe(403)
+    const other = (await run("POST", { origin: "https://evil.example" })) as Response
+    expect(other.status).toBe(403)
+  })
+})

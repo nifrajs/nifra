@@ -1,5 +1,5 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
-import { METHODS, type Middleware } from "@nifrajs/core/server"
+import { isSameOriginRequest, METHODS, type Middleware } from "@nifrajs/core/server"
 import {
   base64UrlEncode,
   hmacSha256,
@@ -37,7 +37,8 @@ export interface CsrfOptions {
   readonly header?: string
   /** Unsafe methods to protect. Default: every method except GET/HEAD/OPTIONS/TRACE. */
   readonly methods?: readonly string[]
-  /** Allowed request origins. Default: same-origin derived from the request URL. */
+  /** Allowed request origins. Default: same host as the request URL, where an `https:` Origin may
+   * reach an `http:` URL (what a TLS-terminating proxy looks like from the server). */
   readonly origins?: readonly string[]
   /** Check Origin/Referer on protected requests. Default true. */
   readonly checkOrigin?: boolean
@@ -49,15 +50,22 @@ function protectedMethod(method: string, configured: Set<string> | undefined): b
   return configured !== undefined ? configured.has(method) : !SAFE_METHODS.has(method)
 }
 
+/**
+ * An explicit allowlist compares exact origins. The same-origin default goes through core's
+ * {@link isSameOriginRequest} instead of comparing against `new URL(req.url).origin`: behind a
+ * TLS-terminating proxy the request URL says `http:` while the browser reports `https:`, and an exact
+ * compare rejected every protected request there.
+ */
 function originAllowed(req: Request, origins: Set<string> | undefined): boolean {
-  const allowed = origins ?? new Set([new URL(req.url).origin])
+  const allows = (candidate: string): boolean =>
+    origins !== undefined ? origins.has(candidate) : isSameOriginRequest(candidate, req)
   const origin = req.headers.get("origin")
-  if (origin !== null) return allowed.has(origin)
+  if (origin !== null) return allows(origin)
 
   const referer = req.headers.get("referer")
   if (referer === null) return false
   try {
-    return allowed.has(new URL(referer).origin)
+    return allows(new URL(referer).origin)
   } catch {
     return false
   }

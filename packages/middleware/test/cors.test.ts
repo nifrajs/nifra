@@ -77,6 +77,10 @@ describe("cors", () => {
     expect(allowed.headers.get("vary")).toContain("Origin")
     const denied = await app.fetch(new Request("http://x/", origin("https://evil.com")))
     expect(denied.headers.get("access-control-allow-origin")).toBeNull()
+    // The header-less answer still depends on Origin: a shared cache must not replay it to b.com.
+    expect(denied.headers.get("vary")).toContain("Origin")
+    const noOrigin = await app.fetch(new Request("http://x/"))
+    expect(noOrigin.headers.get("vary")).toContain("Origin")
   })
 
   test("predicate origin", async () => {

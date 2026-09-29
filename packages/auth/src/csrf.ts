@@ -4,15 +4,15 @@
  * a cross-origin or same-origin *unsafe* request; it must match an allowed origin, else `403`. Safe
  * methods (GET/HEAD/OPTIONS) pass. Apply with `app.use(csrf({ origins: ["https://example.com"] }))`.
  */
-import type { Middleware } from "@nifrajs/core/server"
+import { isSameOriginRequest, type Middleware } from "@nifrajs/core/server"
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
 
 export interface CsrfOptions {
   /**
-   * Allowed origins (e.g. `["https://example.com"]`). **Set this in production behind a proxy** - when
-   * omitted, the check derives same-origin from the request URL, which is correct in dev / when the
-   * proxy preserves `Host` but not when the public origin differs from the worker's.
+   * Allowed origins (e.g. `["https://example.com"]`). When omitted, the request must be same-origin by
+   * host (an `https:` page reaching an `http:` request URL is accepted, so a TLS-terminating proxy
+   * works). Set it when the proxy rewrites `Host`, so the public origin differs from the worker's.
    */
   readonly origins?: readonly string[]
 }
@@ -26,10 +26,13 @@ export function csrf(options: CsrfOptions = {}): Middleware {
     name: "csrf",
     onRequest(req) {
       if (SAFE_METHODS.has(req.method)) return undefined
-      const allowed = configured ?? new Set([new URL(req.url).origin])
+      // The same-origin default uses core's check, which accepts an `https:` page reaching an `http:`
+      // request URL on the same host - what every TLS-terminating proxy looks like from here.
+      const allowed = (candidate: string): boolean =>
+        configured !== undefined ? configured.has(candidate) : isSameOriginRequest(candidate, req)
 
       const origin = req.headers.get("origin")
-      if (origin !== null) return allowed.has(origin) ? undefined : forbidden()
+      if (origin !== null) return allowed(origin) ? undefined : forbidden()
 
       // Some same-origin requests omit `Origin` - fall back to the `Referer`'s origin.
       const referer = req.headers.get("referer")
@@ -40,7 +43,7 @@ export function csrf(options: CsrfOptions = {}): Middleware {
         } catch {
           return forbidden() // malformed Referer
         }
-        return allowed.has(refererOrigin) ? undefined : forbidden()
+        return allowed(refererOrigin) ? undefined : forbidden()
       }
 
       // A state-changing request with neither header → reject (fail closed; a browser always sends one).

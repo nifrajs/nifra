@@ -2,6 +2,7 @@ import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import { defineIdentityPlugin, type IdentityPlugin } from "@nifrajs/core/server"
 import {
   base64UrlDecode,
+  bearerToken,
   jsonError,
   type MaybePromise,
   parseCookies,
@@ -302,7 +303,7 @@ function tokenFromRequest(req: Request, header: string, cookie: string | undefin
   const headerValue = req.headers.get(header)
   if (headerValue !== null) {
     if (header === "authorization") {
-      return headerValue.startsWith("Bearer ") ? headerValue.slice(7).trim() || null : null
+      return bearerToken(headerValue)
     }
     return headerValue.trim() || null
   }

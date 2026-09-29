@@ -106,24 +106,27 @@ export function cors(options: CorsOptions = {}): Middleware {
       return new Response(null, { status: 204, headers })
     },
     onResponseHeaders(headers, req) {
-      const allowOrigin = resolveAllowOrigin(origin, req.header("origin"))
-      if (allowOrigin === null) return
-      headers.set("access-control-allow-origin", allowOrigin)
-      if (allowOrigin !== "*") {
+      // Any policy other than `*` makes the answer depend on the request's Origin - including the
+      // answer that omits Allow-Origin. Without `Vary` on that one, a shared cache stores the
+      // header-less response and replays it to an allowed origin, breaking CORS for everyone.
+      if (origin !== "*") {
         const vary = headers.get("vary")
         headers.set("vary", vary === null || vary === "" ? "Origin" : `${vary}, Origin`)
       }
+      const allowOrigin = resolveAllowOrigin(origin, req.header("origin"))
+      if (allowOrigin === null) return
+      headers.set("access-control-allow-origin", allowOrigin)
       if (credentials) headers.set("access-control-allow-credentials", "true")
       if (exposedHeaders !== undefined) headers.set("access-control-expose-headers", exposedHeaders)
     },
     onNodeResponseHeaders(response: NodeResponseContext, req: NodeRequestContext) {
-      const allowOrigin = resolveAllowOrigin(origin, req.header("origin"))
-      if (allowOrigin === null) return
-      setNodeHeader(response, "access-control-allow-origin", allowOrigin)
-      if (allowOrigin !== "*") {
+      if (origin !== "*") {
         const vary = nodeHeader(response.headers, "vary", response.headersAreLowercase)
         setNodeHeader(response, "vary", vary === null || vary === "" ? "Origin" : `${vary}, Origin`)
       }
+      const allowOrigin = resolveAllowOrigin(origin, req.header("origin"))
+      if (allowOrigin === null) return
+      setNodeHeader(response, "access-control-allow-origin", allowOrigin)
       if (credentials) setNodeHeader(response, "access-control-allow-credentials", "true")
       if (exposedHeaders !== undefined)
         setNodeHeader(response, "access-control-expose-headers", exposedHeaders)

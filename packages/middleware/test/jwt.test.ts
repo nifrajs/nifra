@@ -223,6 +223,31 @@ describe("jwt() / verifyJwt()", () => {
     ).rejects.toThrow(/crit/)
   })
 
+  test("rejects a signature spelled with non-canonical base64url trailing bits", async () => {
+    const token = await hmacToken({ sub: "u1", exp: 2_000_000_000 })
+    const options = { key: SECRET, algorithms: ["HS256"] as const, now: () => 1_900_000_000 }
+    expect((await tryVerifyJwt(token, options)).ok).toBe(true)
+    // A 32-byte HS256 signature is 43 chars: the last one carries 2 unused bits. `atob` ignores them,
+    // so setting one decodes to the same bytes - a second spelling of one signature.
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    const last = alphabet.indexOf(token.at(-1) ?? "")
+    const twin = `${token.slice(0, -1)}${alphabet[last | 1]}`
+    expect((await tryVerifyJwt(twin, options)).ok).toBe(false)
+  })
+
+  test("accepts the Bearer auth-scheme case-insensitively", async () => {
+    const token = await hmacToken({ sub: "u1", exp: 2_000_000_000 })
+    const app = server()
+      .use(jwt({ key: SECRET, algorithms: ["HS256"], now: () => 1_900_000_000 }))
+      .get("/me", () => "ok")
+    for (const scheme of ["bearer", "BEARER"]) {
+      const res = await app.fetch(
+        new Request("http://x/me", { headers: { authorization: `${scheme} ${token}` } }),
+      )
+      expect(res.status).toBe(200)
+    }
+  })
+
   test("tryVerifyJwt returns a typed Result instead of throwing", async () => {
     interface Claims extends JwtClaims {
       readonly sub: string

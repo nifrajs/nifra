@@ -21,6 +21,17 @@ export function jsonError(
 /** Shared with core so auth/CSRF middleware gets the allocation-light cookie scanner too. */
 export const parseCookies = parseCoreCookies
 
+/**
+ * The credential of an `Authorization: Bearer <token>` header, or `null`. The auth-scheme is
+ * case-insensitive (RFC 9110 section 11.1), so `bearer x` and `BEARER x` carry a token too.
+ */
+export function bearerToken(header: string | null | undefined): string | null {
+  if (header == null || header.length < 7 || header.slice(0, 7).toLowerCase() !== "bearer ") {
+    return null
+  }
+  return header.slice(7).trim() || null
+}
+
 export function quotedHeaderValue(value: string): string {
   let out = ""
   for (let i = 0; i < value.length; i++) {
@@ -68,8 +79,22 @@ export function base64UrlEncode(bytes: ArrayBuffer | Uint8Array): string {
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
 }
 
+const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+/**
+ * Decode unpadded base64url, rejecting non-canonical spellings. `atob` ignores the unused low bits of
+ * a final 2- or 3-character group, so without this check a JWT or CSRF signature has several textual
+ * forms that verify identically - the same rule core applies to signed cookies.
+ */
 export function base64UrlDecode(input: string): Uint8Array<ArrayBuffer> | null {
   if (!/^[A-Za-z0-9_-]*$/.test(input) || input.length % 4 === 1) return null
+  const remainder = input.length % 4
+  if (remainder !== 0) {
+    const last = BASE64URL_ALPHABET.indexOf(input[input.length - 1]!)
+    if ((remainder === 2 && (last & 0x0f) !== 0) || (remainder === 3 && (last & 0x03) !== 0)) {
+      return null
+    }
+  }
   const padded = input
     .replace(/-/g, "+")
     .replace(/_/g, "/")

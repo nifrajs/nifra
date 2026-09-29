@@ -1,5 +1,6 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import { defineIdentityPlugin, type IdentityPlugin } from "@nifrajs/core/server"
+import { bearerToken } from "./_utils.ts"
 
 type MaybePromise<T> = T | Promise<T>
 
@@ -96,10 +97,7 @@ export function bearer<P>(options: BearerOptions<P>): AuthPlugin<P> {
   const realm = options.realm ?? "api"
   return createTokenAuth({
     name: "bearer",
-    extract: (request) => {
-      const header = request.headers.get("authorization")
-      return header?.startsWith("Bearer ") === true ? header.slice(7).trim() : undefined
-    },
+    extract: (request) => bearerToken(request.headers.get("authorization")) ?? undefined,
     verify: options.verify,
     optional: options.optional === true,
     challenge: `Bearer realm="${realm}"`,

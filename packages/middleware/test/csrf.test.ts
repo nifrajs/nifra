@@ -51,6 +51,26 @@ describe("csrf()", () => {
     }
   })
 
+  test("same-origin default survives a TLS-terminating proxy but never a downgrade or another host", async () => {
+    const token = await createCsrfToken(SECRET)
+    const app = protectedApp()
+    const send = (url: string, origin: string) =>
+      app.fetch(
+        new Request(url, {
+          method: "POST",
+          headers: {
+            origin,
+            cookie: `csrf-token=${encodeURIComponent(token)}`,
+            "x-csrf-token": token,
+          },
+        }),
+      )
+    // The proxy hands the server a plain-HTTP URL while the browser reports the https page.
+    expect((await send("http://app.test/mutate", "https://app.test")).status).toBe(200)
+    expect((await send("https://app.test/mutate", "http://app.test")).status).toBe(403)
+    expect((await send("http://app.test/mutate", "https://evil.test")).status).toBe(403)
+  })
+
   test("safe methods pass without a token", async () => {
     const app = server()
       .use(csrf({ secret: SECRET }))
@@ -121,6 +141,10 @@ describe("csrf()", () => {
     const token = await createCsrfToken(SECRET, "abcdefghijklmnopqrstuv")
     expect(await verifyCsrfToken(token, SECRET)).toBe(true)
     expect(await verifyCsrfToken(`${token.slice(0, -1)}x`, SECRET)).toBe(false)
+    // The 43-char signature's last char has 2 unused bits; a set bit is a non-canonical twin.
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    const twin = `${token.slice(0, -1)}${alphabet[alphabet.indexOf(token.at(-1) ?? "") | 1]}`
+    expect(await verifyCsrfToken(twin, SECRET)).toBe(false)
     await expect(createCsrfToken("short")).rejects.toThrow(/secret/)
     await expect(createCsrfToken(SECRET, "short")).rejects.toThrow(/nonce/)
     expect(() => csrf({ secret: "short" })).toThrow(/secret/)
