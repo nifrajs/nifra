@@ -39,6 +39,7 @@
       "**",
       "!**/node_modules",
       "!**/.claude",
+      "!.planning",
       "!**/.playwright-cli",
       "!bench/.published",
       "!**/output",
