@@ -22,6 +22,7 @@ permissions:
 
 concurrency:
   group: release-${{ github.event_name == 'workflow_run' && 'publish' || github.event.pull_request.number }}
+  queue: max
   cancel-in-progress: false
 
 jobs:
