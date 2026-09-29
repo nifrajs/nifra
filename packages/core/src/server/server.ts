@@ -326,9 +326,9 @@ function bunPeerPlatform(
   server: { requestIP(request: Request): { readonly address: string } | null },
   req: Request,
 ): Platform {
-  // Bun's requestIP() is surprisingly expensive (~20 us on the SSR benchmark machine). Keep the
+  // Bun's requestIP() costs ~0.5 us per call, about 7% of a bare GET's server time. Keep the
   // documented raw-peer c.clientIp behavior, but resolve it lazily: most routes never read c.clientIp,
-  // and paying for the socket lookup on every request erased Bun's native HTTP advantage. A getter also
+  // so they should not pay for the socket lookup on every request. A getter also
   // preserves middleware that inspects the platform argument directly and trust-mode routes, which
   // resolve the value in deriveClientIp before the handler runs.
   let resolved = false
