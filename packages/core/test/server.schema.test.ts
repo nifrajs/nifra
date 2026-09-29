@@ -195,9 +195,15 @@ describe("body validation", () => {
     // A no-preflight text/plain request, even though the header contains "application/json".
     expect((await send("text/plain; x=application/json")).status).toBe(415)
     expect((await send("text/plain;application/json")).status).toBe(415)
+    expect((await send("application/jsonx")).status).toBe(415)
+    expect((await send("application/json+x")).status).toBe(415)
+    expect((await send("application/json garbage")).status).toBe(415)
+    expect((await send("application/json\tgarbage")).status).toBe(415)
     for (const accepted of [
       "application/json",
       "application/json; charset=utf-8",
+      "application/json;charset=UTF-8",
+      "application/json ; charset=utf-8",
       "Application/JSON; charset=UTF-8",
       "application/vnd.api+json",
       "application/merge-patch+json",

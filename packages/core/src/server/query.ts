@@ -117,9 +117,18 @@ export function queryObjectOf(search: string): Record<string, QueryValue> {
  * so a JSON route would parse a body no CORS policy ever saw.
  */
 export function isJsonMediaType(contentType: string): boolean {
-  // The two spellings every client sends, without slicing or lowercasing.
-  if (contentType === "application/json" || contentType === "application/json; charset=utf-8") {
-    return true
+  // Every lowercase `application/json` spelling, parameters or not, without slicing or lowercasing.
+  if (contentType === "application/json") return true
+  if (contentType.startsWith("application/json")) {
+    let delimiter = 16
+    while (delimiter < contentType.length) {
+      const char = contentType.charCodeAt(delimiter)
+      if (char !== 32 /* SP */ && char !== 9 /* HTAB */) break
+      delimiter++
+    }
+    if (delimiter === contentType.length || contentType.charCodeAt(delimiter) === 59 /* ; */) {
+      return true
+    }
   }
   const semi = contentType.indexOf(";")
   const essence = (semi === -1 ? contentType : contentType.slice(0, semi)).trim().toLowerCase()
