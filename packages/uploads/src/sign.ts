@@ -35,12 +35,16 @@ const toBase64Url = (buf: ArrayBuffer): string => {
   return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
 }
 
+// Canonical unpadded base64url only. `atob` skips whitespace and ignores a final group's unused bits,
+// so without the round-trip check one signature has several spellings - several distinct URLs (cache
+// keys, log lines, dedupe keys) that all verify.
 const fromBase64Url = (value: string): Uint8Array<ArrayBuffer> | null => {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) return null
   try {
     const b = atob(value.replace(/-/g, "+").replace(/_/g, "/"))
     const out = new Uint8Array(b.length)
     for (let i = 0; i < b.length; i++) out[i] = b.charCodeAt(i)
-    return out
+    return toBase64Url(out.buffer) === value ? out : null
   } catch {
     return null
   }

@@ -196,6 +196,20 @@ describe("signDownloadUrl / verifyDownloadUrl", () => {
     )
   })
 
+  test("accepts only the canonical spelling of a signature", async () => {
+    const signed = await signDownloadUrl("/uploads/a.png", secret, {
+      expiresInSeconds: 60,
+      now: 1000,
+    })
+    const sig = new URL(signed, "http://x").searchParams.get("vsig") ?? ""
+    // 32 bytes → 43 chars; the last char carries 2 unused bits that `atob` would ignore.
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    const twin = `${sig.slice(0, -1)}${alphabet[alphabet.indexOf(sig.at(-1) ?? "") | 1]}`
+    expect(await verifyDownloadUrl(signed.replace(sig, twin), secret, { now: 1000 })).toBe(false)
+    const spaced = signed.replace(sig, `${sig.slice(0, 4)}%20${sig.slice(4)}`)
+    expect(await verifyDownloadUrl(spaced, secret, { now: 1000 })).toBe(false)
+  })
+
   test("rejects a wrong secret + a missing signature", async () => {
     const signed = await signDownloadUrl("/uploads/a.png", secret, {
       expiresInSeconds: 60,
