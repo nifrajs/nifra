@@ -192,6 +192,12 @@ function normalizedPath(path: string): string {
   return resolve(path).replaceAll("\\", "/")
 }
 
+// TypeScript 7 canonicalizes Windows paths case-insensitively before virtual-FS callbacks.
+function pathIdentity(path: string): string {
+  const normalized = normalizedPath(path)
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized
+}
+
 function realPath(path: string): string {
   try {
     // Bun's portable realpath can preserve an 8.3 spelling on Windows; the native
@@ -212,10 +218,15 @@ function canonicalRoot(root: string): string {
 }
 
 function pathVariants(path: string): readonly string[] {
-  const normalized = normalizedPath(path)
-  const variants = new Set<string>([normalized])
+  const variants = new Set<string>()
+  const add = (candidate: string): void => {
+    const normalized = normalizedPath(candidate)
+    variants.add(normalized)
+    if (process.platform === "win32") variants.add(normalized.toLowerCase())
+  }
+  add(path)
   try {
-    variants.add(realPath(path))
+    add(realPath(path))
   } catch {
     // Virtual fixture files do not exist on disk; their normalized path is sufficient.
   }
@@ -312,7 +323,14 @@ function createVirtualFileSystem(
   root: string,
 ): UnknownRecord {
   const rootPaths = pathVariants(root)
-  const virtualFiles = [...sourceFiles.keys()]
+  const virtualFiles: string[] = []
+  const seenFiles = new Set<string>()
+  for (const file of sourceFiles.keys()) {
+    const identity = pathIdentity(file)
+    if (seenFiles.has(identity)) continue
+    seenFiles.add(identity)
+    virtualFiles.push(normalizedPath(file))
+  }
   const virtualDirectories = new Set<string>()
   let hasVirtualFileInRoot = false
   for (const file of virtualFiles) {
@@ -328,7 +346,7 @@ function createVirtualFileSystem(
     }
     let directory = normalizedPath(dirname(normalized))
     while (directory === rootPath || directory.startsWith(`${rootPath}/`)) {
-      virtualDirectories.add(directory)
+      for (const variant of pathVariants(directory)) virtualDirectories.add(variant)
       if (directory === rootPath) break
       directory = normalizedPath(dirname(directory))
     }
@@ -359,12 +377,14 @@ function createVirtualFileSystem(
         virtualDirectories.has(variant),
       )
       if (directory === undefined) return undefined
-      const prefix = directory.endsWith("/") ? directory : `${directory}/`
+      const directoryIdentity = pathIdentity(directory)
+      const prefix = directoryIdentity.endsWith("/") ? directoryIdentity : `${directoryIdentity}/`
       const files = new Set<string>()
       const directories = new Set<string>()
       for (const file of virtualFiles) {
         const normalized = normalizedPath(file)
-        if (!normalized.startsWith(prefix)) continue
+        const identity = pathIdentity(normalized)
+        if (!identity.startsWith(prefix)) continue
         const remainder = normalized.slice(prefix.length)
         const slash = remainder.indexOf("/")
         if (slash === -1) files.add(remainder)
@@ -447,13 +467,13 @@ async function createTypeScript7Session(
       if (project === undefined) {
         throw new Error(`TypeScript 7 could not create a project for source file ${path}`)
       }
-      projects.set(normalizedPath(path), project)
+      projects.set(pathIdentity(path), project)
       const source = await project.program.getSourceFile(path)
       if (source === undefined) {
         throw new Error(`TypeScript 7 could not load project source file ${path}`)
       }
       for (const variant of pathVariants(path)) sourceCache.set(variant, source)
-      sourceCache.set(normalizedPath(source.fileName), source)
+      for (const variant of pathVariants(source.fileName)) sourceCache.set(variant, source)
       sourceByContent.set(source.text, source)
       const diagnostics = await project.program.getSyntacticDiagnostics(path)
       // Legacy scanners use parseDiagnostics to avoid interpreting recovery nodes. The remote
@@ -543,14 +563,14 @@ async function createTypeScript7Session(
           checker: firstProject.checker,
           getCheckerForFile: async (file: string): Promise<unknown | undefined> => {
             const project =
-              projects.get(normalizedPath(file)) ??
+              projects.get(pathIdentity(file)) ??
               configuredProject ??
               (await snapshot!.getDefaultProjectForFile(file))
             return project?.checker
           },
           getSourceFile: async (file: string): Promise<unknown | undefined> => {
             const project =
-              projects.get(normalizedPath(file)) ??
+              projects.get(pathIdentity(file)) ??
               configuredProject ??
               (await snapshot!.getDefaultProjectForFile(file))
             return project?.program.getSourceFile(file)
