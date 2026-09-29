@@ -88,7 +88,14 @@ export {
   toVercelHandler,
   type VercelHandler,
 } from "./server/platform-adapters.ts"
-export type { Registry, ResponseMapFor, RouteInfo, RouteInfoFor } from "./server/registry.ts"
+export type {
+  JoinRoutePath,
+  PrefixRegistry,
+  Registry,
+  ResponseMapFor,
+  RouteInfo,
+  RouteInfoFor,
+} from "./server/registry.ts"
 export {
   type PlainRender,
   type ResponseResult,

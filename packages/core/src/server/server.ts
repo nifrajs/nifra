@@ -159,6 +159,7 @@ import type {
   AddRoute,
   EmptyRegistry,
   OutputOf,
+  PrefixRegistry,
   Registry,
   RouteInfoFor,
   WsRouteInfoFor,
@@ -578,6 +579,88 @@ export type NifraFeatureVersion = FeatureVersionOf<Version>
 const webResponseOf = (result: Response | ResponseResult): Response =>
   result instanceof Response ? result : toResponse(result, EMPTY_RESPONSE_CONTROLS)
 
+/** Which requests a scoped (group/merged) hook runs for, judged from the request the hook sees. */
+type HookScope = (req: { readonly method: string; readonly url: string }) => boolean
+
+/** A `group(prefix)` hook's scope: every request whose path is the prefix or lies under it - served,
+ * 404, 405, or preflight alike (Hono's `use("/api/*")` reach). The router matches static segments
+ * byte-exactly and case-sensitively, with the same path scanner used here, so no spelling a group
+ * route answers to can fall outside this test. */
+const underPrefix = (prefix: string): HookScope => {
+  const nested = `${prefix}/`
+  return (req) => {
+    const path = pathnameOf(req.url)
+    return path === prefix || path.startsWith(nested)
+  }
+}
+
+/** A merged server's hook scope: exactly the routes MERGED, snapshotted into a dedicated matcher so
+ * the guard never reflects whatever the source's own catalog grows into afterwards. */
+const servedBy = (routes: readonly CatalogRoute[]): HookScope => {
+  const scope = new RouteCatalog()
+  scope.addBatch(routes)
+  return (req) => scope.find(req.method, pathnameOf(req.url)).found
+}
+
+type AdoptedHook = ((first: never, second: never) => unknown) | undefined
+
+/** Gate adopted hooks to `inScope` (`undefined`: adopt them unchanged). The request is a request
+ * hook's first argument (`reqAt` 0) and every response-side hook's second; out of scope a hook
+ * declines, except a Web response hook, which must hand the response on (`passFirst`). An
+ * `undefined` slot marks an unpaired Node twin, position-aligned with its Web list, and stays
+ * `undefined` - wrapping it would fabricate a twin that never existed. */
+const scopeHooks = <H extends AdoptedHook>(
+  hooks: readonly H[],
+  inScope: HookScope | undefined,
+  reqAt: 0 | 1,
+  passFirst?: true,
+): readonly H[] =>
+  inScope === undefined
+    ? hooks
+    : hooks.map((hook) =>
+        hook === undefined
+          ? hook
+          : (((first: never, second: never) =>
+              inScope(reqAt === 0 ? first : second)
+                ? hook(first, second)
+                : passFirst && first) as H),
+      )
+
+/** A `group()` prefix: `/`-led segments of RFC 3986 `pchar` minus `%` and `:`, none of them `.` or
+ * `..`. That is text the router compares byte-for-byte as static, so a prefix can never smuggle a
+ * param, a wildcard, or an escape, and never spells a path (dot or empty segment, trailing slash)
+ * that no normalized client URL reaches. Segments are delimited by a `/` the class excludes, so the
+ * match is linear. */
+const GROUP_PREFIX = /^(?:\/(?!\.\.?(?:\/|$))[\w.~!$&'()+,;=@-]+)+$/
+
+/** The order-scoped chain a group scope inherits - copied, so what the group adds stays its own. */
+const GROUP_CHAIN = [
+  "derives",
+  "authStages",
+  "beforeHandleHooks",
+  "afterHandleHooks",
+  "onErrorHooks",
+  "aroundHooks",
+  "activeAssurance",
+  // Inherited so a group route computes `authenticated` (idempotency principal scoping) exactly as a
+  // parent route would; only the evidence the group adds is folded at adoption.
+  "globalAssurance",
+  "capabilityInterceptors",
+  "capabilityObservers",
+] as const
+
+/** Installed runtimes: a group scope inherits them, and adoption hoists a source's into a server that
+ * has none, so composing servers cannot silently disable a safety lane. */
+const SERVER_RUNTIMES = [
+  "responseContractRuntime",
+  "idempotencyRuntime",
+  "effectLedgerRuntime",
+  "mcpRuntime",
+  "nodeOutcomeRuntime",
+  "sseRuntime",
+  "wsRuntime",
+] as const
+
 // Stable module-level finalizers so `fetch`/`resolveNode` allocate no per-request closures.
 const IDENTITY_RESPONSE = (response: Response | ResponseResult): Response => webResponseOf(response)
 const RESPONSE_TIMEOUT = (): Response => jsonError(503, "request_timeout")
@@ -823,7 +906,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /** App-declared MCP resources / prompts (via {@link resource} / {@link prompt}), read by `nifra mcp`. */
   private readonly mcpResourceList: McpResourceDescriptor[]
   private readonly mcpPromptList: McpPromptDescriptor[]
+  /** Kept so a {@link group} scope is built with exactly this server's settings: fused lanes read
+   * several of them at request time, so a group route must never run under different ones. */
+  private readonly options: ServerOptions
+  /** Static prefix joined onto every route this server registers; non-empty only on a group scope. */
+  private routePrefix: string
   constructor(options: ServerOptions = {}) {
+    this.options = options
+    this.routePrefix = ""
     this.catalog = new RouteCatalog()
     this.wsRouter = new Router<WsEntry>()
     this.wsRouteCount = 0
@@ -917,7 +1007,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (this.sealed) {
       throw new FrameworkError(
         "SERVER_SEALED",
-        `server configuration is sealed after listen(); call ${operation} before listen()`,
+        `server configuration is sealed after listen() (a group once its builder returns); call ${operation} before`,
       )
     }
   }
@@ -1812,7 +1902,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     handler: (context: never) => unknown,
   ): void {
     this.assertConfigurable("route registration")
-    this.catalog.add(this.prepareRoute(method, path, schema, handler))
+    this.catalog.add(this.prepareRoute(method, this.prefixed(path), schema, handler))
   }
 
   /** Register a contract/group route batch atomically. Every route captures the same current chain it
@@ -1827,9 +1917,24 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): void {
     this.assertConfigurable("route registration")
     const staged = routes.map(({ method, path, schema, handler }) =>
-      this.prepareRoute(method, path, schema, handler),
+      this.prepareRoute(method, this.prefixed(path), schema, handler),
     )
     this.catalog.addBatch(staged)
+  }
+
+  /** Join a group scope's prefix BEFORE compilation, so the pattern, the reflected descriptor, the
+   * capability guard, the ledger record, and assurance path matching all see the one served path. */
+  private prefixed(path: string): string {
+    const prefix = this.routePrefix
+    if (prefix === "") return path
+    if (path === "/") return prefix
+    // Checked here, not left to the pattern compiler: `"/api" + "users"` is a valid-looking path
+    // (`/apiusers`) that would silently escape the group instead of failing.
+    if (path[0] === "/") return prefix + path
+    throw new RouteConfigError(
+      "INVALID_PATH",
+      `group(${JSON.stringify(prefix)}) route path must start with "/": ${JSON.stringify(path)}`,
+    )
   }
 
   private prepareRoute(
@@ -2148,6 +2253,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     other: Server<R2, Ctx2, HookOutput2>,
   ): Server<R & R2, Ctx, HookOutput> {
     this.assertConfigurable("merge()")
+    if (this.routePrefix !== "") {
+      // The merged routes were compiled under their own paths; adopting them here would publish them
+      // OUTSIDE the prefix while looking like part of the group.
+      throw new RouteConfigError(
+        "INVALID_PATH",
+        "merge() inside a group cannot prefix compiled routes - merge on the parent",
+      )
+    }
     const source = other as unknown as Server<Registry, EmptyContext>
     if (source.wsRouteCount > 0) {
       throw new RouteConfigError(
@@ -2155,85 +2268,184 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         "merge() does not carry WebSocket routes - register .ws() routes on the parent server",
       )
     }
+    this.adopt(source, undefined, 0)
+    return this as unknown as Server<R & R2, Ctx, HookOutput>
+  }
+
+  /**
+   * Declare routes under a static path prefix, with the prefix in the typed client, `routes()`,
+   * OpenAPI, capability events, and the effect ledger - the counterpart of Hono's `route()`,
+   * Elysia's `group()`, and Fastify's `register({ prefix })`.
+   *
+   *   app
+   *     .derive(session)
+   *     .group("/admin", (admin) =>
+   *       admin.beforeHandle(requireAdmin).get("/users", listUsers).get("/users/:id", getUser),
+   *     )
+   *     .get("/", home)          // not covered by requireAdmin
+   *
+   * The builder receives a scope that INHERITS this server's route chain as it stands at the call
+   * (`derive`/`decorate`/`authenticate`/`beforeHandle`/`afterHandle`/`onError`/`around`, assurance,
+   * capability interceptors, installed runtimes, applied plugins), exactly as a route declared here
+   * would. What it adds stays in the group: its chain additions apply only to its own routes, and
+   * its request/response hooks (`onRequest`, `onResponse`, `responseHeaders`,
+   * `onResponseFinalized`, and middleware bundles that use them) run only for requests whose path
+   * is the prefix or below it. Per-route authorization belongs in `authenticate`/`beforeHandle`,
+   * which are compiled into each route; request hooks are path prefilters.
+   *
+   * The prefix is static text - `"/api"`, `"/api/v1"` - validated when declared: no params,
+   * wildcards, empty or dot segments, percent-escapes, or trailing slash. A group's `"/"` route
+   * serves the prefix itself. Groups nest (`"/api"` then `"/v1"` serves `/api/v1/...`).
+   *
+   * Fail closed: the builder must synchronously return the scope it was given; a collision with an
+   * existing route throws `RouteConfigError` and adds none of the group's routes; `.ws()`, mounts,
+   * MCP `.tool()`s, and `merge()` inside a group are refused (register them on the parent). Once the
+   * builder returns, the scope is closed - a leaked reference cannot add routes later.
+   */
+  group<const P extends string, R2 extends Registry, Ctx2, HookOutput2>(
+    prefix: P,
+    build: (group: Server<EmptyRegistry, Ctx, HookOutput>) => Server<R2, Ctx2, HookOutput2>,
+  ): Server<R & PrefixRegistry<P, R2>, Ctx, HookOutput> {
+    this.assertConfigurable("group()")
+    if (typeof prefix !== "string" || !GROUP_PREFIX.test(prefix)) {
+      throw new RouteConfigError(
+        "INVALID_PATH",
+        `group() prefix must be a static path like "/api/v1": ${JSON.stringify(prefix)}`,
+      )
+    }
+    const fullPrefix = this.routePrefix + prefix
+    const scope = new Server<Registry, EmptyContext>(this.options)
+    scope.routePrefix = fullPrefix
+    for (const key of GROUP_CHAIN) (scope[key] as unknown[]).push(...this[key])
+    for (const key of SERVER_RUNTIMES)
+      (scope as unknown as Record<string, unknown>)[key] = this[key]
+    Object.assign(scope.decorations, this.decorations)
+    // A plugin already applied here is already in effect for the group (its chain was copied above
+    // and its request hooks are app-wide), so re-applying it would run it twice per request. The
+    // group's own plugins are NOT copied back: they are scoped, and a parent `use()` of the same
+    // plugin must still apply it to the parent's routes. The response observer is the exception: it
+    // installs methods bound to the server it is applied to, so the scope must be free to install its
+    // own (re-applying it registers no hook, so nothing can run twice).
+    for (const name of this.appliedPlugins) {
+      if (name !== "nifra:response-observer") scope.appliedPlugins.add(name)
+    }
+    let built: unknown
+    try {
+      built = build(scope as never)
+      // Only `listen()` seals a server, so a scope sealed here was served on its own - without this
+      // server's request hooks - which a group must never be.
+      if (scope.sealed) built = undefined
+    } finally {
+      // Closed on every exit, including a throw: an async continuation or a leaked reference must
+      // not register routes that nothing will ever adopt.
+      scope.sealed = true
+    }
+    const label = `group(${JSON.stringify(fullPrefix)})`
+    if (built !== scope) {
+      throw new TypeError(`${label} builder must return its group synchronously`)
+    }
+    if (
+      scope.wsRouteCount > 0 ||
+      scope.fetchMounts.length > 0 ||
+      scope.catalog.entries().some((route) => route.descriptor.tool !== undefined)
+    ) {
+      throw new RouteConfigError(
+        "INVALID_PATH",
+        `${label} cannot hold ws(), mount, or MCP tool routes - add them to the parent`,
+      )
+    }
+    if (hookAuditRuntime && process.env.NODE_ENV !== "production")
+      sealHookAudit(scope, scope.catalog.size, this.logger)
+    this.adopt(scope, fullPrefix, this.globalAssurance.length)
+    return this as unknown as Server<R & PrefixRegistry<P, R2>, Ctx, HookOutput>
+  }
+
+  /**
+   * Take over another server's routes and hooks - the shared core of {@link merge} and {@link group}.
+   * `prefix` selects group semantics: hooks are scoped to requests under the prefix (response hooks
+   * included), and the source's global assurance past `inheritedGlobal` (what it copied from this
+   * server) is folded into its routes. Without a prefix, merge semantics: request hooks are scoped to
+   * the source's routes when it has any, response hooks are appended app-wide.
+   */
+  private adopt(
+    source: Server<Registry, EmptyContext>,
+    prefix: string | undefined,
+    inheritedGlobal: number,
+  ): void {
     const sourceRoutes = source.catalog.entries()
     // Hooks and global assurance stay LOCAL to a group that has routes; a route-less group is a
     // middleware bundle whose hooks can only mean app-wide intent, so it keeps the global append.
-    const scoped = sourceRoutes.length > 0
-    // A group's global assurance rides its (route-scoped) hooks: folded into each merged route's
-    // own evidence rather than the parent's global list, so `routes()` never claims the group's
+    // A prefix group is always local: its hooks mean "under this path", routes or not.
+    const scoped = prefix !== undefined || sourceRoutes.length > 0
+    const ownGlobal = source.globalAssurance.slice(inheritedGlobal)
+    // A group's global assurance rides its (scoped) hooks: folded into each adopted route's own
+    // evidence rather than the parent's global list, so `routes()` never claims the group's
     // enforcement for parent routes the group's hooks do not see.
     const foldedAssurance =
-      scoped && source.globalAssurance.length > 0
+      scoped && ownGlobal.length > 0
         ? (route: CatalogRoute): CatalogRoute => ({
             ...route,
-            assurance: [...route.assurance, ...source.globalAssurance],
+            assurance: [...route.assurance, ...ownGlobal],
           })
         : (route: CatalogRoute): CatalogRoute => route
     this.catalog.addBatch(
       sourceRoutes.map((route) => this.bindFusedRuntime(foldedAssurance(route))),
     )
     // Resolved idempotency/ledger route entries carry their own store/sink configuration, while the
-    // runtime object supplies the generic execution machinery. Preserve a group's installed runtime
-    // when the parent has none so merging cannot silently disable a safety lane. If the parent already
-    // has a runtime, either implementation can execute every resolved entry because route-specific
-    // options were pinned during registration.
-    this.responseContractRuntime ??= source.responseContractRuntime
-    this.idempotencyRuntime ??= source.idempotencyRuntime
-    this.effectLedgerRuntime ??= source.effectLedgerRuntime
-    this.mcpRuntime ??= source.mcpRuntime
-    this.nodeOutcomeRuntime ??= source.nodeOutcomeRuntime
-    this.sseRuntime ??= source.sseRuntime
-    this.wsRuntime ??= source.wsRuntime
-    if (scoped && source.onRequestHooks.length > 0) {
-      // Snapshot the group's routes into a dedicated matcher: the guard must reflect what was
-      // MERGED, not whatever the group's own catalog grows into afterwards. One probe against it
-      // gates each group hook to requests the group would serve; everything else passes untouched.
-      const scope = new RouteCatalog()
-      scope.addBatch(sourceRoutes)
-      this.onRequestHooks.push(
-        ...source.onRequestHooks.map(
-          (hook): RawOnRequest =>
-            (req, platform) =>
-              scope.find(req.method, pathnameOf(req.url)).found ? hook(req, platform) : undefined,
-        ),
-      )
-      // An `undefined` slot marks an unpaired hook (position-aligned with `onRequestHooks`) and
-      // must stay `undefined` - wrapping it would fabricate a Node twin that never existed.
-      this.onNodeRequestHooks.push(
-        ...source.onNodeRequestHooks.map((hook): NodeRequestHook | undefined =>
-          hook === undefined
-            ? undefined
-            : (req, platform) =>
-                scope.find(req.method, pathnameOf(req.url)).found ? hook(req, platform) : undefined,
-        ),
-      )
-    } else {
-      this.onRequestHooks.push(...source.onRequestHooks)
-      this.onNodeRequestHooks.push(...source.onNodeRequestHooks)
-    }
+    // runtime object supplies the generic execution machinery. If the parent already has a runtime,
+    // either implementation can execute every resolved entry because route-specific options were
+    // pinned during registration.
+    const runtimes = this as unknown as Record<string, unknown>
+    for (const key of SERVER_RUNTIMES) runtimes[key] ??= source[key]
+    // Which requests a scoped hook sees: under the prefix for a group; for a merged server with
+    // routes, a snapshot of exactly the routes MERGED (not whatever its own catalog grows into later).
+    const inScope =
+      prefix !== undefined
+        ? underPrefix(prefix)
+        : scoped && source.onRequestHooks.length > 0
+          ? servedBy(sourceRoutes)
+          : undefined
+    this.onRequestHooks.push(...scopeHooks(source.onRequestHooks, inScope, 0))
+    this.onNodeRequestHooks.push(...scopeHooks(source.onNodeRequestHooks, inScope, 0))
     this.nodeRequestHooksComplete &&= source.nodeRequestHooksComplete
     this.bunNativeRequestHooksSafe &&= source.bunNativeRequestHooksSafe
-    // The group's static declarations came before its own response hooks, so they are folded in
-    // first - and fold themselves into a hook here if this server already has one (same ordering
-    // rule as a direct `responseHeaders()` call).
-    if (source.staticResponseHeaders !== undefined) {
-      this.addStaticResponseHeaders({ ...source.staticResponseHeaders.record })
+    // A merged server's response hooks are app-wide; a group's run only under its prefix.
+    const responseScope = prefix === undefined ? undefined : inScope
+    const statics = source.staticResponseHeaders
+    if (statics !== undefined) {
+      if (responseScope === undefined) {
+        // The group's static declarations came before its own response hooks, so they are folded in
+        // first - and fold themselves into a hook here if this server already has one (same ordering
+        // rule as a direct `responseHeaders()` call).
+        this.addStaticResponseHeaders({ ...statics.record })
+      } else {
+        // The static tier is folded into EVERY response this server builds, so a group's static
+        // headers cannot join it. A hook ahead of the group's own (the sealed scope is discarded
+        // after adoption) keeps their meaning - defaults a value already on the response wins over.
+        source.onResponseHooks.unshift((response) => applyStaticResponseHeaders(response, statics))
+        source.onNodeResponseHooks.unshift(undefined)
+        source.nodeResponseHooksComplete = false
+      }
     }
-    this.onResponseHooks.push(...source.onResponseHooks)
-    this.onNodeResponseHooks.push(...source.onNodeResponseHooks)
+    this.onResponseHooks.push(...scopeHooks(source.onResponseHooks, responseScope, 1, true))
+    this.onNodeResponseHooks.push(...scopeHooks(source.onNodeResponseHooks, responseScope, 1))
+    this.onResponseFinalizedHooks.push(
+      ...scopeHooks(source.onResponseFinalizedHooks, responseScope, 1),
+    )
     this.nodeResponseHooksComplete &&= source.nodeResponseHooksComplete
     this.bunNativeResponseHeadersOnly &&= source.bunNativeResponseHeadersOnly
     this.hasRawNodeResponseHook ||= source.hasRawNodeResponseHook
-    this.onResponseFinalizedHooks.push(...source.onResponseFinalizedHooks)
     if (source.responseBodyTag !== undefined) {
       const owner = this.enableResponseBodyTagging()
       this.responseBodyOwners.add(source.responseBodyTag)
       source.responseBodyOwners.add(owner)
     }
-    if (!scoped) this.globalAssurance.push(...source.globalAssurance)
+    if (!scoped) this.globalAssurance.push(...ownGlobal)
+    // Cleanup the source registered (a pool, a queue consumer) belongs to the server that now runs
+    // its routes; dropping it would leak the resource past `stop()`.
+    this.stopHooks.push(...source.stopHooks)
     this.mcpResourceList.push(...source.mcpResourceList)
     this.mcpPromptList.push(...source.mcpPromptList)
-    return this as unknown as Server<R & R2, Ctx, HookOutput>
   }
 
   /** A fused renderer closes over runtime services to keep its seven-argument JSC fast path. Merging

@@ -287,18 +287,28 @@ console.log(typeof composeReviewReport, typeof digestReviewReport)`,
 // kernel batch: 1.9 KB gzip on the bare row, with optional rows moving by the same reachable core
 // footprint. Core, middleware, and edge-startup gates remain separate required evidence; this is a
 // narrow repricing of measured feature cost, not an exemption for unbounded growth.
+// Typed prefix groups (`group()`) add ~0.67 KB gzip to the shared kernel (bare 30687 -> 31371 B,
+// measured against its parent commit, which already sat 70 B over the 29.9 ceiling). The method has
+// to be a `Server` member for the builder to inherit the parent's typed context, so it cannot move
+// behind a subpath the way the WS/SSE runtimes did. Of the cost, ~0.35 KB is the method itself (the
+// prefix grammar, the scope fork, the fail-closed builder contract and refusals); the rest is the
+// path join at registration and the prefix-scoped hook gating in the adoption code `merge()` shares.
+// Squeezed first: the fork and the runtime hoist walk field-name lists instead of one statement per
+// field (which also shrank `merge()`), one gate helper wraps every hook kind, and the messages were
+// cut - together 0.33 KB back from the first cut. Nothing runs per request unless a group registers
+// a hook. Every row moves by the same kernel bytes; ceilings are the measured number plus ~0.2 KB.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // The 2026-09-20 security pass adds bounded WebSocket admission/request-hook handling and
   // duplicate-cookie detection to the shared kernel. Reprice every core row together with the
   // measured post-hardening footprint; optional rows must not receive a special exemption.
-  "nifra-bare": 29.9,
+  "nifra-bare": 30.8,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 33.1,
-  "nifra-effect-ledger": 31.9,
-  "nifra-mcp": 30.2,
-  "nifra-sse": 30.7,
-  "nifra-valibot": 31.0,
-  "nifra-typebox-t": 59.8,
+  "nifra-idempotency": 34.0,
+  "nifra-effect-ledger": 32.8,
+  "nifra-mcp": 31.1,
+  "nifra-sse": 31.6,
+  "nifra-valibot": 31.9,
+  "nifra-typebox-t": 60.7,
   // Review-leaf ceiling: measured 5.0 KB gz + ~0.2 KB headroom, same rule as every other row.
   "nifra-agent-review": 5.2,
 }

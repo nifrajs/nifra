@@ -1481,6 +1481,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ - `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ - `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
+- **JoinRoutePath** _(type)_ - `type JoinRoutePath<Prefix extends string, Path extends string> = Path extends "/" ? Prefix : `${Prefix}${Path}``
+  Join a group prefix and a route path the way `Server.group` does at runtime: a group's `/` route serves the prefix itself (no trailing slash), every other path is appended verbatim.
 - **LambdaEvent** _(type)_ - `type LambdaEvent = LambdaV2Event | LambdaV1Event`
 - **LambdaHandler** _(type)_ - `type LambdaHandler = (event: LambdaEvent, context?: unknown) => Promise<LambdaResponse>`
 - **LambdaResponse** _(type)_ - `type LambdaResponse = PlatformResponse`
@@ -1533,6 +1535,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **PlatformResponse** _(interface)_ - `interface PlatformResponse`
 - **PluginTypeCollapsed** _(interface)_ - `interface PluginTypeCollapsed`
   What {@link definePlugin} returns when its `apply` argument never pinned the input server type - the `definePlugin("x", (app) => ...)` arrow, where `app` falls back to `AnyServer`.
+- **PrefixRegistry** _(type)_ - `type PrefixRegistry<Prefix extends string, R extends Registry> = { [Path in keyof R & string as JoinRoutePath<Prefix, Path>]: R[Path] }`
+  Re-key a registry under a static path prefix. Route info (params, schemas, responses) is carried unchanged: a prefix is static text, so it adds no params and cannot change any route's contract.
 - **Prettify** _(type)_ - `type Prettify<T> = { [K in keyof T]: T[K] } & {}`
   Flattens an intersection into a single object type for readable hovers.
 - **PromptArgument** _(interface)_ - `interface PromptArgument`
@@ -2599,6 +2603,8 @@ Every public export of every package and documented subpath - name, kind, signat
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ - `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ - `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
+- **JoinRoutePath** _(type)_ - `type JoinRoutePath<Prefix extends string, Path extends string> = Path extends "/" ? Prefix : `${Prefix}${Path}``
+  Join a group prefix and a route path the way `Server.group` does at runtime: a group's `/` route serves the prefix itself (no trailing slash), every other path is appended verbatim.
 - **LambdaEvent** _(type)_ - `type LambdaEvent = LambdaV2Event | LambdaV1Event`
 - **LambdaHandler** _(type)_ - `type LambdaHandler = (event: LambdaEvent, context?: unknown) => Promise<LambdaResponse>`
 - **LambdaResponse** _(type)_ - `type LambdaResponse = PlatformResponse`
@@ -2649,6 +2655,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **PlatformResponse** _(interface)_ - `interface PlatformResponse`
 - **PluginTypeCollapsed** _(interface)_ - `interface PluginTypeCollapsed`
   What {@link definePlugin} returns when its `apply` argument never pinned the input server type - the `definePlugin("x", (app) => ...)` arrow, where `app` falls back to `AnyServer`.
+- **PrefixRegistry** _(type)_ - `type PrefixRegistry<Prefix extends string, R extends Registry> = { [Path in keyof R & string as JoinRoutePath<Prefix, Path>]: R[Path] }`
+  Re-key a registry under a static path prefix. Route info (params, schemas, responses) is carried unchanged: a prefix is static text, so it adds no params and cannot change any route's contract.
 - **Prettify** _(type)_ - `type Prettify<T> = { [K in keyof T]: T[K] } & {}`
   Flattens an intersection into a single object type for readable hovers.
 - **PromptArgument** _(interface)_ - `interface PromptArgument`
@@ -6005,6 +6013,8 @@ _No named exports (side-effect entrypoint)._
   A named type-identity plugin built with {@link defineIdentityPlugin}. It returns the same concrete server type it receives, preserving the caller's typed registry and context across `.use()` while still allowing the plugin to register runtime hooks or handlers.
 - **InferInput** _(type)_ - `type InferInput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["input"]`
 - **InferOutput** _(type)_ - `type InferOutput<Schema extends StandardSchemaV1> = NonNullable< Schema["~standard"]["types"] >["output"]`
+- **JoinRoutePath** _(type)_ - `type JoinRoutePath<Prefix extends string, Path extends string> = Path extends "/" ? Prefix : `${Prefix}${Path}``
+  Join a group prefix and a route path the way `Server.group` does at runtime: a group's `/` route serves the prefix itself (no trailing slash), every other path is appended verbatim.
 - **LambdaEvent** _(type)_ - `type LambdaEvent = LambdaV2Event | LambdaV1Event`
 - **LambdaHandler** _(type)_ - `type LambdaHandler = (event: LambdaEvent, context?: unknown) => Promise<LambdaResponse>`
 - **LambdaResponse** _(type)_ - `type LambdaResponse = PlatformResponse`
@@ -6057,6 +6067,8 @@ _No named exports (side-effect entrypoint)._
 - **PlatformResponse** _(interface)_ - `interface PlatformResponse`
 - **PluginTypeCollapsed** _(interface)_ - `interface PluginTypeCollapsed`
   What {@link definePlugin} returns when its `apply` argument never pinned the input server type - the `definePlugin("x", (app) => ...)` arrow, where `app` falls back to `AnyServer`.
+- **PrefixRegistry** _(type)_ - `type PrefixRegistry<Prefix extends string, R extends Registry> = { [Path in keyof R & string as JoinRoutePath<Prefix, Path>]: R[Path] }`
+  Re-key a registry under a static path prefix. Route info (params, schemas, responses) is carried unchanged: a prefix is static text, so it adds no params and cannot change any route's contract.
 - **Prettify** _(type)_ - `type Prettify<T> = { [K in keyof T]: T[K] } & {}`
   Flattens an intersection into a single object type for readable hovers.
 - **PromptArgument** _(interface)_ - `interface PromptArgument`

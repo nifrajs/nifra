@@ -5784,6 +5784,18 @@ each other. Each domain therefore owns its full absolute paths (`/api/listings`,
 `/api/agents`), exactly as it would standalone.
 
 -
+**
+`.group(prefix, build)`
+**
+- declare routes under a static prefix. `app.group("/admin", (a) => a.get("/users",
+list))` serves `/admin/users`, and the prefix is part of the typed client,
+`routes()`, OpenAPI, capability events and the effect ledger. The builder
+inherits this server's middleware chain as it stands at the call; what it adds stays in the
+group, and its `onRequest`/`onResponse` hooks run only for requests at
+or under the prefix. The prefix is plain text (no params or wildcards), and a collision
+throws before any group route is added.
+
+-
 **the `/api/*` auto-mount** - a path _guard_, not a rewrite.
 `createWebApp` hands the _same_ `Request` (its URL and body
 intact) to the backend when the pathname is exactly `apiPrefix` or under
@@ -9747,6 +9759,20 @@ const agents = server().get("/agents/:id", (c) => ({ id: c.params.id }))
 const app = server().get("/health", () => ({ ok: true })).merge(listings).merge(agents)
 ```
 
+To declare routes under a shared path, use `group()`. The prefix appears in the typed client,
+`routes()`, and OpenAPI. The builder inherits the chain at the call site. Middleware it adds covers
+only its own routes, and its `onRequest`/`onResponse` hooks run only for requests at or under the
+prefix:
+
+```ts
+const app = server()
+  .derive(session)
+  .group("/admin", (admin) =>
+    admin.beforeHandle(requireAdmin).get("/users", listUsers).get("/users/:id", getUser),
+  )
+  .get("/", home) // requireAdmin does not run here
+```
+
 Each group's routes keep the middleware and assurance captured when that group was defined. For a
 contract-owned surface, `defineContract(...)` + `implement(...)` is the other escape hatch: the
 registry is declared as one object type, so it does not grow one fluent-instantiation level per
@@ -12166,7 +12192,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/core
 
-`AdmissionController`, `AdmissionDecision`, `AnyServer`, `authenticated`, `AuthenticationFailure`, `AuthenticationFailureReason`, `AuthenticationInput`, `AuthenticationResult`, `AuthenticationStage`, `AuthenticationSuccess`, `AuthHeaders`, `AuthMaybePromise`, `commonSecretPatterns`, `Context`, `ContextPlugin`, `cookieNamePrefix`, `CookieOptions`, `CookieSecret`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `DefinePluginResult`, `defineRouterPlugin`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FetchApp`, `FRAMEWORK_NAME`, `FrameworkError`, `FrameworkName`, `Handler`, `hasDuplicateCookie`, `IdentityPlugin`, `InferInput`, `InferOutput`, `isSameOriginPath`, `isSameOriginRequest`, `jsonLogger`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `LogFields`, `Logger`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `METHODS`, `Middleware`, `MountableApp`, `MountFetchOptions`, `MountOptions`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `Params`, `parseCookies`, `pathnameOf`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `Prettify`, `PromptArgument`, `PromptMessage`, `redactLogFields`, `RedactOptions`, `Registry`, `rejected`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `ROUTE_PATTERN_OVERLAP_MAX_STATES`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `routePatternOverlap`, `RoutePatternOverlapLimitError`, `Router`, `RouterMatch`, `RouteSchema`, `RunningServer`, `ScheduledController`, `ScheduledHandler`, `serializeCookie`, `server`, `Server`, `ServerOptions`, `signValue`, `silentLogger`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `status`, `StatusResponse`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `ToolAnnotations`, `toVercelHandler`, `TypedSSEStream`, `unsignValue`, `UrlParts`, `urlPartsOf`, `ValidationOutcome`, `VercelHandler`, `Version`, `VERSION`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`
+`AdmissionController`, `AdmissionDecision`, `AnyServer`, `authenticated`, `AuthenticationFailure`, `AuthenticationFailureReason`, `AuthenticationInput`, `AuthenticationResult`, `AuthenticationStage`, `AuthenticationSuccess`, `AuthHeaders`, `AuthMaybePromise`, `commonSecretPatterns`, `Context`, `ContextPlugin`, `cookieNamePrefix`, `CookieOptions`, `CookieSecret`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `DefinePluginResult`, `defineRouterPlugin`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FetchApp`, `FRAMEWORK_NAME`, `FrameworkError`, `FrameworkName`, `Handler`, `hasDuplicateCookie`, `IdentityPlugin`, `InferInput`, `InferOutput`, `isSameOriginPath`, `isSameOriginRequest`, `JoinRoutePath`, `jsonLogger`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `LogFields`, `Logger`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `METHODS`, `Middleware`, `MountableApp`, `MountFetchOptions`, `MountOptions`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `Params`, `parseCookies`, `pathnameOf`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `PrefixRegistry`, `Prettify`, `PromptArgument`, `PromptMessage`, `redactLogFields`, `RedactOptions`, `Registry`, `rejected`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `ROUTE_PATTERN_OVERLAP_MAX_STATES`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `routePatternOverlap`, `RoutePatternOverlapLimitError`, `Router`, `RouterMatch`, `RouteSchema`, `RunningServer`, `ScheduledController`, `ScheduledHandler`, `serializeCookie`, `server`, `Server`, `ServerOptions`, `signValue`, `silentLogger`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `status`, `StatusResponse`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `ToolAnnotations`, `toVercelHandler`, `TypedSSEStream`, `unsignValue`, `UrlParts`, `urlPartsOf`, `ValidationOutcome`, `VercelHandler`, `Version`, `VERSION`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`
 
 ## @nifrajs/cron
 

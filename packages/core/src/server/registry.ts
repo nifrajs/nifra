@@ -203,3 +203,15 @@ export type AddRoute<
   Path extends string,
   Info extends RouteInfo,
 > = R & { [P in Path]: { [M in Method]: Info } }
+
+/** Join a group prefix and a route path the way `Server.group` does at runtime: a group's `/` route
+ * serves the prefix itself (no trailing slash), every other path is appended verbatim. */
+export type JoinRoutePath<Prefix extends string, Path extends string> = Path extends "/"
+  ? Prefix
+  : `${Prefix}${Path}`
+
+/** Re-key a registry under a static path prefix. Route info (params, schemas, responses) is carried
+ * unchanged: a prefix is static text, so it adds no params and cannot change any route's contract. */
+export type PrefixRegistry<Prefix extends string, R extends Registry> = {
+  [Path in keyof R & string as JoinRoutePath<Prefix, Path>]: R[Path]
+}

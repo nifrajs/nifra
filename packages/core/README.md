@@ -55,6 +55,20 @@ const agents = server().get("/agents/:id", (c) => ({ id: c.params.id }))
 const app = server().get("/health", () => ({ ok: true })).merge(listings).merge(agents)
 ```
 
+To declare routes under a shared path, use `group()`. The prefix appears in the typed client,
+`routes()`, and OpenAPI. The builder inherits the chain at the call site. Middleware it adds covers
+only its own routes, and its `onRequest`/`onResponse` hooks run only for requests at or under the
+prefix:
+
+```ts
+const app = server()
+  .derive(session)
+  .group("/admin", (admin) =>
+    admin.beforeHandle(requireAdmin).get("/users", listUsers).get("/users/:id", getUser),
+  )
+  .get("/", home) // requireAdmin does not run here
+```
+
 Each group's routes keep the middleware and assurance captured when that group was defined. For a
 contract-owned surface, `defineContract(...)` + `implement(...)` is the other escape hatch: the
 registry is declared as one object type, so it does not grow one fluent-instantiation level per

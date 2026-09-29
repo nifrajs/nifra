@@ -196,6 +196,18 @@ export default function Backends() {
           <code>/api/agents</code>), exactly as it would standalone.
         </li>
         <li>
+          <strong>
+            <code>.group(prefix, build)</code>
+          </strong>{" "}
+          - declare routes under a static prefix. <code>app.group("/admin", (a) =&gt; a.get("/users",
+          list))</code> serves <code>/admin/users</code>, and the prefix is part of the typed client,{" "}
+          <code>routes()</code>, OpenAPI, capability events and the effect ledger. The builder
+          inherits this server's middleware chain as it stands at the call; what it adds stays in the
+          group, and its <code>onRequest</code>/<code>onResponse</code> hooks run only for requests at
+          or under the prefix. The prefix is plain text (no params or wildcards), and a collision
+          throws before any group route is added.
+        </li>
+        <li>
           <strong>the <code>/api/*</code> auto-mount</strong> - a path <em>guard</em>, not a rewrite.{" "}
           <code>createWebApp</code> hands the <em>same</em> <code>Request</code> (its URL and body
           intact) to the backend when the pathname is exactly <code>apiPrefix</code> or under{" "}
