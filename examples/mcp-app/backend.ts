@@ -75,6 +75,8 @@ const mcp = createMcpServer({
   widgets: [ordersWidget, ordersReactWidget],
   // Demo data only: opt into browser clients from any origin explicitly.
   allowAnyOrigin: true,
+  // Runs on localhost: refuse any other Host, so a DNS-rebound page cannot reach it.
+  allowedHosts: ["localhost", "127.0.0.1", "[::1]"],
   health: "orders MCP App (nifra) - POST JSON-RPC 2.0 here. Tools: list_orders, list_orders_react.",
 })
 

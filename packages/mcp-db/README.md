@@ -12,6 +12,8 @@ import { serveDatabaseAsMcp } from "@nifrajs/mcp-db"
 
 const mcp = serveDatabaseAsMcp(new Database("app.db"), {
   tables: ["habits", "entries"],
+  // Refuse any other Host, so a DNS-rebound browser page cannot read the schema tools.
+  allowedHosts: ["localhost", "127.0.0.1", "[::1]"],
 })
 ```
 
