@@ -157,6 +157,15 @@ function responseTextContentType(): string {
  * passes no headers of their own. */
 const TEXT_CONTENT_TYPE = "text/plain; charset=utf-8"
 
+/** Where a serving adapter that shares one platform across requests leaves its socket-peer lookup.
+ * `c.clientIp` calls it with the request when a handler reads the address, so a request whose
+ * handler never reads it costs the adapter neither a lookup nor a platform object of its own. */
+export const PLATFORM_PEER = Symbol()
+
+export type PeerPlatform = Platform & {
+  readonly [PLATFORM_PEER]?: (source: RequestSource) => string | undefined
+}
+
 export class RequestContext implements RawContext {
   // `declare` keeps TypeScript's class-field emit from first writing `undefined` to every slot; the
   // constructor initializes only the eager request state, while lazy fields remain absent until used.
@@ -167,7 +176,8 @@ export class RequestContext implements RawContext {
   private declare searchValue: string | undefined
   private declare signalValue: AbortSignal | undefined
   private declare budgetValue: RequestBudget | undefined
-  private declare platformValue: Platform | undefined
+  private declare platformValue: PeerPlatform | undefined
+  private declare peerValue: string | undefined
 
   private declare setValue: CtxSet | undefined
   private declare queryValue: unknown
@@ -268,8 +278,12 @@ export class RequestContext implements RawContext {
 
   get clientIp(): string | undefined {
     // The server resolves the trust declaration into `platform.clientIp` before the context is built,
-    // so this getter just surfaces the already-derived value (raw socket peer by default).
-    return this.platformValue?.clientIp
+    // so this getter just surfaces the already-derived value (raw socket peer by default). A platform
+    // shared across requests holds no address of its own and is asked for this request's peer, once:
+    // the answer is kept, so a read after the socket closed agrees with one before it.
+    const platform = this.platformValue
+    this.peerValue ??= platform?.clientIp ?? platform?.[PLATFORM_PEER]?.(this.source)
+    return this.peerValue
   }
 
   get waitUntil(): (promise: Promise<unknown>) => void {

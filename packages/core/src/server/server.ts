@@ -92,7 +92,12 @@ import type {
   ResponseHeadersView,
 } from "./node-outcome-hook.ts"
 import { type QueryValue, queryObjectOf, searchOf } from "./query.ts"
-import { RequestContext, readBodyFramed } from "./request-context.ts"
+import {
+  type PeerPlatform,
+  PLATFORM_PEER,
+  RequestContext,
+  readBodyFramed,
+} from "./request-context.ts"
 import {
   applyStaticResponseHeaders,
   buildStaticResponseHeaders,
@@ -295,10 +300,15 @@ interface WsEntry {
   readonly handler: WebSocketHandler
 }
 
-/** Structural view of the Bun `Server` the `fetch` 2nd arg exposes (`upgrade` + the socket peer). */
-interface BunUpgradeServer {
-  upgrade(request: Request, options?: { data?: BunWsData }): boolean
+/** Structural view of the socket-peer lookup on the Bun `Server`, so any Bun `Server` (WS or not)
+ * satisfies it. */
+interface BunPeerServer {
   requestIP(request: Request): { readonly address: string } | null
+}
+
+/** Structural view of the Bun `Server` the `fetch` 2nd arg exposes (`upgrade` + the socket peer). */
+interface BunUpgradeServer extends BunPeerServer {
+  upgrade(request: Request, options?: { data?: BunWsData }): boolean
 }
 
 type MountedFetchHandler<Env = unknown> = (
@@ -336,12 +346,8 @@ interface FetchMount<Env = unknown> {
   readonly order: number
 }
 
-/** The socket peer Bun observed, as a `Platform` for the request lifecycle (`undefined` if unknown).
- * Typed structurally on `requestIP` alone so any Bun `Server` (WS or not) satisfies it. */
-function bunPeerPlatform(
-  server: { requestIP(request: Request): { readonly address: string } | null },
-  req: Request,
-): Platform {
+/** The socket peer Bun observed, as a `Platform` for the request lifecycle (`undefined` if unknown). */
+function bunPeerPlatform(server: BunPeerServer, req: Request): Platform {
   // Bun's requestIP() costs ~0.5 us per call, about 7% of a bare GET's server time. Keep the
   // documented raw-peer c.clientIp behavior, but resolve it lazily: most routes never read c.clientIp,
   // so they should not pay for the socket lookup on every request. A getter also
@@ -360,7 +366,7 @@ function bunPeerPlatform(
   }
 }
 
-type BunNativeHandler = (request: Request) => MaybePromise<Response>
+type BunNativeHandler = (request: Request, server: BunPeerServer) => MaybePromise<Response>
 type BunNativeMethodTable = Partial<Record<Method, BunNativeHandler>>
 type BunNativeRoutes = Record<string, BunNativeMethodTable>
 type BunRequestWithParams = Request & { readonly params?: Record<string, string> }
@@ -2727,19 +2733,25 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     source: RequestSource,
     entry: RouteEntry,
     params: Record<string, string>,
+    platform: Platform,
   ): MaybePromise<Response> {
-    if (this.capacityGate === undefined) return this.fetchMatchedInner(source, entry, params)
-    return this.admitGated(requestOf(source), () => this.fetchMatchedInner(source, entry, params))
+    if (this.capacityGate === undefined) {
+      return this.fetchMatchedInner(source, entry, params, platform)
+    }
+    return this.admitGated(requestOf(source), () =>
+      this.fetchMatchedInner(source, entry, params, platform),
+    )
   }
 
   private fetchMatchedInner(
     source: RequestSource,
     entry: RouteEntry,
     params: Record<string, string>,
+    platform: Platform,
   ): MaybePromise<Response> {
     const outcome = this.runMatched(
       source,
-      undefined,
+      platform,
       entry,
       params,
       undefined,
@@ -5992,6 +6004,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     fused: FusedWebRunner | undefined,
     signal: AbortSignal | undefined,
     budget: RequestBudget | undefined,
+    peer: PeerPlatform,
+    fallback: BunNativeHandler,
   ): BunNativeHandler {
     // This callback is reached only from Bun's compiled native route table. Bun has already parsed
     // the HTTP framing, so the JSON lane may retain its native fused `json()` parse without weakening
@@ -6019,7 +6033,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       request: Request,
       params: Record<string, string>,
     ): MaybePromise<Response> => {
-      const outcome = capped!(request, params, undefined, signal!, budget!, undefined, true)
+      const outcome = capped!(request, params, undefined, signal!, budget!, peer, true)
       return outcome instanceof Promise
         ? outcome.then((response) => finishNative(request, response))
         : finishNative(request, outcome)
@@ -6028,15 +6042,15 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (capped === undefined) {
         return (request) => {
           markFramed(request)
-          return this.fetchMatched(request, entry, EMPTY_PARAMS)
+          return this.fetchMatched(request, entry, EMPTY_PARAMS, peer)
         }
       }
       if (this.acceptInboundDeadlines) {
         return (request) => {
           markFramed(request)
           return request.headers.get(NIFRA_DEADLINE_HEADER) !== null
-            ? this.fetchMatched(request, entry, EMPTY_PARAMS)
-            : capped(request, EMPTY_PARAMS, undefined, signal!, budget!, undefined, true)
+            ? this.fetchMatched(request, entry, EMPTY_PARAMS, peer)
+            : capped(request, EMPTY_PARAMS, undefined, signal!, budget!, peer, true)
         }
       }
       return (request) => {
@@ -6050,27 +6064,27 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         ? (params: Record<string, string>) => params[paramNames[0]!]?.includes("\uFFFD") === true
         : hasReplacementParam
     if (capped === undefined) {
-      return (request) => {
+      return (request, server) => {
         markFramed(request)
         const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
-        if (malformed(params)) return this.fetchSource(request)
-        return this.fetchMatched(request, entry, params)
+        if (malformed(params)) return fallback(request, server)
+        return this.fetchMatched(request, entry, params, peer)
       }
     }
     if (this.acceptInboundDeadlines) {
-      return (request) => {
+      return (request, server) => {
         markFramed(request)
         const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
-        if (malformed(params)) return this.fetchSource(request)
+        if (malformed(params)) return fallback(request, server)
         return request.headers.get(NIFRA_DEADLINE_HEADER) !== null
-          ? this.fetchMatched(request, entry, params)
-          : capped(request, params, undefined, signal!, budget!, undefined, true)
+          ? this.fetchMatched(request, entry, params, peer)
+          : capped(request, params, undefined, signal!, budget!, peer, true)
       }
     }
-    return (request) => {
+    return (request, server) => {
       markFramed(request)
       const params = (request as BunRequestWithParams).params ?? EMPTY_PARAMS
-      if (malformed(params)) return this.fetchSource(request)
+      if (malformed(params)) return fallback(request, server)
       return runNative(request, params)
     }
   }
@@ -6081,8 +6095,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    *
    * Bun and the portable router agree on which of two static-and-`:param` paths wins a request, so
    * the table is kept to those paths. Where Bun would otherwise pass a request on to a less specific
-   * path, the more specific one carries `fallback`, the portable dispatcher, under that method. */
-  private buildBunNativeRoutes(fallback: BunNativeHandler): BunNativeRoutes | undefined {
+   * path, the more specific one carries `fallback`, the portable dispatcher, under that method.
+   * `peer` is the platform every request served from the table shares. */
+  private buildBunNativeRoutes(
+    fallback: BunNativeHandler,
+    peer: PeerPlatform,
+  ): BunNativeRoutes | undefined {
     // A `clientIp` trust declaration must run the resolver in `dispatch`, which the fused native lane
     // bypasses - so an app that declares trust routes through the fetch lane (where `c.clientIp`
     // resolves) instead of Bun's native table. The allocation-free default keeps native fusion.
@@ -6148,9 +6166,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       const run = lead[i]
       // The route is served from the table unless its path cannot be there, Bun's table has no slot
       // for its method, or a path outside the table outranks it: Bun would hand this route a request
-      // the portable router gives to that one.
+      // the portable router gives to that one. An idempotent route stays off it too: its lanes run on
+      // a buffered copy of the request, and Bun names the peer only of the request it delivered, so
+      // the platform the table shares could not answer `c.clientIp` there.
       if (
         run === undefined ||
+        entry.idempotent !== undefined ||
         !METHODS.includes(method as Method) ||
         (preflightOnFallback && method === "OPTIONS") ||
         under.get(run)?.some((other) => outranks(other.pattern.segments, pattern.segments))
@@ -6165,6 +6186,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         fused,
         unboundedSignal,
         unboundedBudget,
+        peer,
+        fallback,
       )
       count += 1
       if (paramNames.length > 0) {
@@ -6275,10 +6298,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // Same reasoning as `bind`: omit rather than pass undefined, so Bun's own default applies.
     const idle =
       options?.idleTimeoutSec === undefined ? {} : { idleTimeout: options.idleTimeoutSec }
-    const fallback = (
-      req: Request,
-      server: Parameters<typeof bunPeerPlatform>[0],
-    ): MaybePromise<Response> => {
+    const fallback: BunNativeHandler = (req, server) => {
       // Bun has already framed and bounded this request body in its HTTP parser. Mark the
       // source before the portable fallback runs so body schemas use Bun's native `json()`
       // reader instead of the defensive arrayBuffer/decode path reserved for caller-built
@@ -6287,8 +6307,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       markTrustedBodyFraming(req)
       return this.fetch(req, bunPeerPlatform(server, req) as Platform<EnvOf<Ctx>>)
     }
+    // Bun names the socket peer of a request when its server is asked. A request served from the
+    // native table carries this one platform, which asks only when a handler reads `c.clientIp`.
+    const peer: PeerPlatform = {
+      [PLATFORM_PEER]: (request) =>
+        (running as unknown as BunPeerServer).requestIP(request as Request)?.address,
+    }
     const nativeRoutes =
-      wsHandlers === undefined ? this.buildBunNativeRoutes(fallback as BunNativeHandler) : undefined
+      wsHandlers === undefined ? this.buildBunNativeRoutes(fallback, peer) : undefined
     const running = (wsHandlers === undefined
       ? Bun.serve({
           port,

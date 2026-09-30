@@ -361,16 +361,26 @@ const BROWSER_FEATURES: ReadonlySet<string> = new Set(["nifra-web-client"])
 // /users/login` off the native lane, and an entry under every method on every path is 76 B smaller
 // and triples the time `Bun.serve` takes to accept a 3000-route table. Every kernel row moves by
 // 0.3 KB; the ceiling is the measured number rounded up to the next 0.1 KB.
+// On Bun, `c.clientIp` is the socket peer on a route served from Bun's route table, as it already
+// was on every other route: +65 B gzip (bare 32098 -> 32163 B), inherited by every row. The table's
+// requests share one platform that holds a lookup instead of an address, and the context asks it
+// when a handler reads `c.clientIp`, so a request whose handler never reads it allocates nothing and
+// asks Bun nothing. 5 B of it keeps the first answer, because Bun stops naming the peer once the
+// connection is closed. An idempotent route leaves the table, since its handler runs on a buffered
+// copy of the request that Bun cannot name a peer for. Squeezed first, from +71 B: the key the
+// lookup sits under carries no description. Sending a malformed parameter to the dispatcher without
+// the peer measured 5 B larger and was not taken. Three rows had no slack left and move by 0.1 KB;
+// the other rows still clear theirs.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // The 2026-09-20 security pass adds bounded WebSocket admission/request-hook handling and
   // duplicate-cookie detection to the shared kernel. Reprice every core row together with the
   // measured post-hardening footprint; optional rows must not receive a special exemption.
-  "nifra-bare": 31.4,
+  "nifra-bare": 31.5,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
   "nifra-idempotency": 34.6,
-  "nifra-effect-ledger": 33.3,
+  "nifra-effect-ledger": 33.4,
   "nifra-mcp": 31.7,
-  "nifra-sse": 32.1,
+  "nifra-sse": 32.2,
   "nifra-valibot": 32.4,
   "nifra-typebox-t": 61.5,
   "nifra-typebox-form": 65.4,
