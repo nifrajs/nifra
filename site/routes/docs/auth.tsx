@@ -11,7 +11,7 @@ export const meta = docsMeta(
   "Turnkey auth with @nifrajs/better-auth (OAuth, magic links, 2FA), or signed-cookie + server-store sessions, route guards, and CSRF with @nifrajs/auth.",
 )
 
-const BETTERAUTH = `// doc-check: skip - needs the third-party `better-auth` package + your `db`; install it to run this.
+const BETTERAUTH = `// doc-check: skip - needs the third-party \`better-auth\` package + your \`db\`; install it to run this.
 // auth.ts - your configured Better Auth instance (database, providers, …):
 import { betterAuth as createBetterAuth } from "better-auth"
 export const auth = createBetterAuth({ database: db, emailAndPassword: { enabled: true } })
