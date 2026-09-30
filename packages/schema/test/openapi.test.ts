@@ -504,6 +504,36 @@ describe("header schema → header parameters", () => {
   })
 })
 
+describe("cookie schema → cookie parameters", () => {
+  test("app route emits each declared cookie with its name as written", () => {
+    const doc = toOpenAPI(
+      server().get(
+        "/dashboard",
+        { cookies: t.cookies({ sessionId: t.string(), page: t.optional(t.integer()) }) },
+        (c) => ({ session: c.cookies.sessionId, page: c.cookies.page ?? 1 }),
+      ),
+    )
+    expect(doc.paths["/dashboard"]?.get?.parameters).toEqual([
+      { name: "sessionId", in: "cookie", required: true, schema: { type: "string" } },
+      { name: "page", in: "cookie", required: false, schema: { type: "integer" } },
+    ])
+  })
+
+  test("contract operation emits its cookies schema as cookie parameters", () => {
+    const contract = defineContract({
+      me: {
+        method: "GET",
+        path: "/me",
+        cookies: t.cookies({ session: t.string() }),
+        response: t.object({ ok: t.boolean() }),
+      },
+    })
+    expect(toOpenAPI(contract).paths["/me"]?.get?.parameters).toEqual([
+      { name: "session", in: "cookie", required: true, schema: { type: "string" } },
+    ])
+  })
+})
+
 describe("a body schema with a parser of its own", () => {
   const Pipeline = t.object({ name: t.string() })
   const parse = (): unknown => ({ name: "build" })

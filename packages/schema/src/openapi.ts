@@ -92,7 +92,7 @@ export interface ToOpenAPIOptions {
 
 interface OpenAPIParameter {
   readonly name: string
-  readonly in: "path" | "query" | "header"
+  readonly in: "path" | "query" | "header" | "cookie"
   readonly required: boolean
   readonly schema: JsonSchema
 }
@@ -278,11 +278,23 @@ function headerParameters(schema: SchemaReflection | undefined): OpenAPIParamete
   }))
 }
 
+/** Cookie names are case-sensitive, so each declared field keeps its name as written. */
+function cookieParameters(schema: SchemaReflection | undefined): OpenAPIParameter[] {
+  if (schema?.fields === undefined) return []
+  return schema.fields.map((field) => ({
+    name: field.name,
+    in: "cookie" as const,
+    required: field.required,
+    schema: field.schema,
+  }))
+}
+
 interface OperationInput {
   readonly path: string
   readonly body: SchemaReflection | undefined
   readonly query: SchemaReflection | undefined
   readonly headers: SchemaReflection | undefined
+  readonly cookies?: SchemaReflection | undefined
   /** Reflected params schema - per-field constraints merge into path parameters. */
   readonly params: SchemaReflection | undefined
   readonly response: SchemaReflection | undefined
@@ -419,6 +431,7 @@ function buildOperation(input: OperationInput, store: SchemaStore): OpenAPIOpera
     ...pathParameters(input.path, input.params),
     ...queryParameters(input.query),
     ...headerParameters(input.headers),
+    ...cookieParameters(input.cookies),
   ]
   if (parameters.length > 0) operation.parameters = parameters
 
@@ -497,6 +510,7 @@ export function toOpenAPI(
           body: route.schema?.body,
           query: route.schema?.query,
           headers: route.schema?.headers,
+          cookies: route.schema?.cookies,
           params: route.schema?.params,
           // A route may now declare a `response` contract - emit it as the 200 body schema.
           response: route.schema?.response,
@@ -540,6 +554,7 @@ export function toOpenAPI(
             body: op.body === undefined ? undefined : reflectSchema(op.body),
             query: op.query === undefined ? undefined : reflectSchema(op.query),
             headers: op.headers === undefined ? undefined : reflectSchema(op.headers),
+            cookies: op.cookies === undefined ? undefined : reflectSchema(op.cookies),
             params: op.params === undefined ? undefined : reflectSchema(op.params),
             response: op.response === undefined ? undefined : reflectSchema(op.response),
             operationId: path === forms[forms.length - 1] ? name : undefined,

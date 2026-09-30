@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { t } from "@nifrajs/schema"
 import { RouteConfigError, server } from "../src/index.ts"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "../src/schema/standard.ts"
 import { isResponseResult, type ResponseResult } from "../src/server/runtime-core.ts"
@@ -572,6 +573,149 @@ describe("header validation", () => {
     const res = await app.fetch(new Request("http://localhost/header"))
     expect(res.status).toBe(422)
     expect(ran).toBe(false)
+  })
+})
+
+describe("cookie validation", () => {
+  const sessionCookies = schema<{ session: string }>((value) => {
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "session" in value &&
+      typeof value.session === "string"
+    ) {
+      return { value: { session: value.session } }
+    }
+    return { issues: [{ message: "session is required", path: ["session"] }] }
+  })
+  const withCookie = (path: string, cookie?: string, init: RequestInit = {}): Request =>
+    new Request(`http://localhost${path}`, {
+      ...init,
+      headers: {
+        ...(init.headers as Record<string, string> | undefined),
+        ...(cookie === undefined ? {} : { cookie }),
+      },
+    })
+
+  test("exposes the validated value as c.cookies", async () => {
+    const app = server().get("/me", { cookies: sessionCookies }, (c) => c.cookies)
+    const res = await app.fetch(withCookie("/me", "_ga=GA1.2; session=a%20b"))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ session: "a b" })
+  })
+
+  test("a missing cookie is rejected with 422 before the handler", async () => {
+    let ran = false
+    const app = server().get("/me", { cookies: sessionCookies }, () => {
+      ran = true
+      return "bad"
+    })
+    const res = await app.fetch(withCookie("/me", "theme=dark"))
+    expect(res.status).toBe(422)
+    expect(await res.json()).toEqual({
+      ok: false,
+      error: "validation",
+      issues: [{ message: "session is required", path: ["session"] }],
+    })
+    expect(ran).toBe(false)
+  })
+
+  test("t.cookies coerces declared fields and passes the other cookies through", async () => {
+    const app = server().get(
+      "/prefs",
+      { cookies: t.cookies({ page: t.integer(), dark: t.boolean() }) },
+      (c) => ({ next: c.cookies.page + 1, dark: c.cookies.dark, all: c.cookies }),
+    )
+    const ok = await app.fetch(withCookie("/prefs", "page=2; dark=true; _ga=GA1.2"))
+    expect(await ok.json()).toEqual({
+      next: 3,
+      dark: true,
+      all: { page: 2, dark: true, _ga: "GA1.2" },
+    })
+    expect((await app.fetch(withCookie("/prefs", "page=two; dark=true"))).status).toBe(422)
+  })
+
+  test("every route shape validates cookies, on app.fetch and on listen()", async () => {
+    const shapes = server()
+      .get("/only", { cookies: sessionCookies }, (c) => c.cookies.session)
+      .get(
+        "/query",
+        { cookies: sessionCookies, query: t.query({ q: t.string() }) },
+        (c) => `${c.cookies.session}:${c.query.q}`,
+      )
+      .post(
+        "/body",
+        { cookies: sessionCookies, body: t.object({ name: t.string() }) },
+        (c) => `${c.cookies.session}:${c.body.name}`,
+      )
+      .get(
+        "/ordered",
+        { cookies: sessionCookies, validationOrder: "auth-before-validation" },
+        (c) => c.cookies.session,
+      )
+    const hooked = server()
+      .derive(() => ({ role: "user" }))
+      .beforeHandle(() => undefined)
+      .get("/hooked", { cookies: sessionCookies }, (c) => `${c.cookies.session}:${c.role}`)
+      .post(
+        "/hooked-body",
+        { cookies: sessionCookies, body: t.object({ name: t.string() }) },
+        (c) => `${c.cookies.session}:${c.body.name}:${c.role}`,
+      )
+    const body = { method: "POST", body: JSON.stringify({ name: "Ada" }) }
+    const json = { "content-type": "application/json" }
+    const cases = [
+      [shapes, "/only", {}, "s1"],
+      [shapes, "/query?q=x", {}, "s1:x"],
+      [shapes, "/body", { ...body, headers: json }, "s1:Ada"],
+      [shapes, "/ordered", {}, "s1"],
+      [hooked, "/hooked", {}, "s1:user"],
+      [hooked, "/hooked-body", { ...body, headers: json }, "s1:Ada:user"],
+    ] as const
+    for (const [app, path, init, expected] of cases) {
+      const accepted = await app.fetch(withCookie(path, "session=s1", init))
+      expect(await accepted.json()).toBe(expected)
+      expect((await app.fetch(withCookie(path, undefined, init))).status).toBe(422)
+    }
+    for (const app of [shapes, hooked]) {
+      const instance = app.listen(0, { hostname: "127.0.0.1" })
+      try {
+        for (const [owner, path, init, expected] of cases) {
+          if (owner !== app) continue
+          const url = `http://127.0.0.1:${instance.port}${path}`
+          const accepted = await fetch(url, {
+            ...init,
+            headers: { ...(init as RequestInit).headers, cookie: "session=s1" },
+          })
+          expect(await accepted.json()).toBe(expected)
+          expect((await fetch(url, init as RequestInit)).status).toBe(422)
+        }
+      } finally {
+        instance.stop(true)
+      }
+    }
+  })
+
+  test("onValidationError sees kind cookies and may heal the value", async () => {
+    const kinds: string[] = []
+    const app = server({
+      onValidationError: (_issues, _ctx, kind) => {
+        kinds.push(kind)
+        return { session: "guest" }
+      },
+    }).get("/me", { cookies: sessionCookies }, (c) => c.cookies.session)
+    const res = await app.fetch(withCookie("/me"))
+    expect(await res.json()).toBe("guest")
+    expect(kinds).toEqual(["cookies"])
+  })
+
+  test("an unhealable cookie repair is still a 422", async () => {
+    const app = server({ onValidationError: () => ({ session: 42 }) }).get(
+      "/me",
+      { cookies: sessionCookies },
+      (c) => c.cookies.session,
+    )
+    expect((await app.fetch(withCookie("/me"))).status).toBe(422)
   })
 })
 

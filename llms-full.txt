@@ -952,6 +952,39 @@ The request is on `c.req`, also available as `c.request` - the same name a
 page loader/action receives (which in turn also accepts `ctx.req`), so one name works
 in both places.
 
+### Typed request cookies (schema.cookies)
+
+`c.cookies` is the request's `Cookie` header as a name-to-value record,
+parsed on first read: values are URL-decoded, and when a name repeats the first one wins. Declare a
+`cookies` schema on the route and it is validated before the handler, like
+`query` or `body`: a missing or malformed cookie is a `422`
+(`onValidationError` receives the kind `"cookies"`), and
+`c.cookies` becomes the schema's typed output.
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema"
+
+export const app = server().get(
+  "/dashboard",
+  { cookies: t.cookies({ session: t.string(), page: t.optional(t.integer()) }) },
+  (c) => ({
+    session: c.cookies.session, // string - a request without it is a 422 before this runs
+    page: c.cookies.page ?? 1, // number | undefined - coerced from the cookie's text
+  }),
+)
+```
+
+Use `t.cookies` for this slot. Cookie values are always text, so it coerces declared
+`t.integer()` / `t.number()` / `t.boolean()` fields, and it is
+open: a browser sends every cookie the site has set (analytics, consent, other routes'
+sessions), so the ones a route does not declare pass through rather than failing the request.
+A strict `t.object` here would reject real traffic. A signed cookie arrives as its raw
+`value.signature` text - declare it as `t.string()` and verify it with
+`unsignValue`; when a session must not be ambiguous, reject a repeated name with
+`hasDuplicateCookie`. The OpenAPI document lists each declared field as an
+`in: cookie` parameter.
+
 ### Requests no route matched (notFound)
 
 A path no route matches is answered `404` with
@@ -9044,8 +9077,8 @@ export const GetUser = {
 
 ### Runtime validation
 
-Attach the schema to a route. Path params, query, and body are validated at the runtime
-boundary _before_ your handler runs - invalid input is rejected with a 422, so the
+Attach the schema to a route. Path params, query, headers, cookies, and body are validated at
+the runtime boundary _before_ your handler runs - invalid input is rejected with a 422, so the
 handler only ever sees well-formed data.
 
 ```ts

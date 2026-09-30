@@ -154,6 +154,35 @@ describe("implement() - request header contract", () => {
   })
 })
 
+describe("implement() - request cookie contract", () => {
+  const session: StandardSchemaV1<unknown, { session: string }> = {
+    "~standard": {
+      version: 1,
+      vendor: "test",
+      validate: (value) =>
+        typeof value === "object" &&
+        value !== null &&
+        typeof (value as { session?: unknown }).session === "string"
+          ? { value: { session: (value as { session: string }).session } }
+          : { issues: [{ message: "session is required", path: ["session"] }] },
+      types: undefined as unknown as StandardTypes<unknown, { session: string }>,
+    },
+  }
+
+  test("carries and validates a contract op's cookie schema with typed c.cookies", async () => {
+    const contract = defineContract({ me: { method: "GET", path: "/me", cookies: session } })
+    const app = implement(contract, { me: (c) => ({ session: c.cookies.session }) })
+
+    const ok = await app.fetch(new Request("http://x/me", { headers: { cookie: "session=s1" } }))
+    expect(ok.status).toBe(200)
+    expect(await ok.json()).toEqual({ session: "s1" })
+    expect(app.routes()[0]?.schema?.cookies).toBe(session)
+
+    const missing = await app.fetch(new Request("http://x/me"))
+    expect(missing.status).toBe(422)
+  })
+})
+
 describe("implement(contract, handlers, app) - the middleware seam", () => {
   const contract = defineContract({ me: { method: "GET", path: "/me" } })
   const authPolicy = {

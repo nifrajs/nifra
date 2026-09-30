@@ -83,6 +83,18 @@ const SET = `export const app = server()
     return { ok: true }
   })`
 
+const COOKIES = `import { server } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema"
+
+export const app = server().get(
+  "/dashboard",
+  { cookies: t.cookies({ session: t.string(), page: t.optional(t.integer()) }) },
+  (c) => ({
+    session: c.cookies.session, // string - a request without it is a 422 before this runs
+    page: c.cookies.page ?? 1, // number | undefined - coerced from the cookie's text
+  }),
+)`
+
 const NOT_FOUND = `import { notFound } from "@nifrajs/core/not-found"
 import { server } from "@nifrajs/core/server"
 
@@ -368,6 +380,28 @@ export default function Api() {
         The request is on <code>c.req</code>, also available as <code>c.request</code> - the same name a
         page loader/action receives (which in turn also accepts <code>ctx.req</code>), so one name works
         in both places.
+      </p>
+
+      <h2>Typed request cookies (schema.cookies)</h2>
+      <p>
+        <code>c.cookies</code> is the request's <code>Cookie</code> header as a name-to-value record,
+        parsed on first read: values are URL-decoded, and when a name repeats the first one wins. Declare a{" "}
+        <code>cookies</code> schema on the route and it is validated before the handler, like{" "}
+        <code>query</code> or <code>body</code>: a missing or malformed cookie is a <code>422</code>{" "}
+        (<code>onValidationError</code> receives the kind <code>"cookies"</code>), and{" "}
+        <code>c.cookies</code> becomes the schema's typed output.
+      </p>
+      <CodeBlock code={COOKIES} lang="ts" />
+      <p>
+        Use <code>t.cookies</code> for this slot. Cookie values are always text, so it coerces declared{" "}
+        <code>t.integer()</code> / <code>t.number()</code> / <code>t.boolean()</code> fields, and it is
+        open: a browser sends every cookie the site has set (analytics, consent, other routes'
+        sessions), so the ones a route does not declare pass through rather than failing the request.
+        A strict <code>t.object</code> here would reject real traffic. A signed cookie arrives as its raw{" "}
+        <code>value.signature</code> text - declare it as <code>t.string()</code> and verify it with{" "}
+        <code>unsignValue</code>; when a session must not be ambiguous, reject a repeated name with{" "}
+        <code>hasDuplicateCookie</code>. The OpenAPI document lists each declared field as an{" "}
+        <code>in: cookie</code> parameter.
       </p>
 
       <h2>Requests no route matched (notFound)</h2>

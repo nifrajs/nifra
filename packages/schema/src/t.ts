@@ -30,6 +30,15 @@ function unwrap<P extends Props>(where: string, props: P): { [K in keyof P]: P[K
   return out as { [K in keyof P]: P[K]["jsonSchema"] }
 }
 
+/** An open object whose scalar fields are coerced from strings - the shape of every request input
+ * that arrives as name/value text (a query string, a `Cookie` header). */
+const textFields =
+  (where: string) =>
+  <P extends Props>(props: P, options?: ObjectOptions) =>
+    fromTypeBox(Type.Object(unwrap(where, props), { additionalProperties: true, ...options }), {
+      coerce: true,
+    })
+
 /**
  * The built-in schema builder. Each constructor returns a `NifraSchema` - a
  * Standard Schema whose validated output type flows into `c.body`/`c.query`, and
@@ -141,8 +150,10 @@ export const t = {
    * traffic appends params your schema never declares, causing 422s that never appear in dev/CI). Pass
    * `{ additionalProperties: false }` to enforce a strict allowlist. This is the query-slot constructor;
    * `t.object` stays the constructor for body slots (no coercion, a JSON body is already typed). */
-  query: <P extends Props>(props: P, options?: ObjectOptions) =>
-    fromTypeBox(Type.Object(unwrap("t.query", props), { additionalProperties: true, ...options }), {
-      coerce: true,
-    }),
+  query: textFields("t.query"),
+  /** A request-cookie schema for the `cookies` route slot, with the same string->scalar COERCION as
+   * `t.query` (cookie values always arrive as strings). **Open by default**: a browser sends every
+   * cookie the site has set - analytics, consent, other routes' sessions - so a strict allowlist
+   * would 422 real traffic. Declare the cookies the route reads; the rest pass through. */
+  cookies: textFields("t.cookies"),
 } as const

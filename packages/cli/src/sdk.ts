@@ -40,7 +40,7 @@ interface SchemaRecord {
 
 interface ParameterLike {
   readonly name: string
-  readonly in: "path" | "query" | "header"
+  readonly in: "path" | "query" | "header" | "cookie"
   readonly required: boolean
   readonly schema?: JsonSchema
 }

@@ -322,6 +322,12 @@ export interface RouteSchema {
    * output is exposed as `c.headers`; use lower-case keys because HTTP header names are
    * case-insensitive. */
   readonly headers?: StandardSchemaV1
+  /** Optional request-cookie schema. It validates the cookies parsed from the `Cookie` header -
+   * names as sent, values URL-decoded strings, the first of a repeated name - before the handler
+   * runs, and the validated output is `c.cookies`. A failure is a `422`, like `headers`. A browser
+   * sends every cookie the site has set, so declare the ones the route reads with an open schema
+   * (`t.cookies`, `t.looseObject`) rather than rejecting the rest. */
+  readonly cookies?: StandardSchemaV1
   readonly body?: StandardSchemaV1
   readonly query?: StandardSchemaV1
   /** Optional **response contract**. When declared: the handler's return is type-checked against it
@@ -346,7 +352,7 @@ export interface RouteSchema {
    */
   readonly sse?: StandardSchemaV1
   /**
-   * Hook fired when the request fails `headers`/`params`/`body`/`query` validation, before the handler
+   * Hook fired when the request fails `headers`/`cookies`/`params`/`body`/`query` validation, before the handler
    * runs. `kind` says which input failed. Its return value selects one of three outcomes (may be async):
    *   - a **`Response`** → returned as-is, short-circuiting the route (custom error envelope, redirect, …).
    *   - **any other value** → treated as a repaired payload and **re-validated once** against the same
@@ -361,7 +367,7 @@ export interface RouteSchema {
   readonly onValidationError?: (
     issues: ReadonlyArray<StandardIssue>,
     ctx: Context,
-    kind: "body" | "query" | "params" | "headers",
+    kind: "body" | "query" | "params" | "headers" | "cookies",
   ) => Response | unknown | Promise<Response | unknown>
 }
 
@@ -380,6 +386,13 @@ type HeadersOf<S extends RouteSchema> = S extends {
   headers: infer H extends StandardSchemaV1
 }
   ? InferOutput<H>
+  : Readonly<Record<string, string>>
+
+/** The validated cookie type when a cookie schema is declared, else the parsed name → value record. */
+type CookiesOf<S extends RouteSchema> = S extends {
+  cookies: infer C extends StandardSchemaV1
+}
+  ? InferOutput<C>
   : Readonly<Record<string, string>>
 
 /** The validated params type when a params schema is declared, else the path-inferred `Params<Path>`. */
@@ -444,8 +457,9 @@ export interface Context<Path extends string = string, S extends RouteSchema = R
   readonly query: QueryOf<S>
   readonly body: BodyOf<S>
   /** The request's cookies, parsed from the `Cookie` header (values URL-decoded). Parsed lazily on
-   * first access + cached. Signed cookies arrive as `value.signature` - verify with `unsignValue`. */
-  readonly cookies: Readonly<Record<string, string>>
+   * first access + cached; validated/coerced when `schema.cookies` is declared. Signed cookies arrive
+   * as `value.signature` - verify with `unsignValue`. */
+  readonly cookies: CookiesOf<S>
   readonly set: ResponseControls
   /**
    * Aborts when the server's `requestTimeoutMs` elapses (and never, when no timeout

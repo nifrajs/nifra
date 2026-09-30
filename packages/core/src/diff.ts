@@ -34,6 +34,7 @@ export interface SchemaSnapshot {
 
 export interface RouteSnapshotSchema {
   readonly headers?: SchemaSnapshot
+  readonly cookies?: SchemaSnapshot
   readonly body?: SchemaSnapshot
   readonly query?: SchemaSnapshot
   readonly params?: SchemaSnapshot
@@ -59,6 +60,7 @@ export interface RouteChange {
   readonly section:
     | "route"
     | "headers"
+    | "cookies"
     | "body"
     | "query"
     | "params"
@@ -120,12 +122,14 @@ const snapshotRoute = (route: ReflectedRoute): RouteSnapshot => {
   }
   const body = schemaSnapshot(schema.body)
   const headers = schemaSnapshot(schema.headers)
+  const cookies = schemaSnapshot(schema.cookies)
   const query = schemaSnapshot(schema.query)
   const params = schemaSnapshot(schema.params)
   const response = schemaSnapshot(schema.response)
   const sse = schemaSnapshot(schema.sse)
   const snapped: RouteSnapshotSchema = {
     ...(headers !== undefined ? { headers } : {}),
+    ...(cookies !== undefined ? { cookies } : {}),
     ...(body !== undefined ? { body } : {}),
     ...(query !== undefined ? { query } : {}),
     ...(params !== undefined ? { params } : {}),
@@ -378,7 +382,7 @@ export function diffRouteSnapshots(
     const path = beforeRoute.path
     const beforeSchema = beforeRoute.schema ?? {}
     const afterSchema = afterRoute.schema ?? {}
-    for (const section of ["headers", "body", "query", "params"] as const) {
+    for (const section of ["headers", "cookies", "body", "query", "params"] as const) {
       diffSchemaSection(
         { method, path, section, direction: "request", changes },
         beforeSchema[section],

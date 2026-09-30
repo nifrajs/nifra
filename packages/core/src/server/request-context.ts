@@ -384,6 +384,10 @@ export class RequestContext implements RawContext {
     return this.cookiesValue
   }
 
+  set cookies(value: Readonly<Record<string, string>>) {
+    this.cookiesValue = value
+  }
+
   boundedBody(maxBytes?: number): Promise<Uint8Array> {
     return readBoundedBodyOrThrow(this.source, this.maxBodyBytes, maxBytes)
   }

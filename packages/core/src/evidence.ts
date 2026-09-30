@@ -34,6 +34,7 @@ export interface ProjectEvidenceSchema {
   readonly bodyLimit?: number | "unlimited"
   readonly bodyLimitReason?: string
   readonly headers?: ProjectEvidenceSchemaPart
+  readonly cookies?: ProjectEvidenceSchemaPart
   readonly body?: ProjectEvidenceSchemaPart
   readonly query?: ProjectEvidenceSchemaPart
   readonly params?: ProjectEvidenceSchemaPart
@@ -140,6 +141,7 @@ function schemaOf(route: ReflectedRoute): ProjectEvidenceSchema | undefined {
   const source = route.schema
   if (source === undefined) return undefined
   const headers = schemaPart(source.headers)
+  const cookies = schemaPart(source.cookies)
   const body = schemaPart(source.body)
   const query = schemaPart(source.query)
   const params = schemaPart(source.params)
@@ -154,6 +156,7 @@ function schemaOf(route: ReflectedRoute): ProjectEvidenceSchema | undefined {
     ...(source.bodyLimit !== undefined ? { bodyLimit: source.bodyLimit } : {}),
     ...(source.bodyLimitReason !== undefined ? { bodyLimitReason: source.bodyLimitReason } : {}),
     ...(headers !== undefined ? { headers } : {}),
+    ...(cookies !== undefined ? { cookies } : {}),
     ...(body !== undefined ? { body } : {}),
     ...(query !== undefined ? { query } : {}),
     ...(params !== undefined ? { params } : {}),
@@ -475,6 +478,7 @@ function schemaFromEvidence(schema: ProjectEvidenceSchema | undefined): Reflecte
     ]),
   )
   const headers = schemaPartToReflection(schema.headers)
+  const cookies = schemaPartToReflection(schema.cookies)
   const body = schemaPartToReflection(schema.body)
   const query = schemaPartToReflection(schema.query)
   const params = schemaPartToReflection(schema.params)
@@ -484,6 +488,7 @@ function schemaFromEvidence(schema: ProjectEvidenceSchema | undefined): Reflecte
     ...(schema.bodyLimit !== undefined ? { bodyLimit: schema.bodyLimit } : {}),
     ...(schema.bodyLimitReason !== undefined ? { bodyLimitReason: schema.bodyLimitReason } : {}),
     ...(headers !== undefined ? { headers } : {}),
+    ...(cookies !== undefined ? { cookies } : {}),
     ...(body !== undefined ? { body } : {}),
     ...(query !== undefined ? { query } : {}),
     ...(params !== undefined ? { params } : {}),

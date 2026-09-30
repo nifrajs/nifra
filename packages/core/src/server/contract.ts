@@ -34,6 +34,8 @@ export interface OperationDef {
   readonly params?: StandardSchemaV1
   /** Optional request-header schema (header names are normalized to lower-case). */
   readonly headers?: StandardSchemaV1
+  /** Optional request-cookie schema (see {@link RouteSchema.cookies}). */
+  readonly cookies?: StandardSchemaV1
   readonly body?: StandardSchemaV1
   /** Explicit external-protocol mode; raw bytes/text are read by the handler from `c.req`. */
   readonly wire?: "raw"
@@ -172,6 +174,9 @@ type SchemaForOp<O extends OperationDef> = (O extends { body: infer B extends St
   (O extends { query: infer Q extends StandardSchemaV1 } ? { query: Q } : Record<never, never>) &
   (O extends { headers: infer H extends StandardSchemaV1 }
     ? { headers: H }
+    : Record<never, never>) &
+  (O extends { cookies: infer K extends StandardSchemaV1 }
+    ? { cookies: K }
     : Record<never, never>) &
   (O extends { params: infer P extends StandardSchemaV1 } ? { params: P } : Record<never, never>)
 
@@ -383,6 +388,7 @@ export function implement<
     const schema: RouteSchema | undefined =
       op.params !== undefined ||
       op.headers !== undefined ||
+      op.cookies !== undefined ||
       op.body !== undefined ||
       op.wire !== undefined ||
       op.validationOrder !== undefined ||
@@ -398,6 +404,7 @@ export function implement<
         ? {
             ...(op.params !== undefined ? { params: op.params } : {}),
             ...(op.headers !== undefined ? { headers: op.headers } : {}),
+            ...(op.cookies !== undefined ? { cookies: op.cookies } : {}),
             ...(op.body !== undefined ? { body: op.body } : {}),
             ...(op.wire !== undefined ? { wire: op.wire } : {}),
             ...(op.validationOrder !== undefined ? { validationOrder: op.validationOrder } : {}),

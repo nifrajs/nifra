@@ -202,6 +202,21 @@ describe("diffRouteSnapshots - request direction (body/query)", () => {
       expect.objectContaining({ severity: "breaking", section: "query", field: "cursor" }),
     ])
   })
+
+  test("cookies follow request rules and survive the evidence round trip", () => {
+    const optional = [
+      route("GET", "/me", { cookies: objectSchema({ session: { type: "string" } }, []) }),
+    ]
+    const required = [
+      route("GET", "/me", { cookies: objectSchema({ session: { type: "string" } }, ["session"]) }),
+    ]
+    expect(diffRouteSnapshots(snap(optional), snap(required)).changes).toEqual([
+      expect.objectContaining({ severity: "breaking", section: "cookies", field: "session" }),
+    ])
+    expect(snapshotRoutesFromEvidence(snapshotProjectEvidence(required))).toEqual(
+      snap(required) as never,
+    )
+  })
 })
 
 describe("diffRouteSnapshots - params direction", () => {

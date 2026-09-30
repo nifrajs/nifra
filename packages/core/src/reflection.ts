@@ -56,6 +56,8 @@ export interface ReflectedRouteSchema {
   readonly bodyLimitReason?: string
   /** Request-header schema; names are normalized to lower-case at runtime. */
   readonly headers?: SchemaReflection
+  /** Request-cookie schema, validated against the parsed `Cookie` header. */
+  readonly cookies?: SchemaReflection
   readonly body?: SchemaReflection
   readonly query?: SchemaReflection
   /** Path-params schema - constraints (uuid format, integer min/max) declared via `params: t.object(…)`. */
@@ -226,6 +228,7 @@ const reflectedRouteSchema = (value: unknown): ReflectedRouteSchema | undefined 
       ? { bodyLimitReason: schema.bodyLimitReason }
       : {}),
     ...(schema.headers !== undefined ? { headers: reflectSchema(schema.headers) } : {}),
+    ...(schema.cookies !== undefined ? { cookies: reflectSchema(schema.cookies) } : {}),
     ...(schema.body !== undefined ? { body: reflectSchema(schema.body) } : {}),
     ...(schema.query !== undefined ? { query: reflectSchema(schema.query) } : {}),
     ...(schema.params !== undefined ? { params: reflectSchema(schema.params) } : {}),

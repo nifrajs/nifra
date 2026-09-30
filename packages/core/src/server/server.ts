@@ -37,7 +37,7 @@ import {
   type RawErrorHandler,
   type RouteEntry,
 } from "../internal/route-execution.ts"
-import type { RouteProgramStage } from "../internal/route-program.ts"
+import type { ProgramValidationKind, RouteProgramStage } from "../internal/route-program.ts"
 import { compileRouteProgram, executeRouteProgram } from "../internal/route-program.ts"
 import { isSameOriginRequest } from "../internal/same-origin.ts"
 import type { ResponseObserverPlugin } from "../response-observer.ts"
@@ -269,12 +269,12 @@ export interface RawContext {
   readonly request: Request
   readonly json: (body: unknown, init?: ResponseInit | number) => Response
   readonly text: (body: string, init?: ResponseInit | number) => Response
-  // Writable: the lifecycle replaces it with the validated/coerced value when a `params` schema is
-  // declared (handlers still see it `readonly` via the public `Context` interface).
+  // Writable: the lifecycle replaces each with the validated/coerced value when its schema is
+  // declared (handlers still see them `readonly` via the public `Context` interface).
   params: Record<string, string>
   headers: Record<string, string>
   query: unknown
-  readonly cookies: Readonly<Record<string, string>>
+  cookies: Readonly<Record<string, string>>
   body: unknown
   readonly set: ResponseControls
   readonly [CONTEXT_SET]: () => CtxSet | undefined
@@ -5383,19 +5383,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   // @ts-expect-error TS6133 -- invoked structurally by the general route program
   private validateProgramStage(
     entry: RouteEntry,
-    stage: Extract<RouteProgramStage, { kind: "headers" | "params" | "body" | "query" }>,
+    stage: Extract<RouteProgramStage, { kind: ProgramValidationKind }>,
     source: RequestSource,
     ctx: RawContext,
   ): MaybePromise<Response | ResponseResult | undefined> {
+    if (stage.kind === "body") return this.readProgramBody(entry, source, ctx)
     const input =
       stage.kind === "headers"
         ? headerObjectOf(source.headers)
-        : stage.kind === "params"
-          ? ctx.params
-          : stage.kind === "query"
-            ? queryObjectOf(ctx[CONTEXT_SEARCH])
-            : undefined
-    if (stage.kind === "body") return this.readProgramBody(entry, source, ctx)
+        : stage.kind === "query"
+          ? queryObjectOf(ctx[CONTEXT_SEARCH])
+          : ctx[stage.kind]
     const validation = stage.schema["~standard"].validate(input)
     return validation instanceof Promise
       ? validation.then((result) => this.applyLifecycleValidation(entry, result, ctx, stage.kind))
@@ -5967,13 +5965,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     entry: RouteEntry,
     result: StandardResult<unknown>,
     ctx: RawContext,
-    kind: "body" | "query" | "params" | "headers",
+    kind: ProgramValidationKind,
   ): MaybePromise<Response | ResponseResult | undefined> {
     const assign = (value: unknown): void => {
-      if (kind === "body") ctx.body = value
-      else if (kind === "query") ctx.query = value
-      else if (kind === "headers") ctx.headers = value as Record<string, string>
-      else ctx.params = value as Record<string, string>
+      ;(ctx as unknown as Record<ProgramValidationKind, unknown>)[kind] = value
     }
     if (result.issues === undefined) {
       assign(result.value)
@@ -5992,22 +5987,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
   private finishLifecycleValidationRecovery(
     entry: RouteEntry,
-    kind: "body" | "query" | "params" | "headers",
+    kind: ProgramValidationKind,
     issues: ReadonlyArray<StandardIssue>,
     recovery: unknown,
     assign: (value: unknown) => void,
   ): MaybePromise<Response | ResponseResult | undefined> {
     if (recovery === undefined) return plainValidationError(issues)
     if (recovery instanceof Response) return recovery
-    const schema =
-      kind === "body"
-        ? entry.schema?.body
-        : kind === "query"
-          ? entry.schema?.query
-          : kind === "params"
-            ? entry.schema?.params
-            : entry.schema?.headers
-    const retried = schema!["~standard"].validate(recovery)
+    const retried = entry.schema![kind]!["~standard"].validate(recovery)
     if (retried instanceof Promise) {
       return retried.then((settled) => {
         if (settled.issues !== undefined) return plainValidationError(settled.issues)
