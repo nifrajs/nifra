@@ -539,3 +539,74 @@ describe("a body schema with a parser of its own", () => {
     expect(JSON.stringify(toOpenAPIFromEvidence(evidence))).toBe(JSON.stringify(toOpenAPI(app())))
   })
 })
+
+describe("optional path params", () => {
+  const contract = defineContract({
+    report: {
+      method: "GET",
+      path: "/reports/:year?/:month?",
+      summary: "Reports",
+      response: t.object({ total: t.integer() }),
+    },
+    removeReport: { method: "DELETE", path: "/reports/:year" },
+  })
+  const doc = toOpenAPI(contract)
+
+  test("a contract operation is one operation per concrete path", () => {
+    expect(Object.keys(doc.paths).sort()).toEqual([
+      "/reports",
+      "/reports/{year}",
+      "/reports/{year}/{month}",
+    ])
+    expect(Object.keys(doc.paths["/reports/{year}"] ?? {}).sort()).toEqual(["delete", "get"])
+  })
+
+  test("each path declares only the parameters it has", () => {
+    expect(doc.paths["/reports"]?.get?.parameters).toBeUndefined()
+    expect(doc.paths["/reports/{year}"]?.get?.parameters?.map((p) => p.name)).toEqual(["year"])
+    expect(doc.paths["/reports/{year}/{month}"]?.get?.parameters).toEqual([
+      { name: "year", in: "path", required: true, schema: { type: "string" } },
+      { name: "month", in: "path", required: true, schema: { type: "string" } },
+    ])
+  })
+
+  test("operation ids stay unique: the full path carries the contract name", () => {
+    expect(doc.paths["/reports/{year}/{month}"]?.get?.operationId).toBe("report")
+    expect(doc.paths["/reports/{year}"]?.get?.operationId).toBeUndefined()
+    expect(doc.paths["/reports"]?.get?.operationId).toBeUndefined()
+    const ids = Object.values(doc.paths)
+      .flatMap((item) => Object.values(item))
+      .map((operation) => operation.operationId)
+      .filter((id) => id !== undefined)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  test("every path carries the operation's metadata and response", () => {
+    for (const path of ["/reports", "/reports/{year}", "/reports/{year}/{month}"]) {
+      expect(doc.paths[path]?.get?.summary).toBe("Reports")
+      expect(doc.paths[path]?.get?.responses["200"]?.content).toBeDefined()
+    }
+  })
+
+  test("an override reaches a shorter path by METHOD /path and the full one by name", () => {
+    const overridden = toOpenAPI(contract, {
+      operations: { "GET /reports": { summary: "All reports" }, report: { summary: "One month" } },
+    })
+    expect(overridden.paths["/reports"]?.get?.summary).toBe("All reports")
+    expect(overridden.paths["/reports/{year}"]?.get?.summary).toBe("Reports")
+    expect(overridden.paths["/reports/{year}/{month}"]?.get?.summary).toBe("One month")
+  })
+
+  test("an app route reads the same way, and a stored snapshot agrees", () => {
+    const app = server().get("/reports/:year?/:month?", () => ({ total: 1 }))
+    const live = toOpenAPI(app)
+    expect(Object.keys(live.paths).sort()).toEqual([
+      "/reports",
+      "/reports/{year}",
+      "/reports/{year}/{month}",
+    ])
+    expect(live.paths["/reports"]?.get?.parameters).toBeUndefined()
+    const evidence = JSON.parse(JSON.stringify(snapshotProjectEvidence(app)))
+    expect(JSON.stringify(toOpenAPIFromEvidence(evidence))).toBe(JSON.stringify(live))
+  })
+})

@@ -1,10 +1,11 @@
 import type { DataClassification } from "../classification.ts"
 import { RouteConfigError } from "../errors.ts"
 import { normalizeRouteCapabilities } from "../internal/capability-runtime.ts"
+import { expandOptionalParams } from "../router/pattern.ts"
 import { METHODS, type Method } from "../router/router.ts"
 import type { InferInput, InferOutput, StandardSchemaV1 } from "../schema/standard.ts"
 import { assertByteLimit } from "./body.ts"
-import type { Context, IdempotencyConfig, Params, RouteSchema } from "./context.ts"
+import type { Context, IdempotencyConfig, Params, RoutePaths, RouteSchema } from "./context.ts"
 import type { EmptyRegistry, OutputOf, Registry, RouteInfoFor } from "./registry.ts"
 import { Server } from "./server.ts"
 
@@ -157,8 +158,10 @@ type RouteInfoForOp<O extends OperationDef> = {
 
 /** Re-key the name-keyed ops into the `path → method → RouteInfo` registry. */
 export type RegistryFor<C extends ContractShape> = {
-  [P in C[keyof C]["path"]]: {
-    [K in keyof C as C[K]["path"] extends P ? C[K]["method"] : never]: RouteInfoForOp<C[K]>
+  [P in RoutePaths<C[keyof C]["path"]>]: {
+    [K in keyof C as P extends RoutePaths<C[K]["path"]> ? C[K]["method"] : never]: RouteInfoForOp<
+      C[K]
+    >
   }
 }
 
@@ -293,12 +296,15 @@ export function defineContract<const C extends ContractShape>(contract: C): C {
         `operation "${name}": validationOrder is invalid`,
       )
     }
-    const key = `${method} ${op.path}`
-    if (seen.has(key)) {
-      throw new RouteConfigError("DUPLICATE_ROUTE", `duplicate operation route: ${key}`)
+    // Compared per concrete path, so `/users` collides with the short form of `/users/:id?`.
+    for (const path of expandOptionalParams(op.path)) {
+      const key = `${method} ${path}`
+      if (seen.has(key)) {
+        throw new RouteConfigError("DUPLICATE_ROUTE", `duplicate operation route: ${key}`)
+      }
+      seen.add(key)
     }
     normalizeRouteCapabilities(op.capabilities)
-    seen.add(key)
   }
   return contract
 }
@@ -317,8 +323,10 @@ export type RegistryFromImpl<
   Ctx = NonNullable<unknown>,
   HookOutput = never,
 > = {
-  [P in C[keyof C]["path"]]: {
-    [K in keyof C as C[K]["path"] extends P ? C[K]["method"] : never]: H[K] extends AnyFn
+  [P in RoutePaths<C[keyof C]["path"]>]: {
+    [K in keyof C as P extends RoutePaths<C[K]["path"]>
+      ? C[K]["method"]
+      : never]: H[K] extends AnyFn
       ? RouteInfoFor<C[K]["path"], RouteSchemaForOp<C[K]>, OutputOf<H[K]>, HookOutput>
       : RouteInfoFor<C[K]["path"], RouteSchemaForOp<C[K]>, unknown, HookOutput>
   }

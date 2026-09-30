@@ -335,19 +335,25 @@ const BROWSER_FEATURES: ReadonlySet<string> = new Set(["nifra-web-client"])
 // Writing the field from the plugin instead of through the seam measures 12 B smaller and was not
 // taken: the seam is what refuses an install after `listen()`. The four rows with no slack left move
 // by 0.1 KB; the other rows still clear theirs.
+// Optional path parameters (`/users/:id?`) are expanded to their concrete paths when a route is
+// registered: +103 B gzip (bare 31641 -> 31744 B), inherited by every row. That is the expansion
+// itself plus one loop at the HTTP and WebSocket registration sites; nothing is added to a lookup.
+// Squeezed first, from +122 B: the matcher does not expand, its callers do, which also keeps the
+// feature out of the browser row (the client router bundles the matcher and measured +137 B with
+// the expansion inside it, 0 B now). Seven rows had no slack left and move by 0.1 KB.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // The 2026-09-20 security pass adds bounded WebSocket admission/request-hook handling and
   // duplicate-cookie detection to the shared kernel. Reprice every core row together with the
   // measured post-hardening footprint; optional rows must not receive a special exemption.
-  "nifra-bare": 30.9,
+  "nifra-bare": 31.1,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 34.1,
-  "nifra-effect-ledger": 32.9,
-  "nifra-mcp": 31.2,
-  "nifra-sse": 31.7,
+  "nifra-idempotency": 34.2,
+  "nifra-effect-ledger": 33.0,
+  "nifra-mcp": 31.3,
+  "nifra-sse": 31.8,
   "nifra-valibot": 32.0,
-  "nifra-typebox-t": 61.1,
-  "nifra-typebox-form": 64.9,
+  "nifra-typebox-t": 61.2,
+  "nifra-typebox-form": 65.0,
   // Review-leaf ceiling: measured 5.0 KB gz + ~0.2 KB headroom, same rule as every other row.
   "nifra-agent-review": 5.2,
   // Client runtime ceiling: measured 13.8 KB gz (14089 B) + ~0.2 KB headroom.

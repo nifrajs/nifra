@@ -33,10 +33,10 @@ export interface CatalogRoute {
 }
 
 /**
- * Runtime route catalog. Single-route registration mutates directly; multi-route registration replays
- * the existing catalog plus the candidate batch into a staged router, then swaps the complete state only
- * after every route validates. Failed `implement()`/`merge()` batches therefore leave matching and
- * reflection unchanged.
+ * Runtime route catalog. Single-route registration mutates directly. A batch adds its routes the same
+ * way and, if one is rejected, restores the catalog to what it was before the batch. A failed
+ * `implement()`/`merge()` batch therefore leaves matching and reflection unchanged, and a batch that
+ * validates costs what its routes cost one by one.
  *
  * Coverage note: this file reports 90% functions with every method exercised. `bun test --coverage`
  * (1.3.14) counts one synthetic function per class that it never marks hit - a one-method class with a
@@ -58,18 +58,19 @@ export class RouteCatalog {
   }
 
   addBatch(routes: readonly CatalogRoute[]): void {
-    if (routes.length === 0) return
-    const nextRecords = this.records.concat(routes)
-    const nextDescriptors = this.descriptors.concat(routes.map(({ descriptor }) => descriptor))
-    const nextAssurancePresent =
-      this.assurancePresent || routes.some((route) => route.assurance.length > 0)
-    const staged = new Router<RouteEntry>()
-    for (const route of this.records) staged.add(route.method, route.pattern, route.entry)
-    for (const route of routes) staged.add(route.method, route.pattern, route.entry)
-    this.matcher = staged
-    this.records = nextRecords
-    this.descriptors = nextDescriptors
-    this.assurancePresent = nextAssurancePresent
+    const kept = this.records.length
+    const assurancePresent = this.assurancePresent
+    try {
+      for (const route of routes) this.add(route)
+    } catch (error) {
+      // The rejected route may have left nodes in the trie, so the matcher is not patched: it is
+      // rebuilt from the routes that were there before the batch. They validated once already.
+      this.records.length = this.descriptors.length = kept
+      this.assurancePresent = assurancePresent
+      this.matcher = new Router<RouteEntry>()
+      for (const route of this.records) this.matcher.add(route.method, route.pattern, route.entry)
+      throw error
+    }
   }
 
   find(method: string, path: string): RouterMatch<RouteEntry> {

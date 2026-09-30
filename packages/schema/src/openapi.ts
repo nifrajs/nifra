@@ -1,5 +1,6 @@
 import type { ContractShape } from "@nifrajs/core/contract"
 import { type ProjectEvidenceSnapshot, reflectedRoutesFromEvidence } from "@nifrajs/core/evidence"
+import { expandOptionalParams } from "@nifrajs/core/pattern"
 import {
   type JsonSchema,
   type ReflectedRouteSchema,
@@ -491,44 +492,53 @@ export function toOpenAPI(
     }
   } else {
     for (const [name, op] of Object.entries(input)) {
-      addOperation(
-        paths,
-        op.method,
-        {
-          path: op.path,
-          body: op.body === undefined ? undefined : reflectSchema(op.body),
-          query: op.query === undefined ? undefined : reflectSchema(op.query),
-          headers: op.headers === undefined ? undefined : reflectSchema(op.headers),
-          params: op.params === undefined ? undefined : reflectSchema(op.params),
-          response: op.response === undefined ? undefined : reflectSchema(op.response),
-          operationId: name,
-          summary: op.summary,
-          description: op.description,
-          tags: op.tags,
-          deprecated: op.deprecated,
-          security: op.security,
-          requestContentType: op.requestContentType,
-          responseContentType: op.responseContentType,
-          responses:
-            op.responses === undefined
-              ? undefined
-              : Object.fromEntries(
-                  Object.entries(op.responses).map(([status, response]) => {
-                    const { schema, ...metadata } = response
-                    return [
-                      status,
-                      {
-                        ...metadata,
-                        ...(schema === undefined ? {} : { schema: reflectSchema(schema) }),
-                      },
-                    ]
-                  }),
-                ),
-          inferredResponses: options.inferredResponses?.[`${op.method.toUpperCase()} ${op.path}`],
-        },
-        store,
-        options.operations,
-      )
+      // A path ending in optional params is one operation per concrete path it serves. Operation ids
+      // are unique in a document, so the contract name goes to the full path and the shorter ones
+      // carry none; a shorter path declares only the parameters it has.
+      const forms = expandOptionalParams(op.path)
+      const responses =
+        op.responses === undefined
+          ? undefined
+          : Object.fromEntries(
+              Object.entries(op.responses).map(([status, response]) => {
+                const { schema, ...metadata } = response
+                return [
+                  status,
+                  {
+                    ...metadata,
+                    ...(schema === undefined ? {} : { schema: reflectSchema(schema) }),
+                  },
+                ]
+              }),
+            )
+      for (const path of forms) {
+        addOperation(
+          paths,
+          op.method,
+          {
+            path,
+            body: op.body === undefined ? undefined : reflectSchema(op.body),
+            query: op.query === undefined ? undefined : reflectSchema(op.query),
+            headers: op.headers === undefined ? undefined : reflectSchema(op.headers),
+            params: op.params === undefined ? undefined : reflectSchema(op.params),
+            response: op.response === undefined ? undefined : reflectSchema(op.response),
+            operationId: path === forms[forms.length - 1] ? name : undefined,
+            summary: op.summary,
+            description: op.description,
+            tags: op.tags,
+            deprecated: op.deprecated,
+            security: op.security,
+            requestContentType: op.requestContentType,
+            responseContentType: op.responseContentType,
+            responses,
+            inferredResponses:
+              options.inferredResponses?.[`${op.method.toUpperCase()} ${path}`] ??
+              options.inferredResponses?.[`${op.method.toUpperCase()} ${op.path}`],
+          },
+          store,
+          options.operations,
+        )
+      }
     }
   }
 

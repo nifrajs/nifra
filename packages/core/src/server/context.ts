@@ -144,7 +144,60 @@ type RawParams<Path extends string> = string extends Path
       ? Record<Wild extends "" ? "*" : Wild, string>
       : Record<never, string>
 
-export type Params<Path extends string> = Prettify<RawParams<Path>>
+/** Whether `Run` is nothing but whole-segment optional parameters: `/:a?`, `/:a?/:b?`. */
+type IsOptionalRun<Run extends string> = Run extends ""
+  ? true
+  : Run extends `/:${infer After}`
+    ? TakeParamName<After> extends [infer Name extends string, `?${infer Rest}`]
+      ? Name extends ""
+        ? false
+        : IsOptionalRun<Rest>
+      : false
+    : false
+
+/**
+ * `[head, run]`, where `run` is the run of optional parameters a path ends in and `head` is the path
+ * before it; `false` for a path that does not end in one. The router makes the same cut, from the
+ * other end: it walks back from the last segment while each one is `:name?`.
+ */
+type SplitOptionalRun<
+  Path extends string,
+  Head extends string = "",
+> = Path extends `${infer Before}/:${infer After}`
+  ? IsOptionalRun<`/:${After}`> extends true
+    ? [`${Head}${Before}`, `/:${After}`]
+    : SplitOptionalRun<After, `${Head}${Before}/:`>
+  : false
+
+/** `Head`, then `Head` with each longer prefix of `Run` appended - the `?` marks dropped. */
+type OptionalForms<Head extends string, Run extends string, Done extends string = ""> =
+  | (`${Head}${Done}` extends "" ? "/" : `${Head}${Done}`)
+  | (Run extends `/:${infer After}`
+      ? TakeParamName<After> extends [infer Name extends string, `?${infer Rest}`]
+        ? OptionalForms<Head, Rest, `${Done}/:${Name}`>
+        : never
+      : never)
+
+/**
+ * The concrete paths a route path serves. A path ending in optional parameters is one path per prefix
+ * of that run - `/users/:id?` is `"/users" | "/users/:id"` - and every other path is itself. This is
+ * what a route is keyed by in the registry, so the typed client reaches each form as its own route.
+ */
+export type RoutePaths<Path extends string> = Path extends `${string}?`
+  ? SplitOptionalRun<Path> extends [infer Head extends string, infer Run extends string]
+    ? OptionalForms<Head, Run>
+    : Path
+  : Path
+
+/**
+ * The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since
+ * the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.
+ */
+export type Params<Path extends string> = Path extends `${string}?`
+  ? SplitOptionalRun<Path> extends [infer Head extends string, infer Run extends string]
+    ? Prettify<RawParams<Head> & Partial<RawParams<Run>>>
+    : Prettify<RawParams<Path>>
+  : Prettify<RawParams<Path>>
 
 /** Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…). */
 export interface RouteSchema {

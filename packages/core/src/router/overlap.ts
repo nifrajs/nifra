@@ -1,4 +1,9 @@
-import { type CompiledRoutePattern, compileRoutePattern, type MixedPart } from "./pattern.ts"
+import {
+  type CompiledRoutePattern,
+  compileRoutePattern,
+  expandOptionalParams,
+  type MixedPart,
+} from "./pattern.ts"
 
 type Token =
   | { readonly kind: "char"; readonly value: string }
@@ -144,12 +149,14 @@ function witnessOf(nodes: ReadonlyMap<string, ProductNode>, key: string): string
 }
 
 /**
- * Return a deterministic path accepted by both compiled patterns, or `undefined` when their path
- * languages are disjoint.
+ * Return a deterministic path accepted by both patterns, or `undefined` when their path languages are
+ * disjoint. A pattern ending in optional params is every concrete path it serves, so `/users/:id?`
+ * overlaps `/users` as well as `/users/me`.
  *
  * This is a build/check-time NFA product, never a request-time operation. Route literals are the only
  * input alphabet needed: a literal character is tried verbatim, while `a` is a representative for
  * the unrestricted non-slash character class. No user route text is compiled as a regular expression.
+ * The state budget is one budget for the whole call, however many concrete paths the two sides have.
  */
 export function routePatternOverlap(left: string, right: string): string | undefined {
   if (
@@ -157,18 +164,34 @@ export function routePatternOverlap(left: string, right: string): string | undef
     right.length > ROUTE_PATTERN_OVERLAP_MAX_LENGTH
   )
     throw new RoutePatternOverlapLimitError()
-  const leftTokens = tokensOf(compileRoutePattern(left))
-  const rightTokens = tokensOf(compileRoutePattern(right))
+  const rights = expandOptionalParams(right).map((form) => tokensOf(compileRoutePattern(form)))
+  const budget = { states: ROUTE_PATTERN_OVERLAP_MAX_STATES }
+  for (const form of expandOptionalParams(left)) {
+    const leftTokens = tokensOf(compileRoutePattern(form))
+    for (const rightTokens of rights) {
+      const witness = tokenOverlap(leftTokens, rightTokens, budget)
+      if (witness !== undefined) return witness
+    }
+  }
+  return undefined
+}
+
+function tokenOverlap(
+  leftTokens: readonly Token[],
+  rightTokens: readonly Token[],
+  budget: { states: number },
+): string | undefined {
   const startLeft: State = { index: 0 }
   const startRight: State = { index: 0 }
   const start = productKey(startLeft, startRight)
+  if (budget.states-- <= 0) throw new RoutePatternOverlapLimitError()
   const nodes = new Map<string, ProductNode>([[start, { left: startLeft, right: startRight }]])
   const queue: string[] = [start]
   let head = 0
 
   const enqueue = (next: string, node: ProductNode): void => {
     if (nodes.has(next)) return
-    if (nodes.size >= ROUTE_PATTERN_OVERLAP_MAX_STATES) throw new RoutePatternOverlapLimitError()
+    if (budget.states-- <= 0) throw new RoutePatternOverlapLimitError()
     nodes.set(next, node)
     queue.push(next)
   }

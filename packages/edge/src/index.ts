@@ -29,6 +29,7 @@ import {
   searchOf,
   toResponse,
 } from "@nifrajs/core/edge-kit"
+import { expandOptionalParams } from "@nifrajs/core/pattern"
 import { Router } from "@nifrajs/core/router"
 import type { Method, Params, StandardIssue, StandardSchemaV1 } from "@nifrajs/core/server"
 
@@ -105,7 +106,7 @@ export class EdgeServer {
   }
 
   #route(method: Method, path: string, entry: RouteEntry): this {
-    this.#router.add(method, path, entry)
+    for (const form of expandOptionalParams(path)) this.#router.add(method, form, entry)
     return this
   }
 

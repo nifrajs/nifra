@@ -1529,7 +1529,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
 - **OnRequestResult** _(type)_ - `type OnRequestResult = Response | Request | undefined`
-- **Params** _(type)_ - `type Params<Path extends string> = Prettify<RawParams<Path>>`
+- **Params** _(type)_ - `type Params<Path extends string>`
+  The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.
 - **PlainRender** _(interface)_ - `interface PlainRender`
   A response described as plain data - the status, any headers of its own, and a body still in value form. A `ResponseResult` carrying one is rendered on the SAME lane a handler's plain return takes: `JSON.stringify` straight into the node writer's `kind: "json"` outcome, or the web lane's prebuilt J…
 - **Platform** _(interface)_ - `interface Platform<Env = unknown>`
@@ -1654,7 +1655,7 @@ Every public export of every package and documented subpath - name, kind, signat
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
 - **rejected** _(function)_ - `rejected: (reason?: AuthenticationFailureReason, response?: Response | ResponseResult) => AuthenticationFailure`
 - **routePatternOverlap** _(function)_ - `routePatternOverlap: (left: string, right: string) => string | undefined`
-  Return a deterministic path accepted by both compiled patterns, or `undefined` when their path languages are disjoint.
+  Return a deterministic path accepted by both patterns, or `undefined` when their path languages are disjoint. A pattern ending in optional params is every concrete path it serves, so `/users/:id?` overlaps `/users` as well as `/users/me`.
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
   Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, a `__Secure-`/`__Host-` name whose attributes vio…
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
@@ -1954,7 +1955,7 @@ Every public export of every package and documented subpath - name, kind, signat
   The handlers `implement` requires: one per operation, typed from the op's input + response contract, intersected with the host app's accumulated `derive`/`decorate` context - the same `Context & Ctx` an inline {@link Handler} receives, so a handler graduates either way unchanged.
 - **OperationDef** _(interface)_ - `interface OperationDef`
   One operation in a contract. Input schemas are any Standard Schema; `response` is optional.
-- **RegistryFor** _(type)_ - `type RegistryFor<C extends ContractShape> = { [P in C[keyof C]["path"]]: { [K in keyof C as C[K]["path"] extends P ? C[K]["method"] : never]: RouteInfoForOp<C[K]> } }`
+- **RegistryFor** _(type)_ - `type RegistryFor<C extends ContractShape> = { [P in RoutePaths<C[keyof C]["path"]>]: { [K in keyof C as P extends RoutePaths<C[K]["path"]> ? C[K]["method"] : never]: RouteInfoForOp< C[K] > } }`
   Re-key the name-keyed ops into the `path → method → RouteInfo` registry.
 - **RegistryFromImpl** _(type)_ - `type RegistryFromImpl<C extends ContractShape, H extends HandlersFor<C, Ctx>, Ctx = NonNullable<unknown>, HookOutput = never>`
   The registry produced by `implement`: input from the contract op; `output` is the declared `response` contract when present (it wins - exactly as in the inline path), else the bound HANDLER's return - so the implemented server stays route-for-route identical to the equivalent inline server (the mod…
@@ -2461,6 +2462,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Parse and validate Nifra's strict route grammar once. Trailing slashes remain significant.
 - **decodeRouteParams** _(function)_ - `decodeRouteParams: (raw: Record<string, string>) => Record<string, string> | null`
   Decode router captures under one rule. Plain values take the zero-allocation path; malformed escapes return `null`, allowing HTTP to emit 400 while client navigation declines the match.
+- **expandOptionalParams** _(function)_ - `expandOptionalParams: (pattern: string) => readonly string[]`
+  The concrete patterns an optional-parameter pattern stands for, shortest first.
 - **matchMixedSegment** _(function)_ - `matchMixedSegment: (shape: MixedSegmentShape, segment: string, out: string[]) => boolean`
   Match ONE path segment against a mixed shape, in a single left-to-right pass.
 - **matchRoutePattern** _(function)_ - `matchRoutePattern: (compiled: CompiledRoutePattern, pathname: string) => RoutePatternMatch`
@@ -2687,7 +2690,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
 - **OnRequestResult** _(type)_ - `type OnRequestResult = Response | Request | undefined`
-- **Params** _(type)_ - `type Params<Path extends string> = Prettify<RawParams<Path>>`
+- **Params** _(type)_ - `type Params<Path extends string>`
+  The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.
 - **PlainRender** _(interface)_ - `interface PlainRender`
   A response described as plain data - the status, any headers of its own, and a body still in value form. A `ResponseResult` carrying one is rendered on the SAME lane a handler's plain return takes: `JSON.stringify` straight into the node writer's `kind: "json"` outcome, or the web lane's prebuilt J…
 - **Platform** _(interface)_ - `interface Platform<Env = unknown>`
@@ -2809,7 +2813,7 @@ Every public export of every package and documented subpath - name, kind, signat
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
 - **rejected** _(function)_ - `rejected: (reason?: AuthenticationFailureReason, response?: Response | ResponseResult) => AuthenticationFailure`
 - **routePatternOverlap** _(function)_ - `routePatternOverlap: (left: string, right: string) => string | undefined`
-  Return a deterministic path accepted by both compiled patterns, or `undefined` when their path languages are disjoint.
+  Return a deterministic path accepted by both patterns, or `undefined` when their path languages are disjoint. A pattern ending in optional params is every concrete path it serves, so `/users/:id?` overlaps `/users` as well as `/users/me`.
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
   Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, a `__Secure-`/`__Host-` name whose attributes vio…
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`
@@ -3081,7 +3085,8 @@ _No named exports (side-effect entrypoint)._
   Answers a request no route matched. Return a `Response`, or `undefined` for the default `404`. May be async; a thrown `Response` is treated like a returned one.
 - **NotFoundInput** _(interface)_ - `interface NotFoundInput<Env = unknown>`
   What a {@link NotFoundHandler} is given: the request line and headers of a request no route matched.
-- **Params** _(type)_ - `type Params<Path extends string> = Prettify<RawParams<Path>>`
+- **Params** _(type)_ - `type Params<Path extends string>`
+  The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.
 - **QueryValue** _(type)_ - `type QueryValue = string | string[]`
   A query value: a single occurrence is a string; a repeated key promotes to a string[] so an array query schema (`t.array(t.string())`) can validate `?tag=a&tag=b` - last-wins silently dropped values before (audit 2026-06). Single-occurrence keys stay plain strings, so existing `t.string()` schemas …
 - **StandardSchemaV1** _(interface)_ - `interface StandardSchemaV1<Input = unknown, Output = Input>`
@@ -6134,7 +6139,8 @@ _No named exports (side-effect entrypoint)._
 - **NodeServeOutcome** _(type)_ - `type NodeServeOutcome`
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
 - **OnRequestResult** _(type)_ - `type OnRequestResult = Response | Request | undefined`
-- **Params** _(type)_ - `type Params<Path extends string> = Prettify<RawParams<Path>>`
+- **Params** _(type)_ - `type Params<Path extends string>`
+  The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.
 - **PlainRender** _(interface)_ - `interface PlainRender`
   A response described as plain data - the status, any headers of its own, and a body still in value form. A `ResponseResult` carrying one is rendered on the SAME lane a handler's plain return takes: `JSON.stringify` straight into the node writer's `kind: "json"` outcome, or the web lane's prebuilt J…
 - **Platform** _(interface)_ - `interface Platform<Env = unknown>`
@@ -6259,7 +6265,7 @@ _No named exports (side-effect entrypoint)._
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
 - **rejected** _(function)_ - `rejected: (reason?: AuthenticationFailureReason, response?: Response | ResponseResult) => AuthenticationFailure`
 - **routePatternOverlap** _(function)_ - `routePatternOverlap: (left: string, right: string) => string | undefined`
-  Return a deterministic path accepted by both compiled patterns, or `undefined` when their path languages are disjoint.
+  Return a deterministic path accepted by both patterns, or `undefined` when their path languages are disjoint. A pattern ending in optional params is every concrete path it serves, so `/users/:id?` overlaps `/users` as well as `/users/me`.
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
   Serialize a `Set-Cookie` header value. Pure - applies **no** security defaults (the caller, e.g. `c.set.cookie`, layers `HttpOnly`/`Secure`/`SameSite` on). Throws on an invalid cookie name, a header-injecting `Path`/`Domain`, a non-integer `maxAge`, a `__Secure-`/`__Host-` name whose attributes vio…
 - **server** _(function)_ - `server: <Env = unknown>(options?: ServerOptions) => Server<EmptyRegistry, { readonly env: Env; }>`

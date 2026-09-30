@@ -588,7 +588,7 @@
     "lines": 99.37888198757764
   },
   "packages/core/src/internal/route-catalog.ts": {
-    "functions": 90.9090909090909,
+    "functions": 88.88888888888889,
     "lines": 100
   },
   "packages/core/src/internal/route-compiler.ts": {

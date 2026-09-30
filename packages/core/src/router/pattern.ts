@@ -247,6 +247,37 @@ export function matchMixedSegment(
   return true
 }
 
+const OPTIONAL_PARAM = /^:[A-Za-z_][A-Za-z0-9_]*\?$/
+
+/**
+ * The concrete patterns an optional-parameter pattern stands for, shortest first.
+ *
+ * A path may END in a run of whole-segment optional parameters, `:name?`. It is shorthand for one
+ * route per prefix of that run: `/users/:id?` is `/users` and `/users/:id`, and `/a/:b?/:c?` is `/a`,
+ * `/a/:b`, and `/a/:b/:c`. A later parameter is only present when every earlier one is, so a run of
+ * `n` parameters is `n + 1` patterns, never `2^n`.
+ *
+ * Every other pattern comes back unchanged as the only element. That includes a `?` anywhere but the
+ * trailing run (`/a/:b?/c`) or inside a mixed segment (`/files/:name.:ext?`): there it is literal
+ * text, as it always was.
+ *
+ * Expansion happens before compilation, so each result is an ordinary pattern for
+ * {@link compileRoutePattern} and a matcher never learns that a parameter was optional.
+ */
+export function expandOptionalParams(pattern: string): readonly string[] {
+  if (pattern.charCodeAt(pattern.length - 1) !== 63 /* ? */) return [pattern]
+  const segments = pattern.split("/")
+  let first = segments.length
+  while (first > 1 && OPTIONAL_PARAM.test(segments[first - 1]!)) first--
+  let form = segments.slice(0, first).join("/")
+  const forms = [form || "/"]
+  for (let i = first; i < segments.length; i++) {
+    form += `/${segments[i]!.slice(0, -1)}`
+    forms.push(form)
+  }
+  return forms
+}
+
 /** Parse and validate Nifra's strict route grammar once. Trailing slashes remain significant. */
 export function compileRoutePattern(pattern: string): CompiledRoutePattern {
   if (pattern.length === 0 || pattern.charCodeAt(0) !== 47 /* / */) {

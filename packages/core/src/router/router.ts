@@ -302,6 +302,10 @@ export class Router<T> {
    * Register a payload for `method` + `path`. Throws {@link RouteConfigError}
    * (boot-time, L2) on a duplicate route, a malformed pattern, or conflicting
    * parameter names for the same path shape.
+   *
+   * One call is one route. A `?` in the pattern is literal text here: optional parameters
+   * (`/users/:id?`) are expanded by the caller, which adds each pattern `expandOptionalParams`
+   * (`@nifrajs/core/pattern`) gives for it.
    */
   add(method: Method, pattern: string | CompiledRoutePattern, payload: T): void {
     DYNAMIC_MATCH_CACHES.delete(this)

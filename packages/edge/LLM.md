@@ -22,7 +22,7 @@ Compact fetch-handler server for edge and serverless runtimes (Cloudflare Worker
 - **EdgeNotFound** _(type)_ - `type EdgeNotFound = (( request: Request, pathname: string, ) => Response | Promise<Response>) & { readonly [EDGE_NOT_FOUND]: true }`
 - **Method** _(type)_ - `type Method = (typeof METHODS)[number]`
 - **NotFoundHandler** _(type)_ - `type NotFoundHandler<Env = unknown> = ( input: NotFoundInput<Env>, ) => MaybePromise<Response | undefined>`
-- **Params** _(type)_ - `type Params<Path extends string> = Prettify<RawParams<Path>>`
+- **Params** _(type)_ - `type Params<Path extends string>`
 - **QueryValue** _(type)_ - `type QueryValue = string | string[]`
 
 ## Footguns

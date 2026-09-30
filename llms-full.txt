@@ -569,6 +569,49 @@ export const app = server()
   .listen(3000)
 ```
 
+### Optional path params
+
+A path can end in optional params, written `:name?`. The route then serves the path
+with the param and without it, and the param is typed `string | undefined`:
+
+```ts
+import { server } from "@nifrajs/core/server"
+
+export const app = server()
+  // GET /users and GET /users/42
+  .get("/users/:id?", (c) => (c.params.id === undefined ? { all: true } : { id: c.params.id }))
+  // GET /archive, GET /archive/2026 and GET /archive/2026/09
+  .get("/archive/:year?/:month?", (c) => ({ year: c.params.year, month: c.params.month }))
+```
+
+-
+**Only at the end, only whole segments.** Several in a row are filled left to right, so
+`/archive/:year?/:month?` serves three paths and never a month without a year. A
+`?` anywhere else (`/a/:id?/b`, `/v-:id?`) is ordinary text,
+which no request path can contain; `nifra check` reports it as
+`NF-C026`.
+
+-
+**It is one route per path it serves.** `/users/:id?` is `/users` and
+`/users/:id` with the same handler, schema and hooks, and that is how it appears
+in `app.routes()`, OpenAPI (two operations; the shorter one has no `id`
+parameter) and the typed client (`api.users.get()` and
+`api.users({ id }).get()`).
+
+-
+**An absent param is absent,** not an empty string: it is missing from
+`c.params`. A `params` schema has to allow that, or the shorter path
+answers `422`.
+
+-
+**A path can be registered once.** `GET /users` next to
+`GET /users/:id?` throws at registration, because both serve
+`GET /users`. Nothing of a rejected route is left registered.
+
+Other param modifiers (`:id+`, `:id*`, `:id{[0-9]+}`,
+`:id(\\d+)`) are not part of the path grammar and match as literal text. Where that
+text is intended, put `// nifra-expect param-modifier` above the registration.
+
 ### Status, headers & cookies (c.set)
 
 Return a plain object and Nifra serializes it with a `200` (or `204` when

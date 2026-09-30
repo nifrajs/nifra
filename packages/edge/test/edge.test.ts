@@ -431,3 +431,26 @@ test("toFetchHandler yields a Workers { fetch } module handler", async () => {
   const res = await handler.fetch(new Request("https://x.test/users/7"), {}, ctx)
   expect(await res.json()).toEqual({ id: "7" })
 })
+
+test("a path ending in optional params serves each shorter path too", async () => {
+  const edge = server().get("/reports/:year?/:month?", (c) => ({
+    year: c.params.year ?? null,
+    month: c.params.month ?? null,
+  }))
+  const core = coreServer().get("/reports/:year?/:month?", (c) => ({
+    year: c.params.year ?? null,
+    month: c.params.month ?? null,
+  }))
+  for (const path of ["/reports", "/reports/2026", "/reports/2026/09", "/reports/2026/09/x"]) {
+    const request = () => new Request(`https://x.test${path}`)
+    expect(await wire(await edge.fetch(request()))).toEqual(await wire(await core.fetch(request())))
+  }
+  expect(await (await edge.fetch(new Request("https://x.test/reports"))).json()).toEqual({
+    year: null,
+    month: null,
+  })
+  expect(await (await edge.fetch(new Request("https://x.test/reports/2026"))).json()).toEqual({
+    year: "2026",
+    month: null,
+  })
+})

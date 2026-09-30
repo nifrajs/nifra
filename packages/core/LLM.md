@@ -29,13 +29,14 @@ Bun-native, contract-first HTTP framework - the router, server, and route descri
 - **attachCapabilityJournal** _(function)_ - `attachCapabilityJournal: (context: object, journal: CapabilityExecutionJournal) => void` · from `@nifrajs/core/capabilities`
 - **attachEffectLedger** _(function)_ - `attachEffectLedger: (context: object, ledger: RequestLedger) => void` · from `@nifrajs/core/ledger`
 
-_…and 688 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 689 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 
 - The package root is the lean HTTP server API. Enable optional systems with `.use()` plugins from their subpaths - `.use(mcp())` from `@nifrajs/core/mcp`, `.use(streaming())` from `@nifrajs/core/sse`, `.use(idempotency())`, `.use(effectLedger())`; the root activates none of them.
 - `t.object({...})` (and any object schema) rejects **unknown fields** by default (`additionalProperties: false`) → a structured `422 { path: [...] }` **before** the handler runs. Use `t.looseObject` to allow extras.
 - A route reads JSON and urlencoded bodies and answers `415` to anything else. `bodyParser(schema, { types, parse })` from `@nifrajs/core/body-parser` opts ONE route into other media types; `parse` gets the bytes, already within `bodyLimit`, and its result is validated by the schema. `types` refuses JSON, urlencoded, multipart and `text/plain`. Bound the decoder you pass (aliases, depth).
+- A path may END in optional params: `/users/:id?` serves `/users` and `/users/:id`, and `c.params.id` is `string | undefined` (absent, not `""`). Runs fill left to right (`/d/:y?/:m?` is three paths). It is one route per path in `app.routes()`, OpenAPI and the typed client (`api.users.get()` / `api.users({ id }).get()`), so `GET /users` next to `GET /users/:id?` throws. A `?` anywhere else, and `:id+` / `:id*` / `:id{...}` / `:id(...)`, are literal text (`nifra check` NF-C026).
 - A path no route matches is a `404` `{ ok: false, error: "not_found" }`. `.use(notFound(handler))` from `@nifrajs/core/not-found` answers it instead: return a `Response` (a `2xx` is sent as a `404`; `3xx`/`4xx`/`5xx` are kept) or `undefined` for the default. It is NOT a `server()` option, never runs for a `405`, gets no request body, and is one per server (not inside `group()`). To serve unmatched paths (SPA shell, proxy) use a wildcard route or a mount.
 - **Throw rule:** `throw new Response("", { status: 404 })` is control flow - returned as-is, bypasses `_error`. `throw new Error(…)` hits the nearest `_error` boundary / a 500. Do not throw a `Response` to signal a bug, and do not `throw new Error` to send a 4xx.
 - Type the env ONCE on `server<Env>()` → `c.env` is typed on every route below (no per-binding cast). Without `<Env>`, `c.env` is `unknown`. Still validate untrusted env at the boundary.

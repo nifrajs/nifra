@@ -189,6 +189,96 @@ describe("NF-C024 overlapping route registration", () => {
   })
 })
 
+describe("optional route params", () => {
+  test("NF-C024 reads a trailing optional run as every path it serves", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend(['  .get("/users", () => ({}))', '  .get("/users/:id?", () => ({}))']),
+    )
+    const overlaps = findings.filter((f) => f.code === "NF-C024")
+    expect(overlaps).toHaveLength(1)
+    expect(overlaps[0]?.message).toContain("witness path: /users")
+    expect(findings.filter((f) => f.code === "NF-C026")).toEqual([])
+  })
+
+  test("NF-C024 stays quiet for a disjoint optional route", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend(['  .get("/teams", () => ({}))', '  .get("/users/:id?", () => ({}))']),
+    )
+    expect(findings.filter((f) => f.code === "NF-C024")).toEqual([])
+  })
+
+  test("NF-C019 still reports the same optional route registered twice", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend(['  .get("/users/:id?", () => ({}))', '  .get("/users/:id?", () => ({}))']),
+    )
+    expect(findings.filter((f) => f.code === "NF-C019")).toHaveLength(1)
+  })
+})
+
+describe("NF-C026 param followed by an unsupported modifier", () => {
+  test("supported optional params and ordinary params are quiet", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend([
+        '  .get("/users/:id?", () => ({}))',
+        '  .get("/d/:year?/:month?", () => ({}))',
+        '  .get("/files/:name.json", () => ({}))',
+        '  .get("/assets/*path", () => ({}))',
+        '  .get("/:lang?", () => ({}))',
+      ]),
+    )
+    expect(findings.filter((f) => f.code === "NF-C026")).toEqual([])
+  })
+
+  test("a `?` that is not a trailing whole segment is a warning that names the dead route", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend(['  .get("/users/:id?/posts", () => ({}))', '  .get("/x/v-:id?", () => ({}))']),
+    )
+    const found = findings.filter((f) => f.code === "NF-C026")
+    expect(found).toHaveLength(2)
+    expect(found.every((f) => f.severity === "warn")).toBe(true)
+    expect(found[0]?.message).toContain("GET /users/:id?/posts")
+    expect(found[0]?.message).toContain("'?' after ':id' is matched as literal text")
+    expect(found[0]?.message).toContain("cannot be reached")
+    expect(found[0]?.verify).toBe("nifra check --lints-only")
+  })
+
+  test("modifiers other routers accept are reported once per route", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend([
+        '  .get("/a/:id+", () => ({}))',
+        '  .get("/b/:id*", () => ({}))',
+        '  .get("/c/:id{[0-9]+}", () => ({}))',
+        '  .get("/d/:id([0-9]+)", () => ({}))',
+        '  .get("/e/:id<int>", () => ({}))',
+        '  .get("/f/:a+/:b+", () => ({}))',
+      ]),
+    )
+    const found = findings.filter((f) => f.code === "NF-C026")
+    expect(found).toHaveLength(6)
+    expect(found[0]?.message).toContain("'+' after ':id'")
+    expect(found[0]?.message).not.toContain("cannot be reached")
+  })
+
+  test("a required param before the optional run is still checked", async () => {
+    const findings = await scan("backend.ts", backend(['  .get("/a/:x+/:y?", () => ({}))']))
+    expect(findings.filter((f) => f.code === "NF-C026")).toHaveLength(1)
+  })
+
+  test("supports a route-local suppression pragma", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend(["  // nifra-expect param-modifier", '  .get("/math/:a+", () => ({}))']),
+    )
+    expect(findings.filter((f) => f.code === "NF-C026")).toEqual([])
+  })
+})
+
 test("route rules are total over malformed project facts", async () => {
   const facts = projectFacts("x", "")
   const findings = await runRuleRegistry(

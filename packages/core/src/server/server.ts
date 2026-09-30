@@ -41,7 +41,7 @@ import type { RouteProgramStage } from "../internal/route-program.ts"
 import { compileRouteProgram, executeRouteProgram } from "../internal/route-program.ts"
 import { isSameOriginRequest } from "../internal/same-origin.ts"
 import type { ResponseObserverPlugin } from "../response-observer.ts"
-import { decodeRouteParams } from "../router/pattern.ts"
+import { decodeRouteParams, expandOptionalParams } from "../router/pattern.ts"
 import { EMPTY_PARAMS, type Method, Router } from "../router/router.ts"
 import type {
   InferOutput,
@@ -1857,9 +1857,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.topics ??= runtime.createTopics()
     // A `messageSchema` wraps `message` with validation once, here - every adapter then dispatches
     // already-validated, typed messages (Bun/Deno/Node/Workers) with no per-adapter code.
-    this.wsRouter.add("GET", path, {
-      handler: runtime.wrapHandler(handler as WebSocketHandler),
-    })
+    const entry = { handler: runtime.wrapHandler(handler as WebSocketHandler) }
+    for (const form of expandOptionalParams(path)) this.wsRouter.add("GET", form, entry)
     this.wsRouteCount += 1
     return this as never
   }
@@ -1912,12 +1911,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     schema: RouteSchema | undefined,
     handler: (context: never) => unknown,
   ): void {
-    this.assertConfigurable("route registration")
-    this.catalog.add(this.prepareRoute(method, this.prefixed(path), schema, handler))
+    this.registerBatch([{ method, path, schema, handler }])
   }
 
   /** Register a contract/group route batch atomically. Every route captures the same current chain it
-   * would capture through {@link register}; no route becomes visible unless the full batch validates. */
+   * would capture through {@link register}; no route becomes visible unless the full batch validates.
+   *
+   * A path ending in optional parameters (`/users/:id?`) is one catalog route per concrete pattern,
+   * so reflection, OpenAPI, evidence and the typed client all see ordinary routes. */
   registerBatch(
     routes: readonly {
       readonly method: Method
@@ -1927,9 +1928,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }[],
   ): void {
     this.assertConfigurable("route registration")
-    const staged = routes.map(({ method, path, schema, handler }) =>
-      this.prepareRoute(method, this.prefixed(path), schema, handler),
-    )
+    const staged: CatalogRoute[] = []
+    for (const { method, path, schema, handler } of routes) {
+      for (const form of expandOptionalParams(this.prefixed(path))) {
+        staged.push(this.prepareRoute(method, form, schema, handler))
+      }
+    }
     this.catalog.addBatch(staged)
   }
 

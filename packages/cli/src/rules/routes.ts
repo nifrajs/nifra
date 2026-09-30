@@ -1,5 +1,6 @@
 import { RESERVED_KEY_READOUT, reservedKeyFor } from "@nifrajs/client"
 import { RoutePatternOverlapLimitError, routePatternOverlap } from "@nifrajs/core"
+import { expandOptionalParams } from "@nifrajs/core/pattern"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { commentBlockHasMarker } from "./comment-markers.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
@@ -25,6 +26,7 @@ import type { CheckRule, RuleContext } from "./index.ts"
 /** Opt-out pragma for a route deliberately served only to NON-typed-client consumers. */
 const RESERVED_SEGMENT_PRAGMA = "nifra-expect reserved-segment"
 const ROUTE_OVERLAP_PRAGMA = "nifra-expect route-overlap"
+const PARAM_MODIFIER_PRAGMA = "nifra-expect param-modifier"
 
 interface StaticRouteFact {
   readonly file: string
@@ -231,8 +233,53 @@ export const overlappingRouteRule: CheckRule = {
   },
 }
 
+/** A param name directly followed by a character other routers read as a modifier. */
+const PARAM_MODIFIER = /:[A-Za-z_][A-Za-z0-9_]*[?*+{(<]/
+
+/**
+ * NF-C026: a param followed by `?`, `*`, `+`, `{`, `(` or `<` where the router reads that character
+ * as literal text. The one modifier the router has is `?` on a trailing run of whole segments
+ * (`/users/:id?`), and those are expanded away before this looks, so anything still matching is
+ * text the author very likely meant as syntax: `/users/:id?/posts` serves only a path that
+ * contains a literal `?`, which no request path does.
+ */
+export const paramModifierRule: CheckRule = {
+  code: "NF-C026",
+  title: "Route param followed by an unsupported modifier",
+  async scan(ctx) {
+    const findings: Diagnostic[] = []
+    const linesByFile = new Map<string, readonly string[]>()
+    for (const route of routeFacts(ctx)) {
+      const forms = expandOptionalParams(route.path)
+      const found = PARAM_MODIFIER.exec(forms[forms.length - 1] ?? route.path)
+      if (found === null) continue
+      let lines = linesByFile.get(route.file)
+      if (lines === undefined) {
+        lines = (ctx.project.source.read(route.file) ?? "").split("\n")
+        linesByFile.set(route.file, lines)
+      }
+      if (commentBlockHasMarker(lines, route.line, PARAM_MODIFIER_PRAGMA)) continue
+      const text = found[0]
+      const character = text[text.length - 1]!
+      findings.push(
+        diagnostic({
+          code: "NF-C026",
+          severity: "warn",
+          file: route.file,
+          line: route.line,
+          message: `${route.method} ${route.path} - '${character}' after '${text.slice(0, -1)}' is matched as literal text, not as a param modifier${character === "?" ? "; a request path never contains '?', so this route cannot be reached" : ""}. Optional params are supported as the trailing whole segments of a path (\`/users/:id?\`, \`/d/:year?/:month?\`); for anything else register each path, or mark a deliberate literal with \`// ${PARAM_MODIFIER_PRAGMA}\` above the registration`,
+          evidence: [`${route.method} ${route.path}`, `literal: ${text}`],
+          verify: "nifra check --lints-only",
+        }),
+      )
+    }
+    return findings
+  },
+}
+
 export const routeRules = Object.freeze([
   reservedSegmentRule,
   duplicateRouteRule,
   overlappingRouteRule,
+  paramModifierRule,
 ])

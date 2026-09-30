@@ -106,6 +106,14 @@ export const app = server()
     }),
   )`
 
+const OPTIONAL_PARAMS = `import { server } from "@nifrajs/core/server"
+
+export const app = server()
+  // GET /users and GET /users/42
+  .get("/users/:id?", (c) => (c.params.id === undefined ? { all: true } : { id: c.params.id }))
+  // GET /archive, GET /archive/2026 and GET /archive/2026/09
+  .get("/archive/:year?/:month?", (c) => ({ year: c.params.year, month: c.params.month }))`
+
 export default function Api() {
   return (
     <div className="prose">
@@ -130,6 +138,44 @@ export default function Api() {
         <code>422</code> automatically. Path params (<code>:id</code>) are typed from the pattern.
       </p>
       <CodeBlock code={INLINE} />
+
+      <h2>Optional path params</h2>
+      <p>
+        A path can end in optional params, written <code>:name?</code>. The route then serves the path
+        with the param and without it, and the param is typed <code>string | undefined</code>:
+      </p>
+      <CodeBlock code={OPTIONAL_PARAMS} />
+      <ul>
+        <li>
+          <b>Only at the end, only whole segments.</b> Several in a row are filled left to right, so{" "}
+          <code>/archive/:year?/:month?</code> serves three paths and never a month without a year. A{" "}
+          <code>?</code> anywhere else (<code>/a/:id?/b</code>, <code>/v-:id?</code>) is ordinary text,
+          which no request path can contain; <code>nifra check</code> reports it as{" "}
+          <code>NF-C026</code>.
+        </li>
+        <li>
+          <b>It is one route per path it serves.</b> <code>/users/:id?</code> is <code>/users</code> and{" "}
+          <code>/users/:id</code> with the same handler, schema and hooks, and that is how it appears
+          in <code>app.routes()</code>, OpenAPI (two operations; the shorter one has no <code>id</code>{" "}
+          parameter) and the typed client (<code>api.users.get()</code> and{" "}
+          <code>{`api.users({ id }).get()`}</code>).
+        </li>
+        <li>
+          <b>An absent param is absent,</b> not an empty string: it is missing from{" "}
+          <code>c.params</code>. A <code>params</code> schema has to allow that, or the shorter path
+          answers <code>422</code>.
+        </li>
+        <li>
+          <b>A path can be registered once.</b> <code>GET /users</code> next to{" "}
+          <code>GET /users/:id?</code> throws at registration, because both serve{" "}
+          <code>GET /users</code>. Nothing of a rejected route is left registered.
+        </li>
+      </ul>
+      <p className="caveat">
+        Other param modifiers (<code>:id+</code>, <code>:id*</code>, <code>{`:id{[0-9]+}`}</code>,{" "}
+        <code>{":id(\\d+)"}</code>) are not part of the path grammar and match as literal text. Where that
+        text is intended, put <code>{"// nifra-expect param-modifier"}</code> above the registration.
+      </p>
 
       <h2>Status, headers &amp; cookies (c.set)</h2>
       <p>

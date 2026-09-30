@@ -22,6 +22,7 @@ export const RULE_CODES = Object.freeze({
   "NF-C019": "Duplicate route registration check",
   "NF-C024": "Overlapping route registration check",
   "NF-C025": "Route overlap analysis budget check",
+  "NF-C026": "Route param modifier check",
   "NF-C020": "Island enhancer cleanup check",
   "NF-C021": "nano binding cleanup check",
   "NF-C022": "nano bindList key check",

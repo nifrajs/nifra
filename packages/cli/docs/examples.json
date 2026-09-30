@@ -24,6 +24,12 @@
     "code": "import { client } from \"@nifrajs/client\"\nimport type { app } from \"./server\"\n\n// Infers the server's types directly - no codegen, no schema duplication.\nconst api = client<typeof app>(\"https://api.example.com\")\n\nconst { data } = await api.users({ id: \"1\" }).get()         // path param → /users/1\nawait api.users.post({ name: \"Ada\" })                       // POST body\nawait api.search.get({ query: { page: \"3\" } })              // query string\nawait api.users({ id: \"1\" }).posts({ postId: \"2\" }).get()   // nested params"
   },
   {
+    "name": "OPTIONAL_PARAMS",
+    "topic": "Nifra - API & typed client",
+    "slug": "api",
+    "code": "import { server } from \"@nifrajs/core/server\"\n\nexport const app = server()\n  // GET /users and GET /users/42\n  .get(\"/users/:id?\", (c) => (c.params.id === undefined ? { all: true } : { id: c.params.id }))\n  // GET /archive, GET /archive/2026 and GET /archive/2026/09\n  .get(\"/archive/:year?/:month?\", (c) => ({ year: c.params.year, month: c.params.month }))"
+  },
+  {
     "name": "SETUP",
     "topic": "Nifra - Auth & sessions",
     "slug": "auth",
