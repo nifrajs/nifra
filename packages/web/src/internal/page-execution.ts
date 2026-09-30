@@ -24,6 +24,7 @@ import type {
   NotFoundEntry,
   RouteEntry,
   RouteModule,
+  ShouldRevalidate,
 } from "../manifest.ts"
 import type { NonceResolver } from "../nonce.ts"
 import type { RenderAdapter } from "../render-seam.ts"
@@ -163,6 +164,15 @@ interface NotFoundTarget {
   readonly route: RouteEntry
 }
 
+/** The browser's side of a client navigation: the page it is leaving and the layout slots it holds. */
+type RetainContext = {
+  readonly requested: ReadonlySet<number>
+  readonly from: RouteEntry
+  readonly fromParams: Readonly<Record<string, string>>
+  readonly fromUrl: URL
+  readonly toUrl: URL
+}
+
 type LayoutRun = {
   readonly modules: LoadedLayoutModules
   readonly layoutData: readonly unknown[] | undefined
@@ -277,7 +287,7 @@ export function createPageRequestExecutor<Env = unknown>(
     route: RouteEntry,
     ctx: LoaderContext,
     controls: PageResponseControls,
-    retain: ReadonlySet<number> = new Set(),
+    retain?: RetainContext,
   ): Promise<LayoutRun> => {
     const modules = await loadLayoutModules(route)
     if (!modules.some((m) => m.loader !== undefined)) {
@@ -287,11 +297,20 @@ export function createPageRequestExecutor<Env = unknown>(
     const retained: number[] = []
     const pending: Array<Promise<void>> = []
     for (let i = 0; i < modules.length; i++) {
-      const loader = modules[i]?.loader
+      const layout = modules[i] as LoadedLayoutModules[number]
+      const loader = layout.loader
       if (loader === undefined) continue
-      if (retain.has(i) && modules[i]?.gate !== true) {
-        retained.push(i)
-        continue
+      if (retain !== undefined && layout.gate !== true) {
+        let keep: boolean
+        try {
+          keep = keepsLayoutData(route, i, layout, ctx.params, retain)
+        } catch (err) {
+          throw tagLayoutError(err, route.layoutIds[i] as string)
+        }
+        if (keep) {
+          retained.push(i)
+          continue
+        }
       }
       const scoped: LoaderContext = {
         ...ctx,
@@ -354,48 +373,68 @@ export function createPageRequestExecutor<Env = unknown>(
     return out
   }
 
-  const validatedRetainedIndices = (
-    req: Request,
-    route: RouteEntry,
-    params: Readonly<Record<string, string>>,
-  ): ReadonlySet<number> => {
-    if (req.headers.get(DATA_HEADER) === null) return EMPTY_RETAIN
+  /**
+   * The browser's side of a client navigation: the page it is leaving and the layout slots it asked
+   * to keep. Undefined unless this is a data request whose `from` is same-origin and routable.
+   */
+  const retainContextOf = (req: Request): RetainContext | undefined => {
+    if (req.headers.get(DATA_HEADER) === null) return undefined
     const requested = retainedIndices(req.headers.get(RETAIN_HEADER))
     const from = req.headers.get(NAV_FROM_HEADER)
-    if (requested.size === 0 || from === null) return EMPTY_RETAIN
-    let fromPath: string
+    if (requested.size === 0 || from === null) return undefined
+    let toUrl: URL
+    let fromUrl: URL
     try {
-      const current = new URL(req.url)
-      const source = new URL(from, current)
-      if (source.origin !== current.origin) return EMPTY_RETAIN
-      // Every loader in the chain can read the query (`ctx.search`, `ctx.request.url`), and nothing
-      // records which keys a layout depends on. A changed query therefore re-runs the whole chain;
-      // keys that should not reach a loader at all belong in the route's `searchClientKeys`, which
-      // skips the request entirely.
-      if (source.search !== current.search) return EMPTY_RETAIN
-      fromPath = source.pathname + source.search
+      toUrl = new URL(req.url)
+      fromUrl = new URL(from, toUrl)
     } catch {
-      return EMPTY_RETAIN
+      return undefined
     }
-    const previousMatch = matchManifestRoute(fromPath)
-    if (previousMatch === null) return EMPTY_RETAIN
+    if (fromUrl.origin !== toUrl.origin) return undefined
+    const previousMatch = matchManifestRoute(fromUrl.pathname + fromUrl.search)
+    if (previousMatch === null) return undefined
     const previous = routeById.get(previousMatch.routeId)
-    if (previous === undefined) return EMPTY_RETAIN
-    const valid = new Set<number>()
-    for (const index of requested) {
-      if (route.layoutIds[index] !== previous.layoutIds[index]) continue
-      const owned = route.layoutParams?.[index] ?? []
-      const previouslyOwned = previous.layoutParams?.[index] ?? []
-      if (
-        owned.length !== previouslyOwned.length ||
-        owned.some((name, i) => name !== previouslyOwned[i]) ||
-        owned.some((name) => params[name] !== previousMatch.params[name])
-      ) {
-        continue
-      }
-      valid.add(index)
-    }
-    return valid
+    if (previous === undefined) return undefined
+    return { requested, from: previous, fromParams: previousMatch.params, fromUrl, toUrl }
+  }
+
+  /**
+   * Whether layout `index` keeps the data the browser already has instead of running its loader.
+   * Only a slot the browser asked to keep, holding this same layout, can be kept. By default it is
+   * kept when neither a param the layout owns nor the query changed: every loader in the chain can
+   * read the query (`ctx.search`, `ctx.request.url`) and nothing records which keys it uses. Keys no
+   * loader should see belong in the route's `searchClientKeys`, which skips the request entirely.
+   * The layout's `shouldRevalidate` overrides the default. Never asked for a gate.
+   */
+  const keepsLayoutData = (
+    route: RouteEntry,
+    index: number,
+    layout: LoadedLayoutModules[number],
+    params: Readonly<Record<string, string>>,
+    retain: RetainContext,
+  ): boolean => {
+    if (!retain.requested.has(index)) return false
+    const previous = retain.from
+    if (route.layoutIds[index] !== previous.layoutIds[index]) return false
+    const owned = route.layoutParams?.[index] ?? []
+    const previouslyOwned = previous.layoutParams?.[index] ?? []
+    const defaultShouldRevalidate =
+      retain.fromUrl.search !== retain.toUrl.search ||
+      owned.length !== previouslyOwned.length ||
+      owned.some((name, i) => name !== previouslyOwned[i]) ||
+      owned.some((name) => params[name] !== retain.fromParams[name])
+    const decide = layout.shouldRevalidate
+    if (typeof decide !== "function") return !defaultShouldRevalidate
+    // Copies, so a hook that mutates its arguments cannot reach the request's params or the next
+    // layout's view of the navigation.
+    const answer = (decide as ShouldRevalidate)({
+      currentUrl: new URL(retain.fromUrl),
+      nextUrl: new URL(retain.toUrl),
+      currentParams: { ...retain.fromParams },
+      nextParams: { ...params },
+      defaultShouldRevalidate,
+    })
+    return answer === false
   }
 
   const loaderSearch = (searchSchema: RouteModule["searchSchema"], request: Request) =>
@@ -909,12 +948,7 @@ export function createPageRequestExecutor<Env = unknown>(
             search: loaderSearch(mod.searchSchema, c.req),
             set: controls.scope(PAGE_SCOPE),
           }
-          run = await runLayoutChain(
-            route,
-            ctx,
-            controls,
-            validatedRetainedIndices(c.req, route, c.params),
-          )
+          run = await runLayoutChain(route, ctx, controls, retainContextOf(c.req))
           layoutModules = run.modules
           layoutRetained = run.retained
           const boundaryDefinitions = [

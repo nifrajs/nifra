@@ -4750,6 +4750,10 @@ _No named exports (side-effect entrypoint)._
 - **ServePublicDirOptions** _(interface)_ - `interface ServePublicDirOptions`
 - **ServerOnly** _(type)_ - `type ServerOnly<T> = T & { readonly [SERVER_ONLY_BRAND]?: never }`
   Type-level intent marker for a value that must only exist on the server - a secret, a DB handle, a server-only client. `ServerOnly<T>` is structurally `T` (the brand is an optional phantom field, so existing code keeps type-checking), but it advertises to readers + the compiler that the value is no…
+- **ShouldRevalidate** _(type)_ - `type ShouldRevalidate = (args: ShouldRevalidateArgs) => boolean`
+  A layout's say over whether its loader runs again on a client navigation. Export it from a `_layout` next to the loader: `export const shouldRevalidate: ShouldRevalidate = (args) => ...`.
+- **ShouldRevalidateArgs** _(interface)_ - `interface ShouldRevalidateArgs`
+  One client navigation, as a layout's {@link ShouldRevalidate} sees it.
 - **SsrModuleLoader** _(type)_ - `type SsrModuleLoader = (id: string) => Promise<unknown>`
   Loads a module through the dev server's module graph rather than the runtime's resolver.
 - **StaticBoundary** _(type)_ - `type StaticBoundary<Data, UI> = BoundaryBase<Data, UI> & { readonly mode: "static" readonly load?: (ctx: StaticCtx) => Data | Promise<Data> }`

@@ -765,6 +765,8 @@ export type LoadedLayoutModules = ReadonlyArray<{
   loader?: LayoutLoader
   action?: unknown
   gate?: boolean
+  // Read only when it is a function - see `ShouldRevalidate` in manifest.ts.
+  shouldRevalidate?: unknown
   // A layout may declare its own `searchSchema`; the route's effective search merges the layout chain's
   // schemas with the page's (page-wins). Present on the raw module already - typed here so it is readable.
   searchSchema?: RouteModule["searchSchema"]

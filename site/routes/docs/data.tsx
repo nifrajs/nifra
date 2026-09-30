@@ -51,6 +51,18 @@ export async function loader() {
 }
 // posts[0].frontmatter is { title; date; draft } (typed); posts[0].html is the rendered Markdown`
 
+const SHOULD_REVALIDATE = `// routes/orgs/[org]/_layout.tsx
+import type { ShouldRevalidate } from "@nifrajs/web"
+
+export async function loader({ params }: { params: { org: string } }) {
+  return { org: await db.orgs.find(params.org) }
+}
+
+// The org sidebar ignores the query: filtering a list beneath it keeps the org data,
+// switching orgs loads it again.
+export const shouldRevalidate: ShouldRevalidate = ({ currentParams, nextParams }) =>
+  currentParams.org !== nextParams.org`
+
 export default function Data() {
   return (
     <div className="prose">
@@ -74,6 +86,25 @@ export default function Data() {
         - progressive enhancement, same code.
       </p>
       <CodeBlock code={ACTION} />
+
+      <h2>Layout loaders on navigation</h2>
+      <p>
+        A <code>_layout</code> can have a <code>loader</code> too; its return reaches the layout
+        component as <code>data</code>. On a client navigation that keeps the layout on screen, the
+        browser already holds that data, so the loader runs again only when a param the layout owns
+        changes (<code>org</code> for <code>orgs/[org]/_layout.tsx</code>) or the query changes. After
+        an action, every loader runs. A layout that exports <code>gate = true</code> runs on every
+        request; a layout loader without it is not an authorization boundary.
+      </p>
+      <p>
+        A layout's <code>shouldRevalidate</code> overrides that default. It runs on the server and
+        receives <code>defaultShouldRevalidate</code> with the URL and params being left and the ones
+        being loaded. Returning <code>false</code> keeps the browser's copy. It is not asked on a
+        document request, after an action, or for a gate. A page's loader runs on every navigation:
+        query keys a page never reads belong in its <code>searchClientKeys</code>, which skips the
+        request.
+      </p>
+      <CodeBlock code={SHOULD_REVALIDATE} />
 
       <h2>Content collections</h2>
       <p>

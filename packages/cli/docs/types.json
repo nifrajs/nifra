@@ -17393,6 +17393,20 @@
     "doc": "/**\n * Adaptive capacity admission. Rate limiting bounds request *frequency* and `@nifrajs/core/budget` bounds\n * request *duration*; neither stops a healthy instance from accepting more *concurrent* work than it\n * can finish. This gate admits on live capacity evidence - in-flight count + event-loop lag - briefly\n * queues at the edge, and sheds the rest with `429` + `Retry-After`, so p99 stays bounded under load\n * instead of collapsing.\n *\n * Public mechanics (in-flight + loop lag) know nothing about tenants. An application-supplied {@link AdmissionPolicy}\n * hook layers tenant priority and reserved capacity on top without leaking\n * those concerns into the OSS core.\n *\n * Wire it as the server's `admission` option (NOT an `onRequest` hook - a hook disables the native\n * route table). Off by default: when unset, the request path is untouched.\n */"
   },
   {
+    "name": "ShouldRevalidate",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type ShouldRevalidate = (args: ShouldRevalidateArgs) => boolean;",
+    "doc": "/**\n * A layout's say over whether its loader runs again on a client navigation. Export it from a\n * `_layout` next to the loader: `export const shouldRevalidate: ShouldRevalidate = (args) => ...`.\n *\n * - Asked on the server, on a client navigation that keeps this layout on screen, when the browser\n *   already holds its data. A document request, the revalidation after an action, and\n *   `router.invalidate()` always run the loader.\n * - Return `false` to keep the data the browser has; any other value runs the loader. Return\n *   `args.defaultShouldRevalidate` to keep the default for the cases you do not handle.\n * - Must be synchronous: a returned promise is not `false`, so the loader runs.\n * - Never asked for a `gate` layout, which runs on every request.\n * - A page's loader runs on every navigation and a page's `shouldRevalidate` is not read. Query keys\n *   a page's loader never uses belong in its `searchClientKeys`.\n */"
+  },
+  {
+    "name": "ShouldRevalidateArgs",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ShouldRevalidateArgs {\n    /** The URL the client is leaving. */\n    readonly currentUrl: URL;\n    /** The URL being loaded. */\n    readonly nextUrl: URL;\n    /** Every route param of the page being left - not only the ones the layout owns. */\n    readonly currentParams: Readonly<Record<string, string>>;\n    /** Every route param of the page being loaded. */\n    readonly nextParams: Readonly<Record<string, string>>;\n    /** The answer without the hook: `true` when a param the layout owns or the query changed. */\n    readonly defaultShouldRevalidate: boolean;\n}",
+    "doc": "/** One client navigation, as a layout's {@link ShouldRevalidate} sees it. */"
+  },
+  {
     "name": "signal",
     "kind": "function",
     "package": "@nifrajs/islets",

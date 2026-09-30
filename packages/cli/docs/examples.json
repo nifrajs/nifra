@@ -192,6 +192,12 @@
     "code": "// content.config.ts - a typed, validated collection over a folder of Markdown.\nimport { defineCollection } from \"@nifrajs/content/fs\"\nimport { t } from \"@nifrajs/schema\"\n\nexport const blog = defineCollection({\n  dir: \"content/blog\",\n  schema: t.object({ title: t.string(), date: t.string(), draft: t.boolean() }),\n})\n\n// a loader - typed + validated entries, no manual fs/frontmatter parsing:\nexport async function loader() {\n  const posts = (await blog.all()).filter((p) => !p.frontmatter.draft)\n  return { posts: posts.sort((a, b) => b.frontmatter.date.localeCompare(a.frontmatter.date)) }\n}\n// posts[0].frontmatter is { title; date; draft } (typed); posts[0].html is the rendered Markdown"
   },
   {
+    "name": "SHOULD_REVALIDATE",
+    "topic": "Nifra - Loaders & actions",
+    "slug": "data",
+    "code": "// routes/orgs/[org]/_layout.tsx\nimport type { ShouldRevalidate } from \"@nifrajs/web\"\n\nexport async function loader({ params }: { params: { org: string } }) {\n  return { org: await db.orgs.find(params.org) }\n}\n\n// The org sidebar ignores the query: filtering a list beneath it keeps the org data,\n// switching orgs loads it again.\nexport const shouldRevalidate: ShouldRevalidate = ({ currentParams, nextParams }) =>\n  currentParams.org !== nextParams.org"
+  },
+  {
     "name": "DECORATE",
     "topic": "Nifra - Databases",
     "slug": "database",

@@ -175,6 +175,8 @@ export {
   type RouteEntry,
   type RouteModule,
   type ScriptDescriptor,
+  type ShouldRevalidate,
+  type ShouldRevalidateArgs,
   type StaticPath,
   type StaticPaths,
   type StaticRoutes,

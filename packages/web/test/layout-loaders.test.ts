@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test"
-import { createWebApp, defer, type Manifest, notFound, type RenderAdapter } from "../src/index.ts"
+import {
+  createWebApp,
+  defer,
+  type Manifest,
+  notFound,
+  type RenderAdapter,
+  type ShouldRevalidateArgs,
+} from "../src/index.ts"
 import { DATA_HEADER, NAV_FROM_HEADER, RETAIN_HEADER } from "../src/router.ts"
 
 const streamOf = (s: string): ReadableStream<Uint8Array> =>
@@ -19,7 +26,7 @@ const stub: RenderAdapter = {
   hydrationHead: () => "",
 }
 
-type LayoutMod = { default: unknown; loader?: unknown; gate?: boolean }
+type LayoutMod = { default: unknown; loader?: unknown; gate?: boolean; shouldRevalidate?: unknown }
 
 const appWith = (
   layouts: Record<string, LayoutMod>,
@@ -382,6 +389,175 @@ test("a changed query re-runs a layout loader the params check would keep", asyn
   expect(changed.retained ?? []).toEqual([])
   expect(changed.layoutData).toEqual([{ tab: "b" }])
   expect(seen).toEqual(["b"])
+})
+
+/** A client navigation's data request that offers the `retain` slots it holds. */
+const navigateData = async (
+  app: { fetch(r: Request): Response | Promise<Response> },
+  to: string,
+  from: string,
+  retain = "0",
+) =>
+  await app.fetch(
+    new Request(`http://x${to}`, {
+      headers: { [DATA_HEADER]: "1", [RETAIN_HEADER]: retain, [NAV_FROM_HEADER]: from },
+    }),
+  )
+
+test("shouldRevalidate false keeps a layout's data through a change it owns", async () => {
+  let runs = 0
+  const asked: unknown[] = []
+  const app = appWith(
+    {
+      "orgs/[org]/_layout": {
+        default: "org",
+        loader: () => ({ n: ++runs }),
+        shouldRevalidate: (args: ShouldRevalidateArgs) => {
+          asked.push({
+            currentUrl: args.currentUrl.href,
+            nextUrl: args.nextUrl.href,
+            currentParams: args.currentParams,
+            nextParams: args.nextParams,
+            defaultShouldRevalidate: args.defaultShouldRevalidate,
+          })
+          return false
+        },
+      },
+    },
+    ["orgs/[org]/_layout"],
+    [["org"]],
+  )
+  const res = await navigateData(app, "/orgs/beta/projects/7", "/orgs/acme/projects/7")
+  const envelope = (await res.json()) as { retained?: number[] }
+  expect(runs).toBe(0)
+  expect(envelope.retained).toEqual([0])
+  // The layout owns `org`, so the default was to re-run; the hook saw that and every route param.
+  expect(asked).toEqual([
+    {
+      currentUrl: "http://x/orgs/acme/projects/7",
+      nextUrl: "http://x/orgs/beta/projects/7",
+      currentParams: { org: "acme", id: "7" },
+      nextParams: { org: "beta", id: "7" },
+      defaultShouldRevalidate: true,
+    },
+  ])
+})
+
+test("shouldRevalidate true re-runs a layout the default would keep", async () => {
+  let runs = 0
+  const app = appWith(
+    { _layout: { default: "root", loader: () => ({ n: ++runs }), shouldRevalidate: () => true } },
+    ["_layout"],
+    [[]],
+  )
+  const res = await navigateData(app, "/orgs/acme/projects/8", "/orgs/acme/projects/7")
+  const envelope = (await res.json()) as { retained?: number[]; layoutData?: unknown[] }
+  expect(runs).toBe(1)
+  expect(envelope.retained ?? []).toEqual([])
+  expect(envelope.layoutData).toEqual([{ n: 1 }])
+})
+
+test("shouldRevalidate is not asked for a gate, a document request, or a slot not offered", async () => {
+  let asked = 0
+  let gateRuns = 0
+  let dataRuns = 0
+  const keep = () => {
+    asked += 1
+    return false
+  }
+  const app = appWith(
+    {
+      _layout: {
+        default: "root",
+        gate: true,
+        loader: () => ({ g: ++gateRuns }),
+        shouldRevalidate: keep,
+      },
+      "orgs/[org]/_layout": {
+        default: "org",
+        loader: () => ({ d: ++dataRuns }),
+        shouldRevalidate: keep,
+      },
+    },
+    ["_layout", "orgs/[org]/_layout"],
+    [[], ["org"]],
+  )
+  // A document request carries retain hints only if something forged them; they are ignored.
+  await app.fetch(
+    new Request("http://x/orgs/acme/projects/7", {
+      headers: { [RETAIN_HEADER]: "0,1", [NAV_FROM_HEADER]: "/orgs/acme/projects/8" },
+    }),
+  )
+  // Slot 0 is a gate and runs regardless; slot 1 was not offered, so the browser holds nothing to keep.
+  await navigateData(app, "/orgs/acme/projects/7", "/orgs/acme/projects/8", "0")
+  expect(asked).toBe(0)
+  expect([gateRuns, dataRuns]).toEqual([2, 2])
+})
+
+test("a shouldRevalidate that throws fails the navigation the way its loader would", async () => {
+  const app = appWith(
+    {
+      _layout: {
+        default: "root",
+        loader: () => ({}),
+        shouldRevalidate: () => {
+          throw new Error("boom")
+        },
+      },
+    },
+    ["_layout"],
+    [[]],
+  )
+  const res = await navigateData(app, "/orgs/acme/projects/8", "/orgs/acme/projects/7")
+  expect(res.status).toBe(500)
+})
+
+test("an async shouldRevalidate does not keep data", async () => {
+  let runs = 0
+  const app = appWith(
+    {
+      _layout: {
+        default: "root",
+        loader: () => ({ n: ++runs }),
+        shouldRevalidate: async () => false,
+      },
+    },
+    ["_layout"],
+    [[]],
+  )
+  await navigateData(app, "/orgs/acme/projects/8", "/orgs/acme/projects/7")
+  expect(runs).toBe(1)
+})
+
+test("a page's shouldRevalidate is not read: its loader runs on every navigation", async () => {
+  let runs = 0
+  const app = createWebApp({
+    adapter: stub,
+    manifest: {
+      routes: [
+        {
+          id: "page",
+          pattern: "/orgs/:org/projects/:id",
+          layoutIds: ["_layout"],
+          layoutParams: [[]],
+          file: "page.tsx",
+          load: async () => ({
+            default: "page",
+            loader: () => ({ n: ++runs }),
+            shouldRevalidate: () => false,
+          }),
+        },
+      ],
+      layouts: {
+        _layout: { file: "_layout.tsx", load: async () => ({ default: "root", loader: () => 1 }) },
+      },
+      notFound: { file: "_404.tsx", load: async () => ({ default: "nf" }) },
+    } as unknown as Manifest,
+    clientEntry: "/c.js",
+  })
+  const res = await navigateData(app, "/orgs/acme/projects/7", "/orgs/acme/projects/7")
+  expect(runs).toBe(1)
+  expect(((await res.json()) as { data: unknown }).data).toEqual({ n: 1 })
 })
 
 test("a malformed retain hint is ignored rather than rejected", async () => {

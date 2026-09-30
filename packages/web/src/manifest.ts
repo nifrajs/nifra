@@ -58,6 +58,36 @@ export interface LoaderContext {
 /** A route's optional data loader: params/request in, data out. */
 export type Loader = (ctx: LoaderContext) => unknown | Promise<unknown>
 
+/** One client navigation, as a layout's {@link ShouldRevalidate} sees it. */
+export interface ShouldRevalidateArgs {
+  /** The URL the client is leaving. */
+  readonly currentUrl: URL
+  /** The URL being loaded. */
+  readonly nextUrl: URL
+  /** Every route param of the page being left - not only the ones the layout owns. */
+  readonly currentParams: Readonly<Record<string, string>>
+  /** Every route param of the page being loaded. */
+  readonly nextParams: Readonly<Record<string, string>>
+  /** The answer without the hook: `true` when a param the layout owns or the query changed. */
+  readonly defaultShouldRevalidate: boolean
+}
+
+/**
+ * A layout's say over whether its loader runs again on a client navigation. Export it from a
+ * `_layout` next to the loader: `export const shouldRevalidate: ShouldRevalidate = (args) => ...`.
+ *
+ * - Asked on the server, on a client navigation that keeps this layout on screen, when the browser
+ *   already holds its data. A document request, the revalidation after an action, and
+ *   `router.invalidate()` always run the loader.
+ * - Return `false` to keep the data the browser has; any other value runs the loader. Return
+ *   `args.defaultShouldRevalidate` to keep the default for the cases you do not handle.
+ * - Must be synchronous: a returned promise is not `false`, so the loader runs.
+ * - Never asked for a `gate` layout, which runs on every request.
+ * - A page's loader runs on every navigation and a page's `shouldRevalidate` is not read. Query keys
+ *   a page's loader never uses belong in its `searchClientKeys`.
+ */
+export type ShouldRevalidate = (args: ShouldRevalidateArgs) => boolean
+
 /**
  * A route's optional mutation, run on POST. Shares the loader context (params/request/api);
  * read the form/JSON body off `request`. Returns either a control-flow value (a `redirect()`, a
