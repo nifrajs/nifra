@@ -22,6 +22,7 @@ import type {
   NavigateFunction,
   NavigateOptions,
   NavigateTargetInput,
+  PrefetchMode,
   RenderProps,
   UIMatch,
 } from "@nifrajs/web"
@@ -51,7 +52,7 @@ import {
   useState,
 } from "react"
 
-export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch }
+export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, PrefetchMode, UIMatch }
 
 /** The current route the routing hooks read. Provided by `compose` on SSR + client mount alike. */
 export interface RouterContextValue {
@@ -333,12 +334,16 @@ function isPlainLeftClick(event: MouseEvent, target: string | undefined): boolea
   return target === undefined || target === "" || target === "_self"
 }
 
-/** {@link Link} props: every `<a>` attribute except `href` (set from `to`), plus `to` + `replace`. */
+/** {@link Link} props: every `<a>` attribute except `href` (set from `to`), plus `to`, `replace` and
+ * `prefetch`. */
 export interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"> {
   /** Same-origin destination path (e.g. `/users/7?tab=posts`). Rendered as the `<a href>`. */
   readonly to: string
   /** Replace the current history entry instead of pushing. */
   readonly replace?: boolean
+  /** When the link warms its route ahead of a click - rendered as `data-nifra-prefetch`. Unset, the
+   * nearest ancestor's `data-nifra-prefetch` decides, else `intent` (hover or focus). */
+  readonly prefetch?: PrefetchMode
 }
 
 /**
@@ -348,7 +353,7 @@ export interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>,
  * document-level click handler sees `defaultPrevented` and stands down - exactly one navigation.
  */
 export const Link = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
-  { to, replace, onClick, target, ...rest },
+  { to, replace, prefetch, onClick, target, ...rest },
   ref,
 ) {
   const handleClick = (event: MouseEvent<HTMLAnchorElement>): void => {
@@ -360,7 +365,14 @@ export const Link = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
     event.preventDefault()
     navigate(to, { replace: replace === true })
   }
-  return createElement("a", { ...rest, href: to, target, onClick: handleClick, ref })
+  return createElement("a", {
+    ...rest,
+    href: to,
+    target,
+    onClick: handleClick,
+    ref,
+    ...(prefetch !== undefined ? { "data-nifra-prefetch": prefetch } : {}),
+  })
 })
 
 /** The state a {@link NavLink}'s function-form `className`/`style`/`children` receive. */

@@ -402,8 +402,10 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-typebox-form": 66.3,
   // Review-leaf ceiling: measured 5.0 KB gz + ~0.2 KB headroom, same rule as every other row.
   "nifra-agent-review": 5.2,
-  // Client runtime ceiling: measured 14.5 KB gz (14847 B), rounded up to the next 0.1 KB.
-  "nifra-web-client": 14.5,
+  // Client runtime ceiling: measured size rounded up to the next 0.1 KB. Link prefetch modes (the
+  // `data-nifra-prefetch` opt-out, the scan for viewport and render links) and the freshness bound on
+  // prefetched data add ~0.23 KB gzip: measured 14.7 KB gz (15075 B).
+  "nifra-web-client": 14.8,
 }
 
 const main = async (): Promise<void> => {

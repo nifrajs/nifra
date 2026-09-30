@@ -34,21 +34,31 @@ class FakeEventHub {
 
 class FakeElement {
   readonly attrs = new Map<string, string>()
+  readonly dataset: Record<string, string | undefined> = {}
   readonly tagName: string
   href = ""
   target = ""
   scrolled = 0
+  parent: FakeElement | null = null
 
   constructor(tagName = "div") {
     this.tagName = tagName
   }
 
   closest(selector: string): FakeElement | null {
-    return selector === "a" && this.tagName === "a" ? this : null
+    if (selector === "a") return this.tagName === "a" ? this : null
+    if (selector !== "[data-nifra-prefetch]") return null
+    for (let el: FakeElement | null = this; el !== null; el = el.parent) {
+      if (el.hasAttribute("data-nifra-prefetch")) return el
+    }
+    return null
   }
 
   setAttribute(name: string, value: string): void {
     this.attrs.set(name, value)
+    if (name.startsWith("data-")) {
+      this.dataset[name.slice(5).replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())] = value
+    }
   }
 
   getAttribute(name: string): string | null {
@@ -67,7 +77,6 @@ class FakeElement {
 class FakeFormElement extends FakeElement {
   method = "post"
   action = "http://example.test/submit"
-  readonly dataset: Record<string, string | undefined> = {}
   nativeSubmits = 0
 
   constructor() {
@@ -82,6 +91,8 @@ class FakeFormElement extends FakeElement {
 class FakeDocument extends FakeEventHub {
   readonly documentElement = new FakeElement("html")
   readonly anchors = new Map<string, FakeElement>()
+  /** What a scan for `viewport`/`render` links finds. */
+  prefetchLinks: FakeElement[] = []
   startViewTransition?: (callback: () => unknown) => {
     ready: Promise<unknown>
     finished: Promise<unknown>
@@ -90,6 +101,36 @@ class FakeDocument extends FakeEventHub {
 
   getElementById(id: string): FakeElement | null {
     return this.anchors.get(id) ?? null
+  }
+
+  querySelectorAll(selector: string): FakeElement[] {
+    return selector === "a[data-nifra-prefetch],[data-nifra-prefetch] a" ? this.prefetchLinks : []
+  }
+}
+
+type FakeIntersection = { readonly isIntersecting: boolean; readonly target: FakeElement }
+
+class FakeIntersectionObserver {
+  static last: FakeIntersectionObserver | undefined
+  readonly observed: FakeElement[] = []
+  disconnects = 0
+
+  constructor(readonly callback: (entries: readonly FakeIntersection[]) => void) {
+    FakeIntersectionObserver.last = this
+  }
+
+  observe(el: FakeElement): void {
+    this.observed.push(el)
+  }
+
+  disconnect(): void {
+    this.observed.length = 0
+    this.disconnects++
+  }
+
+  /** The browser reporting `el` crossing into (or out of) view. */
+  report(el: FakeElement, isIntersecting = true): void {
+    this.callback([{ isIntersecting, target: el }])
   }
 }
 
@@ -106,6 +147,7 @@ const globals = [
   "requestAnimationFrame",
   "scrollX",
   "scrollY",
+  "IntersectionObserver",
 ] as const
 
 let document: FakeDocument
@@ -120,6 +162,7 @@ beforeAll(() => {
     previous.set(name, { had: name in slot, value: slot[name] })
   }
   slot.Element = FakeElement
+  slot.IntersectionObserver = FakeIntersectionObserver
   slot.HTMLFormElement = FakeFormElement
   slot.FormData = class {
     constructor(readonly form: FakeFormElement) {}
@@ -366,6 +409,123 @@ test("history integration covers click, prefetch, fragments, popstate, fallback 
 
   stop()
   expect(getBrowserNavigate()).toBeUndefined()
+})
+
+// A router stub that records prefetches; `settle` is the store announcing a settled state.
+function makePrefetchRouter(): {
+  readonly router: ClientRouter
+  readonly prefetched: string[]
+  readonly state: { pending: boolean }
+  readonly settle: () => void
+} {
+  const prefetched: string[] = []
+  let subscriber: (() => void) | undefined
+  const state = { pending: false }
+  const router = {
+    match: (path: string) => (path === "/outside" ? null : { routeId: path, params: {} }),
+    navigate: async () => {},
+    prefetch: async (path: string) => {
+      prefetched.push(path)
+    },
+    subscribe: (listener: () => void) => {
+      subscriber = listener
+      return () => {
+        subscriber = undefined
+      }
+    },
+    snapshot: () => state,
+  } as unknown as ClientRouter
+  return { router, prefetched, state, settle: () => subscriber?.() }
+}
+
+// A link, its own `data-nifra-prefetch` (if any), and an ancestor's (if any).
+function prefetchLink(href: string, mode?: string, ancestorMode?: string): FakeElement {
+  const anchor = new FakeElement("a")
+  anchor.href = href
+  if (mode !== undefined) anchor.setAttribute("data-nifra-prefetch", mode)
+  if (ancestorMode !== undefined) {
+    const nav = new FakeElement("nav")
+    nav.setAttribute("data-nifra-prefetch", ancestorMode)
+    anchor.parent = nav
+  }
+  return anchor
+}
+
+test("data-nifra-prefetch=none on a link or an ancestor stops hover and focus prefetch", () => {
+  resetBrowser()
+  const { router, prefetched } = makePrefetchRouter()
+  const stop = installHistory(router)
+  document.emit("pointerover", fakeEvent(prefetchLink("http://example.test/a", "none")))
+  document.emit("focusin", fakeEvent(prefetchLink("http://example.test/b", undefined, "none")))
+  expect(prefetched).toEqual([])
+  // The nearest attribute wins: a link opts back in under an ancestor that opted out.
+  document.emit("pointerover", fakeEvent(prefetchLink("http://example.test/c", "intent", "none")))
+  // An unknown value is the default.
+  document.emit("focusin", fakeEvent(prefetchLink("http://example.test/d", "hover")))
+  expect(prefetched).toEqual(["/c", "/d"])
+  // The page on screen has nothing to warm.
+  document.emit("pointerover", fakeEvent(prefetchLink("http://example.test/current")))
+  expect(prefetched).toEqual(["/c", "/d"])
+  stop()
+})
+
+test("render links warm when history is installed and each time the router settles", () => {
+  resetBrowser()
+  const { router, prefetched, state, settle } = makePrefetchRouter()
+  document.prefetchLinks = [
+    prefetchLink("http://example.test/pricing", "render"),
+    prefetchLink("http://example.test/docs", undefined, "render"),
+    prefetchLink("http://example.test/current", "render"), // the page on screen
+    prefetchLink("http://example.test/outside", "render"), // not an app route
+    prefetchLink("http://example.test/later", "intent", "render"), // the nearest wins
+  ]
+  const stop = installHistory(router)
+  expect(prefetched).toEqual(["/pricing", "/docs"])
+
+  document.prefetchLinks = [prefetchLink("http://example.test/blog?page=2#top", "render")]
+  state.pending = true
+  settle() // a navigation in flight: the old page is still up
+  expect(prefetched).toEqual(["/pricing", "/docs"])
+  state.pending = false
+  settle()
+  expect(prefetched).toEqual(["/pricing", "/docs", "/blog?page=2"])
+  stop()
+})
+
+test("viewport links warm as they scroll into view; a settle looks again and teardown stops it", () => {
+  resetBrowser()
+  FakeIntersectionObserver.last = undefined
+  const { router, prefetched, settle } = makePrefetchRouter()
+  const next = prefetchLink("http://example.test/next", "viewport")
+  const listed = prefetchLink("http://example.test/list", undefined, "viewport")
+  document.prefetchLinks = [next, listed]
+  const stop = installHistory(router)
+  const seen = FakeIntersectionObserver.last as FakeIntersectionObserver | undefined
+  if (seen === undefined) throw new Error("no IntersectionObserver was created")
+  expect(seen.observed).toEqual([next, listed])
+  expect(prefetched).toEqual([])
+
+  seen.report(next, false) // leaving the viewport warms nothing
+  expect(prefetched).toEqual([])
+  seen.report(next)
+  expect(prefetched).toEqual(["/next"])
+
+  document.prefetchLinks = [listed]
+  settle()
+  expect(seen.disconnects).toBe(1)
+  expect(seen.observed).toEqual([listed])
+  stop()
+  expect(seen.disconnects).toBe(2)
+})
+
+test("a page with no viewport links creates no IntersectionObserver", () => {
+  resetBrowser()
+  FakeIntersectionObserver.last = undefined
+  const { router } = makePrefetchRouter()
+  document.prefetchLinks = [prefetchLink("http://example.test/pricing", "render")]
+  const stop = installHistory(router)
+  expect(FakeIntersectionObserver.last).toBeUndefined()
+  stop()
 })
 
 test("programmatic navigation hard-loads unmatched paths but rejects cross-origin targets", async () => {

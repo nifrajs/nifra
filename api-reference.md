@@ -4682,6 +4682,8 @@ _No named exports (side-effect entrypoint)._
   Pre-hydration form guard - a tiny inline script flushed in `<head>` (it runs in the window between first paint and the island bundle taking over). It neutralizes the one real hydration footgun: a JS-only form (a hand-wired `onSubmit` with no native fallback) submitting *natively* before its handler…
 - **PendingBoundary** _(interface)_ - `interface PendingBoundary`
   A dynamic load that has started but is not part of the initial render barrier.
+- **PrefetchMode** _(type)_ - `type PrefetchMode = "intent" | "viewport" | "render" | "none"`
+  When a link warms its route's chunk and loader data ahead of a click. Set it with the `data-nifra-prefetch` attribute on the link or on any ancestor (the nearest wins): - `intent` (the default) - on hover or keyboard focus. - `viewport` - once the link scrolls into view. - `render` - as soon as a p…
 - **PreviewEndpointOptions** _(interface)_ - `interface PreviewEndpointOptions`
   Config for {@link previewEndpoint}.
 - **PublicDirCache** _(interface)_ - `interface PublicDirCache`
@@ -5647,7 +5649,7 @@ _No named exports (side-effect entrypoint)._
 - **Link** _(const)_ - `Link: import("react").ForwardRefExoticComponent<LinkProps & import("react").RefAttributes<HTMLAnchorElement>>`
   A client-navigating anchor. Renders a real `<a href={to}>` (so it's a working link before hydration and for right-click / open-in-new-tab), and on a plain left-click navigates through the router instead of a full reload. Calling `navigate` + `preventDefault` here means `installHistory`'s document-l…
 - **LinkProps** _(interface)_ - `interface LinkProps`
-  {@link Link} props: every `<a>` attribute except `href` (set from `to`), plus `to` + `replace`.
+  {@link Link} props: every `<a>` attribute except `href` (set from `to`), plus `to`, `replace` and `prefetch`.
 - **Location** _(interface)_ - `interface Location`
   The parsed current location. `hash` is always `""` - the fragment is client-only and never reaches the router state / server, so exposing a live hash would hydration-mismatch; read `window.location.hash` directly (in an effect) if you truly need it.
 - **NavLink** _(const)_ - `NavLink: import("react").ForwardRefExoticComponent<NavLinkProps & import("react").RefAttributes<HTMLAnchorElement>>`
@@ -5664,6 +5666,8 @@ _No named exports (side-effect entrypoint)._
   {@link Navigate} props: the destination `to` and whether to `replace` the history entry.
 - **Navigation** _(interface)_ - `interface Navigation`
   The current navigation state, mirroring the Remix `useNavigation()` shape for familiarity.
+- **PrefetchMode** _(type)_ - `type PrefetchMode = "intent" | "viewport" | "render" | "none"`
+  When a link warms its route's chunk and loader data ahead of a click. Set it with the `data-nifra-prefetch` attribute on the link or on any ancestor (the nearest wins): - `intent` (the default) - on hover or keyboard focus. - `viewport` - once the link scrolls into view. - `render` - as soon as a p…
 - **RouterContext** _(const)_ - `RouterContext: import("react").Context<RouterContextValue>`
 - **RouterContextValue** _(interface)_ - `interface RouterContextValue`
   The current route the routing hooks read. Provided by `compose` on SSR + client mount alike.

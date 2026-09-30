@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, setSystemTime, test } from "bun:test"
 import {
   createClientRouter,
   createMatcher,
@@ -588,6 +588,40 @@ describe("createClientRouter", () => {
     expect(fetches).toBe(13)
     await r.navigate("/users/11") // still cached → no refetch
     expect(fetches).toBe(13)
+  })
+
+  test("a prefetch older than 30 seconds is not used, and prefetching again replaces it", async () => {
+    // A link warmed as it scrolled into view can be clicked long after: that click loads it again.
+    let fetches = 0
+    const r = createClientRouter({
+      patterns,
+      initial,
+      fetchData: async (_p, m) => {
+        fetches++
+        return { id: m.params.id, fetch: fetches }
+      },
+    })
+    try {
+      setSystemTime(new Date("2026-10-01T00:00:00Z"))
+      await r.prefetch("/users/7")
+      setSystemTime(new Date("2026-10-01T00:00:29Z"))
+      await r.prefetch("/users/7") // still fresh → no-op
+      expect(fetches).toBe(1)
+      setSystemTime(new Date("2026-10-01T00:00:31Z"))
+      await r.navigate("/users/7") // stale → the navigation fetches
+      expect(fetches).toBe(2)
+      expect(r.snapshot().data).toEqual({ id: "7", fetch: 2 })
+
+      await r.prefetch("/users/8")
+      setSystemTime(new Date("2026-10-01T00:01:10Z"))
+      await r.prefetch("/users/8") // stale → warmed again
+      expect(fetches).toBe(4)
+      await r.navigate("/users/8") // the fresh copy is used
+      expect(fetches).toBe(4)
+      expect(r.snapshot().data).toEqual({ id: "8", fetch: 4 })
+    } finally {
+      setSystemTime()
+    }
   })
 
   test("submit posts the action in data mode, then revalidates the active loader", async () => {

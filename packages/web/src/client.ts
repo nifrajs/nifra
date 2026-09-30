@@ -444,12 +444,45 @@ export function installHistory(
     go(href, "push")
   }
 
-  // Hover/focus an in-app link → warm its chunk + data (the store dedupes the spam).
-  const onPrefetch = (event: Event): void => {
-    const href = inAppHref(event.target)
+  // `data-nifra-prefetch` on a link or any ancestor (the nearest wins) says when the link warms its
+  // route's chunk and data: `intent` (the default) on hover or focus, `viewport` once it scrolls into
+  // view, `render` as soon as a page shows it, `none` never.
+  const prefetchModeOf = (el: Element): string | undefined =>
+    (el.closest("[data-nifra-prefetch]") as HTMLElement | null)?.dataset.nifraPrefetch
+
+  // Warm an in-app link's route (the store dedupes the spam). The page on screen has nothing to warm.
+  const warm = (target: EventTarget | null): void => {
+    const href = inAppHref(target)
     if (href === null) return
     const url = new URL(href, location.origin)
-    void router.prefetch(url.pathname + url.search) // warm by path+search; the #hash isn't data
+    const path = url.pathname + url.search // the #hash isn't data
+    if (path !== location.pathname + location.search) void router.prefetch(path)
+  }
+
+  const onPrefetch = (event: Event): void => {
+    const target = event.target
+    if (target instanceof Element && prefetchModeOf(target) !== "none") warm(target)
+  }
+
+  // `viewport` and `render` links are looked for when history is installed (the server-rendered page)
+  // and whenever the router settles (a navigation, a submit's revalidation). A link the page adds in
+  // between warms on intent until the next settle.
+  let inView: IntersectionObserver | undefined
+  const scan = (): void => {
+    inView?.disconnect()
+    for (const anchor of document.querySelectorAll(
+      "a[data-nifra-prefetch],[data-nifra-prefetch] a",
+    )) {
+      const mode = prefetchModeOf(anchor)
+      if (mode === "render") warm(anchor)
+      else if (mode === "viewport") {
+        // Scrolling back into view asks again; the store holds a fresh prefetch, so nothing refetches.
+        inView ??= new IntersectionObserver((entries) => {
+          for (const entry of entries) if (entry.isIntersecting) warm(entry.target)
+        })
+        inView.observe(anchor)
+      }
+    }
   }
 
   // Back/forward: the entry already exists (no push). The URL has ALSO already changed - a popstate can't
@@ -499,22 +532,25 @@ export function installHistory(
 
   // After a navigation settles (content rendered), apply the pending scroll target on the next frame:
   // a fragment's element for a cross-page `#hash`, the saved position for back/forward, else the top.
-  // Skipped for submits (pending).
-  const restoreScroll = (): void => {
-    if (router.snapshot().pending || pendingScroll === null) return
+  // A settle with no navigation (a submit's revalidation) scrolls nothing. Either way the rendered
+  // page is then scanned for links to warm.
+  const settled = (): void => {
+    if (router.snapshot().pending) return
     const target = pendingScroll
     pendingScroll = null
     requestAnimationFrame(() => {
-      if ("hash" in target) {
+      if (target !== null && "hash" in target) {
         const el = findAnchor(target.hash)
         if (el !== null) el.scrollIntoView()
         else window.scrollTo(0, 0) // fragment not found → top, like a fresh page load
-      } else {
+      } else if (target !== null) {
         window.scrollTo(target.pos[0], target.pos[1])
       }
+      scan()
     })
   }
-  const unsubscribe = router.subscribe(restoreScroll)
+  const unsubscribe = router.subscribe(settled)
+  scan()
 
   document.addEventListener("click", onClick)
   document.addEventListener("pointerover", onPrefetch)
@@ -523,6 +559,7 @@ export function installHistory(
   window.addEventListener("beforeunload", onBeforeUnload)
   return () => {
     unsubscribe()
+    inView?.disconnect()
     setBrowserNavigate(undefined) // stop routing `useNavigate` to a torn-down router
     setBlockerController(undefined) // stop routing `useBlocker` to a torn-down registry
     document.removeEventListener("click", onClick)

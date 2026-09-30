@@ -123,6 +123,23 @@ test("Link renders a real <a href> (working before hydration, right-clickable)",
   expect(html).toContain(">About</a>")
 })
 
+test("Link's prefetch renders as data-nifra-prefetch, and unset leaves an explicit attribute alone", () => {
+  const viewport = renderToStaticMarkup(
+    createElement(Link, { to: "/next", prefetch: "viewport" }, "Next"),
+  )
+  expect(viewport).toContain('data-nifra-prefetch="viewport"')
+  const nav = renderToStaticMarkup(
+    createElement(NavLink, { to: "/docs", prefetch: "none" }, "Docs"),
+  )
+  expect(nav).toContain('data-nifra-prefetch="none"')
+  // With no prop, an attribute the caller passes is kept; with neither, none is rendered.
+  const passed = renderToStaticMarkup(
+    createElement(Link, { to: "/x", "data-nifra-prefetch": "render" } as never, "X"),
+  )
+  expect(passed).toContain('data-nifra-prefetch="render"')
+  expect(renderToStaticMarkup(createElement(Link, { to: "/y" }, "Y"))).not.toContain("prefetch")
+})
+
 test("NavLink marks aria-current on a prefix match", () => {
   const active = withRoute("/users/7", createElement(NavLink, { to: "/users" }, "Users"))
   expect(active).toContain('aria-current="page"')

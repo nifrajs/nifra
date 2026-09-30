@@ -197,6 +197,7 @@ export {
   type NavigateOptions,
   type NavigateSearchOf,
   type NavigateTargetInput,
+  type PrefetchMode,
   type RouteSearch,
   registerBlocker,
   resolveNavigate,

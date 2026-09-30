@@ -9752,8 +9752,8 @@
     "name": "LinkProps",
     "kind": "interface",
     "package": "@nifrajs/web-react",
-    "signature": "export interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, \"href\"> {\n    /** Same-origin destination path (e.g. `/users/7?tab=posts`). Rendered as the `<a href>`. */\n    readonly to: string;\n    /** Replace the current history entry instead of pushing. */\n    readonly replace?: boolean;\n}",
-    "doc": "/** {@link Link} props: every `<a>` attribute except `href` (set from `to`), plus `to` + `replace`. */"
+    "signature": "export interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, \"href\"> {\n    /** Same-origin destination path (e.g. `/users/7?tab=posts`). Rendered as the `<a href>`. */\n    readonly to: string;\n    /** Replace the current history entry instead of pushing. */\n    readonly replace?: boolean;\n    /** When the link warms its route ahead of a click - rendered as `data-nifra-prefetch`. Unset, the\n     * nearest ancestor's `data-nifra-prefetch` decides, else `intent` (hover or focus). */\n    readonly prefetch?: PrefetchMode;\n}",
+    "doc": "/** {@link Link} props: every `<a>` attribute except `href` (set from `to`), plus `to`, `replace` and\n * `prefetch`. */"
   },
   {
     "name": "listFixRecipes",
@@ -13137,6 +13137,20 @@
     "kind": "interface",
     "package": "@nifrajs/webmcp",
     "signature": "export interface PredictionStoreSnapshot<State> extends AgentSurfaceSnapshot<State> {\n    readonly authoritativeVersion: string;\n    readonly activePredictionIds: readonly string[];\n}"
+  },
+  {
+    "name": "PrefetchMode",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type PrefetchMode = \"intent\" | \"viewport\" | \"render\" | \"none\";",
+    "doc": "/**\n * When a link warms its route's chunk and loader data ahead of a click. Set it with the\n * `data-nifra-prefetch` attribute on the link or on any ancestor (the nearest wins):\n * - `intent` (the default) - on hover or keyboard focus.\n * - `viewport` - once the link scrolls into view.\n * - `render` - as soon as a page shows the link.\n * - `none` - never; the route loads when the link is followed.\n *\n * A warmed route is used by a click within 30 seconds; after that the click loads it again.\n */"
+  },
+  {
+    "name": "PrefetchMode",
+    "kind": "type",
+    "package": "@nifrajs/web-react",
+    "signature": "export type PrefetchMode = \"intent\" | \"viewport\" | \"render\" | \"none\";",
+    "doc": "/**\n * When a link warms its route's chunk and loader data ahead of a click. Set it with the\n * `data-nifra-prefetch` attribute on the link or on any ancestor (the nearest wins):\n * - `intent` (the default) - on hover or keyboard focus.\n * - `viewport` - once the link scrolls into view.\n * - `render` - as soon as a page shows the link.\n * - `none` - never; the route loads when the link is followed.\n *\n * A warmed route is used by a click within 30 seconds; after that the click loads it again.\n */"
   },
   {
     "name": "PrefixRegistry",

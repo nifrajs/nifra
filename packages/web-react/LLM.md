@@ -29,7 +29,7 @@ React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babe
 - **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-react/fetcher`
 - **useAuthSession** _(function)_ - `useAuthSession: () => AuthSession` · from `@nifrajs/web-react/auth`
 
-_…and 54 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
+_…and 55 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
 
 ## Footguns
 

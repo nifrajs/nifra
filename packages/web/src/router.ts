@@ -632,11 +632,17 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     if (listeners.size === 0) return
     for (const listener of [...listeners]) listener()
   }
-  // Bounded one-shot prefetch cache (path → loader data) + an in-flight guard so hover spam
-  // doesn't double-fetch. Consumed (and dropped) by the next navigate to that path.
+  // Bounded one-shot prefetch cache (path → loader data, and when it arrived) + an in-flight guard so
+  // hover spam doesn't double-fetch. Consumed (and dropped) by the next navigate to that path - while
+  // fresh: a link warmed as it scrolled into view can be clicked minutes later.
   const MAX_PREFETCH = 10
-  const prefetched = new Map<string, LoadedRouteData>()
+  const PREFETCH_MAX_AGE_MS = 30_000
+  const prefetched = new Map<string, readonly [LoadedRouteData, number]>()
   const inflight = new Set<string>()
+  const freshPrefetch = (path: string): LoadedRouteData | undefined => {
+    const held = prefetched.get(path)
+    return held !== undefined && Date.now() - held[1] < PREFETCH_MAX_AGE_MS ? held[0] : undefined
+  }
   // Keyed data cache (path → latest loader data + freshness). Written on every published data
   // (navigate/submit), read by `invalidate` (+ targeted revalidation and fetchers in later F16
   // increments). Bounded - evict the oldest-inserted past the cap (route data is small; this just
@@ -904,11 +910,10 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
         // Load the route chunk before invoking a client loader. A route without a client loader still
         // uses the same server-data path; a route with one gets a lazy `serverLoader()` thunk.
         await loadModule?.(matched.routeId)
-        // Use prefetched server data when present (one-shot - drop it); clientLoader still runs over
-        // that cached result without causing another network request.
-        const hit = prefetched.has(path)
-        const prefetchedData = hit ? (prefetched.get(path) as LoadedRouteData) : undefined
-        if (hit) prefetched.delete(path)
+        // Use fresh prefetched server data when present (one-shot - drop it); clientLoader still runs
+        // over that cached result without causing another network request.
+        const prefetchedData = freshPrefetch(path)
+        prefetched.delete(path)
         const loaded = await applyClientLoader(
           path,
           matched,
@@ -1100,7 +1105,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
       await Promise.all(jobs)
     },
     prefetch: async (path) => {
-      if (prefetched.has(path) || inflight.has(path)) return
+      if (inflight.has(path) || freshPrefetch(path) !== undefined) return
       const matched = match(path)
       if (matched === null) return
       inflight.add(path)
@@ -1111,11 +1116,12 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           loadModule?.(matched.routeId),
           loadRouteData(path, matched),
         ])
+        prefetched.delete(path) // a stale entry re-enters as the newest
         if (prefetched.size >= MAX_PREFETCH) {
           const oldest = prefetched.keys().next().value
           if (oldest !== undefined) prefetched.delete(oldest)
         }
-        prefetched.set(path, loaded)
+        prefetched.set(path, [loaded, Date.now()])
       } catch {
         // Best-effort: a failed prefetch just means the eventual navigate fetches normally.
       } finally {

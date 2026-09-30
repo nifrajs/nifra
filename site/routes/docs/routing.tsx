@@ -105,6 +105,17 @@ export default function EditPost() {
   )
 }`
 
+const PREFETCH = `// A docs sidebar: each link loads as it scrolls into view.
+<nav data-nifra-prefetch="viewport">
+  <a href="/docs/routing">Routing</a>
+  <a href="/docs/data">Data</a>
+  {/* The nearest attribute wins: this one waits for the click. */}
+  <a href="/reports/annual" data-nifra-prefetch="none">Annual report</a>
+</nav>
+
+// React's <Link> takes it as a prop.
+<Link to="/pricing" prefetch="render">Pricing</Link>`
+
 const BREADCRUMBS = `// routes/orgs/[org]/_layout.tsx
 import type { ReactNode } from "react"
 import { useMatches } from "@nifrajs/web-react/router"
@@ -270,6 +281,38 @@ export default function Routing() {
         Re-run it after adding a route or changing a <code>searchSchema</code>; a stale shape is a{" "}
         <code>tsc</code> error. The plain string-path and history-delta forms
         (<code>navigate("/about")</code>, <code>navigate(-1)</code>) are unchanged.
+      </p>
+
+      <h2>Prefetching</h2>
+      <p>
+        A link warms its route - the route's code and its loader data - before it is followed, so
+        the click renders at once. <code>data-nifra-prefetch</code>, on the link or on any element
+        around it (the nearest one wins), says when:
+      </p>
+      <ul>
+        <li>
+          <code>intent</code> (the default): on hover or keyboard focus.
+        </li>
+        <li>
+          <code>viewport</code>: once the link scrolls into view.
+        </li>
+        <li>
+          <code>render</code>: as soon as a page shows the link.
+        </li>
+        <li>
+          <code>none</code>: never; the route loads when the link is followed.
+        </li>
+      </ul>
+      <CodeBlock code={PREFETCH} lang="tsx" />
+      <p>
+        Warmed data is used by a click within 30 seconds; after that the click loads the route
+        again, so a link that scrolled into view long ago never shows old data. The page already on
+        screen is never prefetched. <code>viewport</code> and <code>render</code> links are found
+        when the page loads and whenever the router settles (a navigation, a submit); a link the
+        page adds in between warms on intent until then. Both run the target's loaders before
+        anyone clicks, so keep them to links people are likely to follow. The attribute works the
+        same under every adapter; React's <code>&lt;Link&gt;</code> and <code>&lt;NavLink&gt;</code>{" "}
+        also take it as a <code>prefetch</code> prop.
       </p>
 
       <h2>Breadcrumbs and the rendered chain</h2>

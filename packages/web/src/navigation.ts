@@ -103,6 +103,18 @@ export function resolveNavigate(
 }
 
 /**
+ * When a link warms its route's chunk and loader data ahead of a click. Set it with the
+ * `data-nifra-prefetch` attribute on the link or on any ancestor (the nearest wins):
+ * - `intent` (the default) - on hover or keyboard focus.
+ * - `viewport` - once the link scrolls into view.
+ * - `render` - as soon as a page shows the link.
+ * - `none` - never; the route loads when the link is followed.
+ *
+ * A warmed route is used by a click within 30 seconds; after that the click loads it again.
+ */
+export type PrefetchMode = "intent" | "viewport" | "render" | "none"
+
+/**
  * A history-aware navigate. A **string** `to` is a same-origin path (`/users/7?tab=a`) navigated to
  * (push, or replace with `{ replace: true }`); a **number** is a history delta (`-1` back, `1`
  * forward), matching the browser's `history.go`. Registered by `installHistory`.
