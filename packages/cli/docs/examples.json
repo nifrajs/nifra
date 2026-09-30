@@ -390,6 +390,12 @@
     "code": "import { server } from \"@nifrajs/core/server\"\n\nconst app = server()\n\n// A schema route is ALREADY bounded - the validated read enforces `maxBodyBytes`.\n// But a raw-body / file / BYO-validation route reads the body directly, which\n// `maxBodyBytes` does not cover. `c.boundedBody` caps that read:\napp.post(\"/import\", async (c) => {\n  const bytes = await c.boundedBody(5 * 1024 * 1024) // cap THIS route at 5 MiB\n  // Over-cap throws a flat 413; a malformed Content-Length a 400 - as control-flow\n  // Responses (caught by the lifecycle like `throw redirect()`), so a handler can't\n  // accidentally ignore the cap. The over-cap length is rejected BEFORE buffering;\n  // a chunked / length-less body is aborted mid-stream once it crosses the cap.\n  return { received: bytes.byteLength } // a returned object is serialized as JSON 200\n})\n\napp.post(\"/rpc\", async (c) => {\n  const body = await c.boundedJson<{ method: string }>() // default: the server's maxBodyBytes\n  // …bad JSON → 400. Then validate `body` with your schema before trusting it.\n  return { method: body.method }\n})"
   },
   {
+    "name": "FORM",
+    "topic": "Nifra - security & hardening",
+    "slug": "security",
+    "code": "import { server } from \"@nifrajs/core/server\"\nimport { t } from \"@nifrajs/schema/form\"\n\nconst app = server()\n\napp.post(\n  \"/listings\",\n  {\n    body: t.form(\n      {\n        title: t.string({ minLength: 1, maxLength: 120 }),\n        price: t.integer({ minimum: 0 }), // form values arrive as text; \"1200\" becomes 1200\n        cover: t.file({ maxBytes: 5_000_000, accept: [\"image/png\", \"image/jpeg\"] }),\n        photos: t.array(t.file({ maxBytes: 5_000_000, accept: [\"image/*\"] }), { maxItems: 8 }),\n        floorPlan: t.optional(t.file({ accept: [\"application/pdf\"] })),\n      },\n      { maxFiles: 10, maxFields: 20 },\n    ),\n    bodyLimit: 50_000_000, // the default body cap is 1 MB: raise it on the routes that take files\n  },\n  (c) => {\n    const { title, cover, photos } = c.body // cover: File, photos: File[], floorPlan?: File\n    // Name the stored object yourself. `cover.name` is whatever the client typed.\n    const key = `${crypto.randomUUID()}.${cover.type === \"image/png\" ? \"png\" : \"jpg\"}`\n    return { title, key, photos: photos.length }\n  },\n)"
+  },
+  {
     "name": "GATING",
     "topic": "Nifra - security & hardening",
     "slug": "security",

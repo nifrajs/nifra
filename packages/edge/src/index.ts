@@ -206,6 +206,7 @@ export class EdgeServer {
       },
       render,
       () => render(plainError(400, "invalid_json")),
+      bodySchema,
     )
   }
 }

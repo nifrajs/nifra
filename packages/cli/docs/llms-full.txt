@@ -2546,6 +2546,145 @@ path - a clean body pays a substring pre-scan only; the deep walk runs solely wh
 actually contains a suspect token, so an honest payload is never charged for the tree it does
 not have.
 
+### Forms and file uploads - `t.form`
+
+A `multipart/form-data` body is declared like any other: text fields and files side by
+side, validated before the handler runs, typed in `c.body`. The constructors live on
+the `t` of `@nifrajs/schema/form` - the same builder as
+`@nifrajs/schema` plus `t.file` and `t.form` - so an app that
+takes no uploads ships none of this.
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema/form"
+
+const app = server()
+
+app.post(
+  "/listings",
+  {
+    body: t.form(
+      {
+        title: t.string({ minLength: 1, maxLength: 120 }),
+        price: t.integer({ minimum: 0 }), // form values arrive as text; "1200" becomes 1200
+        cover: t.file({ maxBytes: 5_000_000, accept: ["image/png", "image/jpeg"] }),
+        photos: t.array(t.file({ maxBytes: 5_000_000, accept: ["image/*"] }), { maxItems: 8 }),
+        floorPlan: t.optional(t.file({ accept: ["application/pdf"] })),
+      },
+      { maxFiles: 10, maxFields: 20 },
+    ),
+    bodyLimit: 50_000_000, // the default body cap is 1 MB: raise it on the routes that take files
+  },
+  (c) => {
+    const { title, cover, photos } = c.body // cover: File, photos: File[], floorPlan?: File
+    // Name the stored object yourself. `cover.name` is whatever the client typed.
+    const key = `${crypto.randomUUID()}.${cover.type === "image/png" ? "png" : "jpg"}`
+    return { title, key, photos: photos.length }
+  },
+)
+```
+
+`t.file` checks the size before it reads a byte, and `accept` is matched
+against the file&rsquo;s **leading bytes**, never the type the client claimed: a script renamed
+`photo.png` fails validation. With `accept` set, the file the handler
+receives carries the detected type. A type that has no signature to check (`text/csv`,
+`image/svg+xml`) is refused when the schema is built, not silently let through. Text
+fields are coerced from their string form, a repeated field becomes a list, and a field the form
+does not declare fails validation unless `additionalProperties` is set.
+
+The body is bounded before any of it is validated. The route&rsquo;s `bodyLimit` caps
+the whole request; `maxFields` (100), `maxFiles` (10),
+`maxFieldBytes` (64 KiB) and `maxFileBytes` cap what it may carry. A request
+over one is answered `413` with the limit it crossed (`payload_too_large`,
+`too_many_parts`, `too_many_fields`, `too_many_files`,
+`field_too_large`, `file_too_large`); a body that is not a well-formed form
+is a `400` `invalid_multipart`, and any other content type a
+`415`. A body that ends before its closing delimiter is refused rather than read as the
+parts that did arrive. Field names are screened by the same `protoPoisoning` policy as
+JSON keys.
+
+The typed client needs nothing extra: a body that holds a `File` or `Blob`
+goes out as a form.
+
+```ts
+// doc-check: skip - fragment: `app` is the server above; `input` is a file input on your page.
+import { client } from "@nifrajs/client"
+
+const api = client<typeof app>("https://api.example.com")
+const files = [...(input.files ?? [])]
+
+// A body that holds a File is sent as multipart/form-data. The call is typed like any other.
+const { data, error } = await api.listings.post({
+  title: "Two rooms by the park",
+  price: 1200,
+  cover: files[0],
+  photos: files.slice(1),
+})
+```
+
+Bringing your own validator? `multipartBody` marks any Standard Schema as a form body
+and takes the same limits. `t.form` has already done this for itself.
+
+```ts
+// doc-check: skip - fragment: `app` is your server; zod is your own dependency.
+import { multipartBody } from "@nifrajs/core/multipart"
+import { z } from "zod"
+
+const Upload = z.object({ title: z.string(), attachment: z.instanceof(File) })
+
+// Any Standard Schema can validate a form. `multipartBody` is what tells the route to read one.
+app.post("/attachments", { body: multipartBody(Upload, { maxFiles: 1 }) }, (c) => c.body.title)
+```
+
+What a validated file does and does not tell you:
+
+-
+**The signature is all that was checked.** A file can open as a PNG and still carry another
+format behind it, and `application/zip` is also what a `.docx` or
+`.xlsx` is. Re-encode images you will serve back, and scan what you will open.
+
+-
+**
+`file.name` is the client&rsquo;s.
+**
+Path separators and control characters are removed, and that is all. Generate the storage key;
+never build a path from the name.
+
+-
+**
+Without `accept`, `file.type` is the client&rsquo;s too.
+**
+Some runtimes derive it from the file extension. Only a type that `accept` matched is
+one the bytes proved.
+
+-
+**Serve uploads as downloads.** Send `content-disposition: attachment` and
+`x-content-type-options: nosniff`, from a separate origin where you can.
+
+-
+**A form post is a simple cross-origin request.** A browser sends
+`multipart/form-data` with cookies and no preflight, so a cookie-authenticated upload
+route needs `csrf()` like any other state change.
+
+-
+**The form is held in memory.** Budget roughly twice `bodyLimit` per request in
+flight. Past tens of megabytes, hand the client a presigned URL and let it upload to storage
+directly.
+
+An input nobody filled in is not a file: a zero-byte file part, or an empty text part in a file
+field, counts as absent, so it fails a required field and leaves an optional one
+`undefined`. A required list nobody filled in is `[]`; bound it with
+`minItems` if one entry is mandatory. A browser checkbox submits `"on"`,
+which is not a boolean - give the input `value="true"`. And a form with no
+required file also accepts the same fields as JSON or `application/x-www-form-urlencoded`,
+so one route serves a plain HTML form and a script.
+
+In tests, send forms through `inProcessClient` or `testClient`: they encode
+the form first, so the request arrives with the `Content-Length` a network peer would
+send. A `Request` built straight from a `FormData` and passed to
+`app.fetch` has none, and on Node 26 the runtime raises an unhandled rejection when the
+app stops reading such a body early, as it does for one over the limit.
+
 ### File uploads - `@nifrajs/uploads`
 
 A dependency-free package for the upload-hardening basics. `validateUpload` enforces a
@@ -9678,6 +9817,9 @@ const { ok, status, data, error } = await api.users({ id: "42" }).get()
 - **Result, never exceptions.** Every call resolves to `{ ok, status, data, error }`,
   so the failure path is in the types. Bodies are positional (`api.users.post({ name })`);
   pass `{ query, headers, signal }` as call options.
+- **Files.** A body that holds a `File` or `Blob` is sent as `multipart/form-data`, typed from the
+  route's `t.form`: `api.avatars.post({ avatar: file, caption: "me" })`. `inProcessClient` and
+  `testClient` send the same form with its `Content-Length`, as a network peer would.
 - **Environment-agnostic.** No Bun/Node APIs - runs in the browser, workers, or any
   runtime with `fetch`.
 
@@ -10189,7 +10331,7 @@ The body trust boundary is on by default and imported from `@nifrajs/core` - the
 | Streaming byte cap | a length-less (chunked) body is drained under `maxBodyBytes`; once over, the stream is **cancelled** and rejected `413` - it is never buffered whole |
 | Content-Length pre-reject | a declared length over `maxBodyBytes` is `413` before a byte is read; a malformed length is `400` |
 | Prototype-pollution guard | an own `__proto__` key (or a poisoning-shaped `constructor.prototype`) in a JSON body is rejected (`"reject"`, default) or removed (`"strip"`) before it reaches your handler |
-| Media-type framing | JSON and urlencoded bodies are framed and capped; other content types get `415` |
+| Media-type framing | JSON and urlencoded bodies are framed and capped; other content types get `415`. A route whose body is a `t.form` (or a `multipartBody` schema) reads `multipart/form-data` under the same cap, with its own field and file limits |
 
 Rejection envelopes are byte-for-byte the full Server's.
 
@@ -11323,6 +11465,53 @@ const openapi = toOpenAPI(app) // OpenAPI 3.1
   `operationId`s); also works on a live app. Routes using a BYO Standard Schema are
   emitted without a detailed schema (Standard Schema exposes no JSON Schema).
 
+### Forms and files - `@nifrajs/schema/form`
+
+The `t` exported from `@nifrajs/schema/form` is the same builder plus `t.file` and `t.form`. A
+`t.form` is a route `body` that reads `multipart/form-data`: text fields and files validated side by
+side, typed in `c.body`.
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema/form"
+
+const app = server().post(
+  "/avatars",
+  {
+    body: t.form({
+      avatar: t.file({ maxBytes: 5_000_000, accept: ["image/png", "image/jpeg"] }),
+      photos: t.array(t.file({ accept: ["image/*"] }), { maxItems: 8 }),
+      caption: t.optional(t.string({ maxLength: 200 })),
+    }),
+    bodyLimit: 50_000_000, // the default body cap is 1 MB
+  },
+  (c) => ({ bytes: c.body.avatar.size, photos: c.body.photos.length }),
+)
+```
+
+- **`t.file({ maxBytes, accept })`** - a `File`. The size is checked before a byte is read, and
+  `accept` is matched against the file's leading bytes, never the type the client claimed. With
+  `accept` set, the validated file's `type` is the detected one. A type with no signature to check
+  (`text/csv`, `image/svg+xml`) throws when the schema is built.
+- **`t.form(fields, options?)`** - text fields are coerced from their string form, a repeated field
+  is a list, and an undeclared field fails unless `additionalProperties` is set. `options` also takes
+  the body limits: `maxFields` (100), `maxFiles` (10), `maxFieldBytes` (64 KiB), `maxFileBytes`. A
+  request over one is a `413`.
+- **Composes with the plain `t`** - `t.array(file)` and `t.optional(file)` work from either import. A
+  file anywhere else (`t.object`, `t.union`, `t.record`) throws: a file is not JSON.
+- **`toOpenAPI`** emits a form with a file as `multipart/form-data` with `format: binary` fields.
+- **A form with no required file also accepts JSON and urlencoded bodies**, so one route serves an
+  HTML form and a script.
+
+It is a subpath so that an app with no uploads carries none of it. Validation proves a file's
+signature and nothing more: generate your own storage key rather than using `file.name`, serve
+uploads with `content-disposition: attachment`, and protect cookie-authenticated upload routes with
+`csrf()` - a browser posts a form cross-origin without a preflight. The
+[security guide](https://nifra.dev/docs/security) has the full list.
+
+A hand-rolled Standard Schema can validate a form too: wrap it in `multipartBody(schema, limits?)`
+from `@nifrajs/core/multipart`.
+
 ### `t` vs bring-your-own (bundle size)
 
 `t` is the batteries-included default because a TypeBox schema *is* a JSON Schema: it gives you
@@ -11789,6 +11978,15 @@ Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one
 ```sh
 bun add @nifrajs/uploads
 ```
+
+## With a schema
+
+`validateUpload` is for a route that reads the upload itself. To declare the file in the route's
+body schema instead - validated before the handler runs, typed in `c.body` - use `t.file` and
+`t.form` from `@nifrajs/schema/form`, which run the same signature detection.
+
+`@nifrajs/uploads/detect` exports the detection alone (`detectFileType`, `DETECTABLE_MIME_TYPES`,
+`FILE_TYPE_PREFIX_BYTES`) for code that needs the type and nothing else.
 
 ## Docs
 
@@ -12411,7 +12609,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/uploads
 
-`detectFileType`, `FileType`, `ImageReencoder`, `signDownloadUrl`, `SignDownloadUrlOptions`, `stripImageMetadata`, `StripImageMetadataOptions`, `UploadResult`, `validateUpload`, `ValidateUploadOptions`, `verifyDownloadUrl`
+`DETECTABLE_MIME_TYPES`, `detectFileType`, `FILE_TYPE_PREFIX_BYTES`, `FileType`, `ImageReencoder`, `signDownloadUrl`, `SignDownloadUrlOptions`, `stripImageMetadata`, `StripImageMetadataOptions`, `UploadResult`, `validateUpload`, `ValidateUploadOptions`, `verifyDownloadUrl`
 
 ## @nifrajs/web
 

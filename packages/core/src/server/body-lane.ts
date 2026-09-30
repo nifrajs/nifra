@@ -170,7 +170,29 @@ export function readBoundedJsonSource<T>(
   return onResult === undefined ? streamed : streamed.then(onResult, onError)
 }
 
-/** The shared content-type dispatcher around the JSON and urlencoded lanes. */
+/**
+ * Brand under which a body schema carries its own reader for a media type the built-in lanes do not
+ * parse. A registered symbol, so a schema branded by one copy of this module is read by another.
+ */
+export const SCHEMA_BODY_READER: unique symbol = Symbol.for("nifra.body.schemaReader")
+
+/**
+ * A schema-carried body reader. It receives the request's own `content-type`, the route's byte cap,
+ * and the app's prototype-poisoning policy, and owns all three: it answers the value to validate, or
+ * the rejection to send (a `415` for a media type it does not read).
+ */
+export type SchemaBodyReader = (
+  source: RequestSource,
+  contentType: string,
+  maxBodyBytes: number,
+  protoPoisoning: ProtoPoisoning,
+) => Promise<unknown | ResponseResult>
+
+/**
+ * The shared content-type dispatcher around the JSON and urlencoded lanes. A `bodySchema` branded
+ * with {@link SCHEMA_BODY_READER} takes every other media type; JSON and urlencoded bodies keep
+ * their lanes whatever the schema carries.
+ */
 export function readBodyFramed<T>(
   source: RequestSource,
   maxBodyBytes: number,
@@ -178,6 +200,7 @@ export function readBodyFramed<T>(
   onParsed: (parsed: unknown) => MaybePromise<T>,
   wrapResponse: (response: Response | ResponseResult) => T,
   onError: (err: unknown) => MaybePromise<T>,
+  bodySchema?: object,
 ): Promise<T> {
   const contentType = headerOf(source, "content-type") ?? ""
   if (!isJsonMediaType(contentType)) {
@@ -186,6 +209,20 @@ export function readBodyFramed<T>(
         (form) => (isResponseResult(form) ? wrapResponse(form) : onParsed(form)),
         onError,
       ) as Promise<T>
+    }
+    const reader =
+      bodySchema === undefined
+        ? undefined
+        : (bodySchema as { readonly [SCHEMA_BODY_READER]?: SchemaBodyReader })[SCHEMA_BODY_READER]
+    if (typeof reader === "function") {
+      try {
+        return reader(source, contentType, maxBodyBytes, protoPoisoning).then(
+          (parsed) => (isResponseResult(parsed) ? wrapResponse(parsed) : onParsed(parsed)),
+          onError,
+        ) as Promise<T>
+      } catch (err) {
+        return Promise.resolve(onError(err))
+      }
     }
     return Promise.resolve(wrapResponse(plainError(415, "unsupported_media_type")))
   }

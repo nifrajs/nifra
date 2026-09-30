@@ -12,6 +12,36 @@ export interface FileType {
   readonly ext: string
 }
 
+/**
+ * How many leading bytes {@link detectFileType} looks at. Reading this many from the start of a file
+ * (`file.slice(0, FILE_TYPE_PREFIX_BYTES)`) is enough for every type it knows.
+ */
+export const FILE_TYPE_PREFIX_BYTES = 12
+
+/**
+ * Every MIME type {@link detectFileType} can return. An allow-list entry outside this set (and
+ * outside a `type/*` wildcard that covers one of them) can never match, so check a configured
+ * allow-list against it up front instead of rejecting every upload at request time.
+ */
+export const DETECTABLE_MIME_TYPES: readonly string[] = [
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "audio/wav",
+  "video/x-msvideo",
+  "image/avif",
+  "image/heic",
+  "audio/mp4",
+  "video/mp4",
+  "video/webm",
+  "audio/ogg",
+  "audio/mpeg",
+  "application/pdf",
+  "application/zip",
+  "application/gzip",
+]
+
 /** Detect a file's type from its magic bytes, or `null` if unrecognized. */
 export function detectFileType(bytes: Uint8Array): FileType | null {
   const at = (offset: number, ...sig: number[]): boolean =>

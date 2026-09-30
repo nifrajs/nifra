@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { detectFileType } from "../src/detect.ts"
+import { DETECTABLE_MIME_TYPES, detectFileType, FILE_TYPE_PREFIX_BYTES } from "../src/detect.ts"
 import { signDownloadUrl, verifyDownloadUrl } from "../src/sign.ts"
 import { type ImageReencoder, stripImageMetadata } from "../src/strip.ts"
 import { validateUpload } from "../src/validate.ts"
@@ -46,6 +46,20 @@ describe("detectFileType", () => {
       expect(detectFileType(bytes)).toEqual({ mime, ext })
     })
   }
+
+  test("DETECTABLE_MIME_TYPES lists exactly the types the detector returns", () => {
+    expect([...DETECTABLE_MIME_TYPES].sort()).toEqual([...new Set(cases.map((c) => c[2]))].sort())
+  })
+
+  test("FILE_TYPE_PREFIX_BYTES leading bytes are enough for every type", () => {
+    for (const [, bytes, mime] of cases) {
+      const padded = new Uint8Array(64)
+      padded.set(bytes)
+      expect(detectFileType(padded.subarray(0, FILE_TYPE_PREFIX_BYTES))?.mime).toBe(mime)
+    }
+    // One byte less loses the longest signatures, so the constant is not over-generous.
+    expect(detectFileType(riff("WEBP").subarray(0, FILE_TYPE_PREFIX_BYTES - 1))).toBeNull()
+  })
 
   test("returns null for unrecognized bytes", () => {
     expect(detectFileType(bytesOf(1, 2, 3, 4, 5, 6, 7, 8))).toBeNull()

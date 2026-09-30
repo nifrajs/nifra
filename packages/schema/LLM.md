@@ -10,7 +10,7 @@ Built-in schema builder `t` - TypeBox-backed (free JSON Schema + compiled valida
 
 ## Public entrypoints
 
-`@nifrajs/schema` · `@nifrajs/schema/openapi`
+`@nifrajs/schema` · `@nifrajs/schema/form` · `@nifrajs/schema/openapi`
 
 ## Key exports
 
@@ -25,13 +25,15 @@ Built-in schema builder `t` - TypeBox-backed (free JSON Schema + compiled valida
 - **toOpenAPI** _(function)_ - `toOpenAPI: (input: ContractShape | Server, options?: ToOpenAPIOptions) => OpenAPIDocument` · from `@nifrajs/schema`
 - **toOpenAPIFromEvidence** _(function)_ - `toOpenAPIFromEvidence: (evidence: ProjectEvidenceSnapshot, options?: Omit<ToOpenAPIOptions, "evidence">) => OpenAPIDocument` · from `@nifrajs/schema`
 - **OpenAPIImportError** _(class)_ - `class OpenAPIImportError` · from `@nifrajs/schema`
+- **FileOptions** _(interface)_ - `interface FileOptions` · from `@nifrajs/schema/form`
+- **FormOptions** _(interface)_ - `interface FormOptions` · from `@nifrajs/schema/form`
 - **ImportedApiInventory** _(interface)_ - `interface ImportedApiInventory` · from `@nifrajs/schema`
-- **ImportedRoute** _(interface)_ - `interface ImportedRoute` · from `@nifrajs/schema`
-- **ImportedRouteQuery** _(interface)_ - `interface ImportedRouteQuery` · from `@nifrajs/schema`
 
-_…and 10 more - see [`api-reference.md`](../../api-reference.md#nifrajsschema) for the complete list._
+_…and 12 more - see [`api-reference.md`](../../api-reference.md#nifrajsschema) for the complete list._
 
 ## Footguns
 
-- `t.object` is **strict** - unknown keys → `400`. Reach for `t.looseObject` only when extra keys are intentional.
+- `t.object` is **strict** - unknown keys → `422`. Reach for `t.looseObject` only when extra keys are intentional.
+- `t.file` and `t.form` are on the `t` of **`@nifrajs/schema/form`**, not the root `t`. A `t.form` is the route `body` as is and reads `multipart/form-data`; the default body cap is 1 MB, so set `bodyLimit` on a route that takes files.
+- `t.file({ accept })` proves the file's **signature**, nothing more. `file.name` is the client's: generate the storage key, never build a path from the name. Without `accept`, `file.type` is the client's too.
 - `t` is TypeBox-backed and implements **Standard Schema**, so a nifra route accepts it natively (no adapter). zod/valibot/arktype work the same way at the route boundary.

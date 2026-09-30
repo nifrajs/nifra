@@ -232,6 +232,11 @@
       "types": "./dist/seo.d.ts",
       "default": "./dist/seo.js"
     },
+    "./multipart": {
+      "bun": "./src/server/multipart.ts",
+      "types": "./dist/server/multipart.d.ts",
+      "default": "./dist/server/multipart.js"
+    },
     "./sse": {
       "bun": "./src/server/sse.ts",
       "types": "./dist/server/sse.d.ts",

@@ -8,21 +8,28 @@ File-upload hardening for nifra - magic-byte MIME detection, size + type validat
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/uploads` · `@nifrajs/uploads/detect`
+
 ## Key exports
 
-- **detectFileType** _(function)_ - `detectFileType: (bytes: Uint8Array) => FileType | null`
-- **signDownloadUrl** _(function)_ - `signDownloadUrl: (url: string, secret: string, options: SignDownloadUrlOptions) => Promise<string>`
-- **stripImageMetadata** _(function)_ - `stripImageMetadata: (bytes: Uint8Array, backend: ImageReencoder, options?: StripImageMetadataOptions) => Promise<Uint8Array>`
-- **validateUpload** _(function)_ - `validateUpload: (input: Uint8Array | ArrayBuffer | Blob, options: ValidateUploadOptions) => Promise<UploadResult>`
-- **verifyDownloadUrl** _(function)_ - `verifyDownloadUrl: (url: string, secret: string, options?: { readonly now?: number; }) => Promise<boolean>`
-- **FileType** _(interface)_ - `interface FileType`
-- **ImageReencoder** _(interface)_ - `interface ImageReencoder`
-- **SignDownloadUrlOptions** _(interface)_ - `interface SignDownloadUrlOptions`
-- **StripImageMetadataOptions** _(interface)_ - `interface StripImageMetadataOptions`
-- **ValidateUploadOptions** _(interface)_ - `interface ValidateUploadOptions`
-- **UploadResult** _(type)_ - `type UploadResult`
+- **detectFileType** _(function)_ - `detectFileType: (bytes: Uint8Array) => FileType | null` · from `@nifrajs/uploads`
+- **signDownloadUrl** _(function)_ - `signDownloadUrl: (url: string, secret: string, options: SignDownloadUrlOptions) => Promise<string>` · from `@nifrajs/uploads`
+- **stripImageMetadata** _(function)_ - `stripImageMetadata: (bytes: Uint8Array, backend: ImageReencoder, options?: StripImageMetadataOptions) => Promise<Uint8Array>` · from `@nifrajs/uploads`
+- **validateUpload** _(function)_ - `validateUpload: (input: Uint8Array | ArrayBuffer | Blob, options: ValidateUploadOptions) => Promise<UploadResult>` · from `@nifrajs/uploads`
+- **verifyDownloadUrl** _(function)_ - `verifyDownloadUrl: (url: string, secret: string, options?: { readonly now?: number; }) => Promise<boolean>` · from `@nifrajs/uploads`
+- **DETECTABLE_MIME_TYPES** _(const)_ - `DETECTABLE_MIME_TYPES: readonly string[]` · from `@nifrajs/uploads`
+- **FILE_TYPE_PREFIX_BYTES** _(const)_ - `FILE_TYPE_PREFIX_BYTES: 12` · from `@nifrajs/uploads`
+- **FileType** _(interface)_ - `interface FileType` · from `@nifrajs/uploads`
+- **ImageReencoder** _(interface)_ - `interface ImageReencoder` · from `@nifrajs/uploads`
+- **SignDownloadUrlOptions** _(interface)_ - `interface SignDownloadUrlOptions` · from `@nifrajs/uploads`
+- **StripImageMetadataOptions** _(interface)_ - `interface StripImageMetadataOptions` · from `@nifrajs/uploads`
+- **ValidateUploadOptions** _(interface)_ - `interface ValidateUploadOptions` · from `@nifrajs/uploads`
+- **UploadResult** _(type)_ - `type UploadResult` · from `@nifrajs/uploads`
 
 ## Footguns
 
 - MIME is detected from **magic bytes**, never the `Content-Type` header - validate the real bytes, enforce the size cap, and strip EXIF before storing.
+- To declare a file in a route's body schema, use `t.file` / `t.form` from `@nifrajs/schema/form` (same detection, validated before the handler). `validateUpload` is for a route that reads the upload itself.
 - Signed download URLs carry the **shortest viable TTL** - re-sign on demand, don't cache a long-lived URL.

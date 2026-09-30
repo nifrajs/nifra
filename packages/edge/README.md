@@ -63,7 +63,7 @@ The body trust boundary is on by default and imported from `@nifrajs/core` - the
 | Streaming byte cap | a length-less (chunked) body is drained under `maxBodyBytes`; once over, the stream is **cancelled** and rejected `413` - it is never buffered whole |
 | Content-Length pre-reject | a declared length over `maxBodyBytes` is `413` before a byte is read; a malformed length is `400` |
 | Prototype-pollution guard | an own `__proto__` key (or a poisoning-shaped `constructor.prototype`) in a JSON body is rejected (`"reject"`, default) or removed (`"strip"`) before it reaches your handler |
-| Media-type framing | JSON and urlencoded bodies are framed and capped; other content types get `415` |
+| Media-type framing | JSON and urlencoded bodies are framed and capped; other content types get `415`. A route whose body is a `t.form` (or a `multipartBody` schema) reads `multipart/form-data` under the same cap, with its own field and file limits |
 
 Rejection envelopes are byte-for-byte the full Server's.
 

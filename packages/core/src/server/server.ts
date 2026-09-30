@@ -4203,6 +4203,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         finish,
         wrapResponse,
         (err) => logError(err, ctx, finalize, wrapResponse),
+        bodySchema,
       )
     }
   }
@@ -4772,6 +4773,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         onParsed,
         (response) => this.wrapWebResponse(response),
         (err) => Promise.resolve(logError(err, ctx)),
+        bodySchema,
       ) as MaybePromise<Response>
     }
   }
@@ -5202,6 +5204,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         (parsed) => onParsed(parsed, ctx, finalize, wrapResponse),
         wrapResponse,
         (err) => logError(err, ctx, finalize, wrapResponse),
+        bodySchema,
       )
     }
   }
@@ -5355,6 +5358,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       (parsed) => this.finishBodyOnly(entry, parsed, ctx, finalize, wrapResponse),
       wrapResponse,
       (err) => this.handleLifecycleError(entry, err, ctx, finalize, wrapResponse),
+      entry.schema?.body,
     )
   }
 
@@ -5841,6 +5845,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       validate,
       (response) => response,
       (error) => Promise.reject(error),
+      bodySchema,
     )
   }
 

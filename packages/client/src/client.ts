@@ -245,7 +245,7 @@ export function client(
 const utf8 = new TextEncoder()
 
 /** Byte length of a body whose size is knowable without reading a stream; `undefined` otherwise
- * (a `ReadableStream` or `FormData` body stays lengthless - multipart framing is the runtime's). */
+ * (a `ReadableStream` body stays lengthless; a `FormData` body is framed by {@link framedFormRequest}). */
 function knownBodyLength(body: NonNullable<RequestInit["body"]>): number | undefined {
   if (typeof body === "string") return utf8.encode(body).byteLength
   if (body instanceof URLSearchParams) return utf8.encode(body.toString()).byteLength
@@ -270,6 +270,26 @@ function synthesizedRequest(url: string, init?: RequestInit): Request {
   return request
 }
 
+/**
+ * A form body as the bytes a socket would carry, with the length a network peer would declare.
+ *
+ * Handing the `FormData` itself to `Request` leaves the runtime to encode it while the app reads,
+ * which has two costs in-process. The request arrives lengthless, so a fail-closed length gate
+ * refuses it. And an app that stops reading early - a body over its limit - cancels a stream the
+ * runtime is still writing to, which Node 26 reports as an unhandled rejection. Encoding first
+ * gives the app a finished body it can refuse like any other.
+ */
+async function framedFormRequest(url: string, init: RequestInit, form: FormData): Promise<Request> {
+  const encoded = new Response(form as ConstructorParameters<typeof Response>[0])
+  // Read before the body: Bun derives this header from the body and cannot once it is consumed.
+  const contentType = encoded.headers.get("content-type") as string
+  const bytes = await encoded.arrayBuffer()
+  const headers = new Headers(init.headers)
+  headers.set("content-type", contentType)
+  headers.set("content-length", String(bytes.byteLength))
+  return new Request(url, { ...init, headers, body: bytes })
+}
+
 export function inProcessClient<
   App extends { fetch(request: Request): Response | Promise<Response> },
 >(app: App, options?: InProcessClientOptions): InProcessClient<App> {
@@ -277,8 +297,17 @@ export function inProcessClient<
   // own `fetch` takes a `Request`. It is the proxy's per-call transport; the symbol-keyed mount below
   // is the platform-aware auto-mount path. The optional third argument is the calling request's
   // platform, supplied only by a view from the bind seam below; the unbound proxy never passes one.
-  const direct: PlatformFetchFn = (url, init, platform) =>
-    Promise.resolve((app.fetch as BackendMountHandler)(synthesizedRequest(url, init), platform))
+  const direct: PlatformFetchFn = (url, init, platform) => {
+    const body = init?.body
+    if (body instanceof FormData) {
+      return framedFormRequest(url, init as RequestInit, body).then((request) =>
+        (app.fetch as BackendMountHandler)(request, platform),
+      )
+    }
+    return Promise.resolve(
+      (app.fetch as BackendMountHandler)(synthesizedRequest(url, init), platform),
+    )
+  }
   const bridge = options?.validateResponses === true ? withResponseValidation(app, direct) : direct
   const mount: BackendMountHandler = (request, platform) =>
     Promise.resolve((app.fetch as BackendMountHandler)(request, platform))
@@ -452,6 +481,46 @@ function resolveSegment(
   return createProxy(base, key === "index" ? path : `${path}/${key}`, options, cacheable)
 }
 
+/**
+ * The `multipart/form-data` encoding of a body that carries a file: JSON cannot hold one, so a
+ * record with a `Blob`/`File` value (or a list of them) is sent as a form instead - one part per
+ * value, a list as one part per item under the same name, `null`/`undefined` left out. A
+ * `FormData` passed as the body is sent as is. Anything else returns `undefined` and stays JSON.
+ * A form part is text or a file, so a nested object or list cannot be sent and throws.
+ */
+function formBody(body: unknown): FormData | undefined {
+  if (body instanceof FormData) return body
+  if (body === null || typeof body !== "object" || Array.isArray(body) || body instanceof Blob) {
+    return undefined
+  }
+  const entries = Object.entries(body)
+  const isFile = (value: unknown): boolean => value instanceof Blob
+  if (!entries.some(([, value]) => isFile(value) || (Array.isArray(value) && value.some(isFile)))) {
+    return undefined
+  }
+  const form = new FormData()
+  for (const [name, value] of entries) {
+    for (const item of Array.isArray(value) ? value : [value]) {
+      if (item === undefined || item === null) continue
+      if (item instanceof Blob) {
+        form.append(name, item)
+      } else if (
+        typeof item === "string" ||
+        typeof item === "number" ||
+        typeof item === "boolean" ||
+        typeof item === "bigint"
+      ) {
+        form.append(name, String(item))
+      } else {
+        throw new TypeError(
+          `Cannot send "${name}" in a form body: a form field is text or a file, not ${typeof item}`,
+        )
+      }
+    }
+  }
+  return form
+}
+
 async function execute(
   base: string,
   path: string,
@@ -475,10 +544,20 @@ async function execute(
   }
   const init: RequestInit = { method, headers }
   if (body !== undefined) {
-    const codec = options.transport?.codec ?? plainJsonCodec
-    init.body = codec.encode(body)
-    headers["content-type"] = codec.mediaType
-    if (options.transport !== undefined) headers.accept ??= codec.mediaType
+    const form = formBody(body)
+    if (form !== undefined) {
+      init.body = form
+      // The platform writes this header itself, boundary included; one set by hand would name a
+      // boundary the body does not use and the server would refuse the request.
+      for (const name of Object.keys(headers)) {
+        if (name.toLowerCase() === "content-type") delete headers[name]
+      }
+    } else {
+      const codec = options.transport?.codec ?? plainJsonCodec
+      init.body = codec.encode(body)
+      headers["content-type"] = codec.mediaType
+      if (options.transport !== undefined) headers.accept ??= codec.mediaType
+    }
   }
   const { signal, timeout } = buildSignal(callOptions?.signal, options.timeoutMs)
   if (signal !== undefined) init.signal = signal

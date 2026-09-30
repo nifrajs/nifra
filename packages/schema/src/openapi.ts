@@ -374,6 +374,30 @@ function buildResponses(
   return responses
 }
 
+const isBinary = (schema: unknown): boolean =>
+  typeof schema === "object" &&
+  schema !== null &&
+  (schema as { type?: unknown }).type === "string" &&
+  (schema as { format?: unknown }).format === "binary"
+
+/**
+ * Whether a body schema declares a file field (a binary string, or a list of them) - the shape
+ * `t.form` produces. JSON cannot carry a file, so such a body is `multipart/form-data`. Read off
+ * the plain JSON Schema so a document built from a stored evidence snapshot agrees with a live one.
+ */
+function hasFileField(schema: JsonSchema | undefined): boolean {
+  if (typeof schema !== "object" || schema === null) return false
+  const properties = (schema as { properties?: unknown }).properties
+  if (typeof properties !== "object" || properties === null) return false
+  return Object.values(properties).some(
+    (property) =>
+      isBinary(property) ||
+      (typeof property === "object" &&
+        property !== null &&
+        isBinary((property as { items?: unknown }).items)),
+  )
+}
+
 function buildOperation(input: OperationInput, store: SchemaStore): OpenAPIOperation {
   const operation: OpenAPIOperation = { responses: buildResponses(input, store) }
   if (input.operationId !== undefined) operation.operationId = input.operationId
@@ -393,10 +417,10 @@ function buildOperation(input: OperationInput, store: SchemaStore): OpenAPIOpera
   if (input.body !== undefined) {
     const schema = store.collect(input.body.jsonSchema)
     if (schema !== undefined) {
-      operation.requestBody = {
-        required: true,
-        content: { [input.requestContentType ?? "application/json"]: { schema } },
-      }
+      const contentType =
+        input.requestContentType ??
+        (hasFileField(input.body.jsonSchema) ? "multipart/form-data" : "application/json")
+      operation.requestBody = { required: true, content: { [contentType]: { schema } } }
     }
   }
   return operation

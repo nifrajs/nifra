@@ -84,6 +84,57 @@ const app = server().use(securityHeaders({
   hsts: { maxAge: 63072000, includeSubDomains: true, preload: true }, // opt in once HTTPS-only
 }))`
 
+const FORM = `import { server } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema/form"
+
+const app = server()
+
+app.post(
+  "/listings",
+  {
+    body: t.form(
+      {
+        title: t.string({ minLength: 1, maxLength: 120 }),
+        price: t.integer({ minimum: 0 }), // form values arrive as text; "1200" becomes 1200
+        cover: t.file({ maxBytes: 5_000_000, accept: ["image/png", "image/jpeg"] }),
+        photos: t.array(t.file({ maxBytes: 5_000_000, accept: ["image/*"] }), { maxItems: 8 }),
+        floorPlan: t.optional(t.file({ accept: ["application/pdf"] })),
+      },
+      { maxFiles: 10, maxFields: 20 },
+    ),
+    bodyLimit: 50_000_000, // the default body cap is 1 MB: raise it on the routes that take files
+  },
+  (c) => {
+    const { title, cover, photos } = c.body // cover: File, photos: File[], floorPlan?: File
+    // Name the stored object yourself. \`cover.name\` is whatever the client typed.
+    const key = \`\${crypto.randomUUID()}.\${cover.type === "image/png" ? "png" : "jpg"}\`
+    return { title, key, photos: photos.length }
+  },
+)`
+
+const FORM_CLIENT = `// doc-check: skip - fragment: \`app\` is the server above; \`input\` is a file input on your page.
+import { client } from "@nifrajs/client"
+
+const api = client<typeof app>("https://api.example.com")
+const files = [...(input.files ?? [])]
+
+// A body that holds a File is sent as multipart/form-data. The call is typed like any other.
+const { data, error } = await api.listings.post({
+  title: "Two rooms by the park",
+  price: 1200,
+  cover: files[0],
+  photos: files.slice(1),
+})`
+
+const FORM_BYO = `// doc-check: skip - fragment: \`app\` is your server; zod is your own dependency.
+import { multipartBody } from "@nifrajs/core/multipart"
+import { z } from "zod"
+
+const Upload = z.object({ title: z.string(), attachment: z.instanceof(File) })
+
+// Any Standard Schema can validate a form. \`multipartBody\` is what tells the route to read one.
+app.post("/attachments", { body: multipartBody(Upload, { maxFiles: 1 }) }, (c) => c.body.title)`
+
 const UPLOADS = `// doc-check: skip - fragment: \`app\`, \`save\`, \`id\`, and \`env\` are your application's.
 import { validateUpload, signDownloadUrl } from "@nifrajs/uploads"
 
@@ -394,6 +445,99 @@ export default function Security() {
         path - a clean body pays a substring pre-scan only; the deep walk runs solely when the raw text
         actually contains a suspect token, so an honest payload is never charged for the tree it does
         not have.
+      </p>
+
+      <h2>Forms and file uploads - <code>t.form</code></h2>
+      <p>
+        A <code>multipart/form-data</code> body is declared like any other: text fields and files side by
+        side, validated before the handler runs, typed in <code>c.body</code>. The constructors live on
+        the <code>t</code> of <code>@nifrajs/schema/form</code> - the same builder as{" "}
+        <code>@nifrajs/schema</code> plus <code>t.file</code> and <code>t.form</code> - so an app that
+        takes no uploads ships none of this.
+      </p>
+      <CodeBlock code={FORM} lang="ts" />
+      <p>
+        <code>t.file</code> checks the size before it reads a byte, and <code>accept</code> is matched
+        against the file&rsquo;s <b>leading bytes</b>, never the type the client claimed: a script renamed{" "}
+        <code>photo.png</code> fails validation. With <code>accept</code> set, the file the handler
+        receives carries the detected type. A type that has no signature to check (<code>text/csv</code>,{" "}
+        <code>image/svg+xml</code>) is refused when the schema is built, not silently let through. Text
+        fields are coerced from their string form, a repeated field becomes a list, and a field the form
+        does not declare fails validation unless <code>additionalProperties</code> is set.
+      </p>
+      <p>
+        The body is bounded before any of it is validated. The route&rsquo;s <code>bodyLimit</code> caps
+        the whole request; <code>maxFields</code> (100), <code>maxFiles</code> (10),{" "}
+        <code>maxFieldBytes</code> (64 KiB) and <code>maxFileBytes</code> cap what it may carry. A request
+        over one is answered <code>413</code> with the limit it crossed (<code>payload_too_large</code>,{" "}
+        <code>too_many_parts</code>, <code>too_many_fields</code>, <code>too_many_files</code>,{" "}
+        <code>field_too_large</code>, <code>file_too_large</code>); a body that is not a well-formed form
+        is a <code>400</code> <code>invalid_multipart</code>, and any other content type a{" "}
+        <code>415</code>. A body that ends before its closing delimiter is refused rather than read as the
+        parts that did arrive. Field names are screened by the same <code>protoPoisoning</code> policy as
+        JSON keys.
+      </p>
+      <p>
+        The typed client needs nothing extra: a body that holds a <code>File</code> or <code>Blob</code>{" "}
+        goes out as a form.
+      </p>
+      <CodeBlock code={FORM_CLIENT} lang="ts" />
+      <p>
+        Bringing your own validator? <code>multipartBody</code> marks any Standard Schema as a form body
+        and takes the same limits. <code>t.form</code> has already done this for itself.
+      </p>
+      <CodeBlock code={FORM_BYO} lang="ts" />
+      <p>What a validated file does and does not tell you:</p>
+      <ul>
+        <li>
+          <b>The signature is all that was checked.</b> A file can open as a PNG and still carry another
+          format behind it, and <code>application/zip</code> is also what a <code>.docx</code> or{" "}
+          <code>.xlsx</code> is. Re-encode images you will serve back, and scan what you will open.
+        </li>
+        <li>
+          <b>
+            <code>file.name</code> is the client&rsquo;s.
+          </b>{" "}
+          Path separators and control characters are removed, and that is all. Generate the storage key;
+          never build a path from the name.
+        </li>
+        <li>
+          <b>
+            Without <code>accept</code>, <code>file.type</code> is the client&rsquo;s too.
+          </b>{" "}
+          Some runtimes derive it from the file extension. Only a type that <code>accept</code> matched is
+          one the bytes proved.
+        </li>
+        <li>
+          <b>Serve uploads as downloads.</b> Send <code>content-disposition: attachment</code> and{" "}
+          <code>x-content-type-options: nosniff</code>, from a separate origin where you can.
+        </li>
+        <li>
+          <b>A form post is a simple cross-origin request.</b> A browser sends{" "}
+          <code>multipart/form-data</code> with cookies and no preflight, so a cookie-authenticated upload
+          route needs <code>csrf()</code> like any other state change.
+        </li>
+        <li>
+          <b>The form is held in memory.</b> Budget roughly twice <code>bodyLimit</code> per request in
+          flight. Past tens of megabytes, hand the client a presigned URL and let it upload to storage
+          directly.
+        </li>
+      </ul>
+      <p>
+        An input nobody filled in is not a file: a zero-byte file part, or an empty text part in a file
+        field, counts as absent, so it fails a required field and leaves an optional one{" "}
+        <code>undefined</code>. A required list nobody filled in is <code>[]</code>; bound it with{" "}
+        <code>minItems</code> if one entry is mandatory. A browser checkbox submits <code>&quot;on&quot;</code>,
+        which is not a boolean - give the input <code>value=&quot;true&quot;</code>. And a form with no
+        required file also accepts the same fields as JSON or <code>application/x-www-form-urlencoded</code>,
+        so one route serves a plain HTML form and a script.
+      </p>
+      <p>
+        In tests, send forms through <code>inProcessClient</code> or <code>testClient</code>: they encode
+        the form first, so the request arrives with the <code>Content-Length</code> a network peer would
+        send. A <code>Request</code> built straight from a <code>FormData</code> and passed to{" "}
+        <code>app.fetch</code> has none, and on Node 26 the runtime raises an unhandled rejection when the
+        app stops reading such a body early, as it does for one over the limit.
       </p>
 
       <h2>File uploads - <code>@nifrajs/uploads</code></h2>

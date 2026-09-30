@@ -259,10 +259,11 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build the Worker contract dependencies
-        # Schema's build resolves @nifrajs/core/* through core's published-style dist declarations.
-        # Keep these explicit and sequential: one multi-filter invocation may start both builds in
-        # parallel, which makes a clean CI checkout fail before core has emitted its subpath .d.ts files.
-        run: bun run --filter '@nifrajs/core' build && bun run --filter '@nifrajs/schema' build
+        # Schema's build resolves @nifrajs/core/* and @nifrajs/uploads/detect through their
+        # published-style dist declarations. Keep these explicit and sequential: one multi-filter
+        # invocation may start the builds in parallel, which makes a clean CI checkout fail before
+        # a dependency has emitted its subpath .d.ts files.
+        run: bun run --filter '@nifrajs/core' build && bun run --filter '@nifrajs/uploads' build && bun run --filter '@nifrajs/schema' build
 
       - name: Run the real workerd contract laboratory
         run: bun run check:workerd

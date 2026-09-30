@@ -24,6 +24,9 @@ const { ok, status, data, error } = await api.users({ id: "42" }).get()
 - **Result, never exceptions.** Every call resolves to `{ ok, status, data, error }`,
   so the failure path is in the types. Bodies are positional (`api.users.post({ name })`);
   pass `{ query, headers, signal }` as call options.
+- **Files.** A body that holds a `File` or `Blob` is sent as `multipart/form-data`, typed from the
+  route's `t.form`: `api.avatars.post({ avatar: file, caption: "me" })`. `inProcessClient` and
+  `testClient` send the same form with its `Content-Length`, as a network peer would.
 - **Environment-agnostic.** No Bun/Node APIs - runs in the browser, workers, or any
   runtime with `fetch`.
 

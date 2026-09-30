@@ -4,20 +4,29 @@ import {
   type NumberOptions,
   type ObjectOptions,
   type StringOptions,
+  type TArray,
   type TLiteralValue,
   type TSchema,
   type TUnion,
   Type,
 } from "@sinclair/typebox"
 import { fromTypeBox, type NifraSchema } from "./adapter.ts"
+import { fileOps, refuseFile } from "./file-kind.ts"
 
 type Props = Record<string, NifraSchema>
 
-/** Pull each property's raw TypeBox schema out of its `NifraSchema` wrapper. */
-function unwrap<P extends Props>(props: P): { [K in keyof P]: P[K]["jsonSchema"] } {
+/**
+ * Pull each property's raw TypeBox schema out of its `NifraSchema` wrapper. `where` names the calling
+ * constructor: these objects are checked as JSON, so a file field is refused here (it belongs in
+ * `t.form` from `@nifrajs/schema/form`) instead of failing every request later.
+ */
+function unwrap<P extends Props>(where: string, props: P): { [K in keyof P]: P[K]["jsonSchema"] } {
   const out: Record<string, TSchema> = {}
   // Object.entries → own enumerable string keys only (no prototype walk).
-  for (const [key, schema] of Object.entries(props)) out[key] = schema.jsonSchema
+  for (const [key, schema] of Object.entries(props)) {
+    refuseFile(where, schema.jsonSchema)
+    out[key] = schema.jsonSchema
+  }
   return out as { [K in keyof P]: P[K]["jsonSchema"] }
 }
 
@@ -46,16 +55,33 @@ export const t = {
   // properties (no mass-assignment). Use `t.looseObject` (or pass `{ additionalProperties: true }`) to
   // opt into an open object; an explicit `options.additionalProperties` always wins over the default.
   object: <P extends Props>(props: P, options?: ObjectOptions) =>
-    fromTypeBox(Type.Object(unwrap(props), { additionalProperties: false, ...options })),
+    fromTypeBox(
+      Type.Object(unwrap("t.object", props), { additionalProperties: false, ...options }),
+    ),
   /** Like `t.object` but ACCEPTS (and passes through) unknown fields - the explicit opt-out of the
    * strict default. Prefer `t.object` unless you genuinely need an open object. */
   looseObject: <P extends Props>(props: P, options?: ObjectOptions) =>
-    fromTypeBox(Type.Object(unwrap(props), { additionalProperties: true, ...options })),
-  array: <T extends TSchema>(item: NifraSchema<T>, options?: ArrayOptions) =>
+    fromTypeBox(
+      Type.Object(unwrap("t.looseObject", props), { additionalProperties: true, ...options }),
+    ),
+  /**
+   * A list. A list of `t.file()` (from `@nifrajs/schema/form`) honors `minItems` / `maxItems` and is
+   * used inside `t.form`.
+   */
+  array: <T extends TSchema>(
+    item: NifraSchema<T>,
+    options?: ArrayOptions,
+  ): NifraSchema<TArray<T>> =>
+    (fileOps("t.array", item)?.array(item, options) as NifraSchema<TArray<T>> | undefined) ??
     fromTypeBox(Type.Array(item.jsonSchema, options)),
-  /** Marks a property optional inside `t.object`; standalone it is `T | undefined`. */
-  optional: <T extends TSchema>(schema: NifraSchema<T>) =>
-    fromTypeBox(Type.Optional(schema.jsonSchema)),
+  /** Marks a property optional inside `t.object` / `t.form`; standalone it is `T | undefined`. */
+  optional: <T extends TSchema>(schema: NifraSchema<T>) => {
+    const plain = () => fromTypeBox(Type.Optional(schema.jsonSchema))
+    return (
+      (fileOps("t.optional", schema)?.optional(schema) as ReturnType<typeof plain> | undefined) ??
+      plain()
+    )
+  },
   // `const S` captures the argument as a tuple; the explicit return type then maps
   // over that captured tuple (`S[K]["jsonSchema"]`) so the union's `Static` is
   // `A | B`, not `unknown` - the value-level `.map` can't preserve per-element
@@ -63,17 +89,25 @@ export const t = {
   // (order/length are preserved by `map`, so the tuple shape is sound).
   union: <const S extends readonly NifraSchema[]>(schemas: S) =>
     fromTypeBox(
-      Type.Union((schemas as readonly NifraSchema[]).map((schema) => schema.jsonSchema)),
+      Type.Union(
+        (schemas as readonly NifraSchema[]).map((schema) => {
+          refuseFile("t.union", schema.jsonSchema)
+          return schema.jsonSchema
+        }),
+      ),
     ) as NifraSchema<TUnion<{ -readonly [K in keyof S]: S[K]["jsonSchema"] }>>,
-  record: <T extends TSchema>(value: NifraSchema<T>, options?: ObjectOptions) =>
-    fromTypeBox(Type.Record(Type.String(), value.jsonSchema, options)),
+  record: <T extends TSchema>(value: NifraSchema<T>, options?: ObjectOptions) => {
+    refuseFile("t.record", value.jsonSchema)
+    return fromTypeBox(Type.Record(Type.String(), value.jsonSchema, options))
+  },
 
   // Composed from TypeBox directly (not `t.object`/`t.array`) so the `t` literal doesn't reference
   // itself during inference. Cursor pagination - not OFFSET - is the production default: stable under
   // concurrent inserts and O(1) per page. Build pages with `paginate()` + `encodeCursor`/`decodeCursor`.
   /** A cursor-pagination response envelope: `{ items: T[]; nextCursor: string | null }` (`null` = last page). */
-  paginated: <T extends TSchema>(item: NifraSchema<T>, options?: ObjectOptions) =>
-    fromTypeBox(
+  paginated: <T extends TSchema>(item: NifraSchema<T>, options?: ObjectOptions) => {
+    refuseFile("t.paginated", item.jsonSchema)
+    return fromTypeBox(
       Type.Object(
         {
           items: Type.Array(item.jsonSchema),
@@ -81,7 +115,8 @@ export const t = {
         },
         { additionalProperties: false, ...options },
       ),
-    ),
+    )
+  },
   /** A request query schema for cursor pagination: `{ cursor?: string; limit?: number }`. `maxLimit`
    * caps `limit` - a larger value fails validation (a 422), so a client can't request an unbounded page.
    * `coerce` is on because query values arrive as strings (`?limit=20` → `"20"`); it's what makes `limit`
@@ -107,7 +142,7 @@ export const t = {
    * `{ additionalProperties: false }` to enforce a strict allowlist. This is the query-slot constructor;
    * `t.object` stays the constructor for body slots (no coercion, a JSON body is already typed). */
   query: <P extends Props>(props: P, options?: ObjectOptions) =>
-    fromTypeBox(Type.Object(unwrap(props), { additionalProperties: true, ...options }), {
+    fromTypeBox(Type.Object(unwrap("t.query", props), { additionalProperties: true, ...options }), {
       coerce: true,
     }),
 } as const

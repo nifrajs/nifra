@@ -25,6 +25,11 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./form": {
+      "bun": "./src/form.ts",
+      "types": "./dist/form.d.ts",
+      "default": "./dist/form.js"
+    },
     "./openapi": {
       "bun": "./src/openapi.ts",
       "types": "./dist/openapi.d.ts",
@@ -45,6 +50,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@nifrajs/uploads": "workspace:*",
     "@sinclair/typebox": "^0.34.49"
   },
   "peerDependencies": {

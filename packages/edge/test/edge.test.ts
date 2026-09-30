@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { multipartBody } from "@nifrajs/core/multipart"
 import { server as coreServer } from "@nifrajs/core/server"
 import { type StandardSchemaV1, server, toFetchHandler } from "../src/index.ts"
 
@@ -173,6 +174,108 @@ test("parity: an urlencoded form body is framed the same way", async () => {
   const e = await edgeApp().fetch(req())
   const c = await coreApp().fetch(req())
   expect(e.status).toBe(c.status)
+})
+
+/** A hand-rolled Standard Schema for an upload form: a text `title` and one `doc` file. */
+const uploadBody: StandardSchemaV1<{ title: string; doc: File }> = {
+  "~standard": {
+    version: 1,
+    vendor: "edge-test",
+    validate(value) {
+      const v = value as { title?: unknown; doc?: unknown }
+      return typeof v?.title === "string" && v.doc instanceof File
+        ? { value: { title: v.title, doc: v.doc } }
+        : { issues: [{ message: "expected { title: string; doc: File }" }] }
+    },
+  },
+}
+const describeUpload = (c: { body: { title: string; doc: File } }) => ({
+  title: c.body.title,
+  name: c.body.doc.name,
+  size: c.body.doc.size,
+})
+const edgeUploads = () =>
+  server()
+    .post("/docs", { body: multipartBody(uploadBody, { maxFiles: 1 }) }, describeUpload)
+    .post("/plain", { body: uploadBody }, describeUpload)
+const coreUploads = () =>
+  coreServer()
+    .post("/docs", { body: multipartBody(uploadBody, { maxFiles: 1 }) }, describeUpload)
+    .post("/plain", { body: uploadBody }, describeUpload)
+
+const formReq = (path: string, parts: ReadonlyArray<readonly [string, string | File]>) => {
+  const form = new FormData()
+  for (const [name, value] of parts) form.append(name, value)
+  return new Request(`https://x.test${path}`, { method: "POST", body: form })
+}
+
+test("a multipart body reaches the handler as fields and files", async () => {
+  const res = await edgeUploads().fetch(
+    formReq("/docs", [
+      ["title", "report"],
+      ["doc", new File(["hello"], "../../etc/report.txt")],
+    ]),
+  )
+  expect(res.status).toBe(200)
+  // The file name is reduced to its last segment before the handler sees it.
+  expect(await res.json()).toEqual({ title: "report", name: "report.txt", size: 5 })
+})
+
+test("parity: multipart rejections match the full Server", async () => {
+  const doc = () => new File(["hello"], "a.txt")
+  const cases: ReadonlyArray<() => Request> = [
+    // A route that did not opt in refuses the content type.
+    () =>
+      formReq("/plain", [
+        ["title", "t"],
+        ["doc", doc()],
+      ]),
+    // More files than the route allows.
+    () =>
+      formReq("/docs", [
+        ["title", "t"],
+        ["doc", doc()],
+        ["doc", doc()],
+      ]),
+    // The schema rejects a form with no file.
+    () => formReq("/docs", [["title", "t"]]),
+    // A body that is not the multipart it claims to be.
+    () =>
+      new Request("https://x.test/docs", {
+        method: "POST",
+        headers: { "content-type": "multipart/form-data; boundary=x" },
+        body: "not a form",
+      }),
+    // No boundary parameter at all.
+    () =>
+      new Request("https://x.test/docs", {
+        method: "POST",
+        headers: { "content-type": "multipart/form-data" },
+        body: "--x--",
+      }),
+  ]
+  const statuses: number[] = []
+  for (const req of cases) {
+    const e = await wire(await edgeUploads().fetch(req()))
+    expect(e).toEqual(await wire(await coreUploads().fetch(req())))
+    statuses.push(e.status)
+  }
+  expect(statuses).toEqual([415, 413, 422, 400, 400])
+})
+
+test("a multipart body over maxBodyBytes is rejected with 413", async () => {
+  const app = server({ maxBodyBytes: 64 }).post(
+    "/docs",
+    { body: multipartBody(uploadBody) },
+    describeUpload,
+  )
+  const res = await app.fetch(
+    formReq("/docs", [
+      ["title", "t"],
+      ["doc", new File(["x".repeat(500)], "big.txt")],
+    ]),
+  )
+  expect(res.status).toBe(413)
 })
 
 test("toFetchHandler yields a Workers { fetch } module handler", async () => {

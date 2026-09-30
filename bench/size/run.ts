@@ -197,6 +197,13 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
 import { t } from "@nifrajs/schema"
 const body = t.object({ name: t.string(), age: t.number() })
 export default server().post("/users", { body }, (c) => ({ name: c.body.name }))`,
+  // Upload row: `t` from the form subpath, which adds the file constructors, the byte-signature
+  // table and the multipart reader on top of the `nifra-typebox-t` row. None of it may become
+  // reachable from `nifra-typebox-t` or `nifra-bare`.
+  "nifra-typebox-form": `import { server } from "@nifrajs/core/server"
+import { t } from "@nifrajs/schema/form"
+const body = t.form({ name: t.string(), avatar: t.file({ accept: ["image/png"] }) })
+export default server().post("/users", { body }, (c) => ({ name: c.body.name }))`,
   // Leaf-import row, not a server row: pins the marginal cost of reaching for the review leaf.
   // `@nifrajs/agent-review` must stay dependency-minimal and off the request path - it is composed
   // by `nifra review`, never imported by `core`/`client`/`schema`/`web` or any runtime adapter.
@@ -297,6 +304,14 @@ console.log(typeof composeReviewReport, typeof digestReviewReport)`,
 // field (which also shrank `merge()`), one gate helper wraps every hook kind, and the messages were
 // cut - together 0.33 KB back from the first cut. Nothing runs per request unless a group registers
 // a hook. Every row moves by the same kernel bytes; ceilings are the measured number plus ~0.2 KB.
+// File uploads are priced as their own row, `nifra-typebox-form` (measured 64.7 KB), not on `t`. The
+// constructors were first measured on the root builder, where they cost every `t` user +2.2 KB gzip
+// (60.6 -> 62.8) for the signature table, the form validator and the multipart reader. They now sit
+// on the builder of `@nifrajs/schema/form`, so that cost is paid only by an app that imports it.
+// What stays on `t` is ~0.1 KB (measured 62255 B): the marker that lets `t.array`/`t.optional` hand
+// a file schema to its own constructors, and the refusal when one reaches a constructor that
+// validates JSON. That guard has to live on `t`: without it a file field inside `t.object` would
+// build a schema that rejects every request. Squeezed first: the refusal message was cut to one line.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // The 2026-09-20 security pass adds bounded WebSocket admission/request-hook handling and
   // duplicate-cookie detection to the shared kernel. Reprice every core row together with the
@@ -308,7 +323,8 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-mcp": 31.1,
   "nifra-sse": 31.6,
   "nifra-valibot": 31.9,
-  "nifra-typebox-t": 60.7,
+  "nifra-typebox-t": 61.0,
+  "nifra-typebox-form": 64.9,
   // Review-leaf ceiling: measured 5.0 KB gz + ~0.2 KB headroom, same rule as every other row.
   "nifra-agent-review": 5.2,
 }

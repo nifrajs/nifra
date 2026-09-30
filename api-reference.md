@@ -2151,7 +2151,7 @@ Every public export of every package and documented subpath - name, kind, signat
   The shared 422 response result used by every body-validation lane.
 - **queryObjectOf** _(function)_ - `queryObjectOf: (search: string) => Record<string, QueryValue>`
 - **readBodyFramed** _(function)_ - `readBodyFramed: <T>(source: RequestSource, maxBodyBytes: number, protoPoisoning: ProtoPoisoning, onParsed: (parsed: unknown) => MaybePromise<T>, wrapResponse: (response: Response | ResponseResult) => T, onError: (err: u…`
-  The shared content-type dispatcher around the JSON and urlencoded lanes.
+  The shared content-type dispatcher around the JSON and urlencoded lanes. A `bodySchema` branded with {@link SCHEMA_BODY_READER} takes every other media type; JSON and urlencoded bodies keep their lanes whatever the schema carries.
 - **searchOf** _(function)_ - `searchOf: (url: string) => string`
 - **toResponse** _(function)_ - `toResponse: (result: HandlerResult, set: CtxSet, tagResponseBody?: ResponseBodyTagOption, statics?: StaticResponseHeaders) => Response`
 
@@ -2403,6 +2403,15 @@ Every public export of every package and documented subpath - name, kind, signat
   Internal runtime-provider seam used when an in-process WebSocket backend is mounted in Bun.
 - **NIFRA_PLATFORM_CLIENT_IP_DERIVED** _(const)_ - `NIFRA_PLATFORM_CLIENT_IP_DERIVED: typeof NIFRA_PLATFORM_CLIENT_IP_DERIVED`
   Marks a platform whose `clientIp` an enclosing nifra server already derived under its own `clientIp` trust declaration. A server that receives such a platform takes `clientIp` as-is instead of re-deriving it from the request's forwarding headers - an in-process call's `Request` is synthesized, so i…
+
+### `@nifrajs/core/multipart`
+
+- **MultipartLimits** _(interface)_ - `interface MultipartLimits`
+  Per-route bounds on a multipart body. The total size is the route's `bodyLimit`.
+- **MultipartValue** _(type)_ - `type MultipartValue = string | File | Array<string | File>`
+  A value of the record handed to the schema: one part, or every part that shared the name.
+- **multipartBody** _(function)_ - `multipartBody: <Schema extends StandardSchemaV1>(schema: Schema, limits?: MultipartLimits) => Schema`
+  Opt a route's body schema into `multipart/form-data`. Returns a copy of `schema` that also reads multipart bodies; the schema itself is not changed, and JSON and urlencoded bodies still reach it. Opting in a schema that already was replaces its limits.
 
 ### `@nifrajs/core/node-direct`
 
@@ -3966,6 +3975,14 @@ _No named exports (side-effect entrypoint)._
 - **toOpenAPIFromEvidence** _(function)_ - `toOpenAPIFromEvidence: (evidence: ProjectEvidenceSnapshot, options?: Omit<ToOpenAPIOptions, "evidence">) => OpenAPIDocument`
   Generate OpenAPI from an existing canonical project-evidence snapshot without loading a server.
 
+### `@nifrajs/schema/form`
+
+- **FileOptions** _(interface)_ - `interface FileOptions`
+- **FormOptions** _(interface)_ - `interface FormOptions`
+  The multipart limits (`maxFields`, `maxFiles`, `maxFieldBytes`, `maxFileBytes`) bound what the body may carry before any of it is validated; a request over one is answered `413`.
+- **t** _(const)_ - `t: { file: (options?: FileOptions) => NifraSchema<TUnsafe<File>>; form: <P extends Props>(props: P, options?: FormOptions) => NifraSchema<FormShape<P>>; string: (options?: import("@sinclair/typebox").StringOptions) => N…`
+  `t` from `@nifrajs/schema`, plus the two constructors a `multipart/form-data` body needs.
+
 ### `@nifrajs/schema/openapi`
 
 - **OpenAPIDocument** _(interface)_ - `interface OpenAPIDocument`
@@ -4364,6 +4381,12 @@ _No named exports (side-effect entrypoint)._
 
 ## @nifrajs/uploads
 
+### `@nifrajs/uploads`
+
+- **DETECTABLE_MIME_TYPES** _(const)_ - `DETECTABLE_MIME_TYPES: readonly string[]`
+  Every MIME type {@link detectFileType} can return. An allow-list entry outside this set (and outside a `type/*` wildcard that covers one of them) can never match, so check a configured allow-list against it up front instead of rejecting every upload at request time.
+- **FILE_TYPE_PREFIX_BYTES** _(const)_ - `FILE_TYPE_PREFIX_BYTES: 12`
+  How many leading bytes {@link detectFileType} looks at. Reading this many from the start of a file (`file.slice(0, FILE_TYPE_PREFIX_BYTES)`) is enough for every type it knows.
 - **FileType** _(interface)_ - `interface FileType`
   Magic-byte file-type detection - trust the bytes, not the `Content-Type` header (which a client sets freely). Reads only the leading bytes; dependency-free + edge-safe. Covers the common upload types; returns `null` for anything unrecognized (incl. text formats like SVG/CSV that have no magic numbe…
 - **ImageReencoder** _(interface)_ - `interface ImageReencoder`
@@ -4383,6 +4406,17 @@ _No named exports (side-effect entrypoint)._
   Validate uploaded bytes/Blob: size cap + magic-byte type sniff against an optional allow-list.
 - **verifyDownloadUrl** _(function)_ - `verifyDownloadUrl: (url: string, secret: string, options?: { readonly now?: number; }) => Promise<boolean>`
   Verify a URL produced by {@link signDownloadUrl}: signature (constant-time) + not expired.
+
+### `@nifrajs/uploads/detect`
+
+- **DETECTABLE_MIME_TYPES** _(const)_ - `DETECTABLE_MIME_TYPES: readonly string[]`
+  Every MIME type {@link detectFileType} can return. An allow-list entry outside this set (and outside a `type/*` wildcard that covers one of them) can never match, so check a configured allow-list against it up front instead of rejecting every upload at request time.
+- **FILE_TYPE_PREFIX_BYTES** _(const)_ - `FILE_TYPE_PREFIX_BYTES: 12`
+  How many leading bytes {@link detectFileType} looks at. Reading this many from the start of a file (`file.slice(0, FILE_TYPE_PREFIX_BYTES)`) is enough for every type it knows.
+- **FileType** _(interface)_ - `interface FileType`
+  Magic-byte file-type detection - trust the bytes, not the `Content-Type` header (which a client sets freely). Reads only the leading bytes; dependency-free + edge-safe. Covers the common upload types; returns `null` for anything unrecognized (incl. text formats like SVG/CSV that have no magic numbe…
+- **detectFileType** _(function)_ - `detectFileType: (bytes: Uint8Array) => FileType | null`
+  Detect a file's type from its magic bytes, or `null` if unrecognized.
 
 ## @nifrajs/web
 

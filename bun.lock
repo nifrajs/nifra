@@ -563,6 +563,7 @@
       "name": "@nifrajs/schema",
       "version": "3.5.0",
       "dependencies": {
+        "@nifrajs/uploads": "workspace:*",
         "@sinclair/typebox": "^0.34.49",
       },
       "devDependencies": {

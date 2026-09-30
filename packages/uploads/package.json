@@ -24,6 +24,11 @@
       "bun": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./detect": {
+      "bun": "./src/detect.ts",
+      "types": "./dist/detect.d.ts",
+      "default": "./dist/detect.js"
     }
   },
   "files": [

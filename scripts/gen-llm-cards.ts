@@ -199,6 +199,7 @@ const FOOTGUNS: Record<string, readonly string[]> = {
     "**The client never throws.** Every call returns `{ ok, status, data, error }` - branch on `res.ok`, never `try/catch`. A network failure is `ok: false`, not an exception.",
     "Import the server's app **type-only**: `import type { app }` + `client<typeof app>(url)`. The value import would pull server code (and its `node:` deps) into the browser bundle.",
     "`inProcessClient(app)` is a **callable proxy** with the same shape as `client()` but no network - use it in SSR loaders and tests. It mutates/serves the real app in-process; it is not a mock.",
+    "A body that holds a `File` or `Blob` is sent as `multipart/form-data`. Do not set `content-type` for it - the boundary is generated, and a caller-set value is dropped.",
     '**Reserved proxy keys:** the seven HTTP verbs (`get`/`post`/`put`/`patch`/`delete`/`head`/`options`, any casing) plus `subscribe`, `ws`, `index`, `then` (exact) resolve **before** path segments, so `api.delete.post` calls the DELETE verb, not the `/delete` segment. The typed spelling for a colliding segment is a **call on the parent node**: `api.api("delete").post()` sends `POST /api/delete` (accepts exactly the colliding names). The type rejects the dot access with that guidance; `nifra check` reports it (NF-C018, advisory). Prefer verb-free segments when you control the path.',
   ],
   "@nifrajs/testing": [
@@ -207,7 +208,9 @@ const FOOTGUNS: Record<string, readonly string[]> = {
     "Query mutations are proved invalid after URL serialization, and every failure carries `{ seed, caseId, runtime }`; replay one with `only: caseId`.",
   ],
   "@nifrajs/schema": [
-    "`t.object` is **strict** - unknown keys → `400`. Reach for `t.looseObject` only when extra keys are intentional.",
+    "`t.object` is **strict** - unknown keys → `422`. Reach for `t.looseObject` only when extra keys are intentional.",
+    "`t.file` and `t.form` are on the `t` of **`@nifrajs/schema/form`**, not the root `t`. A `t.form` is the route `body` as is and reads `multipart/form-data`; the default body cap is 1 MB, so set `bodyLimit` on a route that takes files.",
+    "`t.file({ accept })` proves the file's **signature**, nothing more. `file.name` is the client's: generate the storage key, never build a path from the name. Without `accept`, `file.type` is the client's too.",
     "`t` is TypeBox-backed and implements **Standard Schema**, so a nifra route accepts it natively (no adapter). zod/valibot/arktype work the same way at the route boundary.",
   ],
   "@nifrajs/web": [
@@ -270,6 +273,7 @@ const FOOTGUNS: Record<string, readonly string[]> = {
   ],
   "@nifrajs/uploads": [
     "MIME is detected from **magic bytes**, never the `Content-Type` header - validate the real bytes, enforce the size cap, and strip EXIF before storing.",
+    "To declare a file in a route's body schema, use `t.file` / `t.form` from `@nifrajs/schema/form` (same detection, validated before the handler). `validateUpload` is for a route that reads the upload itself.",
     "Signed download URLs carry the **shortest viable TTL** - re-sign on demand, don't cache a long-lived URL.",
   ],
   "@nifrajs/image": [
