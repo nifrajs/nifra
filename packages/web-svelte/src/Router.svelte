@@ -15,7 +15,7 @@
   // browser-safe half, and it is where every other adapter takes this from.
   import { searchOfChain } from "@nifrajs/web/client"
   import Chain from "./Chain.svelte"
-  let { router, routes, searchSchemas } = $props()
+  let { router, routes, searchSchemas, matchChains } = $props()
 
   // Capturing the INITIAL `router` is the intent, not an oversight: one router instance is created
   // once per page and mounted here, so it never changes identity for this component's lifetime, and
@@ -35,9 +35,14 @@
       data: snapshot.data,
       actionData: snapshot.actionData,
       pending: snapshot.pending,
+      // The same `params`/`path` the server render received, so `useMatches` reports the same chain.
+      params: snapshot.params,
+      path: snapshot.path,
       search: searchOfChain(searchSchemas?.[snapshot.routeId] ?? [], q === -1 ? "" : snapshot.path.slice(q)),
       ...(snapshot.submission ? { submission: snapshot.submission } : {}),
       ...(snapshot.boundaries !== undefined ? { boundaries: snapshot.boundaries } : {}),
+      // The chain `useMatches` reports - the server passed the same one to the SSR render.
+      ...(matchChains?.[snapshot.routeId] !== undefined ? { matchChain: matchChains[snapshot.routeId] } : {}),
     }
   })
 </script>

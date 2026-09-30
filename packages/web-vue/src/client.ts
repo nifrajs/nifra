@@ -56,7 +56,7 @@ export const hydrationAssuranceHook = Object.freeze({
  * client navigations swap routes without a full reload. The initial snapshot matches the SSR markup.
  */
 export function mountRouter(options: MountRouterOptions): void {
-  const { router, routes, searchSchemas, container } = options
+  const { router, routes, searchSchemas, matchChains, container } = options
   setMountedRouter(router) // expose it to useFetcher/useFetchers (same page, client-only)
   const Root = defineComponent({
     setup() {
@@ -67,7 +67,7 @@ export function mountRouter(options: MountRouterOptions): void {
       onScopeDispose(unsubscribe)
       return () => {
         const s = state.value
-        return compose(routes[s.routeId] ?? [], routeProps(s, searchSchemas))
+        return compose(routes[s.routeId] ?? [], routeProps(s, searchSchemas, matchChains))
       }
     },
   })

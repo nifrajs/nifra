@@ -13,6 +13,7 @@ import { searchOfChain } from "@nifrajs/web/client"
 export function routeProps(
   snapshot: () => RouterState,
   searchSchemas: MountRouterOptions["searchSchemas"],
+  matchChains?: MountRouterOptions["matchChains"],
 ): RenderProps {
   return {
     get data() {
@@ -29,6 +30,13 @@ export function routeProps(
     get pending() {
       return snapshot().pending
     },
+    // The same `params`/`path` the server render received, so `useMatches` reports the same chain.
+    get params() {
+      return snapshot().params
+    },
+    get path() {
+      return snapshot().path
+    },
     get search() {
       // The SAME searchOfChain the server ran, over this snapshot's URL - a same-route search change
       // updates in place (fine-grained), matching the SSR value on hydration.
@@ -41,6 +49,10 @@ export function routeProps(
     },
     get boundaries() {
       return snapshot().boundaries
+    },
+    // The chain `useMatches` reports - the server passed the same one to the SSR render.
+    get matchChain() {
+      return matchChains?.[snapshot().routeId]
     },
   } as RenderProps
 }

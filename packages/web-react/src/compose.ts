@@ -46,6 +46,7 @@ export function compose(chain: readonly unknown[], props: RenderProps): ReactNod
         search: props.search ?? EMPTY_SEARCH,
         pending: props.pending ?? false,
         pendingPath: props.pendingPath,
+        renderProps: props,
       },
     },
     node,

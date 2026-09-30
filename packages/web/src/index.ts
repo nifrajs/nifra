@@ -244,6 +244,7 @@ export {
   BOUNDARY_GLOBAL,
   DATA_GLOBAL,
   LAYOUT_DATA_GLOBAL,
+  type MatchChain,
   type RenderAdapter,
   type RenderProps,
   ROOT_ATTRIBUTE,
@@ -251,6 +252,7 @@ export {
   type SsrModuleLoader,
   setSsrModuleLoader,
   ssrModuleLoader,
+  type UIMatch,
 } from "./render-seam.ts"
 // Agnostic client-side router core (pure + DOM-free) - consumed by per-adapter Router bindings.
 // `DATA_HEADER` marks a navigation's data-only GET; `createWebApp` answers it with loader JSON.

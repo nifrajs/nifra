@@ -26,10 +26,10 @@ Svelte 5 render adapter for @nifrajs/web - SSR + hydration + the .svelte compile
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readable<Blocker>` · from `@nifrajs/web-svelte/router`
 - **useFetcher** _(function)_ - `useFetcher: (key: string) => FetcherStore` · from `@nifrajs/web-svelte/fetcher`
 - **useFetchers** _(function)_ - `useFetchers: () => Readable<readonly Fetcher[]>` · from `@nifrajs/web-svelte/fetcher`
+- **useMatches** _(function)_ - `useMatches: () => () => readonly UIMatch[]` · from `@nifrajs/web-svelte/router`
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction` · from `@nifrajs/web-svelte/router`
-- **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>) => QueryStore<T>` · from `@nifrajs/web-svelte/query`
 
-_…and 16 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
+_…and 18 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
 
 ## Footguns
 

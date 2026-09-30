@@ -105,6 +105,28 @@ export default function EditPost() {
   )
 }`
 
+const BREADCRUMBS = `// routes/orgs/[org]/_layout.tsx
+import type { ReactNode } from "react"
+import { useMatches } from "@nifrajs/web-react/router"
+
+export const handle = { crumb: "Organization" }
+
+export default function OrgLayout({ children }: { children: ReactNode }) {
+  // Outermost layout first, then the page: { id, pathname, params, data, handle }.
+  const crumbs = useMatches().flatMap((m) => {
+    const crumb = (m.handle as { crumb?: string } | undefined)?.crumb
+    return crumb === undefined ? [] : [{ href: m.pathname, crumb }]
+  })
+  return (
+    <>
+      <nav aria-label="Breadcrumb">
+        {crumbs.map((c) => <a key={c.href} href={c.href}>{c.crumb}</a>)}
+      </nav>
+      {children}
+    </>
+  )
+}`
+
 export default function Routing() {
   return (
     <div className="prose">
@@ -248,6 +270,29 @@ export default function Routing() {
         Re-run it after adding a route or changing a <code>searchSchema</code>; a stale shape is a{" "}
         <code>tsc</code> error. The plain string-path and history-delta forms
         (<code>navigate("/about")</code>, <code>navigate(-1)</code>) are unchanged.
+      </p>
+
+      <h2>Breadcrumbs and the rendered chain</h2>
+      <p>
+        A page or a layout can export a <code>handle</code> - any value; nifra only passes it along.{" "}
+        <code>useMatches()</code> returns the chain being rendered, outermost layout first and the
+        page last, each entry as <code>{`{ id, pathname, params, data, handle }`}</code>:{" "}
+        <code>id</code> is the route file without its extension, <code>pathname</code> the part of
+        the URL it covers (a layout its directory's prefix, the page the whole path, never the
+        query), <code>params</code> the ones it declares, and <code>data</code> its loader data (<code>null</code> without a loader). A layout
+        can therefore build breadcrumbs, a title, or a section nav from what the routes below it
+        export.
+      </p>
+      <CodeBlock code={BREADCRUMBS} lang="tsx" />
+      <p>
+        The server render and the browser report the same list, so a breadcrumb trail hydrates with
+        no mismatch. <code>handle</code> is read from the module on each side, never serialized, so
+        it can hold a function or a component. While a <code>_loading</code> page is up it takes the
+        page's place in the list; a nested <code>_404</code> reports the layouts it renders inside;
+        an <code>_error</code> page the server renders reports an empty list.{" "}
+        <code>useMatches</code> ships on every adapter from{" "}
+        <code>@nifrajs/web-&lt;framework&gt;/router</code>, as an array on React/Preact, a{" "}
+        <code>Ref</code> on Vue, and an accessor on Solid/Svelte.
       </p>
 
       <h2>Guarding navigation</h2>

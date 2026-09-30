@@ -25,11 +25,11 @@ Preact render adapter for @nifrajs/web - streaming SSR + hydration (no build plu
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Blocker` · from `@nifrajs/web-preact/router`
 - **useFetcher** _(function)_ - `useFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-preact/fetcher`
 - **useFetchers** _(function)_ - `useFetchers: () => readonly Fetcher[]` · from `@nifrajs/web-preact/fetcher`
+- **useMatches** _(function)_ - `useMatches: () => readonly UIMatch[]` · from `@nifrajs/web-preact/router`
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction` · from `@nifrajs/web-preact/router`
 - **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>) => UseQueryResult<T>` · from `@nifrajs/web-preact/query`
-- **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">` · from `@nifrajs/web-preact/query`
 
-_…and 17 more - see [`api-reference.md`](../../api-reference.md#nifrajswebpreact) for the complete list._
+_…and 20 more - see [`api-reference.md`](../../api-reference.md#nifrajswebpreact) for the complete list._
 
 ## Footguns
 

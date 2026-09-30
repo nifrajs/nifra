@@ -42,11 +42,11 @@ export function hydrate(chain: readonly unknown[], props: RenderProps, container
  * (no `getServerSnapshot`); `router.snapshot` is deterministic, so hydration matches the SSR markup.
  */
 export function mountRouter(options: MountRouterOptions): void {
-  const { router, routes, searchSchemas, container } = options
+  const { router, routes, searchSchemas, matchChains, container } = options
   setMountedRouter(router) // expose it to useFetcher/useFetchers (same page, client-only)
   const Router: FunctionComponent = () => {
     const state = useSyncExternalStore(router.subscribe, router.snapshot)
-    return compose(routes[state.routeId] ?? [], routeProps(state, searchSchemas))
+    return compose(routes[state.routeId] ?? [], routeProps(state, searchSchemas, matchChains))
   }
   preactHydrate(h(Router, null), container as Element)
 }

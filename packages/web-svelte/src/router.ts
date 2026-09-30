@@ -9,6 +9,8 @@ import type {
   NavigateFunction,
   NavigateOptions,
   NavigateTargetInput,
+  RenderProps,
+  UIMatch,
 } from "@nifrajs/web"
 // `/client`, not the root - these are DOM values, and the root's graph carries the
 // server, which Vite's dev server evaluates rather than tree-shakes.
@@ -18,6 +20,8 @@ import {
   registerBlocker,
   resolveNavigate,
 } from "@nifrajs/web/client"
+// Its own subpath, so an app that never calls `useMatches` never bundles it.
+import { chainMatches } from "@nifrajs/web/internal/matches-runtime"
 import { getContext } from "svelte"
 /**
  * `@nifrajs/web-svelte/router` - Svelte routing bindings over the agnostic `@nifrajs/web` history layer,
@@ -29,7 +33,7 @@ import { getContext } from "svelte"
  */
 import { type Readable, readable } from "svelte/store"
 
-export type { Blocker, BlockerFunction, BlockerState, NavigateFunction }
+export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch }
 
 // Must match the string key `Chain.svelte` passes to `setContext` (a string avoids a `.svelte` → `.ts`
 // import that wouldn't resolve once the .svelte is copied to dist).
@@ -58,6 +62,32 @@ export function useSearch<
   return (get ?? EMPTY_SEARCH_ACCESSOR) as () => Schema extends StandardSchemaV1
     ? InferOutput<Schema>
     : Record<string, unknown>
+}
+
+// Must match the string key the outermost `Chain.svelte` provides its props under.
+const PROPS_KEY = "@nifrajs/web-svelte:props"
+const NO_MATCHES: readonly UIMatch[] = Object.freeze([])
+const NO_MATCHES_ACCESSOR = (): readonly UIMatch[] => NO_MATCHES
+
+/**
+ * The rendered chain - each layout, then the page - with the URL prefix, params and loader data each
+ * one owns, plus its `handle` export, as an accessor. The same list on the server render and the client
+ * mount, so a layout can render breadcrumbs from its children's `handle`s without a hydration mismatch.
+ * Call it in a `$derived` or the template - it updates on navigation.
+ *
+ * ```svelte
+ * <script module>
+ *   export const handle = { crumb: "Settings" }
+ * </script>
+ * <script>
+ *   const matches = useMatches()
+ *   const crumbs = $derived(matches().flatMap((m) => m.handle?.crumb ?? []))
+ * </script>
+ * ```
+ */
+export function useMatches(): () => readonly UIMatch[] {
+  const get = getContext<(() => RenderProps) | undefined>(PROPS_KEY)
+  return get === undefined ? NO_MATCHES_ACCESSOR : () => chainMatches(get())
 }
 
 /** Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object).

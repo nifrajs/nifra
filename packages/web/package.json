@@ -189,6 +189,11 @@
       "bun": "./src/internal/loading-runtime.ts",
       "types": "./dist/internal/loading-runtime.d.ts",
       "default": "./dist/internal/loading-runtime.js"
+    },
+    "./internal/matches-runtime": {
+      "bun": "./src/internal/matches-runtime.ts",
+      "types": "./dist/internal/matches-runtime.d.ts",
+      "default": "./dist/internal/matches-runtime.js"
     }
   },
   "files": [

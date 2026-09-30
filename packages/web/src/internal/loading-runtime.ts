@@ -10,6 +10,7 @@
  * Its own module, imported by a generated client entry only when the app has a `_loading` file: an app
  * without one ships none of this.
  */
+import type { MatchChain } from "../render-seam.ts"
 import type { ClientRouter, RouterState } from "../router.ts"
 
 /** How long a navigation may run before its `_loading` page shows. Shorter loads swap straight to the
@@ -29,11 +30,15 @@ export interface LoadingOptions {
   /** Every route id → its {@link LoadingRoute} row. A route id absent here has no layouts. */
   readonly routes: Readonly<Record<string, LoadingRoute>>
   /** `_loading` id → a lazy import of its module. */
-  readonly modules: Readonly<Record<string, () => Promise<{ readonly default?: unknown }>>>
+  readonly modules: Readonly<
+    Record<string, () => Promise<{ readonly default?: unknown; readonly handle?: unknown }>>
+  >
   /** The mounted view's route id → component chain table. The wrapper adds a chain per loading view. */
   readonly chains: Record<string, readonly unknown[]>
   /** Route id → search-schema chain, kept in step with {@link chains}. */
   readonly searchSchemas: Record<string, readonly unknown[]>
+  /** Route id → what `useMatches` reports, kept in step with {@link chains}. */
+  readonly matchChains?: Record<string, MatchChain>
   /** Override {@link LOADING_DELAY_MS}. */
   readonly delayMs?: number
   /** Where a navigation goes when it fails after its loading page was shown. Defaults to a document
@@ -62,12 +67,13 @@ const pathnameOf = (path: string): string => {
  * caller left to report to, so it goes to `fallback`.
  */
 export function withLoading(router: ClientRouter, options: LoadingOptions): ClientRouter {
-  const { routes, modules, chains, searchSchemas } = options
+  const { routes, modules, chains, searchSchemas, matchChains } = options
   const delayMs = options.delayMs ?? LOADING_DELAY_MS
   const fallback = options.fallback ?? ((path: string) => location.assign(path))
 
   const listeners = new Set<() => void>()
   const components = new Map<string, unknown>()
+  const handles = new Map<string, unknown>()
   const inflight = new Map<string, Promise<void>>()
   /** Bumped per navigation through this wrapper - the latest one owns the page slot. */
   let seq = 0
@@ -92,6 +98,7 @@ export function withLoading(router: ClientRouter, options: LoadingOptions): Clie
     )
       .then((mod) => {
         if (mod.default !== undefined) components.set(id, mod.default)
+        handles.set(id, mod.handle)
       })
       .finally(() => {
         inflight.delete(id)
@@ -173,6 +180,13 @@ export function withLoading(router: ClientRouter, options: LoadingOptions): Clie
         chains[view] ??= [...(chains[from.routeId] ?? []).slice(0, choice.shared), component]
         // The current route's schemas: the URL is still its URL, so its layouts read the same search.
         searchSchemas[view] ??= searchSchemas[from.routeId] ?? []
+        if (matchChains !== undefined) {
+          const current = matchChains[from.routeId]
+          matchChains[view] ??= {
+            ids: [...(current?.ids ?? []).slice(0, choice.shared), choice.id],
+            handles: [...(current?.handles ?? []).slice(0, choice.shared), handles.get(choice.id)],
+          }
+        }
         shown = view
         owner = mine
         revealed = true

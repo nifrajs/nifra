@@ -48,6 +48,8 @@ export function generateClientEntry(
   // Routes whose loader appends a nearest `_error` module (LAST) - the client wraps the page in the
   // adapter's `errorBoundary(fallback)` for these, so a client render error shows the `_error` UI.
   const errorRouteIds: string[] = []
+  // Route id → its layout ids, for the chain `useMatches` reports. Routes without layouts are omitted.
+  const layoutIdsOf: Record<string, readonly string[]> = {}
   // Lazy loader returns the raw modules (for both the component chain + the page's `meta` export).
   const lazyLoader = (files: readonly string[]): string => {
     const imports = files.map((f) => `import(${jsStringLiteral(resolve(f))})`).join(", ")
@@ -68,6 +70,7 @@ export function generateClientEntry(
       errorRouteIds.push(route.id)
     }
     loaderRows.push(`  ${JSON.stringify(route.id)}: ${lazyLoader(files)},`)
+    if (route.layoutIds.length > 0) layoutIdsOf[route.id] = route.layoutIds
     patternRows.push(
       `  { routeId: ${JSON.stringify(route.id)}, pattern: ${JSON.stringify(route.pattern)} },`,
     )
@@ -175,6 +178,9 @@ export function generateClientEntry(
     // routeId → the chain the server rendered for an `ssr = false` page: the same layouts (and
     // boundary), with the page's `HydrateFallback` - or an empty leaf - where the component goes.
     "const holds = {}",
+    // routeId → the ids and `handle` exports `useMatches` reports (layouts, then the page).
+    `const layoutIdsOf = ${JSON.stringify(layoutIdsOf)}`,
+    "const matchChains = {}",
     "const loadModule = async (id) => {",
     "  if (chains[id]) return",
     "  const mods = await loaders[id]()",
@@ -196,12 +202,14 @@ export function generateClientEntry(
     // `searchSchema` merges with the page's. Client keys come from the page (second-to-last).
     "    searchSchemas[id] = mods.slice(0, mods.length - 1).map((m) => m.searchSchema)",
     "    searchClientKeys[id] = mods[mods.length - 2].searchClientKeys ?? []",
+    "    matchChains[id] = { ids: [...(layoutIdsOf[id] ?? []), id], handles: mods.slice(0, mods.length - 1).map((m) => m.handle) }",
     "  } else {",
     "    chains[id] = mods.map((m) => m.default)",
     "    metas[id] = mods.map((m) => m.meta)",
     // The chain is every module (layouts + page); client keys come from the page (the last module).
     "    searchSchemas[id] = mods.map((m) => m.searchSchema)",
     "    searchClientKeys[id] = mods[mods.length - 1].searchClientKeys ?? []",
+    "    matchChains[id] = { ids: [...(layoutIdsOf[id] ?? []), id], handles: mods.map((m) => m.handle) }",
     "  }",
     "  const page = errorRouteIds.has(id) ? mods[mods.length - 2] : mods[mods.length - 1]",
     // Keep interception client-safe: only neutral name/mode metadata crosses into the router. The
@@ -249,7 +257,7 @@ export function generateClientEntry(
     // With `_loading` pages the store is wrapped: a slow navigation then names a loading chain (the
     // shared layouts + the `_loading` component) for the mounted view to render in the meantime.
     loadings.length > 0
-      ? "const router = withLoading(createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys, routeHooks }), { routes: loadingRoutes, modules: loadingModules, chains, searchSchemas })"
+      ? "const router = withLoading(createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys, routeHooks }), { routes: loadingRoutes, modules: loadingModules, chains, searchSchemas, matchChains })"
       : "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys, routeHooks })",
     "installHistory(router)",
     "installForms(router)",
@@ -280,6 +288,7 @@ export function generateClientEntry(
     '    const id = "\\0ssr"',
     "    chains[id] = hold",
     "    searchSchemas[id] = searchSchemas[initial.routeId]",
+    "    matchChains[id] = matchChains[initial.routeId]",
     "    const listeners = new Set()",
     "    let held = true",
     "    let base",
@@ -304,7 +313,7 @@ export function generateClientEntry(
     "      for (const listener of [...listeners]) listener()",
     "    }, 0)",
     "  }",
-    "  mountRouter({ router: view, routes: chains, searchSchemas, container: root })",
+    "  mountRouter({ router: view, routes: chains, searchSchemas, matchChains, container: root })",
     // Run the optional client loader only after the adapter has mounted the SSR tree. The initial
     // server data is already in `window.__NIFRA_DATA__`, so `serverLoader()` reuses it and cannot
     // duplicate the first request.

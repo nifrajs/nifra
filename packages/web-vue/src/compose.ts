@@ -1,6 +1,6 @@
 import type { RenderProps } from "@nifrajs/web"
 import { type Component, h, type VNode } from "vue"
-import { SearchProvider } from "./router.ts"
+import { RenderPropsProvider, SearchProvider } from "./router.ts"
 
 // Frozen empty search so a render with no search context has a stable provider value.
 const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
@@ -15,7 +15,10 @@ const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
  */
 export function compose(chain: readonly unknown[], props: RenderProps): VNode {
   const last = chain.length - 1
-  let node: VNode = h(chain[last] as Component, { ...props })
+  // `matchChain` feeds `useMatches` through the provider below; on the page it would fall through as
+  // an attribute on the page's root element.
+  const { matchChain: _chain, ...pageProps } = props
+  let node: VNode = h(chain[last] as Component, pageProps)
   for (let i = last - 1; i >= 0; i--) {
     const child = node
     // Layouts render their child via the default slot (`<slot />` / `{@render children}`).
@@ -31,5 +34,7 @@ export function compose(chain: readonly unknown[], props: RenderProps): VNode {
       { default: () => child },
     )
   }
+  const inner = node
+  node = h(RenderPropsProvider, { value: props }, { default: () => inner })
   return h(SearchProvider, { value: props.search ?? EMPTY_SEARCH }, { default: () => node })
 }

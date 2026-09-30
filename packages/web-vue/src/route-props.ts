@@ -11,7 +11,9 @@ import { searchOfChain } from "@nifrajs/web/client"
 export function routeProps(
   state: RouterState,
   searchSchemas: MountRouterOptions["searchSchemas"],
+  matchChains?: MountRouterOptions["matchChains"],
 ): RenderProps {
+  const matchChain = matchChains?.[state.routeId]
   // This route's typed `search` from the URL + schema chain (the SAME `searchOfChain` the server
   // ran), recomputed each render so `useSearch` stays reactive and hydrates with no drift.
   const q = state.path.indexOf("?")
@@ -23,8 +25,13 @@ export function routeProps(
     ...(state.layoutData !== undefined ? { layoutData: state.layoutData } : {}),
     actionData: state.actionData,
     pending: state.pending,
+    // The same `params`/`path` the server render received, so `useMatches` reports the same chain.
+    params: state.params,
+    path: state.path,
     search: searchOfChain(searchSchemas?.[state.routeId] ?? [], rawSearch),
     ...(state.submission ? { submission: state.submission } : {}),
     ...(state.boundaries !== undefined ? { boundaries: state.boundaries } : {}),
+    // The chain `useMatches` reports - the server passed the same one to the SSR render.
+    ...(matchChain !== undefined ? { matchChain } : {}),
   }
 }

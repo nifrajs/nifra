@@ -35,7 +35,7 @@ export function hydrate(chain: readonly unknown[], props: RenderProps, container
  *   they don't shift Solid's structural hydration keys - unlike a `<Show>`, which would.)
  */
 export function mountRouter(options: MountRouterOptions): void {
-  const { router, routes, searchSchemas, container } = options
+  const { router, routes, searchSchemas, matchChains, container } = options
   setMountedRouter(router) // expose it to createFetcher/useFetchers (same page, client-only)
   const el = container as Element
 
@@ -56,7 +56,10 @@ export function mountRouter(options: MountRouterOptions): void {
       update = setSnapshot
       // The matched chain is fixed for this mount (routeId is constant here); a route *change* disposes
       // and re-mounts below, so the root render fn reads no signal and never re-runs on its own.
-      return compose(routes[initial.routeId] ?? [], routeProps(snapshot, searchSchemas))()
+      return compose(
+        routes[initial.routeId] ?? [],
+        routeProps(snapshot, searchSchemas, matchChains),
+      )()
     }, el)
   }
 

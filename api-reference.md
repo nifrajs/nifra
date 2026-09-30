@@ -4628,6 +4628,8 @@ _No named exports (side-effect entrypoint)._
   A `_loading` page: what the page slot shows while a client navigation loads.
 - **Manifest** _(interface)_ - `interface Manifest`
   The full route manifest.
+- **MatchChain** _(interface)_ - `interface MatchChain`
+  The modules a render stacks, as `useMatches` needs them: each one's id and `handle` export, outermost layout first and the page (or status page) last. Built by the server for SSR and by the generated client entry per route, from the same manifest, so both sides report the same matches.
 - **MemoryCacheStore** _(class)_ - `class MemoryCacheStore`
   In-process ISR cache. Refuses to run in production unless explicitly allowed (mirrors the rate-limit `MemoryStore` - a per-instance cache is unsafe across instances). Bounded **LRU**: a read or write bumps the entry, so the least-recently-used evicts past `max` (a hot, frequently-read page survives…
 - **MemoryCacheStoreOptions** _(interface)_ - `interface MemoryCacheStoreOptions`
@@ -4776,6 +4778,8 @@ _No named exports (side-effect entrypoint)._
 - **SubmitOptions** _(interface)_ - `interface SubmitOptions`
   Per-submit options. `revalidate: false` opts out of the post-action loader re-fetch.
 - **TrustedHtml** _(type)_ - `type TrustedHtml = string & { readonly [TRUSTED_HTML_BRAND]: "trusted-html" }`
+- **UIMatch** _(interface)_ - `interface UIMatch`
+  One module of the rendered chain, as `useMatches` returns it.
 - **UnsafeScriptDescriptor** _(interface)_ - `interface UnsafeScriptDescriptor`
   Explicit escape hatch for executable inline code. A CSP nonce is mandatory.
 - **assertCssLoadingCompatible** _(function)_ - `assertCssLoadingCompatible: (cssCodeSplit: boolean, cssLoading: CssLoadingMode) => void`
@@ -5511,9 +5515,14 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(interface)_ - `interface NavigateFunction`
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
+- **RenderPropsContext** _(const)_ - `RenderPropsContext: import("preact").Context<RenderProps | undefined>`
 - **SearchContext** _(const)_ - `SearchContext: import("preact").Context<Record<string, unknown>>`
+- **UIMatch** _(interface)_ - `interface UIMatch`
+  One module of the rendered chain, as `useMatches` returns it.
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Blocker`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean (`useBlocker(isDirty)`) or a predicate `({ currentLocation, nextLocation }) => boolean`, and get back a {@link Blocker}. When a navigation (an anchor click, `u…
+- **useMatches** _(function)_ - `useMatches: () => readonly UIMatch[]`
+  The rendered chain - each layout, then the page - with the URL prefix, params and loader data each one owns, plus its `handle` export. The same list on the server render and the client mount, so a layout can render breadcrumbs from its children's `handle`s without a hydration mismatch.
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Stable across renders; resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
@@ -5662,10 +5671,14 @@ _No named exports (side-effect entrypoint)._
   The value forms `setSearchParams` accepts.
 - **SetSearchParams** _(type)_ - `type SetSearchParams = ( next: SearchParamsInit | ((prev: URLSearchParams) => SearchParamsInit), options?: NavigateOptions, ) => void`
   Set the query string. Accepts a `URLSearchParams`, a record, a raw string, or an updater of the current params; navigates to the same pathname with the new query (push, or replace via options).
+- **UIMatch** _(interface)_ - `interface UIMatch`
+  One module of the rendered chain, as `useMatches` returns it.
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Blocker`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean (`useBlocker(isDirty)`) or a predicate `({ currentLocation, nextLocation }) => boolean`, and get back a {@link Blocker}. When a navigation (a `<Link>`/anchor c…
 - **useLocation** _(function)_ - `useLocation: () => Location`
   The current {@link Location} (`pathname`/`search`/`hash`), derived from the router context.
+- **useMatches** _(function)_ - `useMatches: () => readonly UIMatch[]`
+  The rendered chain, outermost layout first and the page last: each module's `id`, the URL `pathname` it wraps, its `params` and loader `data`, and its `handle` export. The same list on the server and in the browser, so a layout can render breadcrumbs or read a flag the page exports:
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object; a render-time navigate isn't valid - use {@link Navigate}, which navigates in an effect). Stable across renders; resolves the browser navigate at call time (so it works as soon as `installHistory` …
 - **useNavigation** _(function)_ - `useNavigation: () => Navigation`
@@ -5770,9 +5783,14 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(interface)_ - `interface NavigateFunction`
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
+- **RenderPropsContext** _(const)_ - `RenderPropsContext: Context<RenderProps | undefined>`
 - **SearchContext** _(const)_ - `SearchContext: Context<Accessor<Record<string, unknown>> | undefined>`
+- **UIMatch** _(interface)_ - `interface UIMatch`
+  One module of the rendered chain, as `useMatches` returns it.
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Accessor<Blocker>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a reactive {@link Blocker} accessor. When a navigation (an anchor click, `useNavi…
+- **useMatches** _(function)_ - `useMatches: () => Accessor<readonly UIMatch[]>`
+  The rendered chain - each layout, then the page - with the URL prefix, params and loader data each one owns, plus its `handle` export, as a reactive accessor. The same list on the server render and the client mount, so a layout can render breadcrumbs from its children's `handle`s without a hydratio…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Accessor<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>`
@@ -5859,8 +5877,12 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(interface)_ - `interface NavigateFunction`
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
+- **UIMatch** _(interface)_ - `interface UIMatch`
+  One module of the rendered chain, as `useMatches` returns it.
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readable<Blocker>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a {@link Blocker} store (read with `$blocker`). When a navigation (an anchor clic…
+- **useMatches** _(function)_ - `useMatches: () => () => readonly UIMatch[]`
+  The rendered chain - each layout, then the page - with the URL prefix, params and loader data each one owns, plus its `handle` export, as an accessor. The same list on the server render and the client mount, so a layout can render breadcrumbs from its children's `handle`s without a hydration mismat…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => () => Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>`
@@ -5978,10 +6000,16 @@ _No named exports (side-effect entrypoint)._
   The blocker's lifecycle. `unblocked` - idle, nothing intercepted. `blocked` - a navigation was halted and is awaiting the app's decision (`proceed`/`reset` are live). `proceeding` - the app called `proceed`; the held navigation is being replayed.
 - **NavigateFunction** _(interface)_ - `interface NavigateFunction`
   A programmatic navigate, shared by every adapter's `useNavigate`. Three forms: a string path (push, or replace via `{ replace: true }`), a history delta (`-1`/`1`), or an object target `{ to, search, replace }` whose `search` is typed against `to`'s route schema via {@link NavigateSearchOf} (a wron…
+- **RenderPropsProvider** _(const)_ - `RenderPropsProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ value: { type: ObjectConstructor; required: true; }; }>, () => import("vue").VNode<import("vue").RendererNode, import("vue").RendererEl…`
+  The provider `compose` wraps the chain in for {@link useMatches}: a `computed` view of its `value` prop, so the injected ref follows each navigation's props. Renders its default slot.
 - **SearchProvider** _(const)_ - `SearchProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ value: { type: ObjectConstructor; required: true; }; }>, () => import("vue").VNode<import("vue").RendererNode, import("vue").RendererElement…`
   The provider `compose` wraps the layout tree in. It `provide`s a `computed` view of its `value` prop, so as the mount re-renders with each navigation's search the injected ref updates reactively (setup runs once, but the computed keeps tracking the prop). Renders its default slot (the folded chain).
+- **UIMatch** _(interface)_ - `interface UIMatch`
+  One module of the rendered chain, as `useMatches` returns it.
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readonly<ShallowRef<Blocker>>`
   Guard navigation away from a page with unsaved work, confirming with your OWN async UI. Mirrors react-router's `useBlocker`: pass a boolean or a `({ currentLocation, nextLocation }) => boolean` predicate, and get back a reactive {@link Blocker} ref. When a navigation (an anchor click, `useNavigate`…
+- **useMatches** _(function)_ - `useMatches: () => Readonly<Ref<readonly UIMatch[]>>`
+  The rendered chain - each layout, then the page - with the URL prefix, params and loader data each one owns, plus its `handle` export, as a reactive ref. The same list on the server render and the client mount, so a layout can render breadcrumbs from its children's `handle`s without a hydration mis…
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction`
   Get the {@link NavigateFunction} (a string path, a history delta, or a typed `{ to, search }` object). Resolves the browser navigate at call time, so it works as soon as `installHistory` has run and no-ops before then / on the server.
 - **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Readonly<Ref<Schema extends StandardSchemaV1 ? InferOutput<Schema> : Record<string, unknown>>>`

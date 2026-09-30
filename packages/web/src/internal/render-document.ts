@@ -13,7 +13,7 @@ import type {
   ScriptDescriptor,
   UnsafeScriptDescriptor,
 } from "../manifest.ts"
-import type { RenderAdapter, RenderProps } from "../render-seam.ts"
+import type { MatchChain, RenderAdapter, RenderProps } from "../render-seam.ts"
 import {
   ACTION_GLOBAL,
   BOUNDARY_GLOBAL,
@@ -132,6 +132,8 @@ export interface RenderPageOptions {
   readonly layoutData?: readonly unknown[]
   /** Dynamic-boundary states, forwarded to the adapter and serialized for hydration when present. */
   readonly boundaries?: BoundaryStates
+  /** The chain's ids and `handle` exports, forwarded as `RenderProps.matchChain` for `useMatches`. */
+  readonly matchChain?: MatchChain
   /** HTTP status for the response (default 200; e.g. 404 for a not-found page). */
   readonly status?: number
   /** Extra response headers - e.g. the `cache-control` a terminal status page wants. `content-type`
@@ -444,6 +446,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     ...(boundarySplit !== undefined
       ? { boundaries: boundarySplit.forComponent as BoundaryStates }
       : {}),
+    ...(options.matchChain !== undefined ? { matchChain: options.matchChain } : {}),
   }
 
   // Fast path: nothing `defer()`s and the adapter can render synchronously to a string → buffer the
@@ -767,6 +770,8 @@ export type LoadedLayoutModules = ReadonlyArray<{
   gate?: boolean
   // Read only when it is a function - see `ShouldRevalidate` in manifest.ts.
   shouldRevalidate?: unknown
+  // Reported by `useMatches` - see `RouteModule.handle`.
+  handle?: unknown
   // A layout may declare its own `searchSchema`; the route's effective search merges the layout chain's
   // schemas with the page's (page-wins). Present on the raw module already - typed here so it is readable.
   searchSchema?: RouteModule["searchSchema"]

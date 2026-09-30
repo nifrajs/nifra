@@ -30,6 +30,35 @@ export interface RenderProps {
   readonly search?: Record<string, unknown>
   /** Neutral named-boundary states; adapters choose how each boundary's `render` UI is mounted. */
   readonly boundaries?: BoundaryStates
+  /** The rendered chain's module ids and `handle` exports, for the adapter's `useMatches`. */
+  readonly matchChain?: MatchChain
+}
+
+/**
+ * The modules a render stacks, as `useMatches` needs them: each one's id and `handle` export,
+ * outermost layout first and the page (or status page) last. Built by the server for SSR and by the
+ * generated client entry per route, from the same manifest, so both sides report the same matches.
+ */
+export interface MatchChain {
+  /** Layout ids (`orgs/[org]/_layout`), then the page's route id. */
+  readonly ids: readonly string[]
+  /** Each module's `handle` export, index-aligned with {@link ids}. */
+  readonly handles: readonly unknown[]
+}
+
+/** One module of the rendered chain, as `useMatches` returns it. */
+export interface UIMatch {
+  /** The module's id: a layout's (`orgs/[org]/_layout`), or the page's route id last. */
+  readonly id: string
+  /** The part of the URL path this module wraps: a layout's directory prefix, the whole path for the
+   * page. Raw, as it appears in the URL. */
+  readonly pathname: string
+  /** The params this module's loader receives: a layout's own, every route param for the page. */
+  readonly params: Readonly<Record<string, string>>
+  /** This module's loader data: `null` for a layout without a loader. */
+  readonly data: unknown
+  /** The module's `handle` export - any value, commonly a breadcrumb label or a render function. */
+  readonly handle: unknown
 }
 
 /**

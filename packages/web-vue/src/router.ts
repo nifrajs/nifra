@@ -9,6 +9,8 @@ import type {
   NavigateFunction,
   NavigateOptions,
   NavigateTargetInput,
+  RenderProps,
+  UIMatch,
 } from "@nifrajs/web"
 // `/client`, not the root - these are DOM values, and the root's graph carries the
 // server, which Vite's dev server evaluates rather than tree-shakes.
@@ -18,6 +20,8 @@ import {
   registerBlocker,
   resolveNavigate,
 } from "@nifrajs/web/client"
+// Its own subpath, so an app that never calls `useMatches` never bundles it.
+import { chainMatches } from "@nifrajs/web/internal/matches-runtime"
 /**
  * `@nifrajs/web-vue/router` - Vue routing bindings over the agnostic `@nifrajs/web` history layer:
  * `useNavigate` (programmatic navigation), `useBlocker` (the unsaved-changes guard), and `useSearch`
@@ -37,7 +41,7 @@ import {
   shallowRef,
 } from "vue"
 
-export type { Blocker, BlockerFunction, BlockerState, NavigateFunction }
+export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch }
 
 // Frozen empty search + a stable fallback ref for a `useSearch` used outside a nifra route tree.
 const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
@@ -66,6 +70,45 @@ export const SearchProvider = defineComponent({
     return () => slots.default?.()
   },
 })
+
+// The props `compose` rendered the chain with - what `useMatches` reads. `Symbol.for` for the same
+// reason as the search key.
+const PROPS_KEY: InjectionKey<Readonly<Ref<RenderProps>>> = Symbol.for(
+  "nifra.web-vue.render-props",
+) as InjectionKey<Readonly<Ref<RenderProps>>>
+
+/** The provider `compose` wraps the chain in for {@link useMatches}: a `computed` view of its `value`
+ * prop, so the injected ref follows each navigation's props. Renders its default slot. */
+export const RenderPropsProvider = defineComponent({
+  name: "NifraRenderPropsProvider",
+  props: { value: { type: Object, required: true } },
+  setup(props, { slots }) {
+    provide(
+      PROPS_KEY,
+      computed(() => props.value as RenderProps),
+    )
+    return () => slots.default?.()
+  },
+})
+
+const NO_MATCHES: readonly UIMatch[] = Object.freeze([])
+
+/**
+ * The rendered chain - each layout, then the page - with the URL prefix, params and loader data each
+ * one owns, plus its `handle` export, as a reactive ref. The same list on the server render and the
+ * client mount, so a layout can render breadcrumbs from its children's `handle`s without a hydration
+ * mismatch.
+ *
+ * ```vue
+ * // page: export const handle = { crumb: "Settings" } (a plain <script> block)
+ * const matches = useMatches()
+ * const crumbs = computed(() => matches.value.flatMap((m) => (m.handle as { crumb?: string } | undefined)?.crumb ?? []))
+ * ```
+ */
+export function useMatches(): Readonly<Ref<readonly UIMatch[]>> {
+  const props = inject(PROPS_KEY, undefined)
+  return computed(() => (props === undefined ? NO_MATCHES : chainMatches(props.value)))
+}
 
 /**
  * The route's typed, validated search params as a reactive ref - the SAME value the loader received as

@@ -74,7 +74,13 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   // The view is the router itself unless the first page is an `ssr = false` one (client-only.test.ts).
   expect(code).toContain("let view = router")
   expect(code).toContain(
-    "mountRouter({ router: view, routes: chains, searchSchemas, container: root })",
+    "mountRouter({ router: view, routes: chains, searchSchemas, matchChains, container: root })",
+  )
+  // `useMatches`: the layout ids come from the manifest (status pages have none), the handles from the
+  // loaded modules, in the same order as the chain the server renders.
+  expect(code).toContain('const layoutIdsOf = {"index":["_layout"],"users/[id]":["_layout"]}')
+  expect(code).toContain(
+    "matchChains[id] = { ids: [...(layoutIdsOf[id] ?? []), id], handles: mods.map((m) => m.handle) }",
   )
   // The hydration signal fires on the frame after the adapter mounts (see the Hydration guide).
   expect(code).toContain("requestAnimationFrame(signalHydrated)")

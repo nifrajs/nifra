@@ -547,6 +547,50 @@ Re-run it after adding a route or changing a `searchSchema`; a stale shape is a
 `tsc` error. The plain string-path and history-delta forms
 (`navigate("/about")`, `navigate(-1)`) are unchanged.
 
+### Breadcrumbs and the rendered chain
+
+A page or a layout can export a `handle` - any value; nifra only passes it along.
+`useMatches()` returns the chain being rendered, outermost layout first and the
+page last, each entry as `{ id, pathname, params, data, handle }`:
+`id` is the route file without its extension, `pathname` the part of
+the URL it covers (a layout its directory's prefix, the page the whole path, never the
+query), `params` the ones it declares, and `data` its loader data (`null` without a loader). A layout
+can therefore build breadcrumbs, a title, or a section nav from what the routes below it
+export.
+
+```ts
+// routes/orgs/[org]/_layout.tsx
+import type { ReactNode } from "react"
+import { useMatches } from "@nifrajs/web-react/router"
+
+export const handle = { crumb: "Organization" }
+
+export default function OrgLayout({ children }: { children: ReactNode }) {
+  // Outermost layout first, then the page: { id, pathname, params, data, handle }.
+  const crumbs = useMatches().flatMap((m) => {
+    const crumb = (m.handle as { crumb?: string } | undefined)?.crumb
+    return crumb === undefined ? [] : [{ href: m.pathname, crumb }]
+  })
+  return (
+    <>
+      <nav aria-label="Breadcrumb">
+        {crumbs.map((c) => <a key={c.href} href={c.href}>{c.crumb}</a>)}
+      </nav>
+      {children}
+    </>
+  )
+}
+```
+
+The server render and the browser report the same list, so a breadcrumb trail hydrates with
+no mismatch. `handle` is read from the module on each side, never serialized, so
+it can hold a function or a component. While a `_loading` page is up it takes the
+page's place in the list; a nested `_404` reports the layouts it renders inside;
+an `_error` page the server renders reports an empty list.
+`useMatches` ships on every adapter from
+`@nifrajs/web-<framework>/router`, as an array on React/Preact, a
+`Ref` on Vue, and an accessor on Solid/Svelte.
+
 ### Guarding navigation
 
 A page with unsaved work shouldn't lose it to a stray click or the back button.
@@ -13079,7 +13123,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`Action`, `ACTION_GLOBAL`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BOUNDARY_GLOBAL`, `BoundaryDescriptor`, `boundaryDescriptors`, `BoundaryError`, `BoundaryMode`, `boundaryModeKey`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createMutation`, `createNonceResolver`, `CreateNonceResolverOptions`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateRouteSearchTypes`, `GenerateRouteSearchTypesOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `gone`, `hashQueryKey`, `HtmlSanitizer`, `IDLE_BLOCKER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `mergeHeads`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `normalizeCssLoading`, `notFound`, `NotFoundEntry`, `NotFoundScope`, `openGraph`, `OpenGraphInput`, `PendingBoundary`, `PRE_HYDRATION_GUARD`, `previewEndpoint`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `registerBlocker`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderedPage`, `renderPage`, `RenderPageInput`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `RETAIN_HEADER`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `RouteSearch`, `sanitizedHtml`, `SanitizedHtml`, `sanitizeHtml`, `ScriptDescriptor`, `searchOf`, `SearchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `ServePublicDirOptions`, `SERVER_FN_MODULE`, `SERVER_ONLY_MODULE`, `ServerOnly`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `ssrModuleLoader`, `SsrModuleLoader`, `startDynamicBoundaries`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `STATUS_HEADER`, `statusPage`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `trustHtml`, `unsafeInlineScript`, `UnsafeScriptDescriptor`, `webProjectEvidence`, `withISR`
+`Action`, `ACTION_GLOBAL`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BOUNDARY_GLOBAL`, `BoundaryDescriptor`, `boundaryDescriptors`, `BoundaryError`, `BoundaryMode`, `boundaryModeKey`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createMutation`, `createNonceResolver`, `CreateNonceResolverOptions`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateRouteSearchTypes`, `GenerateRouteSearchTypesOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `gone`, `hashQueryKey`, `HtmlSanitizer`, `IDLE_BLOCKER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `mergeHeads`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `normalizeCssLoading`, `notFound`, `NotFoundEntry`, `NotFoundScope`, `openGraph`, `OpenGraphInput`, `PendingBoundary`, `PRE_HYDRATION_GUARD`, `previewEndpoint`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `registerBlocker`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderedPage`, `renderPage`, `RenderPageInput`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `RETAIN_HEADER`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `RouteSearch`, `sanitizedHtml`, `SanitizedHtml`, `sanitizeHtml`, `ScriptDescriptor`, `searchOf`, `SearchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `ServePublicDirOptions`, `SERVER_FN_MODULE`, `SERVER_ONLY_MODULE`, `ServerOnly`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `ssrModuleLoader`, `SsrModuleLoader`, `startDynamicBoundaries`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `STATUS_HEADER`, `statusPage`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `trustHtml`, `UIMatch`, `unsafeInlineScript`, `UnsafeScriptDescriptor`, `webProjectEvidence`, `withISR`
 
 ## @nifrajs/web-preact
 

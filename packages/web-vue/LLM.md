@@ -24,12 +24,12 @@ Vue render adapter for @nifrajs/web - streaming SSR + hydration, with a .vue SFC
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readonly<ShallowRef<Blocker>>` · from `@nifrajs/web-vue/router`
 - **useFetcher** _(function)_ - `useFetcher: (key: string) => FetcherHandle` · from `@nifrajs/web-vue/fetcher`
 - **useFetchers** _(function)_ - `useFetchers: () => Readonly<ShallowRef<readonly Fetcher[]>>` · from `@nifrajs/web-vue/fetcher`
+- **useMatches** _(function)_ - `useMatches: () => Readonly<Ref<readonly UIMatch[]>>` · from `@nifrajs/web-vue/router`
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction` · from `@nifrajs/web-vue/router`
 - **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>) => UseQueryResult<T>` · from `@nifrajs/web-vue/query`
 - **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">` · from `@nifrajs/web-vue/query`
-- **useSearch** _(function)_ - `useSearch: <Schema extends StandardSchemaV1 | undefined = undefined>() => Readonly<Ref<Schema extends StandardSchemaV1 ? InferOutput<Schema…` · from `@nifrajs/web-vue/router`
 
-_…and 19 more - see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
+_…and 22 more - see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
 
 ## Footguns
 

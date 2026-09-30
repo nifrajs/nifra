@@ -61,7 +61,7 @@ export const hydrationAssuranceHook = Object.freeze({
  * matched route), so hydration reconciles cleanly.
  */
 export function mountRouter(options: MountRouterOptions): void {
-  const { router, routes, searchSchemas, container } = options
+  const { router, routes, searchSchemas, matchChains, container } = options
   setMountedRouter(router) // expose it to useFetcher/useFetchers (same page, client-only)
   const warning = assuranceWarning()
   const originalWarn = console.warn
@@ -69,7 +69,7 @@ export function mountRouter(options: MountRouterOptions): void {
   try {
     svelteHydrate(Router, {
       target: container as Element,
-      props: { router, routes, searchSchemas },
+      props: { router, routes, searchSchemas, matchChains },
     })
   } finally {
     if (warning !== undefined) console.warn = originalWarn

@@ -22,6 +22,8 @@ import type {
   NavigateFunction,
   NavigateOptions,
   NavigateTargetInput,
+  RenderProps,
+  UIMatch,
 } from "@nifrajs/web"
 // `/client`, not the root - these are DOM values, and the root's graph carries the
 // server, which Vite's dev server evaluates rather than tree-shakes.
@@ -31,6 +33,8 @@ import {
   registerBlocker,
   resolveNavigate,
 } from "@nifrajs/web/client"
+// Its own subpath, so an app that never calls `useMatches` bundles none of it.
+import { chainMatches } from "@nifrajs/web/internal/matches-runtime"
 import {
   type AnchorHTMLAttributes,
   type CSSProperties,
@@ -47,7 +51,7 @@ import {
   useState,
 } from "react"
 
-export type { Blocker, BlockerFunction, BlockerState, NavigateFunction }
+export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch }
 
 /** The current route the routing hooks read. Provided by `compose` on SSR + client mount alike. */
 export interface RouterContextValue {
@@ -66,6 +70,8 @@ export interface RouterContextValue {
   /** The `pathname + search` a navigation is transitioning TO while `pending` (`undefined` when idle or
    * during a same-route revalidation). Powers {@link NavLink}'s per-link `isPending`. */
   readonly pendingPath?: string | undefined
+  /** The render's props, which {@link useMatches} derives the matches from. */
+  readonly renderProps?: RenderProps | undefined
 }
 
 // Frozen empty params/search so the default context value has a stable reference (no needless re-renders).
@@ -139,6 +145,26 @@ export function useSearch<
   return useContext(RouterContext).search as Schema extends StandardSchemaV1
     ? InferOutput<Schema>
     : Record<string, unknown>
+}
+
+const NO_MATCHES: readonly UIMatch[] = Object.freeze([])
+
+/**
+ * The rendered chain, outermost layout first and the page last: each module's `id`, the URL
+ * `pathname` it wraps, its `params` and loader `data`, and its `handle` export. The same list on the
+ * server and in the browser, so a layout can render breadcrumbs or read a flag the page exports:
+ *
+ * ```tsx
+ * export const handle = { crumb: "Settings" } // in a page or a layout
+ * // in a layout above it:
+ * const crumbs = useMatches().flatMap((m) => (m.handle as { crumb?: string } | undefined)?.crumb ?? [])
+ * ```
+ *
+ * Empty outside a nifra route tree.
+ */
+export function useMatches(): readonly UIMatch[] {
+  const props = useContext(RouterContext).renderProps
+  return useMemo(() => (props === undefined ? NO_MATCHES : chainMatches(props)), [props])
 }
 
 /** The parsed current location. `hash` is always `""` - the fragment is client-only and never reaches

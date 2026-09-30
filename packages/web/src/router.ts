@@ -10,6 +10,7 @@ import type { StandardSchemaV1 } from "@nifrajs/core/server"
 import type { BoundaryDescriptor, BoundaryStates } from "./boundary.ts"
 import { parseNdjsonData } from "./deferred.ts"
 import type { ClientActionResult, ClientRequestBody, ClientRouteHooks } from "./manifest.ts"
+import type { MatchChain } from "./render-seam.ts"
 import { isClientOnlySearchChange } from "./search.ts"
 
 /**
@@ -321,6 +322,10 @@ export interface MountRouterOptions {
    * `ctx.search`/`RenderProps.search`. Omitted by callers with no typed search (tests, a hand-built mount)
    * ⇒ every route sees the raw parsed query. */
   readonly searchSchemas?: Readonly<Record<string, readonly (StandardSchemaV1 | undefined)[]>>
+  /** routeId → the ids and `handle` exports `useMatches` reports for that chain; built by
+   * `generateClientEntry` as each route's modules load. The mount hands the current route's entry to
+   * the render as `RenderProps.matchChain`. Omitted ⇒ `useMatches` returns an empty list. */
+  readonly matchChains?: Readonly<Record<string, MatchChain>>
   /** Hydration container (opaque - the adapter casts it to its DOM element type). */
   readonly container: unknown
 }
@@ -475,8 +480,12 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     path: string,
     match: { routeId: string; params: Record<string, string> },
     signal?: AbortSignal,
-    retainFrom?: { readonly path: string; readonly layoutData: readonly unknown[] },
+    // Offer the server the layout data on screen: it re-runs whichever of those loaders it must.
+    keepLayouts?: boolean,
   ): Promise<LoadedRouteData> => {
+    const retainFrom = keepLayouts
+      ? state.layoutData && { path: state.path, layoutData: state.layoutData }
+      : undefined
     const retain = retainFrom?.layoutData.map((_, index) => index) ?? []
     const payload = await fetchData(
       path,
@@ -904,15 +913,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           path,
           matched,
           ac.signal,
-          () =>
-            loadRouteData(
-              path,
-              matched,
-              ac.signal,
-              state.layoutData === undefined
-                ? undefined
-                : { path: state.path, layoutData: state.layoutData },
-            ),
+          () => loadRouteData(path, matched, ac.signal, true),
           prefetchedData,
         )
         if (loaded.terminalRouteId !== undefined) await loadModule?.(loaded.terminalRouteId)
@@ -1008,14 +1009,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           // the same as the non-redirect revalidation below. `revalidate: false` keeps layout data
           // the server agrees is unchanged, like an ordinary navigation.
           const loaded = await applyClientLoader(redirectTo, target, ac.signal, () =>
-            loadRouteData(
-              redirectTo,
-              target,
-              ac.signal,
-              opts?.revalidate !== false || state.layoutData === undefined
-                ? undefined
-                : { path: state.path, layoutData: state.layoutData },
-            ),
+            loadRouteData(redirectTo, target, ac.signal, opts?.revalidate === false),
           )
           if (loaded.terminalRouteId !== undefined) await loadModule?.(loaded.terminalRouteId)
           if (mine !== generation) return

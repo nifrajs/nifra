@@ -336,6 +336,12 @@ export interface RouteModule {
    */
   readonly HydrateFallback?: unknown
   /**
+   * Any value to report through `useMatches` - a breadcrumb label, a render function, a flag a layout
+   * reads about the page inside it. Layouts, pages, and status pages may export one. It is read from
+   * the module on the server and in the browser, so it must be the same value on both.
+   */
+  readonly handle?: unknown
+  /**
    * Opt a **static** route (no `:param`/`*`) into build-time prerendering (SSG): `prerenderRoutes`
    * (from `@nifrajs/web/build`) renders it to a static `index.html` at build. The loader runs at build
    * with the in-process `api` (build-safe data only - no per-request cookies/secrets); `defer()` on a

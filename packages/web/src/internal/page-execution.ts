@@ -27,7 +27,7 @@ import type {
   ShouldRevalidate,
 } from "../manifest.ts"
 import type { NonceResolver } from "../nonce.ts"
-import type { RenderAdapter } from "../render-seam.ts"
+import type { MatchChain, RenderAdapter } from "../render-seam.ts"
 import {
   createMatcher,
   DATA_HEADER,
@@ -480,6 +480,17 @@ export function createPageRequestExecutor<Env = unknown>(
     return { chain, head: mergeHeads(heads) }
   }
 
+  /** What `useMatches` reports for a chain: the layouts' ids and `handle`s, then the page's. */
+  const matchChainOf = (
+    layoutIds: readonly string[],
+    layoutModules: LoadedLayoutModules,
+    pageId: string,
+    page: { readonly handle?: unknown },
+  ): MatchChain => ({
+    ids: [...layoutIds, pageId],
+    handles: [...layoutModules.map((layout) => layout.handle), page.handle],
+  })
+
   const dirOfId = (id: string, suffix: string): string =>
     id === suffix ? "" : id.slice(0, id.length - suffix.length - 1)
 
@@ -561,6 +572,7 @@ export function createPageRequestExecutor<Env = unknown>(
     const loaded = (await page.load()) as {
       readonly default: unknown
       readonly searchSchema?: RouteModule["searchSchema"]
+      readonly handle?: unknown
     }
     return renderPageResult({
       adapter,
@@ -568,6 +580,7 @@ export function createPageRequestExecutor<Env = unknown>(
       data: null,
       clientEntry,
       routeId,
+      matchChain: { ids: [routeId], handles: [loaded.handle] },
       ...(path !== undefined
         ? {
             search: searchOf(
@@ -707,6 +720,7 @@ export function createPageRequestExecutor<Env = unknown>(
         params,
         path: pathOf(req),
         search: searchChainOf(layoutModules, mod, req),
+        matchChain: matchChainOf(route.layoutIds, layoutModules, route.id, mod),
         hydrate: mod.hydrate !== false,
         ...(layoutData !== undefined ? { layoutData } : {}),
         ...(boundaryStates !== undefined ? { boundaries: boundaryStates } : {}),
@@ -811,6 +825,7 @@ export function createPageRequestExecutor<Env = unknown>(
       params,
       path: pathOf(req),
       search: searchChainOf(layoutModules, mod, req),
+      matchChain: matchChainOf(page.layoutIds, layoutModules, id, mod),
       status: 404,
       hydrate: false,
       ...(layoutData !== undefined ? { layoutData } : {}),
@@ -1141,6 +1156,7 @@ export function createPageRequestExecutor<Env = unknown>(
           params: c.params,
           path: pathOf(c.req),
           search,
+          matchChain: matchChainOf(route.layoutIds, layoutModules, route.id, mod),
           hydrate: mod.hydrate !== false,
           ...preloadOf(route.id),
           ...stylesOf(route.id),

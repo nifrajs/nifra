@@ -9,6 +9,8 @@ import type {
   NavigateFunction,
   NavigateOptions,
   NavigateTargetInput,
+  RenderProps,
+  UIMatch,
 } from "@nifrajs/web"
 // `/client`, not the root - these are DOM values, and the root's graph carries the
 // server, which Vite's dev server evaluates rather than tree-shakes.
@@ -18,6 +20,8 @@ import {
   registerBlocker,
   resolveNavigate,
 } from "@nifrajs/web/client"
+// Its own subpath, so an app that never calls `useMatches` never bundles it.
+import { chainMatches } from "@nifrajs/web/internal/matches-runtime"
 /**
  * `@nifrajs/web-preact/router` - Preact routing bindings over the agnostic `@nifrajs/web` history layer:
  * `useNavigate` (programmatic navigation), `useBlocker` (the unsaved-changes guard), and `useSearch`
@@ -26,9 +30,9 @@ import {
  * `compose` provides on SSR + client mount alike. Client-safe (no `preact-render-to-string`). No JSX.
  */
 import { createContext } from "preact"
-import { useCallback, useContext, useEffect, useRef, useState } from "preact/compat"
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "preact/compat"
 
-export type { Blocker, BlockerFunction, BlockerState, NavigateFunction }
+export type { Blocker, BlockerFunction, BlockerState, NavigateFunction, UIMatch }
 
 // Frozen empty search so the default context value has a stable reference.
 const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
@@ -47,6 +51,33 @@ const searchContextSlot = globalThis as {
 export const SearchContext =
   searchContextSlot[SEARCH_CONTEXT_SLOT] ?? createContext<Record<string, unknown>>(EMPTY_SEARCH)
 searchContextSlot[SEARCH_CONTEXT_SLOT] = SearchContext
+
+/** The props `compose` rendered the chain with - what {@link useMatches} reads. A `globalThis`
+ * singleton for the same reason as {@link SearchContext}. */
+const PROPS_CONTEXT_SLOT = Symbol.for("nifra.web-preact.props-context")
+const propsContextSlot = globalThis as {
+  [PROPS_CONTEXT_SLOT]?: ReturnType<typeof createContext<RenderProps | undefined>>
+}
+export const RenderPropsContext =
+  propsContextSlot[PROPS_CONTEXT_SLOT] ?? createContext<RenderProps | undefined>(undefined)
+propsContextSlot[PROPS_CONTEXT_SLOT] = RenderPropsContext
+
+const NO_MATCHES: readonly UIMatch[] = Object.freeze([])
+
+/**
+ * The rendered chain - each layout, then the page - with the URL prefix, params and loader data each
+ * one owns, plus its `handle` export. The same list on the server render and the client mount, so a
+ * layout can render breadcrumbs from its children's `handle`s without a hydration mismatch.
+ *
+ * ```tsx
+ * export const handle = { crumb: "Settings" }
+ * const crumbs = useMatches().flatMap((m) => (m.handle as { crumb?: string } | undefined)?.crumb ?? [])
+ * ```
+ */
+export function useMatches(): readonly UIMatch[] {
+  const props = useContext(RenderPropsContext)
+  return useMemo(() => (props === undefined ? NO_MATCHES : chainMatches(props)), [props])
+}
 
 /**
  * The route's typed, validated search params - the SAME value the loader received as `ctx.search`.
