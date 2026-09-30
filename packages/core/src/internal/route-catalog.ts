@@ -16,7 +16,7 @@
  * registration.
  */
 import type { CompiledRoutePattern } from "../router/pattern.ts"
-import { type Method, Router, type RouterMatch } from "../router/router.ts"
+import { Router, type RouterMatch } from "../router/router.ts"
 import type { RouteDescriptor } from "../server/server-types.ts"
 import type { AssuranceDeclaration } from "./route-assurance.ts"
 import type { RouteEntry } from "./route-execution.ts"
@@ -24,7 +24,7 @@ import type { RouteEntry } from "./route-execution.ts"
 /** One canonical runtime route fact. The catalog owns matching, reflection, assurance, tool metadata,
  * replay, and native compilation input so batch registration has one commit point. */
 export interface CatalogRoute {
-  readonly method: Method
+  readonly method: string
   readonly path: string
   readonly pattern: CompiledRoutePattern
   readonly entry: RouteEntry

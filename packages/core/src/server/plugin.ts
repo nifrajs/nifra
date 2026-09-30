@@ -3,7 +3,9 @@
  * `use`/`derive`/`decorate` and/or registering routes) and returns it; these helpers attach a name
  * for idempotent dedupe and pin the type-threading so `.use()` preserves the caller's typed server.
  */
-import type { Registry } from "./registry.ts"
+import type { Method } from "../router/router.ts"
+import type { RouteSchema } from "./context.ts"
+import type { AddRoute, Registry, RouteInfoFor } from "./registry.ts"
 import type { AnyServer, Server } from "./server.ts"
 
 /**
@@ -61,6 +63,48 @@ export function defineContextPlugin<D extends object>(
 ): ContextPlugin<D> {
   return Object.assign(apply, { pluginName: name }) as ContextPlugin<D>
 }
+
+declare const METHOD_ROUTES: unique symbol
+
+/**
+ * What `all()` and `method()` from `@nifrajs/core/methods` return: a plugin for `app.use()` that
+ * registers one handler under the methods `M` of `Path`. It is opaque - apply it with `use`, which
+ * reads the route's types from it and adds them to the app's registry.
+ */
+export interface MethodRoutesPlugin<
+  M extends string,
+  Path extends string,
+  S extends RouteSchema,
+  Output,
+  Ctx,
+> {
+  readonly [METHOD_ROUTES]: {
+    readonly methods: M
+    readonly path: Path
+    readonly schema: S
+    readonly output: Output
+    /** The context the handler was written against; the app must provide at least this. */
+    readonly context: (context: Ctx) => void
+  }
+}
+
+/** The standard methods among `M`, as the registry keys them. A custom token contributes none. */
+type StandardMethodOf<M extends string> = Extract<Uppercase<M>, Method>
+
+/**
+ * The registry after a {@link MethodRoutesPlugin} is applied: `Path` gains the standard methods
+ * among `M`. A method outside the standard set is served but not typed, so it adds nothing.
+ */
+export type WithMethodRoutes<
+  R extends Registry,
+  M extends string,
+  Path extends string,
+  S extends RouteSchema,
+  Output,
+  HookOutput,
+> = [StandardMethodOf<M>] extends [never]
+  ? R
+  : AddRoute<R, StandardMethodOf<M>, Path, RouteInfoFor<Path, S, Output, HookOutput>>
 
 declare const COLLAPSED: unique symbol
 

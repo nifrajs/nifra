@@ -4,6 +4,7 @@ import { server } from "@nifrajs/core"
 import { bodyParser } from "@nifrajs/core/body-parser"
 import { defineContract } from "@nifrajs/core/contract"
 import { snapshotProjectEvidence } from "@nifrajs/core/evidence"
+import { all, method } from "@nifrajs/core/methods"
 import { t, toOpenAPI, toOpenAPIFromEvidence } from "../src/index.ts"
 
 // A BYO Standard Schema: validates at runtime but exposes no JSON Schema.
@@ -608,5 +609,31 @@ describe("optional path params", () => {
     expect(live.paths["/reports"]?.get?.parameters).toBeUndefined()
     const evidence = JSON.parse(JSON.stringify(snapshotProjectEvidence(app)))
     expect(JSON.stringify(toOpenAPIFromEvidence(evidence))).toBe(JSON.stringify(live))
+  })
+})
+
+describe("routes registered by method name", () => {
+  const app = server()
+    .use(all("/echo", () => ({ ok: true })))
+    .use(method(["PURGE", "DELETE"], "/cache/:key", () => ({ ok: true })))
+    .use(method("PROPFIND", "/dav/*path", () => ({ ok: true })))
+
+  test("every standard method is an operation; a custom method has no place in a path item", () => {
+    const doc = toOpenAPI(app)
+    expect(Object.keys(doc.paths).sort()).toEqual(["/cache/{key}", "/echo"])
+    expect(Object.keys(doc.paths["/echo"] ?? {}).sort()).toEqual([
+      "delete",
+      "get",
+      "head",
+      "options",
+      "patch",
+      "post",
+      "put",
+    ])
+    expect(Object.keys(doc.paths["/cache/{key}"] ?? {})).toEqual(["delete"])
+  })
+
+  test("a stored snapshot produces the same document", () => {
+    expect(toOpenAPIFromEvidence(snapshotProjectEvidence(app))).toEqual(toOpenAPI(app))
   })
 })

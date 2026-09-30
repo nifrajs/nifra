@@ -55,6 +55,21 @@ function routeFacts(ctx: RuleContext): StaticRouteFact[] {
 }
 
 /**
+ * One fact per registration site for a rule about the PATH. A call that registers several methods
+ * at once (`all()`, `method([...])`) is several facts on one line with one path, and a finding
+ * about that path is one finding, not one per method.
+ */
+function pathSites(routes: readonly StaticRouteFact[]): StaticRouteFact[] {
+  const seen = new Set<string>()
+  return routes.filter((route) => {
+    const site = `${route.file}\n${route.line}\n${route.path}`
+    if (seen.has(site)) return false
+    seen.add(site)
+    return true
+  })
+}
+
+/**
  * The typed escape spelling for a colliding segment, e.g. `/api/delete` + `delete` →
  * `api("delete").post()` shown as the chain up to the collision. Best-effort readability: earlier
  * segments render as dot access, the colliding one as the parent-node call.
@@ -71,7 +86,7 @@ export const reservedSegmentRule: CheckRule = {
   async scan(ctx) {
     const findings: Diagnostic[] = []
     const linesByFile = new Map<string, readonly string[]>()
-    for (const route of routeFacts(ctx)) {
+    for (const route of pathSites(routeFacts(ctx))) {
       for (const segment of route.path.split("/")) {
         if (segment === "") continue
         const collision = reservedKeyFor(segment)
@@ -116,6 +131,9 @@ export const duplicateRouteRule: CheckRule = {
   async scan(ctx) {
     const findings: Diagnostic[] = []
     const byFile = new Map<string, Map<string, StaticRouteFact>>()
+    // Two calls that each register several methods collide once per shared method; that is one
+    // pair of lines to fix, so it is reported once.
+    const reported = new Set<string>()
     for (const route of routeFacts(ctx)) {
       let seen = byFile.get(route.file)
       if (seen === undefined) {
@@ -128,6 +146,9 @@ export const duplicateRouteRule: CheckRule = {
         seen.set(key, route)
         continue
       }
+      const pair = `${route.file}\n${route.line}\n${first.line}\n${route.path}`
+      if (reported.has(pair)) continue
+      reported.add(pair)
       findings.push(
         diagnostic({
           code: "NF-C019",
@@ -162,6 +183,8 @@ export const overlappingRouteRule: CheckRule = {
       else routes.push(route)
     }
 
+    // As in NF-C019: two multi-method calls overlap once per shared method, reported once.
+    const reported = new Set<string>()
     for (const [file, routes] of byFile) {
       const lines = (): readonly string[] => {
         let value = linesByFile.get(file)
@@ -208,6 +231,9 @@ export const overlappingRouteRule: CheckRule = {
             continue
           }
           if (witness === undefined) continue
+          const pair = `${file}\n${later.line}\n${later.path}\n${earlier.line}\n${earlier.path}`
+          if (reported.has(pair)) break
+          reported.add(pair)
 
           findings.push(
             diagnostic({
@@ -249,7 +275,7 @@ export const paramModifierRule: CheckRule = {
   async scan(ctx) {
     const findings: Diagnostic[] = []
     const linesByFile = new Map<string, readonly string[]>()
-    for (const route of routeFacts(ctx)) {
+    for (const route of pathSites(routeFacts(ctx))) {
       const forms = expandOptionalParams(route.path)
       const found = PARAM_MODIFIER.exec(forms[forms.length - 1] ?? route.path)
       if (found === null) continue

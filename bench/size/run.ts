@@ -341,19 +341,26 @@ const BROWSER_FEATURES: ReadonlySet<string> = new Set(["nifra-web-client"])
 // Squeezed first, from +122 B: the matcher does not expand, its callers do, which also keeps the
 // feature out of the browser row (the client router bundles the matcher and measured +137 B with
 // the expansion inside it, 0 B now). Seven rows had no slack left and move by 0.1 KB.
+// A route can be registered under a method outside the standard seven (`method("PURGE", ...)` from
+// its own subpath): +34 B gzip (bare 31744 -> 31778 B), inherited by every row. 31 B is the matcher's
+// method check, which was a lookup in a set of seven and is now a token pattern that also refuses
+// `TRACE`, `CONNECT` and `TRACK`; it stays in the matcher so no caller can register one of those.
+// 13 B keeps a custom method out of Bun's native route table. The registration functions themselves
+// are not reachable from an app that does not import them. Four rows had no slack left and move by
+// 0.1 KB; the other rows still clear theirs.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // The 2026-09-20 security pass adds bounded WebSocket admission/request-hook handling and
   // duplicate-cookie detection to the shared kernel. Reprice every core row together with the
   // measured post-hardening footprint; optional rows must not receive a special exemption.
   "nifra-bare": 31.1,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 34.2,
+  "nifra-idempotency": 34.3,
   "nifra-effect-ledger": 33.0,
-  "nifra-mcp": 31.3,
+  "nifra-mcp": 31.4,
   "nifra-sse": 31.8,
-  "nifra-valibot": 32.0,
+  "nifra-valibot": 32.1,
   "nifra-typebox-t": 61.2,
-  "nifra-typebox-form": 65.0,
+  "nifra-typebox-form": 65.1,
   // Review-leaf ceiling: measured 5.0 KB gz + ~0.2 KB headroom, same rule as every other row.
   "nifra-agent-review": 5.2,
   // Client runtime ceiling: measured 13.8 KB gz (14089 B) + ~0.2 KB headroom.

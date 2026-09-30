@@ -612,6 +612,59 @@ Other param modifiers (`:id+`, `:id*`, `:id{[0-9]+}`,
 `:id(\\d+)`) are not part of the path grammar and match as literal text. Where that
 text is intended, put `// nifra-expect param-modifier` above the registration.
 
+### Several methods, custom methods (all, method)
+
+`all()` registers one handler under every standard method, and `method()`
+under the method or methods you name, including one outside the standard seven. Both come
+from `@nifrajs/core/methods` and are applied with `use()`:
+
+```ts
+import { server } from "@nifrajs/core/server"
+import { all, method } from "@nifrajs/core/methods"
+
+export const app = server()
+  // GET, POST, PUT, PATCH, DELETE, HEAD and OPTIONS /echo
+  .use(all("/echo", (c) => ({ method: c.req.method })))
+  // A method outside the standard seven
+  .use(method("PURGE", "/cache/:key", (c) => ({ purged: c.params.key })))
+  // A list of methods, one handler
+  .use(method(["GET", "POST"], "/search", (c) => ({ q: c.query.get("q") })))
+```
+
+-
+**Each method is an ordinary route.** It shows in `app.routes()`, takes the
+same schema and hooks, works inside `group()`, and collides with a route already
+registered for that method and path. One call is one registration: if any of its routes is
+refused, none is added.
+
+-
+**There is no catch-all.** `all()` is the seven standard methods, and a
+request with any other method is still a `405` with an `Allow`
+header. To hand every request under a path to another handler whatever its method, use
+`mount()`.
+
+-
+**A method name** is case-insensitive and registered uppercase: letters, digits and
+hyphens, starting with a letter, at most 32 characters. `TRACE`,
+`CONNECT` and `TRACK` are refused, and so is any other value, with
+`INVALID_METHOD` when `method()` is called.
+
+-
+**A custom method has no typed-client call and no OpenAPI entry.** The standard methods
+in the same call keep both. Call a custom one with
+`fetch(url, { method: "PURGE" })`.
+
+-
+**An assurance policy selects standard methods only.** A rule with `methods`
+never matches a custom-method route, so classify it with a path rule. Left unmatched, it is
+reported as `unclassified-route`.
+
+Whether a custom method reaches the app is up to the runtime's HTTP parser.
+`PROPFIND`, `REPORT`, `PURGE` and `QUERY` arrive on
+Bun, Node, Deno and workerd. A token the parser does not know is answered by the runtime
+itself on Bun, Node and workerd, before the app sees it. The compact server from
+`@nifrajs/edge` has no `use()` and takes neither function.
+
 ### Status, headers & cookies (c.set)
 
 Return a plain object and Nifra serializes it with a `200` (or `204` when
@@ -12699,7 +12752,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/core
 
-`AdmissionController`, `AdmissionDecision`, `AnyServer`, `authenticated`, `AuthenticationFailure`, `AuthenticationFailureReason`, `AuthenticationInput`, `AuthenticationResult`, `AuthenticationStage`, `AuthenticationSuccess`, `AuthHeaders`, `AuthMaybePromise`, `commonSecretPatterns`, `Context`, `ContextPlugin`, `cookieNamePrefix`, `CookieOptions`, `CookieSecret`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `DefinePluginResult`, `defineRouterPlugin`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FetchApp`, `FRAMEWORK_NAME`, `FrameworkError`, `FrameworkName`, `Handler`, `hasDuplicateCookie`, `IdentityPlugin`, `InferInput`, `InferOutput`, `isSameOriginPath`, `isSameOriginRequest`, `JoinRoutePath`, `jsonLogger`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `LogFields`, `Logger`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `METHODS`, `Middleware`, `MountableApp`, `MountFetchOptions`, `MountOptions`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `Params`, `parseCookies`, `pathnameOf`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `PrefixRegistry`, `Prettify`, `PromptArgument`, `PromptMessage`, `redactLogFields`, `RedactOptions`, `Registry`, `rejected`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `ROUTE_PATTERN_OVERLAP_MAX_STATES`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `routePatternOverlap`, `RoutePatternOverlapLimitError`, `Router`, `RouterMatch`, `RouteSchema`, `RunningServer`, `ScheduledController`, `ScheduledHandler`, `serializeCookie`, `server`, `Server`, `ServerOptions`, `signValue`, `silentLogger`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `status`, `StatusResponse`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `ToolAnnotations`, `toVercelHandler`, `TypedSSEStream`, `unsignValue`, `UrlParts`, `urlPartsOf`, `ValidationOutcome`, `VercelHandler`, `Version`, `VERSION`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`
+`AdmissionController`, `AdmissionDecision`, `AnyServer`, `authenticated`, `AuthenticationFailure`, `AuthenticationFailureReason`, `AuthenticationInput`, `AuthenticationResult`, `AuthenticationStage`, `AuthenticationSuccess`, `AuthHeaders`, `AuthMaybePromise`, `commonSecretPatterns`, `Context`, `ContextPlugin`, `cookieNamePrefix`, `CookieOptions`, `CookieSecret`, `defineContextPlugin`, `defineIdentityPlugin`, `definePlugin`, `DefinePluginResult`, `defineRouterPlugin`, `DurableObjectNamespaceLike`, `ExecutionContext`, `FetchApp`, `FRAMEWORK_NAME`, `FrameworkError`, `FrameworkName`, `Handler`, `hasDuplicateCookie`, `IdentityPlugin`, `InferInput`, `InferOutput`, `isSameOriginPath`, `isSameOriginRequest`, `JoinRoutePath`, `jsonLogger`, `LambdaEvent`, `LambdaHandler`, `LambdaResponse`, `LambdaV1Event`, `LambdaV2Event`, `LogFields`, `Logger`, `McpPromptDescriptor`, `McpResourceDescriptor`, `Method`, `METHODS`, `Middleware`, `MountableApp`, `MountFetchOptions`, `MountOptions`, `NetlifyEvent`, `NetlifyHandler`, `NifraFeatureVersion`, `NifraPlugin`, `NifraWebSocket`, `NodeRequestContext`, `NodeRequestHook`, `NodeResponseBodyHook`, `NodeResponseContext`, `NodeResponseHook`, `NodeServeOutcome`, `OnRequestResult`, `Params`, `parseCookies`, `pathnameOf`, `PlainRender`, `Platform`, `PlatformResponse`, `PluginTypeCollapsed`, `PrefixRegistry`, `Prettify`, `PromptArgument`, `PromptMessage`, `redactLogFields`, `RedactOptions`, `Registry`, `rejected`, `ResponseBodyHook`, `ResponseBodyReplacement`, `ResponseControls`, `ResponseFinalization`, `ResponseHeadersHook`, `ResponseHeadersView`, `ResponseMapFor`, `ResponseResult`, `ROUTE_PATTERN_OVERLAP_MAX_STATES`, `RouteConfigError`, `RouteConfigErrorCode`, `RouteDescriptor`, `RouteInfo`, `RouteInfoFor`, `RouteMethod`, `routePatternOverlap`, `RoutePatternOverlapLimitError`, `Router`, `RouterMatch`, `RouteSchema`, `RunningServer`, `ScheduledController`, `ScheduledHandler`, `serializeCookie`, `server`, `Server`, `ServerOptions`, `signValue`, `silentLogger`, `SSEContext`, `SSEInit`, `SSEMessage`, `SSEStream`, `StandardIssue`, `StandardResult`, `StandardSchemaV1`, `StandardTypes`, `StandardWebSocket`, `status`, `StatusResponse`, `toFetchHandler`, `toLambdaHandler`, `toNetlifyHandler`, `ToolAnnotations`, `toVercelHandler`, `TypedSSEStream`, `unsignValue`, `UrlParts`, `urlPartsOf`, `ValidationOutcome`, `VercelHandler`, `Version`, `VERSION`, `WebSocketContext`, `WebSocketData`, `WebSocketHandler`, `WebSocketUpgradeOutcome`
 
 ## @nifrajs/cron
 

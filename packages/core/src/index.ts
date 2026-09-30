@@ -28,7 +28,13 @@ export {
   RoutePatternOverlapLimitError,
   routePatternOverlap,
 } from "./router/overlap.ts"
-export { METHODS, type Method, Router, type RouterMatch } from "./router/router.ts"
+export {
+  METHODS,
+  type Method,
+  type RouteMethod,
+  Router,
+  type RouterMatch,
+} from "./router/router.ts"
 export type {
   InferInput,
   InferOutput,

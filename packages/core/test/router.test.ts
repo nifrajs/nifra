@@ -319,7 +319,8 @@ describe("Router.add - boot-time rejection (L2)", () => {
     ["path without leading slash", () => router().add("GET", "no-slash", "x"), "INVALID_PATH"],
     ["empty path", () => router().add("GET", "", "x"), "INVALID_PATH"],
     // Cast exercises the runtime guard that protects non-TS callers.
-    ["invalid method", () => router().add("BREW" as "GET", "/coffee", "x"), "INVALID_METHOD"],
+    ["invalid method", () => router().add("GE T" as "GET", "/coffee", "x"), "INVALID_METHOD"],
+    ["refused method", () => router().add("TRACE" as "GET", "/coffee", "x"), "INVALID_METHOD"],
   ]
 
   for (const [name, run, code] of cases) {

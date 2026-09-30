@@ -24,6 +24,12 @@
     "code": "import { client } from \"@nifrajs/client\"\nimport type { app } from \"./server\"\n\n// Infers the server's types directly - no codegen, no schema duplication.\nconst api = client<typeof app>(\"https://api.example.com\")\n\nconst { data } = await api.users({ id: \"1\" }).get()         // path param → /users/1\nawait api.users.post({ name: \"Ada\" })                       // POST body\nawait api.search.get({ query: { page: \"3\" } })              // query string\nawait api.users({ id: \"1\" }).posts({ postId: \"2\" }).get()   // nested params"
   },
   {
+    "name": "METHOD_ROUTES",
+    "topic": "Nifra - API & typed client",
+    "slug": "api",
+    "code": "import { server } from \"@nifrajs/core/server\"\nimport { all, method } from \"@nifrajs/core/methods\"\n\nexport const app = server()\n  // GET, POST, PUT, PATCH, DELETE, HEAD and OPTIONS /echo\n  .use(all(\"/echo\", (c) => ({ method: c.req.method })))\n  // A method outside the standard seven\n  .use(method(\"PURGE\", \"/cache/:key\", (c) => ({ purged: c.params.key })))\n  // A list of methods, one handler\n  .use(method([\"GET\", \"POST\"], \"/search\", (c) => ({ q: c.query.get(\"q\") })))"
+  },
+  {
     "name": "OPTIONAL_PARAMS",
     "topic": "Nifra - API & typed client",
     "slug": "api",

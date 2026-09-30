@@ -1494,7 +1494,7 @@ Every public export of every package and documented subpath - name, kind, signat
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ - `interface Logger`
 - **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]`
-  HTTP methods the router accepts.
+  The standard HTTP methods: the ones with a builder on the server and a call on the typed client.
 - **McpPromptDescriptor** _(interface)_ - `interface McpPromptDescriptor`
   An app-declared MCP prompt - a reusable prompt template an agent can fetch through `nifra mcp`.
 - **McpResourceDescriptor** _(interface)_ - `interface McpResourceDescriptor`
@@ -1577,6 +1577,8 @@ Every public export of every package and documented subpath - name, kind, signat
   One route's input/output shape as the **client** will consume it. `query`/`body` are `never` when the route declares no schema for them, so the client can detect "this route takes no body" via `[body] extends [never]`. `output` is the handler's raw return type (the client applies `Jsonify` when rea…
 - **RouteInfoFor** _(type)_ - `type RouteInfoFor<Path extends string, S extends RouteSchema, Output, HookOutput = never>`
   Build a {@link RouteInfo} from a route's path, schema, and handler output type.
+- **RouteMethod** _(type)_ - `type RouteMethod = Method | (string & {})`
+  A method a route is registered under: a standard {@link Method}, or another token that {@link isRegistrableMethod} accepts (`PROPFIND`, `PURGE`, ...).
 - **RoutePatternOverlapLimitError** _(class)_ - `class RoutePatternOverlapLimitError`
 - **RouteSchema** _(interface)_ - `interface RouteSchema`
   Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…).
@@ -2392,6 +2394,15 @@ Every public export of every package and documented subpath - name, kind, signat
 - **mcp** _(function)_ - `mcp: () => IdentityPlugin`
   Enable MCP declarations on a server: `.use(mcp())` turns on `.tool()`, `.resource()`, and `.prompt()`. Applying it twice is a no-op (named plugin dedupe).
 
+### `@nifrajs/core/methods`
+
+- **MethodRoutesPlugin** _(interface)_ - `interface MethodRoutesPlugin<M extends string, Path extends string, S extends RouteSchema, Output, Ctx>`
+  What `all()` and `method()` from `@nifrajs/core/methods` return: a plugin for `app.use()` that registers one handler under the methods `M` of `Path`. It is opaque - apply it with `use`, which reads the route's types from it and adds them to the app's registry.
+- **all** _(function)_ - `all: { <Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>, Ctx = {}>(path: Path, schema: S, handler: H): MethodRoutesPlugin<Method, Path, S, OutputOf<H>, Ctx>; <Path extends string, H extends H…`
+  Register one handler under every standard method: `app.use(all(path, handler))`.
+- **method** _(function)_ - `method: { <const M extends string, Path extends string, S extends RouteSchema, H extends Handler<Path, S, Ctx>, Ctx = {}>(name: M | readonly M[], path: Path, schema: S, handler: H): MethodRoutesPlugin<M, Path, S, Output…`
+  Register one handler under the method, or the methods, you name: `app.use(method("PROPFIND", path, handler))`.
+
 ### `@nifrajs/core/mount`
 
 - **BackendEvidenceProvider** _(type)_ - `type BackendEvidenceProvider = () => | ProjectEvidenceSnapshot | Promise<ProjectEvidenceSnapshot>`
@@ -2564,12 +2575,16 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **EMPTY_PARAMS** _(const)_ - `EMPTY_PARAMS: Record<string, string>`
 - **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]`
-  HTTP methods the router accepts.
+  The standard HTTP methods: the ones with a builder on the server and a call on the typed client.
 - **Method** _(type)_ - `type Method = (typeof METHODS)[number]`
+- **RouteMethod** _(type)_ - `type RouteMethod = Method | (string & {})`
+  A method a route is registered under: a standard {@link Method}, or another token that {@link isRegistrableMethod} accepts (`PROPFIND`, `PURGE`, ...).
 - **Router** _(class)_ - `class Router<T>`
   Radix-style segment trie router. Matching precedence is static > param > wildcard. Parameter/wildcard values are returned RAW (not percent-decoded); the server boundary decodes and rejects malformed encodings with a 400, keeping this layer pure and allocation-light.
 - **RouterMatch** _(type)_ - `type RouterMatch<T>`
   Result of {@link Router.find}. The `found: false` cases deliberately separate a missing path (404) from a path that exists for other methods (405), so the server layer can answer correctly and populate an `Allow` header.
+- **isRegistrableMethod** _(function)_ - `isRegistrableMethod: (method: string) => boolean`
+  Whether a route can be registered under `method` - one of {@link METHODS}, or another uppercase token such as `PROPFIND`. `TRACE`, `CONNECT` and `TRACK` never are.
 
 ### `@nifrajs/core/schema`
 
@@ -2657,7 +2672,7 @@ Every public export of every package and documented subpath - name, kind, signat
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ - `interface Logger`
 - **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]`
-  HTTP methods the router accepts.
+  The standard HTTP methods: the ones with a builder on the server and a call on the typed client.
 - **McpPromptDescriptor** _(interface)_ - `interface McpPromptDescriptor`
   An app-declared MCP prompt - a reusable prompt template an agent can fetch through `nifra mcp`.
 - **McpResourceDescriptor** _(interface)_ - `interface McpResourceDescriptor`
@@ -2738,6 +2753,8 @@ Every public export of every package and documented subpath - name, kind, signat
   One route's input/output shape as the **client** will consume it. `query`/`body` are `never` when the route declares no schema for them, so the client can detect "this route takes no body" via `[body] extends [never]`. `output` is the handler's raw return type (the client applies `Jsonify` when rea…
 - **RouteInfoFor** _(type)_ - `type RouteInfoFor<Path extends string, S extends RouteSchema, Output, HookOutput = never>`
   Build a {@link RouteInfo} from a route's path, schema, and handler output type.
+- **RouteMethod** _(type)_ - `type RouteMethod = Method | (string & {})`
+  A method a route is registered under: a standard {@link Method}, or another token that {@link isRegistrableMethod} accepts (`PROPFIND`, `PURGE`, ...).
 - **RoutePatternOverlapLimitError** _(class)_ - `class RoutePatternOverlapLimitError`
 - **RouteSchema** _(interface)_ - `interface RouteSchema`
   Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…).
@@ -6104,7 +6121,7 @@ _No named exports (side-effect entrypoint)._
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ - `interface Logger`
 - **METHODS** _(const)_ - `METHODS: readonly ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]`
-  HTTP methods the router accepts.
+  The standard HTTP methods: the ones with a builder on the server and a call on the typed client.
 - **McpPromptDescriptor** _(interface)_ - `interface McpPromptDescriptor`
   An app-declared MCP prompt - a reusable prompt template an agent can fetch through `nifra mcp`.
 - **McpResourceDescriptor** _(interface)_ - `interface McpResourceDescriptor`
@@ -6187,6 +6204,8 @@ _No named exports (side-effect entrypoint)._
   One route's input/output shape as the **client** will consume it. `query`/`body` are `never` when the route declares no schema for them, so the client can detect "this route takes no body" via `[body] extends [never]`. `output` is the handler's raw return type (the client applies `Jsonify` when rea…
 - **RouteInfoFor** _(type)_ - `type RouteInfoFor<Path extends string, S extends RouteSchema, Output, HookOutput = never>`
   Build a {@link RouteInfo} from a route's path, schema, and handler output type.
+- **RouteMethod** _(type)_ - `type RouteMethod = Method | (string & {})`
+  A method a route is registered under: a standard {@link Method}, or another token that {@link isRegistrableMethod} accepts (`PROPFIND`, `PURGE`, ...).
 - **RoutePatternOverlapLimitError** _(class)_ - `class RoutePatternOverlapLimitError`
 - **RouteSchema** _(interface)_ - `interface RouteSchema`
   Per-route input schemas. Each is any Standard Schema (zod/valibot/arktype/…).

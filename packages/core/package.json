@@ -242,6 +242,11 @@
       "types": "./dist/server/body-parser.d.ts",
       "default": "./dist/server/body-parser.js"
     },
+    "./methods": {
+      "bun": "./src/server/methods.ts",
+      "types": "./dist/server/methods.d.ts",
+      "default": "./dist/server/methods.js"
+    },
     "./not-found": {
       "bun": "./src/server/not-found.ts",
       "types": "./dist/server/not-found.d.ts",

@@ -114,6 +114,17 @@ export const app = server()
   // GET /archive, GET /archive/2026 and GET /archive/2026/09
   .get("/archive/:year?/:month?", (c) => ({ year: c.params.year, month: c.params.month }))`
 
+const METHOD_ROUTES = `import { server } from "@nifrajs/core/server"
+import { all, method } from "@nifrajs/core/methods"
+
+export const app = server()
+  // GET, POST, PUT, PATCH, DELETE, HEAD and OPTIONS /echo
+  .use(all("/echo", (c) => ({ method: c.req.method })))
+  // A method outside the standard seven
+  .use(method("PURGE", "/cache/:key", (c) => ({ purged: c.params.key })))
+  // A list of methods, one handler
+  .use(method(["GET", "POST"], "/search", (c) => ({ q: c.query.get("q") })))`
+
 export default function Api() {
   return (
     <div className="prose">
@@ -175,6 +186,51 @@ export default function Api() {
         Other param modifiers (<code>:id+</code>, <code>:id*</code>, <code>{`:id{[0-9]+}`}</code>,{" "}
         <code>{":id(\\d+)"}</code>) are not part of the path grammar and match as literal text. Where that
         text is intended, put <code>{"// nifra-expect param-modifier"}</code> above the registration.
+      </p>
+
+      <h2>Several methods, custom methods (all, method)</h2>
+      <p>
+        <code>all()</code> registers one handler under every standard method, and <code>method()</code>{" "}
+        under the method or methods you name, including one outside the standard seven. Both come
+        from <code>@nifrajs/core/methods</code> and are applied with <code>use()</code>:
+      </p>
+      <CodeBlock code={METHOD_ROUTES} />
+      <ul>
+        <li>
+          <b>Each method is an ordinary route.</b> It shows in <code>app.routes()</code>, takes the
+          same schema and hooks, works inside <code>group()</code>, and collides with a route already
+          registered for that method and path. One call is one registration: if any of its routes is
+          refused, none is added.
+        </li>
+        <li>
+          <b>There is no catch-all.</b> <code>all()</code> is the seven standard methods, and a
+          request with any other method is still a <code>405</code> with an <code>Allow</code>{" "}
+          header. To hand every request under a path to another handler whatever its method, use{" "}
+          <code>mount()</code>.
+        </li>
+        <li>
+          <b>A method name</b> is case-insensitive and registered uppercase: letters, digits and
+          hyphens, starting with a letter, at most 32 characters. <code>TRACE</code>,{" "}
+          <code>CONNECT</code> and <code>TRACK</code> are refused, and so is any other value, with{" "}
+          <code>INVALID_METHOD</code> when <code>method()</code> is called.
+        </li>
+        <li>
+          <b>A custom method has no typed-client call and no OpenAPI entry.</b> The standard methods
+          in the same call keep both. Call a custom one with{" "}
+          <code>{`fetch(url, { method: "PURGE" })`}</code>.
+        </li>
+        <li>
+          <b>An assurance policy selects standard methods only.</b> A rule with <code>methods</code>{" "}
+          never matches a custom-method route, so classify it with a path rule. Left unmatched, it is
+          reported as <code>unclassified-route</code>.
+        </li>
+      </ul>
+      <p className="caveat">
+        Whether a custom method reaches the app is up to the runtime's HTTP parser.{" "}
+        <code>PROPFIND</code>, <code>REPORT</code>, <code>PURGE</code> and <code>QUERY</code> arrive on
+        Bun, Node, Deno and workerd. A token the parser does not know is answered by the runtime
+        itself on Bun, Node and workerd, before the app sees it. The compact server from{" "}
+        <code>@nifrajs/edge</code> has no <code>use()</code> and takes neither function.
       </p>
 
       <h2>Status, headers &amp; cookies (c.set)</h2>

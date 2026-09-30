@@ -294,3 +294,68 @@ test("route rules are total over malformed project facts", async () => {
   )
   expect(findings).toEqual([])
 })
+
+describe("routes registered by all() and method()", () => {
+  const withMethods = (lines: string[]): string =>
+    [
+      'import { server } from "@nifrajs/core"',
+      'import { all, method } from "@nifrajs/core/methods"',
+      "const app = server()",
+      ...lines,
+    ].join("\n")
+
+  test("a path rule reports an all() call once, not once per method", async () => {
+    const findings = await scan(
+      "backend.ts",
+      withMethods(['  .use(all("/api/delete", handler))', '  .use(all("/u/:id+", handler))']),
+    )
+    expect(findings.filter((f) => f.code === "NF-C018")).toHaveLength(1)
+    expect(findings.filter((f) => f.code === "NF-C026")).toHaveLength(1)
+  })
+
+  test("NF-C019 reports a method already registered on the path, once per call", async () => {
+    const findings = await scan(
+      "backend.ts",
+      withMethods(['  .get("/echo", handler)', '  .use(all("/echo", handler))']),
+    )
+    const dupes = findings.filter((f) => f.code === "NF-C019")
+    expect(dupes).toHaveLength(1)
+    expect(dupes[0]?.message).toContain("GET /echo")
+
+    const twice = await scan(
+      "backend.ts",
+      withMethods(['  .use(all("/echo", handler))', '  .use(all("/echo", handler))']),
+    )
+    expect(twice.filter((f) => f.code === "NF-C019")).toHaveLength(1)
+  })
+
+  test("NF-C019 sees a custom method registered twice and leaves distinct ones alone", async () => {
+    const dupes = await scan(
+      "backend.ts",
+      withMethods([
+        '  .use(method("PURGE", "/cache/:key", handler))',
+        '  .use(method(["purge", "REPORT"], "/cache/:key", handler))',
+      ]),
+    )
+    const found = dupes.filter((f) => f.code === "NF-C019")
+    expect(found).toHaveLength(1)
+    expect(found[0]?.message).toContain("PURGE /cache/:key")
+
+    const distinct = await scan(
+      "backend.ts",
+      withMethods([
+        '  .use(method("PURGE", "/cache/:key", handler))',
+        '  .use(method("REPORT", "/cache/:key", handler))',
+      ]),
+    )
+    expect(distinct.filter((f) => f.code === "NF-C019")).toEqual([])
+  })
+
+  test("NF-C024 reports an overlap with an all() route once per pair of calls", async () => {
+    const findings = await scan(
+      "backend.ts",
+      withMethods(['  .use(all("/items/:id", handler))', '  .use(all("/items/new", handler))']),
+    )
+    expect(findings.filter((f) => f.code === "NF-C024")).toHaveLength(1)
+  })
+})

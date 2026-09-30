@@ -42,7 +42,7 @@ import { compileRouteProgram, executeRouteProgram } from "../internal/route-prog
 import { isSameOriginRequest } from "../internal/same-origin.ts"
 import type { ResponseObserverPlugin } from "../response-observer.ts"
 import { decodeRouteParams, expandOptionalParams } from "../router/pattern.ts"
-import { EMPTY_PARAMS, type Method, Router } from "../router/router.ts"
+import { EMPTY_PARAMS, METHODS, type Method, Router } from "../router/router.ts"
 import type {
   InferOutput,
   StandardIssue,
@@ -161,8 +161,10 @@ import type { NotFoundLane } from "./not-found-answer.ts"
 import type {
   ContextPlugin,
   IdentityPlugin,
+  MethodRoutesPlugin,
   PluginTypeCollapsed,
   ServerTypeUnpinned,
+  WithMethodRoutes,
 } from "./plugin.ts"
 import type {
   AddRoute,
@@ -476,8 +478,10 @@ export {
   defineIdentityPlugin,
   definePlugin,
   defineRouterPlugin,
+  type MethodRoutesPlugin,
   type NifraPlugin,
   type PluginTypeCollapsed,
+  type WithMethodRoutes,
 } from "./plugin.ts"
 export type { IdentityPlugin }
 
@@ -1399,6 +1403,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     return this
   }
 
+  /**
+   * Apply `all()` or `method()` from `@nifrajs/core/methods`: one handler registered under several
+   * methods, or under a method outside the standard seven. The standard methods join the registry.
+   *
+   * Declared first on purpose. The plugin's handler is typed against this app's context, which
+   * TypeScript reads from the first overload it tries.
+   */
+  use<M extends string, Path extends string, S extends RouteSchema, Output>(
+    plugin: MethodRoutesPlugin<M, Path, S, Output, Ctx>,
+  ): Server<WithMethodRoutes<R, M, Path, S, Output, HookOutput>, Ctx, HookOutput>
   /** Enable the opt-in portable response observer methods. */
   use(plugin: ResponseObserverPlugin): this & ResponseObserverMethods
   /**
@@ -1444,7 +1458,14 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    */
   use<M extends Middleware>(mw: M): Server<R, Ctx, HookOutput | MiddlewareOutputOf<M>>
   use(mw: Middleware): this
-  use(arg: Middleware | ((app: this) => AnyServer)): AnyServer {
+  use(
+    input:
+      | Middleware
+      | ((app: this) => AnyServer)
+      | MethodRoutesPlugin<string, string, RouteSchema, unknown, Ctx>,
+  ): AnyServer {
+    // A method-routes plugin is an ordinary plugin function; only its type is opaque.
+    const arg = input as Middleware | ((app: this) => AnyServer)
     this.assertConfigurable("use()")
     if (typeof arg === "function") {
       const name = (arg as { pluginName?: string }).pluginName
@@ -1906,7 +1927,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * is the "compiled", order-scoped per-route chain.
    */
   register(
-    method: Method,
+    method: string,
     path: string,
     schema: RouteSchema | undefined,
     handler: (context: never) => unknown,
@@ -1921,7 +1942,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * so reflection, OpenAPI, evidence and the typed client all see ordinary routes. */
   registerBatch(
     routes: readonly {
-      readonly method: Method
+      readonly method: string
       readonly path: string
       readonly schema: RouteSchema | undefined
       readonly handler: (context: never) => unknown
@@ -1953,7 +1974,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   }
 
   private prepareRoute(
-    method: Method,
+    method: string,
     path: string,
     schema: RouteSchema | undefined,
     handler: (context: never) => unknown,
@@ -6061,11 +6082,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     for (const { method, path, pattern, entry } of this.catalog.entries()) {
       // A preflight hook is intentionally handled by the fallback fetch path. Keeping OPTIONS out
       // of the native table means Bun dispatches it through CORS's onRequest hook even when the
-      // same path has native GET/POST handlers.
+      // same path has native GET/POST handlers. A method outside the standard set also stays on the
+      // fallback: Bun's table has no slot for it, and the portable router serves it.
       if (
-        this.onRequestHooks.length > 0 &&
-        this.bunNativeRequestHooksSafe &&
-        method === "OPTIONS"
+        !METHODS.includes(method as Method) ||
+        (this.onRequestHooks.length > 0 && this.bunNativeRequestHooksSafe && method === "OPTIONS")
       ) {
         continue
       }
@@ -6077,7 +6098,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       }
       const paramNames = pattern.paramNames
       const fused = mayUseFusedNative ? entry.execution.fusedWeb : undefined
-      methods[method] = this.compileBunNativeHandler(
+      methods[method as Method] = this.compileBunNativeHandler(
         entry,
         paramNames,
         fused,

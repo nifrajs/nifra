@@ -431,6 +431,16 @@ function buildOperation(input: OperationInput, store: SchemaStore): OpenAPIOpera
   return operation
 }
 
+const PATH_ITEM_METHODS: ReadonlySet<string> = new Set([
+  "get",
+  "put",
+  "post",
+  "delete",
+  "options",
+  "head",
+  "patch",
+])
+
 function addOperation(
   paths: Record<string, Record<string, OpenAPIOperation>>,
   method: string,
@@ -438,6 +448,9 @@ function addOperation(
   store: SchemaStore,
   operations: ToOpenAPIOptions["operations"],
 ): void {
+  // A path item has a field for each standard method and no place for any other, so a route
+  // registered under a custom method is left out of the document.
+  if (!PATH_ITEM_METHODS.has(method.toLowerCase())) return
   const templated = toTemplatedPath(input.path)
   const pathItem = paths[templated] ?? {}
   paths[templated] = pathItem

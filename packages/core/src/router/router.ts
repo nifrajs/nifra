@@ -9,15 +9,28 @@ import {
   mixedSegmentShape,
 } from "./pattern.ts"
 
-/** HTTP methods the router accepts. */
+/** The standard HTTP methods: the ones with a builder on the server and a call on the typed client. */
 export const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const
 
 export type Method = (typeof METHODS)[number]
 
-const METHOD_SET: ReadonlySet<string> = new Set(METHODS)
+/**
+ * A method a route is registered under: a standard {@link Method}, or another token that
+ * {@link isRegistrableMethod} accepts (`PROPFIND`, `PURGE`, ...).
+ */
+export type RouteMethod = Method | (string & {})
 
-function isMethod(value: string): value is Method {
-  return METHOD_SET.has(value)
+// A method token is 1-32 characters of `A-Z`, `0-9` and `-`, starting with a letter. TRACE, CONNECT
+// and TRACK are left out: TRACE (and its alias TRACK) asks a server to echo the request back,
+// headers included, and CONNECT asks for a tunnel. Neither is something a route handler answers.
+const REGISTRABLE_METHOD = /^(?!(TRAC[EK]|CONNECT)$)[A-Z][A-Z\d-]{0,31}$/
+
+/**
+ * Whether a route can be registered under `method` - one of {@link METHODS}, or another uppercase
+ * token such as `PROPFIND`. `TRACE`, `CONNECT` and `TRACK` never are.
+ */
+export function isRegistrableMethod(method: string): boolean {
+  return REGISTRABLE_METHOD.test(method)
 }
 
 const SLASH = 47
@@ -307,12 +320,10 @@ export class Router<T> {
    * (`/users/:id?`) are expanded by the caller, which adds each pattern `expandOptionalParams`
    * (`@nifrajs/core/pattern`) gives for it.
    */
-  add(method: Method, pattern: string | CompiledRoutePattern, payload: T): void {
+  add(method: string, pattern: string | CompiledRoutePattern, payload: T): void {
     DYNAMIC_MATCH_CACHES.delete(this)
     const upper = method.toUpperCase()
-    // The `Method` parameter type is the compile-time guard; this re-checks at
-    // runtime for JS callers and dynamically-computed methods.
-    if (!isMethod(upper)) {
+    if (!isRegistrableMethod(upper)) {
       throw new RouteConfigError("INVALID_METHOD", `unsupported HTTP method "${method}"`)
     }
     const compiled = typeof pattern === "string" ? compileRoutePattern(pattern) : pattern

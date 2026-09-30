@@ -16,6 +16,7 @@ import {
   snapshotCapabilities,
   validCapabilityId,
 } from "@nifrajs/core/capabilities"
+import { expandOptionalParams } from "@nifrajs/core/pattern"
 import { type ReflectedRoute, reflectRoutes } from "@nifrajs/core/reflection"
 import { scanStaticRouteText, stripComments, walkSource } from "./check.ts"
 
@@ -312,6 +313,15 @@ async function walkRouteModules(
   return { covered, evidence, violations, truncations }
 }
 
+/** The reflected paths a statically collected pattern stands for; a malformed pattern is itself. */
+function staticRouteForms(path: string): readonly string[] {
+  try {
+    return expandOptionalParams(path)
+  } catch {
+    return [path]
+  }
+}
+
 /** Build coverage-qualified static evidence for every reflected route. */
 export async function collectCapabilityProjectReport(
   cwd: string,
@@ -324,9 +334,12 @@ export async function collectCapabilityProjectReport(
   const automatic = new Map<string, Set<string>>()
   for (const [file, content] of sources) {
     for (const route of scanStaticRouteText(file, content)) {
-      const modules = automatic.get(routeKey(route.method, route.path)) ?? new Set<string>()
-      modules.add(file)
-      automatic.set(routeKey(route.method, route.path), modules)
+      // A path ending in optional params is reflected as one route per form it serves.
+      for (const path of staticRouteForms(route.path)) {
+        const modules = automatic.get(routeKey(route.method, path)) ?? new Set<string>()
+        modules.add(file)
+        automatic.set(routeKey(route.method, path), modules)
+      }
     }
   }
 

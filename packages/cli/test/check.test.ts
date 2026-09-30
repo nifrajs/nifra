@@ -366,6 +366,57 @@ describe("scanStaticRouteText - conservative source-only route collection", () =
     ).toEqual(["GET /legacy"])
   })
 
+  test("collects the routes all() and method() register, one per method", () => {
+    const src = [
+      'import { server } from "@nifrajs/core"',
+      'import { all, method } from "@nifrajs/core/methods"',
+      "export const backend = server()",
+      '  .use(all("/echo", handler))',
+      "  .use(method('PURGE', '/cache/:key', handler))",
+      '  .use(method(["get", "REPORT"], "/doc", { body }, handler))',
+    ].join("\n")
+    const routes = scanStaticRouteText("backend.ts", src)
+    expect(routes.map((r) => `${r.line} ${r.method} ${r.path}`)).toEqual([
+      "4 GET /echo",
+      "4 POST /echo",
+      "4 PUT /echo",
+      "4 PATCH /echo",
+      "4 DELETE /echo",
+      "4 HEAD /echo",
+      "4 OPTIONS /echo",
+      "5 PURGE /cache/:key",
+      "6 GET /doc",
+      "6 REPORT /doc",
+    ])
+    // The AST pass agrees with the lexical one on real calls.
+    expect(scanStaticRouteText("backend.ts", src, createSourceFacts(ts))).toEqual(routes)
+  })
+
+  test("all() and method() are read only in a module that imports the methods subpath", () => {
+    const src = [
+      'import { server } from "@nifrajs/core"',
+      'const everything = all("/not-a-route", handler)',
+      'const one = method("PURGE", "/not-a-route", handler)',
+    ].join("\n")
+    expect(scanStaticRouteText("backend.ts", src)).toEqual([])
+  })
+
+  test("a member call, a non-literal path and a name that is not a literal are not collected", () => {
+    const facts = createSourceFacts(ts)
+    const src = [
+      'import { server } from "@nifrajs/core"',
+      'import { all, method } from "@nifrajs/core/methods"',
+      'const a = Promise.all("/member", handler)',
+      "const b = all(path, handler)",
+      'const c = method(name, "/dynamic-name", handler)',
+      'const d = method([name, "PURGE"], "/partly", handler)',
+      "const docs = 'all(\"/in-a-string\", handler)'",
+    ].join("\n")
+    expect(
+      scanStaticRouteText("backend.ts", src, facts).map((r) => `${r.method} ${r.path}`),
+    ).toEqual(["PURGE /partly"])
+  })
+
   test("AST refinement ignores route-shaped text inside ordinary strings", () => {
     const facts = createSourceFacts(ts)
     const src = [

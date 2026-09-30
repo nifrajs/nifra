@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import {
+  apiRoutesSection,
   buildRouteGraph,
   buildRouteTable,
   clientCall,
@@ -165,6 +166,14 @@ describe("clientCall - typed-client call form per route", () => {
   test("casing is preserved, because verbs are intercepted case-insensitively", () => {
     expect(clientCall("POST", "/api/Delete", undefined)).toBe('await api.api("Delete").post()')
   })
+
+  test("a method the typed client has no call for is sent with fetch", () => {
+    expect(clientCall("PROPFIND", "/dav/*path", undefined)).toBe(
+      'await fetch(url, { method: "PROPFIND" })',
+    )
+    // Never a proxy chain: `.purge()` is not a verb, so it would be read as a path segment.
+    expect(clientCall("PURGE", "/cache/:key", { body: {} })).not.toContain("api.")
+  })
 })
 
 describe("clientSpellingFor - the `nifra routes` collision annotation", () => {
@@ -230,6 +239,25 @@ describe("routesToJson - structured list_routes / get_route_schema", () => {
       } as RouteJson,
       { method: "GET", path: "/users/:id", call: "await api.users({ id }).get()" } as RouteJson,
     ])
+  })
+
+  test("a custom-method route is listed with a fetch call, in JSON and in the brief", () => {
+    const routes = [
+      { method: "PURGE", path: "/cache/:key" },
+      { method: "GET", path: "/cache/:key" },
+    ]
+    expect(routesToJson(appWith(routes))).toEqual([
+      { method: "GET", path: "/cache/:key", call: "await api.cache({ key }).get()" },
+      { method: "PURGE", path: "/cache/:key", call: 'await fetch(url, { method: "PURGE" })' },
+    ])
+    const brief = apiRoutesSection(routes)
+    expect(brief).toContain("- `PURGE /cache/:key`")
+    expect(brief).toContain(
+      '- call: `await fetch(url, { method: "PURGE" })` (no typed-client call for this method; `url` is the path above)',
+    )
+    expect(brief).toContain(
+      "- call: `await api.cache({ key }).get()` → `{ ok, status, data, error }`",
+    )
   })
 
   test("omits absent shapes (no body/query/response keys when unschematized)", () => {

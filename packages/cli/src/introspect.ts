@@ -102,6 +102,17 @@ function schemaLines(schema: ReflectedRoute["schema"]): string[] {
 
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
+/** The verbs the typed client has a terminal call for. */
+const TYPED_VERBS: ReadonlySet<string> = new Set([
+  "get",
+  "post",
+  "put",
+  "patch",
+  "delete",
+  "head",
+  "options",
+])
+
 /**
  * The typed-client proxy chain for a path, without the terminal verb call. Shared by `clientCall`
  * and the `nifra routes` collision annotation so both teach exactly one spelling.
@@ -136,6 +147,9 @@ function clientChain(path: string): string {
 export function clientCall(method: string, path: string, schema: unknown): string {
   const s = schema as { body?: unknown; query?: unknown } | undefined
   const verb = method.toLowerCase()
+  // The typed client has a call for the standard methods only; any other method goes out through
+  // `fetch`, against the route's own path.
+  if (!TYPED_VERBS.has(verb)) return `await fetch(url, { method: ${JSON.stringify(method)} })`
   const chain = clientChain(path)
   const isBodyVerb = verb === "post" || verb === "put" || verb === "patch"
   let call: string
@@ -160,7 +174,9 @@ export function apiRoutesSection(routes: readonly ReflectedRoute[]): string {
     .flatMap((r) => [
       `- \`${r.method} ${r.path}\``,
       ...schemaLines(r.schema),
-      `    - call: \`${clientCall(r.method, r.path, r.schema)}\` → \`{ ok, status, data, error }\``,
+      TYPED_VERBS.has(r.method.toLowerCase())
+        ? `    - call: \`${clientCall(r.method, r.path, r.schema)}\` → \`{ ok, status, data, error }\``
+        : `    - call: \`${clientCall(r.method, r.path, r.schema)}\` (no typed-client call for this method; \`url\` is the path above)`,
     ])
   return `## API routes (backend.ts)\n\nEach route's \`body\`/\`query\`/\`response\` shape is its contract - the typed client derives request inputs and \`res.data\` from these, so a screen built on \`client<typeof app>\` stays in sync automatically. The \`call\` line is the exact \`client<typeof app>\` form: static path segments are properties, a path param is a call (\`({ id })\`), the verb is the terminal call (body first for POST/PUT/PATCH), and every call returns the never-throwing \`{ ok, status, data, error }\` Result.\n\n${lines.join("\n")}`
 }

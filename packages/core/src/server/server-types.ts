@@ -5,7 +5,7 @@
  */
 import type { CapabilityUseEvent } from "../internal/capability-runtime.ts"
 import type { AssuranceEvidence } from "../internal/route-assurance.ts"
-import type { Method } from "../router/router.ts"
+import type { RouteMethod } from "../router/router.ts"
 import type { ClientIpTrust } from "./client-ip.ts"
 import type { Context, Platform, RouteSchema } from "./context.ts"
 import type { Logger } from "./logger.ts"
@@ -231,7 +231,7 @@ export interface ToolAnnotations {
  * (e.g. `toOpenAPI`) enumerate routes after registration.
  */
 export interface RouteDescriptor {
-  readonly method: Method
+  readonly method: RouteMethod
   readonly path: string
   readonly schema: RouteSchema | undefined
   /** Runtime response-contract mode captured when this route was registered. */

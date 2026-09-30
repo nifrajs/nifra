@@ -13,7 +13,6 @@
 import type { EffectLifecycleObserver } from "../effect-lifecycle.ts"
 import { RouteConfigError } from "../errors.ts"
 import { type CompiledRoutePattern, compileRoutePattern } from "../router/pattern.ts"
-import type { Method } from "../router/router.ts"
 import { assertByteLimit } from "../server/body.ts"
 import type { RouteSchema } from "../server/context.ts"
 import type { IdempotencyRuntime, ResolvedIdempotency } from "../server/idempotency-lane.ts"
@@ -87,7 +86,7 @@ export interface CompiledRouteOptions {
 /** Resolve all registration-time policy and lane facts for one route. */
 export function compileRouteOptions(
   context: RouteCompilerContext,
-  method: Method,
+  method: string,
   path: string,
   schema: RouteSchema | undefined,
   handler: (context: never) => unknown,

@@ -19,6 +19,14 @@ export interface SourceFacts {
     method: string,
     path: string,
   ): boolean | undefined
+  /** A call to the free function `callee` whose argument at `pathIndex` is the literal `path`. */
+  isFunctionRouteCallAt(
+    source: TSApi.SourceFile,
+    position: number,
+    callee: string,
+    pathIndex: number,
+    path: string,
+  ): boolean | undefined
   isResponseSyntaxAt(source: TSApi.SourceFile, position: number): boolean | undefined
 }
 
@@ -112,6 +120,26 @@ export function createSourceFacts(ts: TypeScriptApi): SourceFacts {
     )
   }
 
+  const isFunctionRouteCallAt = (
+    source: TSApi.SourceFile,
+    position: number,
+    callee: string,
+    pathIndex: number,
+    path: string,
+  ): boolean | undefined => {
+    const call = ancestorAt(ts, source, position, ts.isCallExpression) as
+      | TSApi.CallExpression
+      | undefined
+    if (call === undefined || !ts.isIdentifier(call.expression)) return false
+    const argument = call.arguments[pathIndex]
+    return (
+      call.expression.text === callee &&
+      argument !== undefined &&
+      ts.isStringLiteralLike(argument) &&
+      argument.text === path
+    )
+  }
+
   const isResponseSyntaxAt = (source: TSApi.SourceFile, position: number): boolean | undefined => {
     const returnStatement = ancestorAt(ts, source, position, ts.isReturnStatement) as
       | TSApi.ReturnStatement
@@ -129,5 +157,11 @@ export function createSourceFacts(ts: TypeScriptApi): SourceFacts {
     return false
   }
 
-  return { parse, isValueImportAt, isRouteRegistrationAt, isResponseSyntaxAt }
+  return {
+    parse,
+    isValueImportAt,
+    isRouteRegistrationAt,
+    isFunctionRouteCallAt,
+    isResponseSyntaxAt,
+  }
 }

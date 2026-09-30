@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { server } from "@nifrajs/core"
 import { defineCapabilityPolicy } from "@nifrajs/core/capabilities"
+import { all, method } from "@nifrajs/core/methods"
 import {
   collectCapabilityProjectReport,
   diffCapabilitySnapshots,
@@ -80,6 +81,39 @@ describe("project provenance firewall", () => {
         chain: ["backend.ts", "./src/orders.ts", "postgres"],
       }),
     ])
+  })
+
+  test("covers every form of an optional-param route and the routes of all() and method()", async () => {
+    const cwd = join(FIXTURES, "route-forms")
+    await mkdir(join(cwd, "src"), { recursive: true })
+    // Both declared seams are imported somewhere: an unused seam rule is its own finding.
+    await writeFile(join(cwd, "src/create.ts"), 'import "app-db/write"\n')
+    await writeFile(
+      join(cwd, "backend.ts"),
+      `import { server } from "@nifrajs/core"
+       import { all, method } from "@nifrajs/core/methods"
+       import "app-db/read"
+       export const backend = server()
+         .get("/docs/:lang?/:page?", { capabilities: ["db.read"] }, handler)
+         .use(all("/echo", { capabilities: ["db.read"] }, handler))
+         .use(method(["purge", "GET"], "/cache/:key", { capabilities: ["db.read"] }, handler))`,
+    )
+    const handler = () => ({ ok: true })
+    const app = server()
+      .get("/docs/:lang?/:page?", { capabilities: ["db.read"] }, handler)
+      .use(all("/echo", { capabilities: ["db.read"] }, handler))
+      .use(method(["purge", "GET"], "/cache/:key", { capabilities: ["db.read"] }, handler))
+    const project = await collectCapabilityProjectReport(cwd, app, policy)
+
+    // 3 forms of the optional route, 7 methods of all(), 2 named methods.
+    expect(project.report.routes).toHaveLength(12)
+    expect(project.report.routes.filter((route) => !route.covered)).toEqual([])
+    expect(
+      project.report.routes.find(
+        (route) => route.method === "PURGE" && route.path === "/cache/:key",
+      ),
+    ).toMatchObject({ covered: true })
+    expect(project.report).toMatchObject({ ok: true, findings: [] })
   })
 
   test("explicit routeModules cover contract-style registrations", async () => {

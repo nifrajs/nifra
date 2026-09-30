@@ -67,6 +67,14 @@ const STATIC_IMPORT = /\bimport\s+(?!type\b)(?:[^'"();]*?\bfrom\s+)?['"]([^'"]+)
 
 const ROUTE_REGISTRATION_DQ = /\.([A-Za-z]+)\s*\(\s*"((?:\\.|[^"\\])*)"/g
 const ROUTE_REGISTRATION_SQ = /\.([A-Za-z]+)\s*\(\s*'((?:\\.|[^'\\])*)'/g
+// `all("/path", ...)` and `method("PURGE", "/path", ...)` / `method(["GET", "PURGE"], "/path", ...)`
+// from `@nifrajs/core/methods`. They are free function calls, so the member-call patterns above do
+// not see them.
+const METHODS_SUBPATH = "@nifrajs/core/methods"
+const ALL_ROUTES = /(?<![\w$.])all\s*\(\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')/g
+const METHOD_ROUTES =
+  /(?<![\w$.])method\s*\(\s*(\[[^\]]*\]|"[^"\\]*"|'[^'\\]*')\s*,\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')/g
+const METHOD_NAME_LITERAL = /(["'])([A-Za-z][A-Za-z0-9-]{0,31})\1/g
 export const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
 export interface StaticRouteFinding extends SourceFinding {
@@ -521,7 +529,68 @@ export function scanStaticRouteText(
   return [
     ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_DQ, facts),
     ...scanRoutePattern(file, content, code, ROUTE_REGISTRATION_SQ, facts),
+    ...(code.includes(METHODS_SUBPATH) ? scanMethodRoutes(file, content, code, facts) : []),
   ].sort(bySite)
+}
+
+/**
+ * Routes registered through `all()` and `method()`: one finding per method the call registers, all
+ * on the call's line. A method name that is not a literal is not guessed at, so a list built at
+ * runtime contributes only the names written in it.
+ */
+function scanMethodRoutes(
+  file: string,
+  content: string,
+  code: string,
+  facts?: SourceFacts,
+): StaticRouteFinding[] {
+  const out: StaticRouteFinding[] = []
+  const lines = content.split("\n")
+  const collect = (
+    index: number,
+    callee: string,
+    pathIndex: number,
+    rawPath: string | undefined,
+    quote: string,
+    methods: readonly string[],
+  ): void => {
+    const path = parseQuotedLiteral(`${quote}${rawPath ?? ""}${quote}`)
+    if (path === undefined || !path.startsWith("/") || path.startsWith("//")) return
+    if (facts !== undefined) {
+      const source = facts.parse(file, content)
+      // Same contract as a member-call registration: a parsed source is authoritative, an
+      // unparseable one keeps the lexical finding.
+      if (
+        source !== undefined &&
+        facts.isFunctionRouteCallAt(source, index, callee, pathIndex, path) !== true
+      )
+        return
+    }
+    const line = lineAt(content, index)
+    const snippet = (lines[line - 1] ?? "").trim()
+    for (const method of methods) out.push({ file, line, snippet, method, path })
+  }
+
+  ALL_ROUTES.lastIndex = 0
+  for (let m = ALL_ROUTES.exec(code); m !== null; m = ALL_ROUTES.exec(code)) {
+    const double = m[1] !== undefined
+    collect(m.index, "all", 0, double ? m[1] : m[2], double ? '"' : "'", [...HTTP_VERBS])
+  }
+  METHOD_ROUTES.lastIndex = 0
+  for (let m = METHOD_ROUTES.exec(code); m !== null; m = METHOD_ROUTES.exec(code)) {
+    const names = new Set<string>()
+    METHOD_NAME_LITERAL.lastIndex = 0
+    for (
+      let name = METHOD_NAME_LITERAL.exec(m[1] ?? "");
+      name !== null;
+      name = METHOD_NAME_LITERAL.exec(m[1] ?? "")
+    ) {
+      names.add((name[2] ?? "").toUpperCase())
+    }
+    const double = m[2] !== undefined
+    collect(m.index, "method", 1, double ? m[2] : m[3], double ? '"' : "'", [...names])
+  }
+  return out
 }
 
 /**
