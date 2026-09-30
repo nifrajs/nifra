@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { RouteConfigError } from "../src/errors.ts"
-import { Router } from "../src/router/router.ts"
+import { Router, type RouterMatch } from "../src/router/router.ts"
 
 function router() {
   return new Router<string>()
@@ -192,13 +192,41 @@ describe("Router.find - 404 vs 405", () => {
 })
 
 describe("Router.find - tolerance", () => {
-  test("matches regardless of method casing", () => {
+  test("compares the method token exactly, so a case variant is a different method", () => {
     const r = router()
     r.add("GET", "/x", "x")
-    const upper = r.find("GET", "/x")
-    const lower = r.find("get", "/x")
-    expect(lower).toMatchObject({ payload: "x" })
-    expect(lower).toBe(upper)
+    r.add("POST", "/u/:id", "u")
+    const miss: RouterMatch<string> = {
+      found: false,
+      reason: "method-not-allowed",
+      allowed: ["GET", "HEAD"],
+    }
+    expect(r.find("GET", "/x")).toMatchObject({ payload: "x" })
+    expect(r.find("get", "/x")).toEqual(miss)
+    expect(r.find("Get", "/x")).toEqual(miss)
+    // The implicit HEAD -> GET fallback is exact too.
+    expect(r.find("HEAD", "/x")).toMatchObject({ payload: "x" })
+    expect(r.find("head", "/x")).toEqual(miss)
+    // Same rule on a dynamic terminal, including once the path is served from the match cache.
+    for (let i = 0; i < 3; i++) {
+      expect(r.find("POST", "/u/1")).toMatchObject({ payload: "u" })
+      expect(r.find("post", "/u/1")).toEqual({
+        found: false,
+        reason: "method-not-allowed",
+        allowed: ["POST"],
+      })
+    }
+  })
+
+  test("a case-variant miss never enters the static match cache", () => {
+    const r = router()
+    r.add("GET", "/x", "x")
+    const first = r.find("get", "/x")
+    const second = r.find("get", "/x")
+    expect(second).toEqual(first)
+    expect(second).not.toBe(first)
+    // A hit is one shared cached object; the miss above did not displace it.
+    expect(r.find("GET", "/x")).toBe(r.find("GET", "/x"))
   })
 
   test("static route cache does not retain arbitrary method misses", () => {

@@ -220,43 +220,39 @@ function resolve<T>(
   params: Record<string, string>,
 ): RouterMatch<T> {
   if (terminal.staticMatches !== undefined && params === EMPTY_PARAMS) {
-    // Real requests arrive pre-uppercased (HTTP methods are canonically uppercase; every runtime and
-    // client normalizes this) - try the cache under the raw method first so that overwhelmingly common
-    // case skips `toUpperCase()` entirely, matching the same already-uppercase fast path
-    // `resolveDirect` takes below. Falls back to the uppercase key (computed once) for a lowercase or
-    // mixed-case caller, so behavior is unchanged - only the common case gets cheaper.
     const direct = terminal.staticMatches.get(method)
     if (direct !== undefined) return direct
-    const upper = method.toUpperCase()
-    const cached = upper === method ? undefined : terminal.staticMatches.get(upper)
-    if (cached !== undefined) return cached
+    // Only a hit is cached, and only under a method the terminal serves, so the cache is bounded by
+    // the registered methods and an arbitrary request token never grows it.
     const cacheable =
-      terminal.handlers.has(upper) || (upper === "HEAD" && terminal.handlers.has("GET"))
+      terminal.handlers.has(method) || (method === "HEAD" && terminal.handlers.has("GET"))
     if (!cacheable) return resolveDirect(terminal, method, params)
 
     const res = resolveDirect(terminal, method, params)
-    terminal.staticMatches.set(upper, res)
+    terminal.staticMatches.set(method, res)
     return res
   }
   return resolveDirect(terminal, method, params)
 }
 
+/**
+ * Method tokens are case-sensitive (RFC 9110 §9.1), and this compares them exactly. A request whose
+ * token differs from a registered method only in case is a different method and answers 405. Folding
+ * case here would run a handler under a method string that a case-sensitive method check elsewhere -
+ * a CSRF guard, a body limit, a user hook comparing `c.req.method` - does not recognise, so the two
+ * would disagree about whether the request mutates.
+ */
 function resolveDirect<T>(
   terminal: Terminal<T>,
   method: string,
   params: Record<string, string>,
 ): RouterMatch<T> {
-  if (terminal.handlers.has(method)) {
-    return { found: true, payload: terminal.handlers.get(method)!, params }
-  }
-  const upper = method.toUpperCase()
-  if (upper !== method && terminal.handlers.has(upper)) {
-    return { found: true, payload: terminal.handlers.get(upper)!, params }
-  }
+  const payload = terminal.handlers.get(method)
+  if (payload !== undefined) return { found: true, payload, params }
   // RFC 9110 §9.3.2: HEAD is GET without the body. A route registered for GET answers HEAD with
   // the GET handler; the serving runtime strips the body, so status + headers mirror GET exactly.
-  // An explicitly registered HEAD handler takes precedence via the has() checks above.
-  if (upper === "HEAD") {
+  // An explicitly registered HEAD handler takes precedence via the lookup above.
+  if (method === "HEAD") {
     const get = terminal.handlers.get("GET")
     if (get !== undefined) return { found: true, payload: get, params }
   }
@@ -388,8 +384,8 @@ export class Router<T> {
   }
 
   /**
-   * Resolve `method` + `path`. Tolerant of a missing leading slash and of
-   * method casing. Never throws.
+   * Resolve `method` + `path`. Tolerant of a missing leading slash. The method is compared exactly:
+   * tokens are case-sensitive, so `get` does not reach a `GET` route. Never throws.
    */
   find(method: string, path: string): RouterMatch<T> {
     const len = path.length

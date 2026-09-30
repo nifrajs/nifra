@@ -70,7 +70,14 @@ import {
   markLowercaseHeaderKeys,
 } from "./header-case.ts"
 import { headerObjectOf } from "./headers.ts"
-import { jsonError, pathnameOf, plainError, type UrlParts, urlPartsOf } from "./http.ts"
+import {
+  isRoutableMethod,
+  jsonError,
+  pathnameOf,
+  plainError,
+  type UrlParts,
+  urlPartsOf,
+} from "./http.ts"
 import { type NodeServeOutcome, withStaticNodeHeaders } from "./node-outcome.ts"
 import type {
   NodeOutcomeRuntime,
@@ -2751,7 +2758,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
     const parts = source.urlParts ?? urlPartsOf(source.url)
     const match = this.catalog.find(source.method, parts.pathname)
-    if (match.found) return undefined
+    if (match.found || !isRoutableMethod(source.method)) return undefined
 
     for (const mount of this.fetchMounts) {
       if (!underMountPrefix(parts.pathname, mount.path)) continue
@@ -3074,6 +3081,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   ): MaybePromise<WebSocketUpgradeOutcome> {
     if (this.wsRouteCount === 0 && this.wsMountCount === 0) return WS_PASS
     if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return WS_PASS
+    // Not a handshake this lane may act on: normal routing refuses the token before any hook sees it.
+    if (!isRoutableMethod(req.method)) return WS_PASS
 
     const timeoutMs =
       this.wsUpgradeTimeoutMs === 0
@@ -3312,7 +3321,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         : this.deriveClientIp(source, platform)
     // onRequest hooks may be async, so a hooked app takes the async path; with no hooks (the common
     // case) routing stays synchronous, letting a bare route resolve with no lifecycle promise at all.
-    if (this.onRequestHooks.length === 0) {
+    // A token no route can be registered under skips the hooks as well: it cannot match, so routing
+    // answers it 404 or 405 and no hook reads a method string it would misjudge.
+    if (this.onRequestHooks.length === 0 || !isRoutableMethod(source.method)) {
       return this.routeAndRun(source, resolved, finalize, wrapResponse, onTimeout, webFast)
     }
     if (!webFast && this.canUseNodeRequestHooks()) {
@@ -3636,7 +3647,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       first = i
       break
     }
-    if (first === -1) return undefined
+    // A mounted handler is arbitrary code that may read the method loosely, so it is only handed a
+    // token a route could be registered under; anything else is left to the route table to refuse.
+    if (first === -1 || !isRoutableMethod(source.method)) return undefined
 
     // A request body is a one-shot stream. Only methods whose request semantics are replayable are
     // eligible for 404 fallthrough; this intentionally refuses POST/PUT/PATCH even when the body is

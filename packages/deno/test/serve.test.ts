@@ -360,3 +360,73 @@ Deno.test("statically declared response headers match the equivalent hook on the
     [["x-frame-options", "SAMEORIGIN"]],
   )
 })
+
+/** One HTTP/1.1 request written straight to the socket, so the method token reaches the server
+ * exactly as typed (`fetch` would normalise it). Returns the response status line. */
+async function rawStatusLine(port: number, method: string, path: string): Promise<string> {
+  const conn = await Deno.connect({ hostname: "127.0.0.1", port })
+  try {
+    const body = "x".repeat(32)
+    await conn.write(
+      new TextEncoder().encode(
+        `${method} ${path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n` +
+          `Content-Type: text/plain\r\nContent-Length: ${body.length}\r\n\r\n${body}`,
+      ),
+    )
+    const chunk = new Uint8Array(1024)
+    const read = await conn.read(chunk)
+    return new TextDecoder().decode(chunk.subarray(0, read ?? 0)).split("\r\n")[0] ?? ""
+  } finally {
+    conn.close()
+  }
+}
+
+Deno.test("a method token that differs only in case is a different method on the wire", async () => {
+  const hookSaw: string[] = []
+  const handlerSaw: string[] = []
+  const app = server()
+    .onRequest((req) => {
+      hookSaw.push(req.method)
+    })
+    .post("/mutate", (c) => {
+      handlerSaw.push(c.req.method)
+      return { ok: true }
+    })
+    .patch("/mutate/:id", (c) => {
+      handlerSaw.push(c.req.method)
+      return { ok: true }
+    })
+    .mountFetch("/legacy", (req) => {
+      handlerSaw.push(`mount:${req.method}`)
+      return Response.json({ ok: true })
+    })
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    assertEquals(await rawStatusLine(running.port, "POST", "/mutate"), "HTTP/1.1 200 OK")
+    assertEquals(await rawStatusLine(running.port, "PATCH", "/mutate/1"), "HTTP/1.1 200 OK")
+    // This runtime hands the token over as sent. Anything but the exact registered token must stop
+    // at routing: no hook, handler or mount may observe a method string a method check would not match.
+    for (const method of ["post", "Post", "pOST"]) {
+      assertEquals(
+        await rawStatusLine(running.port, method, "/legacy/item"),
+        "HTTP/1.1 404 Not Found",
+      )
+    }
+    for (const [method, path] of [
+      ["post", "/mutate"],
+      ["Post", "/mutate"],
+      ["pOST", "/mutate"],
+      ["patch", "/mutate/1"],
+      ["Patch", "/mutate/1"],
+    ] as const) {
+      assertEquals(
+        await rawStatusLine(running.port, method, path),
+        "HTTP/1.1 405 Method Not Allowed",
+      )
+    }
+    assertEquals(hookSaw, ["POST", "PATCH"])
+    assertEquals(handlerSaw, ["POST", "PATCH"])
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
