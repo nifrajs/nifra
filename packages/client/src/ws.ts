@@ -14,6 +14,7 @@ import {
   type TransportCodec,
   type TransportCodecRegistry,
 } from "@nifrajs/core/transport-codec"
+import { hasDotSegment } from "./sendable-path.ts"
 import type { WsCallOptions, WsHandle } from "./treaty.ts"
 
 /** Internal handshake between `inProcessClient` and the proxy: in-process apps have no socket. */
@@ -52,6 +53,12 @@ export function openWebSocket(
   if (WebSocketImpl === undefined) {
     throw new Error(
       "no global WebSocket in this runtime - .ws() needs one (browser, Bun, Node 22+)",
+    )
+  }
+
+  if (hasDotSegment(path)) {
+    throw new Error(
+      'cannot open a WebSocket at a path with a "." or ".." segment - URL parsing removes that segment, so the socket would reach a different route',
     )
   }
 

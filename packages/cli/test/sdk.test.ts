@@ -98,6 +98,42 @@ describe("SDK generation", () => {
     }
   })
 
+  test("generated Python refuses a path parameter that is a dot segment", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-sdk-"))
+    try {
+      await Bun.write(join(dir, "nifra_sdk.py"), renderSdk(document, "python"))
+      // The base URL is unreachable: a refused call never gets as far as the network, and a sent
+      // one fails with a connection error instead.
+      const script = [
+        "import sys, urllib.error",
+        "sys.path.insert(0, sys.argv[1])",
+        "import nifra_sdk",
+        'api = nifra_sdk.Client("http://127.0.0.1:1", timeout=2)',
+        'for value in ("..", ".", "...", "a.b"):',
+        "    try:",
+        "        api.get_users_id(value)",
+        '        print(value, "answered")',
+        "    except ValueError:",
+        '        print(value, "refused")',
+        "    except urllib.error.URLError:",
+        '        print(value, "sent")',
+      ].join("\n")
+      const process = Bun.spawn(["python3", "-c", script, dir], { stdout: "pipe", stderr: "pipe" })
+      const [exitCode, output] = await Promise.all([
+        process.exited,
+        new Response(process.stdout).text(),
+      ])
+      expect(exitCode).toBe(0)
+      expect(output.trim().split("\n")).toEqual([".. refused", ". refused", "... sent", "a.b sent"])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("generated Go refuses a path parameter that is a dot segment", () => {
+    expect(renderSdk(document, "go")).toContain('if segment == "." || segment == ".."')
+  })
+
   if (Bun.which("go") !== null) {
     const goCompileTimeout = process.platform === "win32" ? 90_000 : 30_000
 

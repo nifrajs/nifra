@@ -26,6 +26,7 @@ import {
 } from "@nifrajs/core/transport-codec"
 import { RESERVED_VERB_KEYS } from "./reserved.ts"
 import type { ApiError, Result } from "./result.ts"
+import { hasDotSegment } from "./sendable-path.ts"
 import type { Subscription, Treaty, TreatyFromRegistry } from "./treaty.ts"
 import {
   type PlatformFetchFn,
@@ -528,6 +529,11 @@ async function execute(
   args: unknown[],
   options: ClientOptions,
 ): Promise<Result<unknown>> {
+  // Refused before anything runs - no hook, no fetch, no retry - because nothing can be sent: the
+  // request would reach a different path than this call names. Same shape as a network failure.
+  if (hasDotSegment(path)) {
+    return { ok: false, status: 0, data: null, error: { error: "invalid_path" } }
+  }
   const isBodyVerb = BODY_VERBS.has(verb)
   const body = isBodyVerb ? args[0] : undefined
   const callOptions = (isBodyVerb ? args[1] : args[0]) as CallOptions | undefined
@@ -764,6 +770,15 @@ function subscribeSse(
     })
 
   void (async () => {
+    if (hasDotSegment(path)) {
+      // Nothing is sent (see `hasDotSegment`). Reported after `subscribe()` has returned, as every
+      // other failure is, so a handler can use the subscription it was given.
+      await Promise.resolve()
+      if (closed) return
+      callOptions?.onError?.(new Error("invalid_path"))
+      close()
+      return
+    }
     let attempt = 0
     while (!closed) {
       try {
