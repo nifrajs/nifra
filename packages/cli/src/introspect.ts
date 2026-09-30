@@ -12,7 +12,7 @@ import {
   reflectedRoutesFromEvidence,
   snapshotProjectEvidence,
 } from "@nifrajs/core/evidence"
-import { paramConstraint } from "@nifrajs/core/pattern"
+import { compileRoutePattern, type RoutePatternSegment } from "@nifrajs/core/pattern"
 import type { ReflectedRoute } from "@nifrajs/core/reflection"
 import type { Manifest } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
@@ -114,13 +114,31 @@ const TYPED_VERBS: ReadonlySet<string> = new Set([
   "options",
 ])
 
-/** The name a param segment binds: `:id` and `:id{[0-9]+}` both bind `id`. */
-function paramName(seg: string): string {
-  const name = seg.slice(1)
-  const brace = name.indexOf("{")
-  return brace > 0 && paramConstraint(name.slice(brace))?.source.length === name.length - brace - 2
-    ? name.slice(0, brace)
-    : name
+/**
+ * The call a non-static segment adds to the chain, or `undefined` for a static one. The segment is
+ * read by the router's own grammar, so the spelling matches what the typed client accepts:
+ *   - a whole param or a wildcard is called by its name - `:id` and `:id{[0-9]+}` are `({ id })`;
+ *   - a segment that is part literal, part parameter is called with the segment text -
+ *     `:name.json` is ``(`${name}.json`)``.
+ */
+function paramCall(seg: string): string | undefined {
+  let segment: RoutePatternSegment | undefined
+  try {
+    segment = compileRoutePattern(`/${seg}`).segments[0]
+  } catch {
+    return undefined
+  }
+  if (segment === undefined || segment.kind === "static") return undefined
+  if (segment.kind === "param") return `({ ${segment.name} })`
+  if (segment.kind === "wildcard") {
+    return segment.name === "*" ? '({ "*": rest })' : `({ ${segment.name} })`
+  }
+  const [only] = segment.parts
+  if (segment.parts.length === 1 && only?.t === "param") return `({ ${only.name} })`
+  const text = segment.parts
+    .map((part) => (part.t === "lit" ? part.v.replace(/[`\\]|\$\{/g, "\\$&") : `\${${part.name}}`))
+    .join("")
+  return `(\`${text}\`)`
 }
 
 /**
@@ -132,9 +150,9 @@ function clientChain(path: string): string {
   if (segs.length === 0) return "api.index"
   let chain = "api"
   for (const seg of segs) {
-    if (seg.startsWith(":") || seg.startsWith("*")) {
-      chain += `({ ${paramName(seg) || "value"} })`
-    } else if (reservedKeyFor(seg) !== undefined) chain += `(${JSON.stringify(seg)})`
+    const call = paramCall(seg)
+    if (call !== undefined) chain += call
+    else if (reservedKeyFor(seg) !== undefined) chain += `(${JSON.stringify(seg)})`
     else chain += IDENT.test(seg) ? `.${seg}` : `[${JSON.stringify(seg)}]`
   }
   return chain
@@ -144,7 +162,8 @@ function clientChain(path: string): string {
  * The typed-client call form for a route - the exact `client<typeof app>` proxy chain an agent should
  * write, derived from the same convention `@nifrajs/client` implements (so it never has to read the
  * client tests to learn it): a static segment is a property (`.users`), a path param/wildcard is a call
- * that appends the value (`({ id })`), the root path is `.index`, and the HTTP verb is the terminal call.
+ * that appends the value (`({ id })`), a segment that is part literal, part parameter is a call with
+ * the segment text (``(`${name}.json`)``), the root path is `.index`, and the HTTP verb is the terminal call.
  * Body verbs (POST/PUT/PATCH) take the body first then call-options; other verbs take call-options first -
  * so the `{ query }` argument lands in the right slot for each.
  *

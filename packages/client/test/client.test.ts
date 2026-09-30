@@ -302,3 +302,50 @@ describe("collision escape - reserved-named segments via a call on the parent no
     expect(viaDot.ok && viaDot.data).toEqual({ removed: true })
   })
 })
+
+describe("mixed segments - part literal, part parameter", () => {
+  const app = server()
+    .get("/files/:name.json", (c) => ({ json: c.params.name }))
+    .get("/files/:name.csv", (c) => ({ csv: c.params.name }))
+    .get("/files/index.json", () => ({ index: true }))
+    .get("/files/:id", (c) => ({ plain: c.params.id }))
+    .get("/post-:id", (c) => ({ post: c.params.id }))
+    .get("/post-:id/comments", (c) => ({ commentsOf: c.params.id }))
+    .get("/v:major.:minor", (c) => ({ major: c.params.major, minor: c.params.minor }))
+    .get("/img/:id{[0-9]+}.png", (c) => ({ img: c.params.id }))
+  const api = testClient<typeof app>(app)
+
+  test("the segment is sent as written and the server reads the param out of it", async () => {
+    const json = await api.files("report.json").get()
+    expect(json.ok && json.data).toEqual({ json: "report" })
+    const csv = await api.files("report.csv").get()
+    expect(csv.ok && csv.data).toEqual({ csv: "report" })
+    const post = await api("post-42").get()
+    expect(post.ok && post.data).toEqual({ post: "42" })
+    const comments = await api("post-42").comments.get()
+    expect(comments.ok && comments.data).toEqual({ commentsOf: "42" })
+    const version = await api("v1.2").get()
+    expect(version.ok && version.data).toEqual({ major: "1", minor: "2" })
+  })
+
+  test("a static sibling and a whole-segment param at the same position keep their own calls", async () => {
+    const index = await api.files("index.json").get()
+    expect(index.ok && index.data).toEqual({ index: true })
+    const plain = await api.files({ id: "7" }).get()
+    expect(plain.ok && plain.data).toEqual({ plain: "7" })
+  })
+
+  test("the value is one encoded segment: a slash in it never adds a path level", async () => {
+    const stem = "a/b c"
+    const nested = await api.files(`${stem}.json`).get()
+    expect(nested.ok && nested.data).toEqual({ json: "a/b c" })
+  })
+
+  test("a constraint is enforced by the server, not the client", async () => {
+    const img = await api.img("7.png").get()
+    expect(img.ok && img.data).toEqual({ img: "7" })
+    const refused = await api.img("x.png").get()
+    expect(refused.ok).toBe(false)
+    expect(refused.status).toBe(404)
+  })
+})

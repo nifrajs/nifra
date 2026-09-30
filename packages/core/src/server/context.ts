@@ -213,6 +213,34 @@ export type RoutePaths<Path extends string> = Path extends `${string}?`
     : Path
   : Path
 
+/** One concrete path's request text: each parameter replaced by `${string}`, literal text kept. */
+type PathText<Path extends string> = Path extends `${infer Before}:${infer After}`
+  ? TakeParamName<After> extends [infer Name extends string, infer Rest extends string]
+    ? IsLiteralColon<Before, Name, Rest> extends true
+      ? `${Before}:${Name}${PathText<Rest>}`
+      : TakeConstraint<Rest> extends [string, infer Tail extends string]
+        ? `${Before}${string}${PathText<Tail>}`
+        : never
+    : never
+  : Path extends `${infer Start}/*${string}`
+    ? `${Start}/${string}`
+    : Path
+
+/**
+ * The text of a request a route path serves, as a template: `/users/:id` → `` `/users/${string}` ``,
+ * `/files/:name.json` → `` `/files/${string}.json` ``, `/files/*path` → `` `/files/${string}` ``.
+ * Literal text is kept, so a value has to carry it. A constraint is not checked - `/users/:id{[0-9]+}`
+ * is `` `/users/${string}` `` - and a path ending in optional parameters is one template per form:
+ * `/users/:id?` → `` "/users" | `/users/${string}` ``. A non-literal `string` path stays `string`.
+ */
+export type RequestPath<Path extends string> = string extends Path
+  ? string
+  : RoutePaths<Path> extends infer Form extends string
+    ? Form extends unknown
+      ? PathText<Form>
+      : never
+    : never
+
 /**
  * The params a handler for `Path` reads. A parameter in a trailing optional run is optional, since
  * the one handler serves the path with and without it: `/users/:id?` → `{ id?: string }`.

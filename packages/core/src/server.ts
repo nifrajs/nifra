@@ -49,6 +49,7 @@ export type {
   Params,
   Platform,
   Prettify,
+  RequestPath,
   ResponseControls,
   RouteSchema,
 } from "./server/context.ts"

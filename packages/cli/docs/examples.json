@@ -21,7 +21,7 @@
     "name": "CLIENT",
     "topic": "Nifra - API & typed client",
     "slug": "api",
-    "code": "import { client } from \"@nifrajs/client\"\nimport type { app } from \"./server\"\n\n// Infers the server's types directly - no codegen, no schema duplication.\nconst api = client<typeof app>(\"https://api.example.com\")\n\nconst { data } = await api.users({ id: \"1\" }).get()         // path param → /users/1\nawait api.users.post({ name: \"Ada\" })                       // POST body\nawait api.search.get({ query: { page: \"3\" } })              // query string\nawait api.users({ id: \"1\" }).posts({ postId: \"2\" }).get()   // nested params"
+    "code": "import { client } from \"@nifrajs/client\"\nimport type { app } from \"./server\"\n\n// Infers the server's types directly - no codegen, no schema duplication.\nconst api = client<typeof app>(\"https://api.example.com\")\n\nconst { data } = await api.users({ id: \"1\" }).get()         // path param → /users/1\nawait api.users.post({ name: \"Ada\" })                       // POST body\nawait api.search.get({ query: { page: \"3\" } })              // query string\nawait api.users({ id: \"1\" }).posts({ postId: \"2\" }).get()   // nested params\nawait api.files(\"report.json\").get()                        // /files/:name.json → the segment as sent"
   },
   {
     "name": "METHOD_ROUTES",

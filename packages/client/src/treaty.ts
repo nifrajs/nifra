@@ -1,4 +1,4 @@
-import type { RouteInfo, Server } from "@nifrajs/core/server"
+import type { RequestPath, RouteInfo, Server } from "@nifrajs/core/server"
 import type { Jsonify } from "./jsonify.ts"
 import type { Result } from "./result.ts"
 
@@ -199,12 +199,34 @@ type NextSegs<R, Prefix extends string> = {
   [P in Sub<R, Prefix> & string]: NextSeg<Prefix, P>
 }[Sub<R, Prefix> & string]
 
-// Static segments exclude params (`:`), wildcards (`*`), and the root's empty (``).
-type StaticSegs<R, Prefix extends string> = Exclude<
-  NextSegs<R, Prefix>,
-  `:${string}` | `*${string}` | ""
->
-type ParamSeg<R, Prefix extends string> = Extract<NextSegs<R, Prefix>, `:${string}` | `*${string}`>
+/**
+ * What a request carries in place of one route segment: a static segment is itself, `:id` and
+ * `*path` are any `string`, and a segment that is part literal, part parameter keeps its literal
+ * text - `:name.json` is `` `${string}.json` ``. Read with the router's own rules, so a name ends
+ * where the router ends it and a constraint is not part of the text.
+ */
+type SegText<Seg extends string> = RequestPath<`/${Seg}`> extends `/${infer Text}` ? Text : never
+
+// A segment is static when its text is the segment, a param when its text is any string (a whole
+// `:name`, with or without a constraint, or a wildcard), and mixed otherwise.
+type SegKind<Seg extends string> = string extends Seg
+  ? "static"
+  : SegText<Seg> extends Seg
+    ? "static"
+    : string extends SegText<Seg>
+      ? "param"
+      : "mixed"
+
+// The root's empty segment (``) is never a child.
+type SegsOf<Seg extends string, Kind extends string> = Seg extends ""
+  ? never
+  : SegKind<Seg> extends Kind
+    ? Seg
+    : never
+
+type StaticSegs<R, Prefix extends string> = SegsOf<NextSegs<R, Prefix>, "static">
+type ParamSeg<R, Prefix extends string> = SegsOf<NextSegs<R, Prefix>, "param">
+type MixedSegs<R, Prefix extends string> = SegsOf<NextSegs<R, Prefix>, "mixed">
 
 // `unknown` (not `{}`/`never`) is the intersection identity, so empty branches
 // don't poison the node - and we never `Prettify` the node (it would strip the
@@ -267,10 +289,30 @@ type SegmentCall<R, Prefix extends string> = [StaticSegs<R, Prefix>] extends [ne
   ? unknown
   : <S extends StaticSegs<R, Prefix> & string>(segment: S) => TreatyNode<R, `${Prefix}/${S}`>
 
+type MixedCall<R, Prefix extends string, Seg extends string> = Seg extends unknown
+  ? (segment: SegText<Seg>) => TreatyNode<R, `${Prefix}/${Seg}`>
+  : never
+
+/**
+ * The call for a segment that is part literal, part parameter. It has no single param to name, so
+ * it takes the segment as it appears in the request: `/files/:name.json` is
+ * `api.files("report.json")`, `/v:major.:minor` is `api("v1.2")`. The argument's type is the
+ * segment's literal text around any string, so `api.files("report.txt")` does not compile.
+ *
+ * Placed last in the node intersection. A segment the registry declares as static resolves to
+ * `SegmentCall` first - `api.files("index.json")` is the static `/files/index.json` when there is
+ * one, which is also the route the server picks. Two mixed segments at one position that accept the
+ * same text resolve to whichever was registered first.
+ */
+type MixedChild<R, Prefix extends string> = [MixedSegs<R, Prefix>] extends [never]
+  ? unknown
+  : EveryCall<MixedCall<R, Prefix, MixedSegs<R, Prefix>>>
+
 type TreatyNode<R, Prefix extends string> = MethodsAt<R, Prefix> &
   StaticChildren<R, Prefix> &
   ParamChild<R, Prefix> &
-  SegmentCall<R, Prefix>
+  SegmentCall<R, Prefix> &
+  MixedChild<R, Prefix>
 
 // The root path "/" is reached as `api.index.get()` (Eden convention).
 type RootIndex<R> = "/" extends keyof R ? { readonly index: Methods<R["/"]> } : unknown

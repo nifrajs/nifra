@@ -14444,6 +14444,20 @@
     "doc": "/** Structured fields logged per request. */"
   },
   {
+    "name": "RequestPath",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type RequestPath<Path extends string> = string extends Path ? string : RoutePaths<Path> extends infer Form extends string ? Form extends unknown ? PathText<Form> : never : never;",
+    "doc": "/**\n * The text of a request a route path serves, as a template: `/users/:id` → `` `/users/${string}` ``,\n * `/files/:name.json` → `` `/files/${string}.json` ``, `/files/*path` → `` `/files/${string}` ``.\n * Literal text is kept, so a value has to carry it. A constraint is not checked - `/users/:id{[0-9]+}`\n * is `` `/users/${string}` `` - and a path ending in optional parameters is one template per form:\n * `/users/:id?` → `` \"/users\" | `/users/${string}` ``. A non-literal `string` path stays `string`.\n */"
+  },
+  {
+    "name": "RequestPath",
+    "kind": "type",
+    "package": "nifra",
+    "signature": "export type RequestPath<Path extends string> = string extends Path ? string : RoutePaths<Path> extends infer Form extends string ? Form extends unknown ? PathText<Form> : never : never;",
+    "doc": "/**\n * The text of a request a route path serves, as a template: `/users/:id` → `` `/users/${string}` ``,\n * `/files/:name.json` → `` `/files/${string}.json` ``, `/files/*path` → `` `/files/${string}` ``.\n * Literal text is kept, so a value has to carry it. A constraint is not checked - `/users/:id{[0-9]+}`\n * is `` `/users/${string}` `` - and a path ending in optional parameters is one template per form:\n * `/users/:id?` → `` \"/users\" | `/users/${string}` ``. A non-literal `string` path stays `string`.\n */"
+  },
+  {
     "name": "RequestProtocol",
     "kind": "type",
     "package": "@nifrajs/node",

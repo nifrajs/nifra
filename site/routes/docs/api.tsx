@@ -53,7 +53,8 @@ const api = client<typeof app>("https://api.example.com")
 const { data } = await api.users({ id: "1" }).get()         // path param → /users/1
 await api.users.post({ name: "Ada" })                       // POST body
 await api.search.get({ query: { page: "3" } })              // query string
-await api.users({ id: "1" }).posts({ postId: "2" }).get()   // nested params`
+await api.users({ id: "1" }).posts({ postId: "2" }).get()   // nested params
+await api.files("report.json").get()                        // /files/:name.json → the segment as sent`
 
 const RESULT = `// The client NEVER throws - every call returns a discriminated Result:
 const res = await api.users({ id: "1" }).get()
@@ -431,6 +432,17 @@ export default function Api() {
         and query are typed from the route's schema.
       </p>
       <CodeBlock code={CLIENT} />
+      <p>
+        A segment that is part literal, part param - <code>/files/:name.json</code>,{" "}
+        <code>/post-:id</code>, <code>/v:major.:minor</code> - has no single param to name, so it is
+        called with the segment as the request carries it: <code>{'api.files("report.json")'}</code>,{" "}
+        <code>{'api("post-42")'}</code>, <code>{'api("v1.2")'}</code>. The argument is typed as the
+        segment's literal text around any string, so <code>{'api.files("report.txt")'}</code> does
+        not compile, and it is sent as one encoded segment: a <code>/</code> in it never adds a path
+        level. <code>RequestPath</code> from <code>@nifrajs/core</code> is the same reading for a
+        whole path: <code>{'RequestPath<"/files/:name.json">'}</code> is{" "}
+        <code>{"`/files/${string}.json`"}</code>.
+      </p>
       <p className="caveat">
         <b>Reserved proxy keys.</b> The client proxy resolves a fixed set of property names{" "}
         <i>before</i> path segments: the seven HTTP verbs{" "}

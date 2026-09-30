@@ -20,7 +20,9 @@ const { ok, status, data, error } = await api.users({ id: "42" }).get()
 - **Zero codegen.** Types flow from `typeof app` (coupled) - or from a contract via
   `client(contract, url)` (decoupled), with no dependency on the server's source.
 - **Proxy chaining.** Path segments are properties, `:params` are calls, verbs are
-  methods: `api.users({ id }).posts({ postId }).get()`. The root is `api.index`.
+  methods: `api.users({ id }).posts({ postId }).get()`. The root is `api.index`. A segment that
+  is part literal, part param (`/files/:name.json`) is a call with the segment as it is sent:
+  `api.files("report.json").get()`.
 - **Result, never exceptions.** Every call resolves to `{ ok, status, data, error }`,
   so the failure path is in the types. Bodies are positional (`api.users.post({ name })`);
   pass `{ query, headers, signal }` as call options.

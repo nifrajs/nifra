@@ -56,6 +56,10 @@ const backend = {
       schema: { query: schema({ type: "object", properties: { page: { type: "number" } } }) },
     },
     { method: "GET", path: "/orders/:id{[0-9]+}/lines/:kind{open|closed}" },
+    { method: "GET", path: "/files/:name.json" },
+    { method: "GET", path: "/img/:id{[0-9]+}.png/meta" },
+    { method: "GET", path: "/assets/*" },
+    { method: "GET", path: "/docs/*rest" },
   ],
 }
 
@@ -80,6 +84,14 @@ describe("generateLlmsTxt", () => {
     expect(out).toContain("api.items({ id }).get({ query })")
     // A constraint is not part of the argument's name.
     expect(out).toContain("api.orders({ id }).lines({ kind }).get()")
+    // A segment that is part literal, part parameter is called with the segment text.
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: the printed call is a template literal
+    expect(out).toContain("api.files(`${name}.json`).get()")
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: the printed call is a template literal
+    expect(out).toContain("api.img(`${id}.png`).meta.get()")
+    // A wildcard is called by its name; an unnamed one is `*`.
+    expect(out).toContain('api.assets({ "*": rest }).get()')
+    expect(out).toContain("api.docs({ rest }).get()")
     // tsTypeOf: object w/ required+optional, array, enum, union, const, additionalProperties
     expect(out).toContain("name: string")
     expect(out).toContain("age?: number")
