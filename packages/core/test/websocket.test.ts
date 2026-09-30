@@ -416,6 +416,96 @@ describe("app.listen() WebSockets", () => {
     expect(msgs).toEqual([JSON.stringify({ text: "ok" })])
     c.close()
   })
+
+  // A mounted Nifra app takes part in Bun's WebSocket wiring only while it has a WebSocket route, so
+  // composing one without any - the `api` backend `createWebApp` mounts - needs no runtime.
+  test("a mounted app without WebSocket routes listens without a runtime", async () => {
+    const nested = server().mount({
+      path: "/v1",
+      app: server().get("/y", () => "y"),
+      stripPrefix: true,
+    })
+    running = server()
+      .mount({ path: "/api", app: server().get("/x", () => "x"), stripPrefix: true })
+      .mount({ path: "/nested", app: nested, stripPrefix: true })
+      .listen(0)
+    expect(await (await fetch(`http://127.0.0.1:${running.port}/api/x`)).json()).toBe("x")
+    expect(await (await fetch(`http://127.0.0.1:${running.port}/nested/v1/y`)).json()).toBe("y")
+  })
+
+  test("a parent's own WebSocket routes still upgrade beside a WebSocket-free mount", async () => {
+    running = makeApp()
+      .mount({ path: "/api", app: server().get("/x", () => "x"), stripPrefix: true })
+      .listen(0)
+    expect(await collect(`ws://127.0.0.1:${running.port}/echo`, ["hi"], 2)).toEqual([
+      "welcome",
+      "hi",
+    ])
+    expect(await (await fetch(`http://127.0.0.1:${running.port}/api/x`)).json()).toBe("x")
+  })
+
+  test("a mounted child's WebSocket route upgrades through a parent with no runtime", async () => {
+    const child = server()
+      .use(websocket())
+      .ws("/echo", {
+        open: (ws) => ws.send("child-ready"),
+        message: (ws, data) => ws.send(data),
+      })
+    running = server().mount({ path: "/api", app: child, stripPrefix: true }).listen(0)
+    expect(await collect(`ws://127.0.0.1:${running.port}/api/echo`, ["ping"], 2)).toEqual([
+      "child-ready",
+      "ping",
+    ])
+  })
+
+  // The runtime is asked for when `listen()` runs, not when the child is mounted.
+  test("a child given its runtime and WebSocket route after the mount upgrades", async () => {
+    const late = server()
+    const parent = server().mount({ path: "/late", app: late, stripPrefix: true })
+    late.use(websocket()).ws("/echo", { open: (ws) => ws.send("late-ready") })
+    running = parent.listen(0)
+    expect(await collect(`ws://127.0.0.1:${running.port}/late/echo`, [], 1)).toEqual(["late-ready"])
+  })
+
+  test("a WebSocket route two mounts down upgrades through the outer app", async () => {
+    const inner = server()
+      .use(websocket())
+      .ws("/echo", { message: (ws, data) => ws.send(data) })
+    const middle = server().mount({ path: "/inner", app: inner, stripPrefix: true })
+    running = server().mount({ path: "/middle", app: middle, stripPrefix: true }).listen(0)
+    expect(await collect(`ws://127.0.0.1:${running.port}/middle/inner/echo`, ["deep"], 1)).toEqual([
+      "deep",
+    ])
+  })
+
+  test("a mounted resolver that names no runtime still needs one", async () => {
+    const inner = server()
+      .use(websocket())
+      .ws("/echo", { message: (ws, data) => ws.send(data) })
+    // Forwards the resolver but not the runtime seam, so it cannot say whether it takes an upgrade.
+    const wrapped = {
+      fetch: (request: Request) => inner.fetch(request),
+      resolveWebSocketUpgrade: (request: Request) => inner.resolveWebSocketUpgrade(request),
+    }
+    const bare = server().mount({ path: "/api", app: wrapped, stripPrefix: true })
+    expect(() => {
+      running = bare.listen(0)
+    }).toThrow("websocket() runtime")
+    running = server()
+      .use(websocket())
+      .mount({ path: "/api", app: wrapped, stripPrefix: true })
+      .listen(0)
+    expect(await collect(`ws://127.0.0.1:${running.port}/api/echo`, ["wrapped"], 1)).toEqual([
+      "wrapped",
+    ])
+  })
+
+  test("an app mounted under itself to alias a prefix still listens", async () => {
+    const app = server().get("/x", () => "x")
+    app.mount({ path: "/v1", app, stripPrefix: true })
+    running = app.listen(0)
+    expect(await (await fetch(`http://127.0.0.1:${running.port}/v1/x`)).json()).toBe("x")
+  })
 })
 
 // attachWebSocket - the shared bridge the @nifrajs/deno + Workers (toFetchHandler) adapters use over a

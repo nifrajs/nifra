@@ -218,6 +218,22 @@ test("createWebApp composes the backend WebSocket mount with the request path", 
   expect(strippedOutcome.data).toEqual({ path: "/echo" })
 })
 
+test("createWebApp listens on Bun with an api backend that has no WebSocket routes", async () => {
+  const app = createWebApp({
+    adapter: stub,
+    manifest: manifest(),
+    clientEntry: "/c.js",
+    api: inProcessClient(server().get("/api/ping", () => ({ pong: true }))),
+  })
+  const running = app.listen(0)
+  try {
+    const response = await fetch(`http://127.0.0.1:${running.port}/api/ping`)
+    expect(await response.json()).toEqual({ pong: true })
+  } finally {
+    running.stop(true)
+  }
+})
+
 test("a mounted CORS middleware answers preflight before the page router", async () => {
   const api = server()
     .use(cors({ origin: "https://client.example" }))

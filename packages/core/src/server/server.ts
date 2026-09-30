@@ -340,6 +340,8 @@ interface FetchMount<Env = unknown> {
     request: Request,
     platform?: Platform<Env>,
   ) => MaybePromise<WebSocketUpgradeOutcome>
+  /** Set with the resolver: the runtime the child's WebSocket upgrades need (see `[GET_WS_RUNTIME]`). */
+  readonly wsRuntime?: (seen: Set<unknown>) => WsRuntime | null | undefined
   readonly stripPrefix: boolean
   readonly priority: number
   readonly fallbackOn404: boolean
@@ -1129,20 +1131,31 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (options === null || typeof options !== "object") {
       throw new TypeError("mount() requires { path, app }")
     }
-    if (options.app === null || typeof options.app !== "object") {
+    const app = options.app as MountableApp<EnvOf<Ctx>> & Record<symbol, unknown>
+    if (app === null || typeof app !== "object") {
       throw new TypeError("mount() app must be an object with fetch()")
     }
-    if (typeof options.app.fetch !== "function") {
+    if (typeof app.fetch !== "function") {
       throw new TypeError("mount() app.fetch must be a function")
     }
     const resolver =
-      typeof options.app.resolveWebSocketUpgrade === "function"
-        ? options.app.resolveWebSocketUpgrade.bind(options.app)
+      typeof app.resolveWebSocketUpgrade === "function"
+        ? app.resolveWebSocketUpgrade.bind(app)
         : undefined
+    // Bun needs a websocket callback table in the parent process. A composed Nifra app names the
+    // runtime its upgrades need through this internal seam, which `listen()` asks (see
+    // `[GET_WS_RUNTIME]`); a resolver without it names none. Adapters that wire standard sockets use
+    // the resolver outcome's own `attach`.
+    const getRuntime = app[GET_WS_RUNTIME] ?? app[NIFRA_BACKEND_WS_RUNTIME]
     const mount: FetchMount<EnvOf<Ctx>> = {
       path: normalizeMountPrefix(options.path),
-      handler: options.app.fetch.bind(options.app) as MountedFetchHandler<EnvOf<Ctx>>,
-      ...(resolver === undefined ? {} : { resolveWebSocketUpgrade: resolver }),
+      handler: app.fetch.bind(app) as MountedFetchHandler<EnvOf<Ctx>>,
+      ...(resolver === undefined
+        ? {}
+        : {
+            resolveWebSocketUpgrade: resolver,
+            wsRuntime: typeof getRuntime === "function" ? getRuntime.bind(app) : () => null,
+          }),
       stripPrefix: options.stripPrefix === true,
       priority: mountPriorityOf(options.priority),
       fallbackOn404: options.fallbackOn === 404,
@@ -1152,18 +1165,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.fetchMounts.push(mount)
     this.fetchMounts.sort(compareMounts)
     this.preRouteMountCount += 1
-    if (resolver !== undefined) {
-      this.wsMountCount += 1
-      // Bun needs a websocket callback table in the parent process. A composed Nifra server exposes
-      // its installed runtime through this internal seam; adapters that wire standard sockets use
-      // the resolver outcome's own `attach` and do not need this copy.
-      const appSymbols = options.app as unknown as Record<symbol, unknown>
-      const getRuntime = appSymbols[GET_WS_RUNTIME] ?? appSymbols[NIFRA_BACKEND_WS_RUNTIME]
-      if (this.wsRuntime === undefined && typeof getRuntime === "function") {
-        const runtime = (getRuntime as () => WsRuntime | undefined).call(options.app)
-        if (runtime !== undefined) this.wsRuntime = runtime
-      }
-    }
+    if (resolver !== undefined) this.wsMountCount += 1
     return this
   }
 
@@ -2312,9 +2314,25 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.wsRuntime = runtime
   }
 
-  /** @internal Bun's parent dispatcher uses this when a child Nifra app is mounted. */
-  [GET_WS_RUNTIME](): WsRuntime | undefined {
-    return this.wsRuntime
+  /**
+   * @internal The runtime Bun serves this app's WebSocket upgrades with, asked by `listen()` and by a
+   * parent that mounts this app: `undefined` while nothing here can take one, `null` when something
+   * can but no runtime is at hand. A mounted Nifra app answers through this same seam, so mounting an
+   * app without a WebSocket route needs no runtime; a resolver without the seam cannot say, so it
+   * counts. `seen` ends a mount cycle (an app mounted under itself to alias a prefix).
+   */
+  [GET_WS_RUNTIME](seen: Set<unknown> = new Set()): WsRuntime | null | undefined {
+    if (this.wsRouteCount > 0) return this.wsRuntime
+    if (seen.has(this)) return
+    seen.add(this)
+    let found: WsRuntime | null | undefined
+    for (const mount of this.fetchMounts) {
+      const runtime = mount.wsRuntime?.(seen)
+      if (runtime === undefined) continue
+      found = this.wsRuntime ?? runtime
+      if (found) return found
+    }
+    return found
   }
 
   /**
@@ -6284,8 +6302,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // because wsRouteCount > 0 means ws() ran, and ws() requires the runtime at registration.
     // Native pub/sub when the app has WS routes and none validate outbound frames: `ws.subscribe` and
     // `app.publish` go through Bun's own (uWebSockets) broadcast instead of the JS registry loop.
-    const hasWebSockets = this.wsRouteCount > 0 || this.wsMountCount > 0
-    if (hasWebSockets && this.wsRuntime === undefined) {
+    // A mounted app counts only while it has a WebSocket route (see `[GET_WS_RUNTIME]`), so composing
+    // one without any needs no runtime here.
+    const wsRuntime = this[GET_WS_RUNTIME]()
+    if (wsRuntime === null) {
       throw new FrameworkError(
         "INVALID_WS_RUNTIME",
         "a Bun server with mounted WebSocket routes needs the websocket() runtime installed on the parent or child app",
@@ -6296,12 +6316,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // the upgrade outcome instead of accidentally broadcasting child sockets through the parent.
     const nativePubsub =
       this.wsRouteCount > 0 && this.wsMountCount === 0 && !this.wsHasValidatedSend
-    const wsHandlers = !hasWebSockets
-      ? undefined
-      : (this.wsRuntime as WsRuntime).bunHandlers(
-          this.topics ?? (this.wsRuntime as WsRuntime).createTopics(),
-          nativePubsub,
-        )
+    const wsHandlers = wsRuntime?.bunHandlers(this.topics ?? wsRuntime.createTopics(), nativePubsub)
     const reusePort = options?.reusePort === true
     // Spread rather than pass `hostname: undefined` - Bun treats an explicit undefined as a value
     // on some option paths, and omitting is what selects its 0.0.0.0 default.
