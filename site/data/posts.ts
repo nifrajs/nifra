@@ -21,6 +21,27 @@ export interface Post {
 
 export const POSTS: readonly Post[] = [
   {
+    slug: "node-async-context-deopt",
+    date: "2026-09-30",
+    title: "The 1.1 microseconds Node charged every request",
+    summary:
+      "A Node HTTP server that first touches AsyncContextFrame after its tick loop is hot pays for it on every tick. How we found it, what ruled out the kernel and the payload, and the one-line fix.",
+  },
+  {
+    slug: "elysia-2-aot-measured",
+    date: "2026-09-30",
+    title: "We measured Elysia 2's AOT mode before deciding not to copy it",
+    summary:
+      "The Elysia 2 beta moves code generation to build time. Steady state, cold start, bundle size, and a deliberately worst-case route, measured against Nifra - with our bias disclosed.",
+  },
+  {
+    slug: "optimizations-we-rejected",
+    date: "2026-09-30",
+    title: "Three optimizations we built, measured, and deleted",
+    summary:
+      "A schema-compiled serializer, a text prescan for prototype poisoning, and a single-encode response writer. Each looked like a free win and each lost on the clock.",
+  },
+  {
     slug: "typescript-api-framework",
     date: "2026-08-04",
     title: "Choosing a TypeScript API framework in 2026",
