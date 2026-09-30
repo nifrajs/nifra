@@ -1,14 +1,19 @@
-import { expect, test } from "bun:test"
+import { expect, spyOn, test } from "bun:test"
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import type { PluginBuilder } from "bun"
 import {
   matchesSingleCopyDeclaration,
   planSingleCopy,
   readSingleCopyDeclaration,
   readSingleCopyRegistration,
   readSingleCopyStrict,
+  registerSingleCopy,
+  SINGLE_COPY_ACTIVE,
   SINGLE_COPY_STRICT_ENV,
+  type SingleCopyPlugin,
+  type SingleCopySkip,
   singleCopyPlugin,
 } from "../src/single-copy.ts"
 
@@ -568,5 +573,351 @@ test("a linked file with no counterpart in the app's copy is reported, and fails
     expect(run.stderr).toContain("state is NOT deduplicated (no-counterpart)")
   } finally {
     await rm(strict.ground, { recursive: true, force: true })
+  }
+})
+
+test("a root that does not exist plans nothing instead of throwing", async () => {
+  const ground = await realpath(await mkdtemp(join(tmpdir(), "nifra-single-copy-missing-")))
+  try {
+    const missing = join(ground, "never-created")
+    expect(planSingleCopy({ cwd: missing })).toEqual({
+      root: missing,
+      declared: [],
+      redirects: [],
+      skipped: [],
+    })
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("a workspace package wins with the copy hoisted to its repository root", async () => {
+  const { ground, app, ours, theirs } = await linkedRepos("workspace")
+  try {
+    // No `node_modules` of its own: the install hoisted everything to the repository root, which is
+    // also where the linked package is symlinked in.
+    const web = join(app, "packages", "web")
+    await mkdir(web, { recursive: true })
+    await writeFile(
+      join(web, "package.json"),
+      JSON.stringify({ name: "web", nifra: { singleCopy: ["state"] } }),
+    )
+    const plan = planSingleCopy({ cwd: web })
+    expect(plan.root).toBe(web)
+    expect(plan.redirects).toEqual([{ package: "state", from: theirs, to: ours, version: "1.0.0" }])
+    expect(plan.skipped).toHaveLength(0)
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+interface RecordedHook {
+  readonly filter: RegExp
+  readonly run: (path: string) => unknown
+}
+
+/**
+ * Run `setup` against a recording builder. The hooks are then called directly, in this process,
+ * without `Bun.plugin` ever installing them.
+ */
+const hooksOf = (
+  plugin: SingleCopyPlugin,
+): { readonly resolve: RecordedHook | undefined; readonly load: RecordedHook | undefined } => {
+  const resolvers: RecordedHook[] = []
+  const loaders: RecordedHook[] = []
+  const record =
+    (into: RecordedHook[]) =>
+    (
+      constraints: { readonly filter: RegExp },
+      callback: (args: { readonly path: string }) => unknown,
+    ): void => {
+      into.push({ filter: constraints.filter, run: (path) => callback({ path }) })
+    }
+  plugin.setup({
+    onResolve: record(resolvers),
+    onLoad: record(loaders),
+  } as unknown as PluginBuilder)
+  return { resolve: resolvers[0], load: loaders[0] }
+}
+
+const hook = (recorded: RecordedHook | undefined): RecordedHook => {
+  if (recorded === undefined) throw new Error("the plugin registered no such hook")
+  return recorded
+}
+
+test("the resolve hook pins a declared name and its subpaths to the app's copy", async () => {
+  const { ground, app, ours } = await linkedRepos("resolve-hook", {
+    declaration: ["state", "@example/*"],
+  })
+  try {
+    const resolve = hook(hooksOf(singleCopyPlugin({ cwd: app })).resolve)
+    for (const specifier of ["state", "state/index.js", "@example/ui", "@example/ui/deep/file.js"])
+      expect(resolve.filter.test(specifier)).toBe(true)
+    // A name that merely starts with, or ends in, a declared one is a different package.
+    for (const specifier of ["stateful", "@example", "./state", "other/state"])
+      expect(resolve.filter.test(specifier)).toBe(false)
+    expect(resolve.run("state")).toEqual({ path: join(ours, "index.js") })
+    expect(resolve.run("state/index.js")).toEqual({ path: join(ours, "index.js") })
+    // Declared, but not resolvable from the app: there is nothing to pin it TO, so the import is
+    // left to the default resolver rather than turned into a failure.
+    expect(resolve.run("state/missing.js")).toBeUndefined()
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+const EXTRA = "export const extra = new Set();\n"
+
+test("the load hook re-exports the app's counterpart, and returns a file with none untouched", async () => {
+  const { ground, app, ours, theirs } = await linkedRepos("load-hook", { declaration: ["state"] })
+  try {
+    const extra = join(theirs, "extra.js")
+    await writeFile(extra, EXTRA)
+    const skips: SingleCopySkip[] = []
+    const load = hook(
+      hooksOf(
+        singleCopyPlugin({
+          cwd: app,
+          onSkip: (skip) => {
+            skips.push(skip)
+          },
+        }),
+      ).load,
+    )
+    // Anchored at the linked copy: the app's own files, and anything that is not source, never match.
+    expect(load.filter.test(join(theirs, "index.js"))).toBe(true)
+    expect(load.filter.test(join(ours, "index.js"))).toBe(false)
+    expect(load.filter.test(join(theirs, "package.json"))).toBe(false)
+
+    const target = JSON.stringify(join(ours, "index.js"))
+    expect(load.run(join(theirs, "index.js"))).toEqual({
+      contents:
+        `export * from ${target};\n` +
+        `import * as __singleCopy from ${target};\n` +
+        "export default __singleCopy.default ?? __singleCopy;\n",
+      loader: "js",
+    })
+    expect(skips).toHaveLength(0)
+
+    expect(load.run(extra)).toEqual({ contents: EXTRA, loader: "js" })
+    expect(skips).toEqual([
+      {
+        package: "state",
+        from: extra,
+        to: ours,
+        fromVersion: "1.0.0",
+        toVersion: "1.0.0",
+        reason: "no-counterpart",
+        detail:
+          "extra.js has no file at the same path in the app's copy, so it loads from the linked copy and its module state is not shared",
+      },
+    ])
+
+    // Without a listener the plugin stays silent, and still hands the file back.
+    const silent = hook(hooksOf(singleCopyPlugin({ cwd: app })).load)
+    expect(silent.run(extra)).toEqual({ contents: EXTRA, loader: "js" })
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("no declaration registers no hook, and a version skew registers the resolver alone", async () => {
+  const { ground, app } = await linkedRepos("hooks-registered", { siblingVersion: "2.0.0" })
+  try {
+    expect(hooksOf(singleCopyPlugin({ cwd: app }))).toEqual({ resolve: undefined, load: undefined })
+    // Nothing is redirected across versions, so no file of the linked copy is ever intercepted.
+    const skewed = hooksOf(singleCopyPlugin({ cwd: app, packages: ["state"] }))
+    expect(skewed.resolve).toBeDefined()
+    expect(skewed.load).toBeUndefined()
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+const globals = globalThis as Record<symbol, unknown>
+const REGISTRAR_STATE = [
+  Symbol.for("nifra.single-copy.warned"),
+  Symbol.for("nifra.single-copy.installed"),
+  SINGLE_COPY_ACTIVE,
+] as const
+
+/**
+ * Call the registrar in THIS process without installing anything. `Bun.plugin` is global and
+ * permanent, so it is swapped for a recorder; the bookkeeping the registrar keeps on `globalThis` and
+ * the strict switch in the environment start empty and are put back afterwards.
+ */
+const withRegistrar = async (
+  body: (seen: {
+    readonly installed: readonly SingleCopyPlugin[]
+    readonly warnings: readonly string[]
+  }) => void | Promise<void>,
+): Promise<void> => {
+  const saved = REGISTRAR_STATE.map((key) => [key, globals[key]] as const)
+  const strictEnv = process.env[SINGLE_COPY_STRICT_ENV]
+  for (const key of REGISTRAR_STATE) delete globals[key]
+  delete process.env[SINGLE_COPY_STRICT_ENV]
+  const installed: SingleCopyPlugin[] = []
+  const warnings: string[] = []
+  const install = spyOn(Bun, "plugin").mockImplementation(((plugin: SingleCopyPlugin) => {
+    installed.push(plugin)
+  }) as unknown as typeof Bun.plugin)
+  const warn = spyOn(console, "warn").mockImplementation((message: unknown) => {
+    warnings.push(String(message))
+  })
+  try {
+    await body({ installed, warnings })
+  } finally {
+    install.mockRestore()
+    warn.mockRestore()
+    for (const [key, value] of saved) {
+      if (value === undefined) delete globals[key]
+      else globals[key] = value
+    }
+    if (strictEnv === undefined) delete process.env[SINGLE_COPY_STRICT_ENV]
+    else process.env[SINGLE_COPY_STRICT_ENV] = strictEnv
+  }
+}
+
+test("the registrar reports each planned skip, warns once, and installs one plugin per plan", async () => {
+  const { ground, app, ours, theirs } = await linkedRepos("inprocess-skew", {
+    declaration: ["state"],
+    siblingVersion: "2.0.0",
+  })
+  try {
+    await withRegistrar(({ installed, warnings }) => {
+      const skips: SingleCopySkip[] = []
+      const onSkip = (skip: SingleCopySkip): void => {
+        skips.push(skip)
+      }
+      const first = registerSingleCopy({ cwd: app, onSkip })
+      expect(globals[SINGLE_COPY_ACTIVE]).toBe(first)
+      const second = registerSingleCopy({ cwd: app, onSkip })
+      expect(globals[SINGLE_COPY_ACTIVE]).toBe(second)
+      expect(second).toEqual(first)
+      expect(first.root).toBe(app)
+      expect(first.skipped).toHaveLength(1)
+
+      // The listener hears every call; the console and the runtime hear the first one only.
+      expect(skips).toEqual([...first.skipped, ...second.skipped])
+      expect(installed).toHaveLength(1)
+      expect(installed[0]?.plan).toBe(first)
+      expect(warnings).toHaveLength(1)
+      expect(warnings[0]?.split("\n")).toEqual([
+        "[nifra] single-copy: state is NOT deduplicated (version-skew) - a second copy loads, so its module state is not shared.",
+        `  app copy: ${ours} (1.0.0)`,
+        `  linked copy: ${theirs} (2.0.0)`,
+        "  2.0.0 there, 1.0.0 here - redirecting would serve a version that copy did not ask for",
+        "  Fix: align the dependency ranges so both trees install one version, then reinstall. nifra never redirects across versions.",
+      ])
+    })
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("strict mode is the option first, then the declaration or the environment", async () => {
+  const declared = await linkedRepos("inprocess-strict", {
+    declaration: { packages: ["state"], strict: true },
+    siblingVersion: "2.0.0",
+  })
+  try {
+    await withRegistrar(({ installed, warnings }) => {
+      expect(() => registerSingleCopy({ cwd: declared.app })).toThrow(
+        "Strict mode is on, so this process refuses to start.",
+      )
+      // A refusal leaves nothing behind: no hook, no warning, no "active" marker for a checker to trust.
+      expect(installed).toHaveLength(0)
+      expect(warnings).toHaveLength(0)
+      expect(globals[SINGLE_COPY_ACTIVE]).toBeUndefined()
+
+      expect(registerSingleCopy({ cwd: declared.app, strict: false }).skipped).toHaveLength(1)
+      expect(installed).toHaveLength(1)
+      expect(warnings).toHaveLength(1)
+    })
+  } finally {
+    await rm(declared.ground, { recursive: true, force: true })
+  }
+
+  const viaEnv = await linkedRepos("inprocess-strict-env", {
+    declaration: ["state"],
+    siblingVersion: "2.0.0",
+  })
+  try {
+    await withRegistrar(() => {
+      for (const on of ["1", "true"]) {
+        process.env[SINGLE_COPY_STRICT_ENV] = on
+        expect(() => registerSingleCopy({ cwd: viaEnv.app })).toThrow("Strict mode is on")
+      }
+      for (const off of ["0", "false", "yes", ""]) {
+        process.env[SINGLE_COPY_STRICT_ENV] = off
+        expect(registerSingleCopy({ cwd: viaEnv.app }).skipped).toHaveLength(1)
+      }
+      process.env[SINGLE_COPY_STRICT_ENV] = "1"
+      expect(registerSingleCopy({ cwd: viaEnv.app, strict: false }).skipped).toHaveLength(1)
+    })
+  } finally {
+    await rm(viaEnv.ground, { recursive: true, force: true })
+  }
+})
+
+test("the installed plugin warns once for a file with no counterpart, and throws in strict mode", async () => {
+  const { ground, app, theirs } = await linkedRepos("inprocess-no-counterpart", {
+    declaration: ["state"],
+  })
+  try {
+    const extra = join(theirs, "extra.js")
+    await writeFile(extra, EXTRA)
+    await withRegistrar(({ installed, warnings }) => {
+      const skips: SingleCopySkip[] = []
+      const plan = registerSingleCopy({
+        cwd: app,
+        onSkip: (skip) => {
+          skips.push(skip)
+        },
+      })
+      // Same version, so the plan is clean: this skip only exists once a file is actually loaded.
+      expect(plan.skipped).toHaveLength(0)
+      expect(warnings).toHaveLength(0)
+      const [plugin] = installed
+      if (plugin === undefined) throw new Error("the registrar installed no plugin")
+      const load = hook(hooksOf(plugin).load)
+      expect(load.run(extra)).toEqual({ contents: EXTRA, loader: "js" })
+      expect(load.run(extra)).toEqual({ contents: EXTRA, loader: "js" })
+      expect(skips.map((skip) => [skip.reason, skip.from])).toEqual([
+        ["no-counterpart", extra],
+        ["no-counterpart", extra],
+      ])
+      expect(warnings).toHaveLength(1)
+      expect(warnings[0]).toContain("state is NOT deduplicated (no-counterpart)")
+      expect(warnings[0]).toContain(`  linked copy: ${extra} (1.0.0)`)
+      expect(warnings[0]).toContain("Fix: install the same build of the package in both trees")
+    })
+    await withRegistrar(({ installed, warnings }) => {
+      registerSingleCopy({ cwd: app, strict: true })
+      const [plugin] = installed
+      if (plugin === undefined) throw new Error("the registrar installed no plugin")
+      const load = hook(hooksOf(plugin).load)
+      expect(() => load.run(extra)).toThrow("Strict mode is on")
+      // Strict only fails the file that cannot be shared; one with a counterpart still redirects.
+      expect(load.run(join(theirs, "index.js"))).toMatchObject({ loader: "js" })
+      expect(warnings).toHaveLength(0)
+    })
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("with nothing declared the registrar installs no plugin and still records its plan", async () => {
+  const { ground, app } = await linkedRepos("inprocess-undeclared")
+  try {
+    await withRegistrar(({ installed, warnings }) => {
+      const plan = registerSingleCopy({ cwd: app })
+      expect(plan).toEqual({ root: app, declared: [], redirects: [], skipped: [] })
+      expect(installed).toHaveLength(0)
+      expect(warnings).toHaveLength(0)
+      expect(globals[SINGLE_COPY_ACTIVE]).toBe(plan)
+    })
+  } finally {
+    await rm(ground, { recursive: true, force: true })
   }
 })
