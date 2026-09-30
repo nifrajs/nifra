@@ -11,6 +11,9 @@ import {
   requirePeer,
 } from "../src/plugins/kit.ts"
 
+/** A file under this package, located from the test file so the suite runs from any cwd. */
+const WEB_SOURCE_FILE = join(import.meta.dir, "..", "src", "x.module.css")
+
 type LoadCb = (args: { path: string }) => { contents: string; loader: string }
 type ResolveCb = (args: { path: string }) => { path: string; namespace: string }
 
@@ -111,14 +114,14 @@ describe("requirePeer", () => {
 describe("reproduciblePath", () => {
   test("anchors on the file's nearest package.json (package-root-relative), forward-slashed", () => {
     // packages/web HAS a package.json → the path is relative to packages/web, NOT the cwd/repo root.
-    const abs = `${process.cwd()}/packages/web/src/x.module.css`
+    const abs = WEB_SOURCE_FILE
     expect(reproduciblePath(abs)).toBe("src/x.module.css")
     expect(reproduciblePath(abs)).toBe(reproduciblePath(abs)) // deterministic
   })
 
   test("independent of cwd - same file → same path regardless of where the process runs", () => {
     // The whole point of (A): dom build cwd and ssr runtime cwd may differ; the result must not.
-    const abs = `${process.cwd()}/packages/web/src/x.module.css`
+    const abs = WEB_SOURCE_FILE
     const fromRepoRoot = reproduciblePath(abs)
     const cwd = process.cwd()
     try {
