@@ -237,6 +237,11 @@
       "types": "./dist/server/multipart.d.ts",
       "default": "./dist/server/multipart.js"
     },
+    "./body-parser": {
+      "bun": "./src/server/body-parser.ts",
+      "types": "./dist/server/body-parser.d.ts",
+      "default": "./dist/server/body-parser.js"
+    },
     "./sse": {
       "bun": "./src/server/sse.ts",
       "types": "./dist/server/sse.d.ts",

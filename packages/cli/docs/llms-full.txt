@@ -2685,6 +2685,68 @@ send. A `Request` built straight from a `FormData` and passed to
 `app.fetch` has none, and on Node 26 the runtime raises an unhandled rejection when the
 app stops reading such a body early, as it does for one over the limit.
 
+### Other body formats - `bodyParser`
+
+A route reads JSON and urlencoded bodies and answers `415` to everything else.
+`bodyParser` from `@nifrajs/core/body-parser` names the other media types
+one route reads and the function that decodes them. What it decodes is validated by the same
+schema, so the handler sees one typed body whatever format it arrived in.
+
+```ts
+// doc-check: skip - fragment: `app` is your server; `Pipeline` is your schema; yaml is your own dependency.
+import { bodyParser } from "@nifrajs/core/body-parser"
+import { parse } from "yaml"
+
+const utf8 = new TextDecoder("utf-8", { fatal: true })
+
+app.post(
+  "/pipelines",
+  {
+    body: bodyParser(Pipeline, {
+      types: ["application/yaml"],
+      // Handed the bytes, already within bodyLimit. Bound the decoder too: alias count, nesting.
+      parse: (bytes) => parse(utf8.decode(bytes), { maxAliasCount: 0 }),
+    }),
+  },
+  (c) => c.body.name, // validated by Pipeline, whatever format it arrived in
+)
+```
+
+The route opts in, not the app: a parser registered once for every route would widen what each
+of them accepts. Before `parse` runs, the request&rsquo;s media type has matched one
+of `types` in full (case folded, parameters set aside) and the body has been read
+under the route&rsquo;s `bodyLimit`, counted on the bytes delivered. After it, and
+before the schema:
+
+-
+**A parser that throws is a `400`.** The answer is `invalid_body`; the
+parser&rsquo;s own message is not sent.
+
+-
+**The value must be a tree.** An object or array reached twice is what an alias or a cycle
+decodes to, and a few bytes of it can describe a value that takes minutes to walk. It is
+refused with a `400` under every `protoPoisoning` setting.
+
+-
+**
+The `protoPoisoning` policy applies.
+**
+A `__proto__` key, a `constructor` that carries a `prototype`,
+and an object whose prototype the decoder replaced with data are rejected or stripped, as for
+JSON. An instance of a class, such as a `Date` or a `Uint8Array`, is
+passed through without being looked into.
+
+What stays yours is the decoder&rsquo;s own limits: nesting depth, alias expansion, and the size
+of a number or a string are spent inside `parse`, before anything above can look.
+Configure it for untrusted input.
+
+`types` takes full media types only, and refuses four: JSON, urlencoded and multipart
+already have readers, and `text/plain` is a body a browser sends from any site with
+the user&rsquo;s cookies and no preflight. Every type it does accept is one a browser must
+preflight, so your CORS policy sees the request first. The generated OpenAPI document lists
+each type under the operation&rsquo;s request body. The typed client keeps sending JSON, which
+the route still reads; send another format with `fetch`.
+
 ### File uploads - `@nifrajs/uploads`
 
 A dependency-free package for the upload-hardening basics. `validateUpload` enforces a
@@ -10331,7 +10393,7 @@ The body trust boundary is on by default and imported from `@nifrajs/core` - the
 | Streaming byte cap | a length-less (chunked) body is drained under `maxBodyBytes`; once over, the stream is **cancelled** and rejected `413` - it is never buffered whole |
 | Content-Length pre-reject | a declared length over `maxBodyBytes` is `413` before a byte is read; a malformed length is `400` |
 | Prototype-pollution guard | an own `__proto__` key (or a poisoning-shaped `constructor.prototype`) in a JSON body is rejected (`"reject"`, default) or removed (`"strip"`) before it reaches your handler |
-| Media-type framing | JSON and urlencoded bodies are framed and capped; other content types get `415`. A route whose body is a `t.form` (or a `multipartBody` schema) reads `multipart/form-data` under the same cap, with its own field and file limits |
+| Media-type framing | JSON and urlencoded bodies are framed and capped; other content types get `415`. A route whose body is a `t.form` (or a `multipartBody` schema) reads `multipart/form-data` under the same cap, with its own field and file limits, and a `bodyParser` schema reads the media types it names |
 
 Rejection envelopes are byte-for-byte the full Server's.
 

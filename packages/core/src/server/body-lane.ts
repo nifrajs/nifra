@@ -181,12 +181,15 @@ export const SCHEMA_BODY_READER: unique symbol = Symbol.for("nifra.body.schemaRe
  * and the app's prototype-poisoning policy, and owns all three: it answers the value to validate, or
  * the rejection to send (a `415` for a media type it does not read).
  */
-export type SchemaBodyReader = (
+export type SchemaBodyReader = ((
   source: RequestSource,
   contentType: string,
   maxBodyBytes: number,
   protoPoisoning: ProtoPoisoning,
-) => Promise<unknown | ResponseResult>
+) => Promise<unknown | ResponseResult>) & {
+  /** The media types a reader declares it reads, for the documents generated from a route. */
+  readonly mediaTypes?: readonly string[]
+}
 
 /**
  * The shared content-type dispatcher around the JSON and urlencoded lanes. A `bodySchema` branded

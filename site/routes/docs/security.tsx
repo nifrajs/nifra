@@ -135,6 +135,24 @@ const Upload = z.object({ title: z.string(), attachment: z.instanceof(File) })
 // Any Standard Schema can validate a form. \`multipartBody\` is what tells the route to read one.
 app.post("/attachments", { body: multipartBody(Upload, { maxFiles: 1 }) }, (c) => c.body.title)`
 
+const BODY_PARSER = `// doc-check: skip - fragment: \`app\` is your server; \`Pipeline\` is your schema; yaml is your own dependency.
+import { bodyParser } from "@nifrajs/core/body-parser"
+import { parse } from "yaml"
+
+const utf8 = new TextDecoder("utf-8", { fatal: true })
+
+app.post(
+  "/pipelines",
+  {
+    body: bodyParser(Pipeline, {
+      types: ["application/yaml"],
+      // Handed the bytes, already within bodyLimit. Bound the decoder too: alias count, nesting.
+      parse: (bytes) => parse(utf8.decode(bytes), { maxAliasCount: 0 }),
+    }),
+  },
+  (c) => c.body.name, // validated by Pipeline, whatever format it arrived in
+)`
+
 const UPLOADS = `// doc-check: skip - fragment: \`app\`, \`save\`, \`id\`, and \`env\` are your application's.
 import { validateUpload, signDownloadUrl } from "@nifrajs/uploads"
 
@@ -538,6 +556,55 @@ export default function Security() {
         send. A <code>Request</code> built straight from a <code>FormData</code> and passed to{" "}
         <code>app.fetch</code> has none, and on Node 26 the runtime raises an unhandled rejection when the
         app stops reading such a body early, as it does for one over the limit.
+      </p>
+
+      <h2>Other body formats - <code>bodyParser</code></h2>
+      <p>
+        A route reads JSON and urlencoded bodies and answers <code>415</code> to everything else.{" "}
+        <code>bodyParser</code> from <code>@nifrajs/core/body-parser</code> names the other media types
+        one route reads and the function that decodes them. What it decodes is validated by the same
+        schema, so the handler sees one typed body whatever format it arrived in.
+      </p>
+      <CodeBlock code={BODY_PARSER} lang="ts" />
+      <p>
+        The route opts in, not the app: a parser registered once for every route would widen what each
+        of them accepts. Before <code>parse</code> runs, the request&rsquo;s media type has matched one
+        of <code>types</code> in full (case folded, parameters set aside) and the body has been read
+        under the route&rsquo;s <code>bodyLimit</code>, counted on the bytes delivered. After it, and
+        before the schema:
+      </p>
+      <ul>
+        <li>
+          <b>A parser that throws is a <code>400</code>.</b> The answer is <code>invalid_body</code>; the
+          parser&rsquo;s own message is not sent.
+        </li>
+        <li>
+          <b>The value must be a tree.</b> An object or array reached twice is what an alias or a cycle
+          decodes to, and a few bytes of it can describe a value that takes minutes to walk. It is
+          refused with a <code>400</code> under every <code>protoPoisoning</code> setting.
+        </li>
+        <li>
+          <b>
+            The <code>protoPoisoning</code> policy applies.
+          </b>{" "}
+          A <code>__proto__</code> key, a <code>constructor</code> that carries a <code>prototype</code>,
+          and an object whose prototype the decoder replaced with data are rejected or stripped, as for
+          JSON. An instance of a class, such as a <code>Date</code> or a <code>Uint8Array</code>, is
+          passed through without being looked into.
+        </li>
+      </ul>
+      <p>
+        What stays yours is the decoder&rsquo;s own limits: nesting depth, alias expansion, and the size
+        of a number or a string are spent inside <code>parse</code>, before anything above can look.
+        Configure it for untrusted input.
+      </p>
+      <p>
+        <code>types</code> takes full media types only, and refuses four: JSON, urlencoded and multipart
+        already have readers, and <code>text/plain</code> is a body a browser sends from any site with
+        the user&rsquo;s cookies and no preflight. Every type it does accept is one a browser must
+        preflight, so your CORS policy sees the request first. The generated OpenAPI document lists
+        each type under the operation&rsquo;s request body. The typed client keeps sending JSON, which
+        the route still reads; send another format with <code>fetch</code>.
       </p>
 
       <h2>File uploads - <code>@nifrajs/uploads</code></h2>

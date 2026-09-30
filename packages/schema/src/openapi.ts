@@ -420,7 +420,11 @@ function buildOperation(input: OperationInput, store: SchemaStore): OpenAPIOpera
       const contentType =
         input.requestContentType ??
         (hasFileField(input.body.jsonSchema) ? "multipart/form-data" : "application/json")
-      operation.requestBody = { required: true, content: { [contentType]: { schema } } }
+      const content: Record<string, { schema: typeof schema }> = { [contentType]: { schema } }
+      // A body schema with a parser of its own reads those media types too: one entry each, in a
+      // fixed order so a live document and one built from a stored snapshot are the same document.
+      for (const type of [...(input.body.mediaTypes ?? [])].sort()) content[type] ??= { schema }
+      operation.requestBody = { required: true, content }
     }
   }
   return operation

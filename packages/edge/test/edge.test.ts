@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { bodyParser } from "@nifrajs/core/body-parser"
 import { multipartBody } from "@nifrajs/core/multipart"
 import { server as coreServer } from "@nifrajs/core/server"
 import { type StandardSchemaV1, server, toFetchHandler } from "../src/index.ts"
@@ -276,6 +277,59 @@ test("a multipart body over maxBodyBytes is rejected with 413", async () => {
     ]),
   )
   expect(res.status).toBe(413)
+})
+
+const linesBody = () =>
+  bodyParser(userBody, {
+    types: ["application/yaml"],
+    parse: (bytes) => {
+      const out: Record<string, unknown> = {}
+      for (const line of new TextDecoder("utf-8", { fatal: true }).decode(bytes).split("\n")) {
+        if (line === "") continue
+        const at = line.indexOf(": ")
+        if (at === -1) throw new Error("not a line")
+        const value = line.slice(at + 2)
+        out[line.slice(0, at)] = /^\d+$/.test(value) ? Number(value) : value
+      }
+      return out
+    },
+  })
+const describeUser = (c: { body: { name: string; age: number } }) => ({
+  created: c.body.name,
+  age: c.body.age,
+})
+
+test("parity: a body in a media type the route names matches the full Server", async () => {
+  const options = { maxBodyBytes: 64 }
+  const edge = () => server(options).post("/users", { body: linesBody() }, describeUser)
+  const core = () => coreServer(options).post("/users", { body: linesBody() }, describeUser)
+  const yaml = (body: string, contentType = "application/yaml") =>
+    new Request("https://x.test/users", {
+      method: "POST",
+      headers: { "content-type": contentType },
+      body: new TextEncoder().encode(body),
+    })
+  const cases: ReadonlyArray<() => Request> = [
+    () => yaml("name: Ada\nage: 36\n"),
+    () => yaml("name: Ada\nage: 36\n", "Application/YAML; charset=utf-8"),
+    // A media type the route did not name.
+    () => yaml("name: Ada\nage: 36\n", "text/yaml"),
+    // Over the byte cap.
+    () => yaml(`name: ${"x".repeat(200)}\nage: 36\n`),
+    // The parser refuses the body.
+    () => yaml("no separator"),
+    // The schema refuses what the parser decoded.
+    () => yaml("name: Ada\n"),
+    // JSON keeps its own lane.
+    () => yaml('{"name":"Ada","age":36}', "application/json"),
+  ]
+  const statuses: number[] = []
+  for (const req of cases) {
+    const e = await wire(await edge().fetch(req()))
+    expect(e).toEqual(await wire(await core().fetch(req())))
+    statuses.push(e.status)
+  }
+  expect(statuses).toEqual([200, 200, 415, 413, 400, 422, 200])
 })
 
 test("toFetchHandler yields a Workers { fetch } module handler", async () => {

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { StandardSchemaV1 } from "@nifrajs/core"
 import { server } from "@nifrajs/core"
+import { bodyParser } from "@nifrajs/core/body-parser"
 import { defineContract } from "@nifrajs/core/contract"
 import { snapshotProjectEvidence } from "@nifrajs/core/evidence"
 import { t, toOpenAPI, toOpenAPIFromEvidence } from "../src/index.ts"
@@ -499,5 +500,42 @@ describe("header schema → header parameters", () => {
       required: true,
       schema: { type: "string" },
     })
+  })
+})
+
+describe("a body schema with a parser of its own", () => {
+  const Pipeline = t.object({ name: t.string() })
+  const parse = (): unknown => ({ name: "build" })
+  const app = () =>
+    server()
+      .post(
+        "/pipelines",
+        // Declared out of order: the document lists them in one fixed order.
+        { body: bodyParser(Pipeline, { types: ["text/yaml", "application/yaml"], parse }) },
+        (c) => ({ name: c.body.name }),
+      )
+      .post("/plain", { body: Pipeline }, (c) => ({ name: c.body.name }))
+
+  test("each media type it reads is a request content entry with the body schema", () => {
+    const content = toOpenAPI(app()).paths["/pipelines"]?.post?.requestBody?.content
+    expect(Object.keys(content ?? {})).toEqual([
+      "application/json",
+      "application/yaml",
+      "text/yaml",
+    ])
+    const json = content?.["application/json"]?.schema
+    expect(json).toMatchObject({ type: "object", properties: { name: { type: "string" } } })
+    expect(content?.["application/yaml"]?.schema).toEqual(json)
+    expect(content?.["text/yaml"]?.schema).toEqual(json)
+  })
+
+  test("a route without one keeps a single entry", () => {
+    const content = toOpenAPI(app()).paths["/plain"]?.post?.requestBody?.content
+    expect(Object.keys(content ?? {})).toEqual(["application/json"])
+  })
+
+  test("a document built from a stored snapshot is the same document", () => {
+    const evidence = JSON.parse(JSON.stringify(snapshotProjectEvidence(app())))
+    expect(JSON.stringify(toOpenAPIFromEvidence(evidence))).toBe(JSON.stringify(toOpenAPI(app())))
   })
 })

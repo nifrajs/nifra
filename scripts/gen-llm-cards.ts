@@ -192,6 +192,7 @@ const FOOTGUNS: Record<string, readonly string[]> = {
   "@nifrajs/core": [
     "The package root is the lean HTTP server API. Enable optional systems with `.use()` plugins from their subpaths - `.use(mcp())` from `@nifrajs/core/mcp`, `.use(streaming())` from `@nifrajs/core/sse`, `.use(idempotency())`, `.use(effectLedger())`; the root activates none of them.",
     "`t.object({...})` (and any object schema) rejects **unknown fields** by default (`additionalProperties: false`) → a structured `422 { path: [...] }` **before** the handler runs. Use `t.looseObject` to allow extras.",
+    "A route reads JSON and urlencoded bodies and answers `415` to anything else. `bodyParser(schema, { types, parse })` from `@nifrajs/core/body-parser` opts ONE route into other media types; `parse` gets the bytes, already within `bodyLimit`, and its result is validated by the schema. `types` refuses JSON, urlencoded, multipart and `text/plain`. Bound the decoder you pass (aliases, depth).",
     '**Throw rule:** `throw new Response("", { status: 404 })` is control flow - returned as-is, bypasses `_error`. `throw new Error(…)` hits the nearest `_error` boundary / a 500. Do not throw a `Response` to signal a bug, and do not `throw new Error` to send a 4xx.',
     "Type the env ONCE on `server<Env>()` → `c.env` is typed on every route below (no per-binding cast). Without `<Env>`, `c.env` is `unknown`. Still validate untrusted env at the boundary.",
   ],

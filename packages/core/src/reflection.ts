@@ -39,6 +39,11 @@ export interface SchemaReflection {
   readonly jsonSchema: JsonSchema | undefined
   /** Top-level object fields, or `undefined` when the JSON Schema is absent/non-object. */
   readonly fields: readonly ReflectedSchemaField[] | undefined
+  /**
+   * The media types a body schema reads through a parser of its own (`bodyParser`), beyond the
+   * JSON and urlencoded bodies every body schema reads. Absent when it declares none.
+   */
+  readonly mediaTypes?: readonly string[]
 }
 
 export interface ReflectedRouteSchema {
@@ -152,6 +157,24 @@ const fieldsOf = (schema: JsonSchema | undefined): readonly ReflectedSchemaField
   return fields
 }
 
+// The brand a body schema carries its own reader under. Spelled here rather than imported so that
+// reflection does not pull the body lane into a bundle that only describes routes.
+const BODY_READER = Symbol.for("nifra.body.schemaReader")
+
+const mediaTypesOf = (value: unknown): readonly string[] | undefined => {
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) return undefined
+  try {
+    const reader = (value as Record<symbol, unknown>)[BODY_READER]
+    if (typeof reader !== "function") return undefined
+    const declared = (reader as { readonly mediaTypes?: unknown }).mediaTypes
+    if (!Array.isArray(declared)) return undefined
+    const types = declared.filter((type): type is string => typeof type === "string")
+    return types.length > 0 ? Object.freeze(types) : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Reflect a Standard Schema, Nifra/TypeBox schema carrier, or raw JSON Schema. Never throws.
  * Validation-only schemas have `standard` but no `jsonSchema`; raw JSON Schema has the reverse.
@@ -159,7 +182,13 @@ const fieldsOf = (schema: JsonSchema | undefined): readonly ReflectedSchemaField
 export function reflectSchema(value: unknown): SchemaReflection {
   const standard = standardOf(value)
   const jsonSchema = jsonSchemaOf(value, standard)
-  return { standard, jsonSchema, fields: fieldsOf(jsonSchema) }
+  const mediaTypes = mediaTypesOf(value)
+  return {
+    standard,
+    jsonSchema,
+    fields: fieldsOf(jsonSchema),
+    ...(mediaTypes !== undefined ? { mediaTypes } : {}),
+  }
 }
 
 const routeCandidates = (source: unknown): readonly unknown[] => {

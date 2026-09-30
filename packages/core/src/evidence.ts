@@ -26,6 +26,8 @@ import {
 export interface ProjectEvidenceSchemaPart {
   readonly jsonSchema?: JsonSchema
   readonly fields?: readonly ReflectedSchemaField[]
+  /** The media types a body schema reads through a parser of its own. */
+  readonly mediaTypes?: readonly string[]
 }
 
 export interface ProjectEvidenceSchema {
@@ -128,6 +130,9 @@ function schemaPart(value: SchemaReflection | undefined): ProjectEvidenceSchemaP
   return Object.freeze({
     ...(value.jsonSchema !== undefined ? { jsonSchema: value.jsonSchema } : {}),
     ...(value.fields !== undefined ? { fields: Object.freeze([...value.fields]) } : {}),
+    ...(value.mediaTypes !== undefined
+      ? { mediaTypes: Object.freeze([...value.mediaTypes].sort()) }
+      : {}),
   })
 }
 
@@ -453,7 +458,12 @@ function schemaPartToReflection(
 ): SchemaReflection | undefined {
   return value === undefined
     ? undefined
-    : { standard: undefined, jsonSchema: value.jsonSchema, fields: value.fields }
+    : {
+        standard: undefined,
+        jsonSchema: value.jsonSchema,
+        fields: value.fields,
+        ...(value.mediaTypes !== undefined ? { mediaTypes: value.mediaTypes } : {}),
+      }
 }
 
 function schemaFromEvidence(schema: ProjectEvidenceSchema | undefined): ReflectedRoute["schema"] {

@@ -12,6 +12,7 @@
       "@nifrajs/core/cookies": ["./packages/core/src/server/cookies.ts"],
       "@nifrajs/core/edge-kit": ["./packages/core/src/edge-kit.ts"],
       "@nifrajs/core/logger": ["./packages/core/src/server/logger.ts"],
+      "@nifrajs/core/body-parser": ["./packages/core/src/server/body-parser.ts"],
       "@nifrajs/core/multipart": ["./packages/core/src/server/multipart.ts"],
       "@nifrajs/core/response-contract": ["./packages/core/src/server/response-contract-lane.ts"],
       "@nifrajs/core/router": ["./packages/core/src/router/router.ts"],

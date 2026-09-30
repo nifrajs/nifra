@@ -1738,6 +1738,14 @@ Every public export of every package and documented subpath - name, kind, signat
 - **raw** _(function)_ - `raw: <T>(response: Response) => RawResponse<T>`
   Brand a hand-built `Response` with the payload type `T` its body serializes to, so a route that must return a `Response` directly still types `res.data` as `Jsonify<T>` on the client instead of `never`. Use it for the endpoints that build their own `Response` - a token minted by a third-party SDK, …
 
+### `@nifrajs/core/body-parser`
+
+- **BodyParserInput** _(interface)_ - `interface BodyParserInput`
+  What `parse` is told about the body it is decoding.
+- **BodyParserOptions** _(interface)_ - `interface BodyParserOptions`
+- **bodyParser** _(function)_ - `bodyParser: <Schema extends StandardSchemaV1>(schema: Schema, options: BodyParserOptions) => Schema`
+  Opt a route's body schema into media types of your own. Returns a copy of `schema` that also reads a body whose media type is one of `types`, decoded by `parse`; the schema itself is not changed, and JSON and urlencoded bodies still reach it. A schema that already reads another type, such as a form…
+
 ### `@nifrajs/core/budget`
 
 - **BudgetClock** _(interface)_ - `interface BudgetClock`
@@ -2411,7 +2419,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **MultipartValue** _(type)_ - `type MultipartValue = string | File | Array<string | File>`
   A value of the record handed to the schema: one part, or every part that shared the name.
 - **multipartBody** _(function)_ - `multipartBody: <Schema extends StandardSchemaV1>(schema: Schema, limits?: MultipartLimits) => Schema`
-  Opt a route's body schema into `multipart/form-data`. Returns a copy of `schema` that also reads multipart bodies; the schema itself is not changed, and JSON and urlencoded bodies still reach it. Opting in a schema that already was replaces its limits.
+  Opt a route's body schema into `multipart/form-data`. Returns a copy of `schema` that also reads multipart bodies; the schema itself is not changed, and JSON and urlencoded bodies still reach it. Opting in a schema that already was replaces its limits, and a schema that reads another media type thr…
 
 ### `@nifrajs/core/node-direct`
 

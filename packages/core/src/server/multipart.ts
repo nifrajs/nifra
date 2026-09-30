@@ -300,7 +300,10 @@ function renamedFile(part: Blob, name: string): File {
   return file
 }
 
-function createReader(limits: MultipartLimits): SchemaBodyReader {
+function createReader(
+  limits: MultipartLimits,
+  inner: SchemaBodyReader | undefined,
+): SchemaBodyReader {
   const maxFields = limitOf(limits.maxFields, DEFAULT_MAX_FIELDS, "maxFields")
   const maxFiles = limitOf(limits.maxFiles, DEFAULT_MAX_FILES, "maxFiles")
   const maxFieldBytes = limitOf(limits.maxFieldBytes, DEFAULT_MAX_FIELD_BYTES, "maxFieldBytes")
@@ -308,9 +311,14 @@ function createReader(limits: MultipartLimits): SchemaBodyReader {
   // Every part sits between two delimiters, and the last delimiter closes the body.
   const maxDelimiters = maxFields + maxFiles + 1
 
-  return async (source, contentType, maxBodyBytes, protoPoisoning) => {
+  const read: SchemaBodyReader = async (source, contentType, maxBodyBytes, protoPoisoning) => {
     const boundary = boundaryOf(contentType)
-    if (boundary === undefined) return plainError(415, "unsupported_media_type")
+    if (boundary === undefined) {
+      // Not a multipart body: a reader the schema already carried for another media type takes it.
+      return inner === undefined
+        ? plainError(415, "unsupported_media_type")
+        : inner(source, contentType, maxBodyBytes, protoPoisoning)
+    }
     if (boundary === null) return INVALID()
 
     const read = await readBoundedBytes(source, maxBodyBytes)
@@ -379,12 +387,17 @@ function createReader(limits: MultipartLimits): SchemaBodyReader {
     }
     return record
   }
+  const mediaTypes = inner?.mediaTypes
+  return mediaTypes === undefined
+    ? read
+    : Object.defineProperty(read, "mediaTypes", { value: mediaTypes })
 }
 
 /**
  * Opt a route's body schema into `multipart/form-data`. Returns a copy of `schema` that also reads
  * multipart bodies; the schema itself is not changed, and JSON and urlencoded bodies still reach it.
- * Opting in a schema that already was replaces its limits.
+ * Opting in a schema that already was replaces its limits, and a schema that reads another media
+ * type through a parser of its own keeps reading it.
  *
  * Throws a `RangeError` for a limit that is not a non-negative safe integer.
  */
@@ -392,7 +405,12 @@ export function multipartBody<Schema extends StandardSchemaV1>(
   schema: Schema,
   limits: MultipartLimits = {},
 ): Schema {
-  const reader: PropertyDescriptor = { value: createReader(limits) }
+  const carried = (schema as { readonly [SCHEMA_BODY_READER]?: SchemaBodyReader })[
+    SCHEMA_BODY_READER
+  ]
+  const reader: PropertyDescriptor = {
+    value: createReader(limits, typeof carried === "function" ? carried : undefined),
+  }
   if (typeof schema === "function") {
     // A callable schema cannot be copied; an object that delegates to it reads the same.
     return Object.defineProperty(Object.create(schema), SCHEMA_BODY_READER, reader) as Schema

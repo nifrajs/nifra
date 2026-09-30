@@ -2258,6 +2258,26 @@
     "signature": "export interface BodyLimitOptions {\n    /** Maximum raw request-body bytes accepted. */\n    readonly maxBytes: number;\n    /** Methods to inspect. Default: every method except GET/HEAD/OPTIONS/TRACE. */\n    readonly methods?: readonly string[];\n    /** Response error name for over-limit bodies. Default `\"payload_too_large\"`. */\n    readonly error?: string;\n    /** Allow bodies without Content-Length. Default false (fail closed with 411). */\n    readonly allowLengthless?: boolean;\n}"
   },
   {
+    "name": "bodyParser",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function bodyParser<Schema extends StandardSchemaV1>(schema: Schema, options: BodyParserOptions): Schema;",
+    "doc": "/**\n * Opt a route's body schema into media types of your own. Returns a copy of `schema` that also reads\n * a body whose media type is one of `types`, decoded by `parse`; the schema itself is not changed,\n * and JSON and urlencoded bodies still reach it. A schema that already reads another type, such as a\n * form, keeps reading it.\n *\n * Throws a `TypeError` for a `types` entry that is not a full media type, or that names JSON,\n * urlencoded, multipart, or `text/plain`.\n */"
+  },
+  {
+    "name": "BodyParserInput",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface BodyParserInput {\n    /** The media type that matched, lower-cased and without parameters. */\n    readonly mediaType: string;\n    /** The request's `content-type` as sent, for a parser that reads a parameter such as `charset`. */\n    readonly contentType: string;\n}",
+    "doc": "/** What `parse` is told about the body it is decoding. */"
+  },
+  {
+    "name": "BodyParserOptions",
+    "kind": "interface",
+    "package": "@nifrajs/core",
+    "signature": "export interface BodyParserOptions {\n    /** The media types this parser reads, each a full `type/subtype` with no parameters or wildcard. */\n    readonly types: readonly string[];\n    /** Decode the body. The result is what the schema validates; throw to refuse the body with `400`. */\n    readonly parse: (bytes: Uint8Array, input: BodyParserInput) => unknown;\n}"
+  },
+  {
     "name": "boolean",
     "kind": "function",
     "package": "@nifrajs/env",
@@ -11097,7 +11117,7 @@
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function multipartBody<Schema extends StandardSchemaV1>(schema: Schema, limits?: MultipartLimits): Schema;",
-    "doc": "/**\n * Opt a route's body schema into `multipart/form-data`. Returns a copy of `schema` that also reads\n * multipart bodies; the schema itself is not changed, and JSON and urlencoded bodies still reach it.\n * Opting in a schema that already was replaces its limits.\n *\n * Throws a `RangeError` for a limit that is not a non-negative safe integer.\n */"
+    "doc": "/**\n * Opt a route's body schema into `multipart/form-data`. Returns a copy of `schema` that also reads\n * multipart bodies; the schema itself is not changed, and JSON and urlencoded bodies still reach it.\n * Opting in a schema that already was replaces its limits, and a schema that reads another media\n * type through a parser of its own keeps reading it.\n *\n * Throws a `RangeError` for a limit that is not a non-negative safe integer.\n */"
   },
   {
     "name": "MultipartBody",
@@ -13163,7 +13183,7 @@
     "name": "ProjectEvidenceSchemaPart",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface ProjectEvidenceSchemaPart {\n    readonly jsonSchema?: JsonSchema;\n    readonly fields?: readonly ReflectedSchemaField[];\n}"
+    "signature": "export interface ProjectEvidenceSchemaPart {\n    readonly jsonSchema?: JsonSchema;\n    readonly fields?: readonly ReflectedSchemaField[];\n    /** The media types a body schema reads through a parser of its own. */\n    readonly mediaTypes?: readonly string[];\n}"
   },
   {
     "name": "ProjectEvidenceSnapshot",
@@ -16362,7 +16382,7 @@
     "name": "SchemaReflection",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface SchemaReflection {\n    /** The Standard Schema validator, when the value implements Standard Schema v1. */\n    readonly standard: StandardSchemaV1 | undefined;\n    /** Raw JSON Schema metadata, when the value exposes it or is itself a raw JSON Schema. */\n    readonly jsonSchema: JsonSchema | undefined;\n    /** Top-level object fields, or `undefined` when the JSON Schema is absent/non-object. */\n    readonly fields: readonly ReflectedSchemaField[] | undefined;\n}",
+    "signature": "export interface SchemaReflection {\n    /** The Standard Schema validator, when the value implements Standard Schema v1. */\n    readonly standard: StandardSchemaV1 | undefined;\n    /** Raw JSON Schema metadata, when the value exposes it or is itself a raw JSON Schema. */\n    readonly jsonSchema: JsonSchema | undefined;\n    /** Top-level object fields, or `undefined` when the JSON Schema is absent/non-object. */\n    readonly fields: readonly ReflectedSchemaField[] | undefined;\n    /**\n     * The media types a body schema reads through a parser of its own (`bodyParser`), beyond the\n     * JSON and urlencoded bodies every body schema reads. Absent when it declares none.\n     */\n    readonly mediaTypes?: readonly string[];\n}",
     "doc": "/** Validation and introspection capabilities discovered for one schema-like value. */"
   },
   {
