@@ -365,6 +365,7 @@ export function generateServerManifest(
       ...Object.values(manifest.layouts).map((l) => l.file),
       ...Object.values(manifest.errors ?? {}).map((e) => e.file),
       ...(manifest.notFound ? [manifest.notFound.file] : []),
+      ...Object.values(manifest.notFounds ?? {}).map((page) => page.file),
       ...Object.values(manifest.statusPages ?? {}).map((page) => page.file),
     ]),
   ].sort()

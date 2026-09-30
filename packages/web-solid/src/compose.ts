@@ -22,10 +22,13 @@ export function compose(chain: readonly unknown[], props: RenderProps): () => JS
     // Each layout receives its own loader data at its own index. Layouts are the chain's leading
     // prefix, so `layoutData[i]` belongs to `chain[i]`; anything past that end (a client-only `_error`
     // boundary marker, the page) reads `undefined` and is unaffected.
-    const layoutData = props.layoutData?.[i] ?? null
+    // Read through a getter: on the client `props` are getters over the router snapshot, so a
+    // same-route settle that brings new layout data updates the layout in place.
     node = () =>
       createComponent(Layout, {
-        data: layoutData,
+        get data() {
+          return props.layoutData?.[i] ?? null
+        },
         ...(props.boundaries !== undefined ? { boundaries: props.boundaries } : {}),
         children: child(),
       })

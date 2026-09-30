@@ -107,6 +107,27 @@ test("cssCodeSplit false records one standalone aggregate CSS asset and falls ba
   expect(diskManifest.cssLoading).toBe("deferred")
 }, 60_000)
 
+test("a nested _404 is built for its stylesheet: the layouts around it, then its own", async () => {
+  const { root, routesDir } = scaffold({
+    "routes/_layout.tsx": 'import "../app.css"\nexport default function Layout() { return null }\n',
+    "routes/index.tsx": "export default function Index() { return null }\n",
+    "routes/admin/_layout.tsx": "export default function Admin() { return null }\n",
+    "routes/admin/index.tsx": "export default function AdminIndex() { return null }\n",
+    "routes/admin/_404.tsx":
+      'import "../../missing.css"\nexport default function Missing() { return null }\n',
+    "app.css": "body { color: rebeccapurple }\n",
+    "missing.css": ".missing { color: tomato }\n",
+  })
+  const manifest = await build(root, routesDir)
+
+  const styles = manifest.routeStyles?.["admin/_404"] ?? []
+  expect(styles).toHaveLength(2)
+  expect(styles[0]).toBe(manifest.routeStyles?.index?.[0] as string)
+  for (const url of styles) expect(manifest.css).toContain(url)
+  // It is not a page the client navigates to, so it has no chunk list.
+  expect(Object.keys(manifest.routes).sort()).toEqual(["admin/index", "index"])
+}, 60_000)
+
 test("rejects deferred loading when Vite CSS remains split", async () => {
   const { root, routesDir } = scaffold({
     "routes/index.tsx": 'import "../app.css"\nexport default function Index() { return null }\n',

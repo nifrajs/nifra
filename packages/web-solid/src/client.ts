@@ -1,7 +1,4 @@
 import type { MountRouterOptions, RenderProps } from "@nifrajs/web"
-// `/client`, not the root: the root's graph carries the server, and Vite's dev server evaluates it
-// instead of tree-shaking it - which broke hydration before the browser ran a line of app code.
-import { searchOfChain } from "@nifrajs/web/client"
 /**
  * @nifrajs/web-solid/client - Solid client runtime. `hydrate` hydrates a single SSR'd route;
  * `mountRouter` hydrates the initial route then drives navigation through a Solid signal - so a
@@ -14,6 +11,7 @@ import { createSignal } from "solid-js"
 import { hydrate as solidHydrate, render as solidRender } from "solid-js/web"
 import { compose } from "./compose.ts"
 import { setMountedRouter } from "./fetcher.ts"
+import { routeProps } from "./route-props.ts"
 
 // The `_error` boundary chain element - defined in its own module, re-exported here so nifra's client
 // codegen resolves it from `@nifrajs/web-solid/client` alongside `mountRouter`.
@@ -51,43 +49,14 @@ export function mountRouter(options: MountRouterOptions): void {
     mountedRouteId = initial.routeId
     const renderer = first ? solidHydrate : solidRender
     dispose = renderer(() => {
-      // Signal owned by THIS render root (so it's never ownerless). `props` are getters over it; a
+      // Signal owned by THIS render root (so it's never ownerless). `routeProps` are getters over it; a
       // same-route settle calls `update(snapshot)` and the reading components update in place - no
-      // recompose, so the layout chain + focus + scroll survive. Cast bridges
-      // `exactOptionalPropertyTypes` (a getter is always present, returning `undefined` when idle -
-      // the documented "absent on idle" semantics for `submission`).
+      // recompose, so the layout chain + focus + scroll survive.
       const [snapshot, setSnapshot] = createSignal(initial)
       update = setSnapshot
-      const props = {
-        get data() {
-          return snapshot().data
-        },
-        get actionData() {
-          return snapshot().actionData
-        },
-        get pending() {
-          return snapshot().pending
-        },
-        get search() {
-          // The SAME searchOfChain the server ran, over this snapshot's URL - a same-route search change
-          // updates in place (fine-grained), matching the SSR value on hydration.
-          const s = snapshot()
-          const idx = s.path.indexOf("?")
-          return searchOfChain(
-            searchSchemas?.[s.routeId] ?? [],
-            idx === -1 ? "" : s.path.slice(idx),
-          )
-        },
-        get submission() {
-          return snapshot().submission
-        },
-        get boundaries() {
-          return snapshot().boundaries
-        },
-      } as RenderProps
       // The matched chain is fixed for this mount (routeId is constant here); a route *change* disposes
       // and re-mounts below, so the root render fn reads no signal and never re-runs on its own.
-      return compose(routes[initial.routeId] ?? [], props)()
+      return compose(routes[initial.routeId] ?? [], routeProps(snapshot, searchSchemas))()
     }, el)
   }
 

@@ -21,6 +21,7 @@ import type {
   Manifest,
   Meta,
   MetaArgs,
+  NotFoundEntry,
   RouteEntry,
   RouteModule,
 } from "../manifest.ts"
@@ -145,7 +146,25 @@ type PageResponse = Response | ResponseResult | RenderedPage
 export interface PageRequestExecutor<Env = unknown> {
   get(route: RouteEntry): (ctx: PageRouteContext<Env>) => Promise<PageResponse>
   post(route: RouteEntry): (ctx: PageRouteContext<Env>) => Promise<PageResponse>
-  notFound(request: Request, env: Env, path?: string): Promise<PageResponse>
+  /** Answer a URL no route matched: the nearest nested `_404` for it, else the root one. */
+  fallback(ctx: PageRouteContext<Env>): Promise<PageResponse>
+}
+
+/** One URL pattern a nested `_404` answers, as the executor indexes it. */
+interface NotFoundTarget {
+  readonly id: string
+  readonly page: NotFoundEntry
+  /** The pattern's param names in order; the index holds them by position. */
+  readonly names: readonly string[]
+  /** The page's layout chain as a route, so layouts, gates and boundaries run as they do for one. */
+  readonly route: RouteEntry
+}
+
+type LayoutRun = {
+  readonly modules: LoadedLayoutModules
+  readonly layoutData: readonly unknown[] | undefined
+  readonly retained: readonly number[]
+  readonly pending: Promise<unknown>
 }
 
 /**
@@ -174,6 +193,39 @@ export function createPageRequestExecutor<Env = unknown>(
     manifest.routes.map((route) => ({ routeId: route.id, pattern: route.pattern })),
   )
   const routeById = new Map(manifest.routes.map((route) => [route.id, route]))
+
+  // A nested `_404` answers an unmatched URL from inside the catch-all, never as a route of its own:
+  // a registered `/admin/*` would take URLs from a route the router only reaches by backtracking.
+  // Param names are indexed by position, so two directories that name one segment differently share
+  // the index; each target keeps its own names to read a match back.
+  const notFoundTargets: NotFoundTarget[] = []
+  const notFoundPatterns: Array<{ routeId: string; pattern: string }> = []
+  for (const [id, page] of Object.entries(manifest.notFounds ?? {})) {
+    for (const scope of page.scopes) {
+      const names: string[] = []
+      const pattern = scope.pattern.replace(
+        /([:*])([A-Za-z_][A-Za-z0-9_]*)/g,
+        (_match, sigil: string, name: string) => `${sigil}p${names.push(name) - 1}`,
+      )
+      notFoundPatterns.push({ routeId: String(notFoundTargets.length), pattern })
+      notFoundTargets.push({
+        id,
+        page,
+        names,
+        route: {
+          id,
+          pattern: scope.pattern,
+          layoutIds: page.layoutIds,
+          layoutParams: scope.layoutParams,
+          errorIds: page.errorIds,
+          file: page.file,
+          load: page.load,
+        },
+      })
+    }
+  }
+  const matchNotFoundScope =
+    notFoundPatterns.length === 0 ? undefined : createMatcher(notFoundPatterns)
 
   const draftFlag = (req: Request): Promise<boolean> =>
     options.draftSecret === undefined
@@ -223,12 +275,7 @@ export function createPageRequestExecutor<Env = unknown>(
     ctx: LoaderContext,
     controls: PageResponseControls,
     retain: ReadonlySet<number> = new Set(),
-  ): Promise<{
-    readonly modules: LoadedLayoutModules
-    readonly layoutData: readonly unknown[] | undefined
-    readonly retained: readonly number[]
-    readonly pending: Promise<unknown>
-  }> => {
+  ): Promise<LayoutRun> => {
     const modules = await loadLayoutModules(route)
     if (!modules.some((m) => m.loader !== undefined)) {
       return { modules, layoutData: undefined, retained: [], pending: Promise.resolve() }
@@ -618,6 +665,134 @@ export function createPageRequestExecutor<Env = unknown>(
     }
   }
 
+  /** What a failed loader answers with, once a status signal has been ruled out. */
+  const renderLoaderFailure = async (
+    route: RouteEntry,
+    req: Request,
+    env: Env,
+    params: Record<string, string>,
+    err: unknown,
+    personalized: boolean,
+  ): Promise<PageResponse> => {
+    if (isControlFlow(err)) throw err
+    reportLoaderError(route, req, params, err)
+    const errorId = boundaryFor(route, err)
+    if (errorId === undefined) throw err
+    if (req.headers.get(DATA_HEADER) !== null) {
+      return new Response("Internal Server Error", {
+        status: 500,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      })
+    }
+    return renderError(
+      route,
+      errorId,
+      withDuplicateInstanceHint(err),
+      personalized,
+      options.nonce === undefined ? undefined : await resolveNonce(req, env),
+    )
+  }
+
+  /**
+   * Render a nested `_404` inside its layouts. `layoutModules` and `layoutData` are exactly the
+   * layouts at or above the page, their gates already passed.
+   */
+  const renderNestedNotFound = async (
+    req: Request,
+    env: Env,
+    id: string,
+    page: NotFoundEntry,
+    params: Readonly<Record<string, string>>,
+    layoutModules: LoadedLayoutModules,
+    layoutData: readonly unknown[] | undefined,
+    personalized: boolean,
+    signalHeaders?: HeadersLike,
+  ): Promise<PageResponse> => {
+    // The page can show what a layout loaded for this visitor, and a 404 is storable by default.
+    const isPrivate = personalized || layoutData !== undefined
+    if (req.headers.get(DATA_HEADER) !== null) {
+      // No status header: the page has no client chunk, so the navigation falls back to loading the
+      // URL as a document, which renders it here.
+      const headers = new Headers(signalHeaders)
+      headers.set("cache-control", PRIVATE_NO_STORE)
+      headers.set("vary", varyOnDataHeader(headers.get("vary")))
+      return new Response(null, { status: 404, headers })
+    }
+    const mod = await page.load()
+    const nonce = options.nonce === undefined ? undefined : await resolveNonce(req, env)
+    const { chain, head } = resolveChainAndHead(layoutModules, mod, {
+      data: null,
+      params,
+      origin: originOf(req),
+      ...(nonce === undefined ? {} : { nonce }),
+    })
+    let headers: Headers | undefined
+    if (signalHeaders !== undefined || isPrivate) {
+      headers = new Headers(signalHeaders)
+      if (signalHeaders !== undefined) headers.set("vary", varyOnDataHeader(headers.get("vary")))
+      if (isPrivate) headers.set("cache-control", PRIVATE_NO_STORE)
+    }
+    return renderPageResult({
+      adapter,
+      chain,
+      data: null,
+      head,
+      clientEntry,
+      routeId: id,
+      params,
+      path: pathOf(req),
+      search: searchChainOf(layoutModules, mod, req),
+      status: 404,
+      hydrate: false,
+      ...(layoutData !== undefined ? { layoutData } : {}),
+      ...stylesOf(id),
+      ...(headers === undefined ? {} : { headers }),
+      ...(nonce === undefined ? {} : { nonce }),
+      ...titleOption,
+    })
+  }
+
+  /**
+   * The nearest nested `_404` for a `notFound()` from `route`'s own loader - or `undefined` when the
+   * root page applies: another status, a signal a layout raised, no nested page, or a layout that
+   * failed to load its data.
+   */
+  const renderRouteNotFound = async (
+    req: Request,
+    env: Env,
+    route: RouteEntry,
+    params: Readonly<Record<string, string>>,
+    signal: StatusSignal,
+    run: LayoutRun | undefined,
+    personalized: boolean,
+  ): Promise<PageResponse | undefined> => {
+    const id = route.notFoundIds?.at(-1)
+    if (id === undefined || run === undefined) return undefined
+    if (signal[STATUS_SIGNAL].status !== 404 || layoutErrorId(signal) !== undefined) {
+      return undefined
+    }
+    const page = manifest.notFounds?.[id]
+    if (page === undefined) return undefined
+    try {
+      await run.pending
+    } catch {
+      return undefined
+    }
+    // The page's layouts are the leading ones of the route's: its directory contains the route.
+    const kept = page.layoutIds.length
+    return renderNestedNotFound(
+      req,
+      env,
+      id,
+      page,
+      params,
+      run.modules.slice(0, kept),
+      run.layoutData?.slice(0, kept),
+      personalized,
+      signal[STATUS_SIGNAL].headers,
+    )
+  }
+
   const renderNotFound = async (
     request: Request,
     env: Env,
@@ -692,6 +867,7 @@ export function createPageRequestExecutor<Env = unknown>(
         let layoutRetained: readonly number[] = []
         let responseHeaders: Record<string, string> | undefined
         const requestApi = apiFor(c)
+        let run: LayoutRun | undefined
         try {
           const ctx: LoaderContext = {
             params: c.params,
@@ -703,7 +879,7 @@ export function createPageRequestExecutor<Env = unknown>(
             search: loaderSearch(mod.searchSchema, c.req),
             set: controls.scope(PAGE_SCOPE),
           }
-          const run = await runLayoutChain(
+          run = await runLayoutChain(
             route,
             ctx,
             controls,
@@ -760,25 +936,31 @@ export function createPageRequestExecutor<Env = unknown>(
           responseHeaders = controls.documentHeaders()
         } catch (err) {
           if (isStatusSignal(err)) {
-            return renderStatusSignal(c.req, c.env, err, controls.personalized)
+            return (
+              (await renderRouteNotFound(
+                c.req,
+                c.env,
+                route,
+                c.params,
+                err,
+                run,
+                controls.personalized,
+              )) ?? renderStatusSignal(c.req, c.env, err, controls.personalized)
+            )
           }
-          if (isControlFlow(err)) throw err
-          reportLoaderError(route, c.req, c.params, err)
-          const errorId = boundaryFor(route, err)
-          if (errorId === undefined) throw err
-          if (c.req.headers.get(DATA_HEADER) !== null) {
-            return new Response("Internal Server Error", {
-              status: 500,
-              headers: { "content-type": "text/plain; charset=utf-8" },
-            })
-          }
-          return renderError(
+          return renderLoaderFailure(route, c.req, c.env, c.params, err, controls.personalized)
+        }
+        if (isStatusSignal(data)) {
+          const nested = await renderRouteNotFound(
+            c.req,
+            c.env,
             route,
-            errorId,
-            withDuplicateInstanceHint(err),
+            c.params,
+            data,
+            run,
             controls.personalized,
-            options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env),
           )
+          if (nested !== undefined) return nested
         }
         return handleDataOrDocument(
           c.req,
@@ -900,6 +1082,50 @@ export function createPageRequestExecutor<Env = unknown>(
         })
       }),
 
-    notFound: renderNotFound,
+    fallback: withResponseControls(async (c, controls) => {
+      const match = matchNotFoundScope?.(pathOf(c.req)) ?? null
+      const target = match === null ? undefined : notFoundTargets[Number(match.routeId)]
+      if (match === null || target === undefined) {
+        return renderNotFound(c.req, c.env, pathOf(c.req))
+      }
+      const params: Record<string, string> = {}
+      for (let i = 0; i < target.names.length; i++) {
+        params[target.names[i] as string] = match.params[`p${i}`] as string
+      }
+      const mod = await target.page.load()
+      let run: LayoutRun
+      try {
+        run = await runLayoutChain(
+          target.route,
+          {
+            params,
+            request: c.req,
+            req: c.req,
+            api: apiFor(c),
+            env: c.env,
+            draft: await draftFlag(c.req),
+            search: loaderSearch(mod.searchSchema, c.req),
+            set: controls.scope(PAGE_SCOPE),
+          },
+          controls,
+        )
+        await run.pending
+      } catch (err) {
+        if (isStatusSignal(err)) {
+          return renderStatusSignal(c.req, c.env, err, controls.personalized)
+        }
+        return renderLoaderFailure(target.route, c.req, c.env, params, err, controls.personalized)
+      }
+      return renderNestedNotFound(
+        c.req,
+        c.env,
+        target.id,
+        target.page,
+        params,
+        run.modules,
+        run.layoutData,
+        controls.personalized,
+      )
+    }),
   }
 }

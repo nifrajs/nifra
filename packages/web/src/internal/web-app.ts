@@ -14,7 +14,6 @@ import { generateLlmsTxt } from "../llms-txt.ts"
 import type { Manifest } from "../manifest.ts"
 import type { RenderAdapter } from "../render-seam.ts"
 import { createPageRequestExecutor, type NonceResolver } from "./page-execution.ts"
-import { urlPartsFor } from "./request-url.ts"
 
 export type { NonceResolver } from "./page-execution.ts"
 export interface CreateWebAppOptions<Env = unknown> {
@@ -196,14 +195,6 @@ export interface CreateWebAppOptions<Env = unknown> {
   ) => void
 }
 
-/** The handler context fields createWebApp uses - a structural subset of nifra's `Context`. */
-interface RouteContext<Env = unknown> {
-  readonly params: Record<string, string>
-  readonly req: Request
-  /** Platform bindings (Workers env), forwarded to each route's loader/action as `args.env`. */
-  readonly env: Env
-}
-
 /**
  * Re-issue `request` with `prefix` removed from its pathname.
  *
@@ -258,15 +249,6 @@ function mountPathPrefix(path: string): string {
   let end = withoutWildcard.length
   while (end > 0 && withoutWildcard.charCodeAt(end - 1) === 47 /* '/' */) end--
   return withoutWildcard.slice(0, end)
-}
-
-function requestPathOf(request: Request): string {
-  try {
-    const parts = urlPartsFor(request)
-    return parts.pathname + parts.search
-  } catch {
-    return "/"
-  }
 }
 
 /**
@@ -370,10 +352,9 @@ export function createWebApp<Env = unknown>(
     })
   })
 
-  // Wildcard catch-all: unmatched paths render `_404` (404), or a plain text 404 if absent.
-  app.register("GET", "/*", undefined, (c: RouteContext<Env>) =>
-    pageExecutor.notFound(c.req, c.env, requestPathOf(c.req)),
-  )
+  // Wildcard catch-all: unmatched paths render the nearest `_404` (404), or a plain text 404 if
+  // absent.
+  app.register("GET", "/*", undefined, pageExecutor.fallback)
 
   let evidenceComposing = false
   const evidenceProvider: BackendEvidenceProvider = async () => {

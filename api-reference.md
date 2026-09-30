@@ -4668,6 +4668,10 @@ _No named exports (side-effect entrypoint)._
   Context supplied to the optional Content-Security-Policy header callback.
 - **NonceResolver** _(interface)_ - `interface NonceResolver<Env = unknown>`
   A request-aware nonce resolver. It is callable so existing `createWebApp({ nonce })` code can pass it directly. When created with a `header` callback, `createWebApp` also installs its response hook automatically and applies that callback's CSP value to the same request that received the nonce.
+- **NotFoundEntry** _(interface)_ - `interface NotFoundEntry`
+  A `_404` page below the routes root.
+- **NotFoundScope** _(interface)_ - `interface NotFoundScope`
+  One URL pattern a nested `_404` answers when no route matches it.
 - **OpenGraphInput** _(interface)_ - `interface OpenGraphInput`
   Inputs for {@link openGraph} - the common Open Graph properties. All optional; only the provided ones become tags. `type` defaults to `"website"`.
 - **PRE_HYDRATION_GUARD** _(const)_ - `PRE_HYDRATION_GUARD: string`

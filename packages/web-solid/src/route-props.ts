@@ -1,0 +1,46 @@
+import type { MountRouterOptions, RenderProps, RouterState } from "@nifrajs/web"
+// `/client`, not the root: the root's graph carries the server, and Vite's dev server evaluates it
+// instead of tree-shaking it - which broke hydration before the browser ran a line of app code.
+import { searchOfChain } from "@nifrajs/web/client"
+
+/**
+ * The props a mounted Router hands `compose`, as **getters over the snapshot accessor** - so a
+ * same-route settle updates only the components reading the changed field. It is the client half of
+ * the `RenderProps` the server assembled for the same route, so the first render reconciles against
+ * the SSR markup. The cast bridges `exactOptionalPropertyTypes` (a getter is always present, returning
+ * `undefined` when idle - the documented "absent on idle" semantics for `submission`).
+ */
+export function routeProps(
+  snapshot: () => RouterState,
+  searchSchemas: MountRouterOptions["searchSchemas"],
+): RenderProps {
+  return {
+    get data() {
+      return snapshot().data
+    },
+    // Each layout's own loader data. Without it a layout renders `data: null` on the client while the
+    // server rendered it with its data.
+    get layoutData() {
+      return snapshot().layoutData
+    },
+    get actionData() {
+      return snapshot().actionData
+    },
+    get pending() {
+      return snapshot().pending
+    },
+    get search() {
+      // The SAME searchOfChain the server ran, over this snapshot's URL - a same-route search change
+      // updates in place (fine-grained), matching the SSR value on hydration.
+      const s = snapshot()
+      const idx = s.path.indexOf("?")
+      return searchOfChain(searchSchemas?.[s.routeId] ?? [], idx === -1 ? "" : s.path.slice(idx))
+    },
+    get submission() {
+      return snapshot().submission
+    },
+    get boundaries() {
+      return snapshot().boundaries
+    },
+  } as RenderProps
+}

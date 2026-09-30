@@ -349,8 +349,34 @@ export interface RouteEntry {
    * **nearest** boundary, rendered when the route's loader throws. Always set by `buildManifest`
    * (optional only so hand-built test manifests may omit it); absent/empty ⇒ no boundary (error 500s). */
   readonly errorIds?: readonly string[]
+  /** Nested `_404` page ids in this route's ancestor chain (outermost → innermost); the root `_404`
+   * is not listed. The last is the **nearest**, rendered when the route's loader answers
+   * `notFound()`. Absent ⇒ the root `_404`. */
+  readonly notFoundIds?: readonly string[]
   readonly file: string
   readonly load: () => Promise<RouteModule>
+}
+
+/** One URL pattern a nested `_404` answers when no route matches it. */
+export interface NotFoundScope {
+  /** The directory's URL prefix (`/admin`) or everything beneath it (`/admin/*`). */
+  readonly pattern: string
+  /** Param names each layout in {@link NotFoundEntry.layoutIds} owns on this pattern, by index. */
+  readonly layoutParams: ReadonlyArray<readonly string[]>
+}
+
+/** A `_404` page below the routes root. */
+export interface NotFoundEntry extends LayoutEntry {
+  /** Layouts at or above the page's directory (outermost → innermost) - the ones it renders inside. */
+  readonly layoutIds: readonly string[]
+  /** `_error` boundaries at or above the page's directory (outermost → innermost). */
+  readonly errorIds: readonly string[]
+  /**
+   * The URL patterns this page answers when no route matches. Empty when the directory is a
+   * catch-all, or when a `_404` in a directory above it answers the same URLs - the page is then
+   * reached only by `notFound()` from a route beneath it.
+   */
+  readonly scopes: readonly NotFoundScope[]
 }
 
 /** The full route manifest. */
@@ -360,7 +386,14 @@ export interface Manifest {
   /** Per-segment `_error` boundary components, keyed by id (`_error`, `a/_error`, …). Always set by
    * `buildManifest` (optional only so hand-built test manifests may omit it). */
   readonly errors?: Readonly<Record<string, LayoutEntry>>
+  /** The `_404` at the routes root: unmatched URLs and `notFound()` wherever no nested one applies. */
   readonly notFound?: LayoutEntry
+  /**
+   * `_404` pages below the routes root, keyed by id (`admin/_404`, …). Each answers `notFound()` from
+   * the routes beneath its directory and the unmatched URLs under that directory's URL prefix, and
+   * renders inside the layouts at or above it. Absent when the app has none.
+   */
+  readonly notFounds?: Readonly<Record<string, NotFoundEntry>>
   /** Per-status terminal pages from `_<status>.tsx` at the routes root (`_410`, `_451`, …), keyed by
    * the status as a string. Rendered by a loader's `gone()` / `statusPage(n)`; a status with no page
    * falls back to `_404`, and then to plain text. `_404` itself stays on {@link notFound} - it is
@@ -392,6 +425,9 @@ const dirOf = (file: string): string =>
   file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : ""
 const layoutIdFor = (dir: string): string => (dir === "" ? "_layout" : `${dir}/_layout`)
 const errorIdFor = (dir: string): string => (dir === "" ? "_error" : `${dir}/_error`)
+const notFoundIdFor = (dir: string): string => `${dir}/_404`
+const isDirAtOrAbove = (dir: string, other: string): boolean =>
+  dir === "" || dir === other || other.startsWith(`${dir}/`)
 
 /**
  * Derive **every** nifra router pattern a route file maps to (relative to the routes dir):
@@ -618,6 +654,7 @@ export function buildManifest(
   const errorDirs = new Set<string>()
   const errors: Record<string, LayoutEntry> = {}
   let notFound: LayoutEntry | undefined
+  const notFoundFiles = new Map<string, string>()
   const statusPages: Record<string, LayoutEntry> = {}
   const routeFiles: string[] = []
 
@@ -632,7 +669,9 @@ export function buildManifest(
       errorDirs.add(dir)
       errors[errorIdFor(dir)] = { file, load: importer(file) }
     } else if (stem === "_404") {
-      notFound = { file, load: importer(file) }
+      const dir = dirOf(file)
+      notFoundFiles.set(dir, file)
+      if (dir === "") notFound = { file, load: importer(file) }
     } else if (STATUS_PAGE.test(stem) && dirOf(file) === "") {
       // `_410.tsx`, `_451.tsx`, … at the routes root. Root-only: unlike `_error`, these are not
       // resolved per segment - a terminal status is a property of the outcome, not of where in the
@@ -650,6 +689,9 @@ export function buildManifest(
     const layoutDirsForFile = dirs.filter((dir) => layoutDirs.has(dir))
     const layoutIds = layoutDirsForFile.map(layoutIdFor)
     const errorIds = dirs.filter((dir) => errorDirs.has(dir)).map(errorIdFor)
+    const notFoundIds = dirs
+      .filter((dir) => dir !== "" && notFoundFiles.has(dir))
+      .map(notFoundIdFor)
     const id = stripExt(file)
     const load = importer(file) // one lazy loader per file, shared by its (possibly expanded) patterns
     // An optional `[[x]]` segment expands a file into multiple patterns, all pointing at the same
@@ -673,7 +715,70 @@ export function buildManifest(
       const layoutParams = layoutDirsForFile.map((dir) =>
         paramsInPrefix(pattern, depths[dir === "" ? 0 : dir.split("/").length] ?? 0),
       )
-      routes.push({ id, pattern, layoutIds, layoutParams, errorIds, file, load })
+      routes.push({
+        id,
+        pattern,
+        layoutIds,
+        layoutParams,
+        errorIds,
+        ...(notFoundIds.length > 0 ? { notFoundIds } : {}),
+        file,
+        load,
+      })
+    }
+  }
+
+  // Nested `_404` pages. Each answers the unmatched URLs under its directory's URL prefix; when two
+  // directories share a prefix (a route group adds no segment), the one that contains the others
+  // answers, and with no such directory the choice would be arbitrary - so it is a boot error.
+  const scopeOwners = new Map<string, string[]>()
+  const scopesByDir = new Map<string, Array<NotFoundScope & { readonly shape: string }>>()
+  for (const dir of notFoundFiles.keys()) {
+    const layoutDirsForDir = ancestorDirs(`${dir}/_404`).filter((d) => layoutDirs.has(d))
+    const scopes: Array<NotFoundScope & { readonly shape: string }> = []
+    const forms =
+      dir === "" ? [{ pattern: "/", depths: [0] }] : filePathToRoutes(`${dir}/index.tsx`)
+    for (const { pattern: prefix, depths } of forms) {
+      // A catch-all directory already matches everything beneath it: nothing there is unmatched.
+      if (/(?:^|\/)\*[^/]*$/.test(prefix)) continue
+      const layoutParams = layoutDirsForDir.map((d) =>
+        paramsInPrefix(prefix, depths[d === "" ? 0 : d.split("/").length] ?? 0),
+      )
+      for (const pattern of prefix === "/" ? ["/*"] : [prefix, `${prefix}/*`]) {
+        // Two directories answer the same URLs when their patterns differ only in param names.
+        const shape = pattern.replace(/([:*])[A-Za-z_][A-Za-z0-9_]*/g, "$1")
+        if (scopes.some((scope) => scope.shape === shape)) continue
+        scopes.push({ pattern, layoutParams, shape })
+        const owners = scopeOwners.get(shape)
+        if (owners === undefined) scopeOwners.set(shape, [dir])
+        else owners.push(dir)
+      }
+    }
+    scopesByDir.set(dir, scopes)
+  }
+  const ownerOf = new Map<string, string>()
+  for (const [shape, dirs] of scopeOwners) {
+    const owner = dirs.find((dir) => dirs.every((other) => isDirAtOrAbove(dir, other)))
+    if (owner === undefined) {
+      const [first, second] = dirs as [string, string]
+      throw new Error(
+        `[nifra/web] ambiguous _404: "${notFoundFiles.get(first)}" and "${notFoundFiles.get(second)}" both answer unmatched URLs under "${shape.replace(/\/?\*$/, "") || "/"}"; keep one, or add a _404 in a directory that contains both`,
+      )
+    }
+    ownerOf.set(shape, owner)
+  }
+  const notFounds: Record<string, NotFoundEntry> = {}
+  for (const [dir, file] of notFoundFiles) {
+    if (dir === "") continue
+    const dirs = ancestorDirs(file)
+    notFounds[notFoundIdFor(dir)] = {
+      file,
+      load: importer(file),
+      layoutIds: dirs.filter((d) => layoutDirs.has(d)).map(layoutIdFor),
+      errorIds: dirs.filter((d) => errorDirs.has(d)).map(errorIdFor),
+      scopes: (scopesByDir.get(dir) ?? [])
+        .filter((scope) => ownerOf.get(scope.shape) === dir)
+        .map(({ pattern, layoutParams }) => ({ pattern, layoutParams })),
     }
   }
 
@@ -681,6 +786,7 @@ export function buildManifest(
     routes,
     layouts,
     errors,
+    ...(Object.keys(notFounds).length > 0 ? { notFounds } : {}),
     ...(Object.keys(statusPages).length > 0 ? { statusPages } : {}),
   }
   return notFound === undefined ? base : { ...base, notFound }

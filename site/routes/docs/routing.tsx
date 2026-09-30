@@ -126,7 +126,18 @@ export default function Routing() {
           (this docs sidebar is a nested layout).
         </li>
         <li>
-          <code>_404.tsx</code> renders unmatched paths.
+          <code>_404.tsx</code> renders unmatched paths, and whatever a loader answers with{" "}
+          <code>notFound()</code>. At the routes root it renders on its own. In a directory below (
+          <code>admin/_404.tsx</code>) it answers for that part of the app: the unmatched URLs under{" "}
+          <code>/admin</code> and <code>notFound()</code> from the routes beneath it, the nearest one
+          winning, rendered inside the layouts at or above it with their loader data. Those layouts run
+          as they do for a page, so a <code>gate</code> decides first - its redirect is the answer, and
+          its own <code>notFound()</code> shows the root page rather than the area's. A nested{" "}
+          <code>_404</code> is served non-hydrated and never from a shared cache once a layout loaded
+          data for it; a navigation that lands on one loads the URL as a document. Two route groups
+          with a <code>_404</code> at one URL prefix are a boot error unless a directory containing
+          both has one too. <code>gone()</code>, <code>statusPage()</code> and the{" "}
+          <code>_410.tsx</code>-style pages stay at the root, as does the 404 of a static export.
         </li>
         <li>
           <code>_error.tsx</code> is the segment's <b>error boundary</b>. On the server - if a route's

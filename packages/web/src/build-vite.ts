@@ -174,6 +174,8 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
       ...routeManifest.routes.map((r) => r.file),
       ...Object.values(routeManifest.layouts).map((l) => l.file),
       ...(routeManifest.notFound ? [routeManifest.notFound.file] : []),
+      // A nested `_404` is an entry only for its stylesheet: it renders on the server, unhydrated.
+      ...Object.values(routeManifest.notFounds ?? {}).map((page) => page.file),
     ]),
   ].sort()
 
@@ -336,6 +338,12 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
   if (css.length > 0 && cssCodeSplit) {
     for (const route of routeManifest.routes) routeStyles[route.id] = stylesFor(chainFiles(route))
     if (routeManifest.notFound) routeStyles._404 = stylesFor([routeManifest.notFound.file])
+    for (const [id, page] of Object.entries(routeManifest.notFounds ?? {})) {
+      routeStyles[id] = stylesFor([
+        ...page.layoutIds.map((layoutId) => routeManifest.layouts[layoutId]?.file ?? ""),
+        page.file,
+      ])
+    }
   }
 
   // assets - every emitted file + stylesheet across the manifest (chunks, entries, css).

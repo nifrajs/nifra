@@ -169,6 +169,8 @@ export {
   type MetaArgs,
   type MetaDescriptor,
   type MetaInput,
+  type NotFoundEntry,
+  type NotFoundScope,
   type RouteEntry,
   type RouteModule,
   type ScriptDescriptor,

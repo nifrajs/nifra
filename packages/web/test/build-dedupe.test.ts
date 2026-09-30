@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test"
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { BunPlugin } from "bun"
-import { preactDedupePlugin, reactDedupePlugin } from "../src/build.ts"
+import { preactDedupePlugin, reactDedupePlugin, svelteDedupePlugin } from "../src/build.ts"
 
 /** Drive a dedupe plugin's `onResolve` registrations through a minimal stub builder, returning a lookup
  * from specifier → pinned path (or undefined when no handler matches). Shared by the react/preact cases. */
@@ -119,4 +119,127 @@ test("preactDedupePlugin is a no-op when preact is not resolvable (skips, never 
   const plugin: BunPlugin = preactDedupePlugin("/")
   const { matches } = collectPins(plugin)
   expect(matches("preact")).toBe(false)
+})
+
+// Svelte is the one framework whose bare entry is chosen by condition: `browser` is the client
+// runtime, `default` the server one. A fake package keeps the map under the test's control.
+async function fakeSvelteApp(): Promise<{ readonly app: string; readonly svelte: string }> {
+  const app = await mkdtemp(join(tmpdir(), "nifra-svelte-pin-"))
+  const svelte = join(app, "node_modules", "svelte")
+  await mkdir(join(svelte, "src", "internal", "client"), { recursive: true })
+  await writeFile(
+    join(svelte, "package.json"),
+    JSON.stringify({
+      name: "svelte",
+      version: "5.0.0",
+      exports: {
+        "./package.json": "./package.json",
+        ".": {
+          types: "./types/index.d.ts",
+          worker: "./src/index-server.js",
+          browser: "./src/index-client.js",
+          default: "./src/index-server.js",
+        },
+        "./internal/client": { default: "./src/internal/client/index.js" },
+        "./nested": { svelte: { browser: "./src/nested-client.js" }, default: "./src/nested.js" },
+      },
+    }),
+  )
+  for (const file of [
+    "index-server.js",
+    "index-client.js",
+    "internal/client/index.js",
+    "nested.js",
+    "nested-client.js",
+  ]) {
+    await writeFile(join(svelte, "src", file), "export {}\n")
+  }
+  return { app, svelte: await realpath(svelte) }
+}
+
+/** Drive the Svelte plugin's resolver as `Bun.build` would, with the build's own `config`. */
+function sveltePins(
+  from: string,
+  config?: { target?: string; conditions?: string | readonly string[] },
+): (spec: string) => string | undefined {
+  let resolver: ((args: { path: string }) => { path: string } | undefined) | undefined
+  const buildStub = {
+    ...(config === undefined ? {} : { config }),
+    onResolve: (
+      _opts: { filter: RegExp },
+      cb: (args: { path: string }) => { path: string } | undefined,
+    ) => {
+      resolver = cb
+    },
+  }
+  ;(svelteDedupePlugin(from).setup as unknown as (b: typeof buildStub) => unknown)(buildStub)
+  return (spec) => resolver?.({ path: spec })?.path
+}
+
+test("svelteDedupePlugin pins a browser bundle to the client runtime, not the one this process runs", async () => {
+  const { app, svelte } = await fakeSvelteApp()
+  try {
+    // A build with no `target` is a browser build: the bare entry is the CLIENT runtime. Pinning the
+    // server one is what left a built page unable to hydrate.
+    for (const config of [{}, { target: "browser" }, { target: "browser", conditions: ["bun"] }]) {
+      const pin = sveltePins(app, config)
+      expect(await realpath(pin("svelte") as string)).toBe(join(svelte, "src", "index-client.js"))
+      // A condition-free subpath pins to the same copy.
+      expect(await realpath(pin("svelte/internal/client") as string)).toBe(
+        join(svelte, "src", "internal", "client", "index.js"),
+      )
+    }
+  } finally {
+    await rm(app, { recursive: true, force: true })
+  }
+})
+
+test("svelteDedupePlugin reads nested conditions in the package's own order", async () => {
+  const { app, svelte } = await fakeSvelteApp()
+  try {
+    // `svelte` is not an active condition, so its branch is skipped and `default` answers...
+    expect(await realpath(sveltePins(app, {})("svelte/nested") as string)).toBe(
+      join(svelte, "src", "nested.js"),
+    )
+    // ...and once the build names it, the branch - and the `browser` inside it - does.
+    for (const conditions of ["svelte", ["svelte"]]) {
+      expect(await realpath(sveltePins(app, { conditions })("svelte/nested") as string)).toBe(
+        join(svelte, "src", "nested-client.js"),
+      )
+    }
+  } finally {
+    await rm(app, { recursive: true, force: true })
+  }
+})
+
+test("svelteDedupePlugin keeps the runtime's own answer outside a browser bundle", async () => {
+  const { app, svelte } = await fakeSvelteApp()
+  try {
+    // A server bundle, and a runtime plugin (no build config): both run Svelte's server entry.
+    for (const config of [{ target: "bun" }, { target: "node" }, undefined]) {
+      expect(await realpath(sveltePins(app, config)("svelte") as string)).toBe(
+        join(svelte, "src", "index-server.js"),
+      )
+    }
+  } finally {
+    await rm(app, { recursive: true, force: true })
+  }
+})
+
+test("svelteDedupePlugin leaves resolution alone when it cannot pin", async () => {
+  // Svelte is not resolvable from here at all.
+  expect(sveltePins("/", {})("svelte")).toBeUndefined()
+  const { app } = await fakeSvelteApp()
+  try {
+    // A subpath the package does not export.
+    expect(sveltePins(app, {})("svelte/internal/nope")).toBeUndefined()
+    // A package with no export map: the runtime's answer, or nothing.
+    await writeFile(
+      join(app, "node_modules", "svelte", "package.json"),
+      JSON.stringify({ name: "svelte", version: "5.0.0", main: "./src/index-server.js" }),
+    )
+    expect(sveltePins(app, {})("svelte")).toEndWith(join("src", "index-server.js"))
+  } finally {
+    await rm(app, { recursive: true, force: true })
+  }
 })

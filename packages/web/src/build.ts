@@ -5,7 +5,7 @@
  * are Bun-specific and never on the request path (own subpath, like `@nifrajs/web/fs`); the *output*
  * runs on any runtime.
  */
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { cp, lstat, mkdir, realpath } from "node:fs/promises"
 import {
   dirname,
@@ -432,6 +432,8 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
       ...routeManifest.routes.map((r) => r.file),
       ...Object.values(routeManifest.layouts).map((l) => l.file),
       ...(routeManifest.notFound ? [routeManifest.notFound.file] : []),
+      // A nested `_404` is an entry only for its stylesheet: it renders on the server, unhydrated.
+      ...Object.values(routeManifest.notFounds ?? {}).map((page) => page.file),
     ]),
   ].sort()
 
@@ -592,6 +594,12 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
       ])
     }
     if (routeManifest.notFound) routeStyles._404 = stylesFor([routeManifest.notFound.file])
+    for (const [id, page] of Object.entries(routeManifest.notFounds ?? {})) {
+      routeStyles[id] = stylesFor([
+        ...page.layoutIds.map((layoutId) => routeManifest.layouts[layoutId]?.file ?? ""),
+        page.file,
+      ])
+    }
   }
 
   // Copy `public/` into the output next to the hashed assets. A missing directory is normal (most
@@ -751,12 +759,55 @@ const SVELTE_DEDUPE_PATTERN = dedupePolicyFor("svelte").bunPattern ?? /^svelte($
  * fixed subpath list), Svelte has many internal subpaths, so each matched import is resolved dynamically.
  * `svelte/compiler` (build-time only, not in the bundle) doesn't match the filter and is left alone. No-op
  * when Svelte isn't used / isn't resolvable from `from`.
+ *
+ * Svelte is NOT condition-agnostic, unlike React and Preact: its bare entry maps `browser` to the client
+ * runtime and `default` to the server one. `Bun.resolveSync` answers for the process running the build -
+ * a server runtime - so pinning its answer put the SERVER entry into a browser bundle, where `hydrate`
+ * throws and the page never becomes interactive. For a browser bundle the package is therefore pinned by
+ * DIRECTORY and its export map is read with the bundle's own conditions.
  */
 export const svelteDedupePlugin = (from: string): BunPlugin => ({
   name: "nifra-svelte-dedupe",
   setup(build) {
+    // Absent when the plugin runs as a runtime plugin rather than inside `Bun.build`; a build with no
+    // `target` is a browser build (Bun's default).
+    const config = (
+      build as { config?: { target?: string; conditions?: string | readonly string[] } }
+    ).config
+    const browser = config !== undefined && (config.target ?? "browser") === "browser"
+    const conditions = new Set<string>([
+      "browser",
+      "import",
+      ...(typeof config?.conditions === "string"
+        ? [config.conditions]
+        : (config?.conditions ?? [])),
+    ])
+    // The pinned copy's export map, read once. `null` when Svelte is not resolvable from the app root.
+    let pinned: { readonly root: string; readonly map: Record<string, unknown> } | null | undefined
+    const pin = (): { readonly root: string; readonly map: Record<string, unknown> } | null => {
+      if (pinned !== undefined) return pinned
+      try {
+        const manifest = Bun.resolveSync("svelte/package.json", from)
+        const map = (JSON.parse(readFileSync(manifest, "utf8")) as { exports?: unknown }).exports
+        pinned =
+          typeof map === "object" && map !== null
+            ? { root: dirname(manifest), map: map as Record<string, unknown> }
+            : null
+      } catch {
+        pinned = null
+      }
+      return pinned
+    }
     build.onResolve({ filter: SVELTE_DEDUPE_PATTERN }, (args) => {
       try {
+        if (browser) {
+          const copy = pin()
+          const target =
+            copy === null
+              ? undefined
+              : exportTarget(copy.map[`.${args.path.slice("svelte".length)}`], conditions)
+          if (copy !== null && target !== undefined) return { path: join(copy.root, target) }
+        }
         return { path: Bun.resolveSync(args.path, from) }
       } catch {
         return undefined // not resolvable from the app root - leave Bun's default resolution
@@ -764,6 +815,19 @@ export const svelteDedupePlugin = (from: string): BunPlugin => ({
     })
   },
 })
+
+/** Walk one `exports` entry the way a resolver does: the first key, in the package's own order, that is
+ * an active condition (or `default`) wins. */
+function exportTarget(entry: unknown, conditions: ReadonlySet<string>): string | undefined {
+  if (typeof entry === "string") return entry
+  if (typeof entry !== "object" || entry === null) return undefined
+  for (const [key, value] of Object.entries(entry)) {
+    if (key !== "default" && !conditions.has(key)) continue
+    const target = exportTarget(value, conditions)
+    if (target !== undefined) return target
+  }
+  return undefined
+}
 
 /**
  * The app's declared single-copy rule, applied to the bundle.

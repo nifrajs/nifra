@@ -42,4 +42,6 @@
   })
 </script>
 
-<Chain {chain} {props} />
+<!-- Each layout's own loader data, from the same snapshot. Without it a layout renders `data: null` on
+     the client while the server rendered it with its data. -->
+<Chain {chain} {props} layoutData={snapshot.layoutData} />
