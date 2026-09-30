@@ -3,16 +3,24 @@ import {
   compileRoutePattern,
   expandOptionalParams,
   type MixedPart,
+  type ParamConstraint,
 } from "./pattern.ts"
 
 type Token =
   | { readonly kind: "char"; readonly value: string }
-  | { readonly kind: "param" }
+  | { readonly kind: "param"; readonly c?: ParamConstraint }
   | { readonly kind: "wildcard" }
 
 interface State {
   readonly index: number
   readonly active?: "param" | "wildcard"
+  /**
+   * Inside a parameter constrained to a character class: how many characters it has taken. Once the
+   * class has no upper bound the count stops at the lower one, where it no longer changes anything.
+   */
+  readonly taken?: number
+  /** Inside a parameter constrained to a list of values: what is left of each value still possible. */
+  readonly live?: readonly string[]
 }
 
 interface ProductNode {
@@ -35,7 +43,8 @@ export class RoutePatternOverlapLimitError extends Error {
   }
 }
 
-const stateKey = (state: State): string => `${state.index}:${state.active ?? "none"}`
+const stateKey = (state: State): string =>
+  `${state.index}:${state.active ?? "none"}:${state.taken ?? ""}:${state.live?.join("|") ?? ""}`
 const productKey = (left: State, right: State): string => `${stateKey(left)}|${stateKey(right)}`
 
 function pushLiteral(tokens: Token[], value: string): void {
@@ -45,7 +54,7 @@ function pushLiteral(tokens: Token[], value: string): void {
 function pushMixed(tokens: Token[], parts: readonly MixedPart[]): void {
   for (const part of parts) {
     if (part.t === "lit") pushLiteral(tokens, part.v)
-    else tokens.push({ kind: "param" })
+    else tokens.push(part.c === undefined ? { kind: "param" } : { kind: "param", c: part.c })
   }
 }
 
@@ -61,42 +70,79 @@ function tokensOf(pattern: CompiledRoutePattern): readonly Token[] {
   return tokens
 }
 
-function epsilon(state: State): State | undefined {
-  return state.active === undefined ? undefined : { index: state.index + 1 }
+function epsilon(state: State, tokens: readonly Token[]): State | undefined {
+  if (state.active === undefined) return undefined
+  // A constrained parameter ends only where its constraint is met: a whole value from the list, or
+  // at least the class's lower bound of characters.
+  if (state.live?.includes("") === false) return undefined
+  const token = tokens[state.index]
+  if (state.taken !== undefined && token?.kind === "param" && state.taken < token.c!.min) {
+    return undefined
+  }
+  return { index: state.index + 1 }
 }
 
 function advance(state: State, character: string, tokens: readonly Token[]): State | undefined {
-  if (state.active === "param") {
-    return character === "/" ? undefined : state
-  }
   if (state.active === "wildcard") return state
   const token = tokens[state.index]
   if (token === undefined) return undefined
   if (token.kind === "char") {
     return token.value === character ? { index: state.index + 1 } : undefined
   }
-  if (token.kind === "param") {
-    return character === "/" ? undefined : { index: state.index, active: "param" }
+  if (token.kind === "wildcard") return { index: state.index, active: "wildcard" }
+  if (character === "/") return undefined
+  const constraint = token.c
+  if (constraint === undefined) {
+    return state.active === "param" ? state : { index: state.index, active: "param" }
   }
-  return { index: state.index, active: "wildcard" }
+  if (constraint.oneOf !== undefined) {
+    const live = (state.live ?? constraint.oneOf)
+      .filter((value) => value[0] === character)
+      .map((value) => value.slice(1))
+    return live.length === 0 ? undefined : { index: state.index, active: "param", live }
+  }
+  const taken = state.taken ?? 0
+  const code = character.charCodeAt(0)
+  if (taken >= constraint.max || constraint.mask.charCodeAt(code) !== 49 /* 1 */) return undefined
+  return {
+    index: state.index,
+    active: "param",
+    taken: constraint.max === Infinity ? Math.min(taken + 1, constraint.min) : taken + 1,
+  }
 }
 
-function stepKind(state: State, tokens: readonly Token[]): Token["kind"] | undefined {
-  if (state.active !== undefined) return state.active
-  return tokens[state.index]?.kind
-}
-
-function literalAt(state: State, tokens: readonly Token[]): string | undefined {
-  if (state.active !== undefined) return undefined
+/**
+ * The characters that can move `state` on, when they are a short exact list: the next literal
+ * character, or the next character of each value a list-constrained parameter can still become.
+ * `undefined` when the state takes a class of characters instead.
+ */
+function exactCharacters(state: State, tokens: readonly Token[]): readonly string[] | undefined {
+  if (state.active === "wildcard") return undefined
   const token = tokens[state.index]
-  return token?.kind === "char" ? token.value : undefined
+  if (token === undefined) return []
+  if (token.kind === "char") return [token.value]
+  if (token.kind === "wildcard") return undefined
+  const values = state.live ?? token.c?.oneOf
+  return values === undefined
+    ? undefined
+    : [...new Set(values.flatMap((value) => (value === "" ? [] : [value[0]!])))]
+}
+
+// "a" first, so an unconstrained parameter is still witnessed by the letter it always was.
+const CLASS_REPRESENTATIVES = ["a"]
+for (let code = 33; code < 127; code++) {
+  if (code !== 47 /* / */ && code !== 97 /* a */) {
+    CLASS_REPRESENTATIVES.push(String.fromCharCode(code))
+  }
 }
 
 /**
  * Return the finite representative alphabet for this product state. A global alphabet makes a
  * route containing many literal characters quadratic in the number of states. At each state only
- * the exact literal characters and the two equivalence classes (non-slash / any character) can
- * affect the next state, so at most two representatives plus one exact character are needed.
+ * the exact characters one side asks for can affect the next state, or - when both sides take a
+ * class of characters - one character that both classes hold: where a class leads does not depend on
+ * which of its characters was taken. Slash is additionally needed only when both sides are
+ * wildcards because it can move through a segment boundary that no parameter may consume.
  */
 function transitionCharacters(
   left: State,
@@ -104,31 +150,15 @@ function transitionCharacters(
   leftTokens: readonly Token[],
   rightTokens: readonly Token[],
 ): readonly string[] {
-  const leftKind = stepKind(left, leftTokens)
-  const rightKind = stepKind(right, rightTokens)
-  if (leftKind === undefined || rightKind === undefined) return []
-
-  if (leftKind === "char" && rightKind === "char") {
-    const leftValue = literalAt(left, leftTokens)
-    const rightValue = literalAt(right, rightTokens)
-    return leftValue !== undefined && leftValue === rightValue ? [leftValue] : []
-  }
-
-  if (leftKind === "char") {
-    const value = literalAt(left, leftTokens)
-    if (value === undefined) return []
-    return rightKind === "wildcard" || (rightKind === "param" && value !== "/") ? [value] : []
-  }
-  if (rightKind === "char") {
-    const value = literalAt(right, rightTokens)
-    if (value === undefined) return []
-    return leftKind === "wildcard" || (leftKind === "param" && value !== "/") ? [value] : []
-  }
-
-  // Both sides accept a class of characters. "a" represents every non-slash character; slash is
-  // additionally needed only when both sides are wildcards because it can move through a segment
-  // boundary that no parameter may consume.
-  return leftKind === "wildcard" && rightKind === "wildcard" ? ["a", "/"] : ["a"]
+  const exact = exactCharacters(left, leftTokens) ?? exactCharacters(right, rightTokens)
+  if (exact !== undefined) return exact
+  const both = (character: string): boolean =>
+    advance(left, character, leftTokens) !== undefined &&
+    advance(right, character, rightTokens) !== undefined
+  const shared = CLASS_REPRESENTATIVES.find(both)
+  const characters = shared === undefined ? [] : [shared]
+  if (both("/")) characters.push("/")
+  return characters
 }
 
 function accepted(state: State, tokens: readonly Token[]): boolean {
@@ -156,6 +186,11 @@ function witnessOf(nodes: ReadonlyMap<string, ProductNode>, key: string): string
  * This is a build/check-time NFA product, never a request-time operation. Route literals are the only
  * input alphabet needed: a literal character is tried verbatim, while `a` is a representative for
  * the unrestricted non-slash character class. No user route text is compiled as a regular expression.
+ *
+ * A constrained parameter is modelled as its constraint: a value from its list, or a run of its
+ * class within its bounds. In a segment that has several parameters the router is stricter than
+ * that - it places the literals first and tests the values afterwards - so for such a segment the
+ * answer errs towards reporting an overlap that no request can reach, never towards missing one.
  * The state budget is one budget for the whole call, however many concrete paths the two sides have.
  */
 export function routePatternOverlap(left: string, right: string): string | undefined {
@@ -204,8 +239,8 @@ function tokenOverlap(
     }
 
     const transitions: Array<{ readonly left: State; readonly right: State }> = []
-    const leftEpsilon = epsilon(node.left)
-    const rightEpsilon = epsilon(node.right)
+    const leftEpsilon = epsilon(node.left, leftTokens)
+    const rightEpsilon = epsilon(node.right, rightTokens)
     if (leftEpsilon !== undefined) transitions.push({ left: leftEpsilon, right: node.right })
     if (rightEpsilon !== undefined) transitions.push({ left: node.left, right: rightEpsilon })
 

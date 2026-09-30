@@ -310,3 +310,45 @@ chat.send({ say: 1 })
 wsApi.health.ws()
 // @ts-expect-error a WS route has no HTTP verbs
 wsApi.chat.get()
+
+// --- constrained params: called by the bare name, one signature per route at a position ---
+
+const constrainedApp = server()
+  .get("/users/:id{[0-9]+}", (c) => ({ numeric: c.params.id }))
+  .delete("/users/:id{[0-9]+}", () => ({ deleted: true }))
+  .get("/users/:id{[0-9]+}/posts", () => [{ pid: "1" }])
+  .get("/users/:slug", (c) => ({ slug: c.params.slug }))
+  .get("/img/:kind{thumb|full}", (c) => ({ kind: c.params.kind }))
+  .get("/codes/:code{[A-Z]{2}}", (c) => ({ code: c.params.code }))
+  .get("/docs/:page", (c) => ({ page: c.params.page }))
+  .get("/docs/*rest", (c) => ({ rest: c.params.rest }))
+
+const constrainedApi = {} as Treaty<typeof constrainedApp>
+
+const numericUser = constrainedApi.users({ id: "7" }).get()
+export type _ConstrainedParam = Expect<Equal<DataOf<typeof numericUser>, { numeric: string }>>
+const numericDelete = constrainedApi.users({ id: "7" }).delete()
+export type _ConstrainedVerb = Expect<Equal<DataOf<typeof numericDelete>, { deleted: boolean }>>
+const numericPosts = constrainedApi.users({ id: "7" }).posts.get()
+export type _ConstrainedChild = Expect<Equal<DataOf<typeof numericPosts>, { pid: string }[]>>
+// The sibling route at the same position is picked by its own name.
+const slugUser = constrainedApi.users({ slug: "ada" }).get()
+export type _ConstrainedSibling = Expect<Equal<DataOf<typeof slugUser>, { slug: string }>>
+const listKind = constrainedApi.img({ kind: "thumb" }).get()
+export type _ConstrainedList = Expect<Equal<DataOf<typeof listKind>, { kind: string }>>
+const counted = constrainedApi.codes({ code: "FR" }).get()
+export type _ConstrainedCount = Expect<Equal<DataOf<typeof counted>, { code: string }>>
+// A param and a wildcard at one position are both callable.
+const docPage = constrainedApi.docs({ page: "intro" }).get()
+export type _ParamBesideWildcard = Expect<Equal<DataOf<typeof docPage>, { page: string }>>
+const docRest = constrainedApi.docs({ rest: "a/b" }).get()
+export type _WildcardBesideParam = Expect<Equal<DataOf<typeof docRest>, { rest: string }>>
+
+// @ts-expect-error the constraint is not part of the argument's key
+constrainedApi.users({ "id{[0-9]+}": "7" })
+// @ts-expect-error no route at this position takes `name`
+constrainedApi.users({ name: "ada" })
+// @ts-expect-error the `:slug` route has no DELETE
+constrainedApi.users({ slug: "ada" }).delete()
+// @ts-expect-error the `:slug` route has no `posts` child
+constrainedApi.users({ slug: "ada" }).posts

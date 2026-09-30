@@ -12,6 +12,7 @@ import {
   reflectedRoutesFromEvidence,
   snapshotProjectEvidence,
 } from "@nifrajs/core/evidence"
+import { paramConstraint } from "@nifrajs/core/pattern"
 import type { ReflectedRoute } from "@nifrajs/core/reflection"
 import type { Manifest } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
@@ -113,6 +114,15 @@ const TYPED_VERBS: ReadonlySet<string> = new Set([
   "options",
 ])
 
+/** The name a param segment binds: `:id` and `:id{[0-9]+}` both bind `id`. */
+function paramName(seg: string): string {
+  const name = seg.slice(1)
+  const brace = name.indexOf("{")
+  return brace > 0 && paramConstraint(name.slice(brace))?.source.length === name.length - brace - 2
+    ? name.slice(0, brace)
+    : name
+}
+
 /**
  * The typed-client proxy chain for a path, without the terminal verb call. Shared by `clientCall`
  * and the `nifra routes` collision annotation so both teach exactly one spelling.
@@ -123,8 +133,7 @@ function clientChain(path: string): string {
   let chain = "api"
   for (const seg of segs) {
     if (seg.startsWith(":") || seg.startsWith("*")) {
-      const name = seg.replace(/^[:*]/, "") || "value"
-      chain += `({ ${name} })`
+      chain += `({ ${paramName(seg) || "value"} })`
     } else if (reservedKeyFor(seg) !== undefined) chain += `(${JSON.stringify(seg)})`
     else chain += IDENT.test(seg) ? `.${seg}` : `[${JSON.stringify(seg)}]`
   }

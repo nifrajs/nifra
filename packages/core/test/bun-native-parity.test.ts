@@ -121,6 +121,43 @@ describe("Bun-native route table agrees with the portable router", () => {
     expect(listened[5]).toContain("-> 404")
   })
 
+  test("a constrained parameter is matched by the portable router and outranks a bare one", async () => {
+    const app = server()
+      .get("/users/:id{[0-9]+}", (c) => ({ route: "numeric", params: c.params }))
+      .post("/users/:id{[0-9]+}", (c) => ({ route: "update", params: c.params }))
+      .get("/users/:name", (c) => ({ route: "name", params: c.params }))
+      .get("/img/:kind{thumb|full}", (c) => ({ route: "kind", params: c.params }))
+      .get("/o/:page{[0-9]+}?", (c) => ({ route: "page", params: c.params }))
+    const { listened, fetched } = await answers(app, [
+      ["GET", "/users/42"],
+      ["GET", "/users/ada"],
+      ["GET", "/users/4%32"],
+      ["POST", "/users/42"],
+      ["POST", "/users/ada"],
+      ["DELETE", "/users/42"],
+      ["HEAD", "/users/42"],
+      ["GET", "/img/thumb"],
+      ["GET", "/img/other"],
+      ["GET", "/o"],
+      ["GET", "/o/3"],
+      ["GET", "/o/x"],
+    ])
+    expect(listened).toEqual(fetched)
+    expect(listened[0]).toContain('"route":"numeric","params":{"id":"42"}')
+    expect(listened[1]).toContain('"route":"name","params":{"name":"ada"}')
+    expect(listened[2]).toContain('"route":"name","params":{"name":"42"}')
+    expect(listened[3]).toContain('"route":"update"')
+    expect(listened[4]).toContain("-> 405 allow=GET, HEAD")
+    expect(listened[5]).toContain("-> 405 allow=GET, POST, HEAD")
+    expect(listened[8]).toContain("-> 404")
+    expect(listened[9]).toContain('"route":"page","params":{}')
+    expect(listened[10]).toContain('"route":"page","params":{"page":"3"}')
+    expect(listened[11]).toContain("-> 404")
+
+    // A constrained path is never in Bun's table, and the bare parameter it outranks leaves with it.
+    expect(nativeKeys(app)).toEqual(["GET /o", "HEAD /o"])
+  })
+
   test("a path is served from the table unless a path outside the table outranks it", () => {
     expect(
       nativeKeys(
@@ -251,11 +288,11 @@ describe("Bun-native route table agrees with the portable router", () => {
       t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
       return (((t ^ (t >>> 14)) >>> 0) % bound) | 0
     }
-    const inner = ["a", "b", ":p", ":q", ":n.x", "a-:k"]
+    const inner = ["a", "b", ":p", ":q", ":n.x", "a-:k", ":d{[0-9]+}", ":l{a|c}"]
     const last = [...inner, "*w"]
     const methods = ["GET", "POST", "HEAD", "PURGE"]
 
-    const words = ["a", "b", "c", "c.x", "a-1"]
+    const words = ["a", "b", "c", "c.x", "a-1", "7"]
     const paths: string[] = []
     for (const one of words) {
       paths.push(`/${one}`)
@@ -295,5 +332,5 @@ describe("Bun-native route table agrees with the portable router", () => {
       }
       expect(listened.length).toBe(requests.length)
     }
-  })
+  }, 30_000)
 })

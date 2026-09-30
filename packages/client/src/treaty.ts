@@ -217,15 +217,35 @@ type StaticChildren<R, Prefix extends string> = {
     : TreatyNode<R, `${Prefix}/${Seg}`>
 }
 
+/**
+ * The call for one param segment. A constraint is not part of the name: `:id{[0-9]+}` is called
+ * with `{ id }`, and the node below is the route as it was registered.
+ */
+type ParamCall<
+  R,
+  Prefix extends string,
+  Seg extends string,
+> = Seg extends `:${infer Name}{${string}}`
+  ? (params: Record<Name, string>) => TreatyNode<R, `${Prefix}/${Seg}`>
+  : Seg extends `:${infer Name}`
+    ? (params: Record<Name, string>) => TreatyNode<R, `${Prefix}/${Seg}`>
+    : Seg extends `*${infer Name}`
+      ? (params: Record<Name extends "" ? "*" : Name, string>) => TreatyNode<R, `${Prefix}/${Seg}`>
+      : never
+
+/** One callable carrying every signature in a union of functions. */
+type EveryCall<Calls> = (Calls extends unknown ? (call: Calls) => void : never) extends (
+  call: infer All,
+) => void
+  ? All
+  : never
+
+// One position can hold several param routes (`:id{[0-9]+}` beside `:slug`, or a param beside a
+// wildcard). Each gets its own signature, picked by the name in the argument - so routes that share
+// a position should not share a name, or the first one's types answer for both.
 type ParamChild<R, Prefix extends string> = [ParamSeg<R, Prefix>] extends [never]
   ? unknown
-  : ParamSeg<R, Prefix> extends `:${infer Name}`
-    ? (params: Record<Name, string>) => TreatyNode<R, `${Prefix}/:${Name}`>
-    : ParamSeg<R, Prefix> extends `*${infer Name}`
-      ? (
-          params: Record<Name extends "" ? "*" : Name, string>,
-        ) => TreatyNode<R, `${Prefix}/*${Name}`>
-      : unknown
+  : EveryCall<ParamCall<R, Prefix, ParamSeg<R, Prefix>>>
 
 /**
  * The call spelling for a static child segment: `api("users").get()` is `api.users.get()`.

@@ -36,6 +36,12 @@
     "code": "import { server } from \"@nifrajs/core/server\"\n\nexport const app = server()\n  // GET /users and GET /users/42\n  .get(\"/users/:id?\", (c) => (c.params.id === undefined ? { all: true } : { id: c.params.id }))\n  // GET /archive, GET /archive/2026 and GET /archive/2026/09\n  .get(\"/archive/:year?/:month?\", (c) => ({ year: c.params.year, month: c.params.month }))"
   },
   {
+    "name": "PARAM_CONSTRAINTS",
+    "topic": "Nifra - API & typed client",
+    "slug": "api",
+    "code": "import { server } from \"@nifrajs/core/server\"\n\nexport const app = server()\n  // /users/me is its own route; /users/42 is this one; /users/ada is a 404\n  .get(\"/users/me\", () => ({ me: true }))\n  .get(\"/users/:id{[0-9]+}\", (c) => ({ id: Number(c.params.id) }))\n  // A list of values, and a count: exactly two capital letters\n  .get(\"/img/:size{thumb|full}/:file\", (c) => ({ size: c.params.size, file: c.params.file }))\n  .get(\"/countries/:code{[A-Z]{2}}\", (c) => ({ code: c.params.code }))\n  // Inside a segment, and optional at the end of a path\n  .get(\"/files/:name.:ext{png|jpg}\", (c) => ({ name: c.params.name, ext: c.params.ext }))\n  .get(\"/posts/:page{[0-9]+}?\", (c) => ({ page: c.params.page ?? \"1\" }))"
+  },
+  {
     "name": "SETUP",
     "topic": "Nifra - Auth & sessions",
     "slug": "auth",

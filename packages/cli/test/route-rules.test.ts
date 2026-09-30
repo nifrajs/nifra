@@ -218,6 +218,53 @@ describe("optional route params", () => {
   })
 })
 
+describe("param constraints in the overlap rule", () => {
+  test("NF-C024 stays quiet when a constraint keeps two routes apart", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend([
+        '  .get("/users/me", () => ({}))',
+        '  .get("/users/:id{[0-9]+}", () => ({}))',
+        '  .get("/img/:kind{thumb|full}", () => ({}))',
+        '  .get("/img/:name{[0-9]+}", () => ({}))',
+      ]),
+    )
+    expect(findings.filter((f) => f.code === "NF-C024")).toEqual([])
+  })
+
+  test("NF-C024 reports a constrained route beside one that serves the same request", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend(['  .get("/users/:id{[0-9]+}", () => ({}))', '  .get("/users/:name", () => ({}))']),
+    )
+    const found = findings.filter((f) => f.code === "NF-C024")
+    expect(found).toHaveLength(1)
+    expect(found[0]?.message).toMatch(/\/users\/[0-9]+/)
+  })
+
+  test("NF-C019 reports the same constrained route registered twice", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend([
+        '  .get("/users/:id{[0-9]+}", () => ({}))',
+        '  .get("/users/:id{[0-9]+}", () => ({}))',
+      ]),
+    )
+    expect(findings.filter((f) => f.code === "NF-C019")).toHaveLength(1)
+  })
+
+  test("NF-C024 reports two spellings of one constraint", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend([
+        '  .get("/users/:id{[0-9]+}", () => ({}))',
+        '  .get("/users/:id{\\\\d+}", () => ({}))',
+      ]),
+    )
+    expect(findings.filter((f) => f.code === "NF-C024")).toHaveLength(1)
+  })
+})
+
 describe("NF-C026 param followed by an unsupported modifier", () => {
   test("supported optional params and ordinary params are quiet", async () => {
     const findings = await scan(
@@ -231,6 +278,59 @@ describe("NF-C026 param followed by an unsupported modifier", () => {
       ]),
     )
     expect(findings.filter((f) => f.code === "NF-C026")).toEqual([])
+  })
+
+  test("a supported param constraint is quiet, alone, in a segment, and optional", async () => {
+    const source = backend([
+      '  .get("/users/:id{[0-9]+}", () => ({}))',
+      '  .get("/codes/:code{[A-Z]{2,3}}", () => ({}))',
+      '  .get("/pins/:pin{\\\\d{4}}", () => ({}))',
+      '  .get("/img/:kind{thumb|full}", () => ({}))',
+      '  .get("/f/:name.:ext{png|jpg}", () => ({}))',
+      '  .get("/d/:y{[0-9]{4}}-:m{[0-9]{2}}", () => ({}))',
+      '  .get("/orgs/:org{[a-z]+}/users/:id{[0-9]+}", () => ({}))',
+      '  .get("/o/:page{[0-9]+}?", () => ({}))',
+    ])
+    // Every route is read, so the quiet result is about the routes and not about a skipped scan.
+    expect(scanStaticRouteText("backend.ts", source).map((route) => route.path)).toContain(
+      "/pins/:pin{\\d{4}}",
+    )
+    expect(scanStaticRouteText("backend.ts", source)).toHaveLength(8)
+    const findings = await scan("backend.ts", source)
+    expect(findings.filter((f) => f.code === "NF-C026")).toEqual([])
+  })
+
+  test("braces that are not a supported constraint are reported as literal text", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend([
+        '  .get("/a/:id{int}", () => ({}))',
+        '  .get("/b/:id{[0-9]+|[a-z]+}", () => ({}))',
+        '  .get("/c/:id{.+}", () => ({}))',
+        '  .get("/d/:id{[0-9]{0}}", () => ({}))',
+        '  .get("/e/:id{}", () => ({}))',
+      ]),
+    )
+    const found = findings.filter((f) => f.code === "NF-C026")
+    expect(found).toHaveLength(5)
+    expect(found[0]?.message).toContain("'{' after ':id'")
+    expect(found[0]?.message).toContain(":id{[0-9]+}")
+    expect(found[0]?.message).toContain(":ext{png|jpg}")
+  })
+
+  test("a modifier after a constraint is reported, and so is one on a later param", async () => {
+    const findings = await scan(
+      "backend.ts",
+      backend([
+        '  .get("/a/:id{[0-9]+}?/posts", () => ({}))',
+        '  .get("/b/:id{[0-9]+}+", () => ({}))',
+        '  .get("/c/:id{[0-9]+}/:rest*", () => ({}))',
+        '  .get("/d/:id{[0-9]+}{[a-z]+}", () => ({}))',
+      ]),
+    )
+    const found = findings.filter((f) => f.code === "NF-C026")
+    expect(found).toHaveLength(4)
+    expect(found[0]?.message).toContain("GET /a/:id{[0-9]+}?/posts")
   })
 
   test("a `?` that is not a trailing whole segment is a warning that names the dead route", async () => {
@@ -253,7 +353,7 @@ describe("NF-C026 param followed by an unsupported modifier", () => {
       backend([
         '  .get("/a/:id+", () => ({}))',
         '  .get("/b/:id*", () => ({}))',
-        '  .get("/c/:id{[0-9]+}", () => ({}))',
+        '  .get("/c/:id{int}", () => ({}))',
         '  .get("/d/:id([0-9]+)", () => ({}))',
         '  .get("/e/:id<int>", () => ({}))',
         '  .get("/f/:a+/:b+", () => ({}))',

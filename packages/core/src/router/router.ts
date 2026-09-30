@@ -3,6 +3,7 @@ import {
   type CompiledRoutePattern,
   compareMixedPartsSpecificity,
   compileRoutePattern,
+  constrainedParts,
   type MixedPart,
   type MixedSegmentShape,
   matchMixedSegment,
@@ -117,10 +118,14 @@ interface MixedChild<T> {
   readonly shape: MixedSegmentShape
   /** Parsed parts used by the same total specificity comparator as the browser router. */
   readonly parts: readonly MixedPart[]
+  /** `parts` when a parameter has a constraint to test after the scan, else `undefined`. */
+  readonly checked: readonly MixedPart[] | undefined
   readonly node: RouteNode<T>
   /**
-   * The shape as one string, so re-registering the same shape reuses its node. Joined on `/`, the
-   * one character a segment's literal can never hold, so two different shapes never share a key.
+   * The segment as one string, so re-registering the same one reuses its node: each literal and each
+   * parameter's constraint, tagged by kind. Joined on `/`, the one character neither can hold, so
+   * two different segments never share a key. Parameter names are left out: they do not decide what
+   * a segment matches.
    */
   readonly key: string
 }
@@ -182,8 +187,9 @@ function matchNode<T>(
   if (mixedChildren !== undefined && seg.length > 0) {
     for (const child of mixedChildren) {
       // Pushes this segment's captures left-to-right, matching the order `paramNames` was built in,
-      // and pushes nothing on a miss. One pass over the segment whatever the shape: see the scanner.
-      if (!matchMixedSegment(child.shape, seg, paramValues)) continue
+      // and pushes nothing on a miss - a value that fails its constraint is a miss. One pass over
+      // the segment whatever the shape: see the scanner.
+      if (!matchMixedSegment(child.shape, seg, paramValues, child.checked)) continue
       if (isLast) {
         if (child.node.terminal !== undefined) return child.node.terminal
       } else {
@@ -340,12 +346,20 @@ export class Router<T> {
         node.wildcardChild ??= createNode<T>()
         node = node.wildcardChild
       } else if (segment.kind === "mixed") {
-        const shape = mixedSegmentShape(segment.parts)
-        const key = shape.join("/")
+        const parts = segment.parts
+        const key = parts
+          .map((part) => (part.t === "lit" ? `L${part.v}` : `P${part.c?.key ?? ""}`))
+          .join("/")
         node.mixedChildren ??= []
         let child = node.mixedChildren.find((entry) => entry.key === key)
         if (child === undefined) {
-          child = { shape, parts: segment.parts, node: createNode<T>(), key }
+          child = {
+            shape: mixedSegmentShape(parts),
+            parts,
+            checked: constrainedParts(parts),
+            node: createNode<T>(),
+            key,
+          }
           node.mixedChildren.push(child)
           // Most literal text first. Registration order must not decide which of `/:id.txt` and
           // `/:id.json` wins, and re-sorting on insert (a boot-time cost) keeps the match path a

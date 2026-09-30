@@ -2459,10 +2459,12 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **CompiledRoutePattern** _(interface)_ - `interface CompiledRoutePattern`
   Compiled route grammar shared by runtime routers, browser navigation, mocks, and adapters.
-- **MixedPart** _(type)_ - `type MixedPart = | { readonly t: "lit"; readonly v: string } | { readonly t: "param"; readonly name: string }`
-  One piece of a {@link RoutePatternSegment} of kind `mixed`, in left-to-right order.
+- **MixedPart** _(type)_ - `type MixedPart = | { readonly t: "lit"; readonly v: string } | { readonly t: "param"; readonly name: string; readonly c?: ParamConstraint | undefined }`
+  One piece of a {@link RoutePatternSegment} of kind `mixed`, in left-to-right order. A parameter written with a constraint (`:id{[0-9]+}`) carries it as `c`; a segment that is one constrained parameter and nothing else is a `mixed` segment with that single part.
 - **MixedSegmentShape** _(type)_ - `type MixedSegmentShape = readonly string[]`
   A mixed segment laid out for matching: the literals around its parameters, in order. The first entry is the literal before the first parameter, and each entry after it is the literal following the next parameter, so a segment with N parameters has N + 1 entries. An entry is `""` where the segment h…
+- **ParamConstraint** _(interface)_ - `interface ParamConstraint`
+  What a constrained parameter accepts, parsed from the `{...}` after its name.
 - **RoutePatternMatch** _(type)_ - `type RoutePatternMatch = | { readonly matched: true; readonly params: Record<string, string> } | { readonly matched: false; readonly reason: "not-found" | "malformed" }`
 - **RoutePatternSegment** _(type)_ - `type RoutePatternSegment`
 - **compareMixedPartsSpecificity** _(function)_ - `compareMixedPartsSpecificity: (left: readonly MixedPart[], right: readonly MixedPart[]) => number`
@@ -2471,11 +2473,13 @@ Every public export of every package and documented subpath - name, kind, signat
   Core precedence: static > mixed > param > wildcard at the first differing segment, independent of registration order.
 - **compileRoutePattern** _(function)_ - `compileRoutePattern: (pattern: string) => CompiledRoutePattern`
   Parse and validate Nifra's strict route grammar once. Trailing slashes remain significant.
+- **constrainedParts** _(function)_ - `constrainedParts: (parts: readonly MixedPart[]) => readonly MixedPart[] | undefined`
+  The parts of a mixed segment when at least one of its parameters has a constraint, else `undefined`. It is the fourth argument to {@link matchMixedSegment}; done once, at registration.
 - **decodeRouteParams** _(function)_ - `decodeRouteParams: (raw: Record<string, string>) => Record<string, string> | null`
   Decode router captures under one rule. Plain values take the zero-allocation path; malformed escapes return `null`, allowing HTTP to emit 400 while client navigation declines the match.
 - **expandOptionalParams** _(function)_ - `expandOptionalParams: (pattern: string) => readonly string[]`
   The concrete patterns an optional-parameter pattern stands for, shortest first.
-- **matchMixedSegment** _(function)_ - `matchMixedSegment: (shape: MixedSegmentShape, segment: string, out: string[]) => boolean`
+- **matchMixedSegment** _(function)_ - `matchMixedSegment: (shape: MixedSegmentShape, segment: string, out: string[], checked?: readonly MixedPart[]) => boolean`
   Match ONE path segment against a mixed shape, in a single left-to-right pass.
 - **matchRoutePattern** _(function)_ - `matchRoutePattern: (compiled: CompiledRoutePattern, pathname: string) => RoutePatternMatch`
   Match one compiled pattern and return decoded captures. The caller decides cross-pattern order.
@@ -2483,6 +2487,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Lay a mixed segment's parts out as a {@link MixedSegmentShape}. Done once, at registration.
 - **mixedSegmentSource** _(function)_ - `mixedSegmentSource: (parts: readonly MixedPart[]) => string`
   A canonical string for one mixed segment's shape: the anchored-regex source that describes what the segment accepts, with a capture per parameter. Two segments with the same source are the same shape.
+- **paramConstraint** _(function)_ - `paramConstraint: (text: string) => ParamConstraint | undefined`
+  Parse the constraint `text` starts with, or `undefined` when it starts with none. `text` begins at the `{` that follows a parameter name; the constraint read is `source.length + 2` characters long.
 - **sortRoutesBySpecificity** _(function)_ - `sortRoutesBySpecificity: <T extends { readonly pattern: CompiledRoutePattern; }>(routes: T[]) => T[]`
   Sort compiled routes most-specific-first - a static segment beats a dynamic one, the order the router resolves a path in. The single home for that precedence: the web router, the mock server, and the editor plugin all order routes through this one comparator, so which file a path resolves to can ne…
 

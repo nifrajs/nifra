@@ -5,6 +5,7 @@
  * portable (no fs, no DOM) and fully unit-testable. Edge deploys pre-build the manifest.
  */
 import { routePatternOverlap } from "@nifrajs/core"
+import { paramConstraint } from "@nifrajs/core/pattern"
 import type { CookieOptions, StandardSchemaV1 } from "@nifrajs/core/server"
 import type { BoundaryDescriptor, BoundaryRegistration } from "./boundary.ts"
 
@@ -416,6 +417,9 @@ const FILE_PARAM_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
  * `stripExt` already reduces `[inKey].txt.tsx` to `[inKey].txt` - `robots.txt.tsx` proves literal
  * dots survive into a segment, so this was only ever a parser gap.
  *
+ * A `{...}` group straight after a marker that the router would read as a param constraint
+ * (`[id]{a|b}`) is rejected too: see the check below.
+ *
  * `[[optional]]` and `[...catchAll]` are **rejected** inside a mixed segment rather than given a
  * meaning. There is no sensible absent form for `/[[locale]]-feed.xml` - `/-feed.xml` and dropping
  * the segment are both surprising - and a catch-all captures the remaining path verbatim, which
@@ -451,6 +455,13 @@ function mixedFileSegment(seg: string, file: string): string | undefined {
     }
     pattern += `${seg.slice(cursor, marker.index)}:${inner}`
     cursor = (marker.index ?? 0) + marker[0].length
+    // The router reads `:name{...}` as a constraint on the param. A file name is not the place for
+    // one: links, prerendered paths and hydration all rebuild a URL from the pattern by name.
+    if (paramConstraint(seg.slice(cursor)) !== undefined) {
+      throw new Error(
+        `[nifra/web] a param constraint cannot be written in a route file name: "${file}" (segment "${seg}"). Check the value in the route's loader instead, or rename the file so "[${inner}]" is not followed by a "{...}" group.`,
+      )
+    }
   }
   return pattern + seg.slice(cursor)
 }

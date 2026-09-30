@@ -454,3 +454,53 @@ test("a path ending in optional params serves each shorter path too", async () =
     month: null,
   })
 })
+
+test("a param constraint picks the route, byte for byte as the full server does", async () => {
+  const edge = server()
+    .get("/users/:name", () => ({ route: "name" }))
+    .get("/users/:id{[0-9]+}", () => ({ route: "numeric" }))
+    .get("/img/:kind{thumb|full}", () => ({ route: "kind" }))
+    .get("/f/:name.:ext{png|jpg}", () => ({ route: "file" }))
+    .get("/o/:page{[0-9]+}?", () => ({ route: "page" }))
+  const core = coreServer()
+    .get("/users/:name", () => ({ route: "name" }))
+    .get("/users/:id{[0-9]+}", () => ({ route: "numeric" }))
+    .get("/img/:kind{thumb|full}", () => ({ route: "kind" }))
+    .get("/f/:name.:ext{png|jpg}", () => ({ route: "file" }))
+    .get("/o/:page{[0-9]+}?", () => ({ route: "page" }))
+  for (const path of [
+    "/users/42",
+    "/users/ada",
+    "/users/4%32",
+    "/img/thumb",
+    "/img/other",
+    "/f/a.png",
+    "/f/a.b.png",
+    "/o",
+    "/o/3",
+    "/o/x",
+  ]) {
+    const request = () => new Request(`https://x.test${path}`)
+    expect(await wire(await edge.fetch(request()))).toEqual(await wire(await core.fetch(request())))
+  }
+  expect(await (await edge.fetch(new Request("https://x.test/users/42"))).json()).toEqual({
+    route: "numeric",
+  })
+  expect(await (await edge.fetch(new Request("https://x.test/users/4%32"))).json()).toEqual({
+    route: "name",
+  })
+  expect((await edge.fetch(new Request("https://x.test/img/other"))).status).toBe(404)
+  const miss = await edge.fetch(new Request("https://x.test/users/42", { method: "POST" }))
+  expect(miss.status).toBe(405)
+  expect(miss.headers.get("allow")).toBe("GET, HEAD")
+})
+
+test("a constrained param is typed by its bare name", async () => {
+  const edge = server().get("/users/:id{[0-9]+}", (c) => {
+    const id: string = c.params.id
+    return { id }
+  })
+  expect(await (await edge.fetch(new Request("https://x.test/users/7"))).json()).toEqual({
+    id: "7",
+  })
+})

@@ -55,6 +55,7 @@ const backend = {
       path: "/items/:id",
       schema: { query: schema({ type: "object", properties: { page: { type: "number" } } }) },
     },
+    { method: "GET", path: "/orders/:id{[0-9]+}/lines/:kind{open|closed}" },
   ],
 }
 
@@ -77,6 +78,8 @@ describe("generateLlmsTxt", () => {
     expect(out).toContain("api.index")
     expect(out).toContain("api.users.post(body, { query })")
     expect(out).toContain("api.items({ id }).get({ query })")
+    // A constraint is not part of the argument's name.
+    expect(out).toContain("api.orders({ id }).lines({ kind }).get()")
     // tsTypeOf: object w/ required+optional, array, enum, union, const, additionalProperties
     expect(out).toContain("name: string")
     expect(out).toContain("age?: number")

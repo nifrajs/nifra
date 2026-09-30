@@ -1,6 +1,11 @@
 import type { ContractShape } from "@nifrajs/core/contract"
 import { type ProjectEvidenceSnapshot, reflectedRoutesFromEvidence } from "@nifrajs/core/evidence"
-import { expandOptionalParams } from "@nifrajs/core/pattern"
+import {
+  compileRoutePattern,
+  expandOptionalParams,
+  type ParamConstraint,
+  type RoutePatternSegment,
+} from "@nifrajs/core/pattern"
 import {
   type JsonSchema,
   type ReflectedRouteSchema,
@@ -182,54 +187,51 @@ class SchemaStore {
   }
 }
 
-const NIFRA_PARAM = /^[A-Za-z_][A-Za-z0-9_]*$/
-const MIXED_PARAM = /:([A-Za-z_][A-Za-z0-9_]*)/g
-
-/** Names captured by a route segment under Nifra's parameter grammar. */
-function segmentParams(segment: string): readonly string[] {
-  if (segment.startsWith("*")) return [segment.length > 1 ? segment.slice(1) : "wildcard"]
-  const names: string[] = []
-  for (const match of segment.matchAll(MIXED_PARAM)) {
-    const name = match[1]
-    if (name === undefined || match.index === undefined) continue
-    const previous = segment[match.index - 1]
-    const atEnd = match.index + match[0].length === segment.length
-    // `things:batchGet` is an established literal action path. The router only treats a terminal
-    // colon after an identifier as a parameter when a literal suffix follows it.
-    if (previous !== undefined && /[A-Za-z0-9_]/.test(previous) && atEnd) continue
-    names.push(name)
-  }
-  return names
+interface PathParameter {
+  readonly name: string
+  readonly constraint: ParamConstraint | undefined
 }
 
-/** Name of a wholly dynamic path segment, or `undefined` for static/mixed segments. */
-function segmentParam(segment: string): string | undefined {
-  const names = segmentParams(segment)
-  if (segment.startsWith("*") && names.length === 1) return names[0]
-  if (segment.startsWith(":") && NIFRA_PARAM.test(segment.slice(1)) && names.length === 1)
-    return names[0]
-  return undefined
-}
-
-/** Convert one Nifra route segment, including mixed forms, to OpenAPI templates. */
-function toTemplatedSegment(segment: string): string {
-  const whole = segmentParam(segment)
-  if (whole !== undefined) return `{${whole}}`
-  return segment.replace(MIXED_PARAM, (match, name: string, offset: number) => {
-    const previous = segment[offset - 1]
-    const atEnd = offset + match.length === segment.length
-    if (previous !== undefined && /[A-Za-z0-9_]/.test(previous) && atEnd) return match
+/**
+ * A route path as an OpenAPI path template, with the parameters it declares in order:
+ * `/users/:id/*rest` is `/users/{id}/{rest}`, and `/files/:name.json` is `/files/{name}.json`.
+ *
+ * The path is taken apart by the router's own compiler, so a name ends where the router ends it and
+ * a constraint (`:id{[0-9]+}`) is kept off the template. A path the router would refuse is all
+ * literal text: it declares nothing.
+ */
+function templatedPath(path: string): {
+  readonly template: string
+  readonly parameters: readonly PathParameter[]
+} {
+  const parameters: PathParameter[] = []
+  const take = (name: string, constraint?: ParamConstraint): string => {
+    parameters.push({ name, constraint })
     return `{${name}}`
-  })
-}
-
-/** `/users/:id/*rest` → `/users/{id}/{rest}` (OpenAPI path templating). */
-function toTemplatedPath(path: string): string {
-  return path.split("/").map(toTemplatedSegment).join("/")
+  }
+  let segments: readonly RoutePatternSegment[]
+  try {
+    segments = compileRoutePattern(path).segments
+  } catch {
+    return { template: path, parameters }
+  }
+  const template = segments
+    .map((segment) =>
+      segment.kind === "static"
+        ? segment.value
+        : segment.kind === "param"
+          ? take(segment.name)
+          : segment.kind === "wildcard"
+            ? take(segment.name === "*" ? "wildcard" : segment.name)
+            : segment.parts
+                .map((part) => (part.t === "lit" ? part.v : take(part.name, part.c)))
+                .join(""),
+    )
+    .join("/")
+  return { template: `/${template}`, parameters }
 }
 
 function pathParameters(path: string, paramsSchema?: SchemaReflection): OpenAPIParameter[] {
-  const params: OpenAPIParameter[] = []
   // Build a lookup of per-field schemas from the declared params schema (if any).
   const fieldSchemas = new Map<string, JsonSchema>()
   if (paramsSchema?.fields !== undefined) {
@@ -237,15 +239,20 @@ function pathParameters(path: string, paramsSchema?: SchemaReflection): OpenAPIP
       fieldSchemas.set(field.name, field.schema)
     }
   }
-  for (const segment of path.split("/")) {
-    for (const name of segmentParams(segment)) {
-      // Merge the declared constraint (uuid format, integer type, etc.) when present;
-      // fall back to the bare { type: "string" } derived from the URL pattern.
-      const schema = fieldSchemas.get(name) ?? { type: "string" as const }
-      params.push({ name, in: "path", required: true, schema })
-    }
-  }
-  return params
+  // A declared field schema (uuid format, integer type, etc.) wins. Without one, a constraint in
+  // the path says what the router accepts; without either, the parameter is any string.
+  return templatedPath(path).parameters.map(({ name, constraint }) => ({
+    name,
+    in: "path",
+    required: true,
+    schema:
+      fieldSchemas.get(name) ??
+      (constraint === undefined
+        ? { type: "string" }
+        : constraint.oneOf === undefined
+          ? { type: "string", pattern: `^${constraint.source}$` }
+          : { type: "string", enum: constraint.oneOf }),
+  }))
 }
 
 function queryParameters(schema: SchemaReflection | undefined): OpenAPIParameter[] {
@@ -451,7 +458,7 @@ function addOperation(
   // A path item has a field for each standard method and no place for any other, so a route
   // registered under a custom method is left out of the document.
   if (!PATH_ITEM_METHODS.has(method.toLowerCase())) return
-  const templated = toTemplatedPath(input.path)
+  const templated = templatedPath(input.path).template
   const pathItem = paths[templated] ?? {}
   paths[templated] = pathItem
   let operation = buildOperation(input, store)

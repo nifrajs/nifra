@@ -612,6 +612,114 @@ describe("optional path params", () => {
   })
 })
 
+describe("constrained path params", () => {
+  const app = server()
+    .get("/users/:id{[0-9]+}", (c) => ({ id: c.params.id }))
+    .get("/codes/:code{[A-Z]{2,3}}", (c) => ({ code: c.params.code }))
+    .get("/pins/:pin{\\d{4}}", (c) => ({ pin: c.params.pin }))
+    .get("/img/:kind{thumb|full}", (c) => ({ kind: c.params.kind }))
+    .get("/f/:name.:ext{png|jpg}", (c) => ({ name: c.params.name, ext: c.params.ext }))
+    .get("/o/:page{[0-9]+}?", (c) => ({ page: c.params.page ?? "" }))
+    .get(
+      "/orders/:id{[0-9]+}",
+      { params: t.object({ id: t.string({ format: "int64" }) }) },
+      (c) => ({ id: c.params.id }),
+    )
+  const doc = toOpenAPI(app)
+
+  test("the path template carries the bare name, never the constraint", () => {
+    expect(Object.keys(doc.paths).sort()).toEqual([
+      "/codes/{code}",
+      "/f/{name}.{ext}",
+      "/img/{kind}",
+      "/o",
+      "/o/{page}",
+      "/orders/{id}",
+      "/pins/{pin}",
+      "/users/{id}",
+    ])
+  })
+
+  test("a character class is a string pattern, a list of values is an enum", () => {
+    expect(doc.paths["/users/{id}"]?.get?.parameters).toEqual([
+      { name: "id", in: "path", required: true, schema: { type: "string", pattern: "^[0-9]+$" } },
+    ])
+    expect(doc.paths["/codes/{code}"]?.get?.parameters?.[0]?.schema).toEqual({
+      type: "string",
+      pattern: "^[A-Z]{2,3}$",
+    })
+    expect(doc.paths["/pins/{pin}"]?.get?.parameters?.[0]?.schema).toEqual({
+      type: "string",
+      pattern: "^\\d{4}$",
+    })
+    expect(doc.paths["/img/{kind}"]?.get?.parameters?.[0]?.schema).toEqual({
+      type: "string",
+      enum: ["thumb", "full"],
+    })
+  })
+
+  test("every emitted pattern compiles and accepts what the router accepts", () => {
+    for (const [path, value, other] of [
+      ["/users/{id}", "42", "4a"],
+      ["/codes/{code}", "FRA", "FRAN"],
+      ["/pins/{pin}", "0420", "042"],
+    ] as const) {
+      const schema = doc.paths[path]?.get?.parameters?.[0]?.schema as { pattern: string }
+      const pattern = new RegExp(schema.pattern)
+      expect(pattern.test(value)).toBe(true)
+      expect(pattern.test(other)).toBe(false)
+    }
+  })
+
+  test("a part-literal segment lists each param, constrained or not", () => {
+    expect(doc.paths["/f/{name}.{ext}"]?.get?.parameters).toEqual([
+      { name: "name", in: "path", required: true, schema: { type: "string" } },
+      { name: "ext", in: "path", required: true, schema: { type: "string", enum: ["png", "jpg"] } },
+    ])
+  })
+
+  test("an optional constrained param is a parameter only on the path that has it", () => {
+    expect(doc.paths["/o"]?.get?.parameters).toBeUndefined()
+    expect(doc.paths["/o/{page}"]?.get?.parameters?.[0]?.schema).toEqual({
+      type: "string",
+      pattern: "^[0-9]+$",
+    })
+  })
+
+  test("a declared params schema is the parameter's schema", () => {
+    expect(doc.paths["/orders/{id}"]?.get?.parameters?.[0]?.schema).toEqual({
+      type: "string",
+      format: "int64",
+    })
+  })
+
+  test("a contract operation and a stored snapshot read the same way", () => {
+    const contract = defineContract({
+      getUser: { method: "GET", path: "/users/:id{[0-9]+}" },
+      image: { method: "GET", path: "/img/:kind{thumb|full}" },
+    })
+    const fromContract = toOpenAPI(contract)
+    expect(fromContract.paths["/users/{id}"]?.get?.parameters?.[0]?.schema).toEqual({
+      type: "string",
+      pattern: "^[0-9]+$",
+    })
+    expect(fromContract.paths["/img/{kind}"]?.get?.parameters?.[0]?.schema).toEqual({
+      type: "string",
+      enum: ["thumb", "full"],
+    })
+    const evidence = JSON.parse(JSON.stringify(snapshotProjectEvidence(app)))
+    expect(toOpenAPIFromEvidence(evidence)).toEqual(doc)
+  })
+
+  test("braces that are not a constraint are text after the param, as the router reads them", () => {
+    const literal = toOpenAPI(server().get("/x/:id{int}", () => ({})))
+    expect(Object.keys(literal.paths)).toEqual(["/x/{id}{int}"])
+    expect(literal.paths["/x/{id}{int}"]?.get?.parameters).toEqual([
+      { name: "id", in: "path", required: true, schema: { type: "string" } },
+    ])
+  })
+})
+
 describe("routes registered by method name", () => {
   const app = server()
     .use(all("/echo", () => ({ ok: true })))

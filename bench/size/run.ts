@@ -371,23 +371,36 @@ const BROWSER_FEATURES: ReadonlySet<string> = new Set(["nifra-web-client"])
 // lookup sits under carries no description. Sending a malformed parameter to the dispatcher without
 // the peer measured 5 B larger and was not taken. Three rows had no slack left and move by 0.1 KB;
 // the other rows still clear theirs.
+// A path parameter can carry a constraint (`/users/:id{[0-9]+}`, `/img/:kind{thumb|full}`): +753 B
+// gzip (bare 32163 -> 32916 B), inherited by every row, and +768 B on the browser row (14079 ->
+// 14847 B), which matches with the same router so that a path means the same thing on both sides.
+// About 440 B is the reader that turns the text into a table at registration, 80 B the ordering that
+// puts a narrower constraint first, 75 B the per-value test, 70 B the router keying a position by
+// what it accepts. No pattern text becomes a `RegExp`: a class is a 128-character mask and a list a
+// set of its values, so a value is tested in one pass with no backtracking. Building a `RegExp` from
+// the checked class would be smaller and was not taken, because it gives that guarantee to the
+// engine. Squeezed first, from +823 B: the optional-parameter pattern went (the segment splitter
+// answers the same question), the reader has one exit, and the table is a string instead of a frozen
+// array of words, which was also several times slower to read. An app that registers no constraint
+// runs none of it per request. Every kernel row and the browser row are repriced at the measured
+// number rounded up to the next 0.1 KB.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // The 2026-09-20 security pass adds bounded WebSocket admission/request-hook handling and
   // duplicate-cookie detection to the shared kernel. Reprice every core row together with the
   // measured post-hardening footprint; optional rows must not receive a special exemption.
-  "nifra-bare": 31.5,
+  "nifra-bare": 32.2,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 34.6,
-  "nifra-effect-ledger": 33.4,
-  "nifra-mcp": 31.7,
-  "nifra-sse": 32.2,
-  "nifra-valibot": 32.4,
-  "nifra-typebox-t": 61.5,
-  "nifra-typebox-form": 65.4,
+  "nifra-idempotency": 35.3,
+  "nifra-effect-ledger": 34.1,
+  "nifra-mcp": 32.5,
+  "nifra-sse": 32.9,
+  "nifra-valibot": 33.2,
+  "nifra-typebox-t": 62.3,
+  "nifra-typebox-form": 66.1,
   // Review-leaf ceiling: measured 5.0 KB gz + ~0.2 KB headroom, same rule as every other row.
   "nifra-agent-review": 5.2,
-  // Client runtime ceiling: measured 13.8 KB gz (14089 B) + ~0.2 KB headroom.
-  "nifra-web-client": 14.0,
+  // Client runtime ceiling: measured 14.5 KB gz (14847 B), rounded up to the next 0.1 KB.
+  "nifra-web-client": 14.5,
 }
 
 const main = async (): Promise<void> => {

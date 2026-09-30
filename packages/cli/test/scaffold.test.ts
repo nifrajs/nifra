@@ -34,6 +34,16 @@ describe("routePathToFile", () => {
     expect(() => routePathToFile("/a/*rest/b", "tsx")).toThrow(/catch-all must be the last/)
   })
 
+  test("refuses a param constraint: a route file name cannot carry one", () => {
+    expect(() => routePathToFile("/users/:id{[0-9]+}", "tsx")).toThrow(
+      'a param constraint cannot be written in a route file name: ":id{[0-9]+}" in "/users/:id{[0-9]+}"',
+    )
+    expect(() => routePathToFile("/img/:kind{thumb|full}/edit", "tsx")).toThrow(
+      /check the value in the route's loader/,
+    )
+    expect(() => scaffoldRoute("/users/:id{[0-9]+}", "react")).toThrow(/param constraint/)
+  })
+
   test("rejects filesystem traversal and separator syntax", () => {
     expect(() => routePathToFile("/../src/escape", "tsx")).toThrow(/invalid route segment/)
     expect(() => routePathToFile("/a/../../src/escape", "tsx")).toThrow(/invalid route segment/)

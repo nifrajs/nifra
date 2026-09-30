@@ -12,6 +12,7 @@
 
 import { lstat, mkdir, realpath, writeFile } from "node:fs/promises"
 import { dirname, resolve, sep } from "node:path"
+import { paramConstraint } from "@nifrajs/core/pattern"
 
 export type Framework = "react" | "preact" | "solid" | "vue" | "svelte" | "vanilla"
 
@@ -50,6 +51,12 @@ function assertSafeRouteSegment(segment: string, urlPath: string): void {
   if (segment === "." || segment === ".." || segment.includes("\0") || segment.includes("\\")) {
     throw new Error(
       `invalid route segment in ${JSON.stringify(urlPath)}: ${JSON.stringify(segment)}`,
+    )
+  }
+  const brace = segment.indexOf("{")
+  if (segment.startsWith(":") && brace > 0 && paramConstraint(segment.slice(brace)) !== undefined) {
+    throw new Error(
+      `a param constraint cannot be written in a route file name: ${JSON.stringify(segment)} in ${JSON.stringify(urlPath)}. Scaffold the page without it and check the value in the route's loader.`,
     )
   }
   const fileSegment = segmentToFile(segment)

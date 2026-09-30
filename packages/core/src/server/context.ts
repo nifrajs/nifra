@@ -130,6 +130,7 @@ type IsLiteralColon<
  * string }`, `/files/*path` → `{ path: string }`, `/files/*` → `{ "*": string }`.
  * A name ends where the router ends it, at the first character that cannot be part of one, so
  * `/files/:name.json` → `{ name: string }` and `/v:major.:minor` → `{ major: string; minor: string }`.
+ * A constraint does not change the type: `/users/:id{[0-9]+}` → `{ id: string }`.
  * A non-literal `string` path widens to `Record<string, string>`.
  */
 type RawParams<Path extends string> = string extends Path
@@ -144,14 +145,35 @@ type RawParams<Path extends string> = string extends Path
       ? Record<Wild extends "" ? "*" : Wild, string>
       : Record<never, string>
 
-/** Whether `Run` is nothing but whole-segment optional parameters: `/:a?`, `/:a?/:b?`. */
+/**
+ * A parameter constraint at the start of `Text` (`{[0-9]+}`, `{a|b}`) and the text after it, or
+ * `["", Text]` when there is none. A group counts when it opens like a constraint - with a class, a
+ * `\d` or `\w`, or a list of values; whether the router supports what is inside is not checked here.
+ * One level of braces inside is read, which is what a count needs: `{[0-9]{2}}`.
+ */
+type TakeConstraint<Text extends string> = Text extends `{${infer Inner}}${infer Rest}`
+  ? Inner extends `[${string}` | `\\${string}` | `${string}|${string}`
+    ? Inner extends `${string}{${string}`
+      ? Rest extends `}${infer After}`
+        ? [`{${Inner}}}`, After]
+        : ["", Text]
+      : [`{${Inner}}`, Rest]
+    : ["", Text]
+  : ["", Text]
+
+/**
+ * Whether `Run` is nothing but whole-segment optional parameters, each with or without a constraint:
+ * `/:a?`, `/:a?/:b?`, `/:id{[0-9]+}?`.
+ */
 type IsOptionalRun<Run extends string> = Run extends ""
   ? true
   : Run extends `/:${infer After}`
-    ? TakeParamName<After> extends [infer Name extends string, `?${infer Rest}`]
-      ? Name extends ""
-        ? false
-        : IsOptionalRun<Rest>
+    ? TakeParamName<After> extends [infer Name extends string, infer Tail extends string]
+      ? TakeConstraint<Tail> extends [string, `?${infer Rest}`]
+        ? Name extends ""
+          ? false
+          : IsOptionalRun<Rest>
+        : false
       : false
     : false
 
@@ -173,8 +195,10 @@ type SplitOptionalRun<
 type OptionalForms<Head extends string, Run extends string, Done extends string = ""> =
   | (`${Head}${Done}` extends "" ? "/" : `${Head}${Done}`)
   | (Run extends `/:${infer After}`
-      ? TakeParamName<After> extends [infer Name extends string, `?${infer Rest}`]
-        ? OptionalForms<Head, Rest, `${Done}/:${Name}`>
+      ? TakeParamName<After> extends [infer Name extends string, infer Tail extends string]
+        ? TakeConstraint<Tail> extends [infer Constraint extends string, `?${infer Rest}`]
+          ? OptionalForms<Head, Rest, `${Done}/:${Name}${Constraint}`>
+          : never
         : never
       : never)
 

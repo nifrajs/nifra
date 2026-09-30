@@ -608,9 +608,102 @@ answers `422`.
 `GET /users/:id?` throws at registration, because both serve
 `GET /users`. Nothing of a rejected route is left registered.
 
-Other param modifiers (`:id+`, `:id*`, `:id{[0-9]+}`,
-`:id(\\d+)`) are not part of the path grammar and match as literal text. Where that
-text is intended, put `// nifra-expect param-modifier` above the registration.
+Other param modifiers (`:id+`, `:id*`, `:id(\\d+)`) are not
+part of the path grammar and match as literal text. Where that text is intended, put
+`// nifra-expect param-modifier` above the registration.
+
+### Param constraints
+
+A param can say which values it accepts, written in braces after the name. A request whose
+value does not fit is not served by that route, so it falls to another route or to a
+`404`. The param is still a `string`.
+
+```ts
+import { server } from "@nifrajs/core/server"
+
+export const app = server()
+  // /users/me is its own route; /users/42 is this one; /users/ada is a 404
+  .get("/users/me", () => ({ me: true }))
+  .get("/users/:id{[0-9]+}", (c) => ({ id: Number(c.params.id) }))
+  // A list of values, and a count: exactly two capital letters
+  .get("/img/:size{thumb|full}/:file", (c) => ({ size: c.params.size, file: c.params.file }))
+  .get("/countries/:code{[A-Z]{2}}", (c) => ({ code: c.params.code }))
+  // Inside a segment, and optional at the end of a path
+  .get("/files/:name.:ext{png|jpg}", (c) => ({ name: c.params.name, ext: c.params.ext }))
+  .get("/posts/:page{[0-9]+}?", (c) => ({ page: c.params.page ?? "1" }))
+```
+
+A constraint is one of two things:
+
+-
+**One character class, with an optional count.** `[0-9]`,
+`[a-z0-9_-]`, `\\d` or `\\w`, followed by nothing
+(exactly one character), `+`, `{n}`, `{n,}` or
+`{n,m}`. A class holds letters, digits, ranges of them, `\\d`,
+`\\w` and the characters `. _ ~ ! $ & ' ( ) + , ; = @ -`. There
+is no negated class, and a count starts at one.
+
+-
+**A list of two or more values,** separated by `|`:
+`:ext{png|jpg|webp}`. A value is letters, digits, `.`,
+`_`, `~` and `-`.
+
+Anything else in braces (`:id{int}`, `:id{[0-9]+|[a-z]+}`,
+`:id{.+}`) is not a constraint. It is literal text, as before, and
+`nifra check` reports it as `NF-C026`. In a JavaScript string
+`\\d` is written `{'"\\\\d"'}`.
+
+-
+**The value is checked as it was sent,** before percent-decoding. `/users/4%32`
+does not fit `:id{[0-9]+}`, although it decodes to `42`. A handler
+on a constrained route therefore never sees a decoded character the constraint does not
+allow. A broader route beside it still serves that request and sees `42`.
+
+-
+**The narrowest route answers, whatever the order of registration.** Literal text is
+tried first, then a list, then a class, then a bare `:param`, then a wildcard.
+Between two constraints of a kind, the one that accepts fewer values is tried first, so
+`:id{[0-9]+}` is tried before `:id{[0-9a-f]+}`.
+
+-
+**A method the narrowest route does not have is a 405.** With
+`GET /users/:id{[0-9]+}` and `POST /users/:name`,
+`POST /users/42` answers `405` with `Allow: GET, HEAD`. It is
+the same rule a literal route follows beside a param route.
+
+-
+**Two spellings of one constraint are one route.** `:id{[0-9]+}`,
+`:id{\\d+}` and `:id{[0-9]{1,}}` accept the same values, so
+registering two of them for one method throws `DUPLICATE_ROUTE`, and different
+methods on them share one `Allow` list.
+
+-
+**Inside a segment, the text around the params is placed first.**
+`/files/:name.:ext{png|jpg}` splits `a.b.png` at its first dot, into
+`a` and `b.png`, and then the constraint refuses it. The router does
+not look for another split.
+
+-
+**Overlap checks know about constraints.** `/users/me` and
+`/users/:id{[0-9]+}` serve no request in common, so `nifra check`
+(`NF-C024`) has nothing to report. A constrained route beside a bare
+`:param` route still overlaps and is still reported; mark the pair with
+`// nifra-expect route-overlap` where it is intended.
+
+-
+**OpenAPI and the typed client use the bare name.** The path is
+`/users/{id}`; the parameter's schema is
+`{'{ type: "string", pattern: "^[0-9]+$" }'}` for a class and an `enum`
+for a list, unless the route declares a `params` schema. The client call is
+`{'api.users({ id: "42" }).get()'}`. The client does not check the value: a value
+that does not fit is sent, and answered by whichever route it does match. Where two param
+routes share a position, give their params different names so that the call picks the route
+by name.
+
+-
+**Not in a page route's file name.** `@nifrajs/web` refuses a constraint in
+`routes/`, because links and prerendered paths are rebuilt from the param's name.
+Check the value in the page's loader.
 
 ### Several methods, custom methods (all, method)
 

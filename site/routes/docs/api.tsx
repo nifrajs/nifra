@@ -114,6 +114,19 @@ export const app = server()
   // GET /archive, GET /archive/2026 and GET /archive/2026/09
   .get("/archive/:year?/:month?", (c) => ({ year: c.params.year, month: c.params.month }))`
 
+const PARAM_CONSTRAINTS = `import { server } from "@nifrajs/core/server"
+
+export const app = server()
+  // /users/me is its own route; /users/42 is this one; /users/ada is a 404
+  .get("/users/me", () => ({ me: true }))
+  .get("/users/:id{[0-9]+}", (c) => ({ id: Number(c.params.id) }))
+  // A list of values, and a count: exactly two capital letters
+  .get("/img/:size{thumb|full}/:file", (c) => ({ size: c.params.size, file: c.params.file }))
+  .get("/countries/:code{[A-Z]{2}}", (c) => ({ code: c.params.code }))
+  // Inside a segment, and optional at the end of a path
+  .get("/files/:name.:ext{png|jpg}", (c) => ({ name: c.params.name, ext: c.params.ext }))
+  .get("/posts/:page{[0-9]+}?", (c) => ({ page: c.params.page ?? "1" }))`
+
 const METHOD_ROUTES = `import { server } from "@nifrajs/core/server"
 import { all, method } from "@nifrajs/core/methods"
 
@@ -183,10 +196,94 @@ export default function Api() {
         </li>
       </ul>
       <p className="caveat">
-        Other param modifiers (<code>:id+</code>, <code>:id*</code>, <code>{`:id{[0-9]+}`}</code>,{" "}
-        <code>{":id(\\d+)"}</code>) are not part of the path grammar and match as literal text. Where that
-        text is intended, put <code>{"// nifra-expect param-modifier"}</code> above the registration.
+        Other param modifiers (<code>:id+</code>, <code>:id*</code>, <code>{":id(\\d+)"}</code>) are not
+        part of the path grammar and match as literal text. Where that text is intended, put{" "}
+        <code>{"// nifra-expect param-modifier"}</code> above the registration.
       </p>
+
+      <h2>Param constraints</h2>
+      <p>
+        A param can say which values it accepts, written in braces after the name. A request whose
+        value does not fit is not served by that route, so it falls to another route or to a{" "}
+        <code>404</code>. The param is still a <code>string</code>.
+      </p>
+      <CodeBlock code={PARAM_CONSTRAINTS} />
+      <p>A constraint is one of two things:</p>
+      <ul>
+        <li>
+          <b>One character class, with an optional count.</b> <code>[0-9]</code>,{" "}
+          <code>[a-z0-9_-]</code>, <code>{"\\d"}</code> or <code>{"\\w"}</code>, followed by nothing
+          (exactly one character), <code>+</code>, <code>{"{n}"}</code>, <code>{"{n,}"}</code> or{" "}
+          <code>{"{n,m}"}</code>. A class holds letters, digits, ranges of them, <code>{"\\d"}</code>,{" "}
+          <code>{"\\w"}</code> and the characters <code>{". _ ~ ! $ & ' ( ) + , ; = @ -"}</code>. There
+          is no negated class, and a count starts at one.
+        </li>
+        <li>
+          <b>A list of two or more values,</b> separated by <code>|</code>:{" "}
+          <code>{":ext{png|jpg|webp}"}</code>. A value is letters, digits, <code>.</code>,{" "}
+          <code>_</code>, <code>~</code> and <code>-</code>.
+        </li>
+      </ul>
+      <p>
+        Anything else in braces (<code>{":id{int}"}</code>, <code>{":id{[0-9]+|[a-z]+}"}</code>,{" "}
+        <code>{":id{.+}"}</code>) is not a constraint. It is literal text, as before, and{" "}
+        <code>nifra check</code> reports it as <code>NF-C026</code>. In a JavaScript string{" "}
+        <code>{"\\d"}</code> is written <code>{'"\\\\d"'}</code>.
+      </p>
+      <ul>
+        <li>
+          <b>The value is checked as it was sent,</b> before percent-decoding. <code>/users/4%32</code>{" "}
+          does not fit <code>{":id{[0-9]+}"}</code>, although it decodes to <code>42</code>. A handler
+          on a constrained route therefore never sees a decoded character the constraint does not
+          allow. A broader route beside it still serves that request and sees <code>42</code>.
+        </li>
+        <li>
+          <b>The narrowest route answers, whatever the order of registration.</b> Literal text is
+          tried first, then a list, then a class, then a bare <code>:param</code>, then a wildcard.
+          Between two constraints of a kind, the one that accepts fewer values is tried first, so{" "}
+          <code>{":id{[0-9]+}"}</code> is tried before <code>{":id{[0-9a-f]+}"}</code>.
+        </li>
+        <li>
+          <b>A method the narrowest route does not have is a 405.</b> With{" "}
+          <code>{"GET /users/:id{[0-9]+}"}</code> and <code>POST /users/:name</code>,{" "}
+          <code>POST /users/42</code> answers <code>405</code> with <code>Allow: GET, HEAD</code>. It is
+          the same rule a literal route follows beside a param route.
+        </li>
+        <li>
+          <b>Two spellings of one constraint are one route.</b> <code>{":id{[0-9]+}"}</code>,{" "}
+          <code>{":id{\\d+}"}</code> and <code>{":id{[0-9]{1,}}"}</code> accept the same values, so
+          registering two of them for one method throws <code>DUPLICATE_ROUTE</code>, and different
+          methods on them share one <code>Allow</code> list.
+        </li>
+        <li>
+          <b>Inside a segment, the text around the params is placed first.</b>{" "}
+          <code>{"/files/:name.:ext{png|jpg}"}</code> splits <code>a.b.png</code> at its first dot, into{" "}
+          <code>a</code> and <code>b.png</code>, and then the constraint refuses it. The router does
+          not look for another split.
+        </li>
+        <li>
+          <b>Overlap checks know about constraints.</b> <code>/users/me</code> and{" "}
+          <code>{"/users/:id{[0-9]+}"}</code> serve no request in common, so <code>nifra check</code>{" "}
+          (<code>NF-C024</code>) has nothing to report. A constrained route beside a bare{" "}
+          <code>:param</code> route still overlaps and is still reported; mark the pair with{" "}
+          <code>{"// nifra-expect route-overlap"}</code> where it is intended.
+        </li>
+        <li>
+          <b>OpenAPI and the typed client use the bare name.</b> The path is{" "}
+          <code>{"/users/{id}"}</code>; the parameter's schema is{" "}
+          <code>{'{ type: "string", pattern: "^[0-9]+$" }'}</code> for a class and an <code>enum</code>{" "}
+          for a list, unless the route declares a <code>params</code> schema. The client call is{" "}
+          <code>{'api.users({ id: "42" }).get()'}</code>. The client does not check the value: a value
+          that does not fit is sent, and answered by whichever route it does match. Where two param
+          routes share a position, give their params different names so that the call picks the route
+          by name.
+        </li>
+        <li>
+          <b>Not in a page route's file name.</b> <code>@nifrajs/web</code> refuses a constraint in{" "}
+          <code>routes/</code>, because links and prerendered paths are rebuilt from the param's name.
+          Check the value in the page's loader.
+        </li>
+      </ul>
 
       <h2>Several methods, custom methods (all, method)</h2>
       <p>

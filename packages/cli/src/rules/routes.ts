@@ -1,6 +1,6 @@
 import { RESERVED_KEY_READOUT, reservedKeyFor } from "@nifrajs/client"
 import { RoutePatternOverlapLimitError, routePatternOverlap } from "@nifrajs/core"
-import { expandOptionalParams } from "@nifrajs/core/pattern"
+import { expandOptionalParams, paramConstraint } from "@nifrajs/core/pattern"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { commentBlockHasMarker } from "./comment-markers.ts"
 import type { CheckRule, RuleContext } from "./index.ts"
@@ -260,14 +260,34 @@ export const overlappingRouteRule: CheckRule = {
 }
 
 /** A param name directly followed by a character other routers read as a modifier. */
-const PARAM_MODIFIER = /:[A-Za-z_][A-Za-z0-9_]*[?*+{(<]/
+const PARAM_MODIFIER = /:[A-Za-z_][A-Za-z0-9_]*[?*+{(<]/g
+
+/**
+ * The first param in `path` whose modifier the router reads as literal text. A `{...}` group the
+ * router reads as a constraint (`:id{[0-9]+}`, `:ext{png|jpg}`) is syntax, so it is passed over.
+ */
+function literalModifier(path: string): string | undefined {
+  PARAM_MODIFIER.lastIndex = 0
+  for (let found = PARAM_MODIFIER.exec(path); found !== null; found = PARAM_MODIFIER.exec(path)) {
+    const text = found[0]
+    if (!text.endsWith("{")) return text
+    const constraint = paramConstraint(path.slice(PARAM_MODIFIER.lastIndex - 1))
+    if (constraint === undefined) return text
+    const end = PARAM_MODIFIER.lastIndex + constraint.source.length + 1
+    // A modifier after the constraint is literal text like any other (`:id{[0-9]+}?/posts`).
+    if ("?*+{(<".includes(path[end] ?? "/")) return path.slice(found.index, end + 1)
+    PARAM_MODIFIER.lastIndex = end
+  }
+  return undefined
+}
 
 /**
  * NF-C026: a param followed by `?`, `*`, `+`, `{`, `(` or `<` where the router reads that character
- * as literal text. The one modifier the router has is `?` on a trailing run of whole segments
- * (`/users/:id?`), and those are expanded away before this looks, so anything still matching is
- * text the author very likely meant as syntax: `/users/:id?/posts` serves only a path that
- * contains a literal `?`, which no request path does.
+ * as literal text. The router has two modifiers: `?` on a trailing run of whole segments
+ * (`/users/:id?`), expanded away before this looks, and a `{...}` constraint in one of the forms it
+ * supports. Anything else is text the author very likely meant as syntax: `/users/:id?/posts`
+ * serves only a path that contains a literal `?`, which no request path does, and `/users/:id{int}`
+ * serves only a path that ends in those braces.
  */
 export const paramModifierRule: CheckRule = {
   code: "NF-C026",
@@ -277,15 +297,14 @@ export const paramModifierRule: CheckRule = {
     const linesByFile = new Map<string, readonly string[]>()
     for (const route of pathSites(routeFacts(ctx))) {
       const forms = expandOptionalParams(route.path)
-      const found = PARAM_MODIFIER.exec(forms[forms.length - 1] ?? route.path)
-      if (found === null) continue
+      const text = literalModifier(forms[forms.length - 1] ?? route.path)
+      if (text === undefined) continue
       let lines = linesByFile.get(route.file)
       if (lines === undefined) {
         lines = (ctx.project.source.read(route.file) ?? "").split("\n")
         linesByFile.set(route.file, lines)
       }
       if (commentBlockHasMarker(lines, route.line, PARAM_MODIFIER_PRAGMA)) continue
-      const text = found[0]
       const character = text[text.length - 1]!
       findings.push(
         diagnostic({
@@ -293,7 +312,7 @@ export const paramModifierRule: CheckRule = {
           severity: "warn",
           file: route.file,
           line: route.line,
-          message: `${route.method} ${route.path} - '${character}' after '${text.slice(0, -1)}' is matched as literal text, not as a param modifier${character === "?" ? "; a request path never contains '?', so this route cannot be reached" : ""}. Optional params are supported as the trailing whole segments of a path (\`/users/:id?\`, \`/d/:year?/:month?\`); for anything else register each path, or mark a deliberate literal with \`// ${PARAM_MODIFIER_PRAGMA}\` above the registration`,
+          message: `${route.method} ${route.path} - '${character}' after '${text.slice(0, -1)}' is matched as literal text, not as a param modifier${character === "?" ? "; a request path never contains '?', so this route cannot be reached" : ""}. Optional params are supported as the trailing whole segments of a path (\`/users/:id?\`, \`/d/:year?/:month?\`), and a constraint as one character class with an optional count (\`:id{[0-9]+}\`, \`:code{[A-Z]{2}}\`) or a list of two or more values (\`:ext{png|jpg}\`); for anything else register each path, or mark a deliberate literal with \`// ${PARAM_MODIFIER_PRAGMA}\` above the registration`,
           evidence: [`${route.method} ${route.path}`, `literal: ${text}`],
           verify: "nifra check --lints-only",
         }),

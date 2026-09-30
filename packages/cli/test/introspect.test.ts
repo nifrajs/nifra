@@ -119,6 +119,14 @@ describe("clientCall - typed-client call form per route", () => {
     expect(clientCall("GET", "/users/:id", undefined)).toBe("await api.users({ id }).get()")
   })
 
+  test("a constrained param is called by its bare name", () => {
+    expect(clientCall("GET", "/users/:id{[0-9]+}", undefined)).toBe("await api.users({ id }).get()")
+    expect(clientCall("GET", "/img/:kind{thumb|full}/meta", undefined)).toBe(
+      "await api.img({ kind }).meta.get()",
+    )
+    expect(clientCall("GET", "/c/:code{[A-Z]{2}}", undefined)).toBe("await api.c({ code }).get()")
+  })
+
   test("nested static segments chain as properties", () => {
     expect(clientCall("POST", "/v1/session", { body: { type: "object" } })).toBe(
       "await api.v1.session.post(body)",

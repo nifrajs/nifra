@@ -241,6 +241,23 @@ describe("createMockServer", () => {
     expect(await response.json()).toBe("param")
   })
 
+  test("a param constraint picks the route the app would pick", async () => {
+    const fakeApp = {
+      routes: () => [
+        { method: "GET", path: "/users/:name", schema: { response: { const: "name" } } },
+        { method: "GET", path: "/users/:id{[0-9]+}", schema: { response: { const: "numeric" } } },
+        { method: "GET", path: "/img/:kind{thumb|full}", schema: { response: { const: "kind" } } },
+      ],
+    }
+    const mock = createMockServer(fakeApp)
+    const body = async (path: string) =>
+      (await mock.fetch(new Request(`http://localhost${path}`))).json()
+    expect(await body("/users/42")).toBe("numeric")
+    expect(await body("/users/ada")).toBe("name")
+    expect(await body("/img/full")).toBe("kind")
+    expect((await mock.fetch(new Request("http://localhost/img/other"))).status).toBe(404)
+  })
+
   test("exposes mockRoutes for inspection", () => {
     const fakeApp = {
       routes: () => [

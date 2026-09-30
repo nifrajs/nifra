@@ -3,6 +3,7 @@ import {
   reflectedRoutesFromEvidence,
   snapshotProjectEvidence,
 } from "@nifrajs/core/evidence"
+import { paramConstraint } from "@nifrajs/core/pattern"
 
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
@@ -67,8 +68,14 @@ function clientCall(method: string, path: string, schema: unknown): string {
   else
     for (const seg of segs) {
       if (seg.startsWith(":") || seg.startsWith("*")) {
-        const name = seg.replace(/^[:*]/, "") || "value"
-        chain += `({ ${name} })`
+        // A constraint is not part of the name: `:id{[0-9]+}` is called with `{ id }`.
+        const name = seg.slice(1)
+        const brace = name.indexOf("{")
+        const bare =
+          brace > 0 && paramConstraint(name.slice(brace))?.source.length === name.length - brace - 2
+            ? name.slice(0, brace)
+            : name
+        chain += `({ ${bare || "value"} })`
       } else chain += IDENT.test(seg) ? `.${seg}` : `[${JSON.stringify(seg)}]`
     }
   const isBodyVerb = verb === "post" || verb === "put" || verb === "patch"
