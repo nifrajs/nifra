@@ -42,21 +42,107 @@ export interface IdempotencyConfig {
 /** Flattens an intersection into a single object type for readable hovers. */
 export type Prettify<T> = { [K in keyof T]: T[K] } & {}
 
+type ParamNameStart =
+  | "a"
+  | "b"
+  | "c"
+  | "d"
+  | "e"
+  | "f"
+  | "g"
+  | "h"
+  | "i"
+  | "j"
+  | "k"
+  | "l"
+  | "m"
+  | "n"
+  | "o"
+  | "p"
+  | "q"
+  | "r"
+  | "s"
+  | "t"
+  | "u"
+  | "v"
+  | "w"
+  | "x"
+  | "y"
+  | "z"
+  | "A"
+  | "B"
+  | "C"
+  | "D"
+  | "E"
+  | "F"
+  | "G"
+  | "H"
+  | "I"
+  | "J"
+  | "K"
+  | "L"
+  | "M"
+  | "N"
+  | "O"
+  | "P"
+  | "Q"
+  | "R"
+  | "S"
+  | "T"
+  | "U"
+  | "V"
+  | "W"
+  | "X"
+  | "Y"
+  | "Z"
+  | "_"
+type ParamNameChar = ParamNameStart | "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+
+/** The longest parameter name at the start of `Text`, and the text after it. */
+type TakeParamName<
+  Text extends string,
+  Name extends string = "",
+> = Text extends `${infer Char}${infer Rest}`
+  ? Char extends (Name extends "" ? ParamNameStart : ParamNameChar)
+    ? TakeParamName<Rest, `${Name}${Char}`>
+    : [Name, Text]
+  : [Name, ""]
+
+/**
+ * Whether a colon is literal text: one with no name after it, or one that follows a name character
+ * and whose name runs to the end of the segment (`/things:batchGet`).
+ */
+type IsLiteralColon<
+  Before extends string,
+  Name extends string,
+  Rest extends string,
+> = Name extends ""
+  ? true
+  : Before extends `${string}${ParamNameChar}`
+    ? Rest extends "" | `/${string}`
+      ? true
+      : false
+    : false
+
 /**
  * Extracts `:param` and trailing `*wildcard` names from a route-path literal into
  * a string→string record: `/users/:id/posts/:postId` → `{ id: string; postId:
  * string }`, `/files/*path` → `{ path: string }`, `/files/*` → `{ "*": string }`.
+ * A name ends where the router ends it, at the first character that cannot be part of one, so
+ * `/files/:name.json` → `{ name: string }` and `/v:major.:minor` → `{ major: string; minor: string }`.
  * A non-literal `string` path widens to `Record<string, string>`.
  */
 type RawParams<Path extends string> = string extends Path
   ? Record<string, string>
-  : Path extends `${infer _Start}:${infer Param}/${infer Rest}`
-    ? Record<Param, string> & RawParams<`/${Rest}`>
-    : Path extends `${infer _Start}:${infer Param}`
-      ? Record<Param, string>
-      : Path extends `${infer _Start}*${infer Wild}`
-        ? Record<Wild extends "" ? "*" : Wild, string>
-        : Record<never, string>
+  : Path extends `${infer Before}:${infer After}`
+    ? TakeParamName<After> extends [infer Name extends string, infer Rest extends string]
+      ? IsLiteralColon<Before, Name, Rest> extends true
+        ? RawParams<Rest>
+        : Record<Name, string> & RawParams<Rest>
+      : never
+    : Path extends `${infer _Start}*${infer Wild}`
+      ? Record<Wild extends "" ? "*" : Wild, string>
+      : Record<never, string>
 
 export type Params<Path extends string> = Prettify<RawParams<Path>>
 
