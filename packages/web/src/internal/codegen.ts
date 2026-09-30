@@ -172,6 +172,9 @@ export function generateClientEntry(
     // routeId → the page's optional post-hydration client loader/action hooks. Hooks are populated only
     // after the route chunk loads, so routes that do not declare them remain ordinary route modules.
     "const routeHooks = {}",
+    // routeId → the chain the server rendered for an `ssr = false` page: the same layouts (and
+    // boundary), with the page's `HydrateFallback` - or an empty leaf - where the component goes.
+    "const holds = {}",
     "const loadModule = async (id) => {",
     "  if (chains[id]) return",
     "  const mods = await loaders[id]()",
@@ -207,6 +210,7 @@ export function generateClientEntry(
     "  const boundaryMods = errorRouteIds.has(id) ? mods.slice(0, -1) : mods",
     "  const boundaries = boundaryMods.flatMap((m) => (m.boundaries ?? []).map((b) => ({ name: b.name, mode: b.mode, hasLoad: b.load !== undefined, ...(b.errorId === undefined ? {} : { errorId: b.errorId }) })))",
     "  routeHooks[id] = { clientLoader: page.clientLoader, clientAction: page.clientAction, boundaries }",
+    "  if (page.ssr === false) holds[id] = [...chains[id].slice(0, -1), page.HydrateFallback ?? (() => null)]",
     "}",
     "const patterns = [",
     ...patternRows,
@@ -266,7 +270,41 @@ export function generateClientEntry(
     // Wait for framework-owned deferred CSS before loading/mounting the initial route. The coordinator
     // is a no-op for the default blocking links and always has a bounded fail-open terminal state.
     "waitForStyles().then(() => loadModule(initial.routeId)).then(() => {",
-    "  mountRouter({ router, routes: chains, searchSchemas, container: root })",
+    // An `ssr = false` page: the server rendered its held chain, so the view hydrates THAT - under a
+    // chain id no route file can produce - and is handed the real route a task later, once every
+    // adapter has hydrated and subscribed. Only the first view is held; a client navigation to such a
+    // page has no server markup to match and renders the component directly.
+    "  let view = router",
+    "  const hold = holds[initial.routeId]",
+    "  if (hold) {",
+    '    const id = "\\0ssr"',
+    "    chains[id] = hold",
+    "    searchSchemas[id] = searchSchemas[initial.routeId]",
+    "    const listeners = new Set()",
+    "    let held = true",
+    "    let base",
+    "    let derived",
+    "    view = {",
+    "      ...router,",
+    "      snapshot() {",
+    "        const s = router.snapshot()",
+    "        if (!held) return s",
+    // One derived state per router state: the view's store must hand back a stable reference.
+    "        if (base !== s) derived = { ...(base = s), routeId: id }",
+    "        return derived",
+    "      },",
+    "      subscribe(listener) {",
+    "        listeners.add(listener)",
+    "        const off = router.subscribe(listener)",
+    "        return () => (listeners.delete(listener), off())",
+    "      },",
+    "    }",
+    "    setTimeout(() => {",
+    "      held = false",
+    "      for (const listener of [...listeners]) listener()",
+    "    }, 0)",
+    "  }",
+    "  mountRouter({ router: view, routes: chains, searchSchemas, container: root })",
     // Run the optional client loader only after the adapter has mounted the SSR tree. The initial
     // server data is already in `window.__NIFRA_DATA__`, so `serverLoader()` reuses it and cannot
     // duplicate the first request.

@@ -288,6 +288,24 @@ export interface RouteModule {
    */
   readonly hydrate?: boolean
   /**
+   * `false` renders this route's component in the browser only. The server still matches the route,
+   * runs its gates and loaders, renders the layouts around it and embeds the data - it skips the
+   * component alone, putting {@link HydrateFallback} (or nothing) in the page slot. The browser
+   * hydrates against that, then renders the component. For a component that cannot render on a
+   * server: one that reads `window` or a browser-only API while it renders.
+   *
+   * The module itself is still imported on the server, for its loader and options - so an import
+   * that needs a browser at load time belongs inside the component (a dynamic `import()`), not at the
+   * top of the file. Cannot be combined with `hydrate = false`: nothing would ever render the page.
+   */
+  readonly ssr?: boolean
+  /**
+   * What the server renders in the page slot of an `ssr = false` route, and what the browser hydrates
+   * before the component takes over - a skeleton, a spinner. Receives the same props as the
+   * component, loader `data` included. Omitted ⇒ the slot is empty until the component renders.
+   */
+  readonly HydrateFallback?: unknown
+  /**
    * Opt a **static** route (no `:param`/`*`) into build-time prerendering (SSG): `prerenderRoutes`
    * (from `@nifrajs/web/build`) renders it to a static `index.html` at build. The loader runs at build
    * with the in-process `api` (build-safe data only - no per-request cookies/secrets); `defer()` on a

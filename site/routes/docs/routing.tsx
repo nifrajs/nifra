@@ -41,6 +41,24 @@ export async function loader({ params }) {
 }
 // A catch-all needs ≥1 segment (/files alone won't match) and must be the last segment.`
 
+const CLIENT_ONLY = `// routes/map.tsx - a page whose component needs a browser to render.
+export const ssr = false
+
+export async function loader({ api }) {
+  return { pins: await api.pins.get() }   // still runs on the server
+}
+
+// What the server puts in the page slot, and what the browser shows until the component renders.
+// Same props as the component - the loader data is already there.
+export function HydrateFallback({ data }) {
+  return <p>Loading {data.pins.length} pins…</p>
+}
+
+export default function MapPage({ data }) {
+  const width = window.innerWidth         // fine: this never runs on the server
+  return <Canvas width={width} pins={data.pins} />
+}`
+
 const SEARCH = `// routes/reports.tsx - a typed, validated ?page=&sort= query.
 import { useSearch } from "@nifrajs/web-react/router"
 import * as v from "valibot" // any Standard Schema works (valibot, zod, arktype)
@@ -182,6 +200,24 @@ export default function Routing() {
         be the final segment.
       </p>
       <CodeBlock code={CATCHALL} />
+
+      <h2>Client-only pages</h2>
+      <p>
+        <code>export const ssr = false</code> keeps a page's component off the server. The route is
+        still matched, its layouts still render, its gates and its loader still run and the data is
+        still embedded - only the component is skipped. The server puts the page's{" "}
+        <code>HydrateFallback</code> in the page slot (nothing, if there is none), the browser
+        hydrates that, then renders the component with the data it already has. A client navigation
+        to the page renders the component directly. For a component that reads <code>window</code>,
+        a canvas, or a browser-only library while it renders.
+      </p>
+      <CodeBlock code={CLIENT_ONLY} lang="tsx" />
+      <p>
+        The module is still imported on the server, for its loader and its options. An import that
+        needs a browser at load time therefore belongs inside the component - a dynamic{" "}
+        <code>import()</code> - not at the top of the file. <code>ssr = false</code> cannot be
+        combined with <code>hydrate = false</code>: nothing would ever render the page.
+      </p>
 
       <h2>Typed search params</h2>
       <p>

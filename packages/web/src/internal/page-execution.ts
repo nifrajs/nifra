@@ -83,6 +83,9 @@ export interface PageRouteContext<Env = unknown> {
   readonly waitUntil?: (promise: Promise<unknown>) => void
 }
 
+/** The page slot of an `ssr = false` route with no `HydrateFallback`: a component that renders nothing. */
+const EMPTY_LEAF = (): null => null
+
 /** The request-scoping seam of an in-process `api` (see `inProcessClient`), if it carries one. */
 function platformBinderOf(api: unknown): BackendPlatformBinder | undefined {
   if ((typeof api !== "object" && typeof api !== "function") || api === null) return undefined
@@ -403,12 +406,29 @@ export function createPageRequestExecutor<Env = unknown>(
       urlPartsFor(request).search,
     )
 
+  /**
+   * What the server puts in a route's page slot. An `ssr = false` route's component is never rendered
+   * here: its `HydrateFallback` stands in, or an empty leaf. Every adapter renders `() => null` as
+   * nothing, and the browser hydrates the same chain before it renders the component.
+   */
+  const serverLeafOf = (route: RouteEntry, mod: RouteModule): unknown => {
+    if (mod.ssr !== false) return mod.default
+    if (mod.hydrate === false) {
+      throw new Error(
+        `[nifra/web] route "${route.id}" sets both \`ssr = false\` and \`hydrate = false\`: the ` +
+          "server skips its component and no client would ever render it. Remove one of the two.",
+      )
+    }
+    return mod.HydrateFallback ?? EMPTY_LEAF
+  }
+
   const resolveChainAndHead = (
     layoutModules: LoadedLayoutModules,
     page: RouteModule,
     metaArgs: MetaArgs,
+    leaf: unknown = page.default,
   ): { chain: unknown[]; head: Meta } => {
-    const chain = [...layoutModules.map((m) => m.default), page.default]
+    const chain = [...layoutModules.map((m) => m.default), leaf]
     const heads = [
       ...layoutModules.map((m) => resolveMeta(m.meta, metaArgs)),
       resolveMeta(page.meta, metaArgs),
@@ -621,12 +641,17 @@ export function createPageRequestExecutor<Env = unknown>(
     }
 
     const nonce = options.nonce === undefined ? undefined : await resolveNonce(req, env)
-    const { chain, head } = resolveChainAndHead(layoutModules, mod, {
-      data,
-      params,
-      origin: originOf(req),
-      ...(nonce === undefined ? {} : { nonce }),
-    })
+    const { chain, head } = resolveChainAndHead(
+      layoutModules,
+      mod,
+      {
+        data,
+        params,
+        origin: originOf(req),
+        ...(nonce === undefined ? {} : { nonce }),
+      },
+      serverLeafOf(route, mod),
+    )
     try {
       return await renderPageResult({
         adapter,
@@ -1055,12 +1080,17 @@ export function createPageRequestExecutor<Env = unknown>(
           : null
         const responseHeaders = controls.documentHeaders()
         const nonce = options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env)
-        const { chain, head } = resolveChainAndHead(layoutModules, mod, {
-          data,
-          params: c.params,
-          origin: originOf(c.req),
-          ...(nonce === undefined ? {} : { nonce }),
-        })
+        const { chain, head } = resolveChainAndHead(
+          layoutModules,
+          mod,
+          {
+            data,
+            params: c.params,
+            origin: originOf(c.req),
+            ...(nonce === undefined ? {} : { nonce }),
+          },
+          serverLeafOf(route, mod),
+        )
         return renderPageResult({
           adapter,
           chain,

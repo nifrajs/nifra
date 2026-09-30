@@ -461,6 +461,41 @@ export async function loader({ params }) {
 // A catch-all needs ≥1 segment (/files alone won't match) and must be the last segment.
 ```
 
+### Client-only pages
+
+`export const ssr = false` keeps a page's component off the server. The route is
+still matched, its layouts still render, its gates and its loader still run and the data is
+still embedded - only the component is skipped. The server puts the page's
+`HydrateFallback` in the page slot (nothing, if there is none), the browser
+hydrates that, then renders the component with the data it already has. A client navigation
+to the page renders the component directly. For a component that reads `window`,
+a canvas, or a browser-only library while it renders.
+
+```ts
+// routes/map.tsx - a page whose component needs a browser to render.
+export const ssr = false
+
+export async function loader({ api }) {
+  return { pins: await api.pins.get() }   // still runs on the server
+}
+
+// What the server puts in the page slot, and what the browser shows until the component renders.
+// Same props as the component - the loader data is already there.
+export function HydrateFallback({ data }) {
+  return <p>Loading {data.pins.length} pins…</p>
+}
+
+export default function MapPage({ data }) {
+  const width = window.innerWidth         // fine: this never runs on the server
+  return <Canvas width={width} pins={data.pins} />
+}
+```
+
+The module is still imported on the server, for its loader and its options. An import that
+needs a browser at load time therefore belongs inside the component - a dynamic
+`import()` - not at the top of the file. `ssr = false` cannot be
+combined with `hydrate = false`: nothing would ever render the page.
+
 ### Typed search params
 
 Export a `searchSchema` - any Standard Schema (valibot, zod, arktype) - and the URL

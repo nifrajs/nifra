@@ -58,8 +58,13 @@ export const hydrationAssuranceHook = Object.freeze({
 export function mountRouter(options: MountRouterOptions): void {
   const { router, routes, searchSchemas, container } = options
   setMountedRouter(router) // expose it to useFetcher/useFetchers (same page, client-only)
+  // What the server rendered. React hydrates against THIS, whatever the store says by the time it gets
+  // to the component - hydration is scheduled, and a store that moved on first (a client loader that
+  // answered, a held `ssr = false` page released) would otherwise hydrate a tree the markup never had.
+  // React then re-renders with the live snapshot on its own.
+  const hydrated = router.snapshot()
   const Router: FunctionComponent = () => {
-    const state = useSyncExternalStore(router.subscribe, router.snapshot, router.snapshot)
+    const state = useSyncExternalStore(router.subscribe, router.snapshot, () => hydrated)
     return compose(routes[state.routeId] ?? [], routeProps(state, searchSchemas))
   }
   const onRecoverableError = assuranceError()

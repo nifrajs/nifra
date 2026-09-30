@@ -71,7 +71,11 @@ test("generateClientEntry emits lazy code-split loaders + router wiring + patter
   )
   expect(code).toContain("installHistory(router)")
   expect(code).toContain("installForms(router)")
-  expect(code).toContain("mountRouter({ router, routes: chains, searchSchemas, container: root })")
+  // The view is the router itself unless the first page is an `ssr = false` one (client-only.test.ts).
+  expect(code).toContain("let view = router")
+  expect(code).toContain(
+    "mountRouter({ router: view, routes: chains, searchSchemas, container: root })",
+  )
   // The hydration signal fires on the frame after the adapter mounts (see the Hydration guide).
   expect(code).toContain("requestAnimationFrame(signalHydrated)")
   // head updates on navigation from the matched route's MERGED chain meta (layouts→page) + data - #3.

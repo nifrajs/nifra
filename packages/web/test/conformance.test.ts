@@ -72,6 +72,15 @@ describe("assertRenderAdapterConformance", () => {
     await expect(assertRenderAdapterConformance(wrongOrder, fixture)).rejects.toMatchObject({
       check: "layout order",
     })
+
+    // A leaf that renders nothing must leave the slot empty: this adapter renders the page regardless.
+    const ignoresLeaf = adapter({
+      renderToStream: (chain, props) =>
+        streamOf(htmlFor([...chain.slice(0, -1), fixture.page], props)),
+    })
+    await expect(assertRenderAdapterConformance(ignoresLeaf, fixture)).rejects.toMatchObject({
+      check: "empty leaf",
+    })
   })
 
   test("enforces Web byte streams and wraps stream failures", async () => {
