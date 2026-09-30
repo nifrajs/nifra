@@ -388,15 +388,18 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // The 2026-09-20 security pass adds bounded WebSocket admission/request-hook handling and
   // duplicate-cookie detection to the shared kernel. Reprice every core row together with the
   // measured post-hardening footprint; optional rows must not receive a special exemption.
-  "nifra-bare": 32.2,
+  // Resolving dot segments in a request target the same way on every runtime (the resolver, and
+  // Bun's route table handing a `..` parameter to the portable router) adds ~0.2 KB gzip to every
+  // core row: each is its measured size rounded up to the next 0.1 KB.
+  "nifra-bare": 32.4,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 35.3,
-  "nifra-effect-ledger": 34.1,
-  "nifra-mcp": 32.5,
-  "nifra-sse": 32.9,
-  "nifra-valibot": 33.2,
-  "nifra-typebox-t": 62.3,
-  "nifra-typebox-form": 66.1,
+  "nifra-idempotency": 35.5,
+  "nifra-effect-ledger": 34.3,
+  "nifra-mcp": 32.6,
+  "nifra-sse": 33.1,
+  "nifra-valibot": 33.4,
+  "nifra-typebox-t": 62.5,
+  "nifra-typebox-form": 66.3,
   // Review-leaf ceiling: measured 5.0 KB gz + ~0.2 KB headroom, same rule as every other row.
   "nifra-agent-review": 5.2,
   // Client runtime ceiling: measured 14.5 KB gz (14847 B), rounded up to the next 0.1 KB.

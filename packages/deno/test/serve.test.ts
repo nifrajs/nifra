@@ -1,6 +1,11 @@
 import { server } from "@nifrajs/core"
 import { responseObserver } from "@nifrajs/core/response-observer"
 import { websocket } from "@nifrajs/core/ws"
+import {
+  rawUpgradeStatus,
+  requestTargetApp,
+  requestTargetMismatches,
+} from "../../core/test/request-target-matrix.ts"
 import { serve } from "../src/index.ts"
 
 // Minimal local assertions - keeps `deno test` offline + dependency-free.
@@ -426,6 +431,30 @@ Deno.test("a method token that differs only in case is a different method on the
     }
     assertEquals(hookSaw, ["POST", "PATCH"])
     assertEquals(handlerSaw, ["POST", "PATCH"])
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+// Deno hands the adapter the target exactly as sent; the app routes the path a URL parser resolves
+// it to, as it does on every other runtime.
+Deno.test("a target with dot segments or a backslash routes the path it resolves to", async () => {
+  const running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+  try {
+    assertEquals(await requestTargetMismatches(running.port), [])
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("a handshake target with dot segments upgrades on the path it resolves to", async () => {
+  const app = server()
+    .use(websocket())
+    .ws("/echo", { message: (ws, data) => ws.send(data) })
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    assertEquals(await rawUpgradeStatus(running.port, "/rooms/../echo"), 101)
+    assertEquals(await rawUpgradeStatus(running.port, "/rooms/%2e%2e/echo"), 101)
   } finally {
     await running.stop({ drainMs: 0 })
   }

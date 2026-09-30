@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
 import { websocket } from "@nifrajs/core/ws"
+import { rawUpgradeStatus } from "../../core/test/request-target-matrix.ts"
 import { type NodeServer, serve } from "../src/index.ts"
 
 // @nifrajs/node serves WebSockets via the optional `ws` package (a devDependency here). These run on the
@@ -71,6 +72,12 @@ describe("@nifrajs/node WebSockets", () => {
       "child-ready",
       "child-ping",
     ])
+  })
+
+  test("a handshake target with dot segments upgrades on the path it resolves to", async () => {
+    running = await serve(makeApp(), { port: 0, hostname: "127.0.0.1" })
+    expect(await rawUpgradeStatus(running.port, "/rooms/../echo")).toBe(101)
+    expect(await rawUpgradeStatus(running.port, "/rooms/%2e%2e/echo")).toBe(101)
   })
 
   test("guarded: accepts with token, threading data to ws.data", async () => {

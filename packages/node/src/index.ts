@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url"
 import { FastResponse } from "srvx/node"
 import { NODE_BRIDGE_MARKER_KEYS } from "./generated/bridge-markers.ts"
 import type { NodeServeOutcome } from "./generated/node-outcome.ts"
+import { hasDotSegment, resolveDotSegments } from "./generated/request-target.ts"
 import { claimableWebStream, claimNodeStream } from "./node-stream.ts"
 
 /** The runtime platform a nifra app accepts as `fetch`'s 2nd arg - here, the observed socket peer. */
@@ -1354,6 +1355,17 @@ function runNodeSource(
   }
 }
 
+/**
+ * Resolve the target's `.` / `..` segments and backslashes in place, before anything reads it. Node
+ * keeps the target as the client sent it, where Bun and workerd deliver it parsed; resolving it here
+ * routes `/users/../admin` to `/admin` on every runtime, and every later reader - static files,
+ * mounts, the app, `c.req.url` - sees the one path.
+ */
+function resolveTarget(nodeReq: IncomingMessage): void {
+  const target = nodeReq.url
+  if (target !== undefined && hasDotSegment(target)) nodeReq.url = resolveDotSegments(target)
+}
+
 function handle(
   app: FetchHandler,
   nodeReq: IncomingMessage,
@@ -1362,6 +1374,7 @@ function handle(
   staticState: StaticState | undefined,
   hostPolicy: HostPolicy,
 ): void | Promise<void> {
+  resolveTarget(nodeReq)
   const host = requestHost(nodeReq, hostPolicy)
   if (host === undefined) {
     writeBadRequest(nodeRes)
@@ -2593,6 +2606,7 @@ async function handleUpgrade(
   head: Buffer,
   getWss: (maxPayloadBytes?: number) => Promise<WsServer | undefined>,
 ): Promise<void> {
+  resolveTarget(nodeReq)
   let outcome: WsUpgradeOutcome
   try {
     const host = requestHost(nodeReq, hostPolicy)

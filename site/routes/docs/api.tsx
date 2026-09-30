@@ -163,6 +163,13 @@ export default function Api() {
         <code>422</code> automatically. Path params (<code>:id</code>) are typed from the pattern.
       </p>
       <CodeBlock code={INLINE} />
+      <p>
+        A route is chosen for the path a URL parser resolves the request to, on every runtime.{" "}
+        <code>.</code> and <code>..</code> segments, written as-is or as <code>%2e</code>, and a
+        backslash are resolved first: <code>/users/../posts</code> is served by{" "}
+        <code>/posts</code>, never by <code>/users/:id/posts</code>, and <code>c.req.url</code> shows{" "}
+        <code>/posts</code>. An encoded slash (<code>%2f</code>) stays part of its segment.
+      </p>
 
       <h2>Optional path params</h2>
       <p>

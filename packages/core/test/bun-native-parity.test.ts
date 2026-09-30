@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "../src/index.ts"
 import { method as route } from "../src/server/methods.ts"
+import { requestTargetApp, requestTargetMismatches } from "./request-target-matrix.ts"
 
 /**
  * `listen()` on Bun hands some routes to Bun's own route table. These tests hold that lane to the
@@ -277,6 +278,19 @@ describe("Bun-native route table agrees with the portable router", () => {
     expect(second.listened[2]).toContain('"route":"middle"')
     expect(second.listened[3]).toContain('"route":"broad"')
     expect(second.listened[4]).toContain("-> 405")
+  })
+
+  test("a target with dot segments or a backslash routes the path it resolves to", async () => {
+    // Bun matches its table on the target as sent; a `..` it captures as a parameter is a path the
+    // portable router resolves first.
+    const app = requestTargetApp(server())
+    expect(nativeKeys(app)).toContain("GET /users/:id/posts")
+    const instance = app.listen(0, { hostname: "127.0.0.1" })
+    try {
+      expect(await requestTargetMismatches(instance.port)).toEqual([])
+    } finally {
+      instance.stop(true)
+    }
   })
 
   test("generated route tables answer every probe the same on both lanes", async () => {

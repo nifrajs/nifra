@@ -6,6 +6,7 @@ import { authenticated, server } from "@nifrajs/core"
 import { responseObserver } from "@nifrajs/core/response-observer"
 import { status } from "@nifrajs/core/server"
 import { compression } from "@nifrajs/middleware"
+import { requestTargetApp, requestTargetMismatches } from "../../core/test/request-target-matrix.ts"
 import { type NodeServer, serve } from "../src/index.ts"
 
 let running: NodeServer | undefined
@@ -97,6 +98,11 @@ test("serves GET (JSON) + POST (body), resolves the bound port", async () => {
     body: JSON.stringify({ hi: "there" }),
   })
   expect(await echoed.json()).toEqual({ hi: "there" })
+})
+
+test("a target with dot segments or a backslash routes the path it resolves to", async () => {
+  running = await serve(requestTargetApp(server()), { port: 0, hostname: "127.0.0.1" })
+  expect(await requestTargetMismatches(running.port)).toEqual([])
 })
 
 test("Node adapter runs the dedicated auth stage before body validation", async () => {

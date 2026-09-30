@@ -630,6 +630,12 @@ export const app = server()
   .listen(3000)
 ```
 
+A route is chosen for the path a URL parser resolves the request to, on every runtime.
+`.` and `..` segments, written as-is or as `%2e`, and a
+backslash are resolved first: `/users/../posts` is served by
+`/posts`, never by `/users/:id/posts`, and `c.req.url` shows
+`/posts`. An encoded slash (`%2f`) stays part of its segment.
+
 ### Optional path params
 
 A path can end in optional params, written `:name?`. The route then serves the path

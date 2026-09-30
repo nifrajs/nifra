@@ -98,6 +98,7 @@ import {
   RequestContext,
   readBodyFramed,
 } from "./request-context.ts"
+import { hasDotSegment, resolveDotSegments } from "./request-target.ts"
 import {
   applyStaticResponseHeaders,
   buildStaticResponseHeaders,
@@ -537,12 +538,30 @@ export { plainValidationError } from "./validation.ts"
 // importers keep resolving `searchOf`/`queryObjectOf`/`QueryValue` from here.
 export { type QueryValue, queryObjectOf, searchOf }
 
-function hasReplacementParam(params: Record<string, string>): boolean {
+/**
+ * A param value Bun's native route table matched but the portable router must decide: an invalid
+ * escape, or a piece of path Bun matched raw while its own parsed URL says otherwise - a `.` / `..`
+ * segment (Bun hands `%2e` over decoded), or a backslash, which the parsed URL reads as `/`.
+ */
+const unroutedParam = (value: string | undefined): boolean =>
+  value !== undefined &&
+  (value.includes("\uFFFD") || value.includes("\\") || value === "." || value === "..")
+
+function hasUnroutedParam(params: Record<string, string>): boolean {
   for (const key in params) {
-    if (params[key]!.includes("\uFFFD")) return true
+    if (unroutedParam(params[key])) return true
   }
   return false
 }
+
+/**
+ * Deno is the runtime that hands an app a `Request` whose `url` is the target as the client sent it;
+ * Bun, workerd and every `new Request()` parse it first. Only there does `fetch` read the URL up front.
+ */
+const rawRequestTargets = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined"
+
+/** `req` as Bun or workerd would have delivered it: the same request, its URL's dot segments resolved. */
+const withResolvedTarget = (req: Request): Request => new Request(resolveDotSegments(req.url), req)
 
 function normalizeMountPrefix(path: string): string {
   if (!path.startsWith("/") || path.includes("?") || path.includes("#")) {
@@ -2678,6 +2697,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * Bun/Node/Deno omit it (then `c.env` is `undefined` and `c.waitUntil` runs fire-and-forget).
    */
   fetch(req: Request, platform?: Platform<EnvOf<Ctx>>): MaybePromise<Response> {
+    // Deno's `Request.url` is the target as sent; Bun, workerd and every `new Request()` parse it.
+    // Route what the parsed URL says, so `/users/../admin` is `/admin` on every runtime.
+    if (rawRequestTargets && hasDotSegment(req.url)) req = withResolvedTarget(req)
     // An edge deployment whose only ingress is this method declares its requests runtime-framed at
     // construction; everything else stays on the delivered-byte check (see `trustBodyFraming`).
     if (this.trustBodyFraming) markTrustedBodyFraming(req)
@@ -3155,6 +3177,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return WS_PASS
     // Not a handshake this lane may act on: normal routing refuses the token before any hook sees it.
     if (!isRoutableMethod(req.method)) return WS_PASS
+    // The handshake routes the path `fetch` would: dot segments resolved (see `fetch`).
+    if (rawRequestTargets && hasDotSegment(req.url)) req = withResolvedTarget(req)
 
     const timeoutMs =
       this.wsUpgradeTimeoutMs === 0
@@ -6061,8 +6085,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
     const malformed =
       paramNames.length === 1
-        ? (params: Record<string, string>) => params[paramNames[0]!]?.includes("\uFFFD") === true
-        : hasReplacementParam
+        ? (params: Record<string, string>) => unroutedParam(params[paramNames[0]!])
+        : hasUnroutedParam
     if (capped === undefined) {
       return (request, server) => {
         markFramed(request)
