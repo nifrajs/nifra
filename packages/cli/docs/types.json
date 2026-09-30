@@ -18449,7 +18449,7 @@
     "name": "SubmitOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface SubmitOptions {\n    /** Re-run the active route's loader after the action settles (default `true`). Set `false` to\n     * keep the current `data` and rely on the action's `actionData` alone. */\n    readonly revalidate?: boolean;\n}",
+    "signature": "export interface SubmitOptions {\n    /** Re-run the active route's loaders after the action settles (default `true`). Set `false` to\n     * keep the current `data` and rely on the action's `actionData` alone. When the action redirects,\n     * the target's layouts all re-run by default; with `false` it keeps the layout data an ordinary\n     * navigation would. */\n    readonly revalidate?: boolean;\n}",
     "doc": "/** Per-submit options. `revalidate: false` opts out of the post-action loader re-fetch. */"
   },
   {

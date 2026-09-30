@@ -368,6 +368,11 @@ export function createPageRequestExecutor<Env = unknown>(
       const current = new URL(req.url)
       const source = new URL(from, current)
       if (source.origin !== current.origin) return EMPTY_RETAIN
+      // Every loader in the chain can read the query (`ctx.search`, `ctx.request.url`), and nothing
+      // records which keys a layout depends on. A changed query therefore re-runs the whole chain;
+      // keys that should not reach a loader at all belong in the route's `searchClientKeys`, which
+      // skips the request entirely.
+      if (source.search !== current.search) return EMPTY_RETAIN
       fromPath = source.pathname + source.search
     } catch {
       return EMPTY_RETAIN

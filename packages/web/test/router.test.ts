@@ -755,6 +755,32 @@ describe("createClientRouter", () => {
     }
   })
 
+  test("an action redirect loads the target's whole chain unless revalidate is false", async () => {
+    const realFetch = globalThis.fetch
+    const retainHints: Array<string | null> = []
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return new Response(null, { status: 204, headers: { "x-nifra-redirect": "/users/9" } })
+      }
+      retainHints.push(new Headers(init?.headers).get("x-nifra-retain"))
+      return Response.json({ v: 1, data: { id: "9" }, layoutData: [{ shell: "fresh" }] })
+    }) as typeof fetch
+    const start: RouterState = { ...initial, layoutData: [{ shell: "old" }] }
+    try {
+      const r = createClientRouter({ patterns, initial: start })
+      await r.submit("/", new URLSearchParams())
+      // No retain hint: the action may have changed what the layout shows.
+      expect(retainHints).toEqual([null])
+      expect(r.snapshot().layoutData).toEqual([{ shell: "fresh" }])
+
+      const kept = createClientRouter({ patterns, initial: start })
+      await kept.submit("/", new URLSearchParams(), { revalidate: false })
+      expect(retainHints).toEqual([null, "0"])
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
   test("a failed submit clears pending and rethrows", async () => {
     const realFetch = globalThis.fetch
     globalThis.fetch = (async (_url: string, _init?: RequestInit) =>

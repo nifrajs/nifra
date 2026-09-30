@@ -197,8 +197,10 @@ export type FetchRouteData = (
 
 /** Per-submit options. `revalidate: false` opts out of the post-action loader re-fetch. */
 export interface SubmitOptions {
-  /** Re-run the active route's loader after the action settles (default `true`). Set `false` to
-   * keep the current `data` and rely on the action's `actionData` alone. */
+  /** Re-run the active route's loaders after the action settles (default `true`). Set `false` to
+   * keep the current `data` and rely on the action's `actionData` alone. When the action redirects,
+   * the target's layouts all re-run by default; with `false` it keeps the layout data an ordinary
+   * navigation would. */
   readonly revalidate?: boolean
 }
 
@@ -1002,12 +1004,15 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
           if (target === null)
             throw new Error(`[nifra/web] action redirect off-route: ${redirectTo}`)
           await loadModule?.(target.routeId)
+          // The action may have changed what any layout shows, so the target loads its whole chain,
+          // the same as the non-redirect revalidation below. `revalidate: false` keeps layout data
+          // the server agrees is unchanged, like an ordinary navigation.
           const loaded = await applyClientLoader(redirectTo, target, ac.signal, () =>
             loadRouteData(
               redirectTo,
               target,
               ac.signal,
-              state.layoutData === undefined
+              opts?.revalidate !== false || state.layoutData === undefined
                 ? undefined
                 : { path: state.path, layoutData: state.layoutData },
             ),

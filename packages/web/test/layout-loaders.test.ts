@@ -347,6 +347,43 @@ test("retain hints are ignored on hard document GETs", async () => {
   expect(await res.text()).toContain('L=[{"n":1}]')
 })
 
+test("a changed query re-runs a layout loader the params check would keep", async () => {
+  const seen: Array<string | null> = []
+  const app = appWith(
+    {
+      _layout: {
+        default: "root",
+        loader: (ctx: { request: Request }) => {
+          const tab = new URL(ctx.request.url).searchParams.get("tab")
+          seen.push(tab)
+          return { tab }
+        },
+      },
+    },
+    ["_layout"],
+    [[]],
+  )
+  const navigate = async (to: string, from: string) =>
+    (await (
+      await app.fetch(
+        new Request(`http://x${to}`, {
+          headers: { [DATA_HEADER]: "1", [RETAIN_HEADER]: "0", [NAV_FROM_HEADER]: from },
+        }),
+      )
+    ).json()) as { retained?: number[]; layoutData?: unknown[] }
+
+  // Same query, different page param the layout does not own: the client's copy is still current.
+  const same = await navigate("/orgs/acme/projects/7?tab=a", "/orgs/acme/projects/8?tab=a")
+  expect(same.retained).toEqual([0])
+  expect(seen).toEqual([])
+
+  // Only the query changed. The layout owns no params, so nothing else would re-run it.
+  const changed = await navigate("/orgs/acme/projects/7?tab=b", "/orgs/acme/projects/7?tab=a")
+  expect(changed.retained ?? []).toEqual([])
+  expect(changed.layoutData).toEqual([{ tab: "b" }])
+  expect(seen).toEqual(["b"])
+})
+
 test("a malformed retain hint is ignored rather than rejected", async () => {
   let runs = 0
   const app = appWith(
