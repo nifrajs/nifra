@@ -439,9 +439,16 @@ const requestCarriesPrivateState = (req: Request): boolean =>
 const responseIsExplicitlyPublic = (res: Response): boolean =>
   cacheControlHas(res.headers, ["public"])
 
+// `x-nifra-data` alone is not a variation the URL key misses: a navigation data request never reads
+// or writes the store, so every stored entry is the document.
 const responseDeclaresVary = (res: Response): boolean => {
   const value = res.headers.get("vary")
-  return value !== null && value.trim() !== ""
+  if (value === null) return false
+  for (const part of value.split(",")) {
+    const name = part.trim().toLowerCase()
+    if (name !== "" && name !== "x-nifra-data") return true
+  }
+  return false
 }
 
 const isCacheablePage = (req: Request, res: Response): boolean => {
@@ -481,6 +488,7 @@ const CACHEABLE_RESPONSE_HEADERS = new Set([
   "vary",
   "x-content-type-options",
   "x-frame-options",
+  "x-robots-tag",
 ])
 
 const isCacheableResponseHeader = (key: string): boolean => {

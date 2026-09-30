@@ -56,6 +56,17 @@ import {
   withDuplicateInstanceHint,
 } from "./render-document.ts"
 import { urlPartsFor } from "./request-url.ts"
+import {
+  ACTION_SCOPE,
+  type CoreResponseControls,
+  DATA_RESPONSE_HEADERS,
+  PAGE_SCOPE,
+  PageResponseControls,
+  PRIVATE_NO_STORE,
+  PRIVATE_PAGE_HEADERS,
+  privateOutcome,
+  varyOnDataHeader,
+} from "./response-controls.ts"
 
 export type { NonceResolver } from "../nonce.ts"
 
@@ -64,6 +75,8 @@ export interface PageRouteContext<Env = unknown> {
   readonly params: Record<string, string>
   readonly req: Request
   readonly env: Env
+  /** The serving app's response controls; a loader's `ctx.set` queues its cookies through them. */
+  readonly set: CoreResponseControls
   /** The visitor's IP as the serving app derived it; forwarded to a request-bound `ctx.api`. */
   readonly clientIp?: string | undefined
   readonly waitUntil?: (promise: Promise<unknown>) => void
@@ -208,6 +221,7 @@ export function createPageRequestExecutor<Env = unknown>(
   const runLayoutChain = async (
     route: RouteEntry,
     ctx: LoaderContext,
+    controls: PageResponseControls,
     retain: ReadonlySet<number> = new Set(),
   ): Promise<{
     readonly modules: LoadedLayoutModules
@@ -232,6 +246,7 @@ export function createPageRequestExecutor<Env = unknown>(
       const scoped: LoaderContext = {
         ...ctx,
         params: scopeParams(ctx.params, route.layoutParams?.[i]),
+        set: controls.scope(i),
       }
       if (modules[i]?.gate === true) {
         try {
@@ -260,6 +275,7 @@ export function createPageRequestExecutor<Env = unknown>(
   const runLayoutGates = async (
     route: RouteEntry,
     ctx: LoaderContext,
+    controls: PageResponseControls,
   ): Promise<LoadedLayoutModules> => {
     const modules = await loadLayoutModules(route)
     for (let i = 0; i < modules.length; i++) {
@@ -269,6 +285,7 @@ export function createPageRequestExecutor<Env = unknown>(
         await mod.loader({
           ...ctx,
           params: scopeParams(ctx.params, route.layoutParams?.[i]),
+          set: controls.scope(i),
         })
       } catch (err) {
         throw tagLayoutError(err, route.layoutIds[i] as string)
@@ -388,6 +405,7 @@ export function createPageRequestExecutor<Env = unknown>(
     route: RouteEntry,
     errorId: string,
     err: unknown,
+    personalized: boolean,
     nonce?: string,
   ): Promise<PageResponse> => {
     const errDir = dirOfId(errorId, "_error")
@@ -410,6 +428,7 @@ export function createPageRequestExecutor<Env = unknown>(
       routeId: errorId,
       status: 500,
       hydrate: false,
+      ...(personalized ? { headers: PRIVATE_PAGE_HEADERS } : {}),
       ...(nonce === undefined ? {} : { nonce }),
       ...titleOption,
     })
@@ -461,14 +480,29 @@ export function createPageRequestExecutor<Env = unknown>(
     req: Request,
     env: Env,
     signal: StatusSignal,
+    personalized: boolean,
   ): Promise<PageResponse> => {
     const { status, headers } = signal[STATUS_SIGNAL]
     if (req.headers.get(DATA_HEADER) !== null) {
+      // Same URL as the status page, so it is never storable: a cache keyed on the URL alone would
+      // otherwise answer a document request with this empty body.
       const responseHeaders = new Headers(headers)
       responseHeaders.set(STATUS_HEADER, String(status))
+      responseHeaders.set("cache-control", PRIVATE_NO_STORE)
+      responseHeaders.set("vary", varyOnDataHeader(responseHeaders.get("vary")))
       return new Response(null, { status, headers: responseHeaders })
     }
-    return renderTerminalStatus(status, pathOf(req), headers, await resolveNonce(req, env))
+    const nonce = await resolveNonce(req, env)
+    if (headers === undefined && !personalized) {
+      return renderTerminalStatus(status, pathOf(req), undefined, nonce)
+    }
+    const documentHeaders = new Headers(headers)
+    if (headers !== undefined) {
+      documentHeaders.set("vary", varyOnDataHeader(documentHeaders.get("vary")))
+    }
+    // A cookie queued before the signal makes the status page specific to this visitor.
+    if (personalized) documentHeaders.set("cache-control", PRIVATE_NO_STORE)
+    return renderTerminalStatus(status, pathOf(req), documentHeaders, nonce)
   }
 
   const reportLoaderError = (
@@ -497,8 +531,10 @@ export function createPageRequestExecutor<Env = unknown>(
     layoutRetained: readonly number[],
     boundaryStates: BoundaryStates | undefined,
     assemblyCache: RenderAssemblyCache | undefined,
+    responseHeaders: Record<string, string> | undefined,
+    personalized: boolean,
   ): Promise<PageResponse> => {
-    if (isStatusSignal(data)) return renderStatusSignal(req, env, data)
+    if (isStatusSignal(data)) return renderStatusSignal(req, env, data, personalized)
     if (isControlFlow(data)) return data
     if (req.headers.get(DATA_HEADER) !== null) {
       const pageSplit = prepareDeferred(data)
@@ -526,9 +562,14 @@ export function createPageRequestExecutor<Env = unknown>(
               retained: layoutRetained,
               ...(boundarySplit === undefined ? {} : { boundaries: boundarySplit.forClient }),
             }
-      if (allDeferred.length === 0) return Response.json(payload ?? null)
+      if (allDeferred.length === 0) {
+        return Response.json(payload ?? null, { headers: DATA_RESPONSE_HEADERS })
+      }
       return new Response(ndjsonStream(payload, allDeferred), {
-        headers: { "content-type": "application/x-ndjson; charset=utf-8" },
+        headers: {
+          "content-type": "application/x-ndjson; charset=utf-8",
+          ...DATA_RESPONSE_HEADERS,
+        },
       })
     }
 
@@ -556,20 +597,24 @@ export function createPageRequestExecutor<Env = unknown>(
         ...preloadOf(route.id),
         ...stylesOf(route.id),
         prerenderedPaths: options.prerenderedPaths ?? [],
-        ...(mod.revalidate !== undefined ? { revalidate: mod.revalidate } : {}),
-        ...(mod.revalidateTags !== undefined ? { revalidateTags: mod.revalidateTags } : {}),
+        ...(responseHeaders === undefined ? {} : { headers: responseHeaders }),
+        // A response that sets a cookie is one visitor's: it never advertises ISR freshness.
+        ...(mod.revalidate !== undefined && !personalized ? { revalidate: mod.revalidate } : {}),
+        ...(mod.revalidateTags !== undefined && !personalized
+          ? { revalidateTags: mod.revalidateTags }
+          : {}),
         ...(mod.islandScripts !== undefined ? { islandScripts: mod.islandScripts } : {}),
         ...(nonce === undefined ? {} : { nonce }),
         ...titleOption,
         ...(assemblyCache === undefined ? {} : { assemblyCache }),
       })
     } catch (err) {
-      if (isStatusSignal(err)) return renderStatusSignal(req, env, err)
+      if (isStatusSignal(err)) return renderStatusSignal(req, env, err, personalized)
       if (isControlFlow(err)) throw err
       reportLoaderError(route, req, { ...params }, err)
       const errorId = boundaryFor(route, err)
       if (errorId === undefined) throw err
-      return renderError(route, errorId, withDuplicateInstanceHint(err), nonce)
+      return renderError(route, errorId, withDuplicateInstanceHint(err), personalized, nonce)
     }
   }
 
@@ -587,6 +632,28 @@ export function createPageRequestExecutor<Env = unknown>(
       options.nonce === undefined ? undefined : await resolveNonce(request, env),
     )
   }
+
+  /**
+   * Run a page handler with the request's `ctx.set`, sealed once the handler settles - whatever it
+   * answered with - so a write that arrives after the response was decided throws. A request that
+   * queued a cookie answers with a response no shared cache may store, returned or thrown.
+   */
+  const withResponseControls =
+    (run: (c: PageRouteContext<Env>, controls: PageResponseControls) => Promise<PageResponse>) =>
+    async (c: PageRouteContext<Env>): Promise<PageResponse> => {
+      const controls = new PageResponseControls(c)
+      try {
+        const outcome = await run(c, controls)
+        return controls.personalized ? (privateOutcome(outcome) as PageResponse) : outcome
+      } catch (err) {
+        // Returned rather than rethrown: the serving app sends a thrown `Response` exactly as it is,
+        // without the cookies the request queued.
+        if (controls.personalized && isControlFlow(err)) return privateOutcome(err) as PageResponse
+        throw err
+      } finally {
+        controls.seal()
+      }
+    }
 
   return {
     get: (route) => {
@@ -612,7 +679,7 @@ export function createPageRequestExecutor<Env = unknown>(
         return assemblySlot
       }
 
-      return async (c: PageRouteContext<Env>) => {
+      return withResponseControls(async (c, controls) => {
         if (is404Fallback && !prerenderedSet.has(urlPartsFor(c.req).pathname)) {
           return renderNotFound(c.req, c.env, pathOf(c.req))
         }
@@ -623,6 +690,7 @@ export function createPageRequestExecutor<Env = unknown>(
         let boundaryStates: BoundaryStates | undefined
         let layoutModules: LoadedLayoutModules | undefined
         let layoutRetained: readonly number[] = []
+        let responseHeaders: Record<string, string> | undefined
         const requestApi = apiFor(c)
         try {
           const ctx: LoaderContext = {
@@ -633,10 +701,12 @@ export function createPageRequestExecutor<Env = unknown>(
             env: c.env,
             draft,
             search: loaderSearch(mod.searchSchema, c.req),
+            set: controls.scope(PAGE_SCOPE),
           }
           const run = await runLayoutChain(
             route,
             ctx,
+            controls,
             validatedRetainedIndices(c.req, route, c.params),
           )
           layoutModules = run.modules
@@ -685,8 +755,13 @@ export function createPageRequestExecutor<Env = unknown>(
           } else if (staticBoundaries !== undefined) {
             boundaryStates = staticBoundaries
           }
+          // Inside the loader `try`: a header the response cannot carry is a loader error, rendered
+          // by the same boundary as one.
+          responseHeaders = controls.documentHeaders()
         } catch (err) {
-          if (isStatusSignal(err)) return renderStatusSignal(c.req, c.env, err)
+          if (isStatusSignal(err)) {
+            return renderStatusSignal(c.req, c.env, err, controls.personalized)
+          }
           if (isControlFlow(err)) throw err
           reportLoaderError(route, c.req, c.params, err)
           const errorId = boundaryFor(route, err)
@@ -701,6 +776,7 @@ export function createPageRequestExecutor<Env = unknown>(
             route,
             errorId,
             withDuplicateInstanceHint(err),
+            controls.personalized,
             options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env),
           )
         }
@@ -716,92 +792,113 @@ export function createPageRequestExecutor<Env = unknown>(
           layoutRetained,
           boundaryStates,
           layoutModules === undefined ? undefined : assemblyCacheFor(mod, layoutModules),
+          responseHeaders,
+          controls.personalized,
         )
-      }
+      })
     },
 
-    post: (route) => async (c) => {
-      const mod = await route.load()
-      const draft = await draftFlag(c.req)
-      if (mod.action === undefined) {
-        return new Response("Method Not Allowed", {
-          status: 405,
-          headers: { allow: "GET", "content-type": "text/plain; charset=utf-8" },
-        })
-      }
-      const requestApi = apiFor(c)
-      const actionContext: LoaderContext = {
-        params: c.params,
-        request: c.req,
-        req: c.req,
-        api: requestApi,
-        env: c.env,
-        draft,
-        search: loaderSearch(mod.searchSchema, c.req),
-      }
-      const isDataRequest = c.req.headers.get(DATA_HEADER) !== null
-      let layoutModules: LoadedLayoutModules
-      let result: unknown
-      try {
-        layoutModules = await runLayoutGates(route, actionContext)
-        result = await mod.action(actionContext)
-      } catch (err) {
-        if (isControlFlow(err)) return actionResponse(err, isDataRequest)
-        throw err
-      }
-      const isRevalidate =
-        result !== null && typeof result === "object" && "__nifraRevalidate" in result
-      const actionResult = isRevalidate ? (result as RevalidateResult<unknown>).data : result
-      const revalidateHeader: Record<string, string> = isRevalidate
-        ? { [REVALIDATE_HEADER]: (result as RevalidateResult<unknown>).__nifraRevalidate.join(",") }
-        : {}
-      if (isControlFlow(actionResult)) return actionResponse(actionResult, isDataRequest)
-      if (isDataRequest) {
-        const { forClient, deferred } = prepareDeferred(actionResult)
-        if (deferred.length === 0)
-          return Response.json(actionResult ?? null, { headers: revalidateHeader })
-        return new Response(ndjsonStream(forClient, deferred), {
-          headers: { "content-type": "application/x-ndjson; charset=utf-8", ...revalidateHeader },
-        })
-      }
-      const search = searchChainOf(layoutModules, mod, c.req)
-      const data = mod.loader
-        ? await mod.loader({
-            params: c.params,
-            request: c.req,
-            req: c.req,
-            api: requestApi,
-            env: c.env,
-            draft,
-            search,
+    post: (route) =>
+      withResponseControls(async (c, controls) => {
+        const mod = await route.load()
+        const draft = await draftFlag(c.req)
+        if (mod.action === undefined) {
+          return new Response("Method Not Allowed", {
+            status: 405,
+            headers: { allow: "GET", "content-type": "text/plain; charset=utf-8" },
           })
-        : null
-      const nonce = options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env)
-      const { chain, head } = resolveChainAndHead(layoutModules, mod, {
-        data,
-        params: c.params,
-        origin: originOf(c.req),
-        ...(nonce === undefined ? {} : { nonce }),
-      })
-      return renderPageResult({
-        adapter,
-        chain,
-        data,
-        actionData: actionResult,
-        head,
-        clientEntry,
-        routeId: route.id,
-        params: c.params,
-        path: pathOf(c.req),
-        search,
-        hydrate: mod.hydrate !== false,
-        ...preloadOf(route.id),
-        ...stylesOf(route.id),
-        prerenderedPaths: options.prerenderedPaths ?? [],
-        ...(nonce === undefined ? {} : { nonce }),
-        ...titleOption,
-      })
-    },
+        }
+        const requestApi = apiFor(c)
+        const actionContext: LoaderContext = {
+          params: c.params,
+          request: c.req,
+          req: c.req,
+          api: requestApi,
+          env: c.env,
+          draft,
+          search: loaderSearch(mod.searchSchema, c.req),
+          set: controls.scope(ACTION_SCOPE),
+        }
+        const isDataRequest = c.req.headers.get(DATA_HEADER) !== null
+        let layoutModules: LoadedLayoutModules
+        let result: unknown
+        try {
+          layoutModules = await runLayoutGates(route, actionContext, controls)
+          result = await mod.action(actionContext)
+        } catch (err) {
+          if (isControlFlow(err)) return actionResponse(err, isDataRequest)
+          throw err
+        }
+        const isRevalidate =
+          result !== null && typeof result === "object" && "__nifraRevalidate" in result
+        const actionResult = isRevalidate ? (result as RevalidateResult<unknown>).data : result
+        const revalidateHeader: Record<string, string> = isRevalidate
+          ? {
+              [REVALIDATE_HEADER]: (result as RevalidateResult<unknown>).__nifraRevalidate.join(
+                ",",
+              ),
+            }
+          : {}
+        if (isControlFlow(actionResult)) return actionResponse(actionResult, isDataRequest)
+        if (isDataRequest) {
+          // Headers shape the document only, but a bad one fails here too, so a navigation and a full
+          // page load agree on whether the action's response is valid.
+          controls.commit()
+          const { forClient, deferred } = prepareDeferred(actionResult)
+          if (deferred.length === 0) {
+            return Response.json(actionResult ?? null, {
+              headers: { ...DATA_RESPONSE_HEADERS, ...revalidateHeader },
+            })
+          }
+          return new Response(ndjsonStream(forClient, deferred), {
+            headers: {
+              "content-type": "application/x-ndjson; charset=utf-8",
+              ...DATA_RESPONSE_HEADERS,
+              ...revalidateHeader,
+            },
+          })
+        }
+        const search = searchChainOf(layoutModules, mod, c.req)
+        const data = mod.loader
+          ? await mod.loader({
+              params: c.params,
+              request: c.req,
+              req: c.req,
+              api: requestApi,
+              env: c.env,
+              draft,
+              search,
+              set: controls.scope(PAGE_SCOPE),
+            })
+          : null
+        const responseHeaders = controls.documentHeaders()
+        const nonce = options.nonce === undefined ? undefined : await resolveNonce(c.req, c.env)
+        const { chain, head } = resolveChainAndHead(layoutModules, mod, {
+          data,
+          params: c.params,
+          origin: originOf(c.req),
+          ...(nonce === undefined ? {} : { nonce }),
+        })
+        return renderPageResult({
+          adapter,
+          chain,
+          data,
+          actionData: actionResult,
+          head,
+          clientEntry,
+          routeId: route.id,
+          params: c.params,
+          path: pathOf(c.req),
+          search,
+          hydrate: mod.hydrate !== false,
+          ...preloadOf(route.id),
+          ...stylesOf(route.id),
+          prerenderedPaths: options.prerenderedPaths ?? [],
+          ...(responseHeaders === undefined ? {} : { headers: responseHeaders }),
+          ...(nonce === undefined ? {} : { nonce }),
+          ...titleOption,
+        })
+      }),
 
     notFound: renderNotFound,
   }

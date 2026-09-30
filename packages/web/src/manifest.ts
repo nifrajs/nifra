@@ -5,8 +5,33 @@
  * portable (no fs, no DOM) and fully unit-testable. Edge deploys pre-build the manifest.
  */
 import { routePatternOverlap } from "@nifrajs/core"
-import type { StandardSchemaV1 } from "@nifrajs/core/server"
+import type { CookieOptions, StandardSchemaV1 } from "@nifrajs/core/server"
 import type { BoundaryDescriptor, BoundaryRegistration } from "./boundary.ts"
+
+/**
+ * Response controls a loader or action reaches as `ctx.set` - the page counterpart of a route
+ * handler's `c.set`. Write before the loader or action returns; a write from a deferred promise that
+ * settles later throws.
+ */
+export interface LoaderResponseControls {
+  /**
+   * Headers for the rendered document (`cache-control`, `x-robots-tag`, `link`, ...). A layout's
+   * headers are applied first, then the page's, then the action's, so the most specific writer wins a
+   * name. They are not applied to a redirect, a status page, an error page, or a navigation data
+   * response. `content-type`, `set-cookie`, `location`, transport headers, and the `x-nifra-` prefix
+   * are refused.
+   */
+  readonly headers: Record<string, string>
+  /**
+   * Queue a `Set-Cookie`, with the same secure defaults as `c.set.cookie`
+   * (`HttpOnly; Secure; SameSite=Lax; Path=/`). The cookie rides every outcome - the document, a
+   * navigation data response, a redirect, a status or error page - and makes the response
+   * `cache-control: private, no-store`.
+   */
+  cookie(name: string, value: string, options?: CookieOptions): void
+  /** Queue a cookie deletion. Match the `path`/`domain` the cookie was set with. */
+  deleteCookie(name: string, options?: Pick<CookieOptions, "path" | "domain">): void
+}
 
 /** Context passed to a route `loader`. The `api` + `env` are injected by `createWebApp` and typed
  * per-route via `@nifrajs/client`'s `LoaderArgs<Api, Env>` (here they are opaque to the agnostic core). */
@@ -25,6 +50,8 @@ export interface LoaderContext {
    * declares one - failing closed to the schema's defaults - else the raw parsed query. Typed per-route
    * via `@nifrajs/client`'s `LoaderArgs<Api, Env, Search>`. */
   readonly search: Record<string, unknown>
+  /** Response headers and cookies for this page request. */
+  readonly set: LoaderResponseControls
 }
 
 /** A route's optional data loader: params/request in, data out. */

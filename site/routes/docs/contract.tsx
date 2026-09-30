@@ -18,6 +18,7 @@ interface LoaderContext {
   api:     unknown                 // the in-process backend client createWebApp was given
   env:     unknown                 // platform bindings forwarded from c.env (Workers KV/D1/…)
   draft:   boolean                 // true only when a valid draft cookie is present (draftSecret set)
+  set:     LoaderResponseControls  // response headers + cookies for this page request (see below)
 }
 
 // api + env are typed per-route via @nifrajs/client's LoaderArgs<Api, Env>; the agnostic core
@@ -52,6 +53,27 @@ export const meta = ({ data, params, origin }) => ({
 
 export const hydrate = false   // opt out of full-document hydration (static / island pages)
 export default function User(props) { /* props.data, props.actionData, props.params */ }`
+
+const RESPONSE_CONTROLS = `// routes/account.tsx - response headers and cookies, from a loader or an action.
+import { type LoaderContext, redirect } from "@nifrajs/web"
+
+declare function signIn(email: string, password: string): Promise<{ token: string } | null>
+
+export async function loader(ctx: LoaderContext) {
+  // Headers land on the rendered document.
+  ctx.set.headers["cache-control"] = "public, max-age=60"
+  ctx.set.headers["x-robots-tag"] = "noindex"
+  return { plan: "pro" }
+}
+
+export async function action(ctx: LoaderContext) {
+  const form = await ctx.request.formData()
+  const session = await signIn(String(form.get("email")), String(form.get("password")))
+  if (session === null) return { error: "Wrong email or password" }
+  // HttpOnly; Secure; SameSite=Lax; Path=/ unless the options say otherwise.
+  ctx.set.cookie("session", session.token, { maxAge: 60 * 60 * 24 * 7 })
+  throw redirect("/dashboard") // the cookie rides the redirect
+}`
 
 const HEAD_MERGE = `// routes/_layout.tsx - a layout can export \`meta\` too. Its tags are SITEWIDE: they land in
 // the <head> of every page below it - the home for hreflang / preconnect / a section <title>.
@@ -315,8 +337,8 @@ export default function Contract() {
       <h2>LoaderContext</h2>
       <p>
         One context object is passed to every <code>loader</code> and every <code>action</code>. The
-        same five fields, always - <code>params</code>, <code>request</code>, <code>api</code>,{" "}
-        <code>env</code>, and <code>draft</code>.
+        same fields, always - <code>params</code>, <code>request</code>, <code>api</code>,{" "}
+        <code>env</code>, <code>draft</code>, and <code>set</code>.
       </p>
       <CodeBlock code={LOADER_CTX} />
 
@@ -334,6 +356,92 @@ export default function Contract() {
         <code>status(...)</code> render, or a hand-rolled <code>Response</code> - and it's passed
         through untouched. Any other return is serialized as <code>actionData</code>.
       </blockquote>
+
+      <h2>Response headers &amp; cookies</h2>
+      <p>
+        <code>ctx.set</code> is the page counterpart of a route handler's <code>c.set</code>: a
+        loader or action writes response headers on <code>ctx.set.headers</code> and queues cookies
+        with <code>ctx.set.cookie()</code> / <code>ctx.set.deleteCookie()</code>.
+      </p>
+      <CodeBlock code={RESPONSE_CONTROLS} />
+      <table>
+        <thead>
+          <tr>
+            <th>Outcome</th>
+            <th>Headers</th>
+            <th>Cookies</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Rendered document</td>
+            <td>applied</td>
+            <td>sent</td>
+          </tr>
+          <tr>
+            <td>Navigation data response (a client soft-nav)</td>
+            <td>not applied</td>
+            <td>sent</td>
+          </tr>
+          <tr>
+            <td>
+              <code>redirect()</code>, a status page, an <code>_error</code> page
+            </td>
+            <td>not applied</td>
+            <td>sent</td>
+          </tr>
+        </tbody>
+      </table>
+      <ul>
+        <li>
+          <strong>Merge order.</strong> Each loader writes its own header record. They are merged
+          layouts root to leaf, then the page loader, then the action, so the most specific writer
+          wins a name - whichever loader settles first.
+        </li>
+        <li>
+          <strong>Refused names.</strong> <code>content-type</code>, <code>set-cookie</code>,{" "}
+          <code>location</code>, the transport headers (<code>content-length</code>,{" "}
+          <code>transfer-encoding</code>, <code>connection</code>, ...), and the{" "}
+          <code>x-nifra-</code> prefix throw. So does a name that is not an HTTP token and a value
+          with a line break, a control character, or a character outside Latin-1. The request then
+          answers through the <code>_error</code> boundary; the error names the header, never its
+          value.
+        </li>
+        <li>
+          <strong>A cookie makes the response private.</strong> Queueing a cookie through{" "}
+          <code>ctx.set</code> forces <code>cache-control: private, no-store</code> on whatever
+          carries it - the document, a redirect, a status or error page, a hand-built{" "}
+          <code>Response</code> - and the page is not offered to <code>withISR</code>, so a{" "}
+          <code>Set-Cookie</code> never reaches a shared cache. A cookie
+          queued by a middleware on the serving app is outside <code>ctx.set</code>, so set the
+          cache policy for those routes yourself (<code>withISR</code> still refuses to store any
+          response carrying <code>Set-Cookie</code>).
+        </li>
+        <li>
+          <strong>Navigation data responses are never stored.</strong> A soft-nav fetches the same
+          URL as the document with an <code>x-nifra-data</code> request header, so its response is
+          always <code>cache-control: private, no-store</code> with <code>vary: x-nifra-data</code>,
+          and a document that carries loader headers gets <code>x-nifra-data</code> added to its{" "}
+          <code>vary</code>. A CDN that ignores <code>Vary</code> needs <code>x-nifra-data</code> in
+          its cache key when it caches documents.
+        </li>
+        <li>
+          <strong>Write before you return.</strong> The controls close when the loader or action
+          settles. A write from a deferred promise that resolves later throws instead of being
+          dropped.
+        </li>
+        <li>
+          <strong>ISR.</strong> <code>withISR</code> replays a stored page's{" "}
+          <code>x-robots-tag</code>, <code>link</code>, and the other headers on its allowlist; a
+          loader's <code>cache-control: no-store</code> or a <code>vary</code> on a real request
+          header keeps the page out of the store.
+        </li>
+        <li>
+          <strong>Prerender.</strong> A prerendered page is a static file: it is served without the
+          loader's headers or cookies. Set those on the host that serves the file, or keep the route
+          on-demand.
+        </li>
+      </ul>
 
       <h2>Two ways to handle a request</h2>
       <p>

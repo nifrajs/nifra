@@ -902,6 +902,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Context a route `loader` receives: the route params, the request, a typed in-process `api` (an {@link ApiProxy} for the app contract `Api`), and the platform `env`. Pair with `inProcessClient`.
 - **LoaderData** _(type)_ - `type LoaderData<L> = L extends (...args: never[]) => infer R ? Awaited<R> : never`
   The (awaited) return of a `loader`, for typing a page component's `data` prop.
+- **LoaderResponseControls** _(interface)_ - `interface LoaderResponseControls`
+  Response controls a loader or action reaches as `ctx.set` - the page counterpart of a route handler's `c.set`. Write before the loader or action returns; a write from a deferred promise that settles later throws.
 - **RESERVED_EXACT_KEYS** _(const)_ - `RESERVED_EXACT_KEYS: readonly ["subscribe", "ws", "index", "then"]`
   Intercepted by exact match: `subscribe`/`ws` are transports, `index` is `/`, `then` is the await guard.
 - **RESERVED_KEY_READOUT** _(const)_ - `RESERVED_KEY_READOUT: string`
@@ -4517,6 +4519,8 @@ _No named exports (side-effect entrypoint)._
   A route's optional data loader: params/request in, data out.
 - **LoaderContext** _(interface)_ - `interface LoaderContext`
   Context passed to a route `loader`. The `api` + `env` are injected by `createWebApp` and typed per-route via `@nifrajs/client`'s `LoaderArgs<Api, Env>` (here they are opaque to the agnostic core).
+- **LoaderResponseControls** _(interface)_ - `interface LoaderResponseControls`
+  Response controls a loader or action reaches as `ctx.set` - the page counterpart of a route handler's `c.set`. Write before the loader or action returns; a write from a deferred promise that settles later throws.
 - **Manifest** _(interface)_ - `interface Manifest`
   The full route manifest.
 - **MemoryCacheStore** _(class)_ - `class MemoryCacheStore`

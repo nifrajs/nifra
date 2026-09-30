@@ -53,7 +53,7 @@ const RESPONSE_RESULT = Symbol.for("nifra.response.result")
  * `status(...)` returns. Recognized here rather than imported: core keeps its own predicate internal,
  * and the registry symbol is the contract between them (two copies of core must still agree).
  */
-const isResponseResult = (value: unknown): value is ResponseResult =>
+export const isResponseResult = (value: unknown): value is ResponseResult =>
   typeof value === "object" &&
   value !== null &&
   (value as { readonly [RESPONSE_RESULT]?: unknown })[RESPONSE_RESULT] === true &&
@@ -623,7 +623,7 @@ export interface RedirectOptions {
    * attacker-controlled input straight through. Set `true` for a deliberate external redirect. */
   readonly external?: boolean
   /** Extra response headers. A redirect is no longer a `Response`, so there is no `.headers` to
-   * mutate after the fact - name them here. Cookies still ride `c.set`, as on any other response. */
+   * mutate after the fact - name them here. Cookies queued with `ctx.set.cookie()` still ride it. */
   readonly headers?: Readonly<Record<string, string>>
 }
 

@@ -23,9 +23,9 @@ Browser-safe, end-to-end-typed client for @nifrajs/core servers (Eden-style prox
 - **ClientRetryOptions** _(interface)_ - `interface ClientRetryOptions`
 - **InProcessClientOptions** _(interface)_ - `interface InProcessClientOptions`
 - **LoaderArgs** _(interface)_ - `interface LoaderArgs<Api, Env = unknown, Search = undefined>`
-- **SubscribeOptions** _(interface)_ - `interface SubscribeOptions<I extends RouteInfo>`
+- **LoaderResponseControls** _(interface)_ - `interface LoaderResponseControls`
 
-_…and 14 more - see [`api-reference.md`](../../api-reference.md#nifrajsclient) for the complete list._
+_…and 15 more - see [`api-reference.md`](../../api-reference.md#nifrajsclient) for the complete list._
 
 ## Footguns
 

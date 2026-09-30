@@ -163,6 +163,7 @@ export {
   type LinkDescriptor,
   type Loader,
   type LoaderContext,
+  type LoaderResponseControls,
   type Manifest,
   type Meta,
   type MetaArgs,

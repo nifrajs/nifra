@@ -8,7 +8,11 @@ import {
   inProcessClient,
   type LoaderArgs,
   type LoaderData,
+  type LoaderResponseControls,
 } from "../src/index.ts"
+
+// A loader called directly (no page request) still needs its response controls.
+const set: LoaderResponseControls = { headers: {}, cookie() {}, deleteCookie() {} }
 
 const backend = server().get("/users/:id", (c) => ({ id: c.params.id, name: "Ada" }))
 const api = inProcessClient(backend)
@@ -45,6 +49,7 @@ test("inProcessClient + a typed loader resolve data in-process (no network)", as
     api,
     env: undefined,
     draft: false,
+    set,
     search: {},
   })
   expect(data).toEqual({ user: { id: "7", name: "Ada" } })
@@ -114,6 +119,7 @@ test("an action with ActionArgs runs in-process and returns its data branch", as
     api,
     env: undefined,
     draft: false,
+    set,
     search: {},
   })
   expect(data).toEqual({ ok: true, name: "Ada" })
