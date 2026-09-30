@@ -184,6 +184,11 @@
       "bun": "./src/internal/fetcher-runtime.ts",
       "types": "./dist/internal/fetcher-runtime.d.ts",
       "default": "./dist/internal/fetcher-runtime.js"
+    },
+    "./internal/loading-runtime": {
+      "bun": "./src/internal/loading-runtime.ts",
+      "types": "./dist/internal/loading-runtime.d.ts",
+      "default": "./dist/internal/loading-runtime.js"
     }
   },
   "files": [

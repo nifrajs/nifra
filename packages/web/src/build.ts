@@ -434,6 +434,8 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
       ...(routeManifest.notFound ? [routeManifest.notFound.file] : []),
       // A nested `_404` is an entry only for its stylesheet: it renders on the server, unhydrated.
       ...Object.values(routeManifest.notFounds ?? {}).map((page) => page.file),
+      // A `_loading` page is an entry for its stylesheet too: the bootstrap imports it lazily.
+      ...Object.values(routeManifest.loadings ?? {}).map((page) => page.file),
     ]),
   ].sort()
 
@@ -587,13 +589,19 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // SSR pages unstyled. Keep routeStyles absent until at least one authored route entry owns CSS.
   const routeCssEntries = [...cssByEntry.keys()].filter((entry) => entry !== resolvePath(entryFile))
   if (css.length > 0 && routeCssEntries.length > 0) {
+    // A `_loading` page can show on a navigation from ANY page, and a document links only its own
+    // route's stylesheets - so every page that can start a navigation carries the loading pages' too.
+    const loadingFiles = Object.values(routeManifest.loadings ?? {}).map((page) => page.file)
     for (const route of routeManifest.routes) {
       routeStyles[route.id] = stylesFor([
         ...route.layoutIds.map((id) => routeManifest.layouts[id]?.file ?? ""),
         route.file,
+        ...loadingFiles,
       ])
     }
-    if (routeManifest.notFound) routeStyles._404 = stylesFor([routeManifest.notFound.file])
+    if (routeManifest.notFound) {
+      routeStyles._404 = stylesFor([routeManifest.notFound.file, ...loadingFiles])
+    }
     for (const [id, page] of Object.entries(routeManifest.notFounds ?? {})) {
       routeStyles[id] = stylesFor([
         ...page.layoutIds.map((layoutId) => routeManifest.layouts[layoutId]?.file ?? ""),

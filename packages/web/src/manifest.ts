@@ -353,6 +353,9 @@ export interface RouteEntry {
    * is not listed. The last is the **nearest**, rendered when the route's loader answers
    * `notFound()`. Absent ⇒ the root `_404`. */
   readonly notFoundIds?: readonly string[]
+  /** `_loading` page ids in this route's ancestor chain (outermost → innermost). A client navigation
+   * to the route shows the innermost one whose layouts are already on screen. Absent ⇒ none. */
+  readonly loadingIds?: readonly string[]
   readonly file: string
   readonly load: () => Promise<RouteModule>
 }
@@ -379,6 +382,13 @@ export interface NotFoundEntry extends LayoutEntry {
   readonly scopes: readonly NotFoundScope[]
 }
 
+/** A `_loading` page: what the page slot shows while a client navigation loads. */
+export interface LoadingEntry extends LayoutEntry {
+  /** Layouts at or above the page's directory (outermost → innermost). The page shows only while
+   * every one of them is on screen, so it never renders outside a layout above it. */
+  readonly layoutIds: readonly string[]
+}
+
 /** The full route manifest. */
 export interface Manifest {
   readonly routes: readonly RouteEntry[]
@@ -399,6 +409,13 @@ export interface Manifest {
    * falls back to `_404`, and then to plain text. `_404` itself stays on {@link notFound} - it is
    * reached by unmatched paths too, which these are not. */
   readonly statusPages?: Readonly<Record<string, LayoutEntry>>
+  /**
+   * `_loading` pages, keyed by id (`_loading`, `admin/_loading`, …). A client navigation that is
+   * still loading after a short delay shows the target route's nearest one in the page slot, inside
+   * the layouts the two pages share. Browser-only: the server never renders one. Absent when the app
+   * has none.
+   */
+  readonly loadings?: Readonly<Record<string, LoadingEntry>>
 }
 
 // `.svelte` and `.vue` routes are supported too: their `default` export is the component and
@@ -426,6 +443,7 @@ const dirOf = (file: string): string =>
 const layoutIdFor = (dir: string): string => (dir === "" ? "_layout" : `${dir}/_layout`)
 const errorIdFor = (dir: string): string => (dir === "" ? "_error" : `${dir}/_error`)
 const notFoundIdFor = (dir: string): string => `${dir}/_404`
+const loadingIdFor = (dir: string): string => (dir === "" ? "_loading" : `${dir}/_loading`)
 const isDirAtOrAbove = (dir: string, other: string): boolean =>
   dir === "" || dir === other || other.startsWith(`${dir}/`)
 
@@ -642,8 +660,8 @@ const ancestorDirs = (file: string): string[] => {
 /**
  * Build a manifest from route file paths (relative to the routes dir) + an `importer` that
  * turns a path into a lazy module loader. Pure - no fs. Throws at boot (the loud-and-early
- * RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error` files are special; other
- * `_`-prefixed files are ignored (private/colocated, never routed).
+ * RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error`/`_loading` files are special;
+ * other `_`-prefixed files are ignored (private/colocated, never routed).
  */
 export function buildManifest(
   files: readonly string[],
@@ -656,6 +674,7 @@ export function buildManifest(
   let notFound: LayoutEntry | undefined
   const notFoundFiles = new Map<string, string>()
   const statusPages: Record<string, LayoutEntry> = {}
+  const loadingFiles = new Map<string, string>()
   const routeFiles: string[] = []
 
   for (const file of files) {
@@ -672,6 +691,8 @@ export function buildManifest(
       const dir = dirOf(file)
       notFoundFiles.set(dir, file)
       if (dir === "") notFound = { file, load: importer(file) }
+    } else if (stem === "_loading") {
+      loadingFiles.set(dirOf(file), file)
     } else if (STATUS_PAGE.test(stem) && dirOf(file) === "") {
       // `_410.tsx`, `_451.tsx`, … at the routes root. Root-only: unlike `_error`, these are not
       // resolved per segment - a terminal status is a property of the outcome, not of where in the
@@ -692,6 +713,7 @@ export function buildManifest(
     const notFoundIds = dirs
       .filter((dir) => dir !== "" && notFoundFiles.has(dir))
       .map(notFoundIdFor)
+    const loadingIds = dirs.filter((dir) => loadingFiles.has(dir)).map(loadingIdFor)
     const id = stripExt(file)
     const load = importer(file) // one lazy loader per file, shared by its (possibly expanded) patterns
     // An optional `[[x]]` segment expands a file into multiple patterns, all pointing at the same
@@ -722,6 +744,7 @@ export function buildManifest(
         layoutParams,
         errorIds,
         ...(notFoundIds.length > 0 ? { notFoundIds } : {}),
+        ...(loadingIds.length > 0 ? { loadingIds } : {}),
         file,
         load,
       })
@@ -782,12 +805,24 @@ export function buildManifest(
     }
   }
 
+  const loadings: Record<string, LoadingEntry> = {}
+  for (const [dir, file] of loadingFiles) {
+    loadings[loadingIdFor(dir)] = {
+      file,
+      load: importer(file),
+      layoutIds: ancestorDirs(file)
+        .filter((d) => layoutDirs.has(d))
+        .map(layoutIdFor),
+    }
+  }
+
   const base: Manifest = {
     routes,
     layouts,
     errors,
     ...(Object.keys(notFounds).length > 0 ? { notFounds } : {}),
     ...(Object.keys(statusPages).length > 0 ? { statusPages } : {}),
+    ...(Object.keys(loadings).length > 0 ? { loadings } : {}),
   }
   return notFound === undefined ? base : { ...base, notFound }
 }

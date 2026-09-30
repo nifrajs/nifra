@@ -4624,6 +4624,8 @@ _No named exports (side-effect entrypoint)._
   Context passed to a route `loader`. The `api` + `env` are injected by `createWebApp` and typed per-route via `@nifrajs/client`'s `LoaderArgs<Api, Env>` (here they are opaque to the agnostic core).
 - **LoaderResponseControls** _(interface)_ - `interface LoaderResponseControls`
   Response controls a loader or action reaches as `ctx.set` - the page counterpart of a route handler's `c.set`. Write before the loader or action returns; a write from a deferred promise that settles later throws.
+- **LoadingEntry** _(interface)_ - `interface LoadingEntry`
+  A `_loading` page: what the page slot shows while a client navigation loads.
 - **Manifest** _(interface)_ - `interface Manifest`
   The full route manifest.
 - **MemoryCacheStore** _(class)_ - `class MemoryCacheStore`
@@ -4783,7 +4785,7 @@ _No named exports (side-effect entrypoint)._
 - **boundaryModeKey** _(function)_ - `boundaryModeKey: (mode: BoundaryMode) => string`
   Stable mode label for adapter registries and diagnostics.
 - **buildManifest** _(function)_ - `buildManifest: (files: readonly string[], importer: (file: string) => () => Promise<RouteModule>) => Manifest`
-  Build a manifest from route file paths (relative to the routes dir) + an `importer` that turns a path into a lazy module loader. Pure - no fs. Throws at boot (the loud-and-early RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error` files are special; other `_`-prefixed files are …
+  Build a manifest from route file paths (relative to the routes dir) + an `importer` that turns a path into a lazy module loader. Pure - no fs. Throws at boot (the loud-and-early RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error`/`_loading` files are special; other `_`-prefixed…
 - **canonical** _(function)_ - `canonical: (href: string) => LinkDescriptor`
   A `<link rel="canonical">` descriptor for a route's `meta.link`. The canonical URL tells search engines which URL is authoritative for a page (deduping query-string / tracking variants).
 - **createClientRouter** _(function)_ - `createClientRouter: (options: ClientRouterOptions) => ClientRouter`

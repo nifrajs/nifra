@@ -63,7 +63,9 @@ export function mountRouter(options: MountRouterOptions): void {
   mount(true)
   router.subscribe(() => {
     const snapshot = router.snapshot()
-    if (snapshot.pending) return // skip the in-flight tick; act once settled
+    // Skip the in-flight tick and act once settled - unless the store names a different chain while
+    // pending, which is a `_loading` page taking the page slot for the navigation in flight.
+    if (snapshot.pending && snapshot.routeId === mountedRouteId) return
     if (snapshot.routeId === mountedRouteId) {
       update?.(snapshot) // same route → reactive in-place update (preserves layout/focus/scroll)
     } else {

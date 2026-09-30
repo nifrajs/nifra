@@ -81,6 +81,35 @@ export function generateClientEntry(
     loaderRows.push(`  ${JSON.stringify(routeId)}: ${lazyLoader([entry.file])},`)
     statusRoutes[Number(status)] = routeId
   }
+  // `_loading` pages. Emitted only when the app has one, so an app without them imports nothing extra.
+  // Each is its own lazy chunk; a route row carries its layout ids and the loading pages above it with
+  // the number of those layouts each sits under - all the runtime needs to choose one.
+  const loadings = Object.entries(manifest.loadings ?? {})
+  const loadingLines: string[] = []
+  if (loadings.length > 0) {
+    const routeRows = new Map<string, string>()
+    for (const route of manifest.routes) {
+      const above = (route.loadingIds ?? []).map((id) => [
+        id,
+        manifest.loadings?.[id]?.layoutIds.length ?? 0,
+      ])
+      routeRows.set(
+        route.id,
+        `  ${JSON.stringify(route.id)}: ${JSON.stringify([route.layoutIds, above])},`,
+      )
+    }
+    loadingLines.push(
+      "const loadingModules = {",
+      ...loadings.map(
+        ([id, entry]) =>
+          `  ${JSON.stringify(id)}: () => import(${jsStringLiteral(resolve(entry.file))}),`,
+      ),
+      "}",
+      "const loadingRoutes = {",
+      ...routeRows.values(),
+      "}",
+    )
+  }
 
   return `${[
     // `/client`, never the root: the root's graph carries the server (renderPage, the static-file
@@ -89,6 +118,9 @@ export function generateClientEntry(
     'import { applyHead, currentDocumentNonce, installForms, installHistory, signalHydrated, waitForStyles } from "@nifrajs/web/client"',
     // Namespace import: `errorBoundary` is optional (an adapter may not export it). A namespace member
     // access yields `undefined` if absent - unlike a named import, which would be a link error.
+    ...(loadings.length > 0
+      ? ['import { withLoading } from "@nifrajs/web/internal/loading-runtime"']
+      : []),
     `import * as __adapter from ${JSON.stringify(clientModule)}`,
     "const { mountRouter } = __adapter",
     // The assurance hook is optional: ordinary client entries pay only for the namespace lookup, while
@@ -209,7 +241,12 @@ export function generateClientEntry(
     `  actionData: mapDeferred(window.${ACTION_GLOBAL}),`,
     "  pending: false,",
     "}",
-    "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys, routeHooks })",
+    ...loadingLines,
+    // With `_loading` pages the store is wrapped: a slow navigation then names a loading chain (the
+    // shared layouts + the `_loading` component) for the mounted view to render in the meantime.
+    loadings.length > 0
+      ? "const router = withLoading(createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys, routeHooks }), { routes: loadingRoutes, modules: loadingModules, chains, searchSchemas })"
+      : "const router = createClientRouter({ patterns, initial, loadModule, statusRoutes, searchClientKeys, routeHooks })",
     "installHistory(router)",
     "installForms(router)",
     // The container is found in the DOM, not baked in. `rootId` is a per-render option and this entry

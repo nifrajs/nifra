@@ -164,6 +164,7 @@ export {
   type Loader,
   type LoaderContext,
   type LoaderResponseControls,
+  type LoadingEntry,
   type Manifest,
   type Meta,
   type MetaArgs,

@@ -14,6 +14,7 @@ export const meta = docsMeta(
 const TREE = `routes/
   _layout.tsx        wraps every page (chain: outer → inner)
   _error.tsx         error boundary (a loader throws → renders here, 500)
+  _loading.tsx       the page slot while a client navigation loads
   index.tsx          →  /
   about.tsx          →  /about
   users/
@@ -138,6 +139,20 @@ export default function Routing() {
           with a <code>_404</code> at one URL prefix are a boot error unless a directory containing
           both has one too. <code>gone()</code>, <code>statusPage()</code> and the{" "}
           <code>_410.tsx</code>-style pages stay at the root, as does the 404 of a static export.
+        </li>
+        <li>
+          <code>_loading.tsx</code> is what the page slot shows while a client navigation loads. A
+          navigation still waiting on its data after about 120 ms swaps the page for the target
+          route's nearest <code>_loading</code>: the innermost one above it whose layouts are already
+          on screen. Those are the layouts the two pages share, and they stay mounted with their
+          data. A <code>_loading</code> never renders outside a layout above it - coming from
+          outside <code>/admin</code>, <code>admin/_loading.tsx</code> waits for the admin layout and
+          the root one shows instead. A navigation that settles sooner (a prefetched link, a fast
+          loader) goes straight to the new page, as does one with no eligible{" "}
+          <code>_loading</code>; a change of search on the same path and a form submit keep the
+          page and report <code>pending</code>. The component receives <code>pending</code> and no{" "}
+          <code>data</code>. It is a browser-only convention on every adapter - the first load of a
+          URL is a server render, where <code>defer()</code> streams the slow part.
         </li>
         <li>
           <code>_error.tsx</code> is the segment's <b>error boundary</b>. On the server - if a route's
