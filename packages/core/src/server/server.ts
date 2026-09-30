@@ -5219,7 +5219,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       err,
       ctx,
       finalize,
-      wrapResponse,
       responseSet,
       (e, c) => this.logRequestError(e, c),
       () => this.internalErrorResponse(wrapResponse),
@@ -5774,10 +5773,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     wrapResponse: (response: Response | ResponseResult) => T,
   ): MaybePromise<T> {
     // A *thrown* Response is deliberate control flow, not an error - a guard throws a redirect/401,
-    // an action throws an error page. Return it as-is (Remix/SvelteKit semantics); don't run onError
-    // or log it as a 500. This is what makes `throw redirect(...)` / `requireSession(...)` work from
-    // any handler or loader.
-    if (err instanceof Response) return wrapResponse(err)
+    // an action throws an error page. Send it as the same Response returned would be sent (Remix/
+    // SvelteKit semantics): as built, plus the cookies the request queued, so a session set or
+    // cleared before `throw redirect(...)` / `requireSession(...)` ships. Don't run onError or log
+    // it as a 500.
+    if (err instanceof Response) return finalize(err, responseSet(ctx))
     // Same rule for a thrown `status(...)`, but through `finalize` rather than `wrapResponse`: the
     // value is still plain data, so the ordinary JSON lane renders it and no `Response` is built.
     if (isResponseResult(err))

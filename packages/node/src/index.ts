@@ -509,10 +509,17 @@ function appendCookiesToResponse(
   response: Response,
   cookies: readonly string[] | undefined,
 ): Response {
-  if (cookies !== undefined) {
+  if (cookies === undefined || cookies.length === 0) return response
+  try {
     for (const cookie of cookies) response.headers.append("set-cookie", cookie)
+    return response
+  } catch {
+    // Guarded `Headers` (`Response.redirect()`, a raw `fetch()` result) reject every write, so the
+    // first append throws with nothing applied and the cookies land on a mutable copy instead.
+    const clone = new Response(response.body, response)
+    for (const cookie of cookies) clone.headers.append("set-cookie", cookie)
+    return clone
   }
-  return response
 }
 
 /** Early exits built outside the handler's finalizer - an `onRequest` hook's response, a mount's,

@@ -555,8 +555,15 @@ export function appendCookiesToResponse(response: Response, set: CtxSet): Respon
   // returned Response - otherwise the canonical set-session-then-redirect pattern would silently drop
   // the cookie. (Other `c.set` fields stay the returned Response's own concern.)
   const cookies = set._cookies
-  if (cookies !== undefined && cookies.length > 0) {
+  if (cookies === undefined || cookies.length === 0) return response
+  try {
     for (const cookie of cookies) response.headers.append("set-cookie", cookie)
+    return response
+  } catch {
+    // Guarded `Headers` (`Response.redirect()`, a raw `fetch()` result) reject every write, so the
+    // first append throws with nothing applied and the cookies land on a mutable copy instead.
+    const clone = new Response(response.body, response)
+    for (const cookie of cookies) clone.headers.append("set-cookie", cookie)
+    return stamped(clone)
   }
-  return response
 }
