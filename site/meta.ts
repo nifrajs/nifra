@@ -1,6 +1,7 @@
 import type { LinkDescriptor, Meta, MetaDescriptor } from "@nifrajs/web"
-import { canonical, jsonLd, openGraph } from "@nifrajs/web"
+import { canonical, fontPreload, jsonLd, openGraph } from "@nifrajs/web"
 import { docsLabel } from "./data/docs-nav"
+import fonts from "./data/fonts.json"
 import { postBySlug } from "./data/posts"
 
 // Shared per-route <head>: title + description + Open Graph + Twitter card + canonical + JSON-LD.
@@ -85,6 +86,8 @@ export function pageMeta(
       },
       { rel: "icon", type: "image/png", sizes: "64x64", href: "/assets/favicon.png" },
       { rel: "apple-touch-icon", href: "/assets/apple-touch-icon.png" },
+      // The display + body faces are above the fold on every page; preloading them removes the swap.
+      ...fonts.preload.map((href) => fontPreload({ href })),
       ...(extras.link ?? []),
     ],
     ...(extras.structuredData !== undefined && extras.structuredData.length > 0
@@ -244,7 +247,7 @@ export function softwareApplication(): Record<string, unknown> {
     operatingSystem: "Cross-platform",
     url: SITE,
     description:
-      "The AI-native TypeScript framework: typed APIs and full-stack SSR on five UI libraries, one app across Bun, Node, Deno, and the edge.",
+      "The AI-native full-stack TypeScript framework. The route is the contract: the typed client, the docs, the MCP tools, and the security policy are checked against it. Typed APIs and full-stack SSR on five UI libraries, one app across Bun, Node, Deno, and the edge.",
     license: "https://opensource.org/licenses/MIT",
     codeRepository: "https://github.com/nifrajs/nifra",
     programmingLanguage: "TypeScript",

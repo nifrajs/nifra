@@ -16,13 +16,6 @@
       "unproven": []
     },
     {
-      "method": "POST",
-      "path": "/playground/chat",
-      "declared": [],
-      "evidenced": [],
-      "unproven": []
-    },
-    {
       "method": "GET",
       "path": "/stats",
       "declared": [],

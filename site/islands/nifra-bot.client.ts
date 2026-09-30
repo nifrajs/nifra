@@ -14,26 +14,24 @@ const POSITION_KEY = "nifra-bot-position"
 const MAX_MESSAGES = 28
 
 const SECTION_TIPS: Record<string, string> = {
-  hero: "Nifra gives you a fast backend, full-stack SSR, and agent-ready tooling from one codebase.",
-  "sec-agent":
-    "Agent feature: expose typed routes as MCP tools so coding agents can inspect, run, and fix with less context.",
+  hero: "Change a route and the build fails until the client, the docs, and the policy agree with it.",
   "sec-client":
     "Typed client: params, query, body, and response payloads are inferred directly from your server routes.",
-  "sec-frontend":
-    "Use React, Solid, Vue, Preact, or Svelte with the same loaders, actions, streaming, and islands.",
+  "sec-assure":
+    "Assurance: declare what a route may touch, write the rule once, and nifra assure names every route that breaks it.",
+  "sec-agent":
+    "nifra mcp gives a coding agent the live route table, a scaffolder, and the same check and assure gates CI runs.",
   "sec-runtime":
-    "Ship the same app to Bun, Node, Deno, Cloudflare Workers, Vercel, and static prerender targets.",
-  "sec-backend":
-    "Backend features include route schemas, middleware, cookies, sessions, WebSockets, OpenAPI, uploads, cron, and telemetry.",
+    "Use React, Solid, Vue, Preact, or Svelte, and ship the same app to Bun, Node, Deno, and the edge.",
   "sec-ecosystem":
-    "Plugins add auth, env validation, images, uploads, i18n, cron, OpenTelemetry, Drizzle, and more.",
-  "sec-benchmarks":
-    "Benchmarks show Nifra keeps tiny HTTP overhead and strong full-stack SSR throughput.",
-  "sec-timeline":
-    "Types flow from route definitions into clients, docs, tests, MCP tools, and app code.",
+    "Optional packages cover auth, env validation, images, uploads, i18n, cron, OpenTelemetry, Drizzle, and more.",
   "sec-cta":
     "One command scaffolds a typed Nifra app: bun create nifra my-app. Start as an API, grow into full-stack SSR.",
 }
+
+// Tips stay out of the way until the visitor has opened Nira once: the mascot is opt-in, and a
+// bubble that talks over the page before anyone asked is noise.
+let tipsEnabled = false
 
 const TOPICS: readonly TopicAnswer[] = [
   {
@@ -445,12 +443,12 @@ function ensureShell(): void {
 
   panel.append(head, messages, quick, form)
 
-  const bubbleWrap = make("div", { className: "nifra-bubble-container visible" })
+  const bubbleWrap = make("div", { className: "nifra-bubble-container" })
   bubbleWrap.append(
     make("div", {
       className: "nifra-bubble",
       id: "nifra-bubble",
-      text: "Hi, I'm Nira - scroll for tips, or tap me to ask about Nifra.",
+      text: "",
     }),
   )
 
@@ -465,8 +463,8 @@ function ensureShell(): void {
   const avatar = make("img", { className: "nifra-bot-avatar" })
   avatar.src = "/assets/nifra-bot-avatar.png"
   avatar.alt = ""
-  avatar.width = 76
-  avatar.height = 76
+  avatar.width = 52
+  avatar.height = 52
   avatar.draggable = false
   bot.append(avatar)
 
@@ -648,6 +646,27 @@ function currentPosition(): { left: number; top: number } {
   return rect ? { left: rect.left, top: rect.top } : { left: 0, top: 0 }
 }
 
+/** True once the visitor has dragged the mascot somewhere; until then it belongs to its corner. */
+function hasSavedPosition(): boolean {
+  try {
+    return sessionStorage.getItem(POSITION_KEY) !== null
+  } catch {
+    return false
+  }
+}
+
+/** Re-fits the mascot after its box or the viewport changed size. A position the visitor chose is
+ * clamped where it is; an unchosen one goes back to the corner, so a window that grows does not
+ * strand the mascot over the content. */
+function refitPosition(): void {
+  if (!hasSavedPosition()) {
+    restorePosition()
+    return
+  }
+  const pos = currentPosition()
+  setPosition(pos.left, pos.top)
+}
+
 function restorePosition(): void {
   const container = byId("nifra-bot-container")
   if (!container) return
@@ -671,11 +690,11 @@ function setOpen(open: boolean): void {
   container.dataset.open = open ? "true" : "false"
   panel.hidden = !open
   botButton.setAttribute("aria-expanded", open ? "true" : "false")
-  byId("nifra-bubble")?.parentElement?.classList.toggle("visible", !open)
+  if (open) tipsEnabled = true
+  byId("nifra-bubble")?.parentElement?.classList.toggle("visible", !open && tipsEnabled)
   if (!open) forceTip()
   requestAnimationFrame(() => {
-    const pos = currentPosition()
-    setPosition(pos.left, pos.top)
+    refitPosition()
     if (open) byId<HTMLInputElement>("nifra-bot-input")?.focus()
   })
 }
@@ -683,6 +702,7 @@ function setOpen(open: boolean): void {
 function showTip(text: string): void {
   const bubble = byId("nifra-bubble")
   if (!bubble) return
+  if (!tipsEnabled) return
   const next = cleanText(text)
   bubble.parentElement?.classList.add("visible")
   if (bubble.textContent === next) return
@@ -799,20 +819,27 @@ function onSubmit(question: string): void {
 }
 
 function initBot(): void {
+  // The embedded playground (/play?embed=1 in an <iframe>) has no site chrome, and the page that
+  // hosts it already carries the mascot.
+  if (document.documentElement.classList.contains("play-embed")) return
   ensureShell()
   const container = byId("nifra-bot-container")
   const panel = byId("nifra-bot-panel")
   if (!container || !panel) return
+  const hero = document.getElementById("hero")
+  const onHome = hero !== null && window.location.pathname === "/"
+  const setDeferred = (deferred: boolean): void => {
+    container.classList.toggle("nifra-bot-home-deferred", deferred)
+    container.setAttribute("aria-hidden", deferred ? "true" : "false")
+  }
+  // Hidden before it is first displayed: the observer below reports a frame late, and a mascot
+  // that fades out over the hero is worse than one that was never there.
+  if (onHome) setDeferred(true)
   container.style.display = "flex"
   container.dataset.open ||= "false"
   panel.hidden = container.dataset.open !== "true"
   restorePosition()
-  const hero = document.getElementById("hero")
-  if (hero && window.location.pathname === "/") {
-    const setDeferred = (deferred: boolean): void => {
-      container.classList.toggle("nifra-bot-home-deferred", deferred)
-      container.setAttribute("aria-hidden", deferred ? "true" : "false")
-    }
+  if (hero && onHome) {
     if (typeof IntersectionObserver === "function") {
       const observer = new IntersectionObserver(
         ([entry]) => setDeferred(Boolean(entry?.isIntersecting)),
@@ -933,8 +960,7 @@ window.addEventListener(
     if (resizeFrame !== 0) return
     resizeFrame = requestAnimationFrame(() => {
       resizeFrame = 0
-      const pos = currentPosition()
-      setPosition(pos.left, pos.top)
+      refitPosition()
       forceTip()
     })
   },

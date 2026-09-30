@@ -8,16 +8,12 @@ export const meta = pageMeta("Nifra - Not found", "That page doesn't exist.")
 export default function NotFound() {
   return (
     <Layout>
-      <section className="hero" style={{ paddingBottom: 56 }}>
-        <h1>
-          <span className="grad">404</span>
-        </h1>
-        <p className="tagline">That page wandered off - Nifra couldn't match a route for it.</p>
-        <div className="cta">
-          <a className="btn" href="/">
-            ← Back home
-          </a>
-        </div>
+      <section className="notfound">
+        <h1>404</h1>
+        <p>No route matches this address. It may have moved, or the link may be wrong.</p>
+        <a className="button ghost" href="/">
+          Back to the home page
+        </a>
       </section>
     </Layout>
   )

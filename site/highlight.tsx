@@ -130,7 +130,7 @@ export function CodeBlock({
   return (
     <div className="code-window">
       <div className="code-window-header">
-        <div className="code-window-dots">
+        <div className="code-window-dots" aria-hidden="true">
           <span className="code-window-dot red" />
           <span className="code-window-dot yellow" />
           <span className="code-window-dot green" />

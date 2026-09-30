@@ -86,7 +86,7 @@ const NAV_SCRIPT = `(function(){
       
       var header = document.createElement("div");
       header.className = "code-window-header";
-      header.innerHTML = '<div class="code-window-dots"><div class="code-window-dot red"></div><div class="code-window-dot yellow"></div><div class="code-window-dot green"></div></div><div class="code-window-lang">' + lang + '</div>';
+      header.innerHTML = '<div class="code-window-dots" aria-hidden="true"><span class="code-window-dot red"></span><span class="code-window-dot yellow"></span><span class="code-window-dot green"></span></div><div class="code-window-lang">' + lang + '</div>';
       
       pre.parentNode.insertBefore(wrapper, pre);
       wrapper.appendChild(header);

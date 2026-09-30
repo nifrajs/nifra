@@ -39,6 +39,8 @@ cpSync(`${dir}/public/logo-mark.png`, `${dist}/assets/logo-mark.png`)
 cpSync(`${dir}/public/og.jpg`, `${dist}/assets/og.jpg`)
 cpSync(`${dir}/public/background.png`, `${dist}/assets/background.png`)
 cpSync(`${dir}/public/nifra-bot-avatar.png`, `${dist}/assets/nifra-bot-avatar.png`)
+cpSync(`${dir}/public/fonts`, `${dist}/assets/fonts`, { recursive: true })
+cpSync(`${dir}/public/media`, `${dist}/assets/media`, { recursive: true })
 rmSync(`${dir}/.build-deno`, { recursive: true, force: true })
 
 console.log(`Deno output: site/dist-deno (server-deno.js + client ${client.entry})`)

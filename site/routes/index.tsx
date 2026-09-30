@@ -1,13 +1,20 @@
-import { HERO_SSR, HTTP_BENCH, MULTIPLIERS, PROOF } from "../data/benchmarks"
+import type { CSSProperties } from "react"
+import {
+  BUNDLE,
+  formatRps,
+  HERO_SSR,
+  HTTP_RUNTIME,
+  httpWorkloadRps,
+  MULTIPLIERS,
+  PROOF,
+} from "../data/benchmarks"
 import { CodeBlock } from "../highlight"
 import { HOME_COUNTER_ENTRY } from "../islands/entries"
 import { pageMeta, softwareApplication } from "../meta"
 
-const MAX_SSR_MULTIPLIER = `${Math.max(...MULTIPLIERS.map((item) => Number.parseFloat(item.mult)))}×`
-
 export const meta = pageMeta(
-  "Nifra - the TypeScript framework for AI-edited codebases",
-  "Build typed, agentic applications that humans and coding agents can change safely. Nifra combines live MCP project context, bounded agent runs, WebMCP predictive UI, a no-codegen typed client, multi-framework SSR, and one app across Bun, Node, Deno, and the edge.",
+  "Nifra - the AI-native full-stack TypeScript framework",
+  "Nifra is the AI-native full-stack TypeScript framework. The route is the contract: the typed client, the docs, the MCP tools, and the security policy are all checked against it, so a change made by you or by a coding agent cannot half-land. One app across Bun, Node, Deno, and the edge.",
   "/",
   // The one page that describes the project rather than a document, so the SoftwareApplication and
   // the site-wide Organization record both live here and nowhere else.
@@ -31,11 +38,114 @@ export const meta = pageMeta(
   },
 )
 
-// Static page - ships zero framework JS. The only client code is a tiny enhancer (the install
-// command's copy button), loaded through `islandScripts`. The framework switcher + runtime grid
-// below are CSS-only (`:checked` radio tabs), so they stay interactive with zero added JS.
+// Static page - ships zero framework JS. The only client code is a tiny enhancer (the copy buttons),
+// loaded through `islandScripts`. The hero walkthrough and the framework switcher are CSS-only
+// (`:checked` radios), so they stay interactive with zero added JS. The playground is the /play
+// route in an <iframe>, so its island loads only when the frame scrolls near.
 export const hydrate = false
 export const islandScripts = [HOME_COUNTER_ENTRY]
+
+// ---- The hero walkthrough: one change, followed through every gate. ----
+// Every output line is the CLI's own format (`nifra check` / `nifra assure`), so the demo cannot
+// promise a message the tool does not print.
+type DemoKind = "ask" | "ctx" | "add" | "del" | "cmd" | "err" | "ok" | "dim" | "out"
+
+interface DemoLine {
+  readonly kind: DemoKind
+  readonly text: string
+  /** Leading columns, kept as padding so a wrapped line keeps its indent. */
+  readonly indent?: number
+  /** Starts a new block: a little air above. */
+  readonly gap?: boolean
+  /** A file label printed above this line. */
+  readonly file?: string
+}
+
+interface DemoFrame {
+  readonly label: string
+  readonly caption: string
+  readonly lines: readonly DemoLine[]
+}
+
+const DEMO_FRAMES: readonly DemoFrame[] = [
+  {
+    label: "Prompt",
+    caption: "A coding agent gets a plain request, and edits two routes.",
+    lines: [
+      {
+        kind: "ask",
+        text: "Rename title to heading on the note route, and add a route that creates notes.",
+      },
+      { kind: "ctx", text: '.get("/notes/:id", async (c) => {', file: "src/server.ts" },
+      { kind: "ctx", text: "const note = await notes.find(c.params.id)", indent: 2 },
+      { kind: "del", text: "return { id: note.id, title: note.title }", indent: 2 },
+      { kind: "add", text: "return { id: note.id, heading: note.title }", indent: 2 },
+      { kind: "ctx", text: "})" },
+      { kind: "add", text: '.post("/notes", {' },
+      { kind: "add", text: "body: NoteInput,", indent: 2 },
+      { kind: "add", text: "}, (c) => notes.insert(c.body))" },
+    ],
+  },
+  {
+    label: "Check",
+    caption:
+      "The page that still reads the old field stops compiling, and the write nobody declared is flagged.",
+    lines: [
+      { kind: "cmd", text: "nifra check" },
+      { kind: "err", text: "✗ typecheck failed - the frontend/backend contract is broken" },
+      {
+        kind: "out",
+        text: "routes/note.tsx:14  Property 'title' does not exist on type '{ id: string; heading: string; }'.",
+        indent: 4,
+      },
+      { kind: "dim", text: "..." },
+      { kind: "err", text: "✗ effect/capability assurance: 1" },
+      { kind: "out", text: "POST /notes evidence exceeds its declaration: db.write", indent: 4 },
+      { kind: "err", text: "✗ check failed: 2 errors", gap: true },
+    ],
+  },
+  {
+    label: "Assure",
+    caption:
+      "Client fixed, write declared. Now policy objects: a domain write with no authentication.",
+    lines: [
+      { kind: "ctx", text: '.post("/notes", {', file: "src/server.ts" },
+      { kind: "ctx", text: "body: NoteInput,", indent: 2 },
+      { kind: "add", text: 'capabilities: ["db.write"],', indent: 2 },
+      { kind: "ctx", text: "}, (c) => notes.insert(c.body))" },
+      { kind: "cmd", text: "nifra assure", gap: true },
+      { kind: "err", text: "✖ POST /notes (authenticated-write) is missing nifra.authenticated" },
+      { kind: "out", text: "1 assurance failure across 2 routes.", gap: true },
+    ],
+  },
+  {
+    label: "Ship",
+    caption: "One middleware supplies the evidence. Every gate agrees, and the change ships.",
+    lines: [
+      { kind: "add", text: ".use(jwt({", file: "src/server.ts" },
+      { kind: "add", text: "key: env.JWT_SECRET,", indent: 2 },
+      { kind: "add", text: 'algorithms: ["HS256"],', indent: 2 },
+      { kind: "add", text: "}))" },
+      { kind: "cmd", text: "nifra check", gap: true },
+      { kind: "ok", text: "✓ typecheck passed" },
+      { kind: "dim", text: "..." },
+      { kind: "ok", text: "✓ effect/capability assurance: none" },
+      { kind: "ok", text: "✓ check passed" },
+      { kind: "cmd", text: "nifra assure", gap: true },
+      {
+        kind: "ok",
+        text: "✓ route assurance: 2 routes classified; all required evidence is present. Capability assurance covered 2 routes. No declared response/error schemas were found.",
+      },
+    ],
+  },
+]
+
+const DEMO_GUTTER: Partial<Record<DemoKind, string>> = { ask: ">", add: "+", del: "-", cmd: "$" }
+
+/** CSS custom properties are not in React's `CSSProperties`; this is the one place that says so. */
+function cssVars(vars: Record<`--${string}`, number>): CSSProperties {
+  return vars as CSSProperties
+}
 
 // One honest row per shipped capability - the stack you'd otherwise assemble vs the package that
 // covers it. No overselling: rows only exist where the Nifra package genuinely does that job.
@@ -91,89 +201,130 @@ const REPLACE_GROUPS: ReadonlyArray<{
   },
 ]
 
+// One row per category for the strip under the hero; the full table is the ecosystem section.
+const REPLACE_TOP = REPLACE_GROUPS.flatMap((group) => group.rows.slice(0, 1))
+const REPLACE_TOTAL = REPLACE_GROUPS.reduce((total, group) => total + group.rows.length, 0)
+
+// The proof strip reads its two measured numbers from the benchmark dataset, so a re-run moves them.
+const BUN_HTTP = HTTP_RUNTIME.find((row) => row.runtime === "Bun")
+const REACT_MULTIPLIER = MULTIPLIERS.find((row) => row.fw === "React")
+const PROOF_STATS: ReadonlyArray<{ value: string; label: string }> = [
+  ...(REACT_MULTIPLIER !== undefined
+    ? [
+        {
+          value: REACT_MULTIPLIER.mult,
+          label: `dynamic SSR vs ${REACT_MULTIPLIER.rival} (React on Node, same machine)`,
+        },
+      ]
+    : []),
+  ...(BUN_HTTP !== undefined
+    ? [
+        {
+          value: `${Math.round(BUN_HTTP.reqs / 1000)}k`,
+          label: `requests per second on Bun - ${BUN_HTTP.pctOfRaw}% of the raw-runtime ceiling`,
+        },
+      ]
+    : []),
+  ...PROOF.slice(2),
+]
+
+interface Bar {
+  readonly name: string
+  readonly value: number
+  readonly you: boolean
+}
+
+interface RankedBar extends Bar {
+  /** Width as a percentage of the fastest row. */
+  readonly pct: number
+}
+
+/** Fastest first, each bar sized against the fastest. */
+function rankBars(rows: readonly Bar[]): readonly RankedBar[] {
+  const sorted = [...rows].sort((a, b) => b.value - a.value)
+  const max = sorted[0]?.value ?? 1
+  return sorted.map((row) => ({ ...row, pct: Math.round((row.value / max) * 1000) / 10 }))
+}
+
+const SSR_BARS = rankBars(
+  HERO_SSR.map((row) => ({ name: row.name, value: row.reqs, you: row.you === true })),
+)
+
+const NODE_API_FRAMEWORKS = ["Nifra", "Fastify", "Elysia", "Express", "Hono"] as const
+const NODE_API_BARS = rankBars(
+  NODE_API_FRAMEWORKS.flatMap((name) => {
+    const value = httpWorkloadRps("Node", name, "getUsers")
+    return value === undefined ? [] : [{ name, value, you: name === "Nifra" }]
+  }),
+)
+
+const getRps = (runtime: string, framework: string): string =>
+  formatRps(httpWorkloadRps(runtime, framework, "getUsers"))
+const bundleKb = (name: string): string => {
+  const kb = BUNDLE.find((row) => row.name === name)?.kb
+  return kb === undefined ? "n/a" : `${kb} KB`
+}
+
+// One card per comparison page. Each states the measured number and the case for the other tool.
+const VERSUS = [
+  {
+    slug: "nextjs",
+    name: "Next.js",
+    body: `${REACT_MULTIPLIER?.mult ?? ""} the dynamic SSR throughput on the same machine, and five UI frameworks instead of one. Building around React Server Components? Pick Next.js.`,
+  },
+  {
+    slug: "fastify",
+    name: "Fastify",
+    body: `On Node, ${getRps("Node", "Nifra")} vs ${getRps("Node", "Fastify")} requests per second on the same route. Nifra adds the typed client, the UI layer, and three more runtimes.`,
+  },
+  {
+    slug: "elysia",
+    name: "Elysia",
+    body: `On Bun, ${getRps("Bun", "Nifra")} vs ${getRps("Bun", "Elysia")} requests per second on the same route. Elysia is a backend; Nifra adds the UI layer and the gates.`,
+  },
+  {
+    slug: "hono",
+    name: "Hono",
+    body: `Hono is the smaller server bundle: ${bundleKb("Hono")} vs ${bundleKb("Nifra")} gzipped. Pick it for a minimal router, and Nifra for the full stack.`,
+  },
+] as const
+
 const BACKEND_CODE = `import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
-// A typed API - no frontend required. Use Nifra like Hono or Elysia.
+const body = t.object({ name: t.string() })
+
+// A typed API. No frontend required.
 export const app = server()
   .get("/users/:id", (c) => ({ id: c.params.id }))
-  .post("/users", { body: t.object({ name: t.string() }) }, (c) => {
-    // c.body is validated + typed - invalid input is rejected before this runs.
+  .post("/users", { body }, (c) => {
+    // c.body is validated and typed before this runs.
     return { id: crypto.randomUUID(), name: c.body.name }
   })
 
-export default { fetch: app.fetch }   // Bun. Node, Deno, and the edge are one line each.`
+// Bun. Node, Deno, and the edge are one line each.
+export default { fetch: app.fetch }`
 
 const CLIENT_CODE = `import { client } from "@nifrajs/client"
-import type { app } from "./server"   // a type import - server code never ships to the client
+// A type import: server code never ships to the client.
+import type { app } from "./server"
 
 const api = client<typeof app>("https://api.example.com")
 
-// The path autocompletes. Params and body are typed. No codegen, ever.
+// The path autocompletes. Params and body are typed.
 const res = await api.users({ id: "42" }).get()
 
 if (res.ok) {
-  res.data.id        // typed from the route return or response schema
+  res.data.id   // typed from the route's return
 } else {
-  res.error          // client-call failures are returned, never thrown
+  res.error     // failures are returned, never thrown
 }`
 
-const AGENT_CODE = `$ nifra context        # the project's live API surface - pipe into any agent prompt
-  GET  /users/:id   → response { id: string }
-  POST /users       body { name: string } → response { id: string, name: string }
-
-$ nifra mcp            # same data as an MCP server - Claude Code & Cursor read it automatically
-
-# The typed client is the safety lock - an agent physically can't call a route that changed:
-const res = await api.users({ id: "42" }).get()
-if (res.ok) res.data.id
-//              ^ tsc error here the moment the route or response shape changes
-
-$ nifra check          # CI gate: typecheck + typed-client lint - drift fails the build`
-
-const AGENTIC_UI_CODE = `import { t } from "@nifrajs/schema"
-import { defineAgentCapability, registerWebMcpTools } from "@nifrajs/webmcp"
-
-const addToCart = defineAgentCapability({
-  name: "cart.add",
-  description: "Add a product to the current cart.",
-  input: t.object({ sku: t.string(), quantity: t.number() }),
-  output: t.object({ cartVersion: t.string() }),
-  writes: ["cart"],
-  execute: (input) => addItemOnTheServer(input),
-  predict: ({ input, version }) => ({
-    baseVersion: version,
-    patch: [{ op: "add", path: "/items/-", value: input }],
-  }),
-})
-
-await registerWebMcpTools([addToCart]) // explicit page-local allowlist
-// The same capability can power remote MCP, AG-UI, or an agent runner.`
-
-const NIFRA_UI_CODE = `import { ApprovalCard, PromptComposer } from "@nifrajs/ui"
-import { catalogByName } from "@nifrajs/ui-registry"
-
-// Source-owned UI for the moment an agent proposes a change.
-const contract = catalogByName.ApprovalCard
-// Discover the same public contract through the UI MCP server.
-// bunx @nifrajs/ui-mcp`
-
-const RUNTIME_CODE = `import { app } from "./app"   // one app, defined once
-
-// Bun
-export default { port: 3000, fetch: app.fetch }
-
-// Node            import { serve } from "@nifrajs/node"   → serve(app, { port: 3000 })
-// Deno            import { serve } from "@nifrajs/deno"   → serve(app, { port: 3000 })
-
-// Cloudflare Workers / Pages · Vercel edge
-import { toFetchHandler } from "@nifrajs/core/server"
-export default toFetchHandler(app)`
-
-// The five UI adapters, shown as a CSS-only switcher: the SAME routes/loaders/actions/islands -
-// only the adapter import changes. Real packages (@nifrajs/web-<fw>), so the swap is truthful.
 const ASSURE_CODE = `// nifra.assurance.ts - security posture as policy, not convention
-import { defineAssuranceConfig, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
+import {
+  defineAssuranceConfig,
+  NIFRA_ASSURANCE,
+} from "@nifrajs/core/assurance"
 import { app } from "./src/app"
 
 export default defineAssuranceConfig({
@@ -181,8 +332,8 @@ export default defineAssuranceConfig({
   capabilities: {
     definitions: [{ id: "db.write", zone: "domain", access: "write" }],
     provenance: {
-      // Keep the example complete: assurance classification needs both a capability definition
-      // and static provenance coverage for the effect it is meant to protect.
+      // Classification needs a capability definition and static
+      // provenance coverage for the effect it protects.
       imports: [{ specifier: "./db/write.ts", capabilities: ["db.write"] }],
       forbiddenImports: [],
     },
@@ -190,7 +341,7 @@ export default defineAssuranceConfig({
   policy: {
     rules: [
       {
-        // Every domain write must prove authentication - no exceptions, no drift.
+        // Every domain write must prove authentication.
         name: "authenticated-write",
         match: { access: "write", zone: "domain" },
         require: [NIFRA_ASSURANCE.AUTHENTICATED],
@@ -202,6 +353,8 @@ export default defineAssuranceConfig({
 // $ nifra assure
 // ✖ POST /notes (authenticated-write) is missing nifra.authenticated`
 
+// The five UI adapters, shown as a CSS-only switcher: the SAME routes/loaders/actions/islands -
+// only the adapter import changes. Real packages (@nifrajs/web-<fw>), so the swap is truthful.
 const FW_TABS = [
   {
     key: "react",
@@ -272,15 +425,6 @@ const RUNTIME_CARDS = [
   { name: "Vercel", note: "Edge functions", deploy: "export default toFetchHandler(app)" },
 ] as const
 
-// One schema → five aligned outputs. The "single source of truth" story, as a small fan diagram.
-const SOURCE_OUTPUTS = [
-  { title: "Runtime validation", note: "Bad input → 422 before your handler" },
-  { title: "TypeScript types", note: "Inferred params, body, response" },
-  { title: "Typed client", note: "No codegen - drift is a compile error" },
-  { title: "OpenAPI spec", note: "Generated, never hand-written" },
-  { title: "MCP tools", note: "Agents read the live contract" },
-] as const
-
 const AGENT_LOOP = [
   {
     step: "01",
@@ -319,171 +463,41 @@ const AGENT_LOOP = [
   },
 ] as const
 
-const TIMELINE_STEPS = [
+const GATES = [
   {
-    step: "01",
-    pkg: "@nifrajs/schema",
-    title: "Define the Data Contracts",
-    body: "Model request inputs and response payloads with compiled validation. A single schema handles runtime validation, exports TypeScript types, and builds OpenAPI specifications automatically.",
-    code: `import { t } from "@nifrajs/schema"
+    command: "nifra check",
+    body: "Typecheck plus contract rules: hand-rolled fetch to your own API, interpolated SQL, server-only imports in a route module.",
+  },
+  {
+    command: "nifra assure",
+    body: "Classifies every route against policy and lists the evidence each one is missing.",
+  },
+  {
+    command: "nifra levels",
+    body: "Reports which assurance levels the app reaches: L0 typed contract, L1 route assurance, L2 capability lockfile.",
+  },
+] as const
 
-// A contract schema for your routes
-export const GetUserSchema = {
-  params: t.object({ id: t.string() }),
-  response: t.object({
-    id: t.string(),
-    name: t.string(),
-    role: t.union([t.literal("admin"), t.literal("user")])
-  })
-}`,
-  },
-  {
-    step: "02",
-    pkg: "@nifrajs/core/server",
-    title: "Mount the Typed Router",
-    body: "Implement the endpoint. Path parameters are automatically parsed from the literal path, and the incoming request body and query parameters are typechecked at the runtime boundary.",
-    code: `import { server } from "@nifrajs/core/server"
-import { GetUserSchema } from "./schema"
+const MORE_LINKS = [
+  { href: "/docs/types-first", label: "Types-first guide" },
+  { href: "/docs/security", label: "Security model" },
+  { href: "/benchmarks", label: "Benchmarks and method" },
+  { href: "/docs/webmcp", label: "WebMCP" },
+  { href: "/compare", label: "Compare" },
+] as const
 
-export const app = server()
-  .get("/users/:id", GetUserSchema, (c) => {
-    // c.params.id is typed as string
-    return { id: c.params.id, name: "Ada", role: "admin" }
-  })`,
-  },
-  {
-    step: "03",
-    pkg: "@nifrajs/client",
-    title: "Call from Frontend (No-Codegen)",
-    body: "Build the client using only the server's type signature. Autocomplete handles the paths, parameters, and payloads, while TypeScript ensures the frontend never goes out of sync with the backend.",
-    code: `import { client } from "@nifrajs/client"
-import type { app } from "./server"
-
-const api = client<typeof app>("https://api.example.com")
-
-// Typed call, autocompleted paths, compile-time checked
-const res = await api.users({ id: "123" }).get()
-if (res.ok) console.log(res.data.name)`,
-  },
-  {
-    step: "04",
-    pkg: "nifra mcp",
-    title: "Feed AI Agents Live Context",
-    body: "Coding agents write better code when they know the actual codebase rules. Nifra feeds Claude Code, Cursor, or Copilot your live routes and call signatures directly through a Model Context Protocol (MCP) server.",
-    code: `# Run once to register the Nifra MCP server with Claude Code
-$ claude mcp add nifra -- bunx nifra mcp
-
-# Claude can now query:
-# - nifra_context (live routes & schemas)
-# - nifra_run (in-process verification)`,
-  },
-  {
-    step: "05",
-    pkg: "nifra check",
-    title: "Enforce Seams in CI",
-    body: "Block breaking changes from merging. The Nifra linter analyzes client-server bindings and flags frontend-backend drift in a single command, keeping your pipeline green.",
-    code: `# Run linter and typecheck in your GitHub actions
-$ nifra check
-
-# Fails CI if a route signature was changed on the backend
-# but remains un-updated on the frontend client.`,
-  },
-]
-
-const ECOSYSTEM_FEATURES = [
-  {
-    pkg: "@nifrajs/auth",
-    title: "Session Authentication",
-    badge: "Better-Auth",
-    body: "First-class integration with Better-Auth. Preconfigured session middlewares, social logins, and typed roles.",
-    code: `import { auth } from "@nifrajs/auth"\n\nexport const app = server()\n  .use(auth.session())\n  .get("/me", (c) => c.session.user)`,
-  },
-  {
-    pkg: "@nifrajs/uploads",
-    title: "Direct S3/R2 Uploads",
-    badge: "Storage",
-    body: "Secure direct-to-cloud file uploads. Generates signed URLs for S3, Cloudflare R2, or Backblaze without proxying heavy buffers.",
-    code: `import { storage } from "@nifrajs/uploads"\n\nconst url = await storage.presign("avatars", {\n  key: "user-42.png",\n  maxSize: "5mb"\n})`,
-  },
-  {
-    pkg: "@nifrajs/cron",
-    title: "Cron & Background Tasks",
-    badge: "Scheduler",
-    body: "Define periodic cron tasks alongside HTTP handlers. Runs on serverless (Cloudflare triggers) and standalone Node/Bun.",
-    code: `import { cron } from "@nifrajs/cron"\n\nexport const job = cron("0 0 * * *", async () => {\n  await db.sessions.deleteExpired()\n})`,
-  },
-  {
-    pkg: "@nifrajs/otel",
-    title: "OpenTelemetry Tracing",
-    badge: "Observability",
-    body: "Request tracing and custom spans. Export traces to Honeycomb, Datadog, or Grafana Tempo with zero complex boilerplates.",
-    code: `import { otel } from "@nifrajs/otel"\n\nconst app = server()\n  .use(otel.trace({ serviceName: "nifra-api" }))`,
-  },
-  {
-    pkg: "@nifrajs/env",
-    title: "Safe Env Verification",
-    badge: "Validation",
-    body: "Verify environment variables at startup. Validates that API keys and configurations are present and correctly typed at boot.",
-    code: `import { checkEnv } from "@nifrajs/env"\nimport { t } from "@nifrajs/schema"\n\nexport const env = checkEnv({\n  DATABASE_URL: t.string(),\n  PORT: t.number({ default: 3000 })\n})`,
-  },
-  {
-    pkg: "@nifrajs/image",
-    title: "Dynamic Image Optimizer",
-    badge: "Media",
-    body: "On-the-fly resizing, WebP/AVIF formatting, quality compression, and CDN caching to optimize LCP load priority.",
-    code: `import { Image } from "@nifrajs/image"\n\n// optimized image component\n<Image src="/logo.png" width={800} height={400} priority />`,
-  },
-  {
-    pkg: "@nifrajs/i18n",
-    title: "Type-Safe i18n",
-    badge: "Localization",
-    body: "Dynamic pluralization and translations dictionary with automatic HTTP header language negotiation.",
-    code: `import { i18n } from "@nifrajs/i18n"\n\nconst { t } = i18n(c.locale)\nreturn { msg: t("welcome", { name: "Ada" }) }`,
-  },
-  {
-    pkg: "@nifrajs/content",
-    title: "MDX Documents Parser",
-    badge: "MDX Engine",
-    body: "Read Markdown/MDX files, parse frontmatter, validate schemas, and compile them to interactive UI components.",
-    code: `import { content } from "@nifrajs/content"\n\nconst posts = await content("posts")\n  .where({ status: "published" })\n  .all()`,
-  },
-  {
-    pkg: "@nifrajs/islets",
-    title: "Zero-JS Islands",
-    badge: "Performance",
-    body: "Static HTML pages with dynamic island scripts. Restores client interactivity without large JS hydration overhead.",
-    code: `import { islet } from "@nifrajs/islets"\n\n// zero client runtime by default\nexport const hydrate = false\nexport const islandScripts = [counter]`,
-  },
-]
-
-const max = (rows: ReadonlyArray<Record<string, number | string | boolean>>, key: string): number =>
-  Math.max(...rows.map((r) => (typeof r[key] === "number" ? (r[key] as number) : 0)))
-
-function Bar(props: { name: string; value: string; pct: number; you?: boolean }) {
-  return (
-    <div className={props.you ? "bar-row you" : "bar-row"}>
-      <span className="bar-name">{props.name}</span>
-      <span className="bar-track">
-        <span className="bar-fill" style={{ width: `${Math.max(props.pct, 3)}%` }} />
-      </span>
-      <span className="bar-value">{props.value}</span>
-    </div>
-  )
-}
-
-function InstallWidget() {
-  const command = "bun create nifra my-app"
+function InstallWidget(props: { command: string; label: string }) {
   return (
     <button
       className="install-widget"
       type="button"
-      data-copy-command={command}
-      aria-label="Copy installation command"
+      data-copy-command={props.command}
+      aria-label={props.label}
     >
       <span className="prompt">$</span>
-      <span className="command">{command}</span>
+      <span className="command">{props.command}</span>
       <span className="copy-btn">
-        <span className="copied-toast">Copied!</span>
+        <span className="copied-toast">Copied</span>
         <svg
           className="copy-icon"
           aria-hidden="true"
@@ -500,29 +514,152 @@ function InstallWidget() {
   )
 }
 
+// Four frames in one grid cell. Two hidden "autoplay" radios run the timed pass (the second exists
+// so Replay can restart it: a CSS animation only restarts when the rule that names it changes), and
+// one radio per step holds a frame still. No script.
+function HeroDemo() {
+  return (
+    <figure className="demo">
+      <input
+        type="radio"
+        name="demo-step"
+        id="demo-auto"
+        className="demo-radio"
+        aria-label="Play the walkthrough"
+        defaultChecked
+      />
+      <input
+        type="radio"
+        name="demo-step"
+        id="demo-auto-b"
+        className="demo-radio"
+        aria-label="Replay the walkthrough"
+      />
+      {DEMO_FRAMES.map((frame, index) => (
+        <input
+          key={frame.label}
+          type="radio"
+          name="demo-step"
+          id={`demo-${index + 1}`}
+          className="demo-radio"
+          aria-label={`Step ${index + 1}: ${frame.label}`}
+        />
+      ))}
+      <div className="demo-bar" aria-hidden="true">
+        <span className="code-window-dots">
+          <span className="code-window-dot red" />
+          <span className="code-window-dot yellow" />
+          <span className="code-window-dot green" />
+        </span>
+        <span className="demo-title">my-app - coding agent</span>
+        <span />
+      </div>
+      <div className="demo-steps">
+        {DEMO_FRAMES.map((frame, index) => (
+          <label
+            key={frame.label}
+            className="demo-step"
+            htmlFor={`demo-${index + 1}`}
+            data-step={index + 1}
+            style={cssVars({ "--n": index })}
+          >
+            <b>{index + 1}</b>
+            {frame.label}
+          </label>
+        ))}
+        <label className="demo-replay demo-replay-a" htmlFor="demo-auto">
+          Replay
+        </label>
+        <label className="demo-replay demo-replay-b" htmlFor="demo-auto-b">
+          Replay
+        </label>
+      </div>
+      <div className="demo-screen">
+        {DEMO_FRAMES.map((frame, index) => (
+          <div
+            key={frame.label}
+            className="demo-frame"
+            data-step={index + 1}
+            style={cssVars({ "--n": index })}
+          >
+            <div className="demo-body">
+              {frame.lines.map((line, i) => (
+                <div key={`${line.kind}:${line.text}`}>
+                  {line.file !== undefined ? <p className="demo-file">{line.file}</p> : null}
+                  <div
+                    className={line.gap === true ? "demo-line demo-gap" : "demo-line"}
+                    data-k={line.kind}
+                    style={cssVars({ "--i": i })}
+                  >
+                    <i aria-hidden="true">{DEMO_GUTTER[line.kind] ?? ""}</i>
+                    <span
+                      style={
+                        line.indent !== undefined ? { paddingLeft: `${line.indent}ch` } : undefined
+                      }
+                    >
+                      {line.text}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="demo-cap">{frame.caption}</p>
+          </div>
+        ))}
+      </div>
+      <figcaption className="sr-only">
+        One request followed through every gate: a coding agent is asked to rename a field and add a
+        route, nifra check fails on the stale client and the undeclared write, nifra assure names
+        the unauthenticated write, and one auth middleware turns every gate green.
+      </figcaption>
+    </figure>
+  )
+}
+
+function BarChart(props: { title: string; unit: string; bars: readonly RankedBar[] }) {
+  return (
+    <figure className="home-bars">
+      <h3>{props.title}</h3>
+      <p className="home-bars-unit">{props.unit}</p>
+      <ol>
+        {props.bars.map((bar) => (
+          <li key={bar.name} className="home-bar" data-you={bar.you ? "" : undefined}>
+            <span className="home-bar-name">{bar.name}</span>
+            <span className="home-bar-value">{formatRps(bar.value)}</span>
+            <span className="home-bar-track" aria-hidden="true">
+              <span className="home-bar-fill" style={cssVars({ "--w": bar.pct })} />
+            </span>
+          </li>
+        ))}
+      </ol>
+    </figure>
+  )
+}
+
 function FrameworkSwitcher() {
   return (
-    <div className="fw-switcher">
+    <div className="home-fw">
       {FW_TABS.map((tab, i) => (
         <input
           key={tab.key}
           type="radio"
-          name="fw-switch"
-          id={`fw-${tab.key}`}
-          className="fw-radio"
+          name="home-fw"
+          id={`home-fw-${tab.key}`}
+          className="home-fw-radio"
+          aria-label={tab.label}
           defaultChecked={i === 0}
         />
       ))}
-      <div className="fw-tabs" role="tablist" aria-label="UI framework">
+      <div className="home-fw-tabs">
         {FW_TABS.map((tab) => (
-          <label key={tab.key} htmlFor={`fw-${tab.key}`} className="fw-tab">
+          <label key={tab.key} htmlFor={`home-fw-${tab.key}`}>
             {tab.label}
           </label>
         ))}
       </div>
-      <div className="fw-panels">
+      <div className="home-fw-panels">
         {FW_TABS.map((tab) => (
-          <div key={tab.key} className={`fw-panel fw-panel-${tab.key}`}>
+          <div key={tab.key} className="home-fw-panel" data-fw={tab.key}>
             <CodeBlock code={tab.code} lang="ts" />
           </div>
         ))}
@@ -532,508 +669,296 @@ function FrameworkSwitcher() {
 }
 
 export default function Home() {
-  const frontendMax = max(HERO_SSR, "reqs")
-  const httpMax = max(HTTP_BENCH, "reqs")
   return (
     <>
-      <section id="hero" className="hero">
-        <div className="hero-copy">
-          <div className="hero-badge">
-            <span className="badge-dot" />
-            Agent-native framework · typed APIs · provable security
-          </div>
-          <h1>
-            The <em>AI-Native</em> TypeScript Framework.
-          </h1>
-          <p className="tagline">
-            Nifra gives agents the live map they need - MCP context, route-aware scaffolds,
-            self-verifying tools, a <strong>no-codegen typed client</strong> - and a{" "}
-            <strong>route-assurance gate</strong> so nothing they write ships an unproven route.
-            Start with a fast API, add a bounded agent backend and predictive UI, grow into SSR
-            across React, Solid, Vue, Preact, or Svelte, and deploy on Bun, Node, Deno, or the edge.
+      <section id="hero" className="home-hero">
+        <div className="home-hero-copy">
+          <p className="hero-badge">
+            <span className="badge-dot" aria-hidden="true" />
+            Open source, MIT licensed
           </p>
-          <div className="hero-actions">
-            <InstallWidget />
+          <h1>
+            The <b className="nowrap">AI-native</b> <span className="nowrap">full-stack</span>{" "}
+            TypeScript framework.
+          </h1>
+          <p className="home-lede">
+            Change a route, and the build fails until the client, the docs, the agent tools, and the
+            security policy agree. A change made by you or by a coding agent cannot{" "}
+            <span className="nowrap">half-land</span>.
+          </p>
+          <div className="home-install">
+            <InstallWidget command="bun create nifra my-app" label="Copy the install command" />
+          </div>
+          <div className="home-actions">
             <a className="button primary" href="/docs">
-              Get started <span aria-hidden="true">→</span>
+              Read the docs
             </a>
             <a className="button ghost" href="/play">
-              Try the playground
+              Open the playground
             </a>
           </div>
-          <p className="hero-fineprint">
-            No generated SDK. No stale route docs. No unproven routes. No lock-in.
-          </p>
+          <p className="home-fine">Runs on Bun, Node, Deno, and the edge.</p>
         </div>
-        <section className="hero-contract" aria-labelledby="hero-contract-title">
-          <div className="hero-contract-head">
-            <span className="kicker">Contract in · proof out</span>
-            <span className="hero-contract-status">
-              <span className="hero-contract-status-dot" aria-hidden="true" /> live
-            </span>
-          </div>
-          <h2 id="hero-contract-title">A route leaves the editor with evidence.</h2>
-          <div className="hero-contract-flow">
-            <div className="hero-contract-step">
-              <span className="hero-contract-mark" aria-hidden="true">
-                01
-              </span>
-              <div>
-                <span className="hero-contract-label">schema</span>
-                <code>{"t.object({ name: t.string() })"}</code>
-              </div>
-            </div>
-            <div className="hero-contract-step">
-              <span className="hero-contract-mark" aria-hidden="true">
-                02
-              </span>
-              <div>
-                <span className="hero-contract-label">route</span>
-                <code>POST /users</code>
-              </div>
-            </div>
-            <div className="hero-contract-step">
-              <span className="hero-contract-mark" aria-hidden="true">
-                03
-              </span>
-              <div>
-                <span className="hero-contract-label">compile gate</span>
-                <code>nifra_check</code>
-              </div>
-            </div>
-            <div className="hero-contract-step hero-contract-step-final">
-              <span className="hero-contract-mark" aria-hidden="true">
-                04
-              </span>
-              <div>
-                <span className="hero-contract-label">security gate</span>
-                <code>
-                  nifra_assure <span aria-hidden="true">✓</span>
-                </code>
-              </div>
-            </div>
-          </div>
-          <p className="hero-contract-note">
-            One live contract powers validation, types, clients, and the release proof your agents
-            cannot skip.
-          </p>
-        </section>
+        <HeroDemo />
       </section>
 
-      {/* VALUE ROW - lead with the why */}
-      <section className="value-row">
-        <div className="value-item">
-          <strong>Agents read your live API - and can't ship an unproven route</strong>
-          <span>
-            The same typed contract powers coding agents and user-facing agents: live context, typed
-            capabilities, real verification, and an assurance gate for every route.
-          </span>
-        </div>
-        <div className="value-item">
-          <strong>One schema, everything typed</strong>
-          <span>
-            A single schema produces runtime validation, the typed client, OpenAPI, and TypeScript
-            types. Change a route and the frontend stops compiling until you update it.
-          </span>
-        </div>
-        <div className="value-item">
-          <strong>Ship to any runtime</strong>
-          <span>
-            The same app runs on Bun, Node, Deno, Cloudflare, and Vercel - switching targets is one
-            line of adapter code.
-          </span>
-        </div>
+      <ul className="home-proof" aria-label="Measured results">
+        {PROOF_STATS.map((item) => (
+          <li key={item.label}>
+            <strong>{item.value}</strong>
+            <span>{item.label}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="home-proof-note">
+        <a href="/benchmarks">How these were measured</a>
+      </p>
+
+      <section id="sec-replaces" className="home-swap" aria-labelledby="sec-replaces-title">
+        <h2 id="sec-replaces-title" className="home-swap-title">
+          One framework in place of a stack you wire together.
+        </h2>
+        <ul className="home-swap-list">
+          {REPLACE_TOP.map(([old, pkg]) => (
+            <li key={old}>
+              <span className="replace-old">{old}</span>
+              <span className="replace-arrow" aria-hidden="true">
+                →
+              </span>
+              <code className="replace-pkg">{pkg}</code>
+            </li>
+          ))}
+        </ul>
+        <a className="home-link" href="#sec-ecosystem">
+          All {REPLACE_TOTAL} replacements
+        </a>
       </section>
 
-      <section className="agent-lifecycle" aria-labelledby="agent-lifecycle-title">
-        <div className="agent-lifecycle-head">
-          <span className="kicker">The agent lifecycle</span>
-          <h2 id="agent-lifecycle-title">Every AI edit follows the live contract.</h2>
+      <section id="sec-agent" className="home-band">
+        <div className="home-copy">
+          <p className="kicker">01 · Agent-native</p>
+          <h2>The same gates hold when an agent writes the code.</h2>
           <p>
-            Context in, verified change out. Each command reads the current workspace and leaves a
-            clearer handoff for the next one.
+            <code>nifra mcp</code> gives Claude Code, Cursor, and other MCP clients the live route
+            table, a scaffolder that puts files in the right place, and the same check and assure
+            gates your CI runs.
           </p>
+          <InstallWidget
+            command="claude mcp add nifra -- bunx nifra mcp"
+            label="Copy the MCP setup command"
+          />
+          <div className="home-band-links">
+            <a href="/docs/agents">Agent guide</a>
+            <a href="/docs/webmcp">WebMCP</a>
+          </div>
         </div>
-        <ol className="agent-lifecycle-list">
-          {AGENT_LOOP.map((item, index) => (
-            <li
-              className={`agent-lifecycle-step${index === AGENT_LOOP.length - 1 ? " agent-lifecycle-step-final" : ""}`}
-              key={item.command}
-            >
-              <span className="agent-lifecycle-index" aria-hidden="true">
-                {item.step}
+        <ol className="home-tools">
+          {AGENT_LOOP.map((tool) => (
+            <li key={tool.command}>
+              <span className="n" aria-hidden="true">
+                {tool.step}
               </span>
-              <div className="agent-lifecycle-copy">
-                <div className="agent-lifecycle-meta">
-                  <code>{item.command}</code>
-                  <span>{item.phase}</span>
-                </div>
-                <h3>{item.title}</h3>
-                <p>{item.body}</p>
+              <div>
+                <code>{tool.command}</code>
+                <strong>{tool.title}</strong>
+                <p>{tool.body}</p>
               </div>
             </li>
           ))}
         </ol>
-      </section>
-
-      {/* PROOF STRIP */}
-      <section className="proof">
-        {PROOF.map((p) => (
-          <div className="proof-item" key={p.label}>
-            <strong>{p.value}</strong>
-            <span>{p.label}</span>
-          </div>
-        ))}
-      </section>
-
-      {/* FEATURE 1: AI-AGENT FIRST */}
-      <section id="sec-agent" className="feature-showcase">
-        <div className="feature-info">
-          <span className="kicker">01 · Agent-Native</span>
-          <h2>Your agent reads the live app, not stale documentation.</h2>
-          <p>
-            Run <code>nifra mcp</code> and point Claude Code or Cursor at it: an integrated MCP
-            server plus a conventions file expose your project's live routes, schemas, examples, and
-            drift checks, so the agent reads the real API surface directly. It runs on your machine
-            - your code never leaves it. The same public surface also supports bounded agent turns,
-            resumable evidence, a coding-agent host, browser views, and A2A/AG-UI protocol bridges.
-            The docs tools are also hosted at <code>mcp.nifra.dev</code> for agents outside a
-            checkout.
-          </p>
-          <a href="/docs/agents" className="perf-link">
-            Explore the agent layer →
-          </a>
-        </div>
-        <CodeBlock code={AGENT_CODE} lang="ts" />
-      </section>
-
-      {/* FEATURE 2: AGENTIC UI */}
-      <section id="sec-agentic-ui" className="feature-showcase reverse">
-        <div className="feature-info">
-          <span className="kicker">02 · Agentic UI</span>
-          <h2>Let agents act in the interface—and make the state honest.</h2>
-          <p>
-            <code>@nifrajs/webmcp</code> adopts the browser's page-local WebMCP standard with an
-            explicit tool allowlist. Add a deterministic prediction and Nifra applies it atomically,
-            then commits, rolls back, or reports a conflict when authoritative server state arrives.
-            For longer-running agents, <code>@nifrajs/ag-ui</code> streams text, tool calls,
-            approvals, and shared state into the product UI. The normal human UI keeps working when
-            no agent host is present.
-          </p>
-          <a href="/docs/webmcp" className="perf-link">
-            Explore WebMCP &amp; predictive UI →
-          </a>
-        </div>
-        <CodeBlock code={AGENTIC_UI_CODE} lang="ts" />
-      </section>
-
-      {/* FEATURE 2.5: SOURCE-OWNED UI */}
-      <section id="sec-nifra-ui" className="feature-showcase">
-        <div className="feature-info">
-          <span className="kicker">02.5 · Nifra UI</span>
-          <h2>StyleX components that preserve agent intent.</h2>
-          <p>
-            Nifra UI is a separate, source-owned repository for agentic interfaces: 120 accessible
-            React primitives, semantic themes, an inspectable registry, a CLI, and MCP discovery.
-            Use it when the product UI needs to show what an agent knows, proposes, and is allowed
-            to do - without turning the design system into a black box.
-          </p>
-          <a
-            href="https://github.com/nifrajs/nifra-ui"
-            className="perf-link"
-            target="_blank"
-            rel="noreferrer"
+        <figure className="home-film">
+          {/* biome-ignore lint/a11y/useMediaCaption: a silent recording, so there is no audio to caption; the label and the figcaption describe it. */}
+          <video
+            controls
+            preload="none"
+            playsInline
+            poster="/assets/media/agent-gate.jpg"
+            width={1280}
+            height={840}
+            aria-label="Terminal recording: an agent's change fails nifra check, then nifra assure, then passes both"
           >
-            Explore the Nifra UI repository ↗
-          </a>
-        </div>
-        <CodeBlock code={NIFRA_UI_CODE} lang="ts" />
+            <source src="/assets/media/agent-gate.mp4" type="video/mp4" />
+          </video>
+          <figcaption>
+            A 60-second terminal recording against a real app. The agent's edits are replayed from
+            commits; every line of output is the CLI's own.
+          </figcaption>
+        </figure>
       </section>
 
-      {/* FEATURE 3: NO-CODEGEN CLIENT */}
-      <section id="sec-client" className="feature-showcase reverse">
-        <div className="feature-info">
-          <span className="kicker">03 · Type-Safe Client</span>
-          <h2>A client that makes API drift a compile error.</h2>
+      <section id="sec-client" className="home-section">
+        <div className="home-head">
+          <p className="kicker">02 · End-to-end types</p>
+          <h2>The client is inferred from the server.</h2>
           <p>
-            No code generators, no build steps, and no stale SDKs.{" "}
-            <code>client&lt;typeof app&gt;</code> infers paths, parameters, request bodies, and
-            responses directly from your server type. Any mismatch fails the build.
+            Import the app's type and the path, params, body, and response are typed. There is no
+            codegen step to forget and no schema file to drift.
           </p>
-          <a href="/docs/api" className="perf-link">
-            Explore the Typed Client →
-          </a>
         </div>
-        <CodeBlock code={CLIENT_CODE} lang="ts" />
+        <div className="home-duo">
+          <CodeBlock code={BACKEND_CODE} lang="ts" filename="server.ts" />
+          <CodeBlock code={CLIENT_CODE} lang="ts" filename="client.ts" />
+        </div>
       </section>
 
-      {/* FEATURE 4: MULTI-UI SSR - CSS-only framework switcher */}
-      <section id="sec-frontend" className="feature-showcase">
-        <div className="feature-info">
-          <span className="kicker">04 · Unified Frontend</span>
-          <h2>One full-stack engine. Five UI libraries.</h2>
+      <section id="sec-assure" className="home-section home-split">
+        <div className="home-copy">
+          <p className="kicker">03 · Assurance</p>
+          <h2>Security posture is a policy the build enforces.</h2>
           <p>
-            React, Solid, Vue, Preact, and Svelte all sit on the same render engine. Loaders,
-            actions, streaming, prefetching, and islands are identical across all five - switching
-            is a single import. No meta-framework lock-in.
+            Declare what a route may touch, write the rule once, and{" "}
+            <code className="inline">nifra assure</code> names every route that breaks it. An
+            unauthenticated write is a failed build, not a review comment.
           </p>
-          <a href="/docs/frameworks" className="perf-link">
-            Compare the adapters →
+          <ul className="home-list">
+            {GATES.map((gate) => (
+              <li key={gate.command}>
+                <code>{gate.command}</code>
+                <span>{gate.body}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <CodeBlock code={ASSURE_CODE} lang="ts" filename="nifra.assurance.ts" />
+      </section>
+
+      <section id="sec-play" className="home-section">
+        <div className="home-head">
+          <p className="kicker">04 · Try it</p>
+          <h2>Run a real Nifra app without installing anything.</h2>
+          <p>
+            This is the real <code className="inline">@nifrajs/core</code>, running in this tab.
+            Nothing is sent to a server. Pick an example or edit the code, then press Run.
+          </p>
+        </div>
+        <div className="home-play">
+          <iframe src="/play?embed=1" title="Nifra playground" loading="lazy" />
+        </div>
+        <a className="home-link" href="/play">
+          Open the full playground
+        </a>
+      </section>
+
+      <section id="sec-perf" className="home-section">
+        <div className="home-head">
+          <p className="kicker">05 · Performance</p>
+          <h2>Measured against the frameworks you would otherwise pick.</h2>
+          <p>
+            Same machine, same workload, every framework in its production mode. The method and the
+            full tables are on the benchmarks page.
+          </p>
+        </div>
+        <div className="home-bars-grid">
+          <BarChart
+            title="Dynamic SSR, React"
+            unit="Requests per second, higher is better"
+            bars={SSR_BARS}
+          />
+          <BarChart
+            title="JSON API on Node"
+            unit="Requests per second on GET /users/:id, higher is better"
+            bars={NODE_API_BARS}
+          />
+        </div>
+        <p className="home-bars-note">
+          Node is shown for the API chart. The Bun and Deno tables, including the rows where Nifra
+          is not first, are on the <a href="/benchmarks">benchmarks page</a>.
+        </p>
+        <ul className="home-vs" aria-label="Nifra compared with other frameworks">
+          {VERSUS.map((item) => (
+            <li key={item.slug}>
+              <a href={`/compare/${item.slug}`}>
+                <strong>Nifra vs {item.name}</strong>
+                <p>{item.body}</p>
+                <span className="home-vs-go">
+                  Read the comparison <span aria-hidden="true">→</span>
+                </span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section id="sec-runtime" className="home-section home-split">
+        <div className="home-copy">
+          <p className="kicker">06 · Portable</p>
+          <h2>One app. Five UI frameworks, four runtime families.</h2>
+          <p>
+            The adapter is one line. Loaders, actions, streaming, and islands stay the same across
+            React, Solid, Vue, Preact, and Svelte, and the same app runs on Bun, Node, Deno, and the
+            edge.
+          </p>
+          <ul className="home-runtimes">
+            {RUNTIME_CARDS.map((runtime) => (
+              <li key={runtime.name}>
+                <strong>{runtime.name}</strong>
+                <div>
+                  <span>{runtime.note}</span>
+                  <code>{runtime.deploy}</code>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <a className="home-link" href="/frameworks">
+            See the five-framework demo
           </a>
         </div>
         <FrameworkSwitcher />
       </section>
 
-      {/* FEATURE 5: MULTI-RUNTIME */}
-      <section id="sec-runtime" className="feature-showcase reverse">
-        <div className="feature-info">
-          <span className="kicker">05 · Multi-Runtime</span>
-          <h2>Deploy anywhere. Bun, Node, Deno, or the Edge.</h2>
+      <section id="sec-ecosystem" className="home-section">
+        <div className="home-head">
+          <p className="kicker">07 · Ecosystem</p>
+          <h2>Fewer dependencies to keep in agreement.</h2>
           <p>
-            Nifra is built on Web-standard routing and fetch APIs. Run on Bun for blazing-fast
-            development, then deploy to Node, Deno, Cloudflare Workers, or Vercel Edge with a single
-            line of adapter code.
-          </p>
-          <a href="/docs/deployment" className="perf-link">
-            View deployment targets →
-          </a>
-        </div>
-        <CodeBlock code={RUNTIME_CODE} lang="ts" />
-      </section>
-
-      {/* RUNTIME GRID */}
-      <section className="section runtime-section">
-        <div className="runtime-grid">
-          {RUNTIME_CARDS.map((r) => (
-            <article className="runtime-tile" key={r.name}>
-              <span className="runtime-tile-name">{r.name}</span>
-              <span className="runtime-tile-note">{r.note}</span>
-              <code className="runtime-tile-code">{r.deploy}</code>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      {/* FEATURE 6: HARDENED BACKEND */}
-      <section id="sec-backend" className="feature-showcase">
-        <div className="feature-info">
-          <span className="kicker">06 · Hardened APIs</span>
-          <h2>Production security built into the framework.</h2>
-          <p>
-            Zero-dependency middleware for security headers, cookies, CSRF, JWT authentication, rate
-            limiting, CORS, and WebSocket topic pub/sub ships in the box. Compose it at the app or
-            route boundary.
-          </p>
-          <a href="/docs/security" className="perf-link">
-            View Middleware options →
-          </a>
-        </div>
-        <CodeBlock code={BACKEND_CODE} lang="ts" />
-      </section>
-
-      {/* FEATURE 7: ROUTE ASSURANCE */}
-      <section id="sec-assure" className="feature-showcase reverse">
-        <div className="feature-info">
-          <span className="kicker">07 · Route Assurance</span>
-          <h2>Every route proves its security posture - or the build fails.</h2>
-          <p>
-            <code>nifra assure</code> classifies every real route against a policy file and fails CI
-            naming exactly what evidence is missing - an unauthenticated write, an unvalidated body,
-            an undeclared database effect. Linters pattern-match source and spec linters check a
-            document that can lie; this gate reads the live route graph. No other framework ships
-            it.
-          </p>
-          <a href="/docs/capabilities" className="perf-link">
-            Read about Assurance →
-          </a>
-        </div>
-        <CodeBlock code={ASSURE_CODE} lang="ts" />
-      </section>
-
-      {/* FEATURES ECOSYSTEM GRID SECTION */}
-      <section id="sec-ecosystem" className="section">
-        <div
-          className="section-head"
-          style={{ textAlign: "center", maxWidth: "760px", margin: "0 auto 48px" }}
-        >
-          <span className="kicker">Ecosystem Packages</span>
-          <h2>A complete framework, batteries included.</h2>
-          <p>
-            Nifra isn't just a router-it's a modular suite of type-safe packages built for high
-            performance, edge scalability, and robust developer ergonomics.
-          </p>
-          <p className="note" style={{ marginTop: 14 }}>
-            Common combos: <code>auth</code> + <code>uploads</code> for user content ·{" "}
-            <code>cron</code> + <code>otel</code> for observable background jobs · <code>env</code>{" "}
-            + <code>i18n</code> + <code>content</code> for a localized site.
+            The common parts of a TypeScript stack ship as optional @nifrajs packages that share one
+            set of types.
           </p>
         </div>
-
-        <div className="ecosystem-grid">
-          {ECOSYSTEM_FEATURES.map((f) => (
-            <article className="ecosystem-card" key={f.pkg}>
-              <div className="ecosystem-card-head">
-                <code className="ecosystem-pkg">{f.pkg}</code>
-                <span className="ecosystem-badge">{f.badge}</span>
-              </div>
-              <h3>{f.title}</h3>
-              <p>{f.body}</p>
-              <CodeBlock code={f.code} lang="ts" chrome={false} />
-            </article>
-          ))}
-        </div>
-
-        <div style={{ textAlign: "center", margin: "64px auto 0" }}>
-          <h3 style={{ fontSize: 26, marginBottom: 10 }}>Dependencies Nifra replaces</h3>
-          <p className="note" style={{ maxWidth: 720, margin: "0 auto" }}>
-            Each stack on the left is one you would otherwise assemble and keep in sync yourself.
-            Everything else on npm - Stripe, OpenAI, Drizzle, Prisma - needs no integration at all:
-            handlers are plain TypeScript, so it works as-is (
-            <a href="/docs/integrations">see integrations</a>).
-          </p>
-          <div className="replace-groups">
-            {REPLACE_GROUPS.map((group) => (
-              <div className="replace-cat" key={group.title}>
-                <div className="replace-cat-head">{group.title}</div>
-                {group.rows.map(([instead, pkg]) => (
-                  <div className="replace-row" key={pkg + instead}>
-                    <span className="replace-old">{instead}</span>
-                    <span className="replace-arrow" aria-hidden="true">
-                      →
-                    </span>
-                    <code className="replace-pkg">{pkg}</code>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* BENCHMARKS SECTION */}
-      <section id="sec-benchmarks" className="section">
-        <div
-          className="section-head"
-          style={{ textAlign: "center", maxWidth: "760px", margin: "0 auto 48px" }}
-        >
-          <span className="kicker">Performance &amp; Speed</span>
-          <h2>Screamingly fast, frontend and backend.</h2>
-          <p>
-            Nifra runs close to raw Bun/Node speed. Full-stack SSR reaches up to{" "}
-            {MAX_SSR_MULTIPLIER} the throughput of comparable meta-frameworks on Node, while the
-            backend router matches the fastest Node frameworks - tens of thousands of requests per
-            second on a single core.
-          </p>
-        </div>
-
-        <div className="bench-duo">
-          <figure className="bench-card">
-            <figcaption>
-              <span className="bench-kicker">Full-stack SSR · req/s</span>
-              <span className="bench-sub">
-                React, rendered per request - Nifra (Bun + Node) vs Next.js + Remix
-              </span>
-            </figcaption>
-            <div className="bars">
-              {HERO_SSR.map((r) => (
-                <Bar
-                  key={r.name}
-                  name={r.name}
-                  value={r.reqs.toLocaleString()}
-                  pct={(r.reqs / frontendMax) * 100}
-                  you={r.you}
-                />
+        <div className="replace-groups">
+          {REPLACE_GROUPS.map((group) => (
+            <div key={group.title} className="replace-cat">
+              <div className="replace-cat-head">{group.title}</div>
+              {group.rows.map(([old, pkg]) => (
+                <div key={old} className="replace-row">
+                  <span className="replace-old">{old}</span>
+                  <span className="replace-arrow" aria-hidden="true">
+                    →
+                  </span>
+                  <code className="replace-pkg">{pkg}</code>
+                </div>
               ))}
             </div>
-          </figure>
-
-          <figure className="bench-card">
-            <figcaption>
-              <span className="bench-kicker">Node Frameworks · req/s</span>
-              <span className="bench-sub">JSON GET /users/:id · Same machine throughput</span>
-            </figcaption>
-            <div className="bars">
-              {HTTP_BENCH.map((r) => (
-                <Bar
-                  key={r.name}
-                  name={r.name}
-                  value={r.reqs.toLocaleString()}
-                  pct={(r.reqs / httpMax) * 100}
-                  you={r.you}
-                />
-              ))}
-            </div>
-          </figure>
-        </div>
-        <p className="note" style={{ textAlign: "center", marginTop: 24 }}>
-          See detailed memory, cold-boot, and payload size metrics on the{" "}
-          <a href="/benchmarks">benchmarks page</a>.
-        </p>
-      </section>
-
-      {/* THE DEVELOPMENT LIFECYCLE TIMELINE */}
-      <section id="sec-timeline" className="section timeline-section">
-        <div
-          className="section-head"
-          style={{ textAlign: "center", maxWidth: "680px", margin: "0 auto 40px" }}
-        >
-          <span className="kicker">The Anti-Drift Lifecycle</span>
-          <h2>One schema is the single source of truth.</h2>
-          <p>
-            Define a contract once. Nifra keeps validation, types, the typed client, OpenAPI, and
-            your agents in sync with it across the stack.
-          </p>
-        </div>
-
-        <div className="source-fan">
-          <div className="source-core">
-            <code>t.object(&#123;…&#125;)</code>
-            <span>one schema</span>
-          </div>
-          <div className="source-outputs">
-            {SOURCE_OUTPUTS.map((o) => (
-              <div className="source-output" key={o.title}>
-                <strong>{o.title}</strong>
-                <span>{o.note}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="timeline">
-          {TIMELINE_STEPS.map((s) => (
-            <div className="timeline-step" key={s.step}>
-              <div className="timeline-marker">{s.step}</div>
-              <div className="timeline-info">
-                <code className="package-badge">{s.pkg}</code>
-                <h3>{s.title}</h3>
-                <p>{s.body}</p>
-              </div>
-              <div className="timeline-code">
-                <CodeBlock code={s.code} lang={s.step === "04" || s.step === "05" ? "sh" : "ts"} />
-              </div>
-            </div>
           ))}
         </div>
+        <a className="home-link" href="/docs/integrations">
+          Browse every package
+        </a>
       </section>
 
-      {/* CLOSING CTA */}
-      <section id="sec-cta" className="cta">
-        <span className="kicker">Ready when you are</span>
-        <h2>Build something that survives the next AI edit.</h2>
-        <p>
-          One command scaffolds a typed Nifra app - start as a fast API, add agentic behavior when
-          you need it, and let every human or agent interaction run against the live contract.
-        </p>
-        <div className="hero-actions">
-          <InstallWidget />
-          <a className="button primary" href="/docs">
-            Get started <span aria-hidden="true">→</span>
-          </a>
-          <a className="button ghost" href="/benchmarks">
-            See the benchmarks
-          </a>
+      <section id="sec-cta" className="home-end">
+        <div className="home-copy">
+          <h2>Start with one route.</h2>
+          <p>
+            Scaffold an app, change a route, and watch the build tell you what else has to change.
+          </p>
+          <div className="home-actions">
+            <InstallWidget command="bun create nifra my-app" label="Copy the install command" />
+            <a className="button primary" href="/docs">
+              Read the docs
+            </a>
+          </div>
         </div>
+        <ul className="home-more">
+          {MORE_LINKS.map((link) => (
+            <li key={link.href}>
+              <a href={link.href}>
+                {link.label}
+                <span aria-hidden="true">→</span>
+              </a>
+            </li>
+          ))}
+        </ul>
       </section>
     </>
   )

@@ -45,6 +45,8 @@ cpSync(`${dir}/public/logo-mark.png`, `${out}/static/assets/logo-mark.png`)
 cpSync(`${dir}/public/og.jpg`, `${out}/static/assets/og.jpg`)
 cpSync(`${dir}/public/background.png`, `${out}/static/assets/background.png`)
 cpSync(`${dir}/public/nifra-bot-avatar.png`, `${out}/static/assets/nifra-bot-avatar.png`)
+cpSync(`${dir}/public/fonts`, `${out}/static/assets/fonts`, { recursive: true })
+cpSync(`${dir}/public/media`, `${out}/static/assets/media`, { recursive: true })
 rmSync(`${dir}/.build-vercel`, { recursive: true, force: true })
 
 // Build Output API v3: the function is an Edge runtime entry; routing serves real files first

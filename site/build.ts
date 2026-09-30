@@ -54,6 +54,9 @@ cpSync(`${dir}/public/logo-mark.png`, `${dist}/assets/logo-mark.png`)
 cpSync(`${dir}/public/og.jpg`, `${dist}/assets/og.jpg`)
 cpSync(`${dir}/public/background.png`, `${dist}/assets/background.png`)
 cpSync(`${dir}/public/nifra-bot-avatar.png`, `${dist}/assets/nifra-bot-avatar.png`)
+// Self-hosted typefaces (content-hashed; written by build-fonts.ts, referenced from data/fonts.json).
+cpSync(`${dir}/public/fonts`, `${dist}/assets/fonts`, { recursive: true })
+cpSync(`${dir}/public/media`, `${dist}/assets/media`, { recursive: true })
 // AI-readable docs (llmstxt.org): the index + the full single-file reference, served at the site root
 // so an LLM can fetch /llms.txt and /llms-full.txt. Canonical source is the repo root (one per repo).
 cpSync(`${dir}/../llms.txt`, `${dist}/llms.txt`)
