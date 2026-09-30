@@ -10009,6 +10009,13 @@
     "doc": "/**\n * Match a package name against a declaration entry: an exact name, or a `@scope/*` prefix.\n *\n * Exported because the enforcement and the CHECK must agree on it exactly. If `nifra check` decided\n * coverage by its own rule, a package could be reported as deduplicated while the plugin walked past\n * it - which is worse than no check at all, because it is a green light for a broken graph.\n */"
   },
   {
+    "name": "matchMixedSegment",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function matchMixedSegment(shape: MixedSegmentShape, segment: string, out: string[]): boolean;",
+    "doc": "/**\n * Match ONE path segment against a mixed shape, in a single left-to-right pass.\n *\n * On a match the captures are appended to `out` in parameter order and the result is `true`. On a miss\n * `out` is left exactly as it was and the result is `false`.\n *\n * The rule: the leading literal must start the segment and the trailing literal must end it; every\n * parameter takes at least one character; and each literal between two parameters is taken at its\n * FIRST occurrence that leaves the parameter before it non-empty. The last parameter takes what\n * remains. Two parameters with nothing between them give the first one a single character.\n *\n * That is the match an anchored pattern with lazy captures selects, reached without trying the\n * alternatives: taking a literal earlier only ever hands more text to the parameter after it, so if\n * any placement matches, the earliest one does. The work is therefore bounded by the segment's length\n * however many parameters the shape has - a segment is request-controlled and must not be able to buy\n * more than one pass.\n *\n * `segment` must not contain `/`.\n */"
+  },
+  {
     "name": "matchRoutePattern",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -10734,11 +10741,25 @@
     "doc": "/** One piece of a {@link RoutePatternSegment} of kind `mixed`, in left-to-right order. */"
   },
   {
+    "name": "mixedSegmentShape",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function mixedSegmentShape(parts: readonly MixedPart[]): MixedSegmentShape;",
+    "doc": "/** Lay a mixed segment's parts out as a {@link MixedSegmentShape}. Done once, at registration. */"
+  },
+  {
+    "name": "MixedSegmentShape",
+    "kind": "type",
+    "package": "@nifrajs/core",
+    "signature": "export type MixedSegmentShape = readonly string[];",
+    "doc": "/**\n * A mixed segment laid out for matching: the literals around its parameters, in order. The first\n * entry is the literal before the first parameter, and each entry after it is the literal following\n * the next parameter, so a segment with N parameters has N + 1 entries. An entry is `\"\"` where the\n * segment has no literal in that position - at either end, or between two parameters that touch.\n *\n * `/v:major.:minor` is `[\"v\", \".\", \"\"]`; `/:name.json` is `[\"\", \".json\"]`.\n */"
+  },
+  {
     "name": "mixedSegmentSource",
     "kind": "function",
     "package": "@nifrajs/core",
     "signature": "export declare function mixedSegmentSource(parts: readonly MixedPart[]): string;",
-    "doc": "/** The regex source matching one segment's worth of a mixed pattern, with a capture per parameter. */"
+    "doc": "/**\n * A canonical string for one mixed segment's shape: the anchored-regex source that describes what the\n * segment accepts, with a capture per parameter. Two segments with the same source are the same shape.\n *\n * It is an identity and an ordering key. Matching goes through {@link matchMixedSegment}, which accepts\n * exactly what this source describes without compiling it.\n */"
   },
   {
     "name": "MockableApp",
@@ -15377,14 +15398,14 @@
     "name": "Router",
     "kind": "class",
     "package": "@nifrajs/core",
-    "signature": "export declare class Router<T> {\n    private readonly root;\n    /**\n     * Fast path: fully-static paths (no `:param`/`*`) resolve in a single map\n     * lookup keyed by the full path, skipping the trie walk entirely. Values are\n     * the same `Terminal` objects held in the trie, so adding a method later\n     * updates both views at once.\n     */\n    private readonly staticRoutes;\n    /**\n     * Scratch storage for param/wildcard captures during a synchronous trie walk. `find()` copies the\n     * values into the returned params object before clearing this array, so returned matches never share\n     * mutable state. Kept per Router instance, not module-global, to avoid cross-app coupling.\n     */\n    private readonly paramValuesScratch;\n    constructor();\n    /**\n     * Register a payload for `method` + `path`. Throws {@link RouteConfigError}\n     * (boot-time, L2) on a duplicate route, a malformed pattern, or conflicting\n     * parameter names for the same path shape.\n     */\n    add(method: Method, pattern: string | CompiledRoutePattern, payload: T): void;\n    /**\n     * Resolve `method` + `path`. Tolerant of a missing leading slash and of\n     * method casing. Never throws.\n     */\n    find(method: string, path: string): RouterMatch<T>;\n    private findDynamic;\n    private maybeCacheDynamicMatch;\n}",
+    "signature": "export declare class Router<T> {\n    private readonly root;\n    /**\n     * Fast path: fully-static paths (no `:param`/`*`) resolve in a single map\n     * lookup keyed by the full path, skipping the trie walk entirely. Values are\n     * the same `Terminal` objects held in the trie, so adding a method later\n     * updates both views at once.\n     */\n    private readonly staticRoutes;\n    /**\n     * Scratch storage for param/wildcard captures during a synchronous trie walk. `find()` copies the\n     * values into the returned params object before clearing this array, so returned matches never share\n     * mutable state. Kept per Router instance, not module-global, to avoid cross-app coupling.\n     */\n    private readonly paramValuesScratch;\n    constructor();\n    /**\n     * Register a payload for `method` + `path`. Throws {@link RouteConfigError}\n     * (boot-time, L2) on a duplicate route, a malformed pattern, or conflicting\n     * parameter names for the same path shape.\n     */\n    add(method: Method, pattern: string | CompiledRoutePattern, payload: T): void;\n    /**\n     * Resolve `method` + `path`. Tolerant of a missing leading slash. The method is compared exactly:\n     * tokens are case-sensitive, so `get` does not reach a `GET` route. Never throws.\n     */\n    find(method: string, path: string): RouterMatch<T>;\n    private findDynamic;\n    private maybeCacheDynamicMatch;\n}",
     "doc": "/**\n * Radix-style segment trie router. Matching precedence is static > param >\n * wildcard. Parameter/wildcard values are returned RAW (not percent-decoded);\n * the server boundary decodes and rejects malformed encodings with a 400,\n * keeping this layer pure and allocation-light.\n *\n * @typeParam T - the payload stored per (method, path); a route descriptor in\n * practice, but the router is agnostic to it.\n */"
   },
   {
     "name": "Router",
     "kind": "class",
     "package": "nifra",
-    "signature": "export declare class Router<T> {\n    private readonly root;\n    /**\n     * Fast path: fully-static paths (no `:param`/`*`) resolve in a single map\n     * lookup keyed by the full path, skipping the trie walk entirely. Values are\n     * the same `Terminal` objects held in the trie, so adding a method later\n     * updates both views at once.\n     */\n    private readonly staticRoutes;\n    /**\n     * Scratch storage for param/wildcard captures during a synchronous trie walk. `find()` copies the\n     * values into the returned params object before clearing this array, so returned matches never share\n     * mutable state. Kept per Router instance, not module-global, to avoid cross-app coupling.\n     */\n    private readonly paramValuesScratch;\n    constructor();\n    /**\n     * Register a payload for `method` + `path`. Throws {@link RouteConfigError}\n     * (boot-time, L2) on a duplicate route, a malformed pattern, or conflicting\n     * parameter names for the same path shape.\n     */\n    add(method: Method, pattern: string | CompiledRoutePattern, payload: T): void;\n    /**\n     * Resolve `method` + `path`. Tolerant of a missing leading slash and of\n     * method casing. Never throws.\n     */\n    find(method: string, path: string): RouterMatch<T>;\n    private findDynamic;\n    private maybeCacheDynamicMatch;\n}",
+    "signature": "export declare class Router<T> {\n    private readonly root;\n    /**\n     * Fast path: fully-static paths (no `:param`/`*`) resolve in a single map\n     * lookup keyed by the full path, skipping the trie walk entirely. Values are\n     * the same `Terminal` objects held in the trie, so adding a method later\n     * updates both views at once.\n     */\n    private readonly staticRoutes;\n    /**\n     * Scratch storage for param/wildcard captures during a synchronous trie walk. `find()` copies the\n     * values into the returned params object before clearing this array, so returned matches never share\n     * mutable state. Kept per Router instance, not module-global, to avoid cross-app coupling.\n     */\n    private readonly paramValuesScratch;\n    constructor();\n    /**\n     * Register a payload for `method` + `path`. Throws {@link RouteConfigError}\n     * (boot-time, L2) on a duplicate route, a malformed pattern, or conflicting\n     * parameter names for the same path shape.\n     */\n    add(method: Method, pattern: string | CompiledRoutePattern, payload: T): void;\n    /**\n     * Resolve `method` + `path`. Tolerant of a missing leading slash. The method is compared exactly:\n     * tokens are case-sensitive, so `get` does not reach a `GET` route. Never throws.\n     */\n    find(method: string, path: string): RouterMatch<T>;\n    private findDynamic;\n    private maybeCacheDynamicMatch;\n}",
     "doc": "/**\n * Radix-style segment trie router. Matching precedence is static > param >\n * wildcard. Parameter/wildcard values are returned RAW (not percent-decoded);\n * the server boundary decodes and rejects malformed encodings with a 400,\n * keeping this layer pure and allocation-light.\n *\n * @typeParam T - the payload stored per (method, path); a route descriptor in\n * practice, but the router is agnostic to it.\n */"
   },
   {

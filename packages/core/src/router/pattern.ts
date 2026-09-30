@@ -34,32 +34,46 @@ export type RoutePatternMatch =
   | { readonly matched: true; readonly params: Record<string, string> }
   | { readonly matched: false; readonly reason: "not-found" | "malformed" }
 
-/**
- * Regex per compiled pattern, derived on first use. The core trie matches by descending segments and
- * never asks for one, so building it during {@link compileRoutePattern} would charge every server's
- * boot for the browser/mock adapters alone. Keyed by the frozen pattern, so the cache dies with it.
- */
-const REGEX_CACHE = new WeakMap<CompiledRoutePattern, RegExp>()
+/** What {@link matchRoutePattern} needs per compiled pattern: the whole-path regex, and a shape for
+ * each mixed segment (indexed like `segments`, `undefined` elsewhere). */
+interface PatternMatcher {
+  readonly regex: RegExp
+  readonly shapes: readonly (MixedSegmentShape | undefined)[]
+}
 
-function regexOf(compiled: CompiledRoutePattern): RegExp {
-  let regex = REGEX_CACHE.get(compiled)
-  if (regex === undefined) {
+/**
+ * Matcher per compiled pattern, derived on first use. The core trie matches by descending segments
+ * and never asks for one, so building it during {@link compileRoutePattern} would charge every
+ * server's boot for the browser/mock adapters alone. Keyed by the frozen pattern, so the cache dies
+ * with it.
+ */
+const MATCHER_CACHE = new WeakMap<CompiledRoutePattern, PatternMatcher>()
+
+function matcherOf(compiled: CompiledRoutePattern): PatternMatcher {
+  let matcher = MATCHER_CACHE.get(compiled)
+  if (matcher === undefined) {
     if (compiled[COMPILED_ROUTE_PATTERN] !== true) {
       throw new TypeError("route pattern was not produced by compileRoutePattern()")
     }
+    // A mixed segment is captured WHOLE here and taken apart by `matchMixedSegment` afterwards. Its
+    // parameters never become separate lazy groups in this regex: several of those in one segment
+    // make the engine retry every split of the text between them, and the text is the request's.
     const parts = compiled.segments.map((segment) =>
       segment.kind === "static"
         ? escapeRegex(segment.value)
-        : segment.kind === "param"
-          ? "([^/]+)"
-          : segment.kind === "mixed"
-            ? mixedSegmentSource(segment.parts)
-            : "(.+)",
+        : segment.kind === "wildcard"
+          ? "(.+)"
+          : "([^/]+)",
     )
-    regex = new RegExp(parts.length === 0 ? "^/$" : `^/${parts.join("/")}$`)
-    REGEX_CACHE.set(compiled, regex)
+    matcher = {
+      regex: new RegExp(parts.length === 0 ? "^/$" : `^/${parts.join("/")}$`),
+      shapes: compiled.segments.map((segment) =>
+        segment.kind === "mixed" ? mixedSegmentShape(segment.parts) : undefined,
+      ),
+    }
+    MATCHER_CACHE.set(compiled, matcher)
   }
-  return regex
+  return matcher
 }
 
 function validParamName(name: string): boolean {
@@ -140,7 +154,13 @@ function splitMixed(value: string): MixedPart[] | undefined {
   return parts
 }
 
-/** The regex source matching one segment's worth of a mixed pattern, with a capture per parameter. */
+/**
+ * A canonical string for one mixed segment's shape: the anchored-regex source that describes what the
+ * segment accepts, with a capture per parameter. Two segments with the same source are the same shape.
+ *
+ * It is an identity and an ordering key. Matching goes through {@link matchMixedSegment}, which accepts
+ * exactly what this source describes without compiling it.
+ */
 export function mixedSegmentSource(parts: readonly MixedPart[]): string {
   let source = ""
   for (const part of parts) {
@@ -151,6 +171,80 @@ export function mixedSegmentSource(parts: readonly MixedPart[]): string {
     source += part.t === "lit" ? escapeRegex(part.v) : "([^/]+?)"
   }
   return source
+}
+
+/**
+ * A mixed segment laid out for matching: the literals around its parameters, in order. The first
+ * entry is the literal before the first parameter, and each entry after it is the literal following
+ * the next parameter, so a segment with N parameters has N + 1 entries. An entry is `""` where the
+ * segment has no literal in that position - at either end, or between two parameters that touch.
+ *
+ * `/v:major.:minor` is `["v", ".", ""]`; `/:name.json` is `["", ".json"]`.
+ */
+export type MixedSegmentShape = readonly string[]
+
+/** Lay a mixed segment's parts out as a {@link MixedSegmentShape}. Done once, at registration. */
+export function mixedSegmentShape(parts: readonly MixedPart[]): MixedSegmentShape {
+  // Two literals are never adjacent, so a literal fills the open slot and a parameter opens the next.
+  const shape = [""]
+  for (const part of parts) {
+    if (part.t === "lit") shape[shape.length - 1] = part.v
+    else shape.push("")
+  }
+  return shape
+}
+
+/**
+ * Match ONE path segment against a mixed shape, in a single left-to-right pass.
+ *
+ * On a match the captures are appended to `out` in parameter order and the result is `true`. On a miss
+ * `out` is left exactly as it was and the result is `false`.
+ *
+ * The rule: the leading literal must start the segment and the trailing literal must end it; every
+ * parameter takes at least one character; and each literal between two parameters is taken at its
+ * FIRST occurrence that leaves the parameter before it non-empty. The last parameter takes what
+ * remains. Two parameters with nothing between them give the first one a single character.
+ *
+ * That is the match an anchored pattern with lazy captures selects, reached without trying the
+ * alternatives: taking a literal earlier only ever hands more text to the parameter after it, so if
+ * any placement matches, the earliest one does. The work is therefore bounded by the segment's length
+ * however many parameters the shape has - a segment is request-controlled and must not be able to buy
+ * more than one pass.
+ *
+ * `segment` must not contain `/`.
+ */
+export function matchMixedSegment(
+  shape: MixedSegmentShape,
+  segment: string,
+  out: string[],
+): boolean {
+  const last = shape.length - 1
+  const head = shape[0]!
+  const tail = shape[last]!
+  let at = head.length
+  const end = segment.length - tail.length
+  // The first parameter needs a character between the two end literals. This also refuses end
+  // literals that would overlap in the text (`a.:x.b` against `a.b`).
+  if (at >= end) return false
+  if (at !== 0 && !segment.startsWith(head)) return false
+  if (end !== segment.length && !segment.endsWith(tail)) return false
+  const base = out.length
+  for (let i = 1; i < last; i++) {
+    const separator = shape[i]!
+    // An empty separator is found right here, which gives the parameter before it one character.
+    const found = segment.indexOf(separator, at + 1)
+    const next = found + separator.length
+    // The parameter after this separator needs a character before the trailing literal. A first
+    // occurrence that leaves none means every later one does too.
+    if (found === -1 || next >= end) {
+      out.length = base
+      return false
+    }
+    out.push(segment.slice(at, found))
+    at = next
+  }
+  out.push(segment.slice(at, end))
+  return true
 }
 
 /** Parse and validate Nifra's strict route grammar once. Trailing slashes remain significant. */
@@ -287,7 +381,9 @@ export function compareMixedPartsSpecificity(
     }
   }
 
-  return order(mixedSegmentSource(left), mixedSegmentSource(right))
+  // Same kinds in the same order with the same literals: the two are one shape. Parameter names do
+  // not enter into what a segment matches, so they do not order it either.
+  return 0
 }
 
 /** Core precedence: static > mixed > param > wildcard at the first differing segment, independent of
@@ -346,11 +442,28 @@ export function matchRoutePattern(
   compiled: CompiledRoutePattern,
   pathname: string,
 ): RoutePatternMatch {
-  const match = regexOf(compiled).exec(pathname)
+  const matcher = matcherOf(compiled)
+  const match = matcher.regex.exec(pathname)
   if (match === null) return { matched: false, reason: "not-found" }
   const params: Record<string, string> = {}
-  for (let i = 0; i < compiled.paramNames.length; i++) {
-    params[compiled.paramNames[i]!] = match[i + 1] ?? ""
+  const names = compiled.paramNames
+  // One capture group per dynamic segment, in order. A mixed segment's group is the whole segment,
+  // which the scanner splits into that segment's parameters.
+  let group = 1
+  let name = 0
+  let captures: string[] | undefined
+  for (let i = 0; i < compiled.segments.length; i++) {
+    if (compiled.segments[i]!.kind === "static") continue
+    const value = match[group++] ?? ""
+    const shape = matcher.shapes[i]
+    if (shape === undefined) {
+      params[names[name++]!] = value
+      continue
+    }
+    captures ??= []
+    captures.length = 0
+    if (!matchMixedSegment(shape, value, captures)) return { matched: false, reason: "not-found" }
+    for (const capture of captures) params[names[name++]!] = capture
   }
   const decoded = decodeRouteParams(params)
   return decoded === null

@@ -2426,6 +2426,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Compiled route grammar shared by runtime routers, browser navigation, mocks, and adapters.
 - **MixedPart** _(type)_ - `type MixedPart = | { readonly t: "lit"; readonly v: string } | { readonly t: "param"; readonly name: string }`
   One piece of a {@link RoutePatternSegment} of kind `mixed`, in left-to-right order.
+- **MixedSegmentShape** _(type)_ - `type MixedSegmentShape = readonly string[]`
+  A mixed segment laid out for matching: the literals around its parameters, in order. The first entry is the literal before the first parameter, and each entry after it is the literal following the next parameter, so a segment with N parameters has N + 1 entries. An entry is `""` where the segment h…
 - **RoutePatternMatch** _(type)_ - `type RoutePatternMatch = | { readonly matched: true; readonly params: Record<string, string> } | { readonly matched: false; readonly reason: "not-found" | "malformed" }`
 - **RoutePatternSegment** _(type)_ - `type RoutePatternSegment`
 - **compareMixedPartsSpecificity** _(function)_ - `compareMixedPartsSpecificity: (left: readonly MixedPart[], right: readonly MixedPart[]) => number`
@@ -2436,10 +2438,14 @@ Every public export of every package and documented subpath - name, kind, signat
   Parse and validate Nifra's strict route grammar once. Trailing slashes remain significant.
 - **decodeRouteParams** _(function)_ - `decodeRouteParams: (raw: Record<string, string>) => Record<string, string> | null`
   Decode router captures under one rule. Plain values take the zero-allocation path; malformed escapes return `null`, allowing HTTP to emit 400 while client navigation declines the match.
+- **matchMixedSegment** _(function)_ - `matchMixedSegment: (shape: MixedSegmentShape, segment: string, out: string[]) => boolean`
+  Match ONE path segment against a mixed shape, in a single left-to-right pass.
 - **matchRoutePattern** _(function)_ - `matchRoutePattern: (compiled: CompiledRoutePattern, pathname: string) => RoutePatternMatch`
   Match one compiled pattern and return decoded captures. The caller decides cross-pattern order.
+- **mixedSegmentShape** _(function)_ - `mixedSegmentShape: (parts: readonly MixedPart[]) => MixedSegmentShape`
+  Lay a mixed segment's parts out as a {@link MixedSegmentShape}. Done once, at registration.
 - **mixedSegmentSource** _(function)_ - `mixedSegmentSource: (parts: readonly MixedPart[]) => string`
-  The regex source matching one segment's worth of a mixed pattern, with a capture per parameter.
+  A canonical string for one mixed segment's shape: the anchored-regex source that describes what the segment accepts, with a capture per parameter. Two segments with the same source are the same shape.
 - **sortRoutesBySpecificity** _(function)_ - `sortRoutesBySpecificity: <T extends { readonly pattern: CompiledRoutePattern; }>(routes: T[]) => T[]`
   Sort compiled routes most-specific-first - a static segment beats a dynamic one, the order the router resolves a path in. The single home for that precedence: the web router, the mock server, and the editor plugin all order routes through this one comparator, so which file a path resolves to can ne…
 

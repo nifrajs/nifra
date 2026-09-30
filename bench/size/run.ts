@@ -312,15 +312,22 @@ console.log(typeof composeReviewReport, typeof digestReviewReport)`,
 // a file schema to its own constructors, and the refusal when one reaches a constructor that
 // validates JSON. That guard has to live on `t`: without it a file field inside `t.object` would
 // build a schema that rejects every request. Squeezed first: the refusal message was cut to one line.
+// A mixed path segment (`/:name.json`, `/v:major.:minor`) is matched by one pass over the segment
+// instead of a compiled pattern, so a lookup costs the segment's length whatever the parameter count.
+// The scanner is +53 B gzip in the router (bare 31539 -> 31592 B), inherited by every row. Squeezed
+// first, from +182 B: a segment's shape is a flat list of its literals rather than a record, the
+// capture count is read off that list, and the trie keys a shape by those literals, which takes the
+// pattern-source builder and its escaper out of the kernel. The baseline sat exactly on the bare
+// ceiling, so the three rows with no slack left move by 0.1 KB; the other rows still clear theirs.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // The 2026-09-20 security pass adds bounded WebSocket admission/request-hook handling and
   // duplicate-cookie detection to the shared kernel. Reprice every core row together with the
   // measured post-hardening footprint; optional rows must not receive a special exemption.
-  "nifra-bare": 30.8,
+  "nifra-bare": 30.9,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 34.0,
+  "nifra-idempotency": 34.1,
   "nifra-effect-ledger": 32.8,
-  "nifra-mcp": 31.1,
+  "nifra-mcp": 31.2,
   "nifra-sse": 31.6,
   "nifra-valibot": 31.9,
   "nifra-typebox-t": 61.0,

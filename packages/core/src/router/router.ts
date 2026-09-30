@@ -4,7 +4,9 @@ import {
   compareMixedPartsSpecificity,
   compileRoutePattern,
   type MixedPart,
-  mixedSegmentSource,
+  type MixedSegmentShape,
+  matchMixedSegment,
+  mixedSegmentShape,
 } from "./pattern.ts"
 
 /** HTTP methods the router accepts. */
@@ -92,18 +94,22 @@ interface RouteNode<T> {
 }
 
 interface MixedChild<T> {
-  /** Anchored matcher for ONE segment, with a capture group per parameter. */
-  readonly regex: RegExp
   /**
-   * How many values this segment pushes. A mixed segment pushes N, not one, so a failed branch must
-   * pop exactly N to keep `paramValues` aligned with `paramNames`.
+   * What a request segment is matched against: one pass, whatever the segment holds.
+   *
+   * It has one entry more than the segment has parameters. A match pushes a value per parameter -
+   * N values, not one - so a failed branch must pop exactly `shape.length - 1` to keep `paramValues`
+   * aligned with `paramNames`.
    */
-  readonly arity: number
-  /** Parsed shape used by the same total specificity comparator as the browser router. */
+  readonly shape: MixedSegmentShape
+  /** Parsed parts used by the same total specificity comparator as the browser router. */
   readonly parts: readonly MixedPart[]
   readonly node: RouteNode<T>
-  /** The pattern source, so re-registering the same shape reuses its node. */
-  readonly source: string
+  /**
+   * The shape as one string, so re-registering the same shape reuses its node. Joined on `/`, the
+   * one character a segment's literal can never hold, so two different shapes never share a key.
+   */
+  readonly key: string
 }
 
 function createNode<T>(): RouteNode<T> {
@@ -162,19 +168,18 @@ function matchNode<T>(
   const mixedChildren = node.mixedChildren
   if (mixedChildren !== undefined && seg.length > 0) {
     for (const child of mixedChildren) {
-      const matched = child.regex.exec(seg)
-      if (matched === null) continue
-      // Push left-to-right, matching the order `paramNames` was built in.
-      for (let i = 1; i <= child.arity; i++) paramValues.push(matched[i] as string)
+      // Pushes this segment's captures left-to-right, matching the order `paramNames` was built in,
+      // and pushes nothing on a miss. One pass over the segment whatever the shape: see the scanner.
+      if (!matchMixedSegment(child.shape, seg, paramValues)) continue
       if (isLast) {
         if (child.node.terminal !== undefined) return child.node.terminal
       } else {
         const found = matchNode(child.node, path, end + 1, len, paramValues)
         if (found !== undefined) return found
       }
-      // Backtrack: a mixed segment pushed `arity` values, not one, so unwind exactly that many or
-      // every later param reads a value belonging to an abandoned branch.
-      for (let i = 0; i < child.arity; i++) paramValues.pop()
+      // Backtrack: a mixed segment pushed a value per parameter, not a single one, so unwind exactly
+      // that many or every later param reads a value belonging to an abandoned branch.
+      for (let i = 1; i < child.shape.length; i++) paramValues.pop()
     }
   }
 
@@ -320,17 +325,12 @@ export class Router<T> {
         node.wildcardChild ??= createNode<T>()
         node = node.wildcardChild
       } else if (segment.kind === "mixed") {
-        const source = mixedSegmentSource(segment.parts)
+        const shape = mixedSegmentShape(segment.parts)
+        const key = shape.join("/")
         node.mixedChildren ??= []
-        let child = node.mixedChildren.find((entry) => entry.source === source)
+        let child = node.mixedChildren.find((entry) => entry.key === key)
         if (child === undefined) {
-          child = {
-            regex: new RegExp(`^${source}$`),
-            arity: segment.parts.reduce((n, part) => (part.t === "param" ? n + 1 : n), 0),
-            parts: segment.parts,
-            node: createNode<T>(),
-            source,
-          }
+          child = { shape, parts: segment.parts, node: createNode<T>(), key }
           node.mixedChildren.push(child)
           // Most literal text first. Registration order must not decide which of `/:id.txt` and
           // `/:id.json` wins, and re-sorting on insert (a boot-time cost) keeps the match path a

@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test"
-import { compileRoutePattern, matchRoutePattern } from "../src/router/pattern.ts"
+import {
+  compileRoutePattern,
+  type MixedPart,
+  matchMixedSegment,
+  matchRoutePattern,
+  mixedSegmentShape,
+  mixedSegmentSource,
+} from "../src/router/pattern.ts"
 import { Router } from "../src/router/router.ts"
 
 const routerOf = (...patterns: string[]): Router<string> => {
@@ -145,4 +152,225 @@ test("a mixed-free route table allocates no mixed children", () => {
     return count
   }
   expect(walk(roots as unknown as Record<string, unknown>)).toBe(0)
+})
+
+// ── One pass per segment ──────────────────────────────────────────────────────────────────────────
+//
+// A mixed shape reads as an anchored pattern with one lazy capture per parameter. The reference below
+// compiles exactly that pattern; the scanner has to agree with it on every input, captures included,
+// while never doing more than one pass over a segment.
+
+const escapeForRegex = (value: string): string => value.replace(/[.*+?^()|[\]\\{}$]/g, "\\$&")
+
+function referenceSegment(parts: readonly MixedPart[], segment: string): string[] | undefined {
+  const match = new RegExp(`^${mixedSegmentSource(parts)}$`).exec(segment)
+  return match === null ? undefined : match.slice(1)
+}
+
+function referencePath(pattern: string, path: string): Record<string, string> | undefined {
+  const compiled = compileRoutePattern(pattern)
+  const source = compiled.segments.map((segment) =>
+    segment.kind === "static"
+      ? escapeForRegex(segment.value)
+      : segment.kind === "param"
+        ? "([^/]+)"
+        : segment.kind === "mixed"
+          ? mixedSegmentSource(segment.parts)
+          : "(.+)",
+  )
+  const match = new RegExp(`^/${source.join("/")}$`).exec(path)
+  if (match === null) return undefined
+  const params: Record<string, string> = {}
+  compiled.paramNames.forEach((name, index) => {
+    params[name] = match[index + 1] as string
+  })
+  return params
+}
+
+/** Deterministic generator, so a failure names a reproducible case. */
+function seeded(seed: number): () => number {
+  let state = seed >>> 0
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0
+    let t = state
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+// A deliberately tiny alphabet: literals and parameter text collide constantly, which is where a
+// wrong choice of literal occurrence would show.
+const ALPHABET = ["a", "b", "-", "."]
+
+function randomText(random: () => number, min: number, max: number): string {
+  const length = min + Math.floor(random() * (max - min + 1))
+  let text = ""
+  for (let i = 0; i < length; i++) text += ALPHABET[Math.floor(random() * ALPHABET.length)]
+  return text
+}
+
+/** A well-formed shape: at least one parameter, no empty literal, no two literals in a row. */
+function randomShape(random: () => number): MixedPart[] {
+  const parts: MixedPart[] = []
+  const params = 1 + Math.floor(random() * 4)
+  if (random() < 0.5) parts.push({ t: "lit", v: randomText(random, 1, 3) })
+  for (let i = 0; i < params; i++) {
+    parts.push({ t: "param", name: `p${i}` })
+    const isLast = i === params - 1
+    // Mostly a literal between parameters; sometimes none, so adjacent parameters are covered too.
+    if (random() < (isLast ? 0.5 : 0.85)) parts.push({ t: "lit", v: randomText(random, 1, 3) })
+  }
+  // A single bare parameter is not a mixed segment.
+  if (parts.length === 1) parts.push({ t: "lit", v: randomText(random, 1, 3) })
+  return parts
+}
+
+/** Text built to fit the shape, so the comparison sees plenty of matches and not only misses. */
+function fitting(random: () => number, parts: readonly MixedPart[]): string {
+  return parts.map((part) => (part.t === "lit" ? part.v : randomText(random, 1, 4))).join("")
+}
+
+test("the scanner agrees with the anchored lazy pattern on every input", () => {
+  const random = seeded(0x51f15e)
+  let matches = 0
+  let misses = 0
+  for (let shape = 0; shape < 600; shape++) {
+    const parts = randomShape(random)
+    for (let sample = 0; sample < 60; sample++) {
+      const segment = sample % 3 === 0 ? randomText(random, 0, 12) : fitting(random, parts)
+      const expected = referenceSegment(parts, segment)
+      // Pre-filled, so a miss that leaves captures behind - or a hit that overwrites - is caught.
+      const out = ["kept"]
+      const matched = matchMixedSegment(mixedSegmentShape(parts), segment, out)
+      const label = `${JSON.stringify(parts)} against ${JSON.stringify(segment)}`
+      if (expected === undefined) {
+        misses++
+        expect(`${matched} ${JSON.stringify(out)} ${label}`).toBe(`false ["kept"] ${label}`)
+      } else {
+        matches++
+        expect(`${matched} ${JSON.stringify(out)} ${label}`).toBe(
+          `true ${JSON.stringify(["kept", ...expected])} ${label}`,
+        )
+      }
+    }
+  }
+  // Both outcomes have to be well represented or the comparison proves little.
+  expect(matches).toBeGreaterThan(5000)
+  expect(misses).toBeGreaterThan(5000)
+})
+
+test("the trie and matchRoutePattern agree with the whole-path pattern", () => {
+  const random = seeded(0xc0ffee)
+  const patterns = [
+    "/f/:a-:b.json",
+    "/:a.:b",
+    "/v:major.:minor/x",
+    "/api/:version/post-:id.html",
+    "/p/:a:b.x",
+    "/x/:a-:b-:c/:d.a/b",
+    "/a.:x.b",
+    "/:a--:b-:c",
+  ]
+  let matches = 0
+  for (const pattern of patterns) {
+    const router = routerOf(pattern)
+    const compiled = compileRoutePattern(pattern)
+    for (let sample = 0; sample < 1500; sample++) {
+      const path =
+        sample % 4 === 0
+          ? `/${randomText(random, 0, 6)}/${randomText(random, 0, 8)}`
+          : `/${compiled.segments
+              .map((segment) =>
+                segment.kind === "static"
+                  ? segment.value
+                  : segment.kind === "mixed"
+                    ? random() < 0.85
+                      ? fitting(random, segment.parts)
+                      : randomText(random, 0, 8)
+                    : randomText(random, 1, 4),
+              )
+              .join("/")}`
+      const expected = referencePath(pattern, path)
+      if (expected !== undefined) matches++
+      const label = `${pattern} against ${path}`
+      expect(`${JSON.stringify(hit(router, path)?.params)} ${label}`).toBe(
+        `${JSON.stringify(expected)} ${label}`,
+      )
+      const direct = matchRoutePattern(compiled, path)
+      expect(`${JSON.stringify(direct.matched ? direct.params : undefined)} ${label}`).toBe(
+        `${JSON.stringify(expected)} ${label}`,
+      )
+    }
+  }
+  expect(matches).toBeGreaterThan(3000)
+})
+
+test("a wildcard after a mixed segment still takes the rest of the path", () => {
+  const compiled = compileRoutePattern("/files/:name.:ext/*rest")
+  expect(matchRoutePattern(compiled, "/files/a.b.c/x/y")).toEqual({
+    matched: true,
+    params: { name: "a", ext: "b.c", rest: "x/y" },
+  })
+  expect(matchRoutePattern(compiled, "/files/abc/x/y")).toEqual({
+    matched: false,
+    reason: "not-found",
+  })
+})
+
+test("a miss that captured part of the segment leaves no value behind", () => {
+  const parts = compileRoutePattern("/:a-:b.json").segments[0]
+  if (parts?.kind !== "mixed") throw new Error("expected a mixed segment")
+  const out = ["kept"]
+  // `a` is captured, then nothing is left for `b`.
+  expect(matchMixedSegment(mixedSegmentShape(parts.parts), "x-.json", out)).toBe(false)
+  expect(out).toEqual(["kept"])
+  // A leading and a trailing literal that overlap in the text are not a match.
+  const overlap = compileRoutePattern("/a.:x.b").segments[0]
+  if (overlap?.kind !== "mixed") throw new Error("expected a mixed segment")
+  expect(matchMixedSegment(mixedSegmentShape(overlap.parts), "a.b", out)).toBe(false)
+  expect(out).toEqual(["kept"])
+})
+
+test("matching a segment is one pass, however long it is and however many parameters", () => {
+  // Request text decides the segment, so its length must only ever buy a linear amount of work. The
+  // inputs below are the ones that make a backtracking matcher try every split between parameters:
+  // long runs of the separator, of filler, and near misses of a longer separator, each with the
+  // trailing literal present and absent. 64 KB is the largest path a supported runtime hands over.
+  const size = 64 * 1024
+  const shapes = [
+    "/f/:a-:b.json",
+    "/f/:a-:b-:c.json",
+    "/f/:a-:b-:c-:d.json",
+    "/f/:a-:b-:c-:d-:e-:f",
+    "/f/:a--:b--:c--:d.json",
+    "/f/:a:b:c.json",
+    "/f/x:a.:b.:c.:d.y",
+  ]
+  const fills = ["-", "a", ".", "-a", "a-", "--a", ".-"]
+  const paths: string[] = []
+  for (const fill of fills) {
+    const body = fill.repeat(Math.ceil(size / fill.length)).slice(0, size)
+    for (const prefix of ["", "x"]) {
+      for (const suffix of ["", ".json", ".jso", "y", "-"])
+        paths.push(`/f/${prefix}${body}${suffix}`)
+    }
+  }
+
+  const routers = shapes.map((shape) => routerOf(shape))
+  const compiled = shapes.map((shape) => compileRoutePattern(shape))
+  let answered = 0
+  const started = performance.now()
+  for (const path of paths) {
+    for (let i = 0; i < shapes.length; i++) {
+      routers[i]?.find("GET", path)
+      matchRoutePattern(compiled[i] as ReturnType<typeof compileRoutePattern>, path)
+      answered += 2
+    }
+  }
+  const elapsed = performance.now() - started
+  expect(answered).toBe(paths.length * shapes.length * 2)
+  // 980 lookups over 64 KB each. One pass apiece is a few milliseconds in total; a matcher that
+  // retries splits does not finish a single one of these in that time.
+  expect(elapsed).toBeLessThan(2000)
 })
