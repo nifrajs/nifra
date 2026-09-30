@@ -211,7 +211,17 @@ export default server().post("/users", { body }, (c) => ({ name: c.body.name }))
   // kernel, both of which are Phase 6 regressions, not repricings.
   "nifra-agent-review": `import { composeReviewReport, digestReviewReport } from "@nifrajs/agent-review"
 console.log(typeof composeReviewReport, typeof digestReviewReport)`,
+  // Browser row, not a server row: everything the generated client entry imports, which is the
+  // router store, history and link interception, head updates and form handling. It is the payload a
+  // page ships before any framework adapter, so a route-tree or navigation feature that lands in it
+  // is paid by every visitor. The whole namespace is kept so the row does not depend on which
+  // exports a given app happens to use.
+  "nifra-web-client": `import * as client from "@nifrajs/web/client"
+console.log(client)`,
 }
+
+/** Rows bundled for the browser. Every other feature row is a server bundle. */
+const BROWSER_FEATURES: ReadonlySet<string> = new Set(["nifra-web-client"])
 
 // Gzip ceilings are deliberately just above measured values: enough headroom for minifier noise, tight
 // enough that a newly reachable optional subsystem fails CI. Update only with an explained benchmark diff.
@@ -334,6 +344,8 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-typebox-form": 64.9,
   // Review-leaf ceiling: measured 5.0 KB gz + ~0.2 KB headroom, same rule as every other row.
   "nifra-agent-review": 5.2,
+  // Client runtime ceiling: measured 13.8 KB gz (14089 B) + ~0.2 KB headroom.
+  "nifra-web-client": 14.0,
 }
 
 const main = async (): Promise<void> => {
@@ -365,7 +377,9 @@ const main = async (): Promise<void> => {
 
   const features: Size[] = []
   for (const [label, source] of Object.entries(NIFRA_FEATURES)) {
-    const measured = await measure(label, source, { target: "bun" })
+    const measured = await measure(label, source, {
+      target: BROWSER_FEATURES.has(label) ? "browser" : "bun",
+    })
     if (measured) features.push(measured)
   }
   table("Nifra feature matrix - marginal runtime reachability", features, "nifra-bare")

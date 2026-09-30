@@ -50,6 +50,7 @@
     "bench": "bun run bench/index.ts",
     "bench:http": "bun run bench/http/run.ts",
     "bench:http:quick": "bun run bench/http/quick.ts",
+    "bench:route-ab": "bun run bench/http/_route-ab.ts",
     "bench:http:update": "bun run bench/http/aggregate.ts --runs 3 --write",
     "bench:ssr": "bun run bench/ssr/run.ts",
     "bench:content": "bun bench/content-index.ts",
