@@ -365,6 +365,31 @@ type BunNativeMethodTable = Partial<Record<Method, BunNativeHandler>>
 type BunNativeRoutes = Record<string, BunNativeMethodTable>
 type BunRequestWithParams = Request & { readonly params?: Record<string, string> }
 
+/**
+ * Whether the portable router gives `other` a request that `route` also matches: the two patterns can
+ * match one path, and `other` is the more specific at the first segment where they differ. `route`
+ * holds static and `:param` segments only; `other` has a wildcard or a part-literal segment.
+ *
+ * It errs toward `true`. A segment that is part literal, part parameter is taken to match whatever
+ * `route` has in that position.
+ */
+function outranks(
+  other: CatalogRoute["pattern"]["segments"],
+  route: CatalogRoute["pattern"]["segments"],
+): boolean {
+  let ahead = false
+  for (let i = 0; i < route.length; i++) {
+    const theirs = other[i]
+    if (theirs === undefined) return false
+    if (theirs.kind === "wildcard") return ahead
+    const ours = route[i]!
+    if (ours.kind === "static") {
+      if (theirs.kind === "static" ? theirs.value !== ours.value : !ahead) return false
+    } else if (theirs.kind !== "param") ahead = true
+  }
+  return ahead && other.length === route.length
+}
+
 const WS_PASS: WebSocketUpgradeOutcome = { kind: "pass" }
 const DEFAULT_WS_UPGRADE_TIMEOUT_MS = 10_000
 
@@ -6052,9 +6077,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
 
   /** Compile portable route registrations into Bun's native route table. Apps with request-rewrite
    * hooks or WebSockets retain the single portable dispatcher because those features must run before
-   * route selection/upgrade. Named wildcards also stay on the fallback until Bun exposes their raw
-   * capture semantics; static and `:param` routes take the native lane. */
-  private buildBunNativeRoutes(): BunNativeRoutes | undefined {
+   * route selection/upgrade.
+   *
+   * Bun and the portable router agree on which of two static-and-`:param` paths wins a request, so
+   * the table is kept to those paths. Where Bun would otherwise pass a request on to a less specific
+   * path, the more specific one carries `fallback`, the portable dispatcher, under that method. */
+  private buildBunNativeRoutes(fallback: BunNativeHandler): BunNativeRoutes | undefined {
     // A `clientIp` trust declaration must run the resolver in `dispatch`, which the fused native lane
     // bypasses - so an app that declares trust routes through the fetch lane (where `c.clientIp`
     // resolves) instead of Bun's native table. The allocation-free default keeps native fusion.
@@ -6079,26 +6107,59 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const unboundedSignal = mayUseFusedNative ? getNeverAbortSignal() : undefined
     const unboundedBudget = mayUseFusedNative ? getUnboundedRequestBudget() : undefined
     let count = 0
-    for (const { method, path, pattern, entry } of this.catalog.entries()) {
-      // A preflight hook is intentionally handled by the fallback fetch path. Keeping OPTIONS out
-      // of the native table means Bun dispatches it through CORS's onRequest hook even when the
-      // same path has native GET/POST handlers. A method outside the standard set also stays on the
-      // fallback: Bun's table has no slot for it, and the portable router serves it.
+    const all = this.catalog.entries()
+    // A path with a wildcard or a part-literal segment cannot go in the table: Bun reads `/:name.json`
+    // as one parameter named `name.json`. These are filed under each run of static segments they
+    // start with, which is where a table path they could outrank looks for them.
+    const under = new Map<string, CatalogRoute[]>()
+    const lead = all.map((route) => {
+      const segments = route.pattern.segments
+      const plain = segments.every(
+        (segment) => segment.kind === "static" || segment.kind === "param",
+      )
+      let prefix = ""
+      for (const segment of segments) {
+        if (!plain) {
+          let bucket = under.get(prefix)
+          if (bucket === undefined) {
+            bucket = []
+            under.set(prefix, bucket)
+          }
+          bucket.push(route)
+        }
+        if (segment.kind !== "static") break
+        prefix += `/${segment.value}`
+      }
+      return plain ? prefix : undefined
+    })
+    // A preflight hook is intentionally handled by the fallback fetch path. Keeping OPTIONS out
+    // of the native lane means Bun dispatches it through CORS's onRequest hook even when the
+    // same path has native GET/POST handlers.
+    const preflightOnFallback = this.onRequestHooks.length > 0 && this.bunNativeRequestHooksSafe
+    // Where Bun could pass a request down: the methods served natively on a path with a parameter,
+    // as segment count + method. Two table paths match one request only at the same segment count.
+    const below = new Set<string>()
+    const tableAt = (path: string): BunNativeMethodTable => {
+      routes[path] ??= Object.create(null) as BunNativeMethodTable
+      return routes[path]
+    }
+    for (let i = 0; i < all.length; i++) {
+      const { method, path, pattern, entry } = all[i]!
+      const run = lead[i]
+      // The route is served from the table unless its path cannot be there, Bun's table has no slot
+      // for its method, or a path outside the table outranks it: Bun would hand this route a request
+      // the portable router gives to that one.
       if (
+        run === undefined ||
         !METHODS.includes(method as Method) ||
-        (this.onRequestHooks.length > 0 && this.bunNativeRequestHooksSafe && method === "OPTIONS")
+        (preflightOnFallback && method === "OPTIONS") ||
+        under.get(run)?.some((other) => outranks(other.pattern.segments, pattern.segments))
       ) {
         continue
       }
-      if (pattern.segments.some((segment) => segment.kind === "wildcard")) continue
-      let methods = routes[path]
-      if (methods === undefined) {
-        methods = Object.create(null) as BunNativeMethodTable
-        routes[path] = methods
-      }
       const paramNames = pattern.paramNames
       const fused = mayUseFusedNative ? entry.execution.fusedWeb : undefined
-      methods[method as Method] = this.compileBunNativeHandler(
+      tableAt(path)[method as Method] = this.compileBunNativeHandler(
         entry,
         paramNames,
         fused,
@@ -6106,6 +6167,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         unboundedBudget,
       )
       count += 1
+      if (paramNames.length > 0) {
+        below.add(pattern.segments.length + method)
+        if (method === "GET") below.add(`${pattern.segments.length}HEAD`)
+      }
     }
     if (count === 0) return undefined
     // RFC 9110 §9.3.2: a GET route answers HEAD with identical status + headers (Bun strips the
@@ -6115,6 +6180,17 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     for (const path of Object.keys(routes)) {
       const methods = routes[path]!
       if (methods.GET !== undefined) methods.HEAD ??= methods.GET
+    }
+    // Bun picks among the paths its table holds for the request's method, so a path with no entry
+    // for the method lets the request through to a less specific one. The portable router stops at
+    // the most specific path and answers 405. Every path the table could hold therefore gets the
+    // portable dispatcher under each method a less specific path might serve.
+    for (let i = 0; i < all.length; i++) {
+      if (lead[i] === undefined) continue
+      const { path, pattern } = all[i]!
+      for (const method of METHODS) {
+        if (below.has(pattern.segments.length + method)) tableAt(path)[method] ??= fallback
+      }
     }
     return routes
   }
@@ -6199,7 +6275,20 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // Same reasoning as `bind`: omit rather than pass undefined, so Bun's own default applies.
     const idle =
       options?.idleTimeoutSec === undefined ? {} : { idleTimeout: options.idleTimeoutSec }
-    const nativeRoutes = wsHandlers === undefined ? this.buildBunNativeRoutes() : undefined
+    const fallback = (
+      req: Request,
+      server: Parameters<typeof bunPeerPlatform>[0],
+    ): MaybePromise<Response> => {
+      // Bun has already framed and bounded this request body in its HTTP parser. Mark the
+      // source before the portable fallback runs so body schemas use Bun's native `json()`
+      // reader instead of the defensive arrayBuffer/decode path reserved for caller-built
+      // Requests. Native route handlers mark themselves in compileBunNativeHandler; this
+      // covers every request the native lane does not serve.
+      markTrustedBodyFraming(req)
+      return this.fetch(req, bunPeerPlatform(server, req) as Platform<EnvOf<Ctx>>)
+    }
+    const nativeRoutes =
+      wsHandlers === undefined ? this.buildBunNativeRoutes(fallback as BunNativeHandler) : undefined
     const running = (wsHandlers === undefined
       ? Bun.serve({
           port,
@@ -6207,15 +6296,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           ...bind,
           ...idle,
           ...(nativeRoutes === undefined ? {} : { routes: nativeRoutes }),
-          fetch: (req: Request, server) => {
-            // Bun has already framed and bounded this request body in its HTTP parser. Mark the
-            // source before the portable fallback runs so body schemas use Bun's native `json()`
-            // reader instead of the defensive arrayBuffer/decode path reserved for caller-built
-            // Requests. Native route handlers mark themselves in compileBunNativeHandler; this
-            // covers apps whose request/response middleware keeps them on the fallback dispatcher.
-            markTrustedBodyFraming(req)
-            return this.fetch(req, bunPeerPlatform(server, req) as Platform<EnvOf<Ctx>>)
-          },
+          fetch: fallback,
         })
       : Bun.serve<BunWsData>({
           port,

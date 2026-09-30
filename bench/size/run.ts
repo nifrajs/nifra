@@ -348,19 +348,32 @@ const BROWSER_FEATURES: ReadonlySet<string> = new Set(["nifra-web-client"])
 // 13 B keeps a custom method out of Bun's native route table. The registration functions themselves
 // are not reachable from an app that does not import them. Four rows had no slack left and move by
 // 0.1 KB; the other rows still clear theirs.
+// On Bun, `listen()` serves a route from Bun's own route table only when Bun would pick it for exactly
+// the requests the portable matcher gives it: +320 B gzip (bare 31778 -> 32098 B), inherited by every
+// row. Bun chooses among the paths registered for the request's method and reads `/:name.json` as one
+// parameter, so three things are settled before the first request: which table paths are outranked
+// by a path the table cannot hold, which methods a less specific path serves, and the portable
+// dispatcher entries that stop Bun at the more specific path. The cost is the comparison of two
+// paths, the index that keeps the pass linear in the route count (a plain pairwise scan measured
+// 272 ms at 3000 routes against 4 ms), and those entries. It lives in the server because `listen()`
+// does; nothing of it runs per request. Two other shapes were measured first: taking every outranked
+// route out of the table costs the same bytes and moves a `GET /users/:id` beside a `POST
+// /users/login` off the native lane, and an entry under every method on every path is 76 B smaller
+// and triples the time `Bun.serve` takes to accept a 3000-route table. Every kernel row moves by
+// 0.3 KB; the ceiling is the measured number rounded up to the next 0.1 KB.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // The 2026-09-20 security pass adds bounded WebSocket admission/request-hook handling and
   // duplicate-cookie detection to the shared kernel. Reprice every core row together with the
   // measured post-hardening footprint; optional rows must not receive a special exemption.
-  "nifra-bare": 31.1,
+  "nifra-bare": 31.4,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
-  "nifra-idempotency": 34.3,
-  "nifra-effect-ledger": 33.0,
-  "nifra-mcp": 31.4,
-  "nifra-sse": 31.8,
-  "nifra-valibot": 32.1,
-  "nifra-typebox-t": 61.2,
-  "nifra-typebox-form": 65.1,
+  "nifra-idempotency": 34.6,
+  "nifra-effect-ledger": 33.3,
+  "nifra-mcp": 31.7,
+  "nifra-sse": 32.1,
+  "nifra-valibot": 32.4,
+  "nifra-typebox-t": 61.5,
+  "nifra-typebox-form": 65.4,
   // Review-leaf ceiling: measured 5.0 KB gz + ~0.2 KB headroom, same rule as every other row.
   "nifra-agent-review": 5.2,
   // Client runtime ceiling: measured 13.8 KB gz (14089 B) + ~0.2 KB headroom.
