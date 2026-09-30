@@ -82,6 +82,30 @@ const SET = `export const app = server()
     return { ok: true }
   })`
 
+const NOT_FOUND = `import { notFound } from "@nifrajs/core/not-found"
+import { server } from "@nifrajs/core/server"
+
+export const app = server()
+  .get("/users/:id", (c) => ({ id: c.params.id }))
+  .use(
+    notFound(({ pathname, header }) => {
+      // A section that moved: a redirect is sent as the redirect it is.
+      if (pathname.startsWith("/old/")) {
+        return new Response(null, {
+          status: 308,
+          headers: { location: \`/docs/\${pathname.slice(5)}\` },
+        })
+      }
+      // A browser gets a page. It is returned as a 200 here and sent as a 404.
+      if (header("accept")?.includes("text/html")) {
+        return new Response("<h1>Nothing here</h1>", {
+          headers: { "content-type": "text/html; charset=utf-8" },
+        })
+      }
+      return undefined // anything else keeps the default { ok: false, error: "not_found" }
+    }),
+  )`
+
 export default function Api() {
   return (
     <div className="prose">
@@ -137,6 +161,58 @@ export default function Api() {
         The request is on <code>c.req</code>, also available as <code>c.request</code> - the same name a
         page loader/action receives (which in turn also accepts <code>ctx.req</code>), so one name works
         in both places.
+      </p>
+
+      <h2>Requests no route matched (notFound)</h2>
+      <p>
+        A path no route matches is answered <code>404</code> with{" "}
+        <code>{`{ "ok": false, "error": "not_found" }`}</code>. To answer it yourself, apply{" "}
+        <code>notFound(handler)</code> from <code>@nifrajs/core/not-found</code>. The handler returns a{" "}
+        <code>Response</code>, or <code>undefined</code> to keep the default body.
+      </p>
+      <CodeBlock code={NOT_FOUND} />
+      <ul>
+        <li>
+          <b>It answers a 404 and nothing else.</b> A path that exists under another method is still a{" "}
+          <code>405</code> with <code>Allow</code>, a malformed path parameter is still a{" "}
+          <code>400</code>, and a <code>404</code> a route or a mounted app returned itself is left
+          alone.
+        </li>
+        <li>
+          <b>The status stays honest.</b> A <code>2xx</code> answer is sent as a <code>404</code> with
+          the body and headers you gave it, so a crawler or a cache never sees a missing page as a
+          hit. A <code>3xx</code>, <code>4xx</code> or <code>5xx</code> answer is sent unchanged.
+        </li>
+        <li>
+          <b>It sees the request line and headers, never the body.</b> The input is{" "}
+          <code>method</code>, <code>url</code>, <code>pathname</code>, <code>headers</code>,{" "}
+          <code>header(name)</code>, <code>signal</code> and <code>platform</code>.{" "}
+          <code>pathname</code> is the path as it was sent, not percent-decoded: escape it before
+          writing it into HTML, and never use it as a redirect target without checking it.
+        </li>
+        <li>
+          <b>A fault is a plain 500.</b> A throw, a rejection, or a returned value that is not a{" "}
+          <code>Response</code> is logged once and answered{" "}
+          <code>{`{ "ok": false, "error": "internal_error" }`}</code> - the error's text never reaches
+          the client. A thrown <code>Response</code> is an answer, as it is in a route.
+        </li>
+        <li>
+          <b>It is bounded.</b> With <code>requestTimeoutMs</code> set, an async handler that outlives
+          it has <code>signal</code> aborted and the request answered <code>503</code>. A deadline
+          header on the request is not consulted for a request no route matched.
+        </li>
+        <li>
+          <b>The answer takes the normal response path:</b> fixed response headers and{" "}
+          <code>onResponse</code> hooks apply to it like any other response.
+        </li>
+      </ul>
+      <p className="caveat">
+        One handler per server: a second <code>notFound()</code> throws, as does one applied inside a{" "}
+        <code>group()</code> (apply it to the parent) or after <code>listen()</code>.{" "}
+        <code>merge()</code> does not carry a merged server's handler across. To <i>serve</i>{" "}
+        unmatched paths - a single-page app's shell, or another app behind this one - register a
+        wildcard route or a mount instead: those are matches, so they keep their own status, the
+        request body, and the full route lifecycle.
       </p>
 
       <h2>Contract-first (defineContract + implement)</h2>

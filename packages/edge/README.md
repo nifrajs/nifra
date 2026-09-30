@@ -53,6 +53,26 @@ server({ maxBodyBytes: 256_000, protoPoisoning: "strip" })
 | --- | --- | --- |
 | `maxBodyBytes` | `1_000_000` | body-size cap before a `413`, matching core |
 | `protoPoisoning` | `"reject"` | `__proto__` policy for JSON bodies: `"reject"` \| `"strip"` \| `"ignore"`, matching core |
+| `notFound` | the default `404` body | answers a request no route matched; build it with `notFound(handler)` |
+
+### A not-found handler
+
+```ts
+import { notFound, server } from "@nifrajs/edge"
+
+const app = server({
+  notFound: notFound(({ pathname, header }) => {
+    if (header("accept")?.includes("text/html")) {
+      return new Response("<h1>Nothing here</h1>", {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      })
+    }
+    return undefined // keep the default { ok: false, error: "not_found" }
+  }),
+})
+```
+
+The rules are the full Server's, imported rather than restated: the handler runs for a `404` only (a wrong method stays a `405`), it is given the request line and headers but never the body, a `2xx` answer is sent as a `404`, and `undefined` keeps the default body. `pathname` is the path as sent, not percent-decoded - escape it before writing it into HTML. A throw or a value that is not a `Response` is the same flat `500` a route's fault is; there is no logger and no request timeout here, so bound any I/O the handler does. An app that does not import `notFound` ships none of it.
 
 ## Security
 

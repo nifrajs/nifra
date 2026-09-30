@@ -2146,6 +2146,10 @@ Every public export of every package and documented subpath - name, kind, signat
   `ctx.set` carrying the lazy backings (`_headers`, `_cookies`) so `toResponse` can skip allocating anything when no handler touched `c.set.*`. Server-internal.
 - **EMPTY_RESPONSE_CONTROLS** _(const)_ - `EMPTY_RESPONSE_CONTROLS: CtxSet`
 - **MaybePromise** _(type)_ - `type MaybePromise<T> = T | Promise<T>`
+- **NotFoundHandler** _(type)_ - `type NotFoundHandler<Env = unknown> = ( input: NotFoundInput<Env>, ) => MaybePromise<Response | undefined>`
+  Answers a request no route matched. Return a `Response`, or `undefined` for the default `404`. May be async; a thrown `Response` is treated like a returned one.
+- **NotFoundInput** _(interface)_ - `interface NotFoundInput<Env = unknown>`
+  What a {@link NotFoundHandler} is given: the request line and headers of a request no route matched.
 - **ProtoPoisoning** _(type)_ - `type ProtoPoisoning = "reject" | "strip" | "ignore"`
   Prototype-poisoning guard for the JSON body lane - the check behind `c.boundedJson` and the schema path. A single walk of the parsed value, never a reviver (a reviver taxes every key of every parse, including the parses that carry no object at all).
 - **QueryValue** _(type)_ - `type QueryValue = string | string[]`
@@ -2153,6 +2157,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **RequestSource** _(interface)_ - `interface RequestSource`
   Internal request view. A real Web `Request` already satisfies this shape, so Web/edge runtimes pass their `Request` **directly** (zero wrapper allocation on the hot path - `request` is simply absent and {@link requestOf} returns the source itself). Node's adapter passes a *lazy* source whose `reque…
 - **ResponseResult** _(interface)_ - `interface ResponseResult`
+- **answerNotFound** _(function)_ - `answerNotFound: <T, Env>(handler: NotFoundHandler<Env>, input: NotFoundInput<Env>, wrap: (response: Response | ResponseResult) => T, failed: (error: unknown) => T) => MaybePromise<T>`
+- **notFoundInput** _(function)_ - `notFoundInput: <Env>(source: RequestSource, pathname: string, platform: Platform<Env> | undefined, signal?: AbortSignal) => NotFoundInput<Env>`
 - **plainError** _(function)_ - `plainError: (status: number, error: string, headers?: Record<string, string>) => ResponseResult`
   The same envelope as {@link jsonError}, as plain data rather than a built `Response`.
 - **plainValidationError** _(function)_ - `plainValidationError: (issues: ReadonlyArray<StandardIssue>) => ResponseResult`
@@ -2427,6 +2433,15 @@ Every public export of every package and documented subpath - name, kind, signat
   What {@link Server.resolveNode} returns: either a plain-data render the `@nifrajs/node` adapter writes to the socket directly (`kind: "json"` - status + headers + cookies + a pre-stringified body, **no** undici `Response` built or drained), a marked buffered response body (`kind: "body"` - e.g.
 - **nodeDirect** _(function)_ - `nodeDirect: () => IdentityPlugin`
   Enable `app.resolveNode()` for direct callers. Applying it twice is a no-op (named plugin dedupe).
+
+### `@nifrajs/core/not-found`
+
+- **NotFoundHandler** _(type)_ - `type NotFoundHandler<Env = unknown> = ( input: NotFoundInput<Env>, ) => MaybePromise<Response | undefined>`
+  Answers a request no route matched. Return a `Response`, or `undefined` for the default `404`. May be async; a thrown `Response` is treated like a returned one.
+- **NotFoundInput** _(interface)_ - `interface NotFoundInput<Env = unknown>`
+  What a {@link NotFoundHandler} is given: the request line and headers of a request no route matched.
+- **notFound** _(function)_ - `notFound: <Env = unknown>(handler: NotFoundHandler<Env>) => IdentityPlugin`
+  Answer requests no route matched with a handler of your own: `app.use(notFound(handler))`.
 
 ### `@nifrajs/core/pattern`
 
@@ -3056,15 +3071,23 @@ _No named exports (side-effect entrypoint)._
   The request handed to a route. Compact by design: no cookies, no response builder - return a value (rendered as JSON) or a `Response` for full control.
 - **EdgeHandler** _(type)_ - `type EdgeHandler<Path extends string = string, Body = unknown> = ( c: EdgeContext<Path, Body>, ) => unknown | Promise<unknown>`
   A route handler: returns a value (rendered as JSON), a `Response`, or a promise of either. A thrown `Response` is sent as-is; any other throw becomes a `500`.
+- **EdgeNotFound** _(type)_ - `type EdgeNotFound = (( request: Request, pathname: string, ) => Response | Promise<Response>) & { readonly [EDGE_NOT_FOUND]: true }`
+  What {@link notFound} builds for {@link EdgeOptions.notFound}. Opaque: only `notFound()` makes one.
 - **EdgeOptions** _(interface)_ - `interface EdgeOptions`
-  Construction-time options. Both mirror `@nifrajs/core`'s `ServerOptions` defaults.
+  Construction-time options. The defaults mirror `@nifrajs/core`'s `ServerOptions`.
 - **EdgeServer** _(class)_ - `class EdgeServer`
 - **Method** _(type)_ - `type Method = (typeof METHODS)[number]`
+- **NotFoundHandler** _(type)_ - `type NotFoundHandler<Env = unknown> = ( input: NotFoundInput<Env>, ) => MaybePromise<Response | undefined>`
+  Answers a request no route matched. Return a `Response`, or `undefined` for the default `404`. May be async; a thrown `Response` is treated like a returned one.
+- **NotFoundInput** _(interface)_ - `interface NotFoundInput<Env = unknown>`
+  What a {@link NotFoundHandler} is given: the request line and headers of a request no route matched.
 - **Params** _(type)_ - `type Params<Path extends string> = Prettify<RawParams<Path>>`
 - **QueryValue** _(type)_ - `type QueryValue = string | string[]`
   A query value: a single occurrence is a string; a repeated key promotes to a string[] so an array query schema (`t.array(t.string())`) can validate `?tag=a&tag=b` - last-wins silently dropped values before (audit 2026-06). Single-occurrence keys stay plain strings, so existing `t.string()` schemas …
 - **StandardSchemaV1** _(interface)_ - `interface StandardSchemaV1<Input = unknown, Output = Input>`
   The Standard Schema v1 interface (https://standardschema.dev), vendored as types + a tiny runtime helper so any compliant validator - zod, valibot, arktype, … - validates requests without coupling the framework to one lib. The spec is MIT-licensed and explicitly designed to be copied.
+- **notFound** _(function)_ - `notFound: (handler: NotFoundHandler) => EdgeNotFound`
+  Answer requests no route matched with a handler of your own: `server({ notFound: notFound(handler) })`.
 - **server** _(function)_ - `server: (options?: EdgeOptions) => EdgeServer`
   Create a compact edge server.
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(request: Request, platform?: Platform<Env>): MaybePromise<WebSocketUpgradeOutcom…`

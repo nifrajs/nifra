@@ -146,6 +146,7 @@ import {
   INSTALL_IDEMPOTENCY,
   INSTALL_MCP,
   INSTALL_NODE_DIRECT,
+  INSTALL_NOT_FOUND,
   INSTALL_RESPONSE_CONTRACT,
   INSTALL_RESPONSE_OBSERVER,
   INSTALL_SSE,
@@ -156,6 +157,7 @@ import {
 import type { EffectLedgerRuntime } from "./ledger-lane.ts"
 import { jsonLogger, type Logger } from "./logger.ts"
 import type { McpRuntime } from "./mcp-hook.ts"
+import type { NotFoundLane } from "./not-found-answer.ts"
 import type {
   ContextPlugin,
   IdentityPlugin,
@@ -842,6 +844,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private idempotencyRuntime: IdempotencyRuntime | undefined
   /** Installed opt-in runtime for `.tool()`/`.resource()`/`.prompt()`; `undefined` until `.use(mcp())`. */
   private mcpRuntime: McpRuntime | undefined
+  /** Installed answer for a request no route matched; `undefined` (the plain 404) until `.use(notFound())`. */
+  private notFoundLane: NotFoundLane | undefined
   /** Installed Node-direct renderer for direct `resolveNode()` callers; `undefined` until `.use(nodeDirect())`. */
   private nodeOutcomeRuntime: NodeOutcomeRuntime | undefined
   /** Installed streaming runtime for `.sse()` routes; `undefined` until `.use(streaming())`. */
@@ -2207,6 +2211,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   [INSTALL_MCP](runtime: McpRuntime): void {
     this.assertConfigurable("mcp()")
     this.mcpRuntime = runtime
+  }
+
+  /** @internal Symbol-keyed install seam for the `notFound()` plugin. Off the public typed surface. */
+  [INSTALL_NOT_FOUND](lane: NotFoundLane): void {
+    this.assertConfigurable("notFound()")
+    this.notFoundLane = lane
   }
 
   /** @internal Symbol-keyed install seam for the `nodeDirect()` plugin. Off the public typed surface. */
@@ -3610,7 +3620,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
           plainError(405, "method_not_allowed", { allow: match.allowed.join(", ") }),
         )
       }
-      return wrapResponse(plainError(404, "not_found"))
+      const lane = this.notFoundLane
+      return lane === undefined
+        ? wrapResponse(plainError(404, "not_found"))
+        : lane(this, source, pathname, platform, wrapResponse, onTimeout)
     }
 
     // Inspect only captured values for escapes. Scanning the full pathname repeated work the router

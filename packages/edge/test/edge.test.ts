@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test"
 import { bodyParser } from "@nifrajs/core/body-parser"
 import { multipartBody } from "@nifrajs/core/multipart"
+import { notFound as coreNotFound, type NotFoundHandler } from "@nifrajs/core/not-found"
 import { server as coreServer } from "@nifrajs/core/server"
-import { type StandardSchemaV1, server, toFetchHandler } from "../src/index.ts"
+import { notFound, type StandardSchemaV1, server, toFetchHandler } from "../src/index.ts"
 
 /** A hand-rolled Standard Schema for `{ name: string; age: number }` - no schema library in the test. */
 const userBody: StandardSchemaV1<{ name: string; age: number }> = {
@@ -330,6 +331,96 @@ test("parity: a body in a media type the route names matches the full Server", a
     statuses.push(e.status)
   }
   expect(statuses).toEqual([200, 200, 415, 413, 400, 422, 200])
+})
+
+// One handler, driven by the path, so every rule is compared on both servers.
+const missHandler: NotFoundHandler = ({ method, pathname, url, header }) => {
+  switch (pathname) {
+    case "/default":
+      return undefined
+    case "/created":
+      return new Response("made", { status: 201, headers: { "x-miss": "1" } })
+    case "/empty":
+      return new Response(null, { status: 204 })
+    case "/moved":
+      return new Response(null, { status: 308, headers: { location: "/new" } })
+    case "/gone":
+      return new Response("gone", { status: 410 })
+    case "/thrown":
+      throw Response.json({ thrown: true })
+    case "/boom":
+      throw new Error("secret detail")
+    case "/rejects":
+      return Promise.reject(new Error("secret detail"))
+    case "/text":
+      return "secret detail" as unknown as Response
+    case "/unusable":
+      return Response.error()
+    default:
+      return Response.json({ method, pathname, url, accept: header("accept") })
+  }
+}
+
+const silent = { debug() {}, info() {}, warn() {}, error() {} }
+const edgeMisses = () => server({ notFound: notFound(missHandler) }).post("/users", () => "ok")
+const coreMisses = () =>
+  coreServer({ logger: silent })
+    .use(coreNotFound(missHandler))
+    .post("/users", () => "ok")
+
+/** A transport can deliver a method token no `Request` constructor would build. */
+function requestWith(method: string, url: string): Request {
+  const request = new Request(url)
+  Object.defineProperty(request, "method", { value: method })
+  return request
+}
+
+test("parity: a not-found handler answers the same as on the full Server", async () => {
+  const at = (path: string, init?: RequestInit) => () => new Request(`https://x.test${path}`, init)
+  const cases: ReadonlyArray<readonly [() => Request, number]> = [
+    [at("/a%2Fb?x=1", { headers: { accept: "text/html" } }), 404],
+    [at("/default"), 404],
+    [at("/created"), 404],
+    [at("/empty"), 404],
+    [at("/moved"), 308],
+    [at("/gone"), 410],
+    [at("/thrown"), 404],
+    [at("/boom"), 500],
+    [at("/rejects"), 500],
+    [at("/text"), 500],
+    [at("/unusable"), 500],
+    // A path that exists under another method is not a miss.
+    [at("/users"), 405],
+    // A method token no route could be registered under never reaches the handler.
+    [() => requestWith("get", "https://x.test/anything"), 404],
+  ]
+  for (const [req, status] of cases) {
+    const edge = await edgeMisses().fetch(req())
+    const core = await coreMisses().fetch(req())
+    const e = await wire(edge)
+    expect(e).toEqual(await wire(core))
+    expect(e.status).toBe(status)
+    expect(e.body).not.toContain("secret")
+    for (const name of ["content-type", "location", "x-miss"]) {
+      expect(edge.headers.get(name)).toBe(core.headers.get(name))
+    }
+  }
+  const echoed = await (await edgeMisses().fetch(at("/a%2Fb?x=1")())).json()
+  expect(echoed).toEqual({
+    method: "GET",
+    pathname: "/a%2Fb",
+    url: "https://x.test/a%2Fb?x=1",
+    accept: null,
+  })
+  expect(
+    await (await edgeMisses().fetch(requestWith("get", "https://x.test/anything"))).json(),
+  ).toEqual({ ok: false, error: "not_found" })
+})
+
+test("notFound() needs a handler function", () => {
+  expect(() => notFound(undefined as unknown as NotFoundHandler)).toThrow(
+    "notFound() needs a handler function",
+  )
 })
 
 test("toFetchHandler yields a Workers { fetch } module handler", async () => {

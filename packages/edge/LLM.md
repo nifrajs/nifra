@@ -11,13 +11,17 @@ Compact fetch-handler server for edge and serverless runtimes (Cloudflare Worker
 ## Key exports
 
 - **server** _(function)_ - `server: (options?: EdgeOptions) => EdgeServer`
+- **notFound** _(function)_ - `notFound: (handler: NotFoundHandler) => EdgeNotFound`
 - **toFetchHandler** _(function)_ - `toFetchHandler: <Env = unknown>(app: { fetch(request: Request, platform?: Platform<Env>): MaybePromise<Response>; resolveWebSocketUpgrade?(…`
 - **EdgeServer** _(class)_ - `class EdgeServer`
 - **EdgeContext** _(interface)_ - `interface EdgeContext<Path extends string = string, Body = unknown>`
 - **EdgeOptions** _(interface)_ - `interface EdgeOptions`
+- **NotFoundInput** _(interface)_ - `interface NotFoundInput<Env = unknown>`
 - **StandardSchemaV1** _(interface)_ - `interface StandardSchemaV1<Input = unknown, Output = Input>`
 - **EdgeHandler** _(type)_ - `type EdgeHandler<Path extends string = string, Body = unknown> = ( c: EdgeContext<Path, Body>, ) => unknown | Promise<unknown>`
+- **EdgeNotFound** _(type)_ - `type EdgeNotFound = (( request: Request, pathname: string, ) => Response | Promise<Response>) & { readonly [EDGE_NOT_FOUND]: true }`
 - **Method** _(type)_ - `type Method = (typeof METHODS)[number]`
+- **NotFoundHandler** _(type)_ - `type NotFoundHandler<Env = unknown> = ( input: NotFoundInput<Env>, ) => MaybePromise<Response | undefined>`
 - **Params** _(type)_ - `type Params<Path extends string> = Prettify<RawParams<Path>>`
 - **QueryValue** _(type)_ - `type QueryValue = string | string[]`
 

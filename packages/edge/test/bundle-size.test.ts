@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url"
  * size stays under a ceiling. A regression - e.g. accidentally reaching into a heavy corner of
  * `@nifrajs/core` - trips this before it ships.
  *
- * Measured at authoring: ~7.3 KB gz (raw ~20 KB). The ceiling has headroom for honest growth; a
+ * Measured at authoring: ~7.5 KB gz (raw ~22 KB). The ceiling has headroom for honest growth; a
  * jump past it means something big got pulled in - investigate, don't just bump the number.
  */
 const CEILING_GZIP_BYTES = 9_000

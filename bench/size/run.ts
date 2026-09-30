@@ -329,6 +329,12 @@ const BROWSER_FEATURES: ReadonlySet<string> = new Set(["nifra-web-client"])
 // capture count is read off that list, and the trie keys a shape by those literals, which takes the
 // pattern-source builder and its escaper out of the kernel. The baseline sat exactly on the bare
 // ceiling, so the three rows with no slack left move by 0.1 KB; the other rows still clear theirs.
+// A custom answer for unmatched requests (`notFound()`) lives on its own subpath; the kernel keeps
+// the install seam and one branch at the 404 site: +49 B gzip (bare 31592 -> 31641 B), inherited by
+// every row, and nothing else of the feature is reachable from an app that does not import it.
+// Writing the field from the plugin instead of through the seam measures 12 B smaller and was not
+// taken: the seam is what refuses an install after `listen()`. The four rows with no slack left move
+// by 0.1 KB; the other rows still clear theirs.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   // The 2026-09-20 security pass adds bounded WebSocket admission/request-hook handling and
   // duplicate-cookie detection to the shared kernel. Reprice every core row together with the
@@ -336,11 +342,11 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-bare": 30.9,
   // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
   "nifra-idempotency": 34.1,
-  "nifra-effect-ledger": 32.8,
+  "nifra-effect-ledger": 32.9,
   "nifra-mcp": 31.2,
-  "nifra-sse": 31.6,
-  "nifra-valibot": 31.9,
-  "nifra-typebox-t": 61.0,
+  "nifra-sse": 31.7,
+  "nifra-valibot": 32.0,
+  "nifra-typebox-t": 61.1,
   "nifra-typebox-form": 64.9,
   // Review-leaf ceiling: measured 5.0 KB gz + ~0.2 KB headroom, same rule as every other row.
   "nifra-agent-review": 5.2,

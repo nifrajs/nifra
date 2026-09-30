@@ -61,7 +61,9 @@ export function emitRequestErrorLog(
   logger: Logger,
   detail: ErrorLogDetail,
   err: unknown,
-  ctx: RawContext,
+  // Only the request line is read, so a lane with no context yet (a request no route matched) can
+  // log through the same policy.
+  ctx: { readonly req: { readonly method: string; readonly url: string } },
 ): void {
   logger.error("unhandled request error", {
     method: ctx.req.method,
