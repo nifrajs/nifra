@@ -55,7 +55,8 @@ const SHOULD_REVALIDATE = `// routes/orgs/[org]/_layout.tsx
 import type { ShouldRevalidate } from "@nifrajs/web"
 
 export async function loader({ params }: { params: { org: string } }) {
-  return { org: await db.orgs.find(params.org) }
+  const res = await fetch("https://api.example.com/orgs/" + encodeURIComponent(params.org))
+  return { org: await res.json() }
 }
 
 // The org sidebar ignores the query: filtering a list beneath it keeps the org data,

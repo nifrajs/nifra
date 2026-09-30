@@ -195,7 +195,7 @@
     "name": "SHOULD_REVALIDATE",
     "topic": "Nifra - Loaders & actions",
     "slug": "data",
-    "code": "// routes/orgs/[org]/_layout.tsx\nimport type { ShouldRevalidate } from \"@nifrajs/web\"\n\nexport async function loader({ params }: { params: { org: string } }) {\n  return { org: await db.orgs.find(params.org) }\n}\n\n// The org sidebar ignores the query: filtering a list beneath it keeps the org data,\n// switching orgs loads it again.\nexport const shouldRevalidate: ShouldRevalidate = ({ currentParams, nextParams }) =>\n  currentParams.org !== nextParams.org"
+    "code": "// routes/orgs/[org]/_layout.tsx\nimport type { ShouldRevalidate } from \"@nifrajs/web\"\n\nexport async function loader({ params }: { params: { org: string } }) {\n  const res = await fetch(\"https://api.example.com/orgs/\" + encodeURIComponent(params.org))\n  return { org: await res.json() }\n}\n\n// The org sidebar ignores the query: filtering a list beneath it keeps the org data,\n// switching orgs loads it again.\nexport const shouldRevalidate: ShouldRevalidate = ({ currentParams, nextParams }) =>\n  currentParams.org !== nextParams.org"
   },
   {
     "name": "DECORATE",
