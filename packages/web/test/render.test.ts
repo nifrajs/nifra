@@ -120,6 +120,18 @@ test("renderPage emits stylesheets even on a non-hydrated page (e.g. _error)", a
   expect(esc).not.toContain('"><script>x')
 })
 
+test('renderPage refuses an empty clientEntry on a hydrating page instead of emitting src=""', () => {
+  for (const clientEntry of ["", "  "]) {
+    expect(() => renderPage({ adapter: stub, chain: [() => {}], data: null, clientEntry })).toThrow(
+      /non-empty clientEntry/,
+    )
+  }
+  // The same document without a client takeover never references the entry, so it is fine.
+  expect(() =>
+    renderPage({ adapter: stub, chain: [() => {}], data: null, clientEntry: "", hydrate: false }),
+  ).not.toThrow()
+})
+
 test("renderPage defers framework CSS only for hydrating pages and preserves JS-off styling", async () => {
   const html = await (
     await renderPage({

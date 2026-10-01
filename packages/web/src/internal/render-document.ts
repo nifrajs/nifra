@@ -323,6 +323,14 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
   const slot: RenderAssemblyCache =
     nonce === undefined && options.assemblyCache !== undefined ? options.assemblyCache : {}
   if (slot.shellPre === undefined) {
+    // An empty entry is not "no client": `<script type="module" src="">` resolves to the page URL, so
+    // the browser would load the document itself as a module. Checked here, where the shell is built,
+    // so a cached route pays it once.
+    if (hydrate && (clientEntry === undefined || clientEntry.trim() === "")) {
+      throw new TypeError(
+        "[nifra/web] a hydrating page needs a non-empty clientEntry (the built client entry URL); pass hydrate: false for a page with no client",
+      )
+    }
     // Matched-route chunk preloads, concatenated directly. De-duped against the entry, which is
     // preloaded separately below.
     let preloadLinks = ""
