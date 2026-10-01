@@ -5,9 +5,12 @@
  *   1. An explicit `nifra mcp <dir>` argument is taken literally (human configuration wins).
  *   2. A cwd guess walks UP to the nearest nifra marker (a `package.json` depending on `@nifrajs/*`,
  *      or a `nifra.config.ts` monorepo root), so running from a subdirectory still finds the project.
+ *      When nothing above is a project but the spawn directory is a package-manager workspace root
+ *      (`package.json` `workspaces`) with exactly one nifra member, the server adopts that member.
  *   3. The client's MCP `roots` (its workspace folders) are requested after the handshake. When the
  *      guess found no project - or found one DISJOINT from every workspace root - and exactly one
- *      workspace root is a nifra project, the server adopts it.
+ *      workspace root (or one member of a workspace-root folder) is a nifra project, the server
+ *      adopts it.
  *   4. What cannot be resolved fails CLOSED: project-scoped tools refuse with a remediation message
  *      instead of describing whatever directory the server happened to start in.
  *
@@ -15,12 +18,13 @@
  */
 
 import { readFile } from "node:fs/promises"
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path"
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 
 /** How the current root was chosen. `arg` = explicit `nifra mcp <dir>`; `cwd` = the spawn directory;
- * `parent` = a marker found walking up from cwd; `client-root` = adopted from the client's MCP roots. */
-export type McpRootSource = "arg" | "cwd" | "parent" | "client-root"
+ * `parent` = a marker found walking up from cwd; `workspace` = the one nifra member of the spawn
+ * directory's package-manager workspaces; `client-root` = adopted from the client's MCP roots. */
+export type McpRootSource = "arg" | "cwd" | "parent" | "workspace" | "client-root"
 
 export interface McpRootState {
   /** Absolute directory every project-scoped tool operates on. */
@@ -31,11 +35,17 @@ export interface McpRootState {
   /** The client's workspace roots (absolute paths), or `null` until (unless) the client answers
    * `roots/list`. `null` disables mismatch detection - no data is not a mismatch. */
   readonly clientRoots: readonly string[] | null
+  /** Nifra members of the spawn directory's workspaces when there were several to choose from - the
+   * remediation list, since adopting one of them would be a guess. */
+  readonly workspaceCandidates?: readonly string[]
 }
 
 const MAX_CLIENT_ROOTS = 64
 const MAX_ROOT_URI_LENGTH = 16_384
 const MAX_ROOT_PATH_LENGTH = 4_096
+/** Workspace members probed per workspace root. A monorepo larger than this is pointed at explicitly
+ * (`nifra mcp <dir>`) rather than scanned on every server start. */
+const MAX_WORKSPACE_MEMBERS = 256
 
 /** A directory is a nifra project when its `package.json` depends on any `@nifrajs/*` package, or it
  * is a `nifra.config.ts` monorepo root. Backend-only projects (no web config, no `routes/`) count -
@@ -69,8 +79,56 @@ export async function findNifraRoot(start: string): Promise<string | null> {
   }
 }
 
+/** The `workspaces` globs a `package.json` declares (the array form, or Yarn's `{ packages }`), or
+ * `null` when the directory is not a workspace root. Negated patterns are dropped: they only exclude. */
+async function workspacePatterns(dir: string): Promise<readonly string[] | null> {
+  let field: unknown
+  try {
+    field = (
+      JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as Record<string, unknown>
+    ).workspaces
+  } catch {
+    return null
+  }
+  const list = Array.isArray(field)
+    ? field
+    : typeof field === "object" && field !== null
+      ? (field as { packages?: unknown }).packages
+      : undefined
+  if (!Array.isArray(list)) return null
+  return list.filter(
+    (pattern): pattern is string =>
+      typeof pattern === "string" && pattern !== "" && !pattern.startsWith("!"),
+  )
+}
+
+/**
+ * The nifra projects among `dir`'s package-manager workspace members, in declaration order. Empty when
+ * `dir` declares no `workspaces`. A member is a directory a pattern matches that holds a `package.json`;
+ * `node_modules` is never a member.
+ */
+export async function workspaceProjects(dir: string): Promise<string[]> {
+  const patterns = await workspacePatterns(dir)
+  if (patterns === null) return []
+  const members = new Set<string>()
+  let probed = 0
+  for (const pattern of patterns) {
+    const glob = new Bun.Glob(`${pattern.replace(/\/+$/, "")}/package.json`)
+    for await (const match of glob.scan({ cwd: dir, onlyFiles: true })) {
+      if (match.split(/[\\/]/).includes("node_modules")) continue
+      if (++probed > MAX_WORKSPACE_MEMBERS) break
+      members.add(dirname(join(dir, match)))
+    }
+    if (probed > MAX_WORKSPACE_MEMBERS) break
+  }
+  const projects: string[] = []
+  for (const member of members) if (await isNifraProjectDir(member)) projects.push(member)
+  return projects
+}
+
 /** Initial root state. An explicit dir is taken literally (no walk-up - the human named it); a cwd
- * guess walks up so a subdirectory spawn still lands on the project. */
+ * guess walks up so a subdirectory spawn still lands on the project, then tries the spawn directory's
+ * workspace members so a monorepo root finds its one nifra app. */
 export async function resolveRootState(
   requested: string,
   explicit: boolean,
@@ -92,7 +150,17 @@ export async function resolveRootState(
       clientRoots: null,
     }
   }
-  return { root: requested, source: "cwd", isProject: false, clientRoots: null }
+  const members = await workspaceProjects(requested)
+  if (members.length === 1) {
+    return { root: members[0] as string, source: "workspace", isProject: true, clientRoots: null }
+  }
+  return {
+    root: requested,
+    source: "cwd",
+    isProject: false,
+    clientRoots: null,
+    ...(members.length > 1 ? { workspaceCandidates: members } : {}),
+  }
 }
 
 /** `file://` roots from a `roots/list` result, as absolute paths. Non-file and malformed URIs are
@@ -151,9 +219,9 @@ export function rootMismatch(state: McpRootState): boolean {
 /**
  * Fold the client's workspace roots into the state, adopting one of them when the current root is
  * wrong and the correction is unambiguous: the root was GUESSED (never an explicit `nifra mcp <dir>`),
- * it is not a project - or is one disjoint from the whole workspace - and exactly ONE workspace root
- * is a nifra project. Ambiguity (zero or several candidates) adopts nothing; the guard's remediation
- * message lists the candidates instead.
+ * it is not a project - or is one disjoint from the whole workspace - and exactly ONE candidate exists
+ * (see {@link nifraCandidates}). Ambiguity (zero or several candidates) adopts nothing; the guard's
+ * remediation message lists the candidates instead.
  */
 export async function applyClientRoots(
   state: McpRootState,
@@ -162,8 +230,7 @@ export async function applyClientRoots(
   const next: McpRootState = { ...state, clientRoots: paths }
   if (state.source === "arg") return next
   if (next.isProject && !rootMismatch(next)) return next
-  const candidates: string[] = []
-  for (const path of paths) if (await isNifraProjectDir(path)) candidates.push(path)
+  const candidates = await nifraCandidates(paths)
   if (candidates.length !== 1) return next
   return {
     root: candidates[0] as string,
@@ -173,11 +240,15 @@ export async function applyClientRoots(
   }
 }
 
-/** The nifra project roots among the client's workspace roots - the remediation list when adoption
- * was ambiguous. */
+/** The nifra projects the client's workspace roots name: each root that is a project itself, and
+ * otherwise the nifra members of a root that is a package-manager workspace. The remediation list
+ * when adoption was ambiguous. */
 export async function nifraCandidates(paths: readonly string[]): Promise<string[]> {
   const candidates: string[] = []
-  for (const path of paths) if (await isNifraProjectDir(path)) candidates.push(path)
+  for (const path of paths) {
+    if (await isNifraProjectDir(path)) candidates.push(path)
+    else for (const member of await workspaceProjects(path)) candidates.push(member)
+  }
   return candidates
 }
 
@@ -198,10 +269,15 @@ export async function rootVerdict(state: McpRootState): Promise<McpRootVerdict> 
       ? ` Client workspace roots: ${state.clientRoots.join(", ")}.`
       : ""
   if (!state.isProject) {
-    const candidates = state.clientRoots !== null ? await nifraCandidates(state.clientRoots) : []
+    const candidates = [
+      ...new Set([
+        ...(state.workspaceCandidates ?? []),
+        ...(state.clientRoots !== null ? await nifraCandidates(state.clientRoots) : []),
+      ]),
+    ]
     const hint =
       candidates.length > 1
-        ? ` Several workspace roots are nifra projects (${candidates.join(", ")}) - pass one: \`nifra mcp <dir>\`.`
+        ? ` Several workspace folders are nifra projects (${candidates.join(", ")}) - pass one: \`nifra mcp <dir>\`.`
         : ""
     return {
       blocked:

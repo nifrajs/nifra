@@ -93,6 +93,80 @@ describe("resolveRootState", () => {
   })
 })
 
+/** A workspace root (no nifra marker of its own) whose members are `members`: name -> nifra or not. */
+const workspaceRoot = async (
+  workspaces: unknown,
+  members: Record<string, boolean>,
+): Promise<string> => {
+  const dir = await mkdtemp(join(tmpdir(), "nifra-root-ws-"))
+  await writeFile(join(dir, "package.json"), JSON.stringify({ name: "ws", workspaces }))
+  for (const [member, nifra] of Object.entries(members)) {
+    await mkdir(join(dir, member), { recursive: true })
+    await writeFile(
+      join(dir, member, "package.json"),
+      JSON.stringify({
+        name: member,
+        dependencies: nifra ? { "@nifrajs/core": "0.0.0" } : { leftpad: "1.0.0" },
+      }),
+    )
+  }
+  return dir
+}
+
+describe("resolveRootState - package-manager workspaces", () => {
+  test("a workspace root with ONE nifra member adopts it (source `workspace`)", async () => {
+    const dir = await workspaceRoot(["core", "app"], { core: false, app: true })
+    const state = await resolveRootState(dir, false)
+    expect(state).toEqual({
+      root: join(dir, "app"),
+      source: "workspace",
+      isProject: true,
+      clientRoots: null,
+    })
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("globs and Yarn's `{ packages }` form; node_modules is never a member", async () => {
+    const dir = await workspaceRoot(
+      { packages: ["apps/*", "!apps/ignored"] },
+      { "apps/web": true, "apps/docs": false, "apps/node_modules": true },
+    )
+    const state = await resolveRootState(dir, false)
+    expect(state.root).toBe(join(dir, "apps", "web"))
+    expect(state.source).toBe("workspace")
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("several nifra members adopt nothing and the refusal names each one", async () => {
+    const dir = await workspaceRoot(["apps/*"], { "apps/a": true, "apps/b": true })
+    const state = await resolveRootState(dir, false)
+    expect(state.isProject).toBe(false)
+    expect(state.root).toBe(dir)
+    const verdict = await rootVerdict(state)
+    expect(verdict.blocked).toContain(join(dir, "apps", "a"))
+    expect(verdict.blocked).toContain(join(dir, "apps", "b"))
+    expect(verdict.blocked).toContain("nifra mcp <dir>")
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("an explicit dir is never redirected to a workspace member", async () => {
+    const dir = await workspaceRoot(["app"], { app: true })
+    const state = await resolveRootState(dir, true)
+    expect(state).toEqual({ root: dir, source: "arg", isProject: false, clientRoots: null })
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a client workspace root that is a package-manager workspace offers its nifra member", async () => {
+    const dir = await workspaceRoot(["core", "app"], { core: false, app: true })
+    const start = await plainDir()
+    const next = await applyClientRoots(await resolveRootState(start, false), [dir])
+    expect(next.root).toBe(join(dir, "app"))
+    expect(next.source).toBe("client-root")
+    await rm(dir, { recursive: true, force: true })
+    await rm(start, { recursive: true, force: true })
+  })
+})
+
 describe("pathsFromRootsResult", () => {
   test("file:// URIs become paths; non-file and malformed URIs are skipped", () => {
     const expected = resolve("/a/b")
