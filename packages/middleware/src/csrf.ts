@@ -93,11 +93,10 @@ function mediaEssence(contentType: string): string {
   return (semi === -1 ? contentType : contentType.slice(0, semi)).trim().toLowerCase()
 }
 
-/** Up to `maxBytes` of a body stream, or `null` when it is longer (or fails mid-read). */
-async function readAtMost(
-  body: ReadableStream<Uint8Array>,
-  maxBytes: number,
-): Promise<Uint8Array<ArrayBuffer> | null> {
+/** Up to `maxBytes` of a request clone, or `null` when it is longer (or fails mid-read). */
+async function readAtMost(req: Request, maxBytes: number): Promise<Uint8Array<ArrayBuffer> | null> {
+  const body = req.clone().body
+  if (body === null) return null
   const reader = body.getReader()
   const chunks: Uint8Array[] = []
   let total = 0
@@ -107,13 +106,17 @@ async function readAtMost(
       if (done) break
       total += value.byteLength
       if (total > maxBytes) {
-        await reader.cancel()
+        // A clone tees the request: cancel both branches on terminal rejection, without waiting
+        // for the unread branch or an upstream cleanup promise that may never settle.
+        void Promise.allSettled([reader.cancel(), req.body?.cancel()])
         return null
       }
       chunks.push(value)
     }
   } catch {
     return null
+  } finally {
+    reader.releaseLock()
   }
   const out = new Uint8Array(total)
   let offset = 0
@@ -141,9 +144,7 @@ async function formFieldToken(
   if (!urlencoded && essence !== "multipart/form-data") return null
   const declared = req.headers.get("content-length")
   if (declared !== null && !(Number(declared) <= maxBytes)) return null
-  const clone = req.clone().body
-  if (clone === null) return null
-  const bytes = await readAtMost(clone, maxBytes)
+  const bytes = await readAtMost(req, maxBytes)
   if (bytes === null) return null
   try {
     if (urlencoded) return new URLSearchParams(new TextDecoder().decode(bytes)).get(field)

@@ -135,6 +135,60 @@ describe("csrf()", () => {
     )
   })
 
+  test.each([
+    "application/x-www-form-urlencoded",
+    "multipart/form-data; boundary=test",
+  ])("rejects an oversized open %s stream without waiting for cancellation", async (contentType) => {
+    let cancelled = false
+    let handled = false
+    let producer: ReadableStreamDefaultController<Uint8Array> | undefined
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        producer = controller
+        controller.enqueue(new Uint8Array(32))
+        controller.enqueue(new Uint8Array(33))
+      },
+      cancel() {
+        cancelled = true
+        // A producer's cleanup may never settle; rejection must not wait for it either.
+        return new Promise<void>(() => {})
+      },
+    })
+    const app = server()
+      .use(csrf({ secret: SECRET, field: "_csrf", fieldMaxBytes: 64 }))
+      .post("/mutate", () => {
+        handled = true
+        return { ok: true }
+      })
+    const init = {
+      method: "POST",
+      headers: {
+        origin: "http://app.test",
+        cookie: "csrf-token=unsigned",
+        "content-type": contentType,
+      },
+      body,
+      duplex: "half" as const,
+    }
+    const response = app.fetch(new Request("http://app.test/mutate", init))
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const result = await Promise.race([
+        response,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("CSRF rejection waited for the stream")), 500)
+        }),
+      ])
+      expect(result.status).toBe(403)
+      expect(await result.json()).toEqual({ ok: false, error: "csrf_failed" })
+      expect(handled).toBe(false)
+      expect(cancelled).toBe(true)
+    } finally {
+      clearTimeout(timer)
+      if (!cancelled) producer?.close()
+    }
+  })
+
   test("safe methods pass without a token", async () => {
     const app = server()
       .use(csrf({ secret: SECRET }))
