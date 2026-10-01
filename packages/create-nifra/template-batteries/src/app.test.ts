@@ -1,14 +1,18 @@
 import { expect, test } from "bun:test"
 import { app, queue, wasIndexed } from "./app.ts"
 
+// `listen()` tells the app who is calling; a bare `app.fetch` does not, and `rateLimit()` refuses a
+// request it cannot attribute. Each test request therefore arrives from a local peer, as it would
+// through a socket.
+const send = (path: string, init?: RequestInit) =>
+  app.fetch(new Request(`http://localhost${path}`, init), { clientIp: "127.0.0.1" })
+
 const post = (body: unknown) =>
-  app.fetch(
-    new Request("http://localhost/notes", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }),
-  )
+  send("/notes", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
 
 test("create + background index job", async () => {
   const res = await post({ title: "first", body: "hello" })
@@ -28,40 +32,36 @@ test("cursor pagination walks every page", async () => {
   await post({ title: "b", body: "" })
   await post({ title: "c", body: "" })
 
-  const first = (await (
-    await app.fetch(new Request("http://localhost/notes?limit=2"))
-  ).json()) as Page
+  const first = (await (await send("/notes?limit=2")).json()) as Page
   expect(first.items).toHaveLength(2)
   expect(first.nextCursor).not.toBeNull()
 
-  const url = `http://localhost/notes?limit=2&cursor=${encodeURIComponent(first.nextCursor ?? "")}`
-  const second = (await (await app.fetch(new Request(url))).json()) as Page
+  const cursor = encodeURIComponent(first.nextCursor ?? "")
+  const second = (await (await send(`/notes?limit=2&cursor=${cursor}`)).json()) as Page
   expect(second.items.length).toBeGreaterThan(0)
 })
 
 test("limit over the cap is a 422", async () => {
-  const res = await app.fetch(new Request("http://localhost/notes?limit=999"))
+  const res = await send("/notes?limit=999")
   expect(res.status).toBe(422)
 })
 
 test("get one is served (and cached); missing is 404", async () => {
   const created = (await (await post({ title: "cached", body: "x" })).json()) as { id: number }
-  const hit = await app.fetch(new Request(`http://localhost/notes/${created.id}`))
+  const hit = await send(`/notes/${created.id}`)
   expect(((await hit.json()) as { id: number }).id).toBe(created.id)
 
-  const miss = await app.fetch(new Request("http://localhost/notes/999999"))
+  const miss = await send("/notes/999999")
   expect(miss.status).toBe(404)
 })
 
 test("attachment round-trips through storage", async () => {
   const created = (await (await post({ title: "with-file", body: "x" })).json()) as { id: number }
-  const res = await app.fetch(
-    new Request(`http://localhost/notes/${created.id}/attachment`, {
-      method: "PUT",
-      headers: { "content-type": "text/plain" },
-      body: "hello bytes",
-    }),
-  )
+  const res = await send(`/notes/${created.id}/attachment`, {
+    method: "PUT",
+    headers: { "content-type": "text/plain" },
+    body: "hello bytes",
+  })
   expect(res.status).toBe(201)
   expect(((await res.json()) as { bytes: number }).bytes).toBe("hello bytes".length)
 })

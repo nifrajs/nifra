@@ -13,6 +13,7 @@ import {
   NIFRA_BACKEND_WS_MOUNT,
   NIFRA_BACKEND_WS_RUNTIME,
 } from "@nifrajs/core/mount"
+import type { Platform } from "@nifrajs/core/server"
 import {
   assertTransportTextBounded,
   createTransportCodecRegistry,
@@ -183,6 +184,11 @@ export interface InProcessClientOptions extends Omit<ClientOptions, "fetch"> {
   readonly validateResponses?: boolean
 }
 
+export interface TestClientOptions extends InProcessClientOptions {
+  /** The address every call comes from, as a socket peer's would (default `"127.0.0.1"`). */
+  readonly clientIp?: string
+}
+
 interface CallOptions {
   readonly query?: Record<string, unknown>
   readonly headers?: Record<string, string>
@@ -240,8 +246,9 @@ export function client(
  * `c.env` and `c.waitUntil`. Read the caller through `c.clientIp` - identity travels in the platform,
  * so rebuilding a `Request` never loses it. Only platform fields travel: the page request's `cookie`,
  * `authorization` and other headers are NOT copied, so a loader call is anonymous unless the loader
- * passes headers itself (`ctx.api.me.get({ headers: { cookie } })`). Used outside a page render
- * (scripts, {@link testClient}), calls carry no platform, exactly as before.
+ * passes headers itself (`ctx.api.me.get({ headers: { cookie } })`). Used outside a page render (a
+ * script, a job), calls carry no platform, so they come from no address; {@link testClient} is the
+ * variant whose calls come from a local peer.
  */
 const utf8 = new TextEncoder()
 
@@ -294,11 +301,24 @@ async function framedFormRequest(url: string, init: RequestInit, form: FormData)
 export function inProcessClient<
   App extends { fetch(request: Request): Response | Promise<Response> },
 >(app: App, options?: InProcessClientOptions): InProcessClient<App> {
+  return createInProcessClient(app, options, undefined)
+}
+
+function createInProcessClient<
+  App extends { fetch(request: Request): Response | Promise<Response> },
+>(
+  app: App,
+  options: InProcessClientOptions | undefined,
+  // The platform an unbound call carries. Only `testClient` sets one: a production call made on behalf
+  // of a remote user must not look local to rate limits or IP rules.
+  unboundPlatform: Platform | undefined,
+): InProcessClient<App> {
   // The in-process bridge: the client speaks `fetch(url, init)` (the `FetchFn` shape) while the app's
   // own `fetch` takes a `Request`. It is the proxy's per-call transport; the symbol-keyed mount below
   // is the platform-aware auto-mount path. The optional third argument is the calling request's
   // platform, supplied only by a view from the bind seam below; the unbound proxy never passes one.
-  const direct: PlatformFetchFn = (url, init, platform) => {
+  const direct: PlatformFetchFn = (url, init, boundPlatform) => {
+    const platform = boundPlatform ?? unboundPlatform
     const body = init?.body
     if (body instanceof FormData) {
       return framedFormRequest(url, init as RequestInit, body).then((request) =>
@@ -391,7 +411,9 @@ export function inProcessClient<
  * The in-process test client - the Fastify-`inject` / supertest equivalent for nifra. Drives the
  * app's own `fetch` directly: no server, no port, no network, the full real lifecycle (validation,
  * middleware, contracts, auth), and end-to-end types from `App`. Calls never throw - branch on
- * `res.ok`. An alias of {@link inProcessClient} with a test-focused name; identical behavior.
+ * `res.ok`. It is {@link inProcessClient} plus a client address: every call comes from `127.0.0.1`
+ * (or `options.clientIp`), so middleware keyed on the caller, like `rateLimit()`, runs as it would
+ * behind a listener.
  *
  * ```ts
  * import { testClient } from "@nifrajs/client"
@@ -402,7 +424,13 @@ export function inProcessClient<
  * expect(res.ok && res.data.id).toBe("42")
  * ```
  */
-export const testClient = inProcessClient
+export function testClient<App extends { fetch(request: Request): Response | Promise<Response> }>(
+  app: App,
+  options?: TestClientOptions,
+): InProcessClient<App> {
+  const { clientIp = "127.0.0.1", ...rest } = options ?? {}
+  return createInProcessClient(app, rest, { clientIp })
+}
 
 function createProxy(
   base: string,

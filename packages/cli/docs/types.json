@@ -19121,10 +19121,16 @@
   },
   {
     "name": "testClient",
-    "kind": "const",
+    "kind": "function",
     "package": "@nifrajs/client",
-    "signature": "export declare const testClient: typeof inProcessClient;",
-    "doc": "/**\n * The in-process test client - the Fastify-`inject` / supertest equivalent for nifra. Drives the\n * app's own `fetch` directly: no server, no port, no network, the full real lifecycle (validation,\n * middleware, contracts, auth), and end-to-end types from `App`. Calls never throw - branch on\n * `res.ok`. An alias of {@link inProcessClient} with a test-focused name; identical behavior.\n *\n * ```ts\n * import { testClient } from \"@nifrajs/client\"\n * import { app } from \"../src/app\"\n *\n * const api = testClient<typeof app>(app)\n * const res = await api.users({ id: \"42\" }).get()\n * expect(res.ok && res.data.id).toBe(\"42\")\n * ```\n */"
+    "signature": "export declare function testClient<App extends {\n    fetch(request: Request): Response | Promise<Response>;\n}>(app: App, options?: TestClientOptions): InProcessClient<App>;",
+    "doc": "/**\n * The in-process test client - the Fastify-`inject` / supertest equivalent for nifra. Drives the\n * app's own `fetch` directly: no server, no port, no network, the full real lifecycle (validation,\n * middleware, contracts, auth), and end-to-end types from `App`. Calls never throw - branch on\n * `res.ok`. It is {@link inProcessClient} plus a client address: every call comes from `127.0.0.1`\n * (or `options.clientIp`), so middleware keyed on the caller, like `rateLimit()`, runs as it would\n * behind a listener.\n *\n * ```ts\n * import { testClient } from \"@nifrajs/client\"\n * import { app } from \"../src/app\"\n *\n * const api = testClient<typeof app>(app)\n * const res = await api.users({ id: \"42\" }).get()\n * expect(res.ok && res.data.id).toBe(\"42\")\n * ```\n */"
+  },
+  {
+    "name": "TestClientOptions",
+    "kind": "interface",
+    "package": "@nifrajs/client",
+    "signature": "export interface TestClientOptions extends InProcessClientOptions {\n    /** The address every call comes from, as a socket peer's would (default `\"127.0.0.1\"`). */\n    readonly clientIp?: string;\n}"
   },
   {
     "name": "TestClock",

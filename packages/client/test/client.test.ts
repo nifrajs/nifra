@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Result, Treaty } from "@nifrajs/client"
-import { client, testClient } from "@nifrajs/client"
+import { client, inProcessClient, testClient } from "@nifrajs/client"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "@nifrajs/core"
 import { server } from "@nifrajs/core"
 
@@ -259,6 +259,20 @@ describe("testClient", () => {
     const untyped = api as unknown as { nope: { get(): Promise<{ ok: boolean }> } }
     const missing = await untyped.nope.get()
     expect(missing.ok).toBe(false)
+  })
+
+  test("calls arrive from 127.0.0.1, so middleware keyed on the client address runs as it would behind a listener", async () => {
+    const app = server().get("/ip", (c) => ({ ip: c.clientIp ?? null }))
+    const local = await testClient<typeof app>(app).ip.get()
+    expect(local.ok && local.data).toEqual({ ip: "127.0.0.1" })
+    const remote = await testClient<typeof app>(app, { clientIp: "203.0.113.9" }).ip.get()
+    expect(remote.ok && remote.data).toEqual({ ip: "203.0.113.9" })
+  })
+
+  test("inProcessClient carries no address of its own: a call made for a remote user never looks local", async () => {
+    const app = server().get("/ip", (c) => ({ ip: c.clientIp ?? null }))
+    const res = await inProcessClient<typeof app>(app).ip.get()
+    expect(res.ok && res.data).toEqual({ ip: null })
   })
 })
 

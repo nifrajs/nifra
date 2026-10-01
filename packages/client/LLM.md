@@ -12,7 +12,7 @@ Browser-safe, end-to-end-typed client for @nifrajs/core servers (Eden-style prox
 
 - **client** _(function)_ - `client: { <App>(baseUrl: string, options?: ClientOptions): Treaty<App>; <const C extends ContractShape>(contract: C, baseUrl: string, optio…`
 - **inProcessClient** _(function)_ - `inProcessClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: InProcessClientOptions) => In…`
-- **testClient** _(const)_ - `testClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: InProcessClientOptions) => InProce…`
+- **testClient** _(function)_ - `testClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: TestClientOptions) => InProcessCli…`
 - **reservedKeyFor** _(function)_ - `reservedKeyFor: (segment: string) => string | undefined`
 - **ResponseContractViolation** _(class)_ - `class ResponseContractViolation`
 - **RESERVED_EXACT_KEYS** _(const)_ - `RESERVED_EXACT_KEYS: readonly ["subscribe", "ws", "index", "then"]`
@@ -25,7 +25,7 @@ Browser-safe, end-to-end-typed client for @nifrajs/core servers (Eden-style prox
 - **LoaderArgs** _(interface)_ - `interface LoaderArgs<Api, Env = unknown, Search = undefined>`
 - **LoaderResponseControls** _(interface)_ - `interface LoaderResponseControls`
 
-_…and 15 more - see [`api-reference.md`](../../api-reference.md#nifrajsclient) for the complete list._
+_…and 16 more - see [`api-reference.md`](../../api-reference.md#nifrajsclient) for the complete list._
 
 ## Footguns
 

@@ -12,6 +12,7 @@ export {
   type InProcessClient,
   type InProcessClientOptions,
   inProcessClient,
+  type TestClientOptions,
   testClient,
 } from "./client.ts"
 export type { Jsonify } from "./jsonify.ts"

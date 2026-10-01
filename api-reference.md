@@ -918,6 +918,7 @@ Every public export of every package and documented subpath - name, kind, signat
   The outcome of a client call. The client never throws - inspect `ok` to branch.
 - **SubscribeOptions** _(interface)_ - `interface SubscribeOptions<I extends RouteInfo>`
 - **Subscription** _(interface)_ - `interface Subscription`
+- **TestClientOptions** _(interface)_ - `interface TestClientOptions`
 - **Treaty** _(type)_ - `type Treaty<App> = TreatyFromRegistry<RegistryOf<App>>`
   The Eden-style proxy type for a server. Use a named alias for readable errors:
 - **TreatyFromRegistry** _(type)_ - `type TreatyFromRegistry<R> = TreatyNode<R, ""> & RootIndex<R>`
@@ -930,8 +931,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **inProcessClient** _(function)_ - `inProcessClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: InProcessClientOptions) => InProcessClient<App>`
 - **reservedKeyFor** _(function)_ - `reservedKeyFor: (segment: string) => string | undefined`
   The reserved key a static path segment collides with, or undefined. Params (`:id`) and wildcards (`*rest`) never collide - they are not spelled as property accesses.
-- **testClient** _(const)_ - `testClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: InProcessClientOptions) => InProcessClient<App>`
-  The in-process test client - the Fastify-`inject` / supertest equivalent for nifra. Drives the app's own `fetch` directly: no server, no port, no network, the full real lifecycle (validation, middleware, contracts, auth), and end-to-end types from `App`. Calls never throw - branch on `res.ok`. An a…
+- **testClient** _(function)_ - `testClient: <App extends { fetch(request: Request): Response | Promise<Response>; }>(app: App, options?: TestClientOptions) => InProcessClient<App>`
+  The in-process test client - the Fastify-`inject` / supertest equivalent for nifra. Drives the app's own `fetch` directly: no server, no port, no network, the full real lifecycle (validation, middleware, contracts, auth), and end-to-end types from `App`. Calls never throw - branch on `res.ok`. It i…
 
 ## @nifrajs/coding-agent
 

@@ -13636,7 +13636,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/client
 
-`ActionArgs`, `ActionData`, `ApiError`, `ApiProxy`, `client`, `ClientOptions`, `ClientRetryOptions`, `FetchFn`, `inProcessClient`, `InProcessClient`, `InProcessClientOptions`, `Jsonify`, `LoaderArgs`, `LoaderData`, `LoaderResponseControls`, `RegistryOf`, `RESERVED_EXACT_KEYS`, `RESERVED_KEY_READOUT`, `RESERVED_VERB_KEYS`, `reservedKeyFor`, `ResponseContractViolation`, `Result`, `SubscribeOptions`, `Subscription`, `testClient`, `Treaty`, `TreatyFromRegistry`, `WsCallOptions`, `WsHandle`
+`ActionArgs`, `ActionData`, `ApiError`, `ApiProxy`, `client`, `ClientOptions`, `ClientRetryOptions`, `FetchFn`, `inProcessClient`, `InProcessClient`, `InProcessClientOptions`, `Jsonify`, `LoaderArgs`, `LoaderData`, `LoaderResponseControls`, `RegistryOf`, `RESERVED_EXACT_KEYS`, `RESERVED_KEY_READOUT`, `RESERVED_VERB_KEYS`, `reservedKeyFor`, `ResponseContractViolation`, `Result`, `SubscribeOptions`, `Subscription`, `testClient`, `TestClientOptions`, `Treaty`, `TreatyFromRegistry`, `WsCallOptions`, `WsHandle`
 
 ## @nifrajs/coding-agent
 

@@ -29,11 +29,9 @@ const app = server()
 const bindOf = (api: unknown): BackendPlatformBinder =>
   (api as { [NIFRA_BACKEND_BIND_PLATFORM]: BackendPlatformBinder })[NIFRA_BACKEND_BIND_PLATFORM]
 
-test("a standalone in-process client dispatches with no platform", async () => {
-  for (const api of [inProcessClient<typeof app>(app), testClient<typeof app>(app)]) {
-    const res = await api.who.get()
-    expect(res.data).toEqual({ ip: null, env: null })
-  }
+test("a standalone in-process client dispatches with no platform; a test client is a local peer", async () => {
+  expect((await inProcessClient<typeof app>(app).who.get()).data).toEqual({ ip: null, env: null })
+  expect((await testClient<typeof app>(app).who.get()).data).toEqual({ ip: "127.0.0.1", env: null })
 })
 
 test("a platform-bound view carries that platform; the unbound client stays anonymous", async () => {

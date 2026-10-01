@@ -15,6 +15,7 @@
     "@nifrajs/client": "^3.5.0",
     "@nifrajs/core": "^3.5.0",
     "@nifrajs/jobs": "^3.5.0",
+    "@nifrajs/middleware": "^3.5.0",
     "@nifrajs/schema": "^3.5.0",
     "@nifrajs/storage": "^3.5.0"
   },
