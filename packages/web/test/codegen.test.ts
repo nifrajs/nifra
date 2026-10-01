@@ -376,15 +376,16 @@ test("a routable `_`-prefixed id is not mistaken for a terminal status page", ()
 test("a loader's notFound() hydrates the _404 the server rendered, not the matched route", async () => {
   // Both sides, end to end: the server's injected route id feeds the client's initial-route choice.
   const manifest = buildManifest(
-    ["learn/[slug].tsx", "_404.tsx"],
+    ["learn/[slug].tsx", "learn/[slug].backend.ts", "_404.tsx"],
     (file) => async (): Promise<RouteModule> =>
       file === "learn/[slug].tsx"
-        ? {
-            default: "learn",
-            loader: ({ params }: { params: Record<string, string> }) =>
-              params.slug === "intro" ? { title: "Intro" } : notFound(),
-          }
-        : { default: "the-404-page" },
+        ? { default: "learn" }
+        : file === "learn/[slug].backend.ts"
+          ? ({
+              loader: ({ params }: { params: Record<string, string> }) =>
+                params.slug === "intro" ? { title: "Intro" } : notFound(),
+            } as unknown as RouteModule)
+          : { default: "the-404-page" },
   )
   const stub: RenderAdapter = {
     renderToStream: (_chain, props) =>

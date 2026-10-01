@@ -7,6 +7,7 @@ import {
   redirect,
 } from "../src/index.ts"
 import { DATA_HEADER, REDIRECT_HEADER } from "../src/router.ts"
+import { isBackendHalf, splitRouteHalves } from "./_route-halves.ts"
 
 // fetch follows a 3xx, so a navigation's data request that is redirected would hand the client router
 // another page's data under the route it asked for. Every redirect it can meet rides x-nifra-redirect
@@ -28,10 +29,12 @@ type Modules = Record<string, Partial<RouteModule> & { readonly gate?: boolean }
 const appOf = (modules: Modules) =>
   createWebApp({
     adapter: stub,
-    manifest: buildManifest(
-      Object.keys(modules),
-      (file) => () => Promise.resolve({ default: file, ...modules[file] } as RouteModule),
-    ),
+    manifest: buildManifest(Object.keys(splitRouteHalves(modules)), (file) => () => {
+      const halves = splitRouteHalves(modules)
+      return Promise.resolve(
+        (isBackendHalf(file) ? halves[file] : { default: file, ...halves[file] }) as RouteModule,
+      )
+    }),
     clientEntry: "/c.js",
   })
 

@@ -17,6 +17,9 @@
     "cli"
   ],
   "type": "module",
+  "nifra": {
+    "environment": "backend"
+  },
   "bin": {
     "create-nifra": "./dist/cli.js"
   },

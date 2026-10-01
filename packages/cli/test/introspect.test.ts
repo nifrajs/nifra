@@ -451,7 +451,11 @@ describe("describeRoutes (cwd integration)", () => {
       await writeFile(join(routesDir, "index.tsx"), "export default function H() { return null }\n")
       await writeFile(
         join(routesDir, "submit.tsx"),
-        "export default function S() { return null }\nexport const action = async () => ({ ok: true })\n",
+        "export default function S() { return null }\n",
+      )
+      await writeFile(
+        join(routesDir, "submit.backend.ts"),
+        "export const action = async () => ({ ok: true })\n",
       )
       const app: LoadedApp = {
         cwd: dir,

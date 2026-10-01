@@ -74,7 +74,7 @@ export function projectResources(
     {
       uri: "nifra://openapi",
       name: "OpenAPI 3.1",
-      description: "OpenAPI document generated from backend.ts using @nifrajs/schema.",
+      description: "OpenAPI document generated from backend/app.ts using @nifrajs/schema.",
       mimeType: "application/json",
       read: async () => ({ text: await openApiHandler({ format: "json" }, loadAppCached) }),
     },

@@ -21,7 +21,8 @@ function scaffold(files: Record<string, string>): { root: string; routesDir: str
     mkdirSync(join(p, ".."), { recursive: true })
     writeFileSync(p, content)
   }
-  writeFileSync(join(root, "client-stub.ts"), "export function mountRouter() {}\n")
+  mkdirSync(join(root, "frontend"), { recursive: true })
+  writeFileSync(join(root, "frontend/client-stub.ts"), "export function mountRouter() {}\n")
   return { root, routesDir: join(root, "routes") }
 }
 
@@ -30,16 +31,17 @@ const build = (root: string, routesDir: string) =>
     root,
     routesDir,
     outDir: join(root, "dist", "assets"),
-    clientModule: join(root, "client-stub.ts"),
+    clientModule: join(root, "frontend/client-stub.ts"),
     minify: false,
   })
 
 test("emits entry + per-route chunks + CSS, all under the /assets/ public path", async () => {
   const { root, routesDir } = scaffold({
     "routes/_layout.tsx": "export default function Layout() { return null }\n",
-    "routes/index.tsx": 'import "../app.css"\nexport default function Index() { return null }\n',
+    "routes/index.tsx":
+      'import "../frontend/app.css"\nexport default function Index() { return null }\n',
     "routes/about.tsx": "export default function About() { return null }\n",
-    "app.css": "body { color: rebeccapurple }\n",
+    "frontend/app.css": "body { color: rebeccapurple }\n",
   })
   const manifest = await build(root, routesDir)
 
@@ -66,18 +68,20 @@ test("emits entry + per-route chunks + CSS, all under the /assets/ public path",
 
 test("cssCodeSplit false records one standalone aggregate CSS asset and falls back from route styles", async () => {
   const { root, routesDir } = scaffold({
-    "routes/_layout.tsx": 'import "../app.css"\nexport default function Layout() { return null }\n',
-    "routes/index.tsx": 'import "../route.css"\nexport default function Index() { return null }\n',
+    "routes/_layout.tsx":
+      'import "../frontend/app.css"\nexport default function Layout() { return null }\n',
+    "routes/index.tsx":
+      'import "../frontend/route.css"\nexport default function Index() { return null }\n',
     "routes/about.tsx": "export default function About() { return null }\n",
-    "app.css": "body { color: rebeccapurple }\n",
-    "route.css": ".route { color: tomato }\n",
+    "frontend/app.css": "body { color: rebeccapurple }\n",
+    "frontend/route.css": ".route { color: tomato }\n",
   })
   const outDir = join(root, "dist", "assets")
   const manifest = await buildClientVite({
     root,
     routesDir,
     outDir,
-    clientModule: join(root, "client-stub.ts"),
+    clientModule: join(root, "frontend/client-stub.ts"),
     cssCodeSplit: false,
     cssLoading: "deferred",
     publicDir: false,
@@ -109,14 +113,15 @@ test("cssCodeSplit false records one standalone aggregate CSS asset and falls ba
 
 test("a nested _404 is built for its stylesheet: the layouts around it, then its own", async () => {
   const { root, routesDir } = scaffold({
-    "routes/_layout.tsx": 'import "../app.css"\nexport default function Layout() { return null }\n',
+    "routes/_layout.tsx":
+      'import "../frontend/app.css"\nexport default function Layout() { return null }\n',
     "routes/index.tsx": "export default function Index() { return null }\n",
     "routes/admin/_layout.tsx": "export default function Admin() { return null }\n",
     "routes/admin/index.tsx": "export default function AdminIndex() { return null }\n",
     "routes/admin/_404.tsx":
-      'import "../../missing.css"\nexport default function Missing() { return null }\n',
-    "app.css": "body { color: rebeccapurple }\n",
-    "missing.css": ".missing { color: tomato }\n",
+      'import "../../frontend/missing.css"\nexport default function Missing() { return null }\n',
+    "frontend/app.css": "body { color: rebeccapurple }\n",
+    "frontend/missing.css": ".missing { color: tomato }\n",
   })
   const manifest = await build(root, routesDir)
 
@@ -130,13 +135,14 @@ test("a nested _404 is built for its stylesheet: the layouts around it, then its
 
 test("a _loading page is built as a lazy chunk, and its stylesheet ships with the app's", async () => {
   const { root, routesDir } = scaffold({
-    "routes/_layout.tsx": 'import "../app.css"\nexport default function Layout() { return null }\n',
+    "routes/_layout.tsx":
+      'import "../frontend/app.css"\nexport default function Layout() { return null }\n',
     "routes/index.tsx": "export default function Index() { return null }\n",
     "routes/admin/index.tsx": "export default function AdminIndex() { return null }\n",
     "routes/admin/_loading.tsx":
-      'import "../../skeleton.css"\nexport default function Skeleton() { return "loading-marker" }\n',
-    "app.css": "body { color: rebeccapurple }\n",
-    "skeleton.css": ".skeleton { color: tomato }\n",
+      'import "../../frontend/skeleton.css"\nexport default function Skeleton() { return "loading-marker" }\n',
+    "frontend/app.css": "body { color: rebeccapurple }\n",
+    "frontend/skeleton.css": ".skeleton { color: tomato }\n",
   })
   const manifest = await build(root, routesDir)
   const read = (url: string): string =>
@@ -154,15 +160,16 @@ test("a _loading page is built as a lazy chunk, and its stylesheet ships with th
 
 test("rejects deferred loading when Vite CSS remains split", async () => {
   const { root, routesDir } = scaffold({
-    "routes/index.tsx": 'import "../app.css"\nexport default function Index() { return null }\n',
-    "app.css": "body { color: rebeccapurple }\n",
+    "routes/index.tsx":
+      'import "../frontend/app.css"\nexport default function Index() { return null }\n',
+    "frontend/app.css": "body { color: rebeccapurple }\n",
   })
   await expect(
     buildClientVite({
       root,
       routesDir,
       outDir: join(root, "dist", "assets"),
-      clientModule: join(root, "client-stub.ts"),
+      clientModule: join(root, "frontend/client-stub.ts"),
       cssLoading: "deferred",
       minify: false,
     }),
@@ -178,7 +185,7 @@ test("writes manifest.json to outDir and the real chunk files exist on disk", as
     root,
     routesDir,
     outDir,
-    clientModule: join(root, "client-stub.ts"),
+    clientModule: join(root, "frontend/client-stub.ts"),
     minify: false,
   })
   expect(existsSync(join(outDir, "manifest.json"))).toBe(true)
@@ -229,7 +236,7 @@ test("bakes in PUBLIC_* values without exposing unprefixed secrets", async () =>
       root,
       routesDir,
       outDir,
-      clientModule: join(root, "client-stub.ts"),
+      clientModule: join(root, "frontend/client-stub.ts"),
       minify: false,
     })
     const js = [...new Bun.Glob("*.js").scanSync({ cwd: outDir })]
@@ -263,7 +270,7 @@ test("configured publicEnvPrefix disables Vite's independent VITE_* exposure", a
       root,
       routesDir,
       outDir,
-      clientModule: join(root, "client-stub.ts"),
+      clientModule: join(root, "frontend/client-stub.ts"),
       publicEnvPrefix: "NIFRA_PUBLIC_",
       minify: false,
     })
@@ -301,14 +308,14 @@ test("concurrent production and development builds observe their own NODE_ENV", 
       root: production.root,
       routesDir: production.routesDir,
       outDir: join(production.root, "dist", "assets"),
-      clientModule: join(production.root, "client-stub.ts"),
+      clientModule: join(production.root, "frontend/client-stub.ts"),
       vitePlugins: [observer("production")],
     }),
     buildClientVite({
       root: development.root,
       routesDir: development.routesDir,
       outDir: join(development.root, "dist", "assets"),
-      clientModule: join(development.root, "client-stub.ts"),
+      clientModule: join(development.root, "frontend/client-stub.ts"),
       vitePlugins: [observer("development")],
       minify: false,
     }),

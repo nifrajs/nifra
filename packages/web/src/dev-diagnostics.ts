@@ -10,6 +10,7 @@
  */
 import { renderDiagnosticOverlay } from "./dev-error.ts"
 import { buildDiagnostic, type Diagnostic, LAST_ERROR_PATH } from "./diagnostic.ts"
+import { browserDenial, createZoneClassifier } from "./zones.ts"
 
 export interface DevDiagnostics {
   /** True when a request path targets the structured last-error endpoint. */
@@ -26,6 +27,8 @@ export interface DevDiagnostics {
  * to the project (see buildDiagnostic). Both dev servers resolve a concrete root before calling this. */
 export function createDevDiagnostics(root: string): DevDiagnostics {
   let last: Diagnostic | undefined
+  const zones = createZoneClassifier({ appRoot: root })
+  const showSource = (file: string): boolean => browserDenial(zones.classify(file)) === undefined
   return {
     isLastErrorPath: (pathname) => pathname === LAST_ERROR_PATH,
     lastError: () => ({
@@ -40,7 +43,7 @@ export function createDevDiagnostics(root: string): DevDiagnostics {
       },
     }),
     capture: (err, request) => {
-      last = buildDiagnostic(err, { root, request })
+      last = buildDiagnostic(err, { root, request, showSource })
       return renderDiagnosticOverlay(last)
     },
   }

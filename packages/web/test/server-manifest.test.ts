@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { buildManifest, createWebApp, type RenderAdapter, type RouteModule } from "../src/index.ts"
+import { splitRouteHalves } from "./_route-halves.ts"
 
 const streamOf = (s: string): ReadableStream<Uint8Array> =>
   new ReadableStream({
@@ -24,9 +25,10 @@ test("generateServerManifest's runtime pattern round-trips through createWebApp 
     "users/[id].tsx": { default: "user", loader: (ctx) => ({ id: ctx.params.id }) },
     "_404.tsx": { default: "not-found" },
   }
+  const halves = splitRouteHalves(modules)
   const manifest = buildManifest(
-    Object.keys(modules),
-    (file) => () => Promise.resolve(modules[file] as RouteModule),
+    Object.keys(halves),
+    (file) => () => Promise.resolve(halves[file] as RouteModule),
   )
   const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js" })
   // index: loader ran, wrapped in the root _layout (chain 2 = [layout, page]) - buildManifest applies
@@ -52,7 +54,8 @@ test("the lazy runtime pattern round-trips through createWebApp (loaders called 
   }
   const loaders: Record<string, () => Promise<RouteModule>> = {
     "_layout.tsx": make({ default: "layout" }),
-    "index.tsx": make({ default: "home", loader: () => ({ hi: "lazy" }) }),
+    "index.tsx": make({ default: "home" }),
+    "index.backend.ts": make({ loader: () => ({ hi: "lazy" }) } as unknown as RouteModule),
     "_404.tsx": make({ default: "nf" }),
   }
   const manifest = buildManifest(

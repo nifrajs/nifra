@@ -20,7 +20,7 @@ Routes are **Vue SFCs** (`.vue`) under `routes/` - `index.vue` (landing + a live
 counter), `_layout.vue` (chrome via the default slot), `_404.vue`. A route SFC's plain `<script>`
 carries nifra's `loader`/`action`/`meta`; `<script setup>` + `<template>` are the component. The
 build compiles them with `vueBunPlugin` (`@nifrajs/web-vue/plugin`). The frontend adapter is one line in
-`framework.ts`; data lives behind `backend.ts`.
+`backend/framework.ts`; data lives behind `backend/app.ts`.
 
 ## Deploy - pick a target
 
@@ -32,7 +32,7 @@ build compiles them with `vueBunPlugin` (`@nifrajs/web-vue/plugin`). The fronten
 | **Cloudflare Pages** | `bun run build` | `bun run deploy:cf` |
 | **Vercel Edge** | `bun run build:vercel` | `bun run deploy:vercel` |
 
-The routes, `backend.ts`, and the client bundle are shared; each `build*` script swaps `buildServer`'s
+The routes, `backend/`, and the client bundle are shared; each `build*` script swaps `buildServer`'s
 target/conditions and the server entry. nifra never enters your cloud credentials - it scaffolds the
 configs (`Dockerfile`, `deno.json`, `wrangler.toml`, Vercel Build Output API); you run the vendor CLI.
 
@@ -40,9 +40,10 @@ configs (`Dockerfile`, `deno.json`, `wrangler.toml`, Vercel Build Output API); y
 
 ```
 routes/        index.vue (landing), _layout.vue (chrome), _404.vue  (Vue SFCs)
-framework.ts   the adapter (vueAdapter) - imported by the server entries (edge-bundlable)
+               index.backend.ts - the landing page's loader/action (server only)
+backend/       app.ts - your contract (loaders/actions call it in-process)
+               framework.ts - the adapter (vueAdapter) - imported by the server entries (edge-bundlable)
 nifra.config.ts the nifra CLI's dev/build config (adapter + clientModule + Vue plugins) - read by `nifra dev`
-backend.ts     your contract (loaders/actions call it in-process)
 server-bun.ts  Bun entry (Bun.serve)         build-bun.ts    → dist-bun/
 _worker.ts     Cloudflare Pages entry        build.ts        → dist/
 server-node.ts Node entry (@nifrajs/node)       build-node.ts   → dist-node/   (Dockerfile)

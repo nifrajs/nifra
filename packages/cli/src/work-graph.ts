@@ -16,6 +16,7 @@ import {
 } from "@nifrajs/core/evidence"
 import type { ReflectedRoute } from "@nifrajs/core/reflection"
 import { Glob } from "bun"
+import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
 import { digestRoute } from "./contracts.ts"
 
 export type WorkGraphNodeKind =
@@ -135,6 +136,8 @@ export interface ProjectWorkGraphResult {
 
 const SOURCE_GLOB = new Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,json}")
 const IGNORED = /(^|\/)(node_modules|dist|build|\.nifra|\.git|\.wrangler|coverage)\//
+const APP_SOURCE_DIR = /^(?:routes|frontend|backend|shared)\//
+const BACKEND_SOURCE_DIR = /^(?:backend|shared)\//
 const MANIFEST_NAMES = new Set([
   "server-manifest.ts",
   "nifra-manifest.json",
@@ -176,13 +179,13 @@ export function evaluateBuildFreshness(input: {
 
 export async function inspectBuildFreshness(cwd: string): Promise<BuildFreshness> {
   const sourcePaths: string[] = []
-  for (const name of ["backend.ts", "framework.ts", "nifra.config.ts"]) {
+  for (const name of [BACKEND_APP_FILE, FRAMEWORK_FILE, CONFIG_FILE]) {
     const path = resolve(cwd, name)
     if (existsSync(path)) sourcePaths.push(path)
   }
   for await (const rawPath of SOURCE_GLOB.scan({ cwd, dot: false })) {
     const path = rawPath.replaceAll("\\", "/")
-    if (!IGNORED.test(path) && path.startsWith("routes/")) sourcePaths.push(resolve(cwd, path))
+    if (!IGNORED.test(path) && APP_SOURCE_DIR.test(path)) sourcePaths.push(resolve(cwd, path))
   }
   const sourceTimes = await fileTimes(sourcePaths)
   for (const buildDirName of ["dist", "build"]) {
@@ -215,8 +218,8 @@ export async function collectProjectWorkGraph(
 ): Promise<ProjectWorkGraphResult> {
   const freshness = await inspectBuildFreshness(cwd)
   if (!freshness.ok) throw new StaleBuildError(freshness)
-  const backendPath = resolve(cwd, "backend.ts")
-  if (!existsSync(backendPath)) throw new Error(`[nifra] no backend.ts in ${cwd}`)
+  const backendPath = resolve(cwd, BACKEND_APP_FILE)
+  if (!existsSync(backendPath)) throw new Error(`[nifra] no ${BACKEND_APP_FILE} in ${cwd}`)
   const loadedValue: unknown = await import(`${backendPath}?nifra-work-graph=${Date.now()}`)
   const loaded = recordOf(loadedValue)
   if (loaded?.backend === undefined)
@@ -290,8 +293,8 @@ export async function buildWorkGraph(input: WorkGraphBuildInput): Promise<WorkGr
     })
     for (const file of routeFiles)
       addEdge({ from: `file:${file}`, to: routeId, relation: "implements" })
-    if (routeFiles.length === 0 && sourceFiles.some((file) => file.path === "backend.ts"))
-      addEdge({ from: "file:backend.ts", to: routeId, relation: "implements" })
+    if (routeFiles.length === 0 && sourceFiles.some((file) => file.path === BACKEND_APP_FILE))
+      addEdge({ from: `file:${BACKEND_APP_FILE}`, to: routeId, relation: "implements" })
     for (const [name, schema] of Object.entries(route.schema ?? {})) {
       if (schema === undefined || name === "errors") continue
       const schemaId = `schema:${routeKey}:${name}`
@@ -365,7 +368,8 @@ export function queryImpact(graph: WorkGraph, changedFiles: readonly string[]): 
         seeds.add(node.id)
     }
   }
-  if (normalized.includes("backend.ts"))
+  // Any backend or shared module can reach every handler through backend/app.ts.
+  if (normalized.some((file) => BACKEND_SOURCE_DIR.test(file)))
     for (const node of graph.nodes) if (node.kind === "route") seeds.add(node.id)
   const impacted = new Set(seeds)
   const queue = [...seeds]
@@ -581,7 +585,7 @@ function filesForRoute(
   const matches = files
     .filter(
       (file) =>
-        file.path === "backend.ts" ||
+        file.path === BACKEND_APP_FILE ||
         (file.path.startsWith("routes/") && file.content.includes(route.path)),
     )
     .map((file) => file.path)

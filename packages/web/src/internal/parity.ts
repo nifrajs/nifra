@@ -292,7 +292,10 @@ const hasStylesheetImport = (source: string): boolean => {
 /** A single-file-component `<style>` block (Svelte/Vue). The bundler extracts these into the app
  * stylesheet even though no `import "...css"` statement exists, so the dev contract must count them
  * or a scoped-style component would look style-free next to a production manifest that carries css. */
-const SFC_STYLE = /<style[\s>]/i
+const SFC_STYLE = /^<style[\s>]/im
+/** A `<style>` mentioned in an HTML comment is prose, not a block the compiler extracts; neither is
+ * one inside markup or an expression, which is why the match above is anchored to a line start. */
+const HTML_COMMENT = /<!--[\s\S]*?-->/g
 const isSingleFileComponent = (file: string): boolean =>
   file.endsWith(".svelte") || file.endsWith(".vue")
 
@@ -1080,7 +1083,10 @@ export function collectDevelopmentParityInput(
   const sourceRoot = dirname(resolve(routesDir))
   const css = sourceFilesUnder(sourceRoot).some((file) => {
     const content = readFileSync(file, "utf8")
-    return hasStylesheetImport(content) || (isSingleFileComponent(file) && SFC_STYLE.test(content))
+    return (
+      hasStylesheetImport(content) ||
+      (isSingleFileComponent(file) && SFC_STYLE.test(content.replace(HTML_COMMENT, "")))
+    )
   })
     ? ["css:present"]
     : []

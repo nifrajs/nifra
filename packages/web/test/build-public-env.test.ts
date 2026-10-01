@@ -87,7 +87,8 @@ test("buildClient resolves app dependencies when outDir is outside the project",
   const routesDir = join(projectRoot, "routes")
   mkdirSync(routesDir, { recursive: true })
   writeFileSync(join(routesDir, "index.tsx"), "export default function Index() { return null }\n")
-  const clientModule = join(projectRoot, "client-stub.ts")
+  const clientModule = join(projectRoot, "frontend/client-stub.ts")
+  mkdirSync(join(clientModule, ".."), { recursive: true })
   writeFileSync(clientModule, "export function mountRouter() {}\n")
   externalOut = mkdtempSync(join(tmpdir(), "nifra-client-output-"))
 
@@ -116,7 +117,8 @@ test("buildClient bakes a PUBLIC_ var's value into the client bundle, never a se
       "export const secret = process.env.SECRET_E2E_KEY\n",
   )
   // A local client module exposing `mountRouter` so the generated bootstrap import resolves.
-  const clientModule = join(projectRoot, "client-stub.ts")
+  const clientModule = join(projectRoot, "frontend/client-stub.ts")
+  mkdirSync(join(clientModule, ".."), { recursive: true })
   writeFileSync(clientModule, "export function mountRouter() {}\n")
 
   const outDir = join(projectRoot, "dist")

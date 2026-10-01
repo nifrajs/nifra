@@ -57,7 +57,7 @@ export const LEARN_PATH: readonly LearnStep[] = [
     id: "api-route",
     title: "Add a typed API route",
     goal: "A backend endpoint with a typed request/response contract.",
-    do: "Add the route to `backend.ts` with an @nifrajs/schema body/query/response schema. nifra_context shows the resulting contract and the exact typed-client call form.",
+    do: "Add the route to `backend/app.ts` with an @nifrajs/schema body/query/response schema. nifra_context shows the resulting contract and the exact typed-client call form.",
     verify:
       "nifra_run { method, path, body } and check the status + parsed body; nifra_check confirms the contract typechecks.",
     tools: ["nifra_context", "nifra_run", "nifra_check"],

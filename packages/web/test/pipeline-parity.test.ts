@@ -60,21 +60,21 @@ beforeAll(async () => {
   write("routes/_layout.tsx", "export default function Layout() { return null }\n")
   write(
     "routes/index.tsx",
-    'import styles from "../styles.module.css"\n' +
-      'import { token } from "../shared.ts"\n' +
+    'import styles from "../frontend/styles.module.css"\n' +
+      'import { token } from "../shared/token.ts"\n' +
       "export const usedClass = styles.box\n" +
       "export const shared = token\n" +
       "export default function Index() { return null }\n",
   )
   write(
     "routes/about.tsx",
-    'import { token } from "../shared.ts"\n' +
+    'import { token } from "../shared/token.ts"\n' +
       "export const shared = token\n" +
       "export default function About() { return null }\n",
   )
-  write("shared.ts", `export const token = { id: "${SHARED_MARKER}" }\n`)
+  write("shared/token.ts", `export const token = { id: "${SHARED_MARKER}" }\n`)
   write(
-    "styles.module.css",
+    "frontend/styles.module.css",
     ".box { padding: 1rem; animation: spin 1s }\n" +
       ".title { font-weight: 700 }\n" +
       "@keyframes spin { from { opacity: 0 } to { opacity: 1 } }\n" +
@@ -82,12 +82,12 @@ beforeAll(async () => {
   )
   write("public/robots.txt", "User-agent: *\n")
   write("public/nested/note.txt", "nested\n")
-  write("client-stub.ts", "export function mountRouter() {}\n")
+  write("frontend/client-stub.ts", "export function mountRouter() {}\n")
 
   prod = await buildClient({
     routesDir,
     outDir: distDir,
-    clientModule: join(root, "client-stub.ts"),
+    clientModule: join(root, "frontend/client-stub.ts"),
     minify: false,
     publicDir: join(root, "public"),
     plugins: [cssModulesBunPlugin("dom")],
@@ -96,7 +96,7 @@ beforeAll(async () => {
   dev = await createViteDevServer({
     root,
     routesDir,
-    clientModule: join(root, "client-stub.ts"),
+    clientModule: join(root, "frontend/client-stub.ts"),
     port: 0,
     // Deliberately NOT a catch-all: it answers `/` and 404s everything else. A stub that returned 200 for
     // any path would make the "absent in both regimes" check pass no matter what the static layer did.
@@ -188,10 +188,12 @@ const parseViteClassMap = (moduleSource: string): Record<string, string> => {
 }
 
 test("both regimes export the same class keys", async () => {
-  const devMap = parseViteClassMap(await (await fetch(`${devOrigin}/styles.module.css`)).text())
+  const devMap = parseViteClassMap(
+    await (await fetch(`${devOrigin}/frontend/styles.module.css`)).text(),
+  )
   const prodMap = transformCssModule(
-    readFileSync(join(root, "styles.module.css"), "utf8"),
-    "styles.module.css",
+    readFileSync(join(root, "frontend/styles.module.css"), "utf8"),
+    "frontend/styles.module.css",
   ).exports
 
   // `spin` is the `@keyframes` name: part of the CSS Modules export namespace, not just the classes.
@@ -202,10 +204,12 @@ test("both regimes export the same class keys", async () => {
 })
 
 test("both regimes actually SCOPE every class (a passthrough would collide across files)", async () => {
-  const devMap = parseViteClassMap(await (await fetch(`${devOrigin}/styles.module.css`)).text())
+  const devMap = parseViteClassMap(
+    await (await fetch(`${devOrigin}/frontend/styles.module.css`)).text(),
+  )
   const prodMap = transformCssModule(
-    readFileSync(join(root, "styles.module.css"), "utf8"),
-    "styles.module.css",
+    readFileSync(join(root, "frontend/styles.module.css"), "utf8"),
+    "frontend/styles.module.css",
   ).exports
   for (const [local, scoped] of Object.entries(devMap)) {
     expect(scoped, `dev left .${local} unscoped`).not.toBe(local)
@@ -218,10 +222,10 @@ test("both regimes actually SCOPE every class (a passthrough would collide acros
 test("both regimes leave :global alone (the documented escape hatch)", async () => {
   // If one regime scopes `:global(.untouched)`, a hand-written or third-party selector matches locally
   // and stops matching in production - with no error anywhere.
-  const devCss = await (await fetch(`${devOrigin}/styles.module.css?direct`)).text()
+  const devCss = await (await fetch(`${devOrigin}/frontend/styles.module.css?direct`)).text()
   const prodCss = transformCssModule(
-    readFileSync(join(root, "styles.module.css"), "utf8"),
-    "styles.module.css",
+    readFileSync(join(root, "frontend/styles.module.css"), "utf8"),
+    "frontend/styles.module.css",
   ).css
   expect(devCss).toContain(".untouched {")
   expect(prodCss).toContain(".untouched {")

@@ -8,9 +8,9 @@
  * The CI loop: commit a snapshot on main, run `nifra diff api-snapshot.json` on every PR, and an
  * accidental contract break (removed route, new required field, retyped response) fails the build
  * before it ships. Classification lives in `@nifrajs/core/diff` (direction-aware, fails closed);
- * this module only loads `backend.ts` and renders the result.
+ * this module only loads `backend/app.ts` and renders the result.
  *
- * Loads ONLY `backend.ts` - the API contract - so it works on an API-only project with no
+ * Loads ONLY `backend/app.ts` - the API contract - so it works on an API-only project with no
  * framework config or routes/ directory (unlike the eager `loadApp`).
  */
 
@@ -23,6 +23,7 @@ import {
   type RoutesDiff,
   snapshotRoutes,
 } from "@nifrajs/core/diff"
+import { BACKEND_APP_FILE } from "./app-files.ts"
 
 /** Snapshot file envelope - versioned so a future format change can migrate instead of misparse. */
 export interface SnapshotFile {
@@ -81,12 +82,12 @@ export function formatDiff(diff: RoutesDiff): string {
   return `${lines.join("\n")}\n\n${summary}`
 }
 
-/** Import `backend.ts` from `cwd` and snapshot its routes. */
+/** Import `backend/app.ts` from `cwd` and snapshot its routes. */
 export async function snapshotBackend(cwd: string): Promise<readonly RouteSnapshot[]> {
-  const backendPath = resolve(cwd, "backend.ts")
+  const backendPath = resolve(cwd, BACKEND_APP_FILE)
   if (!existsSync(backendPath)) {
     throw new Error(
-      `[nifra] no backend.ts in ${cwd} - \`nifra snapshot\`/\`nifra diff\` compare the API contract, which lives in backend.ts.`,
+      `[nifra] no backend/app.ts in ${cwd} - \`nifra snapshot\`/\`nifra diff\` compare the API contract, which lives in backend/app.ts.`,
     )
   }
   const backend = ((await import(backendPath)) as { backend?: unknown }).backend

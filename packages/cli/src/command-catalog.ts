@@ -21,6 +21,7 @@ import { type I18nCheckOutput, i18nCheckPassed, renderI18nCheck } from "./i18n-c
 import type { VerificationLevelsResult } from "./levels-tool.ts"
 import type { LoadedApp } from "./load.ts"
 import type { ManifestEmitCommandResult } from "./manifest-tool.ts"
+import type { LayoutMigrationResult } from "./migrate-layout.ts"
 import { collectPortResult, type PortResult, renderReport } from "./port.ts"
 import type { ReplayResult } from "./replay.ts"
 import { reviewSpec } from "./review.ts"
@@ -326,9 +327,11 @@ interface FixInput {
   readonly dir?: string | undefined
 }
 
+/** `migrate layout`, or `migrate --from tailwind --to stylex`; the parser admits only those two. */
 interface MigrateInput {
-  readonly from: "tailwind"
-  readonly to: "stylex"
+  readonly kind?: "layout" | undefined
+  readonly from?: "tailwind" | undefined
+  readonly to?: "stylex" | undefined
   readonly write?: boolean | undefined
   readonly json?: boolean | undefined
   readonly dir?: string | undefined
@@ -423,7 +426,9 @@ interface FixCommandOutput {
   readonly failed: readonly { readonly code: string; readonly reason: string }[]
   readonly diagnostics: readonly unknown[]
 }
-interface MigrateCommandOutput extends StylexMigrationResult {}
+type MigrateCommandOutput =
+  | (StylexMigrationResult & { readonly kind?: undefined })
+  | (LayoutMigrationResult & { readonly kind: "layout" })
 interface SnapshotCommandOutput {
   readonly ok: true
   readonly file: string
@@ -667,28 +672,31 @@ const FIX_SCHEMA = input<FixInput>(
 )
 
 const MIGRATE_SCHEMA = input<MigrateInput>(
-  objectSchema(
-    {
-      from: { type: "string", enum: ["tailwind"] },
-      to: { type: "string", enum: ["stylex"] },
-      write: { type: "boolean" },
-      json: { type: "boolean" },
-      dir: { type: "string" },
-    },
-    ["from", "to"],
-  ),
+  objectSchema({
+    kind: { type: "string", enum: ["layout"] },
+    from: { type: "string", enum: ["tailwind"] },
+    to: { type: "string", enum: ["stylex"] },
+    write: { type: "boolean" },
+    json: { type: "boolean" },
+    dir: { type: "string" },
+  }),
   (value) => {
     const raw = withDir(record(value))
+    const flags = {
+      ...parseBooleanFlags(raw, ["write", "json"]),
+      ...(raw.dir === undefined ? {} : { dir: raw.dir }),
+    }
+    const kind = optionalString(raw.kind, "kind")
+    if (kind !== undefined) {
+      if (kind !== "layout")
+        throw new TypeError("the migration must be `layout` (or --from tailwind --to stylex)")
+      return { kind, ...flags }
+    }
     const from = optionalString(raw.from, "from")
     const to = optionalString(raw.to, "to")
     if (from !== "tailwind") throw new TypeError("from must be tailwind")
     if (to !== "stylex") throw new TypeError("to must be stylex")
-    return {
-      from,
-      to,
-      ...parseBooleanFlags(raw, ["write", "json"]),
-      ...(raw.dir === undefined ? {} : { dir: raw.dir }),
-    }
+    return { from, to, ...flags }
   },
 )
 
@@ -1317,12 +1325,14 @@ const fixSpec: CommandSpec<FixInput, FixCommandOutput> = {
 
 const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
   name: "migrate",
-  summary: "Migrate safe static Tailwind className utilities to native StyleX props.",
+  summary:
+    "Move an app onto the frontend/backend split (`migrate layout`), or migrate static Tailwind utilities to StyleX.",
   input: MIGRATE_SCHEMA,
   output: output({
     type: "object",
     properties: {
       ok: { type: "boolean" },
+      kind: { type: "string" },
       from: { type: "string" },
       to: { type: "string" },
       write: { type: "boolean" },
@@ -1331,12 +1341,16 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
       written: { type: "array" },
       issues: { type: "array" },
       files: { type: "array" },
+      splits: { type: "array" },
+      moves: { type: "array" },
+      rewritten: { type: "array" },
     },
-    required: ["ok", "from", "to", "write", "scanned", "changed", "written", "issues", "files"],
+    required: ["ok", "write", "issues"],
   }),
   transports: ["cli"],
   stability: "stable",
   argv: {
+    positionals: ["kind"],
     flags: [
       { name: "from", field: "from", type: "string" },
       { name: "to", field: "to", type: "string" },
@@ -1346,28 +1360,48 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
     ],
   },
   async run(value, ctx) {
+    const dir = resolve(ctx.cwd, value.dir ?? ".")
+    const write = value.write === undefined ? {} : { write: value.write }
+    if (value.kind === "layout") {
+      const { migrateLayout } = await import("./migrate-layout.ts")
+      return { kind: "layout" as const, ...(await migrateLayout(dir, write)) }
+    }
     const { migrateTailwindToStylex } = await import("./stylex-migrate.ts")
-    return migrateTailwindToStylex(resolve(ctx.cwd, value.dir ?? "."), {
-      ...(value.write === undefined ? {} : { write: value.write }),
-    })
+    return migrateTailwindToStylex(dir, write)
   },
-  render: (out) => [
-    out.ok
-      ? `✓ migrated ${out.changed.length} file${out.changed.length === 1 ? "" : "s"}`
-      : `⚠ migrated ${out.changed.length} safe file${out.changed.length === 1 ? "" : "s"}; ${out.issues.length} manual issue${out.issues.length === 1 ? "" : "s"} remain`,
-    `  scanned ${out.scanned} source file${out.scanned === 1 ? "" : "s"}`,
-    ...(out.write
-      ? [`  wrote ${out.written.length} file${out.written.length === 1 ? "" : "s"}`]
-      : out.changed.length > 0
-        ? ["  dry run: pass --write to apply the safe changes"]
+  render: (out) => {
+    if (out.kind === "layout") {
+      return [
+        out.ok
+          ? `✓ ${out.splits.length} route file${out.splits.length === 1 ? "" : "s"} split, ${out.moves.length} file${out.moves.length === 1 ? "" : "s"} moved`
+          : `⚠ ${out.issues.length} issue${out.issues.length === 1 ? "" : "s"} need a decision; everything else is planned`,
+        ...out.splits.map(
+          (split) => `  split ${split.file} → ${split.backend} (${split.moved.join(", ")})`,
+        ),
+        ...out.moves.map((move) => `  move  ${move.from} → ${move.to}`),
+        ...out.rewritten.map((file) => `  edit  ${file} (imports)`),
+        ...out.issues.map((issue) => `  ⚠ ${issue.file}: ${issue.reason}`),
+        ...(out.write ? [] : ["  dry run: pass --write to apply"]),
+      ]
+    }
+    return [
+      out.ok
+        ? `✓ migrated ${out.changed.length} file${out.changed.length === 1 ? "" : "s"}`
+        : `⚠ migrated ${out.changed.length} safe file${out.changed.length === 1 ? "" : "s"}; ${out.issues.length} manual issue${out.issues.length === 1 ? "" : "s"} remain`,
+      `  scanned ${out.scanned} source file${out.scanned === 1 ? "" : "s"}`,
+      ...(out.write
+        ? [`  wrote ${out.written.length} file${out.written.length === 1 ? "" : "s"}`]
+        : out.changed.length > 0
+          ? ["  dry run: pass --write to apply the safe changes"]
+          : []),
+      ...out.issues
+        .slice(0, 30)
+        .map((issue) => `  ${issue.file}:${issue.line} ${issue.token} — ${issue.reason}`),
+      ...(out.issues.length > 30
+        ? [`  … ${out.issues.length - 30} more issue${out.issues.length - 30 === 1 ? "" : "s"}`]
         : []),
-    ...out.issues
-      .slice(0, 30)
-      .map((issue) => `  ${issue.file}:${issue.line} ${issue.token} — ${issue.reason}`),
-    ...(out.issues.length > 30
-      ? [`  … ${out.issues.length - 30} more issue${out.issues.length - 30 === 1 ? "" : "s"}`]
-      : []),
-  ],
+    ]
+  },
   success: (out) => out.ok,
 }
 

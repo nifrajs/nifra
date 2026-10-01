@@ -11,6 +11,7 @@ import {
   dirname,
   join,
   basename as pathBasename,
+  posix,
   relative,
   resolve as resolvePath,
   sep,
@@ -51,13 +52,21 @@ import {
 import {
   generateServerFnStub,
   SERVER_FN_MODULE,
-  SERVER_ONLY_MODULE,
-  SERVER_ONLY_REPLACEMENT,
   serverFnNamespace,
 } from "./internal/server-boundary.ts"
+import {
+  accountEmittedFiles,
+  bunModuleSource,
+  type EmittedFile,
+  formatClientGraphVerdict,
+  formatUnaccountedOutput,
+  verifyClientGraph,
+} from "./internal/zone-graph.ts"
+import { type ClientModuleGraph, fromBunMetafile } from "./module-graph.ts"
+import { zoneGuardPlugin } from "./plugins/zone-guard.ts"
 // `buildTarget(static)` drives the SSG prerender engine directly (it's also re-exported below).
-import { fromBunMetafile } from "./module-graph.ts"
 import { prerenderRoutes } from "./prerender.ts"
+import { createZoneClassifier } from "./zones.ts"
 
 export * from "./build-plan.ts"
 
@@ -444,12 +453,14 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // entry→CSS link for per-route splitting: keyed by the unique source path, so it survives
   // same-basename collisions (`index.tsx` + `blog/index.tsx`) that a filename match can't. Not yet in
   // `@types/bun`'s `BuildConfig`, so spread it in (spread props skip the excess-property check).
-  const buildExtras = { metafile: true }
+  const buildExtras = { metafile: true, throw: false }
+  const classifier = createZoneClassifier({ appRoot: root, routesDir, generatedFiles: [entryFile] })
+  const refused = new Map<string, string>()
+  // No `outdir`: the bundle stays in memory until the graph proves it holds browser code only.
   const result = await (async () => {
     try {
       return await Bun.build({
         entrypoints: [entryFile, ...routeFiles.map(resolve)],
-        outdir: outDir,
         target: "browser",
         naming: "[name]-[hash].[ext]",
         publicPath,
@@ -460,11 +471,16 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
         ...buildExtras,
         minify: options.minify ?? true,
         plugins: [
+          // First, so it sees every file before another plugin's `onLoad` claims it.
+          zoneGuardPlugin({
+            appRoot: root,
+            classifier,
+            onDenied: (file, reason) => refused.set(file, reason),
+          }),
           ...declaredSingleCopyPlugins(root),
           reactDedupePlugin(routesDir),
           preactDedupePlugin(routesDir),
           svelteDedupePlugin(routesDir),
-          serverOnlyEmptyPlugin(),
           serverFnStubPlugin(),
           ...(options.plugins ?? []),
         ],
@@ -485,40 +501,92 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
       rmSync(entryDir, { recursive: true, force: true })
     }
   })()
+  const cwd = process.cwd()
+  const clientMeta = (result as unknown as { metafile?: BunMetafile }).metafile
   if (!result.success) {
+    // A refused file can be what broke the build (a backend module importing a server-only built-in),
+    // so the refusal is the error to show, not the bundler's symptom.
+    const verdict =
+      refused.size > 0 && clientMeta !== undefined
+        ? formatClientGraphVerdict(
+            verifyClientGraph(fromBunMetafile(clientMeta), {
+              classifier,
+              sourceOf: bunModuleSource(cwd),
+            }),
+          )
+        : undefined
+    if (verdict !== undefined) throw new Error(verdict)
+    if (refused.size > 0) throw new Error(formatRefusedFiles(refused, root))
     throw new Error(
       `[nifra/web] client build failed:\n${result.logs.map((l) => String(l)).join("\n")}`,
     )
   }
 
-  // #4: a `node:` builtin (e.g. `node:crypto`) pulled into a CLIENT chunk builds fine (Bun substitutes
-  // a browser polyfill) but breaks/leaks at runtime. Fail the build with a named, actionable error
-  // instead - caught at build time, not by a confused user in the browser. Graph-based (the metafile's
-  // per-output `inputs`), so it can't false-positive on a `"node:..."` string literal and survives
-  // minification. Only the client build runs this; the server build's `node:` imports are legitimate.
-  const clientMeta = (result as unknown as { metafile?: BunMetafile }).metafile
-  const clientGraph = fromBunMetafile(clientMeta)
+  const emitted: EmittedFile[] = await Promise.all(
+    result.outputs.map(async (out): Promise<EmittedFile> => {
+      if (out.kind === "sourcemap") return { name: out.path, kind: "map", text: await out.text() }
+      if (out.kind === "asset")
+        return { name: out.path, kind: out.path.endsWith(".css") ? "css" : "asset" }
+      return { name: out.path, kind: "code", text: await out.text() }
+    }),
+  )
+  const clientGraph = withEmittedImports(fromBunMetafile(clientMeta), emitted, publicPath)
+  const verdict = verifyClientGraph(clientGraph, { classifier, sourceOf: bunModuleSource(cwd) })
+  // Two independent records of one fact: a file the plugin refused that the graph never shows means the
+  // graph is missing evidence, and the build cannot prove anything else about it either.
+  const reported = new Set(verdict.leaks.map((leak) => resolvePath(root, leak.module)))
+  const unseen = [...refused.keys()].filter((file) => !reported.has(file))
+  const graphMessage = formatClientGraphVerdict(
+    unseen.length === 0
+      ? verdict
+      : {
+          ...verdict,
+          gaps: [
+            ...verdict.gaps,
+            ...unseen.map(
+              (file) => `${file} was refused while loading but is missing from the graph`,
+            ),
+          ],
+        },
+  )
+  if (graphMessage !== undefined) throw new Error(graphMessage)
   // #4: a `node:` builtin (e.g. `node:crypto`) pulled into a CLIENT chunk builds fine (Bun substitutes a
   // browser polyfill) but breaks/leaks at runtime. Fail with the chain (entry → … → builtin), through the
   // SHARED formatter so the Vite pipeline's identical guard reads byte-for-byte the same.
   const nodeBuiltinLeak = formatNodeBuiltinLeak(detectNodeBuiltinsInClient(clientGraph))
   if (nodeBuiltinLeak !== undefined) throw new Error(nodeBuiltinLeak)
 
-  // §3.3/§5.1: a module that opted into the `server-only` marker yet reached a CLIENT chunk - catches
-  // pure-server logic (a secret, a server-only API call) carrying no `node:` import and not named
-  // `*.server`, so neither other guard fires. Same shared formatter as above.
+  // A module that imports the `backend-only` marker yet reached a client chunk: library code the zones
+  // cannot place on a side by path alone. Same shared formatter as the Vite pipeline.
   const serverOnlyLeak = formatServerOnlyLeak(detectServerOnlyInClient(clientGraph))
   if (serverOnlyLeak !== undefined) throw new Error(serverOnlyLeak)
 
+  const unaccounted = formatUnaccountedOutput(
+    accountEmittedFiles(emitted, clientGraph, {
+      classifier,
+      sourceOf: bunModuleSource(cwd),
+      outDir: resolvePath(outDir),
+    }),
+  )
+  if (unaccounted !== undefined) throw new Error(unaccounted)
+
+  const outputs = await Promise.all(
+    result.outputs.map(async (out) => {
+      const path = join(outDir, out.path)
+      await Bun.write(path, out)
+      return { kind: out.kind, path }
+    }),
+  )
+
   // Rename any chunk whose basename isn't URL-safe (dynamic-route files become `[slug]-hash.js`) and
   // rewrite the references - otherwise the lazy import 404s and the route silently never hydrates.
-  const renamed = sanitizeOutputNames(result.outputs)
+  const renamed = sanitizeOutputNames(outputs)
   const toUrl = (path: string): string =>
     `${publicPath}${renamed.get(basename(path)) ?? basename(path)}`
   // Entry-point outputs come back in entrypoint order: [bootstrap, ...routeFiles]. Map each route file
   // to its chunk URL by that order (guarded against drift), then a route's chunks = its layout chain +
   // own file.
-  const entryPoints = result.outputs.filter((o) => o.kind === "entry-point")
+  const entryPoints = outputs.filter((o) => o.kind === "entry-point")
   const bootstrap = entryPoints[0]
   if (bootstrap === undefined) throw new Error("[nifra/web] build produced no entry-point output")
   if (entryPoints.length !== routeFiles.length + 1) {
@@ -557,7 +625,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // per-route `cssBundle` outputs follow. Dropping those per-route outputs (the old `aggregate`-only
   // shape) left them in `manifest.assets` but not `css`, so a route-scoped stylesheet normalized to
   // `asset:css` and tripped the module-graph parity contract - a bundler-dependent divergence.
-  const cssAssets = result.outputs.filter((o) => o.kind === "asset" && o.path.endsWith(".css"))
+  const cssAssets = outputs.filter((o) => o.kind === "asset" && o.path.endsWith(".css"))
   const css: readonly string[] = [
     ...cssAssets.filter((o) => cssNameOf(o.path) === bootstrapName),
     ...cssAssets.filter((o) => cssNameOf(o.path) !== bootstrapName),
@@ -569,7 +637,6 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // same-basename collisions (`index.tsx` + `blog/index.tsx`) that a filename match can't. A page then
   // links only its layout chain + own CSS (deduped); an empty array means the page needs no CSS at all.
   // Absent (→ aggregate fallback) only if Bun emits no metafile/cssBundle - never silently incomplete.
-  const cwd = process.cwd()
   const cssByEntry = new Map<string, string>()
   for (const out of Object.values(clientMeta?.outputs ?? {})) {
     if (out.entryPoint !== undefined && out.cssBundle !== undefined) {
@@ -618,7 +685,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
 
   const manifest: BuildManifest = {
     entry: toUrl(bootstrap.path),
-    assets: result.outputs.map((o) => toUrl(o.path)),
+    assets: outputs.map((o) => toUrl(o.path)),
     routes,
     ...(publicFiles.length > 0 ? { publicFiles } : {}),
     ...(css.length > 0 ? { css } : {}),
@@ -852,34 +919,54 @@ function exportTarget(entry: unknown, conditions: ReadonlySet<string>): string |
 const declaredSingleCopyPlugins = (root: string): readonly BunPlugin[] =>
   readSingleCopyDeclaration(root) === undefined ? [] : [declaredSingleCopyPlugin({ cwd: root })]
 
+/** Refusals the bundler stopped on before it produced a graph, so without import chains. */
 /**
- * Remix-style `.server` convention for the CLIENT build. A module named `*.server.ts(x)` (`db.server.ts`,
- * `auth.server.ts`, …) is server-only - empty it in the browser bundle so its (possibly `node:` / native /
- * Capacitor) import subtree never reaches the client. The body is CJS-with-a-Proxy so any named OR default
- * import resolves to `undefined` rather than a "missing export" bundle error (verified), and the real
- * import subtree is gone. The complement to the node-builtin guard: when a server-only import is co-located
- * in a route file (so it can't be tree-shaken out and the guard fails loud), moving it into a `*.server`
- * module is the fix. CLIENT-only - buildServer keeps the real module, which runs server-side.
+ * Give each output chunk the specifiers its emitted code imports. Bun's metafile does not record them
+ * (its output `imports` stay empty even for an external the code keeps), so they are read from the code.
+ * A specifier under `publicPath` or relative to the chunk is mapped back to the output it names.
  */
-export const serverOnlyEmptyPlugin = (): BunPlugin => ({
-  name: "nifra-server-only-empty",
-  setup(build) {
-    build.onLoad({ filter: SERVER_ONLY_MODULE }, () => ({
-      contents: SERVER_ONLY_REPLACEMENT,
-      loader: "js",
-    }))
-  },
-})
+function withEmittedImports(
+  graph: ClientModuleGraph,
+  emitted: readonly EmittedFile[],
+  publicPath: string,
+): ClientModuleGraph {
+  const scanner = new Bun.Transpiler({ loader: "js" })
+  const imports = new Map<string, string[]>()
+  for (const file of emitted) {
+    if (file.kind !== "code" || file.text === undefined) continue
+    imports.set(
+      posix.normalize(file.name),
+      scanner.scanImports(file.text).map(({ path }) => {
+        if (path.startsWith(publicPath)) return path.slice(publicPath.length)
+        if (path.startsWith("./") || path.startsWith("../"))
+          return posix.join(posix.dirname(posix.normalize(file.name)), path)
+        return path
+      }),
+    )
+  }
+  const chunks: Record<string, ClientModuleGraph["chunks"][string]> = {}
+  for (const [path, chunk] of Object.entries(graph.chunks))
+    chunks[path] = { ...chunk, imports: imports.get(posix.normalize(path)) ?? [] }
+  return { ...graph, chunks }
+}
+
+function formatRefusedFiles(refused: ReadonlyMap<string, string>, root: string): string {
+  const lines = [...refused].map(([file, reason]) => {
+    const rel = relative(root, file)
+    return `  - ${rel.startsWith("..") ? file : rel}: ${reason}`
+  })
+  return `[nifra/web] the browser build reached code that may not ship to a browser:\n${lines.join("\n")}`
+}
+
+export { zoneGuardPlugin } from "./plugins/zone-guard.ts"
 
 /**
  * Server functions in the CLIENT build: replace each `*.fn.ts` module with stubs that call the routes
  * the server mounted, so the function bodies - and everything they import - never reach a browser.
  *
- * The sibling of {@link serverOnlyEmptyPlugin}, and a deliberate contrast: a `*.server` module is
- * EMPTIED because nothing may call it from the client, while a `*.fn` module is REPLACED because the
- * client is supposed to call it, just over HTTP. The generation itself is in
- * `internal/server-boundary.ts` so the Vite pipeline emits identical stubs from the same code; two
- * hand-written copies would be a client that works in dev and 404s in production.
+ * The generation itself is in `internal/server-boundary.ts` so the Vite pipeline emits identical stubs
+ * from the same code; two hand-written copies would be a client that works in dev and 404s in
+ * production.
  *
  * CLIENT-only. The server build keeps the real module, which is what `serverFunctions()` mounts.
  */

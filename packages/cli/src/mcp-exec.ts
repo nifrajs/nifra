@@ -10,6 +10,7 @@ import { stat } from "node:fs/promises"
 import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Glob } from "bun"
+import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
 import {
   type CommandCatalogEntry,
   type CommandCtx,
@@ -413,7 +414,7 @@ export function projectTools(
     {
       name: "nifra_openapi",
       description:
-        'Return this project\'s backend OpenAPI 3.1 document generated from backend.ts route schemas via @nifrajs/schema. Use `format:"json"` for machine edits (default) or `format:"yaml"` for humans. Pass `path` (a route prefix like /api/orders, mirroring nifra_routes) to narrow a large backend to operations under that prefix instead of the whole document. Frontend-only apps return a valid empty paths object.',
+        'Return this project\'s backend OpenAPI 3.1 document generated from backend/app.ts route schemas via @nifrajs/schema. Use `format:"json"` for machine edits (default) or `format:"yaml"` for humans. Pass `path` (a route prefix like /api/orders, mirroring nifra_routes) to narrow a large backend to operations under that prefix instead of the whole document. Frontend-only apps return a valid empty paths object.',
       inputSchema: {
         type: "object",
         properties: {
@@ -454,7 +455,7 @@ export function projectTools(
           },
           entry: {
             type: "string",
-            description: "Backend entry file (default: backend.ts | app.ts).",
+            description: "Backend entry file (default: backend/app.ts | app.ts).",
           },
           warm: {
             type: "boolean",
@@ -524,7 +525,7 @@ export function projectTools(
           },
           entry: {
             type: "string",
-            description: "Backend entry file (default: backend.ts | app.ts).",
+            description: "Backend entry file (default: backend/app.ts | app.ts).",
           },
         },
         required: ["path"],
@@ -1081,7 +1082,7 @@ export interface CachedAppLoaderOptions {
   readonly fingerprint?: (cwd: string) => Promise<string>
 }
 
-const APP_FINGERPRINT_FILES = ["nifra.config.ts", "framework.ts", "backend.ts"] as const
+const APP_FINGERPRINT_FILES = [CONFIG_FILE, FRAMEWORK_FILE, BACKEND_APP_FILE] as const
 
 function cacheToken(input: string): string {
   let hash = 2166136261

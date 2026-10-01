@@ -37,12 +37,13 @@ describe("inferOpenAPIResponses", () => {
             "@nifrajs/core/*": [`${repo}/packages/core/src/*`],
           },
         },
-        include: ["backend.ts"],
+        include: ["backend/app.ts"],
       }),
       "utf8",
     )
+    await mkdir(join(root, "backend"))
     await writeFile(
-      join(root, "backend.ts"),
+      join(root, "backend", "app.ts"),
       [
         'import { server, status } from "@nifrajs/core"',
         "export const backend = server()",
@@ -87,12 +88,13 @@ test("reflects response schemas through the TypeScript 7 semantic adapter", asyn
           "@nifrajs/core/*": [`${repo}/packages/core/src/*`],
         },
       },
-      include: ["backend.ts"],
+      include: ["backend/app.ts"],
     }),
     "utf8",
   )
+  await mkdir(join(root, "backend"))
   await writeFile(
-    join(root, "backend.ts"),
+    join(root, "backend", "app.ts"),
     [
       'import { server, status } from "@nifrajs/core"',
       "export const backend = server()",

@@ -196,7 +196,7 @@ export function clientCall(method: string, path: string, schema: unknown): strin
 /** Markdown section listing the backend's API routes with their request + response field shapes. */
 export function apiRoutesSection(routes: readonly ReflectedRoute[]): string {
   if (routes.length === 0) {
-    return "## API routes\n\nNo `backend.ts` server routes found (this app may be frontend-only)."
+    return "## API routes\n\nNo `backend/app.ts` server routes found (this app may be frontend-only)."
   }
   const lines = [...routes]
     .sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
@@ -207,7 +207,7 @@ export function apiRoutesSection(routes: readonly ReflectedRoute[]): string {
         ? `    - call: \`${clientCall(r.method, r.path, r.schema)}\` → \`{ ok, status, data, error }\``
         : `    - call: \`${clientCall(r.method, r.path, r.schema)}\` (no typed-client call for this method; \`url\` is the path above)`,
     ])
-  return `## API routes (backend.ts)\n\nEach route's \`body\`/\`query\`/\`response\` shape is its contract - the typed client derives request inputs and \`res.data\` from these, so a screen built on \`client<typeof app>\` stays in sync automatically. The \`call\` line is the exact \`client<typeof app>\` form: static path segments are properties, a path param is a call (\`({ id })\`), the verb is the terminal call (body first for POST/PUT/PATCH), and every call returns the never-throwing \`{ ok, status, data, error }\` Result.\n\n${lines.join("\n")}`
+  return `## API routes (backend/app.ts)\n\nEach route's \`body\`/\`query\`/\`response\` shape is its contract - the typed client derives request inputs and \`res.data\` from these, so a screen built on \`client<typeof app>\` stays in sync automatically. The \`call\` line is the exact \`client<typeof app>\` form: static path segments are properties, a path param is a call (\`({ id })\`), the verb is the terminal call (body first for POST/PUT/PATCH), and every call returns the never-throwing \`{ ok, status, data, error }\` Result.\n\n${lines.join("\n")}`
 }
 
 /** Compact API-routes INDEX for the no-arg `nifra_context` call - `METHOD path` per route, WITHOUT the
@@ -216,12 +216,12 @@ export function apiRoutesSection(routes: readonly ReflectedRoute[]): string {
  * contract via the `path`/`kind` slice, instead of every schema up front. */
 export function apiRoutesIndexSection(routes: readonly ReflectedRoute[]): string {
   if (routes.length === 0) {
-    return "## API routes (backend.ts)\n\nNo `backend.ts` server routes found (this app may be frontend-only)."
+    return "## API routes (backend/app.ts)\n\nNo `backend/app.ts` server routes found (this app may be frontend-only)."
   }
   const lines = [...routes]
     .sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
     .map((r) => `- \`${r.method} ${r.path}\``)
-  return `## API routes (backend.ts)\n\n${routes.length} route${routes.length === 1 ? "" : "s"}. Call \`nifra_context\` again with \`path\` (a route prefix) and/or \`kind: "api"\` for the body/query/response contracts + the exact \`client<typeof app>\` call form - or \`nifra_routes\` for the same as structured JSON.\n\n${lines.join("\n")}`
+  return `## API routes (backend/app.ts)\n\n${routes.length} route${routes.length === 1 ? "" : "s"}. Call \`nifra_context\` again with \`path\` (a route prefix) and/or \`kind: "api"\` for the body/query/response contracts + the exact \`client<typeof app>\` call form - or \`nifra_routes\` for the same as structured JSON.\n\n${lines.join("\n")}`
 }
 
 /** Markdown section listing the file-routed pages (URL pattern → source file). */
@@ -252,9 +252,9 @@ const CONVENTIONS = `## Conventions (summary)
   \`res.data\` from the backend's route types, so the compiler catches any frontend/backend drift. Never
   hand-roll \`fetch\` + ad-hoc response types for an internal API - that's exactly how screens drift. It
   never throws: branch on \`res.ok ? res.data : res.error\`.
-- **Pages:** file-routed under \`routes/\`; \`loader\`/\`action\` are server-only but the module is also bundled
-  for the browser - **never top-level-import server-only code** (DB, secrets, \`process.env\`) into a route
-  file; reach it via \`ctx.api\` / \`ctx.env\`.
+- **Pages:** file-routed under \`routes/\`. A route is two files: \`x.tsx\` (browser) and \`x.backend.ts\`
+  (\`loader\`, \`action\`, \`middleware\`; server only). Server code lives under \`backend/\`, code both sides
+  use under \`shared/\`, components under \`frontend/\`; the browser build refuses backend code outright.
 - \`app.fetch(Request)\` is the universal entry. Full reference: this repo's \`AGENTS.md\`, or \`llms-full.txt\`.`
 
 /** Optional narrowing for {@link describeProject} - a path prefix and/or one section. A filtered
@@ -504,7 +504,7 @@ export function clientSpellingFor(
 /** Render the route table as a terse aligned text table (the `nifra routes` default output). Pure. */
 export function renderRouteTable(rows: readonly RouteTableEntry[]): string {
   if (rows.length === 0)
-    return "No routes found (no `routes/` pages and no `backend.ts` API routes)."
+    return "No routes found (no `routes/` pages and no `backend/app.ts` API routes)."
   const display = rows.map((r) => ({
     methods: r.methods.join(", "),
     kind: r.kind,

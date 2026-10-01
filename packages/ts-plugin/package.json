@@ -13,6 +13,9 @@
     "editor"
   ],
   "type": "module",
+  "nifra": {
+    "environment": "library"
+  },
   "main": "./dist/index.cjs",
   "types": "./dist/index.d.ts",
   "exports": {

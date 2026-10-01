@@ -35,12 +35,9 @@ function scaffoldApp(): { root: string; routesDir: string; outDir: string; workD
        },
      }\n`,
   )
-  w(
-    "routes/index.tsx",
-    `export function loader() { return { hello: "from-loader" } }
-     export default function Index() { return null }\n`,
-  )
-  w("client-stub.ts", "export function mountRouter() {}\n")
+  w("routes/index.tsx", "export default function Index() { return null }\n")
+  w("routes/index.backend.ts", `export function loader() { return { hello: "from-loader" } }\n`)
+  w("frontend/client-stub.ts", "export function mountRouter() {}\n")
   // The generated server entry imports `@nifrajs/web`, `@nifrajs/core/server` and (for `node`)
   // `@nifrajs/node` by bare specifier, which a real app resolves from its own node_modules.
   linkWorkspacePackages(root, ["web", "core", "node", "client"])
@@ -60,7 +57,7 @@ test("buildTargetVite('node') emits a runnable deploy dir that SSRs", async () =
     routesDir,
     outDir,
     workDir,
-    clientModule: join(root, "client-stub.ts"),
+    clientModule: join(root, "frontend/client-stub.ts"),
     adapterImport: join(root, "framework.ts"),
     title: "Vite Prod",
   })
@@ -133,17 +130,16 @@ test("buildTargetVite('node') wires aggregate CSS and deferred activation end to
   const app = scaffoldApp()
   writeFileSync(
     join(app.routesDir, "index.tsx"),
-    `import "../app.css"
-     export function loader() { return { hello: "from-loader" } }
+    `import "../frontend/app.css"
      export default function Index() { return null }
 `,
   )
-  writeFileSync(join(app.root, "app.css"), "body { color: rebeccapurple }\n")
+  writeFileSync(join(app.root, "frontend/app.css"), "body { color: rebeccapurple }\n")
   const result = await buildTargetVite("node", {
     routesDir: app.routesDir,
     outDir: app.outDir,
     workDir: app.workDir,
-    clientModule: join(app.root, "client-stub.ts"),
+    clientModule: join(app.root, "frontend/client-stub.ts"),
     adapterImport: join(app.root, "framework.ts"),
     cssCodeSplit: false,
     cssLoading: "deferred",
@@ -216,7 +212,7 @@ test("buildTargetVite('cf-pages') emits _worker.js + _routes.json (edge deploy s
     routesDir,
     outDir,
     workDir,
-    clientModule: join(root, "client-stub.ts"),
+    clientModule: join(root, "frontend/client-stub.ts"),
     adapterImport: join(root, "framework.ts"),
   })
   expect(result.target).toBe("cf-pages")
@@ -254,7 +250,7 @@ test("buildTargetVite('cf-pages') rejects a reachable node: builtin in server-on
       routesDir,
       outDir,
       workDir,
-      clientModule: join(root, "client-stub.ts"),
+      clientModule: join(root, "frontend/client-stub.ts"),
       adapterImport: join(root, "framework.ts"),
     }),
   ).rejects.toThrow(/Node built-in\(s\) reached an edge server bundle: .*node:fs/)
@@ -263,11 +259,11 @@ test("buildTargetVite('cf-pages') rejects a reachable node: builtin in server-on
 test("buildTargetVite('static') prerenders opted-in routes with no server", async () => {
   const { root, routesDir, outDir, workDir } = scaffoldApp()
   // Opt the index route into prerendering.
+  writeFileSync(join(routesDir, "index.tsx"), "export default function Index() { return null }\n")
   writeFileSync(
-    join(routesDir, "index.tsx"),
+    join(routesDir, "index.backend.ts"),
     `export const prerender = true
-     export function loader() { return { hello: "from-loader" } }
-     export default function Index() { return null }\n`,
+     export function loader() { return { hello: "from-loader" } }\n`,
   )
   const { createWebApp } = await import("../src/index.ts")
   const { discoverRoutes } = await import("../src/fs.ts")
@@ -276,7 +272,7 @@ test("buildTargetVite('static') prerenders opted-in routes with no server", asyn
     routesDir,
     outDir,
     workDir,
-    clientModule: join(root, "client-stub.ts"),
+    clientModule: join(root, "frontend/client-stub.ts"),
     adapterImport: join(root, "framework.ts"),
     prerenderApp: (client) =>
       createWebApp({

@@ -246,6 +246,28 @@ test("development parity counts a Svelte <style> block as css without a css impo
   }
 })
 
+test("development parity ignores a <style> in an SFC comment, markup or expression", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-parity-sfc-comment-"))
+  try {
+    const routesDir = join(root, "routes")
+    await mkdir(routesDir, { recursive: true })
+    await writeFile(
+      join(routesDir, "_layout.vue"),
+      [
+        "<!--",
+        "<style> in a comment is prose",
+        "-->",
+        "<template><component :is=\"'style'\">{{ css }}</component><slot /></template>",
+        "<script>const css = '<style>' + 1 + '</style>'</script>",
+      ].join("\n"),
+    )
+    const input = collectDevelopmentParityInput(routesDir, false)
+    expect(input.css).toEqual([])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("development parity reports no css for a style-free route", async () => {
   const root = await mkdtemp(join(tmpdir(), "nifra-parity-nocss-"))
   try {

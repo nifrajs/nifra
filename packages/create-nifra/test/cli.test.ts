@@ -310,12 +310,12 @@ describe("scaffold - --framework", () => {
   test("react (default) → template-site; vue → template-site-vue", async () => {
     const r = await freshDir("fw-react")
     await scaffold({ target: r, template: "site", framework: "react" })
-    expect(await readFile(join(r, "framework.ts"), "utf8")).toContain("reactAdapter")
+    expect(await readFile(join(r, "backend", "framework.ts"), "utf8")).toContain("reactAdapter")
 
     const v = await freshDir("fw-vue")
     const res = await scaffold({ target: v, template: "site", framework: "vue" })
     expect(res.framework).toBe("vue")
-    expect(await readFile(join(v, "framework.ts"), "utf8")).toContain("vueAdapter")
+    expect(await readFile(join(v, "backend", "framework.ts"), "utf8")).toContain("vueAdapter")
     // The Vue template scaffolds `.vue` Single-File Components (not render-function `.tsx`).
     expect(await exists(join(v, "routes/index.vue"))).toBe(true)
     expect(await exists(join(v, "routes/index.tsx"))).toBe(false)
@@ -338,7 +338,7 @@ describe("scaffold - --framework", () => {
     for (const [fw, adapter] of cases) {
       const dir = await freshDir(`fw-${fw}`)
       await scaffold({ target: dir, template: "site", framework: fw })
-      expect(await readFile(join(dir, "framework.ts"), "utf8")).toContain(adapter)
+      expect(await readFile(join(dir, "backend", "framework.ts"), "utf8")).toContain(adapter)
       const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as {
         dependencies?: Record<string, string>
       }
@@ -357,15 +357,18 @@ describe("scaffold - --framework", () => {
       const dir = await freshDir(`cli-${framework ?? "react"}`)
       await scaffold({ target: dir, template: "site", ...(framework ? { framework } : {}) })
 
-      // nifra.config.ts is the CLI's config (separate from the edge-imported framework.ts).
+      // nifra.config.ts is the CLI's config (separate from the edge-imported backend/framework.ts).
       const config = await readFile(join(dir, "nifra.config.ts"), "utf8")
-      expect(config).toContain('export { adapter } from "./framework"')
+      expect(config).toContain('export { adapter } from "./backend/framework"')
       expect(config).toContain(`export const clientModule = "${clientModule}"`)
       if (hasVitePlugins) expect(config).toContain("vitePlugins")
       else expect(config).not.toContain("vitePlugins")
 
-      // framework.ts stays minimal (adapter only) so it doesn't drag dev/compiler deps into the worker.
-      expect(await readFile(join(dir, "framework.ts"), "utf8")).not.toContain("vitePlugins")
+      // backend/framework.ts stays minimal (adapter only) so it doesn't drag dev/compiler deps into the
+      // worker.
+      expect(await readFile(join(dir, "backend", "framework.ts"), "utf8")).not.toContain(
+        "vitePlugins",
+      )
 
       const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as {
         scripts?: Record<string, string>

@@ -14,7 +14,7 @@
  * not, and saving it does a clean full reload. Plus no Vite dependency and ONE bundler across dev and
  * production, which is the real prize - the dev/prod seam disappears.
  *
- * CSS Modules, server functions, and `*.server` modules use the same production transforms through the
+ * CSS Modules, server functions, and the zone guard use the same production transforms through the
  * generated Bun config. The CLI owns that config because Bun's HTML dev server accepts plugins only from
  * `[serve.static] plugins`; direct callers should pass the equivalent plugin through their Bun config.
  *
@@ -39,7 +39,7 @@
  *
  * SSR invalidation is Bun's import cache rather than Vite's module graph, so route modules are re-imported
  * under a changing query on each change - which is what `discoverRoutes({ importQuery })` exists for. That
- * query stops at the route file, so everything BELOW it - components, helpers, `*.server` modules - is
+ * query stops at the route file, so everything BELOW it - components, helpers, backend modules - is
  * tracked and re-keyed per module by `./dev-ssr-graph.ts`, or SSR would render the code that was on disk
  * when the server started.
  *
@@ -378,7 +378,7 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
    * client leaks. It is no longer what keeps SSR correct.
    *
    * The entry hash is not the whole marker, though, because it only covers the CLIENT graph. A module
-   * the browser never receives - a `*.server` file, a loader's helper - can change without moving it, so
+   * the browser never receives - a backend module, a loader's helper - can change without moving it, so
    * the key also carries {@link SsrGraph} generation, which counts changes on the SERVER side. Either
    * one moving rebuilds the app, which is what re-imports the route modules under a fresh query.
    */

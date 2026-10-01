@@ -37,10 +37,8 @@ beforeEach(() => {
   routesDir = join(projectRoot, "routes")
   mkdirSync(routesDir, { recursive: true })
   // A minimal home route (no JSX → no framework runtime needed), opted into prerendering.
-  writeFileSync(
-    join(routesDir, "index.tsx"),
-    "export const prerender = true\nexport default function Home() { return null }\n",
-  )
+  writeFileSync(join(routesDir, "index.tsx"), "export default function Home() { return null }\n")
+  writeFileSync(join(routesDir, "index.backend.ts"), "export const prerender = true\n")
   // The app's framework wiring - exports a stub adapter the generated server entry imports. It emits a
   // fixed marker ("nifra") so the prerendered HTML is assertable without a real UI framework.
   writeFileSync(
@@ -56,7 +54,8 @@ beforeEach(() => {
     "export const streamOf = (s) => new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(s)); c.close() } })\n",
   )
   // The stub client runtime the client bundle imports (exports `mountRouter`).
-  writeFileSync(join(projectRoot, "client-stub.ts"), "export function mountRouter() {}\n")
+  mkdirSync(join(projectRoot, "frontend"), { recursive: true })
+  writeFileSync(join(projectRoot, "frontend/client-stub.ts"), "export function mountRouter() {}\n")
 })
 afterEach(() => {
   rmSync(projectRoot, { recursive: true, force: true })
@@ -71,7 +70,7 @@ test("--target cf-pages → _worker.js + _routes.json + /assets bundle", async (
     routesDir,
     outDir,
     workDir: join(projectRoot, ".work"),
-    clientModule: join(projectRoot, "client-stub.ts"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
     adapterImport: join(projectRoot, "framework.ts"),
   })
 
@@ -118,7 +117,7 @@ test("--target static → prerenders opted-in routes to index.html", async () =>
     routesDir,
     outDir,
     workDir: join(projectRoot, ".work-static"),
-    clientModule: join(projectRoot, "client-stub.ts"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
     adapterImport: join(projectRoot, "framework.ts"),
     prerenderApp: app,
   })
@@ -144,7 +143,7 @@ test("--target bun persists the CSS loading policy in the client manifest", asyn
     routesDir,
     outDir,
     workDir: join(projectRoot, ".work-bun-css"),
-    clientModule: join(projectRoot, "client-stub.ts"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
     adapterImport: join(projectRoot, "framework.ts"),
     cssLoading: "deferred",
   })
@@ -159,6 +158,7 @@ test("--target bun persists the CSS loading policy in the client manifest", asyn
 test("--target static with no prerenderable route throws a clear error", async () => {
   // Replace the opted-in route with one that doesn't opt in.
   writeFileSync(join(routesDir, "index.tsx"), "export default function Home() { return null }\n")
+  rmSync(join(routesDir, "index.backend.ts"))
   const manifest = discoverRoutes(routesDir)
   const app = (client: { entry: string }) =>
     createWebApp({ adapter: stubAdapter, manifest, clientEntry: client.entry })
@@ -166,7 +166,7 @@ test("--target static with no prerenderable route throws a clear error", async (
     routesDir,
     outDir: join(projectRoot, "dist-empty"),
     workDir: join(projectRoot, ".work-empty"),
-    clientModule: join(projectRoot, "client-stub.ts"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
     adapterImport: join(projectRoot, "framework.ts"),
     prerenderApp: app,
   })

@@ -12,6 +12,9 @@
     "agent"
   ],
   "type": "module",
+  "nifra": {
+    "environment": "backend"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",

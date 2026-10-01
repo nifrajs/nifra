@@ -9,6 +9,7 @@ import { existsSync, realpathSync } from "node:fs"
 import { isAbsolute, relative, resolve, sep } from "node:path"
 import { pathToFileURL } from "node:url"
 import { type AppLike, runApp } from "@nifrajs/runner"
+import { BACKEND_APP_FILE } from "./app-files.ts"
 import {
   CHILD_INPUT_MAX_BYTES,
   CHILD_OUTPUT_MAX_BYTES,
@@ -17,7 +18,7 @@ import {
   serializeBoundedJson,
 } from "./mcp-io.ts"
 
-const ENTRY_CANDIDATES = ["backend.ts", "app.ts", "src/backend.ts", "src/app.ts"]
+const ENTRY_CANDIDATES = [BACKEND_APP_FILE, "app.ts", "src/app.ts"]
 
 const errString = (err: unknown): string =>
   err instanceof Error ? `${err.name}: ${err.message}` : String(err)

@@ -24,9 +24,10 @@ export interface SyncRoutesResult {
 }
 
 /**
- * Generate the route-search types `.d.ts` from `<cwd>/routes` (the nifra convention). Returns `null` when
- * there is no `routes/` directory (an API-only project - nothing to type). Never loads `framework.ts`: it
- * needs only the route tree, so it works before a build and on a broken framework config.
+ * Generate the route-search types `.d.ts` from `<cwd>/routes` (the nifra convention). Returns
+ * `null` when there is no `routes/` directory (an API-only project - nothing to type). Never loads
+ * `backend/framework.ts`: it needs only the route tree, so it works before a build and on a broken
+ * framework config.
  */
 export async function syncRouteTypes(cwd: string): Promise<SyncRoutesResult | null> {
   const routesDir = join(cwd, "routes")

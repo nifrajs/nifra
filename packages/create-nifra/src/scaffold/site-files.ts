@@ -11,8 +11,8 @@ import { type FrameworkSpec, NIFRA_DEP_RANGE } from "./frameworks.ts"
 const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`
 
 /**
- * `framework.ts` - the one file every server entry imports the adapter from, which is what keeps the
- * entries themselves framework-agnostic and therefore shareable.
+ * `backend/framework.ts` - the one file every server entry imports the adapter from, which is what
+ * keeps the entries themselves framework-agnostic and therefore shareable.
  */
 export function renderFrameworkModule(framework: FrameworkSpec): string {
   return `// The frontend adapter for this app. \`create-nifra --framework <react|preact|vue|solid|svelte>\` swaps

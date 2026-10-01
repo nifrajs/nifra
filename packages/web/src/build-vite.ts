@@ -49,7 +49,6 @@ import { scopedName } from "./plugins/css-modules.ts"
 import { reproduciblePath } from "./plugins/kit.ts"
 import { viteBareBuiltinExternal, viteLeakGuard } from "./plugins/vite-leak-guard.ts"
 import { viteServerFnStub } from "./plugins/vite-server-fn.ts"
-import { viteServerOnlyEmpty } from "./plugins/vite-server-only.ts"
 
 // ---------------------------------------------------------------------------------------------------
 // Structural Vite typings - no hard `vite` dependency (mirrors vite.ts). Only the build API is used.
@@ -203,7 +202,19 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
   const buildEnv = (typeof Bun !== "undefined" ? Bun.env : undefined) ?? process.env
   const publicDefines = publicEnvDefines(options.publicEnvPrefix ?? "PUBLIC_", buildEnv)
   const vite = await loadVite()
-  const leakGuard = viteLeakGuard()
+  // A worker is bundled by its own sub-build the main graph never sees, so it gets its own guard; the
+  // main guard then accepts the worker chunks that guard verified.
+  const verified = new Set<string>()
+  const guardOptions = {
+    appRoot: dirname(routesDir),
+    routesDir,
+    root,
+    outDir: resolvePath(outDir),
+    generatedFiles: [entryFile],
+    verified,
+  }
+  const leakGuard = viteLeakGuard(guardOptions)
+  const workerGuards: ReturnType<typeof viteLeakGuard>[] = []
   try {
     await withSerializedNodeEnv(mode, () =>
       vite.build({
@@ -239,6 +250,13 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
         },
         // First, so a bare built-in is named before Vite turns it into an anonymous stub.
         plugins: [viteBareBuiltinExternal(), ...(options.vitePlugins ?? [])],
+        worker: {
+          plugins: () => {
+            const guard = viteLeakGuard(guardOptions)
+            workerGuards.push(guard)
+            return [viteBareBuiltinExternal(), viteServerFnStub(), guard]
+          },
+        },
         build: {
           outDir,
           emptyOutDir: false, // buildTargetWith owns outDir lifecycle; never let Vite wipe sibling files
@@ -254,7 +272,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
             external: [/^node:/],
             input,
             // The leak guard is a Rollup plugin - last, so it sees the final graph.
-            plugins: [viteServerFnStub(), viteServerOnlyEmpty(), leakGuard],
+            plugins: [viteServerFnStub(), leakGuard],
             output: {
               entryFileNames: "[name]-[hash].js",
               chunkFileNames: "[name]-[hash].js",
@@ -270,7 +288,8 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     // that construction fails, replacing a precise "node:crypto reached the client bundle" with an
     // internal complaint naming nothing. Raising it here puts the message beyond anything that can
     // rewrite it; the bundler's error is kept as `cause` for the rest of the context.
-    if (leakGuard.leak !== undefined) throw new Error(leakGuard.leak, { cause: error })
+    const leak = leakGuard.leak ?? workerGuards.find((guard) => guard.leak !== undefined)?.leak
+    if (leak !== undefined) throw new Error(leak, { cause: error })
     throw error
   } finally {
     rmSync(entryDir, { recursive: true, force: true })

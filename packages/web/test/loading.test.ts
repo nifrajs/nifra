@@ -598,15 +598,15 @@ describe("the client build", () => {
   test("every page that can start a navigation links the loading pages' stylesheets", async () => {
     const files: Record<string, string> = {
       "routes/_layout.tsx":
-        'import "../app.css"\nexport default function Layout() { return null }\n',
+        'import "../frontend/app.css"\nexport default function Layout() { return null }\n',
       "routes/_404.tsx": "export default function Missing() { return null }\n",
       "routes/index.tsx": "export default function Index() { return null }\n",
       "routes/admin/index.tsx": "export default function Admin() { return null }\n",
       "routes/admin/_loading.tsx":
-        'import "../../skeleton.css"\nexport default function Skeleton() { return "loading-marker" }\n',
-      "app.css": "body { color: rebeccapurple }\n",
-      "skeleton.css": ".skeleton { color: tomato }\n",
-      "client-stub.ts": "export function mountRouter() {}\n",
+        'import "../../frontend/skeleton.css"\nexport default function Skeleton() { return "loading-marker" }\n',
+      "frontend/app.css": "body { color: rebeccapurple }\n",
+      "frontend/skeleton.css": ".skeleton { color: tomato }\n",
+      "frontend/client-stub.ts": "export function mountRouter() {}\n",
     }
     for (const [rel, content] of Object.entries(files)) {
       mkdirSync(join(root, rel, ".."), { recursive: true })
@@ -616,7 +616,7 @@ describe("the client build", () => {
     const manifest = await buildClient({
       routesDir: join(root, "routes"),
       outDir,
-      clientModule: join(root, "client-stub.ts"),
+      clientModule: join(root, "frontend/client-stub.ts"),
       publicDir: false,
       minify: false,
     })

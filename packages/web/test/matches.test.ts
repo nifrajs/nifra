@@ -11,6 +11,7 @@ import {
 } from "../src/index.ts"
 import { withLoading } from "../src/internal/loading-runtime.ts"
 import { chainMatches } from "../src/internal/matches-runtime.ts"
+import { splitRouteHalves } from "./_route-halves.ts"
 
 // `useMatches` reports the rendered chain - each layout, then the page - with the URL prefix, params
 // and data each one owns, plus its `handle` export. Every adapter computes it from `RenderProps` with
@@ -142,8 +143,8 @@ const matchesIn = async (res: Response): Promise<unknown> => {
 const appOf = (modules: Record<string, RouteModule>) =>
   createWebApp({
     adapter: renderMatches,
-    manifest: buildManifest(Object.keys(modules), (file) => async () => {
-      const mod = modules[file]
+    manifest: buildManifest(Object.keys(splitRouteHalves(modules)), (file) => async () => {
+      const mod = splitRouteHalves(modules)[file]
       if (mod === undefined) throw new Error(`no module ${file}`)
       return mod
     }),

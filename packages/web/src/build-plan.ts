@@ -341,10 +341,10 @@ export function detectNodeBuiltinsInClient(
 }
 
 // ---------------------------------------------------------------------------------------------------
-// `server-only` poison-import guard (§3.3/§5.1). The complement to the `.server` convention + the
+// `backend-only` poison-import guard (§3.3/§5.1). The complement to the zones + the
 // node-builtin guard: a module of PURE server logic with NO `node:` import (a secret-bearing constant,
 // a server-only API call) that an author wants to FAIL LOUD if it reaches the client opts in with a
-// side-effect `import "@nifrajs/web/server-only"` (Next's `import "server-only"`). On the SERVER build
+// side-effect `import "@nifrajs/web/backend-only"` (Next's `import "server-only"`). On the SERVER build
 // the marker is an empty no-op; the CLIENT build detects - via the SAME Bun metafile graph the
 // node-builtin guard walks - any module that imports the marker AND lands in a client chunk, and fails
 // the build with the import chain. Graph-based (never the emitted text), so it survives minification.
@@ -352,18 +352,18 @@ export function detectNodeBuiltinsInClient(
 
 /** The marker specifier an author imports to opt a module into the client-leak guard. Matched on the
  * import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed,
- * before Bun resolves it to `src/server-only.ts` / `dist/server-only.js`). */
-export const SERVER_ONLY_MARKER = "@nifrajs/web/server-only"
+ * before Bun resolves it to `src/backend-only.ts` / `dist/backend-only.js`). */
+export const SERVER_ONLY_MARKER = "@nifrajs/web/backend-only"
 
 const isServerOnlyMarkerImport = (im: GraphImport): boolean => {
   if (im.original === SERVER_ONLY_MARKER) return true
-  return im.path !== undefined && /(^|\/)server-only\.[cm]?[jt]s$/.test(im.path)
+  return im.path !== undefined && /(^|\/)backend-only\.[cm]?[jt]s$/.test(im.path)
 }
 
-/** True when an INPUT graph key is the marker module file itself (`…/server-only.{ts,js}` under web).
+/** True when an INPUT graph key is the marker module file itself (`…/backend-only.{ts,js}` under web).
  * Excluded from the "marked" set - the marker is the import target, not an opt-in module. */
 const isServerOnlyMarkerModule = (inputKey: string): boolean =>
-  /(^|\/)server-only\.[cm]?[jt]s$/.test(inputKey)
+  /(^|\/)backend-only\.[cm]?[jt]s$/.test(inputKey)
 
 /** One `server-only`-module-in-the-client finding: the offending module (the as-written marker-import
  * chain's tail before the marker), the emitted chunk it landed in, and the shortest USER-module import
@@ -418,7 +418,7 @@ function shortestServerOnlyChain(
 ): string[] {
   // The label for the marked module's tail: its as-written specifier (filled when we cross the edge
   // that reaches it) suffixed with `(marked server-only)`; the entry case uses the entry key itself.
-  const tail = (label: string): string => `${label} (marked server-only)`
+  const tail = (label: string): string => `${label} (marked backend-only)`
   // An entry that is ITSELF the marked module - the chain is just that one node.
   if (entryInputs.includes(markedModule)) return [tail(markedModule)]
   const seen = new Set(entryInputs)
@@ -447,7 +447,7 @@ function shortestServerOnlyChain(
 
 /**
  * Scan a build's metafile for any module that opts into the `server-only` marker (a side-effect
- * `import "@nifrajs/web/server-only"`) yet landed in a CLIENT output chunk, returning a sorted, deduped
+ * `import "@nifrajs/web/backend-only"`) yet landed in a CLIENT output chunk, returning a sorted, deduped
  * list of {@link ServerOnlyFinding}s. Mirrors {@link detectNodeBuiltinsInClient}: it reads the SAME
  * graph facts - which inputs import the marker (the "marked" modules), which chunk each landed in (the
  * per-output `inputs`), and the shortest import chain from a user entry to it. The marker module ITSELF
@@ -518,9 +518,8 @@ export function formatNodeBuiltinLeak(
       : `  - ${finding.builtin} reached the client bundle via ${finding.chunk}`,
   )
   return (
-    `[nifra/web] Node built-in(s) in the client bundle - move them behind a server-only path ` +
-    `(a loader/action runs on the server; import the \`node:\` module there, not at a route's ` +
-    `top level):\n${lines.join("\n")}`
+    `[nifra/web] Node built-in(s) in the client bundle - built-ins run on the server only: import ` +
+    `them in a route's backend half (x.backend.ts) or under backend/, never in browser code:\n${lines.join("\n")}`
   )
 }
 
@@ -531,14 +530,13 @@ export function formatServerOnlyLeak(
   if (findings.length === 0) return undefined
   const lines = findings.map((finding) =>
     finding.chain.length > 1
-      ? `  - server-only module reached the client bundle via ${finding.chain.join(" → ")} (chunk: ${finding.chunk})`
-      : `  - server-only module reached the client bundle via ${finding.chunk}`,
+      ? `  - backend-only module reached the client bundle via ${finding.chain.join(" → ")} (chunk: ${finding.chunk})`
+      : `  - backend-only module reached the client bundle via ${finding.chunk}`,
   )
   return (
-    `[nifra/web] server-only module(s) in the client bundle - a module marked ` +
-    `\`import "${SERVER_ONLY_MARKER}"\` reached the browser. Move it behind a server-only path ` +
-    `(reach it via a loader/action, or rename it \`*.server.ts\`), so its server logic never ships ` +
-    `to the client:\n${lines.join("\n")}`
+    `[nifra/web] backend-only module(s) in the client bundle - a module marked ` +
+    `\`import "${SERVER_ONLY_MARKER}"\` reached the browser. Move it under backend/ and reach it ` +
+    `from a route's backend half (x.backend.ts) or a *.fn.ts server function:\n${lines.join("\n")}`
   )
 }
 

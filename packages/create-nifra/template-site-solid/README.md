@@ -18,7 +18,7 @@ evidence in `nifra.assurance.ts`.
 
 Routes are Solid function components (JSX, compiled by `solidBunPlugin`) under `routes/` - `index.tsx`
 (landing + a live loader/action counter), `_layout.tsx` (chrome), `_404.tsx`. The frontend adapter is
-one line in `framework.ts`; data lives behind `backend.ts`. Each `build*` script wires
+one line in `backend/framework.ts`; data lives behind `backend/app.ts`. Each `build*` script wires
 `solidBunPlugin("dom")` for the client and `("ssr")` + the `solid` export condition for the server.
 
 ## Deploy - pick a target
@@ -38,9 +38,10 @@ nifra never enters your cloud credentials - it scaffolds the configs (`Dockerfil
 
 ```
 routes/        index.tsx (landing), _layout.tsx (chrome), _404.tsx
-framework.ts   the adapter (solidAdapter) - imported by the server entries (edge-bundlable)
+               index.backend.ts - the landing page's loader/action (server only)
+backend/       app.ts - your contract (loaders/actions call it in-process)
+               framework.ts - the adapter (solidAdapter) - imported by the server entries (edge-bundlable)
 nifra.config.ts the nifra CLI's dev/build config (adapter + clientModule + Solid plugins) - read by `nifra dev`
-backend.ts     your contract (loaders/actions call it in-process)
 server-bun.ts  Bun entry (Bun.serve)         build-bun.ts    → dist-bun/
 _worker.ts     Cloudflare Pages entry        build.ts        → dist/
 server-node.ts Node entry (@nifrajs/node)       build-node.ts   → dist-node/   (Dockerfile)

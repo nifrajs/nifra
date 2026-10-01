@@ -1,82 +1,19 @@
 /**
- * The server/client boundary, owned in one place.
+ * The client-build transforms that every pipeline must apply identically - the Bun client build, the
+ * Vite dev server, the Vite production build, and `nifra dev --bun`:
  *
- * The client build must never ship server-only code, or server-only config, to a browser. Three
- * conventions enforce that, and each has to mean the SAME thing in every pipeline that builds the client
- * - the Bun client build, the Vite dev server, the Vite production build, and `nifra dev --bun`:
- *
- *   - `*.server` modules - emptied, so a secret / `node:` / native import subtree never reaches the client.
  *   - `*.fn` modules     - replaced with HTTP stubs, so the function bodies (and their imports) stay server-side.
  *   - public-env prefix  - which environment variables the client bundle is allowed to inline.
  *
- * When each pipeline re-encoded one of these rules, they drifted. A hand-written glob
- * `**\/*.server.{ts,tsx,js,jsx}` missed the extensionless `db.server` and the `.mts`/`.cts`/`.mjs`/`.cjs`
- * forms the regex matches, waving a module the build empties straight into the browser. So the matchers,
- * the replacement bodies, and the env mapping get exactly one definition here; every pipeline imports it,
- * and parity tests assert the Bun and Vite halves emit identical bytes. A matcher that decides whether a
- * secret can reach a browser gets one owner, not four.
+ * Which files may reach a browser at all is the zone classifier's job (`zones.ts`). These two get one
+ * definition here so the Bun and Vite halves emit identical bytes; a copied-then-edited second version
+ * is how a client that works in dev and 404s in production happens.
  */
 
-// Both module conventions match a filename SUFFIX with the identical optional source-extension tail -
-// `.ts`, `.tsx`, `.mts`, `.cts`, `.mjs`, `.cjs`, `.js`, `.jsx`, or none (the extensionless `db.server` /
-// `todos.fn`). Kept adjacent so the shared shape is visible, and a parity test pins that the two never
-// diverge on which extensions count - a copied-then-edited second tail is exactly how the old glob drifted.
-
-/** Matches `db.server.ts`, `auth.server.tsx`, `x.server.mjs`, and the extensionless `foo.server`. */
-export const SERVER_ONLY_MODULE = /\.server(\.[cm]?[jt]sx?)?$/
-/** Modules whose exports become client stubs. Mirrors the `.server` convention's shape. */
+/** Modules whose exports become client stubs: `todos.fn.ts`, `x.fn.mjs`, or the extensionless `foo.fn`. */
 export const SERVER_FN_MODULE = /\.fn(\.[cm]?[jt]sx?)?$/
 
-// ---------------------------------------------------------------------------------------------------
-// `.server` - empty a server-only module in the client build.
-// ---------------------------------------------------------------------------------------------------
-
-/**
- * The replacement body for an emptied module. A Proxy rather than `export {}` so any named OR default
- * import resolves to `undefined` instead of failing the bundle with a missing-export error - the client
- * degrades at the call site it wrote, not at link time in a file it never named.
- *
- * Shared so the Bun and Vite pipelines emit the same bytes; a parity test asserts it.
- */
-export const SERVER_ONLY_REPLACEMENT = "module.exports = new Proxy({}, { get: () => undefined })"
-
 import { jsStringLiteral } from "./js-string.ts"
-
-const EXPORTED_DECLARATION =
-  /\bexport\s+(?:declare\s+)?(?:async\s+)?(?:const|let|var|function|class|enum)\s+([A-Za-z_$][\w$]*)/g
-const EXPORTED_LIST = /\bexport\s*\{([^}]*)\}(?:\s*from\s*["'][^"']+["'])?/g
-
-/**
- * Vite dev serves native ESM, so the Bun/CommonJS proxy above is invalid there. Emit inert ESM
- * bindings derived from the source's public names while discarding the implementation and imports.
- * An unsupported exotic export fails closed at ESM link time; server code is never served as fallback.
- */
-export function viteServerOnlyReplacement(source: string): string {
-  const names = new Set<string>()
-  let hasDefault = /\bexport\s+default\b/.test(source)
-
-  for (const match of source.matchAll(EXPORTED_DECLARATION)) names.add(match[1] as string)
-  for (const match of source.matchAll(EXPORTED_LIST)) {
-    for (const raw of (match[1] ?? "").split(",")) {
-      // Collapse runs of whitespace first (linear), so the ` as ` split below needs no `\s+as\s+`
-      // regex - adjacent unbounded quantifiers around a literal backtrack quadratically on crafted
-      // all-whitespace input.
-      const item = raw
-        .trim()
-        .replace(/\s+/g, " ")
-        .replace(/^type /, "")
-      if (item === "") continue
-      const parts = item.split(" as ")
-      const exported = (parts[1] ?? parts[0] ?? "").trim()
-      if (exported === "default") hasDefault = true
-      else if (/^[A-Za-z_$][\w$]*$/.test(exported)) names.add(exported)
-    }
-  }
-
-  const bindings = [...names].sort().map((name) => `export const ${name} = undefined`)
-  if (hasDefault) bindings.push("export default undefined")
-  return `// Generated by @nifrajs/web: server-only implementation removed from the browser.\n${bindings.join("\n")}\n`
-}
 
 // ---------------------------------------------------------------------------------------------------
 // `.fn` - turn a server-function module into the client stubs that call it.

@@ -44,22 +44,28 @@ const stub: RenderAdapter = {
   hydrationHead: () => "",
 }
 
-const modules: Record<string, Partial<RouteModule> & { default?: unknown }> = {
-  "_404.tsx": {},
-  "about.tsx": {},
-  "[lang]/_middleware.ts": { default: guard },
-  "[lang]/about.tsx": {
-    loader: (ctx) => ({ lang: ctx.params.lang }),
-    meta: ({ params }) => urls.locales.documentMeta(urls.localeOf(`/${params.lang}`)),
-  },
-}
+const modules: Record<string, Partial<RouteModule> & { default?: unknown; middleware?: unknown }> =
+  {
+    "_404.tsx": {},
+    "about.tsx": {},
+    "[lang]/_layout.backend.ts": { middleware: guard },
+    "[lang]/about.tsx": {
+      meta: ({ params }) => urls.locales.documentMeta(urls.localeOf(`/${params.lang}`)),
+    },
+    "[lang]/about.backend.ts": { loader: (ctx) => ({ lang: ctx.params.lang }) },
+  }
 
 const app = createWebApp({
   adapter: stub,
   clientEntry: "/c.js",
   manifest: buildManifest(
     Object.keys(modules),
-    (file) => () => Promise.resolve({ default: file, ...modules[file] } as RouteModule),
+    (file) => () =>
+      Promise.resolve(
+        (file.includes(".backend.")
+          ? modules[file]
+          : { default: file, ...modules[file] }) as RouteModule,
+      ),
   ),
 })
 const get = (path: string, headers: Record<string, string> = {}) =>

@@ -1,8 +1,9 @@
 /**
- * The `createWebApp` options a CLI-run app takes from its framework config and `backend.ts`, built in
- * one place. `nifra dev`, the static prerender, `nifra mcp`'s render tool and the hydration gate each
- * construct the app themselves, and the generated server entry constructs it in production; when each
- * call site picked its own subset, the app they served drifted from the one that ships.
+ * The `createWebApp` options a CLI-run app takes from its framework config and `backend/app.ts`,
+ * built in one place. `nifra dev`, the static prerender, `nifra mcp`'s render tool and the
+ * hydration gate each construct the app themselves, and the generated server entry constructs it in
+ * production; when each call site picked its own subset, the app they served drifted from the one
+ * that ships.
  */
 import { inProcessClient } from "@nifrajs/client"
 import type { CreateWebAppOptions } from "@nifrajs/web"
@@ -29,8 +30,9 @@ export function frameworkWebAppOptions(
 
 /**
  * The mount paths the app will serve ahead of page routing, read from the config alone (no app is
- * built): each `mounts` entry, plus the backend at `apiPrefix` when `backend.ts` exports one. A mount
- * added inside `use` is not visible here; `createWebApp` checks its own mount table at startup.
+ * built): each `mounts` entry, plus the backend at `apiPrefix` when `backend/app.ts` exports one. A
+ * mount added inside `use` is not visible here; `createWebApp` checks its own mount table at
+ * startup.
  */
 export function frameworkMountPaths(fw: NifraFramework, hasBackend: boolean): string[] {
   const paths: string[] = []

@@ -464,9 +464,11 @@ export function createPageRequestExecutor<Env = unknown>(
       let outcome: unknown
       try {
         const middleware = (await entry.load()).default
+        // A `_layout.backend.ts` that exports no middleware is a layout data module, nothing more.
+        if (middleware === undefined) continue
         if (typeof middleware !== "function") {
           throw new Error(
-            `[nifra/web] "${entry.file}" must default-export its middleware function.`,
+            `[nifra/web] "${entry.file}" exports a middleware that is not a function.`,
           )
         }
         outcome = await middleware({
@@ -482,7 +484,7 @@ export function createPageRequestExecutor<Env = unknown>(
         isControlFlow(outcome)
           ? outcome
           : new Error(
-              `[nifra/web] "${entry.file}" returned a value. Middleware returns nothing to let the request through, or a redirect(), a status such as notFound(), or a Response to answer it.`,
+              `[nifra/web] the middleware in "${entry.file}" returned a value. Middleware returns nothing to let the request through, or a redirect(), a status such as notFound(), or a Response to answer it.`,
             ),
         dirTag,
       )

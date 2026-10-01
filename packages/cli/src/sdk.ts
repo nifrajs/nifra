@@ -3,6 +3,7 @@ import { existsSync } from "node:fs"
 import { basename, resolve } from "node:path"
 import type { JsonSchema } from "@nifrajs/core/reflection"
 import { type OpenAPIDocument, toOpenAPI } from "@nifrajs/schema/openapi"
+import { BACKEND_APP_FILE } from "./app-files.ts"
 
 export type SdkLanguage = "python" | "go"
 
@@ -1261,14 +1262,16 @@ function unsupportedTransports(backend: unknown): readonly string[] {
   return result
 }
 
-/** Load backend.ts, generate an SDK, and write it to the project. */
+/** Load backend/app.ts, generate an SDK, and write it to the project. */
 export async function runSdk(
   cwd: string,
   options: { readonly language: SdkLanguage; readonly out?: string; readonly strict?: boolean },
 ): Promise<void> {
-  const backendPath = resolve(cwd, "backend.ts")
+  const backendPath = resolve(cwd, BACKEND_APP_FILE)
   if (!existsSync(backendPath)) {
-    throw new Error(`[nifra] no backend.ts in ${cwd} - SDK generation needs the API contract.`)
+    throw new Error(
+      `[nifra] no ${BACKEND_APP_FILE} in ${cwd} - SDK generation needs the API contract.`,
+    )
   }
   const backend = ((await import(backendPath)) as { backend?: unknown }).backend
   if (backend === undefined) throw new Error(`[nifra] ${backendPath} does not export backend.`)

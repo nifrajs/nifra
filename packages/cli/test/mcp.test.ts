@@ -461,7 +461,8 @@ describe("runBackend (nifra_run engine) - input guards", () => {
           "",
         ].join("\n"),
       )
-      await symlink(evil, join(root, "backend.ts"))
+      await mkdir(join(root, "backend"))
+      await symlink(evil, join(root, "backend", "app.ts"))
 
       const viaSymlink = (await loadBackend(root)) as { error?: string }
       expect(viaSymlink.error).toContain("outside the project root")
@@ -496,8 +497,9 @@ describe("runBackend (nifra_run engine) - input guards", () => {
     }
     let proc: PipeProc | undefined
     try {
+      await mkdir(join(dir, "backend"))
       await writeFile(
-        join(dir, "backend.ts"),
+        join(dir, "backend", "app.ts"),
         [
           "let count = 0",
           "export const backend = {",
@@ -577,8 +579,9 @@ describe("runBackend (nifra_run engine) - input guards", () => {
     try {
       // `/slow` parks long enough to be cancelled mid-flight; `count` persists so we can prove the
       // follow-up request hit the SAME loaded process (no cold respawn).
+      await mkdir(join(dir, "backend"))
       await writeFile(
-        join(dir, "backend.ts"),
+        join(dir, "backend", "app.ts"),
         [
           "let count = 0",
           "export const backend = {",
@@ -1073,7 +1076,7 @@ describe("extractBackendResources / extractBackendPrompts (.resource()/.prompt()
 })
 
 /**
- * A backend-only project - no `nifra.config.ts`/`framework.ts`, no `routes/` - is what
+ * A backend-only project - no `nifra.config.ts`/`backend/framework.ts`, no `routes/` - is what
  * `create-nifra`'s DEFAULT template produces, and the MCP server could not start in one.
  *
  * `runMcpServer` awaited `loadApp` twice: once at boot to collect backend resources/prompts, and once
@@ -1153,7 +1156,7 @@ describe("runMcpServer starts on a project it cannot load", () => {
 
   test("initialize succeeds and the built-in tools are served", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-mcp-backend-only-"))
-    // Deliberately NO nifra.config.ts, framework.ts or routes/ - just an app module, as the
+    // Deliberately NO nifra.config.ts, backend/framework.ts or routes/ - just an app module, as the
     // default template ships it.
     await mkdir(join(dir, "src"), { recursive: true })
     await writeFile(

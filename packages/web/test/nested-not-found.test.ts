@@ -14,6 +14,7 @@ import {
   redirect,
 } from "../src/index.ts"
 import { DATA_HEADER, STATUS_HEADER } from "../src/router.ts"
+import { isBackendHalf, splitRouteHalves } from "./_route-halves.ts"
 
 // A `_404` below the routes root answers for its own part of the app: the unmatched URLs under its
 // directory and `notFound()` from the routes beneath it, inside the layouts around it.
@@ -59,10 +60,12 @@ const renderedOf = (html: string): Rendered => {
 type Modules = Record<string, Partial<RouteModule> & { readonly gate?: boolean }>
 
 const appOf = (modules: Modules, options: Partial<Parameters<typeof createWebApp>[0]> = {}) => {
-  const manifest = buildManifest(
-    Object.keys(modules),
-    (file) => () => Promise.resolve({ default: file, ...modules[file] } as RouteModule),
-  )
+  const manifest = buildManifest(Object.keys(splitRouteHalves(modules)), (file) => () => {
+    const halves = splitRouteHalves(modules)
+    return Promise.resolve(
+      (isBackendHalf(file) ? halves[file] : { default: file, ...halves[file] }) as RouteModule,
+    )
+  })
   return {
     manifest,
     app: createWebApp({ adapter: stub, manifest, clientEntry: "/c.js", ...options }),
@@ -486,15 +489,15 @@ describe("the client build", () => {
   test("a nested _404 links the stylesheets of the layouts around it, then its own", async () => {
     const files: Record<string, string> = {
       "routes/_layout.tsx":
-        'import "../app.css"\nexport default function Layout() { return null }\n',
+        'import "../frontend/app.css"\nexport default function Layout() { return null }\n',
       "routes/index.tsx": "export default function Index() { return null }\n",
       "routes/admin/_layout.tsx": "export default function Admin() { return null }\n",
       "routes/admin/index.tsx": "export default function AdminIndex() { return null }\n",
       "routes/admin/_404.tsx":
-        'import "../../missing.css"\nexport default function Missing() { return null }\n',
-      "app.css": "body { color: rebeccapurple }\n",
-      "missing.css": ".missing { color: tomato }\n",
-      "client-stub.ts": "export function mountRouter() {}\n",
+        'import "../../frontend/missing.css"\nexport default function Missing() { return null }\n',
+      "frontend/app.css": "body { color: rebeccapurple }\n",
+      "frontend/missing.css": ".missing { color: tomato }\n",
+      "frontend/client-stub.ts": "export function mountRouter() {}\n",
     }
     for (const [rel, content] of Object.entries(files)) {
       mkdirSync(join(root, rel, ".."), { recursive: true })
@@ -503,7 +506,7 @@ describe("the client build", () => {
     const manifest = await buildClient({
       routesDir: join(root, "routes"),
       outDir: join(root, "dist", "assets"),
-      clientModule: join(root, "client-stub.ts"),
+      clientModule: join(root, "frontend/client-stub.ts"),
       publicDir: false,
       minify: false,
     })

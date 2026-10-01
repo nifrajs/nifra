@@ -463,7 +463,7 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
     sourceRouteId: string,
     path: string,
     target: RouteMatch,
-  ): BoundaryDescriptor | undefined => {
+  ): Omit<BoundaryDescriptor, "hasLoad"> | undefined => {
     const boundaries = routeHooks[sourceRouteId]?.boundaries ?? []
     const pathname = pathnameOf(path)
     for (const boundary of boundaries) {

@@ -17,8 +17,9 @@ import {
 } from "../src/index.ts"
 import { DATA_HEADER, REDIRECT_HEADER } from "../src/router.ts"
 
-// A `_middleware.ts` runs before the layouts, loaders and action of every route in its directory and
-// below, outermost first, and answers the request by returning or throwing a response.
+// A directory's `_layout.backend.ts` may export `middleware`. It runs before the layouts, loaders and
+// action of every route in its directory and below, outermost first, and answers the request by
+// returning or throwing a response. A directory needs no frontend layout to have middleware.
 
 const streamOf = (s: string): ReadableStream<Uint8Array> => {
   const bytes = new TextEncoder().encode(s)
@@ -46,13 +47,20 @@ const renderedOf = (html: string): { chain: string[]; data: unknown } => {
 type Module = Partial<RouteModule> & {
   readonly gate?: boolean
   readonly default?: unknown
+  readonly middleware?: unknown
 }
 type Modules = Record<string, Module>
 
+// A frontend file renders as its own name; a backend half carries only what the test gives it.
 const appOf = (modules: Modules) => {
   const manifest = buildManifest(
     Object.keys(modules),
-    (file) => () => Promise.resolve({ default: file, ...modules[file] } as RouteModule),
+    (file) => () =>
+      Promise.resolve(
+        (file.includes(".backend.")
+          ? { ...modules[file] }
+          : { default: file, ...modules[file] }) as RouteModule,
+      ),
   )
   return { manifest, app: createWebApp({ adapter: stub, manifest, clientEntry: "/c.js" }) }
 }
@@ -101,22 +109,24 @@ const orgApp = () => {
       return undefined
     }
   const { app, manifest } = appOf({
-    "_middleware.ts": { default: middleware("root") },
+    // The root directory has middleware and no frontend layout.
+    "_layout.backend.ts": { middleware: middleware("root") },
     "_404.tsx": {},
     "_error.tsx": {},
     "index.tsx": {},
     "login.tsx": {},
-    "orgs/[org]/_middleware.ts": { default: middleware("org") },
     "orgs/[org]/_error.tsx": {},
     "orgs/[org]/_404.tsx": {},
-    "orgs/[org]/_layout.tsx": {
-      gate: true,
+    "orgs/[org]/_layout.tsx": { gate: true },
+    "orgs/[org]/_layout.backend.ts": {
+      middleware: middleware("org"),
       loader: () => {
         calls.push("gate")
         return { layout: true }
       },
     },
-    "orgs/[org]/projects/[id].tsx": {
+    "orgs/[org]/projects/[id].tsx": {},
+    "orgs/[org]/projects/[id].backend.ts": {
       loader: (ctx) => {
         calls.push("page")
         if (query(ctx, "page") === "header") ctx.set.headers["x-middleware"] = "page"
@@ -131,19 +141,22 @@ const orgApp = () => {
   return { app, manifest, calls, seen }
 }
 
-describe("buildManifest - _middleware", () => {
+describe("buildManifest - middleware", () => {
+  const load = () => () => Promise.resolve({ default: null })
+
   test("records each route's middleware chain, outermost first, with the params of its prefix", () => {
     const manifest = buildManifest(
       [
-        "_middleware.ts",
+        "_layout.backend.ts",
         "index.tsx",
-        "orgs/[org]/_middleware.js",
+        "orgs/[org]/_layout.backend.js",
         "orgs/[org]/projects/[id].tsx",
-        "(app)/_middleware.ts",
+        "(app)/_layout.tsx",
+        "(app)/_layout.backend.ts",
         "(app)/settings.tsx",
         "about.tsx",
       ],
-      () => () => Promise.resolve({ default: null }),
+      load,
     )
     const route = (pattern: string) => manifest.routes.find((r) => r.pattern === pattern)
     expect(route("/orgs/:org/projects/:id")).toMatchObject({
@@ -160,24 +173,32 @@ describe("buildManifest - _middleware", () => {
       "_middleware",
       "orgs/[org]/_middleware",
     ])
-    expect(manifest.middlewares?.["orgs/[org]/_middleware"]?.file).toBe("orgs/[org]/_middleware.js")
+    expect(manifest.middlewares?.["orgs/[org]/_middleware"]?.file).toBe(
+      "orgs/[org]/_layout.backend.js",
+    )
+    // A middleware-only directory is not a layout: nothing renders there.
+    expect(Object.keys(manifest.layouts)).toEqual(["(app)/_layout"])
+    expect(manifest.layouts["(app)/_layout"]?.backend).toBe("(app)/_layout.backend.ts")
   })
 
-  test("a route with no middleware above it carries none, and an app with none has no map", () => {
+  test("a route with no layout backend half above it carries none, and an app with none has no map", () => {
     const manifest = buildManifest(
-      ["index.tsx", "admin/_middleware.ts", "admin/index.tsx"],
-      () => () => Promise.resolve({ default: null }),
+      ["index.tsx", "admin/_layout.backend.ts", "admin/index.tsx"],
+      load,
     )
     expect("middlewareIds" in (manifest.routes.find((r) => r.pattern === "/") ?? {})).toBe(false)
-    expect(
-      buildManifest(["index.tsx"], () => () => Promise.resolve({ default: null })).middlewares,
-    ).toBeUndefined()
+    expect(buildManifest(["index.tsx"], load).middlewares).toBeUndefined()
   })
 
   test("a nested _404 runs the middleware at or above its directory", () => {
     const manifest = buildManifest(
-      ["_middleware.ts", "orgs/[org]/_middleware.ts", "orgs/[org]/_404.tsx", "orgs/[org]/a.tsx"],
-      () => () => Promise.resolve({ default: null }),
+      [
+        "_layout.backend.ts",
+        "orgs/[org]/_layout.backend.ts",
+        "orgs/[org]/_404.tsx",
+        "orgs/[org]/a.tsx",
+      ],
+      load,
     )
     const page = manifest.notFounds?.["orgs/[org]/_404"]
     expect(page?.middlewareIds).toEqual(["_middleware", "orgs/[org]/_middleware"])
@@ -187,22 +208,18 @@ describe("buildManifest - _middleware", () => {
     ])
   })
 
-  test("a middleware file with a component extension is refused, not ignored", () => {
-    expect(() =>
-      buildManifest(
-        ["admin/_middleware.tsx", "admin/index.tsx"],
-        () => () => Promise.resolve({ default: null }),
-      ),
-    ).toThrow('"admin/_middleware.tsx" is not route middleware: name it "_middleware.ts"')
+  test("a retired _middleware file is refused with the migration, whatever its extension", () => {
+    for (const file of ["admin/_middleware.ts", "admin/_middleware.tsx"]) {
+      expect(() => buildManifest([file, "admin/index.tsx"], load)).toThrow(
+        "admin/_layout.backend.ts",
+      )
+    }
   })
 
-  test("two middleware files in one directory are refused", () => {
-    expect(() =>
-      buildManifest(
-        ["_middleware.ts", "_middleware.js"],
-        () => () => Promise.resolve({ default: null }),
-      ),
-    ).toThrow("two middleware files in one directory")
+  test("two backend halves for one directory are refused", () => {
+    expect(() => buildManifest(["_layout.backend.ts", "_layout.backend.js"], load)).toThrow(
+      "two backend halves for one route",
+    )
   })
 })
 
@@ -263,7 +280,9 @@ describe("route middleware - requests", () => {
     const res = await get(app, "/orgs/acme/projects/7?org=data")
     expect(res.status).toBe(500)
     expect(renderedOf(await res.text()).data).toMatchObject({
-      message: expect.stringContaining('"orgs/[org]/_middleware.ts" returned a value'),
+      message: expect.stringContaining(
+        'the middleware in "orgs/[org]/_layout.backend.ts" returned a value',
+      ),
     })
     expect(calls).toEqual(["root", "org"])
   })
@@ -326,17 +345,52 @@ describe("route middleware - requests", () => {
     expect(guarded.calls).toEqual(["root", "org"])
   })
 
-  test("a module without a default-exported function fails loudly", async () => {
+  test("a middleware export that is not a function fails loudly", async () => {
     const { app } = appOf({
       "_error.tsx": {},
-      "_middleware.ts": { default: "not a function" },
+      "_layout.backend.ts": { middleware: "not a function" },
       "index.tsx": {},
     })
     const res = await get(app, "/")
     expect(res.status).toBe(500)
     expect(renderedOf(await res.text()).data).toMatchObject({
-      message: '[nifra/web] "_middleware.ts" must default-export its middleware function.',
+      message: '[nifra/web] "_layout.backend.ts" exports a middleware that is not a function.',
     })
+  })
+
+  test("a layout backend half without middleware is layout data only: the request runs on", async () => {
+    const { app } = appOf({
+      "_layout.tsx": {},
+      "_layout.backend.ts": { loader: () => ({ shell: true }) },
+      "index.tsx": {},
+    })
+    const res = await get(app, "/")
+    expect(res.status).toBe(200)
+  })
+
+  test("a middleware-only directory's backend half may export only middleware", async () => {
+    const { app } = appOf({
+      "_error.tsx": {},
+      "admin/_layout.backend.ts": { middleware: () => undefined, loader: () => ({}) },
+      "admin/index.tsx": {},
+    })
+    const res = await get(app, "/admin")
+    expect(res.status).toBe(500)
+    expect(renderedOf(await res.text()).data).toMatchObject({
+      message: expect.stringContaining(
+        "has no _layout frontend file, so it may export only middleware",
+      ),
+    })
+  })
+
+  test("only a directory's _layout.backend.ts may export middleware", async () => {
+    const { manifest } = appOf({
+      "index.tsx": {},
+      "index.backend.ts": { middleware: () => undefined },
+    })
+    await expect(manifest.routes[0]?.load() as Promise<unknown>).rejects.toThrow(
+      "only a directory's _layout.backend.ts may export",
+    )
   })
 })
 
@@ -346,13 +400,16 @@ describe("route middleware - files", () => {
     for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
   })
 
-  test("discovery collects _middleware.ts; the server manifest imports it and the client never does", () => {
+  test("discovery collects _layout.backend.ts; the server manifest imports it and the client never does", () => {
     const dir = mkdtempSync(join(tmpdir(), "nifra-middleware-"))
     dirs.push(dir)
     mkdirSync(join(dir, "admin"), { recursive: true })
     writeFileSync(join(dir, "index.tsx"), "export default () => null\n")
     writeFileSync(join(dir, "admin/index.tsx"), "export default () => null\n")
-    writeFileSync(join(dir, "admin/_middleware.ts"), "export default () => undefined\n")
+    writeFileSync(
+      join(dir, "admin/_layout.backend.ts"),
+      "export const middleware = () => undefined\n",
+    )
     writeFileSync(join(dir, "admin/helper.ts"), "export const x = 1\n")
 
     const manifest = discoverRoutes(dir)
@@ -365,12 +422,20 @@ describe("route middleware - files", () => {
       resolve: (file) => `./routes/${file}`,
       clientEntry: "/c.js",
     })
-    expect(server).toContain('"admin/_middleware.ts"')
-    expect(server).toContain('from "./routes/admin/_middleware"')
+    expect(server).toContain('"admin/_layout.backend.ts"')
+    expect(server).toContain('from "./routes/admin/_layout.backend"')
     const client = generateClientEntry(manifest, {
       clientModule: "@nifrajs/web-react/client",
       resolve: (file) => `./routes/${file}`,
     })
-    expect(client).not.toContain("_middleware")
+    expect(client).not.toContain(".backend")
+  })
+
+  test("a retired _middleware.ts on disk fails discovery instead of being ignored", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nifra-middleware-"))
+    dirs.push(dir)
+    writeFileSync(join(dir, "index.tsx"), "export default () => null\n")
+    writeFileSync(join(dir, "_middleware.ts"), "export default () => undefined\n")
+    expect(() => discoverRoutes(dir)).toThrow('"_middleware.ts" is retired')
   })
 })

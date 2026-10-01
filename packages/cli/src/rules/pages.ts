@@ -1,11 +1,12 @@
 /**
  * NF-C027: a page file whose URL sits under the backend's mount path.
  *
- * `backend.ts`'s backend is mounted at `apiPrefix` (default `/api`) ahead of page routing, and its 404
- * is final, so `routes/api/report.tsx` never renders - every request for it gets the backend's 404.
- * `createWebApp` refuses such an app at startup and `nifra build` refuses to build it; this reports it
- * earlier, without running app code (check's pre-`loadApp` invariant): the routes come from a scan of
- * `routes/`, and `apiPrefix` is read only when framework.ts declares it as a string literal.
+ * `backend/app.ts`'s backend is mounted at `apiPrefix` (default `/api`) ahead of page routing, and
+ * its 404 is final, so `routes/api/report.tsx` never renders - every request for it gets the
+ * backend's 404. `createWebApp` refuses such an app at startup and `nifra build` refuses to build
+ * it; this reports it earlier, without running app code (check's pre-`loadApp` invariant): the
+ * routes come from a scan of `routes/`, and `apiPrefix` is read only when backend/framework.ts
+ * declares it as a string literal.
  *
  * Mounts other than the backend's hold `app` objects no static read can see, so they are left to the
  * startup and build checks.
@@ -14,6 +15,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { shadowedPages } from "@nifrajs/web/route-manifest"
+import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "../app-files.ts"
 import { stripComments } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import type { CheckRule } from "./index.ts"
@@ -38,20 +40,20 @@ export function readStaticApiPrefix(source: string): StaticApiPrefix {
   return MENTION.test(code) ? { kind: "unreadable" } : { kind: "default" }
 }
 
-const CONFIG_FILES = ["framework.ts", "nifra.config.ts"] as const
+const CONFIG_FILES = [FRAMEWORK_FILE, CONFIG_FILE] as const
 
 export const shadowedPageRule: CheckRule = {
   code: "NF-C027",
   title: "Page route under the backend mount",
   async scan(ctx) {
-    const backendFile = join(ctx.root, "backend.ts")
+    const backendFile = join(ctx.root, BACKEND_APP_FILE)
     const routesDir = join(ctx.root, "routes")
     if (!existsSync(backendFile) || !existsSync(routesDir)) return []
     if (!BACKEND_EXPORT.test(stripComments(readFileSync(backendFile, "utf8")))) return []
 
     let apiPrefix = "/api"
-    // framework.ts first: the generated server entry imports from it, and the build refuses a
-    // nifra.config.ts whose forwarded fields differ from it.
+    // backend/framework.ts first: the generated server entry imports from it, and the build refuses
+    // a nifra.config.ts whose forwarded fields differ from it.
     const configFile = CONFIG_FILES.find((file) => existsSync(join(ctx.root, file)))
     if (configFile !== undefined) {
       const read = readStaticApiPrefix(readFileSync(join(ctx.root, configFile), "utf8"))
@@ -84,7 +86,7 @@ export const shadowedPageRule: CheckRule = {
           code: "NF-C027",
           severity: "error",
           file: `routes/${page.file}`,
-          message: `routes/${page.file} serves ${page.pattern}, under the backend mounted at ${page.mount} - the backend answers every request there before page routing and its 404 is final, so this page can never render. Move the file out of ${page.mount}, serve the URL from backend.ts, or change the mount path with \`export const apiPrefix = "/backend"\` in framework.ts`,
+          message: `routes/${page.file} serves ${page.pattern}, under the backend mounted at ${page.mount} - the backend answers every request there before page routing and its 404 is final, so this page can never render. Move the file out of ${page.mount}, serve the URL from backend/app.ts, or change the mount path with \`export const apiPrefix = "/backend"\` in backend/framework.ts`,
           evidence: [`page: ${page.pattern}`, `mount: ${page.mount}`],
           verify: "nifra check",
         }),

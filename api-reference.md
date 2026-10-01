@@ -4573,6 +4573,8 @@ _No named exports (side-effect entrypoint)._
   A route's optional mutation, run on POST. Shares the loader context (params/request/api); read the form/JSON body off `request`. Returns either a control-flow value (a `redirect()`, a `status(...)` render, or a hand-rolled `Response` - all passed straight through) or data, surfaced to the page comp…
 - **BOUNDARY_GLOBAL** _(const)_ - `BOUNDARY_GLOBAL: "__NIFRA_BOUNDARIES__"`
   Dynamic-boundary states for hydration; absent when a route declares no boundaries.
+- **BackendOnly** _(type)_ - `type BackendOnly<T> = T & { readonly [BACKEND_ONLY_BRAND]?: never }`
+  Type-level intent marker for a value that must only exist on the server - a secret, a DB handle, a server-only client. `BackendOnly<T>` is structurally `T` (the brand is an optional phantom field, so existing code keeps type-checking), but it advertises to readers + the compiler that the value is n…
 - **Blocker** _(interface)_ - `interface Blocker`
   A navigation guard, mirroring react-router's shape. When `state` is `blocked`, `proceed()` lets the held navigation through and `reset()` cancels it (staying put); both are `undefined` otherwise. The pair is what a boolean `when` can't express - the app shows its OWN async confirmation UI, then cal…
 - **BlockerController** _(interface)_ - `interface BlockerController`
@@ -4832,9 +4834,7 @@ _No named exports (side-effect entrypoint)._
 - **RouterState** _(interface)_ - `interface RouterState`
   The router's observable state. A new object is published on every transition.
 - **SERVER_FN_MODULE** _(const)_ - `SERVER_FN_MODULE: RegExp`
-  Modules whose exports become client stubs. Mirrors the `.server` convention's shape.
-- **SERVER_ONLY_MODULE** _(const)_ - `SERVER_ONLY_MODULE: RegExp`
-  Matches `db.server.ts`, `auth.server.tsx`, `x.server.mjs`, and the extensionless `foo.server`.
+  Modules whose exports become client stubs: `todos.fn.ts`, `x.fn.mjs`, or the extensionless `foo.fn`.
 - **STATUS_HEADER** _(const)_ - `STATUS_HEADER: "x-nifra-status"`
   Response header carrying a **terminal status** a loader signalled with `notFound()` / `gone()` / `statusPage(n)` during a client-side navigation's data fetch.
 - **SanitizedHtml** _(type)_ - `type SanitizedHtml = TrustedHtml & { readonly [SANITIZED_HTML_BRAND]: "sanitized-html" }`
@@ -4843,8 +4843,6 @@ _No named exports (side-effect entrypoint)._
 - **SearchOf** _(type)_ - `type SearchOf<Module> = Module extends { searchSchema: infer S } ? S extends StandardSchemaV1 ? InferOutput<S> extends Record<string, unknown> ? InferOutput<S> : never : Record<string, unknown> : Record<string, unknown>`
   The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route navigation: generated route types (`nifra sync-routes`) map each path to `SearchOf<typeof import("./…
 - **ServePublicDirOptions** _(interface)_ - `interface ServePublicDirOptions`
-- **ServerOnly** _(type)_ - `type ServerOnly<T> = T & { readonly [SERVER_ONLY_BRAND]?: never }`
-  Type-level intent marker for a value that must only exist on the server - a secret, a DB handle, a server-only client. `ServerOnly<T>` is structurally `T` (the brand is an optional phantom field, so existing code keeps type-checking), but it advertises to readers + the compiler that the value is no…
 - **ShouldRevalidate** _(type)_ - `type ShouldRevalidate = (args: ShouldRevalidateArgs) => boolean`
   A layout's say over whether its loader runs again on a client navigation. Export it from a `_layout` next to the loader: `export const shouldRevalidate: ShouldRevalidate = (args) => ...`.
 - **ShouldRevalidateArgs** _(interface)_ - `interface ShouldRevalidateArgs`
@@ -4999,6 +4997,10 @@ _No named exports (side-effect entrypoint)._
 - **withISR** _(function)_ - `withISR: (app: ISRApp, options: ISROptions) => (req: Request, platform?: ISRPlatform) => Promise<Response>`
   Wrap a nifra app with **Incremental Static Regeneration**: a cacheable page is served from {@link CacheStore} when fresh, served **stale while a fresh copy regenerates in the background** (`platform.waitUntil` on edge), or rendered + stored on a miss. Framework-agnostic (it caches the rendered byte…
 
+### `@nifrajs/web/backend-only`
+
+_No named exports (side-effect entrypoint)._
+
 ### `@nifrajs/web/build`
 
 - **BUILD_TARGETS** _(const)_ - `BUILD_TARGETS: readonly ["bun", "node", "deno", "cf-pages", "vercel", "static"]`
@@ -5032,8 +5034,8 @@ _No named exports (side-effect entrypoint)._
 - **PrerenderResult** _(interface)_ - `interface PrerenderResult`
 - **SERVER_ENTRY_OPTIONS** _(const)_ - `SERVER_ENTRY_OPTIONS: readonly ["apiPrefix", "apiStrip", "mounts", "csp", "nonce"]`
   The `createWebApp` options a generated server entry can import from the app's framework module.
-- **SERVER_ONLY_MARKER** _(const)_ - `SERVER_ONLY_MARKER: "@nifrajs/web/server-only"`
-  The marker specifier an author imports to opt a module into the client-leak guard. Matched on the import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed, before Bun resolves it to `src/server-only.ts` / `dist/server-only.js`).
+- **SERVER_ONLY_MARKER** _(const)_ - `SERVER_ONLY_MARKER: "@nifrajs/web/backend-only"`
+  The marker specifier an author imports to opt a module into the client-leak guard. Matched on the import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed, before Bun resolves it to `src/backend-only.ts` / `dist/backend-only.js`).
 - **ServerBuild** _(interface)_ - `interface ServerBuild`
   The built worker bundle - point your `wrangler.toml`'s `main` at `worker`.
 - **ServerBuildTarget** _(type)_ - `type ServerBuildTarget = "browser" | "node" | "bun"`
@@ -5069,7 +5071,7 @@ _No named exports (side-effect entrypoint)._
 - **detectNodeBuiltinsInClient** _(function)_ - `detectNodeBuiltinsInClient: (graph: ClientModuleGraph) => ReadonlyArray<NodeBuiltinFinding>`
   Scan a build's metafile for any `node:` builtin that a USER module pulled into a CLIENT output chunk, returning a sorted, deduped list of {@link NodeBuiltinFinding}s. Three graph facts combine so the report is precise AND actionable: 1. **What the user wrote** - only builtins imported by a NON-`nod…
 - **detectServerOnlyInClient** _(function)_ - `detectServerOnlyInClient: (graph: ClientModuleGraph) => ReadonlyArray<ServerOnlyFinding>`
-  Scan a build's metafile for any module that opts into the `server-only` marker (a side-effect `import "@nifrajs/web/server-only"`) yet landed in a CLIENT output chunk, returning a sorted, deduped list of {@link ServerOnlyFinding}s. Mirrors {@link detectNodeBuiltinsInClient}: it reads the SAME graph…
+  Scan a build's metafile for any module that opts into the `server-only` marker (a side-effect `import "@nifrajs/web/backend-only"`) yet landed in a CLIENT output chunk, returning a sorted, deduped list of {@link ServerOnlyFinding}s. Mirrors {@link detectNodeBuiltinsInClient}: it reads the SAME grap…
 - **diffManifestRoutes** _(function)_ - `diffManifestRoutes: (manifestFiles: readonly string[], discoveredFiles: readonly string[]) => ManifestDrift`
   Diff the route files a committed server-manifest imports against the files freshly discovered in `routes/`. Returns the `missing` (in routes/, not in manifest - stale manifest) and `extra` (in manifest, gone from routes/ - dangling import) sets. Empty arrays ⇒ in sync. Pure - the caller supplies bo…
 - **formatBytes** _(function)_ - `formatBytes: (bytes: number) => string`
@@ -5112,10 +5114,9 @@ _No named exports (side-effect entrypoint)._
   Re-emit a committed server-manifest from a freshly-discovered route tree, PRESERVING its baked client-asset references (`clientEntry` / `styles` / `routeStyles`) and its eager-vs-lazy shape. This is what makes `nifra sync-manifest` a route-table refresh (renamed / added / removed routes) that does …
 - **serverFnStubPlugin** _(const)_ - `serverFnStubPlugin: () => BunPlugin`
   Server functions in the CLIENT build: replace each `*.fn.ts` module with stubs that call the routes the server mounted, so the function bodies - and everything they import - never reach a browser.
-- **serverOnlyEmptyPlugin** _(const)_ - `serverOnlyEmptyPlugin: () => BunPlugin`
-  Remix-style `.server` convention for the CLIENT build. A module named `*.server.ts(x)` (`db.server.ts`, `auth.server.ts`, …) is server-only - empty it in the browser bundle so its (possibly `node:` / native / Capacitor) import subtree never reaches the client. The body is CJS-with-a-Proxy so any na…
 - **svelteDedupePlugin** _(const)_ - `svelteDedupePlugin: (from: string) => BunPlugin`
   Dedupe Svelte to a single copy - the Svelte analogue of `reactDedupePlugin`/`preactDedupePlugin`, closing the same class of bug for Svelte (which had NO build-time dedup before). A workspace- or file-linked `@nifrajs/web-svelte` can resolve its OWN `svelte` (e.g. a sibling repo's install store) whi…
+- **zoneGuardPlugin** _(function)_ - `zoneGuardPlugin: (options: ZoneGuardOptions) => BunPlugin`
 
 ### `@nifrajs/web/build-vite`
 
@@ -5448,12 +5449,13 @@ _No named exports (side-effect entrypoint)._
 
 - **BareBuiltinPlugin** _(interface)_ - `interface BareBuiltinPlugin`
   The minimal Vite plugin shape {@link viteBareBuiltinExternal} returns.
+- **LeakGuardOptions** _(interface)_ - `interface LeakGuardOptions`
 - **LeakGuardPlugin** _(interface)_ - `interface LeakGuardPlugin`
   The minimal Rollup plugin shape this returns - `generateBundle` bound to the plugin context.
 - **viteBareBuiltinExternal** _(function)_ - `viteBareBuiltinExternal: () => BareBuiltinPlugin`
   Keep a bare Node built-in (`fs/promises`, `path`) visible to {@link viteLeakGuard}. Vite resolves a bare built-in that is not an installed package to one shared `__vite-browser-external` stub: the import builds, does nothing in the browser, and no longer names the module. This plugin externalizes i…
-- **viteLeakGuard** _(function)_ - `viteLeakGuard: () => LeakGuardPlugin`
-  A Vite/Rollup plugin that fails the build when server-only code or a `node:` builtin reaches the client bundle - the same two guards, and the same error messages, as nifra's Bun production build.
+- **viteLeakGuard** _(function)_ - `viteLeakGuard: (options?: LeakGuardOptions) => LeakGuardPlugin`
+  A Vite/Rollup plugin that fails the build when anything the zones keep on the server reaches the client bundle, with the same checks and messages as nifra's Bun build: every module classified, the graph evidence complete, every emitted file traced back to it, and the `node:` and `backend-only` guar…
 
 ### `@nifrajs/web/plugins/vite-server-fn`
 
@@ -5461,19 +5463,6 @@ _No named exports (side-effect entrypoint)._
   The slice of a Vite/Rollup plugin this returns. Structural, so `vite` stays an optional peer.
 - **viteServerFnStub** _(function)_ - `viteServerFnStub: () => ServerFnStubPlugin`
   Replace every `*.fn` module with its client stubs.
-
-### `@nifrajs/web/plugins/vite-server-only`
-
-- **SERVER_ONLY_MODULE** _(const)_ - `SERVER_ONLY_MODULE: RegExp`
-  Matches `db.server.ts`, `auth.server.tsx`, `x.server.mjs`, and the extensionless `foo.server`.
-- **SERVER_ONLY_REPLACEMENT** _(const)_ - `SERVER_ONLY_REPLACEMENT: "module.exports = new Proxy({}, { get: () => undefined })"`
-  The replacement body for an emptied module. A Proxy rather than `export {}` so any named OR default import resolves to `undefined` instead of failing the bundle with a missing-export error - the client degrades at the call site it wrote, not at link time in a file it never named.
-- **ServerOnlyEmptyPlugin** _(interface)_ - `interface ServerOnlyEmptyPlugin`
-  The slice of a Vite/Rollup plugin this returns. Structural, so `vite` stays an optional peer.
-- **viteServerOnlyEmpty** _(function)_ - `viteServerOnlyEmpty: () => ServerOnlyEmptyPlugin`
-  Empty every `*.server` module in the client build.
-- **viteServerOnlyReplacement** _(function)_ - `viteServerOnlyReplacement: (source: string) => string`
-  Vite dev serves native ESM, so the Bun/CommonJS proxy above is invalid there. Emit inert ESM bindings derived from the source's public names while discarding the implementation and imports. An unsupported exotic export fails closed at ESM link time; server code is never served as fallback.
 
 ### `@nifrajs/web/pwa-manifest`
 
@@ -5518,10 +5507,6 @@ _No named exports (side-effect entrypoint)._
   Render the manifest as a readable report - the `nifra routes --modes` output.
 - **shadowedPages** _(function)_ - `shadowedPages: (manifest: Pick<Manifest, "routes" | "notFounds">, mountPaths: readonly string[]) => readonly ShadowedPage[]`
   The page routes and nested `_404` scopes that sit under one of `mountPaths`, in manifest order. Paths are normalized here; one the server would refuse is skipped.
-
-### `@nifrajs/web/server-only`
-
-_No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web/service-worker`
 

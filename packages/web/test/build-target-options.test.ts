@@ -63,7 +63,8 @@ beforeEach(() => {
       'export const backend = server().get("/rpc/ping", () => ({ backend: true }))',
     ].join("\n"),
   )
-  writeFileSync(join(projectRoot, "client-stub.ts"), "export function mountRouter() {}\n")
+  mkdirSync(join(projectRoot, "frontend"), { recursive: true })
+  writeFileSync(join(projectRoot, "frontend/client-stub.ts"), "export function mountRouter() {}\n")
 })
 afterEach(() => {
   rmSync(projectRoot, { recursive: true, force: true })
@@ -76,7 +77,7 @@ test("a built worker mounts the backend at the imported apiPrefix and serves the
     routesDir: join(projectRoot, "routes"),
     outDir,
     workDir: join(projectRoot, ".work"),
-    clientModule: join(projectRoot, "client-stub.ts"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
     adapterImport: frameworkFile,
     backendImport: join(projectRoot, "backend.ts"),
     optionImports: { apiPrefix: frameworkFile, mounts: frameworkFile },

@@ -1,28 +1,23 @@
-/** Phantom brand key for {@link ServerOnly}. */
-declare const SERVER_ONLY_BRAND: unique symbol
+/** Phantom brand key for {@link BackendOnly}. */
+declare const BACKEND_ONLY_BRAND: unique symbol
 
 /**
  * Type-level intent marker for a value that must only exist on the server - a secret, a DB handle, a
- * server-only client. `ServerOnly<T>` is structurally `T` (the brand is an optional phantom field, so
+ * server-only client. `BackendOnly<T>` is structurally `T` (the brand is an optional phantom field, so
  * existing code keeps type-checking), but it advertises to readers + the compiler that the value is
  * not meant to cross to the browser. It is **purely type-level** and erases at build - it does NOT,
  * by itself, keep the value out of the client bundle.
  *
- * The enforcement is two runtime conventions:
- *  - add the side-effect import `import "@nifrajs/web/server-only"` at the top of the module - the
- *    client build ({@link buildClient}) fails loud, with the import chain, if it reaches a browser
- *    chunk (the poison-import marker);
- *  - or name the file `*.server.ts` - the `.server` convention empties it in the client build.
- *
- * Use this brand to express the intent in the types; pair it with one of those runtime markers so a
- * leak is caught at build time rather than shipping a secret to the client.
+ * The enforcement is the zone rules: code under `backend/` or in a `*.backend.ts` file never reaches a
+ * browser build, and a module that imports `@nifrajs/web/backend-only` fails every browser build that
+ * reaches it, wherever it lives.
  *
  * @example
- * import "@nifrajs/web/server-only"
- * import type { ServerOnly } from "@nifrajs/web"
- * export const apiKey: ServerOnly<string> = process.env.SECRET_API_KEY!
+ * import "@nifrajs/web/backend-only"
+ * import type { BackendOnly } from "@nifrajs/web"
+ * export const apiKey: BackendOnly<string> = process.env.SECRET_API_KEY!
  */
-export type ServerOnly<T> = T & { readonly [SERVER_ONLY_BRAND]?: never }
+export type BackendOnly<T> = T & { readonly [BACKEND_ONLY_BRAND]?: never }
 
 /**
  * Pre-hydration form guard - a tiny inline script flushed in `<head>` (it runs in the window between

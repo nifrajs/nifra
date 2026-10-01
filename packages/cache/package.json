@@ -13,6 +13,9 @@
     "cache-tags"
   ],
   "type": "module",
+  "nifra": {
+    "environment": "library"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",

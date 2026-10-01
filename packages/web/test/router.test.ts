@@ -183,7 +183,7 @@ describe("createClientRouter", () => {
       fetchData: async (_path, target) => ({ authorizedId: target.params.id }),
       routeHooks: {
         index: {
-          boundaries: [{ name: "userModal", mode: { intercept: "/users/:id" }, hasLoad: true }],
+          boundaries: [{ name: "userModal", mode: { intercept: "/users/:id" } }],
         },
       },
     })

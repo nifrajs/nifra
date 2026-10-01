@@ -16,7 +16,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http"
-import { isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path"
+import { dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path"
 import { createDevDiagnostics } from "./dev-diagnostics.ts"
 import { listenOrExplain } from "./dev-port.ts"
 import { discoverRoutes } from "./fs.ts"
@@ -39,7 +39,7 @@ import {
   reproduciblePath,
 } from "./plugins/kit.ts"
 import { viteServerFnStub } from "./plugins/vite-server-fn.ts"
-import { viteServerOnlyEmpty } from "./plugins/vite-server-only.ts"
+import { viteZoneGuard } from "./plugins/vite-zone-guard.ts"
 
 /** Minimal app surface - `createWebApp(...)` satisfies it. */
 interface FetchApp {
@@ -62,7 +62,11 @@ interface ViteModuleGraph {
 interface ViteLike {
   /** Load a module through VITE's graph - the seam that makes the Vite pipeline own SSR too. */
   ssrLoadModule(url: string): Promise<Record<string, unknown>>
-  readonly middlewares: (req: IncomingMessage, res: ServerResponse, next: () => void) => void
+  readonly middlewares: (
+    req: IncomingMessage,
+    res: ServerResponse,
+    next: (error?: unknown) => void,
+  ) => void
   transformIndexHtml(url: string, html: string): Promise<string>
   ssrFixStacktrace(err: Error): void
   /** The module graph, used to invalidate a changed file AND its transitive importers before reload. */
@@ -389,6 +393,14 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   // endpoint and its headers can't drift between the two dev servers.
   const devDiagnostics = createDevDiagnostics(root)
 
+  // Refuses backend code before Vite serves or transforms it; held here so a refused module's request
+  // is answered with the refusal rather than falling through to the app.
+  const zoneGuard = viteZoneGuard({
+    appRoot: dirname(routesDir),
+    routesDir,
+    generatedFiles: [resolvePath(root, DEV_ENTRY)],
+  })
+
   const server: NodeHttpServer = createHttpServer((req, res) => {
     // Keep this before Vite's middleware: it is an agent endpoint owned by nifra, not a file or app route.
     if (devDiagnostics.isLastErrorPath((req.url ?? "/").split("?", 1)[0] ?? "/")) {
@@ -398,7 +410,24 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
       res.end(body)
       return
     }
-    vite.middlewares(req, res, () => {
+    vite.middlewares(req, res, (error) => {
+      // In middleware mode Vite reports a module's transform error to the overlay and passes the
+      // request on. A request naming a source file was for a module, never a page: it gets the error,
+      // not the app's HTML.
+      const url = req.url ?? "/"
+      const file = /\.[\w]+(?:[?#]|$)/.test(url) ? zoneGuard.fileForUrl(url) : undefined
+      if (error !== undefined || file !== undefined) {
+        res.statusCode = 500
+        res.setHeader("content-type", "text/plain; charset=utf-8")
+        res.setHeader("cache-control", "no-store")
+        const reason =
+          zoneGuard.refusalFor(url) ??
+          (error instanceof Error
+            ? error.message
+            : `[nifra] ${url} failed to transform; the dev server log has the error`)
+        res.end(`${reason}\n`)
+        return
+      }
       // Not a Vite asset → nifra SSR. (`next` runs after Vite declines, so the body is still readable.)
       void (async () => {
         try {
@@ -486,9 +515,9 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
       // Explicit watch config; poll when native fs events aren't delivered (containers/sandboxes).
       watch: usePolling ? { usePolling: true, interval: 80 } : {},
     },
-    // Ahead of the user's plugins: a `*.fn` module must be replaced before anything else
-    // reads it, and the dev server is a client bundler like any other.
-    plugins: [viteServerFnStub(), viteServerOnlyEmpty(), ...plugins],
+    // Ahead of the user's plugins: the zone guard refuses backend code before anything serves or
+    // transforms it, and a `*.fn` module must be replaced before anything else reads it.
+    plugins: [zoneGuard, viteServerFnStub(), ...plugins],
     resolve: {
       conditions: resolveConditions,
       // Dedupe each framework runtime to ONE copy. In a multi-root workspace a shared package can pull

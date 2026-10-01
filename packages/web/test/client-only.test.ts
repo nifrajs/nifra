@@ -10,6 +10,7 @@ import {
   redirect,
 } from "../src/index.ts"
 import { DATA_HEADER } from "../src/router.ts"
+import { isBackendHalf, splitRouteHalves } from "./_route-halves.ts"
 
 // `ssr = false`: the server renders everything around a page except the page's own component - its
 // `HydrateFallback`, or nothing, fills the slot - and the browser hydrates that before it renders the
@@ -59,10 +60,12 @@ const renderedOf = (html: string): Rendered => {
 type Modules = Record<string, Partial<RouteModule>>
 
 const manifestOf = (modules: Modules) =>
-  buildManifest(
-    Object.keys(modules),
-    (file) => () => Promise.resolve({ default: file, ...modules[file] } as RouteModule),
-  )
+  buildManifest(Object.keys(splitRouteHalves(modules)), (file) => () => {
+    const halves = splitRouteHalves(modules)
+    return Promise.resolve(
+      (isBackendHalf(file) ? halves[file] : { default: file, ...halves[file] }) as RouteModule,
+    )
+  })
 
 const appOf = (modules: Modules) =>
   createWebApp({ adapter: stub, manifest: manifestOf(modules), clientEntry: "/c.js" })

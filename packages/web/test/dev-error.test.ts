@@ -5,9 +5,9 @@ import type { Diagnostic } from "../src/diagnostic.ts"
 describe("renderDiagnosticOverlay", () => {
   test("renders the code badge, the codeframe with its caret, and the cause/fix callout", () => {
     const diagnostic: Diagnostic = {
-      code: "NIFRA_SERVER_ONLY_IN_CLIENT",
+      code: "NIFRA_BACKEND_ONLY_IN_CLIENT",
       name: "Error",
-      message: "server-only module reached the client",
+      message: "backend-only module reached the client",
       request: { method: "GET", url: "/dashboard" },
       frames: [
         { raw: "at handler (/src/index.tsx:3:9)", file: "/src/index.tsx", line: 3, column: 9 },
@@ -22,19 +22,19 @@ describe("renderDiagnosticOverlay", () => {
           { number: 4, text: "", caret: false },
         ],
       },
-      cause: "A server-only module was reachable from a client entry.",
-      fix: "Move the server-only use behind a loader or a *.server.ts boundary.",
-      docsAnchor: "errors#server-only-in-client",
+      cause: "A backend-only module was reachable from a client entry.",
+      fix: "Move the backend-only use behind the route's x.backend.ts loader.",
+      docsAnchor: "errors#backend-only-in-client",
     }
     const html = renderDiagnosticOverlay(diagnostic)
-    expect(html).toContain("NIFRA_SERVER_ONLY_IN_CLIENT") // code badge
+    expect(html).toContain("NIFRA_BACKEND_ONLY_IN_CLIENT") // code badge
     expect(html).toContain("/src/index.tsx:3:9") // codeframe location
     expect(html).toContain("throw new Error('boom')") // the offending source line, rendered
     expect(html).toContain("cf-row caret") // the offending line carries the caret class
     expect(html).toContain("likely fix") // the callout tag
-    expect(html).toContain("A server-only module was reachable from a client entry.") // cause
-    expect(html).toContain("Move the server-only use behind a loader") // fix
-    expect(html).toContain("errors#server-only-in-client") // docs anchor
+    expect(html).toContain("A backend-only module was reachable from a client entry.") // cause
+    expect(html).toContain("Move the backend-only use behind") // fix
+    expect(html).toContain("errors#backend-only-in-client") // docs anchor
   })
 
   test("omits the codeframe and fix callout when the diagnostic has neither", () => {

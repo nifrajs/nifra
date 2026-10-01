@@ -117,8 +117,8 @@ async function buildWithGuard(
     logLevel: "silent",
     build: {
       write: false,
-      lib: { entry: join(root, "entry.ts"), formats: ["es"], fileName: "entry" },
-      rollupOptions: { external: [/^node:/], plugins: [viteLeakGuard()] },
+      lib: { entry: join(root, "frontend/entry.ts"), formats: ["es"], fileName: "entry" },
+      rollupOptions: { external: [/^node:/], plugins: [viteLeakGuard({ appRoot: root })] },
     },
   }
   // rolldown-vite's native (napi) bindings can race across repeated in-process builds and throw a
@@ -139,31 +139,63 @@ async function buildWithGuard(
 
 test("real vite build FAILS when a node: builtin reaches the client, with the shared message", async () => {
   const result = await buildWithGuard({
-    "leak.ts": 'import { randomUUID } from "node:crypto"\nexport const id = randomUUID()\n',
-    "entry.ts": 'import { id } from "./leak.ts"\ndocument.title = id\n',
+    "frontend/leak.ts":
+      'import { randomUUID } from "node:crypto"\nexport const id = randomUUID()\n',
+    "frontend/entry.ts": 'import { id } from "./leak.ts"\ndocument.title = id\n',
   })
   expect(result.ok).toBe(false)
   expect(result.error).toContain("Node built-in(s) in the client bundle")
   expect(result.error).toContain("node:crypto reached the client bundle via")
 }, 60_000)
 
-test("real vite build FAILS when a server-only module reaches the client", async () => {
-  // The marker resolves to @nifrajs/web/server-only; the guard flags any module importing it that lands
+test("real vite build FAILS when a backend-only marked module reaches the client", async () => {
+  // The marker resolves to @nifrajs/web/backend-only; the guard flags any module importing it that lands
   // in a client chunk. Uses a relative stub for the marker so the fixture needs no node_modules wiring -
-  // the guard matches on the resolved basename `server-only.ts`, which this satisfies.
+  // the guard matches on the resolved basename `backend-only.ts`, which this satisfies.
   const result = await buildWithGuard({
-    "server-only.ts": "export {}\n",
-    "secrets.ts": 'import "./server-only.ts"\nexport const KEY = "super-secret"\n',
-    "entry.ts": 'import { KEY } from "./secrets.ts"\ndocument.title = KEY\n',
+    "shared/backend-only.ts": "export {}\n",
+    "shared/secrets.ts": 'import "./backend-only.ts"\nexport const KEY = "super-secret"\n',
+    "frontend/entry.ts": 'import { KEY } from "../shared/secrets.ts"\ndocument.title = KEY\n',
   })
   expect(result.ok).toBe(false)
-  expect(result.error).toContain("server-only module(s) in the client bundle")
+  expect(result.error).toContain("backend-only module(s) in the client bundle")
+}, 60_000)
+
+test("real vite build FAILS when backend code reaches the client, naming the chain", async () => {
+  const result = await buildWithGuard({
+    "backend/db.ts": 'export const query = () => "SELECT secret"\n',
+    "shared/data.ts": 'import { query } from "../backend/db.ts"\nexport const rows = query\n',
+    "frontend/entry.ts": 'import { rows } from "../shared/data.ts"\ndocument.title = rows()\n',
+  })
+  expect(result.ok).toBe(false)
+  expect(result.error).toContain("backend/db.ts: it is backend code")
+  expect(result.error).toContain("via frontend/entry.ts → shared/data.ts → backend/db.ts")
+}, 60_000)
+
+test("real vite build FAILS on backend code tree-shaking dropped from every chunk", async () => {
+  // Loaded but unused: no byte ships, yet the import itself crosses the boundary.
+  const result = await buildWithGuard({
+    "backend/db.ts": 'export const query = () => "SELECT secret"\n',
+    "frontend/entry.ts": 'import { query } from "../backend/db.ts"\ndocument.title = "x"\n',
+  })
+  expect(result.ok).toBe(false)
+  expect(result.error).toContain("backend/db.ts: it is backend code")
+}, 60_000)
+
+test("real vite build FAILS on a file in no zone", async () => {
+  const result = await buildWithGuard({
+    "lib/util.ts": "export const x = 1\n",
+    "frontend/entry.ts": 'import { x } from "../lib/util.ts"\ndocument.title = String(x)\n',
+  })
+  expect(result.ok).toBe(false)
+  expect(result.error).toContain('"lib/util.ts" is in no zone')
 }, 60_000)
 
 test("real vite build PASSES for a clean client (no false positive)", async () => {
   const result = await buildWithGuard({
-    "util.ts": 'export const greet = (n) => "hi " + n\n',
-    "entry.ts": 'import { greet } from "./util.ts"\ndocument.title = greet("world")\n',
+    "shared/util.ts": 'export const greet = (n) => "hi " + n\n',
+    "frontend/entry.ts":
+      'import { greet } from "../shared/util.ts"\ndocument.title = greet("world")\n',
   })
   expect(result.error).toBeUndefined()
   expect(result.ok).toBe(true)
@@ -173,7 +205,7 @@ test("real vite build FAILS on a node: builtin reached only via dynamic import()
   // A `node:` module pulled in by `import()` still ships to the browser; the guard reads
   // dynamicallyImportedIds too, so it must catch this the same as a static import.
   const result = await buildWithGuard({
-    "entry.ts":
+    "frontend/entry.ts":
       'export async function load() {\n  const m = await import("node:fs")\n  return m.readFileSync\n}\n',
   })
   expect(result.ok).toBe(false)
@@ -198,8 +230,8 @@ async function buildLikePipeline(
     plugins: [viteBareBuiltinExternal()],
     build: {
       write: false,
-      lib: { entry: join(root, "entry.ts"), formats: ["es"], fileName: "entry" },
-      rollupOptions: { external: [/^node:/], plugins: [viteLeakGuard()] },
+      lib: { entry: join(root, "frontend/entry.ts"), formats: ["es"], fileName: "entry" },
+      rollupOptions: { external: [/^node:/], plugins: [viteLeakGuard({ appRoot: root })] },
     },
   }
   for (let attempt = 0; ; attempt++) {
@@ -216,7 +248,7 @@ async function buildLikePipeline(
 
 test("real vite build FAILS on a bare built-in, named as the Bun build names it", async () => {
   const result = await buildLikePipeline({
-    "entry.ts": 'export const load = () => import("fs/promises")\n',
+    "frontend/entry.ts": 'export const load = () => import("fs/promises")\n',
   })
   expect(result.ok).toBe(false)
   expect(result.error).toContain("node:fs/promises reached the client bundle")
@@ -226,7 +258,8 @@ test("real vite build PASSES when a built-in name resolves to an installed packa
   const result = await buildLikePipeline({
     "node_modules/events/package.json": '{ "name": "events", "main": "index.js" }\n',
     "node_modules/events/index.js": "export class EventEmitter {}\n",
-    "entry.ts": 'import { EventEmitter } from "events"\nexport const e = new EventEmitter()\n',
+    "frontend/entry.ts":
+      'import { EventEmitter } from "events"\nexport const e = new EventEmitter()\n',
   })
   expect(result.error).toBeUndefined()
   expect(result.ok).toBe(true)

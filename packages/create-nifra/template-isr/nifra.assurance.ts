@@ -11,7 +11,7 @@
  * an exemption you get by leaving the rule off is one nobody ever sees.
  */
 import { defineAssuranceConfig, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
-import { backend } from "./backend"
+import { backend } from "./backend/app"
 
 export default defineAssuranceConfig({
   source: backend,

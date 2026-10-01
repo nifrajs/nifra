@@ -16,9 +16,10 @@ production unless `NIFRA_ALLOW_MEMORY_RATE_LIMIT=true`; use a shared store for m
 For cookie sessions, add signed CSRF middleware and require both runtime authentication and CSRF
 evidence in `nifra.assurance.ts`.
 
-Edit `routes/index.tsx` (the landing + a live loader/action counter), add files under `routes/`
-(`about.tsx` → `/about`, `[id].tsx` → `:id`, nested `_layout.tsx` for sections), and put your data
-behind `backend.ts`.
+Edit `routes/index.tsx` (the landing) and `routes/index.backend.ts` (its live loader/action
+counter), add files under `routes/` (`about.tsx` → `/about`, `[id].tsx` → `:id`, nested `_layout.tsx`
+for sections; a page's loader/action goes in its `x.backend.ts`), and put your data behind
+`backend/app.ts`.
 
 ## Deploy - pick a target
 
@@ -30,7 +31,7 @@ behind `backend.ts`.
 | **Cloudflare Pages** | `bun run build` | `bun run deploy:cf` (`wrangler pages deploy dist`) |
 | **Vercel Edge** | `bun run build:vercel` | `bun run deploy:vercel` (`vercel deploy --prebuilt`) |
 
-The routes, `backend.ts`, and the client bundle are shared; each `build*` script swaps
+The routes, `backend/`, and the client bundle are shared; each `build*` script swaps
 `buildServer`'s target/conditions and the server entry. nifra never enters your cloud credentials - the
 configs (`Dockerfile`, `deno.json`, `wrangler.toml`, Vercel Build Output API) are scaffolded; you run
 the vendor CLI.
@@ -39,9 +40,10 @@ the vendor CLI.
 
 ```
 routes/        index.tsx (landing), _layout.tsx (chrome), _404.tsx
-framework.ts   the render adapter (imported by the server entries - kept edge-bundlable)
+               index.backend.ts - the landing page's loader/action (server only)
+backend/       app.ts - your contract (loaders/actions call it in-process)
+               framework.ts - the render adapter (imported by the server entries - kept edge-bundlable)
 nifra.config.ts the nifra CLI's dev/build config (adapter + clientModule) - read by `nifra dev`
-backend.ts     your contract (loaders/actions call it in-process)
 server-bun.ts  Bun entry (Bun.serve)         build-bun.ts    → dist-bun/
 _worker.ts     Cloudflare Pages entry        build.ts        → dist/
 server-node.ts Node entry (@nifrajs/node)       build-node.ts   → dist-node/   (Dockerfile)

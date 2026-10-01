@@ -14,7 +14,7 @@ import {
 import { createFixtureProject, createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
 import { projectFacts } from "./rule-facts.ts"
 
-// framework.ts can set the `createWebApp` options a CLI-run app needs (`apiPrefix`, `apiStrip`,
+// backend/framework.ts can set the `createWebApp` options a CLI-run app needs (`apiPrefix`, `apiStrip`,
 // `mounts`, `csp`, `nonce`); every command forwards the same set, and a page under a mount is refused
 // by the build and by `nifra check`.
 
@@ -50,7 +50,7 @@ describe("loadApp validates the forwarded fields", () => {
   for (const [line, message] of cases) {
     test(line, async () => {
       const dir = project({
-        "framework.ts": [...adapterSource, line].join("\n"),
+        "backend/framework.ts": [...adapterSource, line].join("\n"),
         "routes/index.tsx": "export default () => null\n",
       })
       await expect(loadApp(dir)).rejects.toThrow(message)
@@ -59,7 +59,7 @@ describe("loadApp validates the forwarded fields", () => {
 
   test("well-formed fields load and reach the framework object", async () => {
     const dir = project({
-      "framework.ts": [
+      "backend/framework.ts": [
         ...adapterSource,
         'export const apiPrefix = "/rpc"',
         "export const apiStrip = true",
@@ -94,55 +94,59 @@ describe("forwarding helpers", () => {
   })
 
   test("frameworkOptionImports maps each set field to the framework file", () => {
-    expect(frameworkOptionImports(fw({}), "/a/framework.ts")).toEqual({})
+    expect(frameworkOptionImports(fw({}), "/a/backend/framework.ts")).toEqual({})
     expect(
-      frameworkOptionImports(fw({ apiPrefix: "", csp: {} as never }), "/a/framework.ts"),
+      frameworkOptionImports(fw({ apiPrefix: "", csp: {} as never }), "/a/backend/framework.ts"),
     ).toEqual({
-      optionImports: { apiPrefix: "/a/framework.ts", csp: "/a/framework.ts" },
+      optionImports: { apiPrefix: "/a/backend/framework.ts", csp: "/a/backend/framework.ts" },
     })
   })
 })
 
 describe("assertFrameworkOptionsEdgeExported", () => {
   test("a field set only in nifra.config.ts is refused, naming it", async () => {
-    const dir = project({ "framework.ts": adapterSource.join("\n") })
+    const dir = project({ "backend/framework.ts": adapterSource.join("\n") })
     await expect(
       assertFrameworkOptionsEdgeExported(
         fw({ apiPrefix: "/rpc" }),
         join(dir, "nifra.config.ts"),
-        join(dir, "framework.ts"),
+        join(dir, "backend/framework.ts"),
       ),
     ).rejects.toThrow("`apiPrefix` is exported from")
   })
 
   test("a field defined separately with a different value is refused", async () => {
     const dir = project({
-      "framework.ts": [...adapterSource, 'export const apiPrefix = "/one"'].join("\n"),
+      "backend/framework.ts": [...adapterSource, 'export const apiPrefix = "/one"'].join("\n"),
     })
     await expect(
       assertFrameworkOptionsEdgeExported(
         fw({ apiPrefix: "/two" }),
         join(dir, "nifra.config.ts"),
-        join(dir, "framework.ts"),
+        join(dir, "backend/framework.ts"),
       ),
-    ).rejects.toThrow('export { apiPrefix } from "./framework.ts"')
+    ).rejects.toThrow('export { apiPrefix } from "./backend/framework.ts"')
   })
 
   test("the same value (a re-export) passes; a single-file app and an unset field are no-ops", async () => {
     const dir = project({
-      "framework.ts": [...adapterSource, 'export const apiPrefix = "/rpc"'].join("\n"),
+      "backend/framework.ts": [...adapterSource, 'export const apiPrefix = "/rpc"'].join("\n"),
     })
     await assertFrameworkOptionsEdgeExported(
       fw({ apiPrefix: "/rpc" }),
       join(dir, "nifra.config.ts"),
-      join(dir, "framework.ts"),
+      join(dir, "backend/framework.ts"),
     )
     await assertFrameworkOptionsEdgeExported(
       fw({ apiPrefix: "/x" }),
-      "/a/framework.ts",
-      "/a/framework.ts",
+      "/a/backend/framework.ts",
+      "/a/backend/framework.ts",
     )
-    await assertFrameworkOptionsEdgeExported(fw({}), "/a/nifra.config.ts", "/a/framework.ts")
+    await assertFrameworkOptionsEdgeExported(
+      fw({}),
+      "/a/nifra.config.ts",
+      "/a/backend/framework.ts",
+    )
   })
 })
 
@@ -150,7 +154,7 @@ describe("nifra build refuses a page under a mount", () => {
   const loaded = (dir: string, fields: Partial<NifraFramework>, backend: unknown): LoadedApp =>
     ({
       cwd: dir,
-      configPath: join(dir, "framework.ts"),
+      configPath: join(dir, "backend/framework.ts"),
       routesDir: join(dir, "routes"),
       outDir: join(dir, "dist"),
       framework: fw(fields),
@@ -217,15 +221,15 @@ describe("readStaticApiPrefix", () => {
 
 describe("NF-C027", () => {
   const scan = (dir: string) => {
-    const facts = projectFacts("backend.ts", "", [])
+    const facts = projectFacts("backend/app.ts", "", [])
     return runRuleRegistry({ root: dir, sources: facts.source, project: facts }, pageRules)
   }
   const backendSource = 'import { server } from "@nifrajs/core"\nexport const backend = server()\n'
 
   test("a page under the default backend prefix is an error naming the file", async () => {
     const dir = project({
-      "backend.ts": backendSource,
-      "framework.ts": adapterSource.join("\n"),
+      "backend/app.ts": backendSource,
+      "backend/framework.ts": adapterSource.join("\n"),
       "routes/index.tsx": "export default () => null\n",
       "routes/api/report.tsx": "export default () => null\n",
     })
@@ -241,21 +245,21 @@ describe("NF-C027", () => {
 
   test("a literal apiPrefix moves the check; an empty one turns it off", async () => {
     const files = {
-      "backend.ts": backendSource,
+      "backend/app.ts": backendSource,
       "routes/api/report.tsx": "export default () => null\n",
       "routes/rpc/x.tsx": "export default () => null\n",
     }
     const moved = await scan(
       project({
         ...files,
-        "framework.ts": [...adapterSource, 'export const apiPrefix = "/rpc"'].join("\n"),
+        "backend/framework.ts": [...adapterSource, 'export const apiPrefix = "/rpc"'].join("\n"),
       }),
     )
     expect(moved.map((finding) => finding.file)).toEqual(["routes/rpc/x.tsx"])
     const off = await scan(
       project({
         ...files,
-        "framework.ts": [...adapterSource, 'export const apiPrefix = ""'].join("\n"),
+        "backend/framework.ts": [...adapterSource, 'export const apiPrefix = ""'].join("\n"),
       }),
     )
     expect(off).toEqual([])
@@ -264,13 +268,19 @@ describe("NF-C027", () => {
   test("an apiPrefix it cannot read is reported as info, never guessed", async () => {
     const findings = await scan(
       project({
-        "backend.ts": backendSource,
-        "framework.ts": [...adapterSource, 'export const apiPrefix = "/" + "rpc"'].join("\n"),
+        "backend/app.ts": backendSource,
+        "backend/framework.ts": [...adapterSource, 'export const apiPrefix = "/" + "rpc"'].join(
+          "\n",
+        ),
         "routes/api/report.tsx": "export default () => null\n",
       }),
     )
     expect(findings).toHaveLength(1)
-    expect(findings[0]).toMatchObject({ code: "NF-C027", severity: "info", file: "framework.ts" })
+    expect(findings[0]).toMatchObject({
+      code: "NF-C027",
+      severity: "info",
+      file: "backend/framework.ts",
+    })
   })
 
   test("no backend export means no mount, so nothing is reported", async () => {
@@ -280,7 +290,7 @@ describe("NF-C027", () => {
     expect(
       await scan(
         project({
-          "backend.ts": "export const notTheBackend = 1\n",
+          "backend/app.ts": "export const notTheBackend = 1\n",
           "routes/api/report.tsx": "export default () => null\n",
         }),
       ),

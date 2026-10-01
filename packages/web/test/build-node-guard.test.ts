@@ -50,9 +50,9 @@ test("clean metafile (no node: builtins) → no findings", () => {
   expect(found).toHaveLength(0)
 })
 
-test("undefined/empty metafile → no findings (never throws on a missing graph)", () => {
-  expect(detectNodeBuiltins(undefined)).toHaveLength(0)
-  expect(detectNodeBuiltins({ outputs: {} })).toHaveLength(0)
+test("a missing metafile is an error, never an empty graph that reports nothing", () => {
+  expect(() => detectNodeBuiltins(undefined)).toThrow("produced no module graph")
+  expect(() => detectNodeBuiltins({ outputs: {} })).toThrow("produced no module graph")
 })
 
 test("an `external` node: import (resolved path only, no `original`) is still flagged", () => {
@@ -164,7 +164,8 @@ beforeEach(() => {
   projectRoot = mkdtempSync(WORKSPACE_TMP_BASE)
   routesDir = join(projectRoot, "routes")
   mkdirSync(routesDir, { recursive: true })
-  clientModule = join(projectRoot, "client-stub.ts")
+  clientModule = join(projectRoot, "frontend/client-stub.ts")
+  mkdirSync(join(clientModule, ".."), { recursive: true })
   writeFileSync(clientModule, "export function mountRouter() {}\n")
 })
 afterEach(() => {
@@ -185,7 +186,7 @@ test("buildClient throws a named error when a route imports node:crypto", async 
     minify: false,
   })
   await expect(promise).rejects.toThrow(/node:crypto reached the client bundle via/)
-  await expect(promise).rejects.toThrow(/server-only path/)
+  await expect(promise).rejects.toThrow(/backend half/)
 })
 
 test("buildClient does NOT throw on a benign `node:` string literal (no false positive)", async () => {

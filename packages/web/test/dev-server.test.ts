@@ -24,7 +24,8 @@ beforeEach(() => {
   routesDir = join(projectRoot, "routes")
   mkdirSync(routesDir, { recursive: true })
   writeFileSync(join(routesDir, "index.tsx"), "export default function Index() { return null }\n")
-  clientModule = join(projectRoot, "client-stub.ts")
+  clientModule = join(projectRoot, "frontend/client-stub.ts")
+  mkdirSync(join(clientModule, ".."), { recursive: true })
   writeFileSync(clientModule, "export function mountRouter() {}\n")
 })
 afterEach(() => {

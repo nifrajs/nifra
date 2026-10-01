@@ -8,7 +8,7 @@ import { createWebApp, MemoryCacheStore, revalidateEndpoint, withISR } from "@ni
 import type { BuildManifest } from "@nifrajs/web/build"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { reactAdapter } from "@nifrajs/web-react"
-import { backend } from "./backend"
+import { backend } from "./backend/app"
 
 const publicDir = `${import.meta.dir}/public`
 const assets = JSON.parse(

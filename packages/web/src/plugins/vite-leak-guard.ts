@@ -1,5 +1,5 @@
 /**
- * `@nifrajs/web/plugins/vite-leak-guard` - nifra's two client-leak guards, for a Vite/Rollup production
+ * `@nifrajs/web/plugins/vite-leak-guard` - nifra's client-leak guards, for a Vite/Rollup production
  * build.
  *
  * ## Why this exists
@@ -12,9 +12,9 @@
  * pipeline arriving WITHOUT them, or with a hastily re-implemented "mostly ported" copy, is the failure the
  * neutral module-graph seam was built to prevent.
  *
- * So this is not a second implementation. The detection logic (`detectNodeBuiltinsInClient`,
- * `detectServerOnlyInClient`) and the failure MESSAGES (`formatNodeBuiltinLeak`, `formatServerOnlyLeak`)
- * are the exact same functions the Bun build calls. This plugin only adapts Rollup's bundle shape into the
+ * So this is not a second implementation. The zone verification (`verifyClientGraph`,
+ * `accountEmittedFiles`), the `node:` and `backend-only` detectors and their failure MESSAGES are the
+ * exact same functions the Bun build calls. This plugin only adapts Rollup's bundle shape into the
  * neutral `ClientModuleGraph` (`fromRollupBundle`) and runs them. A leak reads identically whichever
  * bundler produced it, and there is one place to change if a guard changes.
  *
@@ -32,17 +32,35 @@
  *   import { viteBareBuiltinExternal, viteLeakGuard } from "@nifrajs/web/plugins/vite-leak-guard"
  *   export default {
  *     plugins: [viteBareBuiltinExternal()],
- *     build: { rollupOptions: { external: [/^node:/], plugins: [viteLeakGuard()] } },
+ *     build: {
+ *       rollupOptions: { external: [/^node:/], plugins: [viteLeakGuard({ appRoot: import.meta.dirname })] },
+ *     },
  *   }
  */
+import { existsSync } from "node:fs"
+import { isAbsolute, resolve } from "node:path"
 import {
   detectNodeBuiltinsInClient,
   detectServerOnlyInClient,
   formatNodeBuiltinLeak,
   formatServerOnlyLeak,
-} from "../build.ts"
+} from "../build-plan.ts"
 import { isBareNodeBuiltin } from "../internal/node-builtins.ts"
-import { fromRollupBundle, type RollupBundleLike } from "../module-graph.ts"
+import {
+  accountEmittedFiles,
+  type EmittedFile,
+  formatClientGraphVerdict,
+  formatUnaccountedOutput,
+  rollupModuleSource,
+  verifyClientGraph,
+} from "../internal/zone-graph.ts"
+import {
+  type ClientModuleGraph,
+  fromRollupBundle,
+  type GraphModule,
+  type RollupBundleLike,
+} from "../module-graph.ts"
+import { createZoneClassifier } from "../zones.ts"
 
 /**
  * The Rollup plugin-context slice this uses: `getModuleInfo` for a module's resolved imports, and `error`
@@ -52,7 +70,10 @@ interface RollupPluginContext {
   getModuleInfo(id: string): {
     readonly importedIds?: readonly string[]
     readonly dynamicallyImportedIds?: readonly string[]
+    readonly isExternal?: boolean
   } | null
+  /** Every module the build loaded, including ones tree-shaking left out of every chunk. */
+  getModuleIds?(): Iterable<string>
   /**
    * Takes an `Error`, never a string.
    *
@@ -63,6 +84,37 @@ interface RollupPluginContext {
    * entirely and the message survives.
    */
   error(error: Error): never
+}
+
+/** The parts of a Rollup output file the accounting reads. */
+interface RollupOutputLike {
+  readonly type?: string
+  readonly fileName?: string
+  readonly code?: string
+  readonly source?: string | Uint8Array
+  readonly map?: { readonly sources?: readonly (string | null)[] } | null
+  readonly originalFileNames?: readonly string[]
+  readonly viteMetadata?: {
+    readonly importedCss?: ReadonlySet<string>
+    readonly importedAssets?: ReadonlySet<string>
+  }
+  readonly moduleIds?: readonly string[]
+}
+
+export interface LeakGuardOptions {
+  /** The app root: the directory holding `routes/`, `frontend/`, `backend/` and `shared/` (default
+   * the working directory). */
+  readonly appRoot?: string
+  /** The routes directory (default `<appRoot>/routes`). */
+  readonly routesDir?: string
+  /** Vite's `root`, which emitted asset names are relative to (default `appRoot`). */
+  readonly root?: string
+  /** Where the bundle is written; source map paths resolve against it (default `<root>/dist`). */
+  readonly outDir?: string
+  /** The build's own generated entry modules. */
+  readonly generatedFiles?: readonly string[]
+  /** Output files another guarded build already verified (a worker sub-build's chunks). */
+  readonly verified?: Set<string>
 }
 
 /** The minimal Rollup plugin shape this returns - `generateBundle` bound to the plugin context. */
@@ -83,14 +135,26 @@ export interface LeakGuardPlugin {
   generateBundle(this: RollupPluginContext, options: unknown, bundle: RollupBundleLike): void
 }
 
+const CSS_FILE = /\.(?:css|scss|sass|less|styl)(?:$|\?)/
+
 /**
- * A Vite/Rollup plugin that fails the build when server-only code or a `node:` builtin reaches the client
- * bundle - the same two guards, and the same error messages, as nifra's Bun production build.
+ * A Vite/Rollup plugin that fails the build when anything the zones keep on the server reaches the client
+ * bundle, with the same checks and messages as nifra's Bun build: every module classified, the graph
+ * evidence complete, every emitted file traced back to it, and the `node:` and `backend-only` guards.
+ * It runs in `generateBundle`, before Rollup writes a byte.
  */
-export function viteLeakGuard(): LeakGuardPlugin {
+export function viteLeakGuard(options: LeakGuardOptions = {}): LeakGuardPlugin {
+  const appRoot = resolve(options.appRoot ?? process.cwd())
+  const root = resolve(options.root ?? appRoot)
+  const outDir = resolve(root, options.outDir ?? "dist")
   const plugin: LeakGuardPlugin = {
     name: "nifra:leak-guard",
     generateBundle(_options, bundle) {
+      const classifier = createZoneClassifier({
+        appRoot,
+        ...(options.routesDir !== undefined ? { routesDir: options.routesDir } : {}),
+        ...(options.generatedFiles !== undefined ? { generatedFiles: options.generatedFiles } : {}),
+      })
       // Resolved import edges per module, straight from Rollup's graph. Dynamic imports count too: a
       // `node:`/server-only module reached only via `import()` still ships to the browser.
       const importsOf = (id: string): readonly string[] => {
@@ -98,12 +162,23 @@ export function viteLeakGuard(): LeakGuardPlugin {
         if (info === null) return []
         return [...(info.importedIds ?? []), ...(info.dynamicallyImportedIds ?? [])]
       }
-      const graph = fromRollupBundle(bundle, importsOf)
-      // Node-builtin guard first, then server-only - the same order as the Bun build, so the first error a
-      // dev sees is the same across pipelines when a module trips both.
+      const graph = completeGraph(fromRollupBundle(bundle, importsOf), this, importsOf)
+      const sources = { classifier, sourceOf: rollupModuleSource }
+      const outputs = Object.values(bundle as Readonly<Record<string, RollupOutputLike>>)
+      for (const output of outputs) {
+        if (output.type !== "asset" && output.fileName !== undefined)
+          options.verified?.add(output.fileName)
+      }
       const leak =
+        formatClientGraphVerdict(verifyClientGraph(graph, sources)) ??
         formatNodeBuiltinLeak(detectNodeBuiltinsInClient(graph)) ??
-        formatServerOnlyLeak(detectServerOnlyInClient(graph))
+        formatServerOnlyLeak(detectServerOnlyInClient(graph)) ??
+        formatUnaccountedOutput(
+          accountEmittedFiles(emittedFiles(outputs, graph, root, options.verified), graph, {
+            ...sources,
+            outDir,
+          }),
+        )
       if (leak === undefined) return
       // Record before throwing: the throw is what fails the build for a standalone user of this plugin,
       // and the record is what lets a caller that owns the build re-raise the real message (see `leak`).
@@ -112,6 +187,98 @@ export function viteLeakGuard(): LeakGuardPlugin {
     },
   }
   return plugin
+}
+
+/**
+ * The chunk graph plus every module the build loaded but tree-shook out of every chunk, with external
+ * edges marked: an import the bundle left external is evidence the graph has to account for.
+ */
+function completeGraph(
+  graph: ClientModuleGraph,
+  context: RollupPluginContext,
+  importsOf: (id: string) => readonly string[],
+): ClientModuleGraph {
+  const external = (id: string): boolean => context.getModuleInfo(id)?.isExternal === true
+  const modules: Record<string, GraphModule> = {}
+  for (const [id, module] of Object.entries(graph.modules)) {
+    modules[id] = {
+      imports: module.imports.map((im) =>
+        im.path !== undefined && !im.path.startsWith("node:") && external(im.path)
+          ? { ...im, external: true }
+          : im,
+      ),
+    }
+  }
+  for (const id of context.getModuleIds?.() ?? []) {
+    if (modules[id] !== undefined || external(id)) continue
+    modules[id] = {
+      imports: importsOf(id).map((path) => (external(path) ? { path, external: true } : { path })),
+    }
+  }
+  return { modules, chunks: graph.chunks }
+}
+
+/** Every file in the bundle, with what it claims to come from. */
+function emittedFiles(
+  outputs: readonly RollupOutputLike[],
+  graph: ClientModuleGraph,
+  root: string,
+  verified: ReadonlySet<string> | undefined,
+): EmittedFile[] {
+  const fromRoot = (name: string): string => (isAbsolute(name) ? name : resolve(root, name))
+  const moduleFiles = (ids: readonly string[]): string[] =>
+    ids.flatMap((id) => {
+      const source = rollupModuleSource(id)
+      return source.kind === "builtin" || source.file === undefined ? [] : [source.file]
+    })
+  const referencedBy = new Map<string, string[]>()
+  for (const output of outputs) {
+    if (output.type !== "chunk") continue
+    for (const name of [
+      ...(output.viteMetadata?.importedCss ?? []),
+      ...(output.viteMetadata?.importedAssets ?? []),
+    ]) {
+      referencedBy.set(name, [
+        ...(referencedBy.get(name) ?? []),
+        ...moduleFiles(output.moduleIds ?? []),
+      ])
+    }
+  }
+  const cssModules = moduleFiles(Object.keys(graph.modules).filter((id) => CSS_FILE.test(id)))
+  const files: EmittedFile[] = []
+  for (const output of outputs) {
+    const name = output.fileName
+    // Vite's own bookkeeping (`.vite/manifest.json`); nifra deletes it before anything is deployed.
+    if (name === undefined || name.startsWith(".vite/")) continue
+    if (output.type === "chunk") {
+      files.push({ name, kind: "code", text: output.code ?? "" })
+      if (output.map)
+        files.push({ name: `${name}.map`, kind: "map", text: JSON.stringify(output.map) })
+      continue
+    }
+    const text = typeof output.source === "string" ? output.source : undefined
+    if (name.endsWith(".map")) {
+      files.push({ name, kind: "map", ...(text !== undefined ? { text } : {}) })
+      continue
+    }
+    if (verified?.has(name)) continue
+    // Vite names a synthesized asset (the `cssCodeSplit: false` aggregate is `style.css`) after no
+    // real file; only names that exist are evidence.
+    const original = (output.originalFileNames ?? [])
+      .map(fromRoot)
+      .filter((file) => existsSync(file))
+    const referenced = referencedBy.get(name) ?? []
+    const sources =
+      original.length > 0
+        ? original
+        : referenced.length > 0
+          ? referenced
+          : name.endsWith(".css")
+            ? cssModules
+            : []
+    files.push({ name, kind: "asset", sources })
+  }
+  return files
 }
 
 /** The resolve-hook context slice {@link viteBareBuiltinExternal} uses. */

@@ -46,9 +46,6 @@ export const searchSchema = {
     validate: (value) => ({ value: { sku: value?.sku ?? "MISSING" } }),
   },
 }
-export function loader(ctx) {
-  return { loaderSearch: ctx.search }
-}
 export default function Shop({ data }) {
   const search = useSearch()
   return (
@@ -59,6 +56,10 @@ export default function Shop({ data }) {
   )
 }
 `,
+  )
+  writeFileSync(
+    join(routesDir, "shop.backend.ts"),
+    "export function loader(ctx) {\n  return { loaderSearch: ctx.search }\n}\n",
   )
 
   server = await createViteDevServer({

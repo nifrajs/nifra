@@ -21,7 +21,7 @@ const backend = server().post(
 )
 
 const files: readonly WorkGraphSourceFile[] = [
-  { path: "backend.ts", content: 'export const backend = server().post("/orders", ...)' },
+  { path: "backend/app.ts", content: 'export const backend = server().post("/orders", ...)' },
   { path: "routes/orders.ts", content: 'export const route = "/orders"' },
   { path: "routes/orders.test.ts", kind: "test", content: 'test("POST /orders", ...)' },
   { path: "server-manifest.ts", kind: "manifest", content: 'routes: ["/orders"]' },
@@ -80,7 +80,7 @@ describe("verification work graph", () => {
       () => ({ ok: true }),
     )
     const paramFiles: readonly WorkGraphSourceFile[] = [
-      { path: "backend.ts", content: "export const backend = server()" },
+      { path: "backend/app.ts", content: "export const backend = server()" },
       {
         path: "routes/orders-id.test.ts",
         kind: "test",
@@ -127,9 +127,11 @@ describe("verification work graph", () => {
   test("backend changes conservatively impact every reflected route", async () => {
     const result = await buildProjectWorkGraph(
       { source: backend, files, freshness: { ok: true } },
-      { changedFiles: ["backend.ts"] },
+      { changedFiles: ["backend/app.ts"] },
     )
-    expect(queryImpact(result.graph, ["backend.ts"]).impactedRoutes).toEqual(["POST /orders"])
+    expect(queryImpact(result.graph, ["backend/app.ts"]).impactedRoutes).toEqual(["POST /orders"])
+    expect(queryImpact(result.graph, ["backend/db.ts"]).impactedRoutes).toEqual(["POST /orders"])
+    expect(queryImpact(result.graph, ["shared/schema.ts"]).impactedRoutes).toEqual(["POST /orders"])
   })
 
   test("freshness refuses missing and stale builds", () => {

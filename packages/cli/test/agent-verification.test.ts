@@ -15,7 +15,7 @@ import { applyDiagnosticRecipe, listFixRecipes } from "../src/fix-recipes.ts"
 import { runReplay } from "../src/replay.ts"
 import { assertUniqueRuleCodes } from "../src/rules/codes.ts"
 import { validateRulePacks } from "../src/rules/index.ts"
-import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
+import { createFixtureRoot, removeFixtureRoot, writeAppFile } from "./fixture-root.ts"
 
 const ROOT = createFixtureRoot("tmp-agent-verification")
 
@@ -39,15 +39,17 @@ describe("agent verification surfaces", () => {
   test("contract snapshot detects a schema digest change", async () => {
     const dir = join(ROOT, "contracts")
     await mkdir(dir, { recursive: true })
-    await writeFile(
-      join(dir, "backend.ts"),
+    writeAppFile(
+      dir,
+      "backend/app.ts",
       'import { server } from "@nifrajs/core"\nexport const backend = server().get("/users", () => ({ ok: true }))\n',
     )
     const lock = await snapshotContracts(dir)
     expect(Object.keys(lock.routes)).toEqual(["GET /users"])
     expect((await checkContractsLock(dir)).diagnostics).toEqual([])
-    await writeFile(
-      join(dir, "backend.ts"),
+    writeAppFile(
+      dir,
+      "backend/app.ts",
       'import { server } from "@nifrajs/core"\nexport const backend = server().get("/users", () => ({ ok: false }))\n',
     )
     expect((await checkContractsLock(dir)).diagnostics).toHaveLength(0)
@@ -75,10 +77,10 @@ describe("agent verification surfaces", () => {
   test("assurance bundle includes explicit skipped gates", async () => {
     const dir = join(ROOT, "bundle")
     await mkdir(dir, { recursive: true })
-    await writeFile(join(dir, "backend.ts"), "export const backend = { routes: () => [] }\n")
+    writeAppFile(dir, "backend/app.ts", "export const backend = { routes: () => [] }\n")
     await writeFile(
       join(dir, "nifra.assurance.ts"),
-      'import { defineAssuranceConfig } from "@nifrajs/core/assurance"\nimport { backend } from "./backend.ts"\nexport default defineAssuranceConfig({ source: backend, policy: { rules: [], unmatched: "ignore", allowEmpty: true } })\n',
+      'import { defineAssuranceConfig } from "@nifrajs/core/assurance"\nimport { backend } from "./backend/app.ts"\nexport default defineAssuranceConfig({ source: backend, policy: { rules: [], unmatched: "ignore", allowEmpty: true } })\n',
     )
     const bundle = await collectAssureBundle(dir)
     expect(bundle.version).toBe(1)
@@ -92,7 +94,7 @@ describe("agent verification surfaces", () => {
     const globals = globalThis as unknown as Record<PropertyKey, unknown>
     globals[key] = 0
     await mkdir(dir, { recursive: true })
-    await writeFile(join(dir, "backend.ts"), "export const backend = { routes: () => [] }\n")
+    writeAppFile(dir, "backend/app.ts", "export const backend = { routes: () => [] }\n")
     await writeFile(
       join(dir, "nifra.assurance.ts"),
       [
@@ -100,7 +102,7 @@ describe("agent verification surfaces", () => {
         `const globals = globalThis as unknown as Record<PropertyKey, unknown>`,
         `globals[key] = Number(globals[key] ?? 0) + 1`,
         `import { defineAssuranceConfig } from "@nifrajs/core/assurance"`,
-        `import { backend } from "./backend.ts"`,
+        `import { backend } from "./backend/app.ts"`,
         `export default defineAssuranceConfig({ source: backend, policy: { rules: [], unmatched: "ignore", allowEmpty: true } })`,
         "",
       ].join("\n"),
@@ -147,8 +149,9 @@ describe("agent verification surfaces", () => {
   test("replay dispatch is shared and remains project-scoped", async () => {
     const dir = join(ROOT, "replay")
     await mkdir(join(dir, ".nifra", "replays"), { recursive: true })
-    await writeFile(
-      join(dir, "backend.ts"),
+    writeAppFile(
+      dir,
+      "backend/app.ts",
       'import { server } from "@nifrajs/core"\nexport const backend = server().get("/health", () => ({ ok: true }))\n',
     )
     await snapshotContracts(dir)

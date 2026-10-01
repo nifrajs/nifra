@@ -40,7 +40,7 @@ export interface Codeframe {
 
 /** The structured failure. Serialisable as-is to JSON for the agent surfaces. */
 export interface Diagnostic {
-  /** Stable, greppable identifier, e.g. `NIFRA_SERVER_ONLY_IN_CLIENT`. `NIFRA_UNHANDLED` when unrecognised. */
+  /** Stable, greppable identifier, e.g. `NIFRA_BACKEND_IN_CLIENT`. `NIFRA_UNHANDLED` when unrecognised. */
   readonly code: string
   readonly name: string
   readonly message: string
@@ -51,7 +51,7 @@ export interface Diagnostic {
   readonly cause?: string | undefined
   /** Plain-language "do this", when the failure is recognised. */
   readonly fix?: string | undefined
-  /** Docs section anchor for the code, e.g. `errors#server-only-in-client`. */
+  /** Docs section anchor for the code, e.g. `errors#backend-in-client`. */
   readonly docsAnchor?: string | undefined
 }
 
@@ -193,18 +193,27 @@ interface CatalogEntry {
  */
 export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
   {
-    code: "NIFRA_SERVER_ONLY_IN_CLIENT",
-    match: (_n, m) => m.includes("server-only module(s) in the client bundle"),
+    code: "NIFRA_BACKEND_ONLY_IN_CLIENT",
+    match: (_n, m) => m.includes("backend-only module(s) in the client bundle"),
     cause:
-      "A module marked server-only was reachable from a client entry, so it would ship to the browser.",
-    fix: "Follow the import chain in the message and move the server-only use behind a loader/action or a `*.server.ts` boundary, so it never enters a client component.",
-    docsAnchor: "errors#server-only-in-client",
+      "A module that imports the `@nifrajs/web/backend-only` marker was reachable from a client entry, so it would ship to the browser.",
+    fix: "Follow the import chain in the message and move the module under backend/, reached from the route's x.backend.ts (loader/action) or a *.fn.ts server function.",
+    docsAnchor: "errors#backend-only-in-client",
+  },
+  {
+    code: "NIFRA_BACKEND_IN_CLIENT",
+    match: (_n, m) =>
+      m.includes("may not ship to a browser") || m.includes("may not reach the browser"),
+    cause:
+      "Browser code imported a module the zones keep on the server: backend/, a route's x.backend.ts, a server package, or a module outside every zone.",
+    fix: "Reach backend code through the route's x.backend.ts (loader/action) or a *.fn.ts server function; put code both sides need in shared/. The message names the import chain.",
+    docsAnchor: "errors#backend-in-client",
   },
   {
     code: "NIFRA_NODE_BUILTIN_IN_CLIENT",
     match: (_n, m) => m.includes("Node built-in(s) in the client bundle"),
     cause: "A `node:` built-in was reached from a client entry; it has no browser implementation.",
-    fix: "Move the code using the built-in to the server (loader/action or `*.server.ts`); the message lists the import chain that pulled it in.",
+    fix: "Move the code using the built-in under backend/ or into the route's x.backend.ts; the message lists the import chain that pulled it in.",
     docsAnchor: "errors#node-builtin-in-client",
   },
   {
@@ -251,6 +260,9 @@ export interface BuildDiagnosticOptions {
   readonly root?: string
   /** Injectable source reader (tests pass a fake; production reads the filesystem). */
   readonly read?: SourceReader
+  /** Whether a file's source may appear in the codeframe. The overlay is served to a browser, so a dev
+   * server passes the zone check here and backend source never renders in it. */
+  readonly showSource?: (file: string) => boolean
 }
 
 /**
@@ -265,7 +277,7 @@ export function buildDiagnostic(err: unknown, options: BuildDiagnosticOptions = 
   const frames = parseFrames(error.stack ?? "")
   const top = topUserFrame(frames, root)
   const codeframe =
-    top?.file !== undefined && top.line !== undefined
+    top?.file !== undefined && top.line !== undefined && (options.showSource?.(top.file) ?? true)
       ? buildCodeframe(
           options.read === undefined ? canonicalPath(top.file) : top.file,
           top.line,

@@ -20,7 +20,7 @@ Routes are `.svelte` components under `routes/` - `index.svelte` (landing + a li
 counter), `_layout.svelte` (chrome via the `children` snippet), `_404.svelte`. A route's
 `loader`/`action`/`meta` are named exports from its `<script module>` block; the page receives the
 loader output as the `data` prop (`let { data } = $props()`). The frontend adapter is one line in
-`framework.ts`; data lives behind `backend.ts`. Each `build*` script wires `svelteBunPlugin("dom")` for
+`backend/framework.ts`; data lives behind `backend/app.ts`. Each `build*` script wires `svelteBunPlugin("dom")` for
 the client and `("ssr")` for the server.
 
 ## Deploy - pick a target
@@ -40,9 +40,10 @@ nifra never enters your cloud credentials - it scaffolds the configs (`Dockerfil
 
 ```
 routes/        index.svelte (landing), _layout.svelte (chrome), _404.svelte
-framework.ts   the adapter (svelteAdapter) - imported by the server entries (edge-bundlable)
+               index.backend.ts - the landing page's loader/action (server only)
+backend/       app.ts - your contract (loaders/actions call it in-process)
+               framework.ts - the adapter (svelteAdapter) - imported by the server entries (edge-bundlable)
 nifra.config.ts the nifra CLI's dev/build config (adapter + clientModule + Svelte plugins) - read by `nifra dev`
-backend.ts     your contract (loaders/actions call it in-process)
 server-bun.ts  Bun entry (Bun.serve)         build-bun.ts    → dist-bun/
 _worker.ts     Cloudflare Pages entry        build.ts        → dist/
 server-node.ts Node entry (@nifrajs/node)       build-node.ts   → dist-node/   (Dockerfile)

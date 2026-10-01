@@ -6,6 +6,7 @@ import {
   snapshotProjectEvidence,
 } from "@nifrajs/core/evidence"
 import type { ReflectedRoute } from "@nifrajs/core/reflection"
+import { BACKEND_APP_FILE } from "./app-files.ts"
 
 export interface ContractDigest {
   readonly request: string
@@ -109,8 +110,8 @@ export async function buildContractsLock(
 }
 
 async function loadBackend(cwd: string): Promise<unknown> {
-  const backendPath = resolve(cwd, "backend.ts")
-  if (!existsSync(backendPath)) throw new Error(`[nifra] no backend.ts in ${cwd}`)
+  const backendPath = resolve(cwd, BACKEND_APP_FILE)
+  if (!existsSync(backendPath)) throw new Error(`[nifra] no ${BACKEND_APP_FILE} in ${cwd}`)
   const loadedValue: unknown = await import(backendPath)
   const loaded = recordOf(loadedValue)
   if (loaded?.backend === undefined)

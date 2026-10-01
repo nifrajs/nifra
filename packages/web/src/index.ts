@@ -110,21 +110,17 @@ export {
   unsafeInlineScript,
 } from "./internal/render-document.ts"
 export {
+  type BackendOnly,
   DEFAULT_DEV_PORT,
   PRE_HYDRATION_GUARD,
-  type ServerOnly,
 } from "./internal/runtime-contract.ts"
 /**
- * The two file-name conventions that decide what never reaches a browser: a `*.server` module is
- * EMPTIED in the client build, a `*.fn` module is REPLACED with client stubs.
- *
- * Exported because more than the bundlers need them. `nifra dev --bun` cannot transform (Bun's dev
- * bundler takes no plugins) so it must REFUSE instead, and a refusal driven by its own hand-written
- * glob drifts from the transform - which is how `.fn.mts` came to be stubbed by both build pipelines
- * and waved through by the guard that exists to stop it leaking. Anything deciding "is this module
- * server-only" should import the matcher rather than re-encode it.
+ * The `*.fn` server-function convention: the browser build REPLACES such a module with client stubs.
+ * Exported so anything deciding "is this a server-function module" imports the matcher instead of
+ * re-encoding it - a hand-written glob drifts from the transform, which is how `.fn.mts` was once
+ * stubbed by both build pipelines and waved through by the guard meant to stop it leaking.
  */
-export { SERVER_FN_MODULE, SERVER_ONLY_MODULE } from "./internal/server-boundary.ts"
+export { SERVER_FN_MODULE } from "./internal/server-boundary.ts"
 export {
   type CreateWebAppOptions,
   createWebApp,

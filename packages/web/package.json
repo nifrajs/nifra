@@ -20,6 +20,9 @@
     "streaming-ssr"
   ],
   "type": "module",
+  "nifra": {
+    "environment": "library"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -79,10 +82,10 @@
       "types": "./dist/pwa-manifest.d.ts",
       "default": "./dist/pwa-manifest.js"
     },
-    "./server-only": {
-      "bun": "./src/server-only.ts",
-      "types": "./dist/server-only.d.ts",
-      "default": "./dist/server-only.js"
+    "./backend-only": {
+      "bun": "./src/backend-only.ts",
+      "types": "./dist/backend-only.d.ts",
+      "default": "./dist/backend-only.js"
     },
     "./build": {
       "bun": "./src/build.ts",
@@ -164,11 +167,6 @@
       "bun": "./src/plugins/vite-server-fn.ts",
       "types": "./dist/plugins/vite-server-fn.d.ts",
       "default": "./dist/plugins/vite-server-fn.js"
-    },
-    "./plugins/vite-server-only": {
-      "bun": "./src/plugins/vite-server-only.ts",
-      "types": "./dist/plugins/vite-server-only.d.ts",
-      "default": "./dist/plugins/vite-server-only.js"
     },
     "./fn-state": {
       "bun": "./src/fn-state.ts",

@@ -28,11 +28,12 @@ export const SHARED_SITE_FILES: readonly string[] = [
   ".dockerignore",
   "Dockerfile",
   "_worker.ts",
-  "backend.ts",
-  "counter.ts",
+  "backend/app.ts",
+  "backend/counter.ts",
   "deno.json",
   "gitignore",
   "nifra.assurance.ts",
+  "routes/index.backend.ts",
   "server-bun.ts",
   "server-deno.ts",
   "server-node.ts",
@@ -43,7 +44,7 @@ export const SHARED_SITE_FILES: readonly string[] = [
 /** Files each framework supplies itself, relative to its overlay directory. */
 export const FRAMEWORK_SITE_FILES: readonly string[] = ["README.md", "nifra.config.ts"]
 
-/** Route files, whose extension is the framework's own. */
+/** Route frontend files, whose extension is the framework's own. The backend half is shared. */
 export const ROUTE_BASENAMES: readonly string[] = ["_404", "_layout", "index"]
 
 /** Extension the framework's route files carry. */
@@ -66,7 +67,7 @@ export function overlayDir(framework: FrameworkSpec): string {
 export function generatedSiteFiles(framework: FrameworkSpec): Map<string, string> {
   const files = new Map<string, string>()
   for (const target of BUILD_TARGETS) files.set(target.file, renderBuildFile(target, framework))
-  files.set("framework.ts", renderFrameworkModule(framework))
+  files.set("backend/framework.ts", renderFrameworkModule(framework))
   files.set("package.json", renderPackageJson(framework))
   files.set("tsconfig.json", renderTsconfig(framework))
   return files
@@ -98,7 +99,7 @@ export async function materializeSite(
   const emit = (to: string, contents: string): Promise<void> =>
     writeFile(to, contents, force ? {} : { flag: "wx" })
 
-  await mkdir(join(target, "routes"), { recursive: true })
+  for (const dir of ["routes", "backend"]) await mkdir(join(target, dir), { recursive: true })
   for (const file of SHARED_SITE_FILES) await copy(join(SITE_BASE_DIR, file), join(target, file))
   for (const [file, contents] of generatedSiteFiles(framework)) {
     await emit(join(target, file), contents)

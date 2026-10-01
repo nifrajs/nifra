@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 /**
- * `nifra` - the zero-config CLI for a nifra app. Reads `framework.ts` + `backend.ts` + `routes/` from
- * the project root (see {@link loadApp}) and wires the right `@nifrajs/web` entrypoint:
+ * `nifra` - the zero-config CLI for a nifra app. Reads `backend/framework.ts` + `backend/app.ts` +
+ * `routes/` from the project root (see {@link loadApp}) and wires the right `@nifrajs/web`
+ * entrypoint:
  *
  *   nifra dev      true-HMR dev server (Bun native HMR + nifra SSR)         - @nifrajs/web/dev
  *   nifra build    emit a complete target-specific deploy directory        - @nifrajs/web/build
@@ -21,6 +22,7 @@ import {
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { formatShadowedPages, shadowedPages } from "@nifrajs/web/route-manifest"
 import type { BunPlugin } from "bun"
+import { adapterFile, BACKEND_APP_FILE } from "./app-files.ts"
 import { bindCommandArgv, findCommandSpec, renderCommandCatalogHelp } from "./command-catalog.ts"
 import { applyEnvFiles, takeEnvFileFlags } from "./env-file.ts"
 import { FRAMEWORK_WEB_OPTIONS, type LoadedApp, loadApp, type NifraFramework } from "./load.ts"
@@ -91,8 +93,8 @@ Usage:
                                          buildClient + buildServer (+ prerender for static) so an app
                                          no longer hand-writes build-<target>.ts + _worker.ts +
                                          _routes.json. The server entry is generated from your
-                                         framework.ts (adapter) + backend.ts + routes/. --report prints
-                                         a per-chunk size + gzip table (biggest first).
+                                         backend/framework.ts (adapter) + backend/app.ts + routes/.
+                                         --report prints a per-chunk size + gzip table (biggest first).
                 [--vite | --bun]         Force the bundler. Without a flag it follows your config: Bun
                                          (faster, Bun-native) unless your ONLY transforms are
                                          \`vitePlugins\`, which the Bun build cannot run - then Vite,
@@ -162,7 +164,7 @@ Usage:
                                          request enum or adding a response field doesn't) and fails
                                          closed. Exits non-zero on any breaking change - run it in CI.
   nifra sdk     --lang <python|go> [--out <file>] [--strict]
-                                         Generate a deterministic non-TypeScript SDK from backend.ts.
+                                         Generate a deterministic non-TypeScript SDK from backend/app.ts.
   nifra assure  [--config <file>] [--json]  Route-assurance report. Human table by default; --json emits
                                          the {ok, routes, findings} report for agents.
   nifra assure  --bundle [--json] [--strict] [--out <file>] [--hydration] [--interact]
@@ -209,6 +211,12 @@ Usage:
                                          this CLI prints the command for that release's CLI. Fail-closed
                                          on an unknown version or a rollback (--allow-downgrade
                                          overrides). Deterministic + idempotent.
+  nifra migrate layout [--write] [--json]
+                                         Move an app onto the frontend/backend split: split each route
+                                         into x.tsx + x.backend.ts, fold _middleware.ts into
+                                         _layout.backend.ts, move backend.ts/framework.ts under backend/,
+                                         and zone the other modules into frontend/, backend/ or shared/.
+                                         Dry-run by default; --write applies.
   nifra port    [--target <t>] [--json]  Portability linter: print a feature × deploy-target capability
                 [--ci] [--strict]        matrix (in-memory stores, in-process cron/WebSocket, Bun/Deno
                                          globals, node: builtins) with file:line evidence. --target auto-
@@ -222,8 +230,8 @@ Usage:
                                          \`locales\` + \`catalogs\` (+ optional \`ignore\`). Exits 1 on
                                          errors; --strict also on warnings.
 
-Reads nifra.config.ts (adapter + clientModule + plugins; or framework.ts), backend.ts (optional), and
-routes/ from the current directory. Run from your project root.
+Reads nifra.config.ts (adapter + clientModule + plugins; or backend/framework.ts), backend/app.ts
+(optional), and routes/ from the current directory. Run from your project root.
 
 Port: \`dev\` and \`start\` share the default ${DEFAULT_DEV_PORT}. Override with \`--port <n>\` (alias \`-p\`) or the
 \`PORT\` env var (\`--port\` wins over \`PORT\`, which wins over the default).
@@ -298,7 +306,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
   )
   if (decision.pipeline === "bun") {
     // Bun's dev-server bundler takes plugins only via bunfig `[serve.static]`, read at process
-    // start - so the boundary plugins (server-fn stubs, server-only emptying) are delivered by
+    // start - so the boundary plugins (zone guard, server-fn stubs) are delivered by
     // generating a config and re-execing this same command once with `--config=`. The child proves
     // it IS the configured child with a per-launch random token (matched against the file the
     // parent just wrote, consumed on first read). A fixed sentinel here would be a secret-leak
@@ -500,23 +508,26 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
 /**
  * `nifra build --target <t>` - package the engine (buildClient + buildServer + prerender) into one
  * command that emits a full deploy dir, so an app no longer hand-writes build-bun.ts + _worker.ts +
- * _routes.json per target. The adapter is imported from `framework.ts` (the edge-bundlable file - never
- * `nifra.config.ts`, which pulls in Vite plugins), and the backend from `backend.ts` when present;
- * `buildTarget` generates the per-target server entry from those + the app's `routes/`.
+ * _routes.json per target. The adapter is imported from `backend/framework.ts` (the edge-bundlable
+ * file - never `nifra.config.ts`, which pulls in Vite plugins), and the backend from
+ * `backend/app.ts` when present; `buildTarget` generates the per-target server entry from those +
+ * the app's `routes/`.
  */
 /**
  * Refuse a `use` the generated server entry cannot import.
  *
- * `nifra build` emits `import { use } from <frameworkFile>` (framework.ts, the edge-bundlable file),
- * but `loadApp` prefers `nifra.config.ts` - so an app with BOTH files whose `use` lives only in
- * `nifra.config.ts` makes `fw.use` defined while `framework.ts` exports nothing of that name, and the
- * build dies later with an opaque bundler error pointing at generated code. Refuse it here with the
- * exact move instead, in the spirit of `assertPipelineSeparation` (load.ts).
+ * `nifra build` emits `import { use } from <frameworkFile>` (backend/framework.ts, the
+ * edge-bundlable file), but `loadApp` prefers `nifra.config.ts` - so an app with BOTH files whose
+ * `use` lives only in `nifra.config.ts` makes `fw.use` defined while `backend/framework.ts` exports
+ * nothing of that name, and the build dies later with an opaque bundler error pointing at generated
+ * code. Refuse it here with the exact move instead, in the spirit of `assertPipelineSeparation`
+ * (load.ts).
  *
- * Detected by importing `frameworkFile` and checking the named export, not by comparing paths alone:
- * a split app legitimately DEFINES `use` in framework.ts and re-exports it from nifra.config.ts
- * (exactly how `adapter` reaches both readers), and a path compare would refuse that correct layout.
- * The import is cheap - framework.ts is already in the loaded config's module graph in that layout.
+ * Detected by importing `frameworkFile` and checking the named export, not by comparing paths
+ * alone: a split app legitimately DEFINES `use` in backend/framework.ts and re-exports it from
+ * nifra.config.ts (exactly how `adapter` reaches both readers), and a path compare would refuse
+ * that correct layout. The import is cheap - backend/framework.ts is already in the loaded config's
+ * module graph in that layout.
  */
 export async function assertUseIsEdgeExported(
   use: NifraFramework["use"],
@@ -528,10 +539,10 @@ export async function assertUseIsEdgeExported(
   if (typeof mod.use === "function") return
   throw new Error(
     `[nifra] \`use\` is exported from ${configPath} but not from ${frameworkFile}. ` +
-      "`nifra build` generates a server entry that imports `use` from framework.ts (the edge-bundled " +
-      "file), so this build would fail later with an opaque bundler error inside generated code.\n\n" +
-      "  - Define `use` in framework.ts and re-export it from nifra.config.ts " +
-      '(`export { use } from "./framework.ts"`) so `nifra dev` sees it too.',
+      "`nifra build` generates a server entry that imports `use` from backend/framework.ts (the " +
+      "edge-bundled file), so this build would fail later with an opaque bundler error inside generated code.\n\n" +
+      "  - Define `use` in backend/framework.ts and re-export it from nifra.config.ts " +
+      '(`export { use } from "./backend/framework.ts"`) so `nifra dev` sees it too.',
   )
 }
 
@@ -539,10 +550,11 @@ export async function assertUseIsEdgeExported(
  * Refuse a forwarded framework field (`apiPrefix`, `mounts`, `csp`, ...) the generated server entry
  * would not see, or would see with a different value.
  *
- * `nifra dev` reads these from the loaded config (`nifra.config.ts` when it exists) while the server
- * entry imports them from framework.ts. A field set only in nifra.config.ts would be missing from
- * production, and one defined separately in each file could differ - dev mounting the backend at one
- * path while production mounts it at another. Identity is required, which a re-export satisfies.
+ * `nifra dev` reads these from the loaded config (`nifra.config.ts` when it exists) while the
+ * server entry imports them from backend/framework.ts. A field set only in nifra.config.ts would be
+ * missing from production, and one defined separately in each file could differ - dev mounting the
+ * backend at one path while production mounts it at another. Identity is required, which a
+ * re-export satisfies.
  */
 export async function assertFrameworkOptionsEdgeExported(
   fw: NifraFramework,
@@ -558,10 +570,10 @@ export async function assertFrameworkOptionsEdgeExported(
   const names = drifted.map((name) => `\`${name}\``).join(", ")
   throw new Error(
     `[nifra] ${names} ${drifted.length === 1 ? "is" : "are"} exported from ${configPath} but not, or not as the same value, from ${frameworkFile}. ` +
-      "`nifra build` generates a server entry that imports these from framework.ts, so production would " +
-      "serve a different app than `nifra dev`.\n\n" +
-      `  - Define ${drifted.length === 1 ? "it" : "them"} in framework.ts and re-export from nifra.config.ts ` +
-      `(\`export { ${drifted.join(", ")} } from "./framework.ts"\`).`,
+      "`nifra build` generates a server entry that imports these from backend/framework.ts, so production " +
+      "would serve a different app than `nifra dev`.\n\n" +
+      `  - Define ${drifted.length === 1 ? "it" : "them"} in backend/framework.ts and re-export from nifra.config.ts ` +
+      `(\`export { ${drifted.join(", ")} } from "./backend/framework.ts"\`).`,
   )
 }
 
@@ -660,15 +672,11 @@ async function buildForTarget(app: LoadedApp, target: string, flags: Flags): Pro
     ? (await import("@nifrajs/web/build-vite")).buildTargetVite
     : (await import("@nifrajs/web/build")).buildTarget
   const { routesDir, outDir, cwd, backend } = app
-  // The server entry must import the adapter from `framework.ts` (edge-safe), not the loaded config.
-  // `loadApp` guarantees one of them exists; prefer framework.ts so a multi-target app's Vite-plugin
-  // config never reaches the edge bundle (see load.ts module header).
-  const frameworkFile = existsSync(resolve(cwd, "framework.ts"))
-    ? resolve(cwd, "framework.ts")
-    : existsSync(resolve(cwd, "nifra.config.ts"))
-      ? resolve(cwd, "nifra.config.ts")
-      : resolve(cwd, "framework.ts")
-  const backendFile = resolve(cwd, "backend.ts")
+  // The server entry must import the adapter from `backend/framework.ts` (edge-safe), not the
+  // loaded config, so a multi-target app's Vite-plugin config never reaches the edge bundle
+  // (load.ts header).
+  const frameworkFile = adapterFile(cwd)
+  const backendFile = resolve(cwd, BACKEND_APP_FILE)
   await assertUseIsEdgeExported(fw.use, app.configPath, frameworkFile)
   await assertFrameworkOptionsEdgeExported(fw, app.configPath, frameworkFile)
   assertNoShadowedPages(app)

@@ -2,8 +2,8 @@ import { readFile } from "node:fs/promises"
 import { inProcessClient } from "@nifrajs/client"
 import { serve } from "@nifrajs/node"
 import { createWebApp } from "@nifrajs/web"
-import { backend } from "./backend"
-import { adapter } from "./framework"
+import { backend } from "./backend/app"
+import { adapter } from "./backend/framework"
 import { clientEntry, manifest } from "./server-manifest"
 
 const app = createWebApp({

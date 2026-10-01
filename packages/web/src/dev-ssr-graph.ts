@@ -4,7 +4,7 @@
  * Bun's runtime caches every module it has evaluated, and nothing invalidates that cache on a file
  * change. The dev server's answer used to stop at the route module: `discoverRoutes({ importQuery })`
  * appends a changing query to each route's own dynamic import, so the route re-evaluates. Its imports
- * do not - a component, a helper, a `*.server` module all keep resolving to the same cached specifier,
+ * do not - a component, a helper, a backend module all keep resolving to the same cached specifier,
  * so SSR kept rendering the code that was on disk when the server started while the client, which Bun
  * rebuilds properly, rendered the edit. Every framework on this pipeline had it; the Vite pipeline does
  * not, because Vite owns its own SSR module graph.

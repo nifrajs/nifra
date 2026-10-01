@@ -3,21 +3,22 @@
 Dockerfile
 README.md
 _worker.ts
-backend.ts
+backend/app.ts
+backend/counter.ts
+backend/framework.ts
 build-bun.ts
 build-deno.ts
 build-node.ts
 build-vercel.ts
 build.ts
-counter.ts
 deno.json
-framework.ts
 gitignore
 nifra.assurance.ts
 nifra.config.ts
 package.json
 routes/_404.tsx
 routes/_layout.tsx
+routes/index.backend.ts
 routes/index.tsx
 server-bun.ts
 server-deno.ts
@@ -25,6 +26,14 @@ server-node.ts
 server-vercel.ts
 tsconfig.json
 wrangler.toml
+===== site-react :: backend/framework.ts
+// The frontend adapter for this app. `create-nifra --framework <react|preact|vue|solid|svelte>` swaps
+// this one line (and the routes + build config); every server entry imports the adapter from here, so
+// they stay framework-agnostic.
+import { reactAdapter } from "@nifrajs/web-react"
+
+export const adapter = reactAdapter
+
 ===== site-react :: build-bun.ts
 // Build for Bun (nifra's flagship runtime) → dist-bun/ (server-bun.js + client assets).
 // `bun run build:bun`. Run: `bun dist-bun/server-bun.js`.
@@ -187,14 +196,6 @@ writeFileSync(
 )
 console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dist)")
 
-===== site-react :: framework.ts
-// The frontend adapter for this app. `create-nifra --framework <react|preact|vue|solid|svelte>` swaps
-// this one line (and the routes + build config); every server entry imports the adapter from here, so
-// they stay framework-agnostic.
-import { reactAdapter } from "@nifrajs/web-react"
-
-export const adapter = reactAdapter
-
 ===== site-react :: package.json
 {
   "name": "nifra-site",
@@ -293,21 +294,22 @@ export const adapter = reactAdapter
 Dockerfile
 README.md
 _worker.ts
-backend.ts
+backend/app.ts
+backend/counter.ts
+backend/framework.ts
 build-bun.ts
 build-deno.ts
 build-node.ts
 build-vercel.ts
 build.ts
-counter.ts
 deno.json
-framework.ts
 gitignore
 nifra.assurance.ts
 nifra.config.ts
 package.json
 routes/_404.tsx
 routes/_layout.tsx
+routes/index.backend.ts
 routes/index.tsx
 server-bun.ts
 server-deno.ts
@@ -315,6 +317,14 @@ server-node.ts
 server-vercel.ts
 tsconfig.json
 wrangler.toml
+===== site-preact :: backend/framework.ts
+// The frontend adapter for this app. `create-nifra --framework <react|preact|vue|solid|svelte>` swaps
+// this one line (and the routes + build config); every server entry imports the adapter from here, so
+// they stay framework-agnostic.
+import { preactAdapter } from "@nifrajs/web-preact"
+
+export const adapter = preactAdapter
+
 ===== site-preact :: build-bun.ts
 // Build for Bun (nifra's flagship runtime) → dist-bun/ (server-bun.js + client assets).
 // `bun run build:bun`. Run: `bun dist-bun/server-bun.js`.
@@ -477,14 +487,6 @@ writeFileSync(
 )
 console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dist)")
 
-===== site-preact :: framework.ts
-// The frontend adapter for this app. `create-nifra --framework <react|preact|vue|solid|svelte>` swaps
-// this one line (and the routes + build config); every server entry imports the adapter from here, so
-// they stay framework-agnostic.
-import { preactAdapter } from "@nifrajs/web-preact"
-
-export const adapter = preactAdapter
-
 ===== site-preact :: package.json
 {
   "name": "nifra-site",
@@ -579,21 +581,22 @@ export const adapter = preactAdapter
 Dockerfile
 README.md
 _worker.ts
-backend.ts
+backend/app.ts
+backend/counter.ts
+backend/framework.ts
 build-bun.ts
 build-deno.ts
 build-node.ts
 build-vercel.ts
 build.ts
-counter.ts
 deno.json
-framework.ts
 gitignore
 nifra.assurance.ts
 nifra.config.ts
 package.json
 routes/_404.tsx
 routes/_layout.tsx
+routes/index.backend.ts
 routes/index.tsx
 server-bun.ts
 server-deno.ts
@@ -601,6 +604,14 @@ server-node.ts
 server-vercel.ts
 tsconfig.json
 wrangler.toml
+===== site-solid :: backend/framework.ts
+// The frontend adapter for this app. `create-nifra --framework <react|preact|vue|solid|svelte>` swaps
+// this one line (and the routes + build config); every server entry imports the adapter from here, so
+// they stay framework-agnostic.
+import { solidAdapter } from "@nifrajs/web-solid"
+
+export const adapter = solidAdapter
+
 ===== site-solid :: build-bun.ts
 // Build for Bun (nifra's flagship runtime) → dist-bun/ (server-bun.js + client assets).
 // `bun run build:bun`. Run: `bun dist-bun/server-bun.js`.
@@ -796,14 +807,6 @@ writeFileSync(
 )
 console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dist)")
 
-===== site-solid :: framework.ts
-// The frontend adapter for this app. `create-nifra --framework <react|preact|vue|solid|svelte>` swaps
-// this one line (and the routes + build config); every server entry imports the adapter from here, so
-// they stay framework-agnostic.
-import { solidAdapter } from "@nifrajs/web-solid"
-
-export const adapter = solidAdapter
-
 ===== site-solid :: package.json
 {
   "name": "nifra-site",
@@ -899,21 +902,22 @@ export const adapter = solidAdapter
 Dockerfile
 README.md
 _worker.ts
-backend.ts
+backend/app.ts
+backend/counter.ts
+backend/framework.ts
 build-bun.ts
 build-deno.ts
 build-node.ts
 build-vercel.ts
 build.ts
-counter.ts
 deno.json
-framework.ts
 gitignore
 nifra.assurance.ts
 nifra.config.ts
 package.json
 routes/_404.svelte
 routes/_layout.svelte
+routes/index.backend.ts
 routes/index.svelte
 server-bun.ts
 server-deno.ts
@@ -921,6 +925,14 @@ server-node.ts
 server-vercel.ts
 tsconfig.json
 wrangler.toml
+===== site-svelte :: backend/framework.ts
+// The frontend adapter for this app. `create-nifra --framework <react|preact|vue|solid|svelte>` swaps
+// this one line (and the routes + build config); every server entry imports the adapter from here, so
+// they stay framework-agnostic.
+import { svelteAdapter } from "@nifrajs/web-svelte"
+
+export const adapter = svelteAdapter
+
 ===== site-svelte :: build-bun.ts
 // Build for Bun (nifra's flagship runtime) → dist-bun/ (server-bun.js + client assets).
 // `bun run build:bun`. Run: `bun dist-bun/server-bun.js`.
@@ -1111,14 +1123,6 @@ writeFileSync(
 )
 console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dist)")
 
-===== site-svelte :: framework.ts
-// The frontend adapter for this app. `create-nifra --framework <react|preact|vue|solid|svelte>` swaps
-// this one line (and the routes + build config); every server entry imports the adapter from here, so
-// they stay framework-agnostic.
-import { svelteAdapter } from "@nifrajs/web-svelte"
-
-export const adapter = svelteAdapter
-
 ===== site-svelte :: package.json
 {
   "name": "nifra-site",
@@ -1212,21 +1216,22 @@ export const adapter = svelteAdapter
 Dockerfile
 README.md
 _worker.ts
-backend.ts
+backend/app.ts
+backend/counter.ts
+backend/framework.ts
 build-bun.ts
 build-deno.ts
 build-node.ts
 build-vercel.ts
 build.ts
-counter.ts
 deno.json
-framework.ts
 gitignore
 nifra.assurance.ts
 nifra.config.ts
 package.json
 routes/_404.vue
 routes/_layout.vue
+routes/index.backend.ts
 routes/index.vue
 server-bun.ts
 server-deno.ts
@@ -1234,6 +1239,14 @@ server-node.ts
 server-vercel.ts
 tsconfig.json
 wrangler.toml
+===== site-vue :: backend/framework.ts
+// The frontend adapter for this app. `create-nifra --framework <react|preact|vue|solid|svelte>` swaps
+// this one line (and the routes + build config); every server entry imports the adapter from here, so
+// they stay framework-agnostic.
+import { vueAdapter } from "@nifrajs/web-vue"
+
+export const adapter = vueAdapter
+
 ===== site-vue :: build-bun.ts
 // Build for Bun (nifra's flagship runtime) → dist-bun/ (server-bun.js + client assets).
 // `bun run build:bun`. Run: `bun dist-bun/server-bun.js`.
@@ -1452,14 +1465,6 @@ writeFileSync(
   `${JSON.stringify({ version: 1, include: ["/*"], exclude: ["/assets/*"] }, null, 2)}\n`,
 )
 console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dist)")
-
-===== site-vue :: framework.ts
-// The frontend adapter for this app. `create-nifra --framework <react|preact|vue|solid|svelte>` swaps
-// this one line (and the routes + build config); every server entry imports the adapter from here, so
-// they stay framework-agnostic.
-import { vueAdapter } from "@nifrajs/web-vue"
-
-export const adapter = vueAdapter
 
 ===== site-vue :: package.json
 {

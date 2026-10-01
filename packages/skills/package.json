@@ -17,6 +17,9 @@
     "web-framework"
   ],
   "type": "module",
+  "nifra": {
+    "environment": "library"
+  },
   "files": [
     "skills",
     ".claude-plugin"

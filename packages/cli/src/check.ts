@@ -18,6 +18,7 @@
 
 import { existsSync, readFileSync } from "node:fs"
 import { dirname, isAbsolute, join } from "node:path"
+import { BACKEND_APP_FILE } from "./app-files.ts"
 import {
   type CheckAssuranceContext,
   type CheckConfig,
@@ -236,7 +237,7 @@ interface ProjectScan {
 }
 
 async function collectContractFacts(cwd: string): Promise<ContractCheckFacts> {
-  const hasBackend = existsSync(join(cwd, "backend.ts"))
+  const hasBackend = existsSync(join(cwd, BACKEND_APP_FILE))
   const hasLock = existsSync(join(cwd, DEFAULT_CONTRACTS_LOCK))
   if (!hasBackend && !hasLock) return { present: false, vacuous: false, diagnostics: [] }
   try {

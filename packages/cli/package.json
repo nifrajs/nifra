@@ -17,6 +17,9 @@
     "dev-server"
   ],
   "type": "module",
+  "nifra": {
+    "environment": "backend"
+  },
   "bin": {
     "nifra": "./dist/cli.js"
   },

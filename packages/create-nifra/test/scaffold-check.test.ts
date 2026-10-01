@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { existsSync, readdirSync } from "node:fs"
+import { existsSync } from "node:fs"
 import { mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -39,8 +39,9 @@ const COUNTER_SCAFFOLDS = scaffolds.filter(
   (s) => s.label.startsWith("site-") || s.label === "template-isr",
 )
 
-/** The module that REGISTERS the demo routes. `backend.ts` composes; it declares nothing itself. */
-const routeModule = (label: string): string => (label === "template-isr" ? "page.ts" : "counter.ts")
+/** The module that REGISTERS the demo routes. `backend/app.ts` composes; it declares nothing itself. */
+const routeModule = (label: string): string =>
+  label === "template-isr" ? "backend/page.ts" : "backend/counter.ts"
 
 describe("templates: server globals and unused database guard rules", () => {
   for (const { label, dir } of COUNTER_SCAFFOLDS) {
@@ -112,17 +113,14 @@ describe("templates: demo contract is schema-locked and ok-narrowed (static)", (
      * a root that both composes and registers hands every route in it the reach of everything merged
      * there - which is what makes the armed `provenance.imports` unusable and a GET route undeclarable.
      */
-    test(`${label}/backend.ts composes and registers nothing`, async () => {
-      const src = await readFile(join(dir, "backend.ts"), "utf8")
+    test(`${label}/backend/app.ts composes and registers nothing`, async () => {
+      const src = await readFile(join(dir, "backend/app.ts"), "utf8")
       expect(src).toContain(".merge(")
       expect(src).not.toMatch(/\.(get|post|put|patch|delete)\s*\(/)
     })
 
-    test(`${label} index route narrows on res.ok before res.data`, async () => {
-      const routesDir = join(dir, "routes")
-      const index = readdirSync(routesDir).find((f) => f.startsWith("index."))
-      expect(index).toBeDefined()
-      const src = await readFile(join(routesDir, index as string), "utf8")
+    test(`${label} index loader narrows on res.ok before res.data`, async () => {
+      const src = await readFile(join(dir, "routes", "index.backend.ts"), "utf8")
       expect(src).not.toContain("res.data?.")
       expect(src).toMatch(/res\.ok\s*\?\s*res\.data\./)
     })
@@ -224,8 +222,8 @@ describe("templates: declared responses are enforced at runtime", () => {
   const appFiles = [
     "template/src/app.ts",
     "template-batteries/src/app.ts",
-    "template-site/backend.ts",
-    "template-isr/backend.ts",
+    "template-site/backend/app.ts",
+    "template-isr/backend/app.ts",
   ]
 
   for (const file of appFiles) {
