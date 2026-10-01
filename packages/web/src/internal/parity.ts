@@ -6,7 +6,7 @@
  * manifest normalization so those callers cannot quietly grow separate rules.
  */
 
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { lstat, realpath, stat } from "node:fs/promises"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import {
@@ -500,34 +500,26 @@ const workspaceImporters = async (
  * The symlink under `dir/node_modules` an import of `parts` crossed to reach `resolved`, when the copy
  * sits outside `boundary` - the install that owns the importer. Package-manager store links (bun's
  * `.bun/`, pnpm's `.pnpm/`, a workspace package linked to the root store) stay inside it and are not
- * reported; a link another project planted, or a `bun link` into a global directory, is. Prefers the
- * segment whose own target leaves the boundary; when the escape happens deeper in a store chain, the
- * first link crossed is the one to show. `undefined` when the copy is inside, or no segment is a link.
+ * reported; a link another project planted, or a `bun link` into a global directory, is.
  */
-const foreignLink = async (
+const foreignLink = (
   dir: string,
   parts: readonly string[],
   boundary: string,
   resolved: string,
-): Promise<string | undefined> => {
+): string | undefined => {
   if (pathInside(boundary, resolved)) return undefined
-  const realBoundary = await realpath(boundary).catch(() => boundary)
+  const realBoundary = realpathOrSelf(boundary)
   if (pathInside(realBoundary, resolved)) return undefined
-  let first: string | undefined
   let segment = join(dir, "node_modules")
   for (let index = 0; ; index++) {
-    const info = await lstat(segment).catch(() => undefined)
-    if (info === undefined) break
-    if (info.isSymbolicLink()) {
-      const target = await realpath(segment).catch(() => undefined)
-      if (target !== undefined && !pathInside(realBoundary, target)) return segment
-      first ??= segment
-    }
+    const info = lstatSync(segment, { throwIfNoEntry: false })
+    if (info === undefined) return undefined
+    if (info.isSymbolicLink() && !pathInside(realBoundary, realpathOrSelf(segment))) return segment
     const next = parts[index]
-    if (next === undefined) break
+    if (next === undefined) return undefined
     segment = join(segment, next)
   }
-  return first
 }
 
 export const resolvedInstalledCopy = async (
@@ -545,7 +537,7 @@ export const resolvedInstalledCopy = async (
       try {
         const path = await realpath(packageDir)
         // Boundary "" (doctor's stale-dist scan, workspace-link) asks only where the copy is.
-        const link = boundary === "" ? undefined : await foreignLink(dir, parts, boundary, path)
+        const link = boundary === "" ? undefined : foreignLink(dir, parts, boundary, path)
         return {
           path,
           version:
