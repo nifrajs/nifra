@@ -4646,6 +4646,8 @@ _No named exports (side-effect entrypoint)._
   One managed `<meta>` tag. Standard attributes and inert `data-*` metadata only.
 - **MetaInput** _(type)_ - `type MetaInput = Meta | ((args: MetaArgs) => Meta)`
   A route's `meta`: a static {@link Meta}, or a function of the loader data + params + the request origin ({@link MetaArgs}). Use the `origin` arg for absolute `canonical`/`og:url`/`og:image` URLs - it's resolved server-side from the request and matches the client's `location.origin`.
+- **MiddlewareOutcome** _(type)_ - `type MiddlewareOutcome = undefined | Response | ResponseResult`
+  What a {@link RouteMiddleware} answers with: nothing, to let the request through, or a response.
 - **MountRouterOptions** _(interface)_ - `interface MountRouterOptions`
   Options for a per-adapter `mountRouter` (the Router binding that hydrates + re-renders).
 - **MutationCallbacks** _(interface)_ - `interface MutationCallbacks<TData, TVariables>`
@@ -4736,6 +4738,8 @@ _No named exports (side-effect entrypoint)._
   One matched route: pattern, nested layout ids (outermost → innermost), source file, loader.
 - **RouteMatch** _(interface)_ - `interface RouteMatch`
   A URL matched against the manifest patterns: which route + its extracted params.
+- **RouteMiddleware** _(type)_ - `type RouteMiddleware<Ctx = LoaderContext> = ( ctx: Ctx, ) => MiddlewareOutcome | Promise<MiddlewareOutcome>`
+  The default export of a `_middleware.ts` file. It runs on the server before the layouts, loaders and action of every route in its directory and below - on a document request, a client navigation and a form post alike - and before a nested `_404` there. Middleware higher in the tree runs first.
 - **RouteModule** _(interface)_ - `interface RouteModule`
   A route module - the default component + optional loader / action / meta.
 - **RoutePattern** _(interface)_ - `interface RoutePattern`
@@ -4799,7 +4803,7 @@ _No named exports (side-effect entrypoint)._
 - **boundaryModeKey** _(function)_ - `boundaryModeKey: (mode: BoundaryMode) => string`
   Stable mode label for adapter registries and diagnostics.
 - **buildManifest** _(function)_ - `buildManifest: (files: readonly string[], importer: (file: string) => () => Promise<RouteModule>) => Manifest`
-  Build a manifest from route file paths (relative to the routes dir) + an `importer` that turns a path into a lazy module loader. Pure - no fs. Throws at boot (the loud-and-early RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error`/`_loading` files are special; other `_`-prefixed…
+  Build a manifest from route file paths (relative to the routes dir) + an `importer` that turns a path into a lazy module loader. Pure - no fs. Throws at boot (the loud-and-early RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error`/`_loading`/`_middleware` files are special; othe…
 - **canonical** _(function)_ - `canonical: (href: string) => LinkDescriptor`
   A `<link rel="canonical">` descriptor for a route's `meta.link`. The canonical URL tells search engines which URL is authoritative for a page (deduping query-string / tracking variants).
 - **createClientRouter** _(function)_ - `createClientRouter: (options: ClientRouterOptions) => ClientRouter`

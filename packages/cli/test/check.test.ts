@@ -1038,6 +1038,16 @@ describe("scanServerManifestDrift", () => {
     await rm(dir, { recursive: true, force: true })
   })
 
+  test("a _middleware.ts counts as a route file, other .ts files do not", async () => {
+    const dir = await manifestApp(["_middleware.ts", "index.tsx"], ["_middleware.ts", "index.tsx"])
+    await writeFile(join(dir, "routes", "helper.ts"), "export const x = 1\n")
+    expect(await scanServerManifestDrift(dir)).toEqual([])
+    const stale = await manifestApp(["index.tsx"], ["index.tsx", "_middleware.ts"])
+    expect((await scanServerManifestDrift(stale))[0]?.missing).toEqual(["_middleware.ts"])
+    await rm(dir, { recursive: true, force: true })
+    await rm(stale, { recursive: true, force: true })
+  })
+
   test("a non-generated server-manifest.ts (no marker) is ignored", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-manifest-"))
     await mkdir(join(dir, "routes"), { recursive: true })

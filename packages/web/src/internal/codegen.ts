@@ -410,7 +410,7 @@ export interface GenerateServerManifestOptions {
  * Codegen: emit a **server manifest** module (as source) for disk-less edge runtimes (Cloudflare
  * Workers, …) - and, with a `target`, any portable server bundle. `discoverRoutes` scans `node:fs`
  * and dynamic-imports each route by a *runtime* path - neither exists on workerd. This instead emits
- * **statically-analyzable** imports of every route/layout/`_error`/terminal status page (so the bundler includes them) and
+ * **statically-analyzable** imports of every route/layout/`_error`/terminal status page/`_middleware` (so the bundler includes them) and
  * rebuilds the manifest with `buildManifest` - the SAME pure logic `discoverRoutes` feeds, so patterns
  * + layout chains are identical. Eager (`import * as`) by default; `lazy` emits `() => import(...)` so
  * a code-splitting bundler chunks per route. The emitted module exports `manifest` (consumed by
@@ -451,6 +451,7 @@ export function generateServerManifest(
       ...(manifest.notFound ? [manifest.notFound.file] : []),
       ...Object.values(manifest.notFounds ?? {}).map((page) => page.file),
       ...Object.values(manifest.statusPages ?? {}).map((page) => page.file),
+      ...Object.values(manifest.middlewares ?? {}).map((middleware) => middleware.file),
     ]),
   ].sort()
   const header = [

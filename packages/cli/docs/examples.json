@@ -426,6 +426,12 @@
     "code": "import { reportWebVitals, type WebVitalsMetric } from \"@nifrajs/web/vitals\"\n\nfunction send(metric: WebVitalsMetric): void {\n  // name: \"LCP\" | \"INP\" | \"CLS\" | \"FCP\" | \"TTFB\"; route: the matched route's id, e.g. \"users/[id]\"\n  const { name, value, rating, id, route } = metric\n  const body = JSON.stringify({ name, value, rating, id, route })\n  void fetch(\"/api/vitals\", { method: \"POST\", body, keepalive: true }) // survives the page closing\n}\n\n// Call it from the root layout's mount effect; the stop function it returns is the cleanup.\n//   React, Preact: useEffect(() => reportVitals(), [])\n//   Svelte: onMount(reportVitals)    Solid: onMount(() => onCleanup(reportVitals()))\n//   Vue: onMounted(() => (stop = reportVitals())), onUnmounted(() => stop())\nexport const reportVitals = () => reportWebVitals(send, { softNavigations: true })"
   },
   {
+    "name": "MIDDLEWARE",
+    "topic": "Nifra - Routing",
+    "slug": "routing",
+    "code": "// routes/account/_middleware.ts - runs before every page under /account\nimport { type RouteMiddleware, redirect } from \"@nifrajs/web\"\n\nconst middleware: RouteMiddleware = ({ request, set }) => {\n  set.headers[\"cache-control\"] = \"private, no-store\"\n  const signedIn = request.headers.get(\"cookie\")?.includes(\"session=\") ?? false\n  return signedIn ? undefined : redirect(\"/login\")\n}\n\nexport default middleware"
+  },
+  {
     "name": "BOUNDED",
     "topic": "Nifra - security & hardening",
     "slug": "security",

@@ -174,7 +174,9 @@ export default function Auth() {
         <code>requireSession</code> / <code>requireUser</code> throw a <code>status(...)</code> render
         (a 302 to <code>redirectTo</code>, or a 401) when the session is missing - Nifra renders a
         thrown control-flow value as-is, so the guard short-circuits the loader. It is plain data, not
-        a <code>Response</code>: same bytes on the wire, on the lane an ordinary return takes.
+        a <code>Response</code>: same bytes on the wire, on the lane an ordinary return takes. To guard
+        every page under a directory, run the same check in that directory's{" "}
+        <code>_middleware.ts</code> - see <a href="/docs/routing#middleware">Route middleware</a>.
       </p>
       <CodeBlock code={GUARD} />
 

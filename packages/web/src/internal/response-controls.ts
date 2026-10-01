@@ -26,9 +26,13 @@ export const DATA_RESPONSE_HEADERS: Readonly<Record<string, string>> = Object.fr
   vary: DATA_HEADER,
 })
 
-/** Merge order of the header writers: layouts root to leaf, then the page loader, then the action. */
+/**
+ * Merge order of the header writers: middleware root to leaf (`MIDDLEWARE_SCOPE + i`), layouts root
+ * to leaf (`i`), then the page loader, then the action.
+ */
 export const PAGE_SCOPE = 1e9
 export const ACTION_SCOPE = PAGE_SCOPE + 1
+export const MIDDLEWARE_SCOPE = -PAGE_SCOPE
 
 // RFC 9110 `token` and `field-value` (visible ASCII, space, tab, obs-text). A value outside this set
 // could split the header block or be rejected by the transport after the loader already ran.

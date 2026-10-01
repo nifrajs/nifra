@@ -6,7 +6,7 @@
  */
 import { routePatternOverlap } from "@nifrajs/core"
 import { paramConstraint } from "@nifrajs/core/pattern"
-import type { CookieOptions, StandardSchemaV1 } from "@nifrajs/core/server"
+import type { CookieOptions, ResponseResult, StandardSchemaV1 } from "@nifrajs/core/server"
 import type { BoundaryDescriptor, BoundaryRegistration } from "./boundary.ts"
 
 /**
@@ -57,6 +57,29 @@ export interface LoaderContext {
 
 /** A route's optional data loader: params/request in, data out. */
 export type Loader = (ctx: LoaderContext) => unknown | Promise<unknown>
+
+/**
+ * The default export of a `_middleware.ts` file. It runs on the server before the layouts, loaders and
+ * action of every route in its directory and below - on a document request, a client navigation and a
+ * form post alike - and before a nested `_404` there. Middleware higher in the tree runs first.
+ *
+ * - Return nothing to let the request through.
+ * - Return or throw a `redirect()`, a status such as `notFound()`, or a `Response` to answer with it:
+ *   nothing below the middleware runs.
+ * - `ctx.set` adds headers and cookies as a loader's does. A layout's or the page's header of the same
+ *   name wins.
+ * - `ctx.params` holds the params of the directory's own URL prefix, as a layout's loader sees them.
+ *
+ * It does not run for a prerendered page, an ISR cache hit, a mounted API or a static file. For
+ * middleware on every request, export `use` from `framework.ts`. Pass a typed context to type
+ * `ctx.api` and `ctx.env`: `RouteMiddleware<LoaderArgs<typeof app, Env>>`.
+ */
+export type RouteMiddleware<Ctx = LoaderContext> = (
+  ctx: Ctx,
+) => MiddlewareOutcome | Promise<MiddlewareOutcome>
+
+/** What a {@link RouteMiddleware} answers with: nothing, to let the request through, or a response. */
+export type MiddlewareOutcome = undefined | Response | ResponseResult
 
 /** One client navigation, as a layout's {@link ShouldRevalidate} sees it. */
 export interface ShouldRevalidateArgs {
@@ -399,6 +422,12 @@ export interface RouteEntry {
    * Optional only so hand-built test manifests may omit it.
    */
   readonly layoutParams?: ReadonlyArray<readonly string[]>
+  /** `_middleware` ids in this route's ancestor chain (outermost → innermost), run before its
+   * layouts. Absent ⇒ none. */
+  readonly middlewareIds?: readonly string[]
+  /** Param names each middleware in {@link middlewareIds} sees, aligned by index: the params of its
+   * directory's URL prefix, as {@link layoutParams} holds them for a layout. */
+  readonly middlewareParams?: ReadonlyArray<readonly string[]>
   /** `_error` boundary ids in this route's ancestor chain (outermost → innermost). The last is the
    * **nearest** boundary, rendered when the route's loader throws. Always set by `buildManifest`
    * (optional only so hand-built test manifests may omit it); absent/empty ⇒ no boundary (error 500s). */
@@ -420,6 +449,9 @@ export interface NotFoundScope {
   readonly pattern: string
   /** Param names each layout in {@link NotFoundEntry.layoutIds} owns on this pattern, by index. */
   readonly layoutParams: ReadonlyArray<readonly string[]>
+  /** Param names each middleware in {@link NotFoundEntry.middlewareIds} sees on this pattern, by
+   * index. Absent when the page has no middleware. */
+  readonly middlewareParams?: ReadonlyArray<readonly string[]>
 }
 
 /** A `_404` page below the routes root. */
@@ -428,6 +460,8 @@ export interface NotFoundEntry extends LayoutEntry {
   readonly layoutIds: readonly string[]
   /** `_error` boundaries at or above the page's directory (outermost → innermost). */
   readonly errorIds: readonly string[]
+  /** `_middleware` ids at or above the page's directory (outermost → innermost). Absent ⇒ none. */
+  readonly middlewareIds?: readonly string[]
   /**
    * The URL patterns this page answers when no route matches. Empty when the directory is a
    * catch-all, or when a `_404` in a directory above it answers the same URLs - the page is then
@@ -470,6 +504,12 @@ export interface Manifest {
    * has none.
    */
   readonly loadings?: Readonly<Record<string, LoadingEntry>>
+  /**
+   * `_middleware` modules, keyed by id (`_middleware`, `admin/_middleware`, …); each default-exports
+   * a {@link RouteMiddleware}. Server-only: the client build never imports one. Absent when the app
+   * has none.
+   */
+  readonly middlewares?: Readonly<Record<string, LayoutEntry>>
 }
 
 // `.svelte` and `.vue` routes are supported too: their `default` export is the component and
@@ -489,15 +529,22 @@ const GROUP = /^\(.+\)$/
 // thing. Restricted to 3 digits so `_401k` or `_4` is treated as an ordinary underscore-prefixed
 // file (ignored) rather than silently becoming a status page.
 const STATUS_PAGE = /^_[1-5][0-9][0-9]$/
+// Route middleware is a plain module, never a component, so it takes a script extension.
+const MIDDLEWARE_FILE = /^_middleware\.(?:ts|js)$/
 
 const stripExt = (file: string): string => file.replace(ROUTE_EXT, "")
 const baseName = (file: string): string => file.slice(file.lastIndexOf("/") + 1)
+
+/** Whether a routes-relative path is a `_middleware` module, which route discovery collects along
+ * with the route files. */
+export const isMiddlewareFile = (file: string): boolean => MIDDLEWARE_FILE.test(baseName(file))
 const dirOf = (file: string): string =>
   file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : ""
 const layoutIdFor = (dir: string): string => (dir === "" ? "_layout" : `${dir}/_layout`)
 const errorIdFor = (dir: string): string => (dir === "" ? "_error" : `${dir}/_error`)
 const notFoundIdFor = (dir: string): string => `${dir}/_404`
 const loadingIdFor = (dir: string): string => (dir === "" ? "_loading" : `${dir}/_loading`)
+const middlewareIdFor = (dir: string): string => (dir === "" ? "_middleware" : `${dir}/_middleware`)
 const isDirAtOrAbove = (dir: string, other: string): boolean =>
   dir === "" || dir === other || other.startsWith(`${dir}/`)
 
@@ -699,6 +746,14 @@ function paramsInPrefix(pattern: string, count: number): string[] {
   return names
 }
 
+/** The params each directory in `dirs` owns on one expanded pattern - see {@link paramsInPrefix}. */
+const paramsOwnedBy = (
+  dirs: readonly string[],
+  pattern: string,
+  depths: readonly number[],
+): string[][] =>
+  dirs.map((dir) => paramsInPrefix(pattern, depths[dir === "" ? 0 : dir.split("/").length] ?? 0))
+
 const ancestorDirs = (file: string): string[] => {
   const dirs = [""]
   const dir = dirOf(file)
@@ -714,8 +769,8 @@ const ancestorDirs = (file: string): string[] => {
 /**
  * Build a manifest from route file paths (relative to the routes dir) + an `importer` that
  * turns a path into a lazy module loader. Pure - no fs. Throws at boot (the loud-and-early
- * RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error`/`_loading` files are special;
- * other `_`-prefixed files are ignored (private/colocated, never routed).
+ * RouteConfigError ethos) on duplicate patterns. `_layout`/`_404`/`_error`/`_loading`/`_middleware`
+ * files are special; other `_`-prefixed files are ignored (private/colocated, never routed).
  */
 export function buildManifest(
   files: readonly string[],
@@ -729,10 +784,28 @@ export function buildManifest(
   const notFoundFiles = new Map<string, string>()
   const statusPages: Record<string, LayoutEntry> = {}
   const loadingFiles = new Map<string, string>()
+  const middlewareFiles = new Map<string, string>()
   const routeFiles: string[] = []
 
   for (const file of files) {
+    if (isMiddlewareFile(file)) {
+      const dir = dirOf(file)
+      const other = middlewareFiles.get(dir)
+      if (other !== undefined) {
+        throw new Error(
+          `[nifra/web] two middleware files in one directory: "${other}" and "${file}"; keep one`,
+        )
+      }
+      middlewareFiles.set(dir, file)
+      continue
+    }
     const stem = stripExt(baseName(file))
+    if (stem === "_middleware") {
+      // Ignored like any other `_` file, a guard would silently stop guarding anything.
+      throw new Error(
+        `[nifra/web] "${file}" is not route middleware: name it "_middleware.ts" (a plain module, no component)`,
+      )
+    }
     if (stem === "_layout") {
       const dir = dirOf(file)
       layoutDirs.add(dir)
@@ -768,6 +841,8 @@ export function buildManifest(
       .filter((dir) => dir !== "" && notFoundFiles.has(dir))
       .map(notFoundIdFor)
     const loadingIds = dirs.filter((dir) => loadingFiles.has(dir)).map(loadingIdFor)
+    const middlewareDirsForFile = dirs.filter((dir) => middlewareFiles.has(dir))
+    const middlewareIds = middlewareDirsForFile.map(middlewareIdFor)
     const id = stripExt(file)
     const load = importer(file) // one lazy loader per file, shared by its (possibly expanded) patterns
     // An optional `[[x]]` segment expands a file into multiple patterns, all pointing at the same
@@ -788,14 +863,17 @@ export function buildManifest(
         }
       }
       byPattern.set(pattern, file)
-      const layoutParams = layoutDirsForFile.map((dir) =>
-        paramsInPrefix(pattern, depths[dir === "" ? 0 : dir.split("/").length] ?? 0),
-      )
       routes.push({
         id,
         pattern,
         layoutIds,
-        layoutParams,
+        layoutParams: paramsOwnedBy(layoutDirsForFile, pattern, depths),
+        ...(middlewareIds.length > 0
+          ? {
+              middlewareIds,
+              middlewareParams: paramsOwnedBy(middlewareDirsForFile, pattern, depths),
+            }
+          : {}),
         errorIds,
         ...(notFoundIds.length > 0 ? { notFoundIds } : {}),
         ...(loadingIds.length > 0 ? { loadingIds } : {}),
@@ -812,20 +890,28 @@ export function buildManifest(
   const scopesByDir = new Map<string, Array<NotFoundScope & { readonly shape: string }>>()
   for (const dir of notFoundFiles.keys()) {
     const layoutDirsForDir = ancestorDirs(`${dir}/_404`).filter((d) => layoutDirs.has(d))
+    const middlewareDirsForDir = ancestorDirs(`${dir}/_404`).filter((d) => middlewareFiles.has(d))
     const scopes: Array<NotFoundScope & { readonly shape: string }> = []
     const forms =
       dir === "" ? [{ pattern: "/", depths: [0] }] : filePathToRoutes(`${dir}/index.tsx`)
     for (const { pattern: prefix, depths } of forms) {
       // A catch-all directory already matches everything beneath it: nothing there is unmatched.
       if (/(?:^|\/)\*[^/]*$/.test(prefix)) continue
-      const layoutParams = layoutDirsForDir.map((d) =>
-        paramsInPrefix(prefix, depths[d === "" ? 0 : d.split("/").length] ?? 0),
-      )
+      const layoutParams = paramsOwnedBy(layoutDirsForDir, prefix, depths)
+      const middlewareParams =
+        middlewareDirsForDir.length === 0
+          ? undefined
+          : paramsOwnedBy(middlewareDirsForDir, prefix, depths)
       for (const pattern of prefix === "/" ? ["/*"] : [prefix, `${prefix}/*`]) {
         // Two directories answer the same URLs when their patterns differ only in param names.
         const shape = pattern.replace(/([:*])[A-Za-z_][A-Za-z0-9_]*/g, "$1")
         if (scopes.some((scope) => scope.shape === shape)) continue
-        scopes.push({ pattern, layoutParams, shape })
+        scopes.push({
+          pattern,
+          layoutParams,
+          ...(middlewareParams === undefined ? {} : { middlewareParams }),
+          shape,
+        })
         const owners = scopeOwners.get(shape)
         if (owners === undefined) scopeOwners.set(shape, [dir])
         else owners.push(dir)
@@ -848,14 +934,20 @@ export function buildManifest(
   for (const [dir, file] of notFoundFiles) {
     if (dir === "") continue
     const dirs = ancestorDirs(file)
+    const middlewareIds = dirs.filter((d) => middlewareFiles.has(d)).map(middlewareIdFor)
     notFounds[notFoundIdFor(dir)] = {
       file,
       load: importer(file),
       layoutIds: dirs.filter((d) => layoutDirs.has(d)).map(layoutIdFor),
       errorIds: dirs.filter((d) => errorDirs.has(d)).map(errorIdFor),
+      ...(middlewareIds.length > 0 ? { middlewareIds } : {}),
       scopes: (scopesByDir.get(dir) ?? [])
         .filter((scope) => ownerOf.get(scope.shape) === dir)
-        .map(({ pattern, layoutParams }) => ({ pattern, layoutParams })),
+        .map(({ pattern, layoutParams, middlewareParams }) => ({
+          pattern,
+          layoutParams,
+          ...(middlewareParams === undefined ? {} : { middlewareParams }),
+        })),
     }
   }
 
@@ -870,6 +962,11 @@ export function buildManifest(
     }
   }
 
+  const middlewares: Record<string, LayoutEntry> = {}
+  for (const [dir, file] of middlewareFiles) {
+    middlewares[middlewareIdFor(dir)] = { file, load: importer(file) }
+  }
+
   const base: Manifest = {
     routes,
     layouts,
@@ -877,6 +974,7 @@ export function buildManifest(
     ...(Object.keys(notFounds).length > 0 ? { notFounds } : {}),
     ...(Object.keys(statusPages).length > 0 ? { statusPages } : {}),
     ...(Object.keys(loadings).length > 0 ? { loadings } : {}),
+    ...(Object.keys(middlewares).length > 0 ? { middlewares } : {}),
   }
   return notFound === undefined ? base : { ...base, notFound }
 }

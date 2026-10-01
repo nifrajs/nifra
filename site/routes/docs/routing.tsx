@@ -15,6 +15,7 @@ const TREE = `routes/
   _layout.tsx        wraps every page (chain: outer → inner)
   _error.tsx         error boundary (a loader throws → renders here, 500)
   _loading.tsx       the page slot while a client navigation loads
+  _middleware.ts     runs on the server before every page below it
   index.tsx          →  /
   about.tsx          →  /about
   users/
@@ -33,6 +34,17 @@ export const meta = { title: "User" }   // injected into <head> (SSR + client na
 export default function User(props: { data: LoaderData<typeof loader> }) {
   return <h1>User {props.data.id}</h1>
 }`
+
+const MIDDLEWARE = `// routes/account/_middleware.ts - runs before every page under /account
+import { type RouteMiddleware, redirect } from "@nifrajs/web"
+
+const middleware: RouteMiddleware = ({ request, set }) => {
+  set.headers["cache-control"] = "private, no-store"
+  const signedIn = request.headers.get("cookie")?.includes("session=") ?? false
+  return signedIn ? undefined : redirect("/login")
+}
+
+export default middleware`
 
 const CATCHALL = `// routes/files/[...path].tsx  →  matches /files/a, /files/a/b/c.txt, …
 export async function loader({ params }) {
@@ -214,6 +226,10 @@ export default function Routing() {
           receives the serialized error as <code>{`{ data: { name, message } }`}</code> (never the
           stack); a thrown control-flow value (e.g. a guard <code>redirect</code>) passes through.
         </li>
+        <li>
+          <code>_middleware.ts</code> runs on the server before the layouts, loaders and actions of
+          every route in its directory and below - see <a href="#middleware">Route middleware</a>.
+        </li>
       </ul>
 
       <CodeBlock code={TREE} />
@@ -225,6 +241,31 @@ export default function Routing() {
         <code>loader</code> for data - see <a href="/docs/data">Loaders &amp; actions</a>.
       </p>
       <CodeBlock code={ROUTE} />
+
+      <h2 id="middleware">Route middleware</h2>
+      <p>
+        A <code>_middleware.ts</code> default-exports a function that runs on the server before
+        everything under its directory: the layouts' loaders, gates included, then the page's loader
+        or action. It runs for a document request, a client navigation and a form post alike, and
+        before a nested <code>_404</code> there. Middleware higher in the tree runs first.
+      </p>
+      <CodeBlock code={MIDDLEWARE} />
+      <ul>
+        <li>
+          Return nothing to let the request through. Return or throw a <code>redirect()</code>, a
+          status such as <code>notFound()</code>, or a <code>Response</code> to answer with it, and
+          nothing below it runs. During a client navigation, a redirect loads its target as a page.
+        </li>
+        <li>
+          <code>set</code> adds headers and cookies like a loader's; a layout's or the page's header of
+          the same name wins. <code>params</code> holds the params of the directory's URL prefix.
+        </li>
+        <li>
+          It covers pages only: a prerendered page, an ISR cache hit, a mounted API and a static file
+          are served without it. For middleware on every request, export <code>use</code> from{" "}
+          <code>framework.ts</code>: <code>{"export const use = (app) => app.use(securityHeaders())"}</code>.
+        </li>
+      </ul>
 
       <h2>Catch-all routes</h2>
       <p>

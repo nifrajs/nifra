@@ -95,7 +95,9 @@ export default function Data() {
         browser already holds that data, so the loader runs again only when a param the layout owns
         changes (<code>org</code> for <code>orgs/[org]/_layout.tsx</code>) or the query changes. After
         an action, every loader runs. A layout that exports <code>gate = true</code> runs on every
-        request; a layout loader without it is not an authorization boundary.
+        request; a layout loader without it is not an authorization boundary. A{" "}
+        <code>_middleware.ts</code> guards a directory the same way without a layout - see{" "}
+        <a href="/docs/routing#middleware">Route middleware</a>.
       </p>
       <p>
         A layout's <code>shouldRevalidate</code> overrides that default. It runs on the server and

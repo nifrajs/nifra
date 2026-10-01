@@ -64,6 +64,7 @@ import {
   ACTION_SCOPE,
   type CoreResponseControls,
   DATA_RESPONSE_HEADERS,
+  MIDDLEWARE_SCOPE,
   PAGE_SCOPE,
   PageResponseControls,
   PRIVATE_NO_STORE,
@@ -256,6 +257,14 @@ export function createPageRequestExecutor<Env = unknown>(
           pattern: scope.pattern,
           layoutIds: page.layoutIds,
           layoutParams: scope.layoutParams,
+          ...(page.middlewareIds === undefined
+            ? {}
+            : {
+                middlewareIds: page.middlewareIds,
+                ...(scope.middlewareParams === undefined
+                  ? {}
+                  : { middlewareParams: scope.middlewareParams }),
+              }),
           errorIds: page.errorIds,
           file: page.file,
           load: page.load,
@@ -387,6 +396,50 @@ export function createPageRequestExecutor<Env = unknown>(
       }
     }
     return modules
+  }
+
+  /**
+   * Run the route's `_middleware` chain, outermost first, before any of its layouts. A middleware
+   * returns nothing to let the request through; what it returns or throws otherwise is raised the way
+   * a gate's is, tagged with its directory so a failure renders the nearest `_error` at or above it.
+   * Callers skip the call for a route with none, so such a request pays no await for it.
+   */
+  const runMiddleware = async (
+    route: RouteEntry,
+    ctx: LoaderContext,
+    controls: PageResponseControls,
+  ): Promise<void> => {
+    const ids = route.middlewareIds ?? []
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i] as string
+      const entry = manifest.middlewares?.[id] as LayoutEntry
+      const dirTag = `${id.slice(0, id.length - "_middleware".length)}_layout`
+      let outcome: unknown
+      try {
+        const middleware = (await entry.load()).default
+        if (typeof middleware !== "function") {
+          throw new Error(
+            `[nifra/web] "${entry.file}" must default-export its middleware function.`,
+          )
+        }
+        outcome = await middleware({
+          ...ctx,
+          params: scopeParams(ctx.params, route.middlewareParams?.[i]),
+          set: controls.scope(MIDDLEWARE_SCOPE + i),
+        })
+      } catch (err) {
+        throw tagLayoutError(err, dirTag)
+      }
+      if (outcome === undefined) continue
+      throw tagLayoutError(
+        isControlFlow(outcome)
+          ? outcome
+          : new Error(
+              `[nifra/web] "${entry.file}" returned a value. Middleware returns nothing to let the request through, or a redirect(), a status such as notFound(), or a Response to answer it.`,
+            ),
+        dirTag,
+      )
+    }
   }
 
   const retainedIndices = (header: string | null): ReadonlySet<number> => {
@@ -994,6 +1047,7 @@ export function createPageRequestExecutor<Env = unknown>(
             search: loaderSearch(mod.searchSchema, c.req),
             set: controls.scope(PAGE_SCOPE),
           }
+          if (route.middlewareIds !== undefined) await runMiddleware(route, ctx, controls)
           run = await runLayoutChain(route, ctx, controls, retainContextOf(c.req))
           layoutModules = run.modules
           layoutRetained = run.retained
@@ -1115,6 +1169,7 @@ export function createPageRequestExecutor<Env = unknown>(
         let layoutModules: LoadedLayoutModules
         let result: unknown
         try {
+          if (route.middlewareIds !== undefined) await runMiddleware(route, actionContext, controls)
           layoutModules = await runLayoutGates(route, actionContext, controls)
           result = await mod.action(actionContext)
         } catch (err) {
@@ -1211,20 +1266,20 @@ export function createPageRequestExecutor<Env = unknown>(
       const mod = await target.page.load()
       let run: LayoutRun
       try {
-        run = await runLayoutChain(
-          target.route,
-          {
-            params,
-            request: c.req,
-            req: c.req,
-            api: apiFor(c),
-            env: c.env,
-            draft: await draftFlag(c.req),
-            search: loaderSearch(mod.searchSchema, c.req),
-            set: controls.scope(PAGE_SCOPE),
-          },
-          controls,
-        )
+        const ctx: LoaderContext = {
+          params,
+          request: c.req,
+          req: c.req,
+          api: apiFor(c),
+          env: c.env,
+          draft: await draftFlag(c.req),
+          search: loaderSearch(mod.searchSchema, c.req),
+          set: controls.scope(PAGE_SCOPE),
+        }
+        if (target.route.middlewareIds !== undefined) {
+          await runMiddleware(target.route, ctx, controls)
+        }
+        run = await runLayoutChain(target.route, ctx, controls)
         await run.pending
       } catch (err) {
         if (isStatusSignal(err)) {

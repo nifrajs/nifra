@@ -413,11 +413,16 @@ the nearest boundary, which renders `_error` in place (all five adapters). It
 receives the serialized error as `{ data: { name, message } }` (never the
 stack); a thrown control-flow value (e.g. a guard `redirect`) passes through.
 
+-
+`_middleware.ts` runs on the server before the layouts, loaders and actions of
+every route in its directory and below - see [Route middleware](#middleware).
+
 ```ts
 routes/
   _layout.tsx        wraps every page (chain: outer → inner)
   _error.tsx         error boundary (a loader throws → renders here, 500)
   _loading.tsx       the page slot while a client navigation loads
+  _middleware.ts     runs on the server before every page below it
   index.tsx          →  /
   about.tsx          →  /about
   users/
@@ -445,6 +450,40 @@ export default function User(props: { data: LoaderData<typeof loader> }) {
   return <h1>User {props.data.id}</h1>
 }
 ```
+
+### Route middleware
+
+A `_middleware.ts` default-exports a function that runs on the server before
+everything under its directory: the layouts' loaders, gates included, then the page's loader
+or action. It runs for a document request, a client navigation and a form post alike, and
+before a nested `_404` there. Middleware higher in the tree runs first.
+
+```ts
+// routes/account/_middleware.ts - runs before every page under /account
+import { type RouteMiddleware, redirect } from "@nifrajs/web"
+
+const middleware: RouteMiddleware = ({ request, set }) => {
+  set.headers["cache-control"] = "private, no-store"
+  const signedIn = request.headers.get("cookie")?.includes("session=") ?? false
+  return signedIn ? undefined : redirect("/login")
+}
+
+export default middleware
+```
+
+-
+Return nothing to let the request through. Return or throw a `redirect()`, a
+status such as `notFound()`, or a `Response` to answer with it, and
+nothing below it runs. During a client navigation, a redirect loads its target as a page.
+
+-
+`set` adds headers and cookies like a loader's; a layout's or the page's header of
+the same name wins. `params` holds the params of the directory's URL prefix.
+
+-
+It covers pages only: a prerendered page, an ISR cache hit, a mounted API and a static file
+are served without it. For middleware on every request, export `use` from
+`framework.ts`: `export const use = (app) => app.use(securityHeaders())`.
 
 ### Catch-all routes
 
@@ -1225,7 +1264,9 @@ component as `data`. On a client navigation that keeps the layout on screen, the
 browser already holds that data, so the loader runs again only when a param the layout owns
 changes (`org` for `orgs/[org]/_layout.tsx`) or the query changes. After
 an action, every loader runs. A layout that exports `gate = true` runs on every
-request; a layout loader without it is not an authorization boundary.
+request; a layout loader without it is not an authorization boundary. A
+`_middleware.ts` guards a directory the same way without a layout - see
+[Route middleware](/docs/routing#middleware).
 
 A layout's `shouldRevalidate` overrides that default. It runs on the server and
 receives `defaultShouldRevalidate` with the URL and params being left and the ones
@@ -4052,7 +4093,9 @@ createWebApp({ /* … */ api: sessions })                  // inject the manager
 `requireSession` / `requireUser` throw a `status(...)` render
 (a 302 to `redirectTo`, or a 401) when the session is missing - Nifra renders a
 thrown control-flow value as-is, so the guard short-circuits the loader. It is plain data, not
-a `Response`: same bytes on the wire, on the lane an ordinary return takes.
+a `Response`: same bytes on the wire, on the lane an ordinary return takes. To guard
+every page under a directory, run the same check in that directory's
+`_middleware.ts` - see [Route middleware](/docs/routing#middleware).
 
 ```ts
 // doc-check: skip - fragment: `api` is the session manager createWebApp injected (see setup above).
@@ -13254,7 +13297,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`Action`, `ACTION_GLOBAL`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BOUNDARY_GLOBAL`, `BoundaryDescriptor`, `boundaryDescriptors`, `BoundaryError`, `BoundaryMode`, `boundaryModeKey`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createMutation`, `createNonceResolver`, `CreateNonceResolverOptions`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateRouteSearchTypes`, `GenerateRouteSearchTypesOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `gone`, `hashQueryKey`, `HtmlSanitizer`, `IDLE_BLOCKER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `mergeHeads`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `normalizeCssLoading`, `notFound`, `NotFoundEntry`, `NotFoundScope`, `openGraph`, `OpenGraphInput`, `PendingBoundary`, `PRE_HYDRATION_GUARD`, `PrefetchMode`, `previewEndpoint`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `registerBlocker`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderedPage`, `renderPage`, `RenderPageInput`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `RETAIN_HEADER`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteModule`, `RoutePattern`, `RouterState`, `RouteSearch`, `sanitizedHtml`, `SanitizedHtml`, `sanitizeHtml`, `ScriptDescriptor`, `searchOf`, `SearchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `ServePublicDirOptions`, `SERVER_FN_MODULE`, `SERVER_ONLY_MODULE`, `ServerOnly`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `ssrModuleLoader`, `SsrModuleLoader`, `startDynamicBoundaries`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `STATUS_HEADER`, `statusPage`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `trustHtml`, `UIMatch`, `unsafeInlineScript`, `UnsafeScriptDescriptor`, `webProjectEvidence`, `withISR`
+`Action`, `ACTION_GLOBAL`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BOUNDARY_GLOBAL`, `BoundaryDescriptor`, `boundaryDescriptors`, `BoundaryError`, `BoundaryMode`, `boundaryModeKey`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createMatcher`, `createMutation`, `createNonceResolver`, `CreateNonceResolverOptions`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateRouteSearchTypes`, `GenerateRouteSearchTypesOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `gone`, `hashQueryKey`, `HtmlSanitizer`, `IDLE_BLOCKER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `mergeHeads`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `normalizeCssLoading`, `notFound`, `NotFoundEntry`, `NotFoundScope`, `openGraph`, `OpenGraphInput`, `PendingBoundary`, `PRE_HYDRATION_GUARD`, `PrefetchMode`, `previewEndpoint`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `registerBlocker`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderedPage`, `renderPage`, `RenderPageInput`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `RETAIN_HEADER`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouterState`, `RouteSearch`, `sanitizedHtml`, `SanitizedHtml`, `sanitizeHtml`, `ScriptDescriptor`, `searchOf`, `SearchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `ServePublicDirOptions`, `SERVER_FN_MODULE`, `SERVER_ONLY_MODULE`, `ServerOnly`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `ssrModuleLoader`, `SsrModuleLoader`, `startDynamicBoundaries`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `STATUS_HEADER`, `statusPage`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `trustHtml`, `UIMatch`, `unsafeInlineScript`, `UnsafeScriptDescriptor`, `webProjectEvidence`, `withISR`
 
 ## @nifrajs/web-preact
 
