@@ -119,6 +119,22 @@ describe("rateLimit", () => {
     expect(await unkeyed.json()).toEqual({ ok: false, error: "rate_limit_key_unavailable" })
   })
 
+  test("an IPv6 caller is one bucket per /64, an IPv4-mapped peer its IPv4 bucket", async () => {
+    const app = appWith({ store: new MemoryStore(), max: 1, windowMs: 60_000 })
+    const from = (clientIp: string) => app.fetch(new Request("http://x/"), { clientIp })
+    expect((await from("2001:db8:1:2::1")).status).toBe(200)
+    // A fresh address inside the same /64 is the same subscriber.
+    expect((await from("2001:db8:1:2:ffff:ffff:ffff:fffe")).status).toBe(429)
+    expect((await from("2001:db8:1:3::1")).status).toBe(200)
+    expect((await from("9.9.9.9")).status).toBe(200)
+    expect((await from("::ffff:9.9.9.9")).status).toBe(429)
+
+    const proxied = appWith({ store: new MemoryStore(), max: 1, windowMs: 60_000, header: "x-ip" })
+    const via = (ip: string) => proxied.fetch(new Request("http://x/", { headers: { "x-ip": ip } }))
+    expect((await via("2001:db8::a")).status).toBe(200)
+    expect((await via("2001:db8::b")).status).toBe(429)
+  })
+
   test("default key follows the app's clientIp trust declaration and the Node twin", async () => {
     const app = server({ clientIp: { trustedHops: 1 } })
       .use(rateLimit({ store: new MemoryStore(), max: 1, windowMs: 60_000 }))

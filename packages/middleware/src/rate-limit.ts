@@ -5,6 +5,7 @@ import type {
   NodeResponseContext,
   Platform,
 } from "@nifrajs/core/server"
+import { ipBucket } from "./_ip.ts"
 import { setNodeHeader, withHeaders } from "./_utils.ts"
 
 export interface RateLimitResult {
@@ -169,6 +170,7 @@ export interface RateLimitOptions {
  * The default bucket key. With nothing configured it is the caller IP the server resolved into
  * `platform.clientIp` - the raw socket peer, or the app's `clientIp` trust declaration applied to the
  * forwarding chain. `null` (no adapter-observed peer, e.g. a synthetic `app.fetch`) fails closed.
+ * Every IP-derived key goes through {@link ipBucket}: an IPv6 caller counts by its /64.
  */
 function defaultKey(
   req: Request,
@@ -178,11 +180,12 @@ function defaultKey(
   allowGlobalKey: boolean,
 ): string | null {
   if (header === undefined && trustedProxies === 0 && !allowGlobalKey) {
-    return platform?.clientIp || null
+    const peer = platform?.clientIp
+    return peer ? ipBucket(peer) : null
   }
   if (header !== undefined) {
     const ip = req.headers.get(header)
-    if (ip !== null && ip.trim() !== "") return ip.trim()
+    if (ip !== null && ip.trim() !== "") return ipBucket(ip.trim())
   }
   if (trustedProxies > 0) {
     const xff = req.headers.get("x-forwarded-for")
@@ -192,7 +195,7 @@ function defaultKey(
       // proxy observed = the real client. A client can only prepend fakes further left, which this
       // index skips. A chain shorter than `trustedProxies` (misconfig) → undefined → fall through.
       const ip = parts[parts.length - trustedProxies]?.trim()
-      if (ip !== undefined && ip !== "") return ip
+      if (ip !== undefined && ip !== "") return ipBucket(ip)
     }
   }
   // No trusted proxy (or XFF absent/too-short): XFF isn't trustworthy, so don't derive a per-client key
@@ -209,18 +212,19 @@ function nativeKey(
   allowGlobalKey: boolean,
 ): string | null {
   if (header === undefined && trustedProxies === 0 && !allowGlobalKey) {
-    return platform?.clientIp || null
+    const peer = platform?.clientIp
+    return peer ? ipBucket(peer) : null
   }
   if (header !== undefined) {
     const ip = req.header(header)
-    if (ip !== null && ip.trim() !== "") return ip.trim()
+    if (ip !== null && ip.trim() !== "") return ipBucket(ip.trim())
   }
   if (trustedProxies > 0) {
     const xff = req.header("x-forwarded-for")
     if (xff !== null) {
       const parts = xff.split(",")
       const ip = parts[parts.length - trustedProxies]?.trim()
-      if (ip !== undefined && ip !== "") return ip
+      if (ip !== undefined && ip !== "") return ipBucket(ip)
     }
   }
   return allowGlobalKey ? "global" : null

@@ -15,6 +15,11 @@ proxy. It no longer throws at construction, so the scaffolded backend templates,
 IP, and denies a request that has none. A custom `clientIp` receives the platform as its second
 argument.
 
+Both read an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`, how Bun and Node report an IPv4 peer on
+their default listener) as the IPv4 address it carries, so IPv4 `allow`/`deny` rules match it; a rule
+may also be written in that form (`::ffff:10.0.0.0/104`). `rateLimit()` counts an IPv6 caller by its
+`/64`, however the key was derived.
+
 `csrf({ field })` also accepts the token from a form field in an
 `application/x-www-form-urlencoded` or `multipart/form-data` body, for plain HTML forms that cannot
 set a header. Bodies over `fieldMaxBytes` (default 64 KiB) are not read for the field, file parts

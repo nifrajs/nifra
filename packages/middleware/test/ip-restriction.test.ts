@@ -61,6 +61,26 @@ describe("ipRestriction()", () => {
     )
   })
 
+  test("an IPv4 peer reported as IPv4-mapped IPv6 meets the IPv4 rules", async () => {
+    // Bun and Node report every IPv4 peer of their default dual-stack listener this way.
+    const denied = server()
+      .use(ipRestriction({ deny: ["203.0.113.0/24"] }))
+      .get("/", () => ({ ok: true }))
+    const from = (app: typeof denied, clientIp: string) =>
+      app.fetch(new Request("http://x/"), { clientIp })
+    expect((await from(denied, "::ffff:203.0.113.5")).status).toBe(403)
+    expect((await from(denied, "::FFFF:cb00:7105")).status).toBe(403)
+    expect((await from(denied, "::ffff:198.51.100.1")).status).toBe(200)
+
+    const allowed = server()
+      .use(ipRestriction({ allow: ["10.0.0.0/8", "::ffff:192.168.0.0/112"] }))
+      .get("/", () => ({ ok: true }))
+    expect((await from(allowed, "::ffff:10.1.2.3")).status).toBe(200)
+    expect((await from(allowed, "192.168.4.4")).status).toBe(200)
+    expect((await from(allowed, "::ffff:8.8.8.8")).status).toBe(403)
+    expect(() => ipRestriction({ allow: ["::ffff:10.0.0.0/64"] })).toThrow("invalid CIDR prefix")
+  })
+
   test("extracts the trusted proxy hop and ignores spoofed left prefixes", async () => {
     const app = server()
       .use(ipRestriction({ allow: ["1.2.3.4"], trustedProxies: 1 }))
