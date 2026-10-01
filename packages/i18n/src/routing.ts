@@ -1,83 +1,72 @@
 /**
- * Locale-prefixed routing - the URL half of i18n, next to {@link negotiateLocale}'s detection
- * half. Pure + runtime-agnostic: prefix a pathname with a locale, strip a prefix back off, read
- * the locale a URL carries, and emit the absolute `hreflang` link set SEO needs. A route manifest
- * with `[[locale]]` optional segments serves the prefixed shapes; this module is what builds and
- * reads those URLs consistently on both sides (links, redirects, middleware, sitemaps).
+ * Locale-prefixed routing - the URL half of i18n, next to {@link negotiateLocale}'s detection half.
+ * Pure and runtime-agnostic: prefix a pathname with a locale, strip a prefix back off, read the locale
+ * a URL carries, check a `[lang]` route segment, and emit a page's canonical link and `hreflang`
+ * alternates. Everything reads one {@link Locales} registry, so the URL scheme, the alternates and the
+ * document language cannot disagree.
  *
- * Prefixes match full configured tags only (`/fr/...` for `"fr"`, `/pt-BR/...` for `"pt-BR"`) and
- * case-insensitively on read, so `/frank` never reads as French. Like negotiation, matching is
- * against the allow-list - a path segment that is not a supported locale is left alone, never
- * echoed anywhere it matters. No regex runs on request input; one scan of the first segment.
+ * The locale is the FIRST path segment. Prefixes match served locale keys only, case-insensitively on
+ * read (`/HI/x` reads as `hi`), so `/frank` never reads as French and a draft locale's prefix reads as
+ * an ordinary segment. No regex runs on request input; each operation is one scan of the path.
  */
-import type { Locale } from "./negotiate.ts"
+import type { LocaleInfo, Locales } from "./locales.ts"
 
 export interface I18nRoutingOptions {
-  /** The locales the app supports, e.g. `["en", "fr", "pt-BR"]`. First-segment matching is
-   * case-insensitive; emitted prefixes keep the configured spelling. Two locales that differ
-   * only by case are rejected - no URL could name one without naming the other. */
-  readonly locales: readonly Locale[]
-  /** The default locale, served unprefixed unless {@link prefixDefaultLocale} is set. */
-  readonly defaultLocale: Locale
   /** Prefix the default locale too (`/en/about` instead of `/about`). Default `false`. */
   readonly prefixDefaultLocale?: boolean
 }
 
 /** A pathname with its locale prefix removed (or not, when it carries none). */
-export interface UnlocalizedPath {
-  /** The locale the leading segment named, or `undefined` for an unprefixed path. */
-  readonly locale: Locale | undefined
+export interface UnlocalizedPath<K extends string = string> {
+  /** The served locale the leading segment named, or `undefined` for an unprefixed path. */
+  readonly locale: K | undefined
   /** The path without the locale segment, always starting with `/`. */
   readonly pathname: string
 }
 
-/** One `hreflang` alternate: an absolute URL plus the tag search engines match on. */
+/** One `hreflang` alternate: a URL plus the tag search engines match on. */
 export interface HreflangLink {
-  /** The `hreflang` value - the locale tag, or `"x-default"` for the fallback entry. */
+  /** The locale's `hreflang` value, or `"x-default"` for the fallback entry. */
   readonly hreflang: string
   readonly href: string
 }
 
-const hasUpperAscii = (value: string): boolean => {
-  for (let i = 0; i < value.length; i++) {
-    const code = value.charCodeAt(i)
-    if (code >= 65 && code <= 90) return true
-  }
-  return false
+/** A page's canonical URL and the alternates that point at it from each language. */
+export interface Alternates {
+  /** The page's own URL in the locale the path is in. */
+  readonly canonical: string
+  /** One link per listed locale in registry order, then `x-default` when the default is listed. */
+  readonly links: readonly HreflangLink[]
 }
 
-const lowerName = (value: string): string => (hasUpperAscii(value) ? value.toLowerCase() : value)
-
-/** Locale names become URL path segments; reject delimiters and control characters up front. */
-function isSafeLocaleSegment(value: string): boolean {
-  if (value === "" || value === "." || value === ".." || value.includes("%")) return false
-  for (let i = 0; i < value.length; i++) {
-    const code = value.charCodeAt(i)
-    if (
-      code <= 0x1f ||
-      code === 0x7f ||
-      code === 0x20 ||
-      value[i] === "/" ||
-      value[i] === "\\" ||
-      value[i] === "?" ||
-      value[i] === "#"
-    ) {
-      return false
-    }
-  }
-  return true
+export interface AlternatesOptions<K extends string = string> {
+  /** An absolute `http(s)` origin for absolute URLs, as search engines require. Omit for
+   * root-relative URLs, as a language switcher wants. */
+  readonly origin?: string
+  /** The locales this page exists in. Default: every served locale. Every page of one cluster must
+   * pass the same set, so the alternates stay reciprocal; a locale outside the served set throws. */
+  readonly locales?: readonly K[]
 }
 
-/** Normalize and validate the origin used in absolute alternate links. */
+/** What a `[lang]` segment value means for the request. */
+export type SegmentMatch<K extends string = string> =
+  | { readonly kind: "ok"; readonly locale: K }
+  /** Not a served locale (unknown, or a draft): answer 404. */
+  | { readonly kind: "not-found" }
+  /** A served locale under a non-canonical URL - the default's prefix when the default is served
+   * unprefixed, or the wrong case. `location` is the canonical path, query kept. */
+  | { readonly kind: "redirect"; readonly location: string }
+
+/** Normalize and validate the origin used in absolute links. */
 function normalizeOrigin(origin: string): string {
   if (origin.trim() !== origin) {
-    throw new Error("defineI18nRouting: origin must be an absolute http(s) origin")
+    throw new Error("alternates: origin must be an absolute http(s) origin")
   }
   let url: URL
   try {
     url = new URL(origin)
   } catch {
-    throw new Error("defineI18nRouting: origin must be an absolute http(s) origin")
+    throw new Error("alternates: origin must be an absolute http(s) origin")
   }
   if (
     (url.protocol !== "http:" && url.protocol !== "https:") ||
@@ -87,157 +76,234 @@ function normalizeOrigin(origin: string): string {
     url.search !== "" ||
     url.hash !== ""
   ) {
-    throw new Error("defineI18nRouting: origin must be an absolute http(s) origin")
+    throw new Error("alternates: origin must be an absolute http(s) origin")
   }
   return url.origin
 }
 
-/** Split `/fr/about?x=1#y` into path segments plus the untouched query/hash tail. A path
- * missing its leading slash is normalized first - request pathnames always carry one, and link
- * builders should not emit `fr/about` from a typo. */
-function splitTail(path: string): {
+interface SplitPath {
   readonly segments: string[]
-  readonly suffix: string
+  readonly query: string
+  readonly hash: string
   readonly trailingSlash: boolean
-} {
-  const normalized = path.startsWith("/") ? path : `/${path}`
-  let end = normalized.length
-  const query = normalized.indexOf("?")
-  const hash = normalized.indexOf("#")
-  if (query !== -1) end = query
-  if (hash !== -1 && hash < end) end = hash
-  const pathname = normalized.slice(0, end)
-  const segments = pathname.split("/").slice(1)
-  // A trailing slash leaves a final empty segment (`/fr/` → `["fr", ""]`) - drop it so joins
-  // below never emit a doubled slash; the slash itself is tracked separately.
-  if (segments.length > 0 && segments[segments.length - 1] === "") segments.pop()
-  return {
-    segments,
-    suffix: normalized.slice(end),
-    trailingSlash: pathname.length > 1 && pathname.endsWith("/"),
-  }
-}
-
-/** Rejoin path segments under no prefix - `[]` is `/`, never `//`. */
-function joinBare(rest: readonly string[], suffix: string, trailingSlash: boolean): string {
-  const base = rest.length === 0 ? "/" : `/${rest.join("/")}`
-  return `${base}${trailingSlash && base !== "/" ? "/" : ""}${suffix}`
-}
-
-/** Rejoin path segments under `locale` - `[]` is `/fr`, never `/fr/`, unless it trailed. */
-function joinPrefix(
-  locale: Locale,
-  rest: readonly string[],
-  suffix: string,
-  trailingSlash: boolean,
-): string {
-  const base = rest.length === 0 ? `/${locale}` : `/${locale}/${rest.join("/")}`
-  return `${base}${trailingSlash ? "/" : ""}${suffix}`
-}
-
-export interface LocalizedRouter {
-  /** Prefix `path` with `locale` (`/about` → `/fr/about`), unless it is the unprefixed default.
-   * Query string, hash, and trailing slash ride along untouched; an already-prefixed path is
-   * re-prefixed (which also normalizes the segment's case); an unknown `locale` throws. */
-  localizePathname(path: string, locale: Locale): string
-  /** Strip a supported locale prefix (`/fr/about` → `{ locale: "fr", pathname: "/about" }`).
-   * Anything else - including lookalikes like `/frank` - returns `{ locale: undefined }` with the
-   * path unchanged. */
-  unlocalizePathname(path: string): UnlocalizedPath
-  /** The locale a path's first segment names, or `undefined` when unprefixed. */
-  getPathLocale(path: string): Locale | undefined
-  /** Absolute `hreflang` alternates for the URL: one per locale plus `x-default` (which points at
-   * the default-locale URL). `path` may carry any locale prefix or none - it is normalized first,
-   * so every alternate describes the same page; its query string and hash are preserved on each. */
-  hreflangLinks(path: string, origin: string): readonly HreflangLink[]
 }
 
 /**
- * Define the app's locale-prefixed URL scheme once (validated here, so the hot path never
- * re-checks), and get the four path operations bound to it.
+ * Split `/fr/about?x=1#y` into its non-empty path segments plus the untouched query and hash. A
+ * backslash separates segments, as URL parsing treats it, and empty segments are dropped, so no input
+ * can produce an output path starting with `//` or `/\`, which a browser would follow off-site.
+ */
+function splitPath(path: string): SplitPath {
+  let end = path.length
+  const query = path.indexOf("?")
+  const hash = path.indexOf("#")
+  if (query !== -1) end = query
+  if (hash !== -1 && hash < end) end = hash
+  const pathname = path.slice(0, end)
+  const segments: string[] = []
+  let start = 0
+  for (let i = 0; i <= pathname.length; i++) {
+    const ch = pathname[i]
+    if (i === pathname.length || ch === "/" || ch === "\\") {
+      if (i > start) segments.push(pathname.slice(start, i))
+      start = i + 1
+    }
+  }
+  const last = pathname[pathname.length - 1]
+  return {
+    segments,
+    query: hash === -1 ? path.slice(end) : path.slice(end, hash > end ? hash : end),
+    hash: hash === -1 ? "" : path.slice(hash),
+    trailingSlash: segments.length > 0 && (last === "/" || last === "\\"),
+  }
+}
+
+/** Join path segments under an optional prefix - `[]` is `/` (or `/fr`), never `//` or `/fr/`, unless
+ * the input trailed. */
+function joinPath(
+  prefix: string | undefined,
+  rest: readonly string[],
+  trailingSlash: boolean,
+): string {
+  const parts = prefix === undefined ? rest : [prefix, ...rest]
+  if (parts.length === 0) return "/"
+  return `/${parts.join("/")}${trailingSlash && rest.length > 0 ? "/" : ""}`
+}
+
+/** Whether a raw path segment, percent-decoded, equals `value` ignoring ASCII case. */
+function segmentEquals(segment: string, value: string): boolean {
+  let decoded = segment
+  if (segment.includes("%")) {
+    try {
+      decoded = decodeURIComponent(segment)
+    } catch {
+      return false
+    }
+  }
+  return decoded.toLowerCase() === value.toLowerCase()
+}
+
+export interface LocalizedRouter<K extends string = string> {
+  /** The registry this router reads. */
+  readonly locales: Locales<K>
+  /** Prefix `path` with `locale` (`/about` → `/fr/about`), unless it is the unprefixed default.
+   * The query and trailing slash ride along, the hash too; an already-prefixed path is re-prefixed.
+   * A locale that is not served throws. */
+  localizePathname(path: string, locale: K): string
+  /** Strip a served locale prefix (`/fr/about` → `{ locale: "fr", pathname: "/about" }`). Anything
+   * else - `/frank`, a draft's prefix - returns `{ locale: undefined }` with the path unchanged. */
+  unlocalizePathname(path: string): UnlocalizedPath<K>
+  /** The served locale a path's first segment names, or `undefined` when unprefixed. */
+  getPathLocale(path: string): K | undefined
+  /** The locale a path is in: its prefix, or the default for an unprefixed path. */
+  localeOf(path: string): K
+  /** The page's canonical URL and its `hreflang` alternates. `path` may carry any served prefix or
+   * none (it decides the canonical's locale); its query is kept and its hash dropped. */
+  alternates(path: string, options?: AlternatesOptions<K>): Alternates
+  /**
+   * Check the value of a `[lang]` / `[[lang]]` route segment that is the path's first segment.
+   * `pathname` is the request's path (query allowed), used to build a redirect.
+   *
+   * ```ts
+   * // routes/[lang]/_middleware.ts
+   * import { notFound, redirect } from "@nifrajs/web"
+   * import { urls } from "../../lib/i18n"
+   *
+   * export default (ctx) => {
+   *   const { pathname, search } = new URL(ctx.request.url)
+   *   const match = urls.matchSegment(ctx.params.lang, pathname + search)
+   *   if (match.kind === "not-found") notFound()
+   *   if (match.kind === "redirect") return redirect(match.location, { status: 308 })
+   * }
+   * ```
+   */
+  matchSegment(value: string | undefined, pathname: string): SegmentMatch<K>
+}
+
+/**
+ * Bind the app's locale-prefixed URL scheme to a {@link Locales} registry.
  *
  * ```ts
+ * import { defineLocales } from "@nifrajs/i18n"
  * import { defineI18nRouting } from "@nifrajs/i18n/routing"
  *
- * const urls = defineI18nRouting({ locales: ["en", "fr"], defaultLocale: "en" })
+ * const locales = defineLocales({ default: "en", locales: { en: {}, fr: {} } })
+ * export const urls = defineI18nRouting(locales)
  * urls.localizePathname("/about", "fr") // "/fr/about"
- * urls.unlocalizePathname("/fr/about") // { locale: "fr", pathname: "/about" }
+ * urls.alternates("/fr/about", { origin: "https://example.com" }).canonical // "https://example.com/fr/about"
  * ```
  */
-export function defineI18nRouting(options: I18nRoutingOptions): LocalizedRouter {
-  const { locales, defaultLocale } = options
-  if (locales.length === 0) throw new Error("defineI18nRouting: locales must not be empty")
-  if (!locales.includes(defaultLocale)) {
-    throw new Error("defineI18nRouting: defaultLocale must be in locales")
-  }
+export function defineI18nRouting<K extends string>(
+  locales: Locales<K>,
+  options: I18nRoutingOptions = {},
+): LocalizedRouter<K> {
   const prefixDefault = options.prefixDefaultLocale === true
-  // Lowercase tag → configured spelling, so reads are case-insensitive while emitted prefixes
-  // keep the canonical form (`/FR/...` reads as `"fr"` but links are built as `/fr/...`).
-  const byLower = new Map<string, Locale>()
-  for (const locale of locales) {
-    if (!isSafeLocaleSegment(locale)) {
-      throw new Error(
-        `defineI18nRouting: locale ${JSON.stringify(locale)} must be one safe URL path segment`,
-      )
-    }
-    const lower = lowerName(locale)
-    const clash = byLower.get(lower)
-    if (clash !== undefined) {
-      if (clash === locale) {
-        throw new Error(`defineI18nRouting: duplicate locale ${JSON.stringify(locale)}`)
-      }
-      throw new Error(
-        `defineI18nRouting: locales ${JSON.stringify(clash)} and ${JSON.stringify(locale)} differ only by case`,
-      )
-    }
-    byLower.set(lower, locale)
+  const defaultLocale = locales.default
+  // Lowercase key → served key, so reads are case-insensitive while emitted prefixes keep the declared
+  // spelling. Drafts are absent: their prefix reads as an ordinary segment.
+  const servedByLower = new Map<string, K>()
+  for (const key of locales.served) servedByLower.set(key.toLowerCase(), key)
+  const infos = new Map<string, LocaleInfo<K>>()
+  const order = new Map<string, number>()
+  for (const key of locales.served) {
+    infos.set(key, locales.get(key))
+    order.set(key, order.size)
   }
 
-  const matchFirst = (segments: readonly string[]): Locale | undefined => {
-    if (segments.length === 0) return undefined
-    return byLower.get(lowerName(segments[0] as string))
+  const matchFirst = (segments: readonly string[]): K | undefined => {
+    const first = segments[0]
+    return first === undefined ? undefined : servedByLower.get(first.toLowerCase())
   }
 
-  const localizePathname = (path: string, locale: Locale): string => {
-    const target = byLower.get(lowerName(locale))
-    if (target === undefined) {
-      throw new Error(`localizePathname: unsupported locale ${JSON.stringify(locale)}`)
+  const prefixFor = (locale: K): string | undefined =>
+    locale === defaultLocale && !prefixDefault ? undefined : locale
+
+  const servedOrThrow = (locale: K, where: string): K => {
+    if (!infos.has(locale)) {
+      throw new Error(`${where}: ${JSON.stringify(locale)} is not a served locale`)
     }
-    const { segments, suffix, trailingSlash } = splitTail(path)
+    return locale
+  }
+
+  const localizePathname = (path: string, locale: K): string => {
+    const target = servedOrThrow(locale, "localizePathname")
+    const { segments, query, hash, trailingSlash } = splitPath(path)
     const rest = matchFirst(segments) === undefined ? segments : segments.slice(1)
-    if (target === defaultLocale && !prefixDefault) return joinBare(rest, suffix, trailingSlash)
-    return joinPrefix(target, rest, suffix, trailingSlash)
+    return `${joinPath(prefixFor(target), rest, trailingSlash)}${query}${hash}`
   }
 
-  const unlocalizePathname = (path: string): UnlocalizedPath => {
-    const { segments, suffix, trailingSlash } = splitTail(path)
+  const unlocalizePathname = (path: string): UnlocalizedPath<K> => {
+    const { segments, query, hash, trailingSlash } = splitPath(path)
     const locale = matchFirst(segments)
-    if (locale === undefined)
-      return { locale: undefined, pathname: joinBare(segments, suffix, trailingSlash) }
-    return { locale, pathname: joinBare(segments.slice(1), suffix, trailingSlash) }
+    const rest = locale === undefined ? segments : segments.slice(1)
+    return { locale, pathname: `${joinPath(undefined, rest, trailingSlash)}${query}${hash}` }
   }
 
-  const getPathLocale = (path: string): Locale | undefined => matchFirst(splitTail(path).segments)
+  const getPathLocale = (path: string): K | undefined => matchFirst(splitPath(path).segments)
 
-  const hreflangLinks = (path: string, origin: string): readonly HreflangLink[] => {
-    const normalizedOrigin = normalizeOrigin(origin)
-    const { segments, suffix, trailingSlash } = splitTail(path)
-    const rest = matchFirst(segments) === undefined ? segments : segments.slice(1)
-    const base = joinBare(rest, "", trailingSlash)
-    const links: HreflangLink[] = []
-    for (const locale of locales) {
-      const href =
-        locale === defaultLocale && !prefixDefault
-          ? `${normalizedOrigin}${base}${suffix}`
-          : `${normalizedOrigin}/${locale}${base}${suffix}`
-      links.push({ hreflang: locale, href })
+  const localeOf = (path: string): K => getPathLocale(path) ?? defaultLocale
+
+  const alternates = (path: string, opts: AlternatesOptions<K> = {}): Alternates => {
+    const base = opts.origin === undefined ? "" : normalizeOrigin(opts.origin)
+    const { segments, query, trailingSlash } = splitPath(path)
+    const current = matchFirst(segments)
+    const rest = current === undefined ? segments : segments.slice(1)
+    const pageLocale = current ?? defaultLocale
+    let listed: readonly K[] = locales.served
+    if (opts.locales !== undefined) {
+      const wanted = new Set<string>()
+      for (const locale of opts.locales) wanted.add(servedOrThrow(locale, "alternates"))
+      if (!wanted.has(pageLocale)) {
+        throw new Error(
+          `alternates: the page is in ${JSON.stringify(pageLocale)}, which is not in locales - a page cannot be an alternate of a cluster it is missing from`,
+        )
+      }
+      // Registry order, not caller order, so every page of the cluster emits the same list.
+      listed = [...wanted].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0)) as K[]
     }
-    const fallback = prefixDefault
-      ? `${normalizedOrigin}/${defaultLocale}${base}${suffix}`
-      : `${normalizedOrigin}${base}${suffix}`
-    links.push({ hreflang: "x-default", href: fallback })
-    return links
+    const urlFor = (locale: K): string =>
+      `${base}${joinPath(prefixFor(locale), rest, trailingSlash)}${query}`
+    const links: HreflangLink[] = []
+    let hasDefault = false
+    for (const locale of listed) {
+      links.push({ hreflang: (infos.get(locale) as LocaleInfo<K>).hreflang, href: urlFor(locale) })
+      if (locale === defaultLocale) hasDefault = true
+    }
+    if (hasDefault) links.push({ hreflang: "x-default", href: urlFor(defaultLocale) })
+    return { canonical: urlFor(pageLocale), links }
   }
 
-  return { localizePathname, unlocalizePathname, getPathLocale, hreflangLinks }
+  const matchSegment = (value: string | undefined, pathname: string): SegmentMatch<K> => {
+    const { segments, query, trailingSlash } = splitPath(pathname)
+    if (value === undefined) {
+      // An absent optional segment is the default locale's unprefixed URL.
+      if (!prefixDefault) return { kind: "ok", locale: defaultLocale }
+      return {
+        kind: "redirect",
+        location: `${joinPath(defaultLocale, segments, trailingSlash)}${query}`,
+      }
+    }
+    const locale = servedByLower.get(value.toLowerCase())
+    if (locale === undefined) return { kind: "not-found" }
+    const first = segments[0]
+    // The segment must be the one in the path: anything else is a router setup this helper cannot
+    // build a redirect for, and a 404 is the safe answer to it.
+    if (first === undefined || !segmentEquals(first, value)) return { kind: "not-found" }
+    const canonicalPrefix = prefixFor(locale)
+    if (canonicalPrefix === first) return { kind: "ok", locale }
+    return {
+      kind: "redirect",
+      location: `${joinPath(canonicalPrefix, segments.slice(1), trailingSlash)}${query}`,
+    }
+  }
+
+  return {
+    locales,
+    localizePathname,
+    unlocalizePathname,
+    getPathLocale,
+    localeOf,
+    alternates,
+    matchSegment,
+  }
 }

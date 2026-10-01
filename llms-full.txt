@@ -4453,11 +4453,104 @@ lowercase HTML attrs via `toHtmlAttrs`).
 
 ## Nifra - i18n
 
-> Locale negotiation + a tiny ICU message formatter on the platform Intl, framework-agnostic.
+> One locale registry, locale-prefixed routing, negotiation and a tiny ICU message formatter on the platform Intl.
 
-`@nifrajs/i18n` is framework-agnostic and dependency-free - locale negotiation plus a
-tiny ICU message formatter built on the platform `Intl`. It runs on every runtime;
-you bring JSON catalogs.
+`@nifrajs/i18n` is framework-agnostic and dependency-free - one locale registry,
+locale-prefixed routing, locale negotiation and a tiny ICU message formatter built on the
+platform `Intl`. It runs on every runtime; you bring the catalogs.
+
+### Declare your locales
+
+`defineLocales` is the one place a locale is declared: its URL segment, the BCP-47
+tag `Intl` formats with, the `hreflang` value search engines match, its
+writing direction and its own name for a language switcher. Each defaults from the segment, and
+the direction is derived from the tag (an explicit script, a right-to-left language such as
+Urdu, Arabic or Hebrew, or the runtime's likely script). A `draft` locale keeps its
+catalogs but is never served, so a half-translated language cannot be indexed under its own
+URL. Bad tags, unsafe segments and two locales sharing an `hreflang` throw at
+definition.
+
+```ts
+// lib/i18n.ts - each locale declared once; routing, alternates and <html lang>/<html dir> read it.
+import { defineLocales } from "@nifrajs/i18n"
+import { defineI18nRouting } from "@nifrajs/i18n/routing"
+
+export const locales = defineLocales({
+  default: "en",
+  locales: {
+    en: { hreflang: "en-IN" },
+    hi: { hreflang: "hi-IN" },
+    ur: { tag: "ur-PK", hreflang: "ur" }, // dir "rtl", derived from the tag
+    gu: { draft: true }, // catalogs in progress: never routed, never an alternate
+  },
+})
+export const urls = defineI18nRouting(locales)
+
+urls.localizePathname("/kundli", "hi") // "/hi/kundli"
+locales.chain("hi") // ["hi", "en"] - the catalog fallback order
+```
+
+### Locale-prefixed URLs
+
+`@nifrajs/i18n/routing` binds the registry to a URL scheme where the locale is the
+first path segment and the default is unprefixed (or prefixed too, with
+`prefixDefaultLocale`). A `[lang]` route segment matches any string, so
+guard it: `matchSegment` answers not-found for an unknown or draft value and a
+redirect for the default's prefix or a wrong case, and a `_middleware.ts` in the
+`[lang]` directory turns that into a 404 through your `_404` page or a
+permanent redirect - on full page loads, client navigations and form posts alike.
+
+```ts
+// routes/[lang]/_middleware.ts - 404 unknown and draft locales, redirect /en/... to /...
+import { defineLocales } from "@nifrajs/i18n"
+import { defineI18nRouting } from "@nifrajs/i18n/routing"
+import { notFound, type RouteMiddleware, redirect } from "@nifrajs/web"
+
+const urls = defineI18nRouting(
+  defineLocales({ default: "en", locales: { en: {}, hi: {}, gu: { draft: true } } }),
+)
+
+const guard: RouteMiddleware = (ctx) => {
+  const { pathname, search } = new URL(ctx.request.url)
+  const match = urls.matchSegment(ctx.params.lang, pathname + search)
+  if (match.kind === "not-found") notFound()
+  if (match.kind === "redirect") return redirect(match.location, { status: 308 })
+  return undefined
+}
+export default guard
+```
+
+`alternates(path, { origin, locales })` gives the page's canonical URL and its
+`hreflang` links, built exactly as `localizePathname` builds them. Without
+`origin` the URLs are root-relative, for a language switcher. A page that exists in
+only some languages passes those `locales`; the links come out in registry order, so
+every page of the cluster lists the same set and search engines accept it. A redirect or link it
+builds can never start with `//`.
+
+```ts
+// routes/[lang]/kundli.tsx - canonical + hreflang links and the document language.
+import { defineLocales } from "@nifrajs/i18n"
+import { defineI18nRouting } from "@nifrajs/i18n/routing"
+import type { Meta, MetaArgs } from "@nifrajs/web"
+
+const urls = defineI18nRouting(
+  defineLocales({ default: "en", locales: { en: {}, hi: { hreflang: "hi-IN" }, ur: { tag: "ur-PK" } } }),
+)
+
+export function meta({ params, origin }: MetaArgs): Meta {
+  const lang = params.lang ?? ""
+  const locale = urls.locales.isServed(lang) ? lang : urls.locales.default
+  // Every page of this cluster passes the same locales, so the alternates stay reciprocal.
+  const { canonical, links } = urls.alternates(urls.localizePathname("/kundli", locale), { origin })
+  return {
+    ...urls.locales.documentMeta(locale),
+    link: [
+      { rel: "canonical", href: canonical },
+      ...links.map((link) => ({ rel: "alternate", hreflang: link.hreflang, href: link.href })),
+    ],
+  }
+}
+```
 
 ### Negotiate the locale
 
@@ -4548,7 +4641,9 @@ catalog and the page re-renders.
 
 ### Notes
 
-- For many locales, load catalogs **lazily** per request - don't bundle every catalog.
+- For many locales, load catalogs **lazily** per request - don't bundle every catalog. A
+loader that does `await import(`../messages/${locale}.ts`)` ships only the
+requested locale's table to the page, typed inline tables included.
 
 - The supported ICU subset is interpolation + `plural`/`select`; use
 ` n()`/`d()` for inline numbers/dates (no `{n, number}`
@@ -11378,6 +11473,31 @@ Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one
 bun add @nifrajs/i18n
 ```
 
+## Locales and URLs
+
+Declare each locale once with `defineLocales()` - URL segment, BCP-47 tag, `hreflang`, direction and
+native name, each defaulted from the segment - and bind it to a locale-prefixed URL scheme with
+`@nifrajs/i18n/routing`:
+
+```ts
+import { defineLocales } from "@nifrajs/i18n"
+import { defineI18nRouting } from "@nifrajs/i18n/routing"
+
+export const locales = defineLocales({
+  default: "en",
+  locales: { en: {}, hi: { hreflang: "hi-IN" }, ur: { tag: "ur-PK" }, gu: { draft: true } },
+})
+export const urls = defineI18nRouting(locales)
+
+urls.localizePathname("/kundli", "hi") // "/hi/kundli"
+urls.alternates("/hi/kundli", { origin: "https://example.com" }) // { canonical, links } with hreflang
+urls.matchSegment("gu", "/gu/kundli") // { kind: "not-found" } - a draft is never served
+locales.documentMeta("ur") // { lang: "ur-PK", dir: "rtl" }
+```
+
+Guard a `[lang]` route segment with `matchSegment()` in `routes/[lang]/_middleware.ts`: an unknown or
+draft value answers 404, and the default's prefix (`/en/...`) or a wrong case redirects.
+
 ## Locale detection
 
 `negotiateLocale()` / `resolveLocale()` are pure: query parameter → cookie → `Accept-Language` →
@@ -13327,7 +13447,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/i18n
 
-`createFormatter`, `Formatter`, `Locale`, `LocaleParts`, `LocaleSource`, `Messages`, `negotiateLocale`, `NegotiateOptions`, `ResolvedLocale`, `resolveLocale`
+`createFormatter`, `defineLocales`, `Formatter`, `Locale`, `localeDirection`, `LocaleInfo`, `LocaleParts`, `Locales`, `LocalesConfig`, `LocaleSource`, `LocaleSpec`, `Messages`, `negotiateLocale`, `NegotiateOptions`, `ResolvedLocale`, `resolveLocale`
 
 ## @nifrajs/image
 

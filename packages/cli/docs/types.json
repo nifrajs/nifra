@@ -998,6 +998,19 @@
     "signature": "export declare function all<Path extends string, H extends Handler<Path, RouteSchema, Ctx>, Ctx = NonNullable<unknown>>(path: Path, handler: H): MethodRoutesPlugin<Method, Path, Record<never, never>, OutputOf<H>, Ctx>;"
   },
   {
+    "name": "Alternates",
+    "kind": "interface",
+    "package": "@nifrajs/i18n",
+    "signature": "export interface Alternates {\n    /** The page's own URL in the locale the path is in. */\n    readonly canonical: string;\n    /** One link per listed locale in registry order, then `x-default` when the default is listed. */\n    readonly links: readonly HreflangLink[];\n}",
+    "doc": "/** A page's canonical URL and the alternates that point at it from each language. */"
+  },
+  {
+    "name": "AlternatesOptions",
+    "kind": "interface",
+    "package": "@nifrajs/i18n",
+    "signature": "export interface AlternatesOptions<K extends string = string> {\n    /** An absolute `http(s)` origin for absolute URLs, as search engines require. Omit for\n     * root-relative URLs, as a language switcher wants. */\n    readonly origin?: string;\n    /** The locales this page exists in. Default: every served locale. Every page of one cluster must\n     * pass the same set, so the alternates stay reciprocal; a locale outside the served set throws. */\n    readonly locales?: readonly K[];\n}"
+  },
+  {
     "name": "answerNotFound",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -5706,8 +5719,8 @@
     "name": "defineI18nRouting",
     "kind": "function",
     "package": "@nifrajs/i18n",
-    "signature": "export declare function defineI18nRouting(options: I18nRoutingOptions): LocalizedRouter;",
-    "doc": "/**\n * Define the app's locale-prefixed URL scheme once (validated here, so the hot path never\n * re-checks), and get the four path operations bound to it.\n *\n * ```ts\n * import { defineI18nRouting } from \"@nifrajs/i18n/routing\"\n *\n * const urls = defineI18nRouting({ locales: [\"en\", \"fr\"], defaultLocale: \"en\" })\n * urls.localizePathname(\"/about\", \"fr\") // \"/fr/about\"\n * urls.unlocalizePathname(\"/fr/about\") // { locale: \"fr\", pathname: \"/about\" }\n * ```\n */"
+    "signature": "export declare function defineI18nRouting<K extends string>(locales: Locales<K>, options?: I18nRoutingOptions): LocalizedRouter<K>;",
+    "doc": "/**\n * Bind the app's locale-prefixed URL scheme to a {@link Locales} registry.\n *\n * ```ts\n * import { defineLocales } from \"@nifrajs/i18n\"\n * import { defineI18nRouting } from \"@nifrajs/i18n/routing\"\n *\n * const locales = defineLocales({ default: \"en\", locales: { en: {}, fr: {} } })\n * export const urls = defineI18nRouting(locales)\n * urls.localizePathname(\"/about\", \"fr\") // \"/fr/about\"\n * urls.alternates(\"/fr/about\", { origin: \"https://example.com\" }).canonical // \"https://example.com/fr/about\"\n * ```\n */"
   },
   {
     "name": "defineIdentityPlugin",
@@ -5729,6 +5742,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function defineIsland<P = unknown>(enhancer: IslandEnhancer<P>): IslandEnhancer<P>;",
     "doc": "/**\n * Author a typed enhancer. Pure identity at runtime (zero cost, tree-shaken away) - its only job is\n * to pin the `data-props` shape so `el` and `props` are typed inside the body and the enhancer is\n * assignable to `mountIslands`. Prefer this over an inline arrow whenever an island reads props:\n *\n *   const counter = defineIsland<{ start: number }>((el, props) => {\n *     let n = props.start                       // props typed, no cast\n *     const out = el.querySelector(\"output\")!\n *     const onClick = () => { out.textContent = String(++n) }\n *     el.querySelector(\"button\")?.addEventListener(\"click\", onClick)\n *     return () => el.querySelector(\"button\")?.removeEventListener(\"click\", onClick)\n *   })\n *   mountIslands({ counter })\n *\n * The props type is a contract, not a validator - `data-props` is JSON authored by your own SSR, so\n * it is trusted framing, not user input. Keep the enhancer body imperative: read the DOM, wire\n * listeners, return cleanup. No hidden reactivity to get wrong.\n */"
+  },
+  {
+    "name": "defineLocales",
+    "kind": "function",
+    "package": "@nifrajs/i18n",
+    "signature": "export declare function defineLocales<const K extends string>(config: LocalesConfig<K>): Locales<K>;",
+    "doc": "/**\n * Declare the app's locales once.\n *\n * ```ts\n * import { defineLocales } from \"@nifrajs/i18n\"\n *\n * export const locales = defineLocales({\n *   default: \"en\",\n *   locales: {\n *     en: { hreflang: \"en-IN\" },\n *     hi: { hreflang: \"hi-IN\" },\n *     ur: { tag: \"ur-PK\", hreflang: \"ur\" }, // dir: \"rtl\", derived\n *     gu: { draft: true }, // catalogs in progress, not served\n *   },\n * })\n * ```\n */"
   },
   {
     "name": "defineMcpTool",
@@ -8262,8 +8282,8 @@
     "name": "HreflangLink",
     "kind": "interface",
     "package": "@nifrajs/i18n",
-    "signature": "export interface HreflangLink {\n    /** The `hreflang` value - the locale tag, or `\"x-default\"` for the fallback entry. */\n    readonly hreflang: string;\n    readonly href: string;\n}",
-    "doc": "/** One `hreflang` alternate: an absolute URL plus the tag search engines match on. */"
+    "signature": "export interface HreflangLink {\n    /** The locale's `hreflang` value, or `\"x-default\"` for the fallback entry. */\n    readonly hreflang: string;\n    readonly href: string;\n}",
+    "doc": "/** One `hreflang` alternate: a URL plus the tag search engines match on. */"
   },
   {
     "name": "html",
@@ -8458,7 +8478,7 @@
     "name": "I18nRoutingOptions",
     "kind": "interface",
     "package": "@nifrajs/i18n",
-    "signature": "export interface I18nRoutingOptions {\n    /** The locales the app supports, e.g. `[\"en\", \"fr\", \"pt-BR\"]`. First-segment matching is\n     * case-insensitive; emitted prefixes keep the configured spelling. Two locales that differ\n     * only by case are rejected - no URL could name one without naming the other. */\n    readonly locales: readonly Locale[];\n    /** The default locale, served unprefixed unless {@link prefixDefaultLocale} is set. */\n    readonly defaultLocale: Locale;\n    /** Prefix the default locale too (`/en/about` instead of `/about`). Default `false`. */\n    readonly prefixDefaultLocale?: boolean;\n}"
+    "signature": "export interface I18nRoutingOptions {\n    /** Prefix the default locale too (`/en/about` instead of `/about`). Default `false`. */\n    readonly prefixDefaultLocale?: boolean;\n}"
   },
   {
     "name": "idempotency",
@@ -9945,11 +9965,39 @@
     "signature": "export interface LocaleDetectorOptions extends NegotiateOptions {\n    /** Persist a `queryParam` choice into the locale cookie when it differs from the cookie's current\n     * value. Requires both `queryParam` and `cookie`. Default `false`. */\n    readonly persist?: boolean;\n    /** `Max-Age` (seconds) of the persisted cookie. Default one year. */\n    readonly cookieMaxAge?: number;\n    /** Emit `Content-Language` (kept if already set by the handler). Default `true`. */\n    readonly header?: boolean;\n}"
   },
   {
+    "name": "localeDirection",
+    "kind": "function",
+    "package": "@nifrajs/i18n",
+    "signature": "export declare function localeDirection(tag: string): \"ltr\" | \"rtl\";",
+    "doc": "/**\n * The writing direction of a BCP-47 tag: an explicit script subtag decides (`pa-Arab` is rtl,\n * `sd-Deva` ltr), then the language (`ur`, `ar`, `he`, ...), then the script the runtime's likely-\n * subtags data gives for a rarer language. `ltr` when none of those says rtl, including for a tag\n * the runtime cannot parse.\n */"
+  },
+  {
+    "name": "LocaleInfo",
+    "kind": "interface",
+    "package": "@nifrajs/i18n",
+    "signature": "export interface LocaleInfo<K extends string = string> {\n    /** The registry key: the URL segment, and the key catalogs are stored under. */\n    readonly key: K;\n    /** Canonical BCP-47 tag, for `Intl` and `<html lang>`. */\n    readonly tag: string;\n    /** Canonical `hreflang` value. */\n    readonly hreflang: string;\n    readonly dir: \"ltr\" | \"rtl\";\n    readonly name: string;\n    readonly draft: boolean;\n}",
+    "doc": "/** One locale with every field resolved. */"
+  },
+  {
     "name": "LocaleParts",
     "kind": "interface",
     "package": "@nifrajs/i18n",
     "signature": "export interface LocaleParts {\n    readonly header: (name: string) => string | null;\n    readonly url?: string;\n    readonly query?: URLSearchParams;\n}",
     "doc": "/**\n * The slice of a request the negotiation reads. Pass a `Request`, or this structural shape where no\n * `Request` object exists (e.g. inside an `onResponseHeaders` hook, which sees only `url` +\n * `header`). `query`/`url` are consulted only when `queryParam` is configured; an already-parsed\n * `query` is preferred over slicing `url`.\n */"
+  },
+  {
+    "name": "Locales",
+    "kind": "interface",
+    "package": "@nifrajs/i18n",
+    "signature": "export interface Locales<K extends string = string> {\n    readonly default: K;\n    /** Every declared locale, in declaration order. */\n    readonly all: readonly K[];\n    /** The non-draft locales, in declaration order. */\n    readonly served: readonly K[];\n    /** Every resolved field of a declared locale. Throws for an undeclared key. */\n    get(key: K): LocaleInfo<K>;\n    /** Whether `value` is a served locale's key, exactly as declared. */\n    isServed(value: string): value is K;\n    /** The catalog fallback order for `key`: itself, then the declared locale of its base language\n     * (`fr-CA` → `fr`), then the default, without repeats. */\n    chain(key: K): readonly K[];\n    /** `{ lang, dir }` for a route's `meta`, so `<html lang>` and `<html dir>` follow the locale. */\n    documentMeta(key: K): {\n        readonly lang: string;\n        readonly dir: \"ltr\" | \"rtl\";\n    };\n}",
+    "doc": "/** The registry {@link defineLocales} returns. */"
+  },
+  {
+    "name": "LocalesConfig",
+    "kind": "interface",
+    "package": "@nifrajs/i18n",
+    "signature": "export interface LocalesConfig<K extends string> {\n    /** The default locale: served, and the last step of every fallback chain. */\n    readonly default: NoInfer<K>;\n    /** Every locale, keyed by URL segment, in the order alternates and switchers list them. */\n    readonly locales: {\n        readonly [P in K]: LocaleSpec;\n    };\n}",
+    "doc": "/** What {@link defineLocales} takes. */"
   },
   {
     "name": "LocaleSource",
@@ -9959,10 +10007,17 @@
     "doc": "/** Which source produced the locale, in priority order. */"
   },
   {
+    "name": "LocaleSpec",
+    "kind": "interface",
+    "package": "@nifrajs/i18n",
+    "signature": "export interface LocaleSpec {\n    /** The BCP-47 tag `Intl` formats with (`\"ur-PK\"`). Default: the URL segment. */\n    readonly tag?: string;\n    /** The `hreflang` value search engines match (`\"hi-IN\"`, or `\"ur\"` for a language not tied to one\n     * market). Default: the tag. */\n    readonly hreflang?: string;\n    /** Writing direction. Default: derived from the tag (see {@link localeDirection}). */\n    readonly dir?: \"ltr\" | \"rtl\";\n    /** The language's name in itself, for a language switcher (`\"हिन्दी\"`). Default: what\n     * `Intl.DisplayNames` gives in that language, or the tag where the runtime has none. */\n    readonly name?: string;\n    /** Catalogs exist but the locale is not served yet: routing never matches it and alternates never\n     * list it, so an unfinished translation cannot be indexed under its own URL. */\n    readonly draft?: boolean;\n}",
+    "doc": "/** How one locale is declared. Every field has a default derived from the URL segment. */"
+  },
+  {
     "name": "LocalizedRouter",
     "kind": "interface",
     "package": "@nifrajs/i18n",
-    "signature": "export interface LocalizedRouter {\n    /** Prefix `path` with `locale` (`/about` → `/fr/about`), unless it is the unprefixed default.\n     * Query string, hash, and trailing slash ride along untouched; an already-prefixed path is\n     * re-prefixed (which also normalizes the segment's case); an unknown `locale` throws. */\n    localizePathname(path: string, locale: Locale): string;\n    /** Strip a supported locale prefix (`/fr/about` → `{ locale: \"fr\", pathname: \"/about\" }`).\n     * Anything else - including lookalikes like `/frank` - returns `{ locale: undefined }` with the\n     * path unchanged. */\n    unlocalizePathname(path: string): UnlocalizedPath;\n    /** The locale a path's first segment names, or `undefined` when unprefixed. */\n    getPathLocale(path: string): Locale | undefined;\n    /** Absolute `hreflang` alternates for the URL: one per locale plus `x-default` (which points at\n     * the default-locale URL). `path` may carry any locale prefix or none - it is normalized first,\n     * so every alternate describes the same page; its query string and hash are preserved on each. */\n    hreflangLinks(path: string, origin: string): readonly HreflangLink[];\n}"
+    "signature": "export interface LocalizedRouter<K extends string = string> {\n    /** The registry this router reads. */\n    readonly locales: Locales<K>;\n    /** Prefix `path` with `locale` (`/about` → `/fr/about`), unless it is the unprefixed default.\n     * The query and trailing slash ride along, the hash too; an already-prefixed path is re-prefixed.\n     * A locale that is not served throws. */\n    localizePathname(path: string, locale: K): string;\n    /** Strip a served locale prefix (`/fr/about` → `{ locale: \"fr\", pathname: \"/about\" }`). Anything\n     * else - `/frank`, a draft's prefix - returns `{ locale: undefined }` with the path unchanged. */\n    unlocalizePathname(path: string): UnlocalizedPath<K>;\n    /** The served locale a path's first segment names, or `undefined` when unprefixed. */\n    getPathLocale(path: string): K | undefined;\n    /** The locale a path is in: its prefix, or the default for an unprefixed path. */\n    localeOf(path: string): K;\n    /** The page's canonical URL and its `hreflang` alternates. `path` may carry any served prefix or\n     * none (it decides the canonical's locale); its query is kept and its hash dropped. */\n    alternates(path: string, options?: AlternatesOptions<K>): Alternates;\n    /**\n     * Check the value of a `[lang]` / `[[lang]]` route segment that is the path's first segment.\n     * `pathname` is the request's path (query allowed), used to build a redirect.\n     *\n     * ```ts\n     * // routes/[lang]/_middleware.ts\n     * import { notFound, redirect } from \"@nifrajs/web\"\n     * import { urls } from \"../../lib/i18n\"\n     *\n     * export default (ctx) => {\n     *   const { pathname, search } = new URL(ctx.request.url)\n     *   const match = urls.matchSegment(ctx.params.lang, pathname + search)\n     *   if (match.kind === \"not-found\") notFound()\n     *   if (match.kind === \"redirect\") return redirect(match.location, { status: 308 })\n     * }\n     * ```\n     */\n    matchSegment(value: string | undefined, pathname: string): SegmentMatch<K>;\n}"
   },
   {
     "name": "LocalProcessAdapter",
@@ -16882,6 +16937,13 @@
     "doc": "/** A document-wide / per-operation security requirement: scheme name → required scopes. */"
   },
   {
+    "name": "SegmentMatch",
+    "kind": "type",
+    "package": "@nifrajs/i18n",
+    "signature": "export type SegmentMatch<K extends string = string> = {\n    readonly kind: \"ok\";\n    readonly locale: K;\n}\n/** Not a served locale (unknown, or a draft): answer 404. */\n | {\n    readonly kind: \"not-found\";\n}\n/** A served locale under a non-canonical URL - the default's prefix when the default is served\n * unprefixed, or the wrong case. `location` is the canonical path, query kept. */\n | {\n    readonly kind: \"redirect\";\n    readonly location: string;\n};",
+    "doc": "/** What a `[lang]` segment value means for the request. */"
+  },
+  {
     "name": "SelfHealingController",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
@@ -19705,7 +19767,7 @@
     "name": "UnlocalizedPath",
     "kind": "interface",
     "package": "@nifrajs/i18n",
-    "signature": "export interface UnlocalizedPath {\n    /** The locale the leading segment named, or `undefined` for an unprefixed path. */\n    readonly locale: Locale | undefined;\n    /** The path without the locale segment, always starting with `/`. */\n    readonly pathname: string;\n}",
+    "signature": "export interface UnlocalizedPath<K extends string = string> {\n    /** The served locale the leading segment named, or `undefined` for an unprefixed path. */\n    readonly locale: K | undefined;\n    /** The path without the locale segment, always starting with `/`. */\n    readonly pathname: string;\n}",
     "doc": "/** A pathname with its locale prefix removed (or not, when it carries none). */"
   },
   {

@@ -10,6 +10,31 @@ Part of the **[nifra](https://nifra.dev)** full-stack TypeScript framework - one
 bun add @nifrajs/i18n
 ```
 
+## Locales and URLs
+
+Declare each locale once with `defineLocales()` - URL segment, BCP-47 tag, `hreflang`, direction and
+native name, each defaulted from the segment - and bind it to a locale-prefixed URL scheme with
+`@nifrajs/i18n/routing`:
+
+```ts
+import { defineLocales } from "@nifrajs/i18n"
+import { defineI18nRouting } from "@nifrajs/i18n/routing"
+
+export const locales = defineLocales({
+  default: "en",
+  locales: { en: {}, hi: { hreflang: "hi-IN" }, ur: { tag: "ur-PK" }, gu: { draft: true } },
+})
+export const urls = defineI18nRouting(locales)
+
+urls.localizePathname("/kundli", "hi") // "/hi/kundli"
+urls.alternates("/hi/kundli", { origin: "https://example.com" }) // { canonical, links } with hreflang
+urls.matchSegment("gu", "/gu/kundli") // { kind: "not-found" } - a draft is never served
+locales.documentMeta("ur") // { lang: "ur-PK", dir: "rtl" }
+```
+
+Guard a `[lang]` route segment with `matchSegment()` in `routes/[lang]/_middleware.ts`: an unknown or
+draft value answers 404, and the default's prefix (`/en/...`) or a wrong case redirects.
+
 ## Locale detection
 
 `negotiateLocale()` / `resolveLocale()` are pure: query parameter → cookie → `Accept-Language` →

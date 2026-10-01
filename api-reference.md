@@ -3225,16 +3225,28 @@ _No named exports (side-effect entrypoint)._
 - **Formatter** _(interface)_ - `interface Formatter`
 - **Locale** _(type)_ - `type Locale = string`
   Locale negotiation - pick the best supported locale for a request, from (in priority order) an explicit query parameter, then a cookie, then the `Accept-Language` header (quality-ranked, with a base-tag fallback so `fr-CA` matches a supported `fr`). Pure + runtime-agnostic. The result is always a m…
+- **LocaleInfo** _(interface)_ - `interface LocaleInfo<K extends string = string>`
+  One locale with every field resolved.
 - **LocaleParts** _(interface)_ - `interface LocaleParts`
   The slice of a request the negotiation reads. Pass a `Request`, or this structural shape where no `Request` object exists (e.g. inside an `onResponseHeaders` hook, which sees only `url` + `header`). `query`/`url` are consulted only when `queryParam` is configured; an already-parsed `query` is prefe…
 - **LocaleSource** _(type)_ - `type LocaleSource = "query" | "cookie" | "header" | "default"`
   Which source produced the locale, in priority order.
+- **LocaleSpec** _(interface)_ - `interface LocaleSpec`
+  How one locale is declared. Every field has a default derived from the URL segment.
+- **Locales** _(interface)_ - `interface Locales<K extends string = string>`
+  The registry {@link defineLocales} returns.
+- **LocalesConfig** _(interface)_ - `interface LocalesConfig<K extends string>`
+  What {@link defineLocales} takes.
 - **Messages** _(type)_ - `type Messages = Record<string, string>`
   A tiny ICU message formatter on the platform `Intl`. Supports interpolation (`{name}`), `plural` (`{n, plural, one {# item} other {# items}}`, with `=N` exact cases and `#` → the number), and `select` (`{kind, select, a {…} other {…}}`), nested arbitrarily. Parsed by a hand-written recursive descen…
 - **NegotiateOptions** _(interface)_ - `interface NegotiateOptions`
 - **ResolvedLocale** _(interface)_ - `interface ResolvedLocale`
 - **createFormatter** _(function)_ - `createFormatter: (locale: string, messages: Messages) => Formatter`
   Build (or reuse) a {@link Formatter} bound to a locale + its message catalog. Cheap to call per request/render - instances are cached per `(messages, locale)`, and parsed ASTs + `Intl.*` are memoized inside each. The catalog is the app's (import a JSON file); this only negotiates (see `negotiateLoc…
+- **defineLocales** _(function)_ - `defineLocales: <const K extends string>(config: LocalesConfig<K>) => Locales<K>`
+  Declare the app's locales once.
+- **localeDirection** _(function)_ - `localeDirection: (tag: string) => "ltr" | "rtl"`
+  The writing direction of a BCP-47 tag: an explicit script subtag decides (`pa-Arab` is rtl, `sd-Deva` ltr), then the language (`ur`, `ar`, `he`, ...), then the script the runtime's likely- subtags data gives for a rarer language. `ltr` when none of those says rtl, including for a tag the runtime ca…
 - **negotiateLocale** _(function)_ - `negotiateLocale: (request: Request | LocaleParts, options: NegotiateOptions) => Locale`
   Negotiate the request's locale. Order: a valid {@link NegotiateOptions.queryParam} value → a valid {@link NegotiateOptions.cookie} value → `Accept-Language` (each `q`-ranked tag, exact then base-subtag) → `defaultLocale`. {@link resolveLocale} additionally reports the winning source.
 - **resolveLocale** _(function)_ - `resolveLocale: (request: Request | LocaleParts, options: NegotiateOptions) => ResolvedLocale`
@@ -3250,14 +3262,19 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/i18n/routing`
 
+- **Alternates** _(interface)_ - `interface Alternates`
+  A page's canonical URL and the alternates that point at it from each language.
+- **AlternatesOptions** _(interface)_ - `interface AlternatesOptions<K extends string = string>`
 - **HreflangLink** _(interface)_ - `interface HreflangLink`
-  One `hreflang` alternate: an absolute URL plus the tag search engines match on.
+  One `hreflang` alternate: a URL plus the tag search engines match on.
 - **I18nRoutingOptions** _(interface)_ - `interface I18nRoutingOptions`
-- **LocalizedRouter** _(interface)_ - `interface LocalizedRouter`
-- **UnlocalizedPath** _(interface)_ - `interface UnlocalizedPath`
+- **LocalizedRouter** _(interface)_ - `interface LocalizedRouter<K extends string = string>`
+- **SegmentMatch** _(type)_ - `type SegmentMatch<K extends string = string>`
+  What a `[lang]` segment value means for the request.
+- **UnlocalizedPath** _(interface)_ - `interface UnlocalizedPath<K extends string = string>`
   A pathname with its locale prefix removed (or not, when it carries none).
-- **defineI18nRouting** _(function)_ - `defineI18nRouting: (options: I18nRoutingOptions) => LocalizedRouter`
-  Define the app's locale-prefixed URL scheme once (validated here, so the hot path never re-checks), and get the four path operations bound to it.
+- **defineI18nRouting** _(function)_ - `defineI18nRouting: <K extends string>(locales: Locales<K>, options?: I18nRoutingOptions) => LocalizedRouter<K>`
+  Bind the app's locale-prefixed URL scheme to a {@link Locales} registry.
 
 ## @nifrajs/image
 
