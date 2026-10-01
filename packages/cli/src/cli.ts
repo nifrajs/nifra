@@ -119,6 +119,8 @@ Usage:
                                          installs: rewrites only the @nifrajs/cli@x.y.z version in
                                          .mcp.json, .cursor/mcp.json, CLAUDE.md and AGENTS.md's MCP
                                          section - every other byte stays as it is. Creates nothing.
+                                         At a workspace root with one nifra member, the two registries'
+                                         launch also names that member (\`mcp app\`).
   nifra mcp [dir]                        Start an MCP server (stdio) exposing this project to a coding
                                          agent. The project root is [dir] when given, else resolved from
                                          cwd (marker walk-up + the client's MCP roots); tools refuse

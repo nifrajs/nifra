@@ -458,6 +458,99 @@ describe("initAgents --sync-mcp - re-pins the MCP launch and nothing else", () =
   })
 })
 
+describe("initAgents at a workspace root - the launch names the one nifra member", () => {
+  const pin = (version: string) => `@nifrajs/cli@${version}`
+  const cursorJson = (version: string, member?: string) =>
+    `{\n  "mcpServers": {\n    "nifra": {\n      "command": "bunx",\n      "args": [\n        "${pin(version)}",\n        "mcp"${member === undefined ? "" : `,\n        "${member}"`}\n      ]\n    }\n  }\n}\n`
+
+  /** A root that only declares `workspaces`, a framework-free `core`, and the nifra
+   * `app`. nifra is installed in the member (an isolated install), not at the root. */
+  async function workspace(nifraMembers: readonly string[] = ["app"]): Promise<string> {
+    const dir = await freshDir()
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "root", private: true, workspaces: ["core", ...nifraMembers] }),
+    )
+    await mkdir(join(dir, "core"))
+    await writeFile(join(dir, "core/package.json"), JSON.stringify({ name: "core" }))
+    for (const member of nifraMembers) {
+      await mkdir(join(dir, member, "node_modules/@nifrajs/cli"), { recursive: true })
+      await writeFile(
+        join(dir, member, "package.json"),
+        JSON.stringify({ name: member, dependencies: { "@nifrajs/core": "3.4.2" } }),
+      )
+      await writeFile(
+        join(dir, member, "node_modules/@nifrajs/cli/package.json"),
+        JSON.stringify({ name: "@nifrajs/cli", version: "3.4.2" }),
+      )
+    }
+    return dir
+  }
+
+  test("--sync-mcp re-pins to the member's nifra and names it in both registries", async () => {
+    const dir = await workspace()
+    await mkdir(join(dir, ".cursor"))
+    await writeFile(
+      join(dir, ".mcp.json"),
+      `{ "mcpServers": { "nifra": { "command": "bunx", "args": ["${pin("3.1.0")}", "mcp"] } } }\n`,
+    )
+    await writeFile(join(dir, ".cursor/mcp.json"), cursorJson("3.1.0"))
+    await writeFile(join(dir, "CLAUDE.md"), `Launch with \`bunx ${pin("3.1.0")} mcp\`.\n`)
+
+    const result = await initAgents(dir, { syncMcp: true })
+    expect(result.syncedTo).toBe("3.4.2")
+    expect(result.files.find((f) => f.path === ".mcp.json")?.note).toBe(
+      "3.1.0 -> 3.4.2; launches `mcp app`",
+    )
+    expect(await read(dir, ".mcp.json")).toBe(
+      `{ "mcpServers": { "nifra": { "command": "bunx", "args": ["${pin("3.4.2")}", "mcp", "app"] } } }\n`,
+    )
+    expect(await read(dir, ".cursor/mcp.json")).toBe(cursorJson("3.4.2", "app"))
+    // The markdown only describes the launch; its wording keeps everything but the version.
+    expect(await read(dir, "CLAUDE.md")).toBe(`Launch with \`bunx ${pin("3.4.2")} mcp\`.\n`)
+
+    const again = await initAgents(dir, { syncMcp: true })
+    expect(again.files.slice(0, 3).map((f) => f.action)).toEqual(["present", "present", "present"])
+  })
+
+  test("a current pin with no directory is still synced, to name the member", async () => {
+    const dir = await workspace()
+    await writeFile(join(dir, ".mcp.json"), cursorJson("3.4.2"))
+    const result = await initAgents(dir, { syncMcp: true })
+    expect(actionFor(result, ".mcp.json")).toBe("synced")
+    expect(result.files.find((f) => f.path === ".mcp.json")?.note).toBe("launches `mcp app`")
+    expect(await read(dir, ".mcp.json")).toBe(cursorJson("3.4.2", "app"))
+  })
+
+  test("a launch that already names a directory keeps it", async () => {
+    const dir = await workspace()
+    const named = `{ "mcpServers": { "nifra": { "command": "bunx", "args": ["${pin("3.1.0")}", "mcp", "elsewhere"] } } }\n`
+    await writeFile(join(dir, ".mcp.json"), named)
+    await initAgents(dir, { syncMcp: true })
+    expect(await read(dir, ".mcp.json")).toBe(named.replace(pin("3.1.0"), pin("3.4.2")))
+  })
+
+  test("a plain run writes registries that name the member", async () => {
+    const dir = await workspace()
+    await initAgents(dir)
+    const mcp = JSON.parse(await read(dir, ".mcp.json")) as {
+      mcpServers: Record<string, { args: string[] }>
+    }
+    expect(mcp.mcpServers.nifra?.args).toEqual([pin(MCP_CLI_VERSION), "mcp", "app"])
+    expect(await read(dir, ".cursor/mcp.json")).toBe(await read(dir, ".mcp.json"))
+  })
+
+  test("with two nifra members nothing is named: the choice is the user's", async () => {
+    const dir = await workspace(["app", "admin"])
+    await writeFile(join(dir, ".mcp.json"), cursorJson("3.1.0"))
+    const result = await initAgents(dir, { syncMcp: true })
+    expect(result.files.find((f) => f.path === ".mcp.json")?.note).toBe(
+      `3.1.0 -> ${MCP_CLI_VERSION}`,
+    )
+    expect(await read(dir, ".mcp.json")).toBe(cursorJson(MCP_CLI_VERSION))
+  })
+})
+
 // One end-to-end check that the dispatcher wires `nifra init-agents` and confines writes to the cwd.
 describe("CLI dispatch (subprocess)", () => {
   const CLI = join(import.meta.dir, "../src/cli.ts")
