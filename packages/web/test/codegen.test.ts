@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import ts from "typescript"
+import { type BuildServerOptions, buildServer } from "../src/build.ts"
 import { createMatcher } from "../src/client.ts"
 import {
   buildManifest,
@@ -199,6 +200,42 @@ test("generateServerManifest({ lazy }) emits per-route import() loaders (no eage
   )
   expect(code).toContain('export const clientEntry = "/assets/entry-abc123.js"')
   expect(code).not.toContain('"node:fs"')
+})
+
+test("generateServerManifest refuses a missing clientEntry instead of baking undefined", () => {
+  const m = buildManifest(["index.tsx"], importer)
+  const resolve = (file: string) => `./routes/${file}`
+  for (const clientEntry of [undefined, null, 42]) {
+    expect(() =>
+      generateServerManifest(m, { resolve, clientEntry: clientEntry as unknown as string }),
+    ).toThrow(
+      /needs clientEntry .* got (undefined|null|number); check the option is spelled clientEntry/,
+    )
+  }
+  // "" is an app with no client script, not a missing option.
+  expect(generateServerManifest(m, { resolve, clientEntry: "" })).toContain(
+    'export const clientEntry = ""',
+  )
+})
+
+test("buildServer fails the build when clientEntry is misspelled", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-build-server-client-entry-"))
+  try {
+    await mkdir(join(root, "routes"))
+    await writeFile(join(root, "routes/index.tsx"), "export default () => null\n")
+    await writeFile(join(root, "worker.ts"), "export default {}\n")
+    const options = {
+      routesDir: join(root, "routes"),
+      serverEntry: join(root, "worker.ts"),
+      outDir: join(root, "dist"),
+      client: "/assets/entry.js",
+    }
+    await expect(buildServer(options as unknown as BuildServerOptions)).rejects.toThrow(
+      /needs clientEntry .* got undefined/,
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 // biome-ignore format: keep the existing compact test body while adding an explicit heavy-test timeout.

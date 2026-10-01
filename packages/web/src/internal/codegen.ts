@@ -446,6 +446,13 @@ export function generateServerManifest(
     cssLoading: requestedCssLoading,
     lazy = false,
   } = options
+  // A missing entry would bake `clientEntry = undefined` and the build would still succeed, leaving
+  // every hydrating page to fail at request time. `""` stays valid: an app with no client script.
+  if (typeof clientEntry !== "string") {
+    throw new TypeError(
+      `[nifra/web] the server build needs clientEntry (the built client entry URL, buildClient's manifest.entry), got ${clientEntry === null ? "null" : typeof clientEntry}; check the option is spelled clientEntry, or pass "" for an app with no client script`,
+    )
+  }
   const cssLoading = normalizeCssLoading(requestedCssLoading ?? DEFAULT_CSS_LOADING)
   // Every unique source file in the manifest (routes + layouts + error/status pages), sorted for stable output.
   const files = [
