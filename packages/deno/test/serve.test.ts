@@ -24,7 +24,7 @@ Deno.test("serves GET (JSON) + POST (body), resolves the bound port", async () =
     .use(responseObserver())
     .get("/users/:id", (c) => ({ id: c.params.id }))
     .post("/echo", (c) => c.req.json())
-  const running = await serve(app, { port: 0 })
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   try {
     assert(running.port > 0, "port should be resolved")
     const base = `http://localhost:${running.port}`
@@ -45,7 +45,7 @@ Deno.test("passes a 204 (no body) through correctly", async () => {
     c.set.status = 204
     return undefined
   })
-  const running = await serve(app, { port: 0 })
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   try {
     const res = await fetch(`http://localhost:${running.port}/empty`)
     assertEquals(res.status, 204)
@@ -62,7 +62,7 @@ Deno.test("a throwing app yields a flat 500 (no leak)", async () => {
         throw new Error("boom")
       },
     },
-    { port: 0 },
+    { hostname: "127.0.0.1", port: 0 },
   )
   try {
     const res = await fetch(`http://localhost:${running.port}/`)
@@ -78,7 +78,7 @@ Deno.test("stop() drains an in-flight request, then is idempotent", async () => 
     await new Promise((resolve) => setTimeout(resolve, 80))
     return { done: true }
   })
-  const running = await serve(app, { port: 0 })
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const inflight = fetch(`http://localhost:${running.port}/slow`)
     .then((r) => r.json())
     .catch(() => "ERR")
@@ -104,7 +104,7 @@ Deno.test("stop() force-closes a handler that outlives the drain deadline", asyn
     })
     return { done: true }
   })
-  const running = await serve(app, { port: 0 })
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const inflight = fetch(`http://localhost:${running.port}/hang`).catch(() => undefined)
   await started
   const before = performance.now()
@@ -127,7 +127,7 @@ Deno.test("inherits the app-level requestTimeoutMs (503) through app.fetch", asy
     })
     return { done: true }
   })
-  const running = await serve(app, { port: 0 })
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   try {
     const res = await fetch(`http://localhost:${running.port}/slow`)
     assertEquals(res.status, 503)
@@ -176,7 +176,7 @@ Deno.test("WebSocket: upgrades, echoes, and honors an upgrade() guard", async ()
       open: (ws) => ws.send("allowed"),
     })
     .get("/health", () => ({ ok: true }))
-  const running = await serve(app, { port: 0 })
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   try {
     const wsBase = `ws://localhost:${running.port}`
 
@@ -218,7 +218,7 @@ Deno.test("WebSocket: upgrades, echoes, and honors an upgrade() guard", async ()
 
 Deno.test("a WS-free app serves HTTP normally even when the client sends an Upgrade header", async () => {
   const app = server().get("/health", () => ({ ok: true }))
-  const running = await serve(app, { port: 0 })
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   try {
     const res = await fetch(`http://localhost:${running.port}/health`, {
       headers: { upgrade: "websocket", connection: "Upgrade" },
@@ -255,7 +255,7 @@ Deno.test("portable response tiers serve end to end on the fetch path", async ()
       return { ok: true }
     })
     .get("/raw", () => new Response("<h1>hi</h1>", { headers: { "content-type": "text/html" } }))
-  const running = await serve(app, { port: 0 })
+  const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   try {
     const base = `http://localhost:${running.port}`
     const res = await fetch(`${base}/json`)
@@ -320,7 +320,7 @@ Deno.test("statically declared response headers match the equivalent hook on the
   const paths = ["/json", "/own", "/collision", "/cookie", "/raw", "/boom", "/missing"]
 
   const dumpAll = async (app: ReturnType<typeof server>): Promise<unknown[]> => {
-    const running = await serve(app, { port: 0 })
+    const running = await serve(app, { hostname: "127.0.0.1", port: 0 })
     try {
       const out: unknown[] = []
       for (const path of paths) {

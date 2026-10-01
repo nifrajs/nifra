@@ -35,6 +35,7 @@ async function startWithStatic(
   extra?: Partial<ServeStaticOptions>,
 ): Promise<string> {
   running = await serve(app, {
+    hostname: "127.0.0.1",
     port: 0,
     static: { dir, ...(prefix ? { prefix } : {}), ...extra },
   })

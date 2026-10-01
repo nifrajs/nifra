@@ -62,7 +62,7 @@ let instance: ReturnType<typeof app.listen>
 let api: TreatyFromRegistry<RegistryFor<typeof contract>>
 
 beforeAll(() => {
-  instance = app.listen(0)
+  instance = app.listen(0, { hostname: "127.0.0.1" })
   // Decoupled: typed entirely from the contract VALUE - no server import.
   api = client(contract, `http://localhost:${instance.port}`)
 })

@@ -27,7 +27,7 @@ import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
  * belongs to the template literal in the file being written, which is why it is a plain string.
  */
 const SERVE_FIXTURE = `import html from "./index.html"
-const s = Bun.serve({ port: 0, routes: { "/": html }, development: true })
+const s = Bun.serve({ hostname: "127.0.0.1", port: 0, routes: { "/": html }, development: true })
 console.log(\`PORT=\${s.port}\`)
 `
 

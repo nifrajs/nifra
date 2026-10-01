@@ -119,7 +119,7 @@ describe("wired to a live nifra app", () => {
             headers: { "content-type": "text/plain; charset=utf-8" },
           }),
       )
-      .listen(0)
+      .listen(0, { hostname: "127.0.0.1" })
     const base = `http://127.0.0.1:${running.port}`
     const sm = await fetch(`${base}/sitemap.xml`)
     expect(sm.headers.get("content-type")).toContain("application/xml")

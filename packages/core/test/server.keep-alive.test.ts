@@ -60,7 +60,7 @@ test("two requests on ONE connection both get their own response", async () => {
   const app = server()
     .get("/first", () => ({ which: "first" }))
     .get("/second", () => ({ which: "second" }))
-  const instance = app.listen(0)
+  const instance = app.listen(0, { hostname: "127.0.0.1" })
   try {
     const conversation = await converse(instance.port, [get("/first"), get("/second")])
     // Both bodies arrived, in order, on a socket that was never closed between them.
@@ -78,7 +78,7 @@ test("route params and query stay correct on a reused connection", async () => {
   // The failure this guards against is state leaking between requests that share a socket - the second
   // request seeing the first's params, which no single-request test can observe.
   const app = server().get("/users/:id", (c) => ({ id: c.params.id, q: c.query.get("q") }))
-  const instance = app.listen(0)
+  const instance = app.listen(0, { hostname: "127.0.0.1" })
   try {
     const conversation = await converse(instance.port, [
       get("/users/alice?q=one"),
@@ -94,7 +94,7 @@ test("route params and query stay correct on a reused connection", async () => {
 
 test("a 404 on a reused connection does not poison the next request", async () => {
   const app = server().get("/ok", () => ({ ok: true }))
-  const instance = app.listen(0)
+  const instance = app.listen(0, { hostname: "127.0.0.1" })
   try {
     const conversation = await converse(instance.port, [get("/nope"), get("/ok")])
     expect(conversation).toContain("404")

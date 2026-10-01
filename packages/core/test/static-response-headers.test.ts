@@ -303,7 +303,7 @@ describe("responseHeaders() - lane retention", () => {
     const app = server()
       .responseHeaders(DECLARED)
       .get("/json", () => ({ ok: true }))
-    const running = app.listen(0)
+    const running = app.listen(0, { hostname: "127.0.0.1" })
     try {
       const res = await fetch(`http://127.0.0.1:${running.port}/json`)
       expect(res.headers.get("x-frame-options")).toBe("DENY")
@@ -515,7 +515,7 @@ describe("responseHeaders() - refusals", () => {
 
   test("declaring after listen() is refused like every other configuration call", () => {
     const app = server().get("/", () => ({ ok: true }))
-    const running = app.listen(0)
+    const running = app.listen(0, { hostname: "127.0.0.1" })
     try {
       expect(() => app.responseHeaders({ "x-a": "1" })).toThrow(/sealed/)
     } finally {

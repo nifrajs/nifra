@@ -42,7 +42,7 @@ function rawResponseApp() {
 }
 
 test("fastResponse serves a hand-rolled string Response byte-for-byte, with content-length", async () => {
-  running = await serve(rawResponseApp(), { port: 0, fastResponse: true })
+  running = await serve(rawResponseApp(), { hostname: "127.0.0.1", port: 0, fastResponse: true })
   const res = await fetch(`http://localhost:${running.port}/ping`)
   expect(res.status).toBe(200)
   expect(res.headers.get("content-type")).toContain("text/plain")
@@ -51,7 +51,7 @@ test("fastResponse serves a hand-rolled string Response byte-for-byte, with cont
 })
 
 test("fastResponse preserves an explicit status and header on a raw Response", async () => {
-  running = await serve(rawResponseApp(), { port: 0, fastResponse: true })
+  running = await serve(rawResponseApp(), { hostname: "127.0.0.1", port: 0, fastResponse: true })
   const res = await fetch(`http://localhost:${running.port}/status`)
   expect(res.status).toBe(201)
   expect(res.headers.get("x-mark")).toBe("1")
@@ -59,7 +59,7 @@ test("fastResponse preserves an explicit status and header on a raw Response", a
 })
 
 test("fastResponse leaves non-simple Responses (204, streamed) unchanged", async () => {
-  running = await serve(rawResponseApp(), { port: 0, fastResponse: true })
+  running = await serve(rawResponseApp(), { hostname: "127.0.0.1", port: 0, fastResponse: true })
   const empty = await fetch(`http://localhost:${running.port}/empty`)
   expect(empty.status).toBe(204)
   expect(await empty.text()).toBe("")
@@ -74,7 +74,7 @@ test("the patched global Response still satisfies instanceof and the static help
   // Install by starting (then stopping) a server, then probe the global directly.
   return serve(
     server().get("/", () => new Response("x")),
-    { port: 0, fastResponse: true },
+    { hostname: "127.0.0.1", port: 0, fastResponse: true },
   ).then(async (s) => {
     try {
       const simple = new Response("Hi")

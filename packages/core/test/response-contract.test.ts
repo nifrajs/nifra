@@ -208,7 +208,7 @@ describe("the Bun native lane cannot bypass the contract", () => {
     const app = server({ logger: silentLogger })
       .use(responseContract("enforce"))
       .get("/me", { response: STRIPPING }, () => LEAK as never)
-    const running = app.listen(0)
+    const running = app.listen(0, { hostname: "127.0.0.1" })
     try {
       const res = await fetch(`http://127.0.0.1:${running.port}/me`)
       const body = await res.text()
@@ -226,7 +226,7 @@ describe("the Bun native lane cannot bypass the contract", () => {
       { response: STRIPPING },
       () => LEAK as never,
     )
-    const running = app.listen(0)
+    const running = app.listen(0, { hostname: "127.0.0.1" })
     try {
       const res = await fetch(`http://127.0.0.1:${running.port}/me`)
       expect(await res.json()).toEqual(LEAK)

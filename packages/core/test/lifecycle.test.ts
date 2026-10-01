@@ -26,7 +26,7 @@ describe("graceful shutdown", () => {
       await Bun.sleep(60)
       return "done"
     })
-    const srv = app.listen(0)
+    const srv = app.listen(0, { hostname: "127.0.0.1" })
     const inflight = fetch(`http://localhost:${srv.port}/slow`)
       .then((r) => r.json())
       .catch(() => "ERR")
@@ -40,7 +40,7 @@ describe("graceful shutdown", () => {
       await Bun.sleep(400)
       return "done"
     })
-    const srv = app.listen(0)
+    const srv = app.listen(0, { hostname: "127.0.0.1" })
     const inflight = fetch(`http://localhost:${srv.port}/slow`)
       .then((r) => r.text())
       .catch(() => "ERR")
@@ -76,7 +76,7 @@ describe("graceful shutdown", () => {
     const beforeTerm = process.listenerCount("SIGTERM")
     const beforeInt = process.listenerCount("SIGINT")
     const app = server({ gracefulSignals: true }).get("/", () => "ok")
-    const srv = app.listen(0)
+    const srv = app.listen(0, { hostname: "127.0.0.1" })
     expect(process.listenerCount("SIGTERM")).toBe(beforeTerm + 1)
     expect(process.listenerCount("SIGINT")).toBe(beforeInt + 1)
 
@@ -124,7 +124,7 @@ describe("request timeout", () => {
 describe("body size limits", () => {
   test("Content-Length over the cap is rejected before buffering (413)", async () => {
     const app = server({ maxBodyBytes: 100 }).post("/x", { body: passThrough }, (c) => c.body)
-    const srv = app.listen(0)
+    const srv = app.listen(0, { hostname: "127.0.0.1" })
     try {
       // Over the wire, fetch sets a real Content-Length (~510 bytes > cap).
       const res = await fetch(`http://localhost:${srv.port}/x`, {
@@ -188,9 +188,9 @@ describe("ctx.signal", () => {
 describe("listen({ reusePort })", () => {
   test("two servers bind the same port and both answer", async () => {
     const make = () => server().get("/", () => ({ pid: "me" }))
-    const a = make().listen(0, { reusePort: true })
+    const a = make().listen(0, { hostname: "127.0.0.1", reusePort: true })
     // The second bind to the SAME port only succeeds because both sockets set SO_REUSEPORT.
-    const b = make().listen(a.port, { reusePort: true })
+    const b = make().listen(a.port, { hostname: "127.0.0.1", reusePort: true })
     try {
       const res = await fetch(`http://127.0.0.1:${a.port}/`)
       expect(await res.json()).toEqual({ pid: "me" })

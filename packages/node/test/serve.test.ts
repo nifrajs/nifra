@@ -86,7 +86,7 @@ function demoApp() {
 }
 
 test("serves GET (JSON) + POST (body), resolves the bound port", async () => {
-  running = await serve(demoApp(), { port: 0 })
+  running = await serve(demoApp(), { hostname: "127.0.0.1", port: 0 })
   expect(running.port).toBeGreaterThan(0)
   const base = `http://localhost:${running.port}`
 
@@ -133,7 +133,7 @@ test("Node adapter runs the dedicated auth stage before body validation", async 
       (c) => ({ userId: c.principal.userId, body: c.body }),
     )
 
-  running = await serve(guarded, { port: 0 })
+  running = await serve(guarded, { hostname: "127.0.0.1", port: 0 })
   const base = `http://127.0.0.1:${running.port}`
 
   const denied = await fetch(`${base}/private`, {
@@ -158,7 +158,7 @@ test("allowedHosts rejects an untrusted Host on both fast GET and POST paths", a
   const app = server()
     .get("/host", (c) => ({ origin: new URL(c.req.url).origin }))
     .post("/host", (c) => ({ origin: new URL(c.req.url).origin }))
-  running = await serve(app, { port: 0, allowedHosts: ["app.example"] })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0, allowedHosts: ["app.example"] })
   const base = `http://127.0.0.1:${running.port}`
 
   const get = await fetch(`${base}/host`, { headers: { host: "evil.example" } })
@@ -173,7 +173,11 @@ test("allowedHosts rejects an untrusted Host on both fast GET and POST paths", a
 
 test("canonicalHost controls request URL construction and the default remains Host-derived", async () => {
   const canonicalApp = server().get("/host", (c) => ({ origin: new URL(c.req.url).origin }))
-  running = await serve(canonicalApp, { port: 0, canonicalHost: "canonical.example" })
+  running = await serve(canonicalApp, {
+    hostname: "127.0.0.1",
+    port: 0,
+    canonicalHost: "canonical.example",
+  })
   let response = await fetch(`http://127.0.0.1:${running.port}/host`, {
     headers: { host: "evil.example" },
   })
@@ -182,7 +186,7 @@ test("canonicalHost controls request URL construction and the default remains Ho
   running = undefined
 
   const defaultApp = server().get("/host", (c) => ({ origin: new URL(c.req.url).origin }))
-  running = await serve(defaultApp, { port: 0 })
+  running = await serve(defaultApp, { hostname: "127.0.0.1", port: 0 })
   response = await fetch(`http://127.0.0.1:${running.port}/host`, {
     headers: { host: "evil.example" },
   })
@@ -193,7 +197,7 @@ test("emits multiple Set-Cookie headers as separate lines (not comma-joined)", a
   // `Headers.forEach` joins repeated headers with ", "; for Set-Cookie that's wrong (a cookie's
   // `Expires` contains a comma). The adapter must split them via `getSetCookie()` - so a response
   // that sets a session + a CSRF cookie arrives as two distinct header lines.
-  running = await serve(demoApp(), { port: 0 })
+  running = await serve(demoApp(), { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/cookies`)
   await res.text()
   const cookies = res.headers.getSetCookie()
@@ -205,7 +209,7 @@ test("emits multiple Set-Cookie headers as separate lines (not comma-joined)", a
 test("JSON responses carry the application/json content-type (node-direct fast path)", async () => {
   // A nifra app exposes `resolveNode`, so a plain-data result is serialized straight to the socket
   // (no undici Response). The wire bytes must still match: a JSON Content-Type + the JSON body.
-  running = await serve(demoApp(), { port: 0 })
+  running = await serve(demoApp(), { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/users/7`)
   expect(res.headers.get("content-type")).toContain("application/json")
   expect(await res.json()).toEqual({ id: "7" })
@@ -216,7 +220,7 @@ test("node-direct JSON preserves an explicit content-type override", async () =>
     c.set.headers["content-type"] = "application/vnd.api+json"
     return { ok: true }
   })
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/custom-type`)
   expect(res.headers.get("content-type")).toBe("application/vnd.api+json")
   expect(await res.json()).toEqual({ ok: true })
@@ -237,7 +241,7 @@ test("native response middleware keeps JSON on the Node-direct path", async () =
     })
     .get("/native-headers", () => ({ ok: true }))
 
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/native-headers`)
   expect(res.headers.get("x-web-hook")).toBe("1")
   expect(await res.json()).toEqual({ ok: true })
@@ -265,7 +269,7 @@ test("a Web-only onResponse hook bridges the buffered outcome without losing hea
       return { ok: true }
     })
 
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/bridged`)
 
   expect(res.headers.get("x-bridged")).toBe("1")
@@ -293,7 +297,7 @@ test("a Web-only onResponse hook bridges a bodyless outcome", async () => {
       return undefined
     })
 
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/nothing`)
   expect(res.status).toBe(204)
   expect(res.headers.get("x-bridged")).toBe("1")
@@ -313,7 +317,7 @@ test("a hook that peeks at the body through req.clone() leaves it readable downs
     .post("/text", async (c) => ({ got: await c.req.text() }))
     .post("/json", async (c) => ({ got: await c.req.json() }))
 
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const text = await fetch(`http://localhost:${running.port}/text`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -354,7 +358,7 @@ test("native request middleware and c.header avoid the Web request path", async 
     })
     .get("/header", (c) => ({ authorization: c.header("authorization") }))
 
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/header`, {
     headers: { authorization: "Bearer test", "x-gate": "open" },
   })
@@ -372,7 +376,7 @@ test("serve() installs node-direct on the app - app.resolveNode() works with no 
   // Node-direct is adapter plumbing, not a user opt-in: serving on Node enables it, so a direct
   // `app.resolveNode()` call (e.g. a custom integration) renders the plain-data fast path.
   const app = server().get("/u/:id", (c) => ({ id: c.params.id }))
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const outcome = await app.resolveNode(new Request("http://x/u/9"))
   expect(outcome.kind).toBe("json")
   if (outcome.kind === "json") expect(outcome.body).toBe(JSON.stringify({ id: "9" }))
@@ -381,14 +385,14 @@ test("serve() installs node-direct on the app - app.resolveNode() works with no 
 test("a handler-returned Response (redirect) round-trips via the response fallback", async () => {
   // Not the JSON fast path - `resolveNode` returns `{ kind: "response" }`, which the adapter writes
   // the usual Web way (status + headers preserved).
-  running = await serve(demoApp(), { port: 0 })
+  running = await serve(demoApp(), { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/redirect`, { redirect: "manual" })
   expect(res.status).toBe(302)
   expect(res.headers.get("location")).toBe("/dest")
 })
 
 test("a streaming Response body is written through chunk-by-chunk", async () => {
-  running = await serve(demoApp(), { port: 0 })
+  running = await serve(demoApp(), { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/stream`)
   expect(res.headers.get("content-type")).toBe("text/plain")
   expect(await res.text()).toBe("chunk-data")
@@ -405,7 +409,7 @@ test("writes marked buffered response bodies directly without draining the Web s
     { headers: { "content-type": "text/html; charset=utf-8" } },
   )
   Object.defineProperty(response, nodeBody, { value: "<h1>fast html</h1>" })
-  running = await serve({ fetch: () => response }, { port: 0 })
+  running = await serve({ fetch: () => response }, { hostname: "127.0.0.1", port: 0 })
 
   const res = await fetch(`http://localhost:${running.port}/`)
   expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8")
@@ -428,7 +432,7 @@ test("writes node-direct buffered body outcomes with headers and cookies", async
       body: "<h1>node-direct</h1>",
     }),
   }
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
 
   const res = await fetch(`http://localhost:${running.port}/`)
   expect(res.status).toBe(203)
@@ -439,7 +443,7 @@ test("writes node-direct buffered body outcomes with headers and cookies", async
 })
 
 test("renders response-result and marked-Response bodies through the adapter-supplied runtime", async () => {
-  running = await serve(demoApp(), { port: 0 })
+  running = await serve(demoApp(), { hostname: "127.0.0.1", port: 0 })
 
   const lazy = await fetch(`http://localhost:${running.port}/lazy-body`)
   expect(lazy.status).toBe(202)
@@ -483,7 +487,7 @@ test("waits for Node drain when the socket applies response backpressure", async
           }),
         ),
     )
-    running = await serve(app, { port: 0 })
+    running = await serve(app, { hostname: "127.0.0.1", port: 0 })
     const res = await fetch(`http://localhost:${running.port}/backpressure`)
     expect(await res.text()).toBe("first-second")
     expect(forcedBackpressure).toBe(true)
@@ -526,7 +530,7 @@ test("cancels the Web response body when the Node socket closes under backpressu
           }),
         ),
     )
-    running = await serve(app, { port: 0 })
+    running = await serve(app, { hostname: "127.0.0.1", port: 0 })
     await fetch(`http://localhost:${running.port}/disconnect`)
       .then((res) => res.text())
       .catch(() => undefined)
@@ -572,7 +576,7 @@ test("cancels the Web response body on a clean close while waiting for drain", a
           }),
         ),
     )
-    running = await serve(app, { port: 0 })
+    running = await serve(app, { hostname: "127.0.0.1", port: 0 })
     await fetch(`http://localhost:${running.port}/close`)
       .then((res) => res.text())
       .catch(() => undefined)
@@ -615,7 +619,7 @@ test("cancels the Web response body if the socket closes before waiting for drai
           }),
         ),
     )
-    running = await serve(app, { port: 0 })
+    running = await serve(app, { hostname: "127.0.0.1", port: 0 })
     await Promise.race([
       fetch(`http://localhost:${running.port}/already-closed`)
         .then((res) => res.text())
@@ -635,7 +639,10 @@ test("cancels the Web response body if the socket closes before waiting for drai
 test("a plain { fetch } handler (no resolveNode) still works via the Web path", async () => {
   // The adapter bridges *any* Web-fetch handler, not only nifra apps. Without a
   // `resolveNode` seam it falls back to `app.fetch` + the Response writer.
-  running = await serve({ fetch: async () => Response.json({ plain: true }) }, { port: 0 })
+  running = await serve(
+    { fetch: async () => Response.json({ plain: true }) },
+    { hostname: "127.0.0.1", port: 0 },
+  )
   const res = await fetch(`http://localhost:${running.port}/`)
   expect(await res.json()).toEqual({ plain: true })
 })
@@ -645,7 +652,7 @@ test("constructs Request.url with an explicitly configured public protocol", asy
     url: c.req.url,
     protocol: new URL(c.req.url).protocol,
   }))
-  running = await serve(app, { port: 0, protocol: "https" })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0, protocol: "https" })
 
   const res = await fetch(`http://localhost:${running.port}/url?x=1`)
   const body = (await res.json()) as { url: string; protocol: string }
@@ -655,7 +662,7 @@ test("constructs Request.url with an explicitly configured public protocol", asy
 
 test("does not trust forwarded protocol headers unless configured by the host", async () => {
   const app = server().get("/url", (c) => ({ url: c.req.url }))
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
 
   const res = await fetch(`http://localhost:${running.port}/url`, {
     headers: { "x-forwarded-proto": "https" },
@@ -666,7 +673,7 @@ test("does not trust forwarded protocol headers unless configured by the host", 
 test("plain fetch handlers also receive the configured protocol", async () => {
   running = await serve(
     { fetch: (req) => Response.json({ url: req.url }) },
-    { port: 0, protocol: () => "https" },
+    { hostname: "127.0.0.1", port: 0, protocol: () => "https" },
   )
 
   const res = await fetch(`http://localhost:${running.port}/plain`)
@@ -674,9 +681,9 @@ test("plain fetch handlers also receive the configured protocol", async () => {
 })
 
 test("rejects invalid node adapter protocol configuration", () => {
-  expect(() => serve(demoApp(), { port: 0, protocol: "ftp" as unknown as "http" })).toThrow(
-    /protocol/,
-  )
+  expect(() =>
+    serve(demoApp(), { hostname: "127.0.0.1", port: 0, protocol: "ftp" as unknown as "http" }),
+  ).toThrow(/protocol/)
 })
 
 test("a throwing resolveNode yields a flat 500 (no leak)", async () => {
@@ -687,7 +694,7 @@ test("a throwing resolveNode yields a flat 500 (no leak)", async () => {
     },
     fetch: (): Promise<Response> => Promise.resolve(new Response()),
   }
-  running = await serve(fastThrow, { port: 0 })
+  running = await serve(fastThrow, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/`)
   expect(res.status).toBe(500)
   expect(await res.json()).toEqual({ ok: false, error: "internal_error" })
@@ -700,7 +707,7 @@ test("a resolveNodeSource whose promise REJECTS (async) yields a flat 500 (no st
     resolveNodeSource: (): Promise<never> => Promise.reject(new Error("boom secret detail")),
     fetch: (): Promise<Response> => Promise.resolve(new Response()),
   }
-  running = await serve(asyncReject, { port: 0 })
+  running = await serve(asyncReject, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/`)
   expect(res.status).toBe(500)
   const body = await res.text()
@@ -716,7 +723,7 @@ test("a resolveNodeSource that THROWS (sync) yields a flat 500 (no stack leak)",
     },
     fetch: (): Promise<Response> => Promise.resolve(new Response()),
   }
-  running = await serve(syncThrow, { port: 0 })
+  running = await serve(syncThrow, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/`)
   expect(res.status).toBe(500)
   expect(await res.text()).not.toContain("secret detail")
@@ -728,7 +735,7 @@ test("a resolveNode (Web seam) whose promise REJECTS (async) yields a flat 500 (
     resolveNode: (): Promise<never> => Promise.reject(new Error("boom secret detail")),
     fetch: (): Promise<Response> => Promise.resolve(new Response()),
   }
-  running = await serve(asyncReject, { port: 0 })
+  running = await serve(asyncReject, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/`)
   expect(res.status).toBe(500)
   expect(await res.text()).not.toContain("secret detail")
@@ -738,7 +745,7 @@ test("a plain { fetch } whose promise REJECTS (async) yields a flat 500 (no stac
   // Web path: even a non-nifra handler whose fetch rejects must not leak a stack.
   running = await serve(
     { fetch: (): Promise<Response> => Promise.reject(new Error("boom secret detail")) },
-    { port: 0 },
+    { hostname: "127.0.0.1", port: 0 },
   )
   const res = await fetch(`http://localhost:${running.port}/`)
   expect(res.status).toBe(500)
@@ -748,7 +755,7 @@ test("a plain { fetch } whose promise REJECTS (async) yields a flat 500 (no stac
 })
 
 test("passes a 204 (no body) through to Node correctly", async () => {
-  running = await serve(demoApp(), { port: 0 })
+  running = await serve(demoApp(), { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/empty`)
   expect(res.status).toBe(204)
   expect(await res.text()).toBe("")
@@ -759,7 +766,7 @@ test("normalizes a body-hook 304 before the Node direct writer", async () => {
     .use(responseObserver())
     .onResponseBody(() => ({ status: 304 }))
     .get("/doc", () => ({ body: "must not ship" }))
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/doc`)
   expect(res.status).toBe(304)
   expect(await res.text()).toBe("")
@@ -778,7 +785,7 @@ test("bodyless native JSON responses discard a hook-supplied content length", as
       return { status: 304 }
     })
     .get("/doc", () => ({ ok: true }))
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/doc`)
   expect(res.status).toBe(304)
   expect(res.headers.get("content-length")).not.toBe("999")
@@ -802,7 +809,7 @@ test("raw streamed compression works through the Node adapter", async () => {
           { headers: { "content-type": "text/plain" } },
         ),
     )
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/raw`, {
     headers: { "accept-encoding": "gzip" },
   })
@@ -816,7 +823,7 @@ test("normalizes a body-bearing raw 304 before the Node response writer", async 
     "/doc",
     () => new Response("must not ship", { status: 304, headers: { "content-length": "12" } }),
   )
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/doc`)
   expect(res.status).toBe(304)
   expect(res.headers.get("content-length")).not.toBe("12")
@@ -830,7 +837,7 @@ test("a body-less plain render declares content-length: 0 rather than chunking",
   const app = server().get("/go", () =>
     status(303, undefined, { headers: { location: "/thanks" } }),
   )
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/go`, { redirect: "manual" })
   expect(res.status).toBe(303)
   expect(res.headers.get("location")).toBe("/thanks")
@@ -842,7 +849,7 @@ test("a null-body Response declares content-length: 0 rather than chunking", asy
   // The same gap on the lane a hand-rolled `Response` takes, which the plain-render fix did not
   // cover: `new Response(null, ...)` is body-less and its length is knowable, so it is declared.
   const app = server().get("/go", () => new Response(null, { status: 303 }))
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/go`, { redirect: "manual" })
   expect(res.status).toBe(303)
   expect(res.headers.get("content-length")).toBe("0")
@@ -857,7 +864,7 @@ test("a caller-set content-length on a null-body Response is left alone", async 
     "/go",
     () => new Response(null, { status: 200, headers: { "content-length": "4096" } }),
   )
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
 
   const socket = connect(running.port, "127.0.0.1")
   socket.on("error", () => {})
@@ -878,7 +885,7 @@ test("a Response built from a string declares its length instead of chunking", a
   // `new Response("hi")` hands the bytes over as a stream, same as a live producer, so this lane
   // used to frame it as chunked. One chunk plus a close inside the same turn says otherwise.
   const app = server().get("/s", () => new Response("hi", { status: 200 }))
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/s`)
   expect(res.headers.get("content-length")).toBe("2")
   expect(res.headers.get("transfer-encoding")).toBeNull()
@@ -897,7 +904,7 @@ test("a Response over an empty stream declares content-length: 0", async () => {
         }),
       ),
   )
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/empty`)
   expect(res.headers.get("content-length")).toBe("0")
   expect(await res.text()).toBe("")
@@ -922,7 +929,7 @@ test("a genuinely streamed Response still chunks, and is not held for its later 
         }),
       ),
   )
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/stream`)
   expect(res.headers.get("transfer-encoding")).toBe("chunked")
   expect(res.headers.get("content-length")).toBeNull()
@@ -936,7 +943,7 @@ test("a throwing app yields a flat 500 (no leak)", async () => {
         throw new Error("boom")
       },
     },
-    { port: 0 },
+    { hostname: "127.0.0.1", port: 0 },
   )
   const res = await fetch(`http://localhost:${running.port}/`)
   expect(res.status).toBe(500)
@@ -956,7 +963,7 @@ test("a plain render Node refuses to write answers 500 - sync and async - and th
       return status(200, { ok: true }, injected)
     })
     .get("/fine", () => ({ ok: true }))
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   for (const path of ["/sync", "/async"]) {
     const res = await fetch(`http://localhost:${running.port}${path}`)
     expect(res.status).toBe(500)
@@ -980,7 +987,7 @@ test("stop() drains an in-flight request, then is idempotent", async () => {
     await Bun.sleep(80)
     return { done: true }
   })
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const inflight = fetch(`http://localhost:${running.port}/slow`)
     .then((r) => r.json())
     .catch(() => "ERR")
@@ -997,7 +1004,7 @@ test("inherits the app-level requestTimeoutMs (503) through app.fetch", async ()
     await Bun.sleep(200)
     return { done: true }
   })
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/slow`)
   expect(res.status).toBe(503)
   expect(await res.json()).toEqual({ ok: false, error: "request_timeout" })
@@ -1006,7 +1013,7 @@ test("inherits the app-level requestTimeoutMs (503) through app.fetch", async ()
 test("signals:true installs SIGTERM/SIGINT handlers that stop the server, then cleans up", async () => {
   const sigtermBefore = process.listenerCount("SIGTERM")
   const sigintBefore = process.listenerCount("SIGINT")
-  running = await serve(demoApp(), { port: 0, signals: true })
+  running = await serve(demoApp(), { hostname: "127.0.0.1", port: 0, signals: true })
   expect(process.listenerCount("SIGTERM")).toBe(sigtermBefore + 1)
   expect(process.listenerCount("SIGINT")).toBe(sigintBefore + 1)
 
@@ -1034,7 +1041,7 @@ test("c.req materializes lazily and exposes method/url/headers", async () => {
     path: new URL(c.req.url).pathname,
     ua: c.req.headers.get("x-probe"),
   }))
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/whoami`, {
     headers: { "x-probe": "hi" },
   })
@@ -1045,7 +1052,7 @@ test("c.boundedBody on a GET resolves to an empty body through the lean source",
   const app = server().get("/empty-body", async (c) => ({
     len: (await c.boundedBody()).byteLength,
   }))
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/empty-body`)
   expect(await res.json()).toEqual({ len: 0 })
 })
@@ -1054,7 +1061,7 @@ test("c.cookies on a GET with no Cookie header stays empty through the lean sour
   const app = server().get("/no-cookie", (c) => ({
     count: Object.keys(c.cookies).length,
   }))
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/no-cookie`)
   expect(await res.json()).toEqual({ count: 0 })
 })
@@ -1063,7 +1070,7 @@ test("c.boundedBody on a GET honors Content-Length: 0 through the lean source", 
   const app = server().get("/empty-body-length", async (c) => ({
     len: (await c.boundedBody()).byteLength,
   }))
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/empty-body-length`, {
     headers: { "content-length": "0" },
   })
@@ -1075,7 +1082,7 @@ test("c.boundedJson on a bodyless GET returns invalid_json through the lean sour
     await c.boundedJson()
     return { ok: true }
   })
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/empty-json`, {
     headers: { "content-length": "0" },
   })
@@ -1085,7 +1092,7 @@ test("c.boundedJson on a bodyless GET returns invalid_json through the lean sour
 
 test("c.req.json() works through the lazy source on a POST", async () => {
   const app = server().post("/echo", (c) => c.req.json())
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/echo`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -1101,7 +1108,7 @@ test("a schema-validated body still reaches the handler AND c.req is readable af
     name: c.body.name,
     method: c.req.method,
   }))
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/u`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -1114,7 +1121,7 @@ test("SECURITY: an oversized Content-Length is rejected (413) through the lazy s
   // nifra's default cap is 1 MB. A schema route reads the body, so the cap applies - and the lazy
   // source must reject an over-cap Content-Length BEFORE buffering it.
   const app = server().post("/u", { body: nameBody }, (c) => c.body)
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/u`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -1135,7 +1142,7 @@ test("SECURITY: an UNDERSTATED Content-Length cannot smuggle a body past the cap
     handlerRan = true
     return c.body
   })
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
 
   const smuggled = `{"name":"${"a".repeat(1_100_000)}"}` // 1.1 MB, above the default 1 MB cap
   const socket = connect(running.port, "127.0.0.1")
@@ -1190,7 +1197,7 @@ test("parser errors release a response that closes before finish", async () => {
           { headers: { "content-type": "text/plain" } },
         ),
     )
-    running = await serve(app, { port: 0 })
+    running = await serve(app, { hostname: "127.0.0.1", port: 0 })
     socket = connect(running.port, "127.0.0.1")
     socket.on("error", () => {})
     await new Promise<void>((resolve) => socket?.once("connect", resolve))
@@ -1224,7 +1231,7 @@ test("SECURITY: an oversized STREAMED (chunked) body is capped before the handle
     handlerRan = true
     return c.body
   })
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const chunk = new Uint8Array(256 * 1024).fill(97) // 256 KB of 'a'
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -1248,7 +1255,7 @@ test("SECURITY: an oversized STREAMED (chunked) body is capped before the handle
 
 test("a bare GET that never reads c.req still serves (the fast path never builds a Request)", async () => {
   const app = server().get("/fast", () => ({ ok: true }))
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/fast`)
   expect(res.headers.get("content-type")).toContain("application/json")
   expect(await res.json()).toEqual({ ok: true })
@@ -1262,7 +1269,7 @@ test("c.boundedBody reads the raw body on Node via the lazy source's arrayBuffer
     const bytes = await c.boundedBody()
     return { len: bytes.byteLength, text: new TextDecoder().decode(bytes) }
   })
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const res = await fetch(`http://localhost:${running.port}/raw`, {
     method: "POST",
     body: "hello-bounded-body",
@@ -1284,7 +1291,7 @@ test("a client that drops the connection mid-body rejects the read (no hang) and
     }
     return { ok: true }
   })
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
 
   const socket = connect(running.port, "127.0.0.1")
   socket.on("error", () => {}) // swallow the client-side reset that destroy() triggers
@@ -1314,7 +1321,7 @@ test("a half-close (FIN) mid-body rejects via the close signal (not just abort/e
     }
     return { ok: true }
   })
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
 
   const socket = connect(running.port, "127.0.0.1")
   socket.on("error", () => {})
@@ -1337,7 +1344,7 @@ test("boundedBody's explicit cap still overrides the route cap after a c.req tou
     const touched = c.req.headers.get("content-type")
     return { len: (await c.boundedBody(1000)).byteLength, touched }
   })
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
 
   const res = await fetch(`http://localhost:${running.port}/upload`, {
     method: "POST",
@@ -1357,7 +1364,7 @@ test("SECURITY: the transport cap rejects an over-cap direct c.req.json() on the
     handlerValue = await c.req.json()
     return { ok: true }
   })
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
 
   const res = await fetch(`http://localhost:${running.port}/direct`, {
     method: "POST",
@@ -1384,7 +1391,7 @@ test("SECURITY: an over-cap CHUNKED body is capped mid-stream on a direct c.req 
     }
     return { ok: true }
   })
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
 
   const chunk = new Uint8Array(4096).fill(97)
   const stream = new ReadableStream<Uint8Array>({
@@ -1419,7 +1426,7 @@ test("c.req.body replays after a direct c.req.json() instead of re-entering the 
         : new TextDecoder().decode((await new Response(body).bytes()) as Uint8Array)
     return { parsed, replayed }
   })
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
 
   const res = await fetch(`http://localhost:${running.port}/twice`, {
     method: "POST",
@@ -1437,7 +1444,7 @@ test("c.req.json() is complete after a non-body member already materialized the 
     void c.req.bodyUsed
     return c.req.json()
   })
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
 
   const res = await fetch(`http://localhost:${running.port}/late`, {
     method: "POST",
@@ -1459,7 +1466,7 @@ test("SECURITY: c.req.clone() inherits the route cap on the lazy source", async 
     }
     return { ok: true }
   })
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
 
   const res = await fetch(`http://localhost:${running.port}/clone`, {
     method: "POST",
@@ -1505,7 +1512,7 @@ test("a thrown Response ships the cookies queued before it, as a returned one do
       return redirect(true)
     })
 
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   for (const path of ["/thrown", "/returned", "/thrown-guarded", "/returned-guarded"]) {
     const res = await fetch(`http://localhost:${running.port}${path}`, { redirect: "manual" })
     expect(res.status).toBe(303)

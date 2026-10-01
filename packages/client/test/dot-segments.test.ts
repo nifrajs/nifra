@@ -105,7 +105,7 @@ describe("a `.` or `..` param value is refused, not sent to another route", () =
   })
 
   test("over the network too", async () => {
-    running = app.listen(0)
+    running = app.listen(0, { hostname: "127.0.0.1" })
     const remote = client<typeof app>(`http://127.0.0.1:${running.port}`)
     expect(await remote.users({ id: ".." }).delete()).toEqual(REFUSED)
     expect(await remote.users({ id: ".." }).posts.get()).toEqual(REFUSED)

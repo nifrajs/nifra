@@ -102,7 +102,7 @@ afterEach(() => {
 
 describe("typed client .ws()", () => {
   test("send/messages round-trip a typed frame over a real socket", async () => {
-    running = app.listen(0)
+    running = app.listen(0, { hostname: "127.0.0.1" })
     const api = client<typeof app>(`http://127.0.0.1:${running.port}`)
 
     const chat = api.chat.ws()
@@ -120,7 +120,7 @@ describe("typed client .ws()", () => {
   })
 
   test("onMessage callback form delivers parsed frames and unsubscribes", async () => {
-    running = app.listen(0)
+    running = app.listen(0, { hostname: "127.0.0.1" })
     const api = client<typeof app>(`http://127.0.0.1:${running.port}`)
     const chat = api.chat.ws()
 
@@ -143,7 +143,7 @@ describe("typed client .ws()", () => {
   })
 
   test("a schema-invalid inbound frame is dropped by the server, not echoed", async () => {
-    running = app.listen(0)
+    running = app.listen(0, { hostname: "127.0.0.1" })
     const api = client<typeof app>(`http://127.0.0.1:${running.port}`)
     const chat = api.chat.ws()
     await chat.opened

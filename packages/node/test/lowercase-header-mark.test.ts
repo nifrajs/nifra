@@ -41,7 +41,7 @@ function rawHead(port: number, path = "/"): Promise<string> {
 
 /** Header names as written, in wire order. */
 async function wireNames(app: ReturnType<typeof server>): Promise<string[]> {
-  running = await serve(app, { port: 0 })
+  running = await serve(app, { hostname: "127.0.0.1", port: 0 })
   const head = await rawHead(running.port)
   return head
     .split("\r\n")

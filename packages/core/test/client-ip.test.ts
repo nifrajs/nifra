@@ -101,7 +101,7 @@ describe("c.clientIp (integration through fetch)", () => {
     // A trust declaration routes off the fused native table through the fetch lane, where the Bun
     // adapter's `server.requestIP` peer is resolved - proving the whole path over a real socket.
     const app = ipApp({ clientIp: { trustedHops: 0 } })
-    const running = app.listen(0)
+    const running = app.listen(0, { hostname: "127.0.0.1" })
     try {
       const res = await fetch(`http://127.0.0.1:${running.port}/ip`)
       const body = (await res.json()) as { ip: string | null }

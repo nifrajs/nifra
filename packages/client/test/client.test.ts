@@ -84,7 +84,7 @@ let api: Treaty<App>
 const url = (): string => `http://localhost:${instance.port}`
 
 beforeAll(() => {
-  instance = app.listen(0)
+  instance = app.listen(0, { hostname: "127.0.0.1" })
   api = client<App>(url())
 })
 afterAll(() => {

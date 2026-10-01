@@ -560,7 +560,7 @@ describe("group() - fail closed", () => {
     expect(() =>
       app.group("/api", (api) => {
         scope = api as never
-        api.get("/x", () => "x").listen(0)
+        api.get("/x", () => "x").listen(0, { hostname: "127.0.0.1" })
         return api
       }),
     ).toThrow(/must return its group synchronously/)

@@ -197,7 +197,7 @@ describe("app.listen() WebSockets", () => {
   }
 
   test("echo: open → welcome, message → echo", async () => {
-    running = makeApp().listen(0)
+    running = makeApp().listen(0, { hostname: "127.0.0.1" })
     expect(await collect(`ws://127.0.0.1:${running.port}/echo`, ["hi"], 2)).toEqual([
       "welcome",
       "hi",
@@ -227,21 +227,21 @@ describe("app.listen() WebSockets", () => {
           ws.send(JSON.stringify({ text: 42 }))
         },
       })
-      .listen(0)
+      .listen(0, { hostname: "127.0.0.1" })
     expect(await collect(`ws://127.0.0.1:${running.port}/validated`, [], 1)).toEqual([
       JSON.stringify({ text: "ok" }),
     ])
   })
 
   test("guarded: accepts with a valid token, threading data to ws.data", async () => {
-    running = makeApp().listen(0)
+    running = makeApp().listen(0, { hostname: "127.0.0.1" })
     expect(await collect(`ws://127.0.0.1:${running.port}/guarded?token=secret`, [], 1)).toEqual([
       "hi secret",
     ])
   })
 
   test("guarded: rejects the upgrade without a token (never opens)", async () => {
-    running = makeApp().listen(0)
+    running = makeApp().listen(0, { hostname: "127.0.0.1" })
     const outcome = await new Promise<string>((resolve) => {
       const c = new WebSocket(`ws://127.0.0.1:${running?.port}/guarded`)
       let opened = false
@@ -267,7 +267,7 @@ describe("app.listen() WebSockets", () => {
     running = server({ wsMaxPayloadBytes: 8 })
       .use(websocket())
       .ws("/echo", { message: (ws, data) => ws.send(data) })
-      .listen(0)
+      .listen(0, { hostname: "127.0.0.1" })
     const closed = await new Promise<number>((resolve, reject) => {
       const c = new WebSocket(`ws://127.0.0.1:${running?.port}/echo`)
       const timer = setTimeout(() => reject(new Error("timeout")), 3000)
@@ -288,13 +288,13 @@ describe("app.listen() WebSockets", () => {
   })
 
   test("a normal HTTP route works alongside WS routes", async () => {
-    running = makeApp().listen(0)
+    running = makeApp().listen(0, { hostname: "127.0.0.1" })
     const res = await fetch(`http://127.0.0.1:${running.port}/health`)
     expect(await res.json()).toEqual({ ok: true })
   })
 
   test("binary frames round-trip (Uint8Array normalization)", async () => {
-    running = makeApp().listen(0)
+    running = makeApp().listen(0, { hostname: "127.0.0.1" })
     const port = running.port
     const ok = await new Promise<boolean>((resolve, reject) => {
       const c = new WebSocket(`ws://127.0.0.1:${port}/echo`)
@@ -329,7 +329,7 @@ describe("app.listen() WebSockets", () => {
         },
         error: (ws) => ws.send("errored"),
       })
-      .listen(0)
+      .listen(0, { hostname: "127.0.0.1" })
     expect(await collect(`ws://127.0.0.1:${running.port}/boom`, [], 1)).toEqual(["errored"])
   })
 
@@ -342,7 +342,7 @@ describe("app.listen() WebSockets", () => {
           if (m === "leave") ws.unsubscribe("lobby")
         },
       })
-    running = app.listen(0)
+    running = app.listen(0, { hostname: "127.0.0.1" })
     const url = `ws://127.0.0.1:${running.port}/room`
     const a = new WebSocket(url)
     const b = new WebSocket(url)
@@ -398,7 +398,7 @@ describe("app.listen() WebSockets", () => {
         validateSend: true,
         open: (ws) => ws.subscribe("lobby"),
       })
-    running = app.listen(0)
+    running = app.listen(0, { hostname: "127.0.0.1" })
     const c = new WebSocket(`ws://127.0.0.1:${running.port}/room`)
     const msgs: string[] = []
     c.addEventListener("message", (e) => msgs.push(String(e.data)))
@@ -428,7 +428,7 @@ describe("app.listen() WebSockets", () => {
     running = server()
       .mount({ path: "/api", app: server().get("/x", () => "x"), stripPrefix: true })
       .mount({ path: "/nested", app: nested, stripPrefix: true })
-      .listen(0)
+      .listen(0, { hostname: "127.0.0.1" })
     expect(await (await fetch(`http://127.0.0.1:${running.port}/api/x`)).json()).toBe("x")
     expect(await (await fetch(`http://127.0.0.1:${running.port}/nested/v1/y`)).json()).toBe("y")
   })
@@ -436,7 +436,7 @@ describe("app.listen() WebSockets", () => {
   test("a parent's own WebSocket routes still upgrade beside a WebSocket-free mount", async () => {
     running = makeApp()
       .mount({ path: "/api", app: server().get("/x", () => "x"), stripPrefix: true })
-      .listen(0)
+      .listen(0, { hostname: "127.0.0.1" })
     expect(await collect(`ws://127.0.0.1:${running.port}/echo`, ["hi"], 2)).toEqual([
       "welcome",
       "hi",
@@ -451,7 +451,9 @@ describe("app.listen() WebSockets", () => {
         open: (ws) => ws.send("child-ready"),
         message: (ws, data) => ws.send(data),
       })
-    running = server().mount({ path: "/api", app: child, stripPrefix: true }).listen(0)
+    running = server()
+      .mount({ path: "/api", app: child, stripPrefix: true })
+      .listen(0, { hostname: "127.0.0.1" })
     expect(await collect(`ws://127.0.0.1:${running.port}/api/echo`, ["ping"], 2)).toEqual([
       "child-ready",
       "ping",
@@ -463,7 +465,7 @@ describe("app.listen() WebSockets", () => {
     const late = server()
     const parent = server().mount({ path: "/late", app: late, stripPrefix: true })
     late.use(websocket()).ws("/echo", { open: (ws) => ws.send("late-ready") })
-    running = parent.listen(0)
+    running = parent.listen(0, { hostname: "127.0.0.1" })
     expect(await collect(`ws://127.0.0.1:${running.port}/late/echo`, [], 1)).toEqual(["late-ready"])
   })
 
@@ -472,7 +474,9 @@ describe("app.listen() WebSockets", () => {
       .use(websocket())
       .ws("/echo", { message: (ws, data) => ws.send(data) })
     const middle = server().mount({ path: "/inner", app: inner, stripPrefix: true })
-    running = server().mount({ path: "/middle", app: middle, stripPrefix: true }).listen(0)
+    running = server()
+      .mount({ path: "/middle", app: middle, stripPrefix: true })
+      .listen(0, { hostname: "127.0.0.1" })
     expect(await collect(`ws://127.0.0.1:${running.port}/middle/inner/echo`, ["deep"], 1)).toEqual([
       "deep",
     ])
@@ -489,12 +493,12 @@ describe("app.listen() WebSockets", () => {
     }
     const bare = server().mount({ path: "/api", app: wrapped, stripPrefix: true })
     expect(() => {
-      running = bare.listen(0)
+      running = bare.listen(0, { hostname: "127.0.0.1" })
     }).toThrow("websocket() runtime")
     running = server()
       .use(websocket())
       .mount({ path: "/api", app: wrapped, stripPrefix: true })
-      .listen(0)
+      .listen(0, { hostname: "127.0.0.1" })
     expect(await collect(`ws://127.0.0.1:${running.port}/api/echo`, ["wrapped"], 1)).toEqual([
       "wrapped",
     ])
@@ -503,7 +507,7 @@ describe("app.listen() WebSockets", () => {
   test("an app mounted under itself to alias a prefix still listens", async () => {
     const app = server().get("/x", () => "x")
     app.mount({ path: "/v1", app, stripPrefix: true })
-    running = app.listen(0)
+    running = app.listen(0, { hostname: "127.0.0.1" })
     expect(await (await fetch(`http://127.0.0.1:${running.port}/v1/x`)).json()).toBe("x")
   })
 })
@@ -1159,7 +1163,7 @@ describe("WS messageSchema (contract-validated messages)", () => {
         message: (ws, msg) => ws.send(`got:${msg.text}`),
         onInvalidMessage: (ws) => ws.send("invalid"),
       })
-      .listen(0)
+      .listen(0, { hostname: "127.0.0.1" })
     const url = `ws://127.0.0.1:${running.port}/echo`
     const send = (frame: string): Promise<string> =>
       new Promise((resolve, reject) => {
@@ -1217,7 +1221,7 @@ describe("server-side socket controls", () => {
         },
         message: (ws) => ws.close(4001, "done"),
       })
-      .listen(0)
+      .listen(0, { hostname: "127.0.0.1" })
     const closed = await new Promise<{ code: number; got: string[] }>((resolve, reject) => {
       const got: string[] = []
       const c = new WebSocket(`ws://127.0.0.1:${running?.port}/ctl`)
