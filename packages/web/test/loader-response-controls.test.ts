@@ -100,6 +100,75 @@ const post = (app: { fetch(r: Request): Response | Promise<Response> }, asData =
 
 const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err))
 
+describe("layout loader promise compatibility", () => {
+  test("assimilates a thenable without reading its then getter twice", async () => {
+    let reads = 0
+    const app = appFor({
+      layoutLoader: () => ({
+        // biome-ignore lint/suspicious/noThenProperty: exercise await's deliberate thenable assimilation.
+        get then() {
+          reads++
+          return (resolve: (value: unknown) => void) => resolve({ from: "thenable" })
+        },
+      }),
+    })
+    const res = await doc(app)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toContain('"__NIFRA_LAYOUT_DATA__":[{"from":"thenable"}]')
+    expect(reads).toBe(1)
+  })
+
+  test("awaits a promise from another realm", async () => {
+    const { runInNewContext } = await import("node:vm")
+    const foreign: unknown = runInNewContext('Promise.resolve({ from: "foreign" })')
+    expect(foreign instanceof Promise).toBe(false)
+    const app = appFor({ layoutLoader: () => foreign })
+    const res = await doc(app)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toContain('"__NIFRA_LAYOUT_DATA__":[{"from":"foreign"}]')
+  })
+
+  test("assimilates a proxy thenable whose then property is absent from has", async () => {
+    const value = new Proxy(
+      {},
+      {
+        get(target, key, receiver) {
+          if (key !== "then") return Reflect.get(target, key, receiver)
+          return function (this: unknown, resolve: (data: unknown) => void) {
+            expect(this).toBe(value)
+            resolve({ from: "proxy" })
+          }
+        },
+      },
+    )
+    expect("then" in value).toBe(false)
+    const app = appFor({ layoutLoader: () => value })
+    const res = await doc(app)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toContain('"__NIFRA_LAYOUT_DATA__":[{"from":"proxy"}]')
+  })
+
+  test("does not inspect a layout thenable's prototype", async () => {
+    const value = new Proxy(
+      {
+        // biome-ignore lint/suspicious/noThenProperty: exercise await's deliberate thenable assimilation.
+        then(resolve: (data: unknown) => void) {
+          resolve({ from: "opaque" })
+        },
+      },
+      {
+        getPrototypeOf() {
+          throw new Error("prototype inspection is forbidden")
+        },
+      },
+    )
+    const app = appFor({ layoutLoader: () => value })
+    const res = await doc(app)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toContain('"__NIFRA_LAYOUT_DATA__":[{"from":"opaque"}]')
+  })
+})
+
 describe("ctx.set.headers", () => {
   test("a loader's headers reach the document, lower-cased, and the document varies on the data channel", async () => {
     const app = appFor({

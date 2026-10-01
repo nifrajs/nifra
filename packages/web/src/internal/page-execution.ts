@@ -230,7 +230,7 @@ type LayoutRun = {
   readonly modules: LoadedLayoutModules
   readonly layoutData: readonly unknown[] | undefined
   readonly retained: readonly number[]
-  readonly pending: Promise<unknown>
+  readonly pending: Promise<unknown> | undefined
 }
 
 /**
@@ -344,6 +344,14 @@ export function createPageRequestExecutor<Env = unknown>(
     return modules
   }
 
+  // No modules, data, or per-request state: reuse the settled result for page-only routes.
+  const emptyLayoutRun: LayoutRun = {
+    modules: [],
+    layoutData: undefined,
+    retained: [],
+    pending: undefined,
+  }
+
   /** Run layout loaders, awaiting gates before starting the page loader and retaining only safe data. */
   const runLayoutChain = async (
     route: RouteEntry,
@@ -351,9 +359,10 @@ export function createPageRequestExecutor<Env = unknown>(
     controls: PageResponseControls,
     retain?: RetainContext,
   ): Promise<LayoutRun> => {
+    if (route.layoutIds.length === 0) return emptyLayoutRun
     const modules = await loadLayoutModules(route)
     if (!modules.some((m) => m.loader !== undefined)) {
-      return { modules, layoutData: undefined, retained: [], pending: Promise.resolve() }
+      return { modules, layoutData: undefined, retained: [], pending: undefined }
     }
     const results: unknown[] = new Array(modules.length).fill(null)
     const retained: number[] = []
@@ -389,17 +398,33 @@ export function createPageRequestExecutor<Env = unknown>(
       }
       const layoutId = route.layoutIds[i] as string
       const index = i
-      pending.push(
-        (async () => {
-          try {
-            results[index] = await loader(scoped)
-          } catch (err) {
-            throw tagLayoutError(err, layoutId)
-          }
-        })(),
-      )
+      try {
+        const value = loader(scoped)
+        // Scalars settle synchronously. Objects keep await's intrinsic promise/thenable
+        // assimilation: property-presence and prototype probes are unsafe for proxies.
+        if (value !== null && (typeof value === "object" || typeof value === "function")) {
+          pending.push(
+            (async () => {
+              try {
+                results[index] = await value
+              } catch (err) {
+                throw tagLayoutError(err, layoutId)
+              }
+            })(),
+          )
+        } else results[index] = value
+      } catch (err) {
+        // Preserve a synchronous throw as a pending layout failure, just like the async lane.
+        pending.push(Promise.reject(tagLayoutError(err, layoutId)))
+      }
     }
-    return { modules, layoutData: results, retained, pending: Promise.all(pending) }
+    return {
+      modules,
+      layoutData: results,
+      retained,
+      pending:
+        pending.length === 0 ? undefined : pending.length === 1 ? pending[0] : Promise.all(pending),
+    }
   }
 
   /** Run only authorization gates before an action; ordinary layout data runs after a native action. */
@@ -1082,17 +1107,19 @@ export function createPageRequestExecutor<Env = unknown>(
                 } satisfies BoundaryRequestCtx)
           const staticBoundaryPromise =
             boundaryDefinitions.length === 0
-              ? Promise.resolve(undefined)
+              ? undefined
               : resolveStaticBoundaries(
                   boundaryDefinitions,
                   { phase: "build", origin: originOf(c.req) },
                   options.staticBoundaryCache,
                 )
-          const [pageData, , staticBoundaries] = await Promise.all([
-            mod.loader ? mod.loader({ ...ctx, search: effectiveSearch }) : null,
-            run.pending,
-            staticBoundaryPromise,
-          ])
+          const pageResult = mod.loader ? mod.loader({ ...ctx, search: effectiveSearch }) : null
+          const [pageData, , staticBoundaries] =
+            run.pending === undefined && staticBoundaryPromise === undefined
+              ? ([await pageResult, undefined, undefined] as const)
+              : staticBoundaryPromise === undefined
+                ? await Promise.all([pageResult, run.pending])
+                : await Promise.all([pageResult, run.pending, staticBoundaryPromise])
           data = pageData
           layoutData = run.layoutData
           if (boundaryBatch !== undefined) {
