@@ -8,7 +8,7 @@ import {
 } from "../src/build.ts"
 import { importVite } from "../src/internal/vite-import.ts"
 import { fromRollupBundle, type RollupBundleLike } from "../src/module-graph.ts"
-import { viteLeakGuard } from "../src/plugins/vite-leak-guard.ts"
+import { viteBareBuiltinExternal, viteLeakGuard } from "../src/plugins/vite-leak-guard.ts"
 
 /**
  * The Vite/Rollup production leak guards. Two layers of proof:
@@ -178,4 +178,56 @@ test("real vite build FAILS on a node: builtin reached only via dynamic import()
   })
   expect(result.ok).toBe(false)
   expect(result.error).toContain("node:fs reached the client bundle")
+}, 60_000)
+
+/** `buildWithGuard`, with nifra's bare built-in plugin in front - the Vite production pipeline's setup. */
+async function buildLikePipeline(
+  files: Record<string, string>,
+): Promise<{ ok: boolean; error?: string }> {
+  const root = mkdtempSync(TMP_BASE)
+  tmpDirs.push(root)
+  for (const [rel, content] of Object.entries(files)) {
+    const path = join(root, rel)
+    mkdirSync(join(path, ".."), { recursive: true })
+    writeFileSync(path, content)
+  }
+  const vite = await importVite<{ build(config: Record<string, unknown>): Promise<unknown> }>()
+  const config = {
+    root,
+    logLevel: "silent",
+    plugins: [viteBareBuiltinExternal()],
+    build: {
+      write: false,
+      lib: { entry: join(root, "entry.ts"), formats: ["es"], fileName: "entry" },
+      rollupOptions: { external: [/^node:/], plugins: [viteLeakGuard()] },
+    },
+  }
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await vite.build(config)
+      return { ok: true }
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err)
+      if (attempt < 4 && error.includes("Failed to increase error reference count")) continue
+      return { ok: false, error }
+    }
+  }
+}
+
+test("real vite build FAILS on a bare built-in, named as the Bun build names it", async () => {
+  const result = await buildLikePipeline({
+    "entry.ts": 'export const load = () => import("fs/promises")\n',
+  })
+  expect(result.ok).toBe(false)
+  expect(result.error).toContain("node:fs/promises reached the client bundle")
+}, 60_000)
+
+test("real vite build PASSES when a built-in name resolves to an installed package", async () => {
+  const result = await buildLikePipeline({
+    "node_modules/events/package.json": '{ "name": "events", "main": "index.js" }\n',
+    "node_modules/events/index.js": "export class EventEmitter {}\n",
+    "entry.ts": 'import { EventEmitter } from "events"\nexport const e = new EventEmitter()\n',
+  })
+  expect(result.error).toBeUndefined()
+  expect(result.ok).toBe(true)
 }, 60_000)

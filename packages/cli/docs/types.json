@@ -1979,6 +1979,13 @@
     "doc": "/** The JSON-safe lookup bucket stored in a baked index. */"
   },
   {
+    "name": "BareBuiltinPlugin",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface BareBuiltinPlugin {\n    readonly name: string;\n    readonly enforce: \"pre\";\n    resolveId(this: ResolveContext, source: string, importer: string | undefined): Promise<{\n        readonly id: string;\n        readonly external?: boolean;\n    } | null>;\n}",
+    "doc": "/** The minimal Vite plugin shape {@link viteBareBuiltinExternal} returns. */"
+  },
+  {
     "name": "BaselineComparison",
     "kind": "interface",
     "package": "@nifrajs/testing",
@@ -20604,6 +20611,13 @@
     "package": "@nifrajs/agent-app",
     "signature": "export declare function virtualizeEvidenceRows<T>(rows: readonly T[], cursor: number, windowSize?: number): {\n    readonly offset: number;\n    readonly rows: readonly T[];\n};",
     "doc": "/** Keep browser work bounded when a run has more than 1,000 evidence rows. */"
+  },
+  {
+    "name": "viteBareBuiltinExternal",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function viteBareBuiltinExternal(): BareBuiltinPlugin;",
+    "doc": "/**\n * Keep a bare Node built-in (`fs/promises`, `path`) visible to {@link viteLeakGuard}. Vite resolves a\n * bare built-in that is not an installed package to one shared `__vite-browser-external` stub: the\n * import builds, does nothing in the browser, and no longer names the module. This plugin externalizes\n * it as `node:<name>` instead, so the guard fails the build naming it, as the Bun build does. A package\n * of the same name the app installed (`events`, `buffer`) still resolves to that package.\n */"
   },
   {
     "name": "viteBundler",

@@ -25,11 +25,15 @@
  * `fromRollupBundle` needs. Findings fail the build through Rollup's `this.error`, so the message lands in
  * the build output the same way a Bun-build throw does.
  *
- * Add it to the `plugins` of a Vite production build (the LAST plugin, so it sees the final graph):
+ * Add it to the `plugins` of a Vite production build (the LAST plugin, so it sees the final graph),
+ * with `viteBareBuiltinExternal()` first so a bare built-in such as `fs/promises` stays named:
  *
  *   // vite.config.ts (production client build)
- *   import { viteLeakGuard } from "@nifrajs/web/plugins/vite-leak-guard"
- *   export default { build: { rollupOptions: { plugins: [viteLeakGuard()] } } }
+ *   import { viteBareBuiltinExternal, viteLeakGuard } from "@nifrajs/web/plugins/vite-leak-guard"
+ *   export default {
+ *     plugins: [viteBareBuiltinExternal()],
+ *     build: { rollupOptions: { external: [/^node:/], plugins: [viteLeakGuard()] } },
+ *   }
  */
 import {
   detectNodeBuiltinsInClient,
@@ -37,6 +41,7 @@ import {
   formatNodeBuiltinLeak,
   formatServerOnlyLeak,
 } from "../build.ts"
+import { isBareNodeBuiltin } from "../internal/node-builtins.ts"
 import { fromRollupBundle, type RollupBundleLike } from "../module-graph.ts"
 
 /**
@@ -107,4 +112,44 @@ export function viteLeakGuard(): LeakGuardPlugin {
     },
   }
   return plugin
+}
+
+/** The resolve-hook context slice {@link viteBareBuiltinExternal} uses. */
+interface ResolveContext {
+  resolve(
+    source: string,
+    importer: string | undefined,
+    options: { readonly skipSelf: boolean },
+  ): Promise<{ readonly id: string } | null>
+}
+
+/** The minimal Vite plugin shape {@link viteBareBuiltinExternal} returns. */
+export interface BareBuiltinPlugin {
+  readonly name: string
+  readonly enforce: "pre"
+  resolveId(
+    this: ResolveContext,
+    source: string,
+    importer: string | undefined,
+  ): Promise<{ readonly id: string; readonly external?: boolean } | null>
+}
+
+/**
+ * Keep a bare Node built-in (`fs/promises`, `path`) visible to {@link viteLeakGuard}. Vite resolves a
+ * bare built-in that is not an installed package to one shared `__vite-browser-external` stub: the
+ * import builds, does nothing in the browser, and no longer names the module. This plugin externalizes
+ * it as `node:<name>` instead, so the guard fails the build naming it, as the Bun build does. A package
+ * of the same name the app installed (`events`, `buffer`) still resolves to that package.
+ */
+export function viteBareBuiltinExternal(): BareBuiltinPlugin {
+  return {
+    name: "nifra:bare-builtin-external",
+    enforce: "pre",
+    async resolveId(source, importer) {
+      if (!isBareNodeBuiltin(source)) return null
+      const resolved = await this.resolve(source, importer, { skipSelf: true })
+      if (resolved !== null && !resolved.id.startsWith("__vite-browser-external")) return resolved
+      return { id: `node:${source}`, external: true }
+    },
+  }
 }

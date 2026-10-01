@@ -47,7 +47,7 @@ import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
 import { importVite, isViteUnresolved } from "./internal/vite-import.ts"
 import { scopedName } from "./plugins/css-modules.ts"
 import { reproduciblePath } from "./plugins/kit.ts"
-import { viteLeakGuard } from "./plugins/vite-leak-guard.ts"
+import { viteBareBuiltinExternal, viteLeakGuard } from "./plugins/vite-leak-guard.ts"
 import { viteServerFnStub } from "./plugins/vite-server-fn.ts"
 import { viteServerOnlyEmpty } from "./plugins/vite-server-only.ts"
 
@@ -237,7 +237,8 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
               scopedName(reproduciblePath(filename), name),
           },
         },
-        plugins: [...(options.vitePlugins ?? [])],
+        // First, so a bare built-in is named before Vite turns it into an anonymous stub.
+        plugins: [viteBareBuiltinExternal(), ...(options.vitePlugins ?? [])],
         build: {
           outDir,
           emptyOutDir: false, // buildTargetWith owns outDir lifecycle; never let Vite wipe sibling files

@@ -90,14 +90,16 @@ export const cssLoading = "deferred"
 const VITE_PROD = `// vite.config.ts - a Vite/Rollup PRODUCTION client build (the escape hatch, not the default).
 // Only reach for this when an app needs a Vite-only transform with no Bun equivalent; Nifra's default
 // production bundler stays Bun (buildClient), which is faster and Bun-native.
-import { viteLeakGuard } from "@nifrajs/web/plugins/vite-leak-guard"
+import { viteBareBuiltinExternal, viteLeakGuard } from "@nifrajs/web/plugins/vite-leak-guard"
 
 export default {
+  // Keeps a bare built-in (\`fs/promises\`) named instead of an empty stub, so the guard sees it.
+  plugins: [viteBareBuiltinExternal()],
   build: {
     // The SAME two client-leak guards Nifra's Bun build runs - server-only code or a node: builtin
     // reaching the browser fails the build, with the identical error message. A second production
-    // pipeline must not ship without them.
-    rollupOptions: { plugins: [viteLeakGuard()] },
+    // pipeline must not ship without them. \`node:\` stays external so the guard can name it.
+    rollupOptions: { external: [/^node:/], plugins: [viteLeakGuard()] },
   },
 }`
 

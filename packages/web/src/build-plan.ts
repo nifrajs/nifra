@@ -1,5 +1,6 @@
 import { basename as pathBasename } from "node:path"
 import type { CssLoadingMode } from "./css-contract.ts"
+import { isBareNodeBuiltin } from "./internal/node-builtins.ts"
 import type { ClientModuleGraph } from "./module-graph.ts"
 
 export interface BuildManifest {
@@ -184,6 +185,7 @@ export interface Bundler {
 interface GraphImport {
   readonly path?: string
   readonly original?: string
+  readonly external?: boolean
 }
 
 interface GraphInput {
@@ -195,7 +197,11 @@ const basename = (path: string): string => pathBasename(path)
 const nodeBuiltinOf = (im: GraphImport): string | undefined => {
   if (im.original?.startsWith("node:")) return im.original
   if (im.path?.startsWith("node:")) return im.path
-  return undefined
+  // A bare built-in only counts when the bundler left it external: a bundled `fs` resolved to an
+  // installed package (or a polyfill keyed `node:fs`) is handled above or is not a built-in at all.
+  // Labeled with the prefix, so `fs/promises` reads the same from either bundler.
+  const spec = im.external === true ? (im.original ?? im.path) : undefined
+  return spec !== undefined && isBareNodeBuiltin(spec) ? `node:${spec}` : undefined
 }
 
 /** One `node:`-builtin-in-the-client finding: the offending builtin, the emitted chunk it landed in,
@@ -302,17 +308,31 @@ export function detectNodeBuiltinsInClient(
     chains.set(builtin, chain)
     return chain
   }
+  // (1b) Builtins the bundler left EXTERNAL: the import ships in the importer's chunk but the module
+  // is in no output, so (2) can't find it as a chunk member. Bun does this for a dynamic
+  // `import("node:fs")` in a browser build; the browser then fails to load it.
+  const externalsOf = new Map<string, string[]>()
+  for (const [inputKey, input] of Object.entries(inputs)) {
+    if (inputKey.startsWith("node:")) continue
+    for (const im of input.imports ?? []) {
+      if (im.external !== true) continue
+      const builtin = nodeBuiltinOf(im)
+      if (builtin === undefined) continue
+      const list = externalsOf.get(inputKey) ?? []
+      if (!list.includes(builtin)) list.push(builtin)
+      externalsOf.set(inputKey, list)
+    }
+  }
   // (2) Locate which emitted chunk each user-imported builtin reached, via the per-output `inputs`.
   const findings = new Map<string, NodeBuiltinFinding>()
+  const report = (builtin: string, outputPath: string): void => {
+    const chunk = basename(outputPath)
+    findings.set(`${builtin}\0${chunk}`, { builtin, chunk, chain: chainFor(builtin) })
+  }
   for (const [outputPath, output] of Object.entries(graph.chunks)) {
     for (const inputKey of output.modules) {
-      if (!userImported.has(inputKey)) continue
-      const chunk = basename(outputPath)
-      findings.set(`${inputKey}\0${chunk}`, {
-        builtin: inputKey,
-        chunk,
-        chain: chainFor(inputKey),
-      })
+      if (userImported.has(inputKey)) report(inputKey, outputPath)
+      for (const builtin of externalsOf.get(inputKey) ?? []) report(builtin, outputPath)
     }
   }
   return [...findings.values()].sort((a, b) =>

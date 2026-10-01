@@ -204,3 +204,74 @@ test("buildClient does NOT throw on a benign `node:` string literal (no false po
   })
   expect(manifest.entry).toMatch(/\.js$/)
 })
+
+// Bun keeps a dynamic `import("node:fs")` - and a bare built-in such as `fs/promises` - as an EXTERNAL
+// import in a browser build: no polyfill input, nothing in any output's `inputs`. The import still
+// ships, so the guard locates it by the chunk its importer landed in.
+test("an external built-in import is reported in its importer's chunk, bare names prefixed", () => {
+  const found = detectNodeBuiltins({
+    inputs: {
+      "routes/rashifal.tsx": { imports: [{ path: "src/load.ts", original: "../src/load.ts" }] },
+      "src/load.ts": {
+        imports: [
+          { path: "node:fs", external: true },
+          { path: "fs/promises", external: true },
+          { path: "lodash", external: true }, // an external package is not a built-in
+        ],
+      },
+    },
+    outputs: {
+      "dist/rashifal-a.js": {
+        entryPoint: "routes/rashifal.tsx",
+        inputs: { "routes/rashifal.tsx": {}, "src/load.ts": {} },
+      },
+    },
+  })
+  expect(found).toEqual([
+    {
+      builtin: "node:fs",
+      chunk: "rashifal-a.js",
+      chain: ["routes/rashifal.tsx", "../src/load.ts", "node:fs"],
+    },
+    {
+      builtin: "node:fs/promises",
+      chunk: "rashifal-a.js",
+      chain: ["routes/rashifal.tsx", "../src/load.ts", "node:fs/promises"],
+    },
+  ])
+})
+
+test("a bare built-in name that was bundled (an installed package) is not a built-in", () => {
+  const found = detectNodeBuiltins({
+    inputs: {
+      "routes/index.tsx": {
+        imports: [{ path: "node_modules/events/events.js", original: "events" }],
+      },
+      "node_modules/events/events.js": { imports: [] },
+    },
+    outputs: {
+      "dist/index-a.js": {
+        entryPoint: "routes/index.tsx",
+        inputs: { "routes/index.tsx": {}, "node_modules/events/events.js": {} },
+      },
+    },
+  })
+  expect(found).toEqual([])
+})
+
+test("buildClient throws when a route dynamically imports a built-in Bun leaves external", async () => {
+  writeFileSync(
+    join(routesDir, "index.tsx"),
+    "export default function Index() { return null }\n" +
+      'export const loadFs = () => import("node:fs")\n' +
+      'export const loadPromises = () => import("fs/promises")\n',
+  )
+  const promise = buildClient({
+    routesDir,
+    outDir: join(projectRoot, "dist"),
+    clientModule,
+    minify: false,
+  })
+  await expect(promise).rejects.toThrow(/node:fs reached the client bundle via/)
+  await expect(promise).rejects.toThrow(/node:fs\/promises reached the client bundle via/)
+})

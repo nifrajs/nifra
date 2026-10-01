@@ -23,6 +23,9 @@ export interface GraphImport {
   readonly path?: string
   /** The specifier as written in source - the only form that survives an unresolved import. */
   readonly original?: string
+  /** The bundler left this import in the emitted code instead of bundling its target. Bun does this
+   * for a dynamic `import("node:fs")` in a browser build: the import ships, the module does not. */
+  readonly external?: boolean
 }
 
 export interface GraphModule {
@@ -52,7 +55,12 @@ const normalizeModuleId = (id: string): string => id.replaceAll("\\", "/")
 /** The slice of Bun's metafile this seam consumes. Not yet in `@types/bun`; shape per the docs. */
 export interface BunMetafileLike {
   readonly inputs?: Readonly<
-    Record<string, { readonly imports?: ReadonlyArray<{ path?: string; original?: string }> }>
+    Record<
+      string,
+      {
+        readonly imports?: ReadonlyArray<{ path?: string; original?: string; external?: boolean }>
+      }
+    >
   >
   readonly outputs?: Readonly<
     Record<
@@ -77,6 +85,7 @@ export function fromBunMetafile(meta: BunMetafileLike | undefined): ClientModule
       imports: (input.imports ?? []).map((im) => ({
         ...(im.path === undefined ? {} : { path: normalizeModuleId(im.path) }),
         ...(im.original === undefined ? {} : { original: im.original }),
+        ...(im.external === true ? { external: true } : {}),
       })),
     }
   }

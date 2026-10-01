@@ -5421,8 +5421,12 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web/plugins/vite-leak-guard`
 
+- **BareBuiltinPlugin** _(interface)_ - `interface BareBuiltinPlugin`
+  The minimal Vite plugin shape {@link viteBareBuiltinExternal} returns.
 - **LeakGuardPlugin** _(interface)_ - `interface LeakGuardPlugin`
   The minimal Rollup plugin shape this returns - `generateBundle` bound to the plugin context.
+- **viteBareBuiltinExternal** _(function)_ - `viteBareBuiltinExternal: () => BareBuiltinPlugin`
+  Keep a bare Node built-in (`fs/promises`, `path`) visible to {@link viteLeakGuard}. Vite resolves a bare built-in that is not an installed package to one shared `__vite-browser-external` stub: the import builds, does nothing in the browser, and no longer names the module. This plugin externalizes i…
 - **viteLeakGuard** _(function)_ - `viteLeakGuard: () => LeakGuardPlugin`
   A Vite/Rollup plugin that fails the build when server-only code or a `node:` builtin reaches the client bundle - the same two guards, and the same error messages, as nifra's Bun production build.
 
