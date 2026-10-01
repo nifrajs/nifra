@@ -12,7 +12,7 @@ export { default as I18nProvider, type I18nProviderProps } from "./I18nProvider.
 // `.svelte` → `.ts` import that wouldn't resolve once the .svelte is copied to dist).
 const I18N_KEY = "@nifrajs/web-svelte:i18n"
 
-/** Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above.
+/** Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above.
  * nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog. */
 export function useT(): Formatter {
   const get = getContext<(() => Formatter) | undefined>(I18N_KEY)

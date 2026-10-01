@@ -4598,17 +4598,64 @@ const app = server().use(localeDetector({
 
 ### Format messages
 
-`createFormatter(locale, messages)` → `{ t, n, d }`. `t`
-handles interpolation (`{name}`), `plural` (with `=N` exact
-cases and `#` → the number) and `select`, nested - via a hand-written
-parser + `Intl.PluralRules`. `n`/`d` are memoized
-` Intl.NumberFormat`/`DateTimeFormat`. A missing key returns the key.
+`createFormatter(locale, messages, options)` →
+`{ t, get, n, d }`. `t` handles interpolation (
+`{name}`), `plural` (with `=N` exact cases),
+`selectordinal` (1st, 2nd, 3rd) and `select`, nested - via a
+hand-written parser + `Intl.PluralRules`. Inside a plural, `#` is the
+number in the locale's own format. `n`/`d` are memoized
+`Intl.NumberFormat`/`DateTimeFormat`.
+
+A catalog can nest: values are messages, lists or blocks, read with dotted keys (
+`t("home.title")`); a flat key containing a dot is still found first.
+`get(key)` returns a list or block whole, for an FAQ or a page's copy. A key the
+catalog lacks is tried in each `fallback` catalog in order (
+`locales.chain(locale)` gives `fr-CA` → `fr` → the default);
+only when none has it does `onMissing` fire, once per key, and `t`
+return the key. `timeZone` and `numberingSystem` set defaults for every
+`d()`, `n()` and `#`. Formatters are cached per catalog and
+options, so pass a stable `onMissing`.
 
 ```ts
-// catalogs: plain JSON per locale (ICU strings). Bring your own.
-export const catalogs = {
-  en: { greeting: "Hello, {name}!", cart: "{count, plural, =0 {empty} one {# item} other {# items}}" },
-  fr: { greeting: "Bonjour, {name} !", cart: "{count, plural, =0 {vide} one {# article} other {# articles}}" },
+// messages/en.ts - the default locale's catalog: ICU strings, lists and nested blocks.
+import { createFormatter, type PartialMessages } from "@nifrajs/i18n"
+
+export const en = {
+  cart: "{count, plural, =0 {empty} one {# item} other {# items}}",
+  place: "You finished {rank, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}",
+  home: { title: "Welcome back, {name}" },
+  faq: [{ q: "Is it free?", a: "Yes." }],
+}
+
+// Another locale is partial; a key it lacks falls back to the next catalog.
+export const fr: PartialMessages<typeof en> = {
+  cart: "{count, plural, =0 {vide} one {# article} other {# articles}}",
+}
+
+const t = createFormatter<typeof en>("fr", fr, {
+  fallback: [en],
+  onMissing: (key, locale) => console.warn(`missing ${locale} translation: ${key}`),
+  timeZone: "Europe/Paris",
+})
+t.t("cart", { count: 1200 }) // "1 200 articles"
+t.t("home.title", { name: "Ada" }) // "Welcome back, Ada", from en
+const questions = t.get("faq")?.map((item) => item.q)
+console.log(questions)
+```
+
+To type every key once, register the default catalog. A typo in `t()` is then a
+compile error everywhere, and other locales' catalogs (typed `Translation`) are
+checked against its shape.
+
+```ts
+// doc-check: skip - declares the app-wide catalog type, which would retype every other sample here.
+// Once, anywhere in the app: every t() key, useT() included, and every other catalog is checked.
+import type { en } from "./messages/en"
+
+declare module "@nifrajs/i18n" {
+  interface Register {
+    messages: typeof en
+  }
 }
 ```
 
@@ -4616,28 +4663,41 @@ In React, provide it once and read it with `useT()`:
 
 ```ts
 // The page provides the formatter; components read it with useT().
+import { localeCookie } from "@nifrajs/i18n"
 import { I18nProvider, useT } from "@nifrajs/web-react/i18n"
 
 export default function Page({ data }) {
-  return <I18nProvider locale={data.locale} messages={data.messages}><Body/></I18nProvider>
+  // data.fallback: the catalogs locales.chain(locale) names after the page's own, from the loader.
+  return (
+    <I18nProvider locale={data.locale} messages={data.messages} fallback={data.fallback}>
+      <Body />
+    </I18nProvider>
+  )
 }
 
 function Body() {
-  const { t, n, d } = useT()
+  const { t, get, n, d } = useT()
   return <>
-    <p>{t("greeting", { name: "Ada" })}</p>
-    {/* ICU plural with # substitution */}
-    <p>{t("cart", { count: 3 })}</p>            {/* "3 items in your cart" */}
-    <p>{t("price", { amount: n(1299.99, { style: "currency", currency: "EUR" }) })}</p>
+    <p>{t("home.title", { name: "Ada" })}</p>
+    <p>{t("cart", { count: 1200 })}</p>          {/* "1,200 items" - # in the locale's format */}
+    <p>{t("place", { rank: 2 })}</p>             {/* "You finished 2nd" */}
+    <p>{n(1299.99, { style: "currency", currency: "EUR" })}</p>
     <p>{d(Date.now(), { dateStyle: "long" })}</p>
+    <ul>{get("faq")?.map((item) => <li key={item.q}>{item.q}</li>)}</ul>
+    {/* Same cookie name and attributes as localeDetector({ persist: true }) */}
+    <button onClick={() => { document.cookie = localeCookie("locale", "hi"); location.reload() }}>
+      हिन्दी
+    </button>
   </>
 }
 ```
 
-Both `locale` and `messages` are serializable, so SSR renders the
-negotiated catalog and the client rebuilds the same formatter on hydrate - no mismatch.
-Switching language re-navigates (a cookie or `?lang=`); the loader returns the new
-catalog and the page re-renders.
+`locale`, `messages` and `fallback` are serializable, so SSR
+renders the negotiated catalogs and the client rebuilds the same formatter on hydrate - no
+mismatch. Switching language re-navigates (a cookie or `?lang=`); the loader returns
+the new catalog and the page re-renders. `localeCookie(name, locale)` builds the
+detector's own cookie for a switcher, so a choice made in the page and one made through
+`?lang=` are the same cookie.
 
 ### Notes
 
@@ -4645,7 +4705,7 @@ catalog and the page re-renders.
 loader that does `await import(`../messages/${locale}.ts`)` ships only the
 requested locale's table to the page, typed inline tables included.
 
-- The supported ICU subset is interpolation + `plural`/`select`; use
+- The supported ICU subset is interpolation + `plural`/`selectordinal`/`select`; use
 ` n()`/`d()` for inline numbers/dates (no `{n, number}`
 skeletons). `Intl.MessageFormat` isn't widely available yet, so this is the
 portable core.
@@ -11498,6 +11558,31 @@ locales.documentMeta("ur") // { lang: "ur-PK", dir: "rtl" }
 Guard a `[lang]` route segment with `matchSegment()` in `routes/[lang]/_middleware.ts`: an unknown or
 draft value answers 404, and the default's prefix (`/en/...`) or a wrong case redirects.
 
+## Messages
+
+`createFormatter(locale, messages, options)` formats ICU messages: interpolation, `plural`,
+`selectordinal` and `select`, nested, with `#` in the locale's own number format. Catalogs may nest
+(messages, lists, blocks) and are read with dotted keys; `get(key)` returns a list or block whole. A
+key the catalog lacks is tried in each `fallback` catalog, then `onMissing` fires once and the key is
+returned. `timeZone` and `numberingSystem` set defaults for `d()`, `n()` and `#`.
+
+```ts
+import { createFormatter } from "@nifrajs/i18n"
+
+const t = createFormatter("fr-CA", catalogs["fr-CA"], {
+  fallback: locales.chain("fr-CA").slice(1).map((key) => catalogs[key]), // fr, then en
+  onMissing: reportMissingKey, // a stable function: formatters are cached per handler
+  timeZone: user.timeZone,
+})
+t.t("cart", { count: 1200 }) // "1 200 articles"
+```
+
+Declare `interface Register { messages: typeof en }` on `@nifrajs/i18n` once, and every `t()` key
+(adapters' `useT()` included) and every `Translation`-typed catalog is checked against `en`.
+
+`localeCookie(name, locale)` is the browser half of the detector's `persist` cookie: assign it to
+`document.cookie` in a language switcher and it is byte-identical to the detector's `Set-Cookie`.
+
 ## Locale detection
 
 `negotiateLocale()` / `resolveLocale()` are pure: query parameter → cookie → `Accept-Language` →
@@ -13447,7 +13532,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/i18n
 
-`createFormatter`, `defineLocales`, `Formatter`, `Locale`, `localeDirection`, `LocaleInfo`, `LocaleParts`, `Locales`, `LocalesConfig`, `LocaleSource`, `LocaleSpec`, `Messages`, `negotiateLocale`, `NegotiateOptions`, `ResolvedLocale`, `resolveLocale`
+`createFormatter`, `defineLocales`, `Formatter`, `FormatterOptions`, `Locale`, `localeCookie`, `LocaleCookieOptions`, `localeDirection`, `LocaleInfo`, `LocaleParts`, `Locales`, `LocalesConfig`, `LocaleSource`, `LocaleSpec`, `MessageAt`, `MessageKey`, `MessagePath`, `Messages`, `MessageTree`, `MessageValue`, `negotiateLocale`, `NegotiateOptions`, `PartialMessages`, `Register`, `RegisteredMessages`, `ResolvedLocale`, `resolveLocale`, `Translation`
 
 ## @nifrajs/image
 

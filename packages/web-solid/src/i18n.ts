@@ -5,7 +5,12 @@
  * negotiated catalog on the server, and the client rebuilds the same formatter on hydrate (no
  * mismatch). Imports only `solid-js` + `@nifrajs/i18n`; no JSX (`createComponent`).
  */
-import { createFormatter, type Formatter, type Messages } from "@nifrajs/i18n"
+import {
+  createFormatter,
+  type Formatter,
+  type FormatterOptions,
+  type Translation,
+} from "@nifrajs/i18n"
 import {
   type Accessor,
   createComponent,
@@ -17,16 +22,25 @@ import {
 
 const I18nContext = createContext<Accessor<Formatter>>()
 
-export interface I18nProviderProps {
+export interface I18nProviderProps extends FormatterOptions {
   readonly locale: string
-  readonly messages: Messages
+  /** The catalog for `locale`, checked against the registered catalog type when one is declared. */
+  readonly messages: Translation
   readonly children?: JSX.Element
 }
 
-/** Provide a {@link Formatter} (built from `locale` + `messages`) to the subtree. Memoized on
- * `locale`/`messages`, so switching locale rebuilds it. */
+/** Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`,
+ * `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Memoized
+ * on those props, so switching locale rebuilds it. */
 export function I18nProvider(props: I18nProviderProps): JSX.Element {
-  const formatter = createMemo(() => createFormatter(props.locale, props.messages))
+  const formatter = createMemo(() =>
+    createFormatter(props.locale, props.messages, {
+      fallback: props.fallback,
+      onMissing: props.onMissing,
+      timeZone: props.timeZone,
+      numberingSystem: props.numberingSystem,
+    }),
+  )
   return createComponent(I18nContext.Provider, {
     value: formatter,
     get children() {
@@ -35,7 +49,7 @@ export function I18nProvider(props: I18nProviderProps): JSX.Element {
   })
 }
 
-/** Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above.
+/** Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above.
  * nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog. */
 export function useT(): Formatter {
   const formatter = useContext(I18nContext)

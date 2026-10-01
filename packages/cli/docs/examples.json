@@ -300,6 +300,12 @@
     "code": "// routes/[lang]/kundli.tsx - canonical + hreflang links and the document language.\nimport { defineLocales } from \"@nifrajs/i18n\"\nimport { defineI18nRouting } from \"@nifrajs/i18n/routing\"\nimport type { Meta, MetaArgs } from \"@nifrajs/web\"\n\nconst urls = defineI18nRouting(\n  defineLocales({ default: \"en\", locales: { en: {}, hi: { hreflang: \"hi-IN\" }, ur: { tag: \"ur-PK\" } } }),\n)\n\nexport function meta({ params, origin }: MetaArgs): Meta {\n  const lang = params.lang ?? \"\"\n  const locale = urls.locales.isServed(lang) ? lang : urls.locales.default\n  // Every page of this cluster passes the same locales, so the alternates stay reciprocal.\n  const { canonical, links } = urls.alternates(urls.localizePathname(\"/kundli\", locale), { origin })\n  return {\n    ...urls.locales.documentMeta(locale),\n    link: [\n      { rel: \"canonical\", href: canonical },\n      ...links.map((link) => ({ rel: \"alternate\", hreflang: link.hreflang, href: link.href })),\n    ],\n  }\n}"
   },
   {
+    "name": "CATALOG",
+    "topic": "Nifra - i18n",
+    "slug": "i18n",
+    "code": "// messages/en.ts - the default locale's catalog: ICU strings, lists and nested blocks.\nimport { createFormatter, type PartialMessages } from \"@nifrajs/i18n\"\n\nexport const en = {\n  cart: \"{count, plural, =0 {empty} one {# item} other {# items}}\",\n  place: \"You finished {rank, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}\",\n  home: { title: \"Welcome back, {name}\" },\n  faq: [{ q: \"Is it free?\", a: \"Yes.\" }],\n}\n\n// Another locale is partial; a key it lacks falls back to the next catalog.\nexport const fr: PartialMessages<typeof en> = {\n  cart: \"{count, plural, =0 {vide} one {# article} other {# articles}}\",\n}\n\nconst t = createFormatter<typeof en>(\"fr\", fr, {\n  fallback: [en],\n  onMissing: (key, locale) => console.warn(`missing ${locale} translation: ${key}`),\n  timeZone: \"Europe/Paris\",\n})\nt.t(\"cart\", { count: 1200 }) // \"1 200 articles\"\nt.t(\"home.title\", { name: \"Ada\" }) // \"Welcome back, Ada\", from en\nconst questions = t.get(\"faq\")?.map((item) => item.q)\nconsole.log(questions)"
+  },
+  {
     "name": "DETECTOR",
     "topic": "Nifra - i18n",
     "slug": "i18n",

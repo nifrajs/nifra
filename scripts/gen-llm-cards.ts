@@ -288,6 +288,8 @@ const FOOTGUNS: Record<string, readonly string[]> = {
   "@nifrajs/i18n": [
     "The message formatter is a **tiny ICU** layer on the platform `Intl` - it isn't full ICU MessageFormat; check the supported syntax before porting complex messages.",
     "Locale negotiation reads the request; resolve the locale at the boundary and thread it, don't read a global.",
+    "Formatters are cached per catalog object and options: pass a **stable** `onMissing` (module scope) and reuse catalog objects, or every call builds a new formatter.",
+    '`get(key)` returns the first catalog\'s value whole - blocks are not merged across `fallback` catalogs; read nested messages with `t("a.b")` to fall back per key.',
   ],
   "@nifrajs/middleware": [
     "Middleware is **fail-closed** by default - a throwing/denying middleware blocks the request rather than letting it through. Order matters: auth/CSRF before handlers.",

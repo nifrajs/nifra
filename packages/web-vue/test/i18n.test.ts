@@ -41,4 +41,33 @@ describe("@nifrajs/web-vue/i18n", () => {
       renderToString(createSSRApp({ render: () => h(Greeting, { name: "x", n: 2 }) })),
     ).rejects.toThrow(/within an <I18nProvider>/)
   })
+
+  test("fallback, onMissing and numberingSystem reach the formatter", async () => {
+    const missing: string[] = []
+    const onMissing = (key: string) => missing.push(key)
+    const Page = defineComponent({
+      setup() {
+        const { t } = useT()
+        return () => h("p", `${t("own")}|${t("greeting", { name: "Ada", n: 12 })}|${t("gone")}`)
+      },
+    })
+    const html = await renderToString(
+      createSSRApp({
+        render: () =>
+          h(
+            I18nProvider,
+            {
+              locale: "hi",
+              messages: { own: "अपना" },
+              fallback: [messages],
+              numberingSystem: "deva",
+              onMissing,
+            },
+            { default: () => h(Page) },
+          ),
+      }),
+    )
+    expect(html).toContain("अपना|Hi Ada - १२ messages|gone")
+    expect(missing).toEqual(["gone"])
+  })
 })

@@ -25,6 +25,7 @@ import {
   type Middleware,
   serializeCookie,
 } from "@nifrajs/core/server"
+import { LOCALE_COOKIE_MAX_AGE } from "./cookie.ts"
 import {
   type Locale,
   type LocaleSource,
@@ -80,7 +81,7 @@ export function localeDetector(options: LocaleDetectorOptions) {
   const cookieAttrs = {
     path: "/",
     sameSite: "lax",
-    maxAge: options.cookieMaxAge ?? 31_536_000,
+    maxAge: options.cookieMaxAge ?? LOCALE_COOKIE_MAX_AGE,
     // A `__Secure-`/`__Host-` cookie name opts into the prefix contract: apply `Secure` (Path is
     // already `/`, no Domain is set) so the persisting Set-Cookie satisfies it instead of throwing.
     ...(persistCookie !== undefined && cookieNamePrefix(persistCookie) !== undefined

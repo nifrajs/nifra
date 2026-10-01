@@ -218,10 +218,15 @@ console.log(typeof composeReviewReport, typeof digestReviewReport)`,
   // exports a given app happens to use.
   "nifra-web-client": `import * as client from "@nifrajs/web/client"
 console.log(client)`,
+  // Browser row: the whole `@nifrajs/i18n` root (formatter, locale registry, negotiation, the locale
+  // cookie), which a translated page ships to every visitor. Routing and the detector are subpaths
+  // and must stay out of it.
+  "nifra-i18n": `import * as i18n from "@nifrajs/i18n"
+console.log(i18n)`,
 }
 
 /** Rows bundled for the browser. Every other feature row is a server bundle. */
-const BROWSER_FEATURES: ReadonlySet<string> = new Set(["nifra-web-client"])
+const BROWSER_FEATURES: ReadonlySet<string> = new Set(["nifra-web-client", "nifra-i18n"])
 
 // Each ceiling is the measured gzip size rounded up to the next 0.1 KB, tight enough that a newly
 // reachable optional subsystem fails CI. A commit that raises one states the measured cost.
@@ -236,6 +241,7 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-typebox-form": 66.3,
   "nifra-agent-review": 5.2,
   "nifra-web-client": 15.1,
+  "nifra-i18n": 4.2,
 }
 
 const main = async (): Promise<void> => {

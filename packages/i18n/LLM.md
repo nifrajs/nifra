@@ -14,24 +14,26 @@ Framework-agnostic i18n for nifra - locale negotiation + a tiny ICU message form
 
 ## Key exports
 
-- **createFormatter** _(function)_ - `createFormatter: (locale: string, messages: Messages) => Formatter` · from `@nifrajs/i18n`
+- **createFormatter** _(function)_ - `createFormatter: <M extends object = MessageTree>(locale: string, messages: NoInfer<CatalogFor<M>>, options?: NoInfer<FormatterOptions<M>>)…` · from `@nifrajs/i18n`
 - **defineI18nRouting** _(function)_ - `defineI18nRouting: <K extends string>(locales: Locales<K>, options?: I18nRoutingOptions) => LocalizedRouter<K>` · from `@nifrajs/i18n/routing`
 - **defineLocales** _(function)_ - `defineLocales: <const K extends string>(config: LocalesConfig<K>) => Locales<K>` · from `@nifrajs/i18n`
+- **localeCookie** _(function)_ - `localeCookie: (name: string, locale: string, options?: LocaleCookieOptions) => string` · from `@nifrajs/i18n`
 - **localeDetector** _(function)_ - `localeDetector: (options: LocaleDetectorOptions) => import("@nifrajs/core").ContextPlugin<LocaleContext>` · from `@nifrajs/i18n/detector`
 - **localeDirection** _(function)_ - `localeDirection: (tag: string) => "ltr" | "rtl"` · from `@nifrajs/i18n`
 - **negotiateLocale** _(function)_ - `negotiateLocale: (request: Request | LocaleParts, options: NegotiateOptions) => Locale` · from `@nifrajs/i18n`
 - **resolveLocale** _(function)_ - `resolveLocale: (request: Request | LocaleParts, options: NegotiateOptions) => ResolvedLocale` · from `@nifrajs/i18n`
 - **Alternates** _(interface)_ - `interface Alternates` · from `@nifrajs/i18n/routing`
 - **AlternatesOptions** _(interface)_ - `interface AlternatesOptions<K extends string = string>` · from `@nifrajs/i18n/routing`
-- **Formatter** _(interface)_ - `interface Formatter` · from `@nifrajs/i18n`
+- **Formatter** _(interface)_ - `interface Formatter<M extends object = RegisteredMessages>` · from `@nifrajs/i18n`
+- **FormatterOptions** _(interface)_ - `interface FormatterOptions<M extends object = RegisteredMessages>` · from `@nifrajs/i18n`
 - **HreflangLink** _(interface)_ - `interface HreflangLink` · from `@nifrajs/i18n/routing`
 - **I18nRoutingOptions** _(interface)_ - `interface I18nRoutingOptions` · from `@nifrajs/i18n/routing`
-- **LocaleContext** _(interface)_ - `interface LocaleContext` · from `@nifrajs/i18n/detector`
-- **LocaleDetectorOptions** _(interface)_ - `interface LocaleDetectorOptions` · from `@nifrajs/i18n/detector`
 
-_…and 13 more - see [`api-reference.md`](../../api-reference.md#nifrajsi18n) for the complete list._
+_…and 25 more - see [`api-reference.md`](../../api-reference.md#nifrajsi18n) for the complete list._
 
 ## Footguns
 
 - The message formatter is a **tiny ICU** layer on the platform `Intl` - it isn't full ICU MessageFormat; check the supported syntax before porting complex messages.
 - Locale negotiation reads the request; resolve the locale at the boundary and thread it, don't read a global.
+- Formatters are cached per catalog object and options: pass a **stable** `onMissing` (module scope) and reuse catalog objects, or every call builds a new formatter.
+- `get(key)` returns the first catalog's value whole - blocks are not merged across `fallback` catalogs; read nested messages with `t("a.b")` to fall back per key.

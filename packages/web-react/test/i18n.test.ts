@@ -44,4 +44,32 @@ describe("@nifrajs/web-react/i18n", () => {
       /within an <I18nProvider>/,
     )
   })
+
+  test("fallback, onMissing and numberingSystem reach the formatter", () => {
+    const missing: string[] = []
+    const onMissing = (key: string) => missing.push(key)
+    function Page() {
+      const { t } = useT()
+      return createElement(
+        "p",
+        null,
+        `${t("own")}|${t("greeting", { name: "Ada", n: 12 })}|${t("gone")}`,
+      )
+    }
+    const html = renderToStaticMarkup(
+      createElement(
+        I18nProvider,
+        {
+          locale: "hi",
+          messages: { own: "अपना" },
+          fallback: [messages],
+          numberingSystem: "deva",
+          onMissing,
+        },
+        createElement(Page),
+      ),
+    )
+    expect(html).toContain("अपना|Hi Ada - १२ messages|gone")
+    expect(missing).toEqual(["gone"])
+  })
 })

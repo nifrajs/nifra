@@ -35,6 +35,31 @@ locales.documentMeta("ur") // { lang: "ur-PK", dir: "rtl" }
 Guard a `[lang]` route segment with `matchSegment()` in `routes/[lang]/_middleware.ts`: an unknown or
 draft value answers 404, and the default's prefix (`/en/...`) or a wrong case redirects.
 
+## Messages
+
+`createFormatter(locale, messages, options)` formats ICU messages: interpolation, `plural`,
+`selectordinal` and `select`, nested, with `#` in the locale's own number format. Catalogs may nest
+(messages, lists, blocks) and are read with dotted keys; `get(key)` returns a list or block whole. A
+key the catalog lacks is tried in each `fallback` catalog, then `onMissing` fires once and the key is
+returned. `timeZone` and `numberingSystem` set defaults for `d()`, `n()` and `#`.
+
+```ts
+import { createFormatter } from "@nifrajs/i18n"
+
+const t = createFormatter("fr-CA", catalogs["fr-CA"], {
+  fallback: locales.chain("fr-CA").slice(1).map((key) => catalogs[key]), // fr, then en
+  onMissing: reportMissingKey, // a stable function: formatters are cached per handler
+  timeZone: user.timeZone,
+})
+t.t("cart", { count: 1200 }) // "1 200 articles"
+```
+
+Declare `interface Register { messages: typeof en }` on `@nifrajs/i18n` once, and every `t()` key
+(adapters' `useT()` included) and every `Translation`-typed catalog is checked against `en`.
+
+`localeCookie(name, locale)` is the browser half of the detector's `persist` cookie: assign it to
+`document.cookie` in a language switcher and it is byte-identical to the detector's `Set-Cookie`.
+
 ## Locale detection
 
 `negotiateLocale()` / `resolveLocale()` are pure: query parameter → cookie → `Accept-Language` →

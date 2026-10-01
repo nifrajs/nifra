@@ -5,7 +5,12 @@
  * negotiated catalog on the server, and the client rebuilds the same formatter on hydrate (no
  * mismatch). Imports only `vue` + `@nifrajs/i18n`; no template.
  */
-import { createFormatter, type Formatter, type Messages } from "@nifrajs/i18n"
+import {
+  createFormatter,
+  type Formatter,
+  type FormatterOptions,
+  type Translation,
+} from "@nifrajs/i18n"
 import {
   type ComputedRef,
   computed,
@@ -18,24 +23,36 @@ import {
 
 const I18N_KEY: InjectionKey<ComputedRef<Formatter>> = Symbol("nifra-i18n")
 
-/** Provide a {@link Formatter} (built from `locale` + `messages`) to the subtree. Recomputes when
- * `locale`/`messages` change, so a locale switch re-renders consumers. Renders its default slot. */
+/** Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`,
+ * `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Recomputes
+ * when any of them changes, so a locale switch re-renders consumers. Renders its default slot. */
 export const I18nProvider = defineComponent({
   name: "I18nProvider",
   props: {
     locale: { type: String, required: true },
-    messages: { type: Object as PropType<Messages>, required: true },
+    messages: { type: Object as PropType<Translation>, required: true },
+    fallback: { type: Array as PropType<NonNullable<FormatterOptions["fallback"]>> },
+    onMissing: { type: Function as PropType<NonNullable<FormatterOptions["onMissing"]>> },
+    timeZone: { type: String },
+    numberingSystem: { type: String },
   },
   setup(props, { slots }) {
     provide(
       I18N_KEY,
-      computed(() => createFormatter(props.locale, props.messages)),
+      computed(() =>
+        createFormatter(props.locale, props.messages, {
+          fallback: props.fallback,
+          onMissing: props.onMissing,
+          timeZone: props.timeZone,
+          numberingSystem: props.numberingSystem,
+        }),
+      ),
     )
     return () => slots.default?.()
   },
 })
 
-/** Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above. */
+/** Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above. */
 export function useT(): Formatter {
   const formatter = inject(I18N_KEY)
   if (formatter === undefined) {

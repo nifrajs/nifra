@@ -3222,9 +3222,11 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/i18n`
 
-- **Formatter** _(interface)_ - `interface Formatter`
+- **Formatter** _(interface)_ - `interface Formatter<M extends object = RegisteredMessages>`
+- **FormatterOptions** _(interface)_ - `interface FormatterOptions<M extends object = RegisteredMessages>`
 - **Locale** _(type)_ - `type Locale = string`
   Locale negotiation - pick the best supported locale for a request, from (in priority order) an explicit query parameter, then a cookie, then the `Accept-Language` header (quality-ranked, with a base-tag fallback so `fr-CA` matches a supported `fr`). Pure + runtime-agnostic. The result is always a m…
+- **LocaleCookieOptions** _(interface)_ - `interface LocaleCookieOptions`
 - **LocaleInfo** _(interface)_ - `interface LocaleInfo<K extends string = string>`
   One locale with every field resolved.
 - **LocaleParts** _(interface)_ - `interface LocaleParts`
@@ -3237,14 +3239,34 @@ _No named exports (side-effect entrypoint)._
   The registry {@link defineLocales} returns.
 - **LocalesConfig** _(interface)_ - `interface LocalesConfig<K extends string>`
   What {@link defineLocales} takes.
+- **MessageAt** _(type)_ - `type MessageAt<M, P extends string>`
+  The type of the value at dotted key `P` in `M`, resolved the way the formatter looks it up: the whole key first, then segment by segment.
+- **MessageKey** _(type)_ - `type MessageKey<M> = string extends keyof M ? string : LeafPaths<M, 10>`
+  The dotted keys of `M` whose value is a message, which is what `t()` takes. `string` for an untyped catalog.
+- **MessagePath** _(type)_ - `type MessagePath<M> = string extends keyof M ? string : AllPaths<M, 10>`
+  Every dotted key of `M`, blocks and lists included, which is what `get()` takes.
+- **MessageTree** _(interface)_ - `interface MessageTree`
+  A message catalog: ICU strings, lists and nested blocks, keyed by name.
+- **MessageValue** _(type)_ - `type MessageValue = string | readonly MessageValue[] | MessageTree`
+  One catalog value: an ICU message, a list (FAQ items), or a nested block of either.
 - **Messages** _(type)_ - `type Messages = Record<string, string>`
-  A tiny ICU message formatter on the platform `Intl`. Supports interpolation (`{name}`), `plural` (`{n, plural, one {# item} other {# items}}`, with `=N` exact cases and `#` → the number), and `select` (`{kind, select, a {…} other {…}}`), nested arbitrarily. Parsed by a hand-written recursive descen…
+  A flat catalog of ICU strings. Any {@link MessageTree} is accepted where a catalog is taken.
 - **NegotiateOptions** _(interface)_ - `interface NegotiateOptions`
+- **PartialMessages** _(type)_ - `type PartialMessages<M> = string extends keyof M ? M : { readonly [K in keyof M]?: PartialValue<M[K]> }`
+  Another locale's catalog for `M`: every key optional at every level, and any string where `M` has one. A key it lacks falls back through the formatter's `fallback` catalogs.
+- **Register** _(interface)_ - `interface Register`
+  The app's catalog type, declared once so every `t()` key is checked. Empty by default (keys are plain strings). Augment it with the default locale's catalog:
+- **RegisteredMessages** _(type)_ - `type RegisteredMessages = Register extends { readonly messages: infer M extends object } ? M : MessageTree`
+  The catalog type {@link Register} declares, or {@link MessageTree} when it declares none.
 - **ResolvedLocale** _(interface)_ - `interface ResolvedLocale`
-- **createFormatter** _(function)_ - `createFormatter: (locale: string, messages: Messages) => Formatter`
-  Build (or reuse) a {@link Formatter} bound to a locale + its message catalog. Cheap to call per request/render - instances are cached per `(messages, locale)`, and parsed ASTs + `Intl.*` are memoized inside each. The catalog is the app's (import a JSON file); this only negotiates (see `negotiateLoc…
+- **Translation** _(type)_ - `type Translation = CatalogFor<RegisteredMessages>`
+  Any locale's catalog for the {@link Register}ed type ({@link MessageTree} when none is declared).
+- **createFormatter** _(function)_ - `createFormatter: <M extends object = MessageTree>(locale: string, messages: NoInfer<CatalogFor<M>>, options?: NoInfer<FormatterOptions<M>>) => Formatter<M>`
+  Build (or reuse) a {@link Formatter} bound to a locale + its message catalog. Cheap to call per request/render - instances are cached per `(messages, locale, options)`, and parsed ASTs + `Intl.*` are memoized. The catalog is the app's (import a JSON file); this only negotiates (see `negotiateLocale…
 - **defineLocales** _(function)_ - `defineLocales: <const K extends string>(config: LocalesConfig<K>) => Locales<K>`
   Declare the app's locales once.
+- **localeCookie** _(function)_ - `localeCookie: (name: string, locale: string, options?: LocaleCookieOptions) => string`
+  The `document.cookie` string that remembers `locale` under the detector's cookie `name`: `Path=/; SameSite=Lax`, a one-year `Max-Age` by default, and `Secure` for a `__Secure-`/`__Host-` name. Not `HttpOnly`, like the detector's, so the switcher can write it. The value only ever selects one of the …
 - **localeDirection** _(function)_ - `localeDirection: (tag: string) => "ltr" | "rtl"`
   The writing direction of a BCP-47 tag: an explicit script subtag decides (`pa-Arab` is rtl, `sd-Deva` ltr), then the language (`ur`, `ar`, `he`, ...), then the script the runtime's likely- subtags data gives for a rarer language. `ltr` when none of those says rtl, including for a tag the runtime ca…
 - **negotiateLocale** _(function)_ - `negotiateLocale: (request: Request | LocaleParts, options: NegotiateOptions) => Locale`
@@ -5557,10 +5579,10 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web-preact/i18n`
 
 - **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => VNode`
-  Provide a {@link Formatter} (built from `locale` + `messages`) to the subtree. Memoized on `locale`/`messages`, so switching locale rebuilds it and re-renders consumers.
+  Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`, `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Memoized on those props, so switching locale rebuilds it and re-renders consumers; formatters are cached by catalog identi…
 - **I18nProviderProps** _(interface)_ - `interface I18nProviderProps`
 - **useT** _(function)_ - `useT: () => Formatter`
-  Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above.
+  Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above.
 
 ### `@nifrajs/web-preact/image`
 
@@ -5664,10 +5686,10 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web-react/i18n`
 
 - **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => ReactNode`
-  Provide a {@link Formatter} (built from `locale` + `messages`) to the subtree. Memoized on `locale`/`messages`, so switching locale rebuilds it and re-renders consumers.
+  Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`, `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Memoized on those props, so switching locale rebuilds it and re-renders consumers; formatters are cached by catalog identi…
 - **I18nProviderProps** _(interface)_ - `interface I18nProviderProps`
 - **useT** _(function)_ - `useT: () => Formatter`
-  Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above.
+  Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above.
 
 ### `@nifrajs/web-react/image`
 
@@ -5817,10 +5839,10 @@ _No named exports (side-effect entrypoint)._
 ### `@nifrajs/web-solid/i18n`
 
 - **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => JSX.Element`
-  Provide a {@link Formatter} (built from `locale` + `messages`) to the subtree. Memoized on `locale`/`messages`, so switching locale rebuilds it.
+  Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`, `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Memoized on those props, so switching locale rebuilds it.
 - **I18nProviderProps** _(interface)_ - `interface I18nProviderProps`
 - **useT** _(function)_ - `useT: () => Formatter`
-  Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above. nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog.
+  Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above. nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog.
 
 ### `@nifrajs/web-solid/image`
 
@@ -5919,7 +5941,7 @@ _No named exports (side-effect entrypoint)._
 - **I18nProviderProps** _(interface)_ - `interface I18nProviderProps`
   Hand-written types for `I18nProvider.svelte` (consumers resolve these via the `./i18n` re-export).
 - **useT** _(function)_ - `useT: () => Formatter`
-  Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above. nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog.
+  Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above. nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog.
 
 ### `@nifrajs/web-svelte/mdx`
 
@@ -6037,10 +6059,10 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web-vue/i18n`
 
-- **I18nProvider** _(const)_ - `I18nProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ locale: { type: StringConstructor; required: true; }; messages: { type: PropType<Messages>; required: true; }; }>, () => import("vue").VNode<i…`
-  Provide a {@link Formatter} (built from `locale` + `messages`) to the subtree. Recomputes when `locale`/`messages` change, so a locale switch re-renders consumers. Renders its default slot.
+- **I18nProvider** _(const)_ - `I18nProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ locale: { type: StringConstructor; required: true; }; messages: { type: PropType<Translation>; required: true; }; fallback: { type: PropType<N…`
+  Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`, `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Recomputes when any of them changes, so a locale switch re-renders consumers. Renders its default slot.
 - **useT** _(function)_ - `useT: () => Formatter`
-  Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above.
+  Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above.
 
 ### `@nifrajs/web-vue/image`
 

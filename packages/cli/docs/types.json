@@ -4683,8 +4683,8 @@
     "name": "createFormatter",
     "kind": "function",
     "package": "@nifrajs/i18n",
-    "signature": "export declare function createFormatter(locale: string, messages: Messages): Formatter;",
-    "doc": "/**\n * Build (or reuse) a {@link Formatter} bound to a locale + its message catalog. Cheap to call per\n * request/render - instances are cached per `(messages, locale)`, and parsed ASTs + `Intl.*` are\n * memoized inside each. The catalog is the app's (import a JSON file); this only negotiates (see\n * `negotiateLocale`) and formats.\n */"
+    "signature": "export declare function createFormatter<M extends object = RegisteredMessages>(locale: string, messages: NoInfer<CatalogFor<M>>, options?: NoInfer<FormatterOptions<M>>): Formatter<M>;",
+    "doc": "/**\n * Build (or reuse) a {@link Formatter} bound to a locale + its message catalog. Cheap to call per\n * request/render - instances are cached per `(messages, locale, options)`, and parsed ASTs + `Intl.*`\n * are memoized. The catalog is the app's (import a JSON file); this only negotiates (see\n * `negotiateLocale`) and formats.\n *\n * ```ts\n * const t = createFormatter(\"fr-CA\", catalogs[\"fr-CA\"], {\n *   fallback: [catalogs.fr, catalogs.en],\n *   timeZone: user.timeZone,\n *   onMissing: reportMissingKey,\n * })\n * ```\n *\n * Throws, like `Intl`, for an invalid locale, `timeZone` or `numberingSystem`.\n */"
   },
   {
     "name": "createImageHandler",
@@ -7757,7 +7757,13 @@
     "name": "Formatter",
     "kind": "interface",
     "package": "@nifrajs/i18n",
-    "signature": "export interface Formatter {\n    readonly locale: string;\n    /** Format `messages[key]` (an ICU string) with `vars`; a missing key returns the key itself. */\n    t(key: string, vars?: Readonly<Record<string, unknown>>): string;\n    /** Locale number formatting (memoized `Intl.NumberFormat`). */\n    n(value: number, options?: Intl.NumberFormatOptions): string;\n    /** Locale date/time formatting (memoized `Intl.DateTimeFormat`). */\n    d(value: Date | number, options?: Intl.DateTimeFormatOptions): string;\n}"
+    "signature": "export interface Formatter<M extends object = RegisteredMessages> {\n    readonly locale: string;\n    /** Format the ICU message at `key` with `vars`, trying `fallback` catalogs in order. A key no\n     * catalog has calls `onMissing` and returns the key itself. */\n    t(key: MessageKey<M>, vars?: Readonly<Record<string, unknown>>): string;\n    /** The raw value at `key` (a message, list or block) from the first catalog that has it, without\n     * merging catalogs. `undefined`, after `onMissing`, when none has it. */\n    get<P extends MessagePath<M>>(key: P): MessageAt<M, P> | undefined;\n    /** Locale number formatting (memoized `Intl.NumberFormat`). */\n    n(value: number | bigint, options?: Intl.NumberFormatOptions): string;\n    /** Locale date/time formatting (memoized `Intl.DateTimeFormat`). */\n    d(value: Date | number, options?: Intl.DateTimeFormatOptions): string;\n}"
+  },
+  {
+    "name": "FormatterOptions",
+    "kind": "interface",
+    "package": "@nifrajs/i18n",
+    "signature": "export interface FormatterOptions<M extends object = RegisteredMessages> {\n    /** Catalogs to try, in order, for a key `messages` lacks: typically the base language's, then the\n     * default locale's (`locales.chain(key)` gives that order). The formatter's locale still formats a\n     * fallback message's numbers, dates and plurals. */\n    readonly fallback?: readonly CatalogFor<M>[] | undefined;\n    /** Called with a key no catalog has, once per key per formatter, before the key is returned. Pass a\n     * stable function (module scope): formatters are cached per handler, so a new function on every\n     * render builds a new formatter every render. */\n    readonly onMissing?: ((key: string, locale: string) => void) | undefined;\n    /** Default `timeZone` for `d()`. An invalid zone throws here, like `Intl.DateTimeFormat`. */\n    readonly timeZone?: string | undefined;\n    /** Default `numberingSystem` (`\"deva\"`, `\"arab\"`, ...) for `n()`, `d()` and plural `#`. */\n    readonly numberingSystem?: string | undefined;\n}"
   },
   {
     "name": "formatTraceparent",
@@ -8426,52 +8432,52 @@
     "kind": "function",
     "package": "@nifrajs/web-preact",
     "signature": "export declare function I18nProvider(props: I18nProviderProps): VNode;",
-    "doc": "/** Provide a {@link Formatter} (built from `locale` + `messages`) to the subtree. Memoized on\n * `locale`/`messages`, so switching locale rebuilds it and re-renders consumers. */"
+    "doc": "/** Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`,\n * `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Memoized\n * on those props, so switching locale rebuilds it and re-renders consumers; formatters are cached by\n * catalog identity, so an inline `fallback={[en]}` still yields the same instance. */"
   },
   {
     "name": "I18nProvider",
     "kind": "function",
     "package": "@nifrajs/web-react",
     "signature": "export declare function I18nProvider(props: I18nProviderProps): ReactNode;",
-    "doc": "/** Provide a {@link Formatter} (built from `locale` + `messages`) to the subtree. Memoized on\n * `locale`/`messages`, so switching locale rebuilds it and re-renders consumers. */"
+    "doc": "/** Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`,\n * `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Memoized\n * on those props, so switching locale rebuilds it and re-renders consumers; formatters are cached by\n * catalog identity, so an inline `fallback={[en]}` still yields the same instance. */"
   },
   {
     "name": "I18nProvider",
     "kind": "function",
     "package": "@nifrajs/web-solid",
     "signature": "export declare function I18nProvider(props: I18nProviderProps): JSX.Element;",
-    "doc": "/** Provide a {@link Formatter} (built from `locale` + `messages`) to the subtree. Memoized on\n * `locale`/`messages`, so switching locale rebuilds it. */"
+    "doc": "/** Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`,\n * `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Memoized\n * on those props, so switching locale rebuilds it. */"
   },
   {
     "name": "I18nProvider",
     "kind": "const",
     "package": "@nifrajs/web-vue",
-    "signature": "export declare const I18nProvider: import(\"vue\").DefineComponent<import(\"vue\").ExtractPropTypes<{\n    locale: {\n        type: StringConstructor;\n        required: true;\n    };\n    messages: {\n        type: PropType<Messages>;\n        required: true;\n    };\n}>, () => import(\"vue\").VNode<import(\"vue\").RendererNode, import(\"vue\").RendererElement, {\n    [key: string]: any;\n}>[] | undefined, {}, {}, {}, import(\"vue\").ComponentOptionsMixin, import(\"vue\").ComponentOptionsMixin, {}, string, import(\"vue\").PublicProps, Readonly<import(\"vue\").ExtractPropTypes<{\n    locale: {\n        type: StringConstructor;\n        required: true;\n    };\n    messages: {\n        type: PropType<Messages>;\n        required: true;\n    };\n}>> & Readonly<{}>, {}, {}, {}, {}, string, import(\"vue\").ComponentProvideOptions, true, {}, any>;",
-    "doc": "/** Provide a {@link Formatter} (built from `locale` + `messages`) to the subtree. Recomputes when\n * `locale`/`messages` change, so a locale switch re-renders consumers. Renders its default slot. */"
+    "signature": "export declare const I18nProvider: import(\"vue\").DefineComponent<import(\"vue\").ExtractPropTypes<{\n    locale: {\n        type: StringConstructor;\n        required: true;\n    };\n    messages: {\n        type: PropType<Translation>;\n        required: true;\n    };\n    fallback: {\n        type: PropType<NonNullable<FormatterOptions[\"fallback\"]>>;\n    };\n    onMissing: {\n        type: PropType<NonNullable<FormatterOptions[\"onMissing\"]>>;\n    };\n    timeZone: {\n        type: StringConstructor;\n    };\n    numberingSystem: {\n        type: StringConstructor;\n    };\n}>, () => import(\"vue\").VNode<import(\"vue\").RendererNode, import(\"vue\").RendererElement, {\n    [key: string]: any;\n}>[] | undefined, {}, {}, {}, import(\"vue\").ComponentOptionsMixin, import(\"vue\").ComponentOptionsMixin, {}, string, import(\"vue\").PublicProps, Readonly<import(\"vue\").ExtractPropTypes<{\n    locale: {\n        type: StringConstructor;\n        required: true;\n    };\n    messages: {\n        type: PropType<Translation>;\n        required: true;\n    };\n    fallback: {\n        type: PropType<NonNullable<FormatterOptions[\"fallback\"]>>;\n    };\n    onMissing: {\n        type: PropType<NonNullable<FormatterOptions[\"onMissing\"]>>;\n    };\n    timeZone: {\n        type: StringConstructor;\n    };\n    numberingSystem: {\n        type: StringConstructor;\n    };\n}>> & Readonly<{}>, {}, {}, {}, {}, string, import(\"vue\").ComponentProvideOptions, true, {}, any>;",
+    "doc": "/** Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`,\n * `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Recomputes\n * when any of them changes, so a locale switch re-renders consumers. Renders its default slot. */"
   },
   {
     "name": "I18nProviderProps",
     "kind": "interface",
     "package": "@nifrajs/web-preact",
-    "signature": "export interface I18nProviderProps {\n    readonly locale: string;\n    readonly messages: Messages;\n    readonly children?: ComponentChildren;\n}"
+    "signature": "export interface I18nProviderProps extends FormatterOptions {\n    readonly locale: string;\n    /** The catalog for `locale`, checked against the registered catalog type when one is declared. */\n    readonly messages: Translation;\n    readonly children?: ComponentChildren;\n}"
   },
   {
     "name": "I18nProviderProps",
     "kind": "interface",
     "package": "@nifrajs/web-react",
-    "signature": "export interface I18nProviderProps {\n    readonly locale: string;\n    readonly messages: Messages;\n    readonly children?: ReactNode;\n}"
+    "signature": "export interface I18nProviderProps extends FormatterOptions {\n    readonly locale: string;\n    /** The catalog for `locale`, checked against the registered catalog type when one is declared. */\n    readonly messages: Translation;\n    readonly children?: ReactNode;\n}"
   },
   {
     "name": "I18nProviderProps",
     "kind": "interface",
     "package": "@nifrajs/web-solid",
-    "signature": "export interface I18nProviderProps {\n    readonly locale: string;\n    readonly messages: Messages;\n    readonly children?: JSX.Element;\n}"
+    "signature": "export interface I18nProviderProps extends FormatterOptions {\n    readonly locale: string;\n    /** The catalog for `locale`, checked against the registered catalog type when one is declared. */\n    readonly messages: Translation;\n    readonly children?: JSX.Element;\n}"
   },
   {
     "name": "I18nProviderProps",
     "kind": "interface",
     "package": "@nifrajs/web-svelte",
-    "signature": "export interface I18nProviderProps {\n  /** The active locale (e.g. `\"en\"`, `\"fr-CA\"`). */\n  locale: string\n  /** The ICU message catalog for `locale`. */\n  messages: Messages\n  /** The subtree that reads the formatter via `useT()`. */\n  children?: Snippet\n}",
+    "signature": "export interface I18nProviderProps extends FormatterOptions {\n  /** The active locale (e.g. `\"en\"`, `\"fr-CA\"`). */\n  locale: string\n  /** The catalog for `locale`, checked against the registered catalog type when one is declared. */\n  messages: Translation\n  /** The subtree that reads the formatter via `useT()`. */\n  children?: Snippet\n}",
     "doc": "/** Hand-written types for `I18nProvider.svelte` (consumers resolve these via the `./i18n` re-export). */"
   },
   {
@@ -9952,6 +9958,19 @@
     "doc": "/** Context added by {@link localeDetector}. */"
   },
   {
+    "name": "localeCookie",
+    "kind": "function",
+    "package": "@nifrajs/i18n",
+    "signature": "export declare function localeCookie(name: string, locale: string, options?: LocaleCookieOptions): string;",
+    "doc": "/**\n * The `document.cookie` string that remembers `locale` under the detector's cookie `name`:\n * `Path=/; SameSite=Lax`, a one-year `Max-Age` by default, and `Secure` for a `__Secure-`/`__Host-`\n * name. Not `HttpOnly`, like the detector's, so the switcher can write it. The value only ever\n * selects one of the app's own locales: the detector matches it against its allow-list on read.\n *\n * ```ts\n * import { localeCookie } from \"@nifrajs/i18n\"\n *\n * document.cookie = localeCookie(\"locale\", \"hi\")\n * ```\n *\n * Throws for a name that is not an RFC 6265 token, a non-integer `maxAge`, or a cookie over 4 KB.\n */"
+  },
+  {
+    "name": "LocaleCookieOptions",
+    "kind": "interface",
+    "package": "@nifrajs/i18n",
+    "signature": "export interface LocaleCookieOptions {\n    /** `Max-Age` in seconds. Default one year, matching the detector's `cookieMaxAge` default. Pass\n     * the same value the detector is configured with. */\n    readonly maxAge?: number;\n}"
+  },
+  {
     "name": "localeDetector",
     "kind": "function",
     "package": "@nifrajs/i18n",
@@ -10799,11 +10818,46 @@
     "doc": "/** Merge catalogs into one. Throws {@link CatalogError} on any duplicate step key (collision). */"
   },
   {
+    "name": "MessageAt",
+    "kind": "type",
+    "package": "@nifrajs/i18n",
+    "signature": "export type MessageAt<M, P extends string> = string extends keyof M ? MessageValue : M extends readonly (infer E)[] ? P extends `${number}` ? E : P extends `${infer H}.${infer R}` ? H extends `${number}` ? MessageAt<Defined<E>, R> : never : never : P extends keyof M ? M[P] : P extends `${infer H}.${infer R}` ? H extends keyof M ? MessageAt<Defined<M[H]>, R> : never : never;",
+    "doc": "/** The type of the value at dotted key `P` in `M`, resolved the way the formatter looks it up: the\n * whole key first, then segment by segment. */"
+  },
+  {
+    "name": "MessageKey",
+    "kind": "type",
+    "package": "@nifrajs/i18n",
+    "signature": "export type MessageKey<M> = string extends keyof M ? string : LeafPaths<M, 10>;",
+    "doc": "/** The dotted keys of `M` whose value is a message, which is what `t()` takes. `string` for an\n * untyped catalog. */"
+  },
+  {
+    "name": "MessagePath",
+    "kind": "type",
+    "package": "@nifrajs/i18n",
+    "signature": "export type MessagePath<M> = string extends keyof M ? string : AllPaths<M, 10>;",
+    "doc": "/** Every dotted key of `M`, blocks and lists included, which is what `get()` takes. */"
+  },
+  {
     "name": "Messages",
     "kind": "type",
     "package": "@nifrajs/i18n",
     "signature": "export type Messages = Record<string, string>;",
-    "doc": "/**\n * A tiny ICU message formatter on the platform `Intl`. Supports interpolation (`{name}`), `plural`\n * (`{n, plural, one {# item} other {# items}}`, with `=N` exact cases and `#` → the number), and\n * `select` (`{kind, select, a {…} other {…}}`), nested arbitrarily. Parsed by a hand-written recursive\n * descent (a regex can't match nested `{}`); ASTs are cached per message. `Intl.MessageFormat` isn't\n * widely available yet, so this is the portable subset.\n *\n * Not supported (documented non-goals): inline `{n, number}`/`{d, date}` skeletons (use `n`/`d`),\n * `selectordinal`, `offset:`, and apostrophe quoting. A missing key/var fails soft (returns the key /\n * empty). A malformed message fails soft to its raw string so one bad catalog entry does not 500 SSR.\n */"
+    "doc": "/** A flat catalog of ICU strings. Any {@link MessageTree} is accepted where a catalog is taken. */"
+  },
+  {
+    "name": "MessageTree",
+    "kind": "interface",
+    "package": "@nifrajs/i18n",
+    "signature": "export interface MessageTree {\n    [key: string]: MessageValue;\n}",
+    "doc": "/** A message catalog: ICU strings, lists and nested blocks, keyed by name. */"
+  },
+  {
+    "name": "MessageValue",
+    "kind": "type",
+    "package": "@nifrajs/i18n",
+    "signature": "export type MessageValue = string | readonly MessageValue[] | MessageTree;",
+    "doc": "/** One catalog value: an ICU message, a list (FAQ items), or a nested block of either. */"
   },
   {
     "name": "Meta",
@@ -12888,6 +12942,13 @@
     "doc": "/** Parse a decimal Content-Length without allowing malformed or unsafe values to pass as a size. */"
   },
   {
+    "name": "PartialMessages",
+    "kind": "type",
+    "package": "@nifrajs/i18n",
+    "signature": "export type PartialMessages<M> = string extends keyof M ? M : {\n    readonly [K in keyof M]?: PartialValue<M[K]>;\n};",
+    "doc": "/** Another locale's catalog for `M`: every key optional at every level, and any string where `M`\n * has one. A key it lacks falls back through the formatter's `fallback` catalogs. */"
+  },
+  {
     "name": "pathnameOf",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -14276,11 +14337,25 @@
     "doc": "/**\n * Reflect a Standard Schema, Nifra/TypeBox schema carrier, or raw JSON Schema. Never throws.\n * Validation-only schemas have `standard` but no `jsonSchema`; raw JSON Schema has the reverse.\n */"
   },
   {
+    "name": "Register",
+    "kind": "interface",
+    "package": "@nifrajs/i18n",
+    "signature": "export interface Register {\n}",
+    "doc": "/**\n * The app's catalog type, declared once so every `t()` key is checked. Empty by default (keys are\n * plain strings). Augment it with the default locale's catalog:\n *\n * ```ts\n * import type en from \"./messages/en.json\"\n *\n * declare module \"@nifrajs/i18n\" {\n *   interface Register {\n *     messages: typeof en\n *   }\n * }\n * ```\n *\n * With that, `useT().t(\"home.titel\")` is a compile error, and other locales' catalogs are checked\n * against {@link Translation}.\n */"
+  },
+  {
     "name": "registerBlocker",
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function registerBlocker(shouldBlock: BlockerFunction, onChange: (blocker: Blocker) => void): () => void;",
     "doc": "/**\n * Register a navigation guard, returning an unregister function. `onChange` is called with the current\n * {@link Blocker} whenever its state changes (so the adapter can re-render its confirmation UI). Before\n * `installHistory` has run (SSR, pre-hydration), there's no controller: registration is a no-op and the\n * caller stays on {@link IDLE_BLOCKER}, degrading to native navigation. Called by an adapter's\n * `useBlocker`, not by app code directly.\n */"
+  },
+  {
+    "name": "RegisteredMessages",
+    "kind": "type",
+    "package": "@nifrajs/i18n",
+    "signature": "export type RegisteredMessages = Register extends {\n    readonly messages: infer M extends object;\n} ? M : MessageTree;",
+    "doc": "/** The catalog type {@link Register} declares, or {@link MessageTree} when it declares none. */"
   },
   {
     "name": "registerFixRecipe",
@@ -19502,6 +19577,13 @@
     "doc": "/**\n * Pure core (no I/O): scope a CSS-module source. Same `(source, filePath)` in → byte-identical out, so\n * the `\"dom\"` and `\"ssr\"` plugin forms produce the same class map. Exposed for direct testing.\n */"
   },
   {
+    "name": "Translation",
+    "kind": "type",
+    "package": "@nifrajs/i18n",
+    "signature": "export type Translation = CatalogFor<RegisteredMessages>;",
+    "doc": "/** Any locale's catalog for the {@link Register}ed type ({@link MessageTree} when none is declared). */"
+  },
+  {
     "name": "TransportByteLimitOptions",
     "kind": "interface",
     "package": "@nifrajs/agent-protocol",
@@ -20274,35 +20356,35 @@
     "kind": "function",
     "package": "@nifrajs/web-preact",
     "signature": "export declare function useT(): Formatter;",
-    "doc": "/** Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above. */"
+    "doc": "/** Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above. */"
   },
   {
     "name": "useT",
     "kind": "function",
     "package": "@nifrajs/web-react",
     "signature": "export declare function useT(): Formatter;",
-    "doc": "/** Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above. */"
+    "doc": "/** Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above. */"
   },
   {
     "name": "useT",
     "kind": "function",
     "package": "@nifrajs/web-solid",
     "signature": "export declare function useT(): Formatter;",
-    "doc": "/** Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above.\n * nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog. */"
+    "doc": "/** Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above.\n * nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog. */"
   },
   {
     "name": "useT",
     "kind": "function",
     "package": "@nifrajs/web-svelte",
     "signature": "export declare function useT(): Formatter;",
-    "doc": "/** Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above.\n * nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog. */"
+    "doc": "/** Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above.\n * nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog. */"
   },
   {
     "name": "useT",
     "kind": "function",
     "package": "@nifrajs/web-vue",
     "signature": "export declare function useT(): Formatter;",
-    "doc": "/** Read the current {@link Formatter} (`{ locale, t, n, d }`). Throws if no `<I18nProvider>` is above. */"
+    "doc": "/** Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above. */"
   },
   {
     "name": "validateExtensionModule",

@@ -92,27 +92,67 @@ const app = server().use(localeDetector({
 })).get("/", (c) => c.json({ locale: c.locale, via: c.localeSource }))`
 
 const PROVIDER = `// The page provides the formatter; components read it with useT().
+import { localeCookie } from "@nifrajs/i18n"
 import { I18nProvider, useT } from "@nifrajs/web-react/i18n"
 
 export default function Page({ data }) {
-  return <I18nProvider locale={data.locale} messages={data.messages}><Body/></I18nProvider>
+  // data.fallback: the catalogs locales.chain(locale) names after the page's own, from the loader.
+  return (
+    <I18nProvider locale={data.locale} messages={data.messages} fallback={data.fallback}>
+      <Body />
+    </I18nProvider>
+  )
 }
 
 function Body() {
-  const { t, n, d } = useT()
+  const { t, get, n, d } = useT()
   return <>
-    <p>{t("greeting", { name: "Ada" })}</p>
-    {/* ICU plural with # substitution */}
-    <p>{t("cart", { count: 3 })}</p>            {/* "3 items in your cart" */}
-    <p>{t("price", { amount: n(1299.99, { style: "currency", currency: "EUR" }) })}</p>
+    <p>{t("home.title", { name: "Ada" })}</p>
+    <p>{t("cart", { count: 1200 })}</p>          {/* "1,200 items" - # in the locale's format */}
+    <p>{t("place", { rank: 2 })}</p>             {/* "You finished 2nd" */}
+    <p>{n(1299.99, { style: "currency", currency: "EUR" })}</p>
     <p>{d(Date.now(), { dateStyle: "long" })}</p>
+    <ul>{get("faq")?.map((item) => <li key={item.q}>{item.q}</li>)}</ul>
+    {/* Same cookie name and attributes as localeDetector({ persist: true }) */}
+    <button onClick={() => { document.cookie = localeCookie("locale", "hi"); location.reload() }}>
+      हिन्दी
+    </button>
   </>
 }`
 
-const CATALOG = `// catalogs: plain JSON per locale (ICU strings). Bring your own.
-export const catalogs = {
-  en: { greeting: "Hello, {name}!", cart: "{count, plural, =0 {empty} one {# item} other {# items}}" },
-  fr: { greeting: "Bonjour, {name} !", cart: "{count, plural, =0 {vide} one {# article} other {# articles}}" },
+const CATALOG = `// messages/en.ts - the default locale's catalog: ICU strings, lists and nested blocks.
+import { createFormatter, type PartialMessages } from "@nifrajs/i18n"
+
+export const en = {
+  cart: "{count, plural, =0 {empty} one {# item} other {# items}}",
+  place: "You finished {rank, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}",
+  home: { title: "Welcome back, {name}" },
+  faq: [{ q: "Is it free?", a: "Yes." }],
+}
+
+// Another locale is partial; a key it lacks falls back to the next catalog.
+export const fr: PartialMessages<typeof en> = {
+  cart: "{count, plural, =0 {vide} one {# article} other {# articles}}",
+}
+
+const t = createFormatter<typeof en>("fr", fr, {
+  fallback: [en],
+  onMissing: (key, locale) => console.warn(\`missing \${locale} translation: \${key}\`),
+  timeZone: "Europe/Paris",
+})
+t.t("cart", { count: 1200 }) // "1 200 articles"
+t.t("home.title", { name: "Ada" }) // "Welcome back, Ada", from en
+const questions = t.get("faq")?.map((item) => item.q)
+console.log(questions)`
+
+const REGISTER = `// doc-check: skip - declares the app-wide catalog type, which would retype every other sample here.
+// Once, anywhere in the app: every t() key, useT() included, and every other catalog is checked.
+import type { en } from "./messages/en"
+
+declare module "@nifrajs/i18n" {
+  interface Register {
+    messages: typeof en
+  }
 }`
 
 export default function I18n() {
@@ -184,20 +224,41 @@ export default function I18n() {
 
       <h2>Format messages</h2>
       <p>
-        <code>createFormatter(locale, messages)</code> → <code>{`{ t, n, d }`}</code>. <code>t</code>
-        handles interpolation (<code>{`{name}`}</code>), <code>plural</code> (with <code>=N</code> exact
-        cases and <code>#</code> → the number) and <code>select</code>, nested - via a hand-written
-        parser + <code>Intl.PluralRules</code>. <code>n</code>/<code>d</code> are memoized
-        <code> Intl.NumberFormat</code>/<code>DateTimeFormat</code>. A missing key returns the key.
+        <code>createFormatter(locale, messages, options)</code> →{" "}
+        <code>{`{ t, get, n, d }`}</code>. <code>t</code> handles interpolation (
+        <code>{`{name}`}</code>), <code>plural</code> (with <code>=N</code> exact cases),{" "}
+        <code>selectordinal</code> (1st, 2nd, 3rd) and <code>select</code>, nested - via a
+        hand-written parser + <code>Intl.PluralRules</code>. Inside a plural, <code>#</code> is the
+        number in the locale's own format. <code>n</code>/<code>d</code> are memoized{" "}
+        <code>Intl.NumberFormat</code>/<code>DateTimeFormat</code>.
       </p>
-      <CodeBlock code={CATALOG} />
+      <p>
+        A catalog can nest: values are messages, lists or blocks, read with dotted keys (
+        <code>t("home.title")</code>); a flat key containing a dot is still found first.{" "}
+        <code>get(key)</code> returns a list or block whole, for an FAQ or a page's copy. A key the
+        catalog lacks is tried in each <code>fallback</code> catalog in order (
+        <code>locales.chain(locale)</code> gives <code>fr-CA</code> → <code>fr</code> → the default);
+        only when none has it does <code>onMissing</code> fire, once per key, and <code>t</code>{" "}
+        return the key. <code>timeZone</code> and <code>numberingSystem</code> set defaults for every{" "}
+        <code>d()</code>, <code>n()</code> and <code>#</code>. Formatters are cached per catalog and
+        options, so pass a stable <code>onMissing</code>.
+      </p>
+      <CodeBlock code={CATALOG} lang="ts" />
+      <p>
+        To type every key once, register the default catalog. A typo in <code>t()</code> is then a
+        compile error everywhere, and other locales' catalogs (typed <code>Translation</code>) are
+        checked against its shape.
+      </p>
+      <CodeBlock code={REGISTER} lang="ts" />
       <p>In React, provide it once and read it with <code>useT()</code>:</p>
       <CodeBlock code={PROVIDER} />
       <p>
-        Both <code>locale</code> and <code>messages</code> are serializable, so SSR renders the
-        negotiated catalog and the client rebuilds the same formatter on hydrate - no mismatch.
-        Switching language re-navigates (a cookie or <code>?lang=</code>); the loader returns the new
-        catalog and the page re-renders.
+        <code>locale</code>, <code>messages</code> and <code>fallback</code> are serializable, so SSR
+        renders the negotiated catalogs and the client rebuilds the same formatter on hydrate - no
+        mismatch. Switching language re-navigates (a cookie or <code>?lang=</code>); the loader returns
+        the new catalog and the page re-renders. <code>localeCookie(name, locale)</code> builds the
+        detector's own cookie for a switcher, so a choice made in the page and one made through{" "}
+        <code>?lang=</code> are the same cookie.
       </p>
 
       <h2>Notes</h2>
@@ -205,7 +266,7 @@ export default function I18n() {
         <li>For many locales, load catalogs <b>lazily</b> per request - don't bundle every catalog. A
           loader that does <code>{"await import(`../messages/${locale}.ts`)"}</code> ships only the
           requested locale's table to the page, typed inline tables included.</li>
-        <li>The supported ICU subset is interpolation + <code>plural</code>/<code>select</code>; use
+        <li>The supported ICU subset is interpolation + <code>plural</code>/<code>selectordinal</code>/<code>select</code>; use
           <code> n()</code>/<code>d()</code> for inline numbers/dates (no <code>{`{n, number}`}</code>
           skeletons). <code>Intl.MessageFormat</code> isn't widely available yet, so this is the
           portable core.</li>
