@@ -290,6 +290,7 @@ const FOOTGUNS: Record<string, readonly string[]> = {
     "Locale negotiation reads the request; resolve the locale at the boundary and thread it, don't read a global.",
     "Formatters are cached per catalog object and options: pass a **stable** `onMissing` (module scope) and reuse catalog objects, or every call builds a new formatter.",
     '`get(key)` returns the first catalog\'s value whole - blocks are not merged across `fallback` catalogs; read nested messages with `t("a.b")` to fall back per key.',
+    "Rich text is `rich()` (`@nifrajs/i18n/rich`, or the adapter's `/i18n` `rich()` / Svelte `<Rich>`), **never** `t()` + innerHTML/`{@html}`/`v-html`: tags are bare names mapped to handlers, `t()` returns the markers verbatim.",
   ],
   "@nifrajs/middleware": [
     "Middleware is **fail-closed** by default - a throwing/denying middleware blocks the request rather than letting it through. Order matters: auth/CSRF before handlers.",

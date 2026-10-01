@@ -12,6 +12,7 @@ import {
   type MessageTree,
   type PartialMessages,
 } from "../src/index.ts"
+import { type RichChunks, renderRich, rich } from "../src/rich.ts"
 
 const en = {
   home: { title: "Welcome, {name}", cta: { label: "Start" } },
@@ -75,3 +76,15 @@ createFormatter<En>("fr", fr, { fallback: [en] })
 // @ts-expect-error - a list where the default has a message
 const bad: PartialMessages<En> = { home: { title: ["x"] } }
 void bad
+
+// `rich()` takes the formatter's keys, and its result carries what the handlers return.
+interface Bold {
+  readonly inner: RichChunks<Bold>
+}
+const chunks = rich(t, "home.title", { b: (inner: RichChunks<Bold>): Bold => ({ inner }) })
+isTrue<Equal<typeof chunks, (string | Bold)[]>>()
+// @ts-expect-error - a typo is a compile error for rich() too
+rich(t, "home.titel", {})
+renderRich({ join: (parts) => parts.join(""), lineBreak: () => "\n" }, t, "home.cta.label", {
+  b: (content) => content.toUpperCase(),
+})

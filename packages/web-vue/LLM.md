@@ -19,6 +19,7 @@ Vue render adapter for @nifrajs/web - streaming SSR + hydration, with a .vue SFC
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => unknown` · from `@nifrajs/web-vue/client`
 - **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions) => void` · from `@nifrajs/web-vue/client`
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-vue/client`
+- **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonl…` · from `@nifrajs/web-vue/i18n`
 - **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-vue/fetcher`
 - **svgToVueSfc** _(function)_ - `svgToVueSfc: (xml: string) => string` · from `@nifrajs/web-vue/svg`
 - **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Readonly<ShallowRef<Blocker>>` · from `@nifrajs/web-vue/router`
@@ -27,9 +28,8 @@ Vue render adapter for @nifrajs/web - streaming SSR + hydration, with a .vue SFC
 - **useMatches** _(function)_ - `useMatches: () => Readonly<Ref<readonly UIMatch[]>>` · from `@nifrajs/web-vue/router`
 - **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction` · from `@nifrajs/web-vue/router`
 - **useQuery** _(function)_ - `useQuery: <T>(key: unknown, fn: () => Promise<T>) => UseQueryResult<T>` · from `@nifrajs/web-vue/query`
-- **useQueryClient** _(function)_ - `useQueryClient: () => Pick<QueryClient, "invalidateQueries">` · from `@nifrajs/web-vue/query`
 
-_…and 22 more - see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
+_…and 24 more - see [`api-reference.md`](../../api-reference.md#nifrajswebvue) for the complete list._
 
 ## Footguns
 

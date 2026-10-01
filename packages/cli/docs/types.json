@@ -14590,6 +14590,13 @@
     "doc": "/** The provider `compose` wraps the chain in for {@link useMatches}: a `computed` view of its `value`\n * prop, so the injected ref follows each navigation's props. Renders its default slot. */"
   },
   {
+    "name": "renderRich",
+    "kind": "function",
+    "package": "@nifrajs/i18n",
+    "signature": "export declare function renderRich<N, M extends object = RegisteredMessages>(renderer: RichRenderer<N>, formatter: Formatter<M>, key: MessageKey<M>, tags?: Readonly<Record<string, (content: N) => N>>, vars?: Readonly<Record<string, unknown>>): N;",
+    "doc": "/**\n * {@link rich} for a UI framework: each handler receives its tag's content as one node (`renderer.join`)\n * and the result is one node, with `<br/>` rendered by `renderer.lineBreak` unless `tags.br` is given.\n * The adapters' `rich()` is this with their own renderer.\n */"
+  },
+  {
     "name": "renderRouteManifest",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -15593,6 +15600,118 @@
     "package": "@nifrajs/web",
     "signature": "export declare function rewriteSsrImports(contents: string, path: string, generate: \"dom\" | \"ssr\"): string;",
     "doc": "/**\n * Re-key the app-owned imports of a module a **server-side** plugin just compiled. A plugin that claims a\n * file extension is the only code that sees that file's source, so it is the only place its imports can\n * be versioned; without this call every component in that language stays on the code it had at startup.\n *\n * A no-op outside a Bun dev server, and on the client half of a plugin - the client is bundled, and a\n * bundle has no import cache to bust.\n */"
+  },
+  {
+    "name": "rich",
+    "kind": "function",
+    "package": "@nifrajs/i18n",
+    "signature": "export declare function rich<R, M extends object = RegisteredMessages>(formatter: Formatter<M>, key: MessageKey<M>, tags: RichTags<R>, vars?: Readonly<Record<string, unknown>>): (string | R)[];",
+    "doc": "/**\n * The message at `key` as rich chunks: text, and what `tags` returned for each tag in it. Resolution,\n * `fallback` catalogs, `onMissing` and number formatting are the formatter's, as for `t()`; a key no\n * catalog has returns `[key]`.\n */"
+  },
+  {
+    "name": "rich",
+    "kind": "function",
+    "package": "@nifrajs/web-preact",
+    "signature": "export declare function rich<M extends object = RegisteredMessages>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonly<Record<string, unknown>>): ComponentChildren;",
+    "doc": "/**\n * The message at `key` with its tags rendered by `tags`, as Preact nodes - no HTML, no\n * `dangerouslySetInnerHTML`. `\"Read the <link>terms</link>\"` with\n * `{ link: (content) => <a href=\"/terms\">{content}</a> }` renders the link around \"terms\"; a tag with\n * no handler renders its content as text, `<br/>` is a `<br>`, and interpolated values are always\n * text. See `@nifrajs/i18n/rich`.\n */"
+  },
+  {
+    "name": "rich",
+    "kind": "function",
+    "package": "@nifrajs/web-react",
+    "signature": "export declare function rich<M extends object = RegisteredMessages>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonly<Record<string, unknown>>): ReactNode;",
+    "doc": "/**\n * The message at `key` with its tags rendered by `tags`, as React nodes - no HTML, no\n * `dangerouslySetInnerHTML`. `\"Read the <link>terms</link>\"` with\n * `{ link: (content) => <a href=\"/terms\">{content}</a> }` renders the link around \"terms\"; a tag with\n * no handler renders its content as text, `<br/>` is a `<br>`, and interpolated values are always\n * text. See `@nifrajs/i18n/rich`.\n */"
+  },
+  {
+    "name": "rich",
+    "kind": "function",
+    "package": "@nifrajs/web-solid",
+    "signature": "export declare function rich<M extends object = RegisteredMessages>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonly<Record<string, unknown>>): JSX.Element;",
+    "doc": "/**\n * The message at `key` with its tags rendered by `tags`, as Solid nodes - no HTML, no `innerHTML`.\n * `\"Read the <link>terms</link>\"` with `{ link: (content) => <a href=\"/terms\">{content}</a> }`\n * renders the link around \"terms\"; a tag with no handler renders its content as text, `<br/>` is a\n * `<br>`, and interpolated values are always text. It runs once: wrap the call in a function\n * (`{() => rich(t, key, tags, { n: count() })}`) to track signals in `vars`. See `@nifrajs/i18n/rich`.\n */"
+  },
+  {
+    "name": "rich",
+    "kind": "function",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export declare function rich<R, M extends object = RegisteredMessages>(formatter: Formatter<M>, key: MessageKey<M>, tags: RichTags<R>, vars?: Readonly<Record<string, unknown>>): (string | R)[];",
+    "doc": "/**\n * The message at `key` as rich chunks: text, and what `tags` returned for each tag in it. Resolution,\n * `fallback` catalogs, `onMissing` and number formatting are the formatter's, as for `t()`; a key no\n * catalog has returns `[key]`.\n */"
+  },
+  {
+    "name": "rich",
+    "kind": "function",
+    "package": "@nifrajs/web-vue",
+    "signature": "export declare function rich<M extends object = RegisteredMessages>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonly<Record<string, unknown>>): VNodeChild;",
+    "doc": "/**\n * The message at `key` with its tags rendered by `tags`, as Vue vnodes - no HTML, no `v-html`.\n * `\"Read the <link>terms</link>\"` with `{ link: (content) => h(\"a\", { href: \"/terms\" }, [content]) }`\n * renders the link around \"terms\"; a tag with no handler renders its content as text, `<br/>` is a\n * `<br>`, and interpolated values are always text. Call it in a render function (or a template\n * through a component) so a locale change re-renders it. See `@nifrajs/i18n/rich`.\n */"
+  },
+  {
+    "name": "RichChunks",
+    "kind": "type",
+    "package": "@nifrajs/i18n",
+    "signature": "export type RichChunks<R> = readonly (string | R)[];",
+    "doc": "/** A tag's content, or a whole rich message: text, and whatever the tag handlers returned, in order.\n * Adjacent text is merged. */"
+  },
+  {
+    "name": "RichChunks",
+    "kind": "type",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export type RichChunks<R> = readonly (string | R)[];",
+    "doc": "/** A tag's content, or a whole rich message: text, and whatever the tag handlers returned, in order.\n * Adjacent text is merged. */"
+  },
+  {
+    "name": "RichProps",
+    "kind": "interface",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export interface RichProps {\n  /** The catalog key, checked against the registered catalog type when one is declared. */\n  key: MessageKey<RegisteredMessages>\n  /** Snippets by tag name; each receives its tag's content as a snippet to render. */\n  tags?: Readonly<Record<string, Snippet<[Snippet]>>>\n  /** Values for the message's placeholders - always rendered as text. */\n  vars?: Readonly<Record<string, unknown>>\n}",
+    "doc": "/** Hand-written types for `Rich.svelte` (consumers resolve these via the `./i18n` re-export). */"
+  },
+  {
+    "name": "RichRenderer",
+    "kind": "interface",
+    "package": "@nifrajs/i18n",
+    "signature": "export interface RichRenderer<N> {\n    /** One node for `chunks` (empty for `<name/>`). */\n    readonly join: (chunks: RichChunks<N>) => N;\n    /** The node for `<br/>` when the caller passes no `br` handler. Called once per break, so it may\n     * return a fresh element each time. */\n    readonly lineBreak: () => N;\n}",
+    "doc": "/** How a framework turns rich chunks into one node: {@link renderRich} uses it for every tag's content\n * and for the whole message. */"
+  },
+  {
+    "name": "RichTags",
+    "kind": "type",
+    "package": "@nifrajs/i18n",
+    "signature": "export type RichTags<R> = Readonly<Record<string, (chunks: RichChunks<R>) => R>>;",
+    "doc": "/** Handlers by tag name. Only own properties count, so `<constructor>` is never `Object.prototype`'s. */"
+  },
+  {
+    "name": "RichTags",
+    "kind": "type",
+    "package": "@nifrajs/web-preact",
+    "signature": "export type RichTags = Readonly<Record<string, (content: ComponentChildren) => ComponentChildren>>;",
+    "doc": "/** Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node. */"
+  },
+  {
+    "name": "RichTags",
+    "kind": "type",
+    "package": "@nifrajs/web-react",
+    "signature": "export type RichTags = Readonly<Record<string, (content: ReactNode) => ReactNode>>;",
+    "doc": "/** Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node. */"
+  },
+  {
+    "name": "RichTags",
+    "kind": "type",
+    "package": "@nifrajs/web-solid",
+    "signature": "export type RichTags = Readonly<Record<string, (content: JSX.Element) => JSX.Element>>;",
+    "doc": "/** Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node. */"
+  },
+  {
+    "name": "RichTags",
+    "kind": "type",
+    "package": "@nifrajs/web-svelte",
+    "signature": "export type RichTags<R> = Readonly<Record<string, (chunks: RichChunks<R>) => R>>;",
+    "doc": "/** Handlers by tag name. Only own properties count, so `<constructor>` is never `Object.prototype`'s. */"
+  },
+  {
+    "name": "RichTags",
+    "kind": "type",
+    "package": "@nifrajs/web-vue",
+    "signature": "export type RichTags = Readonly<Record<string, (content: VNodeChild) => VNodeChild>>;",
+    "doc": "/** Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node. */"
   },
   {
     "name": "richWireCodec",

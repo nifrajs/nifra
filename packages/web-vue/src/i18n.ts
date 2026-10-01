@@ -9,16 +9,22 @@ import {
   createFormatter,
   type Formatter,
   type FormatterOptions,
+  type MessageKey,
+  type RegisteredMessages,
   type Translation,
 } from "@nifrajs/i18n"
+import { type RichChunks, type RichRenderer, renderRich } from "@nifrajs/i18n/rich"
 import {
   type ComputedRef,
   computed,
   defineComponent,
+  Fragment,
+  h,
   type InjectionKey,
   inject,
   type PropType,
   provide,
+  type VNodeChild,
 } from "vue"
 
 const I18N_KEY: InjectionKey<ComputedRef<Formatter>> = Symbol("nifra-i18n")
@@ -59,4 +65,27 @@ export function useT(): Formatter {
     throw new Error("[nifra/web-vue] useT() must be used within an <I18nProvider>")
   }
   return formatter.value
+}
+
+/** Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node. */
+export type RichTags = Readonly<Record<string, (content: VNodeChild) => VNodeChild>>
+
+const join = (chunks: RichChunks<VNodeChild>): VNodeChild =>
+  chunks.length === 0 ? null : chunks.length === 1 ? chunks[0] : h(Fragment, null, [...chunks])
+const VUE_RICH: RichRenderer<VNodeChild> = { join, lineBreak: () => h("br") }
+
+/**
+ * The message at `key` with its tags rendered by `tags`, as Vue vnodes - no HTML, no `v-html`.
+ * `"Read the <link>terms</link>"` with `{ link: (content) => h("a", { href: "/terms" }, [content]) }`
+ * renders the link around "terms"; a tag with no handler renders its content as text, `<br/>` is a
+ * `<br>`, and interpolated values are always text. Call it in a render function (or a template
+ * through a component) so a locale change re-renders it. See `@nifrajs/i18n/rich`.
+ */
+export function rich<M extends object = RegisteredMessages>(
+  formatter: Formatter<M>,
+  key: MessageKey<M>,
+  tags?: RichTags,
+  vars?: Readonly<Record<string, unknown>>,
+): VNodeChild {
+  return renderRich(VUE_RICH, formatter, key, tags, vars)
 }

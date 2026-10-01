@@ -9,9 +9,12 @@ import {
   createFormatter,
   type Formatter,
   type FormatterOptions,
+  type MessageKey,
+  type RegisteredMessages,
   type Translation,
 } from "@nifrajs/i18n"
-import { createContext, createElement, type ReactNode, useContext, useMemo } from "react"
+import { type RichChunks, type RichRenderer, renderRich } from "@nifrajs/i18n/rich"
+import { createContext, createElement, Fragment, type ReactNode, useContext, useMemo } from "react"
 
 const I18nContext = createContext<Formatter | null>(null)
 
@@ -42,4 +45,32 @@ export function useT(): Formatter {
     throw new Error("[nifra/web-react] useT() must be used within an <I18nProvider>")
   }
   return formatter
+}
+
+/** Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node. */
+export type RichTags = Readonly<Record<string, (content: ReactNode) => ReactNode>>
+
+// Children passed as arguments, not an array, so React asks for no keys.
+const join = (chunks: RichChunks<ReactNode>): ReactNode =>
+  chunks.length === 0
+    ? null
+    : chunks.length === 1
+      ? chunks[0]
+      : createElement(Fragment, null, ...chunks)
+const REACT_RICH: RichRenderer<ReactNode> = { join, lineBreak: () => createElement("br") }
+
+/**
+ * The message at `key` with its tags rendered by `tags`, as React nodes - no HTML, no
+ * `dangerouslySetInnerHTML`. `"Read the <link>terms</link>"` with
+ * `{ link: (content) => <a href="/terms">{content}</a> }` renders the link around "terms"; a tag with
+ * no handler renders its content as text, `<br/>` is a `<br>`, and interpolated values are always
+ * text. See `@nifrajs/i18n/rich`.
+ */
+export function rich<M extends object = RegisteredMessages>(
+  formatter: Formatter<M>,
+  key: MessageKey<M>,
+  tags?: RichTags,
+  vars?: Readonly<Record<string, unknown>>,
+): ReactNode {
+  return renderRich(REACT_RICH, formatter, key, tags, vars)
 }

@@ -120,6 +120,27 @@ function Body() {
   </>
 }`
 
+const RICH = `// messages/en.ts: terms: "Read the <link>terms</link> and <b>privacy notice</b>,<br/>{name}."
+import { rich, useT } from "@nifrajs/web-react/i18n"
+
+function Terms({ name }: { name: string }) {
+  const t = useT()
+  return <p>{rich(t, "terms", {
+    link: (content) => <a href="/terms">{content}</a>,
+    b: (content) => <strong>{content}</strong>,
+  }, { name })}</p>
+}`
+
+const RICH_SVELTE = `<!-- Svelte: each tag is a snippet that renders its content -->
+<script>
+  import { Rich } from "@nifrajs/web-svelte/i18n"
+  let { name } = $props()
+</script>
+
+{#snippet link(content)}<a href="/terms">{@render content()}</a>{/snippet}
+{#snippet b(content)}<strong>{@render content()}</strong>{/snippet}
+<p><Rich key="terms" tags={{ link, b }} vars={{ name }} /></p>`
+
 const CATALOG = `// messages/en.ts - the default locale's catalog: ICU strings, lists and nested blocks.
 import { createFormatter, type PartialMessages } from "@nifrajs/i18n"
 
@@ -259,6 +280,30 @@ export default function I18n() {
         the new catalog and the page re-renders. <code>localeCookie(name, locale)</code> builds the
         detector's own cookie for a switcher, so a choice made in the page and one made through{" "}
         <code>?lang=</code> are the same cookie.
+      </p>
+
+      <h2>Rich text</h2>
+      <p>
+        <code>rich(t, key, tags, vars)</code> renders a message's tags with your components, never
+        with HTML. A tag is a bare name - <code>&lt;b&gt;…&lt;/b&gt;</code> or{" "}
+        <code>&lt;icon/&gt;</code>, no attributes - so a translation, whoever or whatever wrote it,
+        decides where emphasis or a link goes, and your handler decides what it is and where it points.
+        A tag with no handler renders its content as plain text, an unclosed or stray marker stays
+        literal text, <code>&lt;br/&gt;</code> is a line break unless you pass <code>br</code>, and
+        interpolated values are always text, so a value containing <code>&lt;b&gt;</code> cannot
+        open a tag. <code>t()</code> is unchanged and returns the markers as written.
+      </p>
+      <CodeBlock code={RICH} />
+      <p>
+        React, Preact, Solid and Vue export <code>rich()</code> from their <code>/i18n</code> entry,
+        returning one node (each handler gets its tag's content as one node too). Svelte has{" "}
+        <code>&lt;Rich&gt;</code>, which takes one snippet per tag:
+      </p>
+      <CodeBlock code={RICH_SVELTE} lang="svelte" />
+      <p>
+        The framework-free form is <code>rich(formatter, key, tags, vars)</code> from{" "}
+        <code>@nifrajs/i18n/rich</code>: it returns the message as an array of strings and whatever your
+        handlers returned, for building any other output.
       </p>
 
       <h2>Notes</h2>

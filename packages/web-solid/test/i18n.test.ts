@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { createComponent, type JSX } from "solid-js"
 import { Dynamic, renderToString } from "solid-js/web"
-import { I18nProvider, useT } from "../src/i18n.ts"
+import { I18nProvider, rich, useT } from "../src/i18n.ts"
 
 const messages = { greeting: "Hi {name} - {n, plural, one {# message} other {# messages}}" }
 
@@ -69,4 +69,42 @@ describe("@nifrajs/web-solid/i18n", () => {
     expect(html).toContain("अपना|Hi Ada - १२ messages|gone")
     expect(missing).toEqual(["gone"])
   })
+})
+
+test("rich() renders tags as elements and values as text", () => {
+  const html = renderToString(() =>
+    createComponent(I18nProvider, {
+      locale: "en",
+      messages: {
+        terms: "Read the <link>terms and <b>all</b> rules</link>,<br/>{name}! <em>x</em>",
+      },
+      get children() {
+        const t = useT()
+        return createComponent(Dynamic, {
+          component: "p",
+          get children() {
+            return rich(
+              t,
+              "terms",
+              {
+                link: (content) =>
+                  createComponent(Dynamic, { component: "a", href: "/terms", children: content }),
+                b: (content) =>
+                  createComponent(Dynamic, { component: "strong", children: content }),
+              },
+              { name: "<b>Ada</b>" },
+            )
+          },
+        })
+      },
+    }),
+  )
+  // Hydration keys and markers are Solid's, not part of what renders.
+  const visible = html
+    .replace(/ data-hk="[^"]*"/g, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/ +(\/?>)/g, "$1")
+  expect(visible).toBe(
+    '<p>Read the <a href="/terms">terms and <strong>all</strong> rules</a>,<br/>&lt;b>Ada&lt;/b>! x</p>',
+  )
 })

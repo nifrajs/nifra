@@ -177,7 +177,8 @@ export interface Formatter<M extends object = RegisteredMessages> {
   d(value: Date | number, options?: Intl.DateTimeFormatOptions): string
 }
 
-type Part = string | InterpNode | PoundNode | ChoiceNode
+/** A parsed message node. Internal: shared with `./rich.ts`, never exported from the package root. */
+export type Part = string | InterpNode | PoundNode | ChoiceNode
 interface InterpNode {
   readonly kind: "interp"
   readonly arg: string
@@ -295,7 +296,7 @@ function parsePlaceholder(s: string, open: number, pound: boolean): { node: Part
 
 /** What `evaluate` formats plural categories and `#` with; the `Intl` objects it may never need are
  * built on first use. */
-interface Runtime {
+export interface Runtime {
   category(kind: "plural" | "selectordinal", value: number): string
   number(value: number): string
 }
@@ -304,7 +305,7 @@ interface Runtime {
 // the inherited function when the caller did not pass it: catalogs may come from translators or
 // machine translation, and vars are usually plain objects.
 const INHERITED: Readonly<Record<string, unknown>> = {}
-const readVar = (vars: Readonly<Record<string, unknown>>, arg: string): unknown => {
+export const readVar = (vars: Readonly<Record<string, unknown>>, arg: string): unknown => {
   const value = vars[arg]
   // Every inherited member is a function except `__proto__`, so a string or number var pays one typeof.
   if (typeof value !== "function" && value !== Object.prototype) return value
@@ -418,6 +419,15 @@ interface CachedFormatters {
  * objects on every request.
  */
 const FORMATTERS = new WeakMap<object, CachedFormatters>()
+
+/** What `@nifrajs/i18n/rich` reads from a formatter: a key's parsed message through the fallback chain
+ * (reporting a miss exactly as `t()` does), and the runtime that formats plural categories and `#`.
+ * Keyed by the formatter object, so a value that only looks like one has no entry. */
+export interface FormatterInternals {
+  resolve(key: string): readonly Part[] | undefined
+  readonly runtime: Runtime
+}
+export const FORMATTER_INTERNALS = new WeakMap<object, FormatterInternals>()
 
 // Stable numeric identities for the objects an options key names (fallback catalogs, `onMissing`).
 const IDS = new WeakMap<object, number>()
@@ -618,7 +628,7 @@ function buildFormatter(
   }
 
   const EMPTY: Readonly<Record<string, unknown>> = {}
-  return Object.freeze({
+  const formatter = Object.freeze({
     locale,
     t(key: string, vars: Readonly<Record<string, unknown>> = EMPTY): string {
       const ast = resolved.get(key) ?? resolve(String(key))
@@ -644,4 +654,13 @@ function buildFormatter(
       return dateFormat(opts).format(value)
     },
   })
+  FORMATTER_INTERNALS.set(formatter, {
+    resolve(key) {
+      const ast = resolved.get(key) ?? resolve(key)
+      if (ast === undefined) missing(key)
+      return ast
+    },
+    runtime: rt,
+  })
+  return formatter
 }

@@ -1,12 +1,15 @@
 /**
  * `@nifrajs/web-svelte/i18n` - Svelte bindings for `@nifrajs/i18n`: the `<I18nProvider>` component (re-exported
  * from `I18nProvider.svelte`) plus `useT()`, which reads the provided `Formatter` from Svelte context.
- * Call `useT()` during a component's initialization (like any `getContext`).
+ * Call `useT()` during a component's initialization (like any `getContext`). `<Rich>` renders a
+ * message's tags with snippets; `rich()` returns the same message as a parts array.
  */
 import type { Formatter } from "@nifrajs/i18n"
 import { getContext } from "svelte"
 
+export { type RichChunks, type RichTags, rich } from "@nifrajs/i18n/rich"
 export { default as I18nProvider, type I18nProviderProps } from "./I18nProvider.svelte"
+export { default as Rich, type RichProps } from "./Rich.svelte"
 
 // Must match the string key `I18nProvider.svelte` passes to `setContext` (a string avoids a
 // `.svelte` → `.ts` import that wouldn't resolve once the .svelte is copied to dist).

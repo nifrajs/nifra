@@ -17,6 +17,7 @@ Svelte 5 render adapter for @nifrajs/web - SSR + hydration + the .svelte compile
 - **errorBoundary** _(function)_ - `errorBoundary: (fallback: unknown) => NifraSvelteErrorBoundary` · from `@nifrajs/web-svelte/client`
 - **hydrate** _(function)_ - `hydrate: (chain: readonly unknown[], props: RenderProps, container: unknown, options?: HydrationAssuranceOptions) => void` · from `@nifrajs/web-svelte/client`
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-svelte/client`
+- **rich** _(function)_ - `rich: <R, M extends object = import("./format.js").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags: RichTags<R>, vars?: Read…` · from `@nifrajs/web-svelte/i18n`
 - **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-svelte/fetcher`
 - **svelteBunPlugin** _(function)_ - `svelteBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-svelte`
 - **svelteHmrBoundary** _(function)_ - `svelteHmrBoundary: ({ filename }: { filename: string; }) => { hmr: boolean; }` · from `@nifrajs/web-svelte/plugin`
@@ -27,9 +28,8 @@ Svelte 5 render adapter for @nifrajs/web - SSR + hydration + the .svelte compile
 - **useFetcher** _(function)_ - `useFetcher: (key: string) => FetcherStore` · from `@nifrajs/web-svelte/fetcher`
 - **useFetchers** _(function)_ - `useFetchers: () => Readable<readonly Fetcher[]>` · from `@nifrajs/web-svelte/fetcher`
 - **useMatches** _(function)_ - `useMatches: () => () => readonly UIMatch[]` · from `@nifrajs/web-svelte/router`
-- **useNavigate** _(function)_ - `useNavigate: () => NavigateFunction` · from `@nifrajs/web-svelte/router`
 
-_…and 18 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
+_…and 23 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsvelte) for the complete list._
 
 ## Footguns
 

@@ -23,13 +23,13 @@ Solid render adapter for @nifrajs/web - SSR + hydration + the Solid Babel build 
 - **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => JSX.Element` · from `@nifrajs/web-solid/i18n`
 - **Image** _(function)_ - `Image: (props: ImageComponentProps) => JSX.Element` · from `@nifrajs/web-solid/image`
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-solid/client`
+- **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonl…` · from `@nifrajs/web-solid/i18n`
 - **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-solid/fetcher`
 - **solidBunPlugin** _(function)_ - `solidBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-solid`
 - **solidMdxBunPlugin** _(function)_ - `solidMdxBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-solid/mdx`
 - **solidSvgComponentBunPlugin** _(function)_ - `solidSvgComponentBunPlugin: (generate: "dom" | "ssr") => BunPlugin` · from `@nifrajs/web-solid/svg`
-- **useBlocker** _(function)_ - `useBlocker: (shouldBlock: boolean | BlockerFunction) => Accessor<Blocker>` · from `@nifrajs/web-solid/router`
 
-_…and 23 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsolid) for the complete list._
+_…and 25 more - see [`api-reference.md`](../../api-reference.md#nifrajswebsolid) for the complete list._
 
 ## Footguns
 

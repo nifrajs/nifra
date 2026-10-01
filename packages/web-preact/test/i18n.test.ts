@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { h } from "preact"
 import { renderToString } from "preact-render-to-string"
-import { I18nProvider, useT } from "../src/i18n.ts"
+import { I18nProvider, rich, useT } from "../src/i18n.ts"
 
 const messages = { greeting: "Hi {name} - {n, plural, one {# message} other {# messages}}" }
 
@@ -60,4 +60,34 @@ describe("@nifrajs/web-preact/i18n", () => {
     expect(html).toContain("अपना|Hi Ada - १२ messages|gone")
     expect(missing).toEqual(["gone"])
   })
+})
+
+const richMessages = {
+  terms: "Read the <link>terms and <b>all</b> rules</link>,<br/>{name}! <em>x</em>",
+}
+
+function Terms() {
+  const t = useT()
+  return h(
+    "p",
+    null,
+    rich(
+      t,
+      "terms",
+      {
+        link: (content) => h("a", { href: "/terms" }, content),
+        b: (content) => h("strong", null, content),
+      },
+      { name: "<b>Ada</b>" },
+    ),
+  )
+}
+
+test("rich() renders tags as elements and values as text", () => {
+  const html = renderToString(
+    h(I18nProvider, { locale: "en", messages: richMessages }, h(Terms, {})),
+  )
+  expect(html).toBe(
+    '<p>Read the <a href="/terms">terms and <strong>all</strong> rules</a>,<br/>&lt;b>Ada&lt;/b>! x</p>',
+  )
 })

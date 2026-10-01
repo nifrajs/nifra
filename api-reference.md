@@ -3282,6 +3282,19 @@ _No named exports (side-effect entrypoint)._
 - **localeDetector** _(function)_ - `localeDetector: (options: LocaleDetectorOptions) => import("@nifrajs/core").ContextPlugin<LocaleContext>`
   Detect the request's locale and expose it as `c.locale` / `c.localeSource`.
 
+### `@nifrajs/i18n/rich`
+
+- **RichChunks** _(type)_ - `type RichChunks<R> = readonly (string | R)[]`
+  A tag's content, or a whole rich message: text, and whatever the tag handlers returned, in order. Adjacent text is merged.
+- **RichRenderer** _(interface)_ - `interface RichRenderer<N>`
+  How a framework turns rich chunks into one node: {@link renderRich} uses it for every tag's content and for the whole message.
+- **RichTags** _(type)_ - `type RichTags<R> = Readonly<Record<string, (chunks: RichChunks<R>) => R>>`
+  Handlers by tag name. Only own properties count, so `<constructor>` is never `Object.prototype`'s.
+- **renderRich** _(function)_ - `renderRich: <N, M extends object = import("./format.ts").MessageTree>(renderer: RichRenderer<N>, formatter: Formatter<M>, key: MessageKey<M>, tags?: Readonly<Record<string, (content: N) => N>>, vars?: Readonly<Record<st…`
+  {@link rich} for a UI framework: each handler receives its tag's content as one node (`renderer.join`) and the result is one node, with `<br/>` rendered by `renderer.lineBreak` unless `tags.br` is given. The adapters' `rich()` is this with their own renderer.
+- **rich** _(function)_ - `rich: <R, M extends object = import("./format.ts").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags: RichTags<R>, vars?: Readonly<Record<string, unknown>>) => (string | R)[]`
+  The message at `key` as rich chunks: text, and what `tags` returned for each tag in it. Resolution, `fallback` catalogs, `onMissing` and number formatting are the formatter's, as for `t()`; a key no catalog has returns `[key]`.
+
 ### `@nifrajs/i18n/routing`
 
 - **Alternates** _(interface)_ - `interface Alternates`
@@ -5585,6 +5598,10 @@ _No named exports (side-effect entrypoint)._
 - **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => VNode`
   Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`, `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Memoized on those props, so switching locale rebuilds it and re-renders consumers; formatters are cached by catalog identi…
 - **I18nProviderProps** _(interface)_ - `interface I18nProviderProps`
+- **RichTags** _(type)_ - `type RichTags = Readonly<Record<string, (content: ComponentChildren) => ComponentChildren>>`
+  Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node.
+- **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonly<Record<string, unknown>>) => ComponentChildren`
+  The message at `key` with its tags rendered by `tags`, as Preact nodes - no HTML, no `dangerouslySetInnerHTML`. `"Read the <link>terms</link>"` with `{ link: (content) => <a href="/terms">{content}</a> }` renders the link around "terms"; a tag with no handler renders its content as text, `<br/>` is…
 - **useT** _(function)_ - `useT: () => Formatter`
   Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above.
 
@@ -5692,6 +5709,10 @@ _No named exports (side-effect entrypoint)._
 - **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => ReactNode`
   Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`, `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Memoized on those props, so switching locale rebuilds it and re-renders consumers; formatters are cached by catalog identi…
 - **I18nProviderProps** _(interface)_ - `interface I18nProviderProps`
+- **RichTags** _(type)_ - `type RichTags = Readonly<Record<string, (content: ReactNode) => ReactNode>>`
+  Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node.
+- **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonly<Record<string, unknown>>) => ReactNode`
+  The message at `key` with its tags rendered by `tags`, as React nodes - no HTML, no `dangerouslySetInnerHTML`. `"Read the <link>terms</link>"` with `{ link: (content) => <a href="/terms">{content}</a> }` renders the link around "terms"; a tag with no handler renders its content as text, `<br/>` is …
 - **useT** _(function)_ - `useT: () => Formatter`
   Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above.
 
@@ -5845,6 +5866,10 @@ _No named exports (side-effect entrypoint)._
 - **I18nProvider** _(function)_ - `I18nProvider: (props: I18nProviderProps) => JSX.Element`
   Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`, `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Memoized on those props, so switching locale rebuilds it.
 - **I18nProviderProps** _(interface)_ - `interface I18nProviderProps`
+- **RichTags** _(type)_ - `type RichTags = Readonly<Record<string, (content: JSX.Element) => JSX.Element>>`
+  Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node.
+- **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonly<Record<string, unknown>>) => JSX.Element`
+  The message at `key` with its tags rendered by `tags`, as Solid nodes - no HTML, no `innerHTML`. `"Read the <link>terms</link>"` with `{ link: (content) => <a href="/terms">{content}</a> }` renders the link around "terms"; a tag with no handler renders its content as text, `<br/>` is a `<br>`, and …
 - **useT** _(function)_ - `useT: () => Formatter`
   Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above. nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog.
 
@@ -5944,6 +5969,15 @@ _No named exports (side-effect entrypoint)._
 - **I18nProvider** _(const)_ - `I18nProvider: Component<I18nProviderProps, {}, string>`
 - **I18nProviderProps** _(interface)_ - `interface I18nProviderProps`
   Hand-written types for `I18nProvider.svelte` (consumers resolve these via the `./i18n` re-export).
+- **Rich** _(const)_ - `Rich: Component<RichProps, {}, string>`
+- **RichChunks** _(type)_ - `type RichChunks<R> = readonly (string | R)[]`
+  A tag's content, or a whole rich message: text, and whatever the tag handlers returned, in order. Adjacent text is merged.
+- **RichProps** _(interface)_ - `interface RichProps`
+  Hand-written types for `Rich.svelte` (consumers resolve these via the `./i18n` re-export).
+- **RichTags** _(type)_ - `type RichTags<R> = Readonly<Record<string, (chunks: RichChunks<R>) => R>>`
+  Handlers by tag name. Only own properties count, so `<constructor>` is never `Object.prototype`'s.
+- **rich** _(function)_ - `rich: <R, M extends object = import("./format.js").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags: RichTags<R>, vars?: Readonly<Record<string, unknown>>) => (string | R)[]`
+  The message at `key` as rich chunks: text, and what `tags` returned for each tag in it. Resolution, `fallback` catalogs, `onMissing` and number formatting are the formatter's, as for `t()`; a key no catalog has returns `[key]`.
 - **useT** _(function)_ - `useT: () => Formatter`
   Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above. nifra switches locale by re-navigating, which re-runs the consuming component with the new catalog.
 
@@ -6065,6 +6099,10 @@ _No named exports (side-effect entrypoint)._
 
 - **I18nProvider** _(const)_ - `I18nProvider: import("vue").DefineComponent<import("vue").ExtractPropTypes<{ locale: { type: StringConstructor; required: true; }; messages: { type: PropType<Translation>; required: true; }; fallback: { type: PropType<N…`
   Provide a {@link Formatter} (built from `locale` + `messages`, with the optional `fallback`, `onMissing`, `timeZone` and `numberingSystem` of `createFormatter`) to the subtree. Recomputes when any of them changes, so a locale switch re-renders consumers. Renders its default slot.
+- **RichTags** _(type)_ - `type RichTags = Readonly<Record<string, (content: VNodeChild) => VNodeChild>>`
+  Tag handlers for {@link rich}, by tag name: each receives its tag's content as one node.
+- **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonly<Record<string, unknown>>) => VNodeChild`
+  The message at `key` with its tags rendered by `tags`, as Vue vnodes - no HTML, no `v-html`. `"Read the <link>terms</link>"` with `{ link: (content) => h("a", { href: "/terms" }, [content]) }` renders the link around "terms"; a tag with no handler renders its content as text, `<br/>` is a `<br>`, a…
 - **useT** _(function)_ - `useT: () => Formatter`
   Read the current {@link Formatter} (`{ locale, t, get, n, d }`). Throws if no `<I18nProvider>` is above.
 

@@ -10,7 +10,7 @@ Framework-agnostic i18n for nifra - locale negotiation + a tiny ICU message form
 
 ## Public entrypoints
 
-`@nifrajs/i18n` · `@nifrajs/i18n/detector` · `@nifrajs/i18n/routing`
+`@nifrajs/i18n` · `@nifrajs/i18n/detector` · `@nifrajs/i18n/rich` · `@nifrajs/i18n/routing`
 
 ## Key exports
 
@@ -21,15 +21,15 @@ Framework-agnostic i18n for nifra - locale negotiation + a tiny ICU message form
 - **localeDetector** _(function)_ - `localeDetector: (options: LocaleDetectorOptions) => import("@nifrajs/core").ContextPlugin<LocaleContext>` · from `@nifrajs/i18n/detector`
 - **localeDirection** _(function)_ - `localeDirection: (tag: string) => "ltr" | "rtl"` · from `@nifrajs/i18n`
 - **negotiateLocale** _(function)_ - `negotiateLocale: (request: Request | LocaleParts, options: NegotiateOptions) => Locale` · from `@nifrajs/i18n`
+- **renderRich** _(function)_ - `renderRich: <N, M extends object = import("./format.ts").MessageTree>(renderer: RichRenderer<N>, formatter: Formatter<M>, key: MessageKey<M…` · from `@nifrajs/i18n/rich`
 - **resolveLocale** _(function)_ - `resolveLocale: (request: Request | LocaleParts, options: NegotiateOptions) => ResolvedLocale` · from `@nifrajs/i18n`
+- **rich** _(function)_ - `rich: <R, M extends object = import("./format.ts").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags: RichTags<R>, vars?: Read…` · from `@nifrajs/i18n/rich`
 - **Alternates** _(interface)_ - `interface Alternates` · from `@nifrajs/i18n/routing`
 - **AlternatesOptions** _(interface)_ - `interface AlternatesOptions<K extends string = string>` · from `@nifrajs/i18n/routing`
 - **Formatter** _(interface)_ - `interface Formatter<M extends object = RegisteredMessages>` · from `@nifrajs/i18n`
 - **FormatterOptions** _(interface)_ - `interface FormatterOptions<M extends object = RegisteredMessages>` · from `@nifrajs/i18n`
-- **HreflangLink** _(interface)_ - `interface HreflangLink` · from `@nifrajs/i18n/routing`
-- **I18nRoutingOptions** _(interface)_ - `interface I18nRoutingOptions` · from `@nifrajs/i18n/routing`
 
-_…and 25 more - see [`api-reference.md`](../../api-reference.md#nifrajsi18n) for the complete list._
+_…and 30 more - see [`api-reference.md`](../../api-reference.md#nifrajsi18n) for the complete list._
 
 ## Footguns
 
@@ -37,3 +37,4 @@ _…and 25 more - see [`api-reference.md`](../../api-reference.md#nifrajsi18n) f
 - Locale negotiation reads the request; resolve the locale at the boundary and thread it, don't read a global.
 - Formatters are cached per catalog object and options: pass a **stable** `onMissing` (module scope) and reuse catalog objects, or every call builds a new formatter.
 - `get(key)` returns the first catalog's value whole - blocks are not merged across `fallback` catalogs; read nested messages with `t("a.b")` to fall back per key.
+- Rich text is `rich()` (`@nifrajs/i18n/rich`, or the adapter's `/i18n` `rich()` / Svelte `<Rich>`), **never** `t()` + innerHTML/`{@html}`/`v-html`: tags are bare names mapped to handlers, `t()` returns the markers verbatim.

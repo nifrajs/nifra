@@ -26,10 +26,10 @@ React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babe
 - **mountRouter** _(function)_ - `mountRouter: (options: MountRouterOptions) => void` · from `@nifrajs/web-react/client`
 - **Navigate** _(function)_ - `Navigate: ({ to, replace }: NavigateProps) => null` · from `@nifrajs/web-react/router`
 - **QueryClientProvider** _(function)_ - `QueryClientProvider: (props: { readonly client: QueryClient; readonly children?: ReactNode; }) => ReactNode` · from `@nifrajs/web-react/query`
+- **rich** _(function)_ - `rich: <M extends object = import("@nifrajs/i18n").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags?: RichTags, vars?: Readonl…` · from `@nifrajs/web-react/i18n`
 - **setMountedRouter** _(function)_ - `setMountedRouter: (router: ClientRouter | undefined) => void` · from `@nifrajs/web-react/fetcher`
-- **useAuthSession** _(function)_ - `useAuthSession: () => AuthSession` · from `@nifrajs/web-react/auth`
 
-_…and 55 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
+_…and 57 more - see [`api-reference.md`](../../api-reference.md#nifrajswebreact) for the complete list._
 
 ## Footguns
 

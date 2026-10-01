@@ -32,6 +32,11 @@
       "bun": "./src/routing.ts",
       "types": "./dist/routing.d.ts",
       "default": "./dist/routing.js"
+    },
+    "./rich": {
+      "bun": "./src/rich.ts",
+      "types": "./dist/rich.d.ts",
+      "default": "./dist/rich.js"
     }
   },
   "files": [

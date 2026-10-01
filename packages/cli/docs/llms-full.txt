@@ -4699,6 +4699,50 @@ the new catalog and the page re-renders. `localeCookie(name, locale)` builds the
 detector's own cookie for a switcher, so a choice made in the page and one made through
 `?lang=` are the same cookie.
 
+### Rich text
+
+`rich(t, key, tags, vars)` renders a message's tags with your components, never
+with HTML. A tag is a bare name - `<b>…</b>` or
+`<icon/>`, no attributes - so a translation, whoever or whatever wrote it,
+decides where emphasis or a link goes, and your handler decides what it is and where it points.
+A tag with no handler renders its content as plain text, an unclosed or stray marker stays
+literal text, `<br/>` is a line break unless you pass `br`, and
+interpolated values are always text, so a value containing `<b>` cannot
+open a tag. `t()` is unchanged and returns the markers as written.
+
+```ts
+// messages/en.ts: terms: "Read the <link>terms</link> and <b>privacy notice</b>,<br/>{name}."
+import { rich, useT } from "@nifrajs/web-react/i18n"
+
+function Terms({ name }: { name: string }) {
+  const t = useT()
+  return <p>{rich(t, "terms", {
+    link: (content) => <a href="/terms">{content}</a>,
+    b: (content) => <strong>{content}</strong>,
+  }, { name })}</p>
+}
+```
+
+React, Preact, Solid and Vue export `rich()` from their `/i18n` entry,
+returning one node (each handler gets its tag's content as one node too). Svelte has
+`<Rich>`, which takes one snippet per tag:
+
+```ts
+<!-- Svelte: each tag is a snippet that renders its content -->
+<script>
+  import { Rich } from "@nifrajs/web-svelte/i18n"
+  let { name } = $props()
+</script>
+
+{#snippet link(content)}<a href="/terms">{@render content()}</a>{/snippet}
+{#snippet b(content)}<strong>{@render content()}</strong>{/snippet}
+<p><Rich key="terms" tags={{ link, b }} vars={{ name }} /></p>
+```
+
+The framework-free form is `rich(formatter, key, tags, vars)` from
+`@nifrajs/i18n/rich`: it returns the message as an array of strings and whatever your
+handlers returned, for building any other output.
+
 ### Notes
 
 - For many locales, load catalogs **lazily** per request - don't bundle every catalog. A
@@ -11596,6 +11640,11 @@ t.t("cart", { count: 1200 }) // "1 200 articles"
 
 Declare `interface Register { messages: typeof en }` on `@nifrajs/i18n` once, and every `t()` key
 (adapters' `useT()` included) and every `Translation`-typed catalog is checked against `en`.
+
+`rich(formatter, key, tags, vars)` from `@nifrajs/i18n/rich` renders a message's tags
+(`<b>…</b>`, `<icon/>`, names only) with your handlers instead of HTML: a tag without a handler
+keeps its content as text, and interpolated values are never read for tags. Each adapter's `/i18n`
+entry exports a `rich()` that returns framework nodes (Svelte: `<Rich>` with one snippet per tag).
 
 `localeCookie(name, locale)` is the browser half of the detector's `persist` cookie: assign it to
 `document.cookie` in a language switcher and it is byte-identical to the detector's `Set-Cookie`.

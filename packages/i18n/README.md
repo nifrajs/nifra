@@ -57,6 +57,11 @@ t.t("cart", { count: 1200 }) // "1 200 articles"
 Declare `interface Register { messages: typeof en }` on `@nifrajs/i18n` once, and every `t()` key
 (adapters' `useT()` included) and every `Translation`-typed catalog is checked against `en`.
 
+`rich(formatter, key, tags, vars)` from `@nifrajs/i18n/rich` renders a message's tags
+(`<b>…</b>`, `<icon/>`, names only) with your handlers instead of HTML: a tag without a handler
+keeps its content as text, and interpolated values are never read for tags. Each adapter's `/i18n`
+entry exports a `rich()` that returns framework nodes (Svelte: `<Rich>` with one snippet per tag).
+
 `localeCookie(name, locale)` is the browser half of the detector's `persist` cookie: assign it to
 `document.cookie` in a language switcher and it is byte-identical to the detector's `Set-Cookie`.
 
