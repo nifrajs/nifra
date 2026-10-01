@@ -82,9 +82,10 @@ export function tokenSetHas(tokens: ReadonlySet<string>, group: SearchTermGroup)
 export function tokenSetScore(tokens: ReadonlySet<string>, group: SearchTermGroup): number {
   let best = 0
   for (const variant of group.variants) {
-    for (const token of tokens) {
-      if (!tokenMatches(variant, token)) continue
-      const score = variant === group.term && token === variant ? 3 : token === variant ? 2 : 1
+    for (const candidate of tokens) {
+      if (!tokenMatches(variant, candidate)) continue
+      const score =
+        variant === group.term && candidate === variant ? 3 : candidate === variant ? 2 : 1
       if (score > best) best = score
     }
   }
