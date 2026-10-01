@@ -355,9 +355,9 @@ export default function I18n() {
           (Russian <code>few</code>/<code>many</code>, Arabic <code>zero</code>/<code>two</code>) that a
           message never states.</li>
         <li><b>Script purity</b>: letters from a script the locale does not write in - a Telugu sign
-          in a Gujarati word, a Cyrillic <code>е</code> in English - and words mixing Latin with the
-          locale's script, from <code>Intl.Locale(tag).maximize().script</code>. Latin words (brands,
-          units) stay allowed.</li>
+          in a Gujarati word, a Cyrillic <code>е</code> in English - from{" "}
+          <code>Intl.Locale(tag).maximize().script</code>, and, as a warning, words mixing Latin with
+          the locale's script. Latin words (brands, units) stay allowed.</li>
         <li><b>Untranslated</b> messages identical to the default in another language, as a warning.</li>
       </ul>
       <CodeBlock code={CHECK_ENTRY} lang="ts" />

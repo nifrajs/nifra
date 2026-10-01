@@ -10,9 +10,9 @@
  * - plural and select cases: a missing `other`, and plural categories the locale's grammar uses
  *   (`Intl.PluralRules`) that a message never states;
  * - script purity: letters from a script the locale does not write in (a Telugu letter in Gujarati,
- *   a Cyrillic `а` in English), and words that mix Latin with the locale's script, from
- *   `Intl.Locale(tag).maximize().script` and Unicode script properties. Latin words stay allowed
- *   (brands, units, URLs);
+ *   a Cyrillic `а` in English), from `Intl.Locale(tag).maximize().script` and Unicode script
+ *   properties, and, as a warning, words that mix Latin with the locale's script. Latin words stay
+ *   allowed (brands, units, URLs);
  * - untranslated messages: identical to the default's in another language (a warning only).
  *
  * Pure: it reads the catalogs it is given and runs no app code. Draft locales report missing keys and
@@ -186,9 +186,19 @@ const scriptOf = (char: string): string | undefined => {
 const codePoint = (char: string): string =>
   `U+${(char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}`
 
+interface ScriptProblem {
+  readonly severity: "error" | "warning"
+  readonly message: string
+}
+
+// Scripts written without spaces between words: a Latin brand runs straight into the next word.
+const UNSPACED_SCRIPTS: ReadonlySet<string> = new Set(["Thai", "Laoo", "Khmr", "Mymr", "Tibt"])
+
 /** A function naming what in a message is outside the locale's script, or `undefined` when the
- * runtime cannot say which script the locale uses. */
-function scriptChecker(tag: string): ((text: string) => string | undefined) | undefined {
+ * runtime cannot say which script the locale uses. A letter from another script is an error; a word
+ * mixing Latin with the locale's script is a warning - a lookalike in Cyrillic, but Gujarati attaches
+ * suffixes to Latin loanwords (`Googleમાં`). */
+function scriptChecker(tag: string): ((text: string) => ScriptProblem | undefined) | undefined {
   let expected: string | undefined
   try {
     expected = new Intl.Locale(tag).maximize().script
@@ -207,8 +217,11 @@ function scriptChecker(tag: string): ((text: string) => string | undefined) | un
     return undefined // a script this engine's Unicode tables do not know
   }
   const label = `${scriptName(expected)} (${expected})`
-  // A word mixing Latin and the locale's script is a lookalike bug; CJK mixes them by design (Tシャツ).
-  const mixedWords = expected !== "Latn" && COMPOSITE_SCRIPTS[expected] === undefined
+  // CJK mixes scripts inside words by design (Tシャツ), and unspaced scripts have no words to split.
+  const mixedWords =
+    expected !== "Latn" &&
+    COMPOSITE_SCRIPTS[expected] === undefined &&
+    !UNSPACED_SCRIPTS.has(expected)
   return (text) => {
     // Catalogs are mostly printable ASCII: skip the regexes when there is nothing else to look at.
     if (!/[^ -~]/.test(text)) return undefined
@@ -222,12 +235,18 @@ function scriptChecker(tag: string): ((text: string) => string | undefined) | un
         const script = scriptOf(char)
         return `${codePoint(char)} '${char}'${script === undefined ? "" : ` (${scriptName(script)})`}`
       })
-      return `contains ${chars.join(", ")}; the locale writes ${label}`
+      return {
+        severity: "error",
+        message: `contains ${chars.join(", ")}; the locale writes ${label}`,
+      }
     }
     if (!mixedWords) return undefined
     for (const [word] of text.matchAll(/[\p{L}\p{M}]+/gu)) {
       if (own.test(word) && /\p{sc=Latn}/u.test(word)) {
-        return `the word '${word}' mixes Latin letters with ${label}`
+        return {
+          severity: "warning",
+          message: `the word '${word}' mixes Latin letters with ${label} - a lookalike letter, or a Latin word with a suffix`,
+        }
       }
     }
     return undefined
@@ -457,7 +476,9 @@ export function checkCatalogs<K extends string>(
       checkChoices(defaultKey, defaultInfo.tag, key, shape)
     }
     const script = defaultScript?.(shape?.literal ?? text)
-    if (script !== undefined) report("error", "script", defaultKey, key, `${key} ${script}`)
+    if (script !== undefined) {
+      report(script.severity, "script", defaultKey, key, `${key} ${script.message}`)
+    }
   }
   const total = defaultMessages.size
   const coverage: LocaleCoverage[] = []
@@ -485,8 +506,9 @@ export function checkCatalogs<K extends string>(
     for (const [key, text] of own) {
       const shape = parsed(locale, key, text)
       const scriptProblem = script?.(shape?.literal ?? text)
-      if (scriptProblem !== undefined)
-        report("error", "script", locale, key, `${key} ${scriptProblem}`)
+      if (scriptProblem !== undefined) {
+        report(scriptProblem.severity, "script", locale, key, `${key} ${scriptProblem.message}`)
+      }
       const base = defaultMessages.get(key)
       if (base === undefined) {
         const at = lookup(defaultCatalog, key)

@@ -178,6 +178,7 @@ describe("checkCatalogs", () => {
     expect(scripts[1]?.message).toContain("(Telugu)")
     expect(scripts[1]?.message).toContain("Gujarati (Gujr)")
     expect(scripts[2]?.message).toContain("mixes Latin letters with Cyrillic")
+    expect(scripts.map((f) => f.severity)).toEqual(["error", "error", "warning"])
     expect(result.ok).toBe(false)
   })
 
@@ -189,6 +190,19 @@ describe("checkCatalogs", () => {
       ja: { home: { title: "Tシャツ、ようこそ{name}さん、日本語" } },
     })
     expect(only(result.findings, "script")).toEqual([])
+    // Thai has no spaces between words, so a brand next to Thai text is not a mixed word.
+    const thai = checkCatalogs({
+      locales: defineLocales({ default: "en", locales: { en: {}, th: {} } }),
+      catalogs: { en: { brand: "Buy an iPhone" }, th: { brand: "ซื้อiPhoneรุ่นใหม่" } },
+    })
+    expect(only(thai.findings, "script")).toEqual([])
+  })
+
+  test("a Latin loanword with a native suffix is a warning, not an error", () => {
+    const result = check({ en, gu: { brand: "Googleમાં" } })
+    expect(only(result.findings, "script")).toMatchObject([
+      { locale: "gu", key: "brand", severity: "warning" },
+    ])
   })
 
   test("an ignore pattern skips one check for matching keys", () => {

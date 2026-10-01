@@ -10,7 +10,7 @@ catalog in a locale registry the way `t()` reads it: coverage per locale (counti
 through `chain()`), missing keys and keys the default catalog does not have, ICU syntax,
 placeholder and rich-tag parity with the default message, a missing `other` case, plural categories
 the locale's grammar uses that a message never states, script purity (letters outside
-`Intl.Locale(tag).maximize().script`, and words mixing Latin with it), and messages identical to the
+`Intl.Locale(tag).maximize().script`, and, as a warning, words mixing Latin with it), and messages identical to the
 default in another language. It returns findings with a severity (`error`, `warning`, `info`) and a
 per-locale coverage table; `ignore` skips keys per check.
 

@@ -4762,9 +4762,9 @@ adds a placeholder renders it empty.
 message never states.
 
 - **Script purity**: letters from a script the locale does not write in - a Telugu sign
-in a Gujarati word, a Cyrillic `е` in English - and words mixing Latin with the
-locale's script, from `Intl.Locale(tag).maximize().script`. Latin words (brands,
-units) stay allowed.
+in a Gujarati word, a Cyrillic `е` in English - from
+`Intl.Locale(tag).maximize().script`, and, as a warning, words mixing Latin with
+the locale's script. Latin words (brands, units) stay allowed.
 
 - **Untranslated** messages identical to the default in another language, as a warning.
 
