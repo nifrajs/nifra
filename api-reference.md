@@ -4732,6 +4732,8 @@ _No named exports (side-effect entrypoint)._
 - **RenderPageOptions** _(interface)_ - `interface RenderPageOptions`
 - **RenderProps** _(interface)_ - `interface RenderProps`
   The data handed to a route component.
+- **RenderStreamOptions** _(interface)_ - `interface RenderStreamOptions`
+  Per-document options for {@link RenderAdapter.renderToStream}.
 - **RenderedPage** _(interface)_ - `interface RenderedPage`
 - **RevalidateEndpointOptions** _(interface)_ - `interface RevalidateEndpointOptions`
 - **RevalidateResult** _(interface)_ - `interface RevalidateResult<T>`

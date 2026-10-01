@@ -629,6 +629,30 @@ test("renderPage with deferred data: client placeholder + the inline registry ru
   expect(html).toContain("window.__nifraDeferred")
 })
 
+test("renderPage hands the document nonce to the adapter's stream renderer", async () => {
+  const seen: unknown[] = []
+  const recording: RenderAdapter = {
+    renderToStream: (_chain, _props, options) => {
+      seen.push(options)
+      return streamOf("<p>x</p>")
+    },
+    hydrationHead: () => "",
+  }
+  const render = async (nonce?: string) =>
+    (
+      await renderPage({
+        adapter: recording,
+        chain: [null],
+        data: { slow: defer(Promise.resolve("later")) },
+        clientEntry: "/c.js",
+        ...(nonce === undefined ? {} : { nonce }),
+      })
+    ).text()
+  await render("n0nce")
+  await render()
+  expect(seen).toEqual([{ nonce: "n0nce" }, undefined])
+})
+
 test("renderPage omits the deferred runtime when nothing is deferred", async () => {
   const html = await (
     await renderPage({ adapter: stub, chain: [null], data: { a: 1 }, clientEntry: "/c.js" })

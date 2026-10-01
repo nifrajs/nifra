@@ -251,6 +251,7 @@ export {
   type MatchChain,
   type RenderAdapter,
   type RenderProps,
+  type RenderStreamOptions,
   ROOT_ATTRIBUTE,
   ROUTE_GLOBAL,
   type SsrModuleLoader,

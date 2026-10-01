@@ -487,6 +487,7 @@ export function renderPageResult(options: RenderPageInput): MaybePromise<Rendere
     tailHtml,
     status,
     headers,
+    nonce,
     nonceAttr,
   ).then((response) => new ResponseRenderedPage(response))
 }
@@ -501,6 +502,7 @@ async function renderStreamedPage(
   tailHtml: string,
   status: number,
   headers: Record<string, string>,
+  nonce: string | undefined,
   nonceAttr: string,
 ): Promise<Response> {
   // Streaming path - required for `defer()` (progressive `<Await>` resolution) and used by any adapter
@@ -511,7 +513,10 @@ async function renderStreamedPage(
   const shell = enc.encode(shellHtml)
   const closeRoot = enc.encode(closeRootHtml)
   const tail = enc.encode(tailHtml)
-  const appStream = await adapter.renderToStream(chain, renderProps)
+  const appStream =
+    nonce === undefined
+      ? await adapter.renderToStream(chain, renderProps)
+      : await adapter.renderToStream(chain, renderProps, { nonce })
   const body = streamDocument(shell, appStream, closeRoot, allDeferred, tail, enc, nonceAttr)
   return new Response(body, { status, headers })
 }

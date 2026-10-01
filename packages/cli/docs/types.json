@@ -14273,7 +14273,7 @@
     "name": "RenderAdapter",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RenderAdapter {\n    /**\n     * Render a route's layout `chain` (outermost layout → page) to a Web stream of HTML bytes,\n     * including the framework's hydration markers.\n     */\n    renderToStream(chain: readonly unknown[], props: RenderProps): ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>;\n    /** Render the chain to a complete HTML string when no content is deferred. */\n    renderToString?(chain: readonly unknown[], props: RenderProps): string | Promise<string>;\n    /** Per-document bootstrap markup injected into `<head>` for client hydration. */\n    hydrationHead(nonce?: string): string;\n}",
+    "signature": "export interface RenderAdapter {\n    /**\n     * Render a route's layout `chain` (outermost layout → page) to a Web stream of HTML bytes,\n     * including the framework's hydration markers. When `options.nonce` is set, every executable\n     * `<script>` the framework streams (out-of-order Suspense runtimes, serialized resources) must\n     * carry it, or a nonce-based Content-Security-Policy blocks it and the boundary never resolves.\n     */\n    renderToStream(chain: readonly unknown[], props: RenderProps, options?: RenderStreamOptions): ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>;\n    /** Render the chain to a complete HTML string when no content is deferred. */\n    renderToString?(chain: readonly unknown[], props: RenderProps): string | Promise<string>;\n    /** Per-document bootstrap markup injected into `<head>` for client hydration. */\n    hydrationHead(nonce?: string): string;\n}",
     "doc": "/**\n * The seam every render adapter implements. New adapters should prove these invariants with\n * `assertRenderAdapterConformance`; framework-specific behavior remains locally tested.\n */"
   },
   {
@@ -14382,6 +14382,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function renderSizeReport(report: SizeReport): string;",
     "doc": "/**\n * Render a {@link SizeReport} as a terse aligned table (biggest first) with a totals row - the text\n * `nifra build --report` prints. Pure (string in, string out) so the formatting is unit-testable.\n */"
+  },
+  {
+    "name": "RenderStreamOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface RenderStreamOptions {\n    /** The document's CSP nonce, for every executable `<script>` the framework streams. */\n    readonly nonce?: string;\n}",
+    "doc": "/** Per-document options for {@link RenderAdapter.renderToStream}. */"
   },
   {
     "name": "renderWorkGraphJson",

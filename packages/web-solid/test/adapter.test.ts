@@ -52,6 +52,31 @@ test("renderToStream streams a Suspense boundary: fallback bytes precede the res
   expect(html.indexOf("FALLBACK")).toBeLessThan(html.indexOf("RESOLVED")) // fallback streamed first
 })
 
+test("renderToStream stamps the nonce on every script Solid streams for a resource", async () => {
+  const Slow = () => {
+    const [r] = createResource(
+      () => new Promise<string>((res) => setTimeout(() => res("RESOLVED"), 30)),
+    )
+    return r()
+  }
+  const App = () =>
+    createComponent(Suspense, {
+      get fallback() {
+        return "FALLBACK"
+      },
+      get children() {
+        return createComponent(Slow, {})
+      },
+    })
+  const read = async (options?: { nonce: string }) =>
+    new Response(await solidAdapter.renderToStream([App], { data: null }, options)).text()
+  const nonced = await read({ nonce: "n0nce" })
+  const scripts = nonced.match(/<script\b[^>]*>/g) ?? []
+  expect(scripts.length).toBeGreaterThan(0) // the resource + boundary scripts were streamed
+  for (const tag of scripts) expect(tag).toContain('nonce="n0nce"')
+  expect(await read()).not.toContain("nonce=")
+})
+
 test("hydrationHead returns Solid's hydration bootstrap (the _$HY registry)", () => {
   const head = solidAdapter.hydrationHead()
   expect(head.length).toBeGreaterThan(0)

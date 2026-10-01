@@ -32,14 +32,19 @@ export const solidAdapter: RenderAdapter = {
   renderToString(chain, props) {
     return solidRenderToString(compose(chain, props))
   },
-  renderToStream(chain, props) {
+  renderToStream(chain, props, options) {
     // Solid's `renderToStream` streams `Uint8Array` chunks into a Web `WritableStream` via
     // `pipeTo` (fire-and-forget - returns void); pipe into a TransformStream and hand back the
     // readable side. Suspense boundaries stream as they resolve; `generateHydrationScript()` (in
     // <head>) seeds client hydration. A render failure errors `ts.readable`, which `renderPage`
-    // surfaces on the response body.
+    // surfaces on the response body. The nonce reaches the resource and boundary scripts Solid streams.
     const ts = new TransformStream<Uint8Array, Uint8Array>()
-    solidRenderToStream(compose(chain, props)).pipeTo(ts.writable)
+    const app = compose(chain, props)
+    const stream =
+      options?.nonce === undefined
+        ? solidRenderToStream(app)
+        : solidRenderToStream(app, { nonce: options.nonce })
+    stream.pipeTo(ts.writable)
     return ts.readable
   },
   hydrationHead() {

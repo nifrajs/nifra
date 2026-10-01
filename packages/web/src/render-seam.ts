@@ -61,6 +61,12 @@ export interface UIMatch {
   readonly handle: unknown
 }
 
+/** Per-document options for {@link RenderAdapter.renderToStream}. */
+export interface RenderStreamOptions {
+  /** The document's CSP nonce, for every executable `<script>` the framework streams. */
+  readonly nonce?: string
+}
+
 /**
  * The seam every render adapter implements. New adapters should prove these invariants with
  * `assertRenderAdapterConformance`; framework-specific behavior remains locally tested.
@@ -68,11 +74,14 @@ export interface UIMatch {
 export interface RenderAdapter {
   /**
    * Render a route's layout `chain` (outermost layout → page) to a Web stream of HTML bytes,
-   * including the framework's hydration markers.
+   * including the framework's hydration markers. When `options.nonce` is set, every executable
+   * `<script>` the framework streams (out-of-order Suspense runtimes, serialized resources) must
+   * carry it, or a nonce-based Content-Security-Policy blocks it and the boundary never resolves.
    */
   renderToStream(
     chain: readonly unknown[],
     props: RenderProps,
+    options?: RenderStreamOptions,
   ): ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>
   /** Render the chain to a complete HTML string when no content is deferred. */
   renderToString?(chain: readonly unknown[], props: RenderProps): string | Promise<string>

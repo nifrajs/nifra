@@ -21,12 +21,15 @@ export const reactAdapter: RenderAdapter = {
     const { renderToString } = await reactDomServer()
     return renderToString(compose(chain, props))
   },
-  async renderToStream(chain, props) {
+  async renderToStream(chain, props, options) {
     // Resolves a Web `ReadableStream<Uint8Array>` once the shell is renderable; Suspense
     // boundaries stream as they resolve. No `bootstrapModules` - nifra injects the client entry in
     // the document tail. React's default `onError` logs to console.error (errors aren't swallowed).
+    // The nonce reaches the inline runtime React streams to reveal each resolved boundary.
     const { renderToReadableStream } = await reactDomServer()
-    return renderToReadableStream(compose(chain, props))
+    return options?.nonce === undefined
+      ? renderToReadableStream(compose(chain, props))
+      : renderToReadableStream(compose(chain, props), { nonce: options.nonce })
   },
   // React reconciles against the existing DOM on hydrate, so no per-document bootstrap
   // script is needed (contrast Solid's generateHydrationScript) - the seam allows both.
