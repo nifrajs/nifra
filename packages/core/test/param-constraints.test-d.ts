@@ -61,6 +61,7 @@ const app = server()
     c.params["id{[0-9]+}"]
     return { id }
   })
+  // nifra-expect route-overlap: prove a constrained and a bare parameter keep separate registry keys.
   .get("/users/:name", (c) => ({ name: c.params.name }))
   .get("/o/:page{[0-9]+}?", (c) => {
     const page: string | undefined = c.params.page

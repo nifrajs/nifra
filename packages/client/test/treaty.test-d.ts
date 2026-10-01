@@ -314,13 +314,18 @@ wsApi.chat.get()
 // --- constrained params: called by the bare name, one signature per route at a position ---
 
 const constrainedApp = server()
+  // nifra-expect route-overlap: this separate type fixture reuses the earlier app's paths.
   .get("/users/:id{[0-9]+}", (c) => ({ numeric: c.params.id }))
+  // nifra-expect route-overlap: this separate type fixture reuses the earlier app's paths.
   .delete("/users/:id{[0-9]+}", () => ({ deleted: true }))
+  // nifra-expect route-overlap: this separate type fixture reuses the earlier app's paths.
   .get("/users/:id{[0-9]+}/posts", () => [{ pid: "1" }])
+  // nifra-expect route-overlap: prove distinct parameter names retain their own client calls.
   .get("/users/:slug", (c) => ({ slug: c.params.slug }))
   .get("/img/:kind{thumb|full}", (c) => ({ kind: c.params.kind }))
   .get("/codes/:code{[A-Z]{2}}", (c) => ({ code: c.params.code }))
   .get("/docs/:page", (c) => ({ page: c.params.page }))
+  // nifra-expect route-overlap: prove both a named parameter and wildcard keep their client calls.
   .get("/docs/*rest", (c) => ({ rest: c.params.rest }))
 
 const constrainedApi = {} as Treaty<typeof constrainedApp>

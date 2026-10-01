@@ -15,6 +15,7 @@ declare const userOut: StandardSchemaV1<unknown, { id: string }>
 const app = server()
   .get("/users/:id?", (c) => ({ id: c.params.id ?? "all" }))
   .post("/d/:year?/:month?", { body: name }, (c) => ({ year: c.params.year ?? "", n: c.body.name }))
+  // nifra-expect route-overlap: the root optional parameter intentionally shares /users.
   .get("/:lang?", (c) => ({ lang: c.params.lang ?? "en" }))
 
 declare const client: Treaty<typeof app>

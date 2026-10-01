@@ -48,6 +48,7 @@ const app = server()
     name: c.body.name,
   }))
   .group("/api", (api) => api.get("/items/:item?", (c) => ({ item: c.params.item })))
+  // nifra-expect route-overlap: the root optional parameter intentionally shares /users.
   .get("/:lang?", (c) => ({ lang: c.params.lang }))
 
 type Reg = RegistryOf<typeof app>

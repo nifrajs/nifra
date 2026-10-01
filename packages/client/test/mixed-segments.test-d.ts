@@ -9,7 +9,9 @@ import type { Equal, Expect } from "@nifrajs/test-utils"
 const app = server()
   .get("/files/:name.json", (c) => ({ json: c.params.name }))
   .get("/files/:name.csv", (c) => ({ csv: c.params.name }))
+  // nifra-expect route-overlap: prove the exact static sibling wins in the client type.
   .get("/files/index.json", () => ({ index: true }))
+  // nifra-expect route-overlap: prove whole and mixed parameter calls coexist.
   .get("/files/:id", (c) => ({ plain: c.params.id }))
   .get("/post-:id", (c) => ({ post: c.params.id }))
   .get("/post-:id/comments", () => [{ cid: "1" }])
