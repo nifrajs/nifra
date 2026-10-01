@@ -28,6 +28,13 @@ export interface SourceFacts {
     path: string,
   ): boolean | undefined
   isResponseSyntaxAt(source: TSApi.SourceFile, position: number): boolean | undefined
+  /** Whether the `import` keyword at `position` starts a runtime `import(specifier)` call (true) or a
+   * type-position `import("…")` such as `typeof import("x")` (false); undefined when neither. */
+  isDynamicImportAt(
+    source: TSApi.SourceFile,
+    position: number,
+    specifier: string,
+  ): boolean | undefined
 }
 
 function nodeAt(ts: TypeScriptApi, source: TSApi.SourceFile, position: number): TSApi.Node {
@@ -157,11 +164,35 @@ export function createSourceFacts(ts: TypeScriptApi): SourceFacts {
     return false
   }
 
+  const isDynamicImportAt = (
+    source: TSApi.SourceFile,
+    position: number,
+    specifier: string,
+  ): boolean | undefined => {
+    let node: TSApi.Node = nodeAt(ts, source, Math.max(0, Math.min(position, source.end - 1)))
+    for (;;) {
+      if (ts.isImportTypeNode(node)) return false
+      if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        const argument = node.arguments[0]
+        if (
+          argument === undefined ||
+          !(ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument))
+        ) {
+          return undefined
+        }
+        return argument.text === specifier ? true : undefined
+      }
+      if (node === source) return undefined
+      node = node.parent
+    }
+  }
+
   return {
     parse,
     isValueImportAt,
     isRouteRegistrationAt,
     isFunctionRouteCallAt,
     isResponseSyntaxAt,
+    isDynamicImportAt,
   }
 }

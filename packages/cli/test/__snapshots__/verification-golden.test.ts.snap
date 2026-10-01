@@ -69,11 +69,11 @@ exports[`verification golden output: nifra check dirty project: human report wit
       - Replace the relative \`fetch()\` call with the generated \`api...get/post/...\` call and branch on \`{ ok, data, error }\`.
 ✓ client("…") missing its <typeof app> type argument: none
 ✗ server-only import in a route module: 1
-    routes/notes.tsx:1  import { db } from "../db" - server-only "../db" reaches the browser bundle via routes/notes.tsx → ../db (direct edge - couldn't resolve the transitive chain precisely); server-only import in a route module (bundled for the browser) - reach it via c.db / ctx.api inside a loader, never a top-level import
+    routes/notes.tsx:1  import { db } from "../db" - server-only "../db" reaches the browser bundle via routes/notes.tsx → ../db (direct edge - couldn't resolve the transitive chain precisely); server-only import in a route module (bundled for the browser) - reach it via c.db / ctx.api inside a loader; a dynamic import() is bundled too
       fix: Move server-only code behind the route server boundary
-      - Remove the top-level \`import … from "../db"\` from this route module (it's bundled for the browser).
-      - Access backend/data work through the route \`loader\`/\`action\` context (\`api\`, \`env\`, or project server context).
-      - If a direct module import is unavoidable, lazy-load it (\`await import("../db")\`) inside the server-only loader/action path.
+      - Remove the import of "../db" from this route module (it's bundled for the browser).
+      - Access backend/data work through the route \`loader\`/\`action\` context (\`api\`, \`env\`, or project server context), or a server function (\`*.fn.ts\`).
+      - A dynamic \`import()\` does not keep code off the client: the build bundles its target as a lazy chunk, even from inside a loader.
 ✓ SQL built by interpolating a value into the statement: none
 ✓ route returns a raw Response (typed client → data: never): none
 ✓ undeclared dependency in package.json: none
@@ -119,8 +119,8 @@ exports[`verification golden output: nifra check dirty project: --json 1`] = `
       "severity": "error",
       "file": "routes/notes.tsx",
       "line": 1,
-      "message": "import { db } from \\"../db\\" - server-only \\"../db\\" reaches the browser bundle via routes/notes.tsx → ../db (direct edge - couldn't resolve the transitive chain precisely); server-only import in a route module (bundled for the browser) - reach it via c.db / ctx.api inside a loader, never a top-level import",
-      "fix": "server-only import in a route module (bundled for the browser) - reach it via c.db / ctx.api inside a loader, never a top-level import",
+      "message": "import { db } from \\"../db\\" - server-only \\"../db\\" reaches the browser bundle via routes/notes.tsx → ../db (direct edge - couldn't resolve the transitive chain precisely); server-only import in a route module (bundled for the browser) - reach it via c.db / ctx.api inside a loader; a dynamic import() is bundled too",
+      "fix": "server-only import in a route module (bundled for the browser) - reach it via c.db / ctx.api inside a loader; a dynamic import() is bundled too",
       "chain": [
         "routes/notes.tsx",
         "../db"
@@ -129,9 +129,9 @@ exports[`verification golden output: nifra check dirty project: --json 1`] = `
         "kind": "manual",
         "title": "Move server-only code behind the route server boundary",
         "steps": [
-          "Remove the top-level \`import … from \\"../db\\"\` from this route module (it's bundled for the browser).",
-          "Access backend/data work through the route \`loader\`/\`action\` context (\`api\`, \`env\`, or project server context).",
-          "If a direct module import is unavoidable, lazy-load it (\`await import(\\"../db\\")\`) inside the server-only loader/action path."
+          "Remove the import of \\"../db\\" from this route module (it's bundled for the browser).",
+          "Access backend/data work through the route \`loader\`/\`action\` context (\`api\`, \`env\`, or project server context), or a server function (\`*.fn.ts\`).",
+          "A dynamic \`import()\` does not keep code off the client: the build bundles its target as a lazy chunk, even from inside a loader."
         ]
       }
     }

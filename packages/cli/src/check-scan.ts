@@ -61,9 +61,17 @@ const SERVER_ONLY =
   /^(?:node:|bun:)|^(?:postgres|pg|mysql2|ioredis|redis|better-sqlite3|mongodb|@libsql\/client)$|^drizzle-orm\/(?:node-postgres|postgres-js|bun-sqlite|libsql|mysql2|pglite)\b|^(?:\.\.?\/)+db(?:\.[cm]?[jt]sx?)?$/
 
 // A static, non-type import with a string specifier. `import type …` is erased at build, so it's safe
-// and skipped. Dynamic `import(…)` (the correct way to lazy-load server code in a loader) has `(` right
-// after `import`, so `import\s+` never matches it.
+// and skipped. Dynamic `import(…)` has `(` right after `import`, so `import\s+` never matches it; it
+// is read by DYNAMIC_IMPORT below.
 const STATIC_IMPORT = /\bimport\s+(?!type\b)(?:[^'"();]*?\bfrom\s+)?['"]([^'"]+)['"]/g
+// A dynamic `import("x")` whose specifier is one string literal. The client build bundles its target
+// as a lazy chunk, so it reaches the browser bundle like a static import does - also from inside a
+// loader, which ships with the route module. A computed specifier cannot be followed and is skipped.
+const DYNAMIC_IMPORT = /(?<![\w$.])import\s*\(\s*(["'`])([^"'`$\\\r\n]+)\1\s*[,)]/g
+// Without a parser: `typeof import("x")` and `import("x").Name` are type positions, erased at build.
+// A runtime `import("x")` is a promise, so the only members read straight off it are its methods.
+const TYPE_QUERY_BEFORE = /\btypeof\s*$/
+const TYPE_QUALIFIER_AFTER = /^\s*\.\s*(?!(?:then|catch|finally)\b)[A-Za-z_$]/
 
 const ROUTE_REGISTRATION_DQ = /\.([A-Za-z]+)\s*\(\s*"((?:\\.|[^"\\])*)"/g
 const ROUTE_REGISTRATION_SQ = /\.([A-Za-z]+)\s*\(\s*'((?:\\.|[^'\\])*)'/g
@@ -1481,7 +1489,7 @@ function isSideEffectImport(content: string, index: number): boolean {
 export function scanRemovedImports(file: string, content: string): SourceFinding[] {
   const out: SourceFinding[] = []
   const lines = content.split("\n")
-  for (const edge of staticImportEdges(content)) {
+  for (const edge of importEdges(content)) {
     const removed = REMOVED_IMPORTS.find(
       (entry) =>
         edge.specifier === entry.specifier || edge.specifier.startsWith(`${entry.specifier}/`),
@@ -1494,9 +1502,10 @@ export function scanRemovedImports(file: string, content: string): SourceFinding
   return out
 }
 
-/** Scan a route module for top-level server-only imports. Returns `[]` for non-route files (only
- * `routes/` modules are browser-bundled, so a server-only import elsewhere is fine). Each finding carries
- * the offending `specifier` so the diagnostic can render the `routeFile → specifier` chain. Pure. */
+/** Scan a route module for server-only imports, static or a literal dynamic `import()`. Returns `[]`
+ * for non-route files (only `routes/` modules are browser-bundled, so a server-only import elsewhere is
+ * fine). Each finding carries the offending `specifier` so the diagnostic can render the
+ * `routeFile → specifier` chain. Pure. */
 export function scanServerOnlyImports(
   file: string,
   content: string,
@@ -1505,21 +1514,11 @@ export function scanServerOnlyImports(
   if (!ROUTE_FILE.test(file)) return []
   const out: ServerImportFinding[] = []
   const lines = content.split("\n")
-  const code = stripComments(content)
-  const positions = codePositionMask(content)
-  STATIC_IMPORT.lastIndex = 0
-  for (let m = STATIC_IMPORT.exec(code); m !== null; m = STATIC_IMPORT.exec(code)) {
-    if (positions[m.index] === " ") continue
-    const specifier = m[1] ?? ""
+  // Inline `import { type X } from "…"` is erased just like `import type` and is not an edge; a parse
+  // failure keeps the lexical edge so the security rule fails closed.
+  for (const { specifier, index } of importEdges(content, facts, file)) {
     if (!SERVER_ONLY.test(specifier)) continue
-    if (facts !== undefined) {
-      const source = facts.parse(file, content)
-      // Inline `import { type X } from "…"` is erased just like `import type`; don't call it a
-      // runtime leak. A parse failure keeps the old lexical finding so the security rule fails closed.
-      if (source !== undefined && facts.isValueImportAt(source, m.index, specifier) === false)
-        continue
-    }
-    const line = lineAt(content, m.index)
+    const line = lineAt(content, index)
     out.push({ file, line, snippet: (lines[line - 1] ?? "").trim(), specifier })
   }
   return out
@@ -1569,11 +1568,11 @@ function staticImportEdges(
   content: string,
   facts?: SourceFacts,
   file?: string,
+  positions: string = codePositionMask(content),
 ): Array<{ specifier: string; index: number }> {
   const edges: Array<{ specifier: string; index: number }> = []
   const re = staticImportRegex()
   const code = stripComments(content)
-  const positions = codePositionMask(content)
   for (let m = re.exec(code); m !== null; m = re.exec(code)) {
     if (positions[m.index] === " ") continue
     if (m[1] === undefined) continue
@@ -1590,6 +1589,57 @@ function staticImportEdges(
  * Mirrors {@link STATIC_IMPORT}, so `import type` + dynamic `import()` are already excluded. Pure. */
 export function parseStaticImports(content: string, facts?: SourceFacts, file?: string): string[] {
   return staticImportEdges(content, facts, file).map((e) => e.specifier)
+}
+
+/** The literal dynamic `import("x")` calls in executable code, skipping type positions. With `facts`
+ * the parser decides; without it (or when it cannot tell) the lexical rule does. Pure. */
+function dynamicImportEdges(
+  content: string,
+  facts?: SourceFacts,
+  file?: string,
+  positions: string = codePositionMask(content),
+): Array<{ specifier: string; index: number }> {
+  const edges: Array<{ specifier: string; index: number }> = []
+  const re = new RegExp(DYNAMIC_IMPORT.source, DYNAMIC_IMPORT.flags)
+  for (let m = re.exec(content); m !== null; m = re.exec(content)) {
+    if (positions[m.index] === " ") continue // inside a comment or a string
+    const specifier = m[2]
+    if (specifier === undefined) continue
+    const source =
+      facts !== undefined && file !== undefined ? facts.parse(file, content) : undefined
+    const verdict =
+      source === undefined || facts === undefined
+        ? undefined
+        : facts.isDynamicImportAt(source, m.index, specifier)
+    if (verdict === false) continue
+    if (verdict === undefined) {
+      if (TYPE_QUERY_BEFORE.test(content.slice(Math.max(0, m.index - 16), m.index))) continue
+      const end = m.index + m[0].length
+      if (m[0].endsWith(")") && TYPE_QUALIFIER_AFTER.test(content.slice(end, end + 64))) continue
+    }
+    edges.push({ specifier, index: m.index })
+  }
+  return edges
+}
+
+/** Every import a module's runtime code makes - static and literal dynamic - in source order. Pure. */
+function importEdges(
+  content: string,
+  facts?: SourceFacts,
+  file?: string,
+): Array<{ specifier: string; index: number }> {
+  // Without an `import(` there is nothing for the dynamic pass to find; skip its regex.
+  const positions = codePositionMask(content)
+  const edges = staticImportEdges(content, facts, file, positions)
+  if (!content.includes("import(") && !/import\s+\(/.test(content)) return edges
+  return [...edges, ...dynamicImportEdges(content, facts, file, positions)].sort(
+    (a, b) => a.index - b.index,
+  )
+}
+
+/** The specifiers {@link importEdges} finds, static and literal dynamic, in source order. Pure. */
+export function parseImports(content: string, facts?: SourceFacts, file?: string): string[] {
+  return importEdges(content, facts, file).map((e) => e.specifier)
 }
 
 /** The server-only SINK an import specifier names directly (a `node:`/`bun:` builtin or a known
@@ -1620,7 +1670,7 @@ export type ModuleReader = (absPath: string) => string | undefined
 /**
  * BFS the LOCAL module graph from a route file for the SHORTEST import chain that reaches a server-only
  * sink, returning `[routeFile, …as-written specifiers…, sink]` or `undefined` if none is reachable. A
- * node's outgoing edges are its static imports; an edge is followed only when it's a RELATIVE specifier
+ * node's outgoing edges are its static and literal dynamic imports; an edge is followed only when it's a RELATIVE specifier
  * that `resolve` maps to a readable local file (so the walk never descends into node_modules or chases an
  * unresolvable alias). At each node, a by-name sink import (`node:fs`, `postgres`) OR a resolved
  * `*.server` / `server-only`-marked dependency terminates the chain. Bounded by depth + a visited set, so
@@ -1649,7 +1699,7 @@ export function walkServerOnlyChain(
     const next: Node[] = []
     for (const node of frontier) {
       if (node.depth >= TRANSITIVE_MAX_DEPTH) continue
-      for (const spec of parseStaticImports(node.content, facts, node.abs)) {
+      for (const spec of parseImports(node.content, facts, node.abs)) {
         // (a) A by-name sink (builtin / known server-only pkg) → the chain ends here (shortest first,
         // since BFS reaches the nearest sink before any deeper one).
         const sink = directSinkSpecifier(spec)
@@ -1699,7 +1749,7 @@ export function resolveServerOnlyChains(
   // Collect the route's import edges up front (fresh-regex scan) so the per-edge logic below can call
   // the REENTRANT transitive walk without corrupting a shared regex's `lastIndex` (the walk also scans
   // imports). Driving `STATIC_IMPORT.exec` here directly would restart this loop forever.
-  for (const { specifier, index } of staticImportEdges(content, facts, file)) {
+  for (const { specifier, index } of importEdges(content, facts, file)) {
     if (flaggedSpecifiers.has(specifier)) continue
     const line = lineAt(content, index)
     const snippet = (lines[line - 1] ?? "").trim()

@@ -439,12 +439,26 @@ describe("scanServerOnlyImports - server-only imports in route modules", () => {
     expect(flag('import { db } from "../../db.ts"')).toHaveLength(1)
   })
 
-  test("does NOT flag type-only imports, dynamic imports, or normal client deps", () => {
+  test("does NOT flag type-only imports, type-position import() or normal client deps", () => {
     const flag = (src: string) => scanServerOnlyImports("routes/notes.tsx", src)
     expect(flag('import type { Note } from "../db"')).toHaveLength(0) // erased at build
-    expect(flag('const { db } = await import("../db")')).toHaveLength(0) // lazy, server-side only
+    expect(flag('type Db = typeof import("../db")')).toHaveLength(0)
+    expect(flag('let pool: import("pg").Pool')).toHaveLength(0)
     expect(flag('import { useState } from "react"')).toHaveLength(0)
     expect(flag('import { client } from "@nifrajs/client"')).toHaveLength(0)
+    expect(flag("const m = await import(`../db/${name}`)")).toHaveLength(0) // computed: not followed
+  })
+
+  test("flags a literal dynamic import(): the client build bundles it as a lazy chunk", () => {
+    const flag = (src: string) => scanServerOnlyImports("routes/notes.tsx", src)
+    expect(flag('export const loader = async () => (await import("../db")).db.all()')).toEqual([
+      expect.objectContaining({ specifier: "../db", line: 1 }),
+    ])
+    expect(flag("const fs = import('node:fs')")[0]?.specifier).toBe("node:fs")
+    expect(flag('import("pg").then((pg) => pg)')[0]?.specifier).toBe("pg")
+    expect(flag('const pg = await import(\n  "pg",\n  { with: {} }\n)')[0]?.specifier).toBe("pg")
+    expect(flag('// await import("pg")\nconst s = \'import("pg")\'')).toHaveLength(0)
+    expect(flag('obj.import("pg")')).toHaveLength(0)
   })
 
   test("does NOT flag server-only imports shown inside comments or code-sample strings", () => {
@@ -477,7 +491,7 @@ describe("scanServerOnlyImports - server-only imports in route modules", () => {
     ).toBe("../db")
   })
 
-  test("AST refinement ignores inline type-only aliases but keeps dynamic imports out of the scan", () => {
+  test("AST refinement ignores inline type-only aliases and type-position import()", () => {
     const facts = createSourceFacts(ts)
     expect(
       scanServerOnlyImports(
@@ -487,8 +501,15 @@ describe("scanServerOnlyImports - server-only imports in route modules", () => {
       ),
     ).toEqual([])
     expect(
-      scanServerOnlyImports("routes/notes.tsx", 'const load = () => import("../db")', facts),
+      scanServerOnlyImports(
+        "routes/notes.tsx",
+        'type Db = Awaited<ReturnType<typeof import("../db")["open"]>>\nlet p: import("pg").Pool',
+        facts,
+      ),
     ).toEqual([])
+    expect(
+      scanServerOnlyImports("routes/notes.tsx", 'const load = () => import("../db")', facts),
+    ).toEqual([expect.objectContaining({ specifier: "../db" })])
   })
 })
 
@@ -2256,5 +2277,65 @@ describe("cwd invariance", () => {
       process.chdir(before)
     }
     await rm(root, { recursive: true, force: true })
+  })
+})
+
+describe("server-only-import follows literal dynamic import()", () => {
+  const project = async (files: Record<string, string>): Promise<string> => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-dynamic-"))
+    for (const [file, content] of Object.entries(files)) {
+      await mkdir(join(dir, file, ".."), { recursive: true })
+      await writeFile(join(dir, file), content)
+    }
+    return dir
+  }
+
+  test("a loader's dynamic import of a module that reaches pg is reported with its chain", async () => {
+    const dir = await project({
+      "routes/rashifal.tsx": [
+        "export async function loader() {",
+        '  const { horoscope } = await import("../lib/horoscope")',
+        "  return horoscope()",
+        "}",
+        "export default () => null",
+      ].join("\n"),
+      "lib/horoscope.ts":
+        'import { query } from "./pool"\nexport const horoscope = () => query()\n',
+      "lib/pool.ts": 'import pg from "pg"\nexport const query = () => new pg.Pool()\n',
+    })
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    const diag = result.diagnostics.find((d) => d.rule === "server-only-import")
+    expect(diag?.line).toBe(2)
+    expect(diag?.chain).toEqual(["routes/rashifal.tsx", "../lib/horoscope", "./pool", "pg"])
+    expect(result.ok).toBe(false)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a dynamic import inside a dependency is followed too, and a .server target is a sink", async () => {
+    const dir = await project({
+      "routes/a.tsx": 'import { load } from "../lib/load"\nexport default () => load()\n',
+      "lib/load.ts": 'export const load = () => import("./db.server")\n',
+      "lib/db.server.ts": 'import pg from "pg"\nexport default pg\n',
+      "routes/b.tsx":
+        'export const view = () => import("../lib/db.server")\nexport default () => null\n',
+    })
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    const chains = result.diagnostics
+      .filter((d) => d.rule === "server-only-import")
+      .map((d) => d.chain)
+    expect(chains).toContainEqual(["routes/a.tsx", "../lib/load", "./db.server"])
+    expect(chains).toContainEqual(["routes/b.tsx", "../lib/db.server"])
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a lazily loaded client component with no server reach is clean", async () => {
+    const dir = await project({
+      "routes/chart.tsx":
+        'const Chart = () => import("../components/chart")\nexport default () => Chart\n',
+      "components/chart.ts": 'export const draw = () => "svg"\n',
+    })
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    expect(result.diagnostics.find((d) => d.rule === "server-only-import")).toBeUndefined()
+    await rm(dir, { recursive: true, force: true })
   })
 })

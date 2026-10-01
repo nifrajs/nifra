@@ -90,7 +90,7 @@ const FETCH_HINT =
 const STREAM_HINT =
   "hand-rolled EventSource/WebSocket to your own API - subscribe through client<typeof app> (`.subscribe()` for `app.sse()` routes, `.ws()` for `app.ws()` routes) so the compiler catches drift"
 const SERVER_IMPORT_HINT =
-  "server-only import in a route module (bundled for the browser) - reach it via c.db / ctx.api inside a loader, never a top-level import"
+  "server-only import in a route module (bundled for the browser) - reach it via c.db / ctx.api inside a loader; a dynamic import() is bundled too"
 const RESPONSE_ROUTE_HINT =
   "route handler returns a raw Response - the typed client infers `data: never`, so drift detection is lost for this route. Return a plain object (it's serialized for you); for a stream use a typed SSE route (`app.sse(...)`), which keeps typed events; or, if a raw Response is intended (file/redirect), add `{ response: t.… }` or a `// nifra-expect raw-response` comment to mark it and silence this"
 const PIPELINE_DOC_HINT =
@@ -289,9 +289,9 @@ function serverImportSuggestion(
     title: "Move server-only code behind the route server boundary",
     steps: [
       ...(chainStep === undefined ? [] : [chainStep]),
-      `Remove the top-level \`import … from "${specifier}"\` from this route module (it's bundled for the browser).`,
-      "Access backend/data work through the route `loader`/`action` context (`api`, `env`, or project server context).",
-      `If a direct module import is unavoidable, lazy-load it (\`await import("${specifier}")\`) inside the server-only loader/action path.`,
+      `Remove the import of "${specifier}" from this route module (it's bundled for the browser).`,
+      "Access backend/data work through the route `loader`/`action` context (`api`, `env`, or project server context), or a server function (`*.fn.ts`).",
+      "A dynamic `import()` does not keep code off the client: the build bundles its target as a lazy chunk, even from inside a loader.",
     ],
   }
 }
