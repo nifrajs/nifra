@@ -8,7 +8,9 @@ still waiting on its data after about 120 ms swaps the page for the target route
 `_loading` - the innermost one above it whose layouts are already on screen, which are the layouts
 the two pages share; they stay mounted with their data. A `_loading` never renders outside a layout
 above it. A navigation that settles sooner goes straight to the new page, as does one with no
-eligible `_loading`; a change of search on the same path and a form submit keep the page. The
+eligible `_loading`; a change of search on the same path and a form submit keep the page. A newer
+navigation, a form submit, or a refresh of the page on screen takes over from a pending loading
+page, and a superseded navigation that fails later changes nothing. The
 component receives `pending` and no `data`. It is browser-only: the server never renders one, and an
 app without a `_loading` file ships no code for it. Where the browser runs view transitions, a
 navigation's transition ends on the loading page instead of holding the old page until the data

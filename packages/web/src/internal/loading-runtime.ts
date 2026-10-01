@@ -198,6 +198,8 @@ export function withLoading(router: ClientRouter, options: LoadingOptions): Clie
     }
     const settled = done.then(finish, (error: unknown) => {
       finish()
+      // A newer navigation owns the document now; even an aborted older fetch can reject late.
+      if (mine !== seq) return
       if (!revealed) throw error
       const to = redirectOf(error)
       if (to === undefined) fallback(path)
@@ -218,6 +220,18 @@ export function withLoading(router: ClientRouter, options: LoadingOptions): Clie
       }
     },
     navigate,
+    submit(action, body, opts) {
+      ++seq
+      shown = undefined
+      return router.submit(action, body, opts)
+    },
+    invalidate(paths) {
+      if (paths === undefined || paths.includes(router.snapshot().path)) {
+        ++seq
+        shown = undefined
+      }
+      return router.invalidate(paths)
+    },
     prefetch(path) {
       // Warm the loading pages a navigation there could show, alongside the route itself.
       const match = router.match(path)

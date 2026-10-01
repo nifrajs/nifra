@@ -455,6 +455,84 @@ describe("withLoading", () => {
     expect(h.router.snapshot().path).toBe("/?tab=2")
   })
 
+  test("a superseded navigation's late failure cannot replace the newer page", async () => {
+    const h = harness()
+    await h.router.navigate("/about")
+    const second = h.router.navigate("/admin")
+    h.settle("/admin")
+    await second
+    h.fail("/about")
+    await tick(5)
+    expect(h.fellBack).toEqual([])
+    expect(h.router.snapshot().routeId).toBe("admin/index")
+    expect(h.router.snapshot().path).toBe("/admin")
+  })
+
+  test("a superseded navigation's failure leaves the newer loading view pending", async () => {
+    const h = harness()
+    await h.router.navigate("/about")
+    await h.router.navigate("/admin")
+    const view = h.router.snapshot().routeId
+    h.fail("/about")
+    await tick(5)
+    expect(h.fellBack).toEqual([])
+    expect(h.router.snapshot().routeId).toBe(view)
+    expect(h.router.snapshot().pendingPath).toBe("/admin")
+    h.settle("/admin")
+    await tick(5)
+    expect(h.router.snapshot().routeId).toBe("admin/index")
+  })
+
+  test("a form submit cancels a navigation's loading view and stale fallback", async () => {
+    const h = harness()
+    await h.router.navigate("/about")
+    expect(chainOf(h)).toEqual([Root, RootLoading])
+    const fetchBackup = globalThis.fetch
+    let release: ((response: Response) => void) | undefined
+    globalThis.fetch = (() =>
+      new Promise<Response>((resolve) => {
+        release = resolve
+      })) as unknown as typeof fetch
+    try {
+      const submitted = h.router.submit("/", new FormData(), { revalidate: false })
+      await tick(5)
+      expect(h.router.snapshot().routeId).toBe("index")
+      h.fail("/about")
+      await tick(5)
+      expect(h.fellBack).toEqual([])
+      release?.(new Response("null", { headers: { "content-type": "application/json" } }))
+      await submitted
+    } finally {
+      globalThis.fetch = fetchBackup
+    }
+  })
+
+  test("refreshing the active page cancels a navigation's loading view and fallback", async () => {
+    const h = harness()
+    await h.router.navigate("/about")
+    const refreshed = h.router.invalidate()
+    await tick(5)
+    expect(h.router.snapshot().routeId).toBe("index")
+    h.fail("/about")
+    await tick(5)
+    expect(h.fellBack).toEqual([])
+    h.settle("/")
+    await refreshed
+    expect(h.router.snapshot().routeId).toBe("index")
+  })
+
+  test("invalidating an unrelated page leaves the pending loading view intact", async () => {
+    const h = harness()
+    await h.router.navigate("/about")
+    const view = h.router.snapshot().routeId
+    await h.router.invalidate(["/admin"])
+    expect(h.router.snapshot().routeId).toBe(view)
+    expect(h.router.snapshot().pendingPath).toBe("/about")
+    h.settle("/about")
+    await tick(5)
+    expect(h.router.snapshot().routeId).toBe("about")
+  })
+
   test("an unmatched path is ignored and leaves the loading page up", async () => {
     const h = harness()
     await h.router.navigate("/about")
