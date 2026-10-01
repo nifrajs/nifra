@@ -369,10 +369,23 @@ const prerenderedSetOf = (paths: object): ReadonlySet<unknown> => {
   return set
 }
 
-/** The page to load as a document, when that is why a navigation or submit rejected. */
+/**
+ * The page to load as a document, when that is why a navigation or submit rejected. Only an `http:` or
+ * `https:` target: the caller hands it to `location`, which runs a `javascript:` URL in this page,
+ * where the same target in a real redirect's `Location` never runs.
+ */
 export const redirectOf = (error: unknown): string | undefined => {
   const to = (error as { redirectTo?: unknown } | null | undefined)?.redirectTo
-  return typeof to === "string" ? to : undefined
+  return typeof to === "string" && /^https?:$/.test(targetUrl(to)?.protocol ?? "") ? to : undefined
+}
+
+/** A redirect target resolved against a placeholder origin, or `undefined` when it does not parse. */
+const targetUrl = (to: string): URL | undefined => {
+  try {
+    return new URL(to, "http://n.invalid")
+  } catch {
+    return undefined
+  }
 }
 
 const redirected = (to: string): Error =>
@@ -722,13 +735,8 @@ export function createClientRouter(options: ClientRouterOptions): ClientRouter {
   // origin, a `#fragment` to scroll to, or no route.
   const appRedirect = (to: string | undefined): readonly [string, RouteMatch] | undefined => {
     if (to === undefined || !to.startsWith("/") || to.includes("#")) return undefined
-    let url: URL
-    try {
-      url = new URL(to, "http://n.invalid")
-    } catch {
-      return undefined
-    }
-    if (url.host !== "n.invalid") return undefined // `//host`, `/\host`
+    const url = targetUrl(to)
+    if (url?.host !== "n.invalid") return undefined // `//host`, `/\host`, unparseable
     const path = url.pathname + url.search
     const target = match(path)
     return target === null ? undefined : [path, target]

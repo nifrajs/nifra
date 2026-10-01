@@ -426,13 +426,20 @@ test("history integration covers click, prefetch, fragments, popstate, fallback 
   expect(fallback).toEqual(["/fail"])
   expect(locationState.replaced).toEqual(["https://id.example/auth"])
 
+  // A `javascript:` target would run in this page; the link loads as a document instead.
+  rejectNext = Object.assign(new Error("redirected"), { redirectTo: " JavaScript:alert(1)" })
+  document.emit("click", fakeEvent(guarded))
+  await Bun.sleep(0)
+  expect(locationState.replaced).toEqual(["https://id.example/auth"])
+  expect(fallback).toEqual(["/fail", "/guarded"])
+
   // Back/forward that fails reloads the whole entry, query included.
   rejectNext = new Error("offline")
   locationState.pathname = "/list"
   locationState.search = "?page=2"
   windowHub.emit("popstate", new Event("popstate"))
   await Bun.sleep(0)
-  expect(fallback).toEqual(["/fail", "/list?page=2"])
+  expect(fallback).toEqual(["/fail", "/guarded", "/list?page=2"])
   locationState.search = ""
 
   const samePage = new FakeElement("a")

@@ -240,7 +240,7 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-typebox-t": 62.5,
   "nifra-typebox-form": 66.3,
   "nifra-agent-review": 5.2,
-  "nifra-web-client": 15.1,
+  "nifra-web-client": 15.2,
   "nifra-i18n": 4.3,
 }
 

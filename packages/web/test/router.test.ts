@@ -910,6 +910,22 @@ describe("createClientRouter", () => {
     }
   })
 
+  test("an action redirect to a script URL names the current page, never the script", async () => {
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async () =>
+      new Response(null, {
+        status: 204,
+        headers: { "x-nifra-redirect": "javascript:alert(document.domain)" },
+      })) as unknown as typeof fetch
+    try {
+      const r = createClientRouter({ patterns, initial, fetchData: async () => ({}) })
+      const failure = await r.submit("/", new URLSearchParams()).catch((error: unknown) => error)
+      expect((failure as { redirectTo?: string }).redirectTo).toBe("/")
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
   test("once the action ran, a failure names the page to load instead of posting again", async () => {
     const realFetch = globalThis.fetch
     globalThis.fetch = (async () => Response.json({ saved: true })) as unknown as typeof fetch
