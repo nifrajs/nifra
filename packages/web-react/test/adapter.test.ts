@@ -106,3 +106,18 @@ test("renderToStream stamps the nonce on every script React streams for a late b
 test("hydrationHead is empty (React reconciles the DOM; no bootstrap script)", () => {
   expect(reactAdapter.hydrationHead()).toBe("")
 })
+
+test("a render error rejects both render paths with the error itself", async () => {
+  const boom = new Error("boom in render")
+  const Broken = (): ReactNode => {
+    throw boom
+  }
+  const original = console.error
+  console.error = () => {}
+  try {
+    await expect(reactAdapter.renderToString?.([Broken], { data: null })).rejects.toBe(boom)
+    await expect(reactAdapter.renderToStream([Broken], { data: null })).rejects.toBe(boom)
+  } finally {
+    console.error = original
+  }
+})

@@ -84,7 +84,7 @@ test("a plain page under a CSP policy is nonce-free, cacheable, and every inline
   expect(policy).toBe(header({ sources: (await nifraScriptHashes(adapter)).join(" ") }))
 })
 
-test("a deferred page or a meta script under a CSP policy carries a nonce and is no-store", async () => {
+test("a deferred page, a meta script or a nonced link under a CSP policy carries a nonce and is no-store", async () => {
   const app = createWebApp({
     adapter,
     clientEntry: "/c.js",
@@ -97,10 +97,15 @@ test("a deferred page or a meta script under a CSP policy carries a nonce and is
             ? {}
             : { unsafeScript: [unsafeInlineScript("metaBoot()", { nonce })] },
       }),
+      "/styled": () => ({
+        default: "styled",
+        meta: ({ nonce }) =>
+          nonce === undefined ? {} : { link: [{ rel: "stylesheet", href: "/s.css", nonce }] },
+      }),
     }),
     csp: createCspPolicy({ header }),
   })
-  for (const path of ["/later", "/boot"]) {
+  for (const path of ["/later", "/boot", "/styled"]) {
     const res = await app.fetch(new Request(`http://x${path}`))
     const html = await res.text()
     const nonce = html.match(/<script nonce="([^"]+)"/)?.[1]

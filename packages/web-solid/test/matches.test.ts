@@ -4,7 +4,7 @@ import type { JSX } from "solid-js"
 import { renderToString } from "solid-js/web"
 import { compose } from "../src/compose.ts"
 import { routeProps } from "../src/route-props.ts"
-import { useMatches } from "../src/router.ts"
+import { useMatches, useSearch } from "../src/router.ts"
 
 // Solid escapes text content, so `<` and `"` arrive as entities.
 const decode = (html: string): string =>
@@ -54,4 +54,13 @@ test("the mounted router reports what the server rendered", () => {
 
 test("a render without a chain reports nothing", () => {
   expect(render({ data: null, path: "/" })).toContain("<page:[]>")
+})
+
+test("outside a nifra route tree, useMatches and useSearch report nothing", () => {
+  const html = renderToString(() => {
+    const matches = useMatches()
+    const search = useSearch()
+    return `<${matches().length}|${JSON.stringify(search())}>` as unknown as JSX.Element
+  })
+  expect(decode(html)).toContain("<0|{}>")
 })

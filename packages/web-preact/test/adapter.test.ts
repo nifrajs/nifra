@@ -85,3 +85,13 @@ test("renderToStream stamps the nonce on Preact's streamed island runtime, and o
   expect(nonced.match(/nonce=/g)?.length).toBe(1)
   expect(await read()).not.toContain("nonce=")
 })
+
+test("renderToStream leaves an app script that opens like the island runtime un-nonced", async () => {
+  // Same opening bytes as Preact's streamed runtime, but no `preact-island` definition inside.
+  const Page: FunctionComponent = () =>
+    h("script", { dangerouslySetInnerHTML: { __html: "(function(){window.app=2})()" } })
+  const html = await new Response(
+    await preactAdapter.renderToStream([Page], { data: null }, { nonce: "n0" }),
+  ).text()
+  expect(html).toBe("<script>(function(){window.app=2})()</script>")
+})

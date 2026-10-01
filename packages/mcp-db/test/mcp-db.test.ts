@@ -69,6 +69,8 @@ interface FakeWorkerOptions {
   readonly beforeResponse?: () => void
   readonly postMessage?: "throw"
   readonly spawnDelayMs?: number
+  /** Never answer a query, so only the deadline timer can settle it. */
+  readonly silent?: boolean
 }
 
 async function withFakeWorker<T>(
@@ -94,6 +96,7 @@ async function withFakeWorker<T>(
         return
       }
       if (options.postMessage === "throw") throw new Error("worker post failed")
+      if (options.silent === true) return
       options.beforeResponse?.()
       queueMicrotask(() =>
         this.onmessage?.({ data: { id: message.id, ok: true, rows: [] } } as MessageEvent),
@@ -580,6 +583,41 @@ describe("query execution lanes", () => {
           }
         },
         { beforeResponse: () => (now += 2_000) },
+      )
+    } finally {
+      Date.now = realNow
+      db.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  test("a worker that never answers is discarded when the deadline timer fires", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "nifra-mcp-db-"))
+    const path = join(directory, "silent.db")
+    const db = new Database(path)
+    db.run("CREATE TABLE habits (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+    // A frozen clock keeps the whole budget remaining at dispatch however loaded the machine is, so the
+    // timer is always armed - the real-worker test below races a 1 ms budget and may reject earlier.
+    const realNow = Date.now
+    const now = realNow()
+    Date.now = () => now
+    try {
+      await withFakeWorker(
+        "ignore",
+        async () => {
+          const served = serveDatabaseAsMcp(db, {
+            tables: ["habits"],
+            runQuery: { authorize: () => true, queryTimeoutMs: 20 },
+          })
+          try {
+            const result = await call(served, "run_query", { sql: "SELECT name FROM habits" })
+            expect(result.isError).toBe(true)
+            expect(result.text).toBe("query exceeded the time limit")
+          } finally {
+            await served.close?.()
+          }
+        },
+        { silent: true },
       )
     } finally {
       Date.now = realNow
