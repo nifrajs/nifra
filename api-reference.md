@@ -2435,6 +2435,8 @@ Every public export of every package and documented subpath - name, kind, signat
   Internal runtime-provider seam used when an in-process WebSocket backend is mounted in Bun.
 - **NIFRA_PLATFORM_CLIENT_IP_DERIVED** _(const)_ - `NIFRA_PLATFORM_CLIENT_IP_DERIVED: typeof NIFRA_PLATFORM_CLIENT_IP_DERIVED`
   Marks a platform whose `clientIp` an enclosing nifra server already derived under its own `clientIp` trust declaration. A server that receives such a platform takes `clientIp` as-is instead of re-deriving it from the request's forwarding headers - an in-process call's `Request` is synthesized, so i…
+- **preRouteMountPaths** _(function)_ - `preRouteMountPaths: (app: unknown) => readonly string[]`
+  The path of every pre-route `mount()` on a nifra server, as the server matches it (`"/"` for a root mount). Such a mount answers every request under its path before the app's own routes run, and `fallbackOn: 404` only moves on to the next mount, so a route the app declares there is unreachable. Rea…
 
 ### `@nifrajs/core/multipart`
 
@@ -4964,12 +4966,17 @@ _No named exports (side-effect entrypoint)._
 - **PrerenderEntry** _(interface)_ - `interface PrerenderEntry`
 - **PrerenderOptions** _(interface)_ - `interface PrerenderOptions`
 - **PrerenderResult** _(interface)_ - `interface PrerenderResult`
+- **SERVER_ENTRY_OPTIONS** _(const)_ - `SERVER_ENTRY_OPTIONS: readonly ["apiPrefix", "apiStrip", "mounts", "csp", "nonce"]`
+  The `createWebApp` options a generated server entry can import from the app's framework module.
 - **SERVER_ONLY_MARKER** _(const)_ - `SERVER_ONLY_MARKER: "@nifrajs/web/server-only"`
   The marker specifier an author imports to opt a module into the client-leak guard. Matched on the import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed, before Bun resolves it to `src/server-only.ts` / `dist/server-only.js`).
 - **ServerBuild** _(interface)_ - `interface ServerBuild`
   The built worker bundle - point your `wrangler.toml`'s `main` at `worker`.
 - **ServerBuildTarget** _(type)_ - `type ServerBuildTarget = "browser" | "node" | "bun"`
 - **ServerBuildTargetPlan** _(interface)_ - `interface ServerBuildTargetPlan`
+- **ServerEntryOption** _(type)_ - `type ServerEntryOption = (typeof SERVER_ENTRY_OPTIONS)[number]`
+- **ServerEntryOptionImports** _(type)_ - `type ServerEntryOptionImports = Readonly<Partial<Record<ServerEntryOption, string>>>`
+  Each importable option mapped to the specifier of the module that exports it.
 - **ServerOnlyFinding** _(interface)_ - `interface ServerOnlyFinding`
   One `server-only`-module-in-the-client finding: the offending module (the as-written marker-import chain's tail before the marker), the emitted chunk it landed in, and the shortest USER-module import chain that pulled it there (entry → … → the server-only module).
 - **SizeReport** _(interface)_ - `interface SizeReport`
@@ -5009,7 +5016,7 @@ _No named exports (side-effect entrypoint)._
   The build-failing message for `node:` builtins that reached the client bundle. `undefined` ⇒ clean.
 - **formatServerOnlyLeak** _(function)_ - `formatServerOnlyLeak: (findings: ReadonlyArray<ServerOnlyFinding>) => string | undefined`
   The build-failing message for `server-only`-marked modules that reached the client. `undefined` ⇒ clean.
-- **generateServerEntry** _(function)_ - `generateServerEntry: (options: { readonly target: BuildTarget; readonly adapterImport: string; readonly backendImport?: string; readonly useImport?: string; readonly title?: string; readonly publicFiles?: readonly strin…`
+- **generateServerEntry** _(function)_ - `generateServerEntry: (options: { readonly target: BuildTarget; readonly adapterImport: string; readonly backendImport?: string; readonly useImport?: string; readonly optionImports?: ServerEntryOptionImports; readonly ti…`
   Codegen the per-target **server entry** module (source text) for `buildServer` to bundle. It imports the app's `adapter` (from `framework.ts`), the optional `backend` (from `backend.ts`), and the generated `{ manifest, clientEntry }` (from `./server-manifest`), builds `createWebApp`, then wires the…
 - **htmlFileFor** _(function)_ - `htmlFileFor: (pattern: string) => string`
   Map a route path to its output file: `/` → `index.html`, `/a/b` → `a/b/index.html`.
@@ -5429,12 +5436,20 @@ _No named exports (side-effect entrypoint)._
   A route whose declaration the chosen target cannot honour, and what actually happens if it ships.
 - **RouteManifestEntry** _(interface)_ - `interface RouteManifestEntry`
   One route's resolved behaviour.
+- **ShadowedPage** _(interface)_ - `interface ShadowedPage`
+  A page file whose URL pattern sits under a mount.
 - **buildRouteManifest** _(function)_ - `buildRouteManifest: (manifest: Manifest, options?: { readonly target?: string; readonly prerendered?: Readonly<Record<string, readonly string[]>>; readonly capabilities?: readonly RouteCapability[]; }) => Promise<RouteM…`
   Build the route manifest for a discovered app, optionally resolved against a deploy target.
 - **deriveRouteEntry** _(function)_ - `deriveRouteEntry: (id: string, pattern: string, module: Pick<RouteModule, "prerender" | "getStaticPaths" | "revalidate" | "revalidateTags" | "hydrate">, prerenderedPaths?: readonly string[]) => RouteManifestEntry`
   Derive one route's behaviour from its module exports.
+- **formatShadowedPages** _(function)_ - `formatShadowedPages: (pages: readonly ShadowedPage[]) => string`
+  The message every surface reports shadowed pages with.
+- **normalizeMountPath** _(function)_ - `normalizeMountPath: (path: string) => string | undefined`
+  Normalize a mount path the way the server's mount table does: drop a trailing `/*` and a trailing `/`, keep `/` for a root mount. `undefined` for a path the server would refuse (not absolute, a query or hash, a param or an inner wildcard) - the mount itself reports that.
 - **renderRouteManifest** _(function)_ - `renderRouteManifest: (manifest: RouteManifest) => string`
   Render the manifest as a readable report - the `nifra routes --modes` output.
+- **shadowedPages** _(function)_ - `shadowedPages: (manifest: Pick<Manifest, "routes" | "notFounds">, mountPaths: readonly string[]) => readonly ShadowedPage[]`
+  The page routes and nested `_404` scopes that sit under one of `mountPaths`, in manifest order. Paths are normalized here; one the server would refuse is skipped.
 
 ### `@nifrajs/web/server-only`
 

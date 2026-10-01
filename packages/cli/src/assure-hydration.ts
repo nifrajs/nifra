@@ -3,7 +3,6 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os"
 import { basename, join, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { inProcessClient } from "@nifrajs/client"
 import { defineReplayFile } from "@nifrajs/core/replay"
 import { type AppLike, runApp } from "@nifrajs/runner"
 import { createWebApp, type RenderAdapter } from "@nifrajs/web"
@@ -12,6 +11,7 @@ import { discoverRoutes } from "@nifrajs/web/fs"
 import type { BunPlugin } from "bun"
 import { collectDoctorResult } from "./doctor.ts"
 import { loadApp, resolvePlugins } from "./load.ts"
+import { frameworkWebAppOptions } from "./web-app-options.ts"
 
 const HYDRATION_ASSURANCE = Symbol.for("nifra.hydration.assurance")
 const SOURCE_GLOB = "**/*.{ts,tsx,js,jsx,vue,svelte,mdx}"
@@ -202,7 +202,7 @@ async function buildHydrationApp(cwd: string): Promise<BuiltHydrationApp | { ski
       adapter: loaded.framework.adapter as RenderAdapter,
       manifest: discoverRoutes(loaded.routesDir),
       clientEntry: client.entry,
-      ...(loaded.backend === undefined ? {} : { api: inProcessClient(loaded.backend as never) }),
+      ...frameworkWebAppOptions(loaded.framework, loaded.backend),
     }) as unknown as AppLike
     return {
       app: webApp,

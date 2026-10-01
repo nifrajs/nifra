@@ -1003,6 +1003,12 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
 // …) - so we GENERATE it here (per target) instead of asking each app to ship five near-identical files.
 // ===================================================================================================
 
+/** The `createWebApp` options a generated server entry can import from the app's framework module. */
+export const SERVER_ENTRY_OPTIONS = ["apiPrefix", "apiStrip", "mounts", "csp", "nonce"] as const
+export type ServerEntryOption = (typeof SERVER_ENTRY_OPTIONS)[number]
+/** Each importable option mapped to the specifier of the module that exports it. */
+export type ServerEntryOptionImports = Readonly<Partial<Record<ServerEntryOption, string>>>
+
 /**
  * Codegen the per-target **server entry** module (source text) for `buildServer` to bundle. It imports
  * the app's `adapter` (from `framework.ts`), the optional `backend` (from `backend.ts`), and the
@@ -1025,6 +1031,9 @@ export function generateServerEntry(options: {
   /** Import specifier for the module exporting `use`, or `undefined`. Must resolve to the
    * same edge-safe module as `adapterImport`. */
   readonly useImport?: string
+  /** `createWebApp` options to import by name, each mapped to the specifier of the edge-safe module
+   * that exports it. */
+  readonly optionImports?: ServerEntryOptionImports
   /** Document `<title>` passed to `createWebApp`. */
   readonly title?: string
   /** Encoded root-relative public file paths copied into the deploy directory. */
@@ -1035,9 +1044,20 @@ export function generateServerEntry(options: {
     adapterImport,
     backendImport,
     useImport,
+    optionImports = {},
     title = "nifra",
     publicFiles = [],
   } = options
+  // Identifiers come only from the fixed list, never from the caller's keys, so generated code names
+  // nothing the list does not.
+  const importedOptions = SERVER_ENTRY_OPTIONS.filter((name) => optionImports[name] !== undefined)
+  const optionModules = new Map<string, string[]>()
+  for (const name of importedOptions) {
+    const from = optionImports[name] as string
+    const names = optionModules.get(from)
+    if (names === undefined) optionModules.set(from, [name])
+    else names.push(name)
+  }
   if (target === "static") {
     throw new Error("[nifra/web] generateServerEntry: `static` has no server entry (SSG only)")
   }
@@ -1045,6 +1065,9 @@ export function generateServerEntry(options: {
   if (backendImport !== undefined) lines.push('import { inProcessClient } from "@nifrajs/client"')
   lines.push(`import { adapter } from ${JSON.stringify(adapterImport)}`)
   if (useImport !== undefined) lines.push(`import { use } from ${JSON.stringify(useImport)}`)
+  for (const [from, names] of optionModules) {
+    lines.push(`import { ${names.join(", ")} } from ${JSON.stringify(from)}`)
+  }
   if (backendImport !== undefined) {
     lines.push(`import { backend } from ${JSON.stringify(backendImport)}`)
   }
@@ -1060,6 +1083,7 @@ export function generateServerEntry(options: {
     "const app = createWebApp({",
     "  adapter,",
     ...(useImport !== undefined ? ["  use,"] : []),
+    ...importedOptions.map((name) => `  ${name},`),
     "  manifest,",
     "  clientEntry,",
     "  styles,",
@@ -1227,6 +1251,9 @@ export interface BuildTargetOptions {
    * applied before page routes are declared), or `undefined`. Must resolve to the same edge-safe
    * module as `adapterImport`. */
   readonly useImport?: string
+  /** `createWebApp` options the server entry imports by name (`apiPrefix`, `mounts`, `csp`, ...), each
+   * mapped to the specifier (resolvable from `workDir`) of the same edge-safe module as `adapterImport`. */
+  readonly optionImports?: ServerEntryOptionImports
   /** Factory that builds the app for `static` prerendering, GIVEN the client build's manifest - so the
    * emitted hydration `<script src>` uses the REAL content-hashed entry (`client.entry`) plus the same
    * styles/route-preload the server targets use. A pre-built instance can't work here: the hash isn't known
@@ -1447,6 +1474,7 @@ export async function buildTargetWith(
       target,
       adapterImport: options.adapterImport,
       ...(options.useImport !== undefined ? { useImport: options.useImport } : {}),
+      ...(options.optionImports !== undefined ? { optionImports: options.optionImports } : {}),
       ...(options.backendImport !== undefined ? { backendImport: options.backendImport } : {}),
       ...(options.title !== undefined ? { title: options.title } : {}),
       ...(publicFiles.length > 0 ? { publicFiles } : {}),

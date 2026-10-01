@@ -18,6 +18,13 @@
  */
 import type { Manifest, RouteModule } from "./manifest.ts"
 
+export {
+  formatShadowedPages,
+  normalizeMountPath,
+  type ShadowedPage,
+  shadowedPages,
+} from "./internal/mount-shadow.ts"
+
 /**
  * How a route produces its HTML.
  *

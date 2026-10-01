@@ -12,20 +12,24 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { inProcessClient } from "@nifrajs/client"
 import {
-  type CreateWebAppOptions,
   type CssLoadingMode,
   createWebApp,
   DEFAULT_DEV_PORT,
   type RenderAdapter,
 } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
+import { formatShadowedPages, shadowedPages } from "@nifrajs/web/route-manifest"
 import type { BunPlugin } from "bun"
 import { bindCommandArgv, findCommandSpec, renderCommandCatalogHelp } from "./command-catalog.ts"
 import { applyEnvFiles, takeEnvFileFlags } from "./env-file.ts"
-import { type LoadedApp, loadApp, type NifraFramework } from "./load.ts"
+import { FRAMEWORK_WEB_OPTIONS, type LoadedApp, loadApp, type NifraFramework } from "./load.ts"
 import { chooseBuildPipeline, describePipeline } from "./pipeline-guard.ts"
+import {
+  frameworkMountPaths,
+  frameworkOptionImports,
+  frameworkWebAppOptions,
+} from "./web-app-options.ts"
 
 export interface Flags {
   readonly port: number
@@ -230,10 +234,6 @@ const CLI_VERSION = "3.5.0"
 // A render adapter + nifra server are opaque to the CLI (it just forwards them); cast at the seam.
 const asAdapter = (v: unknown): RenderAdapter => v as RenderAdapter
 const asBunPlugins = (v: readonly unknown[]): BunPlugin[] => v as BunPlugin[]
-const asUse = (v: (app: never) => void): NonNullable<CreateWebAppOptions["use"]> =>
-  v as NonNullable<CreateWebAppOptions["use"]>
-const apiOf = (backend: unknown): { api?: unknown } =>
-  backend === undefined ? {} : { api: inProcessClient(backend as never) }
 
 /**
  * Render an error for the CLI, unwrapping the detail a bare `.message` drops.
@@ -422,8 +422,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
           adapter: asAdapter(fw.adapter),
           manifest: discoverRoutes(routesDir, { importQuery }),
           clientEntry,
-          ...(fw.use ? { use: asUse(fw.use) } : {}),
-          ...apiOf(backend),
+          ...frameworkWebAppOptions(fw, backend),
         }),
     })
     console.log(`nifra dev (bun) → http://localhost:${server.port}`)
@@ -483,8 +482,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
         adapter: asAdapter(fw.adapter),
         manifest: discoverRoutes(routesDir, { load }),
         clientEntry,
-        ...(fw.use ? { use: asUse(fw.use) } : {}),
-        ...apiOf(backend),
+        ...frameworkWebAppOptions(fw, backend),
       }),
   })
   console.log(`nifra dev (vite) → http://localhost:${server.port}`)
@@ -527,6 +525,49 @@ export async function assertUseIsEdgeExported(
       "  - Define `use` in framework.ts and re-export it from nifra.config.ts " +
       '(`export { use } from "./framework.ts"`) so `nifra dev` sees it too.',
   )
+}
+
+/**
+ * Refuse a forwarded framework field (`apiPrefix`, `mounts`, `csp`, ...) the generated server entry
+ * would not see, or would see with a different value.
+ *
+ * `nifra dev` reads these from the loaded config (`nifra.config.ts` when it exists) while the server
+ * entry imports them from framework.ts. A field set only in nifra.config.ts would be missing from
+ * production, and one defined separately in each file could differ - dev mounting the backend at one
+ * path while production mounts it at another. Identity is required, which a re-export satisfies.
+ */
+export async function assertFrameworkOptionsEdgeExported(
+  fw: NifraFramework,
+  configPath: string,
+  frameworkFile: string,
+): Promise<void> {
+  if (configPath === frameworkFile) return
+  const set = FRAMEWORK_WEB_OPTIONS.filter((name) => fw[name] !== undefined)
+  if (set.length === 0) return
+  const mod = (await import(frameworkFile).catch(() => ({}))) as Record<string, unknown>
+  const drifted = set.filter((name) => mod[name] !== fw[name])
+  if (drifted.length === 0) return
+  const names = drifted.map((name) => `\`${name}\``).join(", ")
+  throw new Error(
+    `[nifra] ${names} ${drifted.length === 1 ? "is" : "are"} exported from ${configPath} but not, or not as the same value, from ${frameworkFile}. ` +
+      "`nifra build` generates a server entry that imports these from framework.ts, so production would " +
+      "serve a different app than `nifra dev`.\n\n" +
+      `  - Define ${drifted.length === 1 ? "it" : "them"} in framework.ts and re-export from nifra.config.ts ` +
+      `(\`export { ${drifted.join(", ")} } from "./framework.ts"\`).`,
+  )
+}
+
+/**
+ * Refuse a build whose page routes sit under a mount: each would ship as a route that can never render.
+ * Read from the config and `routes/` alone; the server also checks its own mount table at startup,
+ * which covers a mount added inside `use`.
+ */
+export function assertNoShadowedPages(app: LoadedApp): void {
+  const paths = frameworkMountPaths(app.framework, app.backend !== undefined)
+  if (paths.length === 0) return
+  const shadowed = shadowedPages(discoverRoutes(app.routesDir), paths)
+  if (shadowed.length === 0) return
+  throw new Error(`[nifra] build blocked: ${formatShadowedPages(shadowed)}`)
 }
 
 /**
@@ -621,6 +662,8 @@ async function buildForTarget(app: LoadedApp, target: string, flags: Flags): Pro
       : resolve(cwd, "framework.ts")
   const backendFile = resolve(cwd, "backend.ts")
   await assertUseIsEdgeExported(fw.use, app.configPath, frameworkFile)
+  await assertFrameworkOptionsEdgeExported(fw, app.configPath, frameworkFile)
+  assertNoShadowedPages(app)
   // Plugin FORMAT differs by pipeline: the Bun build takes Bun plugins (clientPlugins/serverPlugins); the
   // Vite build takes the app's Vite plugins (fw.vitePlugins) for BOTH halves. buildTargetWith forwards
   // whatever it's given straight to the chosen bundler, which casts to its own plugin type.
@@ -640,6 +683,7 @@ async function buildForTarget(app: LoadedApp, target: string, flags: Flags): Pro
     clientModule: fw.clientModule,
     adapterImport: frameworkFile,
     ...(fw.use ? { useImport: frameworkFile } : {}),
+    ...frameworkOptionImports(fw, frameworkFile),
     ...(backend !== undefined && existsSync(backendFile) ? { backendImport: backendFile } : {}),
     ...plugins,
     ...(fw.conditions ? { conditions: fw.conditions } : {}),
@@ -680,12 +724,11 @@ async function buildPrerenderApp(
       adapter: asAdapter(fw.adapter),
       manifest: discoverRoutes(routesDir),
       clientEntry: client.entry,
-      ...(fw.use ? { use: asUse(fw.use) } : {}),
+      ...frameworkWebAppOptions(fw, backend),
       ...(client.routes ? { routePreload: client.routes } : {}),
       ...(client.css ? { styles: client.css } : {}),
       ...(client.routeStyles ? { routeStyles: client.routeStyles } : {}),
       ...(client.cssLoading !== undefined ? { cssLoading: client.cssLoading } : {}),
-      ...apiOf(backend),
     })
 }
 

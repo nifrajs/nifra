@@ -14,7 +14,7 @@
  */
 import { existsSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
-import type { CssLoadingMode } from "@nifrajs/web"
+import type { CreateWebAppOptions, CssLoadingMode } from "@nifrajs/web"
 import { checkPipelineSeparation } from "./pipeline-guard.ts"
 
 /**
@@ -65,6 +65,48 @@ export interface NifraFramework {
   readonly cssCodeSplit?: boolean
   /** Framework-owned SSR stylesheet activation. Deferred mode is intended for aggregate CSS. */
   readonly cssLoading?: CssLoadingMode
+  /** Path `backend.ts`'s backend is served at (default `"/api"`; `""` turns the mount off). A page file
+   * under it can never render, so the app refuses to start and `nifra build` refuses to build.
+   *
+   * The fields from here down reach the generated server entry, so like `use` they MUST be exported
+   * from `framework.ts` (re-export them from `nifra.config.ts` when both exist). */
+  readonly apiPrefix?: string
+  /** Strip {@link apiPrefix} before the backend sees the path, for a backend that declares its routes
+   * without it. Default `false`. */
+  readonly apiStrip?: boolean
+  /** Apps mounted ahead of page routing - an auth handler, a webhook receiver, a backend served at an
+   * extra path. See `createWebApp`'s `mounts`. */
+  readonly mounts?: CreateWebAppOptions["mounts"]
+  /** A hash-based Content-Security-Policy from `createCspPolicy`. Exclusive with {@link nonce}. */
+  readonly csp?: CreateWebAppOptions["csp"]
+  /** A per-request CSP nonce resolver. Exclusive with {@link csp}. */
+  readonly nonce?: CreateWebAppOptions["nonce"]
+}
+
+/** The {@link NifraFramework} fields forwarded to `createWebApp` and imported by the generated server
+ * entry, in one list so every command that builds the app forwards the same set. */
+export const FRAMEWORK_WEB_OPTIONS = ["apiPrefix", "apiStrip", "mounts", "csp", "nonce"] as const
+export type FrameworkWebOption = (typeof FRAMEWORK_WEB_OPTIONS)[number]
+
+/** Refuse a forwarded field of the wrong shape at load, naming the field, rather than letting it fail
+ * later inside `createWebApp` or the generated server entry. */
+function assertFrameworkWebOptions(fw: Partial<NifraFramework>, configFile: string): void {
+  const wrong = (field: string, expected: string): never => {
+    throw new Error(`[nifra] ${configFile}: \`${field}\` must be ${expected}.`)
+  }
+  if (fw.apiPrefix !== undefined && typeof fw.apiPrefix !== "string") {
+    wrong("apiPrefix", 'a path string such as "/api", or "" to turn the backend mount off')
+  }
+  if (fw.apiStrip !== undefined && typeof fw.apiStrip !== "boolean") wrong("apiStrip", "a boolean")
+  if (fw.mounts !== undefined && !Array.isArray(fw.mounts)) {
+    wrong("mounts", "an array of { path, app } entries")
+  }
+  if (fw.csp !== undefined && (typeof fw.csp !== "object" || fw.csp === null)) {
+    wrong("csp", "the policy createCspPolicy() returns")
+  }
+  if (fw.nonce !== undefined && typeof fw.nonce !== "function") {
+    wrong("nonce", "a nonce resolver function, such as createNonceResolver() returns")
+  }
 }
 
 /**
@@ -211,6 +253,7 @@ export async function loadApp(
       `[nifra] ${configFile} must export \`adapter\` (a render adapter object) and \`clientModule\` (a string).`,
     )
   }
+  assertFrameworkWebOptions(fw, configFile)
   // A `clientModule` given as a RELATIVE path (a local client entry, e.g. `./src/client.tsx`) is
   // resolved to absolute here. It is embedded verbatim as an import specifier in the generated client
   // entry, and `nifra dev` and `nifra build` write that entry into DIFFERENT directories - so a relative

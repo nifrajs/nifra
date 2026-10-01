@@ -63,6 +63,22 @@ export const app = createWebApp({
 // Bun: Bun.serve({ fetch: app.fetch }). No \`if (pathname.startsWith("/api/")) …\` branch needed -
 // POST /api/sync, GET /api/me, etc. are dispatched to the backend BEFORE the page router sees them.`
 
+const FRAMEWORK_OPTIONS = `// framework.ts - the backend moves to /rpc, a webhook handler mounts at /hooks,
+// and one extra URL outside both is a plain route on the web app.
+import { reactAdapter } from "@nifrajs/web-react"
+
+// Any app with fetch(request) mounts; a third-party handler states why nifra cannot analyze it.
+const webhooks = { fetch: (_request: Request) => new Response(null, { status: 204 }) }
+const sitemapXml = () => '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"/>'
+
+export const adapter = reactAdapter
+export const clientModule = "@nifrajs/web-react/client"
+export const apiPrefix = "/rpc" // "" turns the backend mount off
+export const mounts = [{ path: "/hooks", app: webhooks, opaque: "third-party webhook verifier" }]
+export const use = (app: { get(path: string, handler: () => Response): unknown }) => {
+  app.get("/sitemap.xml", () => new Response(sitemapXml(), { headers: { "content-type": "application/xml" } }))
+}`
+
 // The loader path: ctx.api is the SAME inProcessClient, called in-process during SSR (no HTTP hop).
 const LOADER = `// routes/index.tsx - a loader calls the backend IN-PROCESS via ctx.api (no network).
 import type { LoaderContext } from "@nifrajs/web"
@@ -154,6 +170,22 @@ export default function Backends() {
         is. Pass <code>apiPrefix: ""</code> to turn the mount off and keep <code>ctx.api</code> as a
         loader-only client.
       </p>
+      <p>
+        Because the backend answers first and its 404 is final, a page file under the prefix (
+        <code>routes/api/report.tsx</code>) could never render. Nifra refuses it instead of serving a
+        silent 404: <code>createWebApp</code> throws at startup naming the file, <code>nifra build</code>{" "}
+        stops, and <code>nifra check</code> reports <code>NF-C027</code>. The same holds for every other
+        mount in front of the page router.
+      </p>
+      <p>
+        An app run by <code>nifra dev</code> and <code>nifra build</code> sets these options from{" "}
+        <code>framework.ts</code>: <code>apiPrefix</code>, <code>apiStrip</code>, <code>mounts</code>,{" "}
+        <code>csp</code> and <code>nonce</code>. The generated server entry imports them from there, so
+        export them from <code>framework.ts</code> (and re-export from <code>nifra.config.ts</code> when
+        both exist). A <code>mounts</code> entry hands a path to another app; a single extra URL
+        outside the prefix, such as a sitemap, is a plain route registered in <code>use</code>:
+      </p>
+      <CodeBlock code={FRAMEWORK_OPTIONS} lang="ts" />
 
       <blockquote>
         [!NOTE] The mount lives in <code>createWebApp</code>, and <code>nifra dev</code> (the

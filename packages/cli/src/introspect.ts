@@ -16,6 +16,7 @@ import { compileRoutePattern, type RoutePatternSegment } from "@nifrajs/core/pat
 import type { ReflectedRoute } from "@nifrajs/core/reflection"
 import type { Manifest } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
+import { normalizeMountPath } from "@nifrajs/web/route-manifest"
 import type { LoadedApp } from "./load.ts"
 import { chooseBuildPipeline, describePipeline } from "./pipeline-guard.ts"
 
@@ -417,12 +418,16 @@ export interface RouteTableInput {
   /** The page router's `apiPrefix` (default `/api`); an API route at/under it is auto-mounted. `""`
    * disables the auto-mount, so no API route is marked auto-mounted. */
   readonly apiPrefix?: string
+  /** The backend declares its routes without the prefix and is served at `apiPrefix + path`: every API
+   * route is auto-mounted, listed at the path a request uses. */
+  readonly apiStrip?: boolean
 }
 
 /** True when `path` is at or under `prefix` as a path segment boundary (`/api` matches `/api` and
  * `/api/x`, but not `/apiary`). An empty prefix matches nothing (auto-mount disabled). */
 function isUnderPrefix(path: string, prefix: string): boolean {
   if (prefix === "") return false
+  if (prefix === "/") return true
   return path === prefix || path.startsWith(`${prefix}/`)
 }
 
@@ -434,7 +439,14 @@ function isUnderPrefix(path: string, prefix: string): boolean {
  * joined methods, for stable output.
  */
 export function buildRouteTable(input: RouteTableInput): RouteTableEntry[] {
-  const apiPrefix = input.apiPrefix ?? "/api"
+  const configured = input.apiPrefix ?? "/api"
+  // Read the prefix as the server's mount table does (`/api/` and `/api/*` are `/api`).
+  const apiPrefix = configured === "" ? "" : (normalizeMountPath(configured) ?? configured)
+  const stripped = input.apiStrip === true && apiPrefix !== ""
+  const servedPath = (path: string): string => {
+    if (!stripped || apiPrefix === "/") return path
+    return path === "/" ? apiPrefix : `${apiPrefix}${path}`
+  }
   const rows: RouteTableEntry[] = []
   for (const page of input.pages) {
     const methods = page.hasAction ? ["GET", "POST"] : ["GET"]
@@ -443,11 +455,12 @@ export function buildRouteTable(input: RouteTableInput): RouteTableEntry[] {
   // Collapse API routes that share a path into one row with all its methods (a REST resource).
   const byPath = new Map<string, { methods: Set<string>; autoMounted: boolean }>()
   for (const r of input.api) {
-    const existing = byPath.get(r.path)
+    const path = servedPath(r.path)
+    const existing = byPath.get(path)
     if (existing === undefined) {
-      byPath.set(r.path, {
+      byPath.set(path, {
         methods: new Set([r.method.toUpperCase()]),
-        autoMounted: isUnderPrefix(r.path, apiPrefix),
+        autoMounted: stripped || isUnderPrefix(r.path, apiPrefix),
       })
     } else existing.methods.add(r.method.toUpperCase())
   }
@@ -687,7 +700,12 @@ async function collectRouteTable(app: LoadedApp): Promise<RouteTableEntry[]> {
     }
     pages.push({ pattern: route.pattern, file: route.file, hasAction })
   }
-  const rows = buildRouteTable({ pages, api: backendRoutes(app.backend) })
+  const rows = buildRouteTable({
+    pages,
+    api: backendRoutes(app.backend),
+    ...(app.framework.apiPrefix !== undefined ? { apiPrefix: app.framework.apiPrefix } : {}),
+    ...(app.framework.apiStrip !== undefined ? { apiStrip: app.framework.apiStrip } : {}),
+  })
   return rows
 }
 

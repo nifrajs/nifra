@@ -10,7 +10,6 @@
  * `{ error }` so the agent gets the actionable message.
  */
 
-import { inProcessClient } from "@nifrajs/client"
 import { type AppLike, runApp } from "@nifrajs/runner"
 import { createWebApp, type RenderAdapter } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
@@ -22,6 +21,7 @@ import {
   readBoundedStream,
   serializeBoundedJson,
 } from "./mcp-io.ts"
+import { frameworkWebAppOptions } from "./web-app-options.ts"
 
 const errString = (err: unknown): string =>
   err instanceof Error ? `${err.name}: ${err.message}` : String(err)
@@ -54,7 +54,7 @@ async function buildWebApp(cwd: string): Promise<{ app: AppLike } | { error: str
       adapter: app.framework.adapter as RenderAdapter,
       manifest: discoverRoutes(app.routesDir),
       clientEntry: "/_nifra-render-only.js", // placeholder; SSR HTML does not need the built client
-      ...(app.backend !== undefined ? { api: inProcessClient(app.backend as never) } : {}),
+      ...frameworkWebAppOptions(app.framework, app.backend),
     }) as unknown as AppLike
     return { app: webApp }
   } catch (err) {

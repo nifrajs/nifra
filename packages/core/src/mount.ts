@@ -56,6 +56,26 @@ export type BackendEvidenceProvider = () =>
   | ProjectEvidenceSnapshot
   | Promise<ProjectEvidenceSnapshot>
 
+/**
+ * The path of every pre-route `mount()` on a nifra server, as the server matches it (`"/"` for a root
+ * mount). Such a mount answers every request under its path before the app's own routes run, and
+ * `fallbackOn: 404` only moves on to the next mount, so a route the app declares there is unreachable.
+ * Reads the server's own mount table, as `reflectMounts` does; a value that is not a nifra server
+ * yields `[]`. Never called from request dispatch.
+ */
+export function preRouteMountPaths(app: unknown): readonly string[] {
+  const mounts = (app as { readonly fetchMounts?: unknown } | null | undefined)?.fetchMounts
+  if (!Array.isArray(mounts)) return []
+  const paths: string[] = []
+  for (const mount of mounts as ReadonlyArray<{
+    readonly path?: unknown
+    readonly beforeRoutes?: unknown
+  } | null>) {
+    if (mount?.beforeRoutes === true && typeof mount.path === "string") paths.push(mount.path)
+  }
+  return paths
+}
+
 /** Structural mount capability exposed by an in-process typed client. */
 export interface BackendMount<Env = unknown> {
   readonly [NIFRA_BACKEND_MOUNT]: BackendMountHandler<Env>

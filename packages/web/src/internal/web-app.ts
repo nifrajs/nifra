@@ -6,6 +6,7 @@ import {
   NIFRA_BACKEND_MOUNT,
   NIFRA_BACKEND_WS_MOUNT,
   NIFRA_BACKEND_WS_RUNTIME,
+  preRouteMountPaths,
 } from "@nifrajs/core/mount"
 import type { MountableApp, MountOptions } from "@nifrajs/core/server"
 import { type ServerOptions, server } from "@nifrajs/core/server"
@@ -14,6 +15,7 @@ import type { CssLoadingMode } from "../css-contract.ts"
 import { generateLlmsTxt } from "../llms-txt.ts"
 import type { Manifest } from "../manifest.ts"
 import type { RenderAdapter } from "../render-seam.ts"
+import { formatShadowedPages, shadowedPages } from "./mount-shadow.ts"
 import { createPageRequestExecutor, type NonceResolver } from "./page-execution.ts"
 
 export type { NonceResolver } from "./page-execution.ts"
@@ -115,7 +117,11 @@ export interface CreateWebAppOptions<Env = unknown> {
    * page routing; the backend therefore defines its routes at the **full** path (`server().post("/api/
    * sync", …)`), matching the in-process `inProcessClient` call sites. Set to `""` to disable the
    * auto-mount entirely (the app serves pages only and `api` stays a loader-only `ctx.api`). Mounting
-   * is also a no-op when `api` does not expose the symbol mount. */
+   * is also a no-op when `api` does not expose the symbol mount.
+   *
+   * A page file under the prefix (`routes/api/report.tsx`) could never render - the backend answers
+   * first and its 404 is final - so `createWebApp` throws, naming the file. The same holds for every
+   * other pre-route mount. */
   readonly apiPrefix?: string
   /**
    * Strip {@link apiPrefix} from the pathname before dispatching to `api` (default `false`).
@@ -333,6 +339,10 @@ export function createWebApp<Env = unknown>(
     mounts.push({ path: apiPrefix, app: mountedApi, stripPrefix: apiStrip })
   }
   for (const mount of mounts) app.mount(mount)
+  // Read back the server's own mount table, so a mount added in `use` counts as well: a page under any
+  // pre-route mount is unreachable, and serving it as a silent 404 hides that.
+  const shadowed = shadowedPages(manifest, preRouteMountPaths(app))
+  if (shadowed.length > 0) throw new Error(`[nifra/web] ${formatShadowedPages(shadowed)}`)
   const pageExecutor = createPageRequestExecutor<Env>({
     adapter,
     manifest,

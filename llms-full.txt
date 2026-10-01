@@ -6590,6 +6590,37 @@ not the page's. A sibling path that merely shares the prefix string (e.g.
 is. Pass `apiPrefix: ""` to turn the mount off and keep `ctx.api` as a
 loader-only client.
 
+Because the backend answers first and its 404 is final, a page file under the prefix (
+`routes/api/report.tsx`) could never render. Nifra refuses it instead of serving a
+silent 404: `createWebApp` throws at startup naming the file, `nifra build`
+stops, and `nifra check` reports `NF-C027`. The same holds for every other
+mount in front of the page router.
+
+An app run by `nifra dev` and `nifra build` sets these options from
+`framework.ts`: `apiPrefix`, `apiStrip`, `mounts`,
+`csp` and `nonce`. The generated server entry imports them from there, so
+export them from `framework.ts` (and re-export from `nifra.config.ts` when
+both exist). A `mounts` entry hands a path to another app; a single extra URL
+outside the prefix, such as a sitemap, is a plain route registered in `use`:
+
+```ts
+// framework.ts - the backend moves to /rpc, a webhook handler mounts at /hooks,
+// and one extra URL outside both is a plain route on the web app.
+import { reactAdapter } from "@nifrajs/web-react"
+
+// Any app with fetch(request) mounts; a third-party handler states why nifra cannot analyze it.
+const webhooks = { fetch: (_request: Request) => new Response(null, { status: 204 }) }
+const sitemapXml = () => '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"/>'
+
+export const adapter = reactAdapter
+export const clientModule = "@nifrajs/web-react/client"
+export const apiPrefix = "/rpc" // "" turns the backend mount off
+export const mounts = [{ path: "/hooks", app: webhooks, opaque: "third-party webhook verifier" }]
+export const use = (app: { get(path: string, handler: () => Response): unknown }) => {
+  app.get("/sitemap.xml", () => new Response(sitemapXml(), { headers: { "content-type": "application/xml" } }))
+}
+```
+
 [!NOTE] The mount lives in `createWebApp`, and `nifra dev` (the
 Vite-backed dev server) routes every request through that same app's `fetch`. So
 the `/api/*` routes are served identically in development and production - there is
