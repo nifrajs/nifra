@@ -169,6 +169,48 @@ describe("resolveWebSocketUpgrade", () => {
     expect(out.kind).toBe("reject")
     if (out.kind === "reject") expect(out.response.status).toBe(500)
   })
+
+  // Deno builds a request's headers only when they are read, and its adapter asks this of every
+  // request.
+  test("a WebSocket-free mount leaves the request's headers unread", async () => {
+    const app = server().mount({
+      path: "/api",
+      app: server().get("/x", () => "x"),
+      stripPrefix: true,
+    })
+    const request = new Request("http://t/api/x")
+    let reads = 0
+    Object.defineProperty(request, "headers", {
+      get: () => {
+        reads += 1
+        return new Headers()
+      },
+    })
+    expect((await app.resolveWebSocketUpgrade(request)).kind).toBe("pass")
+    expect(reads).toBe(0)
+  })
+
+  test("a mounted app that gains a WebSocket route later upgrades", async () => {
+    const child = server()
+    const app = server().mount({ path: "/api", app: child, stripPrefix: true })
+    const upgrade = () => new Request("http://t/api/echo", { headers: { upgrade: "websocket" } })
+    expect((await app.resolveWebSocketUpgrade(upgrade())).kind).toBe("pass")
+    child.use(websocket()).ws("/echo", { message: (ws, data) => ws.send(data) })
+    expect((await app.resolveWebSocketUpgrade(upgrade())).kind).toBe("upgrade")
+  })
+
+  test("an app with a WebSocket route mounted further down later upgrades", async () => {
+    const inner = server()
+      .use(websocket())
+      .ws("/echo", { message: (ws, data) => ws.send(data) })
+    const middle = server()
+    const app = server().mount({ path: "/middle", app: middle, stripPrefix: true })
+    const upgrade = () =>
+      new Request("http://t/middle/inner/echo", { headers: { upgrade: "websocket" } })
+    expect((await app.resolveWebSocketUpgrade(upgrade())).kind).toBe("pass")
+    middle.mount({ path: "/inner", app: inner, stripPrefix: true })
+    expect((await app.resolveWebSocketUpgrade(upgrade())).kind).toBe("upgrade")
+  })
 })
 
 // A real Bun websocket round-trip through app.listen() - the WS-1 MVP.
@@ -442,6 +484,65 @@ describe("app.listen() WebSockets", () => {
       "hi",
     ])
     expect(await (await fetch(`http://127.0.0.1:${running.port}/api/x`)).json()).toBe("x")
+  })
+
+  // Bun's own broadcast reaches only sockets subscribed through Bun, so a frame sent with the
+  // handle's `publish` arriving shows the app kept native pub/sub.
+  test("native pub/sub stays on beside a WebSocket-free mount", async () => {
+    running = server()
+      .use(websocket())
+      .ws("/room", {
+        open: (ws) => {
+          ws.subscribe("lobby")
+          ws.send("joined")
+        },
+      })
+      .mount({ path: "/api", app: server().get("/x", () => "x"), stripPrefix: true })
+      .listen(0, { hostname: "127.0.0.1" })
+    const c = new WebSocket(`ws://127.0.0.1:${running.port}/room`)
+    const msgs: string[] = []
+    c.addEventListener("message", (e) => {
+      msgs.push(String(e.data))
+      if (msgs.length === 1) running?.publish?.("lobby", "native")
+    })
+    for (let i = 0; i < 200 && msgs.length < 2; i++) await Bun.sleep(10)
+    c.close()
+    expect(msgs).toEqual(["joined", "native"])
+  })
+
+  // Its sockets would land on this server's Bun topics, beside the parent's own.
+  test("under native pub/sub, a WebSocket route a mounted app gains after listen() does not upgrade", async () => {
+    const child = server()
+    running = makeApp()
+      .mount({ path: "/api", app: child, stripPrefix: true })
+      .listen(0, { hostname: "127.0.0.1" })
+    child.use(websocket()).ws("/echo", { open: (ws) => ws.send("child-ready") })
+    const outcome = await new Promise<string>((resolve) => {
+      const c = new WebSocket(`ws://127.0.0.1:${running?.port}/api/echo`)
+      let opened = false
+      const timer = setTimeout(() => resolve(opened ? "opened" : "rejected"), 700)
+      c.addEventListener("open", () => {
+        opened = true
+      })
+      c.addEventListener("error", () => {
+        clearTimeout(timer)
+        resolve("rejected")
+      })
+      c.addEventListener("close", () => {
+        clearTimeout(timer)
+        resolve(opened ? "opened" : "rejected")
+      })
+    })
+    expect(outcome).toBe("rejected")
+  })
+
+  test("listening again after a mounted app gained a WebSocket route upgrades it", async () => {
+    const child = server()
+    const app = makeApp().mount({ path: "/api", app: child, stripPrefix: true })
+    app.listen(0, { hostname: "127.0.0.1" }).stop(true)
+    child.use(websocket()).ws("/echo", { open: (ws) => ws.send("child-ready") })
+    running = app.listen(0, { hostname: "127.0.0.1" })
+    expect(await collect(`ws://127.0.0.1:${running.port}/api/echo`, [], 1)).toEqual(["child-ready"])
   })
 
   test("a mounted child's WebSocket route upgrades through a parent with no runtime", async () => {

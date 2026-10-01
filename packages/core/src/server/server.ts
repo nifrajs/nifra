@@ -402,6 +402,10 @@ function outranks(
 
 const WS_PASS: WebSocketUpgradeOutcome = { kind: "pass" }
 const DEFAULT_WS_UPGRADE_TIMEOUT_MS = 10_000
+/** Counts `ws()` routes and `mount()`s across every app in this copy of core: the only
+ * changes that can make a mounted app take WebSocket upgrades. An app's answer to that question
+ * (`mountsTakeUpgrades`) is kept until this moves. */
+let wsChanges = 0
 
 /** `app.ws()` (and everything downstream of it) needs the runtime `@nifrajs/core/ws` registers. */
 function requireWsRuntime(runtime: WsRuntime | undefined): WsRuntime {
@@ -853,8 +857,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   /** WebSocket routes, matched separately at upgrade time (a GET + `Upgrade: websocket`). */
   private readonly wsRouter: Router<WsEntry>
   private wsRouteCount: number
-  /** Mounted child apps that expose a WebSocket upgrade resolver. */
-  private wsMountCount: number
+  /** `wsChanges` when `wsMountsLive` was last worked out; -1 until then. */
+  private wsMountsCheckedAt = -1
+  /** Whether an app mounted here takes WebSocket upgrades, as of `wsMountsCheckedAt`. */
+  private wsMountsLive = false
   /** In-process pub/sub backing `ws.subscribe(topic)` + `app.publish(topic, data)` (single-instance).
    * Created by the first `app.ws()` via the `@nifrajs/core/ws` runtime - `undefined` until then, so a
    * no-WebSocket app never constructs (or bundles) it. */
@@ -864,7 +870,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * rather than delegate to Bun's native `server.publish`. */
   private wsHasValidatedSend = false
   /** Bun's native topic broadcast, bound by `listen()` in native-pubsub mode; `app.publish` uses it
-   * instead of the JS registry. `undefined` off Bun, before `listen()`, or with a validated-send route. */
+   * instead of the JS registry. `undefined` off Bun, before `listen()`, with a validated-send route,
+   * or when a mounted app takes upgrades. */
   private nativePublish:
     | ((topic: string, data: string | ArrayBufferView | ArrayBuffer) => void)
     | undefined
@@ -986,7 +993,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.catalog = new RouteCatalog()
     this.wsRouter = new Router<WsEntry>()
     this.wsRouteCount = 0
-    this.wsMountCount = 0
     this.topics = undefined
     const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
     assertByteLimit(maxBodyBytes, "maxBodyBytes")
@@ -1167,7 +1173,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.fetchMounts.push(mount)
     this.fetchMounts.sort(compareMounts)
     this.preRouteMountCount += 1
-    if (resolver !== undefined) this.wsMountCount += 1
+    wsChanges += 1
     return this
   }
 
@@ -1935,6 +1941,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const entry = { handler: runtime.wrapHandler(handler as WebSocketHandler) }
     for (const form of expandOptionalParams(path)) this.wsRouter.add("GET", form, entry)
     this.wsRouteCount += 1
+    wsChanges += 1
     return this as never
   }
 
@@ -2323,8 +2330,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * app without a WebSocket route needs no runtime; a resolver without the seam cannot say, so it
    * counts. `seen` ends a mount cycle (an app mounted under itself to alias a prefix).
    */
-  [GET_WS_RUNTIME](seen: Set<unknown> = new Set()): WsRuntime | null | undefined {
-    if (this.wsRouteCount > 0) return this.wsRuntime
+  [GET_WS_RUNTIME](seen?: Set<unknown>): WsRuntime | null | undefined {
+    return this.wsRouteCount > 0 ? this.wsRuntime : this.mountedWsRuntime(seen)
+  }
+
+  /** The `[GET_WS_RUNTIME]` answer for the apps mounted here alone, whatever this app's own routes. */
+  private mountedWsRuntime(seen: Set<unknown> = new Set()): WsRuntime | null | undefined {
     if (seen.has(this)) return
     seen.add(this)
     let found: WsRuntime | null | undefined
@@ -2335,6 +2346,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       if (found) return found
     }
     return found
+  }
+
+  /** Whether an app mounted here takes WebSocket upgrades. Worked out again only after a `ws()` or a
+   * `mount()` somewhere, so the upgrade check on a plain request costs one comparison. */
+  private mountsTakeUpgrades(): boolean {
+    if (this.wsMountsCheckedAt !== wsChanges) {
+      this.wsMountsLive = this.mountedWsRuntime() !== undefined
+      this.wsMountsCheckedAt = wsChanges
+    }
+    return this.wsMountsLive
   }
 
   /**
@@ -3193,7 +3214,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     req: Request,
     platform?: Platform<EnvOf<Ctx>>,
   ): MaybePromise<WebSocketUpgradeOutcome> {
-    if (this.wsRouteCount === 0 && this.wsMountCount === 0) return WS_PASS
+    // Before any header is read: Deno only materializes a request's headers when asked, and that
+    // costs a plain request measurably.
+    if (this.wsRouteCount === 0 && !this.mountsTakeUpgrades()) return WS_PASS
     if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return WS_PASS
     // Not a handshake this lane may act on: normal routing refuses the token before any hook sees it.
     if (!isRoutableMethod(req.method)) return WS_PASS
@@ -3297,6 +3320,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     }
 
     const resolveMounted = (request: Request): MaybePromise<WebSocketUpgradeOutcome> => {
+      // Native pub/sub was chosen because no mounted app took upgrades when `listen()` ran. One that
+      // gains a WebSocket route later stays out: its sockets would share this server's Bun topics.
+      if (this.nativePublish !== undefined) return WS_PASS
       const pathname = urlPartsOf(request.url).pathname
       const dispatch = (start: number): MaybePromise<WebSocketUpgradeOutcome> => {
         let selected: FetchMount<EnvOf<Ctx>> | undefined
@@ -6138,7 +6164,6 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (
       (this.onRequestHooks.length > 0 && !this.bunNativeRequestHooksSafe) ||
       this.wsRouteCount > 0 ||
-      this.wsMountCount > 0 ||
       this.preRouteMountCount > 0 ||
       this.clientIpTrust !== undefined
     ) {
@@ -6318,11 +6343,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         "a Bun server with mounted WebSocket routes needs the websocket() runtime installed on the parent or child app",
       )
     }
-    // Native pub/sub is safe only when every upgrade belongs to this app. A mounted child owns a
-    // different TopicRegistry, so force the per-connection JS dispatcher and carry that registry in
-    // the upgrade outcome instead of accidentally broadcasting child sockets through the parent.
+    // Native pub/sub is safe only when every upgrade belongs to this app. A mounted child that takes
+    // upgrades owns a different TopicRegistry, so force the per-connection JS dispatcher and carry
+    // that registry in the upgrade outcome instead of accidentally broadcasting child sockets through
+    // the parent.
     const nativePubsub =
-      this.wsRouteCount > 0 && this.wsMountCount === 0 && !this.wsHasValidatedSend
+      this.wsRouteCount > 0 && !this.mountsTakeUpgrades() && !this.wsHasValidatedSend
     const wsHandlers = wsRuntime?.bunHandlers(this.topics ?? wsRuntime.createTopics(), nativePubsub)
     // Spread rather than pass `hostname: undefined` (or an undefined idle timeout or TLS) - Bun treats
     // an explicit undefined as a value on some option paths, and omitting is what selects its own
@@ -6374,7 +6400,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         })) as unknown as RunningServer
     this.bunServer = running
     // Bind `app.publish` to Bun's native broadcast now that the server handle exists. Guarded on the
-    // method's presence so a runtime whose handle lacks it simply keeps the registry path.
+    // method's presence so a runtime whose handle lacks it simply keeps the registry path. Cleared
+    // first: a mounted app may have gained a WebSocket route since an earlier `listen()`.
+    this.nativePublish = undefined
     if (nativePubsub && typeof running.publish === "function") {
       const native = running.publish.bind(running)
       this.nativePublish = (topic, data) => {
