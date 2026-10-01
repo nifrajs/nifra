@@ -54,13 +54,16 @@ import {
   SERVER_FN_MODULE,
   serverFnNamespace,
 } from "./internal/server-boundary.ts"
+import { formatUnsupportedBuiltins, unsupportedBuiltins } from "./internal/target-compat.ts"
 import {
   accountEmittedFiles,
   bunModuleSource,
   type EmittedFile,
   formatClientGraphVerdict,
+  formatServerGraphVerdict,
   formatUnaccountedOutput,
   verifyClientGraph,
+  verifyServerGraph,
 } from "./internal/zone-graph.ts"
 import { type ClientModuleGraph, fromBunMetafile } from "./module-graph.ts"
 import { zoneGuardPlugin } from "./plugins/zone-guard.ts"
@@ -744,6 +747,11 @@ export interface BuildServerOptions {
    * - on Cloudflare, ship them with wrangler's `no_bundle` + `find_additional_modules` + an ESModule
    * `rule` (Node/Deno import the chunks natively). Eager (one self-contained file) stays the default. */
   readonly lazy?: boolean
+  /** The app root the zone rules classify against (default: the directory holding `routesDir`). */
+  readonly root?: string
+  /** Modules a build tool wrote or names as an entry (the adapter module a generated entry imports).
+   * Like `serverEntry` and the generated manifest, they may import both halves of a route. */
+  readonly generatedFiles?: readonly string[]
 }
 
 /** The built worker bundle - point your `wrangler.toml`'s `main` at `worker`. */
@@ -919,7 +927,6 @@ function exportTarget(entry: unknown, conditions: ReadonlySet<string>): string |
 const declaredSingleCopyPlugins = (root: string): readonly BunPlugin[] =>
   readSingleCopyDeclaration(root) === undefined ? [] : [declaredSingleCopyPlugin({ cwd: root })]
 
-/** Refusals the bundler stopped on before it produced a graph, so without import chains. */
 /**
  * Give each output chunk the specifiers its emitted code imports. Bun's metafile does not record them
  * (its output `imports` stay empty even for an external the code keeps), so they are read from the code.
@@ -928,16 +935,20 @@ const declaredSingleCopyPlugins = (root: string): readonly BunPlugin[] =>
 function withEmittedImports(
   graph: ClientModuleGraph,
   emitted: readonly EmittedFile[],
-  publicPath: string,
+  publicPath?: string,
 ): ClientModuleGraph {
   const scanner = new Bun.Transpiler({ loader: "js" })
   const imports = new Map<string, string[]>()
   for (const file of emitted) {
-    if (file.kind !== "code" || file.text === undefined) continue
+    if (file.kind !== "code" || file.text === undefined) {
+      imports.set(posix.normalize(file.name), [])
+      continue
+    }
     imports.set(
       posix.normalize(file.name),
       scanner.scanImports(file.text).map(({ path }) => {
-        if (path.startsWith(publicPath)) return path.slice(publicPath.length)
+        if (publicPath !== undefined && path.startsWith(publicPath))
+          return path.slice(publicPath.length)
         if (path.startsWith("./") || path.startsWith("../"))
           return posix.join(posix.dirname(posix.normalize(file.name)), path)
         return path
@@ -945,11 +956,15 @@ function withEmittedImports(
     )
   }
   const chunks: Record<string, ClientModuleGraph["chunks"][string]> = {}
-  for (const [path, chunk] of Object.entries(graph.chunks))
-    chunks[path] = { ...chunk, imports: imports.get(posix.normalize(path)) ?? [] }
+  // A chunk with no emitted file keeps no `imports`, which the verifiers treat as missing evidence.
+  for (const [path, chunk] of Object.entries(graph.chunks)) {
+    const kept = imports.get(posix.normalize(path))
+    chunks[path] = kept === undefined ? chunk : { ...chunk, imports: kept }
+  }
   return { ...graph, chunks }
 }
 
+/** Refusals the bundler stopped on before it produced a graph, so without import chains. */
 function formatRefusedFiles(refused: ReadonlyMap<string, string>, root: string): string {
   const lines = [...refused].map(([file, reason]) => {
     const rel = relative(root, file)
@@ -1045,6 +1060,7 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
     entrypoints: [serverEntry],
     outdir: outDir,
     target,
+    metafile: true,
     conditions: [...conditions],
     define: {
       ...(options.define ?? { "process.env.NODE_ENV": '"production"' }),
@@ -1073,6 +1089,43 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
     throw new Error(
       `[nifra/web] server build failed:\n${result.logs.map((l) => String(l)).join("\n")}`,
     )
+  }
+  // Named as the metafile names outputs: relative to `outdir`.
+  const nameOf = (path: string): string => relative(outDir, path).replaceAll("\\", "/")
+  const emitted = await Promise.all(
+    result.outputs.map(
+      async (out): Promise<EmittedFile> =>
+        out.kind === "sourcemap" || out.kind === "asset"
+          ? { name: nameOf(out.path), kind: out.kind === "sourcemap" ? "map" : "asset" }
+          : { name: nameOf(out.path), kind: "code", text: await out.text() },
+    ),
+  )
+  const serverGraph = withEmittedImports(
+    fromBunMetafile((result as unknown as { metafile?: BunMetafile }).metafile),
+    emitted,
+  )
+  const appRoot = resolvePath(options.root ?? dirname(routesDir))
+  const classifier = createZoneClassifier({
+    appRoot,
+    routesDir,
+    generatedFiles: [
+      serverEntry,
+      join(entryDir, manifestFile),
+      ...(options.generatedFiles ?? []),
+    ].map((file) => resolvePath(file)),
+  })
+  const sourceOf = bunModuleSource(process.cwd())
+  const labelOf = (id: string): string => {
+    const source = sourceOf(id)
+    return source.kind === "file" ? relative(appRoot, source.file).replaceAll("\\", "/") : id
+  }
+  const refusal =
+    formatServerGraphVerdict(verifyServerGraph(serverGraph, { classifier, sourceOf })) ??
+    formatUnsupportedBuiltins(unsupportedBuiltins(serverGraph, target, labelOf), target)
+  if (refusal !== undefined) {
+    // Bun wrote the bundle already; a refused build leaves nothing a deploy step could pick up.
+    for (const output of result.outputs) rmSync(output.path, { force: true })
+    throw new Error(refusal)
   }
   const entryOutput = result.outputs.find((o) => o.kind === "entry-point")
   if (entryOutput === undefined) {
@@ -1443,6 +1496,8 @@ export const bunBundler: Bundler = {
       ...(input.plugins ? { plugins: input.plugins as BunPlugin[] } : {}),
       ...(input.define ? { define: input.define } : {}),
       ...(input.cssLoading !== undefined ? { cssLoading: input.cssLoading } : {}),
+      ...(input.root !== undefined ? { root: input.root } : {}),
+      ...(input.generatedFiles !== undefined ? { generatedFiles: input.generatedFiles } : {}),
     }),
 }
 
@@ -1583,6 +1638,7 @@ export async function buildTargetWith(
         ? { cssLoading: requestedCssLoading }
         : {}),
     root: resolvePath(dirname(routesDir)),
+    generatedFiles: [resolvePath(workDir, options.adapterImport)],
   })
 
   // (3) Assemble the deploy dir for the target.

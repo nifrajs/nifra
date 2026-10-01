@@ -5452,10 +5452,14 @@ _No named exports (side-effect entrypoint)._
 - **LeakGuardOptions** _(interface)_ - `interface LeakGuardOptions`
 - **LeakGuardPlugin** _(interface)_ - `interface LeakGuardPlugin`
   The minimal Rollup plugin shape this returns - `generateBundle` bound to the plugin context.
+- **ServerZoneGuardOptions** _(type)_ - `type ServerZoneGuardOptions = Pick< LeakGuardOptions, "appRoot" | "routesDir" | "generatedFiles" >`
+  What {@link viteServerZoneGuard} needs: the zones of the app, nothing about the output.
 - **viteBareBuiltinExternal** _(function)_ - `viteBareBuiltinExternal: () => BareBuiltinPlugin`
   Keep a bare Node built-in (`fs/promises`, `path`) visible to {@link viteLeakGuard}. Vite resolves a bare built-in that is not an installed package to one shared `__vite-browser-external` stub: the import builds, does nothing in the browser, and no longer names the module. This plugin externalizes i…
 - **viteLeakGuard** _(function)_ - `viteLeakGuard: (options?: LeakGuardOptions) => LeakGuardPlugin`
   A Vite/Rollup plugin that fails the build when anything the zones keep on the server reaches the client bundle, with the same checks and messages as nifra's Bun build: every module classified, the graph evidence complete, every emitted file traced back to it, and the `node:` and `backend-only` guar…
+- **viteServerZoneGuard** _(function)_ - `viteServerZoneGuard: (options?: ServerZoneGuardOptions) => LeakGuardPlugin`
+  The server build's half of the zone rules, with the same checks and message as nifra's Bun server build: every first-party module zoned, backend code never importing frontend code, shared code importing only shared code. It records the refusal in `leak` for the same reason the client guard does.
 
 ### `@nifrajs/web/plugins/vite-server-fn`
 

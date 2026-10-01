@@ -26,6 +26,8 @@ export interface GraphImport {
   /** The bundler left this import in the emitted code instead of bundling its target. Bun does this
    * for a dynamic `import("node:fs")` in a browser build: the import ships, the module does not. */
   readonly external?: boolean
+  /** A dynamic `import()`. A bundler can drop one in dead code while the module around it ships. */
+  readonly dynamic?: boolean
 }
 
 export interface GraphModule {
@@ -65,7 +67,12 @@ export interface BunMetafileLike {
     Record<
       string,
       {
-        readonly imports?: ReadonlyArray<{ path?: string; original?: string; external?: boolean }>
+        readonly imports?: ReadonlyArray<{
+          path?: string
+          original?: string
+          external?: boolean
+          kind?: string
+        }>
       }
     >
   >
@@ -102,6 +109,7 @@ export function fromBunMetafile(meta: BunMetafileLike | undefined): ClientModule
         ...(im.path === undefined ? {} : { path: normalizeModuleId(im.path) }),
         ...(im.original === undefined ? {} : { original: im.original }),
         ...(im.external === true ? { external: true } : {}),
+        ...(im.kind === "dynamic-import" ? { dynamic: true } : {}),
       })),
     }
   }

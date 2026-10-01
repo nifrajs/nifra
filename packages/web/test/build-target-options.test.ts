@@ -10,17 +10,17 @@ import { buildTarget, generateServerEntry } from "../src/build.ts"
 test("generateServerEntry imports each forwarded option by name and passes it through", () => {
   const source = generateServerEntry({
     target: "bun",
-    adapterImport: "/app/framework.ts",
-    optionImports: { apiPrefix: "/app/framework.ts", mounts: "/app/framework.ts" },
+    adapterImport: "/app/backend/framework.ts",
+    optionImports: { apiPrefix: "/app/backend/framework.ts", mounts: "/app/backend/framework.ts" },
   })
-  expect(source).toContain('import { apiPrefix, mounts } from "/app/framework.ts"')
+  expect(source).toContain('import { apiPrefix, mounts } from "/app/backend/framework.ts"')
   expect(source).toMatch(/createWebApp\(\{[\s\S]*\n {2}apiPrefix,\n {2}mounts,\n/)
 })
 
 test("generateServerEntry names only options from its own list", () => {
   const source = generateServerEntry({
     target: "bun",
-    adapterImport: "/app/framework.ts",
+    adapterImport: "/app/backend/framework.ts",
     optionImports: { ["evil(){}" as "apiPrefix"]: "/app/x.ts" },
   })
   expect(source).not.toContain("evil")
@@ -28,7 +28,7 @@ test("generateServerEntry names only options from its own list", () => {
 })
 
 test("generateServerEntry without optionImports emits no option import", () => {
-  const source = generateServerEntry({ target: "bun", adapterImport: "/app/framework.ts" })
+  const source = generateServerEntry({ target: "bun", adapterImport: "/app/backend/framework.ts" })
   expect(source).not.toContain("apiPrefix")
   expect(source).not.toContain("mounts")
 })
@@ -43,8 +43,9 @@ beforeEach(() => {
     join(projectRoot, "routes", "index.tsx"),
     "export default function Home() { return null }\n",
   )
+  mkdirSync(join(projectRoot, "backend"), { recursive: true })
   writeFileSync(
-    join(projectRoot, "framework.ts"),
+    join(projectRoot, "backend/framework.ts"),
     [
       'import { server } from "@nifrajs/core/server"',
       "const streamOf = (s: string) => new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(s)); c.close() } })",
@@ -57,7 +58,7 @@ beforeEach(() => {
     ].join("\n"),
   )
   writeFileSync(
-    join(projectRoot, "backend.ts"),
+    join(projectRoot, "backend/app.ts"),
     [
       'import { server } from "@nifrajs/core/server"',
       'export const backend = server().get("/rpc/ping", () => ({ backend: true }))',
@@ -72,14 +73,14 @@ afterEach(() => {
 
 test("a built worker mounts the backend at the imported apiPrefix and serves the imported mounts", async () => {
   const outDir = join(projectRoot, "dist")
-  const frameworkFile = join(projectRoot, "framework.ts")
+  const frameworkFile = join(projectRoot, "backend/framework.ts")
   await buildTarget("cf-pages", {
     routesDir: join(projectRoot, "routes"),
     outDir,
     workDir: join(projectRoot, ".work"),
     clientModule: join(projectRoot, "frontend/client-stub.ts"),
     adapterImport: frameworkFile,
-    backendImport: join(projectRoot, "backend.ts"),
+    backendImport: join(projectRoot, "backend/app.ts"),
     optionImports: { apiPrefix: frameworkFile, mounts: frameworkFile },
   })
   const worker = (await import(join(outDir, "_worker.js"))) as {

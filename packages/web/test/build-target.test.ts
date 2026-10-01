@@ -41,8 +41,9 @@ beforeEach(() => {
   writeFileSync(join(routesDir, "index.backend.ts"), "export const prerender = true\n")
   // The app's framework wiring - exports a stub adapter the generated server entry imports. It emits a
   // fixed marker ("nifra") so the prerendered HTML is assertable without a real UI framework.
+  mkdirSync(join(projectRoot, "backend"), { recursive: true })
   writeFileSync(
-    join(projectRoot, "framework.ts"),
+    join(projectRoot, "backend/framework.ts"),
     "import { streamOf } from './stub-adapter.ts'\n" +
       "export const adapter = {\n" +
       '  renderToStream: () => streamOf("<p>nifra</p>"),\n' +
@@ -50,7 +51,7 @@ beforeEach(() => {
       "}\n",
   )
   writeFileSync(
-    join(projectRoot, "stub-adapter.ts"),
+    join(projectRoot, "backend/stub-adapter.ts"),
     "export const streamOf = (s) => new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(s)); c.close() } })\n",
   )
   // The stub client runtime the client bundle imports (exports `mountRouter`).
@@ -71,7 +72,7 @@ test("--target cf-pages → _worker.js + _routes.json + /assets bundle", async (
     outDir,
     workDir: join(projectRoot, ".work"),
     clientModule: join(projectRoot, "frontend/client-stub.ts"),
-    adapterImport: join(projectRoot, "framework.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
   })
 
   expect(result.target).toBe("cf-pages")
@@ -118,7 +119,7 @@ test("--target static → prerenders opted-in routes to index.html", async () =>
     outDir,
     workDir: join(projectRoot, ".work-static"),
     clientModule: join(projectRoot, "frontend/client-stub.ts"),
-    adapterImport: join(projectRoot, "framework.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
     prerenderApp: app,
   })
 
@@ -144,7 +145,7 @@ test("--target bun persists the CSS loading policy in the client manifest", asyn
     outDir,
     workDir: join(projectRoot, ".work-bun-css"),
     clientModule: join(projectRoot, "frontend/client-stub.ts"),
-    adapterImport: join(projectRoot, "framework.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
     cssLoading: "deferred",
   })
 
@@ -167,7 +168,7 @@ test("--target static with no prerenderable route throws a clear error", async (
     outDir: join(projectRoot, "dist-empty"),
     workDir: join(projectRoot, ".work-empty"),
     clientModule: join(projectRoot, "frontend/client-stub.ts"),
-    adapterImport: join(projectRoot, "framework.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
     prerenderApp: app,
   })
   await expect(promise).rejects.toThrow(/no routes were prerendered/)

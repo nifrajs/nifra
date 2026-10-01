@@ -1,4 +1,4 @@
-import { app } from "./app"
+import { app } from "./backend/web-app"
 
 // Vercel Edge. `app.fetch` is the universal Web handler; the Edge Runtime dispatches via the fetch
 // event - this is exactly what the `edge-runtime` emulator runs (so this file is verifiable locally,

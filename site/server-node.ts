@@ -10,7 +10,7 @@ import { serve } from "@nifrajs/node"
 import { createWebApp } from "@nifrajs/web"
 import { reactAdapter } from "@nifrajs/web-react"
 import { backend } from "./backend/app"
-import { machineSurfaceFor } from "./machine-surfaces"
+import { machineSurfaceFor } from "./backend/machine-surfaces"
 import { clientEntry, manifest } from "./server-manifest"
 
 const app = createWebApp({

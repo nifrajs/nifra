@@ -47,7 +47,11 @@ import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
 import { importVite, isViteUnresolved } from "./internal/vite-import.ts"
 import { scopedName } from "./plugins/css-modules.ts"
 import { reproduciblePath } from "./plugins/kit.ts"
-import { viteBareBuiltinExternal, viteLeakGuard } from "./plugins/vite-leak-guard.ts"
+import {
+  viteBareBuiltinExternal,
+  viteLeakGuard,
+  viteServerZoneGuard,
+} from "./plugins/vite-leak-guard.ts"
 import { viteServerFnStub } from "./plugins/vite-server-fn.ts"
 
 // ---------------------------------------------------------------------------------------------------
@@ -413,6 +417,8 @@ export interface BuildServerViteOptions {
   readonly target?: "browser" | "node" | "bun"
   /** Vite project root (default: the parent of `routesDir`). */
   readonly root?: string
+  /** Modules the build generated besides the entry and manifest (a target's adapter import). */
+  readonly generatedFiles?: readonly string[]
 }
 
 interface EdgeBundleChunk {
@@ -525,6 +531,15 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
   const mode = options.minify === false ? "development" : "production"
   const vite = await loadVite()
   const edgeGuard = edgeBuiltinGuard()
+  const zoneGuard = viteServerZoneGuard({
+    appRoot: root,
+    routesDir: resolvePath(routesDir),
+    generatedFiles: [
+      serverEntry,
+      join(entryDir, manifestFile),
+      ...(options.generatedFiles ?? []),
+    ].map((file) => resolvePath(file)),
+  })
   try {
     await withSerializedNodeEnv(mode, () =>
       vite.build({
@@ -553,7 +568,7 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
             // Keep builtins external so Node/Bun use their native implementations. Edge builds add a
             // generateBundle guard below, so an external specifier can never silently ship to workerd.
             external: [/^node:/],
-            ...(edge ? { plugins: [edgeGuard] } : {}),
+            plugins: [...(edge ? [edgeGuard] : []), zoneGuard],
             // ONE self-contained `server.js`. `inlineDynamicImports` forces the ENTRY chunk to absorb
             // every module - the app, the adapter, react/react-dom, @nifrajs/* - so no second chunk is
             // emitted. It is NOT redundant with `ssr.noExternal`: `noExternal` decides what gets bundled,
@@ -578,7 +593,8 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
   } catch (error) {
     // Re-raise the guard's own message from here, where no bundler error-reporting path can rewrite it
     // (see the same handling in buildClientVite).
-    if (edgeGuard.leak !== undefined) throw new Error(edgeGuard.leak, { cause: error })
+    const leak = zoneGuard.leak ?? edgeGuard.leak
+    if (leak !== undefined) throw new Error(leak, { cause: error })
     throw error
   }
 
@@ -621,6 +637,7 @@ export const viteBundler: Bundler = {
       ...(input.define ? { define: input.define } : {}),
       ...(input.cssLoading !== undefined ? { cssLoading: input.cssLoading } : {}),
       ...(input.root ? { root: input.root } : {}),
+      ...(input.generatedFiles !== undefined ? { generatedFiles: input.generatedFiles } : {}),
     }),
 }
 

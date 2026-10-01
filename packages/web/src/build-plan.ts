@@ -179,6 +179,8 @@ export interface Bundler {
     /** CSS activation policy to bake into the generated server manifest. */
     readonly cssLoading?: CssLoadingMode
     readonly root?: string
+    /** Modules the zone rules treat as generated: the adapter module the generated entry imports. */
+    readonly generatedFiles?: readonly string[]
   }): Promise<ServerBuild>
 }
 

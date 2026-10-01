@@ -6,8 +6,8 @@ and Vercel Edge**. `createWebApp` + the React adapter are identical everywhere; 
 
 ## Layout
 
-- `routes/`, `backend.ts` - the app (shared across all runtimes).
-- `app.ts` - `createWebApp(...)` → the nifra `app`. Every entry imports this.
+- `routes/`, `backend/app.ts` - the app (shared across all runtimes).
+- `backend/web-app.ts` - `createWebApp(...)` → the nifra `app`. Every entry imports this.
 - `cloudflare.ts` / `node.ts` / `deno.ts` / `vercel.ts` - the per-runtime entries.
 - `build.ts` - `buildClient` once → `public/assets`; `buildServer` per entry → `dist/<runtime>`.
 

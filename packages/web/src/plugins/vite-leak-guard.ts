@@ -50,9 +50,11 @@ import {
   accountEmittedFiles,
   type EmittedFile,
   formatClientGraphVerdict,
+  formatServerGraphVerdict,
   formatUnaccountedOutput,
   rollupModuleSource,
   verifyClientGraph,
+  verifyServerGraph,
 } from "../internal/zone-graph.ts"
 import {
   type ClientModuleGraph,
@@ -182,6 +184,45 @@ export function viteLeakGuard(options: LeakGuardOptions = {}): LeakGuardPlugin {
       if (leak === undefined) return
       // Record before throwing: the throw is what fails the build for a standalone user of this plugin,
       // and the record is what lets a caller that owns the build re-raise the real message (see `leak`).
+      plugin.leak = leak
+      this.error(new Error(leak))
+    },
+  }
+  return plugin
+}
+
+/** What {@link viteServerZoneGuard} needs: the zones of the app, nothing about the output. */
+export type ServerZoneGuardOptions = Pick<
+  LeakGuardOptions,
+  "appRoot" | "routesDir" | "generatedFiles"
+>
+
+/**
+ * The server build's half of the zone rules, with the same checks and message as nifra's Bun server
+ * build: every first-party module zoned, backend code never importing frontend code, shared code
+ * importing only shared code. It records the refusal in `leak` for the same reason the client guard
+ * does.
+ */
+export function viteServerZoneGuard(options: ServerZoneGuardOptions = {}): LeakGuardPlugin {
+  const appRoot = resolve(options.appRoot ?? process.cwd())
+  const plugin: LeakGuardPlugin = {
+    name: "nifra:server-zone-guard",
+    generateBundle(_options, bundle) {
+      const classifier = createZoneClassifier({
+        appRoot,
+        ...(options.routesDir !== undefined ? { routesDir: options.routesDir } : {}),
+        ...(options.generatedFiles !== undefined ? { generatedFiles: options.generatedFiles } : {}),
+      })
+      const importsOf = (id: string): readonly string[] => {
+        const info = this.getModuleInfo(id)
+        if (info === null) return []
+        return [...(info.importedIds ?? []), ...(info.dynamicallyImportedIds ?? [])]
+      }
+      const graph = completeGraph(fromRollupBundle(bundle, importsOf), this, importsOf)
+      const leak = formatServerGraphVerdict(
+        verifyServerGraph(graph, { classifier, sourceOf: rollupModuleSource }),
+      )
+      if (leak === undefined) return
       plugin.leak = leak
       this.error(new Error(leak))
     },

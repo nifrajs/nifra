@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { serve } from "@nifrajs/node"
-import { app } from "./app"
+import { app } from "./backend/web-app"
 
 // Node has no platform asset layer, so the server serves /assets/* from disk (hashed → immutable).
 const ASSETS = process.env.NIFRA_ASSETS_DIR ?? "public/assets"

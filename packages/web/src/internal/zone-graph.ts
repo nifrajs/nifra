@@ -9,7 +9,14 @@ import { existsSync } from "node:fs"
 import { basename, dirname, extname, isAbsolute, posix, relative, resolve } from "node:path"
 import { BACKEND_ROUTE_EXPORTS, backendFileFor } from "../manifest.ts"
 import type { ClientModuleGraph, GraphImport } from "../module-graph.ts"
-import { browserDenial, type ZoneClassifier } from "../zones.ts"
+import {
+  BACKEND_ONLY_MARKER,
+  browserDenial,
+  type Classification,
+  importAllowed,
+  importRuleMessage,
+  type ZoneClassifier,
+} from "../zones.ts"
 import { isBareNodeBuiltin } from "./node-builtins.ts"
 
 /** What a graph module id names. */
@@ -247,6 +254,126 @@ function shortestChains(
     frontier = next
   }
   return chains
+}
+
+export interface ServerGraphVerdict {
+  /** Unzoned files and imports the zone rules refuse, each with the chain from an entry. */
+  readonly violations: readonly ZoneLeak[]
+}
+
+/**
+ * Check a server bundle's graph against the zone rules. Unlike the browser build, backend code is
+ * expected here; what is refused is a first-party file in no zone, an import the rules forbid
+ * (backend reaching frontend code, shared reaching anything but shared code), and shared code reaching
+ * a server built-in or the backend-only marker. The build's own entries and generated modules are
+ * `generated`, so they may import both halves.
+ */
+export function verifyServerGraph(
+  graph: ClientModuleGraph,
+  options: VerifyClientGraphOptions,
+): ServerGraphVerdict {
+  const { classifier, sourceOf } = options
+  const display = (file: string): string => {
+    const rel = relative(classifier.appRoot, file).replaceAll("\\", "/")
+    return rel.startsWith("..") || isAbsolute(rel) ? file : rel
+  }
+  const fileOf = (id: string): string | undefined => {
+    const source = sourceOf(id)
+    return source.kind === "builtin" ? undefined : source.file
+  }
+  const labelOf = (id: string): string => {
+    const file = fileOf(id)
+    return file === undefined ? id : display(file)
+  }
+  const classes = new Map<string, Classification | undefined>()
+  const classOf = (id: string): Classification | undefined => {
+    if (!classes.has(id)) {
+      const source = sourceOf(id)
+      classes.set(id, source.kind === "file" ? classifier.classify(source.file) : undefined)
+    }
+    return classes.get(id)
+  }
+  const idByFile = new Map<string, string>()
+  for (const id of Object.keys(graph.modules)) {
+    const source = sourceOf(id)
+    if (source.kind === "file") idByFile.set(source.file, id)
+  }
+  const resolveEdge = (im: GraphImport): string | undefined => {
+    if (im.path === undefined || im.external === true) return undefined
+    if (graph.modules[im.path] !== undefined) return im.path
+    const source = sourceOf(im.path)
+    return source.kind === "file" ? idByFile.get(source.file) : undefined
+  }
+
+  const edges = new Map<string, Array<{ readonly to: string; readonly label: string }>>()
+  const found: Array<{
+    readonly at: string
+    readonly module: string
+    readonly reason: string
+    readonly tail?: string
+  }> = []
+  for (const [id, module] of Object.entries(graph.modules)) {
+    const from = classOf(id)
+    if (from?.zone === "error") found.push({ at: id, module: labelOf(id), reason: from.reason })
+    const out: Array<{ readonly to: string; readonly label: string }> = []
+    for (const im of module.imports) {
+      const spec = im.original ?? im.path ?? ""
+      if (from?.zone === "shared") {
+        const builtin =
+          isBuiltinSpec(spec) || (im.path !== undefined && sourceOf(im.path).kind === "builtin")
+        if (builtin || spec === BACKEND_ONLY_MARKER) {
+          found.push({
+            at: id,
+            module: labelOf(id),
+            reason: `shared code runs on both sides, so it may not import "${spec}"; move the code that needs it under backend/`,
+            tail: spec,
+          })
+        }
+      }
+      const target = resolveEdge(im)
+      if (target === undefined) continue
+      out.push({ to: target, label: im.original ?? labelOf(target) })
+      const to = classOf(target)
+      if (from === undefined || to === undefined || from.zone === "error" || to.zone === "error")
+        continue
+      if (!importAllowed(from.zone, to.zone)) {
+        found.push({
+          at: id,
+          module: labelOf(target),
+          reason: importRuleMessage(labelOf(id), from.zone, labelOf(target), to.zone),
+          tail: im.original ?? labelOf(target),
+        })
+      }
+    }
+    edges.set(id, out)
+  }
+  if (found.length === 0) return { violations: [] }
+
+  const entries = [
+    ...new Set(
+      Object.values(graph.chunks)
+        .map((chunk) => chunk.entryPoint)
+        .filter((entry): entry is string => entry !== undefined),
+    ),
+  ]
+  const chains = shortestChains(entries, edges)
+  const violations = found
+    .map(({ at, module, reason, tail }) => {
+      const chain = (chains.get(at) ?? [at]).map((label, i) => (i === 0 ? labelOf(label) : label))
+      return { module, reason, chain: tail === undefined ? chain : [...chain, tail] }
+    })
+    .sort((a, b) => a.module.localeCompare(b.module) || a.reason.localeCompare(b.reason))
+  return { violations }
+}
+
+/** The build-failing message for a server graph that breaks the zone rules. */
+export function formatServerGraphVerdict(verdict: ServerGraphVerdict): string | undefined {
+  if (verdict.violations.length === 0) return undefined
+  const lines = verdict.violations.map(
+    (v) =>
+      `  - ${v.module}: ${v.reason}${v.chain.length > 1 ? `\n      via ${v.chain.join(" → ")}` : ""}`,
+  )
+  return `[nifra/web] the server build breaks the zone rules:\n${lines.join("\n")}`
 }
 
 /** One emitted file, as the accounting sees it. */
