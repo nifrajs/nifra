@@ -435,6 +435,9 @@ export function renderCheckReport(result: CheckResult): string[] {
       `• intentional external mounts (not typed-client checked): ${result.externalMounts.join(", ")}`,
     )
   }
+  for (const gap of result.knownGaps ?? []) {
+    lines.push(`• known gap, not capability-analyzed: ${gap.path} - ${gap.reason}`)
+  }
   const deduplicated = result.identityPreflight?.deduplicated ?? []
   if (deduplicated.length > 0) {
     const packages = deduplicated.map((finding) => finding.package).join(", ")

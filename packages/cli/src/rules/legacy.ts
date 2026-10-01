@@ -725,6 +725,11 @@ const capabilityAssuranceRule: CheckRule = {
         finding.code === "unmatched-provenance-seam"
           ? "Write the seam exactly as the code imports it, or delete the rule."
           : undefined
+      const mountFix =
+        finding.code === "opaque-mount-undeclared"
+          ? 'merge() a nifra server() instead of mounting it, or add { opaque: "<why it cannot be analyzed>" } to the mount.'
+          : undefined
+      const ownFix = seamFix ?? mountFix
       findings.push(
         legacyDiagnostic("capability-assurance", {
           severity: "error",
@@ -733,30 +738,40 @@ const capabilityAssuranceRule: CheckRule = {
               ? {}
               : { chain: truncation.chain }
             : { file: violation.module, chain: violation.chain }),
-          message: `${finding.message}${seamFix === undefined ? ` - ${CAPABILITY_HINT}` : ""}`,
-          fix: seamFix ?? CAPABILITY_HINT,
+          message: `${finding.message}${ownFix === undefined ? ` - ${CAPABILITY_HINT}` : ""}`,
+          fix: ownFix ?? CAPABILITY_HINT,
           suggestion:
-            seamFix === undefined
+            mountFix !== undefined
               ? {
                   kind: "manual",
-                  title: "Restore declared effect provenance",
+                  title: "Analyze the mounted routes, or state why they cannot be",
                   steps: [
-                    "Route effectful work through an import listed in capabilities.provenance.imports.",
-                    "Declare the exact capability token on the route; do not widen unrelated routes in the same file.",
-                    "For domain writes, add the adapter the capability definition requires: `schema.idempotency` for the `request` tier, `.use(durableCommand({ journal }))` from @nifrajs/middleware for the `durable` tier.",
-                    "Run `nifra capabilities snapshot` only after assurance passes, then review the lockfile diff.",
+                    "If the child is a nifra server() you own, merge() it so its routes join the analyzed app.",
+                    'If its effects live in code nifra cannot follow (a handler closure from another package), add { opaque: "<reason>" } to the mount.',
+                    "A declared opaque mount is listed as a known gap on every run; it no longer fails assurance.",
                   ],
                 }
-              : {
-                  kind: "manual",
-                  title: "Point the provenance rule at a module that exists",
-                  steps: [
-                    "Copy the specifier from the import statement itself - it is matched as written, with no extension or index resolution.",
-                    "Use a trailing `/*` when the seam is a directory of modules (`@myorg/db/*`).",
-                    "For a routeModules entry, give the project-relative path of the file that implements the route.",
-                    "Delete the rule if the seam it governed is gone; leaving it in place proves nothing.",
-                  ],
-                },
+              : seamFix === undefined
+                ? {
+                    kind: "manual",
+                    title: "Restore declared effect provenance",
+                    steps: [
+                      "Route effectful work through an import listed in capabilities.provenance.imports.",
+                      "Declare the exact capability token on the route; do not widen unrelated routes in the same file.",
+                      "For domain writes, add the adapter the capability definition requires: `schema.idempotency` for the `request` tier, `.use(durableCommand({ journal }))` from @nifrajs/middleware for the `durable` tier.",
+                      "Run `nifra capabilities snapshot` only after assurance passes, then review the lockfile diff.",
+                    ],
+                  }
+                : {
+                    kind: "manual",
+                    title: "Point the provenance rule at a module that exists",
+                    steps: [
+                      "Copy the specifier from the import statement itself - it is matched as written, with no extension or index resolution.",
+                      "Use a trailing `/*` when the seam is a directory of modules (`@myorg/db/*`).",
+                      "For a routeModules entry, give the project-relative path of the file that implements the route.",
+                      "Delete the rule if the seam it governed is gone; leaving it in place proves nothing.",
+                    ],
+                  },
         }),
       )
     }

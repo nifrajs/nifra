@@ -108,6 +108,12 @@
     "code": "import { server } from \"@nifrajs/core\"\nimport { executeCapability } from \"@nifrajs/core/capabilities\"\nimport { createDurableEffectJournal } from \"@nifrajs/core/durable-execution\"\nimport { durableCommand } from \"@nifrajs/middleware\"\n\ndeclare const store: import(\"@nifrajs/core/durable-execution\").DurableEffectStore\ndeclare const gateway: { charge(): Promise<{ id: string }> }\n\nconst commands = durableCommand({ journal: createDurableEffectJournal({ store }) })\n\n// Every executeCapability below this records intent before the effect and one outcome after.\nconst app = server()\n  .use(commands)\n  .post(\"/charge\", { capabilities: [\"billing.charge\"] }, (c: object) =>\n    executeCapability(c, \"billing.charge\", {}, () => gateway.charge()),\n  )"
   },
   {
+    "name": "OPAQUE",
+    "topic": "Nifra - Effect provenance",
+    "slug": "capabilities",
+    "code": "import { server } from \"@nifrajs/core\"\n\n// Stands in for a handler from another package (better-auth's): nifra cannot see what it reaches.\nconst authHandler = { fetch: (request: Request) => new Response(request.url) }\n\nexport const app = server().mount({\n  path: \"/api/auth\",\n  app: authHandler,\n  opaque: \"better-auth's own handler; its effects are its own\",\n})"
+  },
+  {
     "name": "POLICY",
     "topic": "Nifra - Effect provenance",
     "slug": "capabilities",

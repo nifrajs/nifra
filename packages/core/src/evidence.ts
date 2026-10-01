@@ -17,8 +17,10 @@ import type { ResponseClassification } from "./classification.ts"
 import { evidenceProvenance } from "./internal/route-assurance.ts"
 import {
   type JsonSchema,
+  type ReflectedMount,
   type ReflectedRoute,
   type ReflectedSchemaField,
+  reflectMounts,
   reflectRoutes,
   type SchemaReflection,
 } from "./reflection.ts"
@@ -97,6 +99,8 @@ export interface ProjectEvidenceCapabilities {
 export interface ProjectEvidenceSnapshot {
   readonly version: 1
   readonly routes: readonly ProjectEvidenceRoute[]
+  /** Mounted children whose routes are not in `routes`, present when there is at least one. */
+  readonly mounts?: readonly ReflectedMount[]
   readonly assurance?: ProjectEvidenceAssurance
   readonly capabilities?: ProjectEvidenceCapabilities
 }
@@ -112,6 +116,8 @@ export interface ProjectEvidenceOptions {
   readonly routes?: readonly ReflectedRoute[]
   /** Optional static source locations keyed by `${METHOD}\n${path}`. */
   readonly sourceLocations?: ReadonlyMap<string, readonly ProjectEvidenceSourceLocation[]>
+  /** An existing mount reflection, like `routes`. Default: `reflectMounts(source)`. */
+  readonly mounts?: readonly ReflectedMount[]
 }
 
 /** One token-only evidence snapshot in a composed application surface. */
@@ -321,6 +327,9 @@ function remapEvidenceSnapshot(
     const key = route(item.method, item.path)
     return Object.freeze({ ...item, ...key })
   })
+  const mounts = evidence.mounts?.map((item) =>
+    Object.freeze({ ...item, path: composedPath(pathPrefix, item.path) }),
+  )
   const assurance =
     evidence.assurance === undefined
       ? undefined
@@ -356,6 +365,7 @@ function remapEvidenceSnapshot(
   return Object.freeze({
     version: 1,
     routes: Object.freeze(routes),
+    ...(mounts === undefined ? {} : { mounts: Object.freeze(mounts) }),
     ...(assurance === undefined ? {} : { assurance }),
     ...(capabilities === undefined ? {} : { capabilities }),
   })
@@ -392,6 +402,7 @@ export function composeProjectEvidence(
 ): ProjectEvidenceSnapshot {
   const routes: ProjectEvidenceRoute[] = []
   const routeKeys = new Set<string>()
+  const mounts: ReflectedMount[] = []
   const assuranceReports: ProjectEvidenceAssurance[] = []
   const capabilityReports: ProjectEvidenceCapabilities[] = []
 
@@ -406,6 +417,7 @@ export function composeProjectEvidence(
       routeKeys.add(key)
       routes.push(route)
     }
+    mounts.push(...(mapped.mounts ?? []))
     if (mapped.assurance !== undefined) assuranceReports.push(mapped.assurance)
     if (mapped.capabilities !== undefined) capabilityReports.push(mapped.capabilities)
   }
@@ -451,6 +463,7 @@ export function composeProjectEvidence(
   return Object.freeze({
     version: 1,
     routes: sortByRoute(routes),
+    ...mountsPart(mounts),
     ...(assurance === undefined ? {} : { assurance }),
     ...(capabilities === undefined ? {} : { capabilities }),
   })
@@ -542,10 +555,24 @@ export function snapshotProjectEvidence(
   return Object.freeze({
     version: 1,
     routes,
+    ...mountsPart(options.mounts ?? reflectMounts(source)),
     ...(assurance !== undefined ? { assurance } : {}),
     ...(capabilities !== undefined ? { capabilities } : {}),
   })
 }
+
+/** The snapshot's `mounts` field, sorted, and absent when empty so a mount-free app's snapshot (and its
+ * manifest hash) is unchanged. */
+const mountsPart = (
+  mounts: readonly ReflectedMount[],
+): { readonly mounts?: readonly ReflectedMount[] } =>
+  mounts.length === 0
+    ? {}
+    : {
+        mounts: Object.freeze(
+          [...mounts].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
+        ),
+      }
 
 function canonicalValue(value: unknown): string {
   if (value === null || typeof value === "string" || typeof value === "boolean") {

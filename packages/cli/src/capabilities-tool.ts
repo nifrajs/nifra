@@ -17,7 +17,7 @@ import {
   validCapabilityId,
 } from "@nifrajs/core/capabilities"
 import { expandOptionalParams } from "@nifrajs/core/pattern"
-import { type ReflectedRoute, reflectRoutes } from "@nifrajs/core/reflection"
+import { type ReflectedMount, type ReflectedRoute, reflectRoutes } from "@nifrajs/core/reflection"
 import { scanStaticRouteText, stripComments, walkSource } from "./check.ts"
 
 const EFFECT_IMPORT =
@@ -327,7 +327,10 @@ export async function collectCapabilityProjectReport(
   cwd: string,
   source: unknown,
   policyInput: CapabilityPolicy,
-  options: { readonly routes?: readonly ReflectedRoute[] } = {},
+  options: {
+    readonly routes?: readonly ReflectedRoute[]
+    readonly mounts?: readonly ReflectedMount[]
+  } = {},
 ): Promise<CapabilityProjectReport> {
   const policy = defineCapabilityPolicy(policyInput)
   const sources = await readSources(cwd)
@@ -412,6 +415,7 @@ export async function collectCapabilityProjectReport(
   const evaluated = evaluateCapabilityAssurance(source, policy, {
     routes: evidenceRoutes,
     reflectedRoutes,
+    ...(options.mounts === undefined ? {} : { mounts: options.mounts }),
   })
   const report: CapabilityAssuranceReport =
     violations.length === 0 && truncations.length === 0 && unmatchedSeams.length === 0
@@ -692,9 +696,11 @@ export async function runCapabilityCheck(
         2,
       ),
     )
-  } else if (ok) {
-    console.log("✓ capability assurance and lockfile are current")
   } else {
+    if (ok) console.log("✓ capability assurance and lockfile are current")
+    // Stated on every run, passing or not: a gap is the report's own boundary, not a failure.
+    for (const gap of result.report.gaps ?? [])
+      console.log(`• known gap, not analyzed: ${gap.path} - ${gap.reason}`)
     for (const finding of result.report.findings) console.log(`✖ ${finding.message}`)
     for (const violation of result.violations)
       console.log(

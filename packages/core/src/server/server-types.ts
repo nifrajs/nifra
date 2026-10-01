@@ -192,6 +192,13 @@ export interface MountOptions<Env = unknown> {
   readonly priority?: number
   /** For safe replayable methods only, try the next matching mount when this one returns 404. */
   readonly fallbackOn?: 404
+  /**
+   * Why this child is not analyzed, for a handler whose effects nifra cannot follow (a closure from
+   * another package). Capability assurance lists a mount with a reason as a known gap; a mount
+   * without one fails it, since its routes are invisible. A nifra `server()` belongs in `merge()`,
+   * where its routes are analyzed.
+   */
+  readonly opaque?: string
 }
 
 /** Options for a legacy fetch-handler mount. */
@@ -202,6 +209,8 @@ export interface MountFetchOptions {
   readonly priority?: number
   /** For safe replayable methods only, try the next matching legacy mount when it returns 404. */
   readonly fallbackOn?: 404
+  /** Why this handler is not analyzed - see {@link MountOptions.opaque}. */
+  readonly opaque?: string
 }
 
 /** A callback awaited after the Bun server has drained and stopped. */

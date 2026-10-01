@@ -227,8 +227,8 @@ const BROWSER_FEATURES: ReadonlySet<string> = new Set(["nifra-web-client"])
 // reachable optional subsystem fails CI. A commit that raises one states the measured cost.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-bare": 32.5,
-  "nifra-idempotency": 35.6,
-  "nifra-effect-ledger": 34.4,
+  "nifra-idempotency": 35.7,
+  "nifra-effect-ledger": 34.5,
   "nifra-mcp": 32.8,
   "nifra-sse": 33.2,
   "nifra-valibot": 33.5,

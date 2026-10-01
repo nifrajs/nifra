@@ -18,6 +18,7 @@ import {
   evidenceProvenance,
   validEvidence,
 } from "./internal/route-assurance.ts"
+import { NIFRA_BACKEND_EVIDENCE } from "./mount.ts"
 import type { StandardSchemaV1 } from "./schema/standard.ts"
 import type { ToolAnnotations } from "./server/server.ts"
 
@@ -296,4 +297,40 @@ export function reflectRoutes(source: unknown): readonly ReflectedRoute[] {
     })
   }
   return reflected
+}
+
+/** A mounted child (`mount()`, `mountFetch()`) whose routes route reflection cannot see. */
+export interface ReflectedMount {
+  /** The mount prefix with `/*`: the child serves every path under it. */
+  readonly path: string
+  /** Why the child is not analyzed, as declared by `opaque` on the mount. */
+  readonly opaque?: string
+}
+
+/**
+ * The mounts on an app that route reflection cannot see into, sorted by path. A mount whose app
+ * publishes composed evidence (the API `createWebApp` mounts) is left out: its routes reach
+ * reflection through that evidence. Anything that is not a nifra server yields an empty list.
+ */
+export function reflectMounts(source: unknown): readonly ReflectedMount[] {
+  // `fetchMounts` is the server's own mount table, read here rather than exposed through a method so
+  // apps that never reflect pay nothing for it.
+  const mounts = recordOf(source)?.fetchMounts
+  if (!Array.isArray(mounts)) return []
+  const reflected: ReflectedMount[] = []
+  for (const candidate of mounts) {
+    const mount = recordOf(candidate)
+    if (typeof mount?.path !== "string") continue
+    const app = mount.app as { readonly [NIFRA_BACKEND_EVIDENCE]?: unknown } | undefined
+    if (typeof app?.[NIFRA_BACKEND_EVIDENCE] === "function") continue
+    // Checked here, at analysis time, so serving pays nothing: a blank reason is no reason.
+    const opaque = typeof mount.opaque === "string" ? mount.opaque.trim() || undefined : undefined
+    reflected.push(
+      Object.freeze({
+        path: mount.path === "/" ? "/*" : `${mount.path}/*`,
+        ...(opaque !== undefined ? { opaque } : {}),
+      }),
+    )
+  }
+  return reflected.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
 }

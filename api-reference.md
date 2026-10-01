@@ -1813,6 +1813,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **CapabilityExecutor** _(type)_ - `type CapabilityExecutor<T> = (execution: CapabilityExecutionContext) => T | PromiseLike<T>`
 - **CapabilityFinding** _(interface)_ - `interface CapabilityFinding`
 - **CapabilityFindingCode** _(type)_ - `type CapabilityFindingCode`
+- **CapabilityGap** _(interface)_ - `interface CapabilityGap`
+  Part of the app that assurance knowingly does not cover: a mount declared `opaque`. Listed so the report states its own boundary; it never fails the report.
 - **CapabilityIdempotency** _(type)_ - `type CapabilityIdempotency = "none" | "request" | "durable"`
 - **CapabilityImportRule** _(interface)_ - `interface CapabilityImportRule`
 - **CapabilityInterceptor** _(type)_ - `type CapabilityInterceptor = ( event: CapabilityInterceptorEvent, next: CapabilityInterceptorNext, ) => void | PromiseLike<void>`
@@ -2520,12 +2522,16 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **JsonSchema** _(type)_ - `type JsonSchema = boolean | Readonly<Record<string, unknown>>`
   JSON Schema permits either a schema object or the boolean schemas `true` and `false`.
+- **ReflectedMount** _(interface)_ - `interface ReflectedMount`
+  A mounted child (`mount()`, `mountFetch()`) whose routes route reflection cannot see.
 - **ReflectedRoute** _(interface)_ - `interface ReflectedRoute`
 - **ReflectedRouteSchema** _(interface)_ - `interface ReflectedRouteSchema`
 - **ReflectedSchemaField** _(interface)_ - `interface ReflectedSchemaField`
   One top-level property of an introspectable object schema.
 - **SchemaReflection** _(interface)_ - `interface SchemaReflection`
   Validation and introspection capabilities discovered for one schema-like value.
+- **reflectMounts** _(function)_ - `reflectMounts: (source: unknown) => readonly ReflectedMount[]`
+  The mounts on an app that route reflection cannot see into, sorted by path. A mount whose app publishes composed evidence (the API `createWebApp` mounts) is left out: its routes reach reflection through that evidence. Anything that is not a nifra server yields an empty list.
 - **reflectRoutes** _(function)_ - `reflectRoutes: (source: unknown) => readonly ReflectedRoute[]`
   Safely enumerate and normalize route descriptors from an app or descriptor array. Invalid entries are ignored; a missing/throwing `routes()` method yields an empty array.
 - **reflectSchema** _(function)_ - `reflectSchema: (value: unknown) => SchemaReflection`

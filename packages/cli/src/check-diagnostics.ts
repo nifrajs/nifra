@@ -8,6 +8,7 @@
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 import type { AssuranceConfig, AssuranceReport } from "@nifrajs/core/assurance"
+import type { CapabilityGap } from "@nifrajs/core/capabilities"
 import type { ProjectEvidenceSnapshot } from "@nifrajs/core/evidence"
 import type { CapabilityProjectReport } from "./capabilities-tool.ts"
 import {
@@ -84,6 +85,9 @@ export interface CheckResult {
    * better-auth). Echoed here so `--json` / the MCP tool / the report can show what the typed-client scan
    * deliberately skipped - a suppressed prefix stays auditable instead of silently hiding real drift. */
   readonly externalMounts?: readonly string[]
+  /** Mounts declared `opaque` - outside capability assurance on purpose, each with its stated reason.
+   * Listed on every run so the report states its own boundary; never a failure. */
+  readonly knownGaps?: readonly CapabilityGap[]
   /** Active per-rule overrides from `nifra.check.json` `rules`, echoed verbatim so a retagged or
    * suppressed finding stays auditable in `--json`, the MCP tool, and the human report - config can
    * lower (or raise) the gate, but never invisibly. */
@@ -571,6 +575,7 @@ export async function collectCheckDiagnostics(
     shown.length < total ? shown.length + nonLegacyStructuredCount : finalStructured.length
 
   const doctor = projectFacts.packages.doctor
+  const knownGaps = projectFacts.policies.capability?.report.gaps ?? []
   const result: CheckResult = {
     ok: !finalDiagnostics.some((value) => value.severity === "error"),
     typecheck: projectFacts.check.typecheck.ran
@@ -596,6 +601,7 @@ export async function collectCheckDiagnostics(
     ...(checkConfig.externalMounts.length === 0
       ? {}
       : { externalMounts: checkConfig.externalMounts }),
+    ...(knownGaps.length === 0 ? {} : { knownGaps }),
     ...(Object.keys(checkConfig.rules).length === 0 ? {} : { ruleOverrides: checkConfig.rules }),
     ...(shown.length < total ? { truncated: { shown: shown.length, total } } : {}),
   }

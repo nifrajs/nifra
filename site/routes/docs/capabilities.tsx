@@ -105,6 +105,20 @@ const app = server()
     executeCapability(c, "billing.charge", {}, () => gateway.charge()),
   )`
 
+const OPAQUE = `import { server } from "@nifrajs/core"
+
+// Stands in for a handler from another package (better-auth's): nifra cannot see what it reaches.
+const authHandler = { fetch: (request: Request) => new Response(request.url) }
+
+export const app = server().mount({
+  path: "/api/auth",
+  app: authHandler,
+  opaque: "better-auth's own handler; its effects are its own",
+})`
+
+const OPAQUE_CHECK = `$ nifra check
+• known gap, not capability-analyzed: /api/auth/* - better-auth's own handler; its effects are its own`
+
 const LEVELS = `$ nifra capabilities snapshot   # writes capabilities.lock.json
 $ nifra levels
 ✓ L0 typed contract
@@ -247,6 +261,25 @@ export default function Capabilities() {
         like the auth plugins - routes registered before <code>.use(...)</code> are not covered, and{" "}
         <code>nifra check</code> says so rather than assuming.
       </p>
+
+      <h2>Mounts nifra cannot read</h2>
+      <p>
+        <code>mount()</code> and <code>mountFetch()</code> hand requests to code that route reflection
+        does not walk, so the effects behind a mount are unproven. A <code>server()</code> you own
+        belongs in <code>merge()</code> instead, where every route is analyzed like your own. For a
+        handler you cannot analyze, such as a closure exported by an auth library, state why:
+      </p>
+      <CodeBlock code={OPAQUE} lang="ts" />
+      <p>
+        A mount with a reason is a <strong>known gap</strong>: <code>nifra check</code> and{" "}
+        <code>nifra capabilities check</code> list it on every run, and it neither fails assurance nor
+        lowers a level. A mount without one fails, naming both fixes:{" "}
+        <code>mount /api/auth/* is not analyzed</code>. The capability lockfile and the trust manifest
+        record routes, not mounts, so review a new gap where it is listed: in the check output. The
+        same{" "}
+        <code>opaque</code> field works on a <code>createWebApp</code> <code>mounts</code> entry.
+      </p>
+      <CodeBlock code={OPAQUE_CHECK} lang="bash" />
 
       <h2>The lockfile</h2>
       <p>

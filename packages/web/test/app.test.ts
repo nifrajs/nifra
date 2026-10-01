@@ -1258,6 +1258,26 @@ test("webProjectEvidence fails closed when a mounted app has no evidence provide
     mounts: [{ path: "/external", app: { fetch: () => Response.json({ ok: true }) } }],
   })
   await expect(webProjectEvidence(app)).rejects.toThrow(/no token-only evidence provider/)
+  await expect(webProjectEvidence(app)).rejects.toThrow(/opaque/)
+})
+
+test("webProjectEvidence lists a mount declared opaque as a known gap instead of failing", async () => {
+  const app = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    mounts: [
+      {
+        path: "/api/auth",
+        app: { fetch: () => Response.json({ ok: true }) },
+        opaque: "better-auth's own handler",
+      },
+    ],
+  })
+  const evidence = await webProjectEvidence(app)
+  expect(evidence.mounts).toEqual([{ path: "/api/auth/*", opaque: "better-auth's own handler" }])
+  // Still served: the reason changes what assurance reports, not what the app answers.
+  expect((await app.fetch(new Request("http://x/api/auth/session"))).status).toBe(200)
 })
 
 test("webProjectEvidence composes wildcard mounts and rejects an API without evidence", async () => {

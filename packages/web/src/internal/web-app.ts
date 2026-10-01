@@ -137,7 +137,8 @@ export interface CreateWebAppOptions<Env = unknown> {
    *
    * Tried longest-path-first and BEFORE the `api` mount, so a mount at `/api/auth` wins over a backend
    * at `/api` no matter which was declared first. `stripPrefix` is the per-mount form of {@link apiStrip}:
-   * leave it off to pass the full path through.
+   * leave it off to pass the full path through. `opaque` states why a mount whose routes nifra cannot
+   * read (better-auth's handler) is outside assurance; it is then listed as a known gap.
    */
   readonly mounts?: ReadonlyArray<{
     readonly path: string
@@ -145,6 +146,7 @@ export interface CreateWebAppOptions<Env = unknown> {
     readonly stripPrefix?: boolean
     readonly priority?: number
     readonly fallbackOn?: 404
+    readonly opaque?: string
   }>
   /** Secret for **draft / preview mode** (see `enableDraft`). When set, a request carrying a valid
    * signed `__nifra_draft` cookie gets `ctx.draft === true` in loaders/actions (else always `false`).
@@ -322,6 +324,7 @@ export function createWebApp<Env = unknown>(
         ...(mount.stripPrefix === undefined ? {} : { stripPrefix: mount.stripPrefix }),
         ...(mount.priority === undefined ? {} : { priority: mount.priority }),
         ...(mount.fallbackOn === undefined ? {} : { fallbackOn: mount.fallbackOn }),
+        ...(mount.opaque === undefined ? {} : { opaque: mount.opaque }),
       }),
     ),
   )
@@ -396,8 +399,11 @@ export function createWebApp<Env = unknown>(
       for (const mount of configuredMounts) {
         const provider = evidenceProviderOf(mount.app)
         if (provider === undefined) {
+          // A declared opaque mount reaches the snapshot as a known gap, through this app's own
+          // mount reflection above.
+          if (mount.opaque !== undefined) continue
           throw new Error(
-            `[nifra/web] cannot compose assurance evidence: mount "${mount.path}" has no token-only evidence provider`,
+            `[nifra/web] cannot compose assurance evidence: mount "${mount.path}" has no token-only evidence provider - declare why it is not analyzed with { opaque: "<reason>" }`,
           )
         }
         parts.push({

@@ -29,7 +29,12 @@ import {
   effectLedgerOf,
   normalizeEffectMetadata,
 } from "./ledger.ts"
-import { type ReflectedRoute, reflectRoutes } from "./reflection.ts"
+import {
+  type ReflectedMount,
+  type ReflectedRoute,
+  reflectMounts,
+  reflectRoutes,
+} from "./reflection.ts"
 
 export type {
   AroundCapabilityOptions,
@@ -154,6 +159,8 @@ export interface CapabilityEvidenceSet {
   readonly routes: readonly RouteCapabilityEvidence[]
   /** Optional already-composed route reflection for mounted application surfaces. */
   readonly reflectedRoutes?: readonly ReflectedRoute[]
+  /** The mounts reflection cannot see into, when already composed. Default: `reflectMounts(source)`. */
+  readonly mounts?: readonly ReflectedMount[]
 }
 
 export type CapabilityFindingCode =
@@ -167,6 +174,7 @@ export type CapabilityFindingCode =
   | "forbidden-effect-import"
   | "provenance-truncated"
   | "unmatched-provenance-seam"
+  | "opaque-mount-undeclared"
 
 export interface CapabilityFinding {
   readonly code: CapabilityFindingCode
@@ -188,10 +196,24 @@ export interface AssuredCapabilityRoute {
   readonly classification?: DataClassification
 }
 
+/**
+ * Part of the app that assurance knowingly does not cover: a mount declared `opaque`. Listed so the
+ * report states its own boundary; it never fails the report.
+ */
+export interface CapabilityGap {
+  readonly kind: "opaque-mount"
+  /** The mount prefix with `/*`. */
+  readonly path: string
+  /** The declared reason. */
+  readonly reason: string
+}
+
 export interface CapabilityAssuranceReport {
   readonly ok: boolean
   readonly routes: readonly AssuredCapabilityRoute[]
   readonly findings: readonly CapabilityFinding[]
+  /** Declared known gaps, present when there is at least one. */
+  readonly gaps?: readonly CapabilityGap[]
 }
 
 export interface CapabilitySnapshotRoute {
@@ -482,10 +504,26 @@ export function evaluateCapabilityAssurance(
       }),
     )
   }
+  // A mount's routes are invisible to reflection, so its effects are unproven. A declared reason
+  // turns that into a stated boundary of the report; an undeclared one is a hole and fails it.
+  const gaps: CapabilityGap[] = []
+  for (const mount of evidenceSet.mounts ?? reflectMounts(source)) {
+    if (mount.opaque !== undefined) {
+      gaps.push(Object.freeze({ kind: "opaque-mount", path: mount.path, reason: mount.opaque }))
+      continue
+    }
+    findings.push({
+      code: "opaque-mount-undeclared",
+      method: "*",
+      path: mount.path,
+      message: `mount ${mount.path} is not analyzed - merge() a nifra server() so its routes are checked, or declare why with { opaque: "<reason>" } on the mount`,
+    })
+  }
   return Object.freeze({
     ok: findings.length === 0,
     routes: Object.freeze(routes),
     findings: Object.freeze(findings),
+    ...(gaps.length > 0 ? { gaps: Object.freeze(gaps) } : {}),
   })
 }
 

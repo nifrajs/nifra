@@ -349,6 +349,10 @@ interface FetchMount<Env = unknown> {
   readonly fallbackOn404: boolean
   readonly beforeRoutes: boolean
   readonly order: number
+  /** The declared reason this child is not analyzed (`MountOptions.opaque`), checked by reflection. */
+  readonly opaque: string | undefined
+  /** The mounted app (`mount()` only), for reflection to tell a composed child from an opaque one. */
+  readonly app?: object
 }
 
 /** The socket peer Bun observed, as a `Platform` for the request lifecycle (`undefined` if unknown). */
@@ -1116,6 +1120,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       fallbackOn404: options.fallbackOn === 404,
       beforeRoutes: false,
       order: this.mountOrder++,
+      opaque: options.opaque,
     }
     this.fetchMounts.push(mount)
     this.fetchMounts.sort(compareMounts)
@@ -1170,6 +1175,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       fallbackOn404: options.fallbackOn === 404,
       beforeRoutes: true,
       order: this.mountOrder++,
+      opaque: options.opaque,
+      app,
     }
     this.fetchMounts.push(mount)
     this.fetchMounts.sort(compareMounts)
