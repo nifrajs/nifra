@@ -56,20 +56,26 @@ async function answers(
   // Bound to the loopback address itself: a port picked for every interface can be one another
   // process already holds on loopback, and that process would get these requests.
   const instance = app.listen(0, { hostname: "127.0.0.1" })
-  const listened: string[] = []
-  const fetched: string[] = []
+  // Probes are independent, so they go out together: one at a time, the generated-table test's
+  // ~80k loopback round trips outran its budget on a loaded machine.
   try {
-    for (const [method, path] of requests) {
-      const label = `${method} ${path}`
-      listened.push(
-        await show(label, await fetch(`http://127.0.0.1:${instance.port}${path}`, { method })),
-      )
-      fetched.push(await show(label, await app.fetch(new Request(`http://x${path}`, { method }))))
-    }
+    const listened = await Promise.all(
+      requests.map(async ([method, path]) =>
+        show(
+          `${method} ${path}`,
+          await fetch(`http://127.0.0.1:${instance.port}${path}`, { method }),
+        ),
+      ),
+    )
+    const fetched = await Promise.all(
+      requests.map(async ([method, path]) =>
+        show(`${method} ${path}`, await app.fetch(new Request(`http://x${path}`, { method }))),
+      ),
+    )
+    return { listened, fetched }
   } finally {
     instance.stop(true)
   }
-  return { listened, fetched }
 }
 
 describe("Bun-native route table agrees with the portable router", () => {
