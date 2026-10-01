@@ -17,6 +17,7 @@ import { type CheckResult, renderCheckReport } from "./check.ts"
 import type { ContractsLock } from "./contracts.ts"
 import { type Diagnostic, diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
 import type { DoctorResult } from "./doctor.ts"
+import { type I18nCheckOutput, i18nCheckPassed, renderI18nCheck } from "./i18n-check.ts"
 import type { VerificationLevelsResult } from "./levels-tool.ts"
 import type { LoadedApp } from "./load.ts"
 import type { ManifestEmitCommandResult } from "./manifest-tool.ts"
@@ -381,6 +382,14 @@ interface SmokeInput {
   readonly fixture?: string | undefined
   readonly inProcess?: boolean | undefined
   readonly json?: boolean | undefined
+  readonly dir?: string | undefined
+}
+
+interface I18nInput {
+  readonly action: "check"
+  readonly entry?: string | undefined
+  readonly json?: boolean | undefined
+  readonly strict?: boolean | undefined
   readonly dir?: string | undefined
 }
 
@@ -812,6 +821,35 @@ const SMOKE_SCHEMA = input<SmokeInput>(
     return {
       fixture: optionalString(raw.fixture, "fixture"),
       ...parseBooleanFlags(raw, ["inProcess", "json"]),
+      ...(raw.dir === undefined ? {} : { dir: raw.dir }),
+    }
+  },
+)
+
+const I18N_SCHEMA = input<I18nInput>(
+  objectSchema(
+    {
+      action: { type: "string", enum: ["check"] },
+      entry: { type: "string" },
+      json: { type: "boolean" },
+      strict: { type: "boolean" },
+      dir: { type: "string" },
+    },
+    ["action"],
+  ),
+  (value) => {
+    const raw = withDir(record(value))
+    if (raw.action !== "check") {
+      throw new TypeError(
+        raw.action === undefined
+          ? "i18n needs an action: nifra i18n check [entry]"
+          : `unknown i18n action: ${String(raw.action)} (the one action is check)`,
+      )
+    }
+    return {
+      action: "check",
+      entry: optionalString(raw.entry, "entry"),
+      ...parseBooleanFlags(raw, ["json", "strict"]),
       ...(raw.dir === undefined ? {} : { dir: raw.dir }),
     }
   },
@@ -1590,6 +1628,33 @@ const portSpec: CommandSpec<PortInput, PortResult> = {
   json: (out) => out.json,
 }
 
+// CLI only: it imports app code (the catalogs), which a long-lived MCP server process would cache.
+const i18nSpec: CommandSpec<I18nInput, I18nCheckOutput> = {
+  name: "i18n",
+  summary:
+    "Check i18n catalogs (imports the module exporting `locales` and `catalogs`): coverage, missing and unused keys, ICU syntax, placeholder and tag parity, plural cases, script purity, untranslated messages.",
+  input: I18N_SCHEMA,
+  output: output({ type: "object" }),
+  transports: ["cli"],
+  stability: "stable",
+  argv: {
+    positionals: ["action", "entry"],
+    flags: [
+      { name: "json", field: "json", type: "boolean" },
+      { name: "strict", field: "strict", type: "boolean" },
+    ],
+  },
+  async run(value, ctx) {
+    const { runI18nCheck } = await import("./i18n-check.ts")
+    return runI18nCheck(value.dir === undefined ? ctx.cwd : resolve(ctx.cwd, value.dir), {
+      entry: value.entry,
+    })
+  },
+  render: (out) => renderI18nCheck(out),
+  success: (out, input) => i18nCheckPassed(out, input.strict === true),
+  json: (out) => out,
+}
+
 export const commandSpecs = Object.freeze([
   checkSpec,
   reviewSpec,
@@ -1612,6 +1677,7 @@ export const commandSpecs = Object.freeze([
   replaySpec,
   smokeSpec,
   portSpec,
+  i18nSpec,
 ] as const)
 
 const commandByName = new Map(commandSpecs.map((spec) => [spec.name, spec]))

@@ -26,6 +26,7 @@ import {
   type Runtime,
   readVar,
 } from "./format.ts"
+import { TAG_SOURCE } from "./tags.ts"
 
 /** A tag's content, or a whole rich message: text, and whatever the tag handlers returned, in order.
  * Adjacent text is merged. */
@@ -51,9 +52,7 @@ interface Frame<R> {
   readonly chunks: (string | R)[]
 }
 
-// A tag is `<name>`, `</name>` or `<name/>`: an ASCII letter, then letters, digits, `_` or `-`.
-// Anything else (`a < b`, `<3`, `<a href="x">`) is text.
-const TAG = /<(\/?)([A-Za-z][\w-]*)\s*(\/?)>/y
+const TAG = new RegExp(TAG_SOURCE, "y")
 const EMPTY: Readonly<Record<string, unknown>> = {}
 
 const handlerOf = <R>(

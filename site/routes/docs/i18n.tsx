@@ -141,6 +141,38 @@ const RICH_SVELTE = `<!-- Svelte: each tag is a snippet that renders its content
 {#snippet b(content)}<strong>{@render content()}</strong>{/snippet}
 <p><Rich key="terms" tags={{ link, b }} vars={{ name }} /></p>`
 
+const CHECK_ENTRY = `// doc-check: skip - imports the app's own catalog files.
+// lib/i18n.ts - the module \`nifra i18n check\` imports.
+import { defineLocales } from "@nifrajs/i18n"
+import en from "../messages/en.json"
+
+export const locales = defineLocales({
+  default: "en",
+  locales: { en: {}, hi: {}, gu: { draft: true } },
+})
+export const catalogs = {
+  en,
+  hi: () => import("../messages/hi.json"),
+  gu: () => import("../messages/gu.json"),
+}
+// Keys a check skips: exact, a prefix ending in ".*", or "*".
+export const ignore = { script: ["languages.*"], untranslated: ["brand"] }`
+
+const CHECK_TEST = `// Or as a test, with no CLI: the same checks, pure.
+import { expect, test } from "bun:test"
+import { defineLocales } from "@nifrajs/i18n"
+import { checkCatalogs } from "@nifrajs/i18n/check"
+
+const locales = defineLocales({ default: "en", locales: { en: {}, gu: {} } })
+
+test("catalogs are consistent", () => {
+  const { findings } = checkCatalogs({
+    locales,
+    catalogs: { en: { hi: "Hi {name}" }, gu: { hi: "નમસ્તે {name}" } },
+  })
+  expect(findings.filter((finding) => finding.severity === "error")).toEqual([])
+})`
+
 const CATALOG = `// messages/en.ts - the default locale's catalog: ICU strings, lists and nested blocks.
 import { createFormatter, type PartialMessages } from "@nifrajs/i18n"
 
@@ -305,6 +337,36 @@ export default function I18n() {
         <code>@nifrajs/i18n/rich</code>: it returns the message as an array of strings and whatever your
         handlers returned, for building any other output.
       </p>
+
+      <h2>Check your catalogs</h2>
+      <p>
+        <code>nifra i18n check</code> imports the module that exports your <code>locales</code> and{" "}
+        <code>catalogs</code> (unlike <code>nifra check</code>, it runs that code) and checks every
+        catalog the way <code>t()</code> reads it:
+      </p>
+      <ul>
+        <li><b>Coverage</b> per locale, counting messages a regional locale inherits through{" "}
+          <code>chain()</code>; each <b>missing</b> key, and each <b>unused</b> key the default catalog
+          does not have.</li>
+        <li><b>ICU syntax</b>, and <b>placeholder and tag parity</b> with the default message: a
+          translation that drops <code>{`{name}`}</code> or <code>&lt;link&gt;</code> loses it, one that
+          adds a placeholder renders it empty.</li>
+        <li><b>Plural cases</b>: a missing <code>other</code>, and categories the locale's grammar uses
+          (Russian <code>few</code>/<code>many</code>, Arabic <code>zero</code>/<code>two</code>) that a
+          message never states.</li>
+        <li><b>Script purity</b>: letters from a script the locale does not write in - a Telugu sign
+          in a Gujarati word, a Cyrillic <code>е</code> in English - and words mixing Latin with the
+          locale's script, from <code>Intl.Locale(tag).maximize().script</code>. Latin words (brands,
+          units) stay allowed.</li>
+        <li><b>Untranslated</b> messages identical to the default in another language, as a warning.</li>
+      </ul>
+      <CodeBlock code={CHECK_ENTRY} lang="ts" />
+      <p>
+        It exits 1 on an error, and with <code>--strict</code> on a warning too; <code>--json</code>{" "}
+        prints the result. Draft locales report missing keys as info. The checks themselves are{" "}
+        <code>checkCatalogs()</code> from <code>@nifrajs/i18n/check</code>:
+      </p>
+      <CodeBlock code={CHECK_TEST} lang="ts" />
 
       <h2>Notes</h2>
       <ul>

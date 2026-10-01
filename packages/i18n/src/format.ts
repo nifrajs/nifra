@@ -248,7 +248,7 @@ function parseMessage(s: string, start: number, pound: boolean): { parts: Part[]
   return { parts, end: i }
 }
 
-function parseRootMessage(s: string): readonly Part[] {
+export function parseRootMessage(s: string): readonly Part[] {
   const parsed = parseMessage(s, 0, false)
   if (parsed.end !== s.length) fail("unexpected '}'", parsed.end)
   return parsed.parts
@@ -345,7 +345,7 @@ function evaluate(
  * an own property first, then its first segment. Own properties only, so `t("constructor")` never
  * reads `Object.prototype`.
  */
-function lookup(catalog: object, key: string): unknown {
+export function lookup(catalog: object, key: string): unknown {
   let node: unknown = catalog
   let rest = key
   for (;;) {

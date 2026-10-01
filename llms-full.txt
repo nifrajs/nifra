@@ -4743,6 +4743,71 @@ The framework-free form is `rich(formatter, key, tags, vars)` from
 `@nifrajs/i18n/rich`: it returns the message as an array of strings and whatever your
 handlers returned, for building any other output.
 
+### Check your catalogs
+
+`nifra i18n check` imports the module that exports your `locales` and
+`catalogs` (unlike `nifra check`, it runs that code) and checks every
+catalog the way `t()` reads it:
+
+- **Coverage** per locale, counting messages a regional locale inherits through
+`chain()`; each **missing** key, and each **unused** key the default catalog
+does not have.
+
+- **ICU syntax**, and **placeholder and tag parity** with the default message: a
+translation that drops `{name}` or `<link>` loses it, one that
+adds a placeholder renders it empty.
+
+- **Plural cases**: a missing `other`, and categories the locale's grammar uses
+(Russian `few`/`many`, Arabic `zero`/`two`) that a
+message never states.
+
+- **Script purity**: letters from a script the locale does not write in - a Telugu sign
+in a Gujarati word, a Cyrillic `е` in English - and words mixing Latin with the
+locale's script, from `Intl.Locale(tag).maximize().script`. Latin words (brands,
+units) stay allowed.
+
+- **Untranslated** messages identical to the default in another language, as a warning.
+
+```ts
+// doc-check: skip - imports the app's own catalog files.
+// lib/i18n.ts - the module `nifra i18n check` imports.
+import { defineLocales } from "@nifrajs/i18n"
+import en from "../messages/en.json"
+
+export const locales = defineLocales({
+  default: "en",
+  locales: { en: {}, hi: {}, gu: { draft: true } },
+})
+export const catalogs = {
+  en,
+  hi: () => import("../messages/hi.json"),
+  gu: () => import("../messages/gu.json"),
+}
+// Keys a check skips: exact, a prefix ending in ".*", or "*".
+export const ignore = { script: ["languages.*"], untranslated: ["brand"] }
+```
+
+It exits 1 on an error, and with `--strict` on a warning too; `--json`
+prints the result. Draft locales report missing keys as info. The checks themselves are
+`checkCatalogs()` from `@nifrajs/i18n/check`:
+
+```ts
+// Or as a test, with no CLI: the same checks, pure.
+import { expect, test } from "bun:test"
+import { defineLocales } from "@nifrajs/i18n"
+import { checkCatalogs } from "@nifrajs/i18n/check"
+
+const locales = defineLocales({ default: "en", locales: { en: {}, gu: {} } })
+
+test("catalogs are consistent", () => {
+  const { findings } = checkCatalogs({
+    locales,
+    catalogs: { en: { hi: "Hi {name}" }, gu: { hi: "નમસ્તે {name}" } },
+  })
+  expect(findings.filter((finding) => finding.severity === "error")).toEqual([])
+})
+```
+
 ### Notes
 
 - For many locales, load catalogs **lazily** per request - don't bundle every catalog. A
@@ -10673,6 +10738,15 @@ For hand-rolled own-API `fetch()` calls, `nifra check` stays conservative: simpl
 that match a statically visible Nifra route get an exact typed-client rewrite diff; dynamic URLs, custom
 headers, bodies, query strings, or ambiguous routes fall back to manual steps.
 
+## `nifra i18n check` - the catalog gate
+
+`nifra i18n check [entry]` imports the module that exports your `locales` (from `defineLocales`) and
+`catalogs` - unlike `nifra check`, it runs that code - and reports per-locale coverage, missing and
+unused keys, ICU syntax errors, placeholder and rich-tag parity with the default message, plural cases
+the locale's grammar needs, script purity (letters from a script the locale does not write in), and
+untranslated messages. It exits 1 on an error, `--strict` also fails on warnings, and `--json` prints
+the result. The checks are `checkCatalogs()` from `@nifrajs/i18n/check`, usable in a test.
+
 ## `nifra migrate --from tailwind --to stylex`
 
 This command is a dry run by default. It rewrites static `className` attributes whose utilities have a
@@ -11648,6 +11722,14 @@ entry exports a `rich()` that returns framework nodes (Svelte: `<Rich>` with one
 
 `localeCookie(name, locale)` is the browser half of the detector's `persist` cookie: assign it to
 `document.cookie` in a language switcher and it is byte-identical to the detector's `Set-Cookie`.
+
+## Checking catalogs
+
+`checkCatalogs({ locales, catalogs, ignore })` from `@nifrajs/i18n/check` reports coverage, missing
+and unused keys, ICU syntax errors, placeholder and rich-tag parity with the default message, plural
+cases the locale's grammar needs, script purity (`Intl.Locale(tag).maximize().script` against Unicode
+script properties - a Telugu sign in Gujarati, a Cyrillic `е` in English), and untranslated messages.
+It is pure; `nifra i18n check [entry]` runs it over the module exporting `locales` and `catalogs`.
 
 ## Locale detection
 

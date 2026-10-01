@@ -306,6 +306,12 @@
     "code": "// messages/en.ts - the default locale's catalog: ICU strings, lists and nested blocks.\nimport { createFormatter, type PartialMessages } from \"@nifrajs/i18n\"\n\nexport const en = {\n  cart: \"{count, plural, =0 {empty} one {# item} other {# items}}\",\n  place: \"You finished {rank, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}\",\n  home: { title: \"Welcome back, {name}\" },\n  faq: [{ q: \"Is it free?\", a: \"Yes.\" }],\n}\n\n// Another locale is partial; a key it lacks falls back to the next catalog.\nexport const fr: PartialMessages<typeof en> = {\n  cart: \"{count, plural, =0 {vide} one {# article} other {# articles}}\",\n}\n\nconst t = createFormatter<typeof en>(\"fr\", fr, {\n  fallback: [en],\n  onMissing: (key, locale) => console.warn(`missing ${locale} translation: ${key}`),\n  timeZone: \"Europe/Paris\",\n})\nt.t(\"cart\", { count: 1200 }) // \"1 200 articles\"\nt.t(\"home.title\", { name: \"Ada\" }) // \"Welcome back, Ada\", from en\nconst questions = t.get(\"faq\")?.map((item) => item.q)\nconsole.log(questions)"
   },
   {
+    "name": "CHECK_TEST",
+    "topic": "Nifra - i18n",
+    "slug": "i18n",
+    "code": "// Or as a test, with no CLI: the same checks, pure.\nimport { expect, test } from \"bun:test\"\nimport { defineLocales } from \"@nifrajs/i18n\"\nimport { checkCatalogs } from \"@nifrajs/i18n/check\"\n\nconst locales = defineLocales({ default: \"en\", locales: { en: {}, gu: {} } })\n\ntest(\"catalogs are consistent\", () => {\n  const { findings } = checkCatalogs({\n    locales,\n    catalogs: { en: { hi: \"Hi {name}\" }, gu: { hi: \"નમસ્તે {name}\" } },\n  })\n  expect(findings.filter((finding) => finding.severity === \"error\")).toEqual([])\n})"
+  },
+  {
     "name": "DETECTOR",
     "topic": "Nifra - i18n",
     "slug": "i18n",

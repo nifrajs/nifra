@@ -3274,6 +3274,17 @@ _No named exports (side-effect entrypoint)._
 - **resolveLocale** _(function)_ - `resolveLocale: (request: Request | LocaleParts, options: NegotiateOptions) => ResolvedLocale`
   Negotiate the request's locale and report which source chose it. Order: a valid {@link NegotiateOptions.queryParam} value → a valid {@link NegotiateOptions.cookie} value → `Accept-Language` (each `q`-ranked tag, exact then base-subtag) → `defaultLocale`.
 
+### `@nifrajs/i18n/check`
+
+- **CatalogCheckCode** _(type)_ - `type CatalogCheckCode`
+- **CatalogCheckOptions** _(interface)_ - `interface CatalogCheckOptions<K extends string = string>`
+- **CatalogCheckResult** _(interface)_ - `interface CatalogCheckResult`
+- **CatalogCheckSeverity** _(type)_ - `type CatalogCheckSeverity = "error" | "warning" | "info"`
+- **CatalogFinding** _(interface)_ - `interface CatalogFinding`
+- **LocaleCoverage** _(interface)_ - `interface LocaleCoverage`
+- **checkCatalogs** _(function)_ - `checkCatalogs: <K extends string>(options: CatalogCheckOptions<K>) => CatalogCheckResult`
+  Check every locale's catalog in `locales` against the default locale's.
+
 ### `@nifrajs/i18n/detector`
 
 - **LocaleContext** _(interface)_ - `interface LocaleContext`

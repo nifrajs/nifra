@@ -85,6 +85,15 @@ For hand-rolled own-API `fetch()` calls, `nifra check` stays conservative: simpl
 that match a statically visible Nifra route get an exact typed-client rewrite diff; dynamic URLs, custom
 headers, bodies, query strings, or ambiguous routes fall back to manual steps.
 
+## `nifra i18n check` - the catalog gate
+
+`nifra i18n check [entry]` imports the module that exports your `locales` (from `defineLocales`) and
+`catalogs` - unlike `nifra check`, it runs that code - and reports per-locale coverage, missing and
+unused keys, ICU syntax errors, placeholder and rich-tag parity with the default message, plural cases
+the locale's grammar needs, script purity (letters from a script the locale does not write in), and
+untranslated messages. It exits 1 on an error, `--strict` also fails on warnings, and `--json` prints
+the result. The checks are `checkCatalogs()` from `@nifrajs/i18n/check`, usable in a test.
+
 ## `nifra migrate --from tailwind --to stylex`
 
 This command is a dry run by default. It rewrites static `className` attributes whose utilities have a

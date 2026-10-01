@@ -65,6 +65,14 @@ entry exports a `rich()` that returns framework nodes (Svelte: `<Rich>` with one
 `localeCookie(name, locale)` is the browser half of the detector's `persist` cookie: assign it to
 `document.cookie` in a language switcher and it is byte-identical to the detector's `Set-Cookie`.
 
+## Checking catalogs
+
+`checkCatalogs({ locales, catalogs, ignore })` from `@nifrajs/i18n/check` reports coverage, missing
+and unused keys, ICU syntax errors, placeholder and rich-tag parity with the default message, plural
+cases the locale's grammar needs, script purity (`Intl.Locale(tag).maximize().script` against Unicode
+script properties - a Telugu sign in Gujarati, a Cyrillic `е` in English), and untranslated messages.
+It is pure; `nifra i18n check [entry]` runs it over the module exporting `locales` and `catalogs`.
+
 ## Locale detection
 
 `negotiateLocale()` / `resolveLocale()` are pure: query parameter → cookie → `Accept-Language` →

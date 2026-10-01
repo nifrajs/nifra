@@ -3210,11 +3210,41 @@
     "signature": "export interface CaseResult {\n    readonly caseId: string;\n    readonly verdicts: readonly RubricVerdict[];\n    readonly digest: string;\n}"
   },
   {
+    "name": "CatalogCheckCode",
+    "kind": "type",
+    "package": "@nifrajs/i18n",
+    "signature": "export type CatalogCheckCode = \"missing-catalog\" | \"unknown-locale\" | \"invalid-catalog\" | \"shape\" | \"invalid-message\" | \"missing-key\" | \"unused-key\" | \"placeholder\" | \"tag\" | \"missing-other\" | \"plural-categories\" | \"script\" | \"untranslated\";"
+  },
+  {
+    "name": "CatalogCheckOptions",
+    "kind": "interface",
+    "package": "@nifrajs/i18n",
+    "signature": "export interface CatalogCheckOptions<K extends string = string> {\n    readonly locales: Locales<K>;\n    /** Each locale's catalog, by registry key. */\n    readonly catalogs: {\n        readonly [P in K]?: MessageTree | undefined;\n    };\n    /** Keys a check skips, by finding code: an exact key, a prefix ending in `.*` (`\"languages.*\"`), or\n     * `\"*\"` for every key. */\n    readonly ignore?: {\n        readonly [C in CatalogCheckCode]?: readonly string[] | undefined;\n    } | undefined;\n}"
+  },
+  {
+    "name": "CatalogCheckResult",
+    "kind": "interface",
+    "package": "@nifrajs/i18n",
+    "signature": "export interface CatalogCheckResult {\n    /** No error findings. Warnings and info never fail it. */\n    readonly ok: boolean;\n    readonly findings: readonly CatalogFinding[];\n    readonly coverage: readonly LocaleCoverage[];\n}"
+  },
+  {
+    "name": "CatalogCheckSeverity",
+    "kind": "type",
+    "package": "@nifrajs/i18n",
+    "signature": "export type CatalogCheckSeverity = \"error\" | \"warning\" | \"info\";"
+  },
+  {
     "name": "CatalogError",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
     "signature": "export declare class CatalogError extends Error {\n    readonly reason: string;\n    constructor(reason: string);\n}",
     "doc": "/** Thrown on a catalog construction fault: a key collision across merged catalogs. */"
+  },
+  {
+    "name": "CatalogFinding",
+    "kind": "interface",
+    "package": "@nifrajs/i18n",
+    "signature": "export interface CatalogFinding {\n    readonly severity: CatalogCheckSeverity;\n    readonly code: CatalogCheckCode;\n    readonly locale: string;\n    /** The dotted key, when the finding is about one message. */\n    readonly key?: string;\n    readonly message: string;\n}"
   },
   {
     "name": "CatalogStep",
@@ -3537,6 +3567,13 @@
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface ChannelSubscription<Message> extends AsyncIterableIterator<ChannelEvent<Message>> {\n    readonly channel: string;\n    readonly closed: boolean;\n    readonly closeReason: ChannelCloseReason | undefined;\n    readonly resumeToken: string | undefined;\n    close(): void;\n}"
+  },
+  {
+    "name": "checkCatalogs",
+    "kind": "function",
+    "package": "@nifrajs/i18n",
+    "signature": "export declare function checkCatalogs<K extends string>(options: CatalogCheckOptions<K>): CatalogCheckResult;",
+    "doc": "/** Check every locale's catalog in `locales` against the default locale's. */"
   },
   {
     "name": "checkResponseContract",
@@ -9976,6 +10013,12 @@
     "kind": "interface",
     "package": "@nifrajs/i18n",
     "signature": "export interface LocaleCookieOptions {\n    /** `Max-Age` in seconds. Default one year, matching the detector's `cookieMaxAge` default. Pass\n     * the same value the detector is configured with. */\n    readonly maxAge?: number;\n}"
+  },
+  {
+    "name": "LocaleCoverage",
+    "kind": "interface",
+    "package": "@nifrajs/i18n",
+    "signature": "export interface LocaleCoverage {\n    readonly locale: string;\n    readonly default: boolean;\n    readonly draft: boolean;\n    /** Messages in the default locale's catalog. */\n    readonly total: number;\n    /** Of those, how many this locale's own catalog has. */\n    readonly own: number;\n    /** Of those, how many render in this locale's language: its own, or from a catalog earlier in its\n     * `chain()` than the default. */\n    readonly translated: number;\n    /** `translated / total`, from 0 to 1; 1 for the default locale. */\n    readonly coverage: number;\n}"
   },
   {
     "name": "localeDetector",

@@ -215,6 +215,12 @@ Usage:
                                          detected from build/deploy scripts, wrangler.toml, or vercel config;
                                          --ci (or any --target) exits nonzero when a used feature is
                                          unsupported on the target; --strict also fails on caveats.
+  nifra i18n check [entry]               Check i18n catalogs: coverage, missing + unused keys, ICU syntax,
+                [--json] [--strict]      placeholder + tag parity, plural cases, script purity,
+                                         untranslated messages. IMPORTS the entry (default: the first
+                                         i18n.ts in ., lib/, src/, src/lib/, app/), which exports
+                                         \`locales\` + \`catalogs\` (+ optional \`ignore\`). Exits 1 on
+                                         errors; --strict also on warnings.
 
 Reads nifra.config.ts (adapter + clientModule + plugins; or framework.ts), backend.ts (optional), and
 routes/ from the current directory. Run from your project root.

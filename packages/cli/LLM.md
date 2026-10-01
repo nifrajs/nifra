@@ -60,3 +60,4 @@ _…and 67 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) fo
 - nifra replay <file> - Validate a token-only verification metadata file and dispatch it against its gate.
 - nifra smoke [--fixture <value>] [--in-process] [--json] - Run the declared production SSR, mounted-API, 404, header, auth, contract, and hydration smoke checks.
 - nifra port [--target <value>] [--json] [--ci] [--strict] - Print a feature by deploy-target portability matrix with file:line evidence and gate against an unsupported target.
+- nifra i18n <action> <entry> [--json] [--strict] - Check i18n catalogs (imports the module exporting `locales` and `catalogs`): coverage, missing and unused keys, ICU syntax, placeholder and tag parity, plural cases, script purity, untranslated messages.

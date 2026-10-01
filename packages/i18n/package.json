@@ -37,6 +37,11 @@
       "bun": "./src/rich.ts",
       "types": "./dist/rich.d.ts",
       "default": "./dist/rich.js"
+    },
+    "./check": {
+      "bun": "./src/check.ts",
+      "types": "./dist/check.d.ts",
+      "default": "./dist/check.js"
     }
   },
   "files": [

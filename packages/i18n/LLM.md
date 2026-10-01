@@ -10,10 +10,11 @@ Framework-agnostic i18n for nifra - locale negotiation + a tiny ICU message form
 
 ## Public entrypoints
 
-`@nifrajs/i18n` · `@nifrajs/i18n/detector` · `@nifrajs/i18n/rich` · `@nifrajs/i18n/routing`
+`@nifrajs/i18n` · `@nifrajs/i18n/check` · `@nifrajs/i18n/detector` · `@nifrajs/i18n/rich` · `@nifrajs/i18n/routing`
 
 ## Key exports
 
+- **checkCatalogs** _(function)_ - `checkCatalogs: <K extends string>(options: CatalogCheckOptions<K>) => CatalogCheckResult` · from `@nifrajs/i18n/check`
 - **createFormatter** _(function)_ - `createFormatter: <M extends object = MessageTree>(locale: string, messages: NoInfer<CatalogFor<M>>, options?: NoInfer<FormatterOptions<M>>)…` · from `@nifrajs/i18n`
 - **defineI18nRouting** _(function)_ - `defineI18nRouting: <K extends string>(locales: Locales<K>, options?: I18nRoutingOptions) => LocalizedRouter<K>` · from `@nifrajs/i18n/routing`
 - **defineLocales** _(function)_ - `defineLocales: <const K extends string>(config: LocalesConfig<K>) => Locales<K>` · from `@nifrajs/i18n`
@@ -26,10 +27,9 @@ Framework-agnostic i18n for nifra - locale negotiation + a tiny ICU message form
 - **rich** _(function)_ - `rich: <R, M extends object = import("./format.ts").MessageTree>(formatter: Formatter<M>, key: MessageKey<M>, tags: RichTags<R>, vars?: Read…` · from `@nifrajs/i18n/rich`
 - **Alternates** _(interface)_ - `interface Alternates` · from `@nifrajs/i18n/routing`
 - **AlternatesOptions** _(interface)_ - `interface AlternatesOptions<K extends string = string>` · from `@nifrajs/i18n/routing`
-- **Formatter** _(interface)_ - `interface Formatter<M extends object = RegisteredMessages>` · from `@nifrajs/i18n`
-- **FormatterOptions** _(interface)_ - `interface FormatterOptions<M extends object = RegisteredMessages>` · from `@nifrajs/i18n`
+- **CatalogCheckOptions** _(interface)_ - `interface CatalogCheckOptions<K extends string = string>` · from `@nifrajs/i18n/check`
 
-_…and 30 more - see [`api-reference.md`](../../api-reference.md#nifrajsi18n) for the complete list._
+_…and 37 more - see [`api-reference.md`](../../api-reference.md#nifrajsi18n) for the complete list._
 
 ## Footguns
 
@@ -37,4 +37,5 @@ _…and 30 more - see [`api-reference.md`](../../api-reference.md#nifrajsi18n) f
 - Locale negotiation reads the request; resolve the locale at the boundary and thread it, don't read a global.
 - Formatters are cached per catalog object and options: pass a **stable** `onMissing` (module scope) and reuse catalog objects, or every call builds a new formatter.
 - `get(key)` returns the first catalog's value whole - blocks are not merged across `fallback` catalogs; read nested messages with `t("a.b")` to fall back per key.
+- Gate catalogs with `nifra i18n check` (or `checkCatalogs()` from `@nifrajs/i18n/check` in a test): it catches dropped `{placeholders}`, missing plural categories and lookalike letters from another script that review misses.
 - Rich text is `rich()` (`@nifrajs/i18n/rich`, or the adapter's `/i18n` `rich()` / Svelte `<Rich>`), **never** `t()` + innerHTML/`{@html}`/`v-html`: tags are bare names mapped to handlers, `t()` returns the markers verbatim.
