@@ -1539,7 +1539,8 @@ export function scanServerOnlyImports(
 // as SERVER_ONLY, minus the relative `../db` arm - a relative `db` module IS local source we resolve.)
 const SERVER_ONLY_SINK =
   /^(?:node:|bun:)|^(?:postgres|pg|mysql2|ioredis|redis|better-sqlite3|mongodb|@libsql\/client)$|^drizzle-orm\/(?:node-postgres|postgres-js|bun-sqlite|libsql|mysql2|pglite)\b/
-// The `.server` convention: a module named `*.server.ts(x)` is server-only (the client build empties it).
+// The `.server` convention: both client pipelines replace a `*.server` module with an empty one, so it
+// is the boundary the build recommends, not a leak. Nothing at or past it reaches the browser.
 const SERVER_MODULE_FILE = /\.server(\.[cm]?[jt]sx?)?$/
 // The explicit poison-import marker (`@nifrajs/web/server-only`) - a module opting into the client-leak
 // guard. A resolved file whose source carries this side-effect import is a server-only sink.
@@ -1673,7 +1674,8 @@ export type ModuleReader = (absPath: string) => string | undefined
  * node's outgoing edges are its static and literal dynamic imports; an edge is followed only when it's a RELATIVE specifier
  * that `resolve` maps to a readable local file (so the walk never descends into node_modules or chases an
  * unresolvable alias). At each node, a by-name sink import (`node:fs`, `postgres`) OR a resolved
- * `*.server` / `server-only`-marked dependency terminates the chain. Bounded by depth + a visited set, so
+ * `server-only`-marked dependency terminates the chain; a `*.server` dependency is never entered, since
+ * the client build empties it. Bounded by depth + a visited set, so
  * it's linear and cycle-free. `routeFile`/`routeContent` seed the walk; `resolve`/`read` supply the graph
  * - pure given those, so it's unit-testable with a fake graph.
  */
@@ -1709,9 +1711,9 @@ export function walkServerOnlyChain(
         if (!isRelativeSpecifier(spec)) continue
         const abs = resolve(node.abs, spec)
         if (abs === undefined || seen.has(abs)) continue
-        // (c) A resolved `*.server` module is a server-only sink by the `.server` convention - the chain
-        // ends at it (named by the as-written specifier).
-        if (SERVER_MODULE_FILE.test(abs)) return [...node.chain, spec]
+        // (c) A resolved `*.server` module is emptied in the client build: not a sink, and its own
+        // imports never ship, so the walk does not enter it.
+        if (SERVER_MODULE_FILE.test(abs)) continue
         const content = read(abs)
         if (content === undefined) continue // unreadable → can't walk; treat as a leaf
         // (d) A resolved module that opts into the `server-only` marker is a sink too.
@@ -1774,12 +1776,8 @@ export function resolveServerOnlyChains(
         }
         continue
       }
-      // The `.server` / marker sink can be the first hop itself.
-      if (SERVER_MODULE_FILE.test(abs)) {
-        flaggedSpecifiers.add(specifier)
-        out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: false })
-        continue
-      }
+      // A `*.server` first hop is the boundary itself; a marked module is a sink.
+      if (SERVER_MODULE_FILE.test(abs)) continue
       const depContent = read(abs)
       if (depContent === undefined) continue
       if (SERVER_ONLY_MARKER_IMPORT.test(depContent)) {

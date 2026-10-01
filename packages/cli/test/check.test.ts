@@ -1212,10 +1212,12 @@ describe("walkServerOnlyChain - bounded transitive walk over a fake module graph
     expect(chain).toBeUndefined()
   })
 
-  test("a *.server dependency terminates the chain by the .server convention", () => {
+  test("a *.server dependency is a boundary the walk never enters", () => {
+    // The client build empties a `.server` module, so neither it nor what it imports ships.
     const g: Record<string, string> = {
       "/app/routes/z.tsx":
         'import { secret } from "../auth.server.ts"\nexport default () => secret',
+      "/app/auth.server.ts": 'import { createHmac } from "node:crypto"\nexport const secret = 1',
     }
     const chain = walkServerOnlyChain(
       "/app/routes/z.tsx",
@@ -1223,7 +1225,7 @@ describe("walkServerOnlyChain - bounded transitive walk over a fake module graph
       (from, spec) => resolve(from, spec),
       (abs) => g[abs],
     )
-    expect(chain).toEqual(["/app/routes/z.tsx", "../auth.server.ts"])
+    expect(chain).toBeUndefined()
   })
 
   test("a server-only-marked dependency terminates the chain", () => {
@@ -2361,20 +2363,36 @@ describe("server-only-import follows literal dynamic import()", () => {
     await rm(dir, { recursive: true, force: true })
   })
 
-  test("a dynamic import inside a dependency is followed too, and a .server target is a sink", async () => {
+  test("a dynamic import inside a dependency is followed too, and a .server target is a boundary", async () => {
     const dir = await project({
       "routes/a.tsx": 'import { load } from "../lib/load"\nexport default () => load()\n',
-      "lib/load.ts": 'export const load = () => import("./db.server")\n',
+      "lib/load.ts": 'export const load = () => import("./pool")\n',
+      "lib/pool.ts": 'import pg from "pg"\nexport default pg\n',
       "lib/db.server.ts": 'import pg from "pg"\nexport default pg\n',
       "routes/b.tsx":
         'export const view = () => import("../lib/db.server")\nexport default () => null\n',
+      "lib/reads.ts": 'export const reads = () => import("./db.server")\n',
+      "routes/c.tsx": 'import { reads } from "../lib/reads"\nexport default () => reads()\n',
     })
     const result = await collectCheckResult(dir, { lintsOnly: true })
     const chains = result.diagnostics
       .filter((d) => d.rule === "server-only-import")
       .map((d) => d.chain)
-    expect(chains).toContainEqual(["routes/a.tsx", "../lib/load", "./db.server"])
-    expect(chains).toContainEqual(["routes/b.tsx", "../lib/db.server"])
+    expect(chains).toEqual([["routes/a.tsx", "../lib/load", "./pool", "pg"]])
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a loader reading a *.server module, as the troubleshooting guide shows, is clean", async () => {
+    const dir = await project({
+      "db.server.ts":
+        'import { Database } from "bun:sqlite"\nexport const db = new Database("app.db")\n',
+      "routes/notes.tsx":
+        'import type { LoaderContext } from "@nifrajs/web"\nimport { db } from "../db.server"\n' +
+        "export async function loader(_ctx: LoaderContext) {\n" +
+        '  return { notes: db.query("select * from notes").all() }\n}\nexport default () => null\n',
+    })
+    const result = await collectCheckResult(dir, { lintsOnly: true })
+    expect(result.diagnostics.filter((d) => d.rule === "server-only-import")).toEqual([])
     await rm(dir, { recursive: true, force: true })
   })
 
