@@ -3,7 +3,7 @@ import {
   NIFRA_BACKEND_BIND_PLATFORM,
   NIFRA_PLATFORM_CLIENT_IP_DERIVED,
 } from "@nifrajs/core/mount"
-import type { Platform, ResponseResult } from "@nifrajs/core/server"
+import { type Platform, type ResponseResult, status as statusResult } from "@nifrajs/core/server"
 import {
   type BoundaryRequestCtx,
   type BoundaryStates,
@@ -32,6 +32,7 @@ import {
   createMatcher,
   DATA_HEADER,
   NAV_FROM_HEADER,
+  REDIRECT_HEADER,
   RETAIN_HEADER,
   REVALIDATE_HEADER,
   STATUS_HEADER,
@@ -43,6 +44,7 @@ import {
   EMPTY_RETAIN,
   type HeadersLike,
   isControlFlow,
+  isResponseResult,
   isStatusSignal,
   type LoadedLayoutModules,
   layoutErrorId,
@@ -118,6 +120,30 @@ class LoaderPlatform {
 ;(LoaderPlatform.prototype as { [NIFRA_PLATFORM_CLIENT_IP_DERIVED]?: true })[
   NIFRA_PLATFORM_CLIENT_IP_DERIVED
 ] = true
+
+/**
+ * A redirect answering a client navigation's data request, as the client router reads one: fetch would
+ * follow a 3xx and hand the router another page's data under this route, so the location rides
+ * `x-nifra-redirect` on a 204, as an action's does. It shares its URL with the page, so it is never
+ * stored. `undefined` for any other outcome or request.
+ */
+function navigationRedirect(req: Request, outcome: unknown): ResponseResult | undefined {
+  let location: string | null | undefined
+  if (outcome instanceof Response) {
+    if (outcome.status < 300 || outcome.status >= 400) return undefined
+    location = outcome.headers.get("location")
+  } else if (isResponseResult(outcome)) {
+    const plain = outcome.plain
+    if (plain === undefined || plain.status < 300 || plain.status >= 400) return undefined
+    location = plain.headers?.location
+  } else return undefined
+  if (location === null || location === undefined || req.headers.get(DATA_HEADER) === null) {
+    return undefined
+  }
+  return statusResult(204, undefined, {
+    headers: { [REDIRECT_HEADER]: location, ...DATA_RESPONSE_HEADERS },
+  })
+}
 
 export interface PageExecutionOptions<Env = unknown> {
   readonly adapter: RenderAdapter
@@ -895,7 +921,8 @@ export function createPageRequestExecutor<Env = unknown>(
   /**
    * Run a page handler with the request's `ctx.set`, sealed once the handler settles - whatever it
    * answered with - so a write that arrives after the response was decided throws. A request that
-   * queued a cookie answers with a response no shared cache may store, returned or thrown.
+   * queued a cookie answers with a response no shared cache may store, returned or thrown. A redirect
+   * answering a navigation's data request, returned or thrown, reaches the client router intact.
    */
   const withResponseControls =
     (run: (c: PageRouteContext<Env>, controls: PageResponseControls) => Promise<PageResponse>) =>
@@ -903,11 +930,15 @@ export function createPageRequestExecutor<Env = unknown>(
       const controls = new PageResponseControls(c)
       try {
         const outcome = await run(c, controls)
-        return controls.personalized ? (privateOutcome(outcome) as PageResponse) : outcome
+        const answer = navigationRedirect(c.req, outcome) ?? outcome
+        return controls.personalized ? (privateOutcome(answer) as PageResponse) : answer
       } catch (err) {
+        if (!isControlFlow(err)) throw err
+        const answer = navigationRedirect(c.req, err)
         // Returned rather than rethrown: the serving app sends a thrown `Response` exactly as it is,
         // without the cookies the request queued.
-        if (controls.personalized && isControlFlow(err)) return privateOutcome(err) as PageResponse
+        if (controls.personalized) return privateOutcome(answer ?? err) as PageResponse
+        if (answer !== undefined) return answer
         throw err
       } finally {
         controls.seal()

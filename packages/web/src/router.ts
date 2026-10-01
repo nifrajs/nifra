@@ -386,6 +386,11 @@ const defaultFetchData: FetchRouteData = async (path, _match, signal, navigation
     headers.set(NAV_FROM_HEADER, navigation.from)
   }
   const res = await fetch(path, { headers, signal: signal ?? null })
+  // A loader, gate or middleware redirected. The navigation fails with the target as `redirectTo`,
+  // which the history layer loads instead.
+  const redirectTo = res.headers.get(REDIRECT_HEADER)
+  if (redirectTo !== null)
+    throw Object.assign(new Error(`redirected to ${redirectTo}`), { redirectTo })
   const status = Number(res.headers.get(STATUS_HEADER))
   if (Number.isInteger(status) && status >= 400 && status <= 599) {
     return { v: 1, data: null, status } satisfies RouteDataEnvelope

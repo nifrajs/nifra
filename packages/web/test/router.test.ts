@@ -464,6 +464,27 @@ describe("createClientRouter", () => {
     }
   })
 
+  test("the default fetchData fails a redirected navigation with its target, keeping the old page", async () => {
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async (_url: string, _init?: RequestInit) =>
+      new Response(null, {
+        status: 204,
+        headers: { "x-nifra-redirect": "/login?next=%2Fusers%2F1" },
+      })) as typeof fetch
+    try {
+      const r = createClientRouter({ patterns, initial })
+      const failure = await r.navigate("/users/1").then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+      expect(failure).toBeInstanceOf(Error)
+      expect((failure as { redirectTo?: string }).redirectTo).toBe("/login?next=%2Fusers%2F1")
+      expect(r.snapshot()).toMatchObject({ path: initial.path, pending: false })
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
   test("the default fetchData parses an x-ndjson body into data with deferred markers", async () => {
     const realFetch = globalThis.fetch
     // A deferred route streams NDJSON: line 1 (critical + placeholder) then the resolution line.

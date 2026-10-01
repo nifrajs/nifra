@@ -206,6 +206,10 @@ export function waitForStyles(options: WaitForStylesOptions = {}): Promise<void>
   return Promise.all(promises).then(() => undefined)
 }
 
+/** Where a failed data fetch was redirected to, when a redirect is what failed it. */
+const redirectOf = (error: unknown): string | undefined =>
+  (error as { redirectTo?: string } | null)?.redirectTo
+
 /**
  * Attach history + link interception to a router. Returns a teardown function that removes the
  * listeners. A data-fetch failure during a client navigation falls back to a full-page load, so
@@ -369,7 +373,10 @@ export function installHistory(
     }
     here = url.pathname + url.search + url.hash
     // The data layer fetches by path+search; the #hash is client-only (never sent to the server).
-    transition(() => router.navigate(routePath).catch(() => fallback(path)))
+    // A loader, gate or middleware that redirected sends the browser to the target as a document.
+    transition(() =>
+      router.navigate(routePath).catch((error) => fallback(redirectOf(error) ?? path)),
+    )
     settle()
   }
 
@@ -662,8 +669,11 @@ export function installForms(router: ClientRouter): () => void {
     // `data-nifra-revalidate="false"` opts out of the post-action loader revalidation (the action's
     // actionData drives the update); absent or any other value keeps the default revalidation.
     const revalidate = form.dataset.nifraRevalidate !== "false"
-    router.submit(url.pathname + url.search, new FormData(form), { revalidate }).catch(() => {
-      form.submit() // data submit failed - fall back to a full-page POST
+    router.submit(url.pathname + url.search, new FormData(form), { revalidate }).catch((error) => {
+      const to = redirectOf(error)
+      // The action ran and the page it refreshed now redirects: posting again would repeat it.
+      if (to !== undefined) location.assign(to)
+      else form.submit() // data submit failed - fall back to a full-page POST
     })
   }
   document.addEventListener("submit", onSubmit)

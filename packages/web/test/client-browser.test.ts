@@ -325,15 +325,16 @@ test("history integration covers click, prefetch, fragments, popstate, fallback 
   const navigated: string[] = []
   const prefetched: string[] = []
   let subscriber: (() => void) | undefined
-  let rejectNext = false
+  let rejectNext: Error | undefined
   const state = { pending: false }
   const router = {
     match: (path: string) => (path === "/outside" ? null : { routeId: path, params: {} }),
     navigate: async (path: string) => {
       navigated.push(path)
-      if (rejectNext) {
-        rejectNext = false
-        throw new Error("offline")
+      if (rejectNext !== undefined) {
+        const error = rejectNext
+        rejectNext = undefined
+        throw error
       }
       subscriber?.()
     },
@@ -393,12 +394,20 @@ test("history integration covers click, prefetch, fragments, popstate, fallback 
   await Bun.sleep(0)
   expect(scrollCalls).toContainEqual([0, 0])
 
-  rejectNext = true
+  rejectNext = new Error("offline")
   const failing = new FakeElement("a")
   failing.href = "http://example.test/fail"
   document.emit("click", fakeEvent(failing))
   await Bun.sleep(0)
   expect(fallback).toEqual(["/fail"])
+
+  // A redirected navigation loads its target, not the URL that redirected.
+  rejectNext = Object.assign(new Error("redirected"), { redirectTo: "/login?next=%2Fguarded" })
+  const guarded = new FakeElement("a")
+  guarded.href = "http://example.test/guarded"
+  document.emit("click", fakeEvent(guarded))
+  await Bun.sleep(0)
+  expect(fallback).toEqual(["/fail", "/login?next=%2Fguarded"])
 
   const samePage = new FakeElement("a")
   locationState.pathname = "/back"
@@ -572,12 +581,12 @@ test("a malformed programmatic target is rejected before an active blocker inspe
 test("form integration intercepts app POSTs, preserves revalidation choice and falls back natively", async () => {
   resetBrowser()
   const submissions: Array<{ readonly path: string; readonly revalidate: boolean }> = []
-  let reject = false
+  let reject: Error | undefined
   const router = {
     match: (path: string) => (path === "/submit" ? { routeId: "submit", params: {} } : null),
     submit: async (path: string, _form: FormData, options: { revalidate: boolean }) => {
       submissions.push({ path, revalidate: options.revalidate })
-      if (reject) throw new Error("offline")
+      if (reject !== undefined) throw reject
     },
   } as unknown as ClientRouter
   const stop = installForms(router)
@@ -591,10 +600,17 @@ test("form integration intercepts app POSTs, preserves revalidation choice and f
   expect(first.defaultPrevented).toBe(true)
   expect(submissions).toEqual([{ path: "/submit?q=1", revalidate: false }])
 
-  reject = true
+  reject = new Error("offline")
   document.emit("submit", fakeEvent(form))
   await Bun.sleep(0)
   expect(form.nativeSubmits).toBe(1)
+
+  // The action ran, then refreshing the page redirected: load the target, never post again.
+  reject = Object.assign(new Error("redirected"), { redirectTo: "/login" })
+  document.emit("submit", fakeEvent(form))
+  await Bun.sleep(0)
+  expect(form.nativeSubmits).toBe(1)
+  expect(locationState.assigned).toEqual(["/login"])
 
   form.method = "get"
   const getSubmit = fakeEvent(form)
