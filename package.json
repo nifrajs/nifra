@@ -141,7 +141,7 @@
     "express": "^5.2.1",
     "fast-check": "^4.8.0",
     "fast-uri": "3.1.8",
-    "fastify": "^5.12.1",
+    "fastify": "^5.12.5",
     "hono": "^4.13.7",
     "mdsvex": "^0.12",
     "memoirist": "^1.0.3",
