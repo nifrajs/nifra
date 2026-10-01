@@ -14464,6 +14464,20 @@
     "signature": "export interface ReplayTrajectoryOptions {\n    readonly state: AgentTurnState;\n    readonly maxTurns?: number;\n    readonly goal?: (output: unknown) => boolean;\n    readonly faultProfile?: FaultProfile;\n    readonly seed?: number;\n}"
   },
   {
+    "name": "reportWebVitals",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function reportWebVitals(report: (metric: WebVitalsMetric) => void, options?: ReportWebVitalsOptions): () => void;",
+    "doc": "/**\n * Report the page's Core Web Vitals to `report`, each with the route it belongs to. A metric is\n * reported once its value is final - FCP and TTFB as soon as they are known, LCP at the first\n * interaction or when the page is hidden, CLS and INP when the page is hidden - unless\n * `reportAllChanges` asks for every change. The browser buffers the load metrics recorded before the\n * call, so a mount effect after hydration is early enough.\n *\n * Returns a function that stops reporting. On the server it does nothing.\n */"
+  },
+  {
+    "name": "ReportWebVitalsOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ReportWebVitalsOptions {\n    /** Report every change to a metric (LCP, CLS and INP grow while the page is open), not only the\n     * value it settles on. Use `delta` or `id` to aggregate. Default `false`. */\n    readonly reportAllChanges?: boolean;\n    /** Measure each client-side navigation as a page view of its own where the browser can (Chromium\n     * 151 and later), so its metrics carry the route it navigated to. The first page's metrics then\n     * settle at the first client navigation; other browsers report as if this were off. Default `false`. */\n    readonly softNavigations?: boolean;\n}",
+    "doc": "/** How {@link reportWebVitals} reports. */"
+  },
+  {
     "name": "reproduciblePath",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -17312,8 +17326,8 @@
     "name": "setBrowserNavigate",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function setBrowserNavigate(navigate: BrowserNavigate | undefined): void;",
-    "doc": "/** Register (or clear, with `undefined`) the browser navigate - called by `installHistory`. Not for\n * app use. */"
+    "signature": "export declare function setBrowserNavigate(navigate: BrowserNavigate | undefined, router?: ClientRouter): void;",
+    "doc": "/** Register (or clear, with `undefined`) the browser navigate and its router - called by\n * `installHistory`. Not for app use. */"
   },
   {
     "name": "setMountedRouter",
@@ -20528,6 +20542,13 @@
     "package": "nifra",
     "signature": "export type WebSocketUpgradeOutcome = {\n    readonly kind: \"pass\";\n} | {\n    readonly kind: \"reject\";\n    readonly response: Response;\n} | {\n    readonly kind: \"upgrade\";\n    readonly handler: WebSocketHandler;\n    readonly data: unknown;\n    /** The app's pub/sub registry - the adapter wires `ws.subscribe` + close-cleanup to it. */\n    readonly pubsub: TopicRegistry;\n    /** The installed runtime's {@link attachWebSocket}, carried on the outcome so an adapter can wire\n     * a standard socket without a static import of the WS implementation (which would defeat the\n     * `.use(websocket())` tree-shaking). `@nifrajs/workers` may import `attachWebSocket` directly instead. */\n    readonly attach: WsAttach;\n    readonly maxPayloadBytes?: number;\n};",
     "doc": "/**\n * The outcome of `app.resolveWebSocketUpgrade(req)` - for serving adapters:\n * - `pass` - not a WS upgrade for a registered WS route; handle as a normal HTTP request.\n * - `reject` - a WS route matched but `upgrade()` rejected (or the path was malformed); return `response`.\n * - `upgrade` - perform the runtime upgrade, then dispatch the native socket's events to `handler`,\n *   seeding `ws.data` with `data`.\n */"
+  },
+  {
+    "name": "WebVitalsMetric",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type WebVitalsMetric = MetricType & {\n    /** The id of the route the measured page matched (`users/[id]`, the id `useMatches` reports).\n     * `undefined` before the router mounts, for a page no route matches, or for another origin. */\n    readonly route: string | undefined;\n};",
+    "doc": "/**\n * One measurement from `web-vitals` - `name` is `\"LCP\"`, `\"INP\"`, `\"CLS\"`, `\"FCP\"` or `\"TTFB\"`, with its\n * `value`, `rating` (`\"good\"`, `\"needs-improvement\"` or `\"poor\"`), `delta` since the last report and an\n * `id` unique to the measurement - plus the route it belongs to.\n */"
   },
   {
     "name": "widgetDocument",

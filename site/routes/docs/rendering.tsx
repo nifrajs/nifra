@@ -133,6 +133,21 @@ export default fontFace({
 import { fontPreload } from "@nifrajs/web"
 export const meta = { link: [fontPreload({ href: "/fonts/inter-var.woff2" })] }`
 
+const VITALS = `import { reportWebVitals, type WebVitalsMetric } from "@nifrajs/web/vitals"
+
+function send(metric: WebVitalsMetric): void {
+  // name: "LCP" | "INP" | "CLS" | "FCP" | "TTFB"; route: the matched route's id, e.g. "users/[id]"
+  const { name, value, rating, id, route } = metric
+  const body = JSON.stringify({ name, value, rating, id, route })
+  void fetch("/api/vitals", { method: "POST", body, keepalive: true }) // survives the page closing
+}
+
+// Call it from the root layout's mount effect; the stop function it returns is the cleanup.
+//   React, Preact: useEffect(() => reportVitals(), [])
+//   Svelte: onMount(reportVitals)    Solid: onMount(() => onCleanup(reportVitals()))
+//   Vue: onMounted(() => (stop = reportVitals())), onUnmounted(() => stop())
+export const reportVitals = () => reportWebVitals(send, { softNavigations: true })`
+
 export default function Rendering() {
   return (
     <div className="prose">
@@ -241,6 +256,24 @@ export default function Rendering() {
         file downloads with the document instead of waiting on CSS parse.
       </p>
       <CodeBlock code={FONTS} />
+
+      <h2>Web vitals from real users</h2>
+      <p>
+        <code>reportWebVitals</code> from <code>@nifrajs/web/vitals</code> reports the Core Web Vitals
+        your users' browsers measure (LCP, INP, CLS, plus FCP and TTFB), using Google's{" "}
+        <code>web-vitals</code> - install it with <code>bun add web-vitals</code>. Each metric arrives
+        once its value is final, with the id of the route it belongs to (the id{" "}
+        <code>useMatches</code> reports), so the numbers group by route instead of by URL.
+      </p>
+      <CodeBlock code={VITALS} lang="ts" />
+      <p>
+        With <code>softNavigations: true</code>, a client-side navigation counts as a page view of its
+        own where the browser can measure one (Chromium 151 and later), and its metrics carry the route
+        it navigated to; the first page's metrics then settle at the first navigation. Other browsers
+        report the whole visit as one page. <code>reportAllChanges: true</code> reports every change to
+        a metric instead of its final value - aggregate those with <code>delta</code> or{" "}
+        <code>id</code>.
+      </p>
 
       <h2>Which one?</h2>
       <p>

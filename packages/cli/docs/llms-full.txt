@@ -1748,6 +1748,38 @@ import { fontPreload } from "@nifrajs/web"
 export const meta = { link: [fontPreload({ href: "/fonts/inter-var.woff2" })] }
 ```
 
+### Web vitals from real users
+
+`reportWebVitals` from `@nifrajs/web/vitals` reports the Core Web Vitals
+your users' browsers measure (LCP, INP, CLS, plus FCP and TTFB), using Google's
+`web-vitals` - install it with `bun add web-vitals`. Each metric arrives
+once its value is final, with the id of the route it belongs to (the id
+`useMatches` reports), so the numbers group by route instead of by URL.
+
+```ts
+import { reportWebVitals, type WebVitalsMetric } from "@nifrajs/web/vitals"
+
+function send(metric: WebVitalsMetric): void {
+  // name: "LCP" | "INP" | "CLS" | "FCP" | "TTFB"; route: the matched route's id, e.g. "users/[id]"
+  const { name, value, rating, id, route } = metric
+  const body = JSON.stringify({ name, value, rating, id, route })
+  void fetch("/api/vitals", { method: "POST", body, keepalive: true }) // survives the page closing
+}
+
+// Call it from the root layout's mount effect; the stop function it returns is the cleanup.
+//   React, Preact: useEffect(() => reportVitals(), [])
+//   Svelte: onMount(reportVitals)    Solid: onMount(() => onCleanup(reportVitals()))
+//   Vue: onMounted(() => (stop = reportVitals())), onUnmounted(() => stop())
+export const reportVitals = () => reportWebVitals(send, { softNavigations: true })
+```
+
+With `softNavigations: true`, a client-side navigation counts as a page view of its
+own where the browser can measure one (Chromium 151 and later), and its metrics carry the route
+it navigated to; the first page's metrics then settle at the first navigation. Other browsers
+report the whole visit as one page. `reportAllChanges: true` reports every change to
+a metric instead of its final value - aggregate those with `delta` or
+`id`.
+
 ### Which one?
 
 Content that's the same for everyone and changes rarely → **SSG**. Content that changes

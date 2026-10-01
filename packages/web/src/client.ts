@@ -397,7 +397,7 @@ export function installHistory(
     }
     go(to, navOptions?.replace === true ? "replace" : "push", navOptions?.state)
   }
-  setBrowserNavigate(navigate)
+  setBrowserNavigate(navigate, router)
 
   // Publish the guard registry through the DOM-free bridge (`@nifrajs/web`'s `registerBlocker`, which an
   // adapter's `useBlocker` calls). One slot, latest registration wins; the unregister clears it only if

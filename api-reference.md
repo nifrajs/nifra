@@ -4885,8 +4885,8 @@ _No named exports (side-effect entrypoint)._
   Build a static-file handler for `dir`.
 - **setBlockerController** _(function)_ - `setBlockerController: (controller: BlockerController | undefined) => void`
   Register (or clear, with `undefined`) the blocker controller - called by `installHistory`. Not for app use.
-- **setBrowserNavigate** _(function)_ - `setBrowserNavigate: (navigate: BrowserNavigate | undefined) => void`
-  Register (or clear, with `undefined`) the browser navigate - called by `installHistory`. Not for app use.
+- **setBrowserNavigate** _(function)_ - `setBrowserNavigate: (navigate: BrowserNavigate | undefined, router?: ClientRouter) => void`
+  Register (or clear, with `undefined`) the browser navigate and its router - called by `installHistory`. Not for app use.
 - **setSsrModuleLoader** _(function)_ - `setSsrModuleLoader: (load: SsrModuleLoader | undefined) => void`
   Publish or clear the dev server's SSR module loader.
 - **ssrModuleLoader** _(function)_ - `ssrModuleLoader: () => SsrModuleLoader | undefined`
@@ -5420,6 +5420,15 @@ _No named exports (side-effect entrypoint)._
   Generate the service worker source for a build.
 - **serviceWorkerRegistration** _(function)_ - `serviceWorkerRegistration: (scriptUrl?: string) => string`
   The registration snippet, for a `<script>` in your document shell.
+
+### `@nifrajs/web/vitals`
+
+- **ReportWebVitalsOptions** _(interface)_ - `interface ReportWebVitalsOptions`
+  How {@link reportWebVitals} reports.
+- **WebVitalsMetric** _(type)_ - `type WebVitalsMetric`
+  One measurement from `web-vitals` - `name` is `"LCP"`, `"INP"`, `"CLS"`, `"FCP"` or `"TTFB"`, with its `value`, `rating` (`"good"`, `"needs-improvement"` or `"poor"`), `delta` since the last report and an `id` unique to the measurement - plus the route it belongs to.
+- **reportWebVitals** _(function)_ - `reportWebVitals: (report: (metric: WebVitalsMetric) => void, options?: ReportWebVitalsOptions) => () => void`
+  Report the page's Core Web Vitals to `report`, each with the route it belongs to. A metric is reported once its value is final - FCP and TTFB as soon as they are known, LCP at the first interaction or when the page is hidden, CLS and INP when the page is hidden - unless `reportAllChanges` asks for …
 
 ### `@nifrajs/web/vite`
 

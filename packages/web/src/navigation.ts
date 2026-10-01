@@ -12,6 +12,7 @@
  * native `<a href>` full-page navigation - progressive enhancement, no throw.
  */
 
+import type { ClientRouter } from "./router.ts"
 import { serializeSearch } from "./search.ts"
 
 /** Options for a programmatic navigation. */
@@ -121,14 +122,24 @@ export type PrefetchMode = "intent" | "viewport" | "render" | "none"
  */
 export type BrowserNavigate = (to: string | number, options?: NavigateOptions) => void
 
-// The active browser navigate (set by `installHistory`, cleared on teardown). Module-scoped: one app
-// per page; absent on the server and before hydration.
+// The active browser navigate and the router behind it (set by `installHistory`, cleared on
+// teardown). Module-scoped: one app per page; absent on the server and before hydration.
 let browserNavigate: BrowserNavigate | undefined
+let browserRouter: ClientRouter | undefined
 
-/** Register (or clear, with `undefined`) the browser navigate - called by `installHistory`. Not for
- * app use. */
-export function setBrowserNavigate(navigate: BrowserNavigate | undefined): void {
+/** Register (or clear, with `undefined`) the browser navigate and its router - called by
+ * `installHistory`. Not for app use. */
+export function setBrowserNavigate(
+  navigate: BrowserNavigate | undefined,
+  router?: ClientRouter,
+): void {
   browserNavigate = navigate
+  browserRouter = router
+}
+
+/** The mounted client router, or `undefined` on the server / before `installHistory` has run. */
+export function getBrowserRouter(): ClientRouter | undefined {
+  return browserRouter
 }
 
 /** The active browser navigate, or `undefined` on the server / before `installHistory` has run. A
