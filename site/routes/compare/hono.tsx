@@ -1,6 +1,4 @@
-import { compareMeta } from "../../meta"
-
-export const hydrate = false
+import { compareMeta } from "../../shared/meta"
 
 export const meta = compareMeta(
   "hono",

@@ -12,7 +12,7 @@ import { createWebApp } from "@nifrajs/web"
 import type { BuildManifest } from "@nifrajs/web/build"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { svelteAdapter } from "@nifrajs/web-svelte"
-import { backend } from "./backend"
+import { backend } from "./backend/app"
 
 const routesDir = `${import.meta.dir}/routes`
 const dist = `${import.meta.dir}/dist`

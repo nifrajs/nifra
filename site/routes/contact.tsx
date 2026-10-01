@@ -1,4 +1,4 @@
-import { pageMeta } from "../meta"
+import { pageMeta } from "../shared/meta"
 
 export const meta = pageMeta(
   "Nifra - Contact",

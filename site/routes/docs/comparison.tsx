@@ -1,15 +1,5 @@
-import {
-  formatPercent,
-  httpRealworldRps,
-  httpWorkloadRps,
-  percentOf,
-  runtimeCeilingPercent,
-} from "../../data/benchmarks"
-import { docsMeta } from "../../meta"
-
-// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
-// the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
-export const hydrate = false
+import { formatPercent, httpRealworldRps, httpWorkloadRps, percentOf, runtimeCeilingPercent } from "../../shared/data/benchmarks"
+import { docsMeta } from "../../shared/meta"
 
 export const meta = docsMeta(
   "/docs/comparison",

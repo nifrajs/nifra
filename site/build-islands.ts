@@ -4,7 +4,7 @@ import {
   HOME_COUNTER_ENTRY,
   NIFRA_BOT_ENTRY,
   PLAYGROUND_ENTRY,
-} from "./islands/entries"
+} from "./shared/islands/entries"
 
 export interface BuildSiteIslandsOptions {
   readonly outDir: string

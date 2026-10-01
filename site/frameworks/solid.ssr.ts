@@ -8,7 +8,7 @@
 
 import { solidAdapter } from "@nifrajs/web-solid"
 import { App } from "../../bench/ssr/nifra-solid/app.tsx"
-import { type CatalogPageData, catalogItems } from "./data.ts"
+import { type CatalogPageData, catalogItems } from "../shared/frameworks/data.ts"
 
 const data: CatalogPageData = { items: catalogItems() }
 

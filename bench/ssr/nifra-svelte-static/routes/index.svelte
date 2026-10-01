@@ -1,12 +1,5 @@
 <script lang="ts" module>
-  import { catalogItems, type CatalogPageData } from "../../shared/catalog.ts"
-
   export const meta = { title: "nifra SSR bench (Svelte SSG)" }
-  export const prerender = true
-
-  export function loader(): CatalogPageData {
-    return { items: catalogItems() }
-  }
 </script>
 
 <script lang="ts">

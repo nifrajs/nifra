@@ -8,7 +8,7 @@
 import { hydrate } from "@nifrajs/web-react/client"
 import { App } from "../../bench/ssr/nifra/app.tsx"
 import Layout from "../../bench/ssr/nifra/layout.tsx"
-import { FRAMEWORK_DATA_GLOBAL, frameworkStageId } from "./data.ts"
+import { FRAMEWORK_DATA_GLOBAL, frameworkStageId } from "../shared/frameworks/data.ts"
 
 const data = (globalThis as Record<string, unknown>)[FRAMEWORK_DATA_GLOBAL]
 const stage = document.getElementById(frameworkStageId("react"))

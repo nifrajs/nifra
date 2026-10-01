@@ -5,7 +5,7 @@
  * same pattern as `../data/benchmarks.ts`. Importing the JSON (not the builder) keeps the route free of
  * any framework runtime - the static page ships none.
  */
-import type { FrameworkDemoEntry, FrameworksDemoArtifact } from "../build-frameworks.ts"
+import type { FrameworkDemoEntry, FrameworksDemoArtifact } from "../../build-frameworks.ts"
 import artifact from "../data/frameworks-demo.json"
 
 const demo = artifact as FrameworksDemoArtifact

@@ -1,17 +1,7 @@
-import type { ActionArgs, LoaderArgs, LoaderData } from "@nifrajs/client"
-import type { backend } from "../backend"
+import type { LoaderData } from "@nifrajs/client"
+import type { loader } from "./index.backend.ts"
 
 export const meta = { title: "nifra - portable SSR" }
-
-export async function loader({ api }: LoaderArgs<typeof backend>) {
-  const res = await api.count.get()
-  return { count: res.data?.count ?? 0 }
-}
-
-export async function action({ api }: ActionArgs<typeof backend>) {
-  await api.count.post()
-  return { ok: true }
-}
 
 export default function Home(props: { data: LoaderData<typeof loader> }) {
   return (

@@ -1,17 +1,8 @@
-import type { LoaderArgs, LoaderData } from "@nifrajs/client"
+import type { LoaderData } from "@nifrajs/client"
 import type { MetaArgs } from "@nifrajs/web"
 import { trustHtml } from "@nifrajs/web"
 import { Content } from "@nifrajs/web-solid/content"
-import type { backend } from "../../backend"
-
-// Load one post by slug. Dynamic import keeps the fs collection server-only.
-export async function loader({ params }: LoaderArgs<typeof backend>) {
-  const { posts } = await import("../../lib/content")
-  const post = await posts.get(params.slug ?? "")
-  return post
-    ? { title: post.frontmatter.title, html: post.html }
-    : { title: "Not found", html: "<p>No such post.</p>" }
-}
+import type { loader } from "./[slug].backend.ts"
 
 export function meta({ data }: MetaArgs<LoaderData<typeof loader>>) {
   return { title: data.title }

@@ -1,7 +1,5 @@
-import { MULTIPLIERS } from "../../data/benchmarks"
-import { compareMeta } from "../../meta"
-
-export const hydrate = false
+import { MULTIPLIERS } from "../../shared/data/benchmarks"
+import { compareMeta } from "../../shared/meta"
 
 const REACT_SSR_MULTIPLIER = MULTIPLIERS.find((item) => item.fw === "React")?.mult ?? "n/a"
 

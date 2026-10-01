@@ -11,7 +11,7 @@ import { createWebApp, enumerateStaticRoutes } from "@nifrajs/web"
 import type { BuildManifest } from "@nifrajs/web/build"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { reactAdapter } from "@nifrajs/web-react"
-import { backend } from "./backend"
+import { backend } from "./backend/app"
 
 const routesDir = `${import.meta.dir}/routes`
 const dist = `${import.meta.dir}/dist`

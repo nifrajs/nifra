@@ -7,10 +7,9 @@ import {
   httpWorkloadRps,
   MULTIPLIERS,
   PROOF,
-} from "../data/benchmarks"
-import { CodeBlock } from "../highlight"
-import { HOME_COUNTER_ENTRY } from "../islands/entries"
-import { pageMeta, softwareApplication } from "../meta"
+} from "../shared/data/benchmarks"
+import { CodeBlock } from "../shared/highlight"
+import { pageMeta, softwareApplication } from "../shared/meta"
 
 export const meta = pageMeta(
   "Nifra - the AI-native full-stack TypeScript framework",
@@ -37,13 +36,6 @@ export const meta = pageMeta(
     ],
   },
 )
-
-// Static page - ships zero framework JS. The only client code is a tiny enhancer (the copy buttons),
-// loaded through `islandScripts`. The hero walkthrough and the framework switcher are CSS-only
-// (`:checked` radios), so they stay interactive with zero added JS. The playground is the /play
-// route in an <iframe>, so its island loads only when the frame scrolls near.
-export const hydrate = false
-export const islandScripts = [HOME_COUNTER_ENTRY]
 
 // ---- The hero walkthrough: one change, followed through every gate. ----
 // Every output line is the CLI's own format (`nifra check` / `nifra assure`), so the demo cannot

@@ -1,6 +1,4 @@
-import { breadcrumbs, pageMeta } from "../../meta"
-
-export const hydrate = false
+import { breadcrumbs, pageMeta } from "../../shared/meta"
 
 const PAGES: ReadonlyArray<{ slug: string; title: string; summary: string }> = [
   {

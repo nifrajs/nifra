@@ -78,6 +78,6 @@ if (tableARows.length === expectedA && tableBRows.length === expectedB) {
   })
 } else {
   console.log(
-    `\nsite/data/benchmarks.json NOT updated: A ${tableARows.length}/${expectedA}, B ${tableBRows.length}/${expectedB} targets measured`,
+    `\nsite/shared/data/benchmarks.json NOT updated: A ${tableARows.length}/${expectedA}, B ${tableBRows.length}/${expectedB} targets measured`,
   )
 }

@@ -1,8 +1,8 @@
 import type { ReactNode } from "react"
-import { DOCS_GROUPS as GROUPS } from "../../data/docs-nav"
+import { DOCS_GROUPS as GROUPS } from "../../shared/data/docs-nav"
 
 // Nested layout for /docs/* - a sidebar inside the root chrome (layout chain: root → docs → page).
-// The nav itself lives in `data/docs-nav.ts` because `docsMeta()` reads the same list to build each
+// The nav itself lives in `shared/data/docs-nav.ts` because `docsMeta()` reads the same list to build each
 // page's BreadcrumbList: one list, so the sidebar and the crawler never disagree.
 
 const NAV_SCRIPT = `(function(){

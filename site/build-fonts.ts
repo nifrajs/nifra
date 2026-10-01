@@ -1,5 +1,5 @@
 /**
- * Self-hosts the site's typefaces into `public/fonts/` and `data/fonts.json`. Run by hand when a
+ * Self-hosts the site's typefaces into `public/fonts/` and `shared/data/fonts.json`. Run by hand when a
  * family changes; both outputs are committed, so the site build stays offline.
  */
 import { loadGoogleFont } from "@nifrajs/web/fonts"
@@ -17,7 +17,7 @@ const loaded = []
 for (const family of families) loaded.push(await loadGoogleFont(family, io))
 
 await Bun.write(
-  `${dir}/data/fonts.json`,
+  `${dir}/shared/data/fonts.json`,
   `${JSON.stringify(
     {
       css: loaded.map((font) => font.css).join("\n\n"),

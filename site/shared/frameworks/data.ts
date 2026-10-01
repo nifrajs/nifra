@@ -11,7 +11,7 @@ export {
   type CatalogItem,
   type CatalogPageData,
   catalogItems,
-} from "../../bench/ssr/shared/catalog.ts"
+} from "../../../bench/ssr/shared/catalog.ts"
 
 /** Global the /frameworks page serializes the catalog into; each framework client entry reads it to
  * hydrate. Distinct from `@nifrajs/web`'s `__NIFRA_DATA__` (the React page-route data) so the showcase

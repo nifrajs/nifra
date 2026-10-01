@@ -1,7 +1,5 @@
-import { CodeBlock } from "../../highlight"
-import { postMeta } from "../../meta"
-
-export const hydrate = false
+import { CodeBlock } from "../../shared/highlight"
+import { postMeta } from "../../shared/meta"
 
 export const meta = postMeta(
   "elysia-2-aot-measured",

@@ -5,7 +5,7 @@
  * Page routes under `routes/` are not classified; this is the backend contract those pages call.
  */
 import { defineAssuranceConfig, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
-import { backend } from "./backend"
+import { backend } from "./backend/app"
 
 export default defineAssuranceConfig({
   source: backend,

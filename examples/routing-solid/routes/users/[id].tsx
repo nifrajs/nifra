@@ -1,14 +1,7 @@
-import type { LoaderArgs, LoaderData } from "@nifrajs/client"
+import type { LoaderData } from "@nifrajs/client"
 import type { MetaArgs } from "@nifrajs/web"
 import { createSignal } from "solid-js"
-import type { backend } from "../../backend"
-
-// Typed via the annotation (pure type → tree-shaken from the client). `ctx.api` is the typed
-// in-process client; the return flows to the page's `data` prop via LoaderData.
-export async function loader({ api, params }: LoaderArgs<typeof backend>) {
-  const res = await api.users({ id: params.id ?? "" }).get()
-  return { user: res.data }
-}
+import type { loader } from "./[id].backend.ts"
 
 // Dynamic head - a function of the loader data. Updates the title on client navigation.
 export function meta({ data }: MetaArgs<LoaderData<typeof loader>>) {

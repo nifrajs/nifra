@@ -5,10 +5,8 @@ import {
   httpWorkloadRps,
   runtimeCeilingPercent,
   ssrRps,
-} from "../../data/benchmarks"
-import { postMeta } from "../../meta"
-
-export const hydrate = false
+} from "../../shared/data/benchmarks"
+import { postMeta } from "../../shared/meta"
 
 export const meta = postMeta(
   "bun-vs-node",

@@ -1,12 +1,7 @@
-import type { LoaderArgs, LoaderData } from "@nifrajs/client"
+import type { LoaderData } from "@nifrajs/client"
 import type { MetaArgs } from "@nifrajs/web"
 import { useState } from "react"
-import type { backend } from "../../backend"
-
-export async function loader({ api, params }: LoaderArgs<typeof backend>) {
-  const res = await api.users({ id: params.id ?? "" }).get()
-  return { user: res.data }
-}
+import type { loader } from "./[id].backend.ts"
 
 export function meta({ data }: MetaArgs<LoaderData<typeof loader>>) {
   return { title: data.user ? `User #${data.user.id}` : "User" }

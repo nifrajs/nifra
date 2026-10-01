@@ -17,7 +17,7 @@ import { createViteDevServer } from "@nifrajs/web/vite"
 import { svelteAdapter } from "@nifrajs/web-svelte"
 import { svelteHmrBoundary } from "@nifrajs/web-svelte/plugin"
 import { svelte } from "@sveltejs/vite-plugin-svelte"
-import { backend } from "./backend"
+import { backend } from "./backend/app"
 
 const routesDir = `${import.meta.dir}/routes`
 const server = await createViteDevServer({

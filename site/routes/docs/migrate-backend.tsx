@@ -1,9 +1,5 @@
-import { docsMeta } from "../../meta"
-import { CodeBlock } from "../../highlight"
-
-// Pure content page - no React interactivity (TOC/copy/search are the layout enhancer +
-// the Nira island), so ship zero framework JS and avoid hydrating the inline-script DOM.
-export const hydrate = false
+import { docsMeta } from "../../shared/meta"
+import { CodeBlock } from "../../shared/highlight"
 
 export const meta = docsMeta(
   "/docs/migrate-backend",

@@ -24,7 +24,7 @@ import { discoverRoutes } from "@nifrajs/web/fs"
 import { createViteDevServer } from "@nifrajs/web/vite"
 import { reactAdapter } from "@nifrajs/web-react"
 import react from "@vitejs/plugin-react"
-import { backend } from "./backend"
+import { backend } from "./backend/app"
 
 const routesDir = `${import.meta.dir}/routes`
 const server = await createViteDevServer({

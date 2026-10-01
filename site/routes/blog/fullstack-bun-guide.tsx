@@ -1,8 +1,6 @@
-import { formatPercent, runtimeCeilingPercent } from "../../data/benchmarks"
-import { CodeBlock } from "../../highlight"
-import { postMeta } from "../../meta"
-
-export const hydrate = false
+import { formatPercent, runtimeCeilingPercent } from "../../shared/data/benchmarks"
+import { CodeBlock } from "../../shared/highlight"
+import { postMeta } from "../../shared/meta"
 
 export const meta = postMeta(
   "fullstack-bun-guide",

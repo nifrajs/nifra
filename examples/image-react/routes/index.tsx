@@ -1,6 +1,6 @@
 import { selfHostedLoader } from "@nifrajs/image"
 import { Image } from "@nifrajs/web-react/image"
-import { localLoader } from "../loader"
+import { localLoader } from "../shared/loader"
 
 export const meta = { title: "nifra - image demo" }
 

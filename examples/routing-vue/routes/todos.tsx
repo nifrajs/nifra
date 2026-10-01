@@ -1,9 +1,8 @@
-import type { ActionArgs, LoaderArgs, LoaderData } from "@nifrajs/client"
-import { revalidate } from "@nifrajs/web"
+import type { LoaderData } from "@nifrajs/client"
 import { useFetcher } from "@nifrajs/web-vue/fetcher"
 import { useQuery, useQueryClient } from "@nifrajs/web-vue/query"
 import { defineComponent, h } from "vue"
-import type { backend } from "../backend"
+import type { loader } from "./todos.backend.ts"
 
 // A keyed query for client-interactive data - distinct from the route loader. Fetches the home count
 // (data-mode GET), caches under ["count"]; "refresh" invalidates to refetch. Proves useQuery + client.
@@ -66,28 +65,6 @@ const TodoRow = defineComponent({
 export const meta = {
   title: "nifra + Vue - Todos (fetchers + query)",
   meta: [{ name: "description", content: "nifra Vue bindings: useFetcher + useQuery" }],
-}
-
-export async function loader({ api }: LoaderArgs<typeof backend>) {
-  const res = await api.todos.get()
-  return { todos: res.data?.todos ?? [] }
-}
-
-// On POST: a per-row "bump" (a fetcher submit) appends "!" to one todo, then declares /todos changed
-// via revalidate() → the list refreshes. A plain "add" creates a todo (the active loader revalidates).
-export async function action({ request, api }: ActionArgs<typeof backend>) {
-  const form = await request.formData()
-  const bumpId = form.get("bump")
-  if (typeof bumpId === "string" && bumpId !== "") {
-    await new Promise<void>((resolve) => setTimeout(resolve, 500)) // slow → pending visible
-    await api.todos.bump.post({ id: Number(bumpId) })
-    return revalidate(["/todos"], { ok: true as const })
-  }
-  const raw = form.get("text")
-  const text = typeof raw === "string" ? raw.trim() : ""
-  if (text === "") return { ok: false as const }
-  await api.todos.post({ text })
-  return { ok: true as const }
 }
 
 export default defineComponent({

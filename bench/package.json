@@ -3,6 +3,9 @@
   "version": "3.5.0",
   "description": "Benchmark harness. Speed is a v1 goal (parity within ~10% of Elysia), so benchmarks are first-class and tracked from commit one.",
   "type": "module",
+  "nifra": {
+    "environment": "library"
+  },
   "private": true,
   "devDependencies": {
     "@elysiajs/node": "^1.4.5",

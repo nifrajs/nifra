@@ -1,22 +1,11 @@
-import {
-  PLAYGROUND_ENTRY,
-  PLAYGROUND_STARTER_CODE,
-  PLAYGROUND_STARTER_REQUESTS,
-} from "../islands/entries"
-import { pageMeta } from "../meta"
+import { PLAYGROUND_STARTER_CODE, PLAYGROUND_STARTER_REQUESTS } from "../shared/islands/entries"
+import { pageMeta } from "../shared/meta"
 
 export const meta = pageMeta(
   "Nifra - Playground",
   "Run a real Nifra server() app in your browser - define routes, validate with t, fire requests through app.fetch, see the responses. No backend; the same @nifrajs/core that runs on the server.",
   "/play",
 )
-
-// Static page (no React client entry) - the interactive logic ships as a vanilla-JS island that
-// bundles @nifrajs/core + schema + runner and runs the user's app via app.fetch, entirely client-side.
-// The home page embeds this route in an <iframe> as /play?embed=1.
-// `hydrate: false` keeps React from re-rendering (and resetting) the DOM the island owns.
-export const hydrate = false
-export const islandScripts = [PLAYGROUND_ENTRY]
 
 // The starter's request count, so the folded "Requests" row is right before the island runs.
 const STARTER_REQUEST_COUNT = (JSON.parse(PLAYGROUND_STARTER_REQUESTS) as readonly unknown[]).length

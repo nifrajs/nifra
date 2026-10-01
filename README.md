@@ -222,7 +222,7 @@ The app lifecycle is `app.fetch(Request): Promise<Response>`. Define it once and
 Deno, Cloudflare Workers/Pages, or Vercel Edge with a small adapter. The web layer supports React,
 Vue, Solid, Svelte, and Preact without changing the route/data model.
 
-The published snapshot in [`site/data/benchmarks.json`](./site/data/benchmarks.json) is the source
+The published snapshot in [`site/shared/data/benchmarks.json`](./site/shared/data/benchmarks.json) is the source
 of truth for the website tables and benchmark comparison articles. The benchmark suites merge fresh
 results into it through [`bench/site-bench.ts`](./bench/site-bench.ts). The public tables include
 rows where Nifra loses and keep bare HTTP, middleware-shaped HTTP, dynamic SSR, and cacheable SSR

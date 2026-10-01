@@ -1,7 +1,5 @@
-import { POSTS } from "../../data/posts"
-import { breadcrumbs, FEED_LINK, pageMeta } from "../../meta"
-
-export const hydrate = false
+import { POSTS } from "../../shared/data/posts"
+import { breadcrumbs, FEED_LINK, pageMeta } from "../../shared/meta"
 
 export const meta = pageMeta(
   "Nifra - Blog",

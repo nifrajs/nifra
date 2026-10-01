@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import fonts from "../data/fonts.json"
+import fonts from "../shared/data/fonts.json"
 
 // The hero demo plays once on load and again on Replay. A CSS animation only restarts when its name
 // changes, so the two autoplay radios get identical rules under different keyframe names.

@@ -18,7 +18,7 @@
  */
 import { execFileSync } from "node:child_process"
 import { readdirSync, readFileSync, writeFileSync } from "node:fs"
-import { POSTS } from "../site/data/posts"
+import { POSTS } from "../site/shared/data/posts"
 
 const SITE = "https://nifra.dev"
 const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "")

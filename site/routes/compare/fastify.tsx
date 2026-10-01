@@ -4,10 +4,8 @@ import {
   formatRps,
   httpWorkloadRps,
   runtimeCeilingPercent,
-} from "../../data/benchmarks"
-import { compareMeta } from "../../meta"
-
-export const hydrate = false
+} from "../../shared/data/benchmarks"
+import { compareMeta } from "../../shared/meta"
 
 export const meta = compareMeta(
   "fastify",

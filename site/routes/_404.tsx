@@ -1,4 +1,4 @@
-import { pageMeta } from "../meta"
+import { pageMeta } from "../shared/meta"
 import Layout from "./_layout"
 
 export const meta = pageMeta("Nifra - Not found", "That page doesn't exist.")

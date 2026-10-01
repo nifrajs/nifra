@@ -1,8 +1,5 @@
-import { CodeBlock } from "../../highlight"
-import { docsMeta } from "../../meta"
-
-// Pure content page - no interactivity, so ship zero framework JS.
-export const hydrate = false
+import { CodeBlock } from "../../shared/highlight"
+import { docsMeta } from "../../shared/meta"
 
 export const meta = docsMeta(
   "/docs/websockets",

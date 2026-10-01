@@ -8,7 +8,7 @@
 
 import { hydrate } from "@nifrajs/web-solid/client"
 import { App } from "../../bench/ssr/nifra-solid/app.tsx"
-import { FRAMEWORK_DATA_GLOBAL, frameworkStageId } from "./data.ts"
+import { FRAMEWORK_DATA_GLOBAL, frameworkStageId } from "../shared/frameworks/data.ts"
 
 const data = (globalThis as Record<string, unknown>)[FRAMEWORK_DATA_GLOBAL]
 const stage = document.getElementById(frameworkStageId("solid"))

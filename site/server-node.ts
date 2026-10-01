@@ -9,7 +9,7 @@ import { inProcessClient } from "@nifrajs/client"
 import { serve } from "@nifrajs/node"
 import { createWebApp } from "@nifrajs/web"
 import { reactAdapter } from "@nifrajs/web-react"
-import { backend } from "./backend"
+import { backend } from "./backend/app"
 import { machineSurfaceFor } from "./machine-surfaces"
 import { clientEntry, manifest } from "./server-manifest"
 
