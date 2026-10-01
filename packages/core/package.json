@@ -310,7 +310,9 @@
     "./src/node-direct.ts",
     "./dist/node-direct.js",
     "./src/single-copy-register.ts",
-    "./dist/single-copy-register.js"
+    "./dist/single-copy-register.js",
+    "./src/server/core-copies.ts",
+    "./dist/server/core-copies.js"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && bun run ../../scripts/fix-dts.ts dist"

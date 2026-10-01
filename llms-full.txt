@@ -6089,7 +6089,7 @@ path, never an absolute one. A selector written against a generated name behaves
 
 ## Nifra - Troubleshooting
 
-> Fixes keyed on the literal error strings Nifra prints: `reached the client bundle` (a node:/native import in the browser bundle), `server-only module reached the client bundle` (the server-only marker), and `resolveDispatcher` / `Invalid hook call` (duplicate React).
+> Fixes keyed on the literal error strings Nifra prints: `reached the client bundle` (a node:/native import in the browser bundle), `server-only module reached the client bundle` (the server-only marker), `resolveDispatcher` / `Invalid hook call` (duplicate React), and `@nifrajs/core is loaded 2 times` (duplicate core).
 
 Hit an error? Search this page for the literal message. Each section is keyed on the exact
 string Nifra prints, with what it means and the fix. The build, `nifra check`, and
@@ -6269,7 +6269,11 @@ the preflight never executes app code:
 `solid-js`, `svelte`, `vue`. Entries may be exact names or a
 `@scope/*` pattern. `@nifrajs/*` belongs in this set for the same reason
 React does: two copies of `@nifrajs/core` are two distinct `Server`
-classes, so `.merge()` stops accepting an app built against the other one.
+classes with separate request state. The second copy prints
+`[nifra] @nifrajs/core is loaded 2 times` with the path of each as it loads, and
+`.merge()` refuses a server built against the other copy with
+`merge() requires a server() from this copy of @nifrajs/core`. A
+`mount()` crosses only the fetch boundary, so it keeps working across copies.
 
 **The build honours the declaration on its own** -
 `buildClient` and `buildServer` inject the resolver, so bundled output

@@ -8,7 +8,7 @@ export const hydrate = false
 export const meta = docsMeta(
   "/docs/troubleshooting",
   "Nifra - Troubleshooting",
-  "Fixes keyed on the literal error strings Nifra prints: `reached the client bundle` (a node:/native import in the browser bundle), `server-only module reached the client bundle` (the server-only marker), and `resolveDispatcher` / `Invalid hook call` (duplicate React).",
+  "Fixes keyed on the literal error strings Nifra prints: `reached the client bundle` (a node:/native import in the browser bundle), `server-only module reached the client bundle` (the server-only marker), `resolveDispatcher` / `Invalid hook call` (duplicate React), and `@nifrajs/core is loaded 2 times` (duplicate core).",
 )
 
 // The server-only marker - the new opt-in client-leak guard. A pure-server module with no `node:`
@@ -287,7 +287,11 @@ export default function Troubleshooting() {
         <code>solid-js</code>, <code>svelte</code>, <code>vue</code>. Entries may be exact names or a{" "}
         <code>@scope/*</code> pattern. <code>@nifrajs/*</code> belongs in this set for the same reason
         React does: two copies of <code>@nifrajs/core</code> are two distinct <code>Server</code>{" "}
-        classes, so <code>.merge()</code> stops accepting an app built against the other one.
+        classes with separate request state. The second copy prints{" "}
+        <code>[nifra] @nifrajs/core is loaded 2 times</code> with the path of each as it loads, and{" "}
+        <code>.merge()</code> refuses a server built against the other copy with{" "}
+        <code>merge() requires a server() from this copy of @nifrajs/core</code>. A{" "}
+        <code>mount()</code> crosses only the fetch boundary, so it keeps working across copies.
       </p>
       <p>
         <strong>The build honours the declaration on its own</strong> -{" "}

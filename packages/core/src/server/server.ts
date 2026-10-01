@@ -64,6 +64,7 @@ import {
   resolveClientIp,
 } from "./client-ip.ts"
 import type { Context, Platform, ResponseControls, RouteSchema } from "./context.ts"
+import "./core-copies.ts"
 import {
   hasLowercaseHeaderKeysMark,
   headerKeysAllLowercase,
@@ -2386,6 +2387,11 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     other: Server<R2, Ctx2, HookOutput2>,
   ): Server<R & R2, Ctx, HookOutput> {
     this.assertConfigurable("merge()")
+    if (!(other instanceof Server)) {
+      // A server from another copy of this package reaches this copy's private request state through
+      // symbols it does not share, and would fail per request. The boot warning names the copies.
+      throw new TypeError("merge() requires a server() from this copy of @nifrajs/core")
+    }
     if (this.routePrefix !== "") {
       // The merged routes were compiled under their own paths; adopting them here would publish them
       // OUTSIDE the prefix while looking like part of the group.
