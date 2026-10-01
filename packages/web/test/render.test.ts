@@ -53,7 +53,7 @@ test("renderPage builds an HTML doc: SSR markup, hydration head, data, client en
   expect(html).toContain("<title>Hi</title>")
   expect(html).toContain("<!--hydration-head-->")
   expect(html).toContain('<div id="root"><p>chain=2:{"user":"ada"}</p></div>')
-  expect(html).toContain(`window.${DATA_GLOBAL}={"user":"ada"}`)
+  expect(html).toContain(`"${DATA_GLOBAL}":{"user":"ada"}`)
   expect(html).toContain('<script type="module" src="/assets/client.js">')
   // The pre-hydration form guard is inlined in <head> on a hydrating page.
   expect(html).toContain("addEventListener('submit'")
@@ -175,7 +175,7 @@ test("renderPage injects the matched route id only when provided", async () => {
       routeId: "users/[id]",
     })
   ).text()
-  expect(withId).toContain(`window.${ROUTE_GLOBAL}="users/[id]"`)
+  expect(withId).toContain(`"${ROUTE_GLOBAL}":"users/[id]"`)
 
   const withoutId = await (
     await renderPage({ adapter: stub, chain: [() => {}], data: null, clientEntry: "/c.js" })
@@ -458,10 +458,13 @@ test("renderPage propagates a CSP nonce to every framework-owned executable scri
   const executable: string[] = []
   for (let i = html.indexOf("<script"); i !== -1; i = html.indexOf("<script", i + 1)) {
     const close = html.indexOf(">", i)
-    if (close !== -1) executable.push(html.slice(i, close + 1))
+    const open = close === -1 ? "" : html.slice(i, close + 1)
+    // The page-state handover is inert JSON - never executed, so it needs no nonce.
+    if (open !== "" && !open.includes('type="application/json"')) executable.push(open)
   }
   expect(executable.length).toBeGreaterThan(5)
   for (const open of executable) expect(open).toContain('nonce="page-nonce"')
+  expect(html).toContain('<script type="application/json" id="__nifra-handover">{')
   expect(() =>
     renderPage({
       adapter: stub,
@@ -623,7 +626,7 @@ test("renderPage with deferred data: client placeholder + the inline registry ru
     })
   ).text()
   // The serialized data carries a numeric-id placeholder (not the promise).
-  expect(html).toContain(`window.${DATA_GLOBAL}={"now":1,"slow":{"__nifra_deferred":0}}`)
+  expect(html).toContain(`"${DATA_GLOBAL}":{"now":1,"slow":{"__nifra_deferred":0}}`)
   // The inline registry runtime is present (settles streamed __nifraResolve scripts).
   expect(html).toContain("window.__nifraResolve")
   expect(html).toContain("window.__nifraDeferred")
@@ -658,7 +661,7 @@ test("renderPage omits the deferred runtime when nothing is deferred", async () 
     await renderPage({ adapter: stub, chain: [null], data: { a: 1 }, clientEntry: "/c.js" })
   ).text()
   expect(html).not.toContain("__nifraResolve") // non-deferred output is unchanged
-  expect(html).toContain(`window.${DATA_GLOBAL}={"a":1}`)
+  expect(html).toContain(`"${DATA_GLOBAL}":{"a":1}`)
 })
 
 test("renderPage streams __nifraReject for a deferred that rejects (no broken body)", async () => {
@@ -940,7 +943,7 @@ test("renderPage uses the sync renderToString fast path when nothing defers", as
   const html = await res.text()
   expect(html).toContain('<div id="root"><p>string:chain=2:{"a":1}</p></div>') // buffered, NOT streamed
   expect(html).not.toContain("stream:")
-  expect(html).toContain(`window.${DATA_GLOBAL}={"a":1}`) // same tail/data as the streaming path
+  expect(html).toContain(`"${DATA_GLOBAL}":{"a":1}`) // same tail/data as the streaming path
   expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8") // a real Response, headers intact
 })
 

@@ -87,7 +87,7 @@ describe("the server render of an ssr = false route", () => {
     // The loader ran, its data reached the fallback and is embedded for the browser.
     expect(rendered.data).toEqual({ pins: 3 })
     expect(rendered.layoutData).toEqual([{ from: "layout" }])
-    expect(html).toContain('window.__NIFRA_DATA__={"pins":3}')
+    expect(html).toContain('"__NIFRA_DATA__":{"pins":3}')
     // The page still hydrates: the client entry ships.
     expect(html).toContain('<script type="module" src="/c.js">')
   })

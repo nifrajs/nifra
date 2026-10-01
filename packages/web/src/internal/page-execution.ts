@@ -12,6 +12,7 @@ import {
   type StaticBoundaryCache,
   startDynamicBoundaries,
 } from "../boundary.ts"
+import type { CspPolicy } from "../csp.ts"
 import { type CssLoadingMode, DEFAULT_CSS_LOADING, normalizeCssLoading } from "../css-contract.ts"
 import { defer, ndjsonStream, prepareDeferred } from "../deferred.ts"
 import { isDraftEnabled } from "../draft.ts"
@@ -185,6 +186,8 @@ export interface PageExecutionOptions<Env = unknown> {
   readonly staticBoundaryCache?: StaticBoundaryCache
   /** Per-request CSP nonce for framework-owned executable document scripts. */
   readonly nonce?: NonceResolver<Env>
+  /** A hash-based CSP policy: every document is rendered under it, carrying `nonce` only when needed. */
+  readonly csp?: CspPolicy
   readonly onLoaderError?: (
     error: unknown,
     ctx: {
@@ -251,6 +254,7 @@ export function createPageRequestExecutor<Env = unknown>(
     bindApi === undefined ? api : bindApi.call(api, new LoaderPlatform(c) as Platform)
   const cssLoading = normalizeCssLoading(options.cssLoading ?? DEFAULT_CSS_LOADING)
   const titleOption = options.title === undefined ? {} : { title: options.title }
+  const cspOption = options.csp === undefined ? {} : { csp: options.csp }
   const prerenderedSet = new Set(options.prerenderedPaths ?? [])
   const matchManifestRoute = createMatcher(
     manifest.routes.map((route) => ({ routeId: route.id, pattern: route.pattern })),
@@ -638,6 +642,7 @@ export function createPageRequestExecutor<Env = unknown>(
       hydrate: false,
       ...(personalized ? { headers: PRIVATE_PAGE_HEADERS } : {}),
       ...(nonce === undefined ? {} : { nonce }),
+      ...cspOption,
       ...titleOption,
     })
   }
@@ -679,6 +684,7 @@ export function createPageRequestExecutor<Env = unknown>(
       status,
       ...(extraHeaders !== undefined ? { headers: extraHeaders } : {}),
       ...(nonce === undefined ? {} : { nonce }),
+      ...cspOption,
       ...preloadOf(routeId),
       ...stylesOf(routeId),
       prerenderedPaths: options.prerenderedPaths ?? [],
@@ -821,6 +827,7 @@ export function createPageRequestExecutor<Env = unknown>(
           : {}),
         ...(mod.islandScripts !== undefined ? { islandScripts: mod.islandScripts } : {}),
         ...(nonce === undefined ? {} : { nonce }),
+        ...cspOption,
         ...titleOption,
         ...(assemblyCache === undefined ? {} : { assemblyCache }),
       })
@@ -918,6 +925,7 @@ export function createPageRequestExecutor<Env = unknown>(
       ...stylesOf(id),
       ...(headers === undefined ? {} : { headers }),
       ...(nonce === undefined ? {} : { nonce }),
+      ...cspOption,
       ...titleOption,
     })
   }
@@ -1252,6 +1260,7 @@ export function createPageRequestExecutor<Env = unknown>(
           prerenderedPaths: options.prerenderedPaths ?? [],
           ...(responseHeaders === undefined ? {} : { headers: responseHeaders }),
           ...(nonce === undefined ? {} : { nonce }),
+          ...cspOption,
           ...titleOption,
         })
       }),

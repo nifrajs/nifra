@@ -416,6 +416,13 @@ export interface ISROptions {
   readonly draftSecret?: string
 }
 
+/** `createWebApp`'s marker for how its documents meet a CSP (see `DOCUMENT_POLICY` in ./csp.ts). Read
+ * through the global symbol registry so a cache wrapper never imports the CSP module. */
+const DOCUMENT_POLICY = Symbol.for("nifra.web.documentPolicy")
+
+/** Remembered `no-store` keys per `withISR` wrapper. */
+const MAX_UNCACHEABLE_KEYS = 1024
+
 /** Which query parameters an ISR key carries - see {@link ISROptions.query}. */
 export type ISRQuery = "bypass" | "all" | readonly string[]
 
@@ -589,6 +596,25 @@ export function withISR(
   const keyOf = options.key ?? requestKeyOf(urlKeyOf(options.query))
   const draftSecret = options.draftSecret
   const regenerating = new Set<string>()
+  if ((app as unknown as Record<symbol, unknown>)[DOCUMENT_POLICY] === "nonce") {
+    console.warn(
+      "[nifra/web] withISR wraps an app whose every document carries a CSP nonce. Such documents are " +
+        "`private, no-store`, so this cache will never store a page. Use " +
+        "`createWebApp({ csp: createCspPolicy(...) })` instead of `nonce` to cache pages under a CSP.",
+    )
+  }
+  // Keys whose last render declared itself `private` or `no-store`, with when that memo expires. A
+  // remembered key skips the store lookup (a network round trip on a shared store) and renders fresh;
+  // a render that turns out cacheable is stored and forgets the key. So the memo can only cost a cache
+  // hit, never serve the wrong page. Bounded, oldest first, so a URL flood cannot grow it.
+  const uncacheable = new Map<string, number>()
+  const rememberUncacheable = (key: string, res: Response): void => {
+    if (options.revalidate === 0 || !cacheControlHas(res.headers, ["private", "no-store"])) return
+    if (uncacheable.size >= MAX_UNCACHEABLE_KEYS) {
+      uncacheable.delete(uncacheable.keys().next().value as string)
+    }
+    uncacheable.set(key, now() + options.revalidate * 1000)
+  }
 
   // Per-page TTL (ms): the app's `x-nifra-isr-revalidate` header (seconds) if present, else the default.
   const ttlMs = (res: Response): number => {
@@ -604,7 +630,11 @@ export function withISR(
     key: string,
   ): Promise<Response> => {
     const res = await app.fetch(req, platform)
-    if (!isCacheablePage(req, res)) return res
+    if (!isCacheablePage(req, res)) {
+      rememberUncacheable(key, res)
+      return res
+    }
+    uncacheable.delete(key)
     const body = await res.text()
     const tags = tagsOf(res)
     const entry: CachedResponse = {
@@ -669,6 +699,12 @@ export function withISR(
     // unpublished content can't leak into the public cache (and the editor isn't served a stale page).
     if (draftSecret !== undefined && (await isDraftEnabled(req, draftSecret))) {
       return app.fetch(req, platform)
+    }
+
+    const until = uncacheable.get(key)
+    if (until !== undefined) {
+      if (now() < until) return render(req, platform, key)
+      uncacheable.delete(key)
     }
 
     const hit = await store.get(key)

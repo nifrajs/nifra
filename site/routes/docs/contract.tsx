@@ -208,11 +208,30 @@ const page = renderPage({
   chain: [null],
   data: null,
   clientEntry: "/assets/client.js",
-  nonce, // reaches the hydration bootstrap, the data script and every island tag
+  nonce, // reaches the hydration bootstrap, streamed scripts and every island tag
   head: {
     script: [{ content: JSON.stringify({ "@type": "Article" }) }], // inert: JSON only
     unsafeScript: [unsafeInlineScript("window.dataLayer = []", { nonce })],
   },
+})`
+
+const CSP_POLICY = `import { createCspPolicy, createWebApp, MemoryCacheStore, withISR } from "@nifrajs/web"
+
+declare const adapter: import("@nifrajs/web").RenderAdapter
+declare const manifest: import("@nifrajs/web").Manifest
+
+const csp = createCspPolicy({
+  // \`sources\`: a sha256 hash per constant inline script nifra writes, plus 'nonce-…' only on a
+  // page that needs one - it defer()s, or its meta names the nonce in unsafeInlineScript.
+  header: ({ sources }) => \`default-src 'self'; script-src 'self' \${sources}; object-src 'none'\`,
+})
+const app = createWebApp({ adapter, manifest, clientEntry: "/assets/client.js", csp })
+
+// Every other page is nonce-free, sends the same CSP header each time, and caches.
+export const handler = withISR(app, {
+  store: new MemoryCacheStore(),
+  revalidate: 60,
+  now: () => Date.now(),
 })`
 
 const SEO_EXAMPLE = `// routes/articles/[slug].tsx - a complete SEO head: canonical + Open Graph + Twitter + JSON-LD,
@@ -531,6 +550,17 @@ export default function Contract() {
         <code>script-src 'nonce-…'</code> policy is achievable rather than aspirational:
       </p>
       <CodeBlock code={INLINE_SCRIPT} lang="ts" />
+      <p>
+        A nonce makes every document unique, so a nonce-bearing page is{" "}
+        <code>private, no-store</code> and no shared cache - <code>withISR</code>, a CDN - may store
+        it. Page data never needs one: it rides in an inert{" "}
+        <code>&lt;script type="application/json"&gt;</code> the browser does not execute. To cache
+        pages under a strict policy, give <code>createWebApp</code> a <code>csp</code> instead of a{" "}
+        <code>nonce</code>. A page then carries a nonce only when it has a script specific to this
+        request; the rest are allowed by hash, and <code>nifraScriptHashes(adapter)</code> returns
+        the same list for a policy set at a proxy:
+      </p>
+      <CodeBlock code={CSP_POLICY} lang="ts" />
 
       <h2>The client ↔ server boundary</h2>
       <p>

@@ -144,6 +144,12 @@
     "code": "// nifra.config.ts - Bun's client and SSR build transforms.\nimport { stylexBunPlugin } from \"@nifrajs/web/plugins/stylex\"\n\nexport const clientPlugins = [stylexBunPlugin(\"dom\")]\nexport const serverPlugins = [stylexBunPlugin(\"ssr\")]"
   },
   {
+    "name": "CSP_POLICY",
+    "topic": "Nifra - Framework contract",
+    "slug": "contract",
+    "code": "import { createCspPolicy, createWebApp, MemoryCacheStore, withISR } from \"@nifrajs/web\"\n\ndeclare const adapter: import(\"@nifrajs/web\").RenderAdapter\ndeclare const manifest: import(\"@nifrajs/web\").Manifest\n\nconst csp = createCspPolicy({\n  // `sources`: a sha256 hash per constant inline script nifra writes, plus 'nonce-…' only on a\n  // page that needs one - it defer()s, or its meta names the nonce in unsafeInlineScript.\n  header: ({ sources }) => `default-src 'self'; script-src 'self' ${sources}; object-src 'none'`,\n})\nconst app = createWebApp({ adapter, manifest, clientEntry: \"/assets/client.js\", csp })\n\n// Every other page is nonce-free, sends the same CSP header each time, and caches.\nexport const handler = withISR(app, {\n  store: new MemoryCacheStore(),\n  revalidate: 60,\n  now: () => Date.now(),\n})"
+  },
+  {
     "name": "DUAL_API",
     "topic": "Nifra - Framework contract",
     "slug": "contract",
@@ -153,7 +159,7 @@
     "name": "INLINE_SCRIPT",
     "topic": "Nifra - Framework contract",
     "slug": "contract",
-    "code": "import { renderPage, unsafeInlineScript } from \"@nifrajs/web\"\n\ndeclare const adapter: import(\"@nifrajs/web\").RenderAdapter\ndeclare const nonce: string // one per response, from your CSP middleware\n\nconst page = renderPage({\n  adapter,\n  chain: [null],\n  data: null,\n  clientEntry: \"/assets/client.js\",\n  nonce, // reaches the hydration bootstrap, the data script and every island tag\n  head: {\n    script: [{ content: JSON.stringify({ \"@type\": \"Article\" }) }], // inert: JSON only\n    unsafeScript: [unsafeInlineScript(\"window.dataLayer = []\", { nonce })],\n  },\n})"
+    "code": "import { renderPage, unsafeInlineScript } from \"@nifrajs/web\"\n\ndeclare const adapter: import(\"@nifrajs/web\").RenderAdapter\ndeclare const nonce: string // one per response, from your CSP middleware\n\nconst page = renderPage({\n  adapter,\n  chain: [null],\n  data: null,\n  clientEntry: \"/assets/client.js\",\n  nonce, // reaches the hydration bootstrap, streamed scripts and every island tag\n  head: {\n    script: [{ content: JSON.stringify({ \"@type\": \"Article\" }) }], // inert: JSON only\n    unsafeScript: [unsafeInlineScript(\"window.dataLayer = []\", { nonce })],\n  },\n})"
   },
   {
     "name": "PARAM_404",

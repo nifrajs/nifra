@@ -41,6 +41,14 @@ export {
   RenderAdapterConformanceError,
   type RenderAdapterConformanceFixture,
 } from "./conformance.ts"
+// Hash-based CSP: a document carries a nonce only when it needs one, so a CSP page stays cacheable.
+export {
+  type CreateCspPolicyOptions,
+  type CspHeaderContext,
+  type CspPolicy,
+  createCspPolicy,
+  nifraScriptHashes,
+} from "./csp.ts"
 export {
   assertCssLoadingCompatible,
   type CssLoadingMode,
@@ -247,6 +255,7 @@ export {
   ACTION_GLOBAL,
   BOUNDARY_GLOBAL,
   DATA_GLOBAL,
+  HANDOVER_ID,
   LAYOUT_DATA_GLOBAL,
   type MatchChain,
   type RenderAdapter,

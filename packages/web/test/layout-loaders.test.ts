@@ -691,7 +691,7 @@ test("a layout can end the request with notFound()", async () => {
   const res = await app.fetch(new Request("http://x/orgs/acme/projects/7"))
   expect(res.status).toBe(404)
   // The _404 page rendered - not a soft 200, the exact failure that feature exists to prevent.
-  expect(await res.text()).toContain('__NIFRA_ROUTE__="_404"')
+  expect(await res.text()).toContain('"__NIFRA_ROUTE__":"_404"')
 })
 
 test("a layout's notFound() on a soft-nav answers with the status, not a document", async () => {

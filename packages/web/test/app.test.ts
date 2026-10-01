@@ -352,7 +352,7 @@ test("createWebApp matches a catch-all route end-to-end (params.path = the rest)
   expect(html).toContain('chain=1:{"path":"a/b/c.txt"}') // the catch-all captured the full tail
 })
 
-test("createWebApp injects window.__NIFRA_PRERENDERED__ when prerenderedPaths given [SSG P2.4]", async () => {
+test("createWebApp hands over __NIFRA_PRERENDERED__ when prerenderedPaths given [SSG P2.4]", async () => {
   const withSet = createWebApp({
     adapter: stub,
     manifest: fullManifest(),
@@ -360,7 +360,7 @@ test("createWebApp injects window.__NIFRA_PRERENDERED__ when prerenderedPaths gi
     prerenderedPaths: ["/", "/users/1"],
   })
   expect(await (await withSet.fetch(new Request("http://x/"))).text()).toContain(
-    'window.__NIFRA_PRERENDERED__=["/","/users/1"]',
+    '"__NIFRA_PRERENDERED__":["/","/users/1"]',
   )
   // Omitted ⇒ not injected (no bloat for non-SSG apps).
   const without = createWebApp({ adapter: stub, manifest: fullManifest(), clientEntry: "/c.js" })
@@ -641,7 +641,7 @@ test("createWebApp runs an action on POST and re-renders with actionData + the l
   const html = await res.text()
   expect(html).toContain('chain=1:{"count":1}') // loader re-ran
   expect(html).toContain(':action={"saved":"Ada"}') // action data reached the component
-  expect(html).toContain('window.__NIFRA_ACTION__={"saved":"Ada"}') // serialized so hydration matches
+  expect(html).toContain('"__NIFRA_ACTION__":{"saved":"Ada"}') // serialized so hydration matches
 })
 
 test("a deferred action streams NDJSON on a data-mode submit (critical first, then the deferred)", async () => {
@@ -739,7 +739,7 @@ test("a deferred action streams mid-page on a no-JS full-page POST (placeholder 
   const html = await (await app.fetch(new Request("http://x/", { method: "POST" }))).text()
   // The action result is split like loader data: __NIFRA_ACTION__ carries the placeholder (id 0 - the
   // null loader contributes none), and the value streams in a __nifraResolve script after the body.
-  expect(html).toContain('window.__NIFRA_ACTION__={"recs":{"__nifra_deferred":0}}')
+  expect(html).toContain('"__NIFRA_ACTION__":{"recs":{"__nifra_deferred":0}}')
   expect(html).toContain("window.__nifraResolve(0,")
   expect(html).toContain('["x"]') // the resolved value, streamed (not awaited inline)
 })

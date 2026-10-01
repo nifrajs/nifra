@@ -221,6 +221,52 @@ describe("withISR", () => {
     }
   })
 
+  test("a key whose page said no-store skips the store lookup until the memo expires", async () => {
+    const store = new MemoryCacheStore()
+    const gets: string[] = []
+    const spy: typeof store = Object.assign(Object.create(store), {
+      get: (key: string) => {
+        gets.push(key)
+        return store.get(key)
+      },
+    })
+    let cacheControl = "private, no-store"
+    let t = 0
+    const { app, calls } = trackApp(() => html("v", { "cache-control": cacheControl }))
+    const handler = withISR(app, { store: spy, revalidate: 60, now: () => t })
+    await handler(new Request("http://x/p"))
+    await handler(new Request("http://x/p"))
+    expect(gets).toEqual(["http://x/p"]) // the second request went straight to the app
+    expect(calls()).toBe(2)
+    // Once the page becomes cacheable it is stored and the memo forgets the key.
+    cacheControl = "public, max-age=0"
+    expect((await handler(new Request("http://x/p"))).headers.get("x-nifra-isr")).toBe("miss")
+    expect((await handler(new Request("http://x/p"))).headers.get("x-nifra-isr")).toBe("hit")
+    // An expired memo looks the store up again.
+    cacheControl = "no-store"
+    await handler(new Request("http://x/q"))
+    t = 61_000
+    gets.length = 0
+    await handler(new Request("http://x/q"))
+    expect(gets).toEqual(["http://x/q"])
+  })
+
+  test("revalidate 0 keeps no no-store memo", async () => {
+    const store = new MemoryCacheStore()
+    let gets = 0
+    const spy: typeof store = Object.assign(Object.create(store), {
+      get: (key: string) => {
+        gets++
+        return store.get(key)
+      },
+    })
+    const { app } = trackApp(() => html("v", { "cache-control": "no-store" }))
+    const handler = withISR(app, { store: spy, revalidate: 0, now: () => 0 })
+    await handler(new Request("http://x/p"))
+    await handler(new Request("http://x/p"))
+    expect(gets).toBe(2)
+  })
+
   test("stale serves the old body + regenerates behind it (waitUntil)", async () => {
     const store = new MemoryCacheStore()
     let body = "v1"

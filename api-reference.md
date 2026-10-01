@@ -4547,8 +4547,13 @@ _No named exports (side-effect entrypoint)._
 - **ClientRouter** _(interface)_ - `interface ClientRouter`
   The agnostic router store consumed by per-adapter Router bindings.
 - **ClientRouterOptions** _(interface)_ - `interface ClientRouterOptions`
+- **CreateCspPolicyOptions** _(interface)_ - `interface CreateCspPolicyOptions`
 - **CreateNonceResolverOptions** _(interface)_ - `interface CreateNonceResolverOptions<Env = unknown>`
 - **CreateWebAppOptions** _(interface)_ - `interface CreateWebAppOptions<Env = unknown>`
+- **CspHeaderContext** _(interface)_ - `interface CspHeaderContext`
+  What {@link CreateCspPolicyOptions.header} receives for one document.
+- **CspPolicy** _(interface)_ - `interface CspPolicy`
+  A hash-based Content-Security-Policy for nifra documents - see {@link createCspPolicy}. Opaque: pass it to `createWebApp({ csp })` or `renderPage({ csp })`.
 - **CssLoadingMode** _(type)_ - `type CssLoadingMode = "blocking" | "deferred"`
   How framework-owned stylesheets are made active during the first document load.
 - **DATA_GLOBAL** _(const)_ - `DATA_GLOBAL: "__NIFRA_DATA__"`
@@ -4587,6 +4592,8 @@ _No named exports (side-effect entrypoint)._
 - **GenerateServerManifestOptions** _(interface)_ - `interface GenerateServerManifestOptions`
 - **GetStaticPaths** _(type)_ - `type GetStaticPaths = () => StaticPaths | Promise<StaticPaths>`
   A dynamic route's build-time param enumeration (the SSG equivalent of "which pages exist").
+- **HANDOVER_ID** _(const)_ - `HANDOVER_ID: "__nifra-handover"`
+  `id` of the inert `<script type="application/json">` a hydrating document hands its page state over in: one JSON object keyed by the `*_GLOBAL` names below, which the client entry assigns onto `window` before anything reads them. Data the browser never executes needs no CSP nonce or hash.
 - **HtmlSanitizer** _(type)_ - `type HtmlSanitizer = (value: string) => string`
   The only contract a project-specific, allowlist-based HTML sanitizer must satisfy.
 - **IDLE_BLOCKER** _(const)_ - `IDLE_BLOCKER: Blocker`
@@ -4811,6 +4818,8 @@ _No named exports (side-effect entrypoint)._
 - **canonical** _(function)_ - `canonical: (href: string) => LinkDescriptor`
   A `<link rel="canonical">` descriptor for a route's `meta.link`. The canonical URL tells search engines which URL is authoritative for a page (deduping query-string / tracking variants).
 - **createClientRouter** _(function)_ - `createClientRouter: (options: ClientRouterOptions) => ClientRouter`
+- **createCspPolicy** _(function)_ - `createCspPolicy: (options: CreateCspPolicyOptions) => CspPolicy`
+  Create a hash-based Content-Security-Policy for nifra documents, so a page can carry a strict CSP and still be cached.
 - **createMatcher** _(function)_ - `createMatcher: (patterns: readonly RoutePattern[]) => (path: string) => RouteMatch | null`
   Build a matcher from route patterns (built from the SAME manifest the server routes from, so client and server agree). Returns the first matching route + decoded params, or null. The query string is ignored for matching (it is not part of the route pattern).
 - **createMutation** _(function)_ - `createMutation: <TData, TVariables>(fn: (variables: TVariables) => Promise<TData>, callbacks?: MutationCallbacks<TData, TVariables>) => MutationHandle<TData, TVariables>`
@@ -4852,6 +4861,8 @@ _No named exports (side-effect entrypoint)._
   Build a JSON-LD `<script type="application/ld+json">` entry for a route's `meta.script` from a plain object. `JSON.stringify` produces the body; the head renderer breakout-escapes it (see `escapeScriptContent`), so a string field containing `</script>` is embedded safely.
 - **mergeHeads** _(function)_ - `mergeHeads: (heads: readonly Meta[]) => Meta`
   Merge a layout chain's heads, outermost first: `title`/`lang`/`dir` are nearest-wins, and `meta`/`link`/`script` concatenate in chain order.
+- **nifraScriptHashes** _(function)_ - `nifraScriptHashes: (adapter: RenderAdapter) => Promise<readonly string[]>`
+  The `'sha256-…'` sources for the constant inline scripts nifra writes into a document rendered with `adapter`: the pre-hydration form guard and the adapter's hydration head. For a CSP set outside the app (a proxy, a CDN rule); {@link createCspPolicy} computes the same list itself.
 - **normalizeCssLoading** _(function)_ - `normalizeCssLoading: (value: unknown) => CssLoadingMode`
   Runtime validation for JavaScript callers, generated manifests, and hand-authored integrations.
 - **notFound** _(function)_ - `notFound: (options?: StatusPageOptions) => never`

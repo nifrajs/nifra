@@ -5,6 +5,7 @@ import {
   ACTION_GLOBAL,
   BOUNDARY_GLOBAL,
   DATA_GLOBAL,
+  HANDOVER_ID,
   LAYOUT_DATA_GLOBAL,
   ROOT_ATTRIBUTE,
   ROUTE_GLOBAL,
@@ -220,6 +221,10 @@ export function generateClientEntry(
     "  routeHooks[id] = { clientLoader: page.clientLoader, clientAction: page.clientAction, boundaries }",
     "  if (page.ssr === false) holds[id] = [...chains[id].slice(0, -1), page.HydrateFallback ?? (() => null)]",
     "}",
+    // The server hands page state over as one inert JSON script; lift it onto the globals the
+    // router, the deferred mapper and the adapters read, before any of them runs.
+    `const handover = document.getElementById(${JSON.stringify(HANDOVER_ID)})`,
+    'if (handover !== null) Object.assign(window, JSON.parse(handover.textContent || "{}"))',
     "const patterns = [",
     ...patternRows,
     "]",

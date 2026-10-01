@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import {
   buildManifest,
   generateClientEntry,
+  HANDOVER_ID,
   type RenderAdapter,
   ROOT_ATTRIBUTE,
   type RouteModule,
@@ -146,8 +147,12 @@ test("a document with no container throws, naming the container it wanted", () =
 test("the entry never bakes in an id other than the documented fallback", () => {
   const source = entrySource()
   // `getElementById("root")` is the fallback for an unmarked default document and is meant to be
-  // here. A SECOND baked id would be the same bug wearing a different name.
-  expect(source.match(/getElementById\("[^"]*"\)/g)).toEqual(['getElementById("root")'])
+  // here. A SECOND baked container id would be the same bug wearing a different name. The handover
+  // id is not a container: it is the fixed name every document's page-state script carries.
+  expect(source.match(/getElementById\("[^"]*"\)/g)).toEqual([
+    `getElementById("${HANDOVER_ID}")`,
+    'getElementById("root")',
+  ])
   expect(source).toContain(`document.querySelector("body > div[${ROOT_ATTRIBUTE}]")`)
 })
 

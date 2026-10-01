@@ -105,6 +105,13 @@ export function ssrModuleLoader(): SsrModuleLoader | undefined {
   return loaderSlot[SSR_MODULE_LOADER_SLOT]
 }
 
+/**
+ * `id` of the inert `<script type="application/json">` a hydrating document hands its page state over
+ * in: one JSON object keyed by the `*_GLOBAL` names below, which the client entry assigns onto
+ * `window` before anything reads them. Data the browser never executes needs no CSP nonce or hash.
+ */
+export const HANDOVER_ID = "__nifra-handover"
+
 /** Global the server serializes loader data into; the client reads it to hydrate. */
 export const DATA_GLOBAL = "__NIFRA_DATA__"
 /** Per-layout loader data for hydration. */

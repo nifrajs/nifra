@@ -236,14 +236,18 @@ function outputPath(outputDir: string, entry: string): string {
   return join(outputDir, basename(entry))
 }
 
-function globalValue(html: string, name: string): unknown {
-  const expression = new RegExp(`window\\.${name}=([\\s\\S]*?)(?:</script>|;window\\.)`)
-  const value = expression.exec(html)?.[1]?.replace(/;$/, "")
-  if (value === undefined) return undefined
+/** The page state a hydrating document hands over: the inert `#__nifra-handover` JSON script,
+ * keyed by the global names the client entry assigns onto `window`. */
+function handoverOf(html: string): Record<string, unknown> {
+  const body = /<script type="application\/json" id="__nifra-handover">([\s\S]*?)<\/script>/.exec(
+    html,
+  )?.[1]
+  if (body === undefined) return {}
   try {
-    return JSON.parse(value)
+    const parsed: unknown = JSON.parse(body)
+    return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {}
   } catch {
-    return undefined
+    return {}
   }
 }
 
@@ -289,10 +293,7 @@ async function runDomHydration(
     else globals[name] = windowValue[name]
   }
   const windowRecord = windowValue as Record<string, unknown>
-  windowRecord.__NIFRA_ROUTE__ = globalValue(html, "__NIFRA_ROUTE__")
-  windowRecord.__NIFRA_DATA__ = globalValue(html, "__NIFRA_DATA__")
-  windowRecord.__NIFRA_LAYOUT_DATA__ = globalValue(html, "__NIFRA_LAYOUT_DATA__")
-  windowRecord.__NIFRA_ACTION__ = globalValue(html, "__NIFRA_ACTION__")
+  Object.assign(windowRecord, handoverOf(html))
   windowRecord.console = console
   const errors: string[] = []
   const recover = (error: unknown, info?: unknown): void => {

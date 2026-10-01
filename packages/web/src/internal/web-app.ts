@@ -9,6 +9,7 @@ import {
 } from "@nifrajs/core/mount"
 import type { MountableApp, MountOptions } from "@nifrajs/core/server"
 import { type ServerOptions, server } from "@nifrajs/core/server"
+import { type CspPolicy, cspNonceResolver, DOCUMENT_POLICY, isCspPolicy } from "../csp.ts"
 import type { CssLoadingMode } from "../css-contract.ts"
 import { generateLlmsTxt } from "../llms-txt.ts"
 import type { Manifest } from "../manifest.ts"
@@ -31,6 +32,13 @@ export interface CreateWebAppOptions<Env = unknown> {
    * policy's allowed sources are app-specific.
    */
   readonly nonce?: NonceResolver<Env>
+  /**
+   * A hash-based Content-Security-Policy from `createCspPolicy`, instead of `nonce`. A document then
+   * carries a nonce only when it needs one (it `defer()`s a value, or `meta` names the nonce in
+   * `unsafeInlineScript`); every other page is nonce-free, gets the same CSP header on every request,
+   * and stays cacheable by `withISR` or a CDN. `meta` still receives a nonce to name.
+   */
+  readonly csp?: CspPolicy
   /**
    * Options for the underlying `server()` - `requestTimeoutMs`, `admission`, `gracefulSignals`, and
    * the rest of {@link ServerOptions}.
@@ -269,6 +277,12 @@ export function createWebApp<Env = unknown>(
   options: CreateWebAppOptions<Env>,
 ): ReturnType<typeof server<Env>> {
   const { adapter, manifest, clientEntry, title, api } = options
+  if (options.csp !== undefined && options.nonce !== undefined) {
+    throw new TypeError("[nifra/web] createWebApp takes `csp` or `nonce`, not both")
+  }
+  if (options.csp !== undefined && !isCspPolicy(options.csp)) {
+    throw new TypeError("[nifra/web] createWebApp `csp` must come from createCspPolicy()")
+  }
   // Seed the context with the declared `Env` so `app.fetch(req, { env })` / `toFetchHandler(app)` type
   // the platform bindings (see the `createWebApp` doc). The runtime `env` still arrives per-request via
   // `app.fetch(req, { env })`; this is a compile-time-only seed (`server<Env>()` casts, doesn't store).
@@ -281,6 +295,12 @@ export function createWebApp<Env = unknown>(
   // after caller middleware so its request-specific CSP value is the last default applied to a page.
   const nonceResponse = options.nonce?.onResponse
   if (nonceResponse !== undefined) app.onResponse(nonceResponse)
+  // How this app's documents meet a CSP, for wrappers that cache them (`withISR` warns on "nonce").
+  const documentPolicy =
+    options.csp !== undefined ? "hash" : options.nonce !== undefined ? "nonce" : undefined
+  if (documentPolicy !== undefined) {
+    Object.defineProperty(app, DOCUMENT_POLICY, { value: documentPolicy })
+  }
   // Auto-mount the in-process backend over HTTP at `apiPrefix` (default `/api`), BEFORE page routing.
   // Core's pre-route mount seam runs before the page wildcard `/*`; parent request hooks run first,
   // child request hooks run inside the mount, and parent response hooks still wrap the result.
@@ -329,6 +349,9 @@ export function createWebApp<Env = unknown>(
       ? {}
       : { staticBoundaryCache: options.staticBoundaryCache }),
     ...(options.nonce === undefined ? {} : { nonce: options.nonce }),
+    ...(options.csp === undefined
+      ? {}
+      : { nonce: cspNonceResolver(options.csp) as NonceResolver<Env>, csp: options.csp }),
     ...(options.onLoaderError === undefined ? {} : { onLoaderError: options.onLoaderError }),
   })
 

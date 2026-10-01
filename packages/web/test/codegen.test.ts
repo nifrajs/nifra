@@ -367,7 +367,7 @@ test("a loader's notFound() hydrates the _404 the server rendered, not the match
   const served = async (path: string) => {
     const res = await app.fetch(new Request(`http://x${path}`))
     const html = await res.text()
-    const injected = new RegExp(`window\\.${ROUTE_GLOBAL}=("[^"]*");`).exec(html)
+    const injected = new RegExp(`"${ROUTE_GLOBAL}":("[^"]*")`).exec(html)
     if (injected === null) throw new Error(`no route id injected:\n${html.slice(0, 400)}`)
     return { status: res.status, route: JSON.parse(injected[1] as string) as string }
   }
