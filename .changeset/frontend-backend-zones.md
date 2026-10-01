@@ -22,6 +22,12 @@ packages, never a server built-in. A server bundle also refuses a built-in its t
 server build runs the zone rules through `viteServerZoneGuard` from
 `@nifrajs/web/plugins/vite-leak-guard`.
 
+Browser code - a route's frontend half, `frontend/` and `shared/` - may read only `NODE_ENV`, the
+bundler's `import.meta.env` flags (`MODE`, `DEV`, `PROD`, `SSR`, `BASE_URL`) and variables named with
+the public prefix (`PUBLIC_` unless `publicEnvPrefix` says otherwise). Any other `process.env`,
+`import.meta.env`, `Bun.env` or `Deno.env` read fails the build and the dev request, naming the
+variable. Strings, comments, JSX text and Markdown code samples that mention a variable are not reads.
+
 Removed: the `*.server` file convention, the `@nifrajs/web/plugins/vite-server-only` export and
 `SERVER_ONLY_MODULE`. The opt-in marker import is `@nifrajs/web/backend-only`, its brand type is
 `BackendOnly<T>`, and the dev diagnostics are `NIFRA_BACKEND_ONLY_IN_CLIENT` and

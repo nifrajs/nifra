@@ -109,12 +109,20 @@ test("buildClient bakes a PUBLIC_ var's value into the client bundle, never a se
 
   const routesDir = join(projectRoot, "routes")
   mkdirSync(routesDir, { recursive: true })
-  // A route module that reads BOTH a public and a secret var off `process.env`.
+  // The route reads the public var; a dependency reads the secret. App code reading a private var
+  // fails the build, so third-party code is where the define layer still decides.
+  const lib = join(projectRoot, "node_modules/env-reader")
+  mkdirSync(lib, { recursive: true })
+  writeFileSync(
+    join(lib, "package.json"),
+    '{ "name": "env-reader", "type": "module", "main": "index.js" }',
+  )
+  writeFileSync(join(lib, "index.js"), "export const secret = process.env.SECRET_E2E_KEY\n")
   writeFileSync(
     join(routesDir, "index.tsx"),
     "export default function Index() { return null }\n" +
       "export const apiUrl = process.env.PUBLIC_E2E_API_URL\n" +
-      "export const secret = process.env.SECRET_E2E_KEY\n",
+      'export { secret } from "env-reader"\n',
   )
   // A local client module exposing `mountRouter` so the generated bootstrap import resolves.
   const clientModule = join(projectRoot, "frontend/client-stub.ts")

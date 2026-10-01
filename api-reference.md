@@ -5452,7 +5452,7 @@ _No named exports (side-effect entrypoint)._
 - **LeakGuardOptions** _(interface)_ - `interface LeakGuardOptions`
 - **LeakGuardPlugin** _(interface)_ - `interface LeakGuardPlugin`
   The minimal Rollup plugin shape this returns - `generateBundle` bound to the plugin context.
-- **ServerZoneGuardOptions** _(type)_ - `type ServerZoneGuardOptions = Pick< LeakGuardOptions, "appRoot" | "routesDir" | "generatedFiles" >`
+- **ServerZoneGuardOptions** _(type)_ - `type ServerZoneGuardOptions = Pick< LeakGuardOptions, "appRoot" | "routesDir" | "generatedFiles" | "publicEnvPrefix" >`
   What {@link viteServerZoneGuard} needs: the zones of the app, nothing about the output.
 - **viteBareBuiltinExternal** _(function)_ - `viteBareBuiltinExternal: () => BareBuiltinPlugin`
   Keep a bare Node built-in (`fs/promises`, `path`) visible to {@link viteLeakGuard}. Vite resolves a bare built-in that is not an installed package to one shared `__vite-browser-external` stub: the import builds, does nothing in the browser, and no longer names the module. This plugin externalizes i…

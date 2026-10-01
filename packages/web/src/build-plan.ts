@@ -181,6 +181,8 @@ export interface Bundler {
     readonly root?: string
     /** Modules the zone rules treat as generated: the adapter module the generated entry imports. */
     readonly generatedFiles?: readonly string[]
+    /** The public-env prefix browser code may read (default `"PUBLIC_"`). */
+    readonly publicEnvPrefix?: string
   }): Promise<ServerBuild>
 }
 

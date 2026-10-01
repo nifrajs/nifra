@@ -33,6 +33,8 @@ beforeAll(async () => {
     'import { note } from "../backend/notes.fn.ts"\nexport const call = note\n',
   )
   write("lib/loose.ts", `export const loose = "${SECRET}"\n`)
+  write("shared/config.ts", "export const db = process.env.DATABASE_URL\n")
+  write("frontend/public-config.ts", "export const api = import.meta.env.PUBLIC_API\n")
   server = await createViteDevServer({
     root,
     routesDir: join(root, "routes"),
@@ -95,4 +97,14 @@ test("a frontend module importing backend code fails at the import, naming both 
   expect(response.status).toBe(500)
   expect(body).toContain("backend/db.ts may not reach the browser (imported by frontend/leaky.ts)")
   expect(body).not.toContain(SECRET)
+})
+
+test("browser code reading a private environment variable fails; a public one is served", async () => {
+  const refused = await fetch(`${origin}/shared/config.ts`)
+  expect(refused.status).toBe(500)
+  expect(await refused.text()).toContain(
+    "shared/config.ts may not reach the browser: it reads private environment variable process.env.DATABASE_URL",
+  )
+  const served = await fetch(`${origin}/frontend/public-config.ts`)
+  expect(served.status).toBe(200)
 })

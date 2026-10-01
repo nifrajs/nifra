@@ -39,11 +39,13 @@ beforeEach(() => {
   writeFileSync(join(routesDir, "index.tsx"), "export default function Index() { return null }\n")
   mkdirSync(join(root, "frontend"))
   writeFileSync(join(root, "frontend/client.ts"), "export function mountRouter() {}\n")
-  // A module that asks for BOTH, so one request shows what the boundary let through and what it kept.
   writeFileSync(
     join(root, "frontend/env-probe.ts"),
-    `export const visible = import.meta.env.${PUBLIC_VAR}\n` +
-      `export const hidden = import.meta.env.${VITE_VAR}\n`,
+    `export const visible = import.meta.env.${PUBLIC_VAR}\n`,
+  )
+  writeFileSync(
+    join(root, "frontend/env-secret.ts"),
+    `export const hidden = import.meta.env.${VITE_VAR}\n`,
   )
 })
 
@@ -69,13 +71,17 @@ const start = async (publicEnvPrefix?: string): Promise<string> => {
   return `http://127.0.0.1:${server.port}`
 }
 
-test("dev serves the declared public variable and withholds Vite's own VITE_* one", async () => {
+test("dev serves the declared public variable and refuses Vite's own VITE_* one", async () => {
   const origin = await start()
   const served = await (await fetch(`${origin}/frontend/env-probe.ts`)).text()
-
   expect(served).toContain(PUBLIC_VALUE)
-  // The whole point. Before `envPrefix` was bound to Nifra's policy this line was in the response.
-  expect(served).not.toContain(SECRET_VALUE)
+
+  // The whole point. Before `envPrefix` was bound to Nifra's policy this value was in the response.
+  const refused = await fetch(`${origin}/frontend/env-secret.ts`)
+  const body = await refused.text()
+  expect(refused.status).toBe(500)
+  expect(body).toContain(`reads private environment variable import.meta.env.${VITE_VAR}`)
+  expect(body).not.toContain(SECRET_VALUE)
 }, 60_000)
 
 test("a configured prefix is what dev honours, not the default", async () => {
@@ -85,10 +91,11 @@ test("a configured prefix is what dev honours, not the default", async () => {
   const response = await fetch(`${origin}/frontend/env-probe.ts`)
   const served = await response.text()
 
-  // Proof this is the transformed module and not a 404 - without it, two `not.toContain`s would pass
-  // on any error page, which is the way a test like this quietly stops testing anything.
-  expect(response.status).toBe(200)
-  expect(served).toContain("export const visible")
+  // Proof this is the env refusal and not a 404 - without it, two `not.toContain`s would pass on any
+  // error page, which is the way a test like this quietly stops testing anything.
+  expect(response.status).toBe(500)
+  expect(served).toContain(`reads private environment variable import.meta.env.${PUBLIC_VAR}`)
+  expect(served).toContain("variables named NIFRA_ONLY_*")
 
   expect(served).not.toContain(PUBLIC_VALUE)
   expect(served).not.toContain(SECRET_VALUE)

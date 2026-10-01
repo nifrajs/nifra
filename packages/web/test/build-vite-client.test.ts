@@ -226,9 +226,14 @@ test("bakes in PUBLIC_* values without exposing unprefixed secrets", async () =>
   process.env[publicName] = "vite-public-value"
   process.env[secretName] = "vite-private-value"
   try {
+    // App code reading a private variable fails the build; third-party code is not checked, so the
+    // define layer is what keeps its private reads out of the bundle.
     const { root, routesDir } = scaffold({
-      "routes/index.tsx": `export const visible = process.env.${publicName}
-        export const hidden = process.env.${secretName}
+      "node_modules/env-reader/package.json":
+        '{ "name": "env-reader", "type": "module", "main": "index.js" }',
+      "node_modules/env-reader/index.js": `export const hidden = process.env.${secretName}\n`,
+      "routes/index.tsx": `export { hidden } from "env-reader"
+        export const visible = process.env.${publicName}
         export default function Index() { return null }\n`,
     })
     const outDir = join(root, "dist", "assets")
@@ -261,8 +266,11 @@ test("configured publicEnvPrefix disables Vite's independent VITE_* exposure", a
   process.env[viteSecretName] = "vite-prefix-bypass-secret"
   try {
     const { root, routesDir } = scaffold({
-      "routes/index.tsx": `export const visible = import.meta.env.${publicName}
-        export const hidden = import.meta.env.${viteSecretName}
+      "node_modules/env-reader/package.json":
+        '{ "name": "env-reader", "type": "module", "main": "index.js" }',
+      "node_modules/env-reader/index.js": `export const hidden = import.meta.env.${viteSecretName}\n`,
+      "routes/index.tsx": `export { hidden } from "env-reader"
+        export const visible = import.meta.env.${publicName}
         export default function Index() { return null }\n`,
     })
     const outDir = join(root, "dist", "assets")
@@ -324,3 +332,14 @@ test("concurrent production and development builds observe their own NODE_ENV", 
   expect(seen.sort()).toEqual(["development:development", "production:production"])
   expect(process.env.NODE_ENV).toBe(ambient)
 }, 120_000)
+
+test("browser code reading a private environment variable fails the build", async () => {
+  const { root, routesDir } = scaffold({
+    "shared/config.ts": "export const db = process.env.DATABASE_URL\n",
+    "routes/index.tsx":
+      'import { db } from "../shared/config.ts"\nexport default () => [db, import.meta.env.PUBLIC_API]\n',
+  })
+  await expect(build(root, routesDir)).rejects.toThrow(
+    "shared/config.ts: it reads private environment variable process.env.DATABASE_URL",
+  )
+})

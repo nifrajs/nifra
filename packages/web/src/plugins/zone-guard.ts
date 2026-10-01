@@ -9,6 +9,7 @@
 
 import { dirname, isAbsolute, relative, resolve } from "node:path"
 import type { BunPlugin } from "bun"
+import { privateEnvDenial } from "../internal/private-env.ts"
 import {
   BACKEND_ONLY_MARKER,
   browserDenial,
@@ -34,7 +35,13 @@ export interface ZoneGuardOptions {
   readonly onDenied?: (file: string, reason: string) => void
   /** Share a classifier with post-build verification. */
   readonly classifier?: ZoneClassifier
+  /** The public-env prefix browser code may read (default `"PUBLIC_"`). Checked here only in throw
+   * mode; a build checks the finished graph instead. */
+  readonly publicEnvPrefix?: string
 }
+
+/** Zones whose code runs in a browser, so may read only public environment variables. */
+const BROWSER_CODE = new Set<string>(["route-frontend", "frontend", "shared"])
 
 export function zoneGuardPlugin(options: ZoneGuardOptions): BunPlugin {
   const classifier = options.classifier ?? createZoneClassifier(options)
@@ -54,9 +61,18 @@ export function zoneGuardPlugin(options: ZoneGuardOptions): BunPlugin {
   return {
     name: "nifra-zone-guard",
     setup(build) {
-      build.onLoad({ filter: SOURCE_FILE }, (args) => {
+      build.onLoad({ filter: SOURCE_FILE }, async (args) => {
         if (args.namespace !== "file") return undefined
-        const reason = browserDenial(classifier.classify(args.path))
+        const classification = classifier.classify(args.path)
+        let reason = browserDenial(classification)
+        if (
+          reason === undefined &&
+          options.onDenied === undefined &&
+          BROWSER_CODE.has(classification.zone)
+        ) {
+          const source = await Bun.file(args.path).text()
+          reason = privateEnvDenial(args.path, source, options.publicEnvPrefix ?? "PUBLIC_")
+        }
         return reason === undefined ? undefined : refuse(args.path, reason)
       })
       build.onResolve({ filter: ASSET_FILE }, (args) => {

@@ -49,6 +49,7 @@ import {
   assertIdentityParity,
   collectDevelopmentParityInput,
 } from "./internal/parity.ts"
+import { privateEnvCheck } from "./internal/private-env.ts"
 import {
   generateServerFnStub,
   SERVER_FN_MODULE,
@@ -423,6 +424,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   // layered after these in the `define` object). `Bun` may be absent under non-Bun typecheck - guard it.
   const buildEnv = (typeof Bun !== "undefined" ? Bun.env : undefined) ?? process.env
   const publicDefines = publicEnvDefines(options.publicEnvPrefix ?? "PUBLIC_", buildEnv)
+  const privateEnv = privateEnvCheck(options.publicEnvPrefix ?? "PUBLIC_")
   // Keep the generated source beside the project, not inside `outDir`: module resolution starts at the
   // importing file, so an absolute `--out /tmp/deploy` must still resolve the app's dependencies.
   // A unique directory also avoids clobbering a user file or colliding with parallel builds.
@@ -515,6 +517,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
             verifyClientGraph(fromBunMetafile(clientMeta), {
               classifier,
               sourceOf: bunModuleSource(cwd),
+              privateEnv,
             }),
           )
         : undefined
@@ -534,7 +537,11 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     }),
   )
   const clientGraph = withEmittedImports(fromBunMetafile(clientMeta), emitted, publicPath)
-  const verdict = verifyClientGraph(clientGraph, { classifier, sourceOf: bunModuleSource(cwd) })
+  const verdict = verifyClientGraph(clientGraph, {
+    classifier,
+    sourceOf: bunModuleSource(cwd),
+    privateEnv,
+  })
   // Two independent records of one fact: a file the plugin refused that the graph never shows means the
   // graph is missing evidence, and the build cannot prove anything else about it either.
   const reported = new Set(verdict.leaks.map((leak) => resolvePath(root, leak.module)))
@@ -752,6 +759,9 @@ export interface BuildServerOptions {
   /** Modules a build tool wrote or names as an entry (the adapter module a generated entry imports).
    * Like `serverEntry` and the generated manifest, they may import both halves of a route. */
   readonly generatedFiles?: readonly string[]
+  /** The public-env prefix the app's browser code may read (default `"PUBLIC_"`). Shared code in
+   * the server bundle is held to it too. */
+  readonly publicEnvPrefix?: string
 }
 
 /** The built worker bundle - point your `wrangler.toml`'s `main` at `worker`. */
@@ -1120,8 +1130,13 @@ export async function buildServer(options: BuildServerOptions): Promise<ServerBu
     return source.kind === "file" ? relative(appRoot, source.file).replaceAll("\\", "/") : id
   }
   const refusal =
-    formatServerGraphVerdict(verifyServerGraph(serverGraph, { classifier, sourceOf })) ??
-    formatUnsupportedBuiltins(unsupportedBuiltins(serverGraph, target, labelOf), target)
+    formatServerGraphVerdict(
+      verifyServerGraph(serverGraph, {
+        classifier,
+        sourceOf,
+        privateEnv: privateEnvCheck(options.publicEnvPrefix ?? "PUBLIC_"),
+      }),
+    ) ?? formatUnsupportedBuiltins(unsupportedBuiltins(serverGraph, target, labelOf), target)
   if (refusal !== undefined) {
     // Bun wrote the bundle already; a refused build leaves nothing a deploy step could pick up.
     for (const output of result.outputs) rmSync(output.path, { force: true })
@@ -1498,6 +1513,7 @@ export const bunBundler: Bundler = {
       ...(input.cssLoading !== undefined ? { cssLoading: input.cssLoading } : {}),
       ...(input.root !== undefined ? { root: input.root } : {}),
       ...(input.generatedFiles !== undefined ? { generatedFiles: input.generatedFiles } : {}),
+      ...(input.publicEnvPrefix !== undefined ? { publicEnvPrefix: input.publicEnvPrefix } : {}),
     }),
 }
 
@@ -1639,6 +1655,7 @@ export async function buildTargetWith(
         : {}),
     root: resolvePath(dirname(routesDir)),
     generatedFiles: [resolvePath(workDir, options.adapterImport)],
+    ...(options.publicEnvPrefix !== undefined ? { publicEnvPrefix: options.publicEnvPrefix } : {}),
   })
 
   // (3) Assemble the deploy dir for the target.

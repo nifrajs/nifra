@@ -13,6 +13,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
+import { privateEnvDenial } from "../internal/private-env.ts"
 import {
   browserDenial,
   type Classification,
@@ -28,7 +29,12 @@ export interface ViteZoneGuardOptions {
   readonly routesDir?: string
   /** Generated client modules (the dev entry). */
   readonly generatedFiles?: readonly string[]
+  /** The public-env prefix browser code may read (default `"PUBLIC_"`). */
+  readonly publicEnvPrefix?: string
 }
+
+/** Zones whose code runs in a browser, so may read only public environment variables. */
+const BROWSER_CODE = new Set<string>(["route-frontend", "frontend", "shared"])
 
 type Next = (error?: unknown) => void
 type Middleware = (req: IncomingMessage, res: ServerResponse, next: Next) => void
@@ -222,13 +228,19 @@ export function viteZoneGuard(options: ViteZoneGuardOptions): ViteZoneGuardPlugi
       }
       return null
     },
-    transform(_code, id, transformOptions) {
+    transform(code, id, transformOptions) {
       if (!isClient(this, transformOptions?.ssr)) return null
       const file = stripQuery(id)
       if (!isAbsolute(file) || !isFile(file)) return null
       // A fresh transform re-resolves every import, so an earlier refusal is stale until it recurs.
       refusals.delete(file)
-      const reason = browserDenial(classifier.classify(file))
+      const classification = classifier.classify(file)
+      // A `pre` transform sees the file as written, so the env check reads the source the author wrote.
+      const reason =
+        browserDenial(classification) ??
+        (BROWSER_CODE.has(classification.zone) && id === file
+          ? privateEnvDenial(file, code, options.publicEnvPrefix ?? "PUBLIC_")
+          : undefined)
       if (reason !== undefined) refuse(this, file, reason)
       return null
     },

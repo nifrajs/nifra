@@ -46,6 +46,7 @@ import {
   formatServerOnlyLeak,
 } from "../build-plan.ts"
 import { isBareNodeBuiltin } from "../internal/node-builtins.ts"
+import { privateEnvCheck } from "../internal/private-env.ts"
 import {
   accountEmittedFiles,
   type EmittedFile,
@@ -117,6 +118,8 @@ export interface LeakGuardOptions {
   readonly generatedFiles?: readonly string[]
   /** Output files another guarded build already verified (a worker sub-build's chunks). */
   readonly verified?: Set<string>
+  /** The public-env prefix browser code may read (default `"PUBLIC_"`; `""` exposes nothing). */
+  readonly publicEnvPrefix?: string
 }
 
 /** The minimal Rollup plugin shape this returns - `generateBundle` bound to the plugin context. */
@@ -166,13 +169,14 @@ export function viteLeakGuard(options: LeakGuardOptions = {}): LeakGuardPlugin {
       }
       const graph = completeGraph(fromRollupBundle(bundle, importsOf), this, importsOf)
       const sources = { classifier, sourceOf: rollupModuleSource }
+      const privateEnv = privateEnvCheck(options.publicEnvPrefix ?? "PUBLIC_")
       const outputs = Object.values(bundle as Readonly<Record<string, RollupOutputLike>>)
       for (const output of outputs) {
         if (output.type !== "asset" && output.fileName !== undefined)
           options.verified?.add(output.fileName)
       }
       const leak =
-        formatClientGraphVerdict(verifyClientGraph(graph, sources)) ??
+        formatClientGraphVerdict(verifyClientGraph(graph, { ...sources, privateEnv })) ??
         formatNodeBuiltinLeak(detectNodeBuiltinsInClient(graph)) ??
         formatServerOnlyLeak(detectServerOnlyInClient(graph)) ??
         formatUnaccountedOutput(
@@ -194,7 +198,7 @@ export function viteLeakGuard(options: LeakGuardOptions = {}): LeakGuardPlugin {
 /** What {@link viteServerZoneGuard} needs: the zones of the app, nothing about the output. */
 export type ServerZoneGuardOptions = Pick<
   LeakGuardOptions,
-  "appRoot" | "routesDir" | "generatedFiles"
+  "appRoot" | "routesDir" | "generatedFiles" | "publicEnvPrefix"
 >
 
 /**
@@ -220,7 +224,11 @@ export function viteServerZoneGuard(options: ServerZoneGuardOptions = {}): LeakG
       }
       const graph = completeGraph(fromRollupBundle(bundle, importsOf), this, importsOf)
       const leak = formatServerGraphVerdict(
-        verifyServerGraph(graph, { classifier, sourceOf: rollupModuleSource }),
+        verifyServerGraph(graph, {
+          classifier,
+          sourceOf: rollupModuleSource,
+          privateEnv: privateEnvCheck(options.publicEnvPrefix ?? "PUBLIC_"),
+        }),
       )
       if (leak === undefined) return
       plugin.leak = leak

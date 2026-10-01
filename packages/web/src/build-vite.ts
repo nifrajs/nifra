@@ -216,6 +216,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     outDir: resolvePath(outDir),
     generatedFiles: [entryFile],
     verified,
+    ...(options.publicEnvPrefix !== undefined ? { publicEnvPrefix: options.publicEnvPrefix } : {}),
   }
   const leakGuard = viteLeakGuard(guardOptions)
   const workerGuards: ReturnType<typeof viteLeakGuard>[] = []
@@ -419,6 +420,8 @@ export interface BuildServerViteOptions {
   readonly root?: string
   /** Modules the build generated besides the entry and manifest (a target's adapter import). */
   readonly generatedFiles?: readonly string[]
+  /** The public-env prefix browser code may read (default `"PUBLIC_"`). */
+  readonly publicEnvPrefix?: string
 }
 
 interface EdgeBundleChunk {
@@ -539,6 +542,7 @@ export async function buildServerVite(options: BuildServerViteOptions): Promise<
       join(entryDir, manifestFile),
       ...(options.generatedFiles ?? []),
     ].map((file) => resolvePath(file)),
+    ...(options.publicEnvPrefix !== undefined ? { publicEnvPrefix: options.publicEnvPrefix } : {}),
   })
   try {
     await withSerializedNodeEnv(mode, () =>
@@ -638,6 +642,7 @@ export const viteBundler: Bundler = {
       ...(input.cssLoading !== undefined ? { cssLoading: input.cssLoading } : {}),
       ...(input.root ? { root: input.root } : {}),
       ...(input.generatedFiles !== undefined ? { generatedFiles: input.generatedFiles } : {}),
+      ...(input.publicEnvPrefix !== undefined ? { publicEnvPrefix: input.publicEnvPrefix } : {}),
     }),
 }
 

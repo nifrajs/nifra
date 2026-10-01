@@ -153,6 +153,21 @@ describe("buildClient refuses", () => {
     expect(await refusal()).toContain("backend/private.png: it is backend code")
   })
 
+  test("browser code reading a private environment variable, shared/ included", async () => {
+    write("shared/config.ts", "export const db = Bun.env.DATABASE_URL\n")
+    write(
+      "routes/index.tsx",
+      [
+        'import { db } from "../shared/config.ts"',
+        "export default () => [db, process.env.PUBLIC_API, process.env.NODE_ENV]",
+        "",
+      ].join("\n"),
+    )
+    expect(await refusal()).toContain(
+      "shared/config.ts: it reads private environment variable Bun.env.DATABASE_URL",
+    )
+  })
+
   test("a backend-only export in a route's frontend file", async () => {
     write("routes/index.tsx", "export const loader = () => 1\nexport default () => null\n")
     expect(await refusal()).toContain(
@@ -218,6 +233,15 @@ describe("zoneGuardPlugin in throw mode (dev)", () => {
     )
     expect(marker.logs.map(String).join("\n")).toContain(
       'shared/key.ts may not reach the browser: it imports "@nifrajs/web/backend-only"',
+    )
+  })
+
+  test("stops on a private environment read", async () => {
+    const result = await bundle(
+      write("routes/env.tsx", "export default () => import.meta.env.SESSION_SECRET\n"),
+    )
+    expect(result.logs.map(String).join("\n")).toContain(
+      "routes/env.tsx may not reach the browser: it reads private environment variable import.meta.env.SESSION_SECRET",
     )
   })
 })

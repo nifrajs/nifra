@@ -87,6 +87,14 @@ describe("buildServer refuses", () => {
     )
   })
 
+  test("shared code reading a private environment variable", async () => {
+    write("shared/config.ts", "export const use = () => process.env.DATABASE_URL\n")
+    routeUsing("../shared/config.ts")
+    expect(await refusal("bun")).toContain(
+      "shared/config.ts: it reads private environment variable process.env.DATABASE_URL",
+    )
+  })
+
   test("a Node built-in an edge bundle keeps", async () => {
     write(
       "backend/files.ts",
@@ -125,7 +133,7 @@ test("the Vite server build refuses what the Bun one does", async () => {
 })
 
 describe("buildServer builds", () => {
-  test("backend built-ins on the target that has them, and shared code on both sides", async () => {
+  test("backend built-ins and private env on the server, shared code on both sides", async () => {
     write("shared/format.ts", "export const format = (n: number) => String(n)\n")
     write(
       "backend/db.ts",
@@ -136,6 +144,8 @@ describe("buildServer builds", () => {
         "",
       ].join("\n"),
     )
+    write("routes/env.backend.ts", "export const loader = () => process.env.DATABASE_URL\n")
+    write("routes/env.tsx", "export default () => process.env.PUBLIC_API\n")
     routeUsing("../backend/db.ts")
     const { worker } = await build("bun")
     expect(existsSync(worker)).toBe(true)

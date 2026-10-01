@@ -72,7 +72,12 @@ export interface ClientGraphVerdict {
 export interface VerifyClientGraphOptions {
   readonly classifier: ZoneClassifier
   readonly sourceOf: (id: string) => ModuleSource
+  /** The private-env denial for a browser-code file (see `privateEnvCheck`); unchecked when absent. */
+  readonly privateEnv?: (file: string) => string | undefined
 }
+
+/** Zones whose code runs in a browser, so may read only public environment variables. */
+const BROWSER_CODE = new Set<string>(["route-frontend", "frontend", "shared"])
 
 const isUrl = (spec: string): boolean => /^(?:https?:|data:)/i.test(spec)
 const isBuiltinSpec = (spec: string): boolean =>
@@ -178,6 +183,8 @@ export function verifyClientGraph(
     const classification = classifier.classify(file)
     let reason = browserDenial(classification)
     for (const spec of specifiers.get(id) ?? []) reason ??= browserDenial(classification, spec)
+    if (reason === undefined && BROWSER_CODE.has(classification.zone))
+      reason = options.privateEnv?.(file)
     if (reason !== undefined) denied.set(id, reason)
   }
 
@@ -315,6 +322,12 @@ export function verifyServerGraph(
   for (const [id, module] of Object.entries(graph.modules)) {
     const from = classOf(id)
     if (from?.zone === "error") found.push({ at: id, module: labelOf(id), reason: from.reason })
+    const file = fileOf(id)
+    const env =
+      from !== undefined && file !== undefined && BROWSER_CODE.has(from.zone)
+        ? options.privateEnv?.(file)
+        : undefined
+    if (env !== undefined) found.push({ at: id, module: labelOf(id), reason: env })
     const out: Array<{ readonly to: string; readonly label: string }> = []
     for (const im of module.imports) {
       const spec = im.original ?? im.path ?? ""

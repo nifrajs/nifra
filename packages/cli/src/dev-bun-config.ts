@@ -177,7 +177,14 @@ import { serverFnStubPlugin, zoneGuardPlugin } from "@nifrajs/web/build"
 import { cssModulesBunPlugin } from "@nifrajs/web/plugins/css-modules"
 ${appImport}
 // This module lives at <app>/.nifra/dev-bun/, so the app root is two directories up.
-const zones = zoneGuardPlugin({ appRoot: Bun.fileURLToPath(new URL("../../", import.meta.url)) })
+const zones = zoneGuardPlugin({
+  appRoot: Bun.fileURLToPath(new URL("../../", import.meta.url)),${
+    appImport === ""
+      ? ""
+      : `
+  ...(typeof appConfig.publicEnvPrefix === "string" ? { publicEnvPrefix: appConfig.publicEnvPrefix } : {}),`
+  }
+})
 const fn = serverFnStubPlugin()
 const cssModules = cssModulesBunPlugin("dom")
 

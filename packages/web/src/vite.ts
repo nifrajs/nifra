@@ -399,6 +399,7 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     appRoot: dirname(routesDir),
     routesDir,
     generatedFiles: [resolvePath(root, DEV_ENTRY)],
+    ...(options.publicEnvPrefix !== undefined ? { publicEnvPrefix: options.publicEnvPrefix } : {}),
   })
 
   const server: NodeHttpServer = createHttpServer((req, res) => {
