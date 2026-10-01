@@ -1,20 +1,4 @@
-/**
- * `@nifrajs/web/vitals` - Core Web Vitals (LCP, INP, CLS, FCP and TTFB) measured in your users'
- * browsers by Google's `web-vitals`, an optional peer dependency (`bun add web-vitals`). Each metric
- * arrives with the id of the route it belongs to, so field data groups by route.
- *
- * Call {@link reportWebVitals} once in the browser, from a root layout's mount effect. It returns a
- * function that stops reporting, which is what a mount effect's cleanup wants:
- *
- * ```ts
- * import { reportWebVitals } from "@nifrajs/web/vitals"
- *
- * reportWebVitals((metric) => {
- *   const body = JSON.stringify({ name: metric.name, value: metric.value, route: metric.route })
- *   void fetch("/api/vitals", { method: "POST", body, keepalive: true })
- * })
- * ```
- */
+/** Core Web Vitals from Google's `web-vitals` (an optional peer), each tagged with its route. */
 import type { MetricType } from "web-vitals"
 import { onCLS, onFCP, onINP, onLCP, onTTFB } from "web-vitals"
 import { reportWith } from "./internal/vitals-runtime.ts"

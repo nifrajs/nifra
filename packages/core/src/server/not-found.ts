@@ -1,26 +1,10 @@
 /**
- * An opt-in answer for a request no route matched.
- *
- * `app.use(notFound(handler))` replaces the default `404` body; the status stays a `404` unless the
- * handler deliberately picks a redirect or an error. It is a plugin on a subpath, not a server
- * option, so an app that keeps the default `404` ships none of this.
- *
- * What the handler is, and is not:
- *   - It runs only for a **404**: no route has this path. A path that exists under another method
- *     stays a `405` with its `Allow` header, a malformed path stays a `400`, and a mounted handler's
- *     own `404` is that handler's answer.
- *   - It receives a read-only view of the request line and headers, never the body. A request with
- *     no route has no body schema and no body limit, so there is nothing that could bound a read.
- *   - It never sees a request whose method token no route could be registered under; that request
- *     gets the default `404`, the same way it skips `onRequest` hooks.
- *   - It cannot turn a miss into a success: a `2xx` answer is sent as a `404` with the same body and
- *     headers. A redirect (`3xx`), a `410`, or any other `4xx`/`5xx` is sent as built.
- *   - It fails closed: a throw, a rejection, a non-`Response` value, or a `Response` that cannot be
- *     sent (its body already read, or `Response.error()`) is logged and answered with the plain
- *     `500`, never with the error's own text.
- *
- * To SERVE something for unmatched paths - an app shell, a proxied upstream - register a wildcard
- * route or a mount instead; those answer with whatever status they choose.
+ * The `notFound()` handler's rules:
+ * - Only for a `404`: a wrong method stays a `405`, a malformed path a `400`, a mount's `404` its own.
+ * - It sees the request line and headers, never the body: an unrouted request has no body limit.
+ * - A method token no route could take gets the default `404`, as it skips `onRequest` hooks.
+ * - A `2xx` is sent as a `404`; a `3xx`, `410` or other error status is sent as built.
+ * - Fails closed: a throw or an unsendable value is logged and answered with the plain `500`.
  */
 import { type ErrorLogDetail, emitRequestErrorLog } from "./bare-error-lane.ts"
 import type { Platform } from "./context.ts"

@@ -1,8 +1,4 @@
-/**
- * The measuring half of `@nifrajs/web/vitals`. It takes the metric library as a parameter, so tests run
- * it against a fake; the public entry passes Google's `web-vitals`. Kept off `@nifrajs/web/client`: an
- * app that never reports vitals ships none of it.
- */
+/** `@nifrajs/web/vitals` with the metric library passed in, so tests can use a fake. */
 import type { MetricType, ReportOpts } from "web-vitals"
 import { getBrowserRouter } from "../navigation.ts"
 import type { ReportWebVitalsOptions, WebVitalsMetric } from "../vitals.ts"

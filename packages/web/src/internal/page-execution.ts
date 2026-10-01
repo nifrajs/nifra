@@ -421,12 +421,7 @@ export function createPageRequestExecutor<Env = unknown>(
     return modules
   }
 
-  /**
-   * Run the route's `_middleware` chain, outermost first, before any of its layouts. A middleware
-   * returns nothing to let the request through; what it returns or throws otherwise is raised the way
-   * a gate's is, tagged with its directory so a failure renders the nearest `_error` at or above it.
-   * Callers skip the call for a route with none, so such a request pays no await for it.
-   */
+  /** Outermost first; a failure carries its directory so the nearest `_error` above it renders. */
   const runMiddleware = async (
     route: RouteEntry,
     ctx: LoaderContext,
@@ -500,14 +495,7 @@ export function createPageRequestExecutor<Env = unknown>(
     return { requested, from: previous, fromParams: previousMatch.params, fromUrl, toUrl }
   }
 
-  /**
-   * Whether layout `index` keeps the data the browser already has instead of running its loader.
-   * Only a slot the browser asked to keep, holding this same layout, can be kept. By default it is
-   * kept when neither a param the layout owns nor the query changed: every loader in the chain can
-   * read the query (`ctx.search`, `ctx.request.url`) and nothing records which keys it uses. Keys no
-   * loader should see belong in the route's `searchClientKeys`, which skips the request entirely.
-   * The layout's `shouldRevalidate` overrides the default. Never asked for a gate.
-   */
+  /** A query change re-runs layout loaders by default: any can read it, and none declares keys. */
   const keepsLayoutData = (
     route: RouteEntry,
     index: number,
@@ -552,11 +540,7 @@ export function createPageRequestExecutor<Env = unknown>(
       urlPartsFor(request).search,
     )
 
-  /**
-   * What the server puts in a route's page slot. An `ssr = false` route's component is never rendered
-   * here: its `HydrateFallback` stands in, or an empty leaf. Every adapter renders `() => null` as
-   * nothing, and the browser hydrates the same chain before it renders the component.
-   */
+  // `ssr = false`: the slot holds `HydrateFallback`, which the browser hydrates before the page.
   const serverLeafOf = (route: RouteEntry, mod: RouteModule): unknown => {
     if (mod.ssr !== false) return mod.default
     if (mod.hydrate === false) {
@@ -938,11 +922,7 @@ export function createPageRequestExecutor<Env = unknown>(
     })
   }
 
-  /**
-   * The nearest nested `_404` for a `notFound()` from `route`'s own loader - or `undefined` when the
-   * root page applies: another status, a signal a layout raised, no nested page, or a layout that
-   * failed to load its data.
-   */
+  /** The nearest nested `_404` for the route's own `notFound()`, else `undefined` (root page). */
   const renderRouteNotFound = async (
     req: Request,
     env: Env,

@@ -4,11 +4,8 @@ import type { MountRouterOptions, RenderProps, RouterState } from "@nifrajs/web"
 import { searchOfChain } from "@nifrajs/web/client"
 
 /**
- * The props a mounted Router hands `compose`, as **getters over the snapshot accessor** - so a
- * same-route settle updates only the components reading the changed field. It is the client half of
- * the `RenderProps` the server assembled for the same route, so the first render reconciles against
- * the SSR markup. The cast bridges `exactOptionalPropertyTypes` (a getter is always present, returning
- * `undefined` when idle - the documented "absent on idle" semantics for `submission`).
+ * The client half of the server's `RenderProps`, as getters so a settle re-renders only what reads the
+ * changed field. Cast: a getter always exists where `exactOptionalPropertyTypes` expects absence.
  */
 export function routeProps(
   snapshot: () => RouterState,

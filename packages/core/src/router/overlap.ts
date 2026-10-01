@@ -111,11 +111,7 @@ function advance(state: State, character: string, tokens: readonly Token[]): Sta
   }
 }
 
-/**
- * The characters that can move `state` on, when they are a short exact list: the next literal
- * character, or the next character of each value a list-constrained parameter can still become.
- * `undefined` when the state takes a class of characters instead.
- */
+/** The exact characters that can advance `state`, or `undefined` when it accepts a character class. */
 function exactCharacters(state: State, tokens: readonly Token[]): readonly string[] | undefined {
   if (state.active === "wildcard") return undefined
   const token = tokens[state.index]

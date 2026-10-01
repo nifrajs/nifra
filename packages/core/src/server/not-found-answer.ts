@@ -1,8 +1,4 @@
-/**
- * The rules a not-found handler runs under, apart from any one server: the view it is given and how
- * what it produced becomes the answer. `notFound()` (`./not-found.ts`) and the compact edge server
- * both call this, so the rules hold identically on each of them. See `./not-found.ts` for the rules.
- */
+/** The not-found rules (see `./not-found.ts`), shared by `notFound()` and the edge server. */
 import type { Platform } from "./context.ts"
 import { isRoutableMethod, plainError } from "./http.ts"
 import { getNeverAbortSignal, headerOf, type ResponseResult } from "./runtime-core.ts"

@@ -1,8 +1,4 @@
-/**
- * Type-level contract for the `cookies` route slot: a declared schema types `c.cookies` as its
- * output, and without one `c.cookies` stays the parsed name-to-value record. Verified by `tsc`, not
- * run.
- */
+/** Type-level contract for the `cookies` route slot. Checked by `tsc`, not run. */
 import { t } from "@nifrajs/schema"
 import type { Equal, Expect } from "@nifrajs/test-utils"
 import type { Context } from "../src/index.ts"

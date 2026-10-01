@@ -223,176 +223,10 @@ console.log(client)`,
 /** Rows bundled for the browser. Every other feature row is a server bundle. */
 const BROWSER_FEATURES: ReadonlySet<string> = new Set(["nifra-web-client"])
 
-// Gzip ceilings are deliberately just above measured values: enough headroom for minifier noise, tight
-// enough that a newly reachable optional subsystem fails CI. Update only with an explained benchmark diff.
-// +0.4 KB gzip across every row: mixed path segments (`/:key.txt`). The grammar, its per-segment
-// matcher, and the trie's ordered mixed-children list all have to ship, so unlike a diagnostic string
-// this cost is the feature itself. Two things were measured before accepting it: an app registering
-// no mixed segment allocates nothing and pays one `undefined` check on the match path (asserted in
-// mixed-segments.test.ts), and removing the now-obsolete rejected-parameter hint - `:id.json` used to
-// throw and now compiles - gave 0.2 KB back, so the net is +0.4 rather than +0.6.
-// Every row below carries the router, so a router change moves all of them together. The last such
-// move was the total specificity comparator that makes the trie router and the browser matcher order
-// equally-weighted mixed patterns identically: ~0.2 KB gzip, paid once in `nifra-bare` and inherited.
-// The response-contract seam raised every row by ~0.2 KB gzip: the install method, the runtime field,
-// the registration-time decision, and the request-path branch. The lane's own logic is NOT in here -
-// it lives behind `@nifrajs/core/response-contract` and only arrives when the plugin is installed,
-// which is what the budget caught when it was a plain server option (+0.5 KB for everyone).
-// The shared same-origin check (`internal/same-origin.ts`, used by both the WebSocket handshake and
-// `@nifrajs/web`'s server-function mount) added ~38 B gzip over the host-only comparison it replaced:
-// it orders the two schemes so a TLS-terminating proxy stays same-origin while a downgrade does not.
-// Measured before and after, and squeezed first - a rank lookup table cost ~50 B because the table is
-// a shipped object, so the comparison is written out instead. Only `nifra-mcp` and `nifra-valibot`
-// moved a ceiling; both were sitting within 40 B of theirs, which is the gate working as designed.
-// The fused query lane (registration-compiled parse+validate+handler closure for query-only
-// routes) costs ~0.2 KB gzip in the kernel, so every core-based row moved together.
-// The validated POST Web lane is also part of the core registration kernel. Its registration-compiled
-// validation + handler continuation (shared by Web and Node-direct) adds ~0.2 KB gzip across the
-// matrix; the bounded parser and framing checks remain shared with the generic lane, so this is the
-// price of making the safe fast path available by default without weakening the trust boundary.
-// The static response-header tier remains in the default kernel because it folds into response
-// construction without a per-request observer walk. The portable header/body/raw observer adapters
-// are installed from `@nifrajs/core/response-observer`; the minimal server measured 26.2 -> 25.5 KB
-// gzip after the adapters moved behind that seam. Middleware using those tiers carries the opt-in
-// runtime marker, so ordinary core bundles do not reach the observer implementation.
-// The RFC 9110 HEAD fallback (router resolves HEAD to the GET handler, and the Bun native table
-// aliases it) costs a few bytes in the kernel, so every core-based row moved a little. Two were
-// sitting within ~15 B of their ceiling and crossed it; the rest still clear.
-// The legacy-mount and shutdown seams (`mountFetch` prefix dispatch on the unmatched path plus
-// `onStop` hooks settled with a bounded timeout at `stop()`) moved every core row together by
-// ~0.6 KB gzip (bare 22.1 -> 22.7 measured against the pre-seam baseline). Matched routes never
-// touch the mount table - the dispatch lives in the `!match.found` branch - and the admission gate
-// wraps mounts too, so the cost is availability of the seams, not a hot-path tax. Squeezed first:
-// the plan compiler's runner adapter table was deleted outright (the compiler now types the kernel
-// through an erased structural cast), which gave ~0.1 KB back before repricing.
-// Per-route transport body caps moved every core row together by ~1.6 KB gzip (bare 22.9 -> 24.6
-// measured): registration-time `bodyLimit` validation (finite/`"unlimited"`+reason, fail-closed),
-// and the in-place capped reader shadowing (`capTransportBodyReads`) that bounds direct `c.req`
-// body reads on every route without swapping request identity. Attributed with an esbuild metafile
-// diff against the pre-cap baseline: server.ts +1.7 KB min (registration + dispatch), body.ts
-// +2.0 KB min (the reader shadowing + capped stream), everything else noise - no optional
-// subsystem became reachable. The cap is the default-on security boundary, so its dispatch has to
-// live in the kernel; the ceilings move once, together.
-// Two moves are priced into the ceilings below. The larger one predates this repricing and had
-// already put every row over: the transport-cap and portable-tier work above landed without the
-// table being brought forward, so the gate was failing on numbers nobody had accepted (bare measured
-// 25.1 KB against a 24.7 ceiling). The smaller one is current: a declared WebSocket payload cap
-// carried on the upgrade outcome, `errorLogDetail`'s registration-time choice of what an error log
-// carries, and the header-case proof the response walk publishes for its readers - together +0.25 KB
-// gzip, uniform across the matrix (bare 25.1 -> 25.3), because all three sit in the kernel where any
-// route can reach them. Every ceiling is now the measured number plus ~0.2 KB, so a regression of the
-// same size as that batch still trips the gate rather than fitting inside the slack.
-// Two forces moved the ceilings this round; the net is +~0.1 KB gzip, uniform across the matrix (bare
-// 25.3 -> 25.6). CREDIT: the `c.json`/`c.text` Node fast lane's deferred-`Response` stand-in left the
-// core bundle (~0.25 KB gzip off bare). It is a Node-only optimization - Bun and Deno hand a real
-// `Response` to their native server and never take the branch - so it now lives in `@nifrajs/node`,
-// handed to core over the shared `Symbol.for` seam and shipped only in a Node bundle. COST, larger:
-// the regex pathological-input hardening (bounded matchers over untrusted path/query input) and the
-// per-route direct body-read caps both sit in the kernel where any route on any runtime can reach
-// them, so their ~0.35 KB gzip is paid once in `nifra-bare` and inherited. Same rule as before: each
-// ceiling is the measured number plus ~0.2 KB, tight enough that a regression of that size still trips.
-// The roadmap's plain-data response carriers and early-exit handling then added ~0.6 KB gzip to the
-// shared core kernel (bare 25.6 -> 26.2). This is deliberately accepted as a uniform seam cost: the
-// safer status/validation path replaces per-request Response construction and does not make any
-// optional package reachable. The ceilings below retain the same ~0.2 KB headroom over the measured
-// matrix; a further shared-kernel increase still fails all affected rows together. Fused
-// derive/before/after lifecycle lanes plus the opt-in Node body-hook twin add ~0.5 KB gzip to
-// the shared server kernel, accepted here alongside the measured hot-path win on middleware-heavy
-// routes. Reprice every affected row from the current deterministic matrix with the usual ~0.2 KB
-// headroom; the budget remains a regression tripwire for later kernel growth.
-// The 2026-09-28 assurance/auth route program and composed evidence checks add the next measured shared
-// kernel batch: 1.9 KB gzip on the bare row, with optional rows moving by the same reachable core
-// footprint. Core, middleware, and edge-startup gates remain separate required evidence; this is a
-// narrow repricing of measured feature cost, not an exemption for unbounded growth.
-// Typed prefix groups (`group()`) add ~0.67 KB gzip to the shared kernel (bare 30687 -> 31371 B,
-// measured against its parent commit, which already sat 70 B over the 29.9 ceiling). The method has
-// to be a `Server` member for the builder to inherit the parent's typed context, so it cannot move
-// behind a subpath the way the WS/SSE runtimes did. Of the cost, ~0.35 KB is the method itself (the
-// prefix grammar, the scope fork, the fail-closed builder contract and refusals); the rest is the
-// path join at registration and the prefix-scoped hook gating in the adoption code `merge()` shares.
-// Squeezed first: the fork and the runtime hoist walk field-name lists instead of one statement per
-// field (which also shrank `merge()`), one gate helper wraps every hook kind, and the messages were
-// cut - together 0.33 KB back from the first cut. Nothing runs per request unless a group registers
-// a hook. Every row moves by the same kernel bytes; ceilings are the measured number plus ~0.2 KB.
-// File uploads are priced as their own row, `nifra-typebox-form` (measured 64.7 KB), not on `t`. The
-// constructors were first measured on the root builder, where they cost every `t` user +2.2 KB gzip
-// (60.6 -> 62.8) for the signature table, the form validator and the multipart reader. They now sit
-// on the builder of `@nifrajs/schema/form`, so that cost is paid only by an app that imports it.
-// What stays on `t` is ~0.1 KB (measured 62255 B): the marker that lets `t.array`/`t.optional` hand
-// a file schema to its own constructors, and the refusal when one reaches a constructor that
-// validates JSON. That guard has to live on `t`: without it a file field inside `t.object` would
-// build a schema that rejects every request. Squeezed first: the refusal message was cut to one line.
-// A mixed path segment (`/:name.json`, `/v:major.:minor`) is matched by one pass over the segment
-// instead of a compiled pattern, so a lookup costs the segment's length whatever the parameter count.
-// The scanner is +53 B gzip in the router (bare 31539 -> 31592 B), inherited by every row. Squeezed
-// first, from +182 B: a segment's shape is a flat list of its literals rather than a record, the
-// capture count is read off that list, and the trie keys a shape by those literals, which takes the
-// pattern-source builder and its escaper out of the kernel. The baseline sat exactly on the bare
-// ceiling, so the three rows with no slack left move by 0.1 KB; the other rows still clear theirs.
-// A custom answer for unmatched requests (`notFound()`) lives on its own subpath; the kernel keeps
-// the install seam and one branch at the 404 site: +49 B gzip (bare 31592 -> 31641 B), inherited by
-// every row, and nothing else of the feature is reachable from an app that does not import it.
-// Writing the field from the plugin instead of through the seam measures 12 B smaller and was not
-// taken: the seam is what refuses an install after `listen()`. The four rows with no slack left move
-// by 0.1 KB; the other rows still clear theirs.
-// Optional path parameters (`/users/:id?`) are expanded to their concrete paths when a route is
-// registered: +103 B gzip (bare 31641 -> 31744 B), inherited by every row. That is the expansion
-// itself plus one loop at the HTTP and WebSocket registration sites; nothing is added to a lookup.
-// Squeezed first, from +122 B: the matcher does not expand, its callers do, which also keeps the
-// feature out of the browser row (the client router bundles the matcher and measured +137 B with
-// the expansion inside it, 0 B now). Seven rows had no slack left and move by 0.1 KB.
-// A route can be registered under a method outside the standard seven (`method("PURGE", ...)` from
-// its own subpath): +34 B gzip (bare 31744 -> 31778 B), inherited by every row. 31 B is the matcher's
-// method check, which was a lookup in a set of seven and is now a token pattern that also refuses
-// `TRACE`, `CONNECT` and `TRACK`; it stays in the matcher so no caller can register one of those.
-// 13 B keeps a custom method out of Bun's native route table. The registration functions themselves
-// are not reachable from an app that does not import them. Four rows had no slack left and move by
-// 0.1 KB; the other rows still clear theirs.
-// On Bun, `listen()` serves a route from Bun's own route table only when Bun would pick it for exactly
-// the requests the portable matcher gives it: +320 B gzip (bare 31778 -> 32098 B), inherited by every
-// row. Bun chooses among the paths registered for the request's method and reads `/:name.json` as one
-// parameter, so three things are settled before the first request: which table paths are outranked
-// by a path the table cannot hold, which methods a less specific path serves, and the portable
-// dispatcher entries that stop Bun at the more specific path. The cost is the comparison of two
-// paths, the index that keeps the pass linear in the route count (a plain pairwise scan measured
-// 272 ms at 3000 routes against 4 ms), and those entries. It lives in the server because `listen()`
-// does; nothing of it runs per request. Two other shapes were measured first: taking every outranked
-// route out of the table costs the same bytes and moves a `GET /users/:id` beside a `POST
-// /users/login` off the native lane, and an entry under every method on every path is 76 B smaller
-// and triples the time `Bun.serve` takes to accept a 3000-route table. Every kernel row moves by
-// 0.3 KB; the ceiling is the measured number rounded up to the next 0.1 KB.
-// On Bun, `c.clientIp` is the socket peer on a route served from Bun's route table, as it already
-// was on every other route: +65 B gzip (bare 32098 -> 32163 B), inherited by every row. The table's
-// requests share one platform that holds a lookup instead of an address, and the context asks it
-// when a handler reads `c.clientIp`, so a request whose handler never reads it allocates nothing and
-// asks Bun nothing. 5 B of it keeps the first answer, because Bun stops naming the peer once the
-// connection is closed. An idempotent route leaves the table, since its handler runs on a buffered
-// copy of the request that Bun cannot name a peer for. Squeezed first, from +71 B: the key the
-// lookup sits under carries no description. Sending a malformed parameter to the dispatcher without
-// the peer measured 5 B larger and was not taken. Three rows had no slack left and move by 0.1 KB;
-// the other rows still clear theirs.
-// A path parameter can carry a constraint (`/users/:id{[0-9]+}`, `/img/:kind{thumb|full}`): +753 B
-// gzip (bare 32163 -> 32916 B), inherited by every row, and +768 B on the browser row (14079 ->
-// 14847 B), which matches with the same router so that a path means the same thing on both sides.
-// About 440 B is the reader that turns the text into a table at registration, 80 B the ordering that
-// puts a narrower constraint first, 75 B the per-value test, 70 B the router keying a position by
-// what it accepts. No pattern text becomes a `RegExp`: a class is a 128-character mask and a list a
-// set of its values, so a value is tested in one pass with no backtracking. Building a `RegExp` from
-// the checked class would be smaller and was not taken, because it gives that guarantee to the
-// engine. Squeezed first, from +823 B: the optional-parameter pattern went (the segment splitter
-// answers the same question), the reader has one exit, and the table is a string instead of a frozen
-// array of words, which was also several times slower to read. An app that registers no constraint
-// runs none of it per request. Every kernel row and the browser row are repriced at the measured
-// number rounded up to the next 0.1 KB.
+// Each ceiling is the measured gzip size rounded up to the next 0.1 KB, tight enough that a newly
+// reachable optional subsystem fails CI. A commit that raises one states the measured cost.
 const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
-  // The 2026-09-20 security pass adds bounded WebSocket admission/request-hook handling and
-  // duplicate-cookie detection to the shared kernel. Reprice every core row together with the
-  // measured post-hardening footprint; optional rows must not receive a special exemption.
-  // Resolving dot segments in a request target the same way on every runtime (the resolver, and
-  // Bun's route table handing a `..` parameter to the portable router) adds ~0.2 KB gzip to every
-  // core row: each is its measured size rounded up to the next 0.1 KB.
   "nifra-bare": 32.4,
-  // Shared effect evidence plus the explicit atomic safe-retry release path adds ~0.2 KB gzip.
   "nifra-idempotency": 35.5,
   "nifra-effect-ledger": 34.3,
   "nifra-mcp": 32.6,
@@ -400,10 +234,7 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-valibot": 33.4,
   "nifra-typebox-t": 62.5,
   "nifra-typebox-form": 66.3,
-  // Review-leaf ceiling: measured 5.0 KB gz + ~0.2 KB headroom, same rule as every other row.
   "nifra-agent-review": 5.2,
-  // Client runtime ceiling: measured size rounded up to the next 0.1 KB. Following redirects in place
-  // (the router's redirect loop and the address-bar sync) adds ~0.3 KB gzip: measured 15455 B.
   "nifra-web-client": 15.1,
 }
 

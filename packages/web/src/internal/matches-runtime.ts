@@ -1,14 +1,6 @@
 /**
- * `useMatches` for every adapter: the rendered chain as {@link UIMatch} entries.
- *
- * Kept off `@nifrajs/web/client` so an app that never calls `useMatches` ships none of it. The inputs
- * are all in {@link RenderProps}, which the server builds for SSR and the mounted router builds per
- * navigation, so both sides compute the same matches and hydration agrees.
- *
- * A layout's pathname and params come from its directory, read with the file-name grammar the manifest
- * uses (`filePathToRoutes`): a static folder or a `[param]` (the whole name or part of it) wraps one URL
- * segment, `(group)` and `index` none, `[[optional]]` one when its param is present, `[...rest]` the rest
- * of the path.
+ * `useMatches` for every adapter. It reads only {@link RenderProps}, which SSR and the mounted router
+ * both build, so server and browser agree. Layout prefixes follow the `filePathToRoutes` grammar.
  */
 import type { RenderProps, UIMatch } from "../render-seam.ts"
 

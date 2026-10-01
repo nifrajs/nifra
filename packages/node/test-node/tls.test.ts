@@ -1,9 +1,3 @@
-/**
- * `serve({ tls })` on Node itself: an HTTPS listener whose requests see `https:` URLs, and a
- * WebSocket upgrade that arrives over the same TLS port. The certificate is minted in memory per
- * run, so the suite needs no `openssl` and commits no key.
- */
-
 import assert from "node:assert/strict"
 import { get } from "node:https"
 import { after, before, test } from "node:test"

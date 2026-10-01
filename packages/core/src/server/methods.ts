@@ -1,27 +1,6 @@
 /**
- * Routes for more than one method, and for methods outside the standard seven.
- *
- *   - `app.use(all(path, handler))` registers the handler under every standard method: `GET`,
- *     `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD` and `OPTIONS`.
- *   - `app.use(method("PROPFIND", path, handler))` registers it under the method, or the list of
- *     methods, you name. A name can be any uppercase token of letters, digits and hyphens.
- *
- * Both are plugins on a subpath, so an app that uses neither ships none of this.
- *
- * What they are, and are not:
- *   - Each method is an ordinary route. It is listed by `app.routes`, carries its own assurance
- *     evidence, and collides with a route already registered for the same method and path. There is
- *     no catch-all method: a request whose method has no route on the path is still a `405` with an
- *     `Allow` header.
- *   - The whole call is one registration. If any of its routes is refused, none is added.
- *   - `TRACE`, `CONNECT` and `TRACK` cannot be registered. `TRACE` and `TRACK` ask a server to echo
- *     the request, headers included; `CONNECT` asks for a tunnel.
- *   - A method outside the standard seven is served and listed, but has no call on the typed client
- *     and no entry in a generated OpenAPI document. Whether such a request reaches the app at all is
- *     up to the runtime's HTTP parser: `PROPFIND`, `REPORT` and `PURGE` arrive on Bun, Node, Deno and
- *     workerd, while a token the parser does not know may be refused before the server sees it.
- *
- * To hand every request under a path to another handler whatever its method, use `mount()`.
+ * `all()` and `method()`. A method with no route on a path is still a `405`, and a runtime's HTTP
+ * parser may refuse a token it does not know before the server sees the request.
  */
 import { RouteConfigError } from "../errors.ts"
 import { isRegistrableMethod, METHODS, type Method } from "../router/router.ts"

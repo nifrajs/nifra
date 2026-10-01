@@ -673,11 +673,7 @@ function satisfying(constraint: ParamConstraint): string {
   return String.fromCharCode(code).repeat(constraint.min)
 }
 
-/**
- * The request path for a route: every parameter filled from the witness, or with a placeholder the
- * route accepts. The path is taken apart by the router's own compiler, so a part-literal segment
- * (`:name.json`) and a constrained one (`:id{[0-9]+}`) are filled where the router reads them.
- */
+/** Params filled from the witness or a placeholder the route accepts, split by the router's compiler. */
 function materializePath(
   path: string,
   params: Readonly<Record<string, string>> | undefined,

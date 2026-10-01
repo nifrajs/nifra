@@ -1,14 +1,6 @@
 /**
- * `_loading` pages - what the page slot shows while a client navigation loads.
- *
- * {@link withLoading} wraps the agnostic router store. The router underneath is untouched: it still
- * keeps the current route on screen until the target's data arrives. The wrapper only changes what the
- * mounted view is TOLD while that navigation is pending - the same state, with the leaf swapped for the
- * target's `_loading` component inside the layouts the two pages share. Every adapter renders the chain
- * the store names, so none of them needs to know a loading page exists.
- *
- * Its own module, imported by a generated client entry only when the app has a `_loading` file: an app
- * without one ships none of this.
+ * `_loading` pages. The router is untouched: {@link withLoading} only swaps the leaf of the state the
+ * view is told while a navigation is pending, so no adapter knows a loading page exists.
  */
 import type { MatchChain } from "../render-seam.ts"
 import { type ClientRouter, type RouterState, redirectOf } from "../router.ts"
@@ -52,19 +44,9 @@ const pathnameOf = (path: string): string => {
 }
 
 /**
- * Wrap `router` so a slow navigation shows the target route's `_loading` page.
- *
- * - **Which page.** The innermost `_loading` above the target route whose layouts are all on screen -
- *   the layouts the current and target routes share. A `_loading` therefore never renders outside a
- *   layout above it. With none eligible, the current page stays, as it does without this wrapper.
- * - **When.** After `delayMs`, and only while that navigation is still pending. A navigation that
- *   settles sooner (a prefetched one, a fast loader) never shows it.
- * - **Not for.** A change of search on the same pathname, a form submit, or the redirect after one.
- *
- * The returned promise of `navigate` settles when the loading page is on screen OR the navigation is
- * done, whichever is first: a caller that holds rendering until it settles (a view transition) must not
- * hold it across the very wait the loading page exists to cover. A failure after that point has no
- * caller left to report to, so it goes to `fallback`, and a redirect out of the app replaces the entry.
+ * Shows the innermost `_loading` within the layouts both pages share once a navigation outlasts
+ * `delayMs`. `navigate` settles when it shows, so a view transition does not hold across the wait; a
+ * later failure goes to `fallback`, or replaces the entry for a redirect out of the app.
  */
 export function withLoading(router: ClientRouter, options: LoadingOptions): ClientRouter {
   const { routes, modules, chains, searchSchemas, matchChains } = options

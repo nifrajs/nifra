@@ -533,11 +533,7 @@ export function scanStaticRouteText(
   ].sort(bySite)
 }
 
-/**
- * Routes registered through `all()` and `method()`: one finding per method the call registers, all
- * on the call's line. A method name that is not a literal is not guessed at, so a list built at
- * runtime contributes only the names written in it.
- */
+/** Routes from `all()` and `method()`, one per literal method name; a computed name is not guessed. */
 function scanMethodRoutes(
   file: string,
   content: string,

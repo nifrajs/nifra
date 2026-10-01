@@ -1,11 +1,6 @@
 /**
- * Self-host the site's three typefaces. Run once, by hand, when a family or a weight range changes:
- *
- *   bun run site/build-fonts.ts
- *
- * It downloads the latin variable `.woff2` of each family into `public/fonts/` (content-hashed) and
- * writes `data/fonts.json` - the `@font-face` stylesheet the root layout inlines plus the preload
- * links. Both outputs are committed, so a normal site build never touches the network.
+ * Self-hosts the site's typefaces into `public/fonts/` and `data/fonts.json`. Run by hand when a
+ * family changes; both outputs are committed, so the site build stays offline.
  */
 import { loadGoogleFont } from "@nifrajs/web/fonts"
 

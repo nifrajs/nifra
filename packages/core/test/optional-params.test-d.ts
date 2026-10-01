@@ -1,8 +1,4 @@
-/**
- * Type-level contract for optional route params: a path ending in `:name?` segments is keyed in the
- * registry once per concrete path it serves, and its handler sees the run's params as optional.
- * Verified by `tsc`, not run.
- */
+/** Type-level contract for optional route params. Checked by `tsc`, not run. */
 import type { Equal, Expect } from "@nifrajs/test-utils"
 import type { Params, Server, StandardSchemaV1 } from "../src/index.ts"
 import { server } from "../src/index.ts"

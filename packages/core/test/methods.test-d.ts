@@ -1,8 +1,4 @@
-/**
- * Type-level contract for `all()` and `method()`: the handler sees the app's accumulated context,
- * and the routes join the typed registry under the standard methods they were registered for.
- * Verified by `tsc`, not run.
- */
+/** Type-level contract for `all()` and `method()`. Checked by `tsc`, not run. */
 import type { Equal, Expect } from "@nifrajs/test-utils"
 import type { Context, Method, Server, StandardSchemaV1 } from "../src/index.ts"
 import { server } from "../src/index.ts"

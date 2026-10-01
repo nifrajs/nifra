@@ -54,11 +54,7 @@ function routeFacts(ctx: RuleContext): StaticRouteFact[] {
   return out
 }
 
-/**
- * One fact per registration site for a rule about the PATH. A call that registers several methods
- * at once (`all()`, `method([...])`) is several facts on one line with one path, and a finding
- * about that path is one finding, not one per method.
- */
+/** One fact per registration site, so `all()` or `method([...])` reports its path once, not per method. */
 function pathSites(routes: readonly StaticRouteFact[]): StaticRouteFact[] {
   const seen = new Set<string>()
   return routes.filter((route) => {
@@ -282,12 +278,8 @@ function literalModifier(path: string): string | undefined {
 }
 
 /**
- * NF-C026: a param followed by `?`, `*`, `+`, `{`, `(` or `<` where the router reads that character
- * as literal text. The router has two modifiers: `?` on a trailing run of whole segments
- * (`/users/:id?`), expanded away before this looks, and a `{...}` constraint in one of the forms it
- * supports. Anything else is text the author very likely meant as syntax: `/users/:id?/posts`
- * serves only a path that contains a literal `?`, which no request path does, and `/users/:id{int}`
- * serves only a path that ends in those braces.
+ * NF-C026: a param followed by `?`, `*`, `+`, `{`, `(` or `<` that the router reads as literal text
+ * (`/users/:id?/posts`, `/users/:id{int}`). Only a trailing `?` run and a valid `{...}` are syntax.
  */
 export const paramModifierRule: CheckRule = {
   code: "NF-C026",

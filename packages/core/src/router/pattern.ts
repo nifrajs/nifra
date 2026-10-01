@@ -190,13 +190,7 @@ export function paramConstraint(text: string): ParamConstraint | undefined {
   })
 }
 
-/**
- * Whether `value` satisfies `constraint`: one lookup for a list, and for a class a length check and
- * then one lookup per character. A parameter with no constraint accepts every value.
- *
- * Both lookups go to a string or to a frozen object, never to a frozen array: an engine that stores
- * a frozen array sparsely reads it several times slower, and this runs on every request.
- */
+// Runs per request: lookups hit a string or a frozen object, as a frozen array reads several times slower.
 function satisfies(constraint: ParamConstraint | undefined, value: string): boolean {
   if (!constraint) return true
   if (constraint.index) return constraint.index[value] === 1

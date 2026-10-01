@@ -1,13 +1,4 @@
-/**
- * A throwaway self-signed TLS certificate for `localhost` and `127.0.0.1`, minted in memory with Web
- * Crypto. TLS tests then run the same way on Bun, Node and Deno: no `openssl` on the PATH, no extra
- * permissions, and no private key committed to the repository.
- *
- * The certificate is an X.509 v3 end-entity certificate with an ECDSA P-256 key, valid from a day ago
- * to a day from now, naming both hosts in its subjectAltName. It has no basicConstraints, so verifiers
- * that refuse a CA certificate as a server's own (rustls, Deno's client) accept it as a trust anchor
- * for itself.
- */
+/** A throwaway certificate for `localhost` and `127.0.0.1`: no `openssl`, no key in git. */
 
 /** A PEM certificate and its PKCS #8 private key. */
 export interface SelfSignedCertificate {
@@ -104,6 +95,7 @@ export async function selfSignedCertificate(): Promise<SelfSignedCertificate> {
     sequence(utcTime(new Date(now - day)), utcTime(new Date(now + day))),
     name("localhost"),
     spki,
+    // No basicConstraints: rustls and Deno refuse a CA certificate as the server's own.
     der(0xa3, sequence(sequence(objectId(SUBJECT_ALT_NAME), der(0x04, altNames)))),
   )
   // Web Crypto signs ECDSA as raw r || s; X.509 carries it as a DER SEQUENCE of two INTEGERs.

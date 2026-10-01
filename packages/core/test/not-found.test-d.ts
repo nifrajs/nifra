@@ -1,8 +1,4 @@
-/**
- * Type-level contract for `notFound()`: the handler's input is the narrow read-only view, its answer
- * is a `Response` or `undefined`, and applying it leaves the server's types unchanged. Verified by
- * `tsc`, not run.
- */
+/** Type-level contract for `notFound()`. Checked by `tsc`, not run. */
 import type { Equal, Expect } from "@nifrajs/test-utils"
 import type { Platform, Server } from "../src/index.ts"
 import { server } from "../src/index.ts"

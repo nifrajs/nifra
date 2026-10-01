@@ -145,12 +145,7 @@ type RawParams<Path extends string> = string extends Path
       ? Record<Wild extends "" ? "*" : Wild, string>
       : Record<never, string>
 
-/**
- * A parameter constraint at the start of `Text` (`{[0-9]+}`, `{a|b}`) and the text after it, or
- * `["", Text]` when there is none. A group counts when it opens like a constraint - with a class, a
- * `\d` or `\w`, or a list of values; whether the router supports what is inside is not checked here.
- * One level of braces inside is read, which is what a count needs: `{[0-9]{2}}`.
- */
+/** `[constraint, rest]` for a leading `{...}`, else `["", Text]`. One nested level, for `{[0-9]{2}}`. */
 type TakeConstraint<Text extends string> = Text extends `{${infer Inner}}${infer Rest}`
   ? Inner extends `[${string}` | `\\${string}` | `${string}|${string}`
     ? Inner extends `${string}{${string}`
@@ -177,11 +172,7 @@ type IsOptionalRun<Run extends string> = Run extends ""
       : false
     : false
 
-/**
- * `[head, run]`, where `run` is the run of optional parameters a path ends in and `head` is the path
- * before it; `false` for a path that does not end in one. The router makes the same cut, from the
- * other end: it walks back from the last segment while each one is `:name?`.
- */
+/** `[head, run]` for a path ending in `:name?` segments, else `false`; the same cut the router makes. */
 type SplitOptionalRun<
   Path extends string,
   Head extends string = "",
@@ -202,11 +193,7 @@ type OptionalForms<Head extends string, Run extends string, Done extends string 
         : never
       : never)
 
-/**
- * The concrete paths a route path serves. A path ending in optional parameters is one path per prefix
- * of that run - `/users/:id?` is `"/users" | "/users/:id"` - and every other path is itself. This is
- * what a route is keyed by in the registry, so the typed client reaches each form as its own route.
- */
+/** The registry keys of a route path: `/users/:id?` is `"/users" | "/users/:id"`, others are themselves. */
 export type RoutePaths<Path extends string> = Path extends `${string}?`
   ? SplitOptionalRun<Path> extends [infer Head extends string, infer Run extends string]
     ? OptionalForms<Head, Run>

@@ -3,11 +3,7 @@ import type { MountRouterOptions, RenderProps, RouterState } from "@nifrajs/web"
 // instead of tree-shaking it - which broke hydration before the browser ran a line of app code.
 import { searchOfChain } from "@nifrajs/web/client"
 
-/**
- * The props a mounted Router hands `compose` for one store snapshot - the client half of the
- * `RenderProps` the server assembled for the same route, so the first render reconciles against the
- * SSR markup and every navigation after it carries the same fields.
- */
+/** The client half of the server's `RenderProps`, so the first render matches the SSR markup. */
 export function routeProps(
   state: RouterState,
   searchSchemas: MountRouterOptions["searchSchemas"],

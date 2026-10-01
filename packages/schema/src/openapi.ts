@@ -193,12 +193,8 @@ interface PathParameter {
 }
 
 /**
- * A route path as an OpenAPI path template, with the parameters it declares in order:
- * `/users/:id/*rest` is `/users/{id}/{rest}`, and `/files/:name.json` is `/files/{name}.json`.
- *
- * The path is taken apart by the router's own compiler, so a name ends where the router ends it and
- * a constraint (`:id{[0-9]+}`) is kept off the template. A path the router would refuse is all
- * literal text: it declares nothing.
+ * `/users/:id/*rest` as `/users/{id}/{rest}`, with its params in order. Split by the router's own
+ * compiler, so names and constraints end where the router ends them.
  */
 function templatedPath(path: string): {
   readonly template: string
