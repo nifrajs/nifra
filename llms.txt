@@ -103,8 +103,8 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - `@nifrajs/web` - Framework-agnostic SSR core for nifra - the render seam + HTML document orchestration.
 - `@nifrajs/web-preact` - Preact render adapter for @nifrajs/web - streaming SSR + hydration (no build plugin).
 - `@nifrajs/web-react` - React render adapter for @nifrajs/web - SSR + hydration (Bun-native JSX, no Babel).
-- `@nifrajs/web-solid` - Solid render adapter for @nifrajs/web - SSR + hydration + the Solid Babel build plugin.
-- `@nifrajs/web-svelte` - Svelte 5 render adapter for @nifrajs/web - SSR + hydration + the .svelte compiler Bun-plugin.
+- `@nifrajs/web-solid` - Solid render adapter for @nifrajs/web - SSR + hydration, with the Solid Babel build plugin (@nifrajs/web-solid/plugin).
+- `@nifrajs/web-svelte` - Svelte 5 render adapter for @nifrajs/web - SSR + hydration, with the .svelte compiler Bun plugin (@nifrajs/web-svelte/plugin).
 - `@nifrajs/web-vanilla` - Zero-framework render adapter for @nifrajs/web - auto-escaping tagged-template HTML, ~0 KB client JS, interactivity via @nifrajs/web/islands.
 - `@nifrajs/web-vue` - Vue render adapter for @nifrajs/web - streaming SSR + hydration, with a .vue SFC compiler Bun plugin (@nifrajs/web-vue/plugin).
 - `@nifrajs/webmcp` - Typed WebMCP site tools and predictive UI contracts for Nifra.

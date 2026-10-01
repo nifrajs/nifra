@@ -2,8 +2,8 @@
 // Solid `.tsx` compiles via solidBunPlugin; `.mdx` via solidMdxBunPlugin - both "dom" for the client.
 //   bun run examples/mdx-blog/build.ts
 import { buildClient } from "@nifrajs/web/build"
-import { solidBunPlugin } from "@nifrajs/web-solid"
 import { solidMdxBunPlugin } from "@nifrajs/web-solid/mdx"
+import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
 
 const manifest = await buildClient({
   routesDir: `${import.meta.dir}/routes`,

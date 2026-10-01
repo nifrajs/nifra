@@ -617,7 +617,7 @@ export const adapter = solidAdapter
 // `bun run build:bun`. Run: `bun dist-bun/server-bun.js`.
 import { cpSync, mkdirSync, rmSync } from "node:fs"
 import { buildClient, buildServer } from "@nifrajs/web/build"
-import { solidBunPlugin } from "@nifrajs/web-solid"
+import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
 
 const dir = import.meta.dir
 const dist = `${dir}/dist-bun`
@@ -652,7 +652,7 @@ console.log("Bun output → dist-bun (run: bun dist-bun/server-bun.js)")
 // Run: `deno task start` (or deployctl). Deno runs the edge bundle (workerd/edge-light + solid).
 import { cpSync, mkdirSync, rmSync } from "node:fs"
 import { buildClient, buildServer } from "@nifrajs/web/build"
-import { solidBunPlugin } from "@nifrajs/web-solid"
+import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
 
 const dir = import.meta.dir
 const dist = `${dir}/dist-deno`
@@ -686,7 +686,7 @@ console.log("Deno output → dist-deno (run: deno run -A dist-deno/server-deno.j
 // Run: `node dist-node/server-node.js` (or the Dockerfile). `node`+`solid` → solid-js/web's server build.
 import { cpSync, mkdirSync, rmSync } from "node:fs"
 import { buildClient, buildServer } from "@nifrajs/web/build"
-import { solidBunPlugin } from "@nifrajs/web-solid"
+import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
 
 const dir = import.meta.dir
 const dist = `${dir}/dist-node`
@@ -724,7 +724,7 @@ console.log("Node output → dist-node (run: node dist-node/server-node.js)")
 //   .vercel/output/functions/index.func/index.js  - the Edge SSR function (+ .vc-config.json)
 import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { buildClient, buildServer } from "@nifrajs/web/build"
-import { solidBunPlugin } from "@nifrajs/web-solid"
+import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
 
 const dir = import.meta.dir
 const out = `${dir}/.vercel/output`
@@ -774,7 +774,7 @@ console.log("Vercel output → .vercel/output (deploy: vercel deploy --prebuilt)
 // Solid: solidBunPlugin("dom") for the client, ("ssr") for the server + the `solid` export condition.
 import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { buildClient, buildServer } from "@nifrajs/web/build"
-import { solidBunPlugin } from "@nifrajs/web-solid"
+import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
 
 const dir = import.meta.dir
 const dist = `${dir}/dist`

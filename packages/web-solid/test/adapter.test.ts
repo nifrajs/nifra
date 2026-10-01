@@ -2,7 +2,8 @@ import { expect, test } from "bun:test"
 import { unlinkSync } from "node:fs"
 import { assertRenderAdapterConformance, renderPageResult } from "@nifrajs/web"
 import { createComponent, createResource, Suspense } from "solid-js"
-import { solidAdapter, solidBunPlugin } from "../src/index.ts"
+import { solidAdapter } from "../src/index.ts"
+import { solidBunPlugin } from "../src/plugin.ts"
 
 test("solidAdapter conforms to the executable RenderAdapter interface", async () => {
   const layout = (marker: string) => (props: { children: unknown }) => [marker, props.children]

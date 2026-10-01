@@ -7,6 +7,7 @@ import type { CapabilityProjectReport } from "../capabilities-tool.ts"
 import type { SourceFinding, StaticRouteFinding } from "../check-scan.ts"
 import {
   IDENT,
+  movedExportSites,
   parseSimpleFetchCall,
   REMOVED_IMPORTS,
   SIMPLE_REWRITE_METHODS,
@@ -122,6 +123,8 @@ interface LegacyFields {
   readonly evidence?: readonly string[]
   readonly chain?: readonly string[]
   readonly fix?: string
+  /** A recipe for this one finding, when the rule's findings are not all mechanically fixable. */
+  readonly recipe?: Diagnostic["fix"]
   readonly suggestion?: DiagnosticSuggestion
   readonly verify?: string
   readonly includeCode?: boolean
@@ -142,7 +145,7 @@ function legacyDiagnostic(rule: string, fields: LegacyFields): Diagnostic {
   const code = LEGACY_RULE_CODES[rule]
   if (code === undefined) throw new Error(`unknown legacy rule ${rule}`)
   const evidence = fields.evidence ?? fields.chain
-  const fix = canonicalRecipe(rule)
+  const fix = fields.recipe ?? canonicalRecipe(rule)
   const canonical: Diagnostic = {
     code,
     severity: fields.severity === "warning" ? "warn" : fields.severity,
@@ -410,6 +413,18 @@ const removedImportRule: CheckRule = {
   title: TITLES["removed-import"]!,
   async scan(ctx) {
     return [...ctx.project.sourceFindings.removedImports].sort(bySite).map((finding) => {
+      const moved = movedExportSites(finding.snippet)[0]
+      if (moved !== undefined) {
+        const names = moved.moved.map((binding) => `\`${binding.split(/\s+/)[0]}\``).join(", ")
+        return legacyDiagnostic("removed-import", {
+          severity: "error",
+          file: finding.file,
+          line: finding.line,
+          message: `${finding.snippet} - ${names} moved from "${moved.from}" to "${moved.to}"`,
+          fix: `import ${names} from "${moved.to}" - \`nifra fix --code NF-C005\` rewrites it`,
+          recipe: { recipe: "imports.moved-export", command: "nifra fix --code NF-C005" },
+        })
+      }
       const entry = REMOVED_IMPORTS.find(
         (candidate) =>
           finding.snippet.includes(`"${candidate.specifier}`) ||

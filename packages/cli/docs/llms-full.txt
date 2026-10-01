@@ -13772,11 +13772,11 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web-solid
 
-`solidAdapter`, `solidBunPlugin`
+`solidAdapter`
 
 ## @nifrajs/web-svelte
 
-`svelteAdapter`, `svelteBunPlugin`
+`svelteAdapter`
 
 ## @nifrajs/web-vanilla
 

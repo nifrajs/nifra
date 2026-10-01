@@ -117,6 +117,24 @@ registerFixRecipe({
   },
 })
 
+registerFixRecipe({
+  id: "imports.moved-export",
+  description: "Import a name that moved to a subpath from the module that now exports it.",
+  verify: "nifra check --lints-only",
+  async apply(root, diagnostic) {
+    if (diagnostic.file === undefined) return []
+    const path = await resolveInsideProject(root, diagnostic.file)
+    if (path === undefined) return []
+    const { rewriteMovedExports } = await import("./check-scan.ts")
+    const source = await readFile(path, "utf8")
+    // Rewrites every site in the file at once, so the rest of that file's diagnostics find nothing left.
+    const rewritten = rewriteMovedExports(source)
+    if (rewritten === source) return []
+    await writeFile(path, rewritten, "utf8")
+    return [diagnostic.file]
+  },
+})
+
 /**
  * How many typecheck passes the reserved-segment codemod will run. A nested collision
  * (`/api/delete/then`) only reveals its second site once the first is rewritten, so one pass is not

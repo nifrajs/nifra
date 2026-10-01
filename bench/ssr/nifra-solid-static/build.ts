@@ -1,6 +1,6 @@
 import { buildClient, prerenderRoutes } from "@nifrajs/web/build"
 import { discoverRoutes } from "@nifrajs/web/fs"
-import { solidBunPlugin } from "@nifrajs/web-solid"
+import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
 import { plugin } from "bun"
 
 plugin(solidBunPlugin("ssr"))

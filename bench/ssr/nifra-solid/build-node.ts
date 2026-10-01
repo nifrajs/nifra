@@ -4,7 +4,7 @@
  *   bun run bench/ssr/nifra-solid/build-node.ts
  */
 import { mkdirSync, rmSync } from "node:fs"
-import { solidBunPlugin } from "@nifrajs/web-solid"
+import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
 
 const dir = import.meta.dir
 const dist = `${dir}/dist-node`

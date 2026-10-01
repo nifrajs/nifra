@@ -25,5 +25,6 @@ export const recipe: UpgradeRecipe = {
     'The typed client refuses a `.` or `..` path param value (`{ ok: false, status: 0, error: { error: "invalid_path" } }`) instead of sending a request to another path.',
     "`jwt()`, `verifyCsrfToken()` and `verifyDownloadUrl()` accept only canonical unpadded base64url signatures.",
     "In plural messages, `#` is formatted in the locale's number format (`1,000 items`), not as plain digits.",
+    "`solidBunPlugin` is exported from `@nifrajs/web-solid/plugin` and `svelteBunPlugin` from `@nifrajs/web-svelte/plugin`; the adapter roots export only the render adapter. Run `nifra fix --code NF-C005` to rewrite the imports.",
   ],
 }

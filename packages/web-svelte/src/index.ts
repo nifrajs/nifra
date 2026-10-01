@@ -1,19 +1,15 @@
 /**
- * @nifrajs/web-svelte - the Svelte 5 render adapter for @nifrajs/web (server side) + the `.svelte` compiler
- * Bun-plugin. SSR via Svelte's `render` (svelte/server), which returns HTML strings (Svelte SSR is
- * string-based, not a stream), wrapped in a one-chunk Web `ReadableStream` (the seam's shape). The
- * layout-chain fold is the recursive `Chain.svelte`. Client hydration lives in `@nifrajs/web-svelte/client`.
- * Svelte components compile from `.svelte` files, so this adapter ships a build plugin (like
- * `@nifrajs/web-solid`'s Babel plugin) - there is no callable-component runtime.
+ * @nifrajs/web-svelte - the Svelte 5 render adapter for @nifrajs/web (server side). SSR via Svelte's
+ * `render` (svelte/server), which returns HTML strings (Svelte SSR is string-based, not a stream),
+ * wrapped in a one-chunk Web `ReadableStream` (the seam's shape). The layout-chain fold is the recursive
+ * `Chain.svelte`. Client hydration lives in `@nifrajs/web-svelte/client`. Svelte components compile from
+ * `.svelte` files, so this adapter ships a build plugin at `@nifrajs/web-svelte/plugin` (like
+ * `@nifrajs/web-solid/plugin`) - there is no callable-component runtime.
  */
-import { fileURLToPath } from "node:url"
 import type { RenderAdapter, RenderProps } from "@nifrajs/web"
 import { ssrModuleLoader } from "@nifrajs/web"
 import type { Component } from "svelte"
 import { render as runtimeRender } from "svelte/server"
-
-// Re-export the compiler plugin for convenience.
-export { svelteBunPlugin } from "./plugin.ts"
 
 /**
  * `Chain.svelte` is loaded on FIRST RENDER, not at module load.
@@ -68,7 +64,9 @@ const loadChain = (): Component<ChainProps> | Promise<Component<ChainProps>> => 
   chainPromise ??= (
     load !== undefined
       ? Promise.all([
-          load(fileURLToPath(new URL("./Chain.svelte", import.meta.url))),
+          // `import.meta.dirname`, not `node:url`: edge bundles resolve that to a browser polyfill with
+          // no `fileURLToPath`, and this module is in every Svelte server bundle.
+          load(`${import.meta.dirname}/Chain.svelte`),
           load("svelte/server"),
         ]).then(([mod, server]) => {
           render = (server as { render: typeof runtimeRender }).render

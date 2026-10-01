@@ -1484,8 +1484,9 @@ function isSideEffectImport(content: string, index: number): boolean {
   return /^import\s*["'`]/.test(content.slice(index, index + 32))
 }
 
-/** Flag an import of a specifier that no longer exists. Pure; matches the exact specifier or a subpath
- * of it, so `@nifrajs/budget/x` is caught alongside `@nifrajs/budget`. */
+/** Flag an import of a specifier that no longer exists, or of a name that moved to a subpath
+ * ({@link MOVED_EXPORTS}). Pure; matches the exact specifier or a subpath of it, so `@nifrajs/budget/x`
+ * is caught alongside `@nifrajs/budget`. */
 export function scanRemovedImports(file: string, content: string): SourceFinding[] {
   const out: SourceFinding[] = []
   const lines = content.split("\n")
@@ -1498,6 +1499,94 @@ export function scanRemovedImports(file: string, content: string): SourceFinding
     if (removed.sideEffectOnly === true && !isSideEffectImport(content, edge.index)) continue
     const line = lineAt(content, edge.index)
     out.push({ file, line, snippet: (lines[line - 1] ?? "").trim() })
+  }
+  // A moved name's snippet is the whole statement on one line: the rule re-reads the site from it.
+  for (const site of movedExportSites(content)) {
+    const snippet = content.slice(site.index, site.end).replace(/\s+/g, " ")
+    out.push({ file, line: lineAt(content, site.index), snippet })
+  }
+  return out
+}
+
+/**
+ * Named exports that left a module for one of its subpaths, and where they went.
+ *
+ * Unlike a removed specifier, a moved name does fail the typecheck - but that error names neither the
+ * new home nor a fix. Listing it here gives the diagnostic both, and `nifra fix --code NF-C005`
+ * rewrites the import ({@link rewriteMovedExports}).
+ */
+export const MOVED_EXPORTS: ReadonlyArray<{
+  readonly from: string
+  readonly names: readonly string[]
+  readonly to: string
+}> = [
+  // Compiler plugins sit on their own subpath so the adapter root, which every server and edge bundle
+  // links, never pulls in build-time code.
+  { from: "@nifrajs/web-solid", names: ["solidBunPlugin"], to: "@nifrajs/web-solid/plugin" },
+  { from: "@nifrajs/web-svelte", names: ["svelteBunPlugin"], to: "@nifrajs/web-svelte/plugin" },
+]
+
+/** `import { a, b as c } from "x"` and `export { a } from "x"` - the forms a moved name is reached by.
+ * `import type` / `export type` never match, so a type-only import is left to tsc as elsewhere here. */
+const NAMED_FROM = /\b(import|export)\s*\{([^{}]*)\}\s*from\s*(["'])([^"'\n]+)\3;?/g
+
+export interface MovedExportSite {
+  /** Statement span in the scanned source, `end` exclusive (a trailing `;` included). */
+  readonly index: number
+  readonly end: number
+  readonly keyword: string
+  readonly quote: string
+  readonly from: string
+  readonly to: string
+  /** Binding texts as written (`a`, `a as b`), split by whether they move. */
+  readonly kept: readonly string[]
+  readonly moved: readonly string[]
+}
+
+/** Every import/re-export statement naming a {@link MOVED_EXPORTS} binding, in source order. Pure. */
+export function movedExportSites(content: string): MovedExportSite[] {
+  const positions = codePositionMask(content)
+  const sites: MovedExportSite[] = []
+  const re = new RegExp(NAMED_FROM.source, NAMED_FROM.flags)
+  for (let m = re.exec(content); m !== null; m = re.exec(content)) {
+    if (positions[m.index] === " ") continue
+    const entry = MOVED_EXPORTS.find((candidate) => candidate.from === m?.[4])
+    if (entry === undefined) continue
+    const bindings = (m[2] ?? "")
+      .split(",")
+      .map((binding) => binding.trim())
+      .filter((binding) => binding !== "")
+    const moves = (binding: string): boolean =>
+      !binding.startsWith("type ") && entry.names.includes(binding.split(/\s+/)[0] ?? "")
+    const moved = bindings.filter(moves)
+    if (moved.length === 0) continue
+    sites.push({
+      index: m.index,
+      end: m.index + m[0].length,
+      keyword: m[1] ?? "import",
+      quote: m[3] ?? '"',
+      from: entry.from,
+      to: entry.to,
+      kept: bindings.filter((binding) => !moves(binding)),
+      moved,
+    })
+  }
+  return sites
+}
+
+/** Point every moved binding at the module it moved to, leaving the rest of its statement in place.
+ * Returns `content` unchanged when nothing moved, so applying it twice is a no-op. Pure. */
+export function rewriteMovedExports(content: string): string {
+  let out = content
+  for (const site of movedExportSites(content).reverse()) {
+    const semicolon = content[site.end - 1] === ";" ? ";" : ""
+    const statement = (bindings: readonly string[], from: string): string =>
+      `${site.keyword} { ${bindings.join(", ")} } from ${site.quote}${from}${site.quote}${semicolon}`
+    const replacement =
+      site.kept.length === 0
+        ? statement(site.moved, site.to)
+        : `${statement(site.kept, site.from)}\n${statement(site.moved, site.to)}`
+    out = out.slice(0, site.index) + replacement + out.slice(site.end)
   }
   return out
 }

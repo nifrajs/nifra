@@ -5816,8 +5816,6 @@ _No named exports (side-effect entrypoint)._
 
 - **solidAdapter** _(const)_ - `solidAdapter: RenderAdapter`
   The Solid server render adapter - pass to
-- **solidBunPlugin** _(function)_ - `solidBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
-  Bun build/runtime plugin that compiles Solid components with Babel - `generate: "ssr"` for the server, `"dom"` for the client, `hydratable` so SSR and hydrate align. Solid's reactive-JSX compiler ships only as a Babel plugin (no swc/native port); this runs at build time, on `.tsx` files only.
 
 ### `@nifrajs/web-solid/await`
 
@@ -5886,6 +5884,11 @@ _No named exports (side-effect entrypoint)._
 - **useMDXComponents** _(function)_ - `useMDXComponents: () => Record<string, (props: Record<string, unknown>) => unknown>`
   Returns the intrinsic-element → Solid-component map MDX content uses. Merge in your own overrides by passing `components` to the MDX content component (they take precedence).
 
+### `@nifrajs/web-solid/plugin`
+
+- **solidBunPlugin** _(function)_ - `solidBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
+  Bun build/runtime plugin that compiles Solid components with Babel - `generate: "ssr"` for the server, `"dom"` for the client, `hydratable` so SSR and hydrate align. Solid's reactive-JSX compiler ships only as a Babel plugin (no swc/native port); this runs at build time, on `.tsx` files only.
+
 ### `@nifrajs/web-solid/query`
 
 - **CreateQueryResult** _(interface)_ - `interface CreateQueryResult<T>`
@@ -5929,7 +5932,6 @@ _No named exports (side-effect entrypoint)._
 
 - **svelteAdapter** _(const)_ - `svelteAdapter: RenderAdapter`
   The Svelte server render adapter - pass to
-- **svelteBunPlugin** _(function)_ - `svelteBunPlugin: (generate: "dom" | "ssr") => BunPlugin`
 
 ### `@nifrajs/web-svelte/client`
 

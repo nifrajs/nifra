@@ -1,5 +1,5 @@
 // Build the client bundle with Bun.build + Solid's (dom) transform via @nifrajs/web-solid.
-import { solidBunPlugin } from "@nifrajs/web-solid"
+import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
 
 const result = await Bun.build({
   entrypoints: [`${import.meta.dir}/client.ts`],

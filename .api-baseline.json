@@ -209,13 +209,15 @@
   },
   "@nifrajs/web-solid": {
     ".": {
-      "solidBunPlugin": "(generate: \"dom\" | \"ssr\") => BunPlugin",
       "solidAdapter": "RenderAdapter"
     },
     "./client": {
       "hydrate": "(chain: readonly unknown[], props: RenderProps, container: unknown) => void",
       "mountRouter": "(options: MountRouterOptions) => void",
       "errorBoundary": "(fallback: unknown) => unknown"
+    },
+    "./plugin": {
+      "solidBunPlugin": "(generate: \"dom\" | \"ssr\") => BunPlugin"
     },
     "./await": {
       "Await": "<T>(props: AwaitProps<T>) => Element",
@@ -1986,7 +1988,6 @@
   },
   "@nifrajs/web-svelte": {
     ".": {
-      "svelteBunPlugin": "(generate: \"dom\" | \"ssr\") => BunPlugin",
       "svelteAdapter": "RenderAdapter"
     },
     "./client": {

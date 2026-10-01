@@ -92,7 +92,7 @@ export const FRAMEWORK_SPECS: Readonly<Record<string, FrameworkSpec>> = {
     runtimeDependencies: { "solid-js": "^1.9.0" },
     devDependencies: { "vite-plugin-solid": "^2.10.0" },
     typescript: { jsx: "preserve", jsxImportSource: "solid-js" },
-    bunPlugin: { specifier: "@nifrajs/web-solid", name: "solidBunPlugin" },
+    bunPlugin: { specifier: "@nifrajs/web-solid/plugin", name: "solidBunPlugin" },
     // Solid publishes a `solid` export condition that routes `solid-js` to its JSX source; without it
     // the bundler takes the pre-compiled build and hydration has nothing to attach to.
     conditions: { client: ["solid"], ssr: ["solid"] },

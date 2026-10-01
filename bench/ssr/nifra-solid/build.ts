@@ -1,4 +1,4 @@
-import { solidBunPlugin } from "@nifrajs/web-solid"
+import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
 
 const define = { "process.env.NODE_ENV": '"production"' }
 

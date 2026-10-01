@@ -1,7 +1,7 @@
 {
   "name": "@nifrajs/web-solid",
   "version": "3.5.0",
-  "description": "Solid render adapter for @nifrajs/web - SSR + hydration + the Solid Babel build plugin.",
+  "description": "Solid render adapter for @nifrajs/web - SSR + hydration, with the Solid Babel build plugin (@nifrajs/web-solid/plugin).",
   "keywords": [
     "bun",
     "typescript",
@@ -30,6 +30,11 @@
       "bun": "./src/client.ts",
       "types": "./dist/client.d.ts",
       "default": "./dist/client.js"
+    },
+    "./plugin": {
+      "bun": "./src/plugin.ts",
+      "types": "./dist/plugin.d.ts",
+      "default": "./dist/plugin.js"
     },
     "./await": {
       "bun": "./src/await.ts",

@@ -3,7 +3,7 @@
 // `solid-js/web` at its SERVER runtime). `wrangler.toml`'s `main` points at the worker.
 //   bun run examples/workers-ssr-solid/build.ts && (cd examples/workers-ssr-solid && bunx wrangler dev)
 import { buildClient, buildServer } from "@nifrajs/web/build"
-import { solidBunPlugin } from "@nifrajs/web-solid"
+import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
 
 const dir = import.meta.dir
 
