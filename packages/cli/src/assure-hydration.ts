@@ -1,5 +1,5 @@
 import { existsSync, statSync } from "node:fs"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, join, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -176,6 +176,8 @@ async function buildHydrationApp(cwd: string): Promise<BuiltHydrationApp | { ski
     const client = await buildClient({
       routesDir: loaded.routesDir,
       outDir: clientOutput,
+      // The runner imports the entry from disk, where a `/assets/` chunk URL is a filesystem path.
+      publicPath: `${pathToFileURL(clientOutput).href}/`,
       clientModule: loaded.framework.clientModule,
       ...(plugins.length === 0 ? {} : { plugins: plugins as BunPlugin[] }),
       ...(loaded.framework.conditions === undefined
@@ -232,23 +234,12 @@ async function sourceFiles(cwd: string): Promise<Array<{ file: string; content: 
   return files
 }
 
+/** How long a route may take to mark itself hydrated before the gate fails it. */
+const HYDRATION_TIMEOUT_MS = 5_000
+let entryCopies = 0
+
 function outputPath(outputDir: string, entry: string): string {
   return join(outputDir, basename(entry))
-}
-
-/** The page state a hydrating document hands over: the inert `#__nifra-handover` JSON script,
- * keyed by the global names the client entry assigns onto `window`. */
-function handoverOf(html: string): Record<string, unknown> {
-  const body = /<script type="application\/json" id="__nifra-handover">([\s\S]*?)<\/script>/.exec(
-    html,
-  )?.[1]
-  if (body === undefined) return {}
-  try {
-    const parsed: unknown = JSON.parse(body)
-    return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {}
-  } catch {
-    return {}
-  }
 }
 
 async function runDomHydration(
@@ -292,8 +283,21 @@ async function runDomHydration(
     else if (name === "cancelAnimationFrame") globals[name] = (id: number) => clearTimeout(id)
     else globals[name] = windowValue[name]
   }
+  // Framework runtimes reach for more DOM globals (Vue's `SVGElement`, `Text`, `Comment`). Lend every
+  // one the runtime does not define itself, so its own `fetch`, `URL` and timers stay in place.
+  for (const name of Object.getOwnPropertyNames(windowValue)) {
+    if (name in globals) continue
+    let value: unknown
+    try {
+      value = windowValue[name]
+    } catch {
+      continue
+    }
+    previous.set(name, undefined)
+    globals[name] =
+      typeof value === "function" && !/^[A-Z]/.test(name) ? value.bind(windowValue) : value
+  }
   const windowRecord = windowValue as Record<string, unknown>
-  Object.assign(windowRecord, handoverOf(html))
   windowRecord.console = console
   const errors: string[] = []
   const recover = (error: unknown, info?: unknown): void => {
@@ -311,7 +315,12 @@ async function runDomHydration(
       documentValue.querySelector as (selector: string) => { innerHTML?: unknown } | null
     )("#root")
     const before = String(beforeRoot?.innerHTML ?? "")
-    const entry = outputPath(built.outputDir, built.client.entry)
+    // Bun evaluates a file module once per path, query or not, so each route imports its own copy.
+    // A fresh directory each time: Bun's resolver caches a directory's listing once it has read it.
+    const copyDir = join(built.outputDir, `route-${++entryCopies}`)
+    await mkdir(copyDir)
+    const entry = join(copyDir, basename(built.client.entry))
+    await copyFile(outputPath(built.outputDir, built.client.entry), entry)
     const originalError = console.error
     const originalWarn = console.warn
     console.error = (...args) => {
@@ -324,10 +333,32 @@ async function runDomHydration(
       if (/hydr|mismatch|server|client|expected|recover/i.test(message)) errors.push(message)
       originalWarn(...args)
     }
+    // A render that throws on the client surfaces from a scheduler task, not from the import.
+    const uncaught = (error: unknown): void => {
+      errors.push(`uncaught: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    process.on("uncaughtException", uncaught)
+    process.on("unhandledRejection", uncaught)
+    let hydrated = false
     try {
-      await import(`${pathToFileURL(entry).href}?nifra-hydration=${encodeURIComponent(path)}`)
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, 0))
+      await import(pathToFileURL(entry).href)
+      // The entry marks <html> once the adapter has mounted the route. `Date.now` is pinned by the
+      // deterministic runtime, so the bound is measured with `performance.now`.
+      const marked = documentValue.documentElement as { hasAttribute(name: string): boolean }
+      const started = performance.now()
+      for (;;) {
+        hydrated = marked.hasAttribute("data-nifra-hydrated")
+        if (hydrated || errors.length > 0 || performance.now() - started >= HYDRATION_TIMEOUT_MS)
+          break
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 1))
+      }
+      // The framework commits the hydration in its own scheduler tasks after the marker's frame.
+      for (let tick = 0; tick < 10; tick++) {
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 0))
+      }
     } finally {
+      process.off("uncaughtException", uncaught)
+      process.off("unhandledRejection", uncaught)
       console.error = originalError
       console.warn = originalWarn
     }
@@ -336,6 +367,16 @@ async function runDomHydration(
     )("#root")
     const after = String(afterRoot?.innerHTML ?? "")
     const diagnostics: import("./diagnostics.ts").Diagnostic[] = []
+    if (!hydrated && errors.length === 0) {
+      diagnostics.push(
+        diagnostic(
+          "NF-H001",
+          `client hydration did not complete within ${HYDRATION_TIMEOUT_MS / 1000}s`,
+          undefined,
+          [built.framework],
+        ),
+      )
+    }
     if (errors.length > 0 || before !== after) {
       diagnostics.push(
         diagnostic("NF-H001", "client hydration reported a recoverable mismatch", undefined, [
