@@ -207,6 +207,14 @@ export default function Rendering() {
       </p>
       <CodeBlock code={ISR} />
       <p>
+        Entries are keyed by origin and path. A request with a query string skips the cache by
+        default - rendered fresh, never stored - so <code>?a=1</code>, <code>?a=2</code>, ... can't
+        each store a page. To cache a paginated or sorted list, name the parameters:{" "}
+        <code>query: ["page", "sort"]</code> keys on those in any order, and a request carrying any
+        other parameter still skips. <code>query: "all"</code> keys on the whole query string. Give{" "}
+        <code>revalidateEndpoint</code> the same <code>query</code> so purges match.
+      </p>
+      <p>
         Set a route's freshness with <code>export const revalidate</code> (seconds) - Nifra emits it as
         the <code>x-nifra-isr-revalidate</code> header, which the wrapper reads to set that page's TTL.
       </p>

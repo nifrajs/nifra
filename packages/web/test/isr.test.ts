@@ -90,20 +90,20 @@ describe("MemoryCacheStore", () => {
   })
 })
 
-import { type ISRApp, type ISRPlatform, withISR } from "../src/isr.ts"
+import { type ISRApp, type ISROptions, type ISRPlatform, withISR } from "../src/isr.ts"
 
 const html = (body: string, headers: Record<string, string> = {}): Response =>
   new Response(body, { status: 200, headers: { "content-type": "text/html", ...headers } })
 
 const pageKey = (path: string): string => `http://x${path}`
 
-function trackApp(respond: () => Response): { app: ISRApp; calls: () => number } {
+function trackApp(respond: (req: Request) => Response): { app: ISRApp; calls: () => number } {
   let calls = 0
   return {
     app: {
-      fetch: async () => {
+      fetch: async (req) => {
         calls++
-        return respond()
+        return respond(req)
       },
     },
     calls: () => calls,
@@ -153,6 +153,72 @@ describe("withISR", () => {
     const res = await handler(new Request("http://x/p", { headers: { "x-nifra-data": "1" } }))
     expect(res.headers.get("x-nifra-isr")).toBeNull() // passed through, not a cache hit
     expect(calls()).toBe(2)
+  })
+
+  test("default query policy: a query string bypasses, so distinct queries store nothing", async () => {
+    const store = new MemoryCacheStore()
+    const keys: string[] = []
+    const spy: typeof store = Object.assign(Object.create(store), {
+      get: (key: string) => {
+        keys.push(key)
+        return store.get(key)
+      },
+    })
+    const { app, calls } = trackApp(() => html("v1"))
+    const handler = withISR(app, { store: spy, revalidate: 60, now: () => 0 })
+    for (const query of ["?a=1", "?a=2", "?utm_source=x"]) {
+      const res = await handler(new Request(`http://x/p${query}`))
+      expect(res.headers.get("x-nifra-isr")).toBeNull()
+    }
+    expect(keys).toEqual([]) // never even looked up
+    expect(calls()).toBe(3)
+    expect(await store.get("http://x/p?a=1")).toBeUndefined()
+    // The bare path still caches, under the path-only key.
+    expect((await handler(new Request("http://x/p"))).headers.get("x-nifra-isr")).toBe("miss")
+    expect((await store.get("http://x/p"))?.body).toBe("v1")
+  })
+
+  test("a query allowlist keys on those parameters only, in any order", async () => {
+    const store = new MemoryCacheStore()
+    const { app, calls } = trackApp((req) => html(new URL(req.url).search))
+    const handler = withISR(app, { store, revalidate: 60, now: () => 0, query: ["page", "sort"] })
+    expect(
+      (await handler(new Request("http://x/l?sort=new&page=2"))).headers.get("x-nifra-isr"),
+    ).toBe("miss")
+    const reordered = await handler(new Request("http://x/l?page=2&sort=new"))
+    expect(reordered.headers.get("x-nifra-isr")).toBe("hit")
+    expect(await reordered.text()).toBe("?sort=new&page=2")
+    expect((await store.get("http://x/l?page=2&sort=new"))?.body).toBe("?sort=new&page=2")
+    // Any parameter outside the list bypasses rather than being dropped from the key.
+    const extra = await handler(new Request("http://x/l?page=2&sort=new&ref=mail"))
+    expect(extra.headers.get("x-nifra-isr")).toBeNull()
+    expect(await extra.text()).toBe("?page=2&sort=new&ref=mail")
+    // A repeated name keeps its value order, so `?tag=a&tag=b` and `?tag=b&tag=a` stay distinct.
+    const tags = withISR(app, { store, revalidate: 60, now: () => 0, query: ["tag"] })
+    await tags(new Request("http://x/t?tag=a&tag=b"))
+    expect((await tags(new Request("http://x/t?tag=b&tag=a"))).headers.get("x-nifra-isr")).toBe(
+      "miss",
+    )
+    expect(calls()).toBe(4)
+  })
+
+  test('query: "all" keys on the whole query string', async () => {
+    const store = new MemoryCacheStore()
+    const { app } = trackApp(() => html("v1"))
+    const handler = withISR(app, { store, revalidate: 60, now: () => 0, query: "all" })
+    expect((await handler(new Request("http://x/p?a=1"))).headers.get("x-nifra-isr")).toBe("miss")
+    expect((await handler(new Request("http://x/p?a=1"))).headers.get("x-nifra-isr")).toBe("hit")
+    expect((await store.get("http://x/p?a=1"))?.body).toBe("v1")
+  })
+
+  test("an invalid query policy is refused at construction", () => {
+    const store = new MemoryCacheStore()
+    const app = { fetch: async () => html("x") }
+    for (const query of ["some", [""], [1]] as unknown as ISROptions["query"][]) {
+      expect(() =>
+        withISR(app, { store, revalidate: 60, now: () => 0, ...(query && { query }) }),
+      ).toThrow(TypeError)
+    }
   })
 
   test("stale serves the old body + regenerates behind it (waitUntil)", async () => {
@@ -496,6 +562,32 @@ describe("revalidateEndpoint (on-demand purge)", () => {
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ revalidated: "/p" })
     expect(await store.get(pageKey("/p"))).toBeUndefined() // purged
+  })
+
+  test("a purged path's query is keyed by the same policy withISR stores under", async () => {
+    const store = new MemoryCacheStore()
+    const purge = (handler: (req: Request) => Promise<Response>, path: string) =>
+      handler(
+        new Request("http://x/__nifra/revalidate", {
+          method: "POST",
+          headers: { "x-nifra-revalidate-token": "s3cret", "content-type": "application/json" },
+          body: JSON.stringify({ path }),
+        }),
+      )
+    await store.set("http://x/l?page=2&sort=new", entry("L"))
+    const allowlisted = revalidateEndpoint({ store, secret: "s3cret", query: ["page", "sort"] })
+    expect((await purge(allowlisted, "/l?sort=new&page=2")).status).toBe(200)
+    expect(await store.get("http://x/l?page=2&sort=new")).toBeUndefined()
+    // Under the default policy a query string is never cached, so there is nothing to purge.
+    const res = await purge(revalidateEndpoint({ store, secret: "s3cret" }), "/l?page=2")
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ ok: false, error: "uncached_query" })
+    // A protocol-relative path stays a path on the endpoint's own origin.
+    await store.set("http://x//evil.test/p", entry("E"))
+    expect(
+      (await purge(revalidateEndpoint({ store, secret: "s3cret" }), "//evil.test/p")).status,
+    ).toBe(200)
+    expect(await store.get("http://x//evil.test/p")).toBeUndefined()
   })
 
   test("reads the path from a JSON body when no query param", async () => {

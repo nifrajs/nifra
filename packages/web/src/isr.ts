@@ -397,20 +397,60 @@ export interface ISROptions {
   readonly revalidate: number
   /** Monotonic clock (ms) - injected for testability; production passes `() => Date.now()`. */
   readonly now: () => number
-  /** Cache key for a request. Default: `origin + pathname + search` so host-routed apps do not share
-   * entries across tenants. Return `null` to bypass the cache for this request (it goes straight to the
-   * app, uncached). */
+  /** Cache key for a request. Default: `origin + pathname`, plus the query parameters `query` admits,
+   * so host-routed apps do not share entries across tenants. Return `null` to bypass the cache for
+   * this request (it goes straight to the app, uncached). Replaces `query` entirely. */
   readonly key?: (req: Request) => string | null
+  /**
+   * How the query string reaches the default key. Default `"bypass"`: a request carrying any query
+   * parameter skips the cache - rendered fresh, never stored - so `?a=1`, `?a=2`, ... cannot each
+   * store a full page. A list caches by those parameters only, in any order (`?b=2&a=1` and
+   * `?a=1&b=2` share an entry); a request carrying any other parameter still bypasses, because a
+   * loader that reads it would otherwise be served another request's page. `"all"` keys on the whole
+   * query string, so every distinct query is a new entry.
+   */
+  readonly query?: ISRQuery
   /** Draft/preview secret (the same one given to `createWebApp({ draftSecret })` + `enableDraft`). When
    * set, a request carrying a valid signed draft cookie **bypasses the cache** - editors always render
    * fresh, and a draft render is never written to the store (it can't poison the public cache). */
   readonly draftSecret?: string
 }
 
-const defaultKey = (req: Request): string => {
-  const url = new URL(req.url)
-  return url.origin + url.pathname + url.search
+/** Which query parameters an ISR key carries - see {@link ISROptions.query}. */
+export type ISRQuery = "bypass" | "all" | readonly string[]
+
+/** The default key for a URL under a `query` policy, or `null` when the URL must bypass the cache. */
+const urlKeyOf = (query: ISRQuery = "bypass"): ((url: URL) => string | null) => {
+  if (query === "all") return (url) => url.origin + url.pathname + url.search
+  if (query !== "bypass" && !Array.isArray(query)) {
+    throw new TypeError(
+      '[nifra/web] ISR query must be "bypass", "all", or a list of parameter names',
+    )
+  }
+  const allowed = new Set<string>(query === "bypass" ? [] : query)
+  for (const name of allowed) {
+    if (typeof name !== "string" || name === "") {
+      throw new TypeError("[nifra/web] ISR query parameter names must be non-empty strings")
+    }
+  }
+  return (url) => {
+    if (url.search === "") return url.origin + url.pathname
+    if (allowed.size === 0) return null
+    const entries: [string, string][] = []
+    for (const entry of url.searchParams) {
+      if (!allowed.has(entry[0])) return null
+      entries.push(entry)
+    }
+    // Stable by name, so a repeated name keeps its value order (`getAll` can tell them apart).
+    entries.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    return `${url.origin}${url.pathname}?${new URLSearchParams(entries)}`
+  }
 }
+
+const requestKeyOf =
+  (urlKey: (url: URL) => string | null) =>
+  (req: Request): string | null =>
+    urlKey(new URL(req.url))
 
 function assertRevalidate(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 0) {
@@ -546,7 +586,7 @@ export function withISR(
 ): (req: Request, platform?: ISRPlatform) => Promise<Response> {
   const { store, now } = options
   assertRevalidate(options.revalidate, "revalidate")
-  const keyOf = options.key ?? defaultKey
+  const keyOf = options.key ?? requestKeyOf(urlKeyOf(options.query))
   const draftSecret = options.draftSecret
   const regenerating = new Set<string>()
 
@@ -656,6 +696,10 @@ export interface RevalidateEndpointOptions {
   /** Map a to-purge path → its cache key - MUST match the `withISR` `key` fn. The default uses the
    * revalidation request's origin plus the purged path, matching `withISR`'s default host-aware key. */
   readonly key?: (path: string, req: Request) => string
+  /** The `query` policy given to `withISR`, so a purged path's query string is keyed the same way.
+   * Default `"bypass"`. A path whose query `withISR` never caches is refused with `400`. Ignored
+   * when `key` is supplied. */
+  readonly query?: ISRQuery
 }
 
 /**
@@ -673,7 +717,11 @@ export function revalidateEndpoint(
   // through `?? ""` would open the purge to anyone. Refuse it at construction instead.
   assertTokenSecret(options.secret, "revalidateEndpoint")
   const tokenHeader = options.tokenHeader ?? "x-nifra-revalidate-token"
-  const keyOf = options.key ?? ((path: string, req: Request) => new URL(req.url).origin + path)
+  const urlKey = options.key === undefined ? urlKeyOf(options.query) : undefined
+  // Joined as text, never resolved against the origin: `//host/x` must stay a path on this origin.
+  const keyOf =
+    options.key ??
+    ((path: string, req: Request) => urlKey?.(new URL(new URL(req.url).origin + path)) ?? null)
   return async (req) => {
     if (req.method !== "POST") return jsonError(405, "method_not_allowed")
     if (!timingSafeEqual(req.headers.get(tokenHeader) ?? "", options.secret)) {
@@ -704,7 +752,9 @@ export function revalidateEndpoint(
       return Response.json({ revalidatedTag: tag })
     }
     if (path === null || !path.startsWith("/")) return jsonError(400, "invalid_path")
-    await options.store.delete(keyOf(path, req))
+    const key = keyOf(path, req)
+    if (key === null) return jsonError(400, "uncached_query")
+    await options.store.delete(key)
     return Response.json({ revalidated: path })
   }
 }

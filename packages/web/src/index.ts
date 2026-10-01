@@ -134,6 +134,7 @@ export {
   type ISRApp,
   type ISROptions,
   type ISRPlatform,
+  type ISRQuery,
   KVCacheStore,
   type KVCacheStoreOptions,
   type KVNamespaceLike,

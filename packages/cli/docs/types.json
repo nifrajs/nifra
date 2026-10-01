@@ -9249,7 +9249,7 @@
     "name": "ISROptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ISROptions {\n    readonly store: CacheStore;\n    /** Default freshness window (**seconds**) for a cached page; older ⇒ stale (served, regenerated\n     * behind). A route overrides it per-page via `export const revalidate` (surfaced as the\n     * `x-nifra-isr-revalidate` response header). */\n    readonly revalidate: number;\n    /** Monotonic clock (ms) - injected for testability; production passes `() => Date.now()`. */\n    readonly now: () => number;\n    /** Cache key for a request. Default: `origin + pathname + search` so host-routed apps do not share\n     * entries across tenants. Return `null` to bypass the cache for this request (it goes straight to the\n     * app, uncached). */\n    readonly key?: (req: Request) => string | null;\n    /** Draft/preview secret (the same one given to `createWebApp({ draftSecret })` + `enableDraft`). When\n     * set, a request carrying a valid signed draft cookie **bypasses the cache** - editors always render\n     * fresh, and a draft render is never written to the store (it can't poison the public cache). */\n    readonly draftSecret?: string;\n}"
+    "signature": "export interface ISROptions {\n    readonly store: CacheStore;\n    /** Default freshness window (**seconds**) for a cached page; older ⇒ stale (served, regenerated\n     * behind). A route overrides it per-page via `export const revalidate` (surfaced as the\n     * `x-nifra-isr-revalidate` response header). */\n    readonly revalidate: number;\n    /** Monotonic clock (ms) - injected for testability; production passes `() => Date.now()`. */\n    readonly now: () => number;\n    /** Cache key for a request. Default: `origin + pathname`, plus the query parameters `query` admits,\n     * so host-routed apps do not share entries across tenants. Return `null` to bypass the cache for\n     * this request (it goes straight to the app, uncached). Replaces `query` entirely. */\n    readonly key?: (req: Request) => string | null;\n    /**\n     * How the query string reaches the default key. Default `\"bypass\"`: a request carrying any query\n     * parameter skips the cache - rendered fresh, never stored - so `?a=1`, `?a=2`, ... cannot each\n     * store a full page. A list caches by those parameters only, in any order (`?b=2&a=1` and\n     * `?a=1&b=2` share an entry); a request carrying any other parameter still bypasses, because a\n     * loader that reads it would otherwise be served another request's page. `\"all\"` keys on the whole\n     * query string, so every distinct query is a new entry.\n     */\n    readonly query?: ISRQuery;\n    /** Draft/preview secret (the same one given to `createWebApp({ draftSecret })` + `enableDraft`). When\n     * set, a request carrying a valid signed draft cookie **bypasses the cache** - editors always render\n     * fresh, and a draft render is never written to the store (it can't poison the public cache). */\n    readonly draftSecret?: string;\n}"
   },
   {
     "name": "ISRPlatform",
@@ -9257,6 +9257,13 @@
     "package": "@nifrajs/web",
     "signature": "export interface ISRPlatform {\n    readonly waitUntil?: (promise: Promise<unknown>) => void;\n}",
     "doc": "/** Minimal platform shape `withISR` needs - just `waitUntil` (edge runtimes extend the response\n * lifetime so background regeneration finishes). Off-edge it's absent and regen runs fire-and-forget. */"
+  },
+  {
+    "name": "ISRQuery",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type ISRQuery = \"bypass\" | \"all\" | readonly string[];",
+    "doc": "/** Which query parameters an ISR key carries - see {@link ISROptions.query}. */"
   },
   {
     "name": "isSafeReviewDiff",
@@ -15107,7 +15114,7 @@
     "name": "RevalidateEndpointOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RevalidateEndpointOptions {\n    readonly store: CacheStore;\n    /** Shared secret; the request's token must match it (constant-time). */\n    readonly secret: string;\n    /** Header carrying the secret. Default `x-nifra-revalidate-token`. */\n    readonly tokenHeader?: string;\n    /** Map a to-purge path → its cache key - MUST match the `withISR` `key` fn. The default uses the\n     * revalidation request's origin plus the purged path, matching `withISR`'s default host-aware key. */\n    readonly key?: (path: string, req: Request) => string;\n}"
+    "signature": "export interface RevalidateEndpointOptions {\n    readonly store: CacheStore;\n    /** Shared secret; the request's token must match it (constant-time). */\n    readonly secret: string;\n    /** Header carrying the secret. Default `x-nifra-revalidate-token`. */\n    readonly tokenHeader?: string;\n    /** Map a to-purge path → its cache key - MUST match the `withISR` `key` fn. The default uses the\n     * revalidation request's origin plus the purged path, matching `withISR`'s default host-aware key. */\n    readonly key?: (path: string, req: Request) => string;\n    /** The `query` policy given to `withISR`, so a purged path's query string is keyed the same way.\n     * Default `\"bypass\"`. A path whose query `withISR` never caches is refused with `400`. Ignored\n     * when `key` is supplied. */\n    readonly query?: ISRQuery;\n}"
   },
   {
     "name": "RevalidateResult",

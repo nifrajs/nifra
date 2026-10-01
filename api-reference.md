@@ -4596,6 +4596,8 @@ _No named exports (side-effect entrypoint)._
 - **ISROptions** _(interface)_ - `interface ISROptions`
 - **ISRPlatform** _(interface)_ - `interface ISRPlatform`
   Minimal platform shape `withISR` needs - just `waitUntil` (edge runtimes extend the response lifetime so background regeneration finishes). Off-edge it's absent and regen runs fire-and-forget.
+- **ISRQuery** _(type)_ - `type ISRQuery = "bypass" | "all" | readonly string[]`
+  Which query parameters an ISR key carries - see {@link ISROptions.query}.
 - **ISR_REVALIDATE_HEADER** _(const)_ - `ISR_REVALIDATE_HEADER: "x-nifra-isr-revalidate"`
   Response header a route uses to advertise its ISR freshness (**seconds**) to a {@link withISR} wrapper - `createWebApp` emits it from a route's `export const revalidate`. Deliberately distinct from the action-revalidation `x-nifra-revalidate` header (a CSV path list the *client* parses to refetch):…
 - **ISR_REVALIDATE_TAGS_HEADER** _(const)_ - `ISR_REVALIDATE_TAGS_HEADER: "x-nifra-isr-tags"`
