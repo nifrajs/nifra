@@ -54,6 +54,8 @@ export function examplesAppTool(loadExamples: () => Promise<Example[] | undefine
     annotations: {
       title: "Browse the nifra example gallery",
       readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
     description:
