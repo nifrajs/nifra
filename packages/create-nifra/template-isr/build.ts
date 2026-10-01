@@ -7,6 +7,8 @@ const dir = import.meta.dir
 const client = await buildClient({
   routesDir: `${dir}/routes`,
   outDir: `${dir}/public/assets`,
+  // public/ is generated Workers Assets output; copying it into public/assets would recurse.
+  publicDir: false,
   clientModule: "@nifrajs/web-react/client",
   conditions: ["bun", "browser"],
   define: { "process.env.NODE_ENV": '"production"' },

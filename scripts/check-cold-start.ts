@@ -1,6 +1,6 @@
 /**
  * Cold-start gate - the path a brand-new external user takes: `bun create nifra` → `bun install` →
- * `bun run build`. Two "good" releases shipped broken HERE while the package-level gates were green:
+ * `bun run build` + `bun run check`. Two "good" releases shipped broken HERE while package-level gates were green:
  *
  *   - alpha.1/alpha.2 leaked `workspace:*` into published deps (now caught by check-publish's
  *     packed-manifest gate); and
@@ -17,9 +17,9 @@
  *      bug. `^0.1.0-alpha.4` is true → the fix. This is the must-have.
  *
  *   2. FUNCTIONAL (needs `bun run build` first) - pack every publishable package from the CURRENT
- *      source, scaffold `template-site`, force its whole `@nifrajs` tree to the packed tarballs via
- *      `overrides`, then `bun install` + `bun run build`. Catches a template that imports a removed
- *      API or otherwise won't install/build against the artifacts we're about to ship.
+ *      source, scaffold a React site and ISR app, force their whole `@nifrajs` tree to the packed
+ *      tarballs via `overrides`, then install, build, and run each app's check script. A successful
+ *      build alone can hide missing ambient types or invalid capability assurance rules.
  *
  *   bun run scripts/check-cold-start.ts
  */
@@ -28,8 +28,8 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { $ } from "bun"
+import { scaffold } from "../packages/create-nifra/src/cli.ts"
 import { FRAMEWORK_IDS, FRAMEWORK_SPECS } from "../packages/create-nifra/src/scaffold/frameworks.ts"
-import { materializeSite } from "../packages/create-nifra/src/scaffold/site.ts"
 import { renderPackageJson } from "../packages/create-nifra/src/scaffold/site-files.ts"
 
 const ROOT = resolve(import.meta.dir, "..")
@@ -121,8 +121,8 @@ for (const { label: tpl, manifest: m } of manifests) {
   }
 }
 
-// ── Layer 2: FUNCTIONAL scaffold → install → build (against the PACKED current source) ─────────────
-console.log("\n=== cold-start: functional scaffold → install → build (template-site) ===")
+// ── Layer 2: FUNCTIONAL scaffold → install → build → check (PACKED current source) ────────────────
+console.log("\n=== cold-start: functional scaffold → install → build → check (site + ISR) ===")
 const work = mkdtempSync(join(tmpdir(), "nifra-cold-start-"))
 try {
   const tarballs = join(work, "tarballs")
@@ -160,32 +160,38 @@ try {
   if (packFailed) {
     failures += 1
   } else {
-    // Compose a site the way `create-nifra` does. This used to copy `template-site/`, which stopped
-    // being a scaffold the moment a site became shared base + model + overlay - copying the sources
-    // would install and build a directory no user receives, which is the opposite of what this proves.
-    const app = join(work, "app")
-    await materializeSite(app, "react")
+    for (const template of ["site", "isr"] as const) {
+      const app = join(work, template)
+      await scaffold({ target: app, template })
 
-    // Force the WHOLE @nifrajs tree to the packed tarballs via `overrides` - so the template builds
-    // against the current source, not whatever is on npm. (Layer 1 already validated the pin ranges.)
-    const appPkg = readJson(join(app, "package.json")) as Manifest & {
-      overrides?: Record<string, string>
-    }
-    appPkg.overrides = appPkg.overrides ?? {}
-    for (const [name, tgz] of tarballByName) appPkg.overrides[name] = `file:${tgz}`
-    writeFileSync(join(app, "package.json"), `${JSON.stringify(appPkg, null, 2)}\n`)
+      // Pin the entire Nifra tree to the artifacts being verified, including transitive dependencies.
+      const appPkg = readJson(join(app, "package.json")) as Manifest & {
+        overrides?: Record<string, string>
+      }
+      appPkg.overrides = appPkg.overrides ?? {}
+      for (const [name, tgz] of tarballByName) appPkg.overrides[name] = `file:${tgz}`
+      writeFileSync(join(app, "package.json"), `${JSON.stringify(appPkg, null, 2)}\n`)
 
-    const install = await $`bun install`.cwd(app).nothrow()
-    if (install.exitCode !== 0) {
-      failures += 1
-      console.error(`✗ composed site scaffold: bun install failed (exit ${install.exitCode})`)
-    } else {
+      const install = await $`bun install`.cwd(app).nothrow()
+      if (install.exitCode !== 0) {
+        failures += 1
+        console.error(`✗ ${template} scaffold: bun install failed (exit ${install.exitCode})`)
+        continue
+      }
       const build = await $`bun run build`.cwd(app).nothrow()
+      const check = await $`bun run check`.cwd(app).nothrow()
       if (build.exitCode !== 0) {
         failures += 1
-        console.error(`✗ composed site scaffold: bun run build failed (exit ${build.exitCode})`)
-      } else {
-        console.log("✓ composed site scaffold installs + builds against the packed current source")
+        console.error(`✗ ${template} scaffold: bun run build failed (exit ${build.exitCode})`)
+      }
+      if (check.exitCode !== 0) {
+        failures += 1
+        console.error(`✗ ${template} scaffold: bun run check failed (exit ${check.exitCode})`)
+      }
+      if (build.exitCode === 0 && check.exitCode === 0) {
+        console.log(
+          `✓ ${template} scaffold installs + builds + checks against packed current source`,
+        )
       }
     }
   }
@@ -197,4 +203,4 @@ if (failures > 0) {
   console.error(`\n${failures} cold-start check(s) failed`)
   process.exit(1)
 }
-console.log("\n✓ cold-start gate: templates install + build for a fresh external user")
+console.log("\n✓ cold-start gate: templates install + build + check for a fresh external user")

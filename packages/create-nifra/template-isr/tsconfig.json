@@ -10,7 +10,7 @@
     "skipLibCheck": true,
     "noEmit": true,
     "verbatimModuleSyntax": true,
-    "types": ["react", "react-dom"]
+    "types": ["bun", "react", "react-dom"]
   },
   "include": ["**/*.ts", "**/*.tsx"],
   "exclude": [

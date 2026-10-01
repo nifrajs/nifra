@@ -58,6 +58,7 @@ export function renderPackageJson(framework: FrameworkSpec): string {
     dependencies,
     devDependencies: {
       "@nifrajs/cli": NIFRA_DEP_RANGE,
+      "@types/bun": "^1.4.2",
       ...framework.devDependencies,
       typescript: "^6.0.3",
       vite: "^8.2.1",
@@ -110,7 +111,7 @@ export function renderTsconfig(framework: FrameworkSpec): string {
       skipLibCheck: true,
       noEmit: true,
       verbatimModuleSyntax: true,
-      ...(ts.types === undefined ? {} : { types: ts.types }),
+      types: ["bun", ...(ts.types ?? [])],
     },
     include: ts.includeTsx === false ? ["**/*.ts"] : ["**/*.ts", "**/*.tsx"],
     exclude: EXCLUDE,

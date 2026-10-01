@@ -1,8 +1,12 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { existsSync, readdirSync } from "node:fs"
-import { mkdtemp, readFile, realpath, rm } from "node:fs/promises"
+import { mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { server } from "@nifrajs/core"
+import type { AssuranceConfig } from "@nifrajs/core/assurance"
+import ts from "typescript"
+import { collectCapabilityProjectReport } from "../../cli/src/capabilities-tool.ts"
 import { materializeAll } from "./_scaffold-fixtures.ts"
 
 // Regression guard for the "fresh scaffold fails its own `nifra check`" bug:
@@ -23,12 +27,75 @@ const TEMPLATES_DIR = resolve(import.meta.dir, "..")
 const { scaffolds, cleanup: cleanupScaffolds } = await materializeAll()
 afterAll(cleanupScaffolds)
 
+// Use the installed dependencies without a network install; the packed cold-start gate also checks
+// these properties in an external consumer, with only the scaffold's declared dependencies.
+await Promise.all(
+  scaffolds.map(({ dir }) =>
+    symlink(resolve(TEMPLATES_DIR, "../..", "node_modules"), join(dir, "node_modules"), "dir"),
+  ),
+)
+
 const COUNTER_SCAFFOLDS = scaffolds.filter(
   (s) => s.label.startsWith("site-") || s.label === "template-isr",
 )
 
 /** The module that REGISTERS the demo routes. `backend.ts` composes; it declares nothing itself. */
 const routeModule = (label: string): string => (label === "template-isr" ? "page.ts" : "counter.ts")
+
+describe("templates: server globals and unused database guard rules", () => {
+  for (const { label, dir } of COUNTER_SCAFFOLDS) {
+    test(`${label} resolves process.env with its own ambient types`, async () => {
+      const config = ts.readConfigFile(join(dir, "tsconfig.json"), ts.sys.readFile)
+      expect(config.error).toBeUndefined()
+      const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, dir)
+      const probe = join(dir, "env-probe.ts")
+      await writeFile(probe, "export const env: string | undefined = process.env.NIFRA_TEST_ENV\n")
+      const program = ts.createProgram([probe], parsed.options)
+      const source = program.getSourceFile(probe)
+      if (source === undefined) throw new Error("Missing environment type probe")
+      // Only the server-global probe is in scope here. Full framework dependency resolution is
+      // checked by the external packed-consumer gate rather than this shared local install.
+      const diagnostics = [...parsed.errors, ...program.getSemanticDiagnostics(source)]
+      expect(
+        diagnostics.map((item) => ({
+          code: item.code,
+          message: ts.flattenDiagnosticMessageText(item.messageText, "\n"),
+        })),
+      ).toEqual([])
+    })
+  }
+  for (const { label, dir } of scaffolds) {
+    test(`${label} passes capability provenance without a database integration`, async () => {
+      const { default: config } = (await import(join(dir, "nifra.assurance.ts"))) as {
+        default: AssuranceConfig
+      }
+      if (config.capabilities === undefined) throw new Error("Scaffold lacks capability assurance")
+      const project = await collectCapabilityProjectReport(dir, config.source, config.capabilities)
+      expect(project.unmatchedSeams).toEqual([])
+      expect(project.report.ok).toBe(true)
+    })
+  }
+  test("optional starter driver rules still reject undeclared database access", async () => {
+    const site = scaffolds.find(({ label }) => label === "site-react")
+    if (site === undefined) throw new Error("Missing React scaffold")
+    const { default: config } = (await import(join(site.dir, "nifra.assurance.ts"))) as {
+      default: AssuranceConfig
+    }
+    if (config.capabilities === undefined) throw new Error("Scaffold lacks capability assurance")
+    await writeFile(
+      join(site.dir, "database-probe.ts"),
+      `import { server } from "@nifrajs/core"
+import postgres from "postgres"
+export const app = server().post("/database-probe", () => postgres())
+`,
+    )
+    const app = server().post("/database-probe", () => ({ ok: true }))
+    const project = await collectCapabilityProjectReport(site.dir, app, config.capabilities)
+    expect(project.unmatchedSeams).toEqual([])
+    expect(project.report.ok).toBe(false)
+    expect(project.report.routes[0]?.evidence.map(({ id }) => id)).toEqual(["db.read", "db.write"])
+  })
+})
 
 describe("templates: demo contract is schema-locked and ok-narrowed (static)", () => {
   for (const { label, dir } of COUNTER_SCAFFOLDS) {

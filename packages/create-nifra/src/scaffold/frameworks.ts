@@ -39,7 +39,7 @@ export interface FrameworkSpec {
   readonly defineNote?: string
   /** Runtime dependencies beyond the shared Nifra set, in emission order. */
   readonly runtimeDependencies: Readonly<Record<string, string>>
-  /** Dev dependencies beyond `@nifrajs/cli`, `typescript` and `vite`, in emission order. */
+  /** Dev dependencies beyond `@nifrajs/cli`, `@types/bun`, `typescript` and `vite`, in emission order. */
   readonly devDependencies: Readonly<Record<string, string>>
   /** What this framework needs from `tsconfig.json`. */
   readonly typescript: {

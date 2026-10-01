@@ -229,6 +229,7 @@ export const adapter = reactAdapter
   },
   "devDependencies": {
     "@nifrajs/cli": "^3.5.0",
+    "@types/bun": "^1.4.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "typescript": "^6.0.3",
@@ -254,6 +255,7 @@ export const adapter = reactAdapter
     "noEmit": true,
     "verbatimModuleSyntax": true,
     "types": [
+      "bun",
       "react",
       "react-dom"
     ]
@@ -516,6 +518,7 @@ export const adapter = preactAdapter
   },
   "devDependencies": {
     "@nifrajs/cli": "^3.5.0",
+    "@types/bun": "^1.4.2",
     "typescript": "^6.0.3",
     "vite": "^8.2.1"
   }
@@ -538,7 +541,10 @@ export const adapter = preactAdapter
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "verbatimModuleSyntax": true
+    "verbatimModuleSyntax": true,
+    "types": [
+      "bun"
+    ]
   },
   "include": [
     "**/*.ts",
@@ -831,6 +837,7 @@ export const adapter = solidAdapter
   },
   "devDependencies": {
     "@nifrajs/cli": "^3.5.0",
+    "@types/bun": "^1.4.2",
     "vite-plugin-solid": "^2.10.0",
     "typescript": "^6.0.3",
     "vite": "^8.2.1"
@@ -854,7 +861,10 @@ export const adapter = solidAdapter
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "verbatimModuleSyntax": true
+    "verbatimModuleSyntax": true,
+    "types": [
+      "bun"
+    ]
   },
   "include": [
     "**/*.ts",
@@ -1142,6 +1152,7 @@ export const adapter = svelteAdapter
   },
   "devDependencies": {
     "@nifrajs/cli": "^3.5.0",
+    "@types/bun": "^1.4.2",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "typescript": "^6.0.3",
     "vite": "^8.2.1"
@@ -1165,6 +1176,7 @@ export const adapter = svelteAdapter
     "noEmit": true,
     "verbatimModuleSyntax": true,
     "types": [
+      "bun",
       "svelte"
     ]
   },
@@ -1482,6 +1494,7 @@ export const adapter = vueAdapter
   },
   "devDependencies": {
     "@nifrajs/cli": "^3.5.0",
+    "@types/bun": "^1.4.2",
     "@vitejs/plugin-vue": "^5.2.0",
     "@vue/compiler-sfc": "^3.5.0",
     "typescript": "^6.0.3",
@@ -1505,7 +1518,10 @@ export const adapter = vueAdapter
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "verbatimModuleSyntax": true
+    "verbatimModuleSyntax": true,
+    "types": [
+      "bun"
+    ]
   },
   "include": [
     "**/*.ts",
