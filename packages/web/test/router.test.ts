@@ -464,6 +464,64 @@ describe("createClientRouter", () => {
     }
   })
 
+  test("navigate follows a redirect to another route, moving pendingPath to the target", async () => {
+    const r = createClientRouter({
+      patterns,
+      initial,
+      fetchData: async (path, m) => {
+        if (path === "/users/1")
+          throw Object.assign(new Error("moved"), { redirectTo: "/users/2?from=1" })
+        return { id: m.params.id }
+      },
+    })
+    const pendingPaths: Array<string | undefined> = []
+    r.subscribe(() => pendingPaths.push(r.snapshot().pendingPath))
+    await r.navigate("/users/1")
+    expect(r.snapshot()).toMatchObject({
+      routeId: "user",
+      params: { id: "2" },
+      path: "/users/2?from=1",
+      data: { id: "2" },
+      pending: false,
+    })
+    expect(pendingPaths).toEqual(["/users/1", "/users/2?from=1", undefined])
+  })
+
+  test("a redirect loop stops after 20 redirects with its target", async () => {
+    let loads = 0
+    const r = createClientRouter({
+      patterns,
+      initial,
+      fetchData: async () => {
+        loads++
+        throw Object.assign(new Error("moved"), { redirectTo: "/users/1" })
+      },
+    })
+    const failure = await r.navigate("/users/1").catch((error: unknown) => error)
+    expect((failure as { redirectTo?: string }).redirectTo).toBe("/users/1")
+    expect(loads).toBe(21)
+    expect(r.snapshot()).toMatchObject({ path: "/", pending: false })
+  })
+
+  test("a redirect out of the app rejects with its target", async () => {
+    for (const target of [
+      "https://id.example/auth",
+      "//evil.example/x",
+      "/users/2#bio",
+      "/nowhere",
+    ]) {
+      const r = createClientRouter({
+        patterns,
+        initial,
+        fetchData: async () => {
+          throw Object.assign(new Error("moved"), { redirectTo: target })
+        },
+      })
+      const failure = await r.navigate("/users/1").catch((error: unknown) => error)
+      expect((failure as { redirectTo?: string }).redirectTo).toBe(target)
+    }
+  })
+
   test("the default fetchData fails a redirected navigation with its target, keeping the old page", async () => {
     const realFetch = globalThis.fetch
     globalThis.fetch = (async (_url: string, _init?: RequestInit) =>
@@ -831,6 +889,75 @@ describe("createClientRouter", () => {
       const kept = createClientRouter({ patterns, initial: start })
       await kept.submit("/", new URLSearchParams(), { revalidate: false })
       expect(retainHints).toEqual([null, "0"])
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
+  test("an action redirect the router cannot follow rejects with its target", async () => {
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async () =>
+      new Response(null, {
+        status: 204,
+        headers: { "x-nifra-redirect": "https://id.example/auth" },
+      })) as unknown as typeof fetch
+    try {
+      const r = createClientRouter({ patterns, initial, fetchData: async () => ({}) })
+      const failure = await r.submit("/", new URLSearchParams()).catch((error: unknown) => error)
+      expect((failure as { redirectTo?: string }).redirectTo).toBe("https://id.example/auth")
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
+  test("once the action ran, a failure names the page to load instead of posting again", async () => {
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async () => Response.json({ saved: true })) as unknown as typeof fetch
+    const start: RouterState = {
+      ...initial,
+      routeId: "user",
+      params: { id: "1" },
+      path: "/users/1",
+      layoutData: [1],
+    }
+    try {
+      const failing = createClientRouter({
+        patterns,
+        initial: start,
+        fetchData: async () => {
+          throw new Error("offline")
+        },
+      })
+      const failure = await failing
+        .submit("/users/1", new URLSearchParams())
+        .catch((e: unknown) => e)
+      expect((failure as { redirectTo?: string }).redirectTo).toBe("/users/1")
+      expect(failing.snapshot()).toMatchObject({
+        path: "/users/1",
+        layoutData: [1],
+        pending: false,
+      })
+
+      // A navigation that supersedes the reload owns the page: the submit settles quietly.
+      const loads: Array<() => void> = []
+      const superseded = createClientRouter({
+        patterns,
+        initial: start,
+        fetchData: (_path, _match, signal) =>
+          new Promise((resolve, reject) => {
+            loads.push(() => resolve({}))
+            signal?.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError")),
+            )
+          }),
+      })
+      const submitting = superseded.submit("/users/1", new URLSearchParams())
+      while (loads.length === 0) await Bun.sleep(1)
+      const navigating = superseded.navigate("/")
+      while (loads.length === 1) await Bun.sleep(1)
+      loads[1]?.()
+      await navigating
+      await expect(submitting).resolves.toBeUndefined()
     } finally {
       globalThis.fetch = realFetch
     }

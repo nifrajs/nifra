@@ -254,7 +254,8 @@ export default function Routing() {
         <li>
           Return nothing to let the request through. Return or throw a <code>redirect()</code>, a
           status such as <code>notFound()</code>, or a <code>Response</code> to answer with it, and
-          nothing below it runs. During a client navigation, a redirect loads its target as a page.
+          nothing below it runs. During a client navigation, the router follows a redirect to another
+          page of the app without reloading, and the address bar shows the target.
         </li>
         <li>
           <code>set</code> adds headers and cookies like a loader's; a layout's or the page's header of

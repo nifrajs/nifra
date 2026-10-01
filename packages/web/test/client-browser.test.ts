@@ -153,7 +153,14 @@ const globals = [
 let document: FakeDocument
 let windowHub: FakeEventHub & { scrollTo(x: number, y: number): void }
 let historyState: Record<string, unknown> | null
-let locationState: { origin: string; pathname: string; search: string; assigned: string[] }
+let locationState: {
+  origin: string
+  pathname: string
+  search: string
+  hash: string
+  assigned: string[]
+  replaced: string[]
+}
 let historyCalls: Array<readonly [string, unknown]>
 let scrollCalls: Array<readonly [number, number]>
 
@@ -195,12 +202,15 @@ function resetBrowser(): void {
     origin: "http://example.test",
     pathname: "/current",
     search: "",
+    hash: "",
     assigned: [],
+    replaced: [],
   }
   const updateLocation = (path: string): void => {
     const url = new URL(path, locationState.origin)
     locationState.pathname = url.pathname
     locationState.search = url.search
+    locationState.hash = url.hash
   }
   slot.document = document
   slot.window = windowHub
@@ -214,8 +224,14 @@ function resetBrowser(): void {
     get search() {
       return locationState.search
     },
+    get hash() {
+      return locationState.hash
+    },
     assign(path: string) {
       locationState.assigned.push(path)
+    },
+    replace(path: string) {
+      locationState.replaced.push(path)
     },
   }
   slot.history = {
@@ -401,13 +417,23 @@ test("history integration covers click, prefetch, fragments, popstate, fallback 
   await Bun.sleep(0)
   expect(fallback).toEqual(["/fail"])
 
-  // A redirected navigation loads its target, not the URL that redirected.
-  rejectNext = Object.assign(new Error("redirected"), { redirectTo: "/login?next=%2Fguarded" })
+  // A redirect the router cannot follow replaces the entry with its target.
+  rejectNext = Object.assign(new Error("redirected"), { redirectTo: "https://id.example/auth" })
   const guarded = new FakeElement("a")
   guarded.href = "http://example.test/guarded"
   document.emit("click", fakeEvent(guarded))
   await Bun.sleep(0)
-  expect(fallback).toEqual(["/fail", "/login?next=%2Fguarded"])
+  expect(fallback).toEqual(["/fail"])
+  expect(locationState.replaced).toEqual(["https://id.example/auth"])
+
+  // Back/forward that fails reloads the whole entry, query included.
+  rejectNext = new Error("offline")
+  locationState.pathname = "/list"
+  locationState.search = "?page=2"
+  windowHub.emit("popstate", new Event("popstate"))
+  await Bun.sleep(0)
+  expect(fallback).toEqual(["/fail", "/list?page=2"])
+  locationState.search = ""
 
   const samePage = new FakeElement("a")
   locationState.pathname = "/back"
@@ -418,6 +444,59 @@ test("history integration covers click, prefetch, fragments, popstate, fallback 
 
   stop()
   expect(getBrowserNavigate()).toBeUndefined()
+})
+
+test("the address bar follows a redirect the router follows", async () => {
+  resetBrowser()
+  let state: { pending: boolean; pendingPath?: string } = { pending: false }
+  let subscriber: (() => void) | undefined
+  const publish = (next: typeof state): void => {
+    state = next
+    subscriber?.()
+  }
+  const router = {
+    match: (path: string) => ({ routeId: path, params: {} }),
+    navigate: async (path: string) => {
+      publish({ pending: true, pendingPath: path })
+      if (path === "/guarded") publish({ pending: true, pendingPath: "/login" })
+      publish({ pending: false })
+    },
+    prefetch: async () => {},
+    subscribe: (listener: () => void) => {
+      subscriber = listener
+      return () => {
+        subscriber = undefined
+      }
+    },
+    snapshot: () => state,
+  } as unknown as ClientRouter
+  const stop = installHistory(router)
+
+  // A navigation's redirect replaces the entry it pushed, keeping the link's fragment.
+  const link = new FakeElement("a")
+  link.href = "http://example.test/guarded#intro"
+  document.emit("click", fakeEvent(link))
+  await Bun.sleep(0)
+  expect(locationState.pathname + locationState.search + locationState.hash).toBe("/login#intro")
+  expect(historyCalls.map(([kind]) => kind)).toEqual(["replace", "push", "replace"])
+  expect(historyState).toMatchObject({ nifraIndex: 1 })
+
+  // A form post's redirect adds an entry and scrolls to the top.
+  historyCalls = []
+  scrollCalls = []
+  publish({ pending: true, pendingPath: "/done?ok=1" })
+  publish({ pending: false })
+  expect(locationState.pathname + locationState.search).toBe("/done?ok=1")
+  expect(historyCalls.map(([kind]) => kind)).toEqual(["replace", "push"])
+  expect(historyState).toMatchObject({ nifraIndex: 2 })
+  expect(scrollCalls).toEqual([[0, 0]])
+
+  // One that lands back on the page it was posted from adds nothing.
+  historyCalls = []
+  publish({ pending: true, pendingPath: "/done?ok=1" })
+  publish({ pending: false })
+  expect(historyCalls).toEqual([])
+  stop()
 })
 
 // A router stub that records prefetches; `settle` is the store announcing a settled state.

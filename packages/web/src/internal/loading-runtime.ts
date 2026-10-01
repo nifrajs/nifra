@@ -11,7 +11,7 @@
  * without one ships none of this.
  */
 import type { MatchChain } from "../render-seam.ts"
-import type { ClientRouter, RouterState } from "../router.ts"
+import { type ClientRouter, type RouterState, redirectOf } from "../router.ts"
 
 /** How long a navigation may run before its `_loading` page shows. Shorter loads swap straight to the
  * new page: a skeleton that flashes for a few frames reads as a glitch, not as feedback. */
@@ -64,7 +64,7 @@ const pathnameOf = (path: string): string => {
  * The returned promise of `navigate` settles when the loading page is on screen OR the navigation is
  * done, whichever is first: a caller that holds rendering until it settles (a view transition) must not
  * hold it across the very wait the loading page exists to cover. A failure after that point has no
- * caller left to report to, so it goes to `fallback`.
+ * caller left to report to, so it goes to `fallback`, and a redirect out of the app replaces the entry.
  */
 export function withLoading(router: ClientRouter, options: LoadingOptions): ClientRouter {
   const { routes, modules, chains, searchSchemas, matchChains } = options
@@ -217,7 +217,9 @@ export function withLoading(router: ClientRouter, options: LoadingOptions): Clie
     const settled = done.then(finish, (error: unknown) => {
       finish()
       if (!revealed) throw error
-      fallback(path)
+      const to = redirectOf(error)
+      if (to === undefined) fallback(path)
+      else location.replace(to)
     })
     return Promise.race([settled, reveal])
   }

@@ -474,7 +474,8 @@ export default middleware
 -
 Return nothing to let the request through. Return or throw a `redirect()`, a
 status such as `notFound()`, or a `Response` to answer with it, and
-nothing below it runs. During a client navigation, a redirect loads its target as a page.
+nothing below it runs. During a client navigation, the router follows a redirect to another
+page of the app without reloading, and the address bar shows the target.
 
 -
 `set` adds headers and cookies like a loader's; a layout's or the page's header of

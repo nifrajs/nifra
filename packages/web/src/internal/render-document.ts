@@ -22,7 +22,7 @@ import {
   ROOT_ATTRIBUTE,
   ROUTE_GLOBAL,
 } from "../render-seam.ts"
-import { PRERENDERED_GLOBAL, REDIRECT_HEADER } from "../router.ts"
+import { PRERENDERED_GLOBAL } from "../router.ts"
 import { trustedHeadAttributes } from "./head-attributes.ts"
 import { isStaticMeta, mergeHeads } from "./head-merge.ts"
 import { PRE_HYDRATION_GUARD } from "./runtime-contract.ts"
@@ -728,37 +728,6 @@ export function withDuplicateInstanceHint(err: unknown): unknown {
   // stack with nothing on engines that always populate it.
   if (err.stack !== undefined) augmented.stack = err.stack
   return augmented
-}
-
-/**
- * An action's control-flow value passes straight through - except a redirect on a client-submit data
- * request: fetch would follow the 3xx into HTML the client can't use, so the redirect rides the
- * X-Nifra-Redirect header on a 204 and the client navigates. One conversion shared by the returned-
- * and thrown- paths, so `return redirect()` and `throw redirect()` agree.
- *
- * Takes either shape: `redirect()` is a plain render, while a hand-rolled `new Response(...)` from an
- * action still arrives as a `Response`. The rewrite stays on the lane its input was on - a plain
- * redirect converts to a plain 204, and never materializes the `Response` it is replacing.
- */
-export function actionResponse(
-  result: Response | ResponseResult,
-  isDataRequest: boolean,
-): Response | ResponseResult {
-  if (!isDataRequest) return result
-  if (isResponseResult(result)) {
-    const plain = result.plain
-    // No `plain` means a carrier that only knows how to build a `Response` (not one of ours) - fall
-    // back rather than guess at its status.
-    if (plain === undefined) return actionResponse(result.toResponse(), isDataRequest)
-    if (plain.status < 300 || plain.status >= 400) return result
-    const location = plain.headers?.location ?? "/"
-    return statusResult(204, undefined, { headers: { [REDIRECT_HEADER]: location } })
-  }
-  if (result.status >= 300 && result.status < 400) {
-    const location = result.headers.get("location") ?? "/"
-    return statusResult(204, undefined, { headers: { [REDIRECT_HEADER]: location } })
-  }
-  return result
 }
 
 /** A loaded layout module. `loader`/`gate` are the layout-loader surface; `meta` predates it. */

@@ -40,7 +40,6 @@ import {
 import { searchOf, searchOfChain } from "../search.ts"
 import { mergeHeads, resolveMeta } from "./head-merge.ts"
 import {
-  actionResponse,
   EMPTY_RETAIN,
   type HeadersLike,
   isControlFlow,
@@ -123,27 +122,51 @@ class LoaderPlatform {
 ] = true
 
 /**
- * A redirect answering a client navigation's data request, as the client router reads one: fetch would
- * follow a 3xx and hand the router another page's data under this route, so the location rides
- * `x-nifra-redirect` on a 204, as an action's does. It shares its URL with the page, so it is never
- * stored. `undefined` for any other outcome or request.
+ * A redirect answering a data request (a client navigation or form submit), as the client router reads
+ * one: fetch would follow a 3xx and hand the router another page's data, so the target rides
+ * `x-nifra-redirect` on a 204 that keeps the redirect's own headers. `undefined` for any other outcome
+ * or request.
  */
-function navigationRedirect(req: Request, outcome: unknown): ResponseResult | undefined {
-  let location: string | null | undefined
-  if (outcome instanceof Response) {
-    if (outcome.status < 300 || outcome.status >= 400) return undefined
-    location = outcome.headers.get("location")
-  } else if (isResponseResult(outcome)) {
+function dataRedirect(req: Request, outcome: unknown): Response | ResponseResult | undefined {
+  if (req.headers.get(DATA_HEADER) === null) return undefined
+  if (isResponseResult(outcome)) {
     const plain = outcome.plain
-    if (plain === undefined || plain.status < 300 || plain.status >= 400) return undefined
-    location = plain.headers?.location
-  } else return undefined
-  if (location === null || location === undefined || req.headers.get(DATA_HEADER) === null) {
+    if (plain === undefined) return dataRedirect(req, outcome.toResponse())
+    if (plain.status < 300 || plain.status >= 400) return undefined
+    const { location, ...own } = plain.headers ?? {}
+    if (location === undefined) return undefined
+    return statusResult(204, undefined, {
+      headers: {
+        ...own,
+        [REDIRECT_HEADER]: appTarget(location, req.url),
+        ...DATA_RESPONSE_HEADERS,
+      },
+    })
+  }
+  if (!(outcome instanceof Response) || outcome.status < 300 || outcome.status >= 400) {
     return undefined
   }
-  return statusResult(204, undefined, {
-    headers: { [REDIRECT_HEADER]: location, ...DATA_RESPONSE_HEADERS },
-  })
+  const location = outcome.headers.get("location")
+  if (location === null) return undefined
+  const headers = new Headers(outcome.headers)
+  headers.delete("location")
+  headers.delete("content-length")
+  headers.set(REDIRECT_HEADER, appTarget(location, req.url))
+  for (const [name, value] of Object.entries(DATA_RESPONSE_HEADERS)) headers.set(name, value)
+  return new Response(null, { status: 204, headers })
+}
+
+/** A same-origin target as a path, which the client router can follow without loading a document. */
+function appTarget(location: string, requestUrl: string): string {
+  let target: URL
+  try {
+    target = new URL(location, requestUrl)
+  } catch {
+    return location // the browser fails on it the same way when it loads it
+  }
+  return target.origin === new URL(requestUrl).origin
+    ? target.pathname + target.search + target.hash
+    : location
 }
 
 export interface PageExecutionOptions<Env = unknown> {
@@ -975,7 +998,7 @@ export function createPageRequestExecutor<Env = unknown>(
    * Run a page handler with the request's `ctx.set`, sealed once the handler settles - whatever it
    * answered with - so a write that arrives after the response was decided throws. A request that
    * queued a cookie answers with a response no shared cache may store, returned or thrown. A redirect
-   * answering a navigation's data request, returned or thrown, reaches the client router intact.
+   * answering a data request, returned or thrown, reaches the client router intact.
    */
   const withResponseControls =
     (run: (c: PageRouteContext<Env>, controls: PageResponseControls) => Promise<PageResponse>) =>
@@ -983,11 +1006,11 @@ export function createPageRequestExecutor<Env = unknown>(
       const controls = new PageResponseControls(c)
       try {
         const outcome = await run(c, controls)
-        const answer = navigationRedirect(c.req, outcome) ?? outcome
+        const answer = dataRedirect(c.req, outcome) ?? outcome
         return controls.personalized ? (privateOutcome(answer) as PageResponse) : answer
       } catch (err) {
         if (!isControlFlow(err)) throw err
-        const answer = navigationRedirect(c.req, err)
+        const answer = dataRedirect(c.req, err)
         // Returned rather than rethrown: the serving app sends a thrown `Response` exactly as it is,
         // without the cookies the request queued.
         if (controls.personalized) return privateOutcome(answer ?? err) as PageResponse
@@ -1173,7 +1196,7 @@ export function createPageRequestExecutor<Env = unknown>(
           layoutModules = await runLayoutGates(route, actionContext, controls)
           result = await mod.action(actionContext)
         } catch (err) {
-          if (isControlFlow(err)) return actionResponse(err, isDataRequest)
+          if (isControlFlow(err)) return err
           throw err
         }
         const isRevalidate =
@@ -1186,7 +1209,7 @@ export function createPageRequestExecutor<Env = unknown>(
               ),
             }
           : {}
-        if (isControlFlow(actionResult)) return actionResponse(actionResult, isDataRequest)
+        if (isControlFlow(actionResult)) return actionResult
         if (isDataRequest) {
           // Headers shape the document only, but a bad one fails here too, so a navigation and a full
           // page load agree on whether the action's response is valid.

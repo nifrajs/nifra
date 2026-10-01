@@ -18,7 +18,7 @@ import {
   setBlockerController,
   setBrowserNavigate,
 } from "./navigation.ts"
-import type { ClientRouter } from "./router.ts"
+import { type ClientRouter, redirectOf } from "./router.ts"
 
 /** Read the nonce carried by the current server-rendered document, if any. */
 export function currentDocumentNonce(): string | undefined {
@@ -206,10 +206,6 @@ export function waitForStyles(options: WaitForStylesOptions = {}): Promise<void>
   return Promise.all(promises).then(() => undefined)
 }
 
-/** Where a failed data fetch was redirected to, when a redirect is what failed it. */
-const redirectOf = (error: unknown): string | undefined =>
-  (error as { redirectTo?: string } | null)?.redirectTo
-
 /**
  * Attach history + link interception to a router. Returns a teardown function that removes the
  * listeners. A data-fetch failure during a client navigation falls back to a full-page load, so
@@ -237,6 +233,8 @@ export function installHistory(
   let index = (history.state as { nifraIndex?: number } | null)?.nifraIndex ?? 0
   let here = location.pathname + location.search + (location.hash ?? "")
   let reversing = false
+  // The path the router was last seen loading, so a redirect it follows shows up as a change.
+  let expected: string | undefined
   type Registration = {
     readonly shouldBlock: BlockerFunction
     readonly emit: (blocker: Blocker) => void
@@ -372,12 +370,18 @@ export function installHistory(
       pendingScroll = url.hash !== "" ? { hash: hashId(url.hash) } : { pos: [0, 0] }
     }
     here = url.pathname + url.search + url.hash
+    expected = routePath
     // The data layer fetches by path+search; the #hash is client-only (never sent to the server).
-    // A loader, gate or middleware that redirected sends the browser to the target as a document.
-    transition(() =>
-      router.navigate(routePath).catch((error) => fallback(redirectOf(error) ?? path)),
-    )
+    transition(() => router.navigate(routePath).catch((error) => leave(error, path)))
     settle()
+  }
+
+  // A redirect out of the app replaces the entry it answered, as the browser's own redirect would; any
+  // other failure loads the page as a document.
+  const leave = (error: unknown, path: string): void => {
+    const to = redirectOf(error)
+    if (to === undefined) fallback(path)
+    else location.replace(to)
   }
 
   const go = (path: string, mode: "push" | "replace", state?: unknown): void => {
@@ -513,9 +517,9 @@ export function installHistory(
     index = newIndex
     here = dest
     pendingScroll = { pos: scrollOf(history.state) }
-    transition(() =>
-      router.navigate(location.pathname + location.search).catch(() => fallback(location.pathname)),
-    )
+    const routePath = location.pathname + location.search
+    expected = routePath
+    transition(() => router.navigate(routePath).catch((error) => leave(error, dest)))
     settle()
   }
 
@@ -537,12 +541,35 @@ export function installHistory(
     event.returnValue = ""
   }
 
+  // The router is loading a page the address bar does not show: a redirect it follows. That replaces the
+  // entry a navigation pushed, or adds one after a form post, as the browser would. A redirect from a
+  // form post back to the page it was on adds nothing.
+  const follow = (path: string): void => {
+    if (path !== location.pathname + location.search) {
+      if (expected === undefined) {
+        history.replaceState({ ...(history.state ?? {}), nifraScroll: [scrollX, scrollY] }, "")
+        index += 1
+        history.pushState({ nifraIndex: index }, "", path)
+      } else {
+        history.replaceState(history.state, "", path + location.hash)
+      }
+      here = location.pathname + location.search + location.hash
+      pendingScroll = location.hash !== "" ? { hash: hashId(location.hash) } : { pos: [0, 0] }
+    }
+    expected = path
+  }
+
   // After a navigation settles (content rendered), apply the pending scroll target on the next frame:
   // a fragment's element for a cross-page `#hash`, the saved position for back/forward, else the top.
   // A settle with no navigation (a submit's revalidation) scrolls nothing. Either way the rendered
   // page is then scanned for links to warm.
   const settled = (): void => {
-    if (router.snapshot().pending) return
+    const { pending, pendingPath } = router.snapshot()
+    if (pending) {
+      if (pendingPath !== undefined && pendingPath !== expected) follow(pendingPath)
+      return
+    }
+    expected = undefined
     const target = pendingScroll
     pendingScroll = null
     requestAnimationFrame(() => {
@@ -671,7 +698,7 @@ export function installForms(router: ClientRouter): () => void {
     const revalidate = form.dataset.nifraRevalidate !== "false"
     router.submit(url.pathname + url.search, new FormData(form), { revalidate }).catch((error) => {
       const to = redirectOf(error)
-      // The action ran and the page it refreshed now redirects: posting again would repeat it.
+      // The action ran: load the page that shows its result rather than run it again.
       if (to !== undefined) location.assign(to)
       else form.submit() // data submit failed - fall back to a full-page POST
     })

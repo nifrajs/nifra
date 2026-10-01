@@ -66,6 +66,29 @@ const redirecting = () =>
       },
     },
     "admin/index.tsx": {},
+    "own.tsx": {
+      loader: () =>
+        new Response(null, {
+          status: 302,
+          headers: [
+            ["location", "/login"],
+            ["set-cookie", "a=1; Path=/"],
+            ["set-cookie", "b=2; Path=/"],
+            ["x-trace", "t1"],
+          ],
+        }),
+    },
+    "plain.tsx": { loader: () => redirect("/login", { headers: { "set-cookie": "c=3; Path=/" } }) },
+    "act.tsx": {
+      action: () =>
+        new Response(null, {
+          status: 303,
+          headers: [
+            ["location", "http://x/done?ok=1"],
+            ["set-cookie", "s=1; Path=/"],
+          ],
+        }),
+    },
   })
 
 describe("a redirect answering a navigation's data request", () => {
@@ -74,7 +97,7 @@ describe("a redirect answering a navigation's data request", () => {
     const cases: Array<[string, string]> = [
       ["/returned", "/login"],
       ["/thrown", "/login?next=%2Fthrown"],
-      ["/native", "http://x/login"],
+      ["/native", "/login"],
       ["/external", "https://id.example/auth"],
       ["/admin", "/login"],
     ]
@@ -106,6 +129,29 @@ describe("a redirect answering a navigation's data request", () => {
       "session=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax",
     ])
     expect(res.headers.get("cache-control")).toBe("private, no-store")
+  })
+
+  test("the redirect's own headers ride the 204", async () => {
+    const app = redirecting()
+    const own = await get(app, "/own", { [DATA_HEADER]: "1" })
+    expect(own.status).toBe(204)
+    expect(own.headers.get(REDIRECT_HEADER)).toBe("/login")
+    expect(own.headers.getSetCookie()).toEqual(["a=1; Path=/", "b=2; Path=/"])
+    expect(own.headers.get("x-trace")).toBe("t1")
+    expect(own.headers.get("location")).toBeNull()
+
+    const plain = await get(app, "/plain", { [DATA_HEADER]: "1" })
+    expect(plain.status).toBe(204)
+    expect(plain.headers.getSetCookie()).toEqual(["c=3; Path=/"])
+  })
+
+  test("an action's redirect keeps its cookies and sends a same-origin target as a path", async () => {
+    const res = await redirecting().fetch(
+      new Request("http://x/act", { method: "POST", headers: { [DATA_HEADER]: "1" } }),
+    )
+    expect(res.status).toBe(204)
+    expect(res.headers.get(REDIRECT_HEADER)).toBe("/done?ok=1")
+    expect(res.headers.getSetCookie()).toEqual(["s=1; Path=/"])
   })
 
   test("a page that answers normally is untouched", async () => {

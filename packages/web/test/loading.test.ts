@@ -131,7 +131,7 @@ interface Harness {
   readonly searchSchemas: Record<string, readonly unknown[]>
   /** Settle the in-flight data request for `path`. */
   readonly settle: (path: string, data?: unknown) => void
-  readonly fail: (path: string) => void
+  readonly fail: (path: string, error?: Error) => void
   readonly fellBack: string[]
   readonly imported: string[]
 }
@@ -232,8 +232,7 @@ function harness(
       answers.set(path, { data })
       waiting.get(path)?.resolve(data)
     },
-    fail: (path) => {
-      const error = new Error("fetch failed")
+    fail: (path, error = new Error("fetch failed")) => {
       answers.set(path, { error })
       waiting.get(path)?.reject(error)
     },
@@ -404,6 +403,23 @@ describe("withLoading", () => {
     // The page slot is the current page's again until the fallback takes over.
     expect(h.router.snapshot().routeId).toBe("index")
     expect(h.router.snapshot().pending).toBe(false)
+  })
+
+  test("a redirect out of the app after the loading page shows replaces the entry", async () => {
+    const h = harness()
+    const slot = globalThis as { location?: unknown }
+    const saved = slot.location
+    const replaced: string[] = []
+    slot.location = { replace: (to: string) => replaced.push(to) }
+    try {
+      await h.router.navigate("/about")
+      h.fail("/about", Object.assign(new Error("moved"), { redirectTo: "https://id.example/auth" }))
+      await tick(5)
+      expect(replaced).toEqual(["https://id.example/auth"])
+      expect(h.fellBack).toEqual([])
+    } finally {
+      slot.location = saved
+    }
   })
 
   test("a newer navigation with the same loading view keeps it on screen", async () => {
