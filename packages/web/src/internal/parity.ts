@@ -39,6 +39,13 @@ export interface IdentityParityCopy {
    */
   readonly absolutePath?: string
   readonly importers: readonly string[]
+  /**
+   * Symlinks an importer reached this copy through that point outside the install that owns the
+   * importer, display-relative - a link another project planted (a sibling app's `node_modules`
+   * linked into a shared package). Removing it lets the importer resolve its own install's copy.
+   * Absent when no such link was crossed.
+   */
+  readonly links?: readonly string[]
 }
 
 export type IdentityParityCause = "version-skew" | "duplicate-path"
@@ -78,6 +85,11 @@ export interface IdentityParityFinding {
    * workspace, and at least one copy sits outside that subdirectory.
    */
   readonly scope?: string
+  /**
+   * Where a copy came from when an importer reached it through a symlink pointing outside its own
+   * install: each link and its target, and the fix (remove the link). Absent when no copy was.
+   */
+  readonly provenance?: string
   /**
    * The copies exist but the app declared this package single-copy, so the resolver collapses them
    * before anything loads. Reported, never fatal - see `SingleCopyCoverage`.
@@ -484,21 +496,61 @@ const workspaceImporters = async (
   return { importers, truncated }
 }
 
+/**
+ * The symlink under `dir/node_modules` an import of `parts` crossed to reach `resolved`, when the copy
+ * sits outside `boundary` - the install that owns the importer. Package-manager store links (bun's
+ * `.bun/`, pnpm's `.pnpm/`, a workspace package linked to the root store) stay inside it and are not
+ * reported; a link another project planted, or a `bun link` into a global directory, is. Prefers the
+ * segment whose own target leaves the boundary; when the escape happens deeper in a store chain, the
+ * first link crossed is the one to show. `undefined` when the copy is inside, or no segment is a link.
+ */
+const foreignLink = async (
+  dir: string,
+  parts: readonly string[],
+  boundary: string,
+  resolved: string,
+): Promise<string | undefined> => {
+  if (pathInside(boundary, resolved)) return undefined
+  const realBoundary = await realpath(boundary).catch(() => boundary)
+  if (pathInside(realBoundary, resolved)) return undefined
+  let first: string | undefined
+  let segment = join(dir, "node_modules")
+  for (let index = 0; ; index++) {
+    const info = await lstat(segment).catch(() => undefined)
+    if (info === undefined) break
+    if (info.isSymbolicLink()) {
+      const target = await realpath(segment).catch(() => undefined)
+      if (target !== undefined && !pathInside(realBoundary, target)) return segment
+      first ??= segment
+    }
+    const next = parts[index]
+    if (next === undefined) break
+    segment = join(segment, next)
+  }
+  return first
+}
+
 export const resolvedInstalledCopy = async (
   importer: string,
   boundary: string,
   name: string,
-): Promise<{ readonly path: string; readonly version: string } | undefined> => {
+): Promise<
+  { readonly path: string; readonly version: string; readonly link?: string } | undefined
+> => {
   const parts = name.split("/")
   for (let dir = importer; ; dir = dirname(dir)) {
     const packageDir = join(dir, "node_modules", ...parts)
     const meta = await readJson(join(packageDir, "package.json"))
     if (meta !== undefined) {
       try {
+        const path = await realpath(packageDir)
+        // Boundary "" (doctor's stale-dist scan, workspace-link) asks only where the copy is.
+        const link = boundary === "" ? undefined : await foreignLink(dir, parts, boundary, path)
         return {
-          path: await realpath(packageDir),
+          path,
           version:
             typeof meta.version === "string" && meta.version.length > 0 ? meta.version : "unknown",
+          ...(link === undefined ? {} : { link }),
         }
       } catch {
         return undefined
@@ -672,6 +724,14 @@ const duplicatePathRemediation = (name: string): string =>
 const identityRemediation = (cause: IdentityParityCause, name: string): string =>
   cause === "version-skew" ? VERSION_SKEW_REMEDIATION : duplicatePathRemediation(name)
 
+/** Name each planted link, its target, and the fix, for a finding whose copies were reached that way. */
+const describeProvenance = (copies: readonly IdentityParityCopy[]): string | undefined => {
+  const lines = copies.flatMap((copy) => (copy.links ?? []).map((link) => `${link} → ${copy.path}`))
+  if (lines.length === 0) return undefined
+  const one = lines.length === 1
+  return `reached through ${one ? "a symlink" : "symlinks"} that ${one ? "points" : "point"} outside the importer's install: ${lines.join(", ")}. Unless the importer declares ${one ? "it" : "them"} as a \`link:\` dependency, ${one ? "the link was" : "the links were"} planted by hand, by another project, or by \`bun link\` - remove ${one ? "it" : "them"} and reinstall there, so the importer resolves its own install's copy.`
+}
+
 /** What is left to do about a duplicate the declaration already covers. */
 const deduplicatedRemediation = (registration: SingleCopyRegistration): string =>
   registration.run || registration.test
@@ -709,15 +769,23 @@ export async function collectIdentityParity(
   const scanRoot = workspace.root
   const scanPackage = workspace.package
   const { importers, truncated } = await workspaceImporters(scanRoot, scanPackage)
-  const byPackage = new Map<string, Map<string, { version: string; importers: Set<string> }>>()
+  const byPackage = new Map<
+    string,
+    Map<string, { version: string; importers: Set<string>; links: Set<string> }>
+  >()
   const record = (
     name: string,
-    copy: { readonly path: string; readonly version: string },
+    copy: { readonly path: string; readonly version: string; readonly link?: string },
     importer: string,
   ): void => {
     const copies = byPackage.get(name) ?? new Map()
-    const entry = copies.get(copy.path) ?? { version: copy.version, importers: new Set<string>() }
+    const entry = copies.get(copy.path) ?? {
+      version: copy.version,
+      importers: new Set<string>(),
+      links: new Set<string>(),
+    }
     entry.importers.add(importer)
+    if (copy.link !== undefined) entry.links.add(displayPath(requestedRoot, copy.link))
     copies.set(copy.path, entry)
     byPackage.set(name, copies)
   }
@@ -763,13 +831,17 @@ export async function collectIdentityParity(
     const absolutePaths = [...copies.keys()].sort()
     const resolvedCopies = [...copies.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([path, copy]) => ({
-        version: copy.version,
-        path: displayPath(requestedRoot, path),
-        absolutePath: path,
-        importers: [...copy.importers].sort(),
-      }))
+      .map(
+        ([path, copy]): IdentityParityCopy => ({
+          version: copy.version,
+          path: displayPath(requestedRoot, path),
+          absolutePath: path,
+          importers: [...copy.importers].sort(),
+          ...(copy.links.size === 0 ? {} : { links: [...copy.links].sort() }),
+        }),
+      )
     const topology = describeTopology(requestedRoot, scanRoot, absolutePaths)
+    const provenance = describeProvenance(resolvedCopies)
     const scope = describeScope(requestedRoot, scanRoot, absolutePaths)
     const versions = [...new Set(resolvedCopies.map((copy) => copy.version))].sort()
     const cause: IdentityParityCause = versions.length > 1 ? "version-skew" : "duplicate-path"
@@ -794,6 +866,7 @@ export async function collectIdentityParity(
         : identityRemediation(cause, name),
       ...(topology === undefined ? {} : { topology }),
       ...(scope === undefined ? {} : { scope }),
+      ...(provenance === undefined ? {} : { provenance }),
       deduplicated: covered,
     }
     ;(covered ? deduplicated : findings).push(finding)
@@ -818,7 +891,8 @@ export function formatIdentityParityFindings(findings: readonly IdentityParityFi
           .map((copy) => copy.path)
           .join(", ")}` +
         (finding.topology === undefined ? "" : `\n  topology: ${finding.topology}`) +
-        (finding.scope === undefined ? "" : `\n  scope: ${finding.scope}`),
+        (finding.scope === undefined ? "" : `\n  scope: ${finding.scope}`) +
+        (finding.provenance === undefined ? "" : `\n  links: ${finding.provenance}`),
     )
     .join("\n")
 }

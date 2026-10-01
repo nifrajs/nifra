@@ -659,6 +659,56 @@ describe("collectCheckResult - structured result for --json / the MCP tool", () 
     }
   })
 
+  test("duplicate-install names a copy planted by a symlink out of the install, before the fixes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-planted-"))
+    try {
+      const root = join(dir, "workspace")
+      const app = join(root, "packages", "app")
+      const elsewhere = join(dir, "elsewhere", "node_modules", "@nifrajs", "core")
+      await mkdir(join(app, "src"), { recursive: true })
+      await mkdir(join(app, "node_modules", "@nifrajs"), { recursive: true })
+      await mkdir(join(root, "node_modules", "@nifrajs", "core"), { recursive: true })
+      await mkdir(elsewhere, { recursive: true })
+      await writeFile(
+        join(root, "package.json"),
+        JSON.stringify({
+          name: "workspace",
+          private: true,
+          workspaces: ["packages/*"],
+          dependencies: { "@nifrajs/core": "1.12.0" },
+        }),
+      )
+      await writeFile(
+        join(app, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { "@nifrajs/core": "1.12.0" } }),
+      )
+      await writeFile(join(app, "src", "x.ts"), 'import { server } from "@nifrajs/core"')
+      for (const copy of [join(root, "node_modules", "@nifrajs", "core"), elsewhere]) {
+        await writeFile(
+          join(copy, "package.json"),
+          JSON.stringify({ name: "@nifrajs/core", version: "1.12.0" }),
+        )
+      }
+      await symlink(elsewhere, join(app, "node_modules", "@nifrajs", "core"))
+
+      const result = await collectCheckResult(root, { lintsOnly: true })
+      const diagnostic = result.diagnostics.find((d) => d.rule === "duplicate-install")
+      expect(diagnostic?.severity).toBe("error")
+      const steps = diagnostic?.suggestion?.steps ?? []
+      const link = join("packages", "app", "node_modules", "@nifrajs", "core")
+      expect(steps.some((step) => step.includes(`through the symlink ${link}`))).toBe(true)
+      const planted = steps.findIndex((step) => step.startsWith("Planted links:"))
+      expect(planted).toBeGreaterThan(-1)
+      expect(planted).toBeLessThan(steps.findIndex((step) => step.startsWith("Fix 1")))
+      expect(steps[planted]).toContain(
+        `${link} → ${join("..", "elsewhere", "node_modules", "@nifrajs", "core")}`,
+      )
+      expect(result.identityPreflight?.duplicates[0]?.provenance).toContain("bun link")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   test("single-copy declarations report handled duplicates without a duplicate-install diagnostic", async () => {
     const dir = await mkdtemp(join(tmpdir(), "nifra-check-dedup-"))
     try {

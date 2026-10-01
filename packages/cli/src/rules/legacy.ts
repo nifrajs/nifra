@@ -531,7 +531,7 @@ const responseRouteRule: CheckRule = {
 function copyLines(finding: DuplicateInstallFinding): string[] {
   return finding.copies.map(
     (copy) =>
-      `${finding.package}@${copy.version} at ${copy.absolutePath ?? copy.path} - pulled in by ${copy.importers.join(", ")}`,
+      `${finding.package}@${copy.version} at ${copy.absolutePath ?? copy.path} - pulled in by ${copy.importers.join(", ")}${copy.links === undefined ? "" : ` through the symlink ${copy.links.join(", ")}`}`,
   )
 }
 
@@ -550,6 +550,9 @@ function duplicateSuggestion(finding: DuplicateInstallFinding): DiagnosticSugges
     ].join("\n"),
     steps: [
       ...lines.map((line) => `Copy: ${line}`),
+      ...(finding.provenance === undefined
+        ? []
+        : [`Planted links: ${finding.provenance} Try this before the fixes below.`]),
       "Fix 1 - deduplicate: align workspace dependency and peer ranges on one compatible version, remove stale nested installs, and reinstall from the workspace root so every importer resolves one physical copy.",
       `Fix 2 - declare single-copy: apply the package.json and bunfig.toml config printed above; nifra then rewrites every duplicate to this app's copy.${finding.cause === "version-skew" ? " A declaration only covers same-version duplicates, so fix 1's range alignment must land first." : ""}`,
       "Re-run `nifra check`; the gate stays failing until one fix lands.",

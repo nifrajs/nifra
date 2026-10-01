@@ -330,6 +330,15 @@ export default function Troubleshooting() {
         <code>nifra doctor</code> lists them under "deduplicated by declaration", so the topology stays
         visible - it just stops being fatal.
       </p>
+      <p>
+        <strong>A copy someone else planted is named.</strong> When an importer reaches a copy through a
+        symlink that points outside its own install - another project's <code>node_modules</code>{" "}
+        linked into a shared package, or a <code>bun link</code> - <code>nifra doctor</code> prints a{" "}
+        <code>links:</code> line with the link and its target, and <code>nifra check</code> puts it
+        ahead of both fixes. Removing that link and reinstalling there is usually the whole fix.
+        Package-manager store links inside an install (<code>.bun/</code>, <code>.pnpm/</code>) are
+        never reported.
+      </p>
       <blockquote>
         <p>
           [!NOTE]

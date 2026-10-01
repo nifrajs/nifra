@@ -6505,6 +6505,14 @@ A declared duplicate is **reported, not suppressed**.
 `nifra doctor` lists them under "deduplicated by declaration", so the topology stays
 visible - it just stops being fatal.
 
+**A copy someone else planted is named.** When an importer reaches a copy through a
+symlink that points outside its own install - another project's `node_modules`
+linked into a shared package, or a `bun link` - `nifra doctor` prints a
+`links:` line with the link and its target, and `nifra check` puts it
+ahead of both fixes. Removing that link and reinstalling there is usually the whole fix.
+Package-manager store links inside an install (`.bun/`, `.pnpm/`) are
+never reported.
+
 [!NOTE]
 
 This applies to every framework with module-global render state, not just React (Preact,

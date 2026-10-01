@@ -1071,6 +1071,8 @@ export async function runDoctor(
         console.log(`      ${copy.version} at ${copy.path} ← ${copy.importers.join(", ")}`)
       }
       console.log(`      ${finding.explanation}`)
+      // A planted symlink is the cause no reinstall here can see, so it is named before the fix.
+      if (finding.provenance !== undefined) console.log(`      links: ${finding.provenance}`)
       // The shape of the split decides which fix can work, so it is printed above the fix itself.
       if (finding.topology !== undefined) console.log(`      topology: ${finding.topology}`)
       // Why a copy this directory never imports still counts. Without it, a workspace-wide answer

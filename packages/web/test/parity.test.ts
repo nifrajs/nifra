@@ -520,6 +520,62 @@ test("a linked sibling repo's second react is fatal when nothing is declared", a
     // The scanned root IS the requested one here, so there is no scope surprise to explain and the
     // note stays off. It appears only where the answer would otherwise look like the wrong project.
     expect(result.findings[0]?.scope).toBeUndefined()
+    // Each install holds its own react directory, so no link was crossed.
+    expect(result.findings[0]?.provenance).toBeUndefined()
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("a copy reached through a link planted outside the sibling's install names the link and its fix", async () => {
+  const { ground, app, sibling } = await linkedRepos("planted")
+  try {
+    // A third project planted its react into the sibling's install: the sibling's own reinstall would
+    // replace it, but nothing in either listing says where the extra copy came from.
+    const third = join(ground, "third")
+    await rm(join(sibling, "node_modules", "react"), { recursive: true })
+    await mkdir(join(third, ".git"), { recursive: true })
+    await mkdir(join(third, "node_modules", "react"), { recursive: true })
+    await writeFile(
+      join(third, "node_modules", "react", "package.json"),
+      JSON.stringify({ name: "react", version: "19.2.8" }),
+    )
+    await symlink(join(third, "node_modules", "react"), join(sibling, "node_modules", "react"))
+
+    const result = await collectIdentityParity(app)
+    const finding = result.findings[0]
+    expect(finding?.package).toBe("react")
+    const planted = finding?.copies.find((copy) => copy.links !== undefined)
+    expect(planted?.links).toEqual(["../sibling/node_modules/react"])
+    expect(planted?.path).toContain("third")
+    // The app's own copy was reached without a link and carries none.
+    expect(finding?.copies.filter((copy) => copy.links !== undefined)).toHaveLength(1)
+    expect(finding?.provenance).toContain(`../sibling/node_modules/react → ${planted?.path}`)
+    expect(finding?.provenance).toContain("remove it and reinstall there")
+    expect(formatIdentityParityFindings(result.findings)).toContain(
+      "links: reached through a symlink",
+    )
+  } finally {
+    await rm(ground, { recursive: true, force: true })
+  }
+})
+
+test("a package-manager store link inside the sibling's own install is not reported as planted", async () => {
+  const { ground, app, sibling } = await linkedRepos("store-link")
+  try {
+    const stored = join(sibling, "node_modules", ".bun", "react@19.2.8", "node_modules", "react")
+    await rm(join(sibling, "node_modules", "react"), { recursive: true })
+    await mkdir(stored, { recursive: true })
+    await writeFile(
+      join(stored, "package.json"),
+      JSON.stringify({ name: "react", version: "19.2.8" }),
+    )
+    await symlink(stored, join(sibling, "node_modules", "react"))
+
+    const result = await collectIdentityParity(app)
+    expect(result.findings.map((finding) => finding.package)).toEqual(["react"])
+    expect(result.findings[0]?.copies.every((copy) => copy.links === undefined)).toBe(true)
+    expect(result.findings[0]?.provenance).toBeUndefined()
   } finally {
     await rm(ground, { recursive: true, force: true })
   }
