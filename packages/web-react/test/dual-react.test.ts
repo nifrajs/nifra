@@ -134,6 +134,58 @@ try {
   expect(/Invalid hook call|mismatching versions/i.test(output)).toBe(false)
 })
 
+test("a component that imports its own React gets the duplicate named, not a raw TypeError", async () => {
+  // The renderer is on the app's copy (B), but this component's hooks come from another physical copy
+  // (A) - what a linked package with its own node_modules does. The app-root check cannot see that.
+  const adapterEntry = join(import.meta.dir, "../src/index.ts")
+  const otherReact = join(STATIC_REACT_DOM, "..", "react", "index.js")
+  const source = `
+import { createElement } from "react"
+import { useState } from ${JSON.stringify(otherReact)}
+import { reactAdapter } from ${JSON.stringify(adapterEntry)}
+function Counter() {
+  const [n] = useState(7)
+  return createElement("p", null, "count:" + n)
+}
+for (const render of [
+  () => reactAdapter.renderToString([Counter], { data: null }),
+  () => reactAdapter.renderToStream([Counter], { data: null }),
+]) {
+  try {
+    await render()
+    console.log("RESULT_OK")
+  } catch (e) {
+    console.log("RESULT_ERR:" + e.message.split("\\n")[0] + "|cause:" + (e.cause instanceof TypeError))
+  }
+}
+`
+  const output = await runDriver(source, appRoot)
+  const results = output.split("\n").filter((line) => line.startsWith("RESULT_"))
+  expect(results).toHaveLength(2)
+  for (const line of results) {
+    expect(line).toContain("[nifra/web-react] a component called a React hook with no dispatcher")
+    expect(line).toContain("nifra check")
+    expect(line).toContain("|cause:true")
+  }
+})
+
+test("explainRenderError leaves every other error as it was", async () => {
+  const { explainRenderError } = await import("../src/render-error.ts")
+  const plain = new TypeError("null is not an object (evaluating 'user.name')")
+  expect(explainRenderError(plain)).toBe(plain)
+  const thrown = new Error("loader failed")
+  expect(explainRenderError(thrown)).toBe(thrown)
+  for (const message of [
+    "null is not an object (evaluating 'ReactSharedInternals.H.useRef')",
+    "null is not an object (evaluating 'resolveDispatcher().useState')",
+    "Cannot read properties of null (reading 'useContext')",
+  ]) {
+    expect(String((explainRenderError(new TypeError(message)) as Error).message)).toContain(
+      "two copies of React",
+    )
+  }
+})
+
 test("loadReactDomServer re-roots via the injected resolver (the Bun-runtime branch)", async () => {
   // Inject a resolver that returns the app-root copy A's absolute server entry. loadReactDomServer must
   // import THAT module (re-rooting), proving the fix's mechanism in-process and deterministically.

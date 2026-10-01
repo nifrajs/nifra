@@ -6,6 +6,7 @@ import type { RenderAdapter } from "@nifrajs/web"
  */
 import { compose } from "./compose.ts"
 import { reactDomServer } from "./react-dom-server.ts"
+import { explainRenderError } from "./render-error.ts"
 
 /** The React server render adapter - pass to @nifrajs/web's `renderPage`. */
 export const reactAdapter: RenderAdapter = {
@@ -19,7 +20,11 @@ export const reactAdapter: RenderAdapter = {
   // renderPage awaits it.
   async renderToString(chain, props) {
     const { renderToString } = await reactDomServer()
-    return renderToString(compose(chain, props))
+    try {
+      return renderToString(compose(chain, props))
+    } catch (error) {
+      throw explainRenderError(error)
+    }
   },
   async renderToStream(chain, props, options) {
     // Resolves a Web `ReadableStream<Uint8Array>` once the shell is renderable; Suspense
@@ -27,9 +32,13 @@ export const reactAdapter: RenderAdapter = {
     // the document tail. React's default `onError` logs to console.error (errors aren't swallowed).
     // The nonce reaches the inline runtime React streams to reveal each resolved boundary.
     const { renderToReadableStream } = await reactDomServer()
-    return options?.nonce === undefined
-      ? renderToReadableStream(compose(chain, props))
-      : renderToReadableStream(compose(chain, props), { nonce: options.nonce })
+    try {
+      return await (options?.nonce === undefined
+        ? renderToReadableStream(compose(chain, props))
+        : renderToReadableStream(compose(chain, props), { nonce: options.nonce }))
+    } catch (error) {
+      throw explainRenderError(error)
+    }
   },
   // React reconciles against the existing DOM on hydrate, so no per-document bootstrap
   // script is needed (contrast Solid's generateHydrationScript) - the seam allows both.

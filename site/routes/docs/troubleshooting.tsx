@@ -239,7 +239,10 @@ export default function Troubleshooting() {
         <code>resolveDispatcher</code>, or React logs <strong>"Invalid hook call. Hooks can only be
         called inside the body of a function component"</strong>, you almost certainly have{" "}
         <strong>two copies of React</strong> in one render. React's hook dispatcher is module-level
-        global state; a second copy nulls it out and every hook throws.
+        global state; a second copy nulls it out and every hook throws. Under{" "}
+        <code>@nifrajs/web-react</code> the render fails with{" "}
+        <code>[nifra/web-react] a component called a React hook with no dispatcher</code> instead,
+        with the engine's original message kept in parentheses and as the error's <code>cause</code>.
       </p>
       <p>
         Nifra <strong>dedupes React</strong> in both the production build and the Vite dev server, so
