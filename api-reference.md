@@ -1490,6 +1490,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **LambdaResponse** _(type)_ - `type LambdaResponse = PlatformResponse`
 - **LambdaV1Event** _(interface)_ - `interface LambdaV1Event`
 - **LambdaV2Event** _(interface)_ - `interface LambdaV2Event`
+- **ListenTlsOptions** _(interface)_ - `interface ListenTlsOptions`
+  TLS for `listen()`: serve HTTPS from Bun itself, with no proxy in front. `cert` and `key` are PEM, as text or as the file's bytes (`readFileSync("cert.pem")`); `passphrase` unlocks an encrypted key.
 - **LogFields** _(type)_ - `type LogFields = Record<string, unknown>`
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ - `interface Logger`
@@ -2676,6 +2678,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **LambdaResponse** _(type)_ - `type LambdaResponse = PlatformResponse`
 - **LambdaV1Event** _(interface)_ - `interface LambdaV1Event`
 - **LambdaV2Event** _(interface)_ - `interface LambdaV2Event`
+- **ListenTlsOptions** _(interface)_ - `interface ListenTlsOptions`
+  TLS for `listen()`: serve HTTPS from Bun itself, with no proxy in front. `cert` and `key` are PEM, as text or as the file's bytes (`readFileSync("cert.pem")`); `passphrase` unlocks an encrypted key.
 - **LogFields** _(type)_ - `type LogFields = Record<string, unknown>`
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ - `interface Logger`
@@ -6178,6 +6182,8 @@ _No named exports (side-effect entrypoint)._
 - **LambdaResponse** _(type)_ - `type LambdaResponse = PlatformResponse`
 - **LambdaV1Event** _(interface)_ - `interface LambdaV1Event`
 - **LambdaV2Event** _(interface)_ - `interface LambdaV2Event`
+- **ListenTlsOptions** _(interface)_ - `interface ListenTlsOptions`
+  TLS for `listen()`: serve HTTPS from Bun itself, with no proxy in front. `cert` and `key` are PEM, as text or as the file's bytes (`readFileSync("cert.pem")`); `passphrase` unlocks an encrypted key.
 - **LogFields** _(type)_ - `type LogFields = Record<string, unknown>`
   Structured, redacting logger. The framework logs through this interface so secrets/PII are scrubbed once, centrally (per the project's logging rule), not at each call site. Bring your own by passing `logger` to `server()`.
 - **Logger** _(interface)_ - `interface Logger`

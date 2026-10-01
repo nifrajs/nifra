@@ -121,6 +121,7 @@ export {
   defineRouterPlugin,
   type Handler,
   type IdentityPlugin,
+  type ListenTlsOptions,
   type McpPromptDescriptor,
   type McpResourceDescriptor,
   type Middleware,

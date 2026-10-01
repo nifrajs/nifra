@@ -1,6 +1,7 @@
 import { server } from "@nifrajs/core"
 import { responseObserver } from "@nifrajs/core/response-observer"
 import { websocket } from "@nifrajs/core/ws"
+import { selfSignedCertificate } from "../../../internal/test-utils/src/tls.ts"
 import {
   rawUpgradeStatus,
   requestTargetApp,
@@ -456,6 +457,26 @@ Deno.test("a handshake target with dot segments upgrades on the path it resolves
     assertEquals(await rawUpgradeStatus(running.port, "/rooms/../echo"), 101)
     assertEquals(await rawUpgradeStatus(running.port, "/rooms/%2e%2e/echo"), 101)
   } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})
+
+Deno.test("tls serves HTTPS from PEM bytes, and request URLs see https:", async () => {
+  const { cert, key } = await selfSignedCertificate()
+  const app = server().get("/where", (c) => ({ url: c.req.url }))
+  const bytes = new TextEncoder()
+  const running = await serve(app, {
+    port: 0,
+    hostname: "127.0.0.1",
+    tls: { cert: bytes.encode(cert), key: bytes.encode(key) },
+  })
+  // The certificate is self-signed, so the client trusts it explicitly.
+  const client = Deno.createHttpClient({ caCerts: [cert] })
+  try {
+    const base = `https://127.0.0.1:${running.port}`
+    assertEquals(await (await fetch(`${base}/where`, { client })).json(), { url: `${base}/where` })
+  } finally {
+    client.close()
     await running.stop({ drainMs: 0 })
   }
 })

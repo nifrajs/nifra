@@ -77,6 +77,12 @@ export interface ServeOptions {
    * mirroring nifra's Bun `listen({ gracefulSignals })`.
    */
   readonly signals?: boolean
+  /**
+   * Serve HTTPS directly, with no proxy in front: `cert` and `key` as PEM text or the files' bytes.
+   * Unset, the server speaks plain HTTP, which is what a proxy or platform that terminates TLS
+   * expects.
+   */
+  readonly tls?: { readonly cert: string | Uint8Array; readonly key: string | Uint8Array }
 }
 
 export interface DenoServer {
@@ -90,6 +96,10 @@ export interface DenoServer {
 }
 
 const DEFAULT_DRAIN_MS = 10_000
+
+/** PEM as text - `Deno.serve` takes strings only. */
+const pemText = (value: string | Uint8Array): string =>
+  typeof value === "string" ? value : new TextDecoder().decode(value)
 
 /**
  * Serve a Web-`fetch` app on Deno. Returns once bound, so `port` is the real one
@@ -135,6 +145,9 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<DenoSer
       hostname: options.hostname,
       signal: controller.signal,
       onListen() {}, // suppress Deno's default "Listening on …" banner
+      ...(options.tls === undefined
+        ? {}
+        : { cert: pemText(options.tls.cert), key: pemText(options.tls.key) }),
     },
     (request, info: { readonly remoteAddr?: { readonly hostname?: string } }) => {
       // Deno has no separate "stop accepting" primitive: shutdown() starts closing the same

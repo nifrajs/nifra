@@ -29,7 +29,7 @@ Bun-native, contract-first HTTP framework - the router, server, and route descri
 - **assure** _(function)_ - `assure: (app: unknown, evidence: AssuranceAttachment | readonly AssuranceAttachment[]) => void` · from `@nifrajs/core/assurance`
 - **attachCapabilityJournal** _(function)_ - `attachCapabilityJournal: (context: object, journal: CapabilityExecutionJournal) => void` · from `@nifrajs/core/capabilities`
 
-_…and 698 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
+_…and 699 more - see [`api-reference.md`](../../api-reference.md#nifrajscore) for the complete list._
 
 ## Footguns
 

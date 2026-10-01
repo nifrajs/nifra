@@ -25,7 +25,7 @@ The nifra full-stack framework - unscoped meta-entry that re-exports @nifrajs/co
 - **redactLogFields** _(function)_ - `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
 - **rejected** _(function)_ - `rejected: (reason?: AuthenticationFailureReason, response?: Response | ResponseResult) => AuthenticationFailure`
 
-_…and 124 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
+_…and 125 more - see [`api-reference.md`](../../api-reference.md#nifra) for the complete list._
 
 ## Footguns
 

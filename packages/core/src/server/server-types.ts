@@ -280,6 +280,19 @@ export interface McpPromptDescriptor {
 }
 
 /**
+ * TLS for `listen()`: serve HTTPS from Bun itself, with no proxy in front. `cert` and `key` are PEM,
+ * as text or as the file's bytes (`readFileSync("cert.pem")`); `passphrase` unlocks an encrypted key.
+ */
+export interface ListenTlsOptions {
+  /** The certificate chain, PEM. */
+  readonly cert: string | Uint8Array
+  /** The private key, PEM. */
+  readonly key: string | Uint8Array
+  /** The passphrase of an encrypted `key`. */
+  readonly passphrase?: string
+}
+
+/**
  * The handle `listen()` returns - the slice of Bun's server nifra holds and exposes.
  * Declared explicitly (rather than `ReturnType<typeof Bun.serve>`) so the public type
  * surface doesn't leak the ambient `Bun` global into consumers' `.d.ts` resolution.

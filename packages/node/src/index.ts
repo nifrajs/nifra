@@ -19,8 +19,10 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http"
+import { createServer as createHttpsServer } from "node:https"
 import { extname, isAbsolute, relative, resolve, sep } from "node:path"
 import type { Duplex, Readable } from "node:stream"
+import type { TlsOptions } from "node:tls"
 import { fileURLToPath } from "node:url"
 // srvx's lazy spec-shaped Response - see nodeOutcomeToResponse for why the bridge uses it.
 import { FastResponse } from "srvx/node"
@@ -668,11 +670,18 @@ export interface ServeOptions {
   /**
    * Protocol used when the adapter constructs `Request.url`.
    *
-   * `@nifrajs/node` creates a plain Node `http` server, so the safe default is `"http"`. Deployments behind
-   * TLS termination can set `"https"` (or a trusted infra-aware function) so app code that reads
+   * The default is `"https"` when {@link ServeOptions.tls} is set and `"http"` otherwise. Deployments
+   * behind TLS termination can set `"https"` (or a trusted infra-aware function) so app code that reads
    * `request.url` sees the public scheme. Forwarded headers are not trusted implicitly.
    */
   readonly protocol?: RequestProtocolOption
+  /**
+   * Serve HTTPS directly, with no proxy in front: `{ cert, key }` as PEM text or the files' bytes
+   * (`readFileSync("cert.pem")`), plus any other `node:tls` server option (`passphrase`, `ca`,
+   * `requestCert` for client certificates, `minVersion`, `SNICallback`, ...). Unset, the server speaks
+   * plain HTTP, which is what a proxy or platform that terminates TLS expects.
+   */
+  readonly tls?: TlsOptions
   /** Reject requests whose normalized Host authority is not in this allowlist or callback result. */
   readonly allowedHosts?: readonly string[] | ((host: string) => boolean)
   /** Use this validated authority when constructing Request.url, ignoring the inbound Host value. */
@@ -1177,14 +1186,16 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
   if (options.fastResponse === true) installFastResponse()
   let inFlight = 0
   let closed = false
-  const protocol = protocolResolver(options.protocol)
+  const protocol = protocolResolver(
+    options.protocol ?? (options.tls === undefined ? undefined : "https"),
+  )
   const hostPolicy = hostPolicyOf(options)
   const staticState = options.static !== undefined ? staticStateOf(options.static) : undefined
   // Node otherwise destroys a socket as soon as its HTTP parser emits `clientError`. That can
   // discard the response for an already-dispatched request when an understated Content-Length
   // leaves surplus bytes that look like a malformed pipelined request. Keep the parser error
   // connection-scoped and close only after active responses finish, preserving response ordering.
-  const server = createServer((nodeReq, nodeRes) => {
+  const onRequest = (nodeReq: IncomingMessage, nodeRes: ServerResponse): void => {
     const socket = nodeReq.socket as TrackedSocket
     let responseState = socket[ACTIVE_SOCKET_STATE]
     if (responseState === undefined) {
@@ -1217,7 +1228,9 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
       failWrite(nodeRes)
       inFlight -= 1
     }
-  })
+  }
+  const server =
+    options.tls === undefined ? createServer(onRequest) : createHttpsServer(options.tls, onRequest)
 
   server.on("clientError", (_error, socket) => {
     if (socket.destroyed) return

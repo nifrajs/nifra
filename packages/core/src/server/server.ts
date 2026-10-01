@@ -185,6 +185,7 @@ import type {
   AdmissionController,
   AdmissionDecision,
   FetchHandler,
+  ListenTlsOptions,
   McpPromptDescriptor,
   McpResourceDescriptor,
   Middleware,
@@ -482,6 +483,7 @@ export type {
   AdmissionController,
   AdmissionDecision,
   FetchHandler,
+  ListenTlsOptions,
   McpPromptDescriptor,
   McpResourceDescriptor,
   Middleware,
@@ -6268,6 +6270,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * connection cut mid-flight regardless of `requestTimeoutMs`. Apps with such endpoints must raise
    * this above their slowest expected response, which is why it is a first-class option and not a
    * reason to drop down to `Bun.serve`. `0` disables the timeout entirely; max 255.
+   *
+   * `tls` serves HTTPS directly: `app.listen(443, { tls: { cert, key } })` with PEM text or bytes.
+   * Requests then arrive with `https:` URLs. Behind a proxy or a platform that terminates TLS, leave
+   * it unset.
    */
   listen(
     port: number,
@@ -6275,6 +6281,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       readonly reusePort?: boolean
       readonly hostname?: string
       readonly idleTimeoutSec?: number
+      readonly tls?: ListenTlsOptions
     },
   ): RunningServer {
     if (typeof Bun === "undefined") {
@@ -6317,13 +6324,16 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const nativePubsub =
       this.wsRouteCount > 0 && this.wsMountCount === 0 && !this.wsHasValidatedSend
     const wsHandlers = wsRuntime?.bunHandlers(this.topics ?? wsRuntime.createTopics(), nativePubsub)
-    const reusePort = options?.reusePort === true
-    // Spread rather than pass `hostname: undefined` - Bun treats an explicit undefined as a value
-    // on some option paths, and omitting is what selects its 0.0.0.0 default.
-    const bind = options?.hostname === undefined ? {} : { hostname: options.hostname }
-    // Same reasoning as `bind`: omit rather than pass undefined, so Bun's own default applies.
-    const idle =
-      options?.idleTimeoutSec === undefined ? {} : { idleTimeout: options.idleTimeoutSec }
+    // Spread rather than pass `hostname: undefined` (or an undefined idle timeout or TLS) - Bun treats
+    // an explicit undefined as a value on some option paths, and omitting is what selects its own
+    // defaults, 0.0.0.0 among them.
+    const listening = {
+      port,
+      reusePort: options?.reusePort === true,
+      ...(options?.hostname === undefined ? {} : { hostname: options.hostname }),
+      ...(options?.idleTimeoutSec === undefined ? {} : { idleTimeout: options.idleTimeoutSec }),
+      ...(options?.tls === undefined ? {} : { tls: options.tls }),
+    }
     const fallback: BunNativeHandler = (req, server) => {
       // Bun has already framed and bounded this request body in its HTTP parser. Mark the
       // source before the portable fallback runs so body schemas use Bun's native `json()`
@@ -6343,18 +6353,12 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       wsHandlers === undefined ? this.buildBunNativeRoutes(fallback, peer) : undefined
     const running = (wsHandlers === undefined
       ? Bun.serve({
-          port,
-          reusePort,
-          ...bind,
-          ...idle,
+          ...listening,
           ...(nativeRoutes === undefined ? {} : { routes: nativeRoutes }),
           fetch: fallback,
         })
       : Bun.serve<BunWsData>({
-          port,
-          reusePort,
-          ...bind,
-          ...idle,
+          ...listening,
           fetch: (req, server) => this.bunFetchWithWebSocket(req, server),
           // Bun's `ServerWebSocket<BunWsData>` is runtime-compatible with the handlers' structural
           // `BunSocket` view (kept local so `Bun.*` types never leak into the published .d.ts); the

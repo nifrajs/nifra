@@ -43,6 +43,17 @@ export async function emitServiceWorker(manifest: {
   return serviceWorkerRegistration("/sw.js")
 }`
 
+const HTTPS = `import { readFileSync } from "node:fs"
+import { server } from "@nifrajs/core"
+
+const app = server().get("/", () => ({ ok: true }))
+
+// PEM text or the files' bytes.
+const tls = { cert: readFileSync("cert.pem"), key: readFileSync("key.pem") }
+
+app.listen(443, { tls }) // Bun: https://, and wss:// for WebSockets, on one port
+`
+
 const LAMBDA = `// handler.ts - one app per container, built at module scope
 import { handle, streamHandle, type LambdaEnv } from "@nifrajs/aws-lambda"
 import { server } from "@nifrajs/core"
@@ -236,6 +247,22 @@ export default function Deployment() {
         content-typed, with an immutable cache - before the app runs, leaving the SSR fast path
         untouched: <code>serve(app, {'{ port, static: { dir: new URL("./assets/", import.meta.url) } }'})</code>.
         On Cloudflare/Vercel the platform serves assets, so you don't need it there.
+      </p>
+
+      <h2>HTTPS without a proxy</h2>
+      <p>
+        Most deploys end TLS in front of the app - a load balancer, a CDN, the platform - and the app
+        speaks plain HTTP behind it. To serve HTTPS from the process itself, pass <code>tls</code>{" "}
+        with the certificate chain and private key. Requests then arrive with <code>https:</code>{" "}
+        URLs, and WebSocket upgrades ride the same port.
+      </p>
+      <CodeBlock code={HTTPS} lang="ts" />
+      <p>
+        Node and Deno take the same option: <code>serve(app, {"{ port: 443, tls }"})</code>. On Node
+        it accepts any <code>node:tls</code> server option beside <code>cert</code> and{" "}
+        <code>key</code> - <code>ca</code> and <code>requestCert</code> for client certificates,{" "}
+        <code>minVersion</code>, <code>SNICallback</code> for several hostnames. Bun also takes a{" "}
+        <code>passphrase</code> for an encrypted key.
       </p>
 
       <h2>AWS Lambda</h2>
