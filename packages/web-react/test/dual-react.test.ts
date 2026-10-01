@@ -62,11 +62,15 @@ afterAll(() => {
   rmSync(base, { recursive: true, force: true })
 })
 
+// A driver is a cold Bun process loading two React copies: well under a second alone, but past bun:test's
+// 5 s default when the whole suite runs in parallel under coverage.
+const DRIVER_TIMEOUT = 30_000
+
 /** Spawn `bun <driver>` with cwd=app fixture, capture stdout. Mirrors runtime SSR's process isolation. */
 async function runDriver(source: string, cwd: string): Promise<string> {
   const file = join(cwd, `driver-${Math.random().toString(36).slice(2)}.tsx`)
   writeFileSync(file, source)
-  const proc = Bun.spawn(["bun", file], { cwd, stdout: "pipe", stderr: "pipe" })
+  const proc = Bun.spawn([process.execPath, file], { cwd, stdout: "pipe", stderr: "pipe" })
   const [out, err] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -81,12 +85,14 @@ test("convergence: Bun.resolveSync('react-dom/server', appRoot) is the app's cop
   expect(resolved.startsWith(STATIC_REACT_DOM)).toBe(false)
 })
 
-test("OLD static path crashes: static react-dom (copy A) + app react (copy B) component → hook dispatcher mismatch", async () => {
-  // Control: simulate the pre-fix adapter - render with react-dom resolved the way the STATIC import does
-  // (copy A, the hoisted monorepo copy) against a component that uses the app's react (copy B, resolved
-  // from cwd). This is the exact mismatch the static import produced. We import react-dom/server from copy
-  // A's ABSOLUTE path so this driver is deterministic regardless of the test runner's own react.
-  const source = `
+test(
+  "OLD static path crashes: static react-dom (copy A) + app react (copy B) component → hook dispatcher mismatch",
+  async () => {
+    // Control: simulate the pre-fix adapter - render with react-dom resolved the way the STATIC import does
+    // (copy A, the hoisted monorepo copy) against a component that uses the app's react (copy B, resolved
+    // from cwd). This is the exact mismatch the static import produced. We import react-dom/server from copy
+    // A's ABSOLUTE path so this driver is deterministic regardless of the test runner's own react.
+    const source = `
 import { createElement, useState } from "react" // app's react (copy B, resolved from cwd)
 import { renderToString } from ${JSON.stringify(join(STATIC_REACT_DOM, "server.bun.js"))} // static react-dom (copy A)
 function Counter() {
@@ -100,20 +106,24 @@ try {
   console.log("RESULT_ERR:" + (e instanceof Error ? e.message : String(e)))
 }
 `
-  const output = await runDriver(source, appRoot)
-  expect(output).toContain("RESULT_ERR:")
-  // The canonical React mismatch message (or its null-dispatcher variant). Either proves two cores.
-  expect(/Invalid hook call|mismatching versions|H\.useState|resolveDispatcher/i.test(output)).toBe(
-    true,
-  )
-})
+    const output = await runDriver(source, appRoot)
+    expect(output).toContain("RESULT_ERR:")
+    // The canonical React mismatch message (or its null-dispatcher variant). Either proves two cores.
+    expect(
+      /Invalid hook call|mismatching versions|H\.useState|resolveDispatcher/i.test(output),
+    ).toBe(true)
+  },
+  DRIVER_TIMEOUT,
+)
 
-test("FIXED adapter renders: reactAdapter resolves react-dom from the app root → single React core", async () => {
-  // Drive the REAL `reactAdapter` (src/index.ts → src/react-dom-server.ts). Its renderToStream resolves
-  // react-dom/server from process.cwd() (the app root = react-dom copy B), matching the component's react
-  // (copy B). Reverting the fix to the static import would resolve copy A here → RED (mismatch crash).
-  const adapterEntry = join(import.meta.dir, "../src/index.ts")
-  const source = `
+test(
+  "FIXED adapter renders: reactAdapter resolves react-dom from the app root → single React core",
+  async () => {
+    // Drive the REAL `reactAdapter` (src/index.ts → src/react-dom-server.ts). Its renderToStream resolves
+    // react-dom/server from process.cwd() (the app root = react-dom copy B), matching the component's react
+    // (copy B). Reverting the fix to the static import would resolve copy A here → RED (mismatch crash).
+    const adapterEntry = join(import.meta.dir, "../src/index.ts")
+    const source = `
 import { createElement, useState } from "react" // app's react (copy B, resolved from cwd)
 import { reactAdapter } from ${JSON.stringify(adapterEntry)}
 function Counter() {
@@ -128,18 +138,22 @@ try {
   console.log("RESULT_ERR:" + (e instanceof Error ? e.message : String(e)))
 }
 `
-  const output = await runDriver(source, appRoot)
-  expect(output).toContain("RESULT_OK:")
-  expect(output).toContain("count:7")
-  expect(/Invalid hook call|mismatching versions/i.test(output)).toBe(false)
-})
+    const output = await runDriver(source, appRoot)
+    expect(output).toContain("RESULT_OK:")
+    expect(output).toContain("count:7")
+    expect(/Invalid hook call|mismatching versions/i.test(output)).toBe(false)
+  },
+  DRIVER_TIMEOUT,
+)
 
-test("a component that imports its own React gets the duplicate named, not a raw TypeError", async () => {
-  // The renderer is on the app's copy (B), but this component's hooks come from another physical copy
-  // (A) - what a linked package with its own node_modules does. The app-root check cannot see that.
-  const adapterEntry = join(import.meta.dir, "../src/index.ts")
-  const otherReact = join(STATIC_REACT_DOM, "..", "react", "index.js")
-  const source = `
+test(
+  "a component that imports its own React gets the duplicate named, not a raw TypeError",
+  async () => {
+    // The renderer is on the app's copy (B), but this component's hooks come from another physical copy
+    // (A) - what a linked package with its own node_modules does. The app-root check cannot see that.
+    const adapterEntry = join(import.meta.dir, "../src/index.ts")
+    const otherReact = join(STATIC_REACT_DOM, "..", "react", "index.js")
+    const source = `
 import { createElement } from "react"
 import { useState } from ${JSON.stringify(otherReact)}
 import { reactAdapter } from ${JSON.stringify(adapterEntry)}
@@ -159,15 +173,17 @@ for (const render of [
   }
 }
 `
-  const output = await runDriver(source, appRoot)
-  const results = output.split("\n").filter((line) => line.startsWith("RESULT_"))
-  expect(results).toHaveLength(2)
-  for (const line of results) {
-    expect(line).toContain("[nifra/web-react] a component called a React hook with no dispatcher")
-    expect(line).toContain("nifra check")
-    expect(line).toContain("|cause:true")
-  }
-})
+    const output = await runDriver(source, appRoot)
+    const results = output.split("\n").filter((line) => line.startsWith("RESULT_"))
+    expect(results).toHaveLength(2)
+    for (const line of results) {
+      expect(line).toContain("[nifra/web-react] a component called a React hook with no dispatcher")
+      expect(line).toContain("nifra check")
+      expect(line).toContain("|cause:true")
+    }
+  },
+  DRIVER_TIMEOUT,
+)
 
 test("explainRenderError leaves every other error as it was", async () => {
   const { explainRenderError } = await import("../src/render-error.ts")
