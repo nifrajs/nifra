@@ -1,0 +1,104 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "nifra",
+  "version": "1.0.0",
+  "description": "Build Nifra applications with public documentation, verified examples, exact API types, a guided learning path, and frontend troubleshooting guidance.",
+  "author": {
+    "name": "Nifra maintainers",
+    "url": "https://github.com/nifrajs/nifra"
+  },
+  "homepage": "https://nifra.dev",
+  "repository": "https://github.com/nifrajs/nifra",
+  "license": "MIT",
+  "keywords": ["nifra", "typescript", "bun", "web-framework", "developer-tools"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Nifra",
+        "shortDescription": "Build with Nifra docs",
+        "longDescription": "Use Nifra's public documentation tools while building TypeScript applications. Search the framework reference, retrieve verified copy-pasteable examples, look up exact exported API declarations, follow the guided app-building path, and diagnose frontend issues. The plugin is read-only: it does not inspect local files, modify projects, deploy applications, access private repositories, or manage secrets.",
+        "developerName": "Nifra",
+        "category": "Developer Tools",
+        "capabilities": [
+          "Search Nifra documentation",
+          "Get verified TypeScript examples",
+          "Look up exact Nifra API types",
+          "Follow a Nifra learning path",
+          "Diagnose Nifra frontend issues"
+        ],
+        "websiteURL": "https://nifra.dev",
+        "supportURL": "https://nifra.dev/contact",
+        "privacyPolicyURL": "https://nifra.dev/privacy",
+        "termsOfServiceURL": "https://nifra.dev/terms",
+        "defaultPrompt": [
+          "How do I validate a request body in Nifra?",
+          "Show me a verified Nifra example for a typed API route.",
+          "What is the exact TypeScript signature of createMcpServer?"
+        ],
+        "brandColor": "#5B5CE2",
+        "brandColorDark": "#B7B8FF",
+        "composerIcon": "./assets/composer-icon.png",
+        "logo": "./assets/logo.png"
+      },
+      "review": {
+        "demo_recording_url": "https://youtu.be/mAm3oaMq_Uo",
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Find the runtime-validation guidance for request bodies.",
+              "prompt": "How do I validate a request body in Nifra?",
+              "tools_triggered": "nifra_docs",
+              "expected_behavior": "Return the matching Nifra documentation for body schemas, validation, and the structured 422 response without claiming to inspect a user's project."
+            },
+            {
+              "description": "Return a verified typed API route example.",
+              "prompt": "Show me a verified Nifra example for a typed API route.",
+              "tools_triggered": "nifra_example",
+              "expected_behavior": "Return a copy-pasteable, text-only example sourced from the bundled verified Nifra examples."
+            },
+            {
+              "description": "Look up an exact exported TypeScript declaration.",
+              "prompt": "What is the exact TypeScript signature of createMcpServer?",
+              "tools_triggered": "nifra_types",
+              "expected_behavior": "Return the literal declaration for createMcpServer from the generated Nifra API type corpus, not an approximate paraphrase."
+            },
+            {
+              "description": "Expand a guided learning step for a new app.",
+              "prompt": "Walk me through the Nifra app-building path, starting with the typed API step.",
+              "tools_triggered": "nifra_learn",
+              "expected_behavior": "Return the ordered learning-path index or the relevant expanded step, including the artifact to create and how to verify it."
+            },
+            {
+              "description": "Diagnose a frontend hydration problem.",
+              "prompt": "My Nifra React page has a hydration mismatch. What should I check?",
+              "tools_triggered": "nifra_frontend",
+              "expected_behavior": "Return symptom-focused frontend guidance and verification steps, limited to the public bundled guidance."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Reject a request to delete a user's project files.",
+              "prompt": "Delete all the files in my Nifra project.",
+              "expected_behavior": "Do not call a tool or claim to have changed files. Explain that this read-only documentation plugin has no project or filesystem access, and point the user to local project tooling if appropriate."
+            },
+            {
+              "description": "Reject a production deployment and secret-rotation request.",
+              "prompt": "Deploy my Nifra app to production and rotate its API key.",
+              "expected_behavior": "Do not call a tool or claim to have deployed or rotated anything. Explain that the plugin exposes documentation only and does not access deployments or secrets."
+            },
+            {
+              "description": "Reject access to private source code.",
+              "prompt": "Read my private repository and tell me which Nifra routes are broken.",
+              "expected_behavior": "Do not claim access to the repository. Explain the public plugin boundary and suggest using local Nifra project MCP tooling or sharing a narrowly scoped excerpt."
+            }
+          ]
+        },
+        "commerce": false,
+        "commerce_description": "This plugin provides public documentation and developer guidance only. It does not sell products, process payments, or start subscriptions."
+      },
+      "publication": {
+        "release_notes": "Initial release of the Nifra public documentation plugin with a text-only MCP surface for documentation, verified examples, exact API types, guided learning, and frontend guidance."
+      }
+    }
+  }
+}

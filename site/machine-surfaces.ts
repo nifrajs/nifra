@@ -41,6 +41,7 @@ export const AGENTS_MD = [
   "## Agent surfaces",
   "",
   "- Hosted documentation MCP (read-only, stateless): https://mcp.nifra.dev",
+  "- OpenAI Agent Plugin MCP surface (text-only): https://mcp.nifra.dev/openai",
   "- MCP discovery metadata: https://nifra.dev/.well-known/mcp",
   "- Local project MCP: run nifra mcp inside a Nifra repository.",
   "- Project instructions: https://github.com/nifrajs/nifra/blob/main/AGENTS.md",
@@ -65,7 +66,7 @@ export const MCP_DISCOVERY = {
   title: "Nifra docs",
   description:
     "Nifra docs, runnable examples, and API types as an MCP server for any AI assistant.",
-  version: "3.2.0",
+  version: "3.5.0",
   repository: {
     url: "https://github.com/nifrajs/nifra",
     source: "github",

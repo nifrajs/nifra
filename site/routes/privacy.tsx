@@ -14,7 +14,7 @@ export default function Privacy() {
     <article className="prose" style={{ maxWidth: 720, margin: "48px auto" }}>
       <h1>Privacy</h1>
       <p>
-        <em>Last updated: 2026-08-03</em>
+        <em>Last updated: 2026-09-30</em>
       </p>
 
       <h2>What this covers</h2>
@@ -26,8 +26,11 @@ export default function Privacy() {
 
       <h2>What we collect</h2>
       <p>
-        <strong>Nothing that identifies you.</strong> There are no accounts, no sign-ups, no cookies
-        set by us, no advertising or analytics identifiers.
+        <strong>
+          Nifra does not require an account and does not intentionally collect identifying profile
+          data.
+        </strong>{" "}
+        There are no sign-ups, cookies set by us, advertising identifiers, or behavioral profiles.
       </p>
       <ul>
         <li>
@@ -35,22 +38,26 @@ export default function Privacy() {
           from a bundled documentation corpus and stores neither your queries nor their results.
         </li>
         <li>
-          Standard, short-lived operational logs (request path, status, timestamp) may exist at the
-          infrastructure level to keep the service healthy and rate-limited. They are not used to
-          profile users and are not shared or sold.
+          The application processes the query text needed to answer each request in memory and does
+          not persist queries or results. Standard operational metadata (request path, status, and
+          timestamp, and network metadata handled by the hosting provider) may be retained for up to
+          30 days to keep the service healthy, secure, and rate-limited. It is not used to profile
+          users and is not sold.
         </li>
         <li>
-          Traffic is served through a content delivery network, which enforces its own security and
-          rate-limiting; its handling of requests is governed by its own policy.
+          Traffic is served through a content delivery network and hosting provider. Those providers
+          may receive network metadata to deliver and protect the service, and their handling of
+          that metadata is governed by their own policies.
         </li>
       </ul>
 
       <h2>What the MCP tools can access</h2>
       <p>
         Every tool the server exposes (<code>nifra_docs</code>, <code>nifra_example</code>,{" "}
-        <code>nifra_types</code>, <code>nifra_learn</code>, <code>nifra_gallery</code>) is read-only
-        over public documentation. The server never reads your code, files, or any data from your
-        machine or your AI assistant beyond the query text you send it.
+        <code>nifra_types</code>, <code>nifra_learn</code>, <code>nifra_frontend</code>, and the
+        optional <code>nifra_gallery</code> widget) is read-only over public documentation. The
+        server never reads your code, files, or any data from your machine or your AI assistant
+        beyond the query text you send it.
       </p>
 
       <h2>Changes</h2>

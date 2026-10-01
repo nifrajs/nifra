@@ -1910,6 +1910,7 @@ export default function Layout(props: { children?: ReactNode }) {
               npm
             </a>
             <a href="/privacy">Privacy</a>
+            <a href="/terms">Terms</a>
             <span>MIT</span>
           </span>
         </div>
