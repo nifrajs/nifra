@@ -83,6 +83,14 @@ export default function Migrate3() {
         the runner only pins. Dry-run is the default; <code>--write</code> applies and verifies with{" "}
         <code>nifra check</code>.
       </p>
+      <p>
+        Recipes ship with the CLI, so run the command from the release you are moving to:{" "}
+        <code>bunx @nifrajs/cli@3.6.0 upgrade 3.6.0</code>. From 3.6 on it runs every release recipe
+        between the installed version and the target in one pass, so a 1.x or 2.x app reaches the
+        target directly, and <code>--exact</code> pins exact versions instead of keeping{" "}
+        <code>^</code>/<code>~</code>. Asked for a release newer than itself, the CLI prints that
+        release's command instead.
+      </p>
 
       <h2>2. Read redirects as plain data</h2>
       <p>

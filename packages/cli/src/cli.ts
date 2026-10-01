@@ -200,13 +200,15 @@ Usage:
                                          print production readiness, with --strict making absent
                                          applicable guarantees fail. --auto-fix writes safe local-
                                          version dependency fixes.
-  nifra upgrade <version>                Run the per-release upgrade recipe for <version>: sweep every
-                [--write] [--no-verify]  matching dependency pin (preserving ^/~/exact), move removed
-                [--list] [--json]        packages, apply exact imports, then verify with nifra check.
+  nifra upgrade <version>                Upgrade to <version>, running every release recipe between the
+                [--write] [--no-verify]  installed version and it, oldest first: move removed packages,
+                [--list] [--json]        apply exact imports, pin every matching dependency (keeping
+                [--exact]                ^/~, or exact with --exact), then verify with nifra check.
                 [--allow-downgrade]      Dry-run by default; --write applies then verifies (--no-verify
-                                         to skip). --list shows available targets. Fail-closed on an
-                                         unknown version or a rollback (--allow-downgrade overrides).
-                                         Deterministic + idempotent.
+                                         to skip). --list shows available targets. A version newer than
+                                         this CLI prints the command for that release's CLI. Fail-closed
+                                         on an unknown version or a rollback (--allow-downgrade
+                                         overrides). Deterministic + idempotent.
   nifra port    [--target <t>] [--json]  Portability linter: print a feature × deploy-target capability
                 [--ci] [--strict]        matrix (in-memory stores, in-process cron/WebSocket, Bun/Deno
                                          globals, node: builtins) with file:line evidence. --target auto-
@@ -1005,6 +1007,8 @@ async function main(): Promise<void> {
         list: argv.includes("--list"),
         verify: !argv.includes("--no-verify"),
         allowDowngrade: argv.includes("--allow-downgrade"),
+        exact: argv.includes("--exact"),
+        cliVersion: CLI_VERSION,
       })
       if (!ok) process.exitCode = 1
     } catch (err) {
