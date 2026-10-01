@@ -6,10 +6,13 @@
  *   bun run site/build-node.ts
  */
 import { cpSync, mkdirSync, rmSync } from "node:fs"
+import { mdxBunPlugin } from "@nifrajs/content/mdx"
 import { buildClient, buildServer } from "@nifrajs/web/build"
 import { buildSiteIslands } from "./build-islands"
 
 const dir = import.meta.dir
+// `.mdx` routes need the same compiler build.ts uses; without it Bun.build crashes on them.
+const mdx = mdxBunPlugin({ jsxImportSource: "react" })
 const dist = `${dir}/dist-node`
 
 rmSync(dist, { recursive: true, force: true })
@@ -21,6 +24,7 @@ const client = await buildClient({
   clientModule: "@nifrajs/web-react/client",
   conditions: ["bun", "browser"],
   define: { "process.env.NODE_ENV": '"production"' },
+  plugins: [mdx],
 })
 await buildSiteIslands({ outDir: `${dist}/assets` })
 
@@ -30,6 +34,7 @@ const { worker } = await buildServer({
   outDir: `${dir}/.build-node`,
   target: "node", // node:* external; react-dom resolves to its Node SSR build
   clientEntry: client.entry,
+  plugins: [mdx],
 })
 
 cpSync(worker, `${dist}/server-node.js`)
