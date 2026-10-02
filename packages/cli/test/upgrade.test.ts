@@ -365,17 +365,27 @@ describe("chained upgrades", () => {
   })
 
   test("chains every recipe after the installed version up to the target, oldest first", () => {
-    const chain = chainRecipes("3.6.0", "1.13.0")
-    expect(chain.steps).toEqual(["2.0.0", "3.0.0", "3.6.0"])
+    const chain = chainRecipes("4.0.0", "1.13.0")
+    expect(chain.steps).toEqual(["2.0.0", "3.0.0", "4.0.0"])
     expect(chain.dependencyMoves).toEqual([
       { from: "@nifrajs/budget", to: "@nifrajs/core", toVersion: "2.0.0" },
     ])
-    expect(chain.pins).toContainEqual({ match: "@nifrajs/", to: "3.6.0" })
+    expect(chain.pins).toContainEqual({ match: "@nifrajs/", to: "4.0.0" })
     expect(chain.pins.filter((pin) => pin.match === "@nifrajs/")).toHaveLength(1)
     expect(chain.notes?.[0]).toStartWith("2.0.0: ")
-    expect(chain.notes?.at(-1)).toStartWith("3.6.0: ")
-    expect(chainRecipes("3.6.0", "3.0.0").steps).toEqual(["3.6.0"])
-    expect(chainRecipes("3.6.0", "3.6.0").steps).toEqual([])
+    expect(chain.notes?.at(-1)).toStartWith("4.0.0: ")
+    expect(chainRecipes("4.0.0", "3.0.0").steps).toEqual(["4.0.0"])
+    expect(chainRecipes("4.0.0", "4.0.0").steps).toEqual([])
+  })
+
+  test("4.0.0 moves the retired backend-only marker import and leads with the layout move", () => {
+    const chain = chainRecipes("4.0.0", "3.5.0")
+    expect(chain.steps).toEqual(["4.0.0"])
+    expect(chain.importMoves).toContainEqual({
+      from: "@nifrajs/web/server-only",
+      to: "@nifrajs/web/backend-only",
+    })
+    expect(chain.notes?.[0]).toStartWith("4.0.0: Run `nifra migrate layout`")
   })
 
   test("a target without a recipe pins the fixed group; an unknown install runs only the target's", () => {
@@ -393,15 +403,15 @@ describe("chained upgrades", () => {
   test("one run takes a 1.x workspace to the target, moving the removed package on the way", async () => {
     const root = await scaffoldV1("chain-write")
     const { result, out } = await captureConsole(() =>
-      runUpgrade(root, { version: "3.6.0", cliVersion: "3.6.0", write: true, verify: false }),
+      runUpgrade(root, { version: "4.0.0", cliVersion: "4.0.0", write: true, verify: false }),
     )
     expect(result).toBe(true)
-    expect(out).toContain("From 1.13.0, applying the 2.0.0, 3.0.0, 3.6.0 recipes.")
+    expect(out).toContain("From 1.13.0, applying the 2.0.0, 3.0.0, 4.0.0 recipes.")
     const site = JSON.parse(await readFile(join(root, "apps", "site", "package.json"), "utf8"))
-    expect(site.dependencies).toEqual({ "@nifrajs/core": "^3.6.0" })
+    expect(site.dependencies).toEqual({ "@nifrajs/core": "^4.0.0" })
     const rootManifest = JSON.parse(await readFile(join(root, "package.json"), "utf8"))
     expect(rootManifest.dependencies).toEqual({
-      "@nifrajs/core": "^3.6.0",
+      "@nifrajs/core": "^4.0.0",
       "@nifrajs/web": "workspace:*",
       hono: "^4.0.0",
     })
@@ -414,8 +424,8 @@ describe("chained upgrades", () => {
     const root = await scaffoldV1("chain-exact")
     const { result } = await captureConsole(() =>
       runUpgrade(root, {
-        version: "3.6.0",
-        cliVersion: "3.6.0",
+        version: "4.0.0",
+        cliVersion: "4.0.0",
         write: true,
         exact: true,
         verify: false,
@@ -423,14 +433,14 @@ describe("chained upgrades", () => {
     )
     expect(result).toBe(true)
     const site = JSON.parse(await readFile(join(root, "apps", "site", "package.json"), "utf8"))
-    expect(site.dependencies).toEqual({ "@nifrajs/core": "3.6.0" })
+    expect(site.dependencies).toEqual({ "@nifrajs/core": "4.0.0" })
   })
 
   test("a target newer than the CLI prints that release's command and changes nothing", async () => {
     const root = await scaffoldV1("newer")
     const before = await readFile(join(root, "apps", "site", "package.json"), "utf8")
     const { result, out } = await captureConsole(() =>
-      runUpgrade(root, { version: "3.7.0", cliVersion: "3.6.0", write: true, exact: true }),
+      runUpgrade(root, { version: "3.7.0", cliVersion: "4.0.0", write: true, exact: true }),
     )
     expect(result).toBe(false)
     expect(out).toContain("bunx @nifrajs/cli@3.7.0 upgrade 3.7.0 --write --exact")
@@ -439,23 +449,23 @@ describe("chained upgrades", () => {
 
   test("a version that is not a release, or one this CLI has no recipe for, fails closed", async () => {
     const root = await scaffoldV1("bad-target")
-    for (const version of ["^3.6.0", "3.6", "3.6.0; rm -rf /", "latest"]) {
+    for (const version of ["^4.0.0", "3.6", "4.0.0; rm -rf /", "latest"]) {
       const { result, out } = await captureConsole(() =>
-        runUpgrade(root, { version, cliVersion: "3.6.0" }),
+        runUpgrade(root, { version, cliVersion: "4.0.0" }),
       )
       expect(result).toBe(false)
       expect(out).toContain("is not a release version")
       expect(out).not.toContain("bunx")
     }
     const { result, out } = await captureConsole(() =>
-      runUpgrade(root, { version: "3.2.0", cliVersion: "3.6.0" }),
+      runUpgrade(root, { version: "3.2.0", cliVersion: "4.0.0" }),
     )
     expect(result).toBe(false)
-    expect(out).toContain("This CLI upgrades to: 1.8.0, 2.0.0, 3.0.0, 3.6.0")
+    expect(out).toContain("This CLI upgrades to: 1.8.0, 2.0.0, 3.0.0, 4.0.0")
   })
 
   test("the targets are the recipes up to the CLI's version, and that version", () => {
     expect(upgradeTargets("3.5.0")).toEqual(["1.8.0", "2.0.0", "3.0.0", "3.5.0"])
-    expect(upgradeTargets("3.6.0")).toEqual(["1.8.0", "2.0.0", "3.0.0", "3.6.0"])
+    expect(upgradeTargets("4.0.0")).toEqual(["1.8.0", "2.0.0", "3.0.0", "4.0.0"])
   })
 })

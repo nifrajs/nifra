@@ -8736,7 +8736,7 @@ the runner only pins. Dry-run is the default; `--write` applies and verifies wit
 `nifra check`.
 
 Recipes ship with the CLI, so run the command from the release you are moving to:
-`bunx @nifrajs/cli@3.6.0 upgrade 3.6.0`. From 3.6 on it runs every release recipe
+`bunx @nifrajs/cli@4.0.0 upgrade 4.0.0`. From 4.0 on it runs every release recipe
 between the installed version and the target in one pass, so a 1.x or 2.x app reaches the
 target directly, and `--exact` pins exact versions instead of keeping
 `^`/`~`. Asked for a release newer than itself, the CLI prints that

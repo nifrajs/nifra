@@ -18,7 +18,7 @@ script, a right-to-left language, or the runtime's likely script.
 ordinary segment); `alternates(path, { origin?, locales? })` returns the page's canonical URL and its
 `hreflang` links - absolute or root-relative, limited to the locales the page exists in, listed in
 registry order so every page of a cluster agrees, with `x-default` when the default is listed; and
-`matchSegment()` checks a `[lang]` route segment for a `_middleware.ts` guard, answering not-found for
+`matchSegment()` checks a `[lang]` route segment for a route `middleware` guard, answering not-found for
 an unknown or draft value and a redirect for the default's prefix or a wrong case. No path it builds
 can start with `//` or `/\`. No regex runs on request input.
 

@@ -5,7 +5,7 @@
 feat(web): a layout's `shouldRevalidate` decides whether its loader runs again on a client navigation.
 
 ```ts
-// routes/orgs/[org]/_layout.tsx
+// routes/orgs/[org]/_layout.backend.ts
 export const shouldRevalidate: ShouldRevalidate = ({ currentParams, nextParams }) =>
   currentParams.org !== nextParams.org
 ```
