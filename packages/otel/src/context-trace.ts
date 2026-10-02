@@ -6,9 +6,9 @@ import { type ParsedTraceparent, parseTraceparent } from "./traceparent.ts"
  * simply untraced.
  */
 export function traceOfContext(context: unknown): ParsedTraceparent | null {
-  if (typeof context !== "object" || context === null) return null
-  const trace = (context as { readonly trace?: unknown }).trace
-  if (typeof trace !== "object" || trace === null) return null
-  const traceparent = (trace as { readonly traceparent?: unknown }).traceparent
+  if (typeof context !== "object" || context === null || !("trace" in context)) return null
+  const trace = context.trace
+  if (typeof trace !== "object" || trace === null || !("traceparent" in trace)) return null
+  const traceparent = trace.traceparent
   return typeof traceparent === "string" ? parseTraceparent(traceparent) : null
 }

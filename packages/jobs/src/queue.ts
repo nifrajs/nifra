@@ -168,9 +168,10 @@ const traceparentOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value.length === 55 && TRACEPARENT.test(value) ? value : undefined
 
 function contextTraceparent(context: object): string | undefined {
-  const trace = (context as { readonly trace?: unknown }).trace
-  return typeof trace === "object" && trace !== null
-    ? traceparentOrUndefined((trace as { readonly traceparent?: unknown }).traceparent)
+  if (!("trace" in context)) return undefined
+  const trace = context.trace
+  return typeof trace === "object" && trace !== null && "traceparent" in trace
+    ? traceparentOrUndefined(trace.traceparent)
     : undefined
 }
 

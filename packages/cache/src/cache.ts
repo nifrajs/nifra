@@ -189,7 +189,10 @@ export function createCache(options: CacheOptions = {}): Cache {
     }
     return {
       get: <T = unknown>(key: string): Promise<T | undefined> =>
-        read("get", key, (entry) => entry?.value as T | undefined),
+        read("get", key, (entry) =>
+          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the store keeps values untyped; T is the caller's claim for this key, exactly as in the plain get().
+          entry === undefined ? undefined : (entry.value as T),
+        ),
       has: (key) => read("has", key, (entry) => entry !== undefined),
       set: (key, value, opts) =>
         settle("set", key, undefined, opts?.tags?.length ?? 0, () => set(key, value, opts), "ok"),
@@ -200,10 +203,12 @@ export function createCache(options: CacheOptions = {}): Cache {
           const entry = await store.get(key)
           if (entry !== undefined) {
             outcome = readOutcome(entry)
-            if (outcome === "stale") revalidate(key, loader as () => unknown, opts, context)
+            if (outcome === "stale") revalidate(key, loader, opts, context)
+            // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the store keeps values untyped; a wrap of this key stored what a loader of the caller's T returned.
             return entry.value as Awaited<T>
           }
-          const value = (await load(key, loader as () => unknown, opts)) as Awaited<T>
+          // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: load() resolves to what this loader returned, or what a concurrent wrap of the same key loaded for the same T.
+          const value = (await load(key, loader, opts)) as Awaited<T>
           outcome = "miss"
           return value
         } finally {

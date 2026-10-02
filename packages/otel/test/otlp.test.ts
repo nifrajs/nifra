@@ -126,11 +126,14 @@ describe("otlpExporter", () => {
     const kinds = ["internal", "server", "client", "producer", "consumer"] as const
     for (const kind of kinds) exp.onEnd(span({ kind }))
     exp.onEnd(span())
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a kind outside SpanKind on purpose, as caller data can carry one, to show it exports as SERVER.
     exp.onEnd(span({ kind: "toString" as never }))
     await exp.flush()
-    const spans = (
-      calls[0]?.body as { resourceSpans: [{ scopeSpans: [{ spans: Array<{ kind: number }> }] }] }
-    ).resourceSpans[0].scopeSpans[0].spans
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the body is the OTLP/JSON this exporter just posted, and these are the fields it always writes.
+    const body = calls[0]?.body as {
+      resourceSpans: [{ scopeSpans: [{ spans: Array<{ kind: number }> }] }]
+    }
+    const spans = body.resourceSpans[0].scopeSpans[0].spans
     expect(spans.map((s) => s.kind)).toEqual([1, 2, 3, 4, 5, 2, 2])
   })
 
@@ -144,11 +147,11 @@ describe("otlpExporter", () => {
       .get("/ping", () => ({ ok: true }))
     await app.fetch(new Request("http://test/ping"))
     await exp.flush()
-    const spans = (
-      calls[0]?.body as {
-        resourceSpans: [{ scopeSpans: [{ spans: Array<{ name: string; kind: number }> }] }]
-      }
-    ).resourceSpans[0].scopeSpans[0].spans
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the body is the OTLP/JSON this exporter just posted, and these are the fields it always writes.
+    const body = calls[0]?.body as {
+      resourceSpans: [{ scopeSpans: [{ spans: Array<{ name: string; kind: number }> }] }]
+    }
+    const spans = body.resourceSpans[0].scopeSpans[0].spans
     expect(spans.map((s) => [s.name, s.kind])).toEqual([
       ["work", 4],
       ["GET /ping", 2],

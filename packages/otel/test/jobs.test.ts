@@ -227,8 +227,6 @@ describe("jobTracing", () => {
     await queue.enqueue("job", undefined)
     await queue.drain()
     expect(ranInside).toBe(true)
-    expect(scoped.map((trace) => trace.spanId)).toEqual([
-      byName(spans, "process job")[0]?.spanId as string,
-    ])
+    expect([byName(spans, "process job")[0]?.spanId]).toEqual(scoped.map((trace) => trace.spanId))
   })
 })

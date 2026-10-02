@@ -5,7 +5,6 @@
  */
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
-import type { AddressInfo } from "node:net"
 import test from "node:test"
 import { server } from "@nifrajs/core"
 import { serve } from "@nifrajs/node"
@@ -41,11 +40,13 @@ if (onNode) {
   undici.enable()
   const upstream = createServer((_req, res) => res.end("ok"))
   await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve))
-  upstreamUrl = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}/inventory`
   test.after(() => {
     undici.disable()
     upstream.close()
   })
+  const address = upstream.address()
+  if (address === null || typeof address === "string") throw new Error("upstream has no TCP port")
+  upstreamUrl = `http://127.0.0.1:${address.port}/inventory`
 }
 
 function app(spans: NifraSpan[]) {

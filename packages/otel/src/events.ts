@@ -14,6 +14,7 @@ import {
   createObservationLifecycle,
   type ObservationContext,
   type ObservationScope,
+  type StartObservation,
 } from "./lifecycle.ts"
 import type { AttributeValue, ObservationAdapter } from "./span.ts"
 import { parseTraceparent } from "./traceparent.ts"
@@ -137,20 +138,21 @@ export function traceEventConsumer<Envelope extends TracedEventEnvelope, Result>
     }
 
     const envelope = parsed.envelope
-    const link =
-      envelope.causality === undefined ? undefined : causalitySpanLink(envelope.causality)
-    const span = lifecycle.start({
+    const start: { -readonly [K in keyof StartObservation]: StartObservation[K] } = {
       name: `process ${envelope.type}`,
       kind: "consumer",
       parent: ambient,
-      ...(link === undefined ? {} : { links: [link] }),
       attributes: {
         ...operation,
         "messaging.message.id": envelope.id,
         "nifra.event.type": envelope.type,
         "nifra.event.version": envelope.version,
       },
-    })
+    }
+    const link =
+      envelope.causality === undefined ? undefined : causalitySpanLink(envelope.causality)
+    if (link !== undefined) start.links = [link]
+    const span = lifecycle.start(start)
     const context: EventConsumerContext = { trace: span.context }
     try {
       const value =

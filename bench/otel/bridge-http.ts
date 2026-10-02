@@ -44,6 +44,7 @@ async function oha(url: string, requests: number): Promise<Sample> {
     proc.exited,
   ])
   if (code !== 0) throw new Error(`oha exited ${code}: ${err.slice(0, 200)}`)
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: every leaf is unknown and goes through num(), which accepts only a finite number.
   const json = JSON.parse(out) as {
     summary?: { requestsPerSec?: unknown; successRate?: unknown }
     latencyPercentiles?: { p50?: unknown; p99?: unknown }
@@ -87,15 +88,17 @@ for (const runtime of runtimes.length > 0 ? runtimes : ["bun", "node"]) {
     }),
   )
   try {
-    const urls = variants.map((_, index) => `http://127.0.0.1:${3610 + index}/users/42`)
-    for (const url of urls) await waitReady(url)
-    for (const url of urls) await oha(url, WARMUP_REQUESTS)
-    const samples: Sample[][] = variants.map(() => [])
+    const lanes: Array<{ url: string; samples: Sample[] }> = variants.map((_, index) => ({
+      url: `http://127.0.0.1:${3610 + index}/users/42`,
+      samples: [],
+    }))
+    for (const lane of lanes) await waitReady(lane.url)
+    for (const lane of lanes) await oha(lane.url, WARMUP_REQUESTS)
     for (let round = 0; round < rounds; round++) {
-      const order = round % 2 === 0 ? [0, 1] : [1, 0]
-      for (const index of order) samples[index]?.push(await oha(urls[index] as string, REQUESTS))
+      const order = round % 2 === 0 ? lanes : [...lanes].reverse()
+      for (const lane of order) lane.samples.push(await oha(lane.url, REQUESTS))
     }
-    const [plain, bridged] = samples.map((list) => ({
+    const [plain, bridged] = lanes.map(({ samples: list }) => ({
       rps: median(list.map((s) => s.rps)),
       p50ms: median(list.map((s) => s.p50ms)),
       p99ms: median(list.map((s) => s.p99ms)),

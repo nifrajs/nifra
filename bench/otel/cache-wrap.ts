@@ -33,16 +33,17 @@ const loader = () => ({ id: 42, name: "Ada" })
 
 const baselinePath = process.env.NIFRA_CACHE_BASELINE
 if (baselinePath !== undefined) {
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the path names a @nifrajs/cache source entry, whose createCache() returns a cache with this wrap().
   const baseline = (await import(baselinePath)) as { createCache: () => WrapCache }
   const cache = await primed(baseline.createCache())
   rows.push({ label: "baseline (NIFRA_CACHE_BASELINE)", run: () => cache.wrap("user:42", loader) })
 }
 {
-  const cache = await primed(createCache() as WrapCache)
+  const cache = await primed(createCache())
   rows.push({ label: "no observer", run: () => cache.wrap("user:42", loader) })
 }
 {
-  const cache = await primed(createCache({ observer: () => undefined }) as WrapCache)
+  const cache = await primed(createCache({ observer: () => undefined }))
   rows.push({ label: "no-op observer", run: () => cache.wrap("user:42", loader) })
   const context = { trace: TRACE }
   rows.push({
@@ -51,9 +52,7 @@ if (baselinePath !== undefined) {
   })
 }
 {
-  const cache = await primed(
-    createCache({ observer: cacheTracing({ exporter: { onEnd() {} } }) }) as WrapCache,
-  )
+  const cache = await primed(createCache({ observer: cacheTracing({ exporter: { onEnd() {} } }) }))
   rows.push({ label: "cacheTracing, unbound (no span)", run: () => cache.wrap("user:42", loader) })
   const context = { trace: TRACE }
   rows.push({
@@ -74,12 +73,13 @@ async function round(run: () => Promise<unknown>): Promise<number> {
 }
 
 for (const row of rows) for (let i = 0; i < 20_000; i++) await row.run()
-const samples = rows.map(() => [] as number[])
+const samples = rows.map((): number[] => [])
 for (let r = 0; r < ROUNDS; r++) {
   // Rotate the starting row so drift and JIT tiering hit every row equally.
   for (let i = 0; i < rows.length; i++) {
     const index = (i + r) % rows.length
-    samples[index]?.push(await round((rows[index] as (typeof rows)[number]).run))
+    const row = rows[index]
+    if (row !== undefined) samples[index]?.push(await round(row.run))
   }
 }
 

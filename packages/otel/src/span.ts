@@ -99,7 +99,7 @@ export function consoleSpanExporter(
       log(
         JSON.stringify({
           name: span.name,
-          ...(span.kind === undefined ? {} : { kind: span.kind }),
+          kind: span.kind,
           traceId: span.traceId,
           spanId: span.spanId,
           parentSpanId: span.parentSpanId,

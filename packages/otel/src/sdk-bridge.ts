@@ -13,10 +13,16 @@
  * AsyncLocalStorage one from `@opentelemetry/context-async-hooks`; on Workers, `nodejs_compat`).
  */
 
-import type { AnyServer, IdentityPlugin } from "@nifrajs/core/server"
+import { type AnyServer, defineIdentityPlugin, type IdentityPlugin } from "@nifrajs/core/server"
 import { traceOfContext } from "./context-trace.ts"
 import type { ObservationContext, ObservationScope } from "./lifecycle.ts"
-import type { AttributeValue, NifraSpan, ObservationAdapter, SpanKind } from "./span.ts"
+import type {
+  AttributeValue,
+  NifraSpan,
+  ObservationAdapter,
+  ObservationLink,
+  SpanKind,
+} from "./span.ts"
 import { generateSpanId, generateTraceId } from "./traceparent.ts"
 
 /** The OTel `SpanContext` shape. */
@@ -118,17 +124,35 @@ export interface OtelBridge {
   readonly idGenerator: OtelIdGenerator
 }
 
-// `SpanKind` and `SpanStatusCode` of @opentelemetry/api, stable since 1.0.
-const KIND: Readonly<Record<string, number>> = Object.freeze(
-  Object.assign(Object.create(null) as Record<SpanKind, number>, {
-    internal: 0,
-    server: 1,
-    client: 2,
-    producer: 3,
-    consumer: 4,
-  }),
-)
-const SERVER_KIND = 1
+type OtelSpanOptions = NonNullable<Parameters<OtelTracer["startSpan"]>[1]>
+type OtelLink = NonNullable<OtelSpanOptions["links"]>[number]
+
+// `SpanKind` of @opentelemetry/api, stable since 1.0. A kind is caller data, so anything unknown
+// starts as server, the kind of the spans that predate the field.
+function otelKind(kind: SpanKind | undefined): number {
+  switch (kind) {
+    case "internal":
+      return 0
+    case "client":
+      return 2
+    case "producer":
+      return 3
+    case "consumer":
+      return 4
+    default:
+      return 1
+  }
+}
+
+function otelLink(link: ObservationLink): OtelLink {
+  const out: OtelLink = {
+    context: { traceId: link.traceId, spanId: link.spanId, traceFlags: 0, isRemote: true },
+  }
+  if (link.attributes !== undefined) out.attributes = { ...link.attributes }
+  return out
+}
+
+// `SpanStatusCode` of @opentelemetry/api, stable since 1.0.
 const STATUS_OK = 1
 const STATUS_ERROR = 2
 const SAMPLED = 1
@@ -270,7 +294,7 @@ export function otelBridge(options: OtelBridgeOptions): OtelBridge {
     onStart(span: NifraSpan) {
       const at = sweep()
       while (active.size >= maxActive) {
-        const oldest = active.keys().next().value as string | undefined
+        const oldest = active.keys().next().value
         if (oldest === undefined) break
         evict(oldest)
       }
@@ -291,30 +315,13 @@ export function otelBridge(options: OtelBridgeOptions): OtelBridge {
       pending = { traceId: span.traceId, spanId: span.spanId }
       let mirrored: OtelSpan
       try {
-        mirrored = tracerOf().startSpan(
-          span.name,
-          {
-            kind: KIND[span.kind ?? "server"] ?? SERVER_KIND,
-            startTime: span.startTime,
-            attributes: { ...span.attributes },
-            ...(span.links === undefined
-              ? {}
-              : {
-                  links: span.links.map((link) => ({
-                    context: {
-                      traceId: link.traceId,
-                      spanId: link.spanId,
-                      traceFlags: 0,
-                      isRemote: true,
-                    },
-                    ...(link.attributes === undefined
-                      ? {}
-                      : { attributes: { ...link.attributes } }),
-                  })),
-                }),
-          },
-          parent,
-        )
+        const start: OtelSpanOptions = {
+          kind: otelKind(span.kind),
+          startTime: span.startTime,
+          attributes: { ...span.attributes },
+        }
+        if (span.links !== undefined) start.links = span.links.map(otelLink)
+        mirrored = tracerOf().startSpan(span.name, start, parent)
       } finally {
         pending = undefined
       }
@@ -361,7 +368,7 @@ export function otelBridge(options: OtelBridgeOptions): OtelBridge {
 
   return {
     adapter,
-    plugin: Object.assign(apply, { pluginName: "nifra:otel-sdk-bridge" }) as IdentityPlugin,
+    plugin: defineIdentityPlugin("nifra:otel-sdk-bridge", apply),
     scope,
     idGenerator,
   }

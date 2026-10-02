@@ -13,17 +13,25 @@ function collect(): { spans: NifraSpan[]; exporter: { onEnd(span: NifraSpan): vo
   return { spans, exporter: { onEnd: (span) => spans.push(span) } }
 }
 
+function present<T>(value: T | undefined, what: string): T {
+  if (value === undefined) throw new Error(`missing ${what}`)
+  return value
+}
+
 type Paid = { orderId: string; card: string }
 const paidSchema: StandardSchemaV1<Paid, Paid> = {
   "~standard": {
     version: 1,
     vendor: "test",
-    validate: (value) => {
-      const v = value as Partial<Paid> | null
-      return typeof v?.orderId === "string" && typeof v.card === "string"
-        ? { value: v as Paid }
-        : { issues: [{ message: "orderId and card are required" }, { message: "second" }] }
-    },
+    validate: (value) =>
+      typeof value === "object" &&
+      value !== null &&
+      "orderId" in value &&
+      typeof value.orderId === "string" &&
+      "card" in value &&
+      typeof value.card === "string"
+        ? { value: { orderId: value.orderId, card: value.card } }
+        : { issues: [{ message: "orderId and card are required" }, { message: "second" }] },
   },
 }
 const orderPaid = defineEventContract({ type: "order.paid", version: 1, payload: paidSchema })
@@ -67,8 +75,15 @@ describe("traceEventConsumer", () => {
     const result = await consume(JSON.parse(JSON.stringify(produced)))
     expect(result).toEqual({ success: true, value: "o-1" })
 
-    const request = spans.find((span) => span.name === "POST /pay") as NifraSpan
-    const process = spans.find((span) => span.name === "process order.paid") as NifraSpan
+    const request = present(
+      spans.find((span) => span.name === "POST /pay"),
+      "the request span",
+    )
+    const process = present(
+      spans.find((span) => span.name === "process order.paid"),
+      "the consumer span",
+    )
+    const envelope = present(produced, "the produced envelope")
     expect(process.kind).toBe("consumer")
     expect(process.parentSpanId).toBeUndefined()
     expect(process.traceId).not.toBe(request.traceId)
@@ -77,7 +92,7 @@ describe("traceEventConsumer", () => {
       "messaging.system": "nifra.events",
       "messaging.operation.type": "process",
       "messaging.operation.name": "process",
-      "messaging.message.id": produced?.id as string,
+      "messaging.message.id": envelope.id,
       "nifra.event.type": "order.paid",
       "nifra.event.version": 1,
     })
@@ -188,6 +203,6 @@ describe("traceEventConsumer", () => {
       },
     })
     await consume(orderPaid.create({ orderId: "o", card: "c" }))
-    expect(scoped).toEqual([spans[0]?.spanId as string])
+    expect([spans[0]?.spanId]).toEqual(scoped)
   })
 })

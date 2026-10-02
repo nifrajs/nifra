@@ -13,8 +13,9 @@ import {
   createObservationLifecycle,
   type ObservationContext,
   type ObservationScope,
+  type StartObservation,
 } from "./lifecycle.ts"
-import type { ObservationAdapter } from "./span.ts"
+import type { AttributeValue, ObservationAdapter } from "./span.ts"
 import { parseTraceparent } from "./traceparent.ts"
 
 /** `JobEnqueueInfo` from `@nifrajs/jobs`, declared structurally so this package does not depend on it. */
@@ -100,13 +101,10 @@ export function jobTracing(options: JobTracingOptions = {}): JobTracingInstrumen
     },
     async run(info, next) {
       const creation = parseTraceparent(info.traceparent)
-      const span = lifecycle.start({
+      const start: { -readonly [K in keyof StartObservation]: StartObservation[K] } = {
         name: `process ${info.name}`,
         kind: "consumer",
         parent: creation,
-        ...(creation === null
-          ? {}
-          : { links: [{ traceId: creation.traceId, spanId: creation.spanId }] }),
         attributes: {
           "messaging.system": SYSTEM,
           "messaging.operation.type": "process",
@@ -115,23 +113,23 @@ export function jobTracing(options: JobTracingOptions = {}): JobTracingInstrumen
           "messaging.message.id": info.id,
           "nifra.job.attempt": info.attempt,
         },
-      })
+      }
+      if (creation !== null) start.links = [{ traceId: creation.traceId, spanId: creation.spanId }]
+      const span = lifecycle.start(start)
       const trace = span.context
       try {
         const outcome =
           scope === undefined ? await next({ trace }) : await scope(trace, () => next({ trace }))
-        span.end(
-          outcome === "completed"
-            ? { status: "ok", attributes: { "nifra.job.outcome": outcome } }
-            : {
-                status: "error",
-                attributes: {
-                  "nifra.job.outcome": outcome,
-                  "error.type": "_OTHER",
-                  ...(outcome === "dead-lettered" ? { "nifra.job.dead_lettered": true } : {}),
-                },
-              },
-        )
+        if (outcome === "completed") {
+          span.end({ status: "ok", attributes: { "nifra.job.outcome": outcome } })
+        } else {
+          const attributes: Record<string, AttributeValue> = {
+            "nifra.job.outcome": outcome,
+            "error.type": "_OTHER",
+          }
+          if (outcome === "dead-lettered") attributes["nifra.job.dead_lettered"] = true
+          span.end({ status: "error", attributes })
+        }
         return outcome
       } catch (error) {
         span.recordError(error)

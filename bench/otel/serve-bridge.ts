@@ -20,9 +20,11 @@ let app = server().use(tracing({ exporter: { onEnd() {} } }))
 if (variant === "bridge") {
   // The OTel packages are @nifrajs/otel's test devDependencies, so resolve them from there.
   const require = createRequire(new URL("../../packages/otel/package.json", import.meta.url))
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: require() is untyped; this resolves @opentelemetry/api from packages/otel, and packages/otel/test/sdk-bridge.test.ts type-checks that module as an OtelApi.
   const api = require("@opentelemetry/api") as OtelApi & {
     context: { setGlobalContextManager(manager: unknown): boolean }
   }
+  // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: require() is untyped; this resolves @opentelemetry/context-async-hooks ^2.11 from packages/otel, which exports this class with enable().
   const { AsyncLocalStorageContextManager } = require("@opentelemetry/context-async-hooks") as {
     AsyncLocalStorageContextManager: new () => { enable(): unknown }
   }

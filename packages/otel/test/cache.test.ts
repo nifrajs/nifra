@@ -12,6 +12,11 @@ function collect(): { spans: NifraSpan[]; exporter: { onEnd(span: NifraSpan): vo
   return { spans, exporter: { onEnd: (span) => spans.push(span) } }
 }
 
+function present<T>(value: T | undefined, what: string): T {
+  if (value === undefined) throw new Error(`missing ${what}`)
+  return value
+}
+
 const TRACE = {
   traceId: "0af7651916cd43dd8448eb211c80319c",
   spanId: "b7ad6b7169203331",
@@ -53,8 +58,8 @@ describe("cacheTracing", () => {
     for (const [index, span] of wraps.entries()) {
       expect(span.kind).toBe("internal")
       expect(span.status).toBe("ok")
-      expect(span.traceId).toBe(request[index]?.traceId as string)
-      expect(span.parentSpanId).toBe(request[index]?.spanId as string)
+      expect(request[index]?.traceId).toBe(span.traceId)
+      expect(request[index]?.spanId).toBe(span.parentSpanId)
       expect(span.attributes).toMatchObject({
         "nifra.cache.operation": "wrap",
         "nifra.cache.key_prefix": "orders",
@@ -77,8 +82,14 @@ describe("cacheTracing", () => {
     await app.fetch(new Request("http://nifra.test/u"))
     await flush()
 
-    const request = spans.find((span) => span.name === "GET /u") as NifraSpan
-    const revalidate = spans.find((span) => span.name === "cache revalidate") as NifraSpan
+    const request = present(
+      spans.find((span) => span.name === "GET /u"),
+      "the request span",
+    )
+    const revalidate = present(
+      spans.find((span) => span.name === "cache revalidate"),
+      "the revalidate span",
+    )
     expect(
       spans.find((span) => span.name === "cache wrap")?.attributes["nifra.cache.outcome"],
     ).toBe("stale")

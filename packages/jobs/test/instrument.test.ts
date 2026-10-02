@@ -26,8 +26,8 @@ const toSchema: StandardSchemaV1<{ to: string }> = {
     version: 1,
     vendor: "test",
     validate: (v) =>
-      typeof v === "object" && v !== null && typeof (v as { to?: unknown }).to === "string"
-        ? { value: v as { to: string } }
+      typeof v === "object" && v !== null && "to" in v && typeof v.to === "string"
+        ? { value: { to: v.to } }
         : { issues: [{ message: "to must be a string" }] },
   },
 }
@@ -121,6 +121,7 @@ describe("instrument.enqueue", () => {
   })
 
   test("a hook that throws, skips next, or calls it twice still enqueues exactly once", async () => {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: these hooks break the contract on purpose (no next, no result) to show the queue survives it.
     for (const enqueue of [
       () => {
         throw new Error("instrument bug")
@@ -154,6 +155,7 @@ describe("instrument.enqueue", () => {
       },
     })
     const job = queue.define("email", { input: toSchema, handler() {} })
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: a deliberately ill-typed payload, so the schema rejects it at runtime.
     await expect(job.enqueue({ to: 1 } as never)).rejects.toBeInstanceOf(JobValidationError)
     expect(seen).toBeInstanceOf(JobValidationError)
     await expect(queue.enqueue("missing", {})).rejects.toBeInstanceOf(JobError)
@@ -172,7 +174,8 @@ describe("instrument.enqueue", () => {
       },
     })
     await queue.define("email", { handler() {} }).enqueue(undefined)
-    await expect((late as () => Promise<string>)()).rejects.toThrow(/after it returned/)
+    if (late === undefined) throw new Error("the enqueue hook never ran")
+    await expect(late()).rejects.toThrow(/after it returned/)
     expect((await queue.counts()).pending).toBe(1)
   })
 })
@@ -232,11 +235,12 @@ describe("instrument.run", () => {
       await queue.enqueue("ok", undefined)
       await queue.drain()
       expect(contexts).toHaveLength(1)
-      expect("trace" in (contexts[0] as object)).toBe(false)
+      expect(contexts.some((context) => "trace" in context)).toBe(false)
     }
   })
 
   test("a hook that throws, skips next, or calls it twice still runs the handler exactly once", async () => {
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: these hooks break the contract on purpose (no next, no outcome) to show the queue survives it.
     for (const run of [
       () => {
         throw new Error("instrument bug")
@@ -287,7 +291,8 @@ describe("instrument.run", () => {
     queue.define("ok", { handler() {} })
     await queue.enqueue("ok", undefined)
     await expect(queue.process()).rejects.toThrow("store down")
-    expect((rejected as Error).message).toBe("store down")
+    expect(rejected).toBeInstanceOf(Error)
+    expect(rejected).toMatchObject({ message: "store down" })
   })
 
   test("next() called after the hook returned rejects instead of running again", async () => {
@@ -308,7 +313,8 @@ describe("instrument.run", () => {
     })
     await queue.enqueue("ok", undefined)
     await queue.drain()
-    await expect((late as () => Promise<JobRunOutcome>)()).rejects.toThrow(/after it returned/)
+    if (late === undefined) throw new Error("the run hook never ran")
+    await expect(late()).rejects.toThrow(/after it returned/)
     expect(runs).toBe(1)
   })
 

@@ -137,10 +137,10 @@ describe("cache observer", () => {
     expect(await throwing.get<number>("k")).toBe(1)
 
     const rejecting = createCache({
-      observer: (async () => {
+      observer: async () => {
         calls++
         throw new Error("async observer bug")
-      }) as unknown as (event: CacheEvent) => void,
+      },
     })
     expect(await rejecting.wrap("k", () => 2)).toBe(2)
     await flush()

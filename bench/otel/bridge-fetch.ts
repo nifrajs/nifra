@@ -19,9 +19,11 @@ const REQUESTS_PER_ROUND = 4_000
 
 // The OTel packages are @nifrajs/otel's test devDependencies, so resolve them from there.
 const require = createRequire(new URL("../../packages/otel/package.json", import.meta.url))
+// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: require() is untyped; this resolves @opentelemetry/api from packages/otel, and packages/otel/test/sdk-bridge.test.ts type-checks that module as an OtelApi.
 const api = require("@opentelemetry/api") as OtelApi & {
   context: { setGlobalContextManager(manager: unknown): boolean }
 }
+// biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: require() is untyped; this resolves @opentelemetry/context-async-hooks ^2.11 from packages/otel, which exports this class with enable().
 const { AsyncLocalStorageContextManager } = require("@opentelemetry/context-async-hooks") as {
   AsyncLocalStorageContextManager: new () => { enable(): unknown }
 }
@@ -64,18 +66,17 @@ async function round(app: App): Promise<number> {
 }
 
 for (const variant of variants) for (let i = 0; i < 3; i++) await round(variant.app)
-const samples = variants.map(() => [] as number[])
+const samples = variants.map((): number[] => [])
 for (let r = 0; r < ROUNDS; r++) {
   for (let i = 0; i < variants.length; i++) {
     const index = (i + r) % variants.length
-    samples[index]?.push(await round((variants[index] as (typeof variants)[number]).app))
+    const variant = variants[index]
+    if (variant !== undefined) samples[index]?.push(await round(variant.app))
   }
 }
 
 const runtime =
-  "Bun" in globalThis
-    ? `Bun ${(globalThis as unknown as { Bun: { version: string } }).Bun.version}`
-    : `Node ${process.version}`
+  process.versions.bun === undefined ? `Node ${process.version}` : `Bun ${process.versions.bun}`
 console.log(`\n  app.fetch() with and without bridge.plugin - ${runtime}\n`)
 const pairs: Array<[number, number]> = [
   [0, 1],

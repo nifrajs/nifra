@@ -10,6 +10,7 @@ import {
   ParentBasedSampler,
   type ReadableSpan,
   SimpleSpanProcessor,
+  type TracerConfig,
 } from "@opentelemetry/sdk-trace-base"
 import { jobTracing } from "../src/jobs.ts"
 import { createObservationLifecycle } from "../src/lifecycle.ts"
@@ -32,11 +33,12 @@ afterEach(() => {
 /** An SDK provider; with `bridge`, registered globally with the bridge's idGenerator. */
 function sdk(bridge?: OtelBridge) {
   const exporter = new InMemorySpanExporter()
-  const provider = new BasicTracerProvider({
+  const config: TracerConfig = {
     sampler: new ParentBasedSampler({ root: new AlwaysOnSampler() }),
     spanProcessors: [new SimpleSpanProcessor(exporter)],
-    ...(bridge === undefined ? {} : { idGenerator: bridge.idGenerator }),
-  })
+  }
+  if (bridge !== undefined) config.idGenerator = bridge.idGenerator
+  const provider = new BasicTracerProvider(config)
   if (bridge !== undefined) api.trace.setGlobalTracerProvider(provider)
   return { exporter, tracer: provider.getTracer("test") }
 }
@@ -44,6 +46,11 @@ function sdk(bridge?: OtelBridge) {
 function collect(): { spans: NifraSpan[]; exporter: { onEnd(span: NifraSpan): void } } {
   const spans: NifraSpan[] = []
   return { spans, exporter: { onEnd: (span) => spans.push(span) } }
+}
+
+function present<T>(value: T | undefined, what: string): T {
+  if (value === undefined) throw new Error(`missing ${what}`)
+  return value
 }
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 1))
@@ -71,7 +78,7 @@ describe("otelBridge plugin", () => {
 
     await app.fetch(new Request("http://nifra.test/orders"))
 
-    const request = nifra.spans[0] as NifraSpan
+    const request = present(nifra.spans[0], "the request span")
     const child = finished(exporter, "pg.query")
     expect(child.spanContext().traceId).toBe(request.traceId)
     expect(child.parentSpanContext?.spanId).toBe(request.spanId)
@@ -84,7 +91,7 @@ describe("otelBridge plugin", () => {
       .use(tracing({ adapters: [] }))
       .use(otelBridge({ api, tracer }).plugin)
       .get("/x", () => {
-        const active = api.trace.getActiveSpan() as api.Span
+        const active = present(api.trace.getActiveSpan(), "the active span")
         expect(active.isRecording()).toBe(false)
         expect(active.setAttribute("k", 1)).toBe(active)
         expect(active.setAttributes({ k: 1 })).toBe(active)
@@ -116,7 +123,7 @@ describe("otelBridge plugin", () => {
     const parentOf = new Map(nifra.spans.map((span) => [span.name.split("/").at(-1), span.spanId]))
     expect(exporter.getFinishedSpans()).toHaveLength(4)
     for (const child of exporter.getFinishedSpans()) {
-      expect(child.parentSpanContext?.spanId).toBe(parentOf.get(child.name.split(" ")[1]) as string)
+      expect(parentOf.get(child.name.split(" ")[1])).toBe(child.parentSpanContext?.spanId)
     }
   })
 
@@ -173,7 +180,7 @@ describe("otelBridge adapter", () => {
       })
     await app.fetch(new Request("http://nifra.test/orders"))
 
-    const request = nifra.spans[0] as NifraSpan
+    const request = present(nifra.spans[0], "the request span")
     const mirrored = finished(exporter, "GET /orders")
     expect(mirrored.spanContext()).toMatchObject({
       traceId: request.traceId,
@@ -310,7 +317,10 @@ describe("otelBridge scope", () => {
     })
     await queue.enqueue("email-job", undefined)
     await queue.drain()
-    const process = nifra.spans.find((span) => span.name === "process email-job") as NifraSpan
+    const process = present(
+      nifra.spans.find((span) => span.name === "process email-job"),
+      "the process span",
+    )
     expect(finished(exporter, "pg.query").parentSpanContext?.spanId).toBe(process.spanId)
     expect(finished(exporter, "pg.query").spanContext().traceId).toBe(process.traceId)
   })

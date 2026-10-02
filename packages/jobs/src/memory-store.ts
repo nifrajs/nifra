@@ -64,14 +64,15 @@ export class MemoryJobStore implements JobStore {
       if (out.length >= limit) break
       if (r.runAt <= now && r.leaseUntil <= now) {
         r.leaseUntil = now + leaseMs
-        out.push({
+        const job: { -readonly [K in keyof StoredJob]: StoredJob[K] } = {
           id: r.id,
           name: r.name,
           payload: r.payload,
           attempt: r.attempt,
           maxAttempts: r.maxAttempts,
-          ...(r.traceparent === undefined ? {} : { traceparent: r.traceparent }),
-        })
+        }
+        if (r.traceparent !== undefined) job.traceparent = r.traceparent
+        out.push(job)
       }
     }
     return out
