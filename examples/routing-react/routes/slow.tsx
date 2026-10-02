@@ -16,9 +16,11 @@ export default function SlowPage(props: { data: LoaderData<typeof loader> }) {
         {(feed) => <p id="slow-content">{feed}</p>}
       </Await>
       {/* A deferred value nested in an array of objects - streams + hydrates on its own. */}
-      <Await resolve={props.data.panels[0].chart} fallback={<p id="chart-fallback">chart…</p>}>
-        {(chart) => <p id="chart-content">chart: {chart.join(",")}</p>}
-      </Await>
+      {props.data.panels.map((panel) => (
+        <Await key={panel.id} resolve={panel.chart} fallback={<p id="chart-fallback">chart…</p>}>
+          {(chart) => <p id="chart-content">chart: {chart.join(",")}</p>}
+        </Await>
+      ))}
     </div>
   )
 }

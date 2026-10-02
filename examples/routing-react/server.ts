@@ -42,7 +42,7 @@ export const app = createWebApp({
   routePreload: assets.routes,
   // The app's bundled stylesheet (`buildClient`'s manifest.css) → `<link rel="stylesheet">` in every
   // page's <head>. Here `import "./app.css"` in _layout is the global stylesheet.
-  styles: assets.css,
+  styles: assets.css ?? [],
   prerenderedPaths,
   staticFallbacks,
   api,

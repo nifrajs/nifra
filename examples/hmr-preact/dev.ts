@@ -24,10 +24,10 @@ const server = await createViteDevServer({
   clientModule: "@nifrajs/web-preact/client",
   plugins: [preact()],
   port: Number(Bun.env.PORT ?? 3000),
-  createApp: (clientEntry, importQuery) =>
+  createApp: (clientEntry, load) =>
     createWebApp({
       adapter: preactAdapter,
-      manifest: discoverRoutes(routesDir, { importQuery }),
+      manifest: discoverRoutes(routesDir, { load }),
       clientEntry,
       api: inProcessClient(backend),
       title: "nifra HMR (Preact, dev)",

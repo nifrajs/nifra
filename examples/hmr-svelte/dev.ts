@@ -1,9 +1,9 @@
 /**
  * True-HMR dev server (Svelte) - the `@nifrajs/web/vite` server with `@sveltejs/vite-plugin-svelte`
- * (Svelte 5's built-in HMR for the client). `svelteBunPlugin("ssr")` (preloaded, see ssr-preload.ts)
- * handles the Bun-side SSR compile.
+ * (Svelte 5's built-in HMR for the client). The same plugin compiles route modules for SSR:
+ * `createApp`'s `load` resolves them through Vite, so a server render reflects the latest edit.
  *
- *   bun --preload hmr-svelte/ssr-preload.ts hmr-svelte/dev.ts
+ *   bun hmr-svelte/dev.ts
  *   (containers/sandboxes: prefix CHOKIDAR_USEPOLLING=1)
  *
  * Edit `components/Counter.svelte` - it updates live, no page reload. (Svelte's own HMR recreates the
@@ -28,10 +28,10 @@ const server = await createViteDevServer({
   // where it would desync hydration on first load. See its doc comment.
   plugins: [svelte({ dynamicCompileOptions: svelteHmrBoundary })],
   port: Number(Bun.env.PORT ?? 3000),
-  createApp: (clientEntry, importQuery) =>
+  createApp: (clientEntry, load) =>
     createWebApp({
       adapter: svelteAdapter,
-      manifest: discoverRoutes(routesDir, { importQuery }),
+      manifest: discoverRoutes(routesDir, { load }),
       clientEntry,
       api: inProcessClient(backend),
       title: "nifra HMR (Svelte, dev)",

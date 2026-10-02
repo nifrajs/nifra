@@ -6,5 +6,5 @@ export const loaderOutput = t.object({ message: t.string() })
 
 export async function loader({ api }: LoaderArgs<typeof backend>) {
   const res = await api.hello.get()
-  return { message: res.data?.message ?? "" }
+  return { message: res.ok ? res.data.message : "" }
 }

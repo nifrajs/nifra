@@ -9,7 +9,7 @@ export const loaderOutput = t.object({ count: t.number() })
 // revalidates (no full reload); with JS off the native POST re-renders (progressive enhancement).
 export async function loader({ api }: LoaderArgs<typeof backend>) {
   const res = await api.count.get()
-  return { count: res.data?.count ?? 0 }
+  return { count: res.ok ? res.data.count : 0 }
 }
 
 export const actionOutput = t.object({ ok: t.boolean() })

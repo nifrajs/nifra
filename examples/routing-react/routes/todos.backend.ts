@@ -11,7 +11,7 @@ export const loaderOutput = t.object({
 // REVALIDATES (unless the form opts out), so the reconciled list reflects what the server accepted.
 export async function loader({ api }: LoaderArgs<typeof backend>) {
   const res = await api.todos.get()
-  return { todos: res.data?.todos ?? [] }
+  return { todos: res.ok ? res.data.todos : [] }
 }
 
 export const actionOutput = t.object({

@@ -1,6 +1,6 @@
 import { negotiateLocale } from "@nifrajs/i18n"
 import { t } from "@nifrajs/schema"
-import { catalogs, locales } from "../backend/catalogs"
+import { baseCatalog, catalogs, locales } from "../backend/catalogs"
 
 export const loaderOutput = t.object({ locale: t.string(), messages: t.record(t.string()) })
 
@@ -14,5 +14,5 @@ export async function loader({ request }: { request: Request }) {
     fromQuery !== null && (locales as readonly string[]).includes(fromQuery)
       ? fromQuery
       : negotiateLocale(request, { locales, defaultLocale: "en" })
-  return { locale, messages: catalogs[locale] ?? catalogs.en }
+  return { locale, messages: catalogs[locale] ?? baseCatalog }
 }

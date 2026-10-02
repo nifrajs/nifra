@@ -9,5 +9,5 @@ export const loaderOutput = t.object({
 // Param route + typed loader - proves dynamic segments + data loading SSR on the edge.
 export async function loader({ api, params }: LoaderArgs<typeof backend>) {
   const res = await api.users({ id: params.id ?? "" }).get()
-  return { user: res.data }
+  return { user: res.ok ? res.data : undefined }
 }

@@ -12,5 +12,5 @@ export const loaderOutput = t.object({ renders: t.number() })
 
 export async function loader({ api }: LoaderArgs<typeof backend>) {
   const res = await api.page.get()
-  return { renders: res.data?.renders ?? 0 }
+  return { renders: res.ok ? res.data.renders : 0 }
 }

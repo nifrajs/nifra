@@ -8,5 +8,5 @@ export const loaderOutput = t.object({
 
 export async function loader({ api, params }: LoaderArgs<typeof backend>) {
   const res = await api.users({ id: params.id ?? "" }).get()
-  return { user: res.data }
+  return { user: res.ok ? res.data : undefined }
 }

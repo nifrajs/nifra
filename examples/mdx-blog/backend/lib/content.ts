@@ -6,6 +6,6 @@ import { t } from "@nifrajs/schema"
  * only inside loaders (via dynamic `import()`), so this `node:fs`-backed module never reaches the client
  * bundle. For a Workers deploy you'd `bakeCollection(posts)` at build + `fromBaked` at the edge. */
 export const posts = defineCollection({
-  dir: join(import.meta.dir, "..", "content", "posts"),
+  dir: join(import.meta.dir, "..", "..", "content", "posts"),
   schema: t.object({ title: t.string(), date: t.string(), summary: t.string() }),
 })

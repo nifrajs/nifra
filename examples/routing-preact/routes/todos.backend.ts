@@ -9,7 +9,7 @@ export const loaderOutput = t.object({
 
 export async function loader({ api }: LoaderArgs<typeof backend>) {
   const res = await api.todos.get()
-  return { todos: res.data?.todos ?? [] }
+  return { todos: res.ok ? res.data.todos : [] }
 }
 
 export const actionOutput = t.object({ ok: t.boolean() })
