@@ -35,7 +35,8 @@ import {
 
 export interface Flags {
   readonly port: number
-  readonly out: string
+  /** `--out <dir>`; without it `dist`, or `.vercel/output` for a Vercel build. */
+  readonly out: string | undefined
   readonly poll: boolean
   /** `nifra build --target <t>`: emit a full deploy dir for this target. Without it, the `target` that
    * `nifra.config.ts` exports, else `bun`. */
@@ -681,7 +682,11 @@ async function buildForTarget(
   const buildTarget = useVite
     ? (await import("@nifrajs/web/build-vite")).buildTargetVite
     : (await import("@nifrajs/web/build")).buildTarget
-  const { routesDir, outDir, cwd, backend } = app
+  const { routesDir, cwd, backend } = app
+  // `vercel deploy --prebuilt` uploads `.vercel/output` from the project root, so that is where a
+  // Vercel build goes unless `--out` says otherwise.
+  const outDir =
+    target === "vercel" && flags.out === undefined ? resolve(cwd, ".vercel/output") : app.outDir
   // The server entry must import the adapter from `backend/framework.ts` (edge-safe), not the
   // loaded config, so a multi-target app's Vite-plugin config never reaches the edge bundle
   // (load.ts header).
@@ -792,7 +797,7 @@ export function parseFlags(args: readonly string[]): Flags {
   // the SAME uncommon port for `nifra dev` and `nifra start` (DEFAULT_DEV_PORT) so a project's URL is
   // stable across commands and doesn't collide with the usual 3000/5173/8080 crowd.
   let port = Number(Bun.env.PORT ?? DEFAULT_DEV_PORT)
-  let out = "dist"
+  let out: string | undefined
   let poll = Bun.env.CHOKIDAR_USEPOLLING === "1"
   let target: string | undefined
   let report = false

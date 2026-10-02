@@ -34,40 +34,50 @@ const readPkg = async (dir: string): Promise<{ name?: string; scripts?: Record<s
   JSON.parse(await readFile(join(dir, "package.json"), "utf8"))
 
 describe("parseArgs", () => {
-  test("positional target + --template/-t + --deploy/-d", () => {
+  test("positional target + --template/-t + --target + --docker", () => {
     expect(parseArgs(["my-app"])).toEqual({ target: "my-app" })
     expect(parseArgs(["my-app", "--template", "site"])).toEqual({
       target: "my-app",
       template: "site",
     })
     expect(parseArgs(["-t", "isr", "my-app"])).toEqual({ target: "my-app", template: "isr" })
-    expect(parseArgs(["my-app", "-d", "vercel"])).toEqual({
+    expect(parseArgs(["my-app", "--target", "vercel"])).toEqual({
       target: "my-app",
-      template: "site", // --deploy implies the site template
-      deploy: "vercel",
+      template: "site", // --target implies the site template
+      deployTarget: "vercel",
+    })
+    expect(parseArgs(["my-app", "--docker"])).toEqual({
+      target: "my-app",
+      template: "site",
+      docker: true,
     })
   })
 
-  test("explicit --template wins over the --deploy default", () => {
-    expect(parseArgs(["x", "--template", "site", "--deploy", "node"])).toEqual({
+  test("explicit --template wins over the --target default", () => {
+    expect(parseArgs(["x", "--template", "site", "--target", "node"])).toEqual({
       target: "x",
       template: "site",
-      deploy: "node",
+      deployTarget: "node",
     })
   })
 
-  test("--framework/-f implies site and composes with --deploy", () => {
+  test("--framework/-f implies site and composes with --target", () => {
     expect(parseArgs(["my-app", "--framework", "vue"])).toEqual({
       target: "my-app",
       template: "site",
       framework: "vue",
     })
-    expect(parseArgs(["my-app", "-f", "svelte", "-d", "vercel"])).toEqual({
+    expect(parseArgs(["my-app", "-f", "svelte", "--target", "vercel"])).toEqual({
       target: "my-app",
       template: "site",
       framework: "svelte",
-      deploy: "vercel",
+      deployTarget: "vercel",
     })
+  })
+
+  test("the retired --deploy is refused with its replacement", () => {
+    expect(() => parseArgs(["my-app", "--deploy", "vercel"])).toThrow("--deploy is now --target")
+    expect(() => parseArgs(["my-app", "-d", "vercel"])).toThrow("--deploy is now --target")
   })
 })
 
@@ -81,26 +91,42 @@ describe("scaffold - templates", () => {
     expect((await readPkg(dir)).name).toBe("my-api")
   })
 
-  test("site ships every target's entry + config", async () => {
+  test("a site deploys to one target and carries no hand-written server entry", async () => {
     const dir = await freshDir("my-site")
-    await scaffold({ target: dir, template: "site" })
+    const res = await scaffold({ target: dir, template: "site" })
+    expect(res.deploy).toEqual({ target: "bun", label: "Bun", docker: false })
     for (const f of [
       "server-bun.ts",
       "build-bun.ts",
       "server-node.ts",
-      "server-deno.ts",
-      "server-vercel.ts",
       "_worker.ts",
+      "build.ts",
       "Dockerfile",
-      ".dockerignore",
       "deno.json",
       "wrangler.toml",
     ]) {
-      expect(await exists(join(dir, f))).toBe(true)
+      expect(await exists(join(dir, f))).toBe(false)
     }
-    // Project name is filled into the CF Pages config.
+    expect(await readFile(join(dir, "nifra.config.ts"), "utf8")).toEndWith(
+      'export const target = "bun"\n',
+    )
+    expect((await readPkg(dir)).scripts).toEqual({
+      dev: "nifra dev",
+      build: "nifra build",
+      start: "bun dist/server.js",
+      check: "nifra check && nifra assure",
+    })
+  })
+
+  test("a Cloudflare site gets wrangler.toml named for the project", async () => {
+    const dir = await freshDir("my-site")
+    await scaffold({ target: dir, template: "site", deployTarget: "cloudflare" })
     const toml = await readFile(join(dir, "wrangler.toml"), "utf8")
     expect(toml).toContain('name = "my-site"')
+    expect(toml).toContain('pages_build_output_dir = "dist"')
+    expect(await readFile(join(dir, "nifra.config.ts"), "utf8")).toContain(
+      'export const target = "cloudflare"',
+    )
   })
 
   test("ships an AGENTS.md with the core rules, tailored to the template", async () => {
@@ -179,38 +205,77 @@ describe("scaffold - agent-discovery files (MCP auto-discovery)", () => {
   })
 })
 
-describe("scaffold - --deploy preset", () => {
-  test("vercel repoints build/deploy; per-target scripts stay", async () => {
-    const dir = await freshDir("vc-app")
-    const res = await scaffold({ target: dir, template: "site", deploy: "vercel" })
-    expect(res.deploy?.label).toBe("Vercel Edge")
-    const pkg = await readPkg(dir)
-    expect(pkg.scripts?.build).toBe("bun run build-vercel.ts")
-    expect(pkg.scripts?.deploy).toBe("vercel deploy --prebuilt")
-    // The multi-target scripts are untouched, so you can still switch targets.
-    expect(pkg.scripts?.["build:node"]).toBe("bun run build-node.ts")
-    expect(pkg.scripts?.["deploy:cf"]).toBe("wrangler pages deploy dist")
+describe("scaffold - --target and --docker", () => {
+  test("each target gets its scripts, its config file and its runtime package", async () => {
+    const expected = {
+      bun: { start: "bun dist/server.js", deploy: undefined, files: [] },
+      node: { start: "node dist/server.js", deploy: undefined, files: [] },
+      deno: {
+        start: "deno run --allow-net --allow-read --allow-env dist/server.js",
+        deploy: "deployctl deploy --prod --entrypoint=dist/server.js",
+        files: ["deno.json"],
+      },
+      cloudflare: {
+        start: "wrangler pages dev dist",
+        deploy: "wrangler pages deploy dist",
+        files: ["wrangler.toml"],
+      },
+      vercel: { start: undefined, deploy: "vercel deploy --prebuilt", files: [] },
+    } as const
+    for (const [target, want] of Object.entries(expected)) {
+      const dir = await freshDir(`t-${target}`)
+      await scaffold({ target: dir, template: "site", deployTarget: target })
+      const pkg = (await readPkg(dir)) as {
+        scripts?: Record<string, string>
+        dependencies?: Record<string, string>
+      }
+      expect(pkg.scripts?.build).toBe("nifra build")
+      expect(pkg.scripts?.start).toBe(want.start)
+      expect(pkg.scripts?.deploy).toBe(want.deploy)
+      expect(pkg.dependencies?.["@nifrajs/node"] !== undefined).toBe(target === "node")
+      for (const file of ["deno.json", "wrangler.toml", "Dockerfile"]) {
+        expect(await exists(join(dir, file))).toBe((want.files as readonly string[]).includes(file))
+      }
+    }
   })
 
-  test("node deploy interpolates the app name into the docker command", async () => {
+  test("--docker adds an image for a self-hosting server and deploys it", async () => {
     const dir = await freshDir("dock-app")
-    await scaffold({ target: dir, template: "site", deploy: "node" })
-    const pkg = await readPkg(dir)
-    expect(pkg.scripts?.build).toBe("bun run build-node.ts")
-    expect(pkg.scripts?.deploy).toBe(
+    const res = await scaffold({
+      target: dir,
+      template: "site",
+      deployTarget: "node",
+      docker: true,
+    })
+    expect(res.deploy).toEqual({ target: "node", label: "Node", docker: true })
+    expect((await readPkg(dir)).scripts?.deploy).toBe(
       "docker build -t dock-app . && docker run -p 3000:3000 dock-app",
+    )
+    const dockerfile = await readFile(join(dir, "Dockerfile"), "utf8")
+    expect(dockerfile).toContain("RUN bun run build")
+    expect(dockerfile).toContain("FROM node:22-slim AS run")
+    expect(dockerfile).toContain('CMD ["node", "dist/server.js"]')
+    expect(await exists(join(dir, ".dockerignore"))).toBe(true)
+
+    const bun = await freshDir("bun-dock")
+    await scaffold({ target: bun, template: "site", docker: true })
+    expect(await readFile(join(bun, "Dockerfile"), "utf8")).toContain(
+      'CMD ["bun", "dist/server.js"]',
     )
   })
 
-  test("each known target yields a build + deploy script", async () => {
-    for (const target of ["bun", "deno", "cloudflare"]) {
-      const dir = await freshDir(`t-${target}`)
-      const pkg = await scaffold({ target: dir, template: "site", deploy: target }).then(() =>
-        readPkg(dir),
-      )
-      expect(pkg.scripts?.build).toBeTruthy()
-      expect(pkg.scripts?.deploy).toBeTruthy()
-    }
+  test("--docker on a platform target, and cf-pages, are refused", async () => {
+    await expect(
+      scaffold({
+        target: await freshDir("x"),
+        template: "site",
+        deployTarget: "vercel",
+        docker: true,
+      }),
+    ).rejects.toThrow("--docker builds a self-hosting server image (bun or node)")
+    await expect(
+      scaffold({ target: await freshDir("y"), template: "site", deployTarget: "cf-pages" }),
+    ).rejects.toThrow('the deploy target "cf-pages" is now "cloudflare"')
   })
 })
 
@@ -222,18 +287,20 @@ describe("scaffold - rejections", () => {
     )
   })
 
-  test("--deploy with a non-site template", async () => {
-    const dir = await freshDir("x")
-    await expect(scaffold({ target: dir, template: "api", deploy: "vercel" })).rejects.toThrow(
-      /--deploy requires the site template/,
-    )
+  test("--target or --docker with a non-site template", async () => {
+    await expect(
+      scaffold({ target: await freshDir("x"), template: "api", deployTarget: "vercel" }),
+    ).rejects.toThrow(/--target requires the site template/)
+    await expect(
+      scaffold({ target: await freshDir("y"), template: "api", docker: true }),
+    ).rejects.toThrow(/--docker requires the site template/)
   })
 
   test("unknown deploy target", async () => {
     const dir = await freshDir("x")
-    await expect(scaffold({ target: dir, template: "site", deploy: "heroku" })).rejects.toThrow(
-      /unknown deploy target/,
-    )
+    await expect(
+      scaffold({ target: dir, template: "site", deployTarget: "heroku" }),
+    ).rejects.toThrow(/unknown deploy target/)
   })
 
   test("refuses to overwrite an existing directory", async () => {
@@ -266,10 +333,10 @@ describe("scaffold - rejections", () => {
 describe("run (argv → code + message)", () => {
   test("scaffolds + returns target-specific next steps, code 0", async () => {
     const dir = await freshDir("run-vc")
-    const { code, message } = await run([dir, "--deploy", "vercel"])
+    const { code, message } = await run([dir, "--target", "vercel"])
     expect(code).toBe(0)
-    expect(message).toContain("Vercel Edge")
-    expect(message).toContain("vercel deploy --prebuilt")
+    expect(message).toContain("(Vercel)")
+    expect(message).toContain("bun run deploy       # vercel deploy --prebuilt")
     expect(await exists(join(dir, ".gitignore"))).toBe(true)
   })
 
@@ -289,17 +356,23 @@ describe("run (argv → code + message)", () => {
 
   test("unknown deploy target → error, code 1", async () => {
     const dir = await freshDir("run-bad")
-    const { code, message } = await run([dir, "--deploy", "heroku"])
+    const { code, message } = await run([dir, "--target", "heroku"])
     expect(code).toBe(1)
     expect(message).toContain("unknown deploy target")
+  })
+
+  test("the retired --deploy → its replacement, code 1", async () => {
+    const { code, message } = await run([await freshDir("run-old"), "--deploy", "node"])
+    expect(code).toBe(1)
+    expect(message).toContain("--deploy is now --target")
   })
 })
 
 // One end-to-end check that the published binary actually parses argv, scaffolds, and exits 0.
 describe("CLI binary (subprocess)", () => {
-  test("bun create-nifra <dir> --deploy node → exit 0, scaffolded", async () => {
+  test("bun create-nifra <dir> --target node --docker → exit 0, scaffolded", async () => {
     const dir = await freshDir("cli-e2e")
-    const { code, stdout } = await runCli([dir, "--deploy", "node"])
+    const { code, stdout } = await runCli([dir, "--target", "node", "--docker"])
     expect(code).toBe(0)
     expect(stdout).toContain("Created")
     expect(await exists(join(dir, "Dockerfile"))).toBe(true)
@@ -375,26 +448,25 @@ describe("scaffold - --framework", () => {
         devDependencies?: Record<string, string>
       }
       expect(pkg.scripts?.dev).toBe("nifra dev")
-      expect(pkg.scripts?.preview).toBe("bunx wrangler pages dev dist") // the old CF preview, kept
+      expect(pkg.scripts?.build).toBe("nifra build")
       expect(pkg.devDependencies?.["@nifrajs/cli"]).toBeTruthy()
       expect(pkg.devDependencies?.vite).toBeTruthy()
     }
   })
 
-  test("composes with --deploy (Vue + Vercel)", async () => {
+  test("composes with --target (Vue + Vercel)", async () => {
     const dir = await freshDir("fw-vue-vc")
     const res = await scaffold({
       target: dir,
       template: "site",
       framework: "vue",
-      deploy: "vercel",
+      deployTarget: "vercel",
     })
     expect(res.framework).toBe("vue")
-    expect(res.deploy?.label).toBe("Vercel Edge")
-    const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as {
-      scripts?: Record<string, string>
-    }
-    expect(pkg.scripts?.build).toBe("bun run build-vercel.ts")
+    expect(res.deploy?.label).toBe("Vercel")
+    const config = await readFile(join(dir, "nifra.config.ts"), "utf8")
+    expect(config).toContain("vitePlugins")
+    expect(config).toEndWith('export const target = "vercel"\n')
   })
 
   test("--framework with a non-site template / unknown framework → rejects", async () => {
@@ -438,13 +510,17 @@ describe("scaffold parity", () => {
 
 describe("CI workflows (--ci github)", () => {
   test("parseArgs takes --ci/-c and implies the site template", () => {
-    expect(parseArgs(["my-app", "--deploy", "vercel", "--ci", "github"])).toEqual({
+    expect(parseArgs(["my-app", "--target", "vercel", "--ci", "github"])).toEqual({
       target: "my-app",
       template: "site",
-      deploy: "vercel",
+      deployTarget: "vercel",
       ci: "github",
     })
-    expect(parseArgs(["x", "-d", "cloudflare", "-c", "github"])).toMatchObject({ ci: "github" })
+    expect(parseArgs(["x", "-c", "github"])).toEqual({
+      target: "x",
+      template: "site",
+      ci: "github",
+    })
   })
 
   test("githubDeployWorkflow: cloudflare uses wrangler-action + names the project + lists secrets", () => {
@@ -481,7 +557,7 @@ describe("CI workflows (--ci github)", () => {
     const res = await scaffold({
       target: dir,
       template: "site",
-      deploy: "cloudflare",
+      deployTarget: "cloudflare",
       ci: "github",
     })
     expect(res.ci).toBe("github")
@@ -490,19 +566,30 @@ describe("CI workflows (--ci github)", () => {
     expect(wf).toContain("command: pages deploy dist --project-name=ci-app")
   })
 
-  test("--ci requires --deploy, and only 'github' is known", async () => {
+  test("--ci deploys the site's target (bun by default); only 'github' is known", async () => {
+    const dir = await freshDir("a")
+    const res = await scaffold({ target: dir, template: "site", ci: "github" })
+    expect(res.ciSecrets).toEqual([])
+    expect(await readFile(join(dir, ".github/workflows/deploy.yml"), "utf8")).toContain(
+      "Self-hosted: deploy is host-specific",
+    )
     await expect(
-      scaffold({ target: await freshDir("a"), template: "site", ci: "github" }),
-    ).rejects.toThrow(/--ci requires --deploy/)
-    await expect(
-      scaffold({ target: await freshDir("b"), template: "site", deploy: "vercel", ci: "gitlab" }),
+      scaffold({
+        target: await freshDir("b"),
+        template: "site",
+        deployTarget: "vercel",
+        ci: "gitlab",
+      }),
     ).rejects.toThrow(/unknown --ci/)
+    await expect(
+      scaffold({ target: await freshDir("c"), template: "api", ci: "github" }),
+    ).rejects.toThrow(/--ci requires the site template/)
   })
 
   test("run(): next steps surface the workflow + the secrets to set", async () => {
     const { code, message } = await run([
       await freshDir("ci-run"),
-      "-d",
+      "--target",
       "cloudflare",
       "-c",
       "github",

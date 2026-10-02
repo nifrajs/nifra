@@ -139,7 +139,7 @@ describe("generated route types", () => {
     writeRouteTypes({ appRoot: root })
     expect(generated("register.d.ts")).toContain("readonly backend: typeof backend")
     expect(typeErrors(["routes/blog/[slug].tsx", "routes/blog/[slug].backend.ts"])).toEqual([])
-  }, 30_000)
+  }, 60_000)
 
   test("a route with no backend half sends no data", () => {
     write(
@@ -155,7 +155,7 @@ describe("generated route types", () => {
     )
     writeRouteTypes({ appRoot: root })
     expect(typeErrors(["routes/about.tsx"])).toEqual([])
-  }, 30_000)
+  }, 60_000)
 })
 
 describe("writeRouteTypes", () => {

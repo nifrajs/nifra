@@ -1,21 +1,27 @@
 /**
- * Compose a site scaffold: shared base, generated files, framework overlay.
+ * Compose a site scaffold: shared base, generated files, framework overlay, target files.
  *
- * A site is 26 files. Thirteen are the same whatever you render with - the Dockerfile, every server
- * entry, the worker, the assurance config - eight are mechanical enough to emit from a model, and five
- * are genuinely the framework's own. Keeping five copies of all 26 is what let `.vercel` reach four
- * tsconfigs and not the fifth, and a Vercel comment reach one build entry and not the other four.
+ * A site is the same few files whatever it renders with or deploys to - the backend, the assurance
+ * config, the landing page's backend half - plus what is mechanical enough to emit from a model (the
+ * manifest, the tsconfig, the adapter module, the target's config), and the files that are genuinely
+ * the framework's own. There is no per-runtime server entry or build script: `nifra build` generates
+ * the target's entry from `backend/` and `routes/`.
  *
- * The five that stay literal stay literal on purpose. `nifra.config.ts` explains why Solid wants a
- * `solid` resolve condition and what `@preact/preset-vite` is; the routes are the app a user reads
- * first. That prose belongs in a file you can open, not in a TypeScript string.
+ * The framework files stay literal on purpose. `nifra.config.ts` explains why Solid wants a `solid`
+ * resolve condition and what `@preact/preset-vite` is; the routes are the app a user reads first. That
+ * prose belongs in a file you can open, not in a TypeScript string.
  */
-import { cp, mkdir, writeFile } from "node:fs/promises"
+import { cp, mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { type FrameworkSpec, frameworkSpec } from "./frameworks.ts"
-import { BUILD_TARGETS, renderBuildFile } from "./site-build.ts"
-import { renderFrameworkModule, renderPackageJson, renderTsconfig } from "./site-files.ts"
+import {
+  renderFrameworkModule,
+  renderPackageJson,
+  renderTsconfig,
+  type SiteTarget,
+} from "./site-files.ts"
+import { targetFiles } from "./targets.ts"
 
 /**
  * Files identical in every site scaffold, taken from the base directory.
@@ -25,20 +31,11 @@ import { renderFrameworkModule, renderPackageJson, renderTsconfig } from "./site
  * here, and `site-composition.test.ts` fails if this list and the directory disagree.
  */
 export const SHARED_SITE_FILES: readonly string[] = [
-  ".dockerignore",
-  "Dockerfile",
-  "_worker.ts",
   "backend/app.ts",
   "backend/counter.ts",
-  "deno.json",
   "gitignore",
   "nifra.assurance.ts",
   "routes/index.backend.ts",
-  "server-bun.ts",
-  "server-deno.ts",
-  "server-node.ts",
-  "server-vercel.ts",
-  "wrangler.toml",
 ]
 
 /** Files each framework supplies itself, relative to its overlay directory. */
@@ -63,17 +60,25 @@ export function overlayDir(framework: FrameworkSpec): string {
     : join(here, "..", "..", `template-site-${framework.id}`)
 }
 
-/** Every file a site scaffold emits, and the text it holds. Generated files only. */
-export function generatedSiteFiles(framework: FrameworkSpec): Map<string, string> {
+/** Every file a site scaffold generates, and the text it holds. */
+export function generatedSiteFiles(
+  framework: FrameworkSpec,
+  site: SiteTarget,
+): Map<string, string> {
   const files = new Map<string, string>()
-  for (const target of BUILD_TARGETS) files.set(target.file, renderBuildFile(target, framework))
   files.set("backend/framework.ts", renderFrameworkModule(framework))
-  files.set("package.json", renderPackageJson(framework))
+  files.set("package.json", renderPackageJson(framework, site))
   files.set("tsconfig.json", renderTsconfig(framework))
+  for (const [file, text] of targetFiles(site.target, site.name, site.docker)) files.set(file, text)
   return files
 }
 
-export interface MaterializeOptions {
+/** The framework's `nifra.config.ts`, declaring the target `nifra build` emits. */
+export function withTarget(config: string, site: SiteTarget): string {
+  return `${config.replace(/\n*$/, "\n")}\n// The deploy target \`nifra build\` emits; \`nifra target <t>\` switches it.\nexport const target = "${site.target}"\n`
+}
+
+export interface MaterializeOptions extends SiteTarget {
   /** Overwrite an existing destination. Default false, which refuses rather than clobbers. */
   readonly force?: boolean
 }
@@ -88,7 +93,7 @@ export interface MaterializeOptions {
 export async function materializeSite(
   target: string,
   id: string,
-  options: MaterializeOptions = {},
+  options: MaterializeOptions,
 ): Promise<void> {
   const framework = frameworkSpec(id)
   const overlay = overlayDir(framework)
@@ -101,10 +106,14 @@ export async function materializeSite(
 
   for (const dir of ["routes", "backend"]) await mkdir(join(target, dir), { recursive: true })
   for (const file of SHARED_SITE_FILES) await copy(join(SITE_BASE_DIR, file), join(target, file))
-  for (const [file, contents] of generatedSiteFiles(framework)) {
+  for (const [file, contents] of generatedSiteFiles(framework, options)) {
     await emit(join(target, file), contents)
   }
-  for (const file of FRAMEWORK_SITE_FILES) await copy(join(overlay, file), join(target, file))
+  await copy(join(overlay, "README.md"), join(target, "README.md"))
+  await emit(
+    join(target, "nifra.config.ts"),
+    withTarget(await readFile(join(overlay, "nifra.config.ts"), "utf8"), options),
+  )
   const extension = routeExtension(framework)
   for (const base of ROUTE_BASENAMES) {
     const name = join("routes", `${base}.${extension}`)

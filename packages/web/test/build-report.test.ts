@@ -231,6 +231,9 @@ describe("generateServerEntry", () => {
     const src = generateServerEntry({ target: "bun", adapterImport: "../framework.ts" })
     expect(src).toContain("Bun.serve(")
     expect(src).toContain('pathname.startsWith("/assets/")')
+    // The socket peer reaches the app (rateLimit keys on it), and Bun's own framing is trusted.
+    expect(src).toContain("server.requestIP(req)?.address")
+    expect(src).toContain('Symbol.for("nifra.body.trustedFraming")')
     // Frontend-only (no backend) → no inProcessClient/api line.
     expect(src).not.toContain("inProcessClient")
     expect(src).not.toContain("api:")
@@ -249,12 +252,15 @@ describe("generateServerEntry", () => {
     expect(src).toContain('new Set(["/robots.txt","/.well-known/acme-challenge/token"])')
     expect(src).toContain("PUBLIC_FILES.has(pathname)")
     expect(src).toContain("new URL(filePath, STATIC_ROOT)")
+    expect(src).toContain("return app.fetch(req, platform)")
   })
 
-  test("deno → Deno.serve + fetch handler", () => {
+  test("deno → Deno.serve passing the peer address", () => {
     const src = generateServerEntry({ target: "deno", adapterImport: "../framework.ts" })
     expect(src).toContain("Deno.serve(")
-    expect(src).toContain("toFetchHandler(app)")
+    expect(src).toContain("app.fetch(req, { clientIp: info.remoteAddr.hostname })")
+    expect(src).toContain('Symbol.for("nifra.body.trustedFraming")')
+    expect(src).not.toContain("toFetchHandler")
   })
 
   test("vercel → edge config + default fetch export", () => {

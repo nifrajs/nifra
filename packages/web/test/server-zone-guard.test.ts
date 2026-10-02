@@ -202,6 +202,20 @@ describe("unsupportedBuiltins", () => {
     expect(found(graph(fsStatic))).toEqual([["node:fs", [LIB]]])
   })
 
+  test("a built-in every edge runtime provides is not refused there", () => {
+    const als: GraphImport = {
+      path: "node:async_hooks",
+      original: "node:async_hooks",
+      external: true,
+    }
+    expect(found(graph({ ...als, dynamic: true }, { kept: ["node:async_hooks"] }))).toEqual([])
+    expect(found(graph(als))).toEqual([])
+    // A Node server still has it; only `bun:` is refused there.
+    expect(
+      found(graph({ path: "bun:sqlite", original: "bun:sqlite", external: true }), "node"),
+    ).toEqual([["bun:sqlite", [LIB]]])
+  })
+
   test("a built-in the bundler polyfilled is not refused", () => {
     expect(found(graph({ path: "node:path", original: "node:path" }))).toEqual([])
   })

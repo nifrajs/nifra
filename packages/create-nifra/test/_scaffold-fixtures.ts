@@ -39,7 +39,7 @@ export async function materializeAll(): Promise<{
 
   for (const id of FRAMEWORK_IDS) {
     const dir = join(root, `site-${id}`)
-    await materializeSite(dir, id)
+    await materializeSite(dir, id, { target: "bun", docker: false, name: `site-${id}` })
     scaffolds.push({ label: `site-${id}`, dir })
   }
   for (const template of COPIED_TEMPLATES) {

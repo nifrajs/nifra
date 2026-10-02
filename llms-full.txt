@@ -2398,15 +2398,15 @@ shared across adapters, while each page still uses its framework's normal compon
 ### Scaffold any of them
 
 `create-nifra`'s `--framework` flag scaffolds the multi-target SSR site
-with the adapter, routes, build wiring, and deps for your pick. It composes with
-`--deploy`, so one command gives you a framework + a default deploy target.
+with the adapter, routes, and deps for your pick. It composes with `--target`, so
+one command gives you a framework + a deploy target.
 
 ```ts
 # Scaffold a multi-target SSR site in any of the five (react is the default):
 bun create nifra my-app --framework solid      # or react · preact · vue · svelte
 
-# Composes with the deploy preset - pick a framework AND a default deploy target:
-bun create nifra my-app --framework svelte --deploy vercel
+# Composes with --target - pick a framework AND a deploy target:
+bun create nifra my-app --framework svelte --target vercel
 ```
 
 ### The adapters
@@ -5129,24 +5129,29 @@ anywhere. Pick a runtime; the code doesn't change.
 
 ### One command per target
 
-`create-nifra`'s `site` template ships every target's build + server entry
-and config. Pass `--deploy <target>` to make one the default - it points
-`build`/`deploy` at that target and fills in your project name. The
-per-target `build:*`/`deploy:*` scripts stay, so you can switch any time.
+`create-nifra`'s `site` template deploys to one target, chosen with
+`--target` (default `bun`). The app carries no server entry or build
+script: `nifra build` generates the target's entry from `backend/` and
+`routes/`. The target is one line of `nifra.config.ts` (
+`export const target = "vercel"`), so `nifra target <t>` switches
+it and every command reads the same value.
 
 ```ts
-# Scaffold the multi-target site with a chosen default deploy target:
-bun create nifra my-app --deploy vercel     # or: bun | node | deno | cloudflare
-# add --framework to pick the UI too (react default):
-bun create nifra my-app --framework svelte --deploy vercel
+# Scaffold a site for one deploy target (bun is the default):
+bun create nifra my-app --target vercel     # or: bun | node | deno | cloudflare
+# add --framework to pick the UI too (react default), --docker for a bun/node image:
+bun create nifra my-app --framework svelte --target node --docker
 
 cd my-app && bun install
 bun run dev       # local preview
-bun run build     # builds for the chosen target
+bun run build     # nifra build: generates the target's server entry and bundles it
 bun run deploy    # runs that target's deploy CLI (you stay logged-in to the vendor)
 
+# The target lives in nifra.config.ts; switch it with one command:
+bunx nifra target cloudflare
+
 # Or add --ci github to also emit a deploy-on-push GitHub Actions workflow:
-bun create nifra my-app --deploy cloudflare --ci github
+bun create nifra my-app --target cloudflare --ci github
 #   → .github/workflows/deploy.yml (builds on every push/PR, deploys on push to main)
 ```
 
@@ -5157,23 +5162,23 @@ config scaffolded
 
 Bun (flagship)
 
-`dist-bun/`
+`dist/server.js`
 
-`bun run start` (any host)
+`bun run start` (any host), or a Docker image with `--docker`
 
--
+`Dockerfile` + `.dockerignore` with `--docker`
 
 Node
 
-`dist-node/`
+`dist/server.js`
 
-`docker build … && docker run`
+`bun run start` (any host), or a Docker image with `--docker`
 
-`Dockerfile` + `.dockerignore`
+`Dockerfile` + `.dockerignore` with `--docker`
 
 Deno Deploy
 
-`dist-deno/`
+`dist/server.js`
 
 `deployctl deploy`
 
@@ -5181,7 +5186,7 @@ Deno Deploy
 
 Cloudflare Pages
 
-`dist/`
+`dist/_worker.js`
 
 `wrangler pages deploy`
 
@@ -5193,7 +5198,10 @@ Vercel Edge
 
 `vercel deploy --prebuilt`
 
-Build Output API v3
+none (Build Output API v3)
+
+The Bun, Node and Deno entries serve the client bundle from disk next to themselves; on
+Cloudflare and Vercel the platform serves it.
 
 Nifra never runs the deploy or enters your cloud credentials - it scaffolds the config + a
 `deploy` script that shells out to the vendor CLI you've already authed.
@@ -5338,27 +5346,23 @@ export const handler = handle(app) // API Gateway HTTP API (v2) + Function URLs
 
 ### Cloudflare Workers / Pages (the edge)
 
-`buildServer` bundles with edge conditions (`workerd`,
-`edge-light`) into a `_worker.js`; `toFetchHandler(app)` is
-the handler. For Pages, a `_routes.json` serves the client bundle statically.
-SSR verified on real workerd - **this very site runs there**.
+For the `cloudflare` target, `nifra build` bundles the server with edge
+conditions (`workerd`, `edge-light`) into `dist/_worker.js`,
+wrapped in `toFetchHandler(app)`, and writes a `_routes.json` so Pages
+serves the client bundle statically. SSR verified on real workerd - **this very site runs
+there**. A Worker you assemble yourself uses the same adapter:
 
 ```ts
-// _worker.ts - the edge SSR entry
-import { toFetchHandler } from "@nifrajs/core/server"
-import { createWebApp } from "@nifrajs/web"
-import { reactAdapter } from "@nifrajs/web-react"
-import { clientEntry, manifest } from "./server-manifest"  // generated by buildServer
+// worker.ts - any nifra app as a Workers fetch handler
+import { server, toFetchHandler } from "@nifrajs/core/server"
 
-const app = createWebApp({ adapter: reactAdapter, manifest, clientEntry })
-export default toFetchHandler(app)   // a Workers/Pages fetch handler
-
-// build.ts - buildClient (→ /assets) + buildServer (edge conditions → _worker.js)
-import { buildClient, buildServer } from "@nifrajs/web/build"
+const app = server().get("/", () => ({ ok: true }))
+export default toFetchHandler(app)
 ```
 
 Deploy: `wrangler pages deploy dist` (Pages) or `wrangler deploy`
-(Workers). Deno Deploy and Vercel Edge reuse the same build with their conditions.
+(Workers). The `vercel` target emits the same edge bundle as a Build Output API
+function under `.vercel/output`.
 
 ## Nifra - CLI
 

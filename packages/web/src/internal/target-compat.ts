@@ -15,6 +15,25 @@ const UNSUPPORTED: Readonly<Record<ServerBundleTarget, readonly string[]>> = {
 }
 
 /**
+ * The `node:` built-ins every edge runtime nifra deploys to provides: Cloudflare Workers with
+ * `nodejs_compat` (the scaffold's wrangler.toml sets it), Vercel Edge and Deno. Svelte's server renderer
+ * imports `node:async_hooks` for AsyncLocalStorage.
+ */
+export const EDGE_NODE_BUILTINS: ReadonlySet<string> = new Set([
+  "node:assert",
+  "node:async_hooks",
+  "node:buffer",
+  "node:events",
+  "node:util",
+])
+
+/** Whether a server bundle for `target` cannot load the built-in `specifier`. */
+export function unsupportedBuiltin(specifier: string, target: ServerBundleTarget): boolean {
+  if (target === "browser" && EDGE_NODE_BUILTINS.has(specifier)) return false
+  return UNSUPPORTED[target].some((prefix) => specifier.startsWith(prefix))
+}
+
+/**
  * The built-ins a server bundle still loads that its target cannot, each with the modules that import
  * them. A tree-shaken library module that imports `node:fs` is not one: only what the output keeps can
  * fail. Two kinds are kept: an import the emitted code still makes (a dynamic `import()` that survived),
@@ -27,9 +46,8 @@ export function unsupportedBuiltins(
   target: ServerBundleTarget,
   labelOf: (id: string) => string,
 ): ReadonlyMap<string, readonly string[]> {
-  const prefixes = UNSUPPORTED[target]
-  if (prefixes.length === 0) return new Map()
-  const unsupported = (spec: string) => prefixes.some((p) => spec.startsWith(p))
+  if (UNSUPPORTED[target].length === 0) return new Map()
+  const unsupported = (spec: string) => unsupportedBuiltin(spec, target)
   const specOf = (im: GraphImport) => im.original ?? im.path ?? ""
   const chunks = Object.values(graph.chunks)
   const evidence = chunks.every((chunk) => chunk.imports !== undefined)

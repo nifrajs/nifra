@@ -106,6 +106,34 @@ test("--target cloudflare → _worker.js + _routes.json + /assets bundle", async
   expect(result.size.totalGzip).toBeGreaterThan(0)
 }, 60_000)
 
+test("--target vercel → Build Output API v3 (config.json, static/, functions/index.func)", async () => {
+  const outDir = join(projectRoot, ".vercel/output")
+  mkdirSync(join(projectRoot, "public"), { recursive: true })
+  writeFileSync(join(projectRoot, "public", "robots.txt"), "User-agent: *")
+  const result = await buildTarget("vercel", {
+    routesDir,
+    outDir,
+    workDir: join(projectRoot, ".work-vercel"),
+    clientModule: join(projectRoot, "frontend/client-stub.ts"),
+    adapterImport: join(projectRoot, "backend/framework.ts"),
+  })
+  expect(JSON.parse(readFileSync(join(outDir, "config.json"), "utf8"))).toEqual({
+    version: 3,
+    routes: [{ handle: "filesystem" }, { src: "/(.*)", dest: "/index" }],
+  })
+  const fn = join(outDir, "functions/index.func")
+  expect(JSON.parse(readFileSync(join(fn, ".vc-config.json"), "utf8"))).toEqual({
+    runtime: "edge",
+    entrypoint: "index.js",
+  })
+  expect(readFileSync(join(fn, "index.js"), "utf8")).toContain("export")
+  // Static files sit where the filesystem route serves them: the hashed bundle and public/.
+  expect(existsSync(join(outDir, "static", result.client.entry.replace(/^\//, "")))).toBe(true)
+  expect(readFileSync(join(outDir, "static/robots.txt"), "utf8")).toBe("User-agent: *")
+  expect(existsSync(join(outDir, "assets"))).toBe(false)
+  expect(result.run).toContain("vercel deploy --prebuilt")
+}, 60_000)
+
 test("--target static → prerenders opted-in routes to index.html", async () => {
   const outDir = join(projectRoot, "dist-static")
   const manifest = discoverRoutes(routesDir)

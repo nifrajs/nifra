@@ -1277,9 +1277,8 @@ export function generateServerEntry(options: {
   lines.push(
     'import { clientEntry, cssLoading, manifest, styles, routeStyles } from "./server-manifest"',
   )
-  // cloudflare/vercel/deno need the fetch-handler shape; bun/node call app.fetch directly.
-  const usesToFetch = target === "cloudflare" || target === "vercel" || target === "deno"
-  if (usesToFetch) lines.push('import { toFetchHandler } from "@nifrajs/core/server"')
+  // Cloudflare needs the fetch-handler shape; the others call app.fetch directly.
+  if (target === "cloudflare") lines.push('import { toFetchHandler } from "@nifrajs/core/server"')
   if (target === "node") lines.push('import { serve } from "@nifrajs/node"')
   lines.push(
     "",
@@ -1350,11 +1349,15 @@ export function generateServerEntry(options: {
     "}",
     'const TYPES = { js: "text/javascript", css: "text/css", map: "application/json" }',
   )
+  // Bun.serve and Deno.serve delimit the body themselves, so its declared length is the transport
+  // frame - the guarantee core's own listen() and the Deno adapter mark (see markTrustedBodyFraming).
+  const markFramed =
+    '(req as unknown as Record<symbol, unknown>)[Symbol.for("nifra.body.trustedFraming")] = true'
   if (target === "bun") {
     lines.push(
       "const server = Bun.serve({",
       "  port: Number(Bun.env.PORT ?? 3000),",
-      "  async fetch(req) {",
+      "  async fetch(req, server) {",
       "    const { pathname } = new URL(req.url)",
       "    const filePath = staticPath(pathname)",
       "    if (filePath !== undefined) {",
@@ -1363,7 +1366,9 @@ export function generateServerEntry(options: {
       '      const ext = pathname.slice(pathname.lastIndexOf(".") + 1)',
       '      return new Response(file, { headers: { "content-type": TYPES[ext] ?? "application/octet-stream" } })',
       "    }",
-      "    return app.fetch(req)",
+      `    ${markFramed}`,
+      "    // The socket peer, looked up only when something reads it (as core's own listen() does).",
+      "    return app.fetch(req, { get clientIp() { return server.requestIP(req)?.address } })",
       "  },",
       "})",
       // The `${...}` here is literal OUTPUT (a template in the GENERATED file), not a template in this
@@ -1377,7 +1382,7 @@ export function generateServerEntry(options: {
       'import { readFile } from "node:fs/promises"',
       "await serve(",
       "  {",
-      "    async fetch(req) {",
+      "    async fetch(req, platform) {",
       "      const { pathname } = new URL(req.url)",
       "      const filePath = staticPath(pathname)",
       "      if (filePath !== undefined) {",
@@ -1389,7 +1394,7 @@ export function generateServerEntry(options: {
       '          return new Response("not found", { status: 404 })',
       "        }",
       "      }",
-      "      return app.fetch(req)",
+      "      return app.fetch(req, platform)",
       "    },",
       "  },",
       "  { port: Number(process.env.PORT ?? 3000) },",
@@ -1399,9 +1404,8 @@ export function generateServerEntry(options: {
   }
   // deno
   lines.push(
-    "const handler = toFetchHandler(app)",
     "// @ts-ignore - Deno global is present on the Deno runtime this output targets.",
-    'Deno.serve({ port: Number(Deno.env.get("PORT") ?? "3000") }, async (req) => {',
+    'Deno.serve({ port: Number(Deno.env.get("PORT") ?? "3000") }, async (req, info) => {',
     "  const { pathname } = new URL(req.url)",
     "  const filePath = staticPath(pathname)",
     "  if (filePath !== undefined) {",
@@ -1414,7 +1418,8 @@ export function generateServerEntry(options: {
     '      return new Response("not found", { status: 404 })',
     "    }",
     "  }",
-    "  return handler.fetch(req)",
+    `  ${markFramed}`,
+    "  return app.fetch(req, { clientIp: info.remoteAddr.hostname })",
     "})",
   )
   return `${lines.join("\n")}\n`
@@ -1519,14 +1524,12 @@ export interface BuildTargetResult {
  *   - `static`: prerenders opted-in routes (`prerenderRoutes`) to `<outDir>/<path>/index.html` (+
  *     `_data.json`); needs `prerenderApp`. No server.
  *   - `cloudflare`: a `_worker.js` (edge bundle) + a `_routes.json` excluding /assets/* from the worker.
- *   - `vercel`: a `.vercel/output`-shaped function isn't emitted here - `vercel` emits the bundled edge
- *     entry as `<outDir>/index.js` (the CLI's docs point at `vercel`'s Build Output wrapper). [see note]
+ *   - `vercel`: Vercel's Build Output API v3 - `config.json`, the client bundle and public files under
+ *     `static/`, and the edge function at `functions/index.func/index.js`; `vercel deploy --prebuilt`
+ *     uploads it as it is when `outDir` is `.vercel/output`.
  *   - `deno`/`node`/`bun`: the self-hosting server bundle (`server.js`) next to the assets.
  * The server entry is GENERATED (`generateServerEntry`) and bundled (`buildServer`); the app supplies
  * only adapter/backend/routes. Returns the manifest + a size report. Throws on any build failure.
- *
- * Note: the heavier platform wrappers (`.vercel/output` v3 layout, wrangler ISR `find_additional_modules`)
- * remain app-owned scripts; this command targets the common single-bundle deploys. See the CLI docs.
  */
 /** The default (Bun) strategy - `buildClient`/`buildServer` from this module. */
 export const bunBundler: Bundler = {
@@ -1596,11 +1599,12 @@ export async function buildTargetWith(
   const { rmSync } = await import("node:fs")
   rmSync(outDir, { recursive: true, force: true })
   rmSync(workDir, { recursive: true, force: true })
-  const assetsDir = `${outDir}/assets`
+  const staticRoot = targetPlan.staticDir === "" ? outDir : `${outDir}/${targetPlan.staticDir}`
+  const assetsDir = `${staticRoot}/assets`
   mkdirSync(assetsDir, { recursive: true })
   mkdirSync(workDir, { recursive: true })
 
-  // (1) Client bundle → <outDir>/assets/* (every target ships the same hashed client bundle).
+  // (1) Client bundle → <static root>/assets/* (every target ships the same hashed client bundle).
   let client = await bundler.buildClient({
     routesDir,
     outDir: assetsDir,
@@ -1639,7 +1643,9 @@ export async function buildTargetWith(
     })
   }
   const publicFiles =
-    publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
+    publicDir !== undefined && existsSync(publicDir)
+      ? await copyPublicDir(publicDir, staticRoot)
+      : []
   if (publicFiles.length > 0) {
     client = { ...client, publicFiles }
   }
@@ -1748,7 +1754,18 @@ export async function buildTargetWith(
       )
     }
   } else if (targetPlan.target === "vercel") {
+    const fn = dirname(`${outDir}/${targetPlan.outputFile}`)
+    mkdirSync(fn, { recursive: true })
     cpSync(worker, `${outDir}/${targetPlan.outputFile}`)
+    writeFileSync(
+      `${fn}/.vc-config.json`,
+      `${JSON.stringify({ runtime: "edge", entrypoint: "index.js" }, null, 2)}\n`,
+    )
+    // Files the build wrote are served first; every other path is the SSR function's.
+    writeFileSync(
+      `${outDir}/config.json`,
+      `${JSON.stringify({ version: 3, routes: [{ handle: "filesystem" }, { src: "/(.*)", dest: "/index" }] }, null, 2)}\n`,
+    )
   } else {
     cpSync(worker, `${outDir}/${targetPlan.outputFile}`)
   }

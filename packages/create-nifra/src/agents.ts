@@ -247,14 +247,12 @@ const COMMANDS: Readonly<Record<TemplateName, string>> = {
 - \`bun test\` - drive \`app.fetch\` directly; no server required
 - \`nifra check\` - typecheck + typed-client lint (run before you call work done)`,
   site: `- \`bun install\` - install dependencies
-- \`nifra dev\` - true-HMR dev server
-- \`nifra build\` - complete Bun deploy (server + content-hashed client assets)
-- \`nifra start\` - run the generated Bun server - pairs with \`nifra build\`
-- \`nifra check\` - typecheck + typed-client lint (run before you call work done)
-
-  For a local production run use \`nifra build && nifra start\` (or \`bun run build:bun && bun run start\`). NOTE:
-  the bare \`bun run build\` script targets **Cloudflare Pages for DEPLOY** (emits \`dist/\`, a different layout)
-  - it does NOT pair with \`nifra start\`/\`bun run start\` (which serve \`dist-bun/\`). Don't mix the two.`,
+- \`bun run dev\` (\`nifra dev\`) - true-HMR dev server
+- \`bun run build\` (\`nifra build\`) - the deploy directory for the app's \`target\` in \`nifra.config.ts\`; it
+  generates the server entry, so the app has no per-runtime entry or build script
+- \`bun run start\` - run the built app locally (on targets with a local runner)
+- \`nifra target <t>\` - switch where the app deploys: bun | node | deno | cloudflare | vercel
+- \`nifra check\` - typecheck + typed-client lint (run before you call work done)`,
   isr: `- \`bun install\` - install dependencies
 - \`nifra dev\` - true-HMR dev server
 - \`nifra build\` - complete Bun deploy (server + content-hashed client assets)

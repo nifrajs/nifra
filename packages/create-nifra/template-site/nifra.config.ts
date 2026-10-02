@@ -1,5 +1,5 @@
 // The nifra CLI's config - read by `nifra dev|build|start`. Separate from `backend/framework.ts`
-// (which the edge/server entries import, so it must stay edge-bundlable): THIS file is imported only
+// (which the generated server entry imports, so it must stay edge-bundlable): THIS file is imported only
 // by the CLI (which runs on Bun), so it's the place for CLI-only build/dev tooling. React JSX is Bun-native,
 // so the default dev loop needs no Vite plugin.
 

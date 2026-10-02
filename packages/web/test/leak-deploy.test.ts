@@ -91,9 +91,12 @@ describe("deploy targets publish no backend source", () => {
       const app = fixture()
       const outDir = join(app, "dist")
       await build(app, target)
-      const worker = planBuildTarget(target, outDir).outputFile
+      const plan = planBuildTarget(target, outDir)
+      const worker = plan.outputFile
       const published = filesUnder(outDir).filter((file) => relative(outDir, file) !== worker)
-      expect(published.map((file) => relative(outDir, file))).toContain("robots.txt")
+      expect(published.map((file) => relative(outDir, file))).toContain(
+        join(plan.staticDir, "robots.txt"),
+      )
       for (const file of published) {
         expect({
           file: relative(outDir, file),

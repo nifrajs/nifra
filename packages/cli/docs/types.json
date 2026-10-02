@@ -17669,7 +17669,7 @@
     "name": "ServerBuildTargetPlan",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ServerBuildTargetPlan {\n    readonly target: Exclude<BuildTarget, \"static\">;\n    readonly kind: \"server\";\n    readonly serverTarget: ServerBuildTarget;\n    /** The worker's final filename inside the assembled deploy directory. */\n    readonly outputFile: \"_worker.js\" | \"index.js\" | \"server.js\";\n    readonly run: string;\n}"
+    "signature": "export interface ServerBuildTargetPlan {\n    readonly target: Exclude<BuildTarget, \"static\">;\n    readonly kind: \"server\";\n    readonly serverTarget: ServerBuildTarget;\n    /** The worker's final path inside the assembled deploy directory. */\n    readonly outputFile: \"_worker.js\" | \"functions/index.func/index.js\" | \"server.js\";\n    /** Where the host serves static files from, relative to the deploy directory (`\"\"` = its root). */\n    readonly staticDir: \"\" | \"static\";\n    readonly run: string;\n}"
   },
   {
     "name": "ServerEntryOption",
@@ -18817,7 +18817,7 @@
     "name": "StaticBuildTargetPlan",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface StaticBuildTargetPlan {\n    readonly target: \"static\";\n    readonly kind: \"static\";\n    readonly serverTarget: undefined;\n    readonly outputFile: undefined;\n    readonly run: string;\n}"
+    "signature": "export interface StaticBuildTargetPlan {\n    readonly target: \"static\";\n    readonly kind: \"static\";\n    readonly serverTarget: undefined;\n    readonly outputFile: undefined;\n    readonly staticDir: \"\";\n    readonly run: string;\n}"
   },
   {
     "name": "StaticCollection",

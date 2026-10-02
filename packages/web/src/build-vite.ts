@@ -44,6 +44,7 @@ import {
   collectDevelopmentParityInput,
 } from "./internal/parity.ts"
 import { vitePublicEnvPrefix } from "./internal/server-boundary.ts"
+import { unsupportedBuiltin } from "./internal/target-compat.ts"
 import { importVite, isViteUnresolved } from "./internal/vite-import.ts"
 import { scopedName } from "./plugins/css-modules.ts"
 import { reproduciblePath } from "./plugins/kit.ts"
@@ -474,12 +475,13 @@ function edgeBuiltinGuard(): EdgeGuardPlugin {
       for (const output of Object.values(bundle)) {
         if (output.type !== "chunk") continue
         for (const specifier of [...(output.imports ?? []), ...(output.dynamicImports ?? [])]) {
-          if (specifier.startsWith("node:")) builtins.add(specifier)
+          if (unsupportedBuiltin(specifier, "browser")) builtins.add(specifier)
         }
         for (const id of output.moduleIds ?? []) {
           const info = this.getModuleInfo(id)
           const imports = [...(info?.importedIds ?? []), ...(info?.dynamicallyImportedIds ?? [])]
-          if (imports.some((specifier) => specifier.startsWith("node:"))) importers.add(id)
+          if (imports.some((specifier) => unsupportedBuiltin(specifier, "browser")))
+            importers.add(id)
         }
       }
       if (builtins.size === 0) return

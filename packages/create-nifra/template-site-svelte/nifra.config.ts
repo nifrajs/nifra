@@ -1,7 +1,7 @@
 // The nifra CLI's config - read by `nifra dev|build|start`. It's imported ONLY by the CLI (which runs on
 // Bun), so it can eagerly import the Vite plugin + the Svelte compiler - keeping them OUT of the edge
-// worker bundle that `backend/framework.ts` (the render-adapter source the entries import) must stay
-// free of.
+// worker bundle that `backend/framework.ts` (the render-adapter source the generated server entry
+// imports) must stay free of.
 import { svelte } from "@sveltejs/vite-plugin-svelte"
 import { svelteBunPlugin } from "@nifrajs/web-svelte/plugin"
 

@@ -45,7 +45,12 @@ test("every site scaffold matches its committed snapshot", async () => {
 
     // The full tree, so a file the composer stops writing shows up here rather than in a user's app.
     sections.push(`===== site-${id} :: files\n${(await treeOf(site.dir)).join("\n")}`)
-    for (const file of [...generatedSiteFiles(FRAMEWORK_SPECS[id] as never).keys()].sort()) {
+    const files = generatedSiteFiles(FRAMEWORK_SPECS[id] as never, {
+      target: "bun",
+      docker: false,
+      name: `site-${id}`,
+    })
+    for (const file of [...files.keys(), "nifra.config.ts"].sort()) {
       sections.push(`===== site-${id} :: ${file}\n${await readFile(join(site.dir, file), "utf8")}`)
     }
   }

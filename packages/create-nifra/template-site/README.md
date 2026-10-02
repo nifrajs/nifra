@@ -7,7 +7,6 @@ is Web-standard, so only the server entry + build target differ per platform.
 ```sh
 bun install
 bun run dev        # nifra dev → true-HMR dev server (Bun + nifra SSR) at http://localhost:3000
-bun run preview    # wrangler pages dev dist → preview the built Cloudflare bundle (run `bun run build` first)
 ```
 
 The backend starter includes response security headers, explicit-origin CORS, a 30-second request
@@ -21,20 +20,22 @@ counter), add files under `routes/` (`about.tsx` → `/about`, `[id].tsx` → `:
 for sections; a page's loader/action goes in its `x.backend.ts`), and put your data behind
 `backend/app.ts`.
 
-## Deploy - pick a target
+## Deploy
 
-| target | build | deploy |
+The app deploys to the `target` in `nifra.config.ts` (chosen with `bun create nifra --target`, switched
+with `nifra target <t>`). `bun run build` runs `nifra build`, which generates that target's server
+entry from `backend/` and `routes/`, so the app carries no per-runtime entry or build script.
+
+| target | `bun run build` emits | then |
 | --- | --- | --- |
-| **Bun** (flagship) | `bun run build:bun` | `bun run start` (`bun dist-bun/server-bun.js`) - any host |
-| **Node** | `bun run build:node` | `docker build -t app . && docker run -p 3000:3000 app` (or `bun run start:node`) |
-| **Deno Deploy** | `bun run build:deno` | `deployctl deploy --prod --entrypoint=dist-deno/server-deno.js` (or `deno task start`) |
-| **Cloudflare Pages** | `bun run build` | `bun run deploy:cf` (`wrangler pages deploy dist`) |
-| **Vercel Edge** | `bun run build:vercel` | `bun run deploy:vercel` (`vercel deploy --prebuilt`) |
+| **bun** (default) | `dist/server.js` + assets | `bun dist/server.js` on any host (`--docker` adds a Dockerfile) |
+| **node** | `dist/server.js` + assets | `node dist/server.js` (`--docker` adds a Dockerfile) |
+| **deno** | `dist/server.js` + assets | `deployctl deploy --prod --entrypoint=dist/server.js` |
+| **cloudflare** | `dist/` (`_worker.js`, `_routes.json`) | `wrangler pages deploy dist` |
+| **vercel** | `.vercel/output/` (Build Output API) | `vercel deploy --prebuilt` |
 
-The routes, `backend/`, and the client bundle are shared; each `build*` script swaps
-`buildServer`'s target/conditions and the server entry. nifra never enters your cloud credentials - the
-configs (`Dockerfile`, `deno.json`, `wrangler.toml`, Vercel Build Output API) are scaffolded; you run
-the vendor CLI.
+nifra never enters your cloud credentials: it writes the target's config (`wrangler.toml`,
+`deno.json`, a `Dockerfile`) and you run the vendor CLI.
 
 ## Structure
 
@@ -42,11 +43,9 @@ the vendor CLI.
 routes/        index.tsx (landing), _layout.tsx (chrome), _404.tsx
                index.backend.ts - the landing page's loader/action (server only)
 backend/       app.ts - your contract (loaders/actions call it in-process)
-               framework.ts - the render adapter (imported by the server entries - kept edge-bundlable)
-nifra.config.ts the nifra CLI's dev/build config (adapter + clientModule) - read by `nifra dev`
-server-bun.ts  Bun entry (Bun.serve)         build-bun.ts    → dist-bun/
-_worker.ts     Cloudflare Pages entry        build.ts        → dist/
-server-node.ts Node entry (@nifrajs/node)       build-node.ts   → dist-node/   (Dockerfile)
-server-deno.ts Deno entry (@nifrajs/deno)       build-deno.ts   → dist-deno/    (deno.json)
-server-vercel.ts Vercel Edge function        build-vercel.ts → .vercel/output/
+               framework.ts - the render adapter (imported by the server entry `nifra build` generates - kept edge-bundlable)
+frontend/      browser-only code (components, hooks) - created when you need it
+shared/        code both sides import (types, formatting, validation) - may import only shared code
+nifra.config.ts the nifra CLI's dev/build config (adapter + clientModule) - read by `nifra dev` and `nifra build`,
+               including `target`, where `nifra build` deploys
 ```

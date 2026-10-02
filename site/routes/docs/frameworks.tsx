@@ -64,8 +64,8 @@ const q = useQuery(["todos"], loadTodos)    // q.data, q.isFetching, q.refetch()
 const SCAFFOLD = `# Scaffold a multi-target SSR site in any of the five (react is the default):
 bun create nifra my-app --framework solid      # or react · preact · vue · svelte
 
-# Composes with the deploy preset - pick a framework AND a default deploy target:
-bun create nifra my-app --framework svelte --deploy vercel`
+# Composes with --target - pick a framework AND a deploy target:
+bun create nifra my-app --framework svelte --target vercel`
 
 const VUE_SFC = `<!-- routes/index.vue - a Nifra route authored as a Vue Single-File Component -->
 <script lang="ts">
@@ -98,8 +98,8 @@ export default function Frameworks() {
       <h2>Scaffold any of them</h2>
       <p>
         <code>create-nifra</code>'s <code>--framework</code> flag scaffolds the multi-target SSR site
-        with the adapter, routes, build wiring, and deps for your pick. It composes with{" "}
-        <code>--deploy</code>, so one command gives you a framework + a default deploy target.
+        with the adapter, routes, and deps for your pick. It composes with <code>--target</code>, so
+        one command gives you a framework + a deploy target.
       </p>
       <CodeBlock code={SCAFFOLD} />
 

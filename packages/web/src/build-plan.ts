@@ -78,6 +78,7 @@ export interface StaticBuildTargetPlan {
   readonly kind: "static"
   readonly serverTarget: undefined
   readonly outputFile: undefined
+  readonly staticDir: ""
   readonly run: string
 }
 
@@ -85,8 +86,10 @@ export interface ServerBuildTargetPlan {
   readonly target: Exclude<BuildTarget, "static">
   readonly kind: "server"
   readonly serverTarget: ServerBuildTarget
-  /** The worker's final filename inside the assembled deploy directory. */
-  readonly outputFile: "_worker.js" | "index.js" | "server.js"
+  /** The worker's final path inside the assembled deploy directory. */
+  readonly outputFile: "_worker.js" | "functions/index.func/index.js" | "server.js"
+  /** Where the host serves static files from, relative to the deploy directory (`""` = its root). */
+  readonly staticDir: "" | "static"
   readonly run: string
 }
 
@@ -118,6 +121,7 @@ export function planBuildTarget(target: BuildTarget, outDir: string): BuildTarge
       kind: "static",
       serverTarget: undefined,
       outputFile: undefined,
+      staticDir: "",
       run: `static site → ${outDir} (serve the directory with any static host)`,
     }
   }
@@ -127,6 +131,7 @@ export function planBuildTarget(target: BuildTarget, outDir: string): BuildTarge
       kind: "server",
       serverTarget: "browser",
       outputFile: "_worker.js",
+      staticDir: "",
       run: `Cloudflare Pages → ${outDir} (deploy: wrangler pages deploy ${finalPathSegment(outDir)})`,
     }
   }
@@ -135,8 +140,10 @@ export function planBuildTarget(target: BuildTarget, outDir: string): BuildTarge
       target,
       kind: "server",
       serverTarget: "browser",
-      outputFile: "index.js",
-      run: `Vercel edge function → ${outDir}/index.js (wrap with your vercel.json or Build Output API)`,
+      // Vercel's Build Output API: `vercel deploy --prebuilt` uploads this tree as it is.
+      outputFile: "functions/index.func/index.js",
+      staticDir: "static",
+      run: `Vercel (Build Output API) → ${outDir} (deploy: vercel deploy --prebuilt)`,
     }
   }
   return {
@@ -144,6 +151,7 @@ export function planBuildTarget(target: BuildTarget, outDir: string): BuildTarge
     kind: "server",
     serverTarget: target === "node" ? "node" : target === "bun" ? "bun" : "browser",
     outputFile: "server.js",
+    staticDir: "",
     run: `${target} server → ${outDir} (run: ${target === "node" ? "node" : target} ${finalPathSegment(outDir)}/server.js)`,
   }
 }

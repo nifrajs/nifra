@@ -1,17 +1,8 @@
 ===== site-react :: files
-.dockerignore
-Dockerfile
 README.md
-_worker.ts
 backend/app.ts
 backend/counter.ts
 backend/framework.ts
-build-bun.ts
-build-deno.ts
-build-node.ts
-build-vercel.ts
-build.ts
-deno.json
 gitignore
 nifra.assurance.ts
 nifra.config.ts
@@ -20,181 +11,26 @@ routes/_404.tsx
 routes/_layout.tsx
 routes/index.backend.ts
 routes/index.tsx
-server-bun.ts
-server-deno.ts
-server-node.ts
-server-vercel.ts
 tsconfig.json
-wrangler.toml
 ===== site-react :: backend/framework.ts
 // The frontend adapter for this app. `create-nifra --framework <react|preact|vue|solid|svelte>` swaps
-// this one line (and the routes + build config); every server entry imports the adapter from here, so
-// they stay framework-agnostic.
+// this one line (and the routes + build config); the server entry `nifra build` generates imports the
+// adapter from here, so it stays framework-agnostic.
 import { reactAdapter } from "@nifrajs/web-react"
 
 export const adapter = reactAdapter
 
-===== site-react :: build-bun.ts
-// Build for Bun (nifra's flagship runtime) → dist-bun/ (server-bun.js + client assets).
-// `bun run build:bun`. Run: `bun dist-bun/server-bun.js`.
-import { cpSync, mkdirSync, rmSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
+===== site-react :: nifra.config.ts
+// The nifra CLI's config - read by `nifra dev|build|start`. Separate from `backend/framework.ts`
+// (which the generated server entry imports, so it must stay edge-bundlable): THIS file is imported only
+// by the CLI (which runs on Bun), so it's the place for CLI-only build/dev tooling. React JSX is Bun-native,
+// so the default dev loop needs no Vite plugin.
 
-const dir = import.meta.dir
-const dist = `${dir}/dist-bun`
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(`${dist}/assets`, { recursive: true })
+export { adapter } from "./backend/framework"
+export const clientModule = "@nifrajs/web-react/client"
 
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${dist}/assets`,
-  clientModule: "@nifrajs/web-react/client",
-  conditions: ["bun", "browser"],
-  define: { "process.env.NODE_ENV": '"production"' },
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/server-bun.ts`,
-  outDir: `${dir}/.build-bun`,
-  target: "bun",
-  clientEntry: client.entry,
-})
-cpSync(worker, `${dist}/server-bun.js`)
-rmSync(`${dir}/.build-bun`, { recursive: true, force: true })
-console.log("Bun output → dist-bun (run: bun dist-bun/server-bun.js)")
-
-===== site-react :: build-deno.ts
-// Build for Deno → dist-deno/ (server-deno.js + client assets). `bun run build:deno`.
-import { cpSync, mkdirSync, rmSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
-
-const dir = import.meta.dir
-const dist = `${dir}/dist-deno`
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(`${dist}/assets`, { recursive: true })
-
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${dist}/assets`,
-  clientModule: "@nifrajs/web-react/client",
-  conditions: ["bun", "browser"],
-  define: { "process.env.NODE_ENV": '"production"' },
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/server-deno.ts`,
-  outDir: `${dir}/.build-deno`,
-  clientEntry: client.entry,
-})
-cpSync(worker, `${dist}/server-deno.js`)
-rmSync(`${dir}/.build-deno`, { recursive: true, force: true })
-console.log("Deno output → dist-deno (run: deno run -A dist-deno/server-deno.js)")
-
-===== site-react :: build-node.ts
-// Build for Node → dist-node/ (server-node.js + client assets). `bun run build:node`.
-import { cpSync, mkdirSync, rmSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
-
-const dir = import.meta.dir
-const dist = `${dir}/dist-node`
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(`${dist}/assets`, { recursive: true })
-
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${dist}/assets`,
-  clientModule: "@nifrajs/web-react/client",
-  conditions: ["bun", "browser"],
-  define: { "process.env.NODE_ENV": '"production"' },
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/server-node.ts`,
-  outDir: `${dir}/.build-node`,
-  target: "node",
-  clientEntry: client.entry,
-})
-cpSync(worker, `${dist}/server-node.js`)
-rmSync(`${dir}/.build-node`, { recursive: true, force: true })
-console.log("Node output → dist-node (run: node dist-node/server-node.js)")
-
-===== site-react :: build-vercel.ts
-// Build for Vercel, emitting Vercel's Build Output API v3 at .vercel/output/ so it deploys with no
-// framework preset: `vercel deploy --prebuilt`. Layout:
-//   .vercel/output/config.json                   - serve static files, else SSR via the function
-//   .vercel/output/static/assets/<client bundle>  - Vercel's CDN serves these directly
-//   .vercel/output/functions/index.func/index.js  - the Edge SSR function (+ .vc-config.json)
-import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
-
-const dir = import.meta.dir
-const out = `${dir}/.vercel/output`
-const fn = `${out}/functions/index.func`
-rmSync(`${dir}/.vercel`, { recursive: true, force: true })
-mkdirSync(`${out}/static/assets`, { recursive: true })
-mkdirSync(fn, { recursive: true })
-
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${out}/static/assets`,
-  clientModule: "@nifrajs/web-react/client",
-  conditions: ["bun", "browser"],
-  define: { "process.env.NODE_ENV": '"production"' },
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/server-vercel.ts`,
-  outDir: `${dir}/.build-vercel`,
-  clientEntry: client.entry,
-})
-cpSync(worker, `${fn}/index.js`)
-rmSync(`${dir}/.build-vercel`, { recursive: true, force: true })
-
-// Build Output API v3: serve real files first (`handle: filesystem` → /assets/*), then SSR the rest.
-writeFileSync(
-  `${fn}/.vc-config.json`,
-  `${JSON.stringify({ runtime: "edge", entrypoint: "index.js" }, null, 2)}\n`,
-)
-writeFileSync(
-  `${out}/config.json`,
-  `${JSON.stringify(
-    { version: 3, routes: [{ handle: "filesystem" }, { src: "/(.*)", dest: "/index" }] },
-    null,
-    2,
-  )}\n`,
-)
-console.log("Vercel output → .vercel/output (deploy: vercel deploy --prebuilt)")
-
-===== site-react :: build.ts
-// Build for Cloudflare Pages → dist/ (_worker.js + _routes.json + client assets). `bun run build`.
-import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
-
-const dir = import.meta.dir
-const dist = `${dir}/dist`
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(`${dist}/assets`, { recursive: true })
-
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${dist}/assets`,
-  clientModule: "@nifrajs/web-react/client",
-  conditions: ["bun", "browser"],
-  define: { "process.env.NODE_ENV": '"production"' },
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/_worker.ts`,
-  outDir: `${dir}/.build`,
-  clientEntry: client.entry,
-})
-cpSync(worker, `${dist}/_worker.js`)
-rmSync(`${dir}/.build`, { recursive: true, force: true })
-writeFileSync(
-  `${dist}/_routes.json`,
-  `${JSON.stringify({ version: 1, include: ["/*"], exclude: ["/assets/*"] }, null, 2)}\n`,
-)
-console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dist)")
+// The deploy target `nifra build` emits; `nifra target <t>` switches it.
+export const target = "bun"
 
 ===== site-react :: package.json
 {
@@ -204,16 +40,8 @@ console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dis
   "private": true,
   "scripts": {
     "dev": "nifra dev",
-    "preview": "bunx wrangler pages dev dist",
-    "build": "bun run build.ts",
-    "build:bun": "bun run build-bun.ts",
-    "build:node": "bun run build-node.ts",
-    "build:deno": "bun run build-deno.ts",
-    "build:vercel": "bun run build-vercel.ts",
-    "start": "bun dist-bun/server-bun.js",
-    "start:node": "node dist-node/server-node.js",
-    "deploy:cf": "wrangler pages deploy dist",
-    "deploy:vercel": "vercel deploy --prebuilt",
+    "build": "nifra build",
+    "start": "bun dist/server.js",
     "check": "nifra check && nifra assure"
   },
   "dependencies": {
@@ -221,8 +49,6 @@ console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dis
     "@nifrajs/core": "^3.5.0",
     "@nifrajs/middleware": "^3.5.0",
     "@nifrajs/schema": "^3.5.0",
-    "@nifrajs/deno": "^3.5.0",
-    "@nifrajs/node": "^3.5.0",
     "@nifrajs/web": "^3.5.0",
     "@nifrajs/web-react": "^3.5.0",
     "react": "^19.0.0",
@@ -272,41 +98,18 @@ console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dis
   "exclude": [
     "node_modules",
     "dist",
-    "dist-bun",
-    "dist-node",
-    "dist-deno",
-    "dist-vercel",
     ".nifra",
+    ".nifra-build",
     ".vercel",
-    ".wrangler",
-    "server-manifest.ts",
-    "server-bun.ts",
-    "server-node.ts",
-    "server-deno.ts",
-    "server-vercel.ts",
-    "_worker.ts",
-    "build.ts",
-    "build-bun.ts",
-    "build-node.ts",
-    "build-deno.ts",
-    "build-vercel.ts"
+    ".wrangler"
   ]
 }
 
 ===== site-preact :: files
-.dockerignore
-Dockerfile
 README.md
-_worker.ts
 backend/app.ts
 backend/counter.ts
 backend/framework.ts
-build-bun.ts
-build-deno.ts
-build-node.ts
-build-vercel.ts
-build.ts
-deno.json
 gitignore
 nifra.assurance.ts
 nifra.config.ts
@@ -315,181 +118,26 @@ routes/_404.tsx
 routes/_layout.tsx
 routes/index.backend.ts
 routes/index.tsx
-server-bun.ts
-server-deno.ts
-server-node.ts
-server-vercel.ts
 tsconfig.json
-wrangler.toml
 ===== site-preact :: backend/framework.ts
 // The frontend adapter for this app. `create-nifra --framework <react|preact|vue|solid|svelte>` swaps
-// this one line (and the routes + build config); every server entry imports the adapter from here, so
-// they stay framework-agnostic.
+// this one line (and the routes + build config); the server entry `nifra build` generates imports the
+// adapter from here, so it stays framework-agnostic.
 import { preactAdapter } from "@nifrajs/web-preact"
 
 export const adapter = preactAdapter
 
-===== site-preact :: build-bun.ts
-// Build for Bun (nifra's flagship runtime) → dist-bun/ (server-bun.js + client assets).
-// `bun run build:bun`. Run: `bun dist-bun/server-bun.js`.
-import { cpSync, mkdirSync, rmSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
+===== site-preact :: nifra.config.ts
+// The nifra CLI's config - read by `nifra dev|build|start`. Separate from `backend/framework.ts`
+// (which the generated server entry imports, so it must stay edge-bundlable): THIS file is imported only
+// by the CLI (which runs on Bun), so it's the place for CLI-only build/dev tooling. Preact JSX is Bun-native,
+// so the default dev loop needs no Vite plugin.
 
-const dir = import.meta.dir
-const dist = `${dir}/dist-bun`
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(`${dist}/assets`, { recursive: true })
+export { adapter } from "./backend/framework"
+export const clientModule = "@nifrajs/web-preact/client"
 
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${dist}/assets`,
-  clientModule: "@nifrajs/web-preact/client",
-  conditions: ["bun", "browser"],
-  define: { "process.env.NODE_ENV": '"production"' },
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/server-bun.ts`,
-  outDir: `${dir}/.build-bun`,
-  target: "bun",
-  clientEntry: client.entry,
-})
-cpSync(worker, `${dist}/server-bun.js`)
-rmSync(`${dir}/.build-bun`, { recursive: true, force: true })
-console.log("Bun output → dist-bun (run: bun dist-bun/server-bun.js)")
-
-===== site-preact :: build-deno.ts
-// Build for Deno → dist-deno/ (server-deno.js + client assets). `bun run build:deno`.
-import { cpSync, mkdirSync, rmSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
-
-const dir = import.meta.dir
-const dist = `${dir}/dist-deno`
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(`${dist}/assets`, { recursive: true })
-
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${dist}/assets`,
-  clientModule: "@nifrajs/web-preact/client",
-  conditions: ["bun", "browser"],
-  define: { "process.env.NODE_ENV": '"production"' },
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/server-deno.ts`,
-  outDir: `${dir}/.build-deno`,
-  clientEntry: client.entry,
-})
-cpSync(worker, `${dist}/server-deno.js`)
-rmSync(`${dir}/.build-deno`, { recursive: true, force: true })
-console.log("Deno output → dist-deno (run: deno run -A dist-deno/server-deno.js)")
-
-===== site-preact :: build-node.ts
-// Build for Node → dist-node/ (server-node.js + client assets). `bun run build:node`.
-import { cpSync, mkdirSync, rmSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
-
-const dir = import.meta.dir
-const dist = `${dir}/dist-node`
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(`${dist}/assets`, { recursive: true })
-
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${dist}/assets`,
-  clientModule: "@nifrajs/web-preact/client",
-  conditions: ["bun", "browser"],
-  define: { "process.env.NODE_ENV": '"production"' },
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/server-node.ts`,
-  outDir: `${dir}/.build-node`,
-  target: "node",
-  clientEntry: client.entry,
-})
-cpSync(worker, `${dist}/server-node.js`)
-rmSync(`${dir}/.build-node`, { recursive: true, force: true })
-console.log("Node output → dist-node (run: node dist-node/server-node.js)")
-
-===== site-preact :: build-vercel.ts
-// Build for Vercel, emitting Vercel's Build Output API v3 at .vercel/output/ so it deploys with no
-// framework preset: `vercel deploy --prebuilt`. Layout:
-//   .vercel/output/config.json                   - serve static files, else SSR via the function
-//   .vercel/output/static/assets/<client bundle>  - Vercel's CDN serves these directly
-//   .vercel/output/functions/index.func/index.js  - the Edge SSR function (+ .vc-config.json)
-import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
-
-const dir = import.meta.dir
-const out = `${dir}/.vercel/output`
-const fn = `${out}/functions/index.func`
-rmSync(`${dir}/.vercel`, { recursive: true, force: true })
-mkdirSync(`${out}/static/assets`, { recursive: true })
-mkdirSync(fn, { recursive: true })
-
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${out}/static/assets`,
-  clientModule: "@nifrajs/web-preact/client",
-  conditions: ["bun", "browser"],
-  define: { "process.env.NODE_ENV": '"production"' },
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/server-vercel.ts`,
-  outDir: `${dir}/.build-vercel`,
-  clientEntry: client.entry,
-})
-cpSync(worker, `${fn}/index.js`)
-rmSync(`${dir}/.build-vercel`, { recursive: true, force: true })
-
-// Build Output API v3: serve real files first (`handle: filesystem` → /assets/*), then SSR the rest.
-writeFileSync(
-  `${fn}/.vc-config.json`,
-  `${JSON.stringify({ runtime: "edge", entrypoint: "index.js" }, null, 2)}\n`,
-)
-writeFileSync(
-  `${out}/config.json`,
-  `${JSON.stringify(
-    { version: 3, routes: [{ handle: "filesystem" }, { src: "/(.*)", dest: "/index" }] },
-    null,
-    2,
-  )}\n`,
-)
-console.log("Vercel output → .vercel/output (deploy: vercel deploy --prebuilt)")
-
-===== site-preact :: build.ts
-// Build for Cloudflare Pages → dist/ (_worker.js + _routes.json + client assets). `bun run build`.
-import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
-
-const dir = import.meta.dir
-const dist = `${dir}/dist`
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(`${dist}/assets`, { recursive: true })
-
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${dist}/assets`,
-  clientModule: "@nifrajs/web-preact/client",
-  conditions: ["bun", "browser"],
-  define: { "process.env.NODE_ENV": '"production"' },
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/_worker.ts`,
-  outDir: `${dir}/.build`,
-  clientEntry: client.entry,
-})
-cpSync(worker, `${dist}/_worker.js`)
-rmSync(`${dir}/.build`, { recursive: true, force: true })
-writeFileSync(
-  `${dist}/_routes.json`,
-  `${JSON.stringify({ version: 1, include: ["/*"], exclude: ["/assets/*"] }, null, 2)}\n`,
-)
-console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dist)")
+// The deploy target `nifra build` emits; `nifra target <t>` switches it.
+export const target = "bun"
 
 ===== site-preact :: package.json
 {
@@ -499,16 +147,8 @@ console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dis
   "private": true,
   "scripts": {
     "dev": "nifra dev",
-    "preview": "bunx wrangler pages dev dist",
-    "build": "bun run build.ts",
-    "build:bun": "bun run build-bun.ts",
-    "build:node": "bun run build-node.ts",
-    "build:deno": "bun run build-deno.ts",
-    "build:vercel": "bun run build-vercel.ts",
-    "start": "bun dist-bun/server-bun.js",
-    "start:node": "node dist-node/server-node.js",
-    "deploy:cf": "wrangler pages deploy dist",
-    "deploy:vercel": "vercel deploy --prebuilt",
+    "build": "nifra build",
+    "start": "bun dist/server.js",
     "check": "nifra check && nifra assure"
   },
   "dependencies": {
@@ -516,8 +156,6 @@ console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dis
     "@nifrajs/core": "^3.5.0",
     "@nifrajs/middleware": "^3.5.0",
     "@nifrajs/schema": "^3.5.0",
-    "@nifrajs/deno": "^3.5.0",
-    "@nifrajs/node": "^3.5.0",
     "@nifrajs/web": "^3.5.0",
     "@nifrajs/web-preact": "^3.5.0",
     "preact": "^10.25.0"
@@ -563,41 +201,18 @@ console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dis
   "exclude": [
     "node_modules",
     "dist",
-    "dist-bun",
-    "dist-node",
-    "dist-deno",
-    "dist-vercel",
     ".nifra",
+    ".nifra-build",
     ".vercel",
-    ".wrangler",
-    "server-manifest.ts",
-    "server-bun.ts",
-    "server-node.ts",
-    "server-deno.ts",
-    "server-vercel.ts",
-    "_worker.ts",
-    "build.ts",
-    "build-bun.ts",
-    "build-node.ts",
-    "build-deno.ts",
-    "build-vercel.ts"
+    ".wrangler"
   ]
 }
 
 ===== site-solid :: files
-.dockerignore
-Dockerfile
 README.md
-_worker.ts
 backend/app.ts
 backend/counter.ts
 backend/framework.ts
-build-bun.ts
-build-deno.ts
-build-node.ts
-build-vercel.ts
-build.ts
-deno.json
 gitignore
 nifra.assurance.ts
 nifra.config.ts
@@ -606,214 +221,34 @@ routes/_404.tsx
 routes/_layout.tsx
 routes/index.backend.ts
 routes/index.tsx
-server-bun.ts
-server-deno.ts
-server-node.ts
-server-vercel.ts
 tsconfig.json
-wrangler.toml
 ===== site-solid :: backend/framework.ts
 // The frontend adapter for this app. `create-nifra --framework <react|preact|vue|solid|svelte>` swaps
-// this one line (and the routes + build config); every server entry imports the adapter from here, so
-// they stay framework-agnostic.
+// this one line (and the routes + build config); the server entry `nifra build` generates imports the
+// adapter from here, so it stays framework-agnostic.
 import { solidAdapter } from "@nifrajs/web-solid"
 
 export const adapter = solidAdapter
 
-===== site-solid :: build-bun.ts
-// Build for Bun (nifra's flagship runtime) → dist-bun/ (server-bun.js + client assets).
-// `bun run build:bun`. Run: `bun dist-bun/server-bun.js`.
-import { cpSync, mkdirSync, rmSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
+===== site-solid :: nifra.config.ts
+// The nifra CLI's config - read by `nifra dev|build|start`. It's imported ONLY by the CLI (which runs on
+// Bun), so it can eagerly import the Vite plugin + the Solid compile plugin - keeping them OUT of the
+// edge worker bundle that `backend/framework.ts` (the render-adapter source the generated server entry
+// imports) must stay free of. Solid needs the `"solid"` resolve condition (routes solid-js to its
+// source / JSX-dev build).
 import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
+import solid from "vite-plugin-solid"
 
-const dir = import.meta.dir
-const dist = `${dir}/dist-bun`
-const define = { "process.env.NODE_ENV": '"production"' }
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(`${dist}/assets`, { recursive: true })
+export { adapter } from "./backend/framework"
+export const clientModule = "@nifrajs/web-solid/client"
+// `ssr: true` makes vite-plugin-solid emit hydratable client output, matching nifra's Bun SSR.
+export const vitePlugins = [solid({ ssr: true })]
+export const clientPlugins = [solidBunPlugin("dom")]
+export const serverPlugins = [solidBunPlugin("ssr")]
+export const conditions = ["solid"]
 
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${dist}/assets`,
-  clientModule: "@nifrajs/web-solid/client",
-  plugins: [solidBunPlugin("dom")],
-  conditions: ["bun", "solid", "browser"],
-  define,
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/server-bun.ts`,
-  outDir: `${dir}/.build-bun`,
-  target: "bun",
-  clientEntry: client.entry,
-  plugins: [solidBunPlugin("ssr")],
-  conditions: ["bun", "solid"],
-  define,
-})
-cpSync(worker, `${dist}/server-bun.js`)
-rmSync(`${dir}/.build-bun`, { recursive: true, force: true })
-console.log("Bun output → dist-bun (run: bun dist-bun/server-bun.js)")
-
-===== site-solid :: build-deno.ts
-// Build for Deno → dist-deno/ (server-deno.js + client assets). `bun run build:deno`.
-// Run: `deno task start` (or deployctl). Deno runs the edge bundle (workerd/edge-light + solid).
-import { cpSync, mkdirSync, rmSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
-import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
-
-const dir = import.meta.dir
-const dist = `${dir}/dist-deno`
-const define = { "process.env.NODE_ENV": '"production"' }
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(`${dist}/assets`, { recursive: true })
-
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${dist}/assets`,
-  clientModule: "@nifrajs/web-solid/client",
-  plugins: [solidBunPlugin("dom")],
-  conditions: ["bun", "solid", "browser"],
-  define,
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/server-deno.ts`,
-  outDir: `${dir}/.build-deno`,
-  clientEntry: client.entry,
-  plugins: [solidBunPlugin("ssr")],
-  conditions: ["workerd", "edge-light", "solid", "browser"],
-  define,
-})
-cpSync(worker, `${dist}/server-deno.js`)
-rmSync(`${dir}/.build-deno`, { recursive: true, force: true })
-console.log("Deno output → dist-deno (run: deno run -A dist-deno/server-deno.js)")
-
-===== site-solid :: build-node.ts
-// Build for Node → dist-node/ (server-node.js + client assets). `bun run build:node`.
-// Run: `node dist-node/server-node.js` (or the Dockerfile). `node`+`solid` → solid-js/web's server build.
-import { cpSync, mkdirSync, rmSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
-import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
-
-const dir = import.meta.dir
-const dist = `${dir}/dist-node`
-const define = { "process.env.NODE_ENV": '"production"' }
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(`${dist}/assets`, { recursive: true })
-
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${dist}/assets`,
-  clientModule: "@nifrajs/web-solid/client",
-  plugins: [solidBunPlugin("dom")],
-  conditions: ["bun", "solid", "browser"],
-  define,
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/server-node.ts`,
-  outDir: `${dir}/.build-node`,
-  target: "node",
-  clientEntry: client.entry,
-  plugins: [solidBunPlugin("ssr")],
-  conditions: ["node", "solid"],
-  define,
-})
-cpSync(worker, `${dist}/server-node.js`)
-rmSync(`${dir}/.build-node`, { recursive: true, force: true })
-console.log("Node output → dist-node (run: node dist-node/server-node.js)")
-
-===== site-solid :: build-vercel.ts
-// Build for Vercel, emitting Vercel's Build Output API v3 at .vercel/output/ so it deploys with no
-// framework preset: `vercel deploy --prebuilt`. Layout:
-//   .vercel/output/config.json                   - serve static files, else SSR via the function
-//   .vercel/output/static/assets/<client bundle>  - Vercel's CDN serves these directly
-//   .vercel/output/functions/index.func/index.js  - the Edge SSR function (+ .vc-config.json)
-import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
-import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
-
-const dir = import.meta.dir
-const out = `${dir}/.vercel/output`
-const fn = `${out}/functions/index.func`
-const define = { "process.env.NODE_ENV": '"production"' }
-rmSync(`${dir}/.vercel`, { recursive: true, force: true })
-mkdirSync(`${out}/static/assets`, { recursive: true })
-mkdirSync(fn, { recursive: true })
-
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${out}/static/assets`,
-  clientModule: "@nifrajs/web-solid/client",
-  plugins: [solidBunPlugin("dom")],
-  conditions: ["bun", "solid", "browser"],
-  define,
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/server-vercel.ts`,
-  outDir: `${dir}/.build-vercel`,
-  clientEntry: client.entry,
-  plugins: [solidBunPlugin("ssr")],
-  conditions: ["workerd", "edge-light", "solid", "browser"],
-  define,
-})
-cpSync(worker, `${fn}/index.js`)
-rmSync(`${dir}/.build-vercel`, { recursive: true, force: true })
-
-// Build Output API v3: serve real files first (`handle: filesystem` → /assets/*), then SSR the rest.
-writeFileSync(
-  `${fn}/.vc-config.json`,
-  `${JSON.stringify({ runtime: "edge", entrypoint: "index.js" }, null, 2)}\n`,
-)
-writeFileSync(
-  `${out}/config.json`,
-  `${JSON.stringify(
-    { version: 3, routes: [{ handle: "filesystem" }, { src: "/(.*)", dest: "/index" }] },
-    null,
-    2,
-  )}\n`,
-)
-console.log("Vercel output → .vercel/output (deploy: vercel deploy --prebuilt)")
-
-===== site-solid :: build.ts
-// Build for Cloudflare Pages → dist/ (_worker.js + _routes.json + client assets). `bun run build`.
-// Solid: solidBunPlugin("dom") for the client, ("ssr") for the server + the `solid` export condition.
-import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
-import { solidBunPlugin } from "@nifrajs/web-solid/plugin"
-
-const dir = import.meta.dir
-const dist = `${dir}/dist`
-const define = { "process.env.NODE_ENV": '"production"' }
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(`${dist}/assets`, { recursive: true })
-
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${dist}/assets`,
-  clientModule: "@nifrajs/web-solid/client",
-  plugins: [solidBunPlugin("dom")],
-  conditions: ["bun", "solid", "browser"],
-  define,
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/_worker.ts`,
-  outDir: `${dir}/.build`,
-  clientEntry: client.entry,
-  plugins: [solidBunPlugin("ssr")],
-  conditions: ["workerd", "edge-light", "solid", "browser"],
-  define,
-})
-cpSync(worker, `${dist}/_worker.js`)
-rmSync(`${dir}/.build`, { recursive: true, force: true })
-writeFileSync(
-  `${dist}/_routes.json`,
-  `${JSON.stringify({ version: 1, include: ["/*"], exclude: ["/assets/*"] }, null, 2)}\n`,
-)
-console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dist)")
+// The deploy target `nifra build` emits; `nifra target <t>` switches it.
+export const target = "bun"
 
 ===== site-solid :: package.json
 {
@@ -823,16 +258,8 @@ console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dis
   "private": true,
   "scripts": {
     "dev": "nifra dev",
-    "preview": "bunx wrangler pages dev dist",
-    "build": "bun run build.ts",
-    "build:bun": "bun run build-bun.ts",
-    "build:node": "bun run build-node.ts",
-    "build:deno": "bun run build-deno.ts",
-    "build:vercel": "bun run build-vercel.ts",
-    "start": "bun dist-bun/server-bun.js",
-    "start:node": "node dist-node/server-node.js",
-    "deploy:cf": "wrangler pages deploy dist",
-    "deploy:vercel": "vercel deploy --prebuilt",
+    "build": "nifra build",
+    "start": "bun dist/server.js",
     "check": "nifra check && nifra assure"
   },
   "dependencies": {
@@ -840,8 +267,6 @@ console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dis
     "@nifrajs/core": "^3.5.0",
     "@nifrajs/middleware": "^3.5.0",
     "@nifrajs/schema": "^3.5.0",
-    "@nifrajs/deno": "^3.5.0",
-    "@nifrajs/node": "^3.5.0",
     "@nifrajs/web": "^3.5.0",
     "@nifrajs/web-solid": "^3.5.0",
     "solid-js": "^1.9.0"
@@ -888,41 +313,18 @@ console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dis
   "exclude": [
     "node_modules",
     "dist",
-    "dist-bun",
-    "dist-node",
-    "dist-deno",
-    "dist-vercel",
     ".nifra",
+    ".nifra-build",
     ".vercel",
-    ".wrangler",
-    "server-manifest.ts",
-    "server-bun.ts",
-    "server-node.ts",
-    "server-deno.ts",
-    "server-vercel.ts",
-    "_worker.ts",
-    "build.ts",
-    "build-bun.ts",
-    "build-node.ts",
-    "build-deno.ts",
-    "build-vercel.ts"
+    ".wrangler"
   ]
 }
 
 ===== site-svelte :: files
-.dockerignore
-Dockerfile
 README.md
-_worker.ts
 backend/app.ts
 backend/counter.ts
 backend/framework.ts
-build-bun.ts
-build-deno.ts
-build-node.ts
-build-vercel.ts
-build.ts
-deno.json
 gitignore
 nifra.assurance.ts
 nifra.config.ts
@@ -931,209 +333,33 @@ routes/_404.svelte
 routes/_layout.svelte
 routes/index.backend.ts
 routes/index.svelte
-server-bun.ts
-server-deno.ts
-server-node.ts
-server-vercel.ts
 tsconfig.json
-wrangler.toml
 ===== site-svelte :: backend/framework.ts
 // The frontend adapter for this app. `create-nifra --framework <react|preact|vue|solid|svelte>` swaps
-// this one line (and the routes + build config); every server entry imports the adapter from here, so
-// they stay framework-agnostic.
+// this one line (and the routes + build config); the server entry `nifra build` generates imports the
+// adapter from here, so it stays framework-agnostic.
 import { svelteAdapter } from "@nifrajs/web-svelte"
 
 export const adapter = svelteAdapter
 
-===== site-svelte :: build-bun.ts
-// Build for Bun (nifra's flagship runtime) → dist-bun/ (server-bun.js + client assets).
-// `bun run build:bun`. Run: `bun dist-bun/server-bun.js`.
-import { cpSync, mkdirSync, rmSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
+===== site-svelte :: nifra.config.ts
+// The nifra CLI's config - read by `nifra dev|build|start`. It's imported ONLY by the CLI (which runs on
+// Bun), so it can eagerly import the Vite plugin + the Svelte compiler - keeping them OUT of the edge
+// worker bundle that `backend/framework.ts` (the render-adapter source the generated server entry
+// imports) must stay free of.
+import { svelte } from "@sveltejs/vite-plugin-svelte"
 import { svelteBunPlugin } from "@nifrajs/web-svelte/plugin"
 
-const dir = import.meta.dir
-const dist = `${dir}/dist-bun`
-const define = { "process.env.NODE_ENV": '"production"' }
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(`${dist}/assets`, { recursive: true })
+export { adapter } from "./backend/framework"
+export const clientModule = "@nifrajs/web-svelte/client"
+// `nifra dev` HMR: Vite + the official Svelte plugin compile/HMR the .svelte client modules.
+export const vitePlugins = [svelte()]
+// `nifra build` (client) + `nifra start`/`nifra dev` (Bun-side SSR) compile .svelte via these.
+export const clientPlugins = [svelteBunPlugin("dom")]
+export const serverPlugins = [svelteBunPlugin("ssr")]
 
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${dist}/assets`,
-  clientModule: "@nifrajs/web-svelte/client",
-  plugins: [svelteBunPlugin("dom")],
-  conditions: ["bun", "browser"],
-  define,
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/server-bun.ts`,
-  outDir: `${dir}/.build-bun`,
-  target: "bun",
-  clientEntry: client.entry,
-  plugins: [svelteBunPlugin("ssr")],
-  define,
-})
-cpSync(worker, `${dist}/server-bun.js`)
-rmSync(`${dir}/.build-bun`, { recursive: true, force: true })
-console.log("Bun output → dist-bun (run: bun dist-bun/server-bun.js)")
-
-===== site-svelte :: build-deno.ts
-// Build for Deno → dist-deno/ (server-deno.js + client assets). `bun run build:deno`.
-// Run: `deno task start` (or deployctl).
-import { cpSync, mkdirSync, rmSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
-import { svelteBunPlugin } from "@nifrajs/web-svelte/plugin"
-
-const dir = import.meta.dir
-const dist = `${dir}/dist-deno`
-const define = { "process.env.NODE_ENV": '"production"' }
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(`${dist}/assets`, { recursive: true })
-
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${dist}/assets`,
-  clientModule: "@nifrajs/web-svelte/client",
-  plugins: [svelteBunPlugin("dom")],
-  conditions: ["bun", "browser"],
-  define,
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/server-deno.ts`,
-  outDir: `${dir}/.build-deno`,
-  clientEntry: client.entry,
-  plugins: [svelteBunPlugin("ssr")],
-  define,
-})
-cpSync(worker, `${dist}/server-deno.js`)
-rmSync(`${dir}/.build-deno`, { recursive: true, force: true })
-console.log("Deno output → dist-deno (run: deno run -A dist-deno/server-deno.js)")
-
-===== site-svelte :: build-node.ts
-// Build for Node → dist-node/ (server-node.js + client assets). `bun run build:node`.
-// Run: `node dist-node/server-node.js` (or the Dockerfile).
-import { cpSync, mkdirSync, rmSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
-import { svelteBunPlugin } from "@nifrajs/web-svelte/plugin"
-
-const dir = import.meta.dir
-const dist = `${dir}/dist-node`
-const define = { "process.env.NODE_ENV": '"production"' }
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(`${dist}/assets`, { recursive: true })
-
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${dist}/assets`,
-  clientModule: "@nifrajs/web-svelte/client",
-  plugins: [svelteBunPlugin("dom")],
-  conditions: ["bun", "browser"],
-  define,
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/server-node.ts`,
-  outDir: `${dir}/.build-node`,
-  target: "node",
-  clientEntry: client.entry,
-  plugins: [svelteBunPlugin("ssr")],
-  define,
-})
-cpSync(worker, `${dist}/server-node.js`)
-rmSync(`${dir}/.build-node`, { recursive: true, force: true })
-console.log("Node output → dist-node (run: node dist-node/server-node.js)")
-
-===== site-svelte :: build-vercel.ts
-// Build for Vercel, emitting Vercel's Build Output API v3 at .vercel/output/ so it deploys with no
-// framework preset: `vercel deploy --prebuilt`. Layout:
-//   .vercel/output/config.json                   - serve static files, else SSR via the function
-//   .vercel/output/static/assets/<client bundle>  - Vercel's CDN serves these directly
-//   .vercel/output/functions/index.func/index.js  - the Edge SSR function (+ .vc-config.json)
-import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
-import { svelteBunPlugin } from "@nifrajs/web-svelte/plugin"
-
-const dir = import.meta.dir
-const out = `${dir}/.vercel/output`
-const fn = `${out}/functions/index.func`
-const define = { "process.env.NODE_ENV": '"production"' }
-rmSync(`${dir}/.vercel`, { recursive: true, force: true })
-mkdirSync(`${out}/static/assets`, { recursive: true })
-mkdirSync(fn, { recursive: true })
-
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${out}/static/assets`,
-  clientModule: "@nifrajs/web-svelte/client",
-  plugins: [svelteBunPlugin("dom")],
-  conditions: ["bun", "browser"],
-  define,
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/server-vercel.ts`,
-  outDir: `${dir}/.build-vercel`,
-  clientEntry: client.entry,
-  plugins: [svelteBunPlugin("ssr")],
-  define,
-})
-cpSync(worker, `${fn}/index.js`)
-rmSync(`${dir}/.build-vercel`, { recursive: true, force: true })
-
-// Build Output API v3: serve real files first (`handle: filesystem` → /assets/*), then SSR the rest.
-writeFileSync(
-  `${fn}/.vc-config.json`,
-  `${JSON.stringify({ runtime: "edge", entrypoint: "index.js" }, null, 2)}\n`,
-)
-writeFileSync(
-  `${out}/config.json`,
-  `${JSON.stringify(
-    { version: 3, routes: [{ handle: "filesystem" }, { src: "/(.*)", dest: "/index" }] },
-    null,
-    2,
-  )}\n`,
-)
-console.log("Vercel output → .vercel/output (deploy: vercel deploy --prebuilt)")
-
-===== site-svelte :: build.ts
-// Build for Cloudflare Pages → dist/ (_worker.js + _routes.json + client assets). `bun run build`.
-// Svelte: svelteBunPlugin("dom") compiles .svelte for the client, ("ssr") for the server bundle.
-import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
-import { svelteBunPlugin } from "@nifrajs/web-svelte/plugin"
-
-const dir = import.meta.dir
-const dist = `${dir}/dist`
-const define = { "process.env.NODE_ENV": '"production"' }
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(`${dist}/assets`, { recursive: true })
-
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${dist}/assets`,
-  clientModule: "@nifrajs/web-svelte/client",
-  plugins: [svelteBunPlugin("dom")],
-  conditions: ["bun", "browser"],
-  define,
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/_worker.ts`,
-  outDir: `${dir}/.build`,
-  clientEntry: client.entry,
-  plugins: [svelteBunPlugin("ssr")],
-  define,
-})
-cpSync(worker, `${dist}/_worker.js`)
-rmSync(`${dir}/.build`, { recursive: true, force: true })
-writeFileSync(
-  `${dist}/_routes.json`,
-  `${JSON.stringify({ version: 1, include: ["/*"], exclude: ["/assets/*"] }, null, 2)}\n`,
-)
-console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dist)")
+// The deploy target `nifra build` emits; `nifra target <t>` switches it.
+export const target = "bun"
 
 ===== site-svelte :: package.json
 {
@@ -1143,16 +369,8 @@ console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dis
   "private": true,
   "scripts": {
     "dev": "nifra dev",
-    "preview": "bunx wrangler pages dev dist",
-    "build": "bun run build.ts",
-    "build:bun": "bun run build-bun.ts",
-    "build:node": "bun run build-node.ts",
-    "build:deno": "bun run build-deno.ts",
-    "build:vercel": "bun run build-vercel.ts",
-    "start": "bun dist-bun/server-bun.js",
-    "start:node": "node dist-node/server-node.js",
-    "deploy:cf": "wrangler pages deploy dist",
-    "deploy:vercel": "vercel deploy --prebuilt",
+    "build": "nifra build",
+    "start": "bun dist/server.js",
     "check": "nifra check && nifra assure"
   },
   "dependencies": {
@@ -1160,8 +378,6 @@ console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dis
     "@nifrajs/core": "^3.5.0",
     "@nifrajs/middleware": "^3.5.0",
     "@nifrajs/schema": "^3.5.0",
-    "@nifrajs/deno": "^3.5.0",
-    "@nifrajs/node": "^3.5.0",
     "@nifrajs/web": "^3.5.0",
     "@nifrajs/web-svelte": "^3.5.0",
     "svelte": "^5.3.0"
@@ -1206,41 +422,18 @@ console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dis
   "exclude": [
     "node_modules",
     "dist",
-    "dist-bun",
-    "dist-node",
-    "dist-deno",
-    "dist-vercel",
     ".nifra",
+    ".nifra-build",
     ".vercel",
-    ".wrangler",
-    "server-manifest.ts",
-    "server-bun.ts",
-    "server-node.ts",
-    "server-deno.ts",
-    "server-vercel.ts",
-    "_worker.ts",
-    "build.ts",
-    "build-bun.ts",
-    "build-node.ts",
-    "build-deno.ts",
-    "build-vercel.ts"
+    ".wrangler"
   ]
 }
 
 ===== site-vue :: files
-.dockerignore
-Dockerfile
 README.md
-_worker.ts
 backend/app.ts
 backend/counter.ts
 backend/framework.ts
-build-bun.ts
-build-deno.ts
-build-node.ts
-build-vercel.ts
-build.ts
-deno.json
 gitignore
 nifra.assurance.ts
 nifra.config.ts
@@ -1249,238 +442,39 @@ routes/_404.vue
 routes/_layout.vue
 routes/index.backend.ts
 routes/index.vue
-server-bun.ts
-server-deno.ts
-server-node.ts
-server-vercel.ts
 tsconfig.json
-wrangler.toml
 ===== site-vue :: backend/framework.ts
 // The frontend adapter for this app. `create-nifra --framework <react|preact|vue|solid|svelte>` swaps
-// this one line (and the routes + build config); every server entry imports the adapter from here, so
-// they stay framework-agnostic.
+// this one line (and the routes + build config); the server entry `nifra build` generates imports the
+// adapter from here, so it stays framework-agnostic.
 import { vueAdapter } from "@nifrajs/web-vue"
 
 export const adapter = vueAdapter
 
-===== site-vue :: build-bun.ts
-// Build for Bun (nifra's flagship runtime) → dist-bun/ (server-bun.js + client assets).
-// `bun run build:bun`. Run: `bun dist-bun/server-bun.js`.
-import { cpSync, mkdirSync, rmSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
+===== site-vue :: nifra.config.ts
+// The nifra CLI's config - read by `nifra dev|build|start`. It's imported ONLY by the CLI (which runs on
+// Bun), so it can eagerly import the Vite plugin + the SFC compiler - keeping them OUT of the edge
+// worker bundle that `backend/framework.ts` (the render-adapter source the generated server entry
+// imports) must stay free of.
 import { vueBunPlugin } from "@nifrajs/web-vue/plugin"
+import vue from "@vitejs/plugin-vue"
 
-const dir = import.meta.dir
-const dist = `${dir}/dist-bun`
-// Vue feature flags: silence "feature flag not explicitly defined" warnings + trim dev-only code.
-const define = {
-  "process.env.NODE_ENV": '"production"',
+export { adapter } from "./backend/framework"
+export const clientModule = "@nifrajs/web-vue/client"
+// `nifra dev` HMR: Vite + the official Vue plugin compile/HMR the .vue client modules.
+export const vitePlugins = [vue()]
+// `nifra build` (client) + `nifra start`/`nifra dev` (Bun-side SSR) compile .vue via these.
+export const clientPlugins = [vueBunPlugin("dom")]
+export const serverPlugins = [vueBunPlugin("ssr")]
+// Vue feature flags the plugin doesn't inject; `nifra build` defines them in both bundles.
+export const define = {
   __VUE_OPTIONS_API__: "true",
   __VUE_PROD_DEVTOOLS__: "false",
   __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: "false",
 }
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(`${dist}/assets`, { recursive: true })
 
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${dist}/assets`,
-  clientModule: "@nifrajs/web-vue/client",
-  plugins: [vueBunPlugin("dom")], // compile .vue SFCs → client bundle
-  conditions: ["bun", "browser"],
-  define,
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/server-bun.ts`,
-  outDir: `${dir}/.build-bun`,
-  target: "bun",
-  clientEntry: client.entry,
-  plugins: [vueBunPlugin("ssr")], // compile .vue SFCs → SSR
-  define,
-})
-cpSync(worker, `${dist}/server-bun.js`)
-rmSync(`${dir}/.build-bun`, { recursive: true, force: true })
-console.log("Bun output → dist-bun (run: bun dist-bun/server-bun.js)")
-
-===== site-vue :: build-deno.ts
-// Build for Deno → dist-deno/ (server-deno.js + client assets). `bun run build:deno`.
-// Run: `deno task start` (or deployctl for Deno Deploy).
-import { cpSync, mkdirSync, rmSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
-import { vueBunPlugin } from "@nifrajs/web-vue/plugin"
-
-const dir = import.meta.dir
-const dist = `${dir}/dist-deno`
-// Vue feature flags: silence "feature flag not explicitly defined" warnings + trim dev-only code.
-const define = {
-  "process.env.NODE_ENV": '"production"',
-  __VUE_OPTIONS_API__: "true",
-  __VUE_PROD_DEVTOOLS__: "false",
-  __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: "false",
-}
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(`${dist}/assets`, { recursive: true })
-
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${dist}/assets`,
-  clientModule: "@nifrajs/web-vue/client",
-  plugins: [vueBunPlugin("dom")], // compile .vue SFCs → client bundle
-  conditions: ["bun", "browser"],
-  define,
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/server-deno.ts`,
-  outDir: `${dir}/.build-deno`,
-  clientEntry: client.entry,
-  plugins: [vueBunPlugin("ssr")], // compile .vue SFCs → SSR
-  define,
-})
-cpSync(worker, `${dist}/server-deno.js`)
-rmSync(`${dir}/.build-deno`, { recursive: true, force: true })
-console.log("Deno output → dist-deno (run: deno run -A dist-deno/server-deno.js)")
-
-===== site-vue :: build-node.ts
-// Build for Node → dist-node/ (server-node.js + client assets). `bun run build:node`.
-// Run: `node dist-node/server-node.js` (or the Dockerfile).
-import { cpSync, mkdirSync, rmSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
-import { vueBunPlugin } from "@nifrajs/web-vue/plugin"
-
-const dir = import.meta.dir
-const dist = `${dir}/dist-node`
-// Vue feature flags: silence "feature flag not explicitly defined" warnings + trim dev-only code.
-const define = {
-  "process.env.NODE_ENV": '"production"',
-  __VUE_OPTIONS_API__: "true",
-  __VUE_PROD_DEVTOOLS__: "false",
-  __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: "false",
-}
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(`${dist}/assets`, { recursive: true })
-
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${dist}/assets`,
-  clientModule: "@nifrajs/web-vue/client",
-  plugins: [vueBunPlugin("dom")], // compile .vue SFCs → client bundle
-  conditions: ["bun", "browser"],
-  define,
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/server-node.ts`,
-  outDir: `${dir}/.build-node`,
-  target: "node",
-  clientEntry: client.entry,
-  plugins: [vueBunPlugin("ssr")], // compile .vue SFCs → SSR
-  define,
-})
-cpSync(worker, `${dist}/server-node.js`)
-rmSync(`${dir}/.build-node`, { recursive: true, force: true })
-console.log("Node output → dist-node (run: node dist-node/server-node.js)")
-
-===== site-vue :: build-vercel.ts
-// Build for Vercel, emitting Vercel's Build Output API v3 at .vercel/output/ so it deploys with no
-// framework preset: `vercel deploy --prebuilt`. Layout:
-//   .vercel/output/config.json                   - serve static files, else SSR via the function
-//   .vercel/output/static/assets/<client bundle>  - Vercel's CDN serves these directly
-//   .vercel/output/functions/index.func/index.js  - the Edge SSR function (+ .vc-config.json)
-import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
-import { vueBunPlugin } from "@nifrajs/web-vue/plugin"
-
-const dir = import.meta.dir
-const out = `${dir}/.vercel/output`
-const fn = `${out}/functions/index.func`
-// Vue feature flags: silence "feature flag not explicitly defined" warnings + trim dev-only code.
-const define = {
-  "process.env.NODE_ENV": '"production"',
-  __VUE_OPTIONS_API__: "true",
-  __VUE_PROD_DEVTOOLS__: "false",
-  __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: "false",
-}
-rmSync(`${dir}/.vercel`, { recursive: true, force: true })
-mkdirSync(`${out}/static/assets`, { recursive: true })
-mkdirSync(fn, { recursive: true })
-
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${out}/static/assets`,
-  clientModule: "@nifrajs/web-vue/client",
-  plugins: [vueBunPlugin("dom")], // compile .vue SFCs → client bundle
-  conditions: ["bun", "browser"],
-  define,
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/server-vercel.ts`,
-  outDir: `${dir}/.build-vercel`,
-  clientEntry: client.entry,
-  plugins: [vueBunPlugin("ssr")], // compile .vue SFCs → SSR
-  define,
-})
-cpSync(worker, `${fn}/index.js`)
-rmSync(`${dir}/.build-vercel`, { recursive: true, force: true })
-
-// Build Output API v3: serve real files first (`handle: filesystem` → /assets/*), then SSR the rest.
-writeFileSync(
-  `${fn}/.vc-config.json`,
-  `${JSON.stringify({ runtime: "edge", entrypoint: "index.js" }, null, 2)}\n`,
-)
-writeFileSync(
-  `${out}/config.json`,
-  `${JSON.stringify(
-    { version: 3, routes: [{ handle: "filesystem" }, { src: "/(.*)", dest: "/index" }] },
-    null,
-    2,
-  )}\n`,
-)
-console.log("Vercel output → .vercel/output (deploy: vercel deploy --prebuilt)")
-
-===== site-vue :: build.ts
-// Build for Cloudflare Pages → dist/ (_worker.js + _routes.json + client assets). `bun run build`.
-import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { buildClient, buildServer } from "@nifrajs/web/build"
-import { vueBunPlugin } from "@nifrajs/web-vue/plugin"
-
-const dir = import.meta.dir
-const dist = `${dir}/dist`
-// Vue feature flags: silence "feature flag not explicitly defined" warnings + trim dev-only code.
-const define = {
-  "process.env.NODE_ENV": '"production"',
-  __VUE_OPTIONS_API__: "true",
-  __VUE_PROD_DEVTOOLS__: "false",
-  __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: "false",
-}
-rmSync(dist, { recursive: true, force: true })
-mkdirSync(`${dist}/assets`, { recursive: true })
-
-const client = await buildClient({
-  routesDir: `${dir}/routes`,
-  outDir: `${dist}/assets`,
-  clientModule: "@nifrajs/web-vue/client",
-  plugins: [vueBunPlugin("dom")], // compile .vue SFCs → client bundle
-  conditions: ["bun", "browser"],
-  define,
-})
-const { worker } = await buildServer({
-  routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/_worker.ts`,
-  outDir: `${dir}/.build`,
-  clientEntry: client.entry,
-  plugins: [vueBunPlugin("ssr")], // compile .vue SFCs → SSR
-  define,
-})
-cpSync(worker, `${dist}/_worker.js`)
-rmSync(`${dir}/.build`, { recursive: true, force: true })
-writeFileSync(
-  `${dist}/_routes.json`,
-  `${JSON.stringify({ version: 1, include: ["/*"], exclude: ["/assets/*"] }, null, 2)}\n`,
-)
-console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dist)")
+// The deploy target `nifra build` emits; `nifra target <t>` switches it.
+export const target = "bun"
 
 ===== site-vue :: package.json
 {
@@ -1490,16 +484,8 @@ console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dis
   "private": true,
   "scripts": {
     "dev": "nifra dev",
-    "preview": "bunx wrangler pages dev dist",
-    "build": "bun run build.ts",
-    "build:bun": "bun run build-bun.ts",
-    "build:node": "bun run build-node.ts",
-    "build:deno": "bun run build-deno.ts",
-    "build:vercel": "bun run build-vercel.ts",
-    "start": "bun dist-bun/server-bun.js",
-    "start:node": "node dist-node/server-node.js",
-    "deploy:cf": "wrangler pages deploy dist",
-    "deploy:vercel": "vercel deploy --prebuilt",
+    "build": "nifra build",
+    "start": "bun dist/server.js",
     "check": "nifra check && nifra assure"
   },
   "dependencies": {
@@ -1507,8 +493,6 @@ console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dis
     "@nifrajs/core": "^3.5.0",
     "@nifrajs/middleware": "^3.5.0",
     "@nifrajs/schema": "^3.5.0",
-    "@nifrajs/deno": "^3.5.0",
-    "@nifrajs/node": "^3.5.0",
     "@nifrajs/web": "^3.5.0",
     "@nifrajs/web-vue": "^3.5.0",
     "vue": "^3.5.0"
@@ -1555,24 +539,10 @@ console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dis
   "exclude": [
     "node_modules",
     "dist",
-    "dist-bun",
-    "dist-node",
-    "dist-deno",
-    "dist-vercel",
     ".nifra",
+    ".nifra-build",
     ".vercel",
-    ".wrangler",
-    "server-manifest.ts",
-    "server-bun.ts",
-    "server-node.ts",
-    "server-deno.ts",
-    "server-vercel.ts",
-    "_worker.ts",
-    "build.ts",
-    "build-bun.ts",
-    "build-node.ts",
-    "build-deno.ts",
-    "build-vercel.ts"
+    ".wrangler"
   ]
 }
 
