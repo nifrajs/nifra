@@ -55,6 +55,8 @@ export interface Flags {
    * a hard failure to a loud warning so a duplicate coming from a linked sibling repo doesn't take dev
    * down while you fix the resolution. Dev only - `nifra build` always fails hard on a duplicate. */
   readonly allowDuplicateIdentity: boolean
+  /** `nifra dev --no-indicator`: no in-page issues badge; browser errors still reach the dev feed. */
+  readonly noIndicator: boolean
 }
 
 /** Forward a re-exec'd Bun child's output without relying on Windows inheriting a pipe-of-a-pipe. */
@@ -116,6 +118,8 @@ Usage:
                                          loud warning instead of a hard failure, so a duplicate React/
                                          adapter copy from a linked sibling repo doesn't take dev down
                                          while you fix the resolution. Dev only - \`nifra build\` still fails.
+                [--no-indicator]         No in-page issues badge. Browser errors still reach
+                                         \`nifra errors\` and the agent tools.
   nifra errors  [--since <n>] [--category <c>] [--request <id>]  What the running dev server caught:
                                          SSR/loader/API/build/browser/hydration errors, each a structured
                                          diagnostic. Finds the server itself; reads the log a crashed
@@ -502,6 +506,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
       ...(fw.publicDir !== undefined ? { publicDir: fw.publicDir } : {}),
       ...(fw.conditions ? { conditions: fw.conditions } : {}),
       ...(fw.define ? { define: fw.define } : {}),
+      indicator: !flags.noIndicator,
       createApp: (clientEntry, importQuery, dev) =>
         createWebApp({
           adapter: asAdapter(fw.adapter),
@@ -558,6 +563,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
     poll: flags.poll,
     port: flags.port,
     ...(flags.allowDuplicateIdentity ? { allowDuplicateIdentity: true } : {}),
+    indicator: !flags.noIndicator,
     ...(fw.conditions ? { conditions: fw.conditions } : {}),
     ...(fw.define ? { define: fw.define } : {}),
     // `load` resolves route modules through VITE, not through Bun. That is what makes the Vite
@@ -870,6 +876,7 @@ export function parseFlags(args: readonly string[]): Flags {
   let vite = false
   let bun = false
   let allowDuplicateIdentity = false
+  let noIndicator = false
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
     if ((a === "--port" || a === "-p") && args[i + 1]) port = Number(args[++i])
@@ -880,11 +887,12 @@ export function parseFlags(args: readonly string[]): Flags {
     else if (a === "--vite") vite = true
     else if (a === "--bun") bun = true
     else if (a === "--allow-duplicate-identity") allowDuplicateIdentity = true
+    else if (a === "--no-indicator") noIndicator = true
   }
   if (!Number.isFinite(port) || port < 0 || port > 65535) {
     throw new Error(`[nifra] invalid --port: ${port}`)
   }
-  return { port, out, poll, target, report, vite, bun, allowDuplicateIdentity }
+  return { port, out, poll, target, report, vite, bun, allowDuplicateIdentity, noIndicator }
 }
 
 /**

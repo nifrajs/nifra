@@ -49,6 +49,11 @@ test("parseFlags parses --allow-duplicate-identity (default off)", () => {
   expect(parseFlags(["--allow-duplicate-identity"]).allowDuplicateIdentity).toBe(true)
 })
 
+test("parseFlags parses --no-indicator (default off)", () => {
+  expect(parseFlags([]).noIndicator).toBe(false)
+  expect(parseFlags(["--no-indicator"]).noIndicator).toBe(true)
+})
+
 // Guards the regression: `assure --json` must stay the {ok,routes,findings} report. The bundle is
 // opt-in, so bare --json (or no flag) never routes to the {gates,verdict} lane.
 test("assureBundleRequested: --json alone is the report; --bundle and bundle-only flags opt in", () => {
