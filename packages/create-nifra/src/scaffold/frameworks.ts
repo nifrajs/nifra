@@ -23,8 +23,11 @@ export interface FrameworkSpec {
     readonly jsx?: string
     readonly jsxImportSource?: string
     readonly types?: readonly string[]
-    /** False when routes are not `.tsx` - Svelte's are `.svelte`, so the glob would match nothing. */
-    readonly includeTsx?: boolean
+    /**
+     * The tsconfig `include` globs, when not `.ts` + `.tsx`. A framework whose routes are its own
+     * component files lists them, or svelte-check, vue-tsc and the editor never type-check a route.
+     */
+    readonly include?: readonly string[]
   }
 }
 
@@ -76,7 +79,7 @@ export const FRAMEWORK_SPECS: Readonly<Record<string, FrameworkSpec>> = {
     package: "@nifrajs/web-svelte",
     runtimeDependencies: { svelte: "^5.3.0" },
     devDependencies: { "@sveltejs/vite-plugin-svelte": "^5.0.0" },
-    typescript: { types: ["svelte"], includeTsx: false },
+    typescript: { types: ["svelte"], include: ["**/*.ts", "**/*.svelte"] },
   },
   vue: {
     id: "vue",
@@ -84,7 +87,7 @@ export const FRAMEWORK_SPECS: Readonly<Record<string, FrameworkSpec>> = {
     package: "@nifrajs/web-vue",
     runtimeDependencies: { vue: "^3.5.0" },
     devDependencies: { "@vitejs/plugin-vue": "^5.2.0", "@vue/compiler-sfc": "^3.5.0" },
-    typescript: { jsx: "preserve" },
+    typescript: { jsx: "preserve", include: ["**/*.ts", "**/*.tsx", "**/*.vue"] },
   },
 }
 

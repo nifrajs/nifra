@@ -89,7 +89,7 @@ export function renderTsconfig(framework: FrameworkSpec): string {
       // Merges the generated `.nifra/types` tree in, so a route imports its types as `./+types/<name>`.
       rootDirs: [".", "./.nifra/types"],
     },
-    include: ts.includeTsx === false ? ["**/*.ts"] : ["**/*.ts", "**/*.tsx"],
+    include: ts.include ?? ["**/*.ts", "**/*.tsx"],
     exclude: EXCLUDE,
   })
 }

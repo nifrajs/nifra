@@ -816,7 +816,8 @@ export const target = "bun"
     ]
   },
   "include": [
-    "**/*.ts"
+    "**/*.ts",
+    "**/*.svelte"
   ],
   "exclude": [
     "node_modules",
@@ -1029,7 +1030,8 @@ export const target = "bun"
   },
   "include": [
     "**/*.ts",
-    "**/*.tsx"
+    "**/*.tsx",
+    "**/*.vue"
   ],
   "exclude": [
     "node_modules",
