@@ -81,11 +81,20 @@ import { db } from "./db"
 // better-auth stores users + sessions in your database (backend/db/). After editing the config
 // (e.g. adding OAuth providers), generate its tables: \`bunx @better-auth/cli generate\` writes the auth
 // schema for your ORM, then \`bun run db:migrate\` applies it.
+
+// Set in .env: openssl rand -base64 32. better-auth refuses a missing secret in production but only
+// warns about a short one, so a short one is refused here.
+const secret = process.env.BETTER_AUTH_SECRET
+if (process.env.NODE_ENV === "production" && secret && secret.length < 32) {
+  throw new Error(
+    "BETTER_AUTH_SECRET is shorter than 32 characters. Generate one with: openssl rand -base64 32",
+  )
+}
+
 export const auth = createBetterAuth({
   database: ${database},
   emailAndPassword: { enabled: true },
-  // Set in .env - generate a strong value: openssl rand -base64 32
-  secret: process.env.BETTER_AUTH_SECRET,
+  secret,
   baseURL: process.env.BETTER_AUTH_URL,
 })
 
@@ -93,9 +102,12 @@ export type Auth = typeof auth
 `
 }
 
+// No placeholder secret: left empty, better-auth uses its development secret locally and refuses to
+// start in production, where a placeholder would only draw a warning.
 const ENV = `
-# better-auth - REQUIRED. Generate a 32+ char secret: openssl rand -base64 32
-BETTER_AUTH_SECRET="change-me-before-production"
+# better-auth - REQUIRED in production. Generate a 32+ char secret: openssl rand -base64 32
+# Left empty, development uses better-auth's built-in secret and production refuses to start.
+BETTER_AUTH_SECRET=""
 BETTER_AUTH_URL="http://localhost:3000"
 `
 

@@ -798,6 +798,14 @@ describe("scaffold - --auth (better-auth, composes with --db)", () => {
     expect(env).toContain("DATABASE_URL") // from --db
     expect(env).toContain("BETTER_AUTH_SECRET") // from --auth
 
+    // No placeholder secret: better-auth only warns about a weak one, but refuses an empty one in
+    // production. A short secret set by hand is refused by the generated module itself.
+    expect(env).toContain('BETTER_AUTH_SECRET=""')
+    expect(env).not.toContain("change-me")
+    expect(authTs).toContain(
+      'process.env.NODE_ENV === "production" && secret && secret.length < 32',
+    )
+
     const md = await readFile(join(dir, "AGENTS.md"), "utf8")
     expect(md).toContain("## Authentication (better-auth)")
     expect(md).toContain(".use(betterAuth(auth))")
