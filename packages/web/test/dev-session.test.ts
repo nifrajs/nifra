@@ -262,6 +262,9 @@ test("failure() renders the overlay and records the same redacted diagnostic eve
   })
   expect(html).toContain("render broke")
   expect(html).not.toContain("abcdefghijklmnopqrstuvwxyz-0123456789")
+  // The overlay's Copy prompt is pasted into a hosted model: it carries the redacted text too.
+  expect(html).toContain("Copy prompt")
+  expect(html).toContain("render broke [redacted:NIFRA_TEST_SESSION_SECRET]")
   const last = await body(await get(session, LAST_ERROR_PATH))
   expect(String(last.message)).toContain("[redacted:NIFRA_TEST_SESSION_SECRET]")
   const [entry] = session.feed.errors({ categories: ["ssr"] }).errors

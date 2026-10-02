@@ -143,6 +143,24 @@ describe.skipIf(chrome === undefined)("dev issues indicator in a browser", () =>
     expect(await page.evaluate<string[]>("window.__violations")).toEqual([])
   })
 
+  test("a hydration mismatch the framework prints shows as a hydration issue", async () => {
+    await page.goto(serve(undefined))
+    await page.evaluate(`(() => {
+      const attach = Element.prototype.attachShadow
+      Element.prototype.attachShadow = function (init) { const r = attach.call(this, init); window.__shadow = r; return r }
+      console.error("Hydration failed because the server rendered HTML didn't match the client.")
+      return true
+    })()`)
+    await page.evaluate(until('window.__shadow && window.__shadow.querySelector(".badge")'))
+    await page.evaluate('window.__shadow.querySelector(".badge").click()')
+    expect(await page.evaluate<string>('window.__shadow.querySelector(".tag").textContent')).toBe(
+      "NIFRA_HYDRATION_MISMATCH",
+    )
+    expect(
+      await page.evaluate<string>('window.__shadow.querySelector(".tag.cat").textContent'),
+    ).toBe("hydration")
+  })
+
   test("Escape closes the panel and returns focus to the badge", async () => {
     await shows(serve(undefined))
     await page.evaluate('window.__shadow.querySelector(".badge").click()')

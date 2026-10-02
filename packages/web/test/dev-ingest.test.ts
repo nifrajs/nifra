@@ -348,3 +348,23 @@ test("with the indicator off, errors get 204, pages do not name it, and it is no
   expect(sent.status).toBe(204)
   expect((await fetch(`${app.origin}${DEV_FEED_PATHS.indicator}`)).status).toBe(404)
 })
+
+test("the issues a page gets back, prompts included, carry env secrets redacted", async () => {
+  const secret = "zyxwvutsrqponmlkjihgfedcba-9876543210"
+  process.env.NIFRA_TEST_INGEST_SECRET = secret
+  let app: Running
+  try {
+    app = start()
+  } finally {
+    delete process.env.NIFRA_TEST_INGEST_SECRET
+  }
+  const { token } = await pageTokenOf(app)
+  const res = await post(app, {
+    token,
+    events: [{ kind: "error", name: "Error", message: `leaked ${secret}`, stack: "", page: "/" }],
+  })
+  const text = await res.text()
+  expect(res.status).toBe(200)
+  expect(text).not.toContain(secret)
+  expect(text).toContain("[redacted:NIFRA_TEST_INGEST_SECRET]")
+})
