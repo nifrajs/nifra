@@ -10,7 +10,7 @@ Distributed tracing for nifra - W3C traceparent/tracestate propagation + OpenTel
 
 ## Public entrypoints
 
-`@nifrajs/otel` · `@nifrajs/otel/cache` · `@nifrajs/otel/effects` · `@nifrajs/otel/jobs` · `@nifrajs/otel/metrics`
+`@nifrajs/otel` · `@nifrajs/otel/cache` · `@nifrajs/otel/effects` · `@nifrajs/otel/events` · `@nifrajs/otel/jobs` · `@nifrajs/otel/metrics`
 
 ## Key exports
 
@@ -29,7 +29,7 @@ Distributed tracing for nifra - W3C traceparent/tracestate propagation + OpenTel
 - **otlpExporter** _(function)_ - `otlpExporter: (options: OtlpExporterOptions) => OtlpExporter` · from `@nifrajs/otel`
 - **parseTraceparent** _(function)_ - `parseTraceparent: (header: string | null | undefined) => ParsedTraceparent | null` · from `@nifrajs/otel`
 
-_…and 37 more - see [`api-reference.md`](../../api-reference.md#nifrajsotel) for the complete list._
+_…and 44 more - see [`api-reference.md`](../../api-reference.md#nifrajsotel) for the complete list._
 
 ## Footguns
 

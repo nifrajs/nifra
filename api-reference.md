@@ -4039,6 +4039,21 @@ _No named exports (side-effect entrypoint)._
 - **effectTracing** _(function)_ - `effectTracing: (options?: EffectTracingOptions) => EffectTracingPlugin`
   Installs child effect spans on subsequent routes. The observer consumes only the constrained `EffectLifecycleEvent` contract; request/business payloads and error text cannot enter an export.
 
+### `@nifrajs/otel/events`
+
+- **EventConsumerContext** _(interface)_ - `interface EventConsumerContext`
+  What the wrapped handler receives next to the envelope: the consumer span's trace context.
+- **EventTracingOptions** _(interface)_ - `interface EventTracingOptions`
+- **TracedEventConsumer** _(type)_ - `type TracedEventConsumer<Value> = ( input: unknown, parent?: ObservationContext, ) => Promise<TracedEventResult<Value>>`
+  The traced consumer. `parent` is an ambient trace (`c.trace` in a webhook route), if there is one.
+- **TracedEventEnvelope** _(interface)_ - `interface TracedEventEnvelope`
+  The envelope fields a consumer span reads. `EventEnvelope` from `@nifrajs/events` has them.
+- **TracedEventResult** _(type)_ - `type TracedEventResult<Value> = | { readonly success: true; readonly value: Value } | { readonly success: false; readonly issueCount: number }`
+- **TracedEventSource** _(interface)_ - `interface TracedEventSource<Envelope extends TracedEventEnvelope>`
+  An event contract or a registry from `@nifrajs/events`, declared structurally: anything whose `parse(input)` never throws and reports success with an envelope, or failure with `issues` (a contract) or a `reason` (a registry).
+- **traceEventConsumer** _(function)_ - `traceEventConsumer: <Envelope extends TracedEventEnvelope, Result>(source: TracedEventSource<Envelope>, handler: (envelope: Envelope, context: EventConsumerContext) => Result, options?: EventTracingOptions) => TracedEve…`
+  Wrap an event consumer so each envelope is one `process <type>` span (kind consumer), linked to the producer's span through `causalitySpanLink(envelope.causality)`. With a `parent`, the span is that span's child; otherwise it starts its own trace. Attributes: `nifra.event.type`, `nifra.event.versio…
+
 ### `@nifrajs/otel/jobs`
 
 - **JobTracingEnqueueInfo** _(interface)_ - `interface JobTracingEnqueueInfo`
