@@ -30,7 +30,13 @@ import {
   readDbAudit,
   sqlFingerprint,
 } from "../src/db-audit.ts"
-import { dbRedaction, parseDbChildRequest, runDbOperation, serveDbChild } from "../src/db-child.ts"
+import {
+  type DbChildRequest,
+  dbRedaction,
+  parseDbChildRequest,
+  runDbOperation,
+  serveDbChild,
+} from "../src/db-child.ts"
 import {
   type DevDatabase,
   loadDevDatabase,
@@ -274,12 +280,19 @@ describe("one operation, in process", () => {
     ).toMatchObject({
       refusal: { code: "NIFRA_DB_REMOTE_HOST" },
     })
-    const closed = await runDbOperation(
-      root,
+    const requests: DbChildRequest[] = [
       { op: "schema" },
-      pg("postgres://u:p@127.0.0.1:1/app"),
-    )
-    expect(closed).toMatchObject({ ok: false, refusal: { code: "NIFRA_DB_DRIVER" } })
+      { op: "role" },
+      { op: "explain", sql: "SELECT 1" },
+      { op: "query", sql: "SELECT 1" },
+    ]
+    for (const request of requests) {
+      const closed = await runDbOperation(root, request, pg("postgres://u:p@127.0.0.1:1/app"))
+      expect({ op: request.op, closed }).toMatchObject({
+        op: request.op,
+        closed: { ok: false, engine: "postgres", refusal: { code: "NIFRA_DB_DRIVER" } },
+      })
+    }
     expect(
       await runDbOperation(
         root,
