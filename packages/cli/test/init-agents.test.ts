@@ -55,7 +55,7 @@ describe("safeJoin - confines writes to the project root", () => {
 })
 
 describe("initAgents - fresh project", () => {
-  test("writes all four agent-discovery files", async () => {
+  test("writes every agent file", async () => {
     const dir = await freshDir()
     const result = await initAgents(dir)
 
@@ -71,18 +71,39 @@ describe("initAgents - fresh project", () => {
     // .cursor/mcp.json - same server config, byte-identical (single source of truth).
     expect(await read(dir, ".cursor/mcp.json")).toBe(await read(dir, ".mcp.json"))
 
-    // CLAUDE.md - MCP-first preamble that imports AGENTS.md on its own line (no drift).
-    const claude = await read(dir, "CLAUDE.md")
-    expect(claude).toContain("nifra MCP server")
-    expect(claude).toContain("nifra_check")
-    expect(claude.split("\n")).toContain("@AGENTS.md")
+    // Each agent's own file points at AGENTS.md (import directives on their own line), so there is one
+    // copy of the guidance to keep current.
+    expect((await read(dir, "CLAUDE.md")).split("\n")).toContain("@AGENTS.md")
+    expect((await read(dir, "GEMINI.md")).split("\n")).toContain("@./AGENTS.md")
+    expect(await read(dir, ".cursor/rules/nifra.mdc")).toContain("alwaysApply: true")
+    expect(await read(dir, ".github/copilot-instructions.md")).toContain("AGENTS.md")
 
-    // AGENTS.md - written fresh (none existed) with the MCP section.
+    // AGENTS.md - written fresh (none existed) with the MCP section. No routes/, so no structure section.
     const agents = await read(dir, "AGENTS.md")
     expect(agents).toContain("## MCP server")
     expect(agents).toMatch(/bunx @nifrajs\/cli@\d+\.\d+\.\d+\S* mcp/)
+    expect(agents).not.toContain("## Project structure")
 
-    expect(result.files.map((f) => f.action)).toEqual(["wrote", "wrote", "wrote", "wrote"])
+    expect(result.files.map((f) => f.action)).toEqual(Array(7).fill("wrote"))
+  })
+
+  test("a web app's AGENTS.md also teaches the zones, appended once to an existing file", async () => {
+    const dir = await freshDir()
+    await mkdir(join(dir, "routes"))
+    await writeFile(join(dir, "AGENTS.md"), "# AGENTS.md\n\n## MCP server\n\nalready here\n")
+
+    const first = await initAgents(dir)
+    expect(first.files.find((f) => f.path === "AGENTS.md")).toEqual({
+      path: "AGENTS.md",
+      action: "appended",
+      note: "Project structure",
+    })
+    const md = await read(dir, "AGENTS.md")
+    expect(md).toContain("## Project structure")
+    expect(md).toContain("routes/x.backend.ts")
+    expect(md.match(/## MCP server/g)?.length).toBe(1)
+
+    expect(actionFor(await initAgents(dir), "AGENTS.md")).toBe("present")
   })
 })
 
@@ -241,7 +262,7 @@ describe("renderInitAgents", () => {
     const dir = await freshDir()
     await writeFile(join(dir, "AGENTS.md"), "# AGENTS.md\n\nrules\n")
     const out = renderInitAgents(await initAgents(dir))
-    expect(out).toContain("✓ appended MCP section to AGENTS.md")
+    expect(out).toContain("✓ appended to AGENTS.md  (MCP server)")
   })
 })
 
@@ -276,6 +297,9 @@ describe("runInitAgents", () => {
       ".mcp.json",
       ".cursor/mcp.json",
       "CLAUDE.md",
+      "GEMINI.md",
+      ".cursor/rules/nifra.mdc",
+      ".github/copilot-instructions.md",
       "AGENTS.md",
     ])
     expect(parsed.cwd).toBe(dir)

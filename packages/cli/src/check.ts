@@ -577,7 +577,7 @@ export async function runCheck(
 
   console.log(renderCheckReport(result).join("\n"))
   // Discoverability nudge: a project with no `.mcp.json` hasn't wired its nifra MCP for coding agents.
-  // `nifra init-agents` writes it (+ .cursor/mcp.json + a CLAUDE.md preamble), no-clobber. A non-fatal
+  // `nifra init-agents` writes it (+ .cursor/mcp.json + each agent's pointer to AGENTS.md), no-clobber. A non-fatal
   // one-line tip in the human report only (the `--json` path returns above, unaffected).
   if (!existsSync(join(cwd, ".mcp.json"))) {
     console.log(

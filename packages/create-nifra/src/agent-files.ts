@@ -1,25 +1,24 @@
 /**
- * The canonical generators for the agent-discovery files an app ships so a coding agent auto-discovers
- * the project's nifra MCP server and prefers it over writing nifra from memory:
+ * The canonical generators for the agent files an app ships. `AGENTS.md` is the single source of agent
+ * guidance; every other agent's file is a thin pointer to it, so no two copies can drift:
  *
- *   .mcp.json          - Claude Code's project MCP registry  ({ mcpServers: { nifra: { command, args } } })
- *   .cursor/mcp.json   - Cursor's MCP registry (same server config)
- *   CLAUDE.md          - Claude's preamble (use the MCP first; gate on `nifra check`) + `@AGENTS.md` import
- *   AGENTS.md "MCP"    - a section for non-Claude agents pointing at the same server
+ *   AGENTS.md                         - the guidance (read natively by Codex, Cursor, Copilot and others)
+ *   CLAUDE.md                         - Claude Code: `@AGENTS.md` import
+ *   GEMINI.md                         - Gemini CLI: `@./AGENTS.md` import
+ *   .cursor/rules/nifra.mdc           - Cursor: an always-applied rule pointing at AGENTS.md
+ *   .github/copilot-instructions.md   - GitHub Copilot: points at AGENTS.md
+ *   .mcp.json, .cursor/mcp.json       - the nifra MCP server, registered for Claude Code and Cursor
  *
- * Single source of truth: both `create-nifra` (scaffold time) and `@nifrajs/cli`'s `nifra init-agents`
- * (retrofit an existing app) import these, so the four files can never drift apart. This module is
- * dependency-free (pure string + object generation) on purpose - `create-nifra` ships with no runtime
- * deps, and `@nifrajs/cli` imports it as a workspace dependency.
+ * Both `create-nifra` (scaffold time) and `@nifrajs/cli`'s `nifra init-agents` (retrofit an existing app)
+ * import these, so the files can never drift apart. This module is dependency-free (pure string + object
+ * generation) on purpose - `create-nifra` ships with no runtime deps, and `@nifrajs/cli` imports it as a
+ * workspace dependency.
  *
  * Why `bunx @nifrajs/cli mcp` (not `bunx nifra mcp`): the `nifra` binary is provided by the
- * `@nifrajs/cli` package. A scaffolded `site` app carries `@nifrajs/cli` as a devDependency, so either
- * spelling would resolve `node_modules/.bin/nifra` locally - BUT the `api`/`isr` templates do NOT carry
- * `@nifrajs/cli`, and the bare npm package literally named `nifra` (this monorepo's `@nifrajs/web` shim)
- * exposes NO `nifra` bin. So `bunx nifra mcp` would fetch the wrong package and fail there. Naming the
- * bin-owning package, `bunx @nifrajs/cli mcp`, resolves the locally-installed bin when present and
- * otherwise fetches the package that actually provides the `nifra` command - robust across every
- * template and for any existing app.
+ * `@nifrajs/cli` package, and the bare npm package literally named `nifra` (this monorepo's
+ * `@nifrajs/web` shim) exposes NO `nifra` bin, so `bunx nifra mcp` would fetch the wrong package in an
+ * app that does not carry `@nifrajs/cli`. Naming the bin-owning package resolves the locally-installed
+ * bin when present and otherwise fetches the package that actually provides the `nifra` command.
  */
 
 import { readFileSync } from "node:fs"
@@ -81,35 +80,27 @@ export function mcpJson(): string {
   return `${JSON.stringify(MCP_CONFIG, null, 2)}\n`
 }
 
-/**
- * `CLAUDE.md` - Claude Code reads this automatically. It is deliberately NOT a copy of `AGENTS.md`:
- * a short preamble that (1) tells Claude this project ships a nifra MCP, registered in `.mcp.json`, and
- * to PREFER it, and (2) pulls in the full cookbook with Claude Code's `@file` import directive on its
- * own line - `@AGENTS.md` - so the conventions live in exactly one place and can't drift between the
- * two files. Keep this short; the depth is in `AGENTS.md`.
- */
+const POINTER_INTRO =
+  "This project's agent guidance - commands, the project structure, the rules, and the nifra MCP server - lives in AGENTS.md, the single source every agent reads."
+
+/** `CLAUDE.md`: Claude Code expands the `@AGENTS.md` import in place. */
 export function claudeMd(): string {
-  return `# CLAUDE.md
+  return `# CLAUDE.md\n\n${POINTER_INTRO}\n\n@AGENTS.md\n`
+}
 
-This project ships a **nifra MCP server**, registered for Claude Code in \`.mcp.json\` (it launches with
-\`${MCP_SERVER_COMMAND} ${MCP_SERVER_ARGS.join(" ")}\`). **Prefer the MCP tools** over writing nifra from memory - they are
-typechecked against *this* project and this installed version, so they beat training-data recall:
+/** `GEMINI.md`: Gemini CLI expands `@./AGENTS.md` imports in its context files. */
+export function geminiMd(): string {
+  return `# GEMINI.md\n\n${POINTER_INTRO}\n\n@./AGENTS.md\n`
+}
 
-- \`nifra_docs\` / \`nifra_example\` - exact signatures + verified, compiling snippets. Reach for these
-  before hand-writing a route, a loader, or a client call; a remembered API is often stale or wrong.
-- \`nifra_context\` - this project's route index + conventions, so changes fit the existing surface.
-- \`nifra_types\` - the EXACT TypeScript of any \`@nifrajs/*\` symbol (e.g. \`nifra_types({ name: "RateLimitStore" })\`).
-  Call it for a precise type; **never read \`node_modules/@nifrajs/**/*.d.ts\`** - the tool is the authoritative, complete source.
-- **\`nifra_check\` is the done-gate.** Before declaring any change complete, run \`nifra_check\` (or
-  \`nifra check --json\` in a terminal). It typechecks the frontend↔backend contract and flags drift
-  (hand-rolled \`fetch()\` to this app's own API, server-only imports in \`routes/\`). A failing check
-  means the work isn't done - fix it, don't ship around it.
+/** `.cursor/rules/nifra.mdc`: an always-applied Cursor rule; `@AGENTS.md` attaches the file. */
+export function cursorRule(): string {
+  return `---\ndescription: nifra project guidance\nalwaysApply: true\n---\n\n${POINTER_INTRO} Read it before changing code:\n\n@AGENTS.md\n`
+}
 
-The full nifra cookbook for this app - backend rules, the typed never-throwing client, file routing, and
-the gotchas - lives in \`AGENTS.md\`, imported here so it stays the single source of truth:
-
-@AGENTS.md
-`
+/** `.github/copilot-instructions.md`: Copilot has no import syntax, so this names the file. */
+export function copilotInstructions(): string {
+  return `${POINTER_INTRO} Read AGENTS.md at the repository root before changing code, and follow it.\n`
 }
 
 /**
@@ -133,6 +124,44 @@ project + the installed version, so they beat training-data recall:
   failing check means it isn't done. (\`nifra check --json\` in a terminal does the same.)`
 }
 
+/**
+ * The "## Project structure" section of a web app's `AGENTS.md`: the zones the build enforces. Shared so
+ * a scaffolded app and one `nifra init-agents` retrofits teach the same rules.
+ */
+export function agentsStructureSection(): string {
+  return `${STRUCTURE_HEADING}
+
+Every file a build loads belongs to one side, and the build refuses an import that crosses the wrong
+way - it fails naming the import chain rather than shipping server code to the browser.
+
+| Where | Holds | Reaches the browser |
+|---|---|---|
+| \`routes/x.tsx\` (\`.svelte\`, \`.vue\`, \`.mdx\`) | a page: the component, \`meta\` | yes |
+| \`routes/x.backend.ts\` | that page's \`loader\`, \`action\`, \`loaderOutput\`, \`actionOutput\`, \`middleware\` | never |
+| \`frontend/\` | components, hooks, browser-only code | yes |
+| \`backend/\` | \`app.ts\` (the API), \`framework.ts\`, the database, auth, secrets | never |
+| \`shared/\` | schemas, types and pure helpers both sides import | yes |
+| \`public/\` | static files served as they are | yes |
+
+A file outside those folders joins a side with a \`.frontend.ts\`, \`.backend.ts\` or \`.shared.ts\` suffix.
+
+- **A route is two files.** \`routes/blog/[slug].tsx\` renders; \`routes/blog/[slug].backend.ts\` loads.
+  A server-only export (\`loader\`, \`action\`, ...) in the \`.tsx\` file is a build error.
+- **Frontend code never imports backend code** - not \`backend/\`, not a \`.backend.ts\` file, not a
+  database driver or \`node:\` built-in. Data reaches a page only as its loader's return value.
+- **Every loader and action declares what it sends**: \`export const loaderOutput = t.object({ ... })\`
+  (and \`actionOutput\`). Only what the schema declares reaches the browser, and a loader without one
+  is refused.
+- **Type a route with its generated \`./+types/<name>\`**: \`import type { Route } from "./+types/[slug]"\`
+  gives \`Route.LoaderArgs\` (with the typed \`api\`) in the backend half and \`Route.ComponentProps\` in
+  the page. \`nifra dev\`, \`nifra build\`, \`nifra check\` and \`nifra types\` write them.
+- **Secrets stay in \`backend/\`.** A value only the server may see is read there (\`process.env\`), never
+  in a frontend file; a build that finds what looks like a credential in browser output fails.`
+}
+
+/** The heading `nifra init-agents` looks for before appending {@link agentsStructureSection}. */
+export const STRUCTURE_HEADING = "## Project structure"
+
 /** Identifies a generated agent-discovery file: where it goes (relative to the project root) and how to
  * produce its content. `merge` is for files that augment an existing one (AGENTS.md) rather than own it. */
 export interface AgentFileSpec {
@@ -143,8 +172,20 @@ export interface AgentFileSpec {
 }
 
 /** The standalone files this module fully owns (whole-file generators). AGENTS.md is handled separately
- * because create-nifra builds it from `agents.ts` and the retrofit command appends a section to it. */
+ * because create-nifra builds it from `agents.ts` and the retrofit command appends sections to it. */
 export const MCP_JSON_PATH = ".mcp.json"
 export const CURSOR_MCP_JSON_PATH = ".cursor/mcp.json"
 export const CLAUDE_MD_PATH = "CLAUDE.md"
+export const GEMINI_MD_PATH = "GEMINI.md"
+export const CURSOR_RULE_PATH = ".cursor/rules/nifra.mdc"
+export const COPILOT_INSTRUCTIONS_PATH = ".github/copilot-instructions.md"
 export const AGENTS_MD_PATH = "AGENTS.md"
+
+/** Every agent's pointer to `AGENTS.md`, in the order they are written and reported. */
+export const AGENT_POINTERS: readonly { readonly path: string; readonly content: () => string }[] =
+  [
+    { path: CLAUDE_MD_PATH, content: claudeMd },
+    { path: GEMINI_MD_PATH, content: geminiMd },
+    { path: CURSOR_RULE_PATH, content: cursorRule },
+    { path: COPILOT_INSTRUCTIONS_PATH, content: copilotInstructions },
+  ]

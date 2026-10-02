@@ -234,6 +234,13 @@
     "signature": "export declare const AGENT_CARD_WELL_KNOWN_PATH = \"/.well-known/agent-card.json\";"
   },
   {
+    "name": "AGENT_POINTERS",
+    "kind": "const",
+    "package": "create-nifra",
+    "signature": "export declare const AGENT_POINTERS: readonly {\n    readonly path: string;\n    readonly content: () => string;\n}[];",
+    "doc": "/** Every agent's pointer to `AGENTS.md`, in the order they are written and reported. */"
+  },
+  {
     "name": "AGENT_PRESETS",
     "kind": "const",
     "package": "@nifrajs/coding-agent",
@@ -733,6 +740,13 @@
     "package": "create-nifra",
     "signature": "export declare function agentsMcpSection(): string;",
     "doc": "/**\n * The \"## MCP server\" section appended to a scaffolded (or retrofitted) `AGENTS.md`, so non-Claude\n * agents (Cursor, and anything that reads `AGENTS.md`) also learn the MCP exists and what to prefer.\n * Mirrors the CLAUDE.md preamble's guidance without the Claude-specific `@import`.\n */"
+  },
+  {
+    "name": "agentsStructureSection",
+    "kind": "function",
+    "package": "create-nifra",
+    "signature": "export declare function agentsStructureSection(): string;",
+    "doc": "/**\n * The \"## Project structure\" section of a web app's `AGENTS.md`: the zones the build enforces. Shared so\n * a scaffolded app and one `nifra init-agents` retrofits teach the same rules.\n */"
   },
   {
     "name": "AgentStatePatchOp",
@@ -3700,7 +3714,7 @@
     "kind": "function",
     "package": "create-nifra",
     "signature": "export declare function claudeMd(): string;",
-    "doc": "/**\n * `CLAUDE.md` - Claude Code reads this automatically. It is deliberately NOT a copy of `AGENTS.md`:\n * a short preamble that (1) tells Claude this project ships a nifra MCP, registered in `.mcp.json`, and\n * to PREFER it, and (2) pulls in the full cookbook with Claude Code's `@file` import directive on its\n * own line - `@AGENTS.md` - so the conventions live in exactly one place and can't drift between the\n * two files. Keep this short; the depth is in `AGENTS.md`.\n */"
+    "doc": "/** `CLAUDE.md`: Claude Code expands the `@AGENTS.md` import in place. */"
   },
   {
     "name": "client",
@@ -4562,6 +4576,19 @@
     "doc": "/** True when both coordinates address the same boundary at the same child vector. */"
   },
   {
+    "name": "COPILOT_INSTRUCTIONS_PATH",
+    "kind": "const",
+    "package": "create-nifra",
+    "signature": "export declare const COPILOT_INSTRUCTIONS_PATH = \".github/copilot-instructions.md\";"
+  },
+  {
+    "name": "copilotInstructions",
+    "kind": "function",
+    "package": "create-nifra",
+    "signature": "export declare function copilotInstructions(): string;",
+    "doc": "/** `.github/copilot-instructions.md`: Copilot has no import syntax, so this names the file. */"
+  },
+  {
     "name": "copyPublicDir",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -5287,6 +5314,12 @@
     "signature": "export declare const CURSOR_MCP_JSON_PATH = \".cursor/mcp.json\";"
   },
   {
+    "name": "CURSOR_RULE_PATH",
+    "kind": "const",
+    "package": "create-nifra",
+    "signature": "export declare const CURSOR_RULE_PATH = \".cursor/rules/nifra.mdc\";"
+  },
+  {
     "name": "CursorResume",
     "kind": "type",
     "package": "@nifrajs/agent-protocol",
@@ -5311,6 +5344,13 @@
     "package": "@nifrajs/agent-protocol",
     "signature": "export interface CursorResyncRequired {\n    readonly status: \"resync_required\";\n    readonly reason: CursorResyncReason;\n    readonly earliest: number;\n    readonly latest: number;\n}",
     "doc": "/** The bounded window no longer contains the record after the cursor; a full resync is required. */"
+  },
+  {
+    "name": "cursorRule",
+    "kind": "function",
+    "package": "create-nifra",
+    "signature": "export declare function cursorRule(): string;",
+    "doc": "/** `.cursor/rules/nifra.mdc`: an always-applied Cursor rule; `@AGENTS.md` attaches the file. */"
   },
   {
     "name": "DATA_CAPABILITIES",
@@ -7987,6 +8027,19 @@
     "doc": "/** A value that can go up and down (in-flight requests, queue depth). */"
   },
   {
+    "name": "GEMINI_MD_PATH",
+    "kind": "const",
+    "package": "create-nifra",
+    "signature": "export declare const GEMINI_MD_PATH = \"GEMINI.md\";"
+  },
+  {
+    "name": "geminiMd",
+    "kind": "function",
+    "package": "create-nifra",
+    "signature": "export declare function geminiMd(): string;",
+    "doc": "/** `GEMINI.md`: Gemini CLI expands `@./AGENTS.md` imports in its context files. */"
+  },
+  {
     "name": "generateClientEntry",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -10471,7 +10524,7 @@
     "kind": "const",
     "package": "create-nifra",
     "signature": "export declare const MCP_JSON_PATH = \".mcp.json\";",
-    "doc": "/** The standalone files this module fully owns (whole-file generators). AGENTS.md is handled separately\n * because create-nifra builds it from `agents.ts` and the retrofit command appends a section to it. */"
+    "doc": "/** The standalone files this module fully owns (whole-file generators). AGENTS.md is handled separately\n * because create-nifra builds it from `agents.ts` and the retrofit command appends sections to it. */"
   },
   {
     "name": "MCP_SERVER_ARGS",
@@ -19093,6 +19146,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function stripSvgPreamble(xml: string): string;",
     "doc": "/**\n * Strip the XML declaration, comments, and DOCTYPE from an SVG source by index scan. Shared by every\n * adapter's SVG-component transform instead of chained regex `replace`s, for two reasons: the lazy\n * `[\\s\\S]*?` scans backtrack quadratically on an unterminated marker, and sequential single-pass\n * replaces can splice removed delimiters back together (`<<!---->!DOCTYPE …>` survives them). The\n * scan removes each block in one forward pass, so neither failure mode exists. An unterminated\n * marker swallows the rest of the input - the correct reading, matching an XML parser.\n */"
+  },
+  {
+    "name": "STRUCTURE_HEADING",
+    "kind": "const",
+    "package": "create-nifra",
+    "signature": "export declare const STRUCTURE_HEADING = \"## Project structure\";",
+    "doc": "/** The heading `nifra init-agents` looks for before appending {@link agentsStructureSection}. */"
   },
   {
     "name": "structuredOutputParser",

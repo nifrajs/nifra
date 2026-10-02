@@ -139,15 +139,16 @@ describe("scaffold - templates", () => {
     expect(apiMd).toContain("never throws") // the typed client
     expect(apiMd).toContain("llms-full.txt") // pointer to the full reference
     expect(apiMd).toContain("install current, never pin from memory") // anti-stale-training rule
-    // The API template is not full-stack → no route-module gotcha section.
-    expect(apiMd).not.toContain("never import server-only code")
+    // The API template is not full-stack → no frontend, so no zones section.
+    expect(apiMd).not.toContain("## Project structure")
 
-    // The full-stack templates add the file-routing + server-only-import gotcha, named per framework.
+    // The full-stack templates add file routing and the zones the build enforces, named per framework.
     const site = await freshDir("my-site")
     await scaffold({ target: site, template: "site", framework: "vue" })
     const siteMd = await readFile(join(site, "AGENTS.md"), "utf8")
     expect(siteMd).toContain("# AGENTS.md - my-site")
-    expect(siteMd).toContain("never import server-only code at a route's top level")
+    expect(siteMd).toContain("## Project structure")
+    expect(siteMd).toContain("Frontend code never imports backend code")
     expect(siteMd).toContain("Vue")
     expect(siteMd).toContain("@nifrajs/web-vue")
   })
@@ -183,16 +184,22 @@ describe("scaffold - agent-discovery files (MCP auto-discovery)", () => {
     expect(cursor).toBe(root)
   })
 
-  test("writes a CLAUDE.md that is MCP-first and imports AGENTS.md (no duplication)", async () => {
-    const dir = await freshDir("claude-app")
+  test("every agent's own file is a pointer to AGENTS.md, so no guidance is duplicated", async () => {
+    const dir = await freshDir("pointer-app")
     await scaffold({ target: dir })
-    const md = await readFile(join(dir, "CLAUDE.md"), "utf8")
-    expect(md).toContain("nifra MCP server")
-    expect(md).toContain("nifra_docs")
-    expect(md).toContain("nifra_check") // the done-gate
-    // The `@AGENTS.md` import directive must be on its own line for Claude Code to resolve it - that's
-    // how the full cookbook stays in AGENTS.md alone (no drift between the two files).
-    expect(md.split("\n")).toContain("@AGENTS.md")
+    const read = (path: string) => readFile(join(dir, path), "utf8")
+    // Import directives must sit on their own line for Claude Code and Gemini CLI to expand them.
+    expect((await read("CLAUDE.md")).split("\n")).toContain("@AGENTS.md")
+    expect((await read("GEMINI.md")).split("\n")).toContain("@./AGENTS.md")
+    const cursor = await read(".cursor/rules/nifra.mdc")
+    expect(cursor).toStartWith("---\n")
+    expect(cursor).toContain("alwaysApply: true")
+    expect(cursor.split("\n")).toContain("@AGENTS.md")
+    expect(await read(".github/copilot-instructions.md")).toContain("AGENTS.md")
+    // A pointer carries no guidance of its own: the MCP tools are taught once, in AGENTS.md.
+    for (const path of ["CLAUDE.md", "GEMINI.md", ".cursor/rules/nifra.mdc"]) {
+      expect(await read(path)).not.toContain("nifra_docs")
+    }
   })
 
   test("AGENTS.md gains the MCP section so non-Claude agents learn the server exists", async () => {

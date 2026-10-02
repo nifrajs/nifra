@@ -5556,15 +5556,17 @@ need both). Anywhere else, add the URL.
 # Registers the MCP server and writes the agent files. Never clobbers what is already there.
 nifra init-agents
 
-#   .mcp.json          the server, for Claude Code and anything else reading that format
-#   .cursor/mcp.json   the same, for Cursor
-#   CLAUDE.md          project conventions an agent reads on entry
-#   AGENTS.md          the same, in the vendor-neutral format
+#   AGENTS.md                         the guidance: commands, project structure, rules, the MCP tools
+#   CLAUDE.md, GEMINI.md              Claude Code and Gemini CLI: import AGENTS.md
+#   .cursor/rules/nifra.mdc           Cursor: an always-applied rule pointing at AGENTS.md
+#   .github/copilot-instructions.md   Copilot: points at AGENTS.md
+#   .mcp.json, .cursor/mcp.json       the server, for Claude Code and Cursor
+# AGENTS.md is the one copy; the others only point at it, so they cannot drift apart.
 
 # Then restart the agent so it picks the server up.
 
 # The server is pinned to an exact @nifrajs/cli. After upgrading nifra, re-pin it to the version the
-# project installs. Only that version string changes; every other byte of the four files is kept.
+# project installs. Only that version string changes; every other byte of every file is kept.
 # At a workspace root whose one nifra app is a member, the launch also names it: `mcp app`.
 nifra init-agents --sync-mcp
 ```

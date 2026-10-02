@@ -1,20 +1,22 @@
 /**
- * `nifra init-agents` - retrofit an EXISTING app with the agent-discovery files a freshly scaffolded
- * app ships, so an already-built project adopts the nifra MCP in one command:
+ * `nifra init-agents` - retrofit an EXISTING app with the agent files a freshly scaffolded app ships, so
+ * an already-built project adopts them in one command:
  *
- *   .mcp.json          - Claude Code's project MCP registry  (launches `bunx @nifrajs/cli mcp`)
- *   .cursor/mcp.json   - Cursor's MCP registry (same server config)
- *   CLAUDE.md          - Claude's MCP-first preamble + `@AGENTS.md` import
- *   AGENTS.md          - a `## MCP server` section appended (or a minimal file if none exists)
+ *   .mcp.json, .cursor/mcp.json   - the nifra MCP server for Claude Code and Cursor
+ *   CLAUDE.md, GEMINI.md, .cursor/rules/nifra.mdc, .github/copilot-instructions.md
+ *                                 - each agent's pointer to AGENTS.md, the single source of guidance
+ *   AGENTS.md                     - the `## MCP server` section, and for an app with `routes/` the
+ *                                   `## Project structure` section, appended when missing (or a minimal
+ *                                   file if none exists)
  *
  * The generators are imported from `create-nifra/agent-files` - the SAME source of truth `create-nifra`
  * uses at scaffold time - so a retrofitted app and a freshly scaffolded one get byte-identical configs.
  *
  * Safety: this writes into the user's existing tree, so it NEVER silently clobbers a file they may have
  * customized. By default an existing `.mcp.json` / `CLAUDE.md` / `.cursor/mcp.json` is SKIPPED with a
- * notice; `--force` overwrites. `AGENTS.md` is special-cased - if it already has the MCP section it's
- * left alone, otherwise the section is APPENDED (never overwriting the user's conventions), and `--force`
- * is not needed for that append since it's additive. Every write path is resolved + confined under the
+ * notice; `--force` overwrites. `AGENTS.md` is special-cased - a section it already has is left alone,
+ * a missing one is APPENDED (never overwriting the user's conventions), and `--force` is not needed for
+ * that append since it's additive. Every write path is resolved + confined under the
  * cwd (no `..` traversal escaping the project root).
  *
  * `--sync-mcp` is the upgrade path: the launch command pins an exact `@nifrajs/cli` version, so after
@@ -31,15 +33,17 @@ import type { Stats } from "node:fs"
 import { chmod, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { isAbsolute, relative, resolve, sep } from "node:path"
 import {
+  AGENT_POINTERS,
   AGENTS_MD_PATH,
   agentsMcpSection,
+  agentsStructureSection,
   CLAUDE_MD_PATH,
   CURSOR_MCP_JSON_PATH,
-  claudeMd,
   MCP_CLI_VERSION,
   MCP_JSON_PATH,
   MCP_SERVER_COMMAND,
   mcpJson,
+  STRUCTURE_HEADING,
 } from "create-nifra/agent-files"
 import { installedNifraVersion, resolveRootState } from "./mcp-root.ts"
 
@@ -47,9 +51,9 @@ import { installedNifraVersion, resolveRootState } from "./mcp-root.ts"
 export interface InitAgentsFileResult {
   /** Project-root-relative POSIX path. */
   readonly path: string
-  /** `wrote` - created or (with --force) overwrote; `appended` - added the MCP section to an existing
+  /** `wrote` - created or (with --force) overwrote; `appended` - added missing sections to an existing
    * AGENTS.md; `skipped` - already present and not forced (or, under --sync-mcp, absent or unpinned);
-   * `present` - MCP section already there (or, under --sync-mcp, already pinned to the target);
+   * `present` - every section already there (or, under --sync-mcp, already pinned to the target);
    * `synced` - --sync-mcp rewrote a stale pinned version or named the workspace member. */
   readonly action: "wrote" | "appended" | "skipped" | "present" | "synced"
   /** Why it was skipped/left, for the notice (e.g. "exists - pass --force to overwrite"). */
@@ -142,7 +146,7 @@ async function writeOwned(
   if (!force && (await fileExists(abs))) {
     return { path: rel, action: "skipped", note: "exists - pass --force to overwrite" }
   }
-  // `.cursor/mcp.json` needs its parent dir; `recursive` is a no-op for the root-level files.
+  // A nested file (`.cursor/`, `.github/`) needs its parent dir; `recursive` is a no-op at the root.
   await mkdir(resolve(abs, ".."), { recursive: true })
   await atomicWrite(abs, content)
   return { path: rel, action: "wrote" }
@@ -168,16 +172,19 @@ async function atomicWrite(
 }
 
 /**
- * AGENTS.md is additive, not owned: if it exists and already has the MCP section, leave it; if it exists
- * without the section, append the section (preserving the user's conventions); if it's absent, write a
- * minimal AGENTS.md that is just the MCP section under a heading. `--force` is irrelevant here - we never
- * overwrite the user's existing guidance.
+ * AGENTS.md is additive, not owned: each section it lacks is appended (preserving the user's
+ * conventions), each it has is left alone, and an absent file is written with just those sections.
+ * `--force` is irrelevant here - we never overwrite the user's existing guidance. The structure section
+ * is for an app with `routes/`; an API-only app has no frontend to keep apart.
  */
 async function ensureAgentsMd(cwd: string): Promise<InitAgentsFileResult> {
   const abs = safeJoin(cwd, AGENTS_MD_PATH)
   await assertSafeParents(cwd, abs)
   await assertRegularTarget(abs, AGENTS_MD_PATH)
-  const section = agentsMcpSection()
+  const sections = [{ heading: "## MCP server", text: agentsMcpSection() }]
+  if (await isDirectory(safeJoin(cwd, "routes"))) {
+    sections.push({ heading: STRUCTURE_HEADING, text: agentsStructureSection() })
+  }
   let existing: string | undefined
   try {
     existing = await readFile(abs, "utf8")
@@ -185,20 +192,29 @@ async function ensureAgentsMd(cwd: string): Promise<InitAgentsFileResult> {
     existing = undefined // no AGENTS.md yet
   }
   if (existing === undefined) {
+    const body = sections.map((section) => section.text).join("\n\n")
     await atomicWrite(
       abs,
-      `# AGENTS.md\n\nGuidance for AI coding agents working in this repo.\n\n${section}\n`,
+      `# AGENTS.md\n\nGuidance for AI coding agents working in this repo.\n\n${body}\n`,
     )
     return { path: AGENTS_MD_PATH, action: "wrote" }
   }
   // Match on the section heading, not the full body, so a reformatted-but-present section still counts.
-  if (existing.includes("## MCP server")) {
-    return { path: AGENTS_MD_PATH, action: "present", note: "already has an MCP section" }
+  const current = existing
+  const missing = sections.filter((section) => !current.includes(section.heading))
+  if (missing.length === 0) {
+    return { path: AGENTS_MD_PATH, action: "present", note: "already has every section" }
   }
-  const sep = existing.endsWith("\n") ? "\n" : "\n\n"
-  await atomicWrite(abs, `${existing}${sep}${section}\n`)
-  return { path: AGENTS_MD_PATH, action: "appended" }
+  const sep = current.endsWith("\n") ? "\n" : "\n\n"
+  await atomicWrite(abs, `${current}${sep}${missing.map((section) => section.text).join("\n\n")}\n`)
+  const names = missing.map((section) => section.heading.slice(3)).join(" + ")
+  return { path: AGENTS_MD_PATH, action: "appended", note: names }
 }
+
+const isDirectory = (path: string): Promise<boolean> =>
+  lstat(path)
+    .then((stat) => stat.isDirectory())
+    .catch(() => false)
 
 /** An exact version: the only pin --sync-mcp rewrites. A dist-tag or a range is a deliberate choice,
  * not a scaffold-time freeze. Prerelease and build suffixes are part of the version. */
@@ -390,7 +406,7 @@ async function syncMcpPins(cwd: string): Promise<InitAgentsResult> {
 }
 
 /**
- * Retrofit `cwd` with the four agent-discovery files. Pure enough to unit-test (no argv, no process.exit,
+ * Retrofit `cwd` with the agent files. Pure enough to unit-test (no argv, no process.exit,
  * no console) - the CLI wrapper handles printing + the exit code.
  */
 export async function initAgents(
@@ -404,13 +420,15 @@ export async function initAgents(
     if (force) throw new Error("[nifra] --sync-mcp cannot be combined with --force")
     return syncMcpPins(cwd)
   }
-  // Order: the two MCP registries + CLAUDE.md (owned, no-clobber), then AGENTS.md (additive).
+  // Order: the two MCP registries and each agent's pointer (owned, no-clobber), then AGENTS.md (additive).
   const member = await workspaceMember(cwd)
   const registry = member === undefined ? mcpJson() : nameMember(mcpJson(), member).text
   const files: InitAgentsFileResult[] = []
   files.push(await writeOwned(cwd, MCP_JSON_PATH, registry, force))
   files.push(await writeOwned(cwd, CURSOR_MCP_JSON_PATH, registry, force))
-  files.push(await writeOwned(cwd, CLAUDE_MD_PATH, claudeMd(), force))
+  for (const pointer of AGENT_POINTERS) {
+    files.push(await writeOwned(cwd, pointer.path, pointer.content(), force))
+  }
   files.push(await ensureAgentsMd(cwd))
   // A file the run left alone may still launch an old CLI. Say so where the file is reported, with
   // the command that fixes only that. Advisory: a file it cannot read costs the hint, not the run.
@@ -431,7 +449,7 @@ export async function initAgents(
 
 const ACTION_GLYPH: Readonly<Record<InitAgentsFileResult["action"], string>> = {
   wrote: "✓ wrote",
-  appended: "✓ appended MCP section to",
+  appended: "✓ appended to",
   skipped: "• skipped",
   present: "• kept",
   synced: "✓ re-pinned",

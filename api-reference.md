@@ -6310,16 +6310,21 @@ _No named exports (side-effect entrypoint)._
 ## create-nifra
 
 - **AGENTS_MD_PATH** _(const)_ - `AGENTS_MD_PATH: "AGENTS.md"`
+- **AGENT_POINTERS** _(const)_ - `AGENT_POINTERS: readonly { readonly path: string; readonly content: () => string; }[]`
+  Every agent's pointer to `AGENTS.md`, in the order they are written and reported.
 - **AgentFileSpec** _(interface)_ - `interface AgentFileSpec`
   Identifies a generated agent-discovery file: where it goes (relative to the project root) and how to produce its content. `merge` is for files that augment an existing one (AGENTS.md) rather than own it.
 - **CLAUDE_MD_PATH** _(const)_ - `CLAUDE_MD_PATH: "CLAUDE.md"`
+- **COPILOT_INSTRUCTIONS_PATH** _(const)_ - `COPILOT_INSTRUCTIONS_PATH: ".github/copilot-instructions.md"`
 - **CURSOR_MCP_JSON_PATH** _(const)_ - `CURSOR_MCP_JSON_PATH: ".cursor/mcp.json"`
+- **CURSOR_RULE_PATH** _(const)_ - `CURSOR_RULE_PATH: ".cursor/rules/nifra.mdc"`
+- **GEMINI_MD_PATH** _(const)_ - `GEMINI_MD_PATH: "GEMINI.md"`
 - **MCP_CLI_VERSION** _(const)_ - `MCP_CLI_VERSION: string`
   The `@nifrajs/cli` version the launch command pins to - DERIVED at load time from this package's own `version`, never hardcoded. `fixed` changeset versioning ([["@nifrajs/*", "create-nifra", "nifra"]] in `.changeset/config.json`) bumps `create-nifra` and `@nifrajs/cli` in lockstep, so `create-nifra…
 - **MCP_CONFIG** _(const)_ - `MCP_CONFIG: McpConfig`
   The one canonical MCP config object both registries serialize - the anti-drift seam.
 - **MCP_JSON_PATH** _(const)_ - `MCP_JSON_PATH: ".mcp.json"`
-  The standalone files this module fully owns (whole-file generators). AGENTS.md is handled separately because create-nifra builds it from `agents.ts` and the retrofit command appends a section to it.
+  The standalone files this module fully owns (whole-file generators). AGENTS.md is handled separately because create-nifra builds it from `agents.ts` and the retrofit command appends sections to it.
 - **MCP_SERVER_ARGS** _(const)_ - `MCP_SERVER_ARGS: readonly [`@nifrajs/cli@${string}`, "mcp"]`
 - **MCP_SERVER_COMMAND** _(const)_ - `MCP_SERVER_COMMAND: "bunx"`
   The MCP launch command, shared by `.mcp.json` and `.cursor/mcp.json`. See the module header for why the package is named explicitly rather than relying on the bare `nifra` bin.
@@ -6327,10 +6332,20 @@ _No named exports (side-effect entrypoint)._
   Claude Code / Cursor MCP config shape: a map of server name → launch config.
 - **McpServerConfig** _(interface)_ - `interface McpServerConfig`
   The server entry registered under the `nifra` key in both Claude Code's and Cursor's MCP config.
+- **STRUCTURE_HEADING** _(const)_ - `STRUCTURE_HEADING: "## Project structure"`
+  The heading `nifra init-agents` looks for before appending {@link agentsStructureSection}.
 - **agentsMcpSection** _(function)_ - `agentsMcpSection: () => string`
   The "## MCP server" section appended to a scaffolded (or retrofitted) `AGENTS.md`, so non-Claude agents (Cursor, and anything that reads `AGENTS.md`) also learn the MCP exists and what to prefer. Mirrors the CLAUDE.md preamble's guidance without the Claude-specific `@import`.
+- **agentsStructureSection** _(function)_ - `agentsStructureSection: () => string`
+  The "## Project structure" section of a web app's `AGENTS.md`: the zones the build enforces. Shared so a scaffolded app and one `nifra init-agents` retrofits teach the same rules.
 - **claudeMd** _(function)_ - `claudeMd: () => string`
-  `CLAUDE.md` - Claude Code reads this automatically. It is deliberately NOT a copy of `AGENTS.md`: a short preamble that (1) tells Claude this project ships a nifra MCP, registered in `.mcp.json`, and to PREFER it, and (2) pulls in the full cookbook with Claude Code's `@file` import directive on its…
+  `CLAUDE.md`: Claude Code expands the `@AGENTS.md` import in place.
+- **copilotInstructions** _(function)_ - `copilotInstructions: () => string`
+  `.github/copilot-instructions.md`: Copilot has no import syntax, so this names the file.
+- **cursorRule** _(function)_ - `cursorRule: () => string`
+  `.cursor/rules/nifra.mdc`: an always-applied Cursor rule; `@AGENTS.md` attaches the file.
+- **geminiMd** _(function)_ - `geminiMd: () => string`
+  `GEMINI.md`: Gemini CLI expands `@./AGENTS.md` imports in its context files.
 - **mcpJson** _(function)_ - `mcpJson: () => string`
   Serialize the canonical MCP config as the JSON written to `.mcp.json` and `.cursor/mcp.json`. Trailing newline so the file is POSIX-clean and diffs don't flag a missing EOL.
 

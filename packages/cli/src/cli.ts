@@ -117,12 +117,14 @@ Usage:
                                          against it: a route the target can't honour (an ssr route on a
                                          static build, ISR where there's no revalidation) exits nonzero
                                          with the consequence - run in CI so it fails the build, not prod.
-  nifra init-agents [--force] [--json]   Retrofit an EXISTING app with the agent-discovery files a new
-                                         app ships: .mcp.json + .cursor/mcp.json (register this project's
-                                         nifra MCP), CLAUDE.md (MCP-first preamble + @AGENTS.md import),
-                                         and a "## MCP server" section in AGENTS.md. No-clobber by
-                                         default (skips a file you've customized); --force overwrites the
-                                         owned files. AGENTS.md is only appended to, never overwritten.
+  nifra init-agents [--force] [--json]   Retrofit an EXISTING app with the agent files a new app ships:
+                                         .mcp.json + .cursor/mcp.json (register this project's nifra MCP),
+                                         each agent's pointer to AGENTS.md (CLAUDE.md, GEMINI.md,
+                                         .cursor/rules/nifra.mdc, .github/copilot-instructions.md), and
+                                         AGENTS.md's "## MCP server" and (with routes/) "## Project
+                                         structure" sections. No-clobber by default (skips a file you've
+                                         customized); --force overwrites the owned files. AGENTS.md is
+                                         only appended to, never overwritten.
   nifra init-agents --sync-mcp [--json]  Re-pin an existing app's MCP launch to the nifra the project
                                          installs: rewrites only the @nifrajs/cli@x.y.z version in
                                          .mcp.json, .cursor/mcp.json, CLAUDE.md and AGENTS.md's MCP
@@ -983,7 +985,7 @@ async function main(): Promise<void> {
     if (!ok) process.exitCode = 1
     return
   }
-  // `init-agents` retrofits the agent-discovery files (.mcp.json, CLAUDE.md, …) into the cwd. It's a
+  // `init-agents` retrofits the agent files (.mcp.json, CLAUDE.md, AGENTS.md, …) into the cwd. It's a
   // pure file-writing command independent of the app loading, so dispatch it before the eager `loadApp`
   // (an existing app might be API-only or not yet built). It always succeeds unless a write throws.
   if (command === "init-agents") {

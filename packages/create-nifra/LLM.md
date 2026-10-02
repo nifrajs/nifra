@@ -11,19 +11,21 @@ Scaffold a new nifra app - `bun create nifra <dir>`.
 ## Key exports
 
 - **agentsMcpSection** _(function)_ - `agentsMcpSection: () => string`
+- **agentsStructureSection** _(function)_ - `agentsStructureSection: () => string`
 - **claudeMd** _(function)_ - `claudeMd: () => string`
+- **copilotInstructions** _(function)_ - `copilotInstructions: () => string`
+- **cursorRule** _(function)_ - `cursorRule: () => string`
+- **geminiMd** _(function)_ - `geminiMd: () => string`
 - **mcpJson** _(function)_ - `mcpJson: () => string`
+- **AGENT_POINTERS** _(const)_ - `AGENT_POINTERS: readonly { readonly path: string; readonly content: () => string; }[]`
 - **AGENTS_MD_PATH** _(const)_ - `AGENTS_MD_PATH: "AGENTS.md"`
 - **CLAUDE_MD_PATH** _(const)_ - `CLAUDE_MD_PATH: "CLAUDE.md"`
+- **COPILOT_INSTRUCTIONS_PATH** _(const)_ - `COPILOT_INSTRUCTIONS_PATH: ".github/copilot-instructions.md"`
 - **CURSOR_MCP_JSON_PATH** _(const)_ - `CURSOR_MCP_JSON_PATH: ".cursor/mcp.json"`
-- **MCP_CLI_VERSION** _(const)_ - `MCP_CLI_VERSION: string`
-- **MCP_CONFIG** _(const)_ - `MCP_CONFIG: McpConfig`
-- **MCP_JSON_PATH** _(const)_ - `MCP_JSON_PATH: ".mcp.json"`
-- **MCP_SERVER_ARGS** _(const)_ - `MCP_SERVER_ARGS: readonly [`@nifrajs/cli@${string}`, "mcp"]`
-- **MCP_SERVER_COMMAND** _(const)_ - `MCP_SERVER_COMMAND: "bunx"`
-- **AgentFileSpec** _(interface)_ - `interface AgentFileSpec`
-- **McpConfig** _(interface)_ - `interface McpConfig`
-- **McpServerConfig** _(interface)_ - `interface McpServerConfig`
+- **CURSOR_RULE_PATH** _(const)_ - `CURSOR_RULE_PATH: ".cursor/rules/nifra.mdc"`
+- **GEMINI_MD_PATH** _(const)_ - `GEMINI_MD_PATH: "GEMINI.md"`
+
+_…and 9 more - see [`api-reference.md`](../../api-reference.md#createnifra) for the complete list._
 
 ## Footguns
 
