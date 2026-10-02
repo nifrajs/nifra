@@ -1902,6 +1902,13 @@
     "doc": "/** The nifra marker a module imports to refuse the browser outright. */"
   },
   {
+    "name": "BACKEND_ROUTE_EXPORTS",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const BACKEND_ROUTE_EXPORTS: ReadonlySet<string>;",
+    "doc": "/** Exports only the server or the build reads. They live in the route's `x.backend.ts`. */"
+  },
+  {
     "name": "BackendEvidenceProvider",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -7944,6 +7951,13 @@
     "package": "@nifrajs/schema",
     "signature": "export declare function fromTypeBox<T extends TSchema>(schema: T, options?: {\n    readonly coerce?: boolean;\n}): NifraSchema<T>;",
     "doc": "/**\n * Wrap a TypeBox schema as a `NifraSchema`.\n *\n * **Validation is fast where it can be, and works everywhere.** The first `validate`\n * builds a compiled `TypeCompiler` validator (codegen via `new Function`) and memoizes\n * it - composing schemas (`t.object({ a: t.string() })`) never compiles the inner\n * pieces; only a schema actually used to validate a request pays the one-time codegen\n * cost. On Bun and Node this is the only path and it is untouched.\n *\n * Edge runtimes (Cloudflare Workers, Vercel Edge, Deno Deploy) **forbid dynamic code\n * generation**, so that first compile throws there. We catch it once per schema and\n * fall back to TypeBox's eval-free `Value` checker - same semantics (and same global\n * `FormatRegistry`, so `t.string({ format })` behaves identically), no `new Function`.\n * The branch is decided once and memoized, so the hot path is a single check either way.\n *\n * Exposed (not just used internally by `t`) so a TypeBox schema authored directly can\n * be adapted without leaving the Standard Schema world.\n *\n * `options.coerce` runs TypeBox's `Value.Convert` (string→number/integer/boolean, per the schema)\n * BEFORE validating. Query values always arrive as strings (`?limit=20` → `\"20\"`), so a query schema\n * with a numeric field can't validate without this - it's how `t.pageQuery` yields a real `number`.\n * Leave it OFF (the default) for body/JSON schemas: a JSON number is already a number, and coercing\n * would silently accept `\"20\"` where the contract said `20`.\n */"
+  },
+  {
+    "name": "FRONTEND_ROUTE_EXPORTS",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const FRONTEND_ROUTE_EXPORTS: ReadonlySet<string>;",
+    "doc": "/** Exports the browser runs or reads. They live in a route's frontend file, which ships whole. */"
   },
   {
     "name": "GateResult",
@@ -17983,7 +17997,7 @@
     "kind": "type",
     "package": "@nifrajs/web",
     "signature": "export type ShouldRevalidate = (args: ShouldRevalidateArgs) => boolean;",
-    "doc": "/**\n * A layout's say over whether its loader runs again on a client navigation. Export it from a\n * `_layout` next to the loader: `export const shouldRevalidate: ShouldRevalidate = (args) => ...`.\n *\n * - Asked on the server, on a client navigation that keeps this layout on screen, when the browser\n *   already holds its data. A document request, the revalidation after an action, and\n *   `router.invalidate()` always run the loader.\n * - Return `false` to keep the data the browser has; any other value runs the loader. Return\n *   `args.defaultShouldRevalidate` to keep the default for the cases you do not handle.\n * - Must be synchronous: a returned promise is not `false`, so the loader runs.\n * - Never asked for a `gate` layout, which runs on every request.\n * - A page's loader runs on every navigation and a page's `shouldRevalidate` is not read. Query keys\n *   a page's loader never uses belong in its `searchClientKeys`.\n */"
+    "doc": "/**\n * A layout's say over whether its loader runs again on a client navigation. Export it from a\n * `_layout.backend.ts` next to the loader: `export const shouldRevalidate: ShouldRevalidate = (args) => ...`.\n *\n * - Asked on the server, on a client navigation that keeps this layout on screen, when the browser\n *   already holds its data. A document request, the revalidation after an action, and\n *   `router.invalidate()` always run the loader.\n * - Return `false` to keep the data the browser has; any other value runs the loader. Return\n *   `args.defaultShouldRevalidate` to keep the default for the cases you do not handle.\n * - Must be synchronous: a returned promise is not `false`, so the loader runs.\n * - Never asked for a `gate` layout, which runs on every request.\n * - A page's loader runs on every navigation and a page's `shouldRevalidate` is not read. Query keys\n *   a page's loader never uses belong in its `searchClientKeys`.\n */"
   },
   {
     "name": "ShouldRevalidateArgs",

@@ -24,24 +24,12 @@ import {
   writeFileSync,
 } from "node:fs"
 import { dirname, extname, join, posix, relative, resolve } from "node:path"
+import { BACKEND_ROUTE_EXPORTS } from "@nifrajs/web/route-manifest"
 import type * as TS from "typescript"
 import { importTypeScript } from "./internal/typescript-import.ts"
 
-/** Exports only the server or the build reads. Mirrors `@nifrajs/web`'s route-pair contract. */
-const BACKEND_EXPORTS: ReadonlySet<string> = new Set([
-  "loader",
-  "action",
-  "loaderOutput",
-  "actionOutput",
-  "boundaryLoaders",
-  "getStaticPaths",
-  "prerender",
-  "revalidate",
-  "revalidateTags",
-  "hydrate",
-  "islandScripts",
-  "middleware",
-])
+/** Exports only the server or the build reads: `@nifrajs/web`'s route-pair contract. */
+const BACKEND_EXPORTS = BACKEND_ROUTE_EXPORTS
 
 const ROUTE_FILE = /\.(?:tsx|jsx|svelte|vue|mdx)$/
 const SOURCE_FILE = /\.(?:[cm]?[jt]sx?|svelte|vue|mdx)$/

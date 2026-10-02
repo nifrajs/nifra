@@ -24,6 +24,8 @@ export {
   type ShadowedPage,
   shadowedPages,
 } from "./internal/mount-shadow.ts"
+/** Which half of a route each export belongs in: the frontend file or its `x.backend.ts`. */
+export { BACKEND_ROUTE_EXPORTS, FRONTEND_ROUTE_EXPORTS } from "./manifest.ts"
 
 /**
  * How a route produces its HTML.

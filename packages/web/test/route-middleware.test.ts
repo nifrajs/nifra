@@ -117,9 +117,10 @@ const orgApp = () => {
     "login.tsx": {},
     "orgs/[org]/_error.tsx": {},
     "orgs/[org]/_404.tsx": {},
-    "orgs/[org]/_layout.tsx": { gate: true },
+    "orgs/[org]/_layout.tsx": {},
     "orgs/[org]/_layout.backend.ts": {
       middleware: middleware("org"),
+      gate: true,
       loader: () => {
         calls.push("gate")
         return { layout: true }

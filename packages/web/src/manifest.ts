@@ -97,7 +97,7 @@ export interface ShouldRevalidateArgs {
 
 /**
  * A layout's say over whether its loader runs again on a client navigation. Export it from a
- * `_layout` next to the loader: `export const shouldRevalidate: ShouldRevalidate = (args) => ...`.
+ * `_layout.backend.ts` next to the loader: `export const shouldRevalidate: ShouldRevalidate = (args) => ...`.
  *
  * - Asked on the server, on a client navigation that keeps this layout on screen, when the browser
  *   already holds its data. A document request, the revalidation after an action, and
@@ -598,6 +598,8 @@ export const BACKEND_ROUTE_EXPORTS: ReadonlySet<string> = new Set([
   "hydrate",
   "islandScripts",
   "middleware",
+  "gate",
+  "shouldRevalidate",
 ])
 
 const routeError = (message: string): Error => new Error(`[nifra/web] ${message}`)

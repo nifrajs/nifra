@@ -4844,7 +4844,7 @@ _No named exports (side-effect entrypoint)._
   The search OUTPUT type for a route MODULE - its `searchSchema`'s validated output, or the raw parsed query (`Record<string, unknown>`) when it declares none. The building block for typed cross-route navigation: generated route types (`nifra sync-routes`) map each path to `SearchOf<typeof import("./…
 - **ServePublicDirOptions** _(interface)_ - `interface ServePublicDirOptions`
 - **ShouldRevalidate** _(type)_ - `type ShouldRevalidate = (args: ShouldRevalidateArgs) => boolean`
-  A layout's say over whether its loader runs again on a client navigation. Export it from a `_layout` next to the loader: `export const shouldRevalidate: ShouldRevalidate = (args) => ...`.
+  A layout's say over whether its loader runs again on a client navigation. Export it from a `_layout.backend.ts` next to the loader: `export const shouldRevalidate: ShouldRevalidate = (args) => ...`.
 - **ShouldRevalidateArgs** _(interface)_ - `interface ShouldRevalidateArgs`
   One client navigation, as a layout's {@link ShouldRevalidate} sees it.
 - **SsrModuleLoader** _(type)_ - `type SsrModuleLoader = (id: string) => Promise<unknown>`
@@ -5487,6 +5487,10 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web/route-manifest`
 
+- **BACKEND_ROUTE_EXPORTS** _(const)_ - `BACKEND_ROUTE_EXPORTS: ReadonlySet<string>`
+  Exports only the server or the build reads. They live in the route's `x.backend.ts`.
+- **FRONTEND_ROUTE_EXPORTS** _(const)_ - `FRONTEND_ROUTE_EXPORTS: ReadonlySet<string>`
+  Exports the browser runs or reads. They live in a route's frontend file, which ships whole.
 - **RenderMode** _(type)_ - `type RenderMode = "static" | "isr" | "ssr"`
   How a route produces its HTML.
 - **RouteCapability** _(type)_ - `type RouteCapability = "server" | "revalidation"`
