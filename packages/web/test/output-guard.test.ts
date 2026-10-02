@@ -390,6 +390,26 @@ describe("a route's backend half", () => {
     expect(await data.text()).not.toContain("never-sent")
   })
 
+  test("a deferred value streams its projected value", async () => {
+    const app = appOf({
+      loader: () => ({
+        user: "ada",
+        feed: defer(Promise.resolve([{ title: "a", authorEmail: "never-sent" }])),
+      }),
+      loaderOutput: t.object({
+        user: t.string(),
+        feed: t.deferred(t.array(t.object({ title: t.string() }))),
+      }),
+    })
+    const data = await app.fetch(new Request("http://x/page", { headers: { [DATA_HEADER]: "1" } }))
+    const body = await data.text()
+    expect(body).toContain('"title":"a"')
+    expect(body).not.toContain("never-sent")
+    const page = await (await app.fetch(new Request("http://x/page"))).text()
+    expect(page).toContain('"title":"a"')
+    expect(page).not.toContain("never-sent")
+  })
+
   test("a loader returning data without a schema fails the request", async () => {
     const app = appOf({ loader: () => ({ name: "Ada" }) })
     const res = await app.fetch(new Request("http://x/page"))
