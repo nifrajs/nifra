@@ -148,9 +148,10 @@ const PLACEHOLDER =
   /^(?:user(?:name)?|pass(?:word)?|pwd|secret|admin|root|guest|test|demo|example|changeme|change-me|xxx+|\*+|\.\.\.+|my-?password|your-?password|<[^>]*>|\$\{[^}]*\}|\{\{[^}]*\}\}|%[A-Za-z_]+%?)$/i
 
 /** A literal assigned to a name: `apiKey: "..."`, `const secret = '...'`. Template literals with an
- * interpolation are not literals. */
+ * interpolation are not literals. The lookbehind starts a name only where an identifier starts: a
+ * match from inside a long word run backtracks the rest of that run, quadratic in its length. */
 const ASSIGNED =
-  /([A-Za-z_$][\w$]*)["']?\s*(?:[:=]|\?\?=|\|\|=)\s*(?:"([^"\\\r\n]{16,256})"|'([^'\\\r\n]{16,256})'|`([^`\\$\r\n]{16,256})`)/g
+  /(?<![\w$])([A-Za-z_$][\w$]*)["']?\s*(?:[:=]|\?\?=|\|\|=)\s*(?:"([^"\\\r\n]{16,256})"|'([^'\\\r\n]{16,256})'|`([^`\\$\r\n]{16,256})`)/g
 
 const EXTRA_SECRET_NAME =
   /(?:accesskey|signingkey|encryptionkey|masterkey|serviceaccountkey|connectionstring)$/

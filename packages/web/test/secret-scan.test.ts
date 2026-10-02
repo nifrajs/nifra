@@ -119,6 +119,13 @@ describe("assigned secrets", () => {
       expect(source(text)).toEqual([])
     }
   })
+
+  test("a long unbroken word run, such as inlined base64, scans in linear time", () => {
+    const text = `${"a".repeat(100_000)} x; const apiKey = "Zq8mW2vX9pLr4TbN7yKc3HdF"`
+    const started = performance.now()
+    expect(rules(source(text))).toEqual(['assigned-secret: literal assigned to "apiKey"'])
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
 })
 
 describe("private environment values", () => {
