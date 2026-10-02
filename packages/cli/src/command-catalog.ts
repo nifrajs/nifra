@@ -15,6 +15,7 @@ import type {
 } from "./capabilities-tool.ts"
 import { type CheckResult, renderCheckReport } from "./check.ts"
 import type { ContractsLock } from "./contracts.ts"
+import { errorsSpec, logsSpec } from "./dev-feed-tool.ts"
 import { type Diagnostic, diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
 import type { DoctorResult } from "./doctor.ts"
 import { type I18nCheckOutput, i18nCheckPassed, renderI18nCheck } from "./i18n-check.ts"
@@ -1859,6 +1860,8 @@ export const commandSpecs = Object.freeze([
   smokeSpec,
   portSpec,
   i18nSpec,
+  errorsSpec,
+  logsSpec,
 ] as const)
 
 const commandByName = new Map(commandSpecs.map((spec) => [spec.name, spec]))

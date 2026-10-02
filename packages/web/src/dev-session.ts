@@ -373,7 +373,7 @@ export function createDevSession(options: DevSessionOptions): DevSession {
           schema: DEV_FEED_SCHEMA,
           pid: process.pid,
           port: bound,
-          url: `http://localhost:${bound}`,
+          url: `http://127.0.0.1:${bound}`,
           pipeline,
           root,
           startedAt,

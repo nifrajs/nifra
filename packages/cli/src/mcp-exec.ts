@@ -34,9 +34,6 @@ import {
   CHILD_INPUT_MAX_BYTES,
   CHILD_OUTPUT_MAX_BYTES,
   CHILD_TIMEOUT_MS,
-  LOCAL_TOOL_FETCH_TIMEOUT_MS,
-  notNifraResponse,
-  readBoundedResponse,
   readBoundedStream,
   timeoutMessage,
   validateLocalPort,
@@ -244,7 +241,7 @@ export function projectTools(
     {
       name: "nifra_explain",
       description:
-        "Turn a nifra error into a STRUCTURED diagnostic instead of eyeballing a stack trace: a stable `code`, the top frame in YOUR source, a codeframe around the offending line, and - when nifra recognises the failure - the plain-language `cause` + `fix` + docs anchor. Pass `error` (and `stack` if you have it, e.g. from nifra_run/nifra_test output or a failing build) to explain a specific failure; or pass `port` to fetch the running dev server's most recent SSR failure from `/__nifra/last-error`. Returns the same JSON the dev overlay renders.",
+        "Turn a nifra error into a STRUCTURED diagnostic instead of eyeballing a stack trace: a stable `code`, the top frame in YOUR source, a codeframe around the offending line, and - when nifra recognises the failure - the plain-language `cause` + `fix` + docs anchor. Pass `error` (and `stack` if you have it, e.g. from nifra_run/nifra_test output or a failing build) to explain a specific failure. With no `error`, returns the running dev server's most recent error of any kind (SSR, loader, API, build, browser, hydration) with its request id - the server is found automatically; `port`/`dir` pick one when several run. nifra_errors lists them all. Returns the same JSON the dev overlay renders.",
       inputSchema: {
         type: "object",
         properties: {
@@ -266,17 +263,22 @@ export function projectTools(
           port: {
             type: "number",
             description:
-              "Instead of a pasted error, fetch the running dev server's most recent SSR failure from this port.",
+              "The dev server's port, when the workspace runs several. Optional: the project's `nifra dev` server is found automatically.",
+          },
+          dir: {
+            type: "string",
+            description: "The app directory, when the workspace runs more than one dev server.",
           },
         },
         additionalProperties: false,
       },
-      handler: async (args) => {
-        const { error, stack, name, port } = args as {
+      handler: async (args, context) => {
+        const { error, stack, name, port, dir } = args as {
           error?: string
           stack?: string
           name?: string
           port?: number
+          dir?: string
         }
         if (error !== undefined || stack !== undefined) {
           const { buildDiagnostic } = await import("@nifrajs/web/diagnostic")
@@ -285,125 +287,91 @@ export function projectTools(
           if (stack !== undefined) e.stack = stack
           return JSON.stringify(buildDiagnostic(e, { root: cwd }), null, 2)
         }
-        if (port !== undefined) {
-          const validPort = validateLocalPort(port)
-          if (validPort === undefined) {
-            return JSON.stringify(
-              { code: "NIFRA_INVALID_PORT", message: "port must be an integer from 1 to 65535." },
-              null,
-              2,
-            )
-          }
-          const { LAST_ERROR_PATH } = await import("@nifrajs/web/diagnostic")
-          try {
-            const res = await fetch(`http://127.0.0.1:${validPort}${LAST_ERROR_PATH}`, {
-              signal: AbortSignal.timeout(LOCAL_TOOL_FETCH_TIMEOUT_MS),
-            })
-            if (res.headers.get("x-nifra-diagnostic") !== "true")
-              return notNifraResponse("diagnostic")
-            if (!res.ok) {
-              return JSON.stringify(
-                {
-                  code: "NIFRA_NONE",
-                  message: `dev server at :${validPort} returned ${res.status}`,
-                },
-                null,
-                2,
-              )
-            }
-            return await readBoundedResponse(res)
-          } catch (cause) {
-            return JSON.stringify(
-              {
-                code: "NIFRA_NONE",
-                message: `could not reach a nifra dev server at :${validPort} - ${cause instanceof Error ? cause.message : String(cause)}`,
-              },
-              null,
-              2,
-            )
-          }
+        const target = resolveProjectDir(cwd, dir)
+        if (target === null) return dirError(dir)
+        if (port !== undefined && validateLocalPort(port) === undefined) {
+          return JSON.stringify(
+            { code: "NIFRA_INVALID_PORT", message: "port must be an integer from 1 to 65535." },
+            null,
+            2,
+          )
         }
-        return JSON.stringify(
-          {
-            code: "NIFRA_NONE",
-            message:
-              "Pass `error` (and `stack` if available) to explain a failure, or `port` to fetch the dev server's last error.",
-          },
-          null,
-          2,
-        )
-      },
-    },
-    {
-      name: "nifra_inspect",
-      description:
-        "Observe what your requests ACTUALLY did on the running dev server - the recent request traces the DevTools plugin records: `{ method, path, status, durationMs, isrStatus, bodyBytes }` per request. The read no other tool gives you: after nifra_run or a real browser request, call this to SEE the outcome (which route answered, the status, how long, ISR hit/miss) instead of guessing. Pass `port` (the running dev server); narrow with `path` (a path prefix) or `limit` (most recent N). Requires the app to mount `@nifrajs/web`'s `devtools()` plugin (which auto-enables in development).",
-      inputSchema: {
-        type: "object",
-        properties: {
-          port: { type: "number", description: "The running dev server's port." },
-          path: { type: "string", description: "Only traces whose path starts with this prefix." },
-          limit: { type: "number", description: "Return only the most recent N traces." },
-        },
-        required: ["port"],
-        additionalProperties: false,
-      },
-      handler: async (args) => {
-        const { port, path, limit } = args as { port?: number; path?: string; limit?: number }
-        if (port === undefined) {
+        const { explainLatest } = await import("./dev-feed-tool.ts")
+        try {
+          return JSON.stringify(await explainLatest(target, port, context.signal), null, 2)
+        } catch (cause) {
           return JSON.stringify(
             {
-              events: [],
-              note: "Pass `port` - the running dev server whose request traces to read.",
+              code: "NIFRA_NONE",
+              message: `could not read the dev server's errors - ${cause instanceof Error ? cause.message : String(cause)}`,
             },
             null,
             2,
           )
         }
-        try {
-          const validPort = validateLocalPort(port)
-          if (validPort === undefined) {
-            return JSON.stringify(
-              {
-                events: [],
-                code: "NIFRA_INVALID_PORT",
-                note: "port must be an integer from 1 to 65535.",
-              },
-              null,
-              2,
-            )
-          }
-          const url = new URL(`http://127.0.0.1:${validPort}/_nifra/devtools/state`)
-          if (path !== undefined) url.searchParams.set("path", path)
-          if (limit !== undefined) url.searchParams.set("limit", String(limit))
-          const res = await fetch(url, {
-            signal: AbortSignal.timeout(LOCAL_TOOL_FETCH_TIMEOUT_MS),
-          })
-          if (res.headers.get("x-nifra-devtools") !== "true") return notNifraResponse("DevTools")
-          if (res.status === 404) {
-            return JSON.stringify(
-              {
-                events: [],
-                note: "No DevTools endpoint on that server. Mount `devtools()` from @nifrajs/web and run in development.",
-              },
-              null,
-              2,
-            )
-          }
-          if (!res.ok) {
-            return JSON.stringify(
-              { events: [], note: `DevTools state returned ${res.status}.` },
-              null,
-              2,
-            )
-          }
-          return await readBoundedResponse(res)
-        } catch (cause) {
-          const validPort = validateLocalPort(port)
+      },
+    },
+    {
+      name: "nifra_inspect",
+      description:
+        "Observe what your requests ACTUALLY did on the running dev server: one trace per request, `{ requestId, method, path, status, durationMs, bytes, isr, errorIds, logCount }`. After nifra_run or a real browser request, call this to SEE the outcome (the status, how long, ISR hit/miss, whether it logged or failed) instead of guessing; pass a trace's `requestId` to nifra_errors/nifra_logs for what that request failed with or printed. Every `nifra dev` server keeps these traces and is found automatically; `port`/`dir` pick one when several run. Narrow with `path` (a path prefix), `requestId`, `since` (a cursor from an earlier call) or `limit` (most recent N). An explicit `port` this project did not start falls back to the `@nifrajs/devtools` plugin's traces.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          port: {
+            type: "number",
+            description:
+              "The dev server's port. Optional: the project's server is found automatically.",
+          },
+          path: { type: "string", description: "Only traces whose path starts with this prefix." },
+          requestId: { type: "string", description: "Only the trace with this request id." },
+          since: {
+            type: "number",
+            description: "Only traces after this cursor (the `cursor` an earlier call returned).",
+          },
+          limit: { type: "number", description: "Return only the most recent N traces." },
+          dir: {
+            type: "string",
+            description: "The app directory, when the workspace runs more than one dev server.",
+          },
+        },
+        additionalProperties: false,
+      },
+      handler: async (args, context) => {
+        const { port, path, requestId, since, limit, dir } = args as {
+          port?: number
+          path?: string
+          requestId?: string
+          since?: number
+          limit?: number
+          dir?: string
+        }
+        const target = resolveProjectDir(cwd, dir)
+        if (target === null) return dirError(dir)
+        if (port !== undefined && validateLocalPort(port) === undefined) {
           return JSON.stringify(
             {
-              events: [],
-              note: `Could not reach a dev server at :${validPort ?? String(port)} - ${cause instanceof Error ? cause.message : String(cause)}`,
+              requests: [],
+              code: "NIFRA_INVALID_PORT",
+              note: "port must be an integer from 1 to 65535.",
+            },
+            null,
+            2,
+          )
+        }
+        const { inspectRequests } = await import("./dev-feed-tool.ts")
+        try {
+          const result = await inspectRequests(
+            target,
+            { port, path, requestId, since, limit },
+            context.signal,
+          )
+          return JSON.stringify(result, null, 2)
+        } catch (cause) {
+          return JSON.stringify(
+            {
+              requests: [],
+              note: `Could not read the dev server's request traces - ${cause instanceof Error ? cause.message : String(cause)}`,
             },
             null,
             2,

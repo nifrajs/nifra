@@ -20,10 +20,13 @@
  *   - `nifra_levels`  - the cumulative verification ladder (L0 contract → L4 invariants): what the
  *     project actually proves, and why each level it misses does not hold.
  *   - `nifra_doctor`  - package.json dependency drift detector, with safe local-version auto-fix.
- *   - `nifra_explain` - resolve an error (pasted, or the dev server's last) into a structured
+ *   - `nifra_errors`  - the running dev server's errors (SSR, loader, API, build, browser, hydration,
+ *     crash), each a structured diagnostic tagged with its request; `since` cursors, stale flags.
+ *   - `nifra_logs`    - the dev server's console output, server and browser, tagged by request.
+ *   - `nifra_explain` - resolve an error (pasted, or the dev server's latest) into a structured
  *     diagnostic: stable code, a codeframe in the user's source, and the recognised cause + fix.
  *   - `nifra_inspect` - read the running dev server's recent request traces (method/path/status/
- *     duration/ISR) from the DevTools plugin: what your requests ACTUALLY did, not a guess.
+ *     duration/ISR/errors): what your requests ACTUALLY did, not a guess.
  *
  * Wire it into a client (e.g. Claude Desktop / Cursor) as: command `nifra`, args `["mcp"]` (or
  * `["mcp", "<dir>"]` to pin the project directory explicitly). The server does NOT silently trust its

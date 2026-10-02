@@ -39,6 +39,8 @@ test("the stable catalog is the public command allowlist", () => {
     "smoke",
     "port",
     "i18n",
+    "errors",
+    "logs",
   ])
   expect(names).not.toContain("verify")
 })

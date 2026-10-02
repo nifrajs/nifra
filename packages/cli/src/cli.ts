@@ -116,6 +116,12 @@ Usage:
                                          loud warning instead of a hard failure, so a duplicate React/
                                          adapter copy from a linked sibling repo doesn't take dev down
                                          while you fix the resolution. Dev only - \`nifra build\` still fails.
+  nifra errors  [--since <n>] [--category <c>] [--request <id>]  What the running dev server caught:
+                                         SSR/loader/API/build/browser/hydration errors, each a structured
+                                         diagnostic. Finds the server itself; reads the log a crashed
+                                         one left. Exits 1 while current-code errors are open.
+  nifra logs    [--since <n>] [--level <l>] [--grep <s>]  The dev server's console, server and
+                                         browser, each line tagged with its request.
   nifra build   [--out <dir>] [--report]  Emit a complete deploy directory.
                 [--target <t>]             Target a FULL deploy dir for <t>:
                                          bun | node | deno | cloudflare | vercel | static. Packages
@@ -166,7 +172,8 @@ Usage:
                                          nifra_run (backend), nifra_render (SSR a page), nifra_docs,
                                          nifra_example (verified snippets), nifra_scaffold (route→file),
                                          nifra_check (drift gate + fixes), nifra_levels (verification
-                                         ladder), nifra_doctor (deps), nifra_explain (structured errors),
+                                         ladder), nifra_doctor (deps), nifra_errors + nifra_logs (what
+                                         the running dev server saw), nifra_explain (structured errors),
                                          nifra_inspect (request traces), nifra_learn (guided build path).
   nifra docs-mcp [--port <n>]            Serve the PUBLIC docs MCP over HTTP (nifra_docs + nifra_example) -
                                          self-host on a VPS so any remote agent can learn nifra. Default :8787.
