@@ -244,6 +244,36 @@ describe("zoneGuardPlugin in throw mode (dev)", () => {
       "routes/env.tsx may not reach the browser: it reads private environment variable import.meta.env.SESSION_SECRET",
     )
   })
+
+  // A path `onResolve` filter that matches the dev probe page's `<script src="./entry.tsx">` makes
+  // Bun's dev server key that page's import by its raw specifier, and the client never boots - even
+  // when the handler declines. The browser-level proof is packages/cli/test/bun-dev-browser-boot.
+  test("no path resolve filter matches a source file, so the dev entry script stays Bun's", () => {
+    const filters: RegExp[] = []
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the guard's setup calls only onResolve and onLoad, both present
+    zoneGuardPlugin({ appRoot: root }).setup({
+      onResolve: ({ filter }: { filter: RegExp }) => filters.push(filter),
+      onLoad: () => undefined,
+    } as never)
+    const matches = (specifier: string): boolean => filters.some((filter) => filter.test(specifier))
+    for (const specifier of [
+      "./entry.tsx",
+      "../routes/index.tsx",
+      "/abs/app/frontend/x.module.css",
+      "./query.ts?raw",
+      "../backend/db.ts#frag",
+    ]) {
+      expect(matches(specifier), specifier).toBe(false)
+    }
+    for (const specifier of [
+      "./logo.png",
+      "../backend/query.sql",
+      "../backend/key.pem?v=1",
+      "./a.ts/b.wasm",
+    ]) {
+      expect(matches(specifier), specifier).toBe(true)
+    }
+  })
 })
 
 describe("graph evidence", () => {

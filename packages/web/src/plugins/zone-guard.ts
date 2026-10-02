@@ -17,13 +17,22 @@ import {
   type ZoneClassifier,
 } from "../zones.ts"
 
+const SOURCE_EXTENSIONS =
+  "[cm]?[jt]sx?|svelte|vue|mdx|astro|css|scss|sass|less|json|jsonc|toml|ya?ml|txt|md"
 /** Source files Bun loads through a loader that tolerates a declining `onLoad`. Every other file
  * (images, fonts, wasm, and a `.pem` or `.sql` imported `with { type: "text" }`) goes through
  * `onResolve`: a file-loader asset panics Bun 1.4 on a declining `onLoad`. */
-const SOURCE_FILE =
-  /\.(?:[cm]?[jt]sx?|svelte|vue|mdx|astro|css|scss|sass|less|json|jsonc|toml|ya?ml|txt|md)$/
-/** A relative or absolute import whose last segment has an extension. */
-const PATH_WITH_EXTENSION = /^(?:\.|\/|[A-Za-z]:[\\/]).*\.[^./\\?#]+(?:[?#].*)?$/
+const SOURCE_FILE = new RegExp(`\\.(?:${SOURCE_EXTENSIONS})$`)
+/**
+ * A relative or absolute import whose last segment has an extension, other than a source file.
+ * Source files are excluded by the FILTER, not declined by the handler: when a `[serve.static]`
+ * `onResolve` filter matches an HTML page's `<script src>`, Bun's dev server writes that raw
+ * specifier into the page's HMR module table even if the handler declines, so the browser fails with
+ * "Failed to load bundled module './entry.tsx'" and the client never boots (Bun 1.3.14 - 1.4.2).
+ */
+const NON_SOURCE_PATH = new RegExp(
+  `^(?:\\.|\\/|[A-Za-z]:[\\\\/])(?![^?#]*\\.(?:${SOURCE_EXTENSIONS})(?:[?#]|$)).*\\.[^./\\\\?#]+(?:[?#].*)?$`,
+)
 
 export interface ZoneGuardOptions {
   /** The app root: the directory holding `routes/`, `frontend/`, `backend/` and `shared/`. */
@@ -76,11 +85,10 @@ export function zoneGuardPlugin(options: ZoneGuardOptions): BunPlugin {
         }
         return reason === undefined ? undefined : refuse(args.path, reason)
       })
-      build.onResolve({ filter: PATH_WITH_EXTENSION }, (args) => {
-        const path = args.path.replace(/[?#].*$/, "")
+      build.onResolve({ filter: NON_SOURCE_PATH }, (args) => {
         // An entry point (a dev server's HTML page) is the build's own choice, not an import.
-        if (SOURCE_FILE.test(path) || args.importer === "") return undefined
-        const file = resolve(dirname(args.importer), path)
+        if (args.importer === "") return undefined
+        const file = resolve(dirname(args.importer), args.path.replace(/[?#].*$/, ""))
         const reason = browserDenial(classifier.classify(file))
         return reason === undefined ? undefined : refuse(file, reason, args.importer)
       })
