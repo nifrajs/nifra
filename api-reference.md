@@ -4082,6 +4082,23 @@ _No named exports (side-effect entrypoint)._
 - **metrics** _(function)_ - `metrics: (options?: MetricsOptions) => IdentityPlugin`
   Enable RED metrics + a `/metrics` Prometheus endpoint. Records `nifra_http_requests_total`, `nifra_http_request_duration_seconds`, and `nifra_http_requests_in_flight`, labeled by method, matched route template, and status. Apply once (named-plugin dedupe).
 
+### `@nifrajs/otel/sdk-bridge`
+
+- **OtelApi** _(interface)_ - `interface OtelApi`
+  The part of `@opentelemetry/api` the bridge uses: pass `import * as api from "@opentelemetry/api"`.
+- **OtelBridge** _(interface)_ - `interface OtelBridge`
+- **OtelBridgeOptions** _(interface)_ - `interface OtelBridgeOptions`
+- **OtelIdGenerator** _(interface)_ - `interface OtelIdGenerator`
+  The SDK's `IdGenerator`.
+- **OtelSpan** _(interface)_ - `interface OtelSpan`
+  The part of an OTel `Span` the bridge uses. Every `Span` from `@opentelemetry/api` has it.
+- **OtelSpanContext** _(interface)_ - `interface OtelSpanContext`
+  The OTel `SpanContext` shape.
+- **OtelTracer** _(interface)_ - `interface OtelTracer`
+  The part of an OTel `Tracer` the bridge uses.
+- **otelBridge** _(function)_ - `otelBridge: (options: OtelBridgeOptions) => OtelBridge`
+  Build the bridge. See {@link OtelBridge} for what each part does.
+
 ## @nifrajs/pi
 
 - **PiBackend** _(class)_ - `class PiBackend`

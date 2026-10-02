@@ -52,6 +52,11 @@
       "bun": "./src/events.ts",
       "types": "./dist/events.d.ts",
       "default": "./dist/events.js"
+    },
+    "./sdk-bridge": {
+      "bun": "./src/sdk-bridge.ts",
+      "types": "./dist/sdk-bridge.d.ts",
+      "default": "./dist/sdk-bridge.js"
     }
   },
   "files": [
@@ -73,7 +78,11 @@
     "@nifrajs/cache": "workspace:*",
     "@nifrajs/core": "workspace:*",
     "@nifrajs/events": "workspace:*",
-    "@nifrajs/jobs": "workspace:*"
+    "@nifrajs/jobs": "workspace:*",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/context-async-hooks": "^2.11.0",
+    "@opentelemetry/instrumentation-undici": "^0.32.0",
+    "@opentelemetry/sdk-trace-base": "^2.11.0"
   },
   "repository": {
     "type": "git",

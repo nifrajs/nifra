@@ -10,7 +10,7 @@ Distributed tracing for nifra - W3C traceparent/tracestate propagation + OpenTel
 
 ## Public entrypoints
 
-`@nifrajs/otel` · `@nifrajs/otel/cache` · `@nifrajs/otel/effects` · `@nifrajs/otel/events` · `@nifrajs/otel/jobs` · `@nifrajs/otel/metrics`
+`@nifrajs/otel` · `@nifrajs/otel/cache` · `@nifrajs/otel/effects` · `@nifrajs/otel/events` · `@nifrajs/otel/jobs` · `@nifrajs/otel/metrics` · `@nifrajs/otel/sdk-bridge`
 
 ## Key exports
 
@@ -26,10 +26,10 @@ Distributed tracing for nifra - W3C traceparent/tracestate propagation + OpenTel
 - **generateTraceId** _(function)_ - `generateTraceId: () => string` · from `@nifrajs/otel`
 - **jobTracing** _(function)_ - `jobTracing: (options?: JobTracingOptions) => JobTracingInstrument` · from `@nifrajs/otel/jobs`
 - **metrics** _(function)_ - `metrics: (options?: MetricsOptions) => IdentityPlugin` · from `@nifrajs/otel/metrics`
+- **otelBridge** _(function)_ - `otelBridge: (options: OtelBridgeOptions) => OtelBridge` · from `@nifrajs/otel/sdk-bridge`
 - **otlpExporter** _(function)_ - `otlpExporter: (options: OtlpExporterOptions) => OtlpExporter` · from `@nifrajs/otel`
-- **parseTraceparent** _(function)_ - `parseTraceparent: (header: string | null | undefined) => ParsedTraceparent | null` · from `@nifrajs/otel`
 
-_…and 44 more - see [`api-reference.md`](../../api-reference.md#nifrajsotel) for the complete list._
+_…and 52 more - see [`api-reference.md`](../../api-reference.md#nifrajsotel) for the complete list._
 
 ## Footguns
 
