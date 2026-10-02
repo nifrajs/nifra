@@ -1,6 +1,5 @@
-import type { LoaderData } from "@nifrajs/client"
 import { Counter } from "../frontend/components/Counter"
-import type { loader } from "./index.backend.ts"
+import type { Route } from "./+types/index"
 
 export const meta = {
   title: "nifra - HMR (Solid)",
@@ -8,6 +7,6 @@ export const meta = {
 }
 
 // The route file co-locates loader/meta → not a Fast Refresh boundary. The view lives in <Counter>.
-export default function Home(props: { data: LoaderData<typeof loader> }) {
+export default function Home(props: Route.ComponentProps) {
   return <Counter message={props.data.message} />
 }

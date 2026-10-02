@@ -1,8 +1,7 @@
 /** @jsxImportSource preact */
 
-import type { ActionData, LoaderData } from "@nifrajs/client"
 import { Await } from "@nifrajs/web-preact/await"
-import type { action, loader } from "./index.backend.ts"
+import type { Route } from "./+types/index"
 
 // Static head for this route - SSR-injected + updated on client navigation.
 export const meta = {
@@ -10,10 +9,7 @@ export const meta = {
   meta: [{ name: "description", content: "nifra Preact bindings: loader + action + defer/Await" }],
 }
 
-export default function Home(props: {
-  data: LoaderData<typeof loader>
-  actionData?: ActionData<typeof action>
-}) {
+export default function Home(props: Route.ComponentProps) {
   return (
     <div>
       <h1 id="page">Home</h1>

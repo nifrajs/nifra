@@ -1,10 +1,9 @@
-import type { LoaderData } from "@nifrajs/client"
 import { For } from "solid-js"
-import type { loader } from "./index.backend.ts"
+import type { Route } from "./+types/index"
 
 export const meta = { title: "nifra MDX blog (Solid)" }
 
-export default function Index(props: { data: LoaderData<typeof loader> }) {
+export default function Index(props: Route.ComponentProps) {
   return (
     <main>
       <h1 id="title">nifra blog</h1>

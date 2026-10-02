@@ -1,14 +1,13 @@
-import type { LoaderData } from "@nifrajs/client"
 import type { MetaArgs } from "@nifrajs/web"
 import { trustHtml } from "@nifrajs/web"
 import { Content } from "@nifrajs/web-solid/content"
-import type { loader } from "./[slug].backend.ts"
+import type { Route } from "./+types/[slug]"
 
-export function meta({ data }: MetaArgs<LoaderData<typeof loader>>) {
+export function meta({ data }: MetaArgs<Route.LoaderData>) {
   return { title: data.title }
 }
 
-export default function Post(props: { data: LoaderData<typeof loader> }) {
+export default function Post(props: Route.ComponentProps) {
   return (
     <article id="post">
       <p>

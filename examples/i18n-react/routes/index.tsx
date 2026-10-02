@@ -1,6 +1,5 @@
-import type { LoaderData } from "@nifrajs/client"
 import { I18nProvider, useT } from "@nifrajs/web-react/i18n"
-import type { loader } from "./index.backend.ts"
+import type { Route } from "./+types/index"
 
 export const meta = { title: "nifra - i18n demo" }
 
@@ -18,7 +17,7 @@ function Content() {
   )
 }
 
-export default function Home(props: { data: LoaderData<typeof loader> }) {
+export default function Home(props: Route.ComponentProps) {
   return (
     <I18nProvider locale={props.data.locale} messages={props.data.messages}>
       <Content />

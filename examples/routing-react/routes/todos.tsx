@@ -1,8 +1,6 @@
-import type { ActionData, LoaderData } from "@nifrajs/client"
-import type { Submission } from "@nifrajs/web"
 import { useFetcher } from "@nifrajs/web-react/fetcher"
 import { useQuery, useQueryClient } from "@nifrajs/web-react/query"
-import type { action, loader } from "./todos.backend.ts"
+import type { Route } from "./+types/todos"
 
 // F16 (query-cache): a keyed query for client-interactive data - distinct from the route loader. It
 // fetches the home route's count (data-mode GET), caches it under ["count"], and the "refresh" button
@@ -57,12 +55,7 @@ function TodoRow(props: { todo: { id: number; text: string } }) {
   )
 }
 
-export default function Todos(props: {
-  data: LoaderData<typeof loader>
-  actionData?: ActionData<typeof action>
-  pending?: boolean
-  submission?: Submission
-}) {
+export default function Todos(props: Route.ComponentProps) {
   // F15: the in-flight submission drives the OPTIMISTIC row - rendered instantly from the FormData
   // the client just submitted, before the server has responded. `formData.get` may return a File, so
   // narrow to string. Cleared automatically when the submit settles (then the real data shows).
@@ -72,7 +65,7 @@ export default function Todos(props: {
   // Revalidation control: when a submit opts OUT of revalidation (data-nifra-revalidate="false"), the
   // loader data stays stale, so we surface the created todo from actionData instead - deduped against
   // the list so the revalidating form (whose reconcile already includes it) never double-renders.
-  const created = props.actionData?.ok ? props.actionData.created : null
+  const created = props.actionData?.ok ? (props.actionData.created ?? null) : null
   const createdIsNew = created !== null && !props.data.todos.some((todo) => todo.id === created.id)
 
   return (

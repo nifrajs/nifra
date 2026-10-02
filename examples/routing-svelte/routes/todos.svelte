@@ -3,24 +3,26 @@
   useFetcher (the bump button). The bindings are Svelte stores, read reactively with `$` (top-level
   vars only - that's why the bump is a single top-level fetcher, not per-row).
 -->
-<script module>
+<script module lang="ts">
   export const meta = {
     title: "nifra + Svelte - Todos (fetchers + query)",
     meta: [{ name: "description", content: "nifra Svelte bindings: useFetcher + useQuery" }],
   }
 </script>
 
-<script>
+<script lang="ts">
   import { useFetcher } from "@nifrajs/web-svelte/fetcher"
   import { useQuery, useQueryClient } from "@nifrajs/web-svelte/query"
-  let { data } = $props()
+  import type { Route } from "./+types/todos"
+
+  let { data }: Route.ComponentProps = $props()
 
   const qc = useQueryClient()
   // A keyed query for the home count (data-mode GET), distinct from this route's loader. Read via `$`.
   const count = useQuery(["count"], () =>
     fetch("/", { headers: { "x-nifra-data": "1" } })
       .then((r) => r.json())
-      .then((d) => d.count),
+      .then((d: { count: number }) => d.count),
   )
 
   // A concurrent fetcher: bumps todo #1 (appends "!"), then revalidate() refreshes the list. Read via `$`.

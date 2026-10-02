@@ -1,7 +1,6 @@
-import type { ActionArgs, LoaderArgs } from "@nifrajs/client"
 import { t } from "@nifrajs/schema"
 import { defer } from "@nifrajs/web"
-import type { backend } from "../backend/app"
+import type { Route } from "./+types/index"
 
 // SSG: prerender this static route to dist/index.html at build (build.ts → prerenderRoutes). Proves
 // the prerender pipeline is framework-agnostic - same opt-in flag, Preact render output. `defer()`
@@ -12,14 +11,14 @@ export const loaderOutput = t.object({ count: t.number() })
 
 // Loader reads the count via the in-process api; the action increments it. After a client submit the
 // loader REVALIDATES, so the count updates with no full reload (progressive enhancement with JS off).
-export async function loader({ api }: LoaderArgs<typeof backend>) {
+export async function loader({ api }: Route.LoaderArgs) {
   const res = await api.count.get()
   return { count: res.ok ? res.data.count : 0 }
 }
 
 export const actionOutput = t.object({ ok: t.boolean(), receipt: t.deferred(t.string()) })
 
-export async function action({ api }: ActionArgs<typeof backend>) {
+export async function action({ api }: Route.ActionArgs) {
   await api.count.post()
   // defer() in an ACTION: the mutation (count++) returns immediately; the slow "receipt" streams into
   // <Await> afterward (on a client submit) without blocking the count update.

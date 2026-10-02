@@ -1,7 +1,6 @@
-import type { ActionArgs, LoaderArgs } from "@nifrajs/client"
 import { t } from "@nifrajs/schema"
 import { defer } from "@nifrajs/web"
-import type { backend } from "../backend/app"
+import type { Route } from "./+types/index"
 
 // SSG: prerender this static route to dist/index.html at build (build.ts → prerenderRoutes). The
 // loader runs at build (bakes the initial count); the page is then live after hydration - the form
@@ -15,14 +14,14 @@ export const loaderOutput = t.object({ count: t.number() })
 // in-process api; the action increments it. After a client submit the loader REVALIDATES, so the
 // count updates with no full reload. With JS off, the native POST re-renders the page with the
 // fresh count (progressive enhancement).
-export async function loader({ api }: LoaderArgs<typeof backend>) {
+export async function loader({ api }: Route.LoaderArgs) {
   const res = await api.count.get()
   return { count: res.ok ? res.data.count : 0 }
 }
 
 export const actionOutput = t.object({ ok: t.boolean(), receipt: t.deferred(t.string()) })
 
-export async function action({ api }: ActionArgs<typeof backend>) {
+export async function action({ api }: Route.ActionArgs) {
   await api.count.post()
   // defer() in an ACTION: the mutation (the count++) returns immediately; the slow "receipt" streams
   // into <Await> afterward (on a client submit) without blocking the count update.

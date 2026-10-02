@@ -1,7 +1,6 @@
-import type { LoaderData } from "@nifrajs/client"
 import { useNavigate, useSearch } from "@nifrajs/web-react/router"
 import { searchSchema } from "../shared/search.ts"
-import type { loader } from "./search.backend.ts"
+import type { Route } from "./+types/search"
 
 export { searchSchema }
 
@@ -12,7 +11,7 @@ export const meta = { title: "nifra - Typed search params" }
 
 // The component reads the SAME value with `useSearch` (SSR-correct), so `page`/`q` render server-side and
 // hydrate with no mismatch. The buttons/link change the query; a soft-nav re-derives search identically.
-export default function Search({ data }: { data: LoaderData<typeof loader> }) {
+export default function Search({ data }: Route.ComponentProps) {
   const { page, q, view } = useSearch<typeof searchSchema>() // { page: number; q: string; view }
   const navigate = useNavigate()
   const base = `page=${page}${q ? `&q=${q}` : ""}`

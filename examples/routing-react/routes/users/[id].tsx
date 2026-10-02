@@ -1,14 +1,13 @@
-import type { LoaderData } from "@nifrajs/client"
 import type { MetaArgs } from "@nifrajs/web"
 import { useState } from "react"
-import type { loader } from "./[id].backend.ts"
+import type { Route } from "./+types/[id]"
 
 // Dynamic head - a function of the loader data. Updates the title on client navigation.
-export function meta({ data }: MetaArgs<LoaderData<typeof loader>>) {
+export function meta({ data }: MetaArgs<Route.LoaderData>) {
   return { title: data.user ? `User #${data.user.id}` : "User" }
 }
 
-export default function User(props: { data: LoaderData<typeof loader> }) {
+export default function User(props: Route.ComponentProps) {
   const [n, setN] = useState(0)
   return (
     <div>

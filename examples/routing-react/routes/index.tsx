@@ -1,6 +1,5 @@
-import type { ActionData, LoaderData } from "@nifrajs/client"
 import { Await } from "@nifrajs/web-react/await"
-import type { action, loader } from "./index.backend.ts"
+import type { Route } from "./+types/index"
 
 // Row numbers for the scroll-demo filler list (stable, unique → keyed by value, not array index).
 const scrollRows = Array.from({ length: 100 }, (_, i) => i + 1)
@@ -11,10 +10,7 @@ export const meta = {
   meta: [{ name: "description", content: "nifra F7 counter demo" }],
 }
 
-export default function Home(props: {
-  data: LoaderData<typeof loader>
-  actionData?: ActionData<typeof action>
-}) {
+export default function Home(props: Route.ComponentProps) {
   return (
     <div>
       <h1 id="page">Home</h1>

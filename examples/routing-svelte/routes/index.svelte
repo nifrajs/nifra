@@ -2,16 +2,18 @@
   Home route. `<script module>` exports meta (loader and action live in index.backend.ts); the
   instance `<script>` + template is the component.
 -->
-<script module>
+<script module lang="ts">
   export const meta = {
     title: "nifra + Svelte - Home",
     meta: [{ name: "description", content: "nifra Svelte bindings: loader + action + defer/Await" }],
   }
 </script>
 
-<script>
+<script lang="ts">
   import Await from "@nifrajs/web-svelte/await"
-  let { data, actionData } = $props()
+  import type { Route } from "./+types/index"
+
+  let { data, actionData }: Route.ComponentProps = $props()
 </script>
 
 <div>

@@ -1,10 +1,9 @@
-import type { LoaderData } from "@nifrajs/client"
 import { Await } from "@nifrajs/web-solid/await"
-import type { loader } from "./slow.backend.ts"
+import type { Route } from "./+types/slow"
 
 export const meta = { title: "nifra on the edge - streaming" }
 
-export default function SlowPage(props: { data: LoaderData<typeof loader> }) {
+export default function SlowPage(props: Route.ComponentProps) {
   return (
     <div>
       <h1 id="page">Streaming demo</h1>

@@ -1,9 +1,8 @@
 /** @jsxImportSource preact */
 
-import type { LoaderData } from "@nifrajs/client"
 import { useFetcher } from "@nifrajs/web-preact/fetcher"
 import { useQuery, useQueryClient } from "@nifrajs/web-preact/query"
-import type { loader } from "./todos.backend.ts"
+import type { Route } from "./+types/todos"
 
 // A keyed query for client-interactive data - distinct from the route loader. It fetches the home
 // route's count (data-mode GET), caches it under ["count"], and "refresh" invalidates that key to
@@ -55,7 +54,7 @@ function TodoRow(props: { todo: { id: number; text: string } }) {
   )
 }
 
-export default function Todos(props: { data: LoaderData<typeof loader>; pending?: boolean }) {
+export default function Todos(props: Route.ComponentProps) {
   return (
     <div>
       <h1 id="page">Todos</h1>

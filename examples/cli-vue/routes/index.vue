@@ -13,8 +13,17 @@ export const meta = {
 
 <script setup lang="ts">
 import { ref } from "vue"
+import type { Route } from "./+types/index"
 
-defineProps(["data", "actionData", "pending", "submission"])
+// compose() spreads data/actionData/pending/submission as props - declare them so they aren't attrs.
+// Listed rather than `defineProps<Route.ComponentProps>()`: the SFC compiler cannot follow an imported
+// type through tsconfig `rootDirs`, but it can declare these keys and leave their types to TypeScript.
+defineProps<{
+  data: Route.LoaderData
+  actionData?: Route.ActionData
+  pending?: Route.ComponentProps["pending"]
+  submission?: Route.ComponentProps["submission"]
+}>()
 const local = ref(0)
 </script>
 

@@ -538,8 +538,6 @@
     "examples/routing-solid/server.ts": 1,
     "examples/routing-svelte/server.ts": 1,
     "examples/routing-vue-sfc/server.ts": 1,
-    "examples/routing-vue/routes/index.tsx": 2,
-    "examples/routing-vue/routes/todos.tsx": 3,
     "examples/routing-vue/server.ts": 1,
     "examples/web-preact/client.ts": 1,
     "examples/web-react/client.ts": 1,

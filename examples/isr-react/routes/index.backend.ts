@@ -1,6 +1,5 @@
-import type { LoaderArgs } from "@nifrajs/client"
 import { t } from "@nifrajs/schema"
-import type { backend } from "../backend/app"
+import type { Route } from "./+types/index"
 
 // ISR: the `withISR` wrapper (server.ts / worker.ts) caches this page's rendered document and serves
 // it stale-while-revalidate. `revalidate` is the freshness window in **seconds** - `createWebApp`
@@ -10,7 +9,7 @@ export const revalidate = 2
 
 export const loaderOutput = t.object({ renders: t.number() })
 
-export async function loader({ api }: LoaderArgs<typeof backend>) {
+export async function loader({ api }: Route.LoaderArgs) {
   const res = await api.page.get()
   return { renders: res.ok ? res.data.renders : 0 }
 }

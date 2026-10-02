@@ -1,7 +1,6 @@
-import type { ActionArgs, LoaderArgs } from "@nifrajs/client"
 import { t } from "@nifrajs/schema"
 import { revalidate } from "@nifrajs/web"
-import type { backend } from "../backend/app"
+import type { Route } from "./+types/todos"
 
 export const loaderOutput = t.object({
   todos: t.array(t.object({ id: t.integer(), text: t.string() })),
@@ -9,7 +8,7 @@ export const loaderOutput = t.object({
 
 // The list loader - reads the current todos via the in-process api. After a client submit the loader
 // REVALIDATES (unless the form opts out), so the reconciled list reflects what the server accepted.
-export async function loader({ api }: LoaderArgs<typeof backend>) {
+export async function loader({ api }: Route.LoaderArgs) {
   const res = await api.todos.get()
   return { todos: res.ok ? res.data.todos : [] }
 }
@@ -26,7 +25,7 @@ export const actionOutput = t.object({
 //   • "add" (a form submit, F15): the optimistic-UI + revalidation-control demo. Returns a typed
 //     error for the reject case (a 200, so no native fallback) and the created todo as actionData.
 // Both are artificially slow so their in-flight states are observable.
-export async function action({ request, api }: ActionArgs<typeof backend>) {
+export async function action({ request, api }: Route.ActionArgs) {
   const form = await request.formData()
 
   const bumpId = form.get("bump")

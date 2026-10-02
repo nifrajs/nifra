@@ -16,9 +16,9 @@ const app = server<Env>().get("/", (c) => ({ greeting: c.env.GREETING ?? "hello"
 export default toFetchHandler(app)
 ```
 
-In a nifra **frontend** app, route loaders/actions read the same typed bindings via
-`LoaderArgs<typeof app, Env>` (e.g. `async function loader({ env }: LoaderArgs<typeof backend, Env>)`)
-- `createWebApp` forwards `c.env` to them.
+In a nifra **frontend** app, route loaders/actions read the same typed bindings through
+`Route.LoaderArgs` once `Env` is registered (`declare module "@nifrajs/client" { interface Register { env: Env } }`),
+e.g. `async function loader({ env }: Route.LoaderArgs)` - `createWebApp` forwards `c.env` to them.
 
 ```sh
 bunx wrangler dev      # run locally on workerd
