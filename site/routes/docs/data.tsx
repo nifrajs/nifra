@@ -110,6 +110,16 @@ export default function Data() {
       </p>
       <CodeBlock code={LOADER} lang="ts" />
       <CodeBlock code={PAGE} />
+      <p>
+        A field named like a credential (<code>password</code>, <code>token</code>,{" "}
+        <code>apiKey</code>) fails the route when it loads unless its schema is wrapped in{" "}
+        <code>t.declassified("why it may reach the browser", ...)</code>; a schema library that
+        exposes no JSON Schema, such as valibot, gets that check only from <code>nifra check</code>,
+        and only where the schema is written out in the backend half. The contract covers data,
+        not responses you build: a loader or action returning a <code>2xx</code>{" "}
+        <code>Response</code> is refused, but a redirect or an error-status <code>Response</code>{" "}
+        is sent exactly as written, so its body must hold nothing the browser may not see.
+      </p>
 
       <h2>Actions &amp; revalidation</h2>
       <p>
