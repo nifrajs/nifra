@@ -172,7 +172,7 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
     match: (_n, m) => m.includes("NIFRA_CDN_TAG_INVALID"),
     cause:
       "A route's revalidateTags function returned a tag that is not a letter followed by up to 127 of A-Z a-z 0-9 . _ : / -, more than 32 tags, or something other than an array. Those tags were dropped, so a purge by them reaches nothing.",
-    fix: "Build tags from route params only (`product:${params.id}`), keep to the allowed characters, and return at most 32.",
+    fix: 'Build tags from route params only (`"product:" + params.id`), keep to the allowed characters, and return at most 32.',
     docsAnchor: "errors#cdn-tag-invalid",
   },
   {
