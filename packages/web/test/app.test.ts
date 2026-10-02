@@ -16,6 +16,7 @@ import {
   unsafeInlineScript,
   webProjectEvidence,
 } from "../src/index.ts"
+import { openCacheChannel } from "../src/isr.ts"
 
 // The in-process backend mount target - the symbol-keyed `BackendMount` shape `inProcessClient(app)`
 // returns. Reproduced here so the web test exercises the real `createWebApp` `/api/*` auto-mount
@@ -539,6 +540,11 @@ test("a route's `revalidate` rides the x-nifra-isr-revalidate header (ISR P3.3)"
     layouts: {},
   }
   const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js" })
+  // Nothing reads the channel yet, so a visitor never sees the route's freshness or tags.
+  const unread = await app.fetch(new Request("http://x/isr"))
+  expect(unread.headers.get("x-nifra-isr-revalidate")).toBeNull()
+  expect(unread.headers.get("x-nifra-isr-tags")).toBeNull()
+  openCacheChannel(app)
   const isr = await app.fetch(new Request("http://x/isr"))
   expect(isr.headers.get("x-nifra-isr-revalidate")).toBe("60") // seconds, distinct channel
   expect(isr.headers.get("x-nifra-isr-tags")).toBe("catalog,products")

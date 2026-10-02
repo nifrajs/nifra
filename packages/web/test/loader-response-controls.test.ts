@@ -11,7 +11,7 @@ import {
   redirect,
 } from "../src/index.ts"
 import { varyOnDataHeader } from "../src/internal/response-controls.ts"
-import { MemoryCacheStore, withISR } from "../src/isr.ts"
+import { MemoryCacheStore, openCacheChannel, withISR } from "../src/isr.ts"
 import { DATA_HEADER, REDIRECT_HEADER, STATUS_HEADER } from "../src/router.ts"
 
 const streamOf = (s: string): ReadableStream<Uint8Array> => {
@@ -77,13 +77,17 @@ const pageManifest = (options: PageOptions): Manifest =>
     notFound: { file: "_404.tsx", load: async () => ({ default: "the-404-page" }) },
   }) as Manifest
 
-const appFor = (options: PageOptions, errors?: unknown[]) =>
-  createWebApp({
+// The ISR channel is open, as under `withISR`, so these tests see what a cache wrapper is handed.
+const appFor = (options: PageOptions, errors?: unknown[]) => {
+  const app = createWebApp({
     adapter: stub,
     manifest: pageManifest(options),
     clientEntry: "/c.js",
     ...(errors === undefined ? {} : { onLoaderError: (err: unknown) => void errors.push(err) }),
   })
+  openCacheChannel(app)
+  return app
+}
 
 const doc = (app: { fetch(r: Request): Response | Promise<Response> }) =>
   app.fetch(new Request("http://x/page"))

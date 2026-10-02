@@ -188,6 +188,8 @@ export interface PageExecutionOptions<Env = unknown> {
   readonly nonce?: NonceResolver<Env>
   /** A hash-based CSP policy: every document is rendered under it, carrying `nonce` only when needed. */
   readonly csp?: CspPolicy
+  /** Set once a cache wrapper attaches; until then a route's freshness and tags stay off the response. */
+  readonly cacheChannel?: { readonly enabled: boolean }
   readonly onLoaderError?: (
     error: unknown,
     ctx: {
@@ -848,8 +850,12 @@ export function createPageRequestExecutor<Env = unknown>(
         prerenderedPaths: options.prerenderedPaths ?? [],
         ...(responseHeaders === undefined ? {} : { headers: responseHeaders }),
         // A response that sets a cookie is one visitor's: it never advertises ISR freshness.
-        ...(mod.revalidate !== undefined && !personalized ? { revalidate: mod.revalidate } : {}),
-        ...(mod.revalidateTags !== undefined && !personalized
+        ...(mod.revalidate !== undefined && !personalized && options.cacheChannel?.enabled === true
+          ? { revalidate: mod.revalidate }
+          : {}),
+        ...(mod.revalidateTags !== undefined &&
+        !personalized &&
+        options.cacheChannel?.enabled === true
           ? { revalidateTags: mod.revalidateTags }
           : {}),
         ...(mod.islandScripts !== undefined ? { islandScripts: mod.islandScripts } : {}),

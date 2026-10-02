@@ -237,8 +237,10 @@ export default function Rendering() {
       </p>
       <p>
         Set a route's freshness with <code>export const revalidate</code> (seconds) in its{" "}
-        <code>.backend.ts</code> - Nifra emits it as
-        the <code>x-nifra-isr-revalidate</code> header, which the wrapper reads to set that page's TTL.
+        <code>.backend.ts</code> - Nifra hands it to the wrapper as
+        the <code>x-nifra-isr-revalidate</code> header, which sets that page's TTL. That header and
+        the route's tags exist only while a wrapper reads them: an app nothing wraps never sends
+        them, and <code>withISR</code> removes them from every response it returns.
       </p>
       <CodeBlock code={REVALIDATE} />
 

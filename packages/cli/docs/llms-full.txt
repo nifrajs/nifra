@@ -1818,8 +1818,10 @@ other parameter still skips. `query: "all"` keys on the whole query string. Give
 `revalidateEndpoint` the same `query` so purges match.
 
 Set a route's freshness with `export const revalidate` (seconds) in its
-`.backend.ts` - Nifra emits it as
-the `x-nifra-isr-revalidate` header, which the wrapper reads to set that page's TTL.
+`.backend.ts` - Nifra hands it to the wrapper as
+the `x-nifra-isr-revalidate` header, which sets that page's TTL. That header and
+the route's tags exist only while a wrapper reads them: an app nothing wraps never sends
+them, and `withISR` removes them from every response it returns.
 
 ```ts
 // routes/pricing.backend.ts - a per-route freshness window (seconds), overriding the wrapper's.

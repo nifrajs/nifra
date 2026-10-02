@@ -389,6 +389,34 @@ export const ISR_REVALIDATE_TAGS_HEADER = "x-nifra-isr-tags"
  */
 export const ISR_REVALIDATE_HEADER = "x-nifra-isr-revalidate"
 
+/** A `createWebApp` app answers this with a function that turns its ISR headers on. A wrapper that
+ * reads them calls it, so an app nothing caches never sends a route's freshness or tags. */
+export const CACHE_CHANNEL: unique symbol = Symbol.for("nifra.web.cacheChannel")
+
+/** Ask `app` to emit its ISR headers; an app without the channel emits whatever it emits. */
+export function openCacheChannel(app: object): void {
+  const open = (app as Record<symbol, unknown>)[CACHE_CHANNEL]
+  if (typeof open === "function") open()
+}
+
+/** Drop the ISR headers from a response that leaves the cache layer. */
+export function withoutCacheChannel(res: Response): Response {
+  if (!res.headers.has(ISR_REVALIDATE_HEADER) && !res.headers.has(ISR_REVALIDATE_TAGS_HEADER)) {
+    return res
+  }
+  try {
+    res.headers.delete(ISR_REVALIDATE_HEADER)
+    res.headers.delete(ISR_REVALIDATE_TAGS_HEADER)
+    return res
+  } catch {
+    // A `fetch()` response has immutable headers: rebuild it around the same body instead.
+    const headers = new Headers(res.headers)
+    headers.delete(ISR_REVALIDATE_HEADER)
+    headers.delete(ISR_REVALIDATE_TAGS_HEADER)
+    return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
+  }
+}
+
 export interface ISROptions {
   readonly store: CacheStore
   /** Default freshness window (**seconds**) for a cached page; older ⇒ stale (served, regenerated
@@ -596,6 +624,7 @@ export function withISR(
   const keyOf = options.key ?? requestKeyOf(urlKeyOf(options.query))
   const draftSecret = options.draftSecret
   const regenerating = new Set<string>()
+  openCacheChannel(app)
   if ((app as unknown as Record<symbol, unknown>)[DOCUMENT_POLICY] === "nonce") {
     console.warn(
       "[nifra/web] withISR wraps an app whose every document carries a CSP nonce. Such documents are " +
@@ -632,7 +661,7 @@ export function withISR(
     const res = await app.fetch(req, platform)
     if (!isCacheablePage(req, res)) {
       rememberUncacheable(key, res)
-      return res
+      return withoutCacheChannel(res)
     }
     uncacheable.delete(key)
     const body = await res.text()
@@ -693,12 +722,12 @@ export function withISR(
     // by URL, and serving one to a loader-data fetch would hand the client HTML where it expects
     // the loader payload. (The write path already refuses to cache data-mode responses.)
     const key = req.method === "GET" && req.headers.get("x-nifra-data") === null ? keyOf(req) : null
-    if (key === null) return app.fetch(req, platform)
+    if (key === null) return withoutCacheChannel(await app.fetch(req, platform))
 
     // Draft/preview: an editor (valid signed cookie) always renders fresh and is never cached, so
     // unpublished content can't leak into the public cache (and the editor isn't served a stale page).
     if (draftSecret !== undefined && (await isDraftEnabled(req, draftSecret))) {
-      return app.fetch(req, platform)
+      return withoutCacheChannel(await app.fetch(req, platform))
     }
 
     const until = uncacheable.get(key)

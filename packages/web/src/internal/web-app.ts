@@ -12,6 +12,7 @@ import type { MountableApp, MountOptions } from "@nifrajs/core/server"
 import { type ServerOptions, server } from "@nifrajs/core/server"
 import { type CspPolicy, cspNonceResolver, DOCUMENT_POLICY, isCspPolicy } from "../csp.ts"
 import type { CssLoadingMode } from "../css-contract.ts"
+import { CACHE_CHANNEL } from "../isr.ts"
 import { generateLlmsTxt } from "../llms-txt.ts"
 import type { Manifest } from "../manifest.ts"
 import type { RenderAdapter } from "../render-seam.ts"
@@ -309,6 +310,12 @@ export function createWebApp<Env = unknown>(
   if (documentPolicy !== undefined) {
     Object.defineProperty(app, DOCUMENT_POLICY, { value: documentPolicy })
   }
+  const cacheChannel = { enabled: false }
+  Object.defineProperty(app, CACHE_CHANNEL, {
+    value: () => {
+      cacheChannel.enabled = true
+    },
+  })
   // Auto-mount the in-process backend over HTTP at `apiPrefix` (default `/api`), BEFORE page routing.
   // Core's pre-route mount seam runs before the page wildcard `/*`; parent request hooks run first,
   // child request hooks run inside the mount, and parent response hooks still wrap the result.
@@ -366,6 +373,7 @@ export function createWebApp<Env = unknown>(
       ? {}
       : { nonce: cspNonceResolver(options.csp) as NonceResolver<Env>, csp: options.csp }),
     ...(options.onLoaderError === undefined ? {} : { onLoaderError: options.onLoaderError }),
+    cacheChannel,
   })
 
   for (const route of manifest.routes) {

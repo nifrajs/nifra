@@ -13,6 +13,7 @@ import {
   unsafeInlineScript,
   withISR,
 } from "../src/index.ts"
+import { openCacheChannel } from "../src/isr.ts"
 
 const streamOf = (s: string): ReadableStream<Uint8Array> => {
   const bytes = new TextEncoder().encode(s)
@@ -64,6 +65,7 @@ test("a plain page under a CSP policy is nonce-free, cacheable, and every inline
     manifest: manifestOf({ "/": () => ({ default: "home", revalidate: 60 }) }),
     csp: createCspPolicy({ header }),
   })
+  openCacheChannel(app)
   const first = await app.fetch(new Request("http://x/"))
   const html = await first.text()
   expect(html).not.toContain("nonce=")

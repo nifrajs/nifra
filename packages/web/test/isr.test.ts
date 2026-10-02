@@ -590,7 +590,82 @@ describe("withISR", () => {
   })
 })
 
-import { revalidateEndpoint } from "../src/isr.ts"
+import type { Manifest, RenderAdapter } from "../src/index.ts"
+import { createWebApp } from "../src/index.ts"
+import { revalidateEndpoint, withoutCacheChannel } from "../src/isr.ts"
+
+describe("a route's ISR freshness and tags never reach a visitor", () => {
+  const adapter: RenderAdapter = {
+    renderToString: () => "<p>page</p>",
+    renderToStream: () => new Response("<p>page</p>").body as ReadableStream<Uint8Array>,
+    hydrationHead: () => "",
+  }
+  const manifest: Manifest = {
+    routes: [
+      {
+        id: "isr",
+        pattern: "/isr",
+        layoutIds: [],
+        file: "isr.tsx",
+        load: async () => ({ default: "isr", revalidate: 60, revalidateTags: ["catalog"] }),
+      },
+    ],
+    layouts: {},
+  }
+  const channel = (res: Response) => [
+    res.headers.get("x-nifra-isr-revalidate"),
+    res.headers.get("x-nifra-isr-tags"),
+  ]
+
+  test("an app nothing caches sends neither header", async () => {
+    const app = createWebApp({ adapter, manifest, clientEntry: "/c.js" })
+    expect(channel(await app.fetch(new Request("http://x/isr")))).toEqual([null, null])
+  })
+
+  test("withISR strips them from stored, cached and bypassing responses alike", async () => {
+    const app = createWebApp({ adapter, manifest, clientEntry: "/c.js" })
+    const handler = withISR(app, { store: new MemoryCacheStore(), revalidate: 30, now: () => 0 })
+    const miss = await handler(new Request("http://x/isr"))
+    expect(miss.headers.get("x-nifra-isr")).toBe("miss")
+    const hit = await handler(new Request("http://x/isr"))
+    expect(hit.headers.get("x-nifra-isr")).toBe("hit")
+    const bypass = await handler(new Request("http://x/isr?q=1"))
+    expect(bypass.headers.get("x-nifra-isr")).toBeNull()
+    for (const res of [miss, hit, bypass]) expect(channel(res)).toEqual([null, null])
+  })
+
+  test("a page withISR refuses to store, and a keyless bypass, carry neither header", async () => {
+    const app = createWebApp({ adapter, manifest, clientEntry: "/c.js" })
+    const stored = withISR(app, { store: new MemoryCacheStore(), revalidate: 30, now: () => 0 })
+    const cookie = await stored(new Request("http://x/isr", { headers: { cookie: "sid=1" } }))
+    expect(channel(cookie)).toEqual([null, null])
+    const keyless = withISR(app, {
+      store: new MemoryCacheStore(),
+      revalidate: 30,
+      now: () => 0,
+      key: () => null,
+    })
+    expect(channel(await keyless(new Request("http://x/isr")))).toEqual([null, null])
+  })
+
+  test("a response with immutable headers is rebuilt around the same body", async () => {
+    const res = new Response("body", {
+      status: 201,
+      statusText: "Made",
+      headers: { "x-nifra-isr-tags": "catalog", "x-nifra-isr-revalidate": "60", "x-kept": "1" },
+    })
+    Object.defineProperty(res.headers, "delete", {
+      value: () => {
+        throw new TypeError("immutable")
+      },
+    })
+    const out = withoutCacheChannel(res)
+    expect(out).not.toBe(res)
+    expect(channel(out)).toEqual([null, null])
+    expect([out.status, out.statusText, out.headers.get("x-kept")]).toEqual([201, "Made", "1"])
+    expect(await out.text()).toBe("body")
+  })
+})
 
 describe("revalidateEndpoint (on-demand purge)", () => {
   const seed = async (store: MemoryCacheStore) => store.set(pageKey("/p"), entry("cached"))
