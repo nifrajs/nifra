@@ -33,6 +33,7 @@ afterEach(async () => {
 
 const start = async (
   fetchImpl: (request: Request) => Response | Promise<Response>,
+  plugins: readonly unknown[] = [],
 ): Promise<string> => {
   server = await createViteDevServer({
     root,
@@ -40,6 +41,7 @@ const start = async (
     clientModule: join(root, "client.ts"),
     port: 0,
     createApp: () => ({ fetch: fetchImpl }),
+    plugins,
   })
   return `http://127.0.0.1:${server.port}`
 }
@@ -127,6 +129,125 @@ test("an HTML response gets Vite's client injected so HMR can connect", async ()
   const html = await (await fetch(`${origin}/`)).text()
   expect(html).toContain("hi")
   expect(html).toContain("/@vite/client")
+})
+
+// Stands in for `@vitejs/plugin-react`'s refresh preamble: an inline module script on every page.
+const preamble = {
+  name: "test-preamble",
+  transformIndexHtml: () => [
+    {
+      tag: "script",
+      attrs: { type: "module" },
+      children: "window.__preamble = 1",
+      injectTo: "head",
+    },
+  ],
+}
+
+const page = (head: string, headers: Record<string, string>) => () =>
+  new Response(`<!doctype html><html><head>${head}</head><body>hi</body></html>`, {
+    headers: { "content-type": "text/html", ...headers },
+  })
+
+/** Every `<script>` / `<style>` start tag in a page (not text inside a script), and its nonce. */
+const tagNonces = (html: string): Array<string | undefined> =>
+  [
+    ...html
+      .replace(/(<script\b[^>]*>)[\s\S]*?<\/script>/gi, "$1")
+      .matchAll(/<(?:script|style)\b([^>]*)>/gi),
+  ].map((match) => /\bnonce="([^"]*)"/.exec(match[1] ?? "")?.[1])
+
+test("an HTML page keeps the app's response headers", async () => {
+  // The HTML path rewrites the body for Vite's client, and it used to rebuild the headers from
+  // nothing: a loader's cookie, the CSP, cache-control and vary reached the browser under Bun dev
+  // and were dropped under Vite dev.
+  const origin = await start(() => {
+    const headers = new Headers({
+      "content-type": "text/html",
+      "cache-control": "private, no-store",
+      vary: "cookie",
+      "x-nifra-status": "200",
+      // The app's length, for the body before Vite's client was injected.
+      "content-length": "52",
+    })
+    headers.append("set-cookie", "session=1; Path=/; HttpOnly")
+    headers.append("set-cookie", "theme=dark; Path=/")
+    return new Response("<!doctype html><html><head></head><body>hi</body></html>", { headers })
+  })
+  const res = await fetch(`${origin}/`)
+  expect(res.headers.getSetCookie()).toEqual(["session=1; Path=/; HttpOnly", "theme=dark; Path=/"])
+  expect(res.headers.get("cache-control")).toBe("private, no-store")
+  expect(res.headers.get("vary")).toBe("cookie")
+  expect(res.headers.get("x-nifra-status")).toBe("200")
+  const html = await res.text()
+  expect(html).toContain("/@vite/client")
+  expect(html).toEndWith("</html>")
+})
+
+test("a nonce page: Vite's tags carry the page's nonce, and so may its runtime styles", async () => {
+  const origin = await start(
+    page(`<script nonce="pagenonce">window.__s = "<style>"</script>`, {
+      "content-security-policy":
+        "default-src 'self'; script-src 'self' 'nonce-pagenonce'; object-src 'none'",
+    }),
+    [preamble],
+  )
+  const res = await fetch(`${origin}/`)
+  const html = await res.text()
+  expect(html).toContain("window.__preamble = 1")
+  expect(tagNonces(html).length).toBeGreaterThanOrEqual(3)
+  expect(new Set(tagNonces(html))).toEqual(new Set(["pagenonce"]))
+  // A script body is not markup: the string in it is left as written.
+  expect(html).toContain(`window.__s = "<style>"`)
+  // Vite's client reads this to nonce the <style> it adds for each imported stylesheet.
+  expect(html).toContain(`<meta property="csp-nonce" nonce="pagenonce">`)
+  // script-src already names the nonce; styles fall back to default-src, which now does too.
+  expect(res.headers.get("content-security-policy")).toBe(
+    "default-src 'self' 'nonce-pagenonce'; script-src 'self' 'nonce-pagenonce'; object-src 'none'",
+  )
+})
+
+test("a hash page: Vite's tags get a dev nonce that the policy names", async () => {
+  const origin = await start(
+    page("<script>window.__app = 1</script>", {
+      "content-security-policy": "script-src 'self' 'sha256-abc='; style-src 'self'",
+    }),
+    [preamble],
+  )
+  const res = await fetch(`${origin}/`)
+  const nonces = new Set(tagNonces(await res.text()))
+  expect(nonces.size).toBe(1)
+  const [nonce] = nonces
+  expect(nonce).toMatch(/^[A-Za-z0-9]{16,}$/)
+  expect(res.headers.get("content-security-policy")).toBe(
+    `script-src 'self' 'sha256-abc=' 'nonce-${nonce}'; style-src 'self' 'nonce-${nonce}'`,
+  )
+})
+
+test("a directive that already allows inline is left alone", async () => {
+  // A nonce in a directive switches its 'unsafe-inline' off, which would break the app's own inline
+  // styles - and Vite's tags are allowed there already.
+  const origin = await start(
+    page(`<script nonce="p">1</script>`, {
+      "content-security-policy": "script-src 'nonce-p'; style-src 'self' 'unsafe-inline'",
+      "content-security-policy-report-only": "default-src 'self' 'unsafe-inline'",
+    }),
+    [preamble],
+  )
+  const res = await fetch(`${origin}/`)
+  expect(res.headers.get("content-security-policy")).toBe(
+    "script-src 'nonce-p'; style-src 'self' 'unsafe-inline'",
+  )
+  expect(res.headers.get("content-security-policy-report-only")).toBe(
+    "default-src 'self' 'unsafe-inline'",
+  )
+})
+
+test("a page with no CSP gets no nonces", async () => {
+  const origin = await start(page("<script>1</script>", {}), [preamble])
+  const html = await (await fetch(`${origin}/`)).text()
+  expect(tagNonces(html).every((nonce) => nonce === undefined)).toBe(true)
+  expect(html).not.toContain("csp-nonce")
 })
 
 test("a bind failure names the port and leaves nothing running", async () => {

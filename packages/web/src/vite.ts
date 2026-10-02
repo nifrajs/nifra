@@ -21,6 +21,7 @@ import { createDevDiagnostics } from "./dev-diagnostics.ts"
 import { listenOrExplain } from "./dev-port.ts"
 import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry, setSsrModuleLoader } from "./index.ts"
+import { admitViteTags } from "./internal/dev-csp.ts"
 import { viteDedupePackages } from "./internal/identity-policy.ts"
 import {
   assertIdentityParity,
@@ -444,8 +445,15 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
             await pipeWebBodyToNode(nifraRes.body, res)
             return
           }
-          // Inject Vite's HMR client + the framework's refresh preamble into the SSR'd HTML.
-          const html = await vite.transformIndexHtml(req.url ?? "/", await nifraRes.text())
+          // Inject Vite's HMR client + the framework's refresh preamble into the SSR'd HTML, keeping the
+          // app's headers (cookies, CSP, cache-control) as the Bun pipeline does.
+          const headers = new Headers(nifraRes.headers)
+          headers.delete("content-length") // the body grows with Vite's tags
+          const html = admitViteTags(
+            await vite.transformIndexHtml(req.url ?? "/", await nifraRes.text()),
+            headers,
+          )
+          applyResponseHeaders(headers, res)
           res.setHeader("content-type", "text/html; charset=utf-8")
           res.end(html)
         } catch (err) {
