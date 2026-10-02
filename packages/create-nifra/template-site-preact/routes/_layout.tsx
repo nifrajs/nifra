@@ -22,7 +22,9 @@ const css = `
 export default function Layout(props: { children?: ComponentChildren }) {
   return (
     <div id="app">
-      <style>{css}</style>
+      {/* Raw: the server renderer escapes text children, and a <style> element's text is never
+          unescaped, so a quoted font name would arrive as &quot; and void the rule. */}
+      <style dangerouslySetInnerHTML={{ __html: css }} />
       <header className="site">
         <div className="wrap">
           <a href="/" className="logo">
