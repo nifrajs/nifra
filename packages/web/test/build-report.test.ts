@@ -98,7 +98,7 @@ const EAGER_MANIFEST = [
   'import * as m0 from "./routes/_layout"',
   'import * as m1 from "./routes/about"',
   'import * as m2 from "./routes/index"',
-  "const modules: Record<string, RouteModule> = {",
+  "const modules: Record<string, object> = {",
   '  "_layout.tsx": m0,',
   '  "about.tsx": m1,',
   '  "index.tsx": m2,',
@@ -106,20 +106,20 @@ const EAGER_MANIFEST = [
   'export const clientEntry = "/assets/_nifra-entry-deadbeef.js"',
   "export const styles = []",
   "export const routeStyles = {}",
-  "export const manifest = buildManifest(Object.keys(modules), (file) => () => Promise.resolve(modules[file]))",
+  "export const manifest = buildManifest(Object.keys(modules), (file) => () => Promise.resolve(modules[file] as RouteModule))",
 ].join("\n")
 
 // A lazy manifest (`() => import(...)`), the other shape generateServerManifest emits.
 const LAZY_MANIFEST = [
   'import { buildManifest, type RouteModule } from "@nifrajs/web"',
-  "const loaders: Record<string, () => Promise<RouteModule>> = {",
+  "const loaders: Record<string, () => Promise<object>> = {",
   '  "_layout.tsx": () => import("./routes/_layout"),',
   '  "index.tsx": () => import("./routes/index"),',
   "}",
   'export const clientEntry = "/assets/_nifra-entry-cafe1234.js"',
   "export const styles = []",
   "export const routeStyles = {}",
-  "export const manifest = buildManifest(Object.keys(loaders), (file) => () => loaders[file]())",
+  "export const manifest = buildManifest(Object.keys(loaders), (file) => loaders[file] as () => Promise<RouteModule>)",
 ].join("\n")
 
 describe("parseManifestRouteFiles", () => {
@@ -137,7 +137,7 @@ describe("parseManifestRouteFiles", () => {
 
   test("reads the extension-bearing keys regardless of import prefix, ignoring baked routeStyles", () => {
     const src = [
-      "const loaders: Record<string, () => Promise<RouteModule>> = {",
+      "const loaders: Record<string, () => Promise<object>> = {",
       '  "index.tsx": () => import("../app/routes/index"),',
       "}",
       // A single-line `routeStyles` whose keys must NOT be mistaken for route-map entries - including
@@ -623,7 +623,7 @@ describe("server-manifest resync preserves what it cannot recompute", () => {
     // the name and `=` is exactly what defeated the old substring detector, so the fixture must carry it.
     const lazySource = BUILT.replace(
       "const modules = { }",
-      "const loaders: Record<string, () => Promise<RouteModule>> = { }",
+      "const loaders: Record<string, () => Promise<object>> = { }",
     )
     const manifest = {
       routes: [

@@ -47,7 +47,7 @@ test("generateServerManifest's runtime pattern round-trips through createWebApp 
 
 test("the lazy runtime pattern round-trips through createWebApp (loaders called on demand)", async () => {
   // Mirror lazy codegen: a per-file loader map (here `() => Promise.resolve(mod)` stands in for
-  // `() => import(...)`), behind the same `(file) => () => loaders[file]()` importer the codegen emits.
+  // `() => import(...)`), behind the same `loaders[file]` importer the codegen emits.
   const loaded: string[] = []
   const make = (mod: RouteModule) => () => {
     loaded.push((mod.default as string) ?? "?")
@@ -64,7 +64,7 @@ test("the lazy runtime pattern round-trips through createWebApp (loaders called 
   }
   const manifest = buildManifest(
     Object.keys(loaders),
-    (file) => () => loaders[file]?.() as Promise<RouteModule>,
+    (file) => loaders[file] as () => Promise<RouteModule>,
   )
   const app = createWebApp({ adapter: stub, manifest, clientEntry: "/c.js" })
   expect(await (await app.fetch(new Request("http://x/"))).text()).toContain(

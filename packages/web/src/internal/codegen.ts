@@ -434,6 +434,12 @@ function moduleSpecifier(resolved: string): string {
   return resolved.replace(SOURCE_EXTENSION, "")
 }
 
+// A route's namespace is not assignable to `RouteModule` under a strict `tsc` (a backend half has no
+// `default`, a typed `meta` narrows its data), so the table holds plain objects and the cast happens at
+// `buildManifest`'s boundary - the same cast `discoverRoutes` applies to its dynamic import.
+const LAZY_IMPORTER = "(file) => loaders[file] as () => Promise<RouteModule>"
+const EAGER_IMPORTER = "(file) => () => Promise.resolve(modules[file] as RouteModule)"
+
 export function generateServerManifest(
   manifest: Manifest,
   options: GenerateServerManifestOptions,
@@ -495,14 +501,14 @@ export function generateServerManifest(
     )
     return `${[
       ...header,
-      "const loaders: Record<string, () => Promise<RouteModule>> = {",
+      "const loaders: Record<string, () => Promise<object>> = {",
       ...loaders,
       "}",
       clientEntryLine,
       stylesLine,
       routeStylesLine,
       cssLoadingLine,
-      "export const manifest = buildManifest(Object.keys(loaders), (file) => () => loaders[file]())",
+      `export const manifest = buildManifest(Object.keys(loaders), ${LAZY_IMPORTER})`,
     ].join("\n")}\n`
   }
   // Eager: `import * as` per route (all bundled into the entry, parsed at boot). Index-based
@@ -514,13 +520,13 @@ export function generateServerManifest(
   return `${[
     ...header,
     ...imports,
-    "const modules: Record<string, RouteModule> = {",
+    "const modules: Record<string, object> = {",
     ...entries,
     "}",
     clientEntryLine,
     stylesLine,
     routeStylesLine,
     cssLoadingLine,
-    "export const manifest = buildManifest(Object.keys(modules), (file) => () => Promise.resolve(modules[file]))",
+    `export const manifest = buildManifest(Object.keys(modules), ${EAGER_IMPORTER})`,
   ].join("\n")}\n`
 }

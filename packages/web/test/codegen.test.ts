@@ -153,7 +153,7 @@ test("generateServerManifest emits STATIC imports + a buildManifest-backed manif
     clientEntry: "/assets/entry-abc123.js",
   })
   expect(code).toContain('import { buildManifest, type RouteModule } from "@nifrajs/web"')
-  expect(code).toContain("const modules: Record<string, RouteModule> = {")
+  expect(code).toContain("const modules: Record<string, object> = {")
   // STATIC `import * as` per unique file (5) - including dedicated terminal status pages.
   expect(code.match(/^import \* as m\d+ from /gm)?.length).toBe(5)
   // Files are sorted: _404 (m0), _410 (m1), _layout (m2), index (m3), users/[id] (m4). Import specifiers
@@ -171,7 +171,7 @@ test("generateServerManifest emits STATIC imports + a buildManifest-backed manif
   expect(code).toContain('export const clientEntry = "/assets/entry-abc123.js"')
   // Rebuilt via the SAME pure logic discoverRoutes feeds (patterns + layout chains match exactly).
   expect(code).toContain(
-    "export const manifest = buildManifest(Object.keys(modules), (file) => () => Promise.resolve(modules[file]))",
+    "export const manifest = buildManifest(Object.keys(modules), (file) => () => Promise.resolve(modules[file] as RouteModule))",
   )
   // The whole point: NO dynamic-path import, NO fs (unlike the client entry / discoverRoutes).
   expect(code).not.toContain("import(")
@@ -188,7 +188,7 @@ test("generateServerManifest({ lazy }) emits per-route import() loaders (no eage
   // LAZY loaders: `() => import("./routes/x")` (static specifier → one chunk per route). The specifier
   // is EXTENSIONLESS so the manifest typechecks under a bare `tsc`; the map KEY keeps its `.tsx`.
   expect(code).toContain('"index.tsx": () => import("./routes/index"),')
-  expect(code).toContain("const loaders: Record<string, () => Promise<RouteModule>> = {")
+  expect(code).toContain("const loaders: Record<string, () => Promise<object>> = {")
   expect(code).toContain('"users/[id].tsx": () => import("./routes/users/[id]"),')
   expect(code.match(/=> import\("\.\/routes\//g)?.length).toBe(4)
   // No source extension survives in an import specifier (TS5097 under a plain tsc).
@@ -197,7 +197,7 @@ test("generateServerManifest({ lazy }) emits per-route import() loaders (no eage
   expect(code).not.toContain("import * as m")
   // Built from the per-file loaders; clientEntry still baked; still fs-free.
   expect(code).toContain(
-    "export const manifest = buildManifest(Object.keys(loaders), (file) => () => loaders[file]())",
+    "export const manifest = buildManifest(Object.keys(loaders), (file) => loaders[file] as () => Promise<RouteModule>)",
   )
   expect(code).toContain('export const clientEntry = "/assets/entry-abc123.js"')
   expect(code).not.toContain('"node:fs"')
@@ -249,7 +249,21 @@ test("generated server manifests compile under a strict consumer tsconfig", asyn
       join(routesDir, "index.tsx"),
       "export default function Index() { return null }\n",
     )
-    const manifest = buildManifest(["index.tsx"], importer)
+    // A backend half has no `default`, and a typed `meta` narrows its data: neither namespace is a
+    // `RouteModule` to a strict tsc, which the generated table must not claim.
+    await writeFile(
+      join(routesDir, "index.backend.ts"),
+      "export function loader() { return { n: 1 } }\n",
+    )
+    await writeFile(
+      join(routesDir, "post.tsx"),
+      [
+        "export function meta({ data }: { data: { title: string } }) { return { title: data.title } }",
+        "export default function Post() { return null }",
+        "",
+      ].join("\n"),
+    )
+    const manifest = buildManifest(["index.tsx", "index.backend.ts", "post.tsx"], importer)
     // NOTE: `allowImportingTsExtensions` is deliberately NOT set - the generated manifest must typecheck
     // under a bare consumer tsconfig. It used to emit `.tsx` import specifiers (TS5097 without the flag);
     // extensionless specifiers resolve to the source file under any `moduleResolution` and need no flag.
@@ -257,6 +271,7 @@ test("generated server manifests compile under a strict consumer tsconfig", asyn
       baseUrl: process.cwd(),
       jsx: ts.JsxEmit.ReactJSX,
       ignoreDeprecations: "6.0",
+      noUncheckedIndexedAccess: true,
       module: ts.ModuleKind.ESNext,
       moduleResolution: ts.ModuleResolutionKind.Bundler,
       noEmit: true,
