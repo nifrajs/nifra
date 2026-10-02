@@ -1252,7 +1252,7 @@ function unsupportedTransports(backend: unknown): readonly string[] {
   ).routes
   if (typeof routes !== "function") return []
   const result: string[] = []
-  for (const route of routes()) {
+  for (const route of routes.call(backend)) {
     const method = typeof route.method === "string" ? route.method : "?"
     const path = typeof route.path === "string" ? route.path : "?"
     if (route.schema?.sse !== undefined) {

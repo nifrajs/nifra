@@ -4,7 +4,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { server } from "@nifrajs/core/server"
 import { type OpenAPIDocument, toOpenAPI } from "@nifrajs/schema/openapi"
-import { renderSdk, SdkGenerationError } from "../src/sdk.ts"
+import { renderSdk, runSdk, SdkGenerationError } from "../src/sdk.ts"
+import { createFixtureRoot, removeFixtureRoot, writeAppFile } from "./fixture-root.ts"
 
 const document = toOpenAPI(server().get("/users/:id", () => ({ ok: true }))) as OpenAPIDocument
 
@@ -164,5 +165,20 @@ describe("SDK generation", () => {
       },
       { timeout: goCompileTimeout },
     )
+  }
+})
+
+test("runSdk reads a real backend from backend/app.ts and writes the client", async () => {
+  const root = createFixtureRoot("tmp-sdk-run-")
+  try {
+    writeAppFile(
+      root,
+      "backend/app.ts",
+      'import { server } from "@nifrajs/core/server"\nexport const backend = server().get("/ping", () => ({ ok: true }))\n',
+    )
+    await runSdk(root, { language: "python" })
+    expect(await Bun.file(join(root, "nifra_sdk.py")).text()).toContain("/ping")
+  } finally {
+    removeFixtureRoot(root)
   }
 })
