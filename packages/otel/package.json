@@ -42,6 +42,11 @@
       "bun": "./src/cache.ts",
       "types": "./dist/cache.d.ts",
       "default": "./dist/cache.js"
+    },
+    "./jobs": {
+      "bun": "./src/jobs.ts",
+      "types": "./dist/jobs.d.ts",
+      "default": "./dist/jobs.js"
     }
   },
   "files": [
@@ -61,7 +66,8 @@
   },
   "devDependencies": {
     "@nifrajs/cache": "workspace:*",
-    "@nifrajs/core": "workspace:*"
+    "@nifrajs/core": "workspace:*",
+    "@nifrajs/jobs": "workspace:*"
   },
   "repository": {
     "type": "git",

@@ -25,7 +25,7 @@ Typed background jobs for nifra - enqueue work off the request path with retries
 - **ExponentialOptions** _(interface)_ - `interface ExponentialOptions`
 - **JobContext** _(interface)_ - `interface JobContext`
 
-_…and 16 more - see [`api-reference.md`](../../api-reference.md#nifrajsjobs) for the complete list._
+_…and 21 more - see [`api-reference.md`](../../api-reference.md#nifrajsjobs) for the complete list._
 
 ## Footguns
 

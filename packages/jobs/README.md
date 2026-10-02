@@ -56,11 +56,46 @@ const q = createQueue({ store: new RedisJobStore(redis) })
 Leasing is at-least-once: a leased job is hidden for `leaseMs`; a worker that dies mid-job releases it
 back automatically. Make handlers **idempotent**.
 
+`enqueue` may pass an optional `traceparent` (the producer's W3C trace context); a store should persist
+it and hand it back on every `lease`. A store that drops it still runs every job - a traced run only
+loses its link to the producer. `jobStoreCertificationProfile({ traceparent: true })` from
+`@nifrajs/testing/certification` checks the round trip as an optional capability.
+
 The queue remains agent-agnostic. `@nifrajs/coding-agent` can place content-free run-dispatch
 identities in a dedicated `JobStore`, but this package does not import or define agent concepts. A
 `MemoryJobStore` is disposable single-process storage; production durability, authorization,
 retention, reconciliation, and worker coordination belong to the caller's operated adapter. No
 exactly-once delivery guarantee is implied by a lease.
+
+## Tracing
+
+`instrument` takes around-hooks for each enqueue and each attempt. `jobTracing()` from
+`@nifrajs/otel/jobs` fills them with OpenTelemetry messaging spans:
+
+```ts
+import { jobTracing } from "@nifrajs/otel/jobs"
+
+const q = createQueue({ store, instrument: jobTracing({ exporter }) })
+const email = q.define("send-email", {
+  async handler({ to }, ctx) {
+    await cache.for(ctx).wrap(`tmpl:welcome`, loadTemplate) // ctx.trace keeps the cache span in the trace
+    await send(to)
+  },
+})
+
+app.post("/signup", async (c) => ({ id: await email.for(c).enqueue({ to: c.body.email }) }))
+```
+
+- `email.for(c).enqueue()` stores `c.trace.traceparent` with the job. Outside a request, pass
+  `{ traceparent }` to `enqueue`. A value that is not a well-formed traceparent is dropped.
+- Each enqueue is a `send send-email` producer span; each attempt a `process send-email` consumer span,
+  a child of the send span (plus a link to it). Retries are separate process spans; the attempt that
+  dead-letters the job is marked `nifra.job.dead_lettered`.
+- The handler sees `ctx.trace` (the process span), so `cache.for(ctx)` and a nested
+  `job.for(ctx).enqueue()` stay in the same trace.
+- `for(context)` needs a `beacon`, an `instrument`, or both.
+
+A hook that throws, or never calls `next`, cannot change behavior: the work still runs, uninstrumented.
 
 ## Cloudflare Workers
 
@@ -71,16 +106,20 @@ the consumer:
 ```ts
 export default {
   async queue(_batch, env) {
-    const q = createQueue({ store: new D1JobStore(env.DB) })
+    const q = createQueue({ store: new D1JobStore(env.DB), instrument: jobTracing({ exporter }) })
     await q.process() // one round; the platform schedules invocations
   },
 }
 ```
 
+When a CF Queue message carries the job itself rather than a pointer into the store, put the
+`traceparent` in the message body next to the payload and hand it back as `StoredJob.traceparent`, so
+the run stays in the producer's trace.
+
 ## API
 
-- `createQueue(options?)` → `Queue` - `{ store?, onError?, now?, defaultAttempts?, backoff? }`.
-- `queue.define(name, { handler, input?, retries? })` → typed `JobHandle` with `.enqueue(payload, { delayMs? | runAt? })`.
+- `createQueue(options?)` → `Queue` - `{ store?, onError?, now?, defaultAttempts?, backoff?, beacon?, capabilities?, instrument? }`.
+- `queue.define(name, { handler, input?, retries? })` → typed `JobHandle` with `.enqueue(payload, { delayMs? | runAt?, traceparent? })` and `.for(context)`.
 - `queue.enqueue(name, payload, options?)` - enqueue by name.
 - `queue.start({ concurrency?, pollIntervalMs?, leaseMs? })` → `Worker` (`.stop()` drains gracefully).
 - `queue.process()` - run one poll round (for Workers / custom drivers). `queue.drain()` - process until empty.

@@ -187,6 +187,57 @@ describe("portable adapter certification", () => {
     expect(jobs.ok).toBe(true)
   })
 
+  test("traceparent round-trip is an optional job-store capability, failed by a store that drops it", async () => {
+    const traced = await certifyAdapter({
+      profile: jobStoreCertificationProfile({ traceparent: true }),
+      adapterId: "memory-jobs",
+      createAdapter: () => new MemoryJobStore(),
+    })
+    expect(traced.ok).toBe(true)
+    expect(traced.capabilities.map((capability) => capability.capability)).toContain(
+      "traceparent-roundtrip",
+    )
+
+    class DroppingStore extends MemoryJobStore {
+      override enqueue(job: Parameters<MemoryJobStore["enqueue"]>[0]): string {
+        const { traceparent: _dropped, ...rest } = job
+        return super.enqueue(rest)
+      }
+    }
+    const dropping = await certifyAdapter({
+      profile: jobStoreCertificationProfile({ traceparent: true }),
+      adapterId: "dropping-jobs",
+      createAdapter: () => new DroppingStore(),
+    })
+    expect(dropping.ok).toBe(false)
+    expect(
+      dropping.capabilities.map((capability) => [capability.capability, capability.status]),
+    ).toEqual([
+      ["lease-complete", "passed"],
+      ["retry-schedule", "passed"],
+      ["dead-letter", "passed"],
+      ["traceparent-roundtrip", "failed"],
+    ])
+    expect(dropping.checks.find((check) => !check.ok)?.errorName).toBe("Error")
+
+    const leaking = await certifyAdapter({
+      profile: jobStoreCertificationProfile({ traceparent: true }),
+      adapterId: "leaking-jobs",
+      createAdapter: () => {
+        const store = new MemoryJobStore()
+        const lease = store.lease.bind(store)
+        store.lease = (now, limit, leaseMs) =>
+          lease(now, limit, leaseMs).map((job) => ({
+            ...job,
+            traceparent:
+              job.traceparent ?? "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+          }))
+        return store
+      },
+    })
+    expect(leaking.ok).toBe(false)
+  })
+
   test("certifies optional provider mechanics and an independent event-log implementation", async () => {
     const storage = await certifyAdapter({
       profile: storageAdapterCertificationProfile({ paging: true, presign: true, move: true }),

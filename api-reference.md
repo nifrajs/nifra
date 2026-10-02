@@ -3529,14 +3529,22 @@ _No named exports (side-effect entrypoint)._
 - **JobCounts** _(interface)_ - `interface JobCounts`
 - **JobDefinition** _(interface)_ - `interface JobDefinition<Payload>`
   A job definition registered on a queue.
+- **JobEnqueueInfo** _(interface)_ - `interface JobEnqueueInfo`
+  What `instrument.enqueue` sees.
 - **JobError** _(class)_ - `class JobError`
   Thrown for a misuse of the queue API (duplicate/unknown job name).
 - **JobHandle** _(interface)_ - `interface JobHandle<Payload>`
   A typed handle to enqueue a defined job.
 - **JobHandler** _(type)_ - `type JobHandler<Payload> = (payload: Payload, ctx: JobContext) => void | Promise<void>`
   A job processor. A throw/rejection routes to `onError` and triggers retry/dead-letter - never crashes the worker.
+- **JobRunInfo** _(interface)_ - `interface JobRunInfo`
+  What `instrument.run` sees for one attempt.
+- **JobRunOutcome** _(type)_ - `type JobRunOutcome = "completed" | "retried" | "dead-lettered"`
+  How an attempt ended: removed, rescheduled, or moved to the dead-letter set.
 - **JobStore** _(interface)_ - `interface JobStore`
   Persistence + leasing for the queue. The default {@link MemoryJobStore} is single-process (dev / a single long-running server); implement this over Redis/Postgres/etc. for durability or multiple workers. All methods may be sync or async - the queue awaits them.
+- **JobTraceContext** _(interface)_ - `interface JobTraceContext`
+  The trace an instrumented attempt runs in. It has the shape of `c.trace` from `@nifrajs/otel`, so `cache.for(ctx)` and a nested `job.for(ctx).enqueue()` inside the handler stay in the same trace.
 - **JobValidationError** _(class)_ - `class JobValidationError`
   Thrown by `enqueue` when the payload fails the job's `input` schema (validation at the trust boundary).
 - **MemoryJobStore** _(class)_ - `class MemoryJobStore`
@@ -3544,6 +3552,8 @@ _No named exports (side-effect entrypoint)._
 - **Queue** _(interface)_ - `interface Queue`
 - **QueueHealth** _(interface)_ - `interface QueueHealth`
   Queue health counters. A straight passthrough of `JobStore.counts()` - counters are safe.
+- **QueueInstrument** _(interface)_ - `interface QueueInstrument`
+  Around-hooks for tracing (or timing) the queue - the seam `jobTracing()` from `@nifrajs/otel/jobs` plugs into. Each hook calls `next` once and returns what it resolves to. A hook that throws, or never calls `next`, cannot change behavior: the work still runs, uninstrumented.
 - **QueueOptions** _(interface)_ - `interface QueueOptions`
 - **RetryPolicy** _(interface)_ - `interface RetryPolicy`
 - **StandardResult** _(type)_ - `type StandardResult<Output> = | { readonly value: Output; readonly issues?: undefined } | { readonly issues: ReadonlyArray<{ readonly message: string }> }`
@@ -3972,6 +3982,8 @@ _No named exports (side-effect entrypoint)._
 - **ObservationLink** _(interface)_ - `interface ObservationLink`
   A non-parent causal relationship to a span in another trace (the OTel `Link` model).
 - **ObservationParent** _(interface)_ - `interface ObservationParent`
+- **ObservationScope** _(type)_ - `type ObservationScope = <T>(trace: ObservationContext, run: () => T) => T`
+  Runs `run` with a span active in an ambient context (OpenTelemetry's, for one), so code that only sees that context - a pg or undici instrumentation - nests under the span. `otelBridge().scope` from `@nifrajs/otel/sdk-bridge` is one.
 - **OtlpExporter** _(interface)_ - `interface OtlpExporter`
 - **OtlpExporterOptions** _(interface)_ - `interface OtlpExporterOptions`
 - **ParsedTraceparent** _(interface)_ - `interface ParsedTraceparent`
@@ -4026,6 +4038,18 @@ _No named exports (side-effect entrypoint)._
 - **EffectTracingPlugin** _(interface)_ - `interface EffectTracingPlugin`
 - **effectTracing** _(function)_ - `effectTracing: (options?: EffectTracingOptions) => EffectTracingPlugin`
   Installs child effect spans on subsequent routes. The observer consumes only the constrained `EffectLifecycleEvent` contract; request/business payloads and error text cannot enter an export.
+
+### `@nifrajs/otel/jobs`
+
+- **JobTracingEnqueueInfo** _(interface)_ - `interface JobTracingEnqueueInfo`
+  `JobEnqueueInfo` from `@nifrajs/jobs`, declared structurally so this package does not depend on it.
+- **JobTracingInstrument** _(interface)_ - `interface JobTracingInstrument`
+  Structurally a `QueueInstrument` from `@nifrajs/jobs`: pass it as `createQueue({ instrument })`.
+- **JobTracingOptions** _(interface)_ - `interface JobTracingOptions`
+- **JobTracingRunInfo** _(interface)_ - `interface JobTracingRunInfo`
+  `JobRunInfo` from `@nifrajs/jobs`, declared structurally.
+- **jobTracing** _(function)_ - `jobTracing: (options?: JobTracingOptions) => JobTracingInstrument`
+  The queue instrument. Span names are `send <job name>` (kind producer) and `process <job name>` (kind consumer), with `messaging.system = "nifra.jobs"`, `messaging.operation.type`/`.name`, `messaging.destination.name` (the job name) and `messaging.message.id`. A process span also carries `nifra.job…
 
 ### `@nifrajs/otel/metrics`
 
@@ -4417,7 +4441,8 @@ _No named exports (side-effect entrypoint)._
 - **httpToolAdapter** _(function)_ - `httpToolAdapter: <Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: Omit<ToolCallOptions, "signal" | "ledger">) => ToolAdapter`
   Exercise the Web adapter while returning the same normalized result shape as direct calls.
 - **inProcessToolAdapter** _(function)_ - `inProcessToolAdapter: <Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: ToolCallOptions) => ToolAdapter`
-- **jobStoreCertificationProfile** _(function)_ - `jobStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableJobStore>`
+- **jobStoreCertificationProfile** _(function)_ - `jobStoreCertificationProfile: (options?: { readonly traceparent?: boolean; }) => AdapterCertificationProfile<CertifiableJobStore>`
+  The job-store profile. `traceparent: true` adds the optional `traceparent-roundtrip` capability: the trace context given to `enqueue` comes back on every lease, including after a retry. A store without it still runs jobs; traced runs just lose their link to the producer.
 - **mcpToolAdapter** _(function)_ - `mcpToolAdapter: <Input, Output>(tool: ToolContract<Input, Output>, baseOptions?: Omit<ToolCallOptions, "signal" | "ledger">) => ToolAdapter`
 - **modelGatewayCertificationProfile** _(const)_ - `modelGatewayCertificationProfile: () => AdapterCertificationProfile<CertifiableModelGateway>`
 - **parseRubricVerdict** _(function)_ - `parseRubricVerdict: (rubric: RubricSpec, value: unknown) => RubricVerdict`
@@ -4499,7 +4524,8 @@ _No named exports (side-effect entrypoint)._
 - **defineCertificationProfile** _(function)_ - `defineCertificationProfile: <Adapter>(profile: AdapterCertificationProfile<Adapter>) => AdapterCertificationProfile<Adapter>`
   Define and validate a custom domain/provider profile at module initialization.
 - **eventDeliveryCertificationProfile** _(function)_ - `eventDeliveryCertificationProfile: () => AdapterCertificationProfile<CertifiableEventDeliveryAdapter>`
-- **jobStoreCertificationProfile** _(function)_ - `jobStoreCertificationProfile: () => AdapterCertificationProfile<CertifiableJobStore>`
+- **jobStoreCertificationProfile** _(function)_ - `jobStoreCertificationProfile: (options?: { readonly traceparent?: boolean; }) => AdapterCertificationProfile<CertifiableJobStore>`
+  The job-store profile. `traceparent: true` adds the optional `traceparent-roundtrip` capability: the trace context given to `enqueue` comes back on every lease, including after a retry. A store without it still runs jobs; traced runs just lose their link to the producer.
 - **runtimeAdapterCertificationProfile** _(function)_ - `runtimeAdapterCertificationProfile: () => AdapterCertificationProfile<CertifiableRuntimeAdapter>`
 - **storageAdapterCertificationProfile** _(function)_ - `storageAdapterCertificationProfile: (options?: { readonly paging?: boolean; readonly presign?: boolean; readonly move?: boolean; }) => AdapterCertificationProfile<CertifiableStorageAdapter>`
 - **verifyAdapterCertification** _(function)_ - `verifyAdapterCertification: (report: AdapterCertificationReport) => Promise<boolean>`

@@ -526,6 +526,7 @@
       "devDependencies": {
         "@nifrajs/cache": "workspace:*",
         "@nifrajs/core": "workspace:*",
+        "@nifrajs/jobs": "workspace:*",
       },
       "peerDependencies": {
         "@nifrajs/core": "workspace:^",

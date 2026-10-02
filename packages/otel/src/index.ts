@@ -24,6 +24,7 @@ export {
   type ObservationLifecycle,
   type ObservationLifecycleOptions,
   type ObservationParent,
+  type ObservationScope,
   type StartObservation,
 } from "./lifecycle.ts"
 export { type OtlpExporter, type OtlpExporterOptions, otlpExporter } from "./otlp.ts"

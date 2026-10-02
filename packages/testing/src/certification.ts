@@ -311,6 +311,7 @@ export interface CertifiableStoredJob {
   readonly payload: unknown
   readonly attempt: number
   readonly maxAttempts: number
+  readonly traceparent?: string
 }
 
 export interface CertifiableJobStore {
@@ -319,6 +320,7 @@ export interface CertifiableJobStore {
     payload: unknown
     runAt: number
     maxAttempts: number
+    traceparent?: string
   }): string | Promise<string>
   lease(
     now: number,
@@ -337,54 +339,90 @@ export interface CertifiableJobStore {
       }>
 }
 
-export function jobStoreCertificationProfile(): AdapterCertificationProfile<CertifiableJobStore> {
-  return {
-    id: "job-store",
-    version: 1,
-    capabilities: ["lease-complete", "retry-schedule", "dead-letter"],
-    checks: [
-      {
-        id: "lease-complete",
-        capability: "lease-complete",
-        async run(store) {
-          const id = await store.enqueue({
-            name: "cert",
-            payload: { n: 1 },
-            runAt: 10,
-            maxAttempts: 3,
-          })
-          if ((await store.lease(9, 1, 100)).length !== 0) throw new Error("JobEarlyLease")
-          const leased = await store.lease(10, 1, 100)
-          if (leased.length !== 1 || leased[0]?.id !== id || leased[0]?.attempt !== 0)
-            throw new Error("JobLease")
-          await store.complete(id)
-          if ((await store.counts()).pending !== 0) throw new Error("JobComplete")
-        },
+/**
+ * The job-store profile. `traceparent: true` adds the optional `traceparent-roundtrip` capability: the
+ * trace context given to `enqueue` comes back on every lease, including after a retry. A store without
+ * it still runs jobs; traced runs just lose their link to the producer.
+ */
+export function jobStoreCertificationProfile(
+  options: { readonly traceparent?: boolean } = {},
+): AdapterCertificationProfile<CertifiableJobStore> {
+  const capabilities = ["lease-complete", "retry-schedule", "dead-letter"]
+  const checks: CertificationCheck<CertifiableJobStore>[] = [
+    {
+      id: "lease-complete",
+      capability: "lease-complete",
+      async run(store) {
+        const id = await store.enqueue({
+          name: "cert",
+          payload: { n: 1 },
+          runAt: 10,
+          maxAttempts: 3,
+        })
+        if ((await store.lease(9, 1, 100)).length !== 0) throw new Error("JobEarlyLease")
+        const leased = await store.lease(10, 1, 100)
+        if (leased.length !== 1 || leased[0]?.id !== id || leased[0]?.attempt !== 0)
+          throw new Error("JobLease")
+        await store.complete(id)
+        if ((await store.counts()).pending !== 0) throw new Error("JobComplete")
       },
-      {
-        id: "retry-schedule",
-        capability: "retry-schedule",
-        async run(store) {
-          const id = await store.enqueue({ name: "cert", payload: null, runAt: 0, maxAttempts: 3 })
-          await store.lease(0, 1, 10)
-          await store.retry(id, 20)
-          if ((await store.lease(19, 1, 10)).length !== 0) throw new Error("JobRetryEarly")
-          const retried = await store.lease(20, 1, 10)
-          if (retried[0]?.attempt !== 1) throw new Error("JobRetryAttempt")
-        },
+    },
+    {
+      id: "retry-schedule",
+      capability: "retry-schedule",
+      async run(store) {
+        const id = await store.enqueue({ name: "cert", payload: null, runAt: 0, maxAttempts: 3 })
+        await store.lease(0, 1, 10)
+        await store.retry(id, 20)
+        if ((await store.lease(19, 1, 10)).length !== 0) throw new Error("JobRetryEarly")
+        const retried = await store.lease(20, 1, 10)
+        if (retried[0]?.attempt !== 1) throw new Error("JobRetryAttempt")
       },
-      {
-        id: "dead-letter",
-        capability: "dead-letter",
-        async run(store) {
-          const id = await store.enqueue({ name: "cert", payload: null, runAt: 0, maxAttempts: 1 })
-          await store.deadLetter(id, "bounded-code")
-          const counts = await store.counts()
-          if (counts.dead !== 1 || counts.pending !== 0) throw new Error("JobDeadLetter")
-        },
+    },
+    {
+      id: "dead-letter",
+      capability: "dead-letter",
+      async run(store) {
+        const id = await store.enqueue({ name: "cert", payload: null, runAt: 0, maxAttempts: 1 })
+        await store.deadLetter(id, "bounded-code")
+        const counts = await store.counts()
+        if (counts.dead !== 1 || counts.pending !== 0) throw new Error("JobDeadLetter")
       },
-    ],
+    },
+  ]
+  if (options.traceparent === true) {
+    capabilities.push("traceparent-roundtrip")
+    checks.push({
+      id: "traceparent-roundtrip",
+      capability: "traceparent-roundtrip",
+      async run(store) {
+        const traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        const id = await store.enqueue({
+          name: "cert",
+          payload: null,
+          runAt: 0,
+          maxAttempts: 3,
+          traceparent,
+        })
+        const first = await store.lease(0, 1, 10)
+        if (first[0]?.id !== id || first[0]?.traceparent !== traceparent)
+          throw new Error("JobTraceparentLease")
+        await store.retry(id, 20)
+        const retried = await store.lease(20, 1, 10)
+        if (retried[0]?.traceparent !== traceparent) throw new Error("JobTraceparentRetry")
+        const untraced = await store.enqueue({
+          name: "cert",
+          payload: null,
+          runAt: 0,
+          maxAttempts: 1,
+        })
+        const plain = (await store.lease(100, 2, 10)).find((job) => job.id === untraced)
+        if (plain === undefined || plain.traceparent !== undefined)
+          throw new Error("JobTraceparentAbsent")
+      },
+    })
   }
+  return { id: "job-store", version: 1, capabilities, checks }
 }
 
 export interface CertifiableStorageObject {

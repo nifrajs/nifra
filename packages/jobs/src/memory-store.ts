@@ -14,6 +14,7 @@ interface Record {
   readonly payload: unknown
   attempt: number
   readonly maxAttempts: number
+  readonly traceparent: string | undefined
   runAt: number
   /** Epoch-ms until which this job is hidden (leased). 0 = available. */
   leaseUntil: number
@@ -36,7 +37,13 @@ export class MemoryJobStore implements JobStore {
     this.idFor = options.idFor ?? (() => `job_${++this.seq}`)
   }
 
-  enqueue(job: { name: string; payload: unknown; runAt: number; maxAttempts: number }): string {
+  enqueue(job: {
+    name: string
+    payload: unknown
+    runAt: number
+    maxAttempts: number
+    traceparent?: string
+  }): string {
     const id = this.idFor()
     this.jobs.set(id, {
       id,
@@ -44,6 +51,7 @@ export class MemoryJobStore implements JobStore {
       payload: job.payload,
       attempt: 0,
       maxAttempts: job.maxAttempts,
+      traceparent: job.traceparent,
       runAt: job.runAt,
       leaseUntil: 0,
     })
@@ -62,6 +70,7 @@ export class MemoryJobStore implements JobStore {
           payload: r.payload,
           attempt: r.attempt,
           maxAttempts: r.maxAttempts,
+          ...(r.traceparent === undefined ? {} : { traceparent: r.traceparent }),
         })
       }
     }

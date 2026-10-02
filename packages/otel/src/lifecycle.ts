@@ -28,6 +28,13 @@ export interface ObservationContext {
   readonly traceparent: string
 }
 
+/**
+ * Runs `run` with a span active in an ambient context (OpenTelemetry's, for one), so code that only
+ * sees that context - a pg or undici instrumentation - nests under the span. `otelBridge().scope` from
+ * `@nifrajs/otel/sdk-bridge` is one.
+ */
+export type ObservationScope = <T>(trace: ObservationContext, run: () => T) => T
+
 export interface ObservationParent {
   readonly traceId: string
   readonly spanId: string
