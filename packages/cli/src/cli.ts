@@ -122,6 +122,10 @@ Usage:
                                          one left. Exits 1 while current-code errors are open.
   nifra logs    [--since <n>] [--level <l>] [--grep <s>]  The dev server's console, server and
                                          browser, each line tagged with its request.
+  nifra cdn-check <url>                  Check a deployed page behind a CDN: served from cache, no
+                                         internal or CDN-only headers reaching the visitor, and soft
+                                         navigations get page data, not the cached document. Exits 1
+                                         on a failure.
   nifra build   [--out <dir>] [--report]  Emit a complete deploy directory.
                 [--target <t>]             Target a FULL deploy dir for <t>:
                                          bun | node | deno | cloudflare | vercel | static. Packages

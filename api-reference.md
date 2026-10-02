@@ -5275,7 +5275,7 @@ _No named exports (side-effect entrypoint)._
 - **cloudflareWorkersCache** _(function)_ - `cloudflareWorkersCache: (options: CloudflareWorkersCacheOptions) => CdnProvider`
   Workers Cache in front of the Worker serving the app. Purges are scoped to the calling entrypoint.
 - **cloudflareZone** _(function)_ - `cloudflareZone: (options: CloudflareZoneOptions) => CdnProvider`
-  A Cloudflare zone proxying the origin. HTML is only cached by a Cache Rule that makes it eligible, and the zone's cache ignores `Vary`: the rule must also bypass the cache when the request carries `x-nifra-data` (soft navigations fetch the page URL with that header). `nifra cdn check` tests both.
+  A Cloudflare zone proxying the origin. HTML is only cached by a Cache Rule that makes it eligible, and the zone's cache ignores `Vary`: the rule must also bypass the cache when the request carries `x-nifra-data` (soft navigations fetch the page URL with that header). `nifra cdn-check` tests both.
 - **createInvalidator** _(function)_ - `createInvalidator: (options: InvalidatorOptions) => { invalidate(target: { readonly tags?: readonly string[]; readonly paths?: readonly string[]; }, platform?: ISRPlatform): Promise<InvalidateResult>; }`
   Purge pages after a mutation, from app code: `await invalidate({ tags: ["product:42"] })`. The origin store goes first, so a CDN refetch cannot repopulate from a stale origin entry. At most 32 tags and 100 paths a call.
 - **defineCdnProvider** _(function)_ - `defineCdnProvider: (definition: CdnProviderDefinition, options?: PurgeQueueOptions) => CdnProvider`

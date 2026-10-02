@@ -337,6 +337,12 @@ export default function Rendering() {
         does the same. Staleness compounds: a page can be up to the CDN's{" "}
         <code>stale-while-revalidate</code> older than ISR's own window.
       </p>
+      <p>
+        After a deploy, <code>nifra cdn-check https://example.com/products/42</code> requests the page
+        twice and once as a soft navigation. It reports whether the second request came from the CDN's
+        cache, and fails when nifra's internal headers reach the visitor or when a soft navigation is
+        answered with the cached document.
+      </p>
       <CodeBlock code={CDN_PURGE} />
 
       <h2>Draft / preview mode</h2>

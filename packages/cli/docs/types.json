@@ -4013,7 +4013,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function cloudflareZone(options: CloudflareZoneOptions): CdnProvider;",
-    "doc": "/**\n * A Cloudflare zone proxying the origin. HTML is only cached by a Cache Rule that makes it eligible,\n * and the zone's cache ignores `Vary`: the rule must also bypass the cache when the request carries\n * `x-nifra-data` (soft navigations fetch the page URL with that header). `nifra cdn check` tests both.\n */"
+    "doc": "/**\n * A Cloudflare zone proxying the origin. HTML is only cached by a Cache Rule that makes it eligible,\n * and the zone's cache ignores `Vary`: the rule must also bypass the cache when the request carries\n * `x-nifra-data` (soft navigations fetch the page URL with that header). `nifra cdn-check` tests both.\n */"
   },
   {
     "name": "CloudflareZoneOptions",

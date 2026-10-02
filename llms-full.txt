@@ -1934,6 +1934,11 @@ code, `createInvalidator(&#123; store, cdn, origin &#125;).invalidate(&#123; tag
 does the same. Staleness compounds: a page can be up to the CDN's
 `stale-while-revalidate` older than ISR's own window.
 
+After a deploy, `nifra cdn-check https://example.com/products/42` requests the page
+twice and once as a soft navigation. It reports whether the second request came from the CDN's
+cache, and fails when nifra's internal headers reach the visitor or when a soft navigation is
+answered with the cached document.
+
 ```ts
 # Several paths and tags in one call (at most 100 paths and 32 tags).
 curl -X POST https://example.com/__nifra/revalidate \

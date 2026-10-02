@@ -13,6 +13,7 @@ import type {
   CapabilityExplainCommandResult,
   CapabilitySnapshotCommandResult,
 } from "./capabilities-tool.ts"
+import { cdnCheckSpec } from "./cdn-check.ts"
 import { type CheckResult, renderCheckReport } from "./check.ts"
 import type { ContractsLock } from "./contracts.ts"
 import { errorsSpec, logsSpec } from "./dev-feed-tool.ts"
@@ -1862,6 +1863,7 @@ export const commandSpecs = Object.freeze([
   i18nSpec,
   errorsSpec,
   logsSpec,
+  cdnCheckSpec,
 ] as const)
 
 const commandByName = new Map(commandSpecs.map((spec) => [spec.name, spec]))
