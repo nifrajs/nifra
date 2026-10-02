@@ -3801,6 +3801,53 @@ _No named exports (side-effect entrypoint)._
 - **unexposedPlanRelation** _(function)_ - `unexposedPlanRelation: (planRows: readonly { readonly detail?: unknown; }[], exposed: (relation: string) => boolean) => string | undefined`
   The first relation an `EXPLAIN QUERY PLAN` result scans or searches that `exposed` rejects, as the plan spells it, or `undefined` when every scanned relation is exposed.
 
+### `@nifrajs/mcp-db/postgres`
+
+- **ConnectPostgresOptions** _(interface)_ - `interface ConnectPostgresOptions`
+  Options for {@link connectPostgres}.
+- **PgConnection** _(interface)_ - `interface PgConnection`
+  One connection reserved from the pool (`Bun.SQL`'s `ReservedSQL`, structurally).
+- **PgQuery** _(interface)_ - `interface PgQuery`
+  A pending query: awaitable for object rows, or `.values()` for array rows.
+- **PostgresClient** _(interface)_ - `interface PostgresClient`
+  A Postgres client (`Bun.SQL`, structurally): the engine reserves one connection per call.
+- **PostgresQueryOptions** _(interface)_ - `interface PostgresQueryOptions`
+  Options for {@link queryPostgres}.
+- **PostgresRoleReport** _(interface)_ - `interface PostgresRoleReport`
+  What the role gate and extension gate read about the connected role.
+- **PostgresRoleSql** _(interface)_ - `interface PostgresRoleSql`
+  The SQL that creates a read-only role for this database, for the developer to run themselves.
+- **PostgresRoleSqlOptions** _(interface)_ - `interface PostgresRoleSqlOptions`
+  Options for {@link postgresRoleSql}.
+- **PostgresSchemaOptions** _(interface)_ - `interface PostgresSchemaOptions`
+  Options for {@link readPostgresSchema}.
+- **PostgresScope** _(interface)_ - `interface PostgresScope`
+  Which relations a query may read.
+- **PostgresTarget** _(interface)_ - `interface PostgresTarget`
+  Where to connect, parsed from a `postgres://` URL.
+- **connectPostgres** _(function)_ - `connectPostgres: (target: PostgresTarget, options: ConnectPostgresOptions) => PostgresClient | DbRefusal`
+  Open a one-connection `Bun.SQL` client for `target` after the host gate. Every session starts read-only with `standard_conforming_strings` on (the statement tokenizer reads strings that way).
+- **explainPostgres** _(function)_ - `explainPostgres: (client: PostgresClient, sql: string, options: PostgresQueryOptions & { readonly analyze?: boolean; }) => Promise<DbPlan | DbRefusal>`
+  `EXPLAIN (FORMAT JSON)` for one query, after the same layers as {@link queryPostgres}.
+- **inspectPostgresRole** _(function)_ - `inspectPostgresRole: (client: PostgresClient, options: { readonly timeoutMs: number; }) => Promise<PostgresRoleReport | DbRefusal>`
+  Read the connected role's privileges, in a read-only transaction.
+- **isLocalPostgresHost** _(function)_ - `isLocalPostgresHost: (host: string) => boolean`
+  True for `localhost`, `*.localhost`, 127.0.0.0/8 and `::1` (also as an IPv4-mapped address).
+- **lintPostgresStatement** _(function)_ - `lintPostgresStatement: (sql: string) => DbRefusal | undefined`
+  Refuse what the tokenizer layer refuses: a non-query, several statements, a denied function.
+- **parsePostgresUrl** _(function)_ - `parsePostgresUrl: (url: string) => PostgresTarget | DbRefusal`
+  Parse a `postgres://` (or `postgresql://`) URL. Only the host, port, user, password, database and `sslmode` are read - any other parameter (`options=-c ...` included) is ignored, so a URL cannot switch off the read-only session settings.
+- **postgresHostRefusal** _(function)_ - `postgresHostRefusal: (target: PostgresTarget, allowHosts?: readonly string[]) => DbRefusal | undefined`
+  Refuse a TCP host that is neither local nor named in `allowHosts`.
+- **postgresRoleRefusal** _(function)_ - `postgresRoleRefusal: (report: PostgresRoleReport, options?: { readonly allowExtensions?: readonly string[]; }) => DbRefusal | undefined`
+  The role gate and the extension gate, as one decision over a {@link PostgresRoleReport}.
+- **postgresRoleSql** _(function)_ - `postgresRoleSql: (client: PostgresClient, options: PostgresRoleSqlOptions) => Promise<PostgresRoleSql | DbRefusal>`
+  Write the SQL for a login role that can read the allowed schemas and nothing else: `pg_read_all_data` on Postgres 14+ when nothing is excluded; otherwise `GRANT SELECT` per schema plus default privileges, and a `REVOKE` for each excluded table and its partitions (`pg_read_all_data` would override a…
+- **queryPostgres** _(function)_ - `queryPostgres: (client: PostgresClient, sql: string, options: PostgresQueryOptions) => Promise<DbRows | DbRefusal>`
+  Run one read-only query through every layer and return capped, masked rows.
+- **readPostgresSchema** _(function)_ - `readPostgresSchema: (client: PostgresClient, options: PostgresSchemaOptions) => Promise<DbSchemaReport | DbRefusal>`
+  Describe the readable tables and views in the allowed schemas from `pg_catalog`, with queries this module writes (no caller SQL runs), so it works on any role: columns, primary keys, foreign keys, indexes and the planner's row estimate.
+
 ## @nifrajs/middleware
 
 ### `@nifrajs/middleware`

@@ -231,6 +231,12 @@ const FOOTGUNS: Record<string, readonly string[]> = {
     "`createMcpServer` has **no built-in authentication**. Put authorization at the host boundary with `authorizeMessage`, and do not expose state-changing or private tools on an unauthenticated mount.",
     "Tool and prompt failures are deliberately returned as generic errors; log detailed diagnostics on the server and never put filesystem paths, SQL, provider responses, or secrets in thrown messages.",
   ],
+  "@nifrajs/mcp-db": [
+    "`run_query` on `serveDatabaseAsMcp` is off until you pass an `authorize` hook, and a table outside `tables` is refused even through an alias. D1 is not supported: it cannot open a database read-only at the engine.",
+    "The engines are for development databases. `@nifrajs/mcp-db/postgres` refuses a superuser connection (`NIFRA_DB_SUPERUSER`), a role in `pg_execute_server_program` / `pg_read_server_files` / `pg_write_server_files`, and a role that can use dblink, postgres_fdw, file_fdw or an untrusted language (`NIFRA_DB_EXTENSION`, unless `allowExtensions` names it). Connect as a read-only role; `postgresRoleSql` writes the SQL for one and runs nothing.",
+    "Rows and schema text are database data: treat every value (and every table or column name) as untrusted, never as instructions. Results are capped by `maxRows` and `maxResultBytes`, and `redaction` masks columns and scrubs strings - pass one.",
+    "`exclude` is enforced on the plan (Postgres) or the compiled statement (SQLite), so views, CTEs, partitions and inheritance children are covered. On Postgres the hard boundary for an excluded table is still the role's privileges: a SQL function can read a table without it appearing in the plan, which is why `postgresRoleSql` REVOKEs excluded tables instead of granting `pg_read_all_data`.",
+  ],
   "@nifrajs/webmcp": [
     "WebMCP registration is **page-local and opt-in**: pass an explicit capability allowlist to `registerWebMcpTools`; unsupported browsers safely no-op, and registration never replaces server authorization.",
     "Predictions are deterministic application transforms, not model guesses. Pair `predict` with `reconcile`, keep patches bounded to `add`/`replace`/`remove`, and treat version conflicts as a normal UI outcome.",

@@ -75,6 +75,7 @@
       "@nifrajs/prompt": ["./packages/prompt/src/index.ts"],
       "@nifrajs/mcp-db": ["./packages/mcp-db/src/index.ts"],
       "@nifrajs/mcp-db/engine": ["./packages/mcp-db/src/engine.ts"],
+      "@nifrajs/mcp-db/postgres": ["./packages/mcp-db/src/postgres.ts"],
       "@nifrajs/agent-telemetry": ["./packages/agent-telemetry/src/index.ts"],
       "@nifrajs/agent": ["./packages/agent/src/index.ts"],
       "@nifrajs/agent-review": ["./packages/agent-review/src/index.ts"],

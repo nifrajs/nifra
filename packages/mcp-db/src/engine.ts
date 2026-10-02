@@ -210,6 +210,12 @@ export interface SqliteQueryOptions extends ShapeRowsOptions {
 
 type Verified = { readonly ok: true; readonly query: string } | DbRefusal
 
+const GATE_MESSAGES = {
+  empty: "empty query",
+  multiple: "only a single statement is allowed",
+  "not-read": "only a read-only query (SELECT, or WITH ... SELECT) is allowed",
+} as const
+
 function verifySqlite(
   db: Pick<Database, "prepare">,
   sql: string,
@@ -226,9 +232,8 @@ function verifySqlite(
   const ctes = new Set(sqliteCteNames(sql))
   const gate = gateSqliteStatement(sql, (relation) => exposed.has(relation) || ctes.has(relation))
   if (!gate.ok) {
-    return gate.reason === "unexposed"
-      ? unexposed(gate.relation ?? "")
-      : dbRefusal("NIFRA_DB_WRITE_REFUSED", gate.text)
+    if (gate.reason === "unexposed") return unexposed(gate.relation ?? "")
+    return dbRefusal("NIFRA_DB_WRITE_REFUSED", GATE_MESSAGES[gate.reason])
   }
   let reads: string[]
   try {
