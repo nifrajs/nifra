@@ -114,6 +114,26 @@ describe("projection drops what the schema does not declare", () => {
     })
   })
 
+  test("a Date in a string field is sent as its ISO string, as JSON would send it", () => {
+    const createdAt = new Date("2026-01-02T03:04:05Z")
+    const schema = t.object({
+      createdAt: t.string({ format: "date-time" }),
+      rows: t.array(t.object({ at: t.string() })),
+    })
+    const value = { createdAt, rows: [{ at: createdAt }] }
+    expect(guard(schema, value)).toEqual({
+      createdAt: "2026-01-02T03:04:05.000Z",
+      rows: [{ at: "2026-01-02T03:04:05.000Z" }],
+    })
+    // Copy-on-write: the loader's own object keeps its Date.
+    expect(value.createdAt).toBe(createdAt)
+    expect(
+      guard(t.object({ at: t.union([t.string(), t.null()]) }), { at: new Date(Number.NaN) }),
+    ).toEqual({
+      at: null,
+    })
+  })
+
   test("a class instance becomes a plain object of its declared fields", () => {
     class User {
       constructor(

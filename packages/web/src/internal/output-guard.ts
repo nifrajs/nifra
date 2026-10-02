@@ -134,8 +134,15 @@ const UNKNOWN: Project = (value, state) => {
   return value
 }
 
-/** A scalar schema: the validator decides, and a deferred marker cannot pass a scalar check. */
-const LEAF: Project = (value) => value
+/**
+ * A scalar schema: the validator decides, and a deferred marker cannot pass a scalar check. A `Date`
+ * becomes what JSON makes of it (its ISO string), so a `t.string()` field accepts a timestamp column
+ * and the page renders on the server with the value the browser receives.
+ */
+const LEAF: Project = (value) => (value instanceof Date ? value.toJSON() : value)
+
+/** An array whose items are all scalars, passed through whole. */
+const LEAF_ARRAY: Project = (value) => value
 
 const typesOf = (node: Node): readonly unknown[] | undefined =>
   Array.isArray(node.type) ? node.type : node.type === undefined ? undefined : [node.type]
@@ -276,7 +283,7 @@ class Compiler {
       }
       const proto = Object.getPrototypeOf(value)
       if (proto !== Object.prototype && proto !== null) {
-        if (value instanceof Date) return value
+        if (value instanceof Date) return value.toJSON()
         // A class instance: its own fields as a plain object, so no prototype `toJSON` or getter
         // decides what is serialized.
         const snapshot: Record<string, unknown> = {}
@@ -296,7 +303,7 @@ class Compiler {
           continue
         }
         const before = input[key]
-        if (projector === LEAF) {
+        if (projector === LEAF_ARRAY || (projector === LEAF && !(before instanceof Date))) {
           if (out !== undefined) assign(out, key, before)
           continue
         }
@@ -325,14 +332,16 @@ class Compiler {
     )
     const restSchema = Array.isArray(node.items) ? node.additionalItems : node.items
     const rest = this.extra(restSchema, where) ?? UNKNOWN
-    if (rest === LEAF && head.every((projector) => projector === LEAF)) return LEAF
+    // An array of scalars is the validator's alone: no key to drop, and walking it here would cost
+    // every `string[]` a loop. A `Date` inside one reaches the validator as it is.
+    if (rest === LEAF && head.every((projector) => projector === LEAF)) return LEAF_ARRAY
     return (value, state) => {
       if (!Array.isArray(value)) return value
       let out: unknown[] | undefined
       for (let i = 0; i < value.length; i++) {
         const before = value[i]
         const projector = head[i] ?? rest
-        if (projector === LEAF) {
+        if (projector === LEAF && !(before instanceof Date)) {
           if (out !== undefined) out[i] = before
           continue
         }
@@ -411,6 +420,7 @@ class Compiler {
   ): Project {
     return (value, state) => {
       if (typeof value !== "object" || value === null) return value
+      if (value instanceof Date) return value.toJSON()
       if (Array.isArray(value)) return array === undefined ? value : array(value, state)
       if (isDeferred(value)) {
         if (deferred !== undefined) return deferred(value, state)

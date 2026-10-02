@@ -103,7 +103,9 @@ export default function Data() {
         A route's <code>loader</code> runs on the server and calls your backend in-process during
         SSR - no network hop. Its <code>loaderOutput</code> schema is the contract with the page:
         the page receives that shape as <code>data</code>, and nothing else the loader returns
-        leaves the server. A loader without one is flagged by <code>nifra check</code>. See{" "}
+        leaves the server. A <code>Date</code> travels as its ISO string, so declare a timestamp
+        column as <code>t.string()</code>. A loader without a schema is flagged by{" "}
+        <code>nifra check</code>. See{" "}
         <a href="/docs/structure">Project structure</a> for the route pair.
       </p>
       <CodeBlock code={LOADER} lang="ts" />
