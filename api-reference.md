@@ -3724,6 +3724,8 @@ _No named exports (side-effect entrypoint)._
 
 ## @nifrajs/mcp-db
 
+### `@nifrajs/mcp-db`
+
 - **McpDbAuthorizeContext** _(interface)_ - `interface McpDbAuthorizeContext`
   Context forwarded to `authorize` - the inbound HTTP Request carrying the `run_query` call.
 - **McpDbConfigError** _(class)_ - `class McpDbConfigError`
@@ -3733,6 +3735,71 @@ _No named exports (side-effect entrypoint)._
   The structural slice of `bun:sqlite`'s `Database` this package needs.
 - **serveDatabaseAsMcp** _(function)_ - `serveDatabaseAsMcp: (db: SqliteDatabaseLike, options: ServeDatabaseAsMcpOptions) => McpServer`
   Serve `db` as a mountable MCP server (`mcp.fetch` at `POST /mcp`). See module docs for the security model. Throws {@link McpDbConfigError} on any unsafe configuration - always at construction (boot), never at request time.
+
+### `@nifrajs/mcp-db/engine`
+
+- **DbPlan** _(interface)_ - `interface DbPlan`
+  A plan for a statement, as the engine reports it.
+- **DbRedaction** _(interface)_ - `interface DbRedaction`
+  What keeps secrets out of a result: which columns to mask, and how to scrub text.
+- **DbRefusal** _(interface)_ - `interface DbRefusal`
+  A refused or failed call: what happened, the fix, and its anchor under `https://nifra.dev/docs/`.
+- **DbRefusalCode** _(type)_ - `type DbRefusalCode`
+  Every reason a database call is refused or fails, as a stable code.
+- **DbRows** _(interface)_ - `interface DbRows`
+  Rows ready to leave the process: capped, masked and JSON-safe.
+- **DbSchemaColumn** _(interface)_ - `interface DbSchemaColumn`
+  A column in {@link DbSchemaTable}.
+- **DbSchemaForeignKey** _(interface)_ - `interface DbSchemaForeignKey`
+  A foreign key in {@link DbSchemaTable}.
+- **DbSchemaIndex** _(interface)_ - `interface DbSchemaIndex`
+  An index in {@link DbSchemaTable}.
+- **DbSchemaReport** _(interface)_ - `interface DbSchemaReport`
+  The exposed schema, built only from catalog queries the engine writes itself.
+- **DbSchemaTable** _(interface)_ - `interface DbSchemaTable`
+  One exposed table or view.
+- **REDACTED_CELL** _(const)_ - `REDACTED_CELL: "[redacted]"`
+  The value a masked cell carries.
+- **ShapeRowsOptions** _(interface)_ - `interface ShapeRowsOptions`
+  Options for {@link shapeRows}.
+- **SqliteDatabaseLike** _(interface)_ - `interface SqliteDatabaseLike`
+  The structural slice of `bun:sqlite`'s `Database` this package needs.
+- **SqliteGate** _(type)_ - `type SqliteGate = | { readonly ok: true; readonly query: string } | { readonly ok: false readonly reason: "empty" | "multiple" | "not-read" | "unexposed" readonly text: string readonly relation?: string }`
+  The outcome of {@link gateSqliteStatement}. A refusal's `text` is the message `run_query` returns.
+- **SqliteQueryOptions** _(interface)_ - `interface SqliteQueryOptions`
+  Options for {@link querySqlite} and {@link explainSqlite}.
+- **SqliteSchemaOptions** _(interface)_ - `interface SqliteSchemaOptions`
+  Options for {@link readSqliteSchema}.
+- **boundedSqliteQuery** _(function)_ - `boundedSqliteQuery: (query: string, maxRows: number) => string`
+  Wrap a gated query so SQLite materializes at most one row beyond `maxRows`.
+- **countSqliteQuery** _(function)_ - `countSqliteQuery: (query: string) => string`
+  Wrap a gated query to count its rows (re-executes it).
+- **dbRefusal** _(function)_ - `dbRefusal: (code: DbRefusalCode, message: string) => DbRefusal`
+  Build a {@link DbRefusal} for `code` with its fix and docs anchor.
+- **explainSqlite** _(function)_ - `explainSqlite: (db: Pick<Database, "prepare">, sql: string, options: Pick<SqliteQueryOptions, "exclude" | "maxResultBytes">) => DbPlan | DbRefusal`
+  `EXPLAIN QUERY PLAN` for one statement, after the same gates as {@link querySqlite}.
+- **fitToBytes** _(function)_ - `fitToBytes: <T>(count: number, build: (shown: number) => T, maxBytes: number) => { readonly value: T; readonly serialized: string; readonly shown: number; } | undefined`
+  Serialize `build(shown)` for the largest `shown <= count` (halving from `count`) whose JSON fits `maxBytes`. `undefined` when even `build(0)` does not fit.
+- **gateSqliteStatement** _(function)_ - `gateSqliteStatement: (input: string, exposed: (relation: string) => boolean) => SqliteGate`
+  Gate one statement before SQLite sees it: non-empty, a single statement, SELECT/WITH only, and every relation it names after `FROM`/`JOIN` exposed. Returns the statement without its terminator, ready to wrap. Relation names are checked here as well as in the plan because SQLite's plan names an alia…
+- **isDbRefusal** _(function)_ - `isDbRefusal: (value: unknown) => value is DbRefusal`
+  True for a value {@link dbRefusal} built.
+- **openReadOnlySqlite** _(function)_ - `openReadOnlySqlite: (file: string) => Promise<Database>`
+  Open a SQLite file read-only: the `readonly` flag plus `PRAGMA query_only = ON`.
+- **querySqlite** _(function)_ - `querySqlite: (db: Pick<Database, "prepare">, sql: string, options: SqliteQueryOptions) => DbRows | DbRefusal`
+  Run one read-only query: the statement gates, the check that every table its bytecode opens is exposed (every table and view minus `exclude`), then at most `maxRows + 1` rows through {@link shapeRows}. Synchronous: run it where the caller can stop the process (the CLI runs each call in its own subp…
+- **readSqliteSchema** _(function)_ - `readSqliteSchema: (db: Pick<Database, "prepare">, options?: SqliteSchemaOptions) => DbSchemaReport | DbRefusal`
+  Describe the exposed tables and views from SQLite's own catalog (`sqlite_master` and the `pragma_*` table functions, each bound by parameter): columns, primary key, foreign keys, indexes, and a row count per table.
+- **resolveSqliteFile** _(function)_ - `resolveSqliteFile: (root: string, file: string, allowFiles?: readonly string[]) => string | DbRefusal`
+  Resolve a database file against the project root. The file must exist and its real path (symlinks followed) must sit inside the root's real path, unless `allowFiles` names it.
+- **shapeRows** _(function)_ - `shapeRows: (columns: readonly string[], rows: readonly (readonly unknown[])[], options: ShapeRowsOptions) => DbRows`
+  Cap, mask and normalize rows fetched as arrays (at most `maxRows + 1`, so truncation is known without counting). The byte cap halves the row count until the JSON fits.
+- **sqliteRelations** _(function)_ - `sqliteRelations: (db: Pick<Database, "prepare">, exclude?: readonly string[]) => { readonly all: ReadonlySet<string>; readonly exposed: ReadonlySet<string>; }`
+  The tables and views of a SQLite database, lowercased: all of them, and those not excluded.
+- **toJsonCell** _(function)_ - `toJsonCell: (value: unknown, redaction?: DbRedaction, depth?: number) => unknown`
+  One database value as JSON: bytes become `<n bytes>`, a bigint outside the safe range a string, a date an ISO string, a non-finite number a string. Strings go through `redaction.text`, and a key inside a JSON value that `redaction.column` matches is masked.
+- **unexposedPlanRelation** _(function)_ - `unexposedPlanRelation: (planRows: readonly { readonly detail?: unknown; }[], exposed: (relation: string) => boolean) => string | undefined`
+  The first relation an `EXPLAIN QUERY PLAN` result scans or searches that `exposed` rejects, as the plan spells it, or `undefined` when every scanned relation is exposed.
 
 ## @nifrajs/middleware
 

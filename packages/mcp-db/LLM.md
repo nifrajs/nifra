@@ -8,14 +8,28 @@ Serve a SQLite database as a fail-closed MCP server - allowlisted schema tools b
 > reference see [`api-reference.md`](../../api-reference.md) (every export + signature) and
 > [`llms-full.txt`](../../llms-full.txt) (the prose guides). One cheap read instead of the whole corpus.
 
+## Public entrypoints
+
+`@nifrajs/mcp-db` · `@nifrajs/mcp-db/engine`
+
 ## Key exports
 
-- **serveDatabaseAsMcp** _(function)_ - `serveDatabaseAsMcp: (db: SqliteDatabaseLike, options: ServeDatabaseAsMcpOptions) => McpServer`
-- **McpDbConfigError** _(class)_ - `class McpDbConfigError`
-- **McpDbAuthorizeContext** _(interface)_ - `interface McpDbAuthorizeContext`
-- **RunQueryOptions** _(interface)_ - `interface RunQueryOptions`
-- **ServeDatabaseAsMcpOptions** _(interface)_ - `interface ServeDatabaseAsMcpOptions`
-- **SqliteDatabaseLike** _(interface)_ - `interface SqliteDatabaseLike`
+- **boundedSqliteQuery** _(function)_ - `boundedSqliteQuery: (query: string, maxRows: number) => string` · from `@nifrajs/mcp-db/engine`
+- **countSqliteQuery** _(function)_ - `countSqliteQuery: (query: string) => string` · from `@nifrajs/mcp-db/engine`
+- **dbRefusal** _(function)_ - `dbRefusal: (code: DbRefusalCode, message: string) => DbRefusal` · from `@nifrajs/mcp-db/engine`
+- **explainSqlite** _(function)_ - `explainSqlite: (db: Pick<Database, "prepare">, sql: string, options: Pick<SqliteQueryOptions, "exclude" | "maxResultBytes">) => DbPlan | Db…` · from `@nifrajs/mcp-db/engine`
+- **fitToBytes** _(function)_ - `fitToBytes: <T>(count: number, build: (shown: number) => T, maxBytes: number) => { readonly value: T; readonly serialized: string; readonly…` · from `@nifrajs/mcp-db/engine`
+- **gateSqliteStatement** _(function)_ - `gateSqliteStatement: (input: string, exposed: (relation: string) => boolean) => SqliteGate` · from `@nifrajs/mcp-db/engine`
+- **isDbRefusal** _(function)_ - `isDbRefusal: (value: unknown) => value is DbRefusal` · from `@nifrajs/mcp-db/engine`
+- **openReadOnlySqlite** _(function)_ - `openReadOnlySqlite: (file: string) => Promise<Database>` · from `@nifrajs/mcp-db/engine`
+- **querySqlite** _(function)_ - `querySqlite: (db: Pick<Database, "prepare">, sql: string, options: SqliteQueryOptions) => DbRows | DbRefusal` · from `@nifrajs/mcp-db/engine`
+- **readSqliteSchema** _(function)_ - `readSqliteSchema: (db: Pick<Database, "prepare">, options?: SqliteSchemaOptions) => DbSchemaReport | DbRefusal` · from `@nifrajs/mcp-db/engine`
+- **resolveSqliteFile** _(function)_ - `resolveSqliteFile: (root: string, file: string, allowFiles?: readonly string[]) => string | DbRefusal` · from `@nifrajs/mcp-db/engine`
+- **serveDatabaseAsMcp** _(function)_ - `serveDatabaseAsMcp: (db: SqliteDatabaseLike, options: ServeDatabaseAsMcpOptions) => McpServer` · from `@nifrajs/mcp-db`
+- **shapeRows** _(function)_ - `shapeRows: (columns: readonly string[], rows: readonly (readonly unknown[])[], options: ShapeRowsOptions) => DbRows` · from `@nifrajs/mcp-db/engine`
+- **sqliteRelations** _(function)_ - `sqliteRelations: (db: Pick<Database, "prepare">, exclude?: readonly string[]) => { readonly all: ReadonlySet<string>; readonly exposed: Rea…` · from `@nifrajs/mcp-db/engine`
+
+_…and 22 more - see [`api-reference.md`](../../api-reference.md#nifrajsmcpdb) for the complete list._
 
 ## Footguns
 
