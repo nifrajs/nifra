@@ -237,6 +237,21 @@ const ROWS: readonly LeakPath[] = [
     },
   },
   {
+    name: "a backend file that is not a script, imported as text (Bun)",
+    files: {
+      "backend/query.sql": `select '${BACKEND_MARKER}'\n`,
+      "routes/index.tsx": PAGE(
+        'import query from "../backend/query.sql" with { type: "text" }',
+        "query",
+      ),
+    },
+    expect: {
+      "bun-build": "backend/query.sql: it is backend code",
+      "bun-dev":
+        "backend/query.sql may not reach the browser (imported by routes/index.tsx): it is backend code",
+    },
+  },
+  {
     name: "a worker built from backend code",
     files: {
       "backend/job.ts": `self.postMessage("${BACKEND_MARKER}")\n`,

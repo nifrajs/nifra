@@ -17,12 +17,13 @@ import {
   type ZoneClassifier,
 } from "../zones.ts"
 
-/** Source files Bun loads through a loader that tolerates a declining `onLoad`. File-loader assets
- * (images, fonts, wasm) panic Bun 1.4 on a declining `onLoad`, so those go through `onResolve`. */
+/** Source files Bun loads through a loader that tolerates a declining `onLoad`. Every other file
+ * (images, fonts, wasm, and a `.pem` or `.sql` imported `with { type: "text" }`) goes through
+ * `onResolve`: a file-loader asset panics Bun 1.4 on a declining `onLoad`. */
 const SOURCE_FILE =
   /\.(?:[cm]?[jt]sx?|svelte|vue|mdx|astro|css|scss|sass|less|json|jsonc|toml|ya?ml|txt|md)$/
-const ASSET_FILE =
-  /\.(?:png|jpe?g|gif|webp|avif|ico|bmp|svg|woff2?|ttf|otf|eot|wasm|mp3|mp4|webm|ogg|wav|pdf)$/i
+/** A relative or absolute import whose last segment has an extension. */
+const PATH_WITH_EXTENSION = /^(?:\.|\/|[A-Za-z]:[\\/]).*\.[^./\\?#]+(?:[?#].*)?$/
 
 export interface ZoneGuardOptions {
   /** The app root: the directory holding `routes/`, `frontend/`, `backend/` and `shared/`. */
@@ -75,9 +76,11 @@ export function zoneGuardPlugin(options: ZoneGuardOptions): BunPlugin {
         }
         return reason === undefined ? undefined : refuse(args.path, reason)
       })
-      build.onResolve({ filter: ASSET_FILE }, (args) => {
-        if (!args.path.startsWith(".") && !isAbsolute(args.path)) return undefined
-        const file = resolve(dirname(args.importer), args.path.replace(/[?#].*$/, ""))
+      build.onResolve({ filter: PATH_WITH_EXTENSION }, (args) => {
+        const path = args.path.replace(/[?#].*$/, "")
+        // An entry point (a dev server's HTML page) is the build's own choice, not an import.
+        if (SOURCE_FILE.test(path) || args.importer === "") return undefined
+        const file = resolve(dirname(args.importer), path)
         const reason = browserDenial(classifier.classify(file))
         return reason === undefined ? undefined : refuse(file, reason, args.importer)
       })
