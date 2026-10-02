@@ -31,6 +31,7 @@ describe("effectTracing", () => {
       "nifra.effect.admission",
       "nifra.effect.execution",
     ])
+    expect(spans.map((span) => span.kind)).toEqual(["internal", "internal"])
     expect(spans[0]?.attributes["nifra.effect.id"]).toBe(spans[1]?.attributes["nifra.effect.id"])
     expect(spans[1]?.attributes).toMatchObject({
       "nifra.effect.capability": "payments.charge",

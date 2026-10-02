@@ -120,6 +120,7 @@ export function tracing(options: TracingOptions = {}): ContextPlugin<TracingCont
         const path = pathOf(c.req.url)
         const observation = lifecycle.start({
           name: `${c.req.method} ${path}`,
+          kind: "server",
           traceparent: c.req.headers.get("traceparent"),
           attributes: {
             "http.request.method": c.req.method,

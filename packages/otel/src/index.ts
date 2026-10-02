@@ -34,6 +34,7 @@ export {
   type NifraSpan,
   type ObservationAdapter,
   type ObservationLink,
+  type SpanKind,
   type SpanStatus,
 } from "./span.ts"
 export {

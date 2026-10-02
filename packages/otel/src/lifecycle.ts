@@ -9,6 +9,7 @@ import type {
   NifraSpan,
   ObservationAdapter,
   ObservationLink,
+  SpanKind,
   SpanStatus,
 } from "./span.ts"
 import {
@@ -35,6 +36,8 @@ export interface ObservationParent {
 
 export interface StartObservation {
   readonly name: string
+  /** OTel span kind. Omitted, the span exports as `server`. */
+  readonly kind?: SpanKind
   /** Explicit parent. `null` forces a root span; `undefined` falls back to `traceparent`. */
   readonly parent?: ObservationParent | null
   /** Inbound W3C header used when `parent` is undefined. */
@@ -147,6 +150,7 @@ export function createObservationLifecycle(
       ...(parent === null ? {} : { parentSpanId: parent.spanId }),
       sampled,
       name: input.name,
+      ...(input.kind === undefined ? {} : { kind: input.kind }),
       startTime,
       status: "unset",
       attributes: { ...input.attributes },

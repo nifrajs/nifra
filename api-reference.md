@@ -3968,6 +3968,8 @@ _No named exports (side-effect entrypoint)._
 - **OtlpExporterOptions** _(interface)_ - `interface OtlpExporterOptions`
 - **ParsedTraceparent** _(interface)_ - `interface ParsedTraceparent`
   A parsed inbound `traceparent`.
+- **SpanKind** _(type)_ - `type SpanKind = "server" | "client" | "producer" | "consumer" | "internal"`
+  The OTel span kind. A span without one is exported as `server`, the kind of the request spans that predate this field.
 - **SpanStatus** _(type)_ - `type SpanStatus = "unset" | "ok" | "error"`
   The span model + exporter seam. Attribute names follow OpenTelemetry HTTP semantic conventions (`http.request.method`, `url.path`, `http.response.status_code`, …) so a span maps cleanly onto an OTel `Span` when bridged - but nothing here depends on the OTel SDK. You supply an {@link ObservationAdap…
 - **StartObservation** _(interface)_ - `interface StartObservation`

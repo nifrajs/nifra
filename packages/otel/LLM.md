@@ -29,7 +29,7 @@ Distributed tracing for nifra - W3C traceparent/tracestate propagation + OpenTel
 - **traceHeaders** _(function)_ - `traceHeaders: (trace: TraceContext, causality?: CausalityContext) => { readonly traceparent: string; } & Readonly<Record<string, string>>` · from `@nifrajs/otel`
 - **tracing** _(function)_ - `tracing: (options?: TracingOptions) => ContextPlugin<TracingContext>` · from `@nifrajs/otel`
 
-_…and 25 more - see [`api-reference.md`](../../api-reference.md#nifrajsotel) for the complete list._
+_…and 26 more - see [`api-reference.md`](../../api-reference.md#nifrajsotel) for the complete list._
 
 ## Footguns
 

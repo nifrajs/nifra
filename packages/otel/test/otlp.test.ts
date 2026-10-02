@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
 import type { NifraSpan } from "../src/index.ts"
-import { otlpExporter, tracing } from "../src/index.ts"
+import { createObservationLifecycle, otlpExporter, tracing } from "../src/index.ts"
 
 function span(overrides: Partial<NifraSpan> = {}): NifraSpan {
   return {
@@ -118,6 +118,41 @@ describe("otlpExporter", () => {
       calls[0]?.body as { resourceSpans: [{ scopeSpans: [{ spans: [{ status: unknown }] }] }] }
     ).resourceSpans[0].scopeSpans[0].spans[0]
     expect(otlp.status).toEqual({ code: 2 })
+  })
+
+  test("maps each span kind onto its OTLP enum, and an absent or unknown kind onto SERVER", async () => {
+    const { calls, fetch } = recordingFetch()
+    const exp = otlpExporter({ url: "http://c", fetch })
+    const kinds = ["internal", "server", "client", "producer", "consumer"] as const
+    for (const kind of kinds) exp.onEnd(span({ kind }))
+    exp.onEnd(span())
+    exp.onEnd(span({ kind: "toString" as never }))
+    await exp.flush()
+    const spans = (
+      calls[0]?.body as { resourceSpans: [{ scopeSpans: [{ spans: Array<{ kind: number }> }] }] }
+    ).resourceSpans[0].scopeSpans[0].spans
+    expect(spans.map((s) => s.kind)).toEqual([1, 2, 3, 4, 5, 2, 2])
+  })
+
+  test("tracing() request spans are server spans and effect spans are internal", async () => {
+    const { calls, fetch } = recordingFetch()
+    const exp = otlpExporter({ url: "http://c", fetch })
+    const lifecycle = createObservationLifecycle({ adapters: [exp] })
+    lifecycle.start({ name: "work", kind: "producer" }).end()
+    const app = server()
+      .use(tracing({ exporter: exp }))
+      .get("/ping", () => ({ ok: true }))
+    await app.fetch(new Request("http://test/ping"))
+    await exp.flush()
+    const spans = (
+      calls[0]?.body as {
+        resourceSpans: [{ scopeSpans: [{ spans: Array<{ name: string; kind: number }> }] }]
+      }
+    ).resourceSpans[0].scopeSpans[0].spans
+    expect(spans.map((s) => [s.name, s.kind])).toEqual([
+      ["work", 4],
+      ["GET /ping", 2],
+    ])
   })
 
   test("serializes causal span links and their typed attributes", async () => {
