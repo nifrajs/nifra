@@ -1040,10 +1040,11 @@ const sourceFilesUnder = (root: string): readonly string[] => {
   const files: string[] = []
   const walk = (current: string): void => {
     for (const entry of readdirSync(current, { withFileTypes: true })) {
+      // Dot-directories hold tool output (.wrangler, .vercel, .svelte-kit), whose bundles quote css
+      // imports the app never makes.
       if (
-        ["node_modules", "dist", "dist-node", "build", ".git", ".nifra", "coverage"].includes(
-          entry.name,
-        )
+        entry.name.startsWith(".") ||
+        ["node_modules", "dist", "dist-node", "build", "coverage"].includes(entry.name)
       )
         continue
       const path = join(current, entry.name)

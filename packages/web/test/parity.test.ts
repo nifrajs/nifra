@@ -772,3 +772,17 @@ test("an undeclared non-framework package is outside the identity scan", async (
     await rm(ground, { recursive: true, force: true })
   }
 })
+
+test("development parity skips tool output in dot-directories", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nifra-parity-dot-dir-"))
+  try {
+    const routesDir = join(root, "routes")
+    await mkdir(routesDir, { recursive: true })
+    await writeFile(join(routesDir, "index.tsx"), "export default () => null\n")
+    await mkdir(join(root, ".wrangler", "tmp"), { recursive: true })
+    await writeFile(join(root, ".wrangler", "tmp", "worker.js"), 'import "./app.css"\n')
+    expect(collectDevelopmentParityInput(routesDir, false).css).toEqual([])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
