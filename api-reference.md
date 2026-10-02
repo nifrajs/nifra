@@ -5240,6 +5240,8 @@ _No named exports (side-effect entrypoint)._
 - **DEV_LOG_LEVELS** _(const)_ - `DEV_LOG_LEVELS: readonly DevLogLevel[]`
 - **DEV_REQUEST_ID_HEADER** _(const)_ - `DEV_REQUEST_ID_HEADER: "x-nifra-request-id"`
   Response header naming the request id every entry recorded during that request carries.
+- **DEV_SERVER_FILES** _(const)_ - `DEV_SERVER_FILES: RegExp`
+  Every file the feed writes (record, its temp file, log, rotated log): what a file watcher skips. A RegExp, not a glob: a glob's `**` does not cross a dot-directory such as the project's own path.
 - **DEV_SERVER_LOG_FILE** _(const)_ - `DEV_SERVER_LOG_FILE: ".nifra/dev-server.log"`
 - **DEV_SERVER_RECORD_FILE** _(const)_ - `DEV_SERVER_RECORD_FILE: ".nifra/dev-server.json"`
   Discovery record and persisted log, relative to the project root. `.nifra/` is gitignored.
@@ -5324,6 +5326,8 @@ _No named exports (side-effect entrypoint)._
   Resolve any thrown value into a `Diagnostic`: parse the (already source-mapped) stack, locate the top user frame, attach a codeframe, and classify the failure for a cause/fix. The caller is responsible for running Vite's `ssrFixStacktrace` first so the frames point at real source.
 - **classify** _(function)_ - `classify: (name: string, message: string) => { code: string; cause?: string; fix?: string; docsAnchor?: string; }`
   Classify an error name+message against the catalog; falls back to the generic unhandled code.
+- **isHydrationMismatch** _(function)_ - `isHydrationMismatch: (message: string) => boolean`
+  True when `message` is a framework's report of a server/browser render mismatch.
 - **parseFrames** _(function)_ - `parseFrames: (stack: string) => DiagnosticFrame[]`
   Parse a V8/Node stack into structured frames. Handles the `at fn (path:line:col)`, bare `at path:line:col`, and `at async fn (...)` shapes; a frame that doesn't match keeps its raw text with no location (so nothing is silently dropped).
 - **topUserFrame** _(function)_ - `topUserFrame: (frames: readonly DiagnosticFrame[], root: string | undefined) => DiagnosticFrame | undefined`

@@ -330,3 +330,83 @@ test("the Vite dev server feeds the same agent surface as the Bun one", async ()
   // Paths under /__nifra/ that are not the session's still reach Vite and the app.
   expect((await fetch(`${origin}/__nifra/unknown`)).status).toBe(200)
 })
+
+test("the feed's own writes under .nifra/ are not file changes", async () => {
+  let created = 0
+  server = await createViteDevServer({
+    root,
+    routesDir,
+    clientModule: join(root, "client.ts"),
+    port: 0,
+    createApp: () => {
+      created += 1
+      return {
+        fetch: () => {
+          console.error("an error line is persisted at once")
+          return new Response("<html><head></head><body>ok</body></html>", {
+            headers: { "content-type": "text/html" },
+          })
+        },
+      }
+    },
+  })
+  const origin = `http://127.0.0.1:${server.port}`
+  const record = readDevServerRecord(root)
+  const headers = { [DEV_TOKEN_HEADER]: record?.token ?? "" }
+  const generation = async (): Promise<number> =>
+    (
+      await readJson<{ generation: number }>(
+        await fetch(`${origin}${DEV_FEED_PATHS.identity}`, { headers }),
+      )
+    ).generation
+  // FSEvents can report the files written just before the server started a moment late: let them
+  // land first, so the window below holds only the feed's own writes.
+  await Bun.sleep(600)
+  const before = { generation: await generation(), created }
+  for (let i = 0; i < 3; i++) await fetch(`${origin}/`)
+  // Longer than the persistence flush and a watcher's debounce.
+  await Bun.sleep(600)
+  expect(await generation()).toBe(before.generation)
+  expect(created).toBe(before.created)
+})
+
+test("Vite pages carry the browser-capture script, and its batches reach the feed", async () => {
+  const origin = await start(
+    () =>
+      new Response("<!doctype html><html><head><title>t</title></head><body>ok</body></html>", {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "content-security-policy": "script-src 'nonce-pagenonce'; connect-src 'self'",
+        },
+      }),
+  )
+  const html = await (await fetch(`${origin}/cart`)).text()
+  // Nonced with the page's own nonce, like every tag Vite adds.
+  expect(html).toMatch(/<script nonce="pagenonce" data-nifra-dev>/)
+  const token = /"t":"([^"]+)"/.exec(html)?.[1] ?? ""
+  const post = (body: string): Promise<Response> =>
+    fetch(`${origin}${DEV_FEED_PATHS.clientEvent}`, {
+      method: "POST",
+      headers: { origin, "content-type": "application/json" },
+      body,
+    })
+  const sent = await post(
+    JSON.stringify({
+      token,
+      events: [
+        { kind: "error", name: "TypeError", message: "vite page broke", stack: "", page: "/cart" },
+      ],
+    }),
+  )
+  expect(sent.status).toBe(204)
+  const record = readDevServerRecord(root)
+  const { errors } = await readJson<{ errors: Array<{ category: string; page?: string }> }>(
+    await fetch(`${origin}${DEV_FEED_PATHS.errors}`, {
+      headers: { [DEV_TOKEN_HEADER]: record?.token ?? "" },
+    }),
+  )
+  expect(errors).toEqual([expect.objectContaining({ category: "browser", page: "/cart" })])
+  expect((await post(JSON.stringify({ token, events: [], pad: "x".repeat(200_000) }))).status).toBe(
+    413,
+  )
+})

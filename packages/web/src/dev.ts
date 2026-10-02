@@ -434,13 +434,16 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
       const entry = await currentEntry(true)
       const res = await (await appForRequest(entry.src)).fetch(req)
       if (!(res.headers.get("content-type") ?? "").includes("text/html")) return res
-      if (entry.styles.length === 0) return res
+      if (entry.styles.length === 0) return session.decoratePage(req, res)
       const headers = new Headers(res.headers)
       headers.delete("content-length") // the body grows with the injected stylesheet links
-      return new Response(injectStyles(await res.text(), entry.styles), {
-        status: res.status,
-        headers,
-      })
+      return session.decoratePage(
+        req,
+        new Response(injectStyles(await res.text(), entry.styles), {
+          status: res.status,
+          headers,
+        }),
+      )
     } catch (err) {
       // One Diagnostic drives every surface: the overlay returned here, the JSON at LAST_ERROR_PATH and
       // the feed's `ssr` entry.

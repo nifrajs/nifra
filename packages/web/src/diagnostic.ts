@@ -257,9 +257,7 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
   },
   {
     code: "NIFRA_HYDRATION_MISMATCH",
-    match: (_n, m) =>
-      /hydrat(?:ion|ed|e)\b[^\n]*(?:mismatch|failed|did not match|didn't match)/i.test(m) ||
-      /hydration_mismatch/.test(m),
+    match: (_n, m) => isHydrationMismatch(m),
     cause:
       "The browser rendered different markup than the server sent, so the framework discarded or patched the server HTML.",
     fix: "Look for values that differ between server and browser during render (Date.now(), Math.random(), locale formatting, window/localStorage reads, invalid HTML nesting). Run nifra_hydrate to reproduce it with a stable diagnostic.",
@@ -275,6 +273,21 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
     docsAnchor: "errors#schema-parse",
   },
 ]
+
+// What each framework says when the browser's first render disagrees with the server HTML:
+// React 19 / 18 (dev and minified #418/#423/#425), Vue, Svelte 5, Solid and preact/debug.
+const HYDRATION_MESSAGES: readonly RegExp[] = [
+  /hydrat(?:ion|ed|e)\b[^\n]*(?:mismatch|failed|did not match|didn't match)/i,
+  /hydration_mismatch|hydration key/i,
+  /error while hydrating|failed to hydrate|Text content did not match|Expected server HTML to contain/i,
+  /caused by the SSR'd HTML/,
+  /Minified React error #(?:418|423|425)\b/,
+]
+
+/** True when `message` is a framework's report of a server/browser render mismatch. */
+export function isHydrationMismatch(message: string): boolean {
+  return HYDRATION_MESSAGES.some((pattern) => pattern.test(message))
+}
 
 /** Classify an error name+message against the catalog; falls back to the generic unhandled code. */
 export function classify(

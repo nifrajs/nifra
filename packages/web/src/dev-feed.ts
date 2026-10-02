@@ -61,6 +61,11 @@ export const DEV_FEED_HEADER = "x-nifra-dev-feed"
 /** Discovery record and persisted log, relative to the project root. `.nifra/` is gitignored. */
 export const DEV_SERVER_RECORD_FILE = ".nifra/dev-server.json"
 export const DEV_SERVER_LOG_FILE = ".nifra/dev-server.log"
+/**
+ * Every file the feed writes (record, its temp file, log, rotated log): what a file watcher skips. A
+ * RegExp, not a glob: a glob's `**` does not cross a dot-directory such as the project's own path.
+ */
+export const DEV_SERVER_FILES = /[\\/]\.nifra[\\/]dev-server\./
 
 export type DevErrorCategory =
   /** A failure that escaped the app entirely; the dev overlay rendered it. */

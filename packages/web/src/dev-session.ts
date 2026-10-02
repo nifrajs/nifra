@@ -8,11 +8,23 @@
  * either. `/__nifra/last-error` keeps its older, token-free contract behind the same Host check.
  */
 import { performance } from "node:perf_hooks"
+import {
+  type BrowserError,
+  CLIENT_BATCH_MAX_BYTES,
+  type ClientEvent,
+  type DevClientConfig,
+  devClientTag,
+  injectIntoHtml,
+  injectIntoStream,
+  isInjectablePage,
+  parseClientBatch,
+} from "./dev-client.ts"
 import { createDevDiagnostics, type DevDiagnostics } from "./dev-diagnostics.ts"
 import {
   captureInto,
   createDevFeed,
   createDevToken,
+  currentDevRequest,
   DEV_ERROR_CATEGORIES,
   DEV_FEED_HEADER,
   DEV_FEED_PATHS,
@@ -23,11 +35,13 @@ import {
   type DevFeed,
   type DevPipeline,
   type DevServerIdentity,
+  type LogMeta,
   removeDevServerRecord,
   runWithDevRequest,
   writeDevServerRecord,
 } from "./dev-feed.ts"
-import { LAST_ERROR_PATH } from "./diagnostic.ts"
+import { createSourceMapper } from "./dev-sourcemap.ts"
+import { isHydrationMismatch, LAST_ERROR_PATH } from "./diagnostic.ts"
 import { timingSafeEqual } from "./internal/timing-safe-equal.ts"
 import { ISR_STATUS_HEADER } from "./isr.ts"
 import { browserDenial, createZoneClassifier } from "./zones.ts"
@@ -61,6 +75,16 @@ export interface DevSession {
   handle(request: Request): Promise<Response | undefined>
   /** Run one app request as a tracked request: id header, trace, and entries tagged with its id. */
   track(request: Request, handler: () => Promise<Response>): Promise<Response>
+  /**
+   * The page response with the browser-capture script first in its `<head>` (streamed, not buffered)
+   * and its CSP admitting the script. Anything that is not an HTML page comes back untouched.
+   */
+  decoratePage(request: Request, response: Response): Response
+  /**
+   * {@link decoratePage} for a page already in memory (the Vite pipeline, which nonces every script
+   * after this): rewrites `headers` in place and leaves script admission to that nonce.
+   */
+  decorateHtml(request: Request, html: string, headers: Headers, requestId?: string | null): string
   /** Record a failure that escaped the app and return the overlay HTML for it. */
   failure(err: unknown, request: { readonly method: string; readonly url: string }): string
   /** For `createWebApp({ onLoaderError })`: loader/action/render failures a boundary answered. */
@@ -190,6 +214,46 @@ export function buildFailureError(err: unknown, label: string): Error {
   return error
 }
 
+/** The origin the browser used for this request (its own Host, which the session already vetted). */
+const originOf = (request: Request): string =>
+  `http://${request.headers.get("host") ?? new URL(request.url).host}`
+
+/** A request from a page on this same origin: its Origin names the Host it was sent to. */
+function sameOrigin(request: Request): boolean {
+  const origin = request.headers.get("origin")
+  const host = request.headers.get("host")
+  if (origin === null || host === null) return false
+  const site = request.headers.get("sec-fetch-site")
+  if (site !== null && site !== "same-origin") return false
+  try {
+    const url = new URL(origin)
+    return url.protocol === "http:" && url.host.toLowerCase() === host.toLowerCase()
+  } catch {
+    return false
+  }
+}
+
+/** The body as text, or undefined once it passes `max` bytes (declared or actual). */
+async function readCapped(request: Request, max: number): Promise<string | undefined> {
+  const declared = Number(request.headers.get("content-length") ?? "0")
+  if (declared > max) return undefined
+  if (request.body === null) return ""
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > max) {
+      await reader.cancel()
+      return undefined
+    }
+    chunks.push(value)
+  }
+  return Buffer.concat(chunks).toString("utf8")
+}
+
 /** Create the session a dev server owns from construction to `stop()`. */
 export function createDevSession(options: DevSessionOptions): DevSession {
   const { root, pipeline } = options
@@ -203,6 +267,9 @@ export function createDevSession(options: DevSessionOptions): DevSession {
     publicEnvPrefix: options.publicEnvPrefix,
   })
   const token = createDevToken()
+  // Embedded in every page, so it proves only "a page this server served": it admits event batches
+  // and nothing else. The agent token never leaves the discovery record.
+  const pageToken = createDevToken()
   const startedAt = new Date().toISOString()
   let port = 0
   let requestCounter = 0
@@ -214,6 +281,10 @@ export function createDevSession(options: DevSessionOptions): DevSession {
   )
 
   const detachCapture = captureInto(feed)
+  const mapper = createSourceMapper({
+    root,
+    origin: () => (port === 0 ? undefined : `http://127.0.0.1:${port}`),
+  })
 
   // Observes without changing what a crash does: the process still dies exactly as it would have.
   const onCrash = (err: unknown): void => {
@@ -300,8 +371,147 @@ export function createDevSession(options: DevSessionOptions): DevSession {
     return json(feed.requests({ since, limit, requestId, path: textParam(url, "path") }))
   }
 
-  const ingestClientEvents = async (_request: Request): Promise<Response> =>
-    json({ code: "NIFRA_DEV_NOT_FOUND", message: "browser capture is not enabled" }, 404)
+  // A page can loop on an error (a render that throws every frame): the bucket keeps it from flooding
+  // the feed. Refills at 30 events a second, holds 300.
+  const bucket = { tokens: 300, at: performance.now() }
+  let lastDropNotice = Number.NEGATIVE_INFINITY
+  const admit = (wanted: number): number => {
+    const now = performance.now()
+    bucket.tokens = Math.min(300, bucket.tokens + ((now - bucket.at) / 1000) * 30)
+    bucket.at = now
+    const granted = Math.min(wanted, Math.floor(bucket.tokens))
+    bucket.tokens -= granted
+    return granted
+  }
+
+  /** A browser error as an entry, its stack mapped back to source. Returns its `Name: message`. */
+  const recordBrowserError = async (error: BrowserError, meta: LogMeta): Promise<string> => {
+    const head = `${error.name}: ${error.message}`
+    // Chrome leads a stack with its message; Firefox and Safari send frames only. Rebuild one shape.
+    const mapped = error.stack === "" ? "" : await mapper.mapStack(error.stack)
+    const frames = mapped
+      .split("\n")
+      .filter((line) => /^\s*at\s/.test(line))
+      .join("\n")
+    const rebuilt = new Error(error.message)
+    rebuilt.name = error.name
+    rebuilt.stack = frames === "" ? head : `${head}\n${frames}`
+    feed.recordError(rebuilt, {
+      ...meta,
+      category: isHydrationMismatch(error.message) ? "hydration" : "browser",
+    })
+    return head
+  }
+
+  const recordClientEvent = async (event: ClientEvent): Promise<void> => {
+    const meta: LogMeta = { source: "browser", page: event.page, requestId: event.requestId }
+    if (event.kind === "console") {
+      feed.recordLog(event.level, event.message, meta)
+      if (event.error !== undefined) {
+        await recordBrowserError(event.error, meta)
+        return
+      }
+      // React 18, Vue and Svelte report a mismatch through the console rather than by throwing.
+      if (
+        (event.level === "error" || event.level === "warn") &&
+        isHydrationMismatch(event.message)
+      ) {
+        await recordBrowserError(
+          { name: "HydrationMismatch", message: event.message, stack: "" },
+          meta,
+        )
+      }
+      return
+    }
+    if (event.kind === "resource") {
+      const head = await recordBrowserError(
+        { name: "ResourceError", message: `failed to load <${event.tag}> ${event.url}`, stack: "" },
+        meta,
+      )
+      feed.recordLog("error", head, meta)
+      return
+    }
+    const head = await recordBrowserError(event, meta)
+    feed.recordLog(
+      "error",
+      `Uncaught ${event.kind === "rejection" ? "(in promise) " : ""}${head}`,
+      meta,
+    )
+  }
+
+  const ingestClientEvents = async (request: Request): Promise<Response> => {
+    if (request.method !== "POST")
+      return json({ code: "NIFRA_DEV_METHOD", message: "use POST" }, 405)
+    // Only this server's own pages: a cross-site form or `fetch` POST carries a foreign Origin.
+    if (!sameOrigin(request))
+      return json({ code: "NIFRA_DEV_FORBIDDEN", message: "same-origin pages only" }, 403)
+    const text = await readCapped(request, CLIENT_BATCH_MAX_BYTES)
+    if (text === undefined)
+      return json({ code: "NIFRA_DEV_TOO_LARGE", message: "batch too large" }, 413)
+    let value: unknown
+    try {
+      value = JSON.parse(text)
+    } catch {
+      return json({ code: "NIFRA_DEV_BAD_BATCH", message: "batch is not JSON" }, 400)
+    }
+    const batch = parseClientBatch(value)
+    if (batch === undefined)
+      return json({ code: "NIFRA_DEV_BAD_BATCH", message: "batch has the wrong shape" }, 400)
+    if (!timingSafeEqual(batch.token, pageToken))
+      return json({ code: "NIFRA_DEV_UNAUTHORIZED", message: "unknown page token" }, 401)
+    const granted = admit(batch.events.length)
+    for (const event of batch.events.slice(0, granted)) await recordClientEvent(event)
+    if (granted < batch.events.length) {
+      const now = performance.now()
+      if (now - lastDropNotice > 10_000) {
+        lastDropNotice = now
+        feed.recordLog(
+          "warn",
+          "[nifra] the browser is reporting faster than 30 events a second; dropping the excess",
+        )
+      }
+      return json({ code: "NIFRA_DEV_RATE_LIMITED", message: "slow down" }, 429)
+    }
+    return new Response(null, { status: 204, headers: { [DEV_FEED_HEADER]: "true" } })
+  }
+
+  const clientConfig = (
+    request: Request,
+    requestId: string | null | undefined,
+  ): DevClientConfig => {
+    const url = new URL(request.url)
+    return {
+      ingestPath: DEV_FEED_PATHS.clientEvent,
+      pageToken,
+      requestId: requestId ?? undefined,
+      documentPath: `${url.pathname}${url.search}`,
+    }
+  }
+
+  const decoratePage = (request: Request, response: Response): Response => {
+    const body = response.body
+    if (body === null || !isInjectablePage(response, request.method)) return response
+    const headers = new Headers(response.headers)
+    const requestId = currentDevRequest()?.requestId ?? response.headers.get(DEV_REQUEST_ID_HEADER)
+    const tag = devClientTag(clientConfig(request, requestId), headers, originOf(request))
+    if (tag === undefined) return response
+    headers.delete("content-length") // the body grows by the script
+    return new Response(injectIntoStream(body, tag), {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    })
+  }
+
+  const decorateHtml = (
+    request: Request,
+    html: string,
+    headers: Headers,
+    requestId?: string | null,
+  ): string => {
+    const tag = devClientTag(clientConfig(request, requestId), headers, originOf(request), true)
+    return tag === undefined ? html : injectIntoHtml(html, tag)
+  }
 
   const track = async (request: Request, handler: () => Promise<Response>): Promise<Response> => {
     requestCounter += 1
@@ -351,6 +561,8 @@ export function createDevSession(options: DevSessionOptions): DevSession {
     diagnostics,
     handle,
     track,
+    decoratePage,
+    decorateHtml,
     failure: (err, request) => diagnostics.capture(err, request),
     onLoaderError: (err, ctx) => {
       const url = new URL(ctx.request.url)
@@ -364,7 +576,10 @@ export function createDevSession(options: DevSessionOptions): DevSession {
       feed.recordError(buildFailureError(err, label), { category: "build" })
     },
     buildPassed: () => feed.resolve("build"),
-    markChange: () => feed.markChange(),
+    markChange: () => {
+      feed.markChange()
+      mapper.clear()
+    },
     listening: (bound) => {
       port = bound
       if (!record) return

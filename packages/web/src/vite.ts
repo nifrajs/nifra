@@ -17,7 +17,8 @@ import {
   type ServerResponse,
 } from "node:http"
 import { dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path"
-import { DEV_REQUEST_ID_HEADER } from "./dev-feed.ts"
+import { CLIENT_BATCH_MAX_BYTES } from "./dev-client.ts"
+import { DEV_REQUEST_ID_HEADER, DEV_SERVER_FILES } from "./dev-feed.ts"
 import { listenOrExplain } from "./dev-port.ts"
 import { createDevSession, type DevAppHooks, isDevAgentPath } from "./dev-session.ts"
 import { discoverRoutes } from "./fs.ts"
@@ -183,6 +184,23 @@ const readNodeBody = async (req: IncomingMessage): Promise<Buffer | undefined> =
   const chunks: Buffer[] = []
   for await (const chunk of req) chunks.push(chunk as Buffer)
   return Buffer.concat(chunks)
+}
+
+/**
+ * An agent request's body, never buffered past `max` bytes. A larger body is drained, not kept, so the
+ * client still gets an answer: the session refuses the truncated batch.
+ */
+const readAgentBody = async (req: IncomingMessage, max: number): Promise<Buffer | undefined> => {
+  if (req.method === "GET" || req.method === "HEAD") return undefined
+  const chunks: Buffer[] = []
+  let total = 0
+  for await (const chunk of req) {
+    if (!Buffer.isBuffer(chunk)) continue
+    total += chunk.length
+    if (total <= max) chunks.push(chunk)
+  }
+  // One byte past the cap is enough for the session's own size check to refuse it.
+  return total > max ? Buffer.alloc(max + 1) : Buffer.concat(chunks)
 }
 
 /** Build a Web `Request` from a Node `IncomingMessage` (+ already-read body) for nifra's `app.fetch`. */
@@ -425,7 +443,8 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     // Keep this before Vite's middleware: the agent endpoints are owned by nifra, not files or routes.
     if (isDevAgentPath((req.url ?? "/").split("?", 1)[0] ?? "/")) {
       void (async () => {
-        const agent = await session.handle(toWebRequest(req, await readNodeBody(req)))
+        const body = await readAgentBody(req, CLIENT_BATCH_MAX_BYTES)
+        const agent = await session.handle(toWebRequest(req, body))
         if (agent === undefined) {
           handleWithVite(req, res)
           return
@@ -499,10 +518,8 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
           // app's headers (cookies, CSP, cache-control) as the Bun pipeline does.
           const headers = new Headers(nifraRes.headers)
           headers.delete("content-length") // the body grows with Vite's tags
-          const html = admitViteTags(
-            await vite.transformIndexHtml(req.url ?? "/", await nifraRes.text()),
-            headers,
-          )
+          const page = session.decorateHtml(webRequest, await nifraRes.text(), headers, requestId)
+          const html = admitViteTags(await vite.transformIndexHtml(req.url ?? "/", page), headers)
           applyResponseHeaders(headers, res)
           res.setHeader("content-type", "text/html; charset=utf-8")
           res.end(html)
@@ -549,6 +566,16 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
   const adapterPackage = packageNameOf(options.clientModule)
   const ssrExternal = [...(adapterPackage !== undefined ? [adapterPackage] : []), "@nifrajs/web"]
   const usePolling = options.poll ?? process.env.CHOKIDAR_USEPOLLING === "1"
+  // The feed writes its record and log under `.nifra/`: watching them would turn every log flush into
+  // a "file change" that re-creates the app and marks every entry stale.
+  const watch: { ignored: RegExp[]; usePolling?: boolean; interval?: number } = {
+    ignored: [DEV_SERVER_FILES],
+  }
+  // Poll when native fs events aren't delivered (containers/sandboxes).
+  if (usePolling) {
+    watch.usePolling = true
+    watch.interval = 80
+  }
   // Never `import("vite")` directly here: the guard in `importVite` has to run first, and the dev
   // server importing vite unguarded is precisely what poisoned the module for the whole process.
   const viteModule = await importVite<ViteModule>()
@@ -568,8 +595,7 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     server: {
       middlewareMode: true,
       hmr: { server },
-      // Explicit watch config; poll when native fs events aren't delivered (containers/sandboxes).
-      watch: usePolling ? { usePolling: true, interval: 80 } : {},
+      watch,
     },
     // Ahead of the user's plugins: the zone guard refuses backend code before anything serves or
     // transforms it, and a `*.fn` module must be replaced before anything else reads it.

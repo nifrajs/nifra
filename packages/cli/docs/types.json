@@ -6331,6 +6331,13 @@
     "signature": "export declare const DEV_ROUTES_ENV = \"NIFRA_DEV_ROUTES\";"
   },
   {
+    "name": "DEV_SERVER_FILES",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const DEV_SERVER_FILES: RegExp;",
+    "doc": "/**\n * Every file the feed writes (record, its temp file, log, rotated log): what a file watcher skips. A\n * RegExp, not a glob: a glob's `**` does not cross a dot-directory such as the project's own path.\n */"
+  },
+  {
     "name": "DEV_SERVER_LOG_FILE",
     "kind": "const",
     "package": "@nifrajs/web",
@@ -9565,6 +9572,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function isDraftEnabled(request: Request, secret: string): Promise<boolean>;",
     "doc": "/**\n * Whether `request` carries a **valid** signed draft cookie (constant-time verify via `unsignValue`).\n * `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for editors. A\n * missing, forged, or tampered cookie returns `false`.\n */"
+  },
+  {
+    "name": "isHydrationMismatch",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function isHydrationMismatch(message: string): boolean;",
+    "doc": "/** True when `message` is a framework's report of a server/browser render mismatch. */"
   },
   {
     "name": "isJsonRpcRequest",

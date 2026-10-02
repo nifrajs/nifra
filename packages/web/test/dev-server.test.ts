@@ -117,6 +117,9 @@ test("Bun's stylesheets are injected into the SSR'd <head>", async () => {
   const dev = await boot()
   const page = await (await fetch(`http://127.0.0.1:${dev.port}/`)).text()
   expect(page).toMatch(/<link rel="stylesheet" href="\/_bun\/[^"]+\.css"><\/head>/)
+  // The browser-capture script rides along, ahead of everything the page loads.
+  expect(page.indexOf("<script data-nifra-dev>")).toBeGreaterThan(page.indexOf("<head"))
+  expect(page.indexOf("<script data-nifra-dev>")).toBeLessThan(page.indexOf("/_bun/"))
 })
 
 test("SSR never lags the client: the render that follows a rebuild is already rebuilt too", async () => {

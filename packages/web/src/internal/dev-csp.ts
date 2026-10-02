@@ -94,3 +94,72 @@ export function admitViteTags(
         meta +
         tagged.slice(head.index + head[0].length)
 }
+
+const SCRIPT_DIRECTIVES = GOVERNING[0]
+const CONNECT_DIRECTIVES = ["connect-src", "default-src"] as const
+
+/** Whether `sources` already let the page reach `url` (a same-origin absolute URL). */
+const reaches = (sources: readonly string[], url: URL): boolean =>
+  sources.some((source) => {
+    const lower = source.toLowerCase()
+    return (
+      lower === "'self'" ||
+      lower === "*" ||
+      lower === `${url.protocol}` ||
+      lower === url.origin ||
+      lower === `${url.origin}/` ||
+      lower === url.href
+    )
+  })
+
+/**
+ * Admit nifra's own inline dev script, by `hash`, and its POSTs to `connect`, in each policy header.
+ * Without a `hash` the caller nonces the script itself. Returns false when a policy forbids scripts
+ * outright (`'none'`): such a page runs no code, so there is nothing to capture and the script stays
+ * out. A directive that already admits every inline script is left alone, because adding a hash would
+ * switch its `'unsafe-inline'` off.
+ */
+export function admitInlineScript(
+  headers: Headers,
+  hash: string | undefined,
+  connect: URL,
+): boolean {
+  const updates: [string, string][] = []
+  let allowed = true
+  for (const name of POLICY_HEADERS) {
+    const value = headers.get(name)
+    if (value === null) continue
+    const next = value
+      .split(",")
+      .map((policy) => {
+        const directives = policy
+          .split(";")
+          .map((directive) => directive.trim())
+          .filter((directive) => directive !== "")
+          .map((directive) => directive.split(/\s+/))
+        const governing = (names: readonly string[]): string[] | undefined =>
+          names
+            .map((n) => directives.find(([directive]) => directive?.toLowerCase() === n))
+            .find((directive) => directive !== undefined)
+        const script = governing(SCRIPT_DIRECTIVES)
+        if (script !== undefined) {
+          const sources = script.slice(1)
+          if (sources.includes("'none'")) allowed = false
+          else if (hash !== undefined && !sources.includes(hash) && !allowsInline(sources))
+            script.push(hash)
+        }
+        const connectDirective = governing(CONNECT_DIRECTIVES)
+        if (connectDirective !== undefined && !reaches(connectDirective.slice(1), connect)) {
+          const none = connectDirective.indexOf("'none'")
+          if (none === -1) connectDirective.push(connect.href)
+          else connectDirective.splice(none, 1, connect.href)
+        }
+        return directives.map((directive) => directive.join(" ")).join("; ")
+      })
+      .join(", ")
+    updates.push([name, next])
+  }
+  if (!allowed) return false
+  for (const [name, value] of updates) headers.set(name, value)
+  return true
+}
