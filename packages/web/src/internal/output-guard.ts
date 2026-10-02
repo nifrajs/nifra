@@ -48,6 +48,7 @@ const SENSITIVE_SUFFIXES: readonly string[] = [
   "passwordhash",
   "secret",
   "apikey",
+  "apitoken",
   "privatekey",
   "secretkey",
   "accesstoken",

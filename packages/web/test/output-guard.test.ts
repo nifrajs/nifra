@@ -344,6 +344,8 @@ describe("sensitive field names", () => {
       "password_hash",
       "clientSecret",
       "API_KEY",
+      "apiToken",
+      "GITHUB_API_TOKEN",
       "accessToken",
       "token",
       "ssn",
