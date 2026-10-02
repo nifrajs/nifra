@@ -2,6 +2,8 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
+import { generateServerManifest } from "../src/internal/codegen.ts"
+import { buildManifest, type RouteModule } from "../src/manifest.ts"
 import {
   browserDenial,
   type Classification,
@@ -144,6 +146,27 @@ describe("createZoneClassifier", () => {
         zone: "generated",
       },
     )
+  })
+
+  test("a generated server manifest is generated wherever the build wrote it", () => {
+    // It composes both halves of every route, so it imports frontend code by design.
+    const manifest = buildManifest(
+      ["index.tsx", "index.backend.ts"],
+      () => async () => ({ default: null }) as unknown as RouteModule,
+    )
+    const source = generateServerManifest(manifest, {
+      resolve: (file) => `../routes/${file}`,
+      clientEntry: "/assets/entry.js",
+    })
+    const generated = write("app/backend/server-manifest.ts", source)
+    expect(createZoneClassifier({ appRoot: app }).classify(generated)).toEqual({
+      zone: "generated",
+    })
+    // A hand-written module of the same name is ordinary backend code.
+    const handWritten = write("app/backend/nested/server-manifest.ts")
+    expect(createZoneClassifier({ appRoot: app }).classify(handWritten)).toEqual({
+      zone: "backend",
+    })
   })
 })
 
