@@ -44,7 +44,7 @@ interface ZonedFile {
 }
 
 /** Every scanned source file that belongs to an app, classified once per app classifier. */
-function zonedFiles(ctx: RuleContext): {
+export function zonedFiles(ctx: RuleContext): {
   readonly files: readonly ZonedFile[]
   readonly classifierFor: (app: string) => ZoneClassifier
 } {

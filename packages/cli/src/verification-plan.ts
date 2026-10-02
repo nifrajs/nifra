@@ -109,6 +109,12 @@ const GATES = Object.freeze([
     { workflowRequired: false },
   ),
   gate(
+    "output-guard-performance",
+    [["run", "check:output-guard"]],
+    "Run `bun run check:output-guard` and investigate the data guard's projection cost.",
+    { workflowRequired: false },
+  ),
+  gate(
     "edge-startup",
     [["run", "check:edge-startup"]],
     "Run `bun run check:edge-startup` and investigate edge/Workers import-time growth.",
@@ -200,6 +206,7 @@ const RELEASE_PLAN = Object.freeze([
   "size",
   "core-performance",
   "middleware-performance",
+  "output-guard-performance",
   "edge-startup",
   "publish",
   "consumer",

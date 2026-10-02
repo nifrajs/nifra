@@ -39,6 +39,7 @@
     "check:workerd": "bun run scripts/check-workerd.ts",
     "check:core-performance": "bun run bench/http/_fetch-micro.ts --check",
     "check:middleware-overhead": "bun run bench/http/middleware-overhead.ts --check",
+    "check:output-guard": "bun run bench/schema/output-guard.ts --check",
     "check:edge-startup": "bun run scripts/check-edge-startup.ts",
     "check:cold-start": "bun run scripts/check-cold-start.ts",
     "check:size": "bun run bench/size/run.ts --check",

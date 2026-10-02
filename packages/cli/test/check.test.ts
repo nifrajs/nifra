@@ -73,6 +73,7 @@ describe("release verification", () => {
       "size",
       "core-performance",
       "middleware-performance",
+      "output-guard-performance",
       "edge-startup",
       "publish",
       "consumer",
@@ -2495,6 +2496,84 @@ describe("zone rules from source (NF-C028, NF-C029)", () => {
     expect(await findings(dir, "NF-C029")).toEqual([
       "routes/index.tsx:1 routes/index.tsx it reads private environment variable process.env.PUBLIC_URL. Browser code may read only NODE_ENV and variables named APP_PUBLIC_*; read the rest in a loader, an action or under backend/",
       "shared/config.ts:2 shared/config.ts it reads private environment variable Bun.env.DATABASE_URL. Browser code may read only NODE_ENV and variables named APP_PUBLIC_*; read the rest in a loader, an action or under backend/",
+    ])
+    await rm(dir, { recursive: true, force: true })
+  })
+})
+
+describe("data guard from source (NF-C030, NF-C031)", () => {
+  const project = async (files: Record<string, string>): Promise<string> => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-data-guard-"))
+    for (const [file, content] of Object.entries(files)) {
+      await mkdir(join(dir, file, ".."), { recursive: true })
+      await writeFile(join(dir, file), content)
+    }
+    return dir
+  }
+  const findings = async (dir: string, code: string) =>
+    (await collectCheckResult(dir, { lintsOnly: true })).diagnostics
+      .filter((d) => d.code === code)
+      .map((d) => `${d.file}:${d.line} ${d.severity}`)
+
+  test("a loader or action that may return data without its output schema", async () => {
+    const dir = await project({
+      "routes/a.tsx": "export default () => null\n",
+      "routes/a.backend.ts":
+        "export async function loader({ api }: { api: unknown }): Promise<{ n: number }> {\n  return { n: 1 }\n}\nexport const action = () => ({ ok: true })\n",
+      "routes/b.tsx": "export default () => null\n",
+      "routes/b.backend.ts": [
+        'import { t } from "@nifrajs/schema"',
+        "export const loaderOutput = t.object({ n: t.number() })",
+        "export const loader = () => ({ n: 1 })",
+        "",
+      ].join("\n"),
+      "routes/c.tsx": "export default () => null\n",
+      "routes/c.backend.ts": [
+        'import { redirect } from "@nifrajs/web"',
+        "export function loader(): never {",
+        '  throw new Error("down")',
+        "}",
+        "export async function action() {",
+        '  if (Math.random() > 1) return redirect("/x")',
+        "  return",
+        "}",
+        "",
+      ].join("\n"),
+    })
+    expect(await findings(dir, "NF-C030")).toEqual([
+      "routes/a.backend.ts:1 warning",
+      "routes/a.backend.ts:4 warning",
+    ])
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a sensitive field an output schema names without t.declassified", async () => {
+    const dir = await project({
+      "routes/a.tsx": "export default () => null\n",
+      "routes/a.backend.ts": [
+        'import { t } from "@nifrajs/schema"',
+        "export const loaderOutput = t.object({",
+        "  user: t.object({ name: t.string(), passwordHash: t.string() }),",
+        '  uploadToken: t.declassified("a one-time upload token", t.string()),',
+        "  csrfToken: t.string(),",
+        "})",
+        "export const actionInput = t.object({ password: t.string() })",
+        "export const loader = () => ({})",
+        "",
+      ].join("\n"),
+      "backend/todos.fn.ts": [
+        'import { t } from "@nifrajs/schema"',
+        'import { serverFn } from "@nifrajs/web/fn"',
+        "export const me = serverFn(",
+        '  { input: t.object({ apiKey: t.string() }), output: t.object({ "api_key": t.string() }) },',
+        '  () => ({ api_key: "x" }),',
+        ")",
+        "",
+      ].join("\n"),
+    })
+    expect(await findings(dir, "NF-C031")).toEqual([
+      "backend/todos.fn.ts:4 error",
+      "routes/a.backend.ts:3 error",
     ])
     await rm(dir, { recursive: true, force: true })
   })

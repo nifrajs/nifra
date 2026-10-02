@@ -26,6 +26,8 @@ export const RULE_CODES = Object.freeze({
   "NF-C027": "Page route under the backend mount",
   "NF-C028": "Zone import check",
   "NF-C029": "Private environment read in browser code",
+  "NF-C030": "Route data without an output schema",
+  "NF-C031": "Sensitive field in an output schema",
   "NF-C020": "Island enhancer cleanup check",
   "NF-C021": "nano binding cleanup check",
   "NF-C022": "nano bindList key check",

@@ -20,6 +20,7 @@ import {
 import type { DuplicateInstallFinding } from "./doctor.ts"
 import type { PipelineReport } from "./pipeline-report.ts"
 import { freezeProjectFacts, type ProjectFactsSeed } from "./project-facts.ts"
+import { dataGuardRules } from "./rules/data-guard.ts"
 import { parseRulePacks, runRuleRegistry } from "./rules/index.ts"
 import { islandRules } from "./rules/islands.ts"
 import { LEGACY_RULE_CODES, LEGACY_RULE_ORDER, legacyRules } from "./rules/legacy.ts"
@@ -436,6 +437,7 @@ export async function collectCheckDiagnostics(
     ...routeRules,
     ...pageRules,
     ...zoneRules,
+    ...dataGuardRules,
     ...islandRules,
     ...nanoRules,
   ]
