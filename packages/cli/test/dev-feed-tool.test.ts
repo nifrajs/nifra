@@ -251,14 +251,28 @@ test("argv binds lists, flags and the request alias; the human render names each
   })
 
   const app = start(tempRoot())
-  app.session.feed.recordError(new TypeError("cannot read 'id'"), {
-    category: "api",
-    requestId: "r7",
-  })
+  // A built diagnostic, not a thrown error: the render must not depend on how this process formats stacks.
+  app.session.feed.recordDiagnostic(
+    {
+      code: "NIFRA_UNHANDLED",
+      name: "TypeError",
+      message: "TypeError: cannot read 'id'",
+      frames: [
+        {
+          raw: "at create (/app/backend/orders.ts:12:5)",
+          file: "/app/backend/orders.ts",
+          line: 12,
+          column: 5,
+        },
+      ],
+    },
+    { category: "api", requestId: "r7" },
+  )
   const lines = renderErrors(await runErrors({}, { cwd: app.root }))
   expect(lines[0]).toContain(`nifra dev :${app.server.port}`)
   expect(
     lines.some((line) => line.includes("[api] TypeError: cannot read 'id'") && line.includes("r7")),
   ).toBe(true)
+  expect(lines).toContain("      at /app/backend/orders.ts:12")
   expect(lines.join("\n")).not.toContain("treat it as data")
 })

@@ -5759,14 +5759,98 @@ nifra_check             # typecheck + lints, each with a structured fix
 nifra_fix               # applies the mechanical ones
 nifra_run    {request}  # a real request through the backend: status, headers, parsed body
 nifra_render {path}     # SSR a page route, returns the HTML
-nifra_inspect {port}    # recent dev-server request traces: status, duration, ISR hit/miss
-nifra_explain {error}   # turn a failure into a structured diagnostic and fix
 nifra_test              # bun test, bounded structured results
 
-# 4. What does it now prove?
+# 4. What did the running app do?
+nifra_errors            # what the dev server caught: SSR, loader, API, build, browser, hydration
+nifra_logs              # its console output, server and browser, each line tagged with its request
+nifra_inspect           # one trace per request: status, duration, ISR hit/miss, its errors and logs
+nifra_explain           # the latest error (or a pasted one) as a structured diagnostic and fix
+
+# 5. What does it now prove?
 nifra_assure            # every route's required evidence, and what is missing
 nifra_levels            # { achieved, levels[] } - the ladder
 ```
+
+### What the running app saw
+
+`nifra dev` keeps a feed of what happened while it ran, and the project tools read it
+without being told a port. The server writes `.nifra/dev-server.json`, readable only by
+its owner, with its port and a token minted for that run; a tool checks that the server answers
+as itself before it reads anything.
+
+```ts
+nifra_errors                                  # every open error, newest last
+nifra_errors  {since: 41}                     # only what happened after a previous call's cursor
+nifra_errors  {category: ["hydration"], includeStale: false}
+nifra_logs    {requestId: "r12"}              # what one request printed, server and browser
+nifra_inspect {path: "/cart"}                 # one trace per request, with the ids of its errors
+
+# The same feed from a terminal. `nifra errors` exits 1 while the current code has open errors.
+nifra errors --category browser,hydration
+nifra logs --level warn,error --grep cart
+```
+
+Each error is a structured diagnostic, the same one the dev overlay renders:
+
+```ts
+{
+  "id": "e_5b6cbe9d",
+  "category": "browser",
+  "source": "browser",
+  "page": "/cart",
+  "requestId": "r12",
+  "count": 3,
+  "stale": false,
+  "diagnostic": {
+    "code": "NIFRA_UNHANDLED",
+    "name": "TypeError",
+    "message": "TypeError: cart.items is undefined",
+    "frames": [{ "file": "/app/routes/cart.tsx", "line": 18, "column": 9 }],
+    "codeframe": { "file": "/app/routes/cart.tsx", "line": 18, "column": 9, "lines": [] }
+  }
+}
+```
+
+-
+**Every layer.** Categories are `ssr` (page render),
+`page` (loader or action), `api` (backend handler), `build`,
+`browser`, `hydration`, and `process` (the server itself
+died).
+
+-
+**The browser too.** Each dev page carries a small inline script that reports
+uncaught errors, unhandled rejections, failed script loads, console output, and hydration
+mismatches from React, Vue, Svelte, Solid, and Preact. Stacks are mapped to your source through
+the dev server's own source maps. A page's CSP admits the script by hash; a page whose CSP
+allows no script gets none. None of it reaches a build.
+
+-
+**One id per request.** Every dev response carries
+`x-nifra-request-id`, and the server and browser entries from one page load share
+it, so a hydration mismatch links to the render and the loader data behind it.
+
+-
+**Stale is flagged.** An entry recorded before the last file change is
+`stale`: re-run the request to confirm it persists. A build error clears when the
+next build passes. Pass the returned `cursor` as `since` to see only what
+is new.
+
+-
+**Secrets stay out.** Values of non-public environment variables, keys, tokens,
+JWTs, and credential headers are redacted before anything is stored.
+
+-
+**Crashes leave a record.** When the server dies, the tools read the log it
+persisted to `.nifra/dev-server.log`, the crash included.
+
+-
+**Data, not instructions.** Entry text is output from your app and the pages it
+served, and every answer says so, so an agent treats a log line that reads like an instruction
+as the data it is.
+
+`nifra_run` returns the same evidence for the requests it makes: each result carries the
+console output and the structured errors that request produced.
 
 ### Why the answers can be trusted
 
@@ -6268,6 +6352,16 @@ export const app = server().use(devtools())
 It is off outside development by default, refuses remote connections unless you allow them, and
 caps both the buffered event count and the number of live connections - a dev tool that streams
 request internals has to be closed by default rather than merely quiet in production.
+
+### What the agent sees
+
+Both pipelines record every request, server and browser error, and console line into one feed,
+each tagged with the id the response carries in `x-nifra-request-id`. A coding agent
+reads it through `nifra_errors`, `nifra_logs` and
+`nifra_inspect`, and you can read it with `nifra errors` and
+`nifra logs`. Pages get a small inline script that reports browser errors and
+hydration mismatches back to the dev server; the dev server writes `.nifra/dev-server.json`
+so the tools can find it. See [coding agents](/docs/agents).
 
 ### Containers & sandboxes
 
@@ -8300,6 +8394,123 @@ Complete runnable references - a typed CRUD API you can diff your own against:
 `examples/db-postgres` (Drizzle + Postgres, embedded PGlite - zero setup) and
 `examples/db-sqlite` (the same API on raw `bun:sqlite`, parameterized
 queries, boundary validation).
+
+## Nifra - Error codes
+
+> Every error code Nifra recognises: what each one means and how to fix it. The dev overlay, nifra_explain and nifra_errors name these codes and link here.
+
+When Nifra recognises a failure it gives it a stable code, says why it happened, and says what to
+do. The dev overlay shows it, `nifra_explain` returns it, and every entry
+`nifra_errors` reads from the running dev server carries it. A failure Nifra does not
+recognise is `NIFRA_UNHANDLED`, still with its frames and a codeframe around the line
+in your source.
+
+```ts
+{
+  "code": "NIFRA_OUTPUT_SENSITIVE_FIELD",
+  "name": "OutputGuardError",
+  "message": "OutputGuardError: loaderOutput declares passwordHash",
+  "frames": [{ "file": "/app/routes/users/[id].backend.ts", "line": 9, "column": 3 }],
+  "cause": "An output schema declares a field whose name marks it as a credential ...",
+  "fix": "Remove the field from loaderOutput/actionOutput ...",
+  "docsAnchor": "errors#output-sensitive-field"
+}
+```
+
+### Code that crossed into the browser
+
+#### NIFRA_BACKEND_IN_CLIENT
+
+Browser code imported a module that stays on the server: something under
+`backend/`, a route's `x.backend.ts`, a server package, or a module
+outside every zone.
+
+**Fix:** reach backend code through the route's `x.backend.ts` (loader or
+action) or a `*.fn.ts` server function, and put code both sides need in
+`shared/`. The message names the import chain that pulled it in.
+
+#### NIFRA_BACKEND_ONLY_IN_CLIENT
+
+A module that imports the `@nifrajs/web/backend-only` marker was reachable from a
+client entry, so it would ship to the browser.
+
+**Fix:** follow the import chain in the message and move the module under
+`backend/`, reached from the route's `x.backend.ts` or a
+`*.fn.ts` server function.
+
+#### NIFRA_NODE_BUILTIN_IN_CLIENT
+
+A `node:` built-in was reached from a client entry. It has no browser implementation.
+
+**Fix:** move the code that uses it under `backend/` or into the route's
+`x.backend.ts`. The message lists the import chain.
+
+### Data the output guard refused
+
+Loaders and actions declare the shape the page receives in `loaderOutput` and
+`actionOutput`. The output guard projects what they return onto that shape before it
+reaches the browser, and refuses what does not fit.
+
+#### NIFRA_OUTPUT_SENSITIVE_FIELD
+
+An output schema declares a field whose name marks it as a credential (password, token, secret
+and the like), so the route refuses to send it to the browser.
+
+**Fix:** remove the field from `loaderOutput`/`actionOutput`.
+If it truly must reach the browser, wrap it in `t.declassified(reason, schema)`.
+`nifra check` reports the same as NF-C031.
+
+#### NIFRA_OUTPUT_UNDECLARED_DEFERRED
+
+The loader returns a deferred (streamed) value its output schema does not declare.
+
+**Fix:** declare the field with `t.deferred(schema)` in
+`loaderOutput`, or stop deferring it.
+
+#### NIFRA_OUTPUT_RAW_RESPONSE
+
+A loader or action returned a successful `Response`. Its body would reach the browser
+without passing the output schema.
+
+**Fix:** return the data itself so the schema projects it, or serve the raw response
+from a `backend/app.ts` route.
+
+#### NIFRA_OUTPUT_SCHEMA_MISMATCH
+
+Data a loader or action returned does not match its declared output schema, so it was refused
+before rendering.
+
+**Fix:** make the returned value match `loaderOutput`/
+`actionOutput` at the listed paths, or update the schema if the shape changed on
+purpose.
+
+#### NIFRA_OUTPUT_GUARD
+
+Route data failed the output guard that stands between loaders/actions and the browser.
+
+**Fix:** declare `loaderOutput`/`actionOutput` as a Standard
+Schema that describes exactly the fields the page needs. `nifra check` flags routes
+without one (NF-C030).
+
+### Rendering and data
+
+#### NIFRA_HYDRATION_MISMATCH
+
+The browser rendered different markup than the server sent, so the framework discarded or
+patched the server HTML. In development the page reports it to the dev server as a
+`hydration` entry, tagged with the request that rendered the page.
+
+**Fix:** look for values that differ between server and browser during render:
+`Date.now()`, `Math.random()`, locale formatting, reads of
+`window` or `localStorage`, invalid HTML nesting. `nifra_hydrate`
+reproduces it with a stable diagnostic. See [hydration](/docs/hydration).
+
+#### NIFRA_SCHEMA_PARSE
+
+Data crossing a boundary did not match its declared schema.
+
+**Fix:** check the value against the schema at the failing boundary (loader input,
+search params, or request body). Parse, don't cast: the shape must match exactly.
 
 ## Nifra - Failure laboratory
 

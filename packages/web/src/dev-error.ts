@@ -32,7 +32,7 @@ function fixHtml(diagnostic: Diagnostic): string {
   if (diagnostic.fix === undefined) return ""
   const anchor =
     diagnostic.docsAnchor !== undefined
-      ? `<div class="fix-docs">docs: <code>${esc(diagnostic.docsAnchor)}</code></div>`
+      ? `<div class="fix-docs">docs: <a href="https://nifra.dev/docs/${esc(diagnostic.docsAnchor)}" target="_blank" rel="noreferrer"><code>${esc(diagnostic.docsAnchor)}</code></a></div>`
       : ""
   const cause =
     diagnostic.cause !== undefined ? `<p class="fix-cause">${esc(diagnostic.cause)}</p>` : ""

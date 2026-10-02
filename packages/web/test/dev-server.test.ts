@@ -269,10 +269,24 @@ test("the dev leak guard reports a client leak instead of serving it silently", 
       }),
     )
     expect(feed.errors[0]?.diagnostic.message).toContain("node:crypto")
+
+    // Fixing the leak clears it: the next passing build resolves the open build error.
+    writeFileSync(join(routesDir, "index.tsx"), "export default function Index() { return null }\n")
+    const openBuildErrors = async (): Promise<number> =>
+      (
+        await readJson<{ errors: unknown[] }>(
+          await fetch(`http://127.0.0.1:${server?.port}${DEV_FEED_PATHS.errors}?category=build`, {
+            headers: { [DEV_TOKEN_HEADER]: tokenFor(projectRoot) },
+          }),
+        )
+      ).errors.length
+    const fixDeadline = Date.now() + 20_000
+    while (Date.now() < fixDeadline && (await openBuildErrors()) > 0) await Bun.sleep(200)
+    expect(await openBuildErrors()).toBe(0)
   } finally {
     console.error = original
   }
-}, 40_000)
+}, 60_000)
 
 test("buildFailureDetail surfaces AggregateError members, not Bun's bare 'Bundle failed'", () => {
   // Bun.build rejects with an AggregateError whose own message says nothing; the actionable part

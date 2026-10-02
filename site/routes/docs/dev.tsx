@@ -379,6 +379,17 @@ export default function Dev() {
         request internals has to be closed by default rather than merely quiet in production.
       </p>
 
+      <h2>What the agent sees</h2>
+      <p>
+        Both pipelines record every request, server and browser error, and console line into one feed,
+        each tagged with the id the response carries in <code>x-nifra-request-id</code>. A coding agent
+        reads it through <code>nifra_errors</code>, <code>nifra_logs</code> and{" "}
+        <code>nifra_inspect</code>, and you can read it with <code>nifra errors</code> and{" "}
+        <code>nifra logs</code>. Pages get a small inline script that reports browser errors and
+        hydration mismatches back to the dev server; the dev server writes <code>.nifra/dev-server.json</code>{" "}
+        so the tools can find it. See <a href="/docs/agents">coding agents</a>.
+      </p>
+
       <h2>Containers & sandboxes</h2>
       <p>
         In Docker, networked volumes, and some sandboxes, pass{" "}

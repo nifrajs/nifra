@@ -84,6 +84,7 @@ export const DOCS_GROUPS: readonly DocsGroup[] = [
       { href: "/docs/rendering", label: "SSG & ISR" },
       { href: "/docs/dev", label: "Dev & HMR" },
       { href: "/docs/cli", label: "CLI" },
+      { href: "/docs/errors", label: "Error codes" },
       { href: "/docs/deployment", label: "Deployment" },
       { href: "/docs/troubleshooting", label: "Troubleshooting" },
     ],

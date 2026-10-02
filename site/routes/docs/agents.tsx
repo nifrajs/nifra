@@ -38,13 +38,44 @@ nifra_check             # typecheck + lints, each with a structured fix
 nifra_fix               # applies the mechanical ones
 nifra_run    {request}  # a real request through the backend: status, headers, parsed body
 nifra_render {path}     # SSR a page route, returns the HTML
-nifra_inspect {port}    # recent dev-server request traces: status, duration, ISR hit/miss
-nifra_explain {error}   # turn a failure into a structured diagnostic and fix
 nifra_test              # bun test, bounded structured results
 
-# 4. What does it now prove?
+# 4. What did the running app do?
+nifra_errors            # what the dev server caught: SSR, loader, API, build, browser, hydration
+nifra_logs              # its console output, server and browser, each line tagged with its request
+nifra_inspect           # one trace per request: status, duration, ISR hit/miss, its errors and logs
+nifra_explain           # the latest error (or a pasted one) as a structured diagnostic and fix
+
+# 5. What does it now prove?
 nifra_assure            # every route's required evidence, and what is missing
 nifra_levels            # { achieved, levels[] } - the ladder`
+
+const FEED = `nifra_errors                                  # every open error, newest last
+nifra_errors  {since: 41}                     # only what happened after a previous call's cursor
+nifra_errors  {category: ["hydration"], includeStale: false}
+nifra_logs    {requestId: "r12"}              # what one request printed, server and browser
+nifra_inspect {path: "/cart"}                 # one trace per request, with the ids of its errors
+
+# The same feed from a terminal. \`nifra errors\` exits 1 while the current code has open errors.
+nifra errors --category browser,hydration
+nifra logs --level warn,error --grep cart`
+
+const FEED_ENTRY = `{
+  "id": "e_5b6cbe9d",
+  "category": "browser",
+  "source": "browser",
+  "page": "/cart",
+  "requestId": "r12",
+  "count": 3,
+  "stale": false,
+  "diagnostic": {
+    "code": "NIFRA_UNHANDLED",
+    "name": "TypeError",
+    "message": "TypeError: cart.items is undefined",
+    "frames": [{ "file": "/app/routes/cart.tsx", "line": 18, "column": 9 }],
+    "codeframe": { "file": "/app/routes/cart.tsx", "line": 18, "column": 9, "lines": [] }
+  }
+}`
 
 const PROMPT = `// doc-check: skip - the completion callback is yours; any provider SDK fits the shape.
 import { prompt } from "@nifrajs/prompt"
@@ -224,6 +255,60 @@ export default function Agents() {
 
       <h2>The loop</h2>
       <CodeBlock code={LOOP} lang="bash" />
+
+      <h2>What the running app saw</h2>
+      <p>
+        <code>nifra dev</code> keeps a feed of what happened while it ran, and the project tools read it
+        without being told a port. The server writes <code>.nifra/dev-server.json</code>, readable only by
+        its owner, with its port and a token minted for that run; a tool checks that the server answers
+        as itself before it reads anything.
+      </p>
+      <CodeBlock code={FEED} lang="bash" />
+      <p>Each error is a structured diagnostic, the same one the dev overlay renders:</p>
+      <CodeBlock code={FEED_ENTRY} lang="json" />
+      <ul>
+        <li>
+          <strong>Every layer.</strong> Categories are <code>ssr</code> (page render),{" "}
+          <code>page</code> (loader or action), <code>api</code> (backend handler), <code>build</code>,{" "}
+          <code>browser</code>, <code>hydration</code>, and <code>process</code> (the server itself
+          died).
+        </li>
+        <li>
+          <strong>The browser too.</strong> Each dev page carries a small inline script that reports
+          uncaught errors, unhandled rejections, failed script loads, console output, and hydration
+          mismatches from React, Vue, Svelte, Solid, and Preact. Stacks are mapped to your source through
+          the dev server's own source maps. A page's CSP admits the script by hash; a page whose CSP
+          allows no script gets none. None of it reaches a build.
+        </li>
+        <li>
+          <strong>One id per request.</strong> Every dev response carries{" "}
+          <code>x-nifra-request-id</code>, and the server and browser entries from one page load share
+          it, so a hydration mismatch links to the render and the loader data behind it.
+        </li>
+        <li>
+          <strong>Stale is flagged.</strong> An entry recorded before the last file change is{" "}
+          <code>stale</code>: re-run the request to confirm it persists. A build error clears when the
+          next build passes. Pass the returned <code>cursor</code> as <code>since</code> to see only what
+          is new.
+        </li>
+        <li>
+          <strong>Secrets stay out.</strong> Values of non-public environment variables, keys, tokens,
+          JWTs, and credential headers are redacted before anything is stored.
+        </li>
+        <li>
+          <strong>Crashes leave a record.</strong> When the server dies, the tools read the log it
+          persisted to <code>.nifra/dev-server.log</code>, the crash included.
+        </li>
+        <li>
+          <strong>Data, not instructions.</strong> Entry text is output from your app and the pages it
+          served, and every answer says so, so an agent treats a log line that reads like an instruction
+          as the data it is.
+        </li>
+      </ul>
+      <p>
+        <code>nifra_run</code> returns the same evidence for the requests it makes: each result carries the
+        console output and the structured errors that request produced.
+      </p>
 
       <h2>Why the answers can be trusted</h2>
       <p>
