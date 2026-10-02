@@ -19,7 +19,13 @@ interface Manifest {
   private?: boolean
   overrides?: Record<string, string>
 }
-const readJson = (p: string): Manifest => JSON.parse(readFileSync(p, "utf8")) as Manifest
+const readJson = (p: string): Manifest => {
+  const parsed: unknown = JSON.parse(readFileSync(p, "utf8"))
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`${p} is not a JSON object`)
+  }
+  return parsed
+}
 
 /** Pack every publishable package into `dest`. Needs `bun run build` first. Returns name → tarball. */
 export async function packCurrentSource(dest: string): Promise<Map<string, string>> {
