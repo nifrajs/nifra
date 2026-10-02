@@ -84,32 +84,40 @@ export const DEV_DATABASE_ENV_FILES = [
 
 class InvalidDeclaration extends Error {}
 
-const invalid = (message: string): never => {
+function invalid(message: string): never {
   throw new InvalidDeclaration(message)
 }
 
-function strings(raw: Record<string, unknown>, field: string): readonly string[] {
-  const value = raw[field]
+/** One field of the declaration object, read without trusting its shape. */
+type Fields = (field: string) => unknown
+
+function strings(fields: Fields, field: string): readonly string[] {
+  const value = fields(field)
   if (value === undefined) return []
-  if (!Array.isArray(value) || !value.every((item) => typeof item === "string" && item !== "")) {
-    invalid(`devDatabase.${field} must be an array of non-empty strings`)
+  if (!Array.isArray(value)) invalid(`devDatabase.${field} must be an array of non-empty strings`)
+  const out: string[] = []
+  for (const item of value) {
+    if (typeof item !== "string" || item === "") {
+      invalid(`devDatabase.${field} must be an array of non-empty strings`)
+    }
+    out.push(item)
   }
-  return value as string[]
+  return out
 }
 
 function integer(
-  raw: Record<string, unknown>,
+  fields: Fields,
   field: string,
   fallback: number,
   min: number,
   max: number,
 ): number {
-  const value = raw[field]
+  const value = fields(field)
   if (value === undefined) return fallback
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) {
     invalid(`devDatabase.${field} must be an integer from ${min} to ${max}`)
   }
-  return value as number
+  return value
 }
 
 /** Validate a `devDatabase` export and apply defaults. Unknown fields are refused, never ignored. */
@@ -118,50 +126,54 @@ export function parseDevDatabase(value: unknown): DevDatabase | DbRefusal {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
       invalid('devDatabase must be an object such as { kind: "sqlite", file: "./data/app.db" }')
     }
-    const raw = value as Record<string, unknown>
+    const fields: Fields = (field) => Reflect.get(value, field)
+    const declared = fields("kind")
     const kind =
-      raw.kind === "sqlite" || raw.kind === "postgres"
-        ? raw.kind
+      declared === "sqlite" || declared === "postgres"
+        ? declared
         : invalid('devDatabase.kind must be "sqlite" or "postgres"')
     const known = kind === "sqlite" ? SQLITE_FIELDS : POSTGRES_FIELDS
-    for (const field of Object.keys(raw)) {
+    for (const field of Object.keys(value)) {
       if (!known.has(field))
         invalid(`devDatabase has no field ${JSON.stringify(field)} for kind ${kind}`)
     }
-    if (raw.query !== undefined && typeof raw.query !== "boolean") {
+    const query = fields("query")
+    if (query !== undefined && typeof query !== "boolean") {
       invalid("devDatabase.query must be a boolean")
     }
     const common: DevDatabaseCommon = {
-      exclude: strings(raw, "exclude"),
-      maxRows: integer(raw, "maxRows", 100, 1, 10_000),
+      exclude: strings(fields, "exclude"),
+      maxRows: integer(fields, "maxRows", 100, 1, 10_000),
       // The answer crosses the subprocess pipe as one line, bounded at 1 MiB with its envelope.
-      maxResultBytes: integer(raw, "maxResultBytes", 100 * 1024, 1024, 512 * 1024),
-      timeoutMs: integer(raw, "timeoutMs", 5_000, 100, 120_000),
-      redactColumns: strings(raw, "redactColumns"),
-      revealColumns: strings(raw, "revealColumns"),
-      query: raw.query !== false,
+      maxResultBytes: integer(fields, "maxResultBytes", 100 * 1024, 1024, 512 * 1024),
+      timeoutMs: integer(fields, "timeoutMs", 5_000, 100, 120_000),
+      redactColumns: strings(fields, "redactColumns"),
+      revealColumns: strings(fields, "revealColumns"),
+      query: query !== false,
     }
     if (kind === "sqlite") {
-      if (typeof raw.file !== "string" || raw.file === "" || raw.file.startsWith(":memory:")) {
+      const file = fields("file")
+      if (typeof file !== "string" || file === "" || file.startsWith(":memory:")) {
         invalid("devDatabase.file must be the path of a SQLite database file")
       }
-      return { ...common, kind, file: raw.file as string, allowFiles: strings(raw, "allowFiles") }
+      return { ...common, kind, file, allowFiles: strings(fields, "allowFiles") }
     }
-    if (raw.url === undefined) {
+    const url = fields("url")
+    if (url === undefined) {
       invalid(
         `devDatabase.url is undefined: the environment variable it reads is not set (nifra applies ${DEV_DATABASE_ENV_FILES.join(", ")} first)`,
       )
     }
-    if (typeof raw.url !== "string" || raw.url === "") {
+    if (typeof url !== "string" || url === "") {
       invalid("devDatabase.url must be a postgres:// URL")
     }
     return {
       ...common,
       kind,
-      url: raw.url as string,
-      allowHosts: strings(raw, "allowHosts"),
-      allowExtensions: strings(raw, "allowExtensions"),
-      schemas: raw.schemas === undefined ? ["public"] : strings(raw, "schemas"),
+      url,
+      allowHosts: strings(fields, "allowHosts"),
+      allowExtensions: strings(fields, "allowExtensions"),
+      schemas: fields("schemas") === undefined ? ["public"] : strings(fields, "schemas"),
     }
   } catch (error) {
     if (error instanceof InvalidDeclaration) return dbRefusal("NIFRA_DB_CONFIG", error.message)
@@ -194,17 +206,19 @@ export async function loadDevDatabase(root: string): Promise<DevDatabase | DbRef
   if (!existsSync(configPath)) {
     return dbRefusal("NIFRA_DB_NOT_DECLARED", `${root} has no ${CONFIG_FILE} declaring devDatabase`)
   }
-  let config: { devDatabase?: unknown }
+  let config: unknown
   try {
-    config = (await import(configPath)) as { devDatabase?: unknown }
+    config = await import(configPath)
   } catch (error) {
     return dbRefusal(
       "NIFRA_DB_CONFIG",
       `${CONFIG_FILE} failed to load: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
-  if (config.devDatabase === undefined) {
+  const declared =
+    typeof config === "object" && config !== null ? Reflect.get(config, "devDatabase") : undefined
+  if (declared === undefined) {
     return dbRefusal("NIFRA_DB_NOT_DECLARED", `${CONFIG_FILE} does not export devDatabase`)
   }
-  return parseDevDatabase(config.devDatabase)
+  return parseDevDatabase(declared)
 }

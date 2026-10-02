@@ -10,8 +10,13 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { SQL } from "bun"
-import { type DbRefusal, isDbRefusal } from "../src/engine.ts"
-import { extended, fetchThroughCursor, inReadOnlyTransaction } from "../src/internal/pg-exec.ts"
+import { isDbRefusal } from "../src/engine.ts"
+import {
+  extended,
+  fetchThroughCursor,
+  inReadOnlyTransaction,
+  records,
+} from "../src/internal/pg-exec.ts"
 import {
   connectPostgres,
   explainPostgres,
@@ -67,30 +72,26 @@ let serverVersion = 0
 const clients: PostgresClient[] = []
 
 function rawClient(database: string): SQL {
-  return new SQL({
+  const options: SQL.PostgresOrMySQLOptions = {
     adapter: "postgres",
     hostname: admin.host ?? "127.0.0.1",
     port: admin.port,
     username: admin.username,
-    ...(admin.password === undefined ? {} : { password: admin.password }),
     database,
     max: 1,
-  })
+  }
+  if (admin.password !== undefined) options.password = admin.password
+  return new SQL(options)
 }
 
 /** A read-only engine client as `role` (the admin when omitted). */
 function engineClient(role?: string, timeoutMs = TIMEOUT_MS): PostgresClient {
-  const target: PostgresTarget = {
-    host: admin.host ?? "127.0.0.1",
-    port: admin.port,
-    database: DB,
-    username: role ?? admin.username,
-    ...(role === undefined
-      ? admin.password === undefined
-        ? {}
-        : { password: admin.password }
-      : { password: PASSWORD }),
-  }
+  const password = role === undefined ? admin.password : PASSWORD
+  const base = { host: admin.host ?? "127.0.0.1", port: admin.port, database: DB }
+  const target: PostgresTarget =
+    password === undefined
+      ? { ...base, username: role ?? admin.username }
+      : { ...base, username: role ?? admin.username, password }
   const client = connectPostgres(target, { timeoutMs })
   if (isDbRefusal(client)) throw new Error(client.message)
   clients.push(client)
@@ -98,6 +99,13 @@ function engineClient(role?: string, timeoutMs = TIMEOUT_MS): PostgresClient {
 }
 
 const code = (value: unknown): string | undefined => (isDbRefusal(value) ? value.code : undefined)
+
+/** A driver error as `SQLSTATE message`. */
+const failure = (error: unknown): { state: string; message: string } => ({
+  state:
+    typeof error === "object" && error !== null && "errno" in error ? String(error.errno) : "?",
+  message: error instanceof Error ? error.message : String(error),
+})
 
 /**
  * What the server alone does with `sql`: the statement goes through the read-only transaction and
@@ -113,13 +121,12 @@ async function serverOnly(
       await fetchThroughCursor(connection, sql, { maxRows: 5, scope: async () => undefined })
       outcome = { ran: true }
     } catch (error) {
-      const failure = error as { errno?: unknown; message?: unknown }
-      outcome = { ran: false, state: String(failure.errno), message: String(failure.message) }
+      outcome = { ran: false, ...failure(error) }
     }
     return outcome
   })
   if (outcome !== undefined) return outcome
-  return { ran: false, state: "?", message: (result as DbRefusal).message }
+  return { ran: false, state: "?", message: isDbRefusal(result) ? result.message : String(result) }
 }
 
 describe.skipIf(SKIP)(SUITE, () => {
@@ -208,12 +215,9 @@ describe.skipIf(SKIP)(SUITE, () => {
         const simple = await connection.unsafe("SELECT 1 AS a; SELECT 2 AS b")
         expect(simple.length).toBeGreaterThan(0)
         const refused = await Promise.resolve(
-          extended(connection as never, "SELECT 1 AS a; SELECT 2 AS b"),
-        ).then(
-          () => undefined,
-          (error: { errno?: string; message?: string }) => error,
-        )
-        expect(refused?.errno).toBe("42601")
+          extended(connection, "SELECT 1 AS a; SELECT 2 AS b"),
+        ).then(() => undefined, failure)
+        expect(refused?.state).toBe("42601")
         expect(refused?.message).toContain(
           "cannot insert multiple commands into a prepared statement",
         )
@@ -229,16 +233,16 @@ describe.skipIf(SKIP)(SUITE, () => {
     const client = engineClient(ROLE.reader, 2_500)
     const connection = await client.reserve()
     try {
-      const [session] = await connection`SHOW default_transaction_read_only`
+      const [session] = records(await connection`SHOW default_transaction_read_only`)
       expect(session?.default_transaction_read_only).toBe("on")
-      const [standard] = await connection`SHOW standard_conforming_strings`
+      const [standard] = records(await connection`SHOW standard_conforming_strings`)
       expect(standard?.standard_conforming_strings).toBe("on")
     } finally {
       connection.release()
     }
     const inside = await inReadOnlyTransaction(client, 1_234, async (tx) => {
-      const [readOnly] = await tx`SHOW transaction_read_only`
-      const [timeout] = await tx`SHOW statement_timeout`
+      const [readOnly] = records(await tx`SHOW transaction_read_only`)
+      const [timeout] = records(await tx`SHOW statement_timeout`)
       return { readOnly: readOnly?.transaction_read_only, timeout: timeout?.statement_timeout }
     })
     expect(inside).toEqual({ readOnly: "on", timeout: "1234ms" })
@@ -249,8 +253,11 @@ describe.skipIf(SKIP)(SUITE, () => {
     const insert = await serverOnly(su, "INSERT INTO orders (status) VALUES ('x') RETURNING id")
     expect(insert).toMatchObject({ ran: false, state: "42601" })
     const cte = await serverOnly(su, "WITH d AS (DELETE FROM orders RETURNING *) SELECT * FROM d")
-    expect(cte).toMatchObject({ ran: false, state: "0A000" })
-    expect((cte as { message: string }).message).toContain("data-modifying")
+    expect(cte).toMatchObject({
+      ran: false,
+      state: "0A000",
+      message: expect.stringContaining("data-modifying"),
+    })
     const declared = await inReadOnlyTransaction(su, 3_000, async (connection) => {
       try {
         await extended(
@@ -259,7 +266,8 @@ describe.skipIf(SKIP)(SUITE, () => {
         )
         return "ran"
       } catch (error) {
-        return `${(error as { errno?: string }).errno} ${(error as Error).message}`
+        const { state, message } = failure(error)
+        return `${state} ${message}`
       }
     })
     expect(String(declared)).toMatch(
@@ -408,8 +416,10 @@ describe.skipIf(SKIP)(SUITE, () => {
     const reader = engineClient(ROLE.reader)
     const { allowExtensions: _, ...strict } = OPTIONS
     const refused = await queryPostgres(reader, "SELECT 1", strict)
-    expect(code(refused)).toBe("NIFRA_DB_EXTENSION")
-    expect((refused as DbRefusal).message).toContain("dblink")
+    expect(refused).toMatchObject({
+      code: "NIFRA_DB_EXTENSION",
+      message: expect.stringContaining("dblink"),
+    })
     expect(code(await queryPostgres(reader, "SELECT 1", OPTIONS))).toBeUndefined()
   })
 
@@ -533,7 +543,9 @@ describe.skipIf(SKIP)(SUITE, () => {
     const generated = engineClient(ROLE.generated)
     const [readOnly] = await generated.reserve().then(async (connection) => {
       try {
-        return await connection`SELECT rolconfig::text AS config FROM pg_roles WHERE rolname = current_user`
+        return records(
+          await connection`SELECT rolconfig::text AS config FROM pg_roles WHERE rolname = current_user`,
+        )
       } finally {
         connection.release()
       }

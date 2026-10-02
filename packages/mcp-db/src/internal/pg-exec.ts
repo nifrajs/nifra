@@ -12,9 +12,17 @@
 
 import { type DbRefusal, dbRefusal } from "./shared.ts"
 
-/** A pending query: awaitable for object rows, or `.values()` for array rows. */
-export interface PgQuery extends PromiseLike<readonly Record<string, unknown>[]> {
-  values(): PromiseLike<readonly (readonly unknown[])[]>
+/** A pending query: awaitable for object rows, or `.values()` for array rows (checked by readers). */
+export interface PgQuery extends PromiseLike<readonly unknown[]> {
+  values(): PromiseLike<readonly unknown[]>
+}
+
+/** Rows as records: a driver row that is not an object is dropped, never cast. */
+export function records(rows: readonly unknown[]): Record<string, unknown>[] {
+  return rows.filter(
+    (row): row is Record<string, unknown> =>
+      typeof row === "object" && row !== null && !Array.isArray(row),
+  )
 }
 
 /** One connection reserved from the pool (`Bun.SQL`'s `ReservedSQL`, structurally). */
@@ -32,7 +40,7 @@ export interface PostgresClient {
 
 /** Run caller text as ONE extended-protocol statement with no parameters. */
 export function extended(connection: PgConnection, text: string): PgQuery {
-  const strings = Object.assign([text], { raw: [text] }) as unknown as TemplateStringsArray
+  const strings: TemplateStringsArray = Object.assign([text], { raw: [text] })
   return connection(strings)
 }
 
@@ -41,7 +49,9 @@ const WRITE_KEYWORD =
 
 /** Map a driver error to a refusal by its SQLSTATE; only a genuine query error is a failure. */
 export function pgFailure(error: unknown, context = "query failed"): DbRefusal {
-  const state = (error as { errno?: unknown } | null)?.errno
+  // Bun.SQL puts the SQLSTATE on `errno`.
+  const state =
+    typeof error === "object" && error !== null && "errno" in error ? error.errno : undefined
   const message = `${context}: ${error instanceof Error ? error.message : String(error)}`
   if (typeof state !== "string" || !/^[0-9A-Z]{5}$/.test(state)) {
     return dbRefusal("NIFRA_DB_DRIVER", message)
@@ -100,6 +110,7 @@ export async function inReadOnlyTransaction<T>(
     return pgFailure(error, "could not connect")
   }
   try {
+    // nifra-expect sql-dynamic: fixed statements; the one interpolation is a validated integer of milliseconds
     await connection.unsafe(
       `BEGIN READ ONLY; SET LOCAL statement_timeout = ${ms}; SET LOCAL lock_timeout = ${ms}; SET LOCAL idle_in_transaction_session_timeout = ${ms}`,
     )
@@ -139,26 +150,29 @@ export function planReads(plan: unknown): PlanReads {
       for (const item of node) visit(item, depth + 1)
       return
     }
-    const record = node as Record<string, unknown>
-    const schema = typeof record.Schema === "string" ? record.Schema : ""
-    for (const [field, found] of [
+    const field = (key: string): unknown => Reflect.get(node, key)
+    const declared = field("Schema")
+    const schema = typeof declared === "string" ? declared : ""
+    for (const [key, found] of [
       ["Relation Name", relations],
       ["Function Name", functions],
     ] as const) {
-      const name = record[field]
+      const name = field(key)
       if (typeof name === "string") found.set(`${schema}.${name}`, { schema, name })
     }
-    visit(record.Plan, depth + 1)
-    visit(record.Plans, depth + 1)
+    visit(field("Plan"), depth + 1)
+    visit(field("Plans"), depth + 1)
   }
   visit(plan, 0)
   return { relations: [...relations.values()], functions: [...functions.values()] }
 }
 
 /** The JSON document an `EXPLAIN (FORMAT JSON)` row carries, whatever the driver parsed it into. */
-export function planDocument(rows: readonly Record<string, unknown>[]): unknown {
-  const value = rows[0]?.["QUERY PLAN"]
-  return typeof value === "string" ? (JSON.parse(value) as unknown) : value
+export function planDocument(rows: readonly unknown[]): unknown {
+  const value = records(rows)[0]?.["QUERY PLAN"]
+  if (typeof value !== "string") return value
+  const parsed: unknown = JSON.parse(value)
+  return parsed
 }
 
 /** Refuse when anything the plan reads (or a table it inherits from) is out of scope. */
@@ -191,11 +205,17 @@ export async function fetchThroughCursor(
   const plan = planDocument(await extended(connection, `EXPLAIN (VERBOSE, FORMAT JSON) ${wrapped}`))
   const refusal = await options.scope(connection, planReads(plan))
   if (refusal !== undefined) return refusal
-  const fetched = await connection
-    .unsafe(`FETCH FORWARD ${options.maxRows + 1} FROM nifra_c`)
-    .values()
+  const rowCap = options.maxRows + 1
+  const fetched =
+    // nifra-expect sql-dynamic: a fixed FETCH whose one interpolation is the integer row cap
+    (await connection.unsafe(`FETCH FORWARD ${rowCap} FROM nifra_c`).values()).filter(
+      (row): row is unknown[] => Array.isArray(row),
+    )
   const first = fetched[0]?.[0]
-  const columns = typeof first === "string" ? (JSON.parse(first) as string[]) : []
+  const names: unknown = typeof first === "string" ? JSON.parse(first) : []
+  const columns = Array.isArray(names)
+    ? names.filter((name): name is string => typeof name === "string")
+    : []
   return { columns, rows: fetched.map((row) => row.slice(1)) }
 }
 

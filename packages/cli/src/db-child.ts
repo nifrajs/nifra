@@ -117,7 +117,7 @@ async function runSqlite(
       const schema = readSqliteSchema(handle, {
         exclude: db.exclude,
         redaction,
-        ...(request.table === undefined ? {} : { table: request.table }),
+        table: request.table,
       })
       return isDbRefusal(schema) ? schema : { ...base, schema }
     }
@@ -149,7 +149,7 @@ async function runPostgres(
       const schema = await readPostgresSchema(client, {
         ...db,
         redaction,
-        ...(request.table === undefined ? {} : { table: request.table }),
+        table: request.table,
       })
       return isDbRefusal(schema) ? schema : { ...base, schema }
     }
@@ -203,6 +203,8 @@ export async function runDbOperation(
   }
 }
 
+const OPS = ["schema", "query", "explain", "role"] as const
+
 /** Validate the parent's request (it crosses a process boundary). */
 export function parseDbChildRequest(
   text: string,
@@ -214,20 +216,18 @@ export function parseDbChildRequest(
     return undefined
   }
   if (typeof value !== "object" || value === null) return undefined
-  const raw = value as Record<string, unknown>
-  const ops = ["schema", "query", "explain", "role"]
-  if (typeof raw.token !== "string" || !/^[0-9a-f-]{16,64}$/.test(raw.token)) return undefined
-  if (typeof raw.op !== "string" || !ops.includes(raw.op)) return undefined
-  if (raw.sql !== undefined && typeof raw.sql !== "string") return undefined
-  if (raw.table !== undefined && typeof raw.table !== "string") return undefined
-  if (raw.analyze !== undefined && typeof raw.analyze !== "boolean") return undefined
-  return {
-    token: raw.token,
-    op: raw.op as DbChildRequest["op"],
-    sql: raw.sql,
-    table: raw.table,
-    analyze: raw.analyze,
-  }
+  const field = (key: string): unknown => Reflect.get(value, key)
+  const token = field("token")
+  const op = OPS.find((name) => name === field("op"))
+  const sql = field("sql")
+  const table = field("table")
+  const analyze = field("analyze")
+  if (typeof token !== "string" || !/^[0-9a-f-]{16,64}$/.test(token)) return undefined
+  if (op === undefined) return undefined
+  if (sql !== undefined && typeof sql !== "string") return undefined
+  if (table !== undefined && typeof table !== "string") return undefined
+  if (analyze !== undefined && typeof analyze !== "boolean") return undefined
+  return { token, op, sql, table, analyze }
 }
 
 /**

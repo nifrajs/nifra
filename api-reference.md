@@ -3808,7 +3808,7 @@ _No named exports (side-effect entrypoint)._
 - **PgConnection** _(interface)_ - `interface PgConnection`
   One connection reserved from the pool (`Bun.SQL`'s `ReservedSQL`, structurally).
 - **PgQuery** _(interface)_ - `interface PgQuery`
-  A pending query: awaitable for object rows, or `.values()` for array rows.
+  A pending query: awaitable for object rows, or `.values()` for array rows (checked by readers).
 - **PostgresClient** _(interface)_ - `interface PostgresClient`
   A Postgres client (`Bun.SQL`, structurally): the engine reserves one connection per call.
 - **PostgresQueryOptions** _(interface)_ - `interface PostgresQueryOptions`

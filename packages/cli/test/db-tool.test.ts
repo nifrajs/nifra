@@ -15,7 +15,12 @@ import { join } from "node:path"
 import { isDbRefusal } from "@nifrajs/mcp-db/engine"
 import { parsePostgresUrl } from "@nifrajs/mcp-db/postgres"
 import { SQL } from "bun"
-import { bindCommandArgv, commandCatalog, commandMcpName } from "../src/command-catalog.ts"
+import {
+  bindCommandArgv,
+  type CommandCtx,
+  commandCatalog,
+  commandMcpName,
+} from "../src/command-catalog.ts"
 import {
   appendDbAudit,
   DB_AUDIT_FILE,
@@ -74,10 +79,15 @@ function sqliteProject(extra = "", configHead = ""): string {
   return root
 }
 
-const ctx = (cwd: string, signal?: AbortSignal) => ({
-  cwd,
-  ...(signal === undefined ? {} : { signal }),
-})
+const ctx = (cwd: string, signal?: AbortSignal): CommandCtx =>
+  signal === undefined ? { cwd } : { cwd, signal }
+
+/** A value at `path` inside parsed JSON, or undefined. */
+const dig = (value: unknown, ...path: (string | number)[]): unknown =>
+  path.reduce<unknown>(
+    (at, key) => (typeof at === "object" && at !== null ? Reflect.get(at, key) : undefined),
+    value,
+  )
 
 describe("devDatabase declaration", () => {
   test("defaults, and every field validated", () => {
@@ -172,15 +182,16 @@ describe("devDatabase declaration", () => {
 })
 
 describe("one operation, in process", () => {
-  const declared = (patch: Partial<DevDatabase> = {}): DevDatabase => {
+  const declared = (patch: Record<string, unknown> = {}): DevDatabase => {
     const db = parseDevDatabase({
       kind: "sqlite",
       file: "./data/app.db",
       exclude: ["sessions"],
       redactColumns: ["api_token"],
+      ...patch,
     })
     if (isDbRefusal(db)) throw new Error(db.message)
-    return { ...db, ...patch } as DevDatabase
+    return db
   }
 
   test("schema, query, explain and role on SQLite", async () => {
@@ -239,19 +250,13 @@ describe("one operation, in process", () => {
     new Database(outside).close()
     symlinkSync(outside, join(root, "data", "link.db"))
     expect(
-      await runDbOperation(root, { op: "schema" }, {
-        ...db,
-        file: "./data/link.db",
-      } as DevDatabase),
+      await runDbOperation(root, { op: "schema" }, declared({ file: "./data/link.db" })),
     ).toMatchObject({
       refusal: { code: "NIFRA_DB_OUTSIDE_ROOT" },
     })
     writeFileSync(join(root, "data", "junk.db"), "not a database at all, just text".repeat(200))
     expect(
-      await runDbOperation(root, { op: "schema" }, {
-        ...db,
-        file: "./data/junk.db",
-      } as DevDatabase),
+      await runDbOperation(root, { op: "schema" }, declared({ file: "./data/junk.db" })),
     ).toMatchObject({
       refusal: { code: "NIFRA_DB_DRIVER" },
     })
@@ -290,10 +295,7 @@ describe("one operation, in process", () => {
   })
 
   test("redaction masks credential columns and scrubs env values and token formats", () => {
-    const db = declared({
-      redactColumns: ["notes"],
-      revealColumns: ["password"],
-    } as Partial<DevDatabase>)
+    const db = declared({ redactColumns: ["notes"], revealColumns: ["password"] })
     const redaction = dbRedaction(parent, db, { MY_SECRET: "s3cr3t-value-0123456789" })
     expect(redaction.column?.("password_hash")).toBe(true)
     expect(redaction.column?.("Notes")).toBe(true)
@@ -323,7 +325,7 @@ describe("one operation, in process", () => {
 })
 
 describe("the subprocess protocol", () => {
-  const stream = (text: string) => new Response(text).body as ReadableStream<Uint8Array>
+  const stream = (text: string) => new Blob([text]).stream()
   const serve = async (root: string, request: unknown) => {
     const lines: string[] = []
     const served = await serveDbChild(root, stream(JSON.stringify(request)), async (line) => {
@@ -723,16 +725,18 @@ describe.skipIf(PG_URL === "")(
       password?: string
       database: string
     }
-    const raw = (name: string) =>
-      new SQL({
+    const raw = (name: string) => {
+      const options: SQL.PostgresOrMySQLOptions = {
         adapter: "postgres",
         hostname: admin.host ?? "127.0.0.1",
         port: admin.port,
         username: admin.username,
-        ...(admin.password === undefined ? {} : { password: admin.password }),
         database: name,
         max: 1,
-      })
+      }
+      if (admin.password !== undefined) options.password = admin.password
+      return new SQL(options)
+    }
     const url = (user: string, secret: string | undefined) =>
       `postgres://${encodeURIComponent(user)}${secret === undefined ? "" : `:${encodeURIComponent(secret)}`}@${admin.host ?? "127.0.0.1"}:${admin.port}/${database}`
     const project = (envUrl: string) => {
@@ -922,17 +926,14 @@ describe("nifra mcp over stdio", () => {
         ],
         [2, 3, 4, 5, 6, 7],
       )
-      const tools = (
-        responses[2] as { result: { tools: { name: string; inputSchema: unknown }[] } }
-      ).result.tools
-      const names = tools.map((tool) => tool.name)
+      const tools = dig(responses[2], "result", "tools")
+      const names = Array.isArray(tools) ? tools.map((tool) => dig(tool, "name")) : []
       expect(names).toContain("nifra_db_schema")
       expect(names).toContain("nifra_db_query")
       expect(names).toContain("nifra_db_role")
       expect(names).not.toContain("nifra_db_audit")
-      const raw = (id: number) =>
-        (responses[id] as { result: { content: { text: string }[] } }).result.content[0]?.text ?? ""
-      const text = (id: number) => JSON.parse(raw(id))
+      const text = (id: number): unknown =>
+        JSON.parse(String(dig(responses[id], "result", "content", 0, "text") ?? ""))
       expect(text(3)).toMatchObject({ ok: true, tool: "schema", untrusted: true })
       expect(text(4)).toMatchObject({ ok: true, rows: [[2]], untrusted: true })
       expect(text(5)).toMatchObject({ ok: true, rows: [["one"], ["two"]] })
@@ -985,8 +986,9 @@ async function mcpRpc(
       buffered = lines.pop() ?? ""
       for (const line of lines) {
         if (!line.startsWith("{")) continue
-        const parsed = JSON.parse(line) as { id?: number }
-        if (typeof parsed.id === "number") byId[parsed.id] = parsed
+        const parsed: unknown = JSON.parse(line)
+        const id = dig(parsed, "id")
+        if (typeof id === "number") byId[id] = parsed
       }
     }
   } finally {

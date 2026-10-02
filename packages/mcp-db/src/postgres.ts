@@ -37,6 +37,7 @@ import {
   type PlanReads,
   type PlanRelation,
   type PostgresClient,
+  records,
 } from "./internal/pg-exec.ts"
 import { DENIED_FUNCTION_PREFIXES, lintPostgres, withoutTerminator } from "./internal/pg-lexer.ts"
 import {
@@ -68,7 +69,7 @@ export interface PostgresTarget {
   readonly tls?: "disable" | "allow" | "prefer" | "require" | "verify-ca" | "verify-full"
 }
 
-const SSL_MODES = new Set(["disable", "allow", "prefer", "require", "verify-ca", "verify-full"])
+const SSL_MODES = ["disable", "allow", "prefer", "require", "verify-ca", "verify-full"] as const
 
 /**
  * Parse a `postgres://` (or `postgresql://`) URL. Only the host, port, user, password, database and
@@ -103,10 +104,10 @@ export function parsePostgresUrl(url: string): PostgresTarget | DbRefusal {
   const database =
     decodeURIComponent(parsed.pathname.replace(/^\//, "")) || params.get("dbname") || username
   const sslmode = params.get("sslmode") ?? undefined
-  if (sslmode !== undefined && !SSL_MODES.has(sslmode)) {
+  const tls = SSL_MODES.find((mode) => mode === sslmode)
+  if (sslmode !== undefined && tls === undefined) {
     return dbRefusal("NIFRA_DB_CONFIG", `devDatabase.url has an unknown sslmode ${sslmode}`)
   }
-  const tls = sslmode as PostgresTarget["tls"]
   const location =
     host === "" || host.startsWith("/")
       ? { socket: `${host === "" ? "/tmp" : host.replace(/\/$/, "")}/.s.PGSQL.${port}` }
@@ -154,8 +155,6 @@ export interface ConnectPostgresOptions {
   readonly allowHosts?: readonly string[]
 }
 
-type SqlConstructor = new (options: Record<string, unknown>) => PostgresClient
-
 /**
  * Open a one-connection `Bun.SQL` client for `target` after the host gate. Every session starts
  * read-only with `standard_conforming_strings` on (the statement tokenizer reads strings that way).
@@ -166,11 +165,10 @@ export function connectPostgres(
 ): PostgresClient | DbRefusal {
   const refusal = postgresHostRefusal(target, options.allowHosts)
   if (refusal !== undefined) return refusal
-  const SQL = (globalThis as { Bun?: { SQL?: SqlConstructor } }).Bun?.SQL
-  if (SQL === undefined) {
+  if (typeof Bun === "undefined") {
     return dbRefusal("NIFRA_DB_DRIVER", "the Postgres engine needs Bun (it uses Bun.SQL)")
   }
-  return new SQL({
+  return new Bun.SQL({
     adapter: "postgres",
     ...(target.socket === undefined ? { hostname: target.host } : { path: target.socket }),
     port: target.port,
@@ -212,7 +210,8 @@ const asStrings = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
 
 async function readRole(connection: PgConnection): Promise<PostgresRoleReport> {
-  const [row] = await connection`
+  const [row] = records(
+    await connection`
     SELECT current_user::text AS role,
       r.rolsuper AS superuser,
       pg_catalog.current_setting('server_version_num')::int AS version,
@@ -245,7 +244,8 @@ async function readRole(connection: PgConnection): Promise<PostgresRoleReport> {
             SELECT 1 FROM pg_catalog.pg_proc p WHERE p.prolang = l.oid
               AND pg_catalog.has_function_privilege(p.oid, 'EXECUTE')))
         ORDER BY 1)) AS languages
-    FROM pg_catalog.pg_roles r WHERE r.rolname = current_user`
+    FROM pg_catalog.pg_roles r WHERE r.rolname = current_user`,
+  )
   if (row === undefined) throw new Error("the connected role is not in pg_roles")
   return {
     role: String(row.role),
@@ -367,7 +367,8 @@ function checkScope(scope: PostgresScope) {
       if (reason !== undefined) return dbRefusal("NIFRA_DB_TABLE_EXCLUDED", reason)
     }
     if (relations.length === 0) return undefined
-    const ancestors = await connection`
+    const ancestors = records(
+      await connection`
       WITH RECURSIVE planned AS (
         SELECT pg_catalog.to_regclass(pg_catalog.quote_ident(r.schema) || '.' || pg_catalog.quote_ident(r.name))::oid AS oid
         FROM pg_catalog.json_to_recordset(${[...relations]}::json) AS r(schema text, name text)
@@ -378,7 +379,8 @@ function checkScope(scope: PostgresScope) {
       )
       SELECT n.nspname::text AS schema, c.relname::text AS name
       FROM up JOIN pg_catalog.pg_class c ON c.oid = up.oid
-      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace`
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace`,
+    )
     for (const row of ancestors) {
       const reason = outOfScope({ schema: String(row.schema), name: String(row.name) })
       if (reason !== undefined) return dbRefusal("NIFRA_DB_TABLE_EXCLUDED", reason)
@@ -471,12 +473,12 @@ const RELKINDS: Readonly<Record<string, DbSchemaTable["kind"]>> = {
 export interface PostgresSchemaOptions extends PostgresScope {
   readonly timeoutMs: number
   /** Describe only this table (`name` or `schema.name`). */
-  readonly table?: string
+  readonly table?: string | undefined
   readonly redaction?: DbRedaction
 }
 
 const jsonValues = (value: unknown): unknown[] => {
-  const parsed = typeof value === "string" ? (JSON.parse(value) as unknown) : value
+  const parsed: unknown = typeof value === "string" ? JSON.parse(value) : value
   return Array.isArray(parsed) ? parsed : []
 }
 
@@ -501,7 +503,8 @@ export async function readPostgresSchema(
     name.toLowerCase() === wanted ||
     `${schema}.${name}`.toLowerCase() === wanted
   return inReadOnlyTransaction(client, options.timeoutMs, async (connection) => {
-    const relations = await connection`
+    const relations = records(
+      await connection`
       SELECT n.nspname::text AS schema, c.relname::text AS name, c.relkind::text AS kind,
         c.reltuples::float8 AS estimate,
         to_json(ARRAY(
@@ -525,8 +528,10 @@ export async function readPostgresSchema(
       WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND NOT c.relispartition
         AND n.nspname = ANY(ARRAY(SELECT pg_catalog.json_array_elements_text(${schemas}::json)))
         AND pg_catalog.has_table_privilege(c.oid, 'SELECT')
-      ORDER BY 1, 2`
-    const columns = await connection`
+      ORDER BY 1, 2`,
+    )
+    const columns = records(
+      await connection`
       SELECT n.nspname::text AS schema, c.relname::text AS table, a.attname::text AS name,
         pg_catalog.format_type(a.atttypid, a.atttypmod) AS type, NOT a.attnotnull AS nullable,
         pg_catalog.pg_get_expr(d.adbin, d.adrelid) AS default_value,
@@ -538,8 +543,10 @@ export async function readPostgresSchema(
       LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
       WHERE a.attnum > 0 AND NOT a.attisdropped AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
         AND n.nspname = ANY(ARRAY(SELECT pg_catalog.json_array_elements_text(${schemas}::json)))
-      ORDER BY 1, 2, a.attnum`
-    const foreignKeys = await connection`
+      ORDER BY 1, 2, a.attnum`,
+    )
+    const foreignKeys = records(
+      await connection`
       SELECT n.nspname::text AS schema, c.relname::text AS table,
         to_json(ARRAY(SELECT a.attname::text FROM unnest(k.conkey) WITH ORDINALITY AS u(num, ord)
           JOIN pg_catalog.pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = u.num ORDER BY u.ord)) AS columns,
@@ -553,8 +560,10 @@ export async function readPostgresSchema(
       JOIN pg_catalog.pg_namespace fn ON fn.oid = fc.relnamespace
       WHERE k.contype = 'f'
         AND n.nspname = ANY(ARRAY(SELECT pg_catalog.json_array_elements_text(${schemas}::json)))
-      ORDER BY 1, 2, k.conname`
-    const indexes = await connection`
+      ORDER BY 1, 2, k.conname`,
+    )
+    const indexes = records(
+      await connection`
       SELECT n.nspname::text AS schema, t.relname::text AS table, i.relname::text AS name,
         x.indisunique AS is_unique,
         to_json(ARRAY(SELECT pg_catalog.pg_get_indexdef(x.indexrelid, k, true)
@@ -564,7 +573,8 @@ export async function readPostgresSchema(
       JOIN pg_catalog.pg_class t ON t.oid = x.indrelid
       JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
       WHERE n.nspname = ANY(ARRAY(SELECT pg_catalog.json_array_elements_text(${schemas}::json)))
-      ORDER BY 1, 2, 3`
+      ORDER BY 1, 2, 3`,
+    )
     const key = (schema: unknown, name: unknown): string => `${String(schema)}.${String(name)}`
     const text = (value: string): string => options.redaction?.text?.(value) ?? value
     // What the query scope would refuse is hidden too: a table inheriting from an excluded one, and a
@@ -667,13 +677,16 @@ export async function postgresRoleSql(
   const schemas = options.schemas ?? ["public"]
   const exclude = (options.exclude ?? []).map((name) => name.toLowerCase())
   return inReadOnlyTransaction(client, options.timeoutMs, async (connection) => {
-    const [facts] = await connection`
+    const [facts] = records(
+      await connection`
       SELECT pg_catalog.current_database()::text AS database,
-        pg_catalog.current_setting('server_version_num')::int AS version`
+        pg_catalog.current_setting('server_version_num')::int AS version`,
+    )
     const excluded =
       exclude.length === 0
         ? []
-        : await connection`
+        : records(
+            await connection`
       WITH RECURSIVE picked AS (
         SELECT c.oid FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
         WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
@@ -686,7 +699,8 @@ export async function postgresRoleSql(
       SELECT n.nspname::text AS schema, c.relname::text AS name
       FROM picked JOIN pg_catalog.pg_class c ON c.oid = picked.oid
       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-      ORDER BY 1, 2`
+      ORDER BY 1, 2`,
+          )
     const database = String(facts?.database ?? "")
     const version = Number(facts?.version ?? 0)
     const who = quoteIdent(role)

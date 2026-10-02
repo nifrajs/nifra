@@ -398,6 +398,7 @@ describe("query, explain, schema", () => {
       },
     })
     const codeFor = (code: string | undefined, message?: string) => {
+      // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the fake has only prepare().all(), all the engine calls on this path
       const result = querySqlite(failing(code, message) as never, "SELECT 1", CAPS)
       return isDbRefusal(result) ? result.code : undefined
     }
@@ -419,6 +420,7 @@ describe("query, explain, schema", () => {
         },
       }),
     }
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the fake has only prepare().all(), all the engine calls on this path
     const schema = readSqliteSchema(brokenCatalog as never)
     expect(isDbRefusal(schema) ? schema.code : schema).toBe("NIFRA_DB_DRIVER")
     let calls = 0
@@ -430,6 +432,7 @@ describe("query, explain, schema", () => {
         },
       }),
     }
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the fake has only prepare().all(), all the engine calls on this path
     const partial = readSqliteSchema(brokenTable as never)
     expect(isDbRefusal(partial) ? partial.code : partial).toBe("NIFRA_DB_QUERY_FAILED")
     let planned = 0
@@ -444,6 +447,7 @@ describe("query, explain, schema", () => {
         }
       },
     }
+    // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the fake has only prepare().all(), all the engine calls on this path
     const explained = explainSqlite(brokenExplain as never, "SELECT 1", CAPS)
     expect(isDbRefusal(explained) ? explained.code : explained).toBe("NIFRA_DB_TIMEOUT")
   })

@@ -97,12 +97,16 @@ export function appendDbAudit(root: string, entry: DbAuditEntry): boolean {
   }
 }
 
-const isEntry = (value: unknown): value is DbAuditEntry =>
+/** True for a line `appendDbAudit` wrote (its required fields, at least). */
+export const isDbAuditEntry = (value: unknown): value is DbAuditEntry =>
   typeof value === "object" &&
   value !== null &&
-  typeof (value as { at?: unknown }).at === "string" &&
-  typeof (value as { tool?: unknown }).tool === "string" &&
-  typeof (value as { ok?: unknown }).ok === "boolean"
+  "at" in value &&
+  typeof value.at === "string" &&
+  "tool" in value &&
+  typeof value.tool === "string" &&
+  "ok" in value &&
+  typeof value.ok === "boolean"
 
 /** The newest `limit` entries, oldest first, across the current and the rotated file. */
 export function readDbAudit(root: string, limit: number): DbAuditEntry[] {
@@ -114,7 +118,7 @@ export function readDbAudit(root: string, limit: number): DbAuditEntry[] {
       if (line.trim() === "") continue
       try {
         const parsed: unknown = JSON.parse(line)
-        if (isEntry(parsed)) entries.push(parsed)
+        if (isDbAuditEntry(parsed)) entries.push(parsed)
       } catch {
         // A torn last line from a killed writer is skipped, not fatal.
       }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { type DbRefusal, isDbRefusal } from "../src/engine.ts"
+import { isDbRefusal } from "../src/engine.ts"
 import {
   inReadOnlyTransaction,
   type PgConnection,
@@ -407,15 +407,19 @@ function fakeClient(rules: readonly Rule[], options: { reserveFails?: boolean } 
       values: () => run().then((reply) => reply.values ?? []),
     }
   }
-  const connection = ((strings: TemplateStringsArray, ...values: unknown[]) =>
-    query(
-      strings.reduce((text, part, index) => `${text}${index > 0 ? `$${index}` : ""}${part}`, ""),
-      values,
-    )) as PgConnection
-  connection.unsafe = (text: string) => query(text, [])
-  connection.release = () => {
-    log.push("release")
-  }
+  const connection: PgConnection = Object.assign(
+    (strings: TemplateStringsArray, ...values: unknown[]) =>
+      query(
+        strings.reduce((text, part, index) => `${text}${index > 0 ? `$${index}` : ""}${part}`, ""),
+        values,
+      ),
+    {
+      unsafe: (text: string) => query(text, []),
+      release: () => {
+        log.push("release")
+      },
+    },
+  )
   const client: PostgresClient = {
     reserve: async () => {
       if (options.reserveFails === true)
@@ -517,12 +521,12 @@ describe("query layers over a scripted client", () => {
       ])
       return queryPostgres(client, "SELECT 1", { ...QUERY, exclude: ["secrets", "public.audit"] })
     }
-    expect(((await scoped(plan([["public", "secrets"]]))) as DbRefusal).message).toContain(
-      "devDatabase.exclude",
-    )
-    expect(((await scoped(plan([["pg_catalog", "pg_class"]]))) as DbRefusal).message).toContain(
-      "outside the allowed schemas",
-    )
+    expect(await scoped(plan([["public", "secrets"]]))).toMatchObject({
+      message: expect.stringContaining("devDatabase.exclude"),
+    })
+    expect(await scoped(plan([["pg_catalog", "pg_class"]]))).toMatchObject({
+      message: expect.stringContaining("outside the allowed schemas"),
+    })
     expect(
       code(await scoped(plan([["public", "audit_2026"]]), [{ schema: "public", name: "audit" }])),
     ).toBe("NIFRA_DB_TABLE_EXCLUDED")
@@ -565,8 +569,10 @@ describe("query layers over a scripted client", () => {
     expect(declared.log.at(-1)).toBe("release")
     const unreachable = fakeClient([], { reserveFails: true })
     const refused = await queryPostgres(unreachable.client, "SELECT 1", QUERY)
-    expect(refused).toMatchObject({ code: "NIFRA_DB_DRIVER" })
-    expect((refused as DbRefusal).message).toStartWith("could not connect")
+    expect(refused).toMatchObject({
+      code: "NIFRA_DB_DRIVER",
+      message: expect.stringMatching(/^could not connect/),
+    })
     expect(code(await queryPostgres(unreachable.client, "DELETE FROM x", QUERY))).toBe(
       "NIFRA_DB_WRITE_REFUSED",
     )
@@ -602,7 +608,7 @@ describe("query layers over a scripted client", () => {
       analyze: true,
     })
     expect(analyzed).toMatchObject({ analyzed: true, truncated: true })
-    expect(JSON.stringify((analyzed as { plan: unknown }).plan)).not.toContain("xxxx")
+    expect(JSON.stringify(analyzed)).not.toContain("xxxx")
     const tiny = await explainPostgres(client, "SELECT * FROM orders", {
       ...QUERY,
       analyze: true,

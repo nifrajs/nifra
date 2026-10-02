@@ -60,7 +60,7 @@ export function lexPostgres(sql: string): PgLexResult {
     unterminated = true
   }
   while (i < sql.length) {
-    const char = sql[i] as string
+    const char = sql.charAt(i)
     const next = sql[i + 1]
     if (/\s/.test(char)) {
       i++
@@ -135,7 +135,7 @@ export function lexPostgres(sql: string): PgLexResult {
       } else if (next !== undefined && next >= "0" && next <= "9") {
         const start = i
         i++
-        while (i < sql.length && /[0-9]/.test(sql[i] as string)) i++
+        while (i < sql.length && /[0-9]/.test(sql.charAt(i))) i++
         tokens.push({ kind: "param", value: sql.slice(start, i), bare: false, offset: start })
       } else {
         tokens.push({ kind: "punct", value: char, bare: false, offset: i })
@@ -143,7 +143,7 @@ export function lexPostgres(sql: string): PgLexResult {
       }
     } else if (WORD_START.test(char)) {
       const start = i
-      while (i < sql.length && WORD_PART.test(sql[i] as string)) i++
+      while (i < sql.length && WORD_PART.test(sql.charAt(i))) i++
       tokens.push({ kind: "word", value: sql.slice(start, i), bare: true, offset: start })
     } else if (
       (char >= "0" && char <= "9") ||
@@ -152,10 +152,10 @@ export function lexPostgres(sql: string): PgLexResult {
       // Digits only: a letter right after a number starts a new word, so `1pg_sleep(` still shows
       // the call (older servers lex it the same way).
       const start = i
-      while (i < sql.length && /[0-9_.]/.test(sql[i] as string)) i++
+      while (i < sql.length && /[0-9_.]/.test(sql.charAt(i))) i++
       if ((sql[i] === "e" || sql[i] === "E") && /[0-9+-]/.test(sql[i + 1] ?? "")) {
         i += 2
-        while (i < sql.length && /[0-9]/.test(sql[i] as string)) i++
+        while (i < sql.length && /[0-9]/.test(sql.charAt(i))) i++
       }
       tokens.push({ kind: "number", value: sql.slice(start, i), bare: false, offset: start })
     } else {

@@ -90,9 +90,11 @@ export function isDbRefusal(value: unknown): value is DbRefusal {
   return (
     typeof value === "object" &&
     value !== null &&
-    typeof (value as { code?: unknown }).code === "string" &&
-    (value as { code: string }).code in REFUSAL_FIXES &&
-    typeof (value as { message?: unknown }).message === "string"
+    "code" in value &&
+    typeof value.code === "string" &&
+    Object.hasOwn(REFUSAL_FIXES, value.code) &&
+    "message" in value &&
+    typeof value.message === "string"
   )
 }
 

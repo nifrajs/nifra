@@ -17,6 +17,7 @@ import {
   type DbRefusalCode,
   type DbSchemaTable,
   dbRefusal,
+  isDbRefusal,
 } from "@nifrajs/mcp-db/engine"
 import { createDevFeed } from "@nifrajs/web/dev-feed"
 import type { CommandCtx, CommandSpec } from "./command-catalog.ts"
@@ -24,6 +25,7 @@ import {
   appendDbAudit,
   DB_AUDIT_FILE,
   type DbAuditEntry,
+  isDbAuditEntry,
   readDbAudit,
   sqlFingerprint,
 } from "./db-audit.ts"
@@ -71,16 +73,29 @@ function childPath(): string {
   return fileURLToPath(new URL(import.meta.url)).replace(/db-tool\.(ts|js)$/, "db-child.$1")
 }
 
+/** The answer's discriminating fields; the rest is this package's own subprocess output. */
+const isChildAnswer = (value: unknown): value is DbChildAnswer =>
+  typeof value === "object" &&
+  value !== null &&
+  "ok" in value &&
+  typeof value.ok === "boolean" &&
+  "durationMs" in value &&
+  typeof value.durationMs === "number" &&
+  (value.ok || ("refusal" in value && isDbRefusal(value.refusal)))
+
 function parseMessage(text: string): DbChildMessage | undefined {
+  let value: unknown
   try {
-    const value = JSON.parse(text) as Partial<DbChildMessage>
-    if (value.type === "ready" && typeof value.timeoutMs === "number")
-      return value as DbChildMessage
-    if (value.type === "answer" && typeof value.answer === "object" && value.answer !== null) {
-      return value as DbChildMessage
-    }
+    value = JSON.parse(text)
   } catch {
-    // Not a protocol line.
+    return undefined
+  }
+  if (typeof value !== "object" || value === null || !("type" in value)) return undefined
+  if (value.type === "ready" && "timeoutMs" in value && typeof value.timeoutMs === "number") {
+    return { type: "ready", timeoutMs: value.timeoutMs }
+  }
+  if (value.type === "answer" && "answer" in value && isChildAnswer(value.answer)) {
+    return { type: "answer", answer: value.answer }
   }
   return undefined
 }
@@ -366,21 +381,29 @@ export function renderDbOutput(out: DbToolOutput): string[] {
 // Specs
 // ---------------------------------------------------------------------------------------------------
 
-function fields(value: unknown): Record<string, unknown> {
+/** One field of a tool input, read without trusting its shape. */
+type Fields = (field: string) => unknown
+
+function fields(value: unknown): Fields {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     throw new TypeError("input must be an object")
-  return value as Record<string, unknown>
+  return (field) => Reflect.get(value, field)
 }
 
-function optional<T>(
-  raw: Record<string, unknown>,
-  field: string,
-  type: "string" | "boolean",
-): T | undefined {
-  const value = raw[field]
-  if (value === undefined) return undefined
-  if (typeof value !== type) throw new TypeError(`${field} must be a ${type}`)
-  return value as T
+function optionalString(get: Fields, field: string): string | undefined {
+  const value = get(field)
+  if (value !== undefined && typeof value !== "string") {
+    throw new TypeError(`${field} must be a string`)
+  }
+  return value
+}
+
+function optionalBoolean(get: Fields, field: string): boolean | undefined {
+  const value = get(field)
+  if (value !== undefined && typeof value !== "boolean") {
+    throw new TypeError(`${field} must be a boolean`)
+  }
+  return value
 }
 
 const DIR = {
@@ -392,9 +415,12 @@ const DIR = {
 const isDbOutput = (value: unknown): value is DbToolOutput =>
   typeof value === "object" &&
   value !== null &&
-  typeof (value as { ok?: unknown }).ok === "boolean" &&
-  typeof (value as { tool?: unknown }).tool === "string" &&
-  typeof (value as { durationMs?: unknown }).durationMs === "number"
+  "ok" in value &&
+  typeof value.ok === "boolean" &&
+  "tool" in value &&
+  typeof value.tool === "string" &&
+  "durationMs" in value &&
+  typeof value.durationMs === "number"
 
 const OUTPUT = {
   version: 1,
@@ -439,9 +465,9 @@ export const dbSchemaSpec: CommandSpec<DbSchemaInput, DbToolOutput> = {
     parse: (value) => {
       const raw = fields(value)
       return {
-        table: optional<string>(raw, "table", "string"),
-        dir: optional<string>(raw, "dir", "string"),
-        json: optional<boolean>(raw, "json", "boolean"),
+        table: optionalString(raw, "table"),
+        dir: optionalString(raw, "dir"),
+        json: optionalBoolean(raw, "json"),
       }
     },
   },
@@ -491,17 +517,16 @@ export const dbQuerySpec: CommandSpec<DbQueryInput, DbToolOutput> = {
     },
     parse: (value) => {
       const raw = fields(value)
-      const sql = optional<string>(raw, "sql", "string")
+      const sql = optionalString(raw, "sql")
       if (sql === undefined || sql.trim() === "")
         throw new TypeError("sql must be a non-empty string")
-      const analyze = optional<boolean>(raw, "analyze", "boolean")
+      const analyze = optionalBoolean(raw, "analyze")
       return {
         sql,
-        explain:
-          optional<boolean>(raw, "explain", "boolean") ?? (analyze === true ? true : undefined),
+        explain: optionalBoolean(raw, "explain") ?? (analyze === true ? true : undefined),
         analyze,
-        dir: optional<string>(raw, "dir", "string"),
-        json: optional<boolean>(raw, "json", "boolean"),
+        dir: optionalString(raw, "dir"),
+        json: optionalBoolean(raw, "json"),
       }
     },
   },
@@ -548,8 +573,8 @@ export const dbRoleSpec: CommandSpec<DbRoleInput, DbToolOutput> = {
     parse: (value) => {
       const raw = fields(value)
       return {
-        dir: optional<string>(raw, "dir", "string"),
-        json: optional<boolean>(raw, "json", "boolean"),
+        dir: optionalString(raw, "dir"),
+        json: optionalBoolean(raw, "json"),
       }
     },
   },
@@ -599,16 +624,17 @@ export const dbAuditSpec: CommandSpec<DbAuditInput, DbAuditOutput> = {
     },
     parse: (value) => {
       const raw = fields(value)
-      const limit = raw.limit
+      const limit = raw("limit")
       if (
         limit !== undefined &&
         (typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1)
-      )
+      ) {
         throw new TypeError("limit must be a positive integer")
+      }
       return {
-        limit: limit === undefined ? undefined : Math.min(limit as number, MAX_AUDIT_LIMIT),
-        dir: optional<string>(raw, "dir", "string"),
-        json: optional<boolean>(raw, "json", "boolean"),
+        limit: typeof limit === "number" ? Math.min(limit, MAX_AUDIT_LIMIT) : undefined,
+        dir: optionalString(raw, "dir"),
+        json: optionalBoolean(raw, "json"),
       }
     },
   },
@@ -621,9 +647,12 @@ export const dbAuditSpec: CommandSpec<DbAuditInput, DbAuditOutput> = {
     },
     parse: (value) => {
       const raw = fields(value)
-      if (typeof raw.file !== "string" || !Array.isArray(raw.entries))
+      const file = raw("file")
+      const entries = raw("entries")
+      if (typeof file !== "string" || !Array.isArray(entries) || !entries.every(isDbAuditEntry)) {
         throw new TypeError("db-audit output must carry file and entries")
-      return value as DbAuditOutput
+      }
+      return { file, entries }
     },
   },
   transports: ["cli"],

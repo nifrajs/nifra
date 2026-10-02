@@ -145,8 +145,11 @@ export async function openReadOnlySqlite(file: string): Promise<Database> {
     return probe(readonly)
   } catch (error) {
     readonly.close()
-    const code = (error as { code?: unknown }).code
-    if (code !== "SQLITE_CANTOPEN" || !isWalDatabase(file) || existsSync(`${file}-wal`)) {
+    if (
+      sqliteCode(error) !== "SQLITE_CANTOPEN" ||
+      !isWalDatabase(file) ||
+      existsSync(`${file}-wal`)
+    ) {
       throw error
     }
   }
@@ -166,10 +169,10 @@ export function sqliteRelations(
 ): { readonly all: ReadonlySet<string>; readonly exposed: ReadonlySet<string> } {
   const excluded = new Set(exclude.map((name) => name.toLowerCase()))
   const rows = db
-    .prepare(
+    .prepare<{ name: string }, []>(
       "SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'",
     )
-    .all() as { name: string }[]
+    .all()
   const all = new Set(rows.map((row) => row.name.toLowerCase()))
   return { all, exposed: new Set([...all].filter((name) => !excluded.has(name))) }
 }
@@ -177,9 +180,13 @@ export function sqliteRelations(
 const SQLITE_WRITE_SYNTAX =
   /near "(insert|update|delete|replace|create|drop|alter|attach|detach|pragma|vacuum|reindex|analyze|begin|commit|rollback|savepoint|release)": syntax error/i
 
+/** The `SQLITE_*` code bun:sqlite puts on an error, if any. */
+const sqliteCode = (error: unknown): unknown =>
+  typeof error === "object" && error !== null && "code" in error ? error.code : undefined
+
 /** Map a SQLite error to a refusal: a write the engine rejected is a refusal, not a failure. */
 function sqliteFailure(error: unknown, context: string): DbRefusal {
-  const code = (error as { code?: unknown } | null)?.code
+  const code = sqliteCode(error)
   const message = `${context}: ${error instanceof Error ? error.message : String(error)}`
   if (typeof code === "string") {
     if (code.startsWith("SQLITE_READONLY") || code === "SQLITE_AUTH") {
@@ -257,14 +264,14 @@ const READ_OPCODES = new Set(["OpenRead", "ReopenIdx", "OpenWrite", "VOpen"])
 function bytecodeReads(db: Pick<Database, "prepare">, query: string): string[] {
   const pages = new Map<number, string>([[1, "sqlite_master"]])
   const catalog = db
-    .prepare("SELECT tbl_name AS name, rootpage FROM sqlite_master WHERE rootpage > 0")
-    .all() as { name: string; rootpage: number | bigint }[]
+    .prepare<{ name: string; rootpage: number | bigint }, []>(
+      "SELECT tbl_name AS name, rootpage FROM sqlite_master WHERE rootpage > 0",
+    )
+    .all()
   for (const entry of catalog) pages.set(Number(entry.rootpage), entry.name)
-  const program = db.prepare(`EXPLAIN ${query}`).all() as {
-    opcode: string
-    p2: number | bigint
-    p3: number | bigint
-  }[]
+  const program = db
+    .prepare<{ opcode: string; p2: number | bigint; p3: number | bigint }, []>(`EXPLAIN ${query}`)
+    .all()
   const reads = new Set<string>()
   for (const step of program) {
     if (!READ_OPCODES.has(step.opcode)) continue
@@ -283,8 +290,8 @@ function bytecodeReads(db: Pick<Database, "prepare">, query: string): string[] {
 /**
  * Run one read-only query: the statement gates, the check that every table its bytecode opens is
  * exposed (every table and view minus `exclude`), then at most `maxRows + 1` rows through
- * {@link shapeRows}. Synchronous: run it where the
- * caller can stop the process (the CLI runs each call in its own subprocess, killed at the deadline).
+ * {@link shapeRows}. Synchronous: run it where the caller can stop the process (the CLI runs each
+ * call in its own subprocess, killed at the deadline).
  */
 export function querySqlite(
   db: Pick<Database, "prepare">,
@@ -295,7 +302,7 @@ export function querySqlite(
   if (!("ok" in verified)) return verified
   try {
     const statement = db.prepare(boundedSqliteQuery(verified.query, options.maxRows))
-    const rows = statement.values() as unknown[][]
+    const rows = statement.values()
     const columns = [...statement.columnNames]
     statement.finalize()
     return shapeRows(columns, rows, options)
@@ -313,11 +320,11 @@ export function explainSqlite(
   const verified = verifySqlite(db, sql, options.exclude)
   if (!("ok" in verified)) return verified
   try {
-    const plan = db.prepare(`EXPLAIN QUERY PLAN ${verified.query}`).all() as {
-      id: number | bigint
-      parent: number | bigint
-      detail: string
-    }[]
+    const plan = db
+      .prepare<{ id: number | bigint; parent: number | bigint; detail: string }, []>(
+        `EXPLAIN QUERY PLAN ${verified.query}`,
+      )
+      .all()
     const steps = plan.map(({ id, parent, detail }) => ({
       id: Number(id),
       parent: Number(parent),
@@ -336,11 +343,26 @@ export function explainSqlite(
 
 const quoteSqliteIdentifier = (name: string): string => `"${name.replaceAll('"', '""')}"`
 
+interface SqliteColumnRow {
+  readonly name: string
+  readonly type: string
+  readonly required: number | bigint
+  readonly dflt: string | null
+  readonly pk: number | bigint
+}
+
+interface SqliteForeignKeyRow {
+  readonly id: number | bigint
+  readonly ref: string
+  readonly col: string
+  readonly refcol: string | null
+}
+
 /** Options for {@link readSqliteSchema}. */
 export interface SqliteSchemaOptions {
   readonly exclude?: readonly string[]
   /** Describe only this table or view. */
-  readonly table?: string
+  readonly table?: string | undefined
   readonly redaction?: DbRedaction
 }
 
@@ -358,10 +380,10 @@ export function readSqliteSchema(
   let entries: { name: string; type: "table" | "view" }[]
   try {
     entries = db
-      .prepare(
+      .prepare<{ name: string; type: "table" | "view" }, []>(
         "SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name",
       )
-      .all() as { name: string; type: "table" | "view" }[]
+      .all()
   } catch (error) {
     return sqliteFailure(error, "could not read the schema")
   }
@@ -378,26 +400,15 @@ export function readSqliteSchema(
     for (const entry of exposed) {
       if (wanted !== undefined && entry.name.toLowerCase() !== wanted) continue
       const columns = db
-        .prepare(
+        .prepare<SqliteColumnRow, [string]>(
           'SELECT name, type, "notnull" AS required, dflt_value AS dflt, pk FROM pragma_table_info(?) ORDER BY cid',
         )
-        .all(entry.name) as {
-        name: string
-        type: string
-        required: number | bigint
-        dflt: string | null
-        pk: number | bigint
-      }[]
+        .all(entry.name)
       const keys = db
-        .prepare(
+        .prepare<SqliteForeignKeyRow, [string]>(
           'SELECT id, "table" AS ref, "from" AS col, "to" AS refcol FROM pragma_foreign_key_list(?) ORDER BY id, seq',
         )
-        .all(entry.name) as {
-        id: number | bigint
-        ref: string
-        col: string
-        refcol: string | null
-      }[]
+        .all(entry.name)
       const foreignKeys = new Map<number, { columns: string[]; table: string; refs: string[] }>()
       for (const key of keys) {
         const id = Number(key.id)
@@ -406,25 +417,29 @@ export function readSqliteSchema(
         if (key.refcol !== null) fk.refs.push(key.refcol)
         foreignKeys.set(id, fk)
       }
-      const indexes = (
-        db
-          .prepare('SELECT name, "unique" AS uniq FROM pragma_index_list(?) ORDER BY seq')
-          .all(entry.name) as { name: string; uniq: number | bigint }[]
-      ).map((index) => ({
-        name: index.name,
-        unique: Number(index.uniq) === 1,
-        columns: (
-          db.prepare("SELECT name FROM pragma_index_info(?) ORDER BY seqno").all(index.name) as {
-            name: string | null
-          }[]
-        ).map((column) => column.name ?? "<expression>"),
-      }))
+      const indexes = db
+        .prepare<{ name: string; uniq: number | bigint }, [string]>(
+          'SELECT name, "unique" AS uniq FROM pragma_index_list(?) ORDER BY seq',
+        )
+        .all(entry.name)
+        .map((index) => ({
+          name: index.name,
+          unique: Number(index.uniq) === 1,
+          columns: db
+            .prepare<{ name: string | null }, [string]>(
+              "SELECT name FROM pragma_index_info(?) ORDER BY seqno",
+            )
+            .all(index.name)
+            .map((column) => column.name ?? "<expression>"),
+        }))
       let rowEstimate: number | null = null
       if (entry.type === "table") {
         // nifra-expect sql-dynamic: the table name comes from sqlite_master, quoted as an identifier
         const counted = db
-          .prepare(`SELECT count(*) AS n FROM ${quoteSqliteIdentifier(entry.name)}`)
-          .all() as { n: number | bigint }[]
+          .prepare<{ n: number | bigint }, []>(
+            `SELECT count(*) AS n FROM ${quoteSqliteIdentifier(entry.name)}`,
+          )
+          .all()
         rowEstimate = counted[0] === undefined ? null : Number(counted[0].n)
       }
       tables.push({
