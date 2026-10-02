@@ -87,6 +87,11 @@
       "types": "./dist/zones.d.ts",
       "default": "./dist/zones.js"
     },
+    "./route-types": {
+      "bun": "./src/route-types.ts",
+      "types": "./dist/route-types.d.ts",
+      "default": "./dist/route-types.js"
+    },
     "./backend-only": {
       "bun": "./src/backend-only.ts",
       "types": "./dist/backend-only.d.ts",

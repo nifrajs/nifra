@@ -1,7 +1,8 @@
 /**
- * `@nifrajs/ts-plugin` - a TypeScript language-service plugin. It adds ONE thing to the editor:
- * go-to-definition on a route-path string literal jumps to the `routes/` file that serves it, so
- * `navigate({ to: "/orders" })`, `<Link to="/orders">`, or `href="/orders"` are click-through.
+ * `@nifrajs/ts-plugin` - a TypeScript language-service plugin. It adds two things to the editor:
+ * - go-to-definition on a route-path string literal jumps to the `routes/` file that serves it, so
+ *   `navigate({ to: "/orders" })`, `<Link to="/orders">`, or `href="/orders"` are click-through;
+ * - the frontend/backend zone rules as errors on the import that breaks them (see ./zones.ts).
  *
  * Wire it up in a project's tsconfig:
  * ```json
@@ -10,13 +11,14 @@
  *
  * The routing rules are nifra's own: it discovers routes with `@nifrajs/web`'s `discoverRoutes` and
  * matches with `@nifrajs/core`'s pattern matcher (see ./resolve.ts), so a path resolves to exactly the
- * file it would serve at runtime. The plugin only wires that into `getDefinitionAndBoundSpan`.
+ * file it would serve at runtime; the zone rules are `@nifrajs/web/zones`, the builds' own classifier.
  */
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { dirname, isAbsolute, join, resolve } from "node:path"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import type * as ts from "typescript"
 import { resolveRouteFile } from "./resolve.ts"
+import { zoneDiagnostics } from "./zones.ts"
 
 /** Walk up from a source file to the nearest directory that has a `routes/` folder - the app root. */
 export function findRoutesDir(
@@ -324,6 +326,18 @@ function init(modules: { typescript: typeof ts }): ts.server.PluginModule {
             ? undefined
             : ls.getDefinitionAndBoundSpan(source.fileName, position)
         })()
+      proxy.getSemanticDiagnostics = (fileName) => {
+        const source = programSourceFile(tsm, ls.getProgram(), fileName)
+        const own = ls.getSemanticDiagnostics(source?.fileName ?? fileName)
+        const routesDir = source === undefined ? undefined : findRoutesDir(source.fileName)
+        if (source === undefined || routesDir === undefined) return own
+        try {
+          const options = ls.getProgram()?.getCompilerOptions() ?? {}
+          return [...own, ...zoneDiagnostics(tsm, source, dirname(routesDir), options)]
+        } catch {
+          return own // the build enforces the rules; an editor assist must never break diagnostics
+        }
+      }
       return proxy
     },
   }

@@ -105,6 +105,9 @@ async function typecheck(cwd: string, signal?: AbortSignal): Promise<TypecheckRe
   const tsconfig = join(cwd, "tsconfig.json")
   if (!(await Bun.file(tsconfig).exists()))
     return { ran: false, ok: true, note: "no tsconfig.json" }
+  // Routes import their generated `./+types` modules; bring them up to date before tsc reads them.
+  const { refreshRouteTypes } = await import("./route-types.ts")
+  refreshRouteTypes(cwd, () => {})
   const tscBin = resolveTscBin(cwd)
   if (tscBin === undefined) {
     return {

@@ -12637,6 +12637,13 @@
     "doc": "/** Output formats nifra's endpoint can emit. AVIF is intentionally excluded - `Bun.Image` reports\n * `ERR_IMAGE_FORMAT_UNSUPPORTED` for AVIF encode on common platforms, so offering it would 500. */"
   },
   {
+    "name": "OutputOf",
+    "kind": "type",
+    "package": "@nifrajs/client",
+    "signature": "export type OutputOf<Module, Name extends string> = Module extends {\n    readonly [K in Name]: infer S;\n} ? S extends StandardSchemaV1 ? InferOutput<S> : never : null;",
+    "doc": "/**\n * What a route module's output schema lets through to the browser: the output type of its `Name`\n * export (`loaderOutput`, `actionOutput`), or `null` when the module declares none - a loader without\n * one sends no data.\n */"
+  },
+  {
     "name": "OwnedEffectContext",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -14498,6 +14505,13 @@
   {
     "name": "Register",
     "kind": "interface",
+    "package": "@nifrajs/client",
+    "signature": "export interface Register {\n}",
+    "doc": "/**\n * The app's registered types. `nifra types` writes `.nifra/types/register.d.ts`, which fills it in\n * from `backend/app.ts`, so a route's generated `Route.LoaderArgs` types `api` without the route\n * importing the backend:\n *\n *     declare module \"@nifrajs/client\" { interface Register { backend: typeof backend } }\n *\n * `env` may be registered the same way, for the platform bindings `ctx.env` carries.\n */"
+  },
+  {
+    "name": "Register",
+    "kind": "interface",
     "package": "@nifrajs/i18n",
     "signature": "export interface Register {\n}",
     "doc": "/**\n * The app's catalog type, declared once so every `t()` key is checked. Empty by default (keys are\n * plain strings). Augment it with the default locale's catalog:\n *\n * ```ts\n * import type en from \"./messages/en.json\"\n *\n * declare module \"@nifrajs/i18n\" {\n *   interface Register {\n *     messages: typeof en\n *   }\n * }\n * ```\n *\n * With that, `useT().t(\"home.titel\")` is a compile error, and other locales' catalogs are checked\n * against {@link Translation}.\n */"
@@ -14508,6 +14522,20 @@
     "package": "@nifrajs/web",
     "signature": "export declare function registerBlocker(shouldBlock: BlockerFunction, onChange: (blocker: Blocker) => void): () => void;",
     "doc": "/**\n * Register a navigation guard, returning an unregister function. `onChange` is called with the current\n * {@link Blocker} whenever its state changes (so the adapter can re-render its confirmation UI). Before\n * `installHistory` has run (SSR, pre-hydration), there's no controller: registration is a no-op and the\n * caller stays on {@link IDLE_BLOCKER}, degrading to native navigation. Called by an adapter's\n * `useBlocker`, not by app code directly.\n */"
+  },
+  {
+    "name": "RegisteredBackend",
+    "kind": "type",
+    "package": "@nifrajs/client",
+    "signature": "export type RegisteredBackend = Register extends {\n    readonly backend: infer Backend;\n} ? Backend : unknown;",
+    "doc": "/** The registered backend (`Register[\"backend\"]`), or `unknown` before one is registered. */"
+  },
+  {
+    "name": "RegisteredEnv",
+    "kind": "type",
+    "package": "@nifrajs/client",
+    "signature": "export type RegisteredEnv = Register extends {\n    readonly env: infer Env;\n} ? Env : unknown;",
+    "doc": "/** The registered platform bindings (`Register[\"env\"]`), or `unknown`. */"
   },
   {
     "name": "RegisteredMessages",
@@ -15946,6 +15974,13 @@
     "doc": "/** Hard budget for the offline route-language intersection. Never use this on the request path. */"
   },
   {
+    "name": "ROUTE_TYPES_DIR",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const ROUTE_TYPES_DIR = \".nifra/types\";",
+    "doc": "/** Where the generated types live, relative to the app root. */"
+  },
+  {
     "name": "RouteBody",
     "kind": "type",
     "package": "@nifrajs/web",
@@ -16061,6 +16096,13 @@
     "package": "@nifrajs/middleware",
     "signature": "export interface RouteLike {\n    readonly method: string;\n    readonly path: string;\n    readonly schema?: {\n        readonly body?: unknown;\n        readonly query?: unknown;\n        readonly response?: unknown;\n    } | undefined;\n}",
     "doc": "/** A registered route as seen by {@link buildOpenApiDocument} - structurally a `@nifrajs/core`\n * `RouteDescriptor` (so `app.routes()` is passed straight through). */"
+  },
+  {
+    "name": "RouteLoaderArgs",
+    "kind": "type",
+    "package": "@nifrajs/client",
+    "signature": "export type RouteLoaderArgs<Params, Search = undefined> = Omit<LoaderArgs<RegisteredBackend, RegisteredEnv, Search>, \"params\"> & {\n    readonly params: Params;\n};",
+    "doc": "/** A route's loader or action context: its own `params`, and `api` typed by the registered backend. */"
   },
   {
     "name": "RouteLocation",
@@ -16264,6 +16306,25 @@
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface RouteSnapshotSchema {\n    readonly headers?: SchemaSnapshot;\n    readonly cookies?: SchemaSnapshot;\n    readonly body?: SchemaSnapshot;\n    readonly query?: SchemaSnapshot;\n    readonly params?: SchemaSnapshot;\n    readonly response?: SchemaSnapshot;\n    readonly sse?: SchemaSnapshot;\n    readonly errors?: Readonly<Record<string, SchemaSnapshot>>;\n}"
+  },
+  {
+    "name": "routeTypeFiles",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function routeTypeFiles(options: RouteTypesOptions): ReadonlyMap<string, string>;",
+    "doc": "/** Every generated types file for the app, by absolute path. */"
+  },
+  {
+    "name": "RouteTypesOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface RouteTypesOptions {\n    /** The app root: where `.nifra/` and `backend/app.ts` live. */\n    readonly appRoot: string;\n    /** The routes directory. Defaults to `<appRoot>/routes`. */\n    readonly routesDir?: string;\n}"
+  },
+  {
+    "name": "RouteTypesResult",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface RouteTypesResult {\n    /** Files written because they were missing or out of date. */\n    readonly written: readonly string[];\n    /** Files removed because no route generates them any more. */\n    readonly removed: readonly string[];\n}"
   },
   {
     "name": "rpcError",
@@ -17247,6 +17308,13 @@
     "package": "@nifrajs/web-vue",
     "signature": "export declare const SearchProvider: import(\"vue\").DefineComponent<import(\"vue\").ExtractPropTypes<{\n    value: {\n        type: ObjectConstructor;\n        required: true;\n    };\n}>, () => import(\"vue\").VNode<import(\"vue\").RendererNode, import(\"vue\").RendererElement, {\n    [key: string]: any;\n}>[] | undefined, {}, {}, {}, import(\"vue\").ComponentOptionsMixin, import(\"vue\").ComponentOptionsMixin, {}, string, import(\"vue\").PublicProps, Readonly<import(\"vue\").ExtractPropTypes<{\n    value: {\n        type: ObjectConstructor;\n        required: true;\n    };\n}>> & Readonly<{}>, {}, {}, {}, {}, string, import(\"vue\").ComponentProvideOptions, true, {}, any>;",
     "doc": "/**\n * The provider `compose` wraps the layout tree in. It `provide`s a `computed` view of its `value` prop,\n * so as the mount re-renders with each navigation's search the injected ref updates reactively (setup\n * runs once, but the computed keeps tracking the prop). Renders its default slot (the folded chain).\n */"
+  },
+  {
+    "name": "SearchSchemaOf",
+    "kind": "type",
+    "package": "@nifrajs/client",
+    "signature": "export type SearchSchemaOf<Module> = Module extends {\n    readonly searchSchema: infer S;\n} ? S : undefined;",
+    "doc": "/** The `searchSchema` a route's frontend half declares, or `undefined`. */"
   },
   {
     "name": "securityBaseline",
@@ -18481,6 +18549,13 @@
     "kind": "class",
     "package": "@nifrajs/cli",
     "signature": "export declare class StaleBuildError extends Error {\n    readonly freshness: BuildFreshness;\n    constructor(freshness: BuildFreshness);\n}"
+  },
+  {
+    "name": "staleRouteTypes",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function staleRouteTypes(options: RouteTypesOptions): readonly string[];",
+    "doc": "/** Generated files missing or different on disk, and files on disk the app no longer generates. */"
   },
   {
     "name": "StandardFailure",
@@ -21317,6 +21392,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function writeDevFiles(options: WriteDevFilesOptions): void;",
     "doc": "/**\n * Generate the client entry + the HTML route that carries it.\n *\n * Route specifiers are written **relative to the entry file**, not root-relative as the Vite path writes\n * them: Vite resolves `/routes/x.tsx` against its configured root, while Bun's bundler resolves an import\n * the way the runtime does, so a leading slash there would mean the filesystem root.\n */"
+  },
+  {
+    "name": "writeRouteTypes",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function writeRouteTypes(options: RouteTypesOptions): RouteTypesResult;",
+    "doc": "/**\n * Bring `.nifra/types` up to date with the app's routes. Unchanged files are left alone, so an\n * editor watching them sees only real changes. Owns the directory: anything else in it is removed.\n */"
   },
   {
     "name": "WsCallOptions",

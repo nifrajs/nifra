@@ -25,7 +25,7 @@ Browser-safe, end-to-end-typed client for @nifrajs/core servers (Eden-style prox
 - **LoaderArgs** _(interface)_ - `interface LoaderArgs<Api, Env = unknown, Search = undefined>`
 - **LoaderResponseControls** _(interface)_ - `interface LoaderResponseControls`
 
-_…and 16 more - see [`api-reference.md`](../../api-reference.md#nifrajsclient) for the complete list._
+_…and 22 more - see [`api-reference.md`](../../api-reference.md#nifrajsclient) for the complete list._
 
 ## Footguns
 

@@ -25,6 +25,7 @@ import type { LayoutMigrationResult } from "./migrate-layout.ts"
 import { collectPortResult, type PortResult, renderReport } from "./port.ts"
 import type { ReplayResult } from "./replay.ts"
 import { reviewSpec } from "./review.ts"
+import type { RouteTypesReport } from "./route-types.ts"
 import type { SmokeReport } from "./smoke.ts"
 import type { StylexMigrationResult } from "./stylex-migrate.ts"
 import {
@@ -333,6 +334,12 @@ interface MigrateInput {
   readonly from?: "tailwind" | undefined
   readonly to?: "stylex" | undefined
   readonly write?: boolean | undefined
+  readonly json?: boolean | undefined
+  readonly dir?: string | undefined
+}
+
+interface TypesInput {
+  readonly check?: boolean | undefined
   readonly json?: boolean | undefined
   readonly dir?: string | undefined
 }
@@ -697,6 +704,17 @@ const MIGRATE_SCHEMA = input<MigrateInput>(
     if (from !== "tailwind") throw new TypeError("from must be tailwind")
     if (to !== "stylex") throw new TypeError("to must be stylex")
     return { from, to, ...flags }
+  },
+)
+
+const TYPES_SCHEMA = input<TypesInput>(
+  objectSchema({ check: { type: "boolean" }, json: { type: "boolean" }, dir: { type: "string" } }),
+  (value) => {
+    const raw = withDir(record(value))
+    return {
+      ...parseBooleanFlags(raw, ["check", "json"]),
+      ...(raw.dir === undefined ? {} : { dir: raw.dir }),
+    }
   },
 )
 
@@ -1405,6 +1423,48 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
   success: (out) => out.ok,
 }
 
+const typesSpec: CommandSpec<TypesInput, RouteTypesReport> = {
+  name: "types",
+  summary:
+    "Generate each route's `./+types` module (params, schema-typed data, typed `api`); `--check` fails when one is stale.",
+  input: TYPES_SCHEMA,
+  output: output({
+    type: "object",
+    properties: {
+      ok: { type: "boolean" },
+      check: { type: "boolean" },
+      written: { type: "array" },
+      removed: { type: "array" },
+      stale: { type: "array" },
+      tsconfig: { type: "string" },
+    },
+    required: ["ok", "check", "written", "removed", "stale"],
+  }),
+  transports: ["cli"],
+  stability: "stable",
+  argv: {
+    flags: [
+      { name: "check", field: "check", type: "boolean" },
+      { name: "json", field: "json", type: "boolean" },
+      { name: "dir", field: "dir", type: "string" },
+    ],
+  },
+  async run(value, ctx) {
+    const { routeTypes } = await import("./route-types.ts")
+    return routeTypes(resolve(ctx.cwd, value.dir ?? "."), { check: value.check === true })
+  },
+  render: (out) => [
+    out.check
+      ? out.ok
+        ? "✓ route types are up to date"
+        : `✖ ${out.stale.length} route type file${out.stale.length === 1 ? " is" : "s are"} stale - run \`nifra types\``
+      : `✓ route types: ${out.written.length} written, ${out.removed.length} removed`,
+    ...out.stale.map((file) => `  stale ${file}`),
+    ...(out.tsconfig === undefined ? [] : [`  ⚠ ${out.tsconfig}`]),
+  ],
+  success: (out) => out.ok,
+}
+
 const snapshotSpec: CommandSpec<SnapshotInput, SnapshotCommandOutput> = {
   name: "snapshot",
   summary: "Write the backend API contract as a versioned JSON baseline.",
@@ -1702,6 +1762,7 @@ export const commandSpecs = Object.freeze([
   doctorSpec,
   fixSpec,
   migrateSpec,
+  typesSpec,
   snapshotSpec,
   diffSpec,
   contractsSpec,

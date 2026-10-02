@@ -98,7 +98,7 @@ For an LLM implementing with nifra with no prior training data, read **[llms-ful
 - `@nifrajs/skills` - Agent skills for nifra - portable SKILL.md bundles that teach a coding agent Nifra's contracts, boundaries, and CI gates, and point it at the live MCP server instead of stale recall.
 - `@nifrajs/storage` - Blob storage mechanics for nifra - traversal-safe memory, filesystem, and R2 adapters, optional provider capabilities, and executable adapter conformance.
 - `@nifrajs/testing` - Contract-derived adversarial tests, runtime-matrix response conformance, and cookie-aware in-process sessions for Nifra apps.
-- `@nifrajs/ts-plugin` - TypeScript language-service plugin for nifra - go-to-definition from a route-path string literal to the routes/ file that serves it.
+- `@nifrajs/ts-plugin` - TypeScript language-service plugin for nifra - go-to-definition from a route-path string literal to the routes/ file that serves it, and the frontend/backend zone rules as editor errors.
 - `@nifrajs/uploads` - File-upload hardening for nifra - magic-byte MIME detection, size + type validation, short-TTL signed download URLs, and EXIF/metadata stripping. Dependency-free, edge-safe.
 - `@nifrajs/web` - Framework-agnostic SSR core for nifra - the render seam + HTML document orchestration.
 - `@nifrajs/web-preact` - Preact render adapter for @nifrajs/web - streaming SSR + hydration (no build plugin).

@@ -10,7 +10,8 @@
     "skipLibCheck": true,
     "noEmit": true,
     "verbatimModuleSyntax": true,
-    "types": ["bun", "react", "react-dom"]
+    "types": ["bun", "react", "react-dom"],
+    "rootDirs": [".", "./.nifra/types"]
   },
   "include": ["**/*.ts", "**/*.tsx"],
   "exclude": [

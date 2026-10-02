@@ -112,6 +112,8 @@ export function renderTsconfig(framework: FrameworkSpec): string {
       noEmit: true,
       verbatimModuleSyntax: true,
       types: ["bun", ...(ts.types ?? [])],
+      // Merges the generated `.nifra/types` tree in, so a route imports its types as `./+types/<name>`.
+      rootDirs: [".", "./.nifra/types"],
     },
     include: ts.includeTsx === false ? ["**/*.ts"] : ["**/*.ts", "**/*.tsx"],
     exclude: EXCLUDE,

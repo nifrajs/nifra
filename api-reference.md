@@ -904,18 +904,30 @@ Every public export of every package and documented subpath - name, kind, signat
   The (awaited) return of a `loader`, for typing a page component's `data` prop.
 - **LoaderResponseControls** _(interface)_ - `interface LoaderResponseControls`
   Response controls a loader or action reaches as `ctx.set` - the page counterpart of a route handler's `c.set`. Write before the loader or action returns; a write from a deferred promise that settles later throws.
+- **OutputOf** _(type)_ - `type OutputOf<Module, Name extends string> = Module extends { readonly [K in Name]: infer S } ? S extends StandardSchemaV1 ? InferOutput<S> : never : null`
+  What a route module's output schema lets through to the browser: the output type of its `Name` export (`loaderOutput`, `actionOutput`), or `null` when the module declares none - a loader without one sends no data.
 - **RESERVED_EXACT_KEYS** _(const)_ - `RESERVED_EXACT_KEYS: readonly ["subscribe", "ws", "index", "then"]`
   Intercepted by exact match: `subscribe`/`ws` are transports, `index` is `/`, `then` is the await guard.
 - **RESERVED_KEY_READOUT** _(const)_ - `RESERVED_KEY_READOUT: string`
   Human-readable readout of the closed set, for diagnostics that have to teach it.
 - **RESERVED_VERB_KEYS** _(const)_ - `RESERVED_VERB_KEYS: readonly ["get", "post", "put", "patch", "delete", "head", "options"]`
   Intercepted case-insensitively: `/api/Delete` collides just as `/api/delete` does.
+- **Register** _(interface)_ - `interface Register`
+  The app's registered types. `nifra types` writes `.nifra/types/register.d.ts`, which fills it in from `backend/app.ts`, so a route's generated `Route.LoaderArgs` types `api` without the route importing the backend:
+- **RegisteredBackend** _(type)_ - `type RegisteredBackend = Register extends { readonly backend: infer Backend } ? Backend : unknown`
+  The registered backend (`Register["backend"]`), or `unknown` before one is registered.
+- **RegisteredEnv** _(type)_ - `type RegisteredEnv = Register extends { readonly env: infer Env } ? Env : unknown`
+  The registered platform bindings (`Register["env"]`), or `unknown`.
 - **RegistryOf** _(type)_ - `type RegistryOf<App> = App extends Server<infer R, infer _Ctx> ? R : never`
   Extract the accumulated route registry from a server's type (`typeof app`), ignoring its middleware context.
 - **ResponseContractViolation** _(class)_ - `class ResponseContractViolation`
   A response body that broke its route's declared contract. Thrown THROUGH the "never throws" client on purpose: this is a test assertion about the server's honesty, not a call outcome the caller should branch on - swallowing it into a `Result` would let the drift pass the test.
 - **Result** _(type)_ - `type Result<Data, Errors = unknown, Responses = unknown>`
   The outcome of a client call. The client never throws - inspect `ok` to branch.
+- **RouteLoaderArgs** _(type)_ - `type RouteLoaderArgs<Params, Search = undefined> = Omit< LoaderArgs<RegisteredBackend, RegisteredEnv, Search>, "params" > & { readonly params: Params }`
+  A route's loader or action context: its own `params`, and `api` typed by the registered backend.
+- **SearchSchemaOf** _(type)_ - `type SearchSchemaOf<Module> = Module extends { readonly searchSchema: infer S } ? S : undefined`
+  The `searchSchema` a route's frontend half declares, or `undefined`.
 - **SubscribeOptions** _(interface)_ - `interface SubscribeOptions<I extends RouteInfo>`
 - **Subscription** _(interface)_ - `interface Subscription`
 - **TestClientOptions** _(interface)_ - `interface TestClientOptions`
@@ -5517,6 +5529,19 @@ _No named exports (side-effect entrypoint)._
   Render the manifest as a readable report - the `nifra routes --modes` output.
 - **shadowedPages** _(function)_ - `shadowedPages: (manifest: Pick<Manifest, "routes" | "notFounds">, mountPaths: readonly string[]) => readonly ShadowedPage[]`
   The page routes and nested `_404` scopes that sit under one of `mountPaths`, in manifest order. Paths are normalized here; one the server would refuse is skipped.
+
+### `@nifrajs/web/route-types`
+
+- **ROUTE_TYPES_DIR** _(const)_ - `ROUTE_TYPES_DIR: ".nifra/types"`
+  Where the generated types live, relative to the app root.
+- **RouteTypesOptions** _(interface)_ - `interface RouteTypesOptions`
+- **RouteTypesResult** _(interface)_ - `interface RouteTypesResult`
+- **routeTypeFiles** _(function)_ - `routeTypeFiles: (options: RouteTypesOptions) => ReadonlyMap<string, string>`
+  Every generated types file for the app, by absolute path.
+- **staleRouteTypes** _(function)_ - `staleRouteTypes: (options: RouteTypesOptions) => readonly string[]`
+  Generated files missing or different on disk, and files on disk the app no longer generates.
+- **writeRouteTypes** _(function)_ - `writeRouteTypes: (options: RouteTypesOptions) => RouteTypesResult`
+  Bring `.nifra/types` up to date with the app's routes. Unchanged files are left alone, so an editor watching them sees only real changes. Owns the directory: anything else in it is removed.
 
 ### `@nifrajs/web/service-worker`
 

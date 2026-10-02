@@ -259,6 +259,10 @@ console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dis
       "bun",
       "react",
       "react-dom"
+    ],
+    "rootDirs": [
+      ".",
+      "./.nifra/types"
     ]
   },
   "include": [
@@ -546,6 +550,10 @@ console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dis
     "verbatimModuleSyntax": true,
     "types": [
       "bun"
+    ],
+    "rootDirs": [
+      ".",
+      "./.nifra/types"
     ]
   },
   "include": [
@@ -867,6 +875,10 @@ console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dis
     "verbatimModuleSyntax": true,
     "types": [
       "bun"
+    ],
+    "rootDirs": [
+      ".",
+      "./.nifra/types"
     ]
   },
   "include": [
@@ -1182,6 +1194,10 @@ console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dis
     "types": [
       "bun",
       "svelte"
+    ],
+    "rootDirs": [
+      ".",
+      "./.nifra/types"
     ]
   },
   "include": [
@@ -1526,6 +1542,10 @@ console.log("Cloudflare Pages output → dist (deploy: wrangler pages deploy dis
     "verbatimModuleSyntax": true,
     "types": [
       "bun"
+    ],
+    "rootDirs": [
+      ".",
+      "./.nifra/types"
     ]
   },
   "include": [

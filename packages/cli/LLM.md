@@ -51,6 +51,7 @@ _…and 67 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) fo
 - nifra doctor [--json] [--auto-fix] [--strict] [--target <value>] - Find undeclared imports, duplicate identity installs, and pipeline readiness drift.
 - nifra fix [--code <value>] [--json] - Apply registered mechanical diagnostic recipes and return remaining findings.
 - nifra migrate <kind> [--from <value>] [--to <value>] [--write] [--json] [--dir <value>] - Move an app onto the frontend/backend split (`migrate layout`), or migrate static Tailwind utilities to StyleX.
+- nifra types [--check] [--json] [--dir <value>] - Generate each route's `./+types` module (params, schema-typed data, typed `api`); `--check` fails when one is stale.
 - nifra snapshot [--out <value>] [--json] - Write the backend API contract as a versioned JSON baseline.
 - nifra diff <baseline> [--json] - Compare the current backend contract with a baseline and fail on breaking changes.
 - nifra contracts <action> [--out <value>] [--json] - Snapshot or check the deterministic route contract lock.

@@ -71,6 +71,48 @@ export interface LoaderArgs<Api, Env = unknown, Search = undefined> {
   readonly set: LoaderResponseControls
 }
 
+/**
+ * The app's registered types. `nifra types` writes `.nifra/types/register.d.ts`, which fills it in
+ * from `backend/app.ts`, so a route's generated `Route.LoaderArgs` types `api` without the route
+ * importing the backend:
+ *
+ *     declare module "@nifrajs/client" { interface Register { backend: typeof backend } }
+ *
+ * `env` may be registered the same way, for the platform bindings `ctx.env` carries.
+ */
+// biome-ignore lint/suspicious/noEmptyInterface: filled in by declaration merging
+export interface Register {}
+
+/** The registered backend (`Register["backend"]`), or `unknown` before one is registered. */
+export type RegisteredBackend = Register extends { readonly backend: infer Backend }
+  ? Backend
+  : unknown
+
+/** The registered platform bindings (`Register["env"]`), or `unknown`. */
+export type RegisteredEnv = Register extends { readonly env: infer Env } ? Env : unknown
+
+/**
+ * What a route module's output schema lets through to the browser: the output type of its `Name`
+ * export (`loaderOutput`, `actionOutput`), or `null` when the module declares none - a loader without
+ * one sends no data.
+ */
+export type OutputOf<Module, Name extends string> = Module extends { readonly [K in Name]: infer S }
+  ? S extends StandardSchemaV1
+    ? InferOutput<S>
+    : never
+  : null
+
+/** The `searchSchema` a route's frontend half declares, or `undefined`. */
+export type SearchSchemaOf<Module> = Module extends { readonly searchSchema: infer S }
+  ? S
+  : undefined
+
+/** A route's loader or action context: its own `params`, and `api` typed by the registered backend. */
+export type RouteLoaderArgs<Params, Search = undefined> = Omit<
+  LoaderArgs<RegisteredBackend, RegisteredEnv, Search>,
+  "params"
+> & { readonly params: Params }
+
 /** The (awaited) return of a `loader`, for typing a page component's `data` prop. */
 export type LoaderData<L> = L extends (...args: never[]) => infer R ? Awaited<R> : never
 

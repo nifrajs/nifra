@@ -4,6 +4,8 @@ A TypeScript language-service plugin for [nifra](https://github.com/nifrajs/nifr
 
 The routing rules are nifra's own - it discovers routes with `@nifrajs/web` and matches them with `@nifrajs/core`'s pattern matcher - so a path resolves to exactly the file it would serve at runtime, dynamic segments included (`/users/42` → `routes/users/[id].tsx`).
 
+It also shows the frontend/backend zone rules as you type: a value import that the build would refuse - backend code in a page, frontend code in `backend/`, anything but shared code in `shared/`, a Node built-in or a server package (`pg`, a mailer, a server SDK) in browser code - is an error on the import itself. `import type` is always allowed. The rules come from `@nifrajs/web/zones`, the same classifier the builds and `nifra check` use; the build stays authoritative and reports the full import chain.
+
 ## Install
 
 ```sh

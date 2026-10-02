@@ -30,6 +30,12 @@ export type {
   LoaderArgs,
   LoaderData,
   LoaderResponseControls,
+  OutputOf,
+  Register,
+  RegisteredBackend,
+  RegisteredEnv,
+  RouteLoaderArgs,
+  SearchSchemaOf,
 } from "./routes.ts"
 export type {
   RegistryOf,

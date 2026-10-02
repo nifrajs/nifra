@@ -217,6 +217,10 @@ Usage:
                                          _layout.backend.ts, move backend.ts/framework.ts under backend/,
                                          and zone the other modules into frontend/, backend/ or shared/.
                                          Dry-run by default; --write applies.
+  nifra types   [--check] [--json]       Generate each route's ./+types module under .nifra/types: its
+                                         params, the data its output schemas let through, and api typed
+                                         by backend/app.ts. dev, build and check refresh them too;
+                                         --check fails when one is stale.
   nifra port    [--target <t>] [--json]  Portability linter: print a feature × deploy-target capability
                 [--ci] [--strict]        matrix (in-memory stores, in-process cron/WebSocket, Bun/Deno
                                          globals, node: builtins) with file:line evidence. --target auto-
@@ -1041,6 +1045,12 @@ async function main(): Promise<void> {
   }
   const flags = parseFlags(argv.slice(1))
   const app = await loadApp(process.cwd(), flags.out)
+  if (command !== "start") {
+    const { refreshRouteTypes, watchRouteTypes } = await import("./route-types.ts")
+    refreshRouteTypes(app.cwd)
+    // A relaunched `nifra dev --bun` child runs beside its parent, which already watches.
+    if (command === "dev" && process.env.NIFRA_BUN_DEV_TOKEN === undefined) watchRouteTypes(app.cwd)
+  }
   if (command === "dev") await dev(app, flags)
   else if (command === "build") await buildForTarget(app, flags.target, flags)
   else await start(app, flags)

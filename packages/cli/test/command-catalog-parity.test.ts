@@ -27,6 +27,7 @@ test("the stable catalog is the public command allowlist", () => {
     "doctor",
     "fix",
     "migrate",
+    "types",
     "snapshot",
     "diff",
     "contracts",
