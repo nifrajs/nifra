@@ -33,6 +33,7 @@ import {
   renderReleaseVerification,
   resolveVerificationRoot,
 } from "../src/release-verification.ts"
+import { readSecretExemptions } from "../src/rules/secrets.ts"
 import {
   omittedVerificationGateIds,
   renderVerificationPlan,
@@ -2633,6 +2634,26 @@ describe("credentials in browser code (NF-C032)", () => {
         "nifra.config.ts:- [nifra/web] secretExemptions[0] needs a reason",
       ) as unknown as string,
     ])
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("an exemption whose strings hold brackets, braces or colons is read whole", async () => {
+    const dir = await project({
+      "routes/[lang]/index.tsx": `export const key = "${STRIPE}"\nexport default () => null\n`,
+      "public/keys.txt": `${AWS}\n`,
+      "nifra.config.ts": [
+        "export const secretExemptions: SecretExemption[] = [",
+        '  { rule: "key-format", file: "routes/[lang]/index.tsx", reason: "a test key [1] {see file: x}" },',
+        "  { rule: 'key-format', file: 'public/keys.txt', reason: 'documented, not live' },",
+        "]",
+        "",
+      ].join("\n"),
+    })
+    expect(readSecretExemptions(dir).map((e) => [e.file, e.reason])).toEqual([
+      ["routes/[lang]/index.tsx", "a test key [1] {see file: x}"],
+      ["public/keys.txt", "documented, not live"],
+    ])
+    expect(await findings(dir)).toEqual([])
     await rm(dir, { recursive: true, force: true })
   })
 })

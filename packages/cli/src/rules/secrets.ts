@@ -20,9 +20,50 @@ import { zonedFiles } from "./zones.ts"
 
 const BROWSER_CODE = new Set(["route-frontend", "frontend", "shared"])
 
-const EXEMPTIONS = /\bexport\s+const\s+secretExemptions\b[^=]*=\s*\[([\s\S]*?)\]/
-const STRING_FIELD = (name: string): RegExp =>
-  new RegExp(`\\b${name}\\s*:\\s*(?:"([^"\\\\\\r\\n]*)"|'([^'\\\\\\r\\n]*)')`)
+const EXEMPTIONS_START = /\bexport\s+const\s+secretExemptions\b[^=]*=\s*\[/
+
+type Token = { readonly kind: "string" | "word" | "punct"; readonly value: string }
+
+/**
+ * The tokens of an array literal, from just after its `[` to the `]` that closes it. A string is one
+ * token, so a bracket or a colon inside one (`"routes/[lang]/index.tsx"`) is text, never syntax.
+ */
+function arrayTokens(src: string, from: number): Token[] {
+  const tokens: Token[] = []
+  let depth = 0
+  let i = from
+  while (i < src.length) {
+    const c = src[i] as string
+    if (c === '"' || c === "'" || c === "`") {
+      let value = ""
+      let j = i + 1
+      while (j < src.length && src[j] !== c) {
+        if (src[j] === "\\") {
+          value += src[j + 1] ?? ""
+          j += 2
+        } else value += src[j++]
+      }
+      tokens.push({ kind: "string", value })
+      i = j + 1
+    } else if (/[\w$]/.test(c)) {
+      let j = i
+      while (j < src.length && /[\w$]/.test(src[j] as string)) j++
+      tokens.push({ kind: "word", value: src.slice(i, j) })
+      i = j
+    } else {
+      if (c === "]" || c === "}" || c === ")") {
+        if (depth === 0) break
+        depth--
+      } else if (c === "[" || c === "{" || c === "(") depth++
+      if (!/\s/.test(c)) tokens.push({ kind: "punct", value: c })
+      i++
+    }
+  }
+  return tokens
+}
+
+const isPunct = (token: Token | undefined, value: string): boolean =>
+  token?.kind === "punct" && token.value === value
 
 /**
  * The app's `secretExemptions`, read statically from `nifra.config.ts` (check never imports app code):
@@ -31,25 +72,43 @@ const STRING_FIELD = (name: string): RegExp =>
 export function readSecretExemptions(appRoot: string): SecretExemption[] {
   const path = join(appRoot, CONFIG_FILE)
   if (!existsSync(path)) return []
-  const body = EXEMPTIONS.exec(stripComments(readFileSync(path, "utf8")))?.[1]
-  if (body === undefined) return []
+  const text = stripComments(readFileSync(path, "utf8"))
+  const opened = EXEMPTIONS_START.exec(text)
+  if (opened === null) return []
+  const tokens = arrayTokens(text, opened.index + opened[0].length)
   const exemptions: SecretExemption[] = []
-  for (const object of body.match(/\{[^{}]*\}/g) ?? []) {
-    const field = (name: string): string | undefined => {
-      const found = STRING_FIELD(name).exec(object)
-      return found === null ? undefined : (found[1] ?? found[2])
+  let depth = 0
+  let fields: Record<string, string> | undefined
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i] as Token
+    if (token.kind === "punct" && "[{(".includes(token.value)) {
+      depth++
+      if (depth === 1 && token.value === "{") fields = {}
+    } else if (token.kind === "punct" && "]})".includes(token.value)) {
+      if (depth === 1 && fields !== undefined) {
+        const { rule, reason, file, env } = fields
+        if (rule !== undefined && reason !== undefined) {
+          exemptions.push({
+            rule: rule as SecretExemption["rule"],
+            reason,
+            ...(file === undefined ? {} : { file }),
+            ...(env === undefined ? {} : { env }),
+          })
+        }
+        fields = undefined
+      }
+      depth--
+    } else if (
+      depth === 1 &&
+      fields !== undefined &&
+      token.kind !== "punct" &&
+      isPunct(tokens[i + 1], ":") &&
+      tokens[i + 2]?.kind === "string" &&
+      (isPunct(tokens[i + 3], ",") || isPunct(tokens[i + 3], "}"))
+    ) {
+      fields[token.value] ??= (tokens[i + 2] as Token).value
+      i += 2
     }
-    const rule = field("rule")
-    const reason = field("reason")
-    const file = field("file")
-    const env = field("env")
-    if (rule === undefined || reason === undefined) continue
-    exemptions.push({
-      rule: rule as SecretExemption["rule"],
-      reason,
-      ...(file === undefined ? {} : { file }),
-      ...(env === undefined ? {} : { env }),
-    })
   }
   return exemptions
 }
