@@ -82,6 +82,7 @@ describe("release verification", () => {
       "cross-runtime-node",
       "workerd",
       "pipeline-parity",
+      "leak-matrix",
       "verification-parity",
       "changesets",
     ])

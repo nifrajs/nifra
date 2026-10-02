@@ -538,6 +538,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
               classifier,
               sourceOf: bunModuleSource(cwd),
               privateEnv,
+              refused: new Set(refused.keys()),
             }),
           )
         : undefined
@@ -565,6 +566,7 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     classifier,
     sourceOf: bunModuleSource(cwd),
     privateEnv,
+    refused: new Set(refused.keys()),
   })
   // Two independent records of one fact: a file the plugin refused that the graph never shows means the
   // graph is missing evidence, and the build cannot prove anything else about it either.

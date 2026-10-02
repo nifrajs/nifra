@@ -151,6 +151,7 @@ export { LAST_ERROR_PATH } from "./diagnostic.ts"
 
 // The codegen'd client entry is written here (at the Vite root) so Vite serves + HMRs it.
 const DEV_ENTRY = ".nifra-vite-entry.tsx"
+const VITE_CLOSE_BOUND_MS = 2000
 
 /** Candidate spellings for Vite's module-graph map. Vite has used native and slash-normalized
  * absolute Windows paths across versions, while watcher events can additionally arrive as a file URL. */
@@ -660,7 +661,16 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
       // stop several dev servers in one process).
       setSsrModuleLoader(undefined)
       server.close()
-      await vite.close()
+      // Vite (8.2) never settles a first dependency optimization that close() cuts short, and close()
+      // waits on it for good. Everything else closes in parallel, so only that wait is bounded.
+      let bound: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([
+        vite.close(),
+        new Promise<void>((resolve) => {
+          bound = setTimeout(resolve, VITE_CLOSE_BOUND_MS)
+        }),
+      ])
+      clearTimeout(bound)
     },
   }
 }

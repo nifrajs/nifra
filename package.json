@@ -44,6 +44,7 @@
     "check:cold-start": "bun run scripts/check-cold-start.ts",
     "check:size": "bun run bench/size/run.ts --check",
     "check:pipeline-parity": "bun scripts/check-pipeline-parity.ts",
+    "check:leak-matrix": "bun test packages/web/test/leak-matrix.test.ts packages/web/test/leak-deploy.test.ts packages/web/test/vite-dev-zones.test.ts packages/web-solid/test/zones.test.ts packages/web-svelte/test/zones.test.ts packages/web-vue/test/zones.test.ts && cd examples && bun test leak-matrix/frameworks.test.ts",
     "check:cli-isolation": "bun test packages/cli/test --randomize --seed=\"${NIFRA_TEST_SEED:-0}\"",
     "check:verification-parity": "bun run scripts/check-verification-parity.ts",
     "check:changesets": "bun run scripts/check-changeset-coverage.ts",

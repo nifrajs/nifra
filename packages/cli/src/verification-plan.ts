@@ -159,6 +159,11 @@ const GATES = Object.freeze([
     "Run `bun run check:pipeline-parity` and fix the development and production manifest drift.",
   ),
   gate(
+    "leak-matrix",
+    [["run", "check:leak-matrix"]],
+    "Run `bun run check:leak-matrix` and fix the pipeline that let server code or a credential through.",
+  ),
+  gate(
     "cli-isolation",
     [["run", "check:cli-isolation"]],
     "Run `bun run check:cli-isolation` and fix the first order-dependent CLI test failure.",
@@ -215,6 +220,7 @@ const RELEASE_PLAN = Object.freeze([
   "cross-runtime-node",
   "workerd",
   "pipeline-parity",
+  "leak-matrix",
   "verification-parity",
   "changesets",
 ] as const)

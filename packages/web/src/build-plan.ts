@@ -493,12 +493,23 @@ export function detectServerOnlyInClient(
   }
   // (2) Locate which emitted chunk each marked module reached, via the per-output `inputs`.
   const findings = new Map<string, ServerOnlyFinding>()
+  const placed = new Set<string>()
   for (const [outputPath, output] of Object.entries(graph.chunks)) {
     for (const inputKey of output.modules) {
       if (!marked.has(inputKey)) continue
       const chunk = basename(outputPath)
+      placed.add(inputKey)
       findings.set(`${inputKey}\0${chunk}`, { chunk, chain: chainFor(inputKey) })
     }
+  }
+  // A marked module the build loaded but no chunk lists: the bundler inlined what it exports (a
+  // constant ships without its module) or dropped it. The import crossed the boundary either way.
+  for (const inputKey of marked) {
+    if (placed.has(inputKey)) continue
+    findings.set(`${inputKey}\0`, {
+      chunk: "none, inlined or shaken out",
+      chain: chainFor(inputKey),
+    })
   }
   return [...findings.values()].sort((a, b) => {
     const am = a.chain[a.chain.length - 1] ?? ""

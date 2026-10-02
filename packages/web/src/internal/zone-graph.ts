@@ -5,7 +5,7 @@
  * written. It fails closed: a module it cannot place, an import edge it cannot follow, an emitted file
  * it cannot trace back to the graph or an import the bundle left external is an error, not a pass.
  */
-import { existsSync } from "node:fs"
+import { existsSync, realpathSync } from "node:fs"
 import { basename, dirname, extname, isAbsolute, posix, relative, resolve } from "node:path"
 import { BACKEND_ROUTE_EXPORTS, backendFileFor } from "../manifest.ts"
 import type { ClientModuleGraph, GraphImport } from "../module-graph.ts"
@@ -74,6 +74,17 @@ export interface VerifyClientGraphOptions {
   readonly sourceOf: (id: string) => ModuleSource
   /** The private-env denial for a browser-code file (see `privateEnvCheck`); unchecked when absent. */
   readonly privateEnv?: (file: string) => string | undefined
+  /** Files the zone guard refused while the bundler loaded them. Bun keeps the edge to a module
+   * tree-shaking removed but drops the module, so such an edge still names a refusal. */
+  readonly refused?: ReadonlySet<string>
+}
+
+const realOrSelf = (file: string): string => {
+  try {
+    return realpathSync(file)
+  } catch {
+    return file
+  }
 }
 
 /** Zones whose code runs in a browser, so may read only public environment variables. */
@@ -103,12 +114,19 @@ export function verifyClientGraph(
     const source = sourceOf(id)
     if (source.kind === "file") idByFile.set(source.file, id)
   }
+  const refused = new Set([...(options.refused ?? [])].map(realOrSelf))
+  const dropped = new Set<string>()
   const resolveEdge = (im: GraphImport): string | undefined => {
     const path = im.path
     if (path === undefined) return undefined
     if (graph.modules[path] !== undefined) return path
     const source = sourceOf(path)
-    return source.kind === "file" ? idByFile.get(source.file) : undefined
+    if (source.kind !== "file") return undefined
+    const known = idByFile.get(source.file)
+    if (known !== undefined) return known
+    if (!refused.has(realOrSelf(source.file))) return undefined
+    dropped.add(path)
+    return path
   }
   // A lazy `import()` of a split module is an edge to the OUTPUT chunk; its entry module continues the walk.
   const entryByChunk = new Map<string, string>()
@@ -152,8 +170,8 @@ export function verifyClientGraph(
         )
         continue
       }
-      // An edge with no module behind it was never loaded: a `sideEffects: false` package's unused
-      // re-export. No code of it can ship, so it is not missing evidence.
+      // An edge with no module behind it was never loaded (a `sideEffects: false` package's unused
+      // re-export), so it is not missing evidence - unless the zone guard refused the file it names.
       const target = resolveEdge(im)
       if (target === undefined) continue
       out.push({ to: target, label: im.original ?? labelOf(target) })
@@ -176,7 +194,7 @@ export function verifyClientGraph(
   }
 
   const denied = new Map<string, string>()
-  for (const id of Object.keys(graph.modules)) {
+  for (const id of [...Object.keys(graph.modules), ...dropped]) {
     const source = sourceOf(id)
     const file = source.kind === "builtin" ? undefined : source.file
     if (file === undefined) continue
@@ -309,7 +327,9 @@ export function verifyServerGraph(
     if (im.path === undefined || im.external === true) return undefined
     if (graph.modules[im.path] !== undefined) return im.path
     const source = sourceOf(im.path)
-    return source.kind === "file" ? idByFile.get(source.file) : undefined
+    if (source.kind !== "file") return undefined
+    // Bun keeps the edge to a module tree-shaking removed and drops the module; its zone still counts.
+    return idByFile.get(source.file) ?? (existsSync(source.file) ? im.path : undefined)
   }
 
   const edges = new Map<string, Array<{ readonly to: string; readonly label: string }>>()

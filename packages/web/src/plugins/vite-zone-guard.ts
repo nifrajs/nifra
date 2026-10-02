@@ -42,6 +42,11 @@ type Middleware = (req: IncomingMessage, res: ServerResponse, next: Next) => voi
 interface PluginContext {
   readonly environment?: { readonly name?: string }
   error(error: Error | string): never
+  resolve(
+    source: string,
+    importer: string | undefined,
+    options: { readonly skipSelf: boolean } & Record<string, unknown>,
+  ): Promise<{ readonly id: string; readonly external?: boolean | string } | null>
 }
 
 /** The slice of a Vite plugin this returns. Structural, so `vite` stays an optional peer. */
@@ -56,7 +61,7 @@ export interface ViteZoneGuardPlugin {
     source: string,
     importer: string | undefined,
     options?: { readonly ssr?: boolean; readonly scan?: boolean },
-  ): null
+  ): Promise<null>
   transform(
     this: PluginContext,
     code: string,
@@ -208,23 +213,30 @@ export function viteZoneGuard(options: ViteZoneGuardOptions): ViteZoneGuardPlugi
       // Registered directly (not in a returned post hook), so it runs ahead of Vite's own middlewares.
       server.middlewares.use(middleware)
     },
-    resolveId(source, importer, resolveOptions) {
+    async resolveId(source, importer, resolveOptions) {
       if (importer === undefined || resolveOptions?.scan === true) return null
       if (!isClient(this, resolveOptions?.ssr)) return null
       const importerFile = stripQuery(importer)
       if (!isAbsolute(importerFile)) return null
-      const name = specifierPackage(source)
-      if (name !== undefined) {
-        const reason = browserDenial(packageClassification(name, importerFile), source)
-        if (reason !== undefined) refuse(this, source, reason, importerFile)
-        return null
-      }
       if (source.startsWith(".")) {
         const target = resolve(dirname(importerFile), stripQuery(source))
         if (isFile(target)) {
           const reason = browserDenial(classifier.classify(target))
           if (reason !== undefined) refuse(this, target, reason, importerFile)
         }
+        return null
+      }
+      const name = specifierPackage(source)
+      if (name !== undefined) {
+        const reason = browserDenial(packageClassification(name, importerFile), source)
+        if (reason !== undefined) refuse(this, source, reason, importerFile)
+      }
+      // An alias, a tsconfig path or a package export: what the specifier resolves to decides.
+      const resolved = await this.resolve(source, importer, { ...resolveOptions, skipSelf: true })
+      const target = resolved === null || resolved.external ? undefined : stripQuery(resolved.id)
+      if (target !== undefined && isAbsolute(target) && isFile(target)) {
+        const reason = browserDenial(classifier.classify(target), source)
+        if (reason !== undefined) refuse(this, target, reason, importerFile)
       }
       return null
     },

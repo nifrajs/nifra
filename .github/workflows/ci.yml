@@ -294,6 +294,11 @@ jobs:
       - name: Compare Bun and Vite production pipelines on the fixture app
         run: bun run check:pipeline-parity
 
+      # Every way server code or a credential can reach a browser, against both bundlers, both dev
+      # servers, the server build, each framework's route syntax and each deploy target's output.
+      - name: Leak matrix
+        run: bun run check:leak-matrix
+
   # Scan Bun's lockfile as part of the release-gated CI workflow. This job is deliberately a
   # reusable OSV workflow so a known advisory cannot pass CI and still reach the release workflow.
   osv:
