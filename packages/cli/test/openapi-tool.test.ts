@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
 import { t } from "@nifrajs/schema"
-import type { LoadedApp } from "../src/load.ts"
+import { type LoadedApp, loadBackendApp } from "../src/load.ts"
 import { renderOpenApi } from "../src/openapi-tool.ts"
+import { createFixtureRoot, removeFixtureRoot, writeAppFile } from "./fixture-root.ts"
 
 function loaded(backend: unknown): LoadedApp {
   return {
@@ -76,4 +77,20 @@ describe("renderOpenApi", () => {
     expect(Object.keys(all.paths).sort()).toEqual(["/api/orders", "/health"])
     expect(Object.keys(emptyPrefix.paths).sort()).toEqual(["/api/orders", "/health"])
   })
+})
+
+test("an API-only app (backend/app.ts, no web config) loads for the OpenAPI document", async () => {
+  const root = createFixtureRoot("tmp-openapi-api-only-")
+  try {
+    writeAppFile(
+      root,
+      "backend/app.ts",
+      'import { server } from "@nifrajs/core/server"\nexport const backend = server().get("/ping", () => ({ ok: true }))\n',
+    )
+    const app = await loadBackendApp(root)
+    const doc = JSON.parse(renderOpenApi(app, "json")) as { paths: Record<string, unknown> }
+    expect(Object.keys(doc.paths)).toEqual(["/ping"])
+  } finally {
+    removeFixtureRoot(root)
+  }
 })

@@ -1256,7 +1256,10 @@ const openApiSpec: CommandSpec<OpenApiInput, OpenApiCommandOutput> = {
     ],
   },
   async run(value, ctx) {
-    const app = await loadAppFor(ctx)
+    const app =
+      ctx.loadApp !== undefined
+        ? await ctx.loadApp()
+        : await import("./load.ts").then(({ loadBackendApp }) => loadBackendApp(ctx.cwd))
     const { renderOpenApiWithTypes } = await import("./openapi-tool.ts")
     const format = value.format ?? "json"
     return {

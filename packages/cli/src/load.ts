@@ -248,6 +248,30 @@ const isAdapter = (v: unknown): boolean => typeof v === "object" && v !== null
 const importWithQuery = (path: string, query: string | undefined): Promise<unknown> =>
   import(query === undefined || query === "" ? path : `${path}?${query}`)
 
+/**
+ * What reads only the backend (`nifra openapi`): the whole app when it has a web config, else
+ * `backend/app.ts` alone, so an API-only app needs no adapter to describe its routes.
+ */
+export async function loadBackendApp(
+  cwd: string,
+  options: LoadAppOptions = {},
+): Promise<Pick<LoadedApp, "cwd" | "backend">> {
+  if (existsSync(resolve(cwd, CONFIG_FILE)) || existsSync(resolve(cwd, FRAMEWORK_FILE))) {
+    return loadApp(cwd, "dist", options)
+  }
+  assertCurrentLayout(cwd)
+  const backendPath = resolve(cwd, BACKEND_APP_FILE)
+  if (!existsSync(backendPath)) {
+    throw new Error(
+      `[nifra] no ${BACKEND_APP_FILE} in ${cwd}: the OpenAPI document describes its routes`,
+    )
+  }
+  const backend = (
+    (await importWithQuery(backendPath, options.importQuery)) as { backend?: unknown }
+  ).backend
+  return { cwd, backend }
+}
+
 /** Discover + validate the app conventions rooted at `cwd`. Prefers `nifra.config.ts`, falls back
  * to
  * `backend/framework.ts`. Throws a clear, actionable error if neither exists or the config is
