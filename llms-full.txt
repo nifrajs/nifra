@@ -1277,7 +1277,9 @@ the client never throws, it returns `{ data, error }`.
 A route's `loader` runs on the server and calls your backend in-process during
 SSR - no network hop. Its `loaderOutput` schema is the contract with the page:
 the page receives that shape as `data`, and nothing else the loader returns
-leaves the server. A loader without one is flagged by `nifra check`. See
+leaves the server. A `Date` travels as its ISO string, so declare a timestamp
+column as `t.string()`. A loader without a schema is flagged by
+`nifra check`. See
 [Project structure](/docs/structure) for the route pair.
 
 ```ts
@@ -1305,6 +1307,15 @@ export default function User({ data }: Route.ComponentProps) {
   return <h1>{data.name}</h1>
 }
 ```
+
+A field named like a credential (`password`, `token`,
+`apiKey`) fails the route when it loads unless its schema is wrapped in
+`t.declassified("why it may reach the browser", ...)`; a schema library that
+exposes no JSON Schema, such as valibot, gets that check only from `nifra check`,
+and only where the schema is written out in the backend half. The contract covers data,
+not responses you build: a loader or action returning a `2xx`
+`Response` is refused, but a redirect or an error-status `Response`
+is sent exactly as written, so its body must hold nothing the browser may not see.
 
 ### Actions & revalidation
 
