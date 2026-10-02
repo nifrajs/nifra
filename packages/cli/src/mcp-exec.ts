@@ -436,7 +436,7 @@ export function projectTools(
     {
       name: "nifra_run",
       description:
-        "Run HTTP requests through this project's backend and return structured results (status, headers, parsed body, and any thrown error). Use it to verify code after editing: by default the backend is re-loaded in a fresh process each call. Pass warm:true to reuse a hot worker while source files are unchanged; it restarts automatically when files change. Each request: { method?, path, body?, headers? }.",
+        "Run HTTP requests through this project's backend and return structured results: status, headers, parsed body, `logs` (what the handler printed, per request, secrets redacted) and `errors` (a Diagnostic with codeframe, cause and fix for a thrown error or the unhandled error behind a bare 500). Use it to verify code after editing: by default the backend is re-loaded in a fresh process each call. Pass warm:true to reuse a hot worker while source files are unchanged; it restarts automatically when files change. Each request: { method?, path, body?, headers? }.",
       inputSchema: {
         type: "object",
         properties: {

@@ -5268,6 +5268,8 @@ _No named exports (side-effect entrypoint)._
   What a running dev server writes to {@link DEV_SERVER_RECORD_FILE} so tools can find it.
 - **ErrorMeta** _(interface)_ - `interface ErrorMeta`
 - **LogMeta** _(interface)_ - `interface LogMeta`
+- **captureInto** _(function)_ - `captureInto: (feed: DevFeed) => () => void`
+  Record the process's console and stream output into `feed`: every line as a log entry, and core's `unhandled request error` line additionally as an `api` error with a full Diagnostic. The one sink both dev servers and `nifra_run` use. Returns the detach function.
 - **createDevFeed** _(function)_ - `createDevFeed: (options: DevFeedOptions) => DevFeed`
   Create the store a dev server records into.
 - **createDevToken** _(function)_ - `createDevToken: () => string`

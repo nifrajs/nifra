@@ -624,7 +624,7 @@
     "packages/cli/src/mcp-reflect.ts": 9,
     "packages/cli/src/mcp-render.ts": 9,
     "packages/cli/src/mcp-root.ts": 9,
-    "packages/cli/src/mcp-run.ts": 7,
+    "packages/cli/src/mcp-run.ts": 5,
     "packages/cli/src/mcp-ws.ts": 2,
     "packages/cli/src/mcp.ts": 2,
     "packages/cli/src/migrate-layout.ts": 3,

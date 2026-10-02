@@ -8,7 +8,15 @@
 import { existsSync, realpathSync } from "node:fs"
 import { isAbsolute, relative, resolve, sep } from "node:path"
 import { pathToFileURL } from "node:url"
-import { type AppLike, runApp } from "@nifrajs/runner"
+import { type AppLike, type RequestSpec, type RunResult, runApp } from "@nifrajs/runner"
+import {
+  captureInto,
+  createDevFeed,
+  type DevFeed,
+  type DevLogLevel,
+  runWithDevRequest,
+} from "@nifrajs/web/dev-feed"
+import type { Diagnostic } from "@nifrajs/web/diagnostic"
 import { BACKEND_APP_FILE } from "./app-files.ts"
 import {
   CHILD_INPUT_MAX_BYTES,
@@ -86,10 +94,73 @@ export async function runBackend(
   if ("error" in loaded) return loaded
 
   try {
-    return { results: await runApp(loaded.app, requests as Parameters<typeof runApp>[1]) }
+    return { results: await runCaptured(cwd, loaded.app, requests) }
   } catch (err) {
     return { error: errString(err) }
   }
+}
+
+/** What `nifra_run` adds to the runner's result: what the app printed, and what failed, structured. */
+export interface RunCapture {
+  readonly logs?: ReadonlyArray<{ readonly level: DevLogLevel; readonly message: string }>
+  readonly errors?: readonly Diagnostic[]
+}
+
+const MAX_LOGS_PER_REQUEST = 100
+
+/**
+ * Run `requests` one at a time, each inside its own request context, so what a handler logs - and
+ * core's `unhandled request error` line behind a bare 500 - lands on the result of the request that
+ * produced it, redacted, with the error as a Diagnostic (codeframe, cause, fix). Without this a 500 came
+ * back as `internal_error` and the reason only ever reached a stderr nobody reads.
+ */
+export async function runCaptured(
+  cwd: string,
+  app: AppLike,
+  requests: readonly unknown[],
+): Promise<Array<RunResult & RunCapture>> {
+  const feed = createDevFeed({ root: cwd, persist: false })
+  const detach = captureInto(feed)
+  const runs: Array<{ readonly requestId: string; readonly result: RunResult }> = []
+  try {
+    for (const [index, spec] of requests.entries()) {
+      const requestId = `run${index + 1}`
+      const [method, path] = describeSpec(spec)
+      const [result] = await runWithDevRequest(
+        { feedId: feed.id, requestId, method, path },
+        // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: runApp validates each spec itself and reports a malformed one as that request's error.
+        () => runApp(app, [spec as RequestSpec]),
+      )
+      if (result !== undefined) runs.push({ requestId, result })
+    }
+    // A line a handler scheduled for later (a promise continuation, a 0 ms timer) still lands.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  } finally {
+    detach()
+  }
+  return runs.map(({ requestId, result }) => withCapture(feed, requestId, result))
+}
+
+function describeSpec(spec: unknown): [string, string] {
+  if (typeof spec !== "object" || spec === null) return ["GET", "/"]
+  const method = "method" in spec && typeof spec.method === "string" ? spec.method : "GET"
+  const path = "path" in spec && typeof spec.path === "string" ? spec.path : "/"
+  return [method, path]
+}
+
+function withCapture(feed: DevFeed, requestId: string, result: RunResult): RunResult & RunCapture {
+  if (result.error !== undefined) {
+    const thrown = new Error(result.error.message)
+    thrown.name = result.error.name
+    if (result.error.stack !== undefined) thrown.stack = result.error.stack
+    feed.recordError(thrown, { category: "api", requestId })
+  }
+  const capture: { -readonly [K in keyof RunCapture]: RunCapture[K] } = {}
+  const logs = feed.logs({ requestId, limit: MAX_LOGS_PER_REQUEST }).logs
+  if (logs.length > 0) capture.logs = logs.map(({ level, message }) => ({ level, message }))
+  const errors = feed.errors({ requestId }).errors
+  if (errors.length > 0) capture.errors = errors.map((entry) => entry.diagnostic)
+  return { ...result, ...capture }
 }
 
 interface WorkerMessage {
@@ -114,13 +185,31 @@ function safeResponseId(value: unknown): number | string | null {
   return null
 }
 
-async function runWorker(cwd: string): Promise<void> {
+/**
+ * Keep stdout for the protocol. The app's console and any direct `process.stdout.write` go to stderr,
+ * or a stray `console.log` in a handler would corrupt the JSON the parent reads. Returns the writer
+ * that still reaches the real stdout.
+ */
+function reserveStdout(): (text: string) => void {
   redirectConsoleToStderr()
+  const original: unknown = Reflect.get(process.stdout, "write")
+  const write = typeof original === "function" ? original.bind(process.stdout) : undefined
+  // Bound now, before any capture patches stderr: a redirected stdout line is captured once, as stdout.
+  const toStderr = process.stderr.write.bind(process.stderr)
+  Reflect.set(process.stdout, "write", (chunk: unknown, ...rest: unknown[]) =>
+    Reflect.apply(toStderr, process.stderr, [chunk, ...rest]),
+  )
+  return (text) => {
+    write?.(text)
+  }
+}
+
+async function runWorker(cwd: string, protocol: (text: string) => void): Promise<void> {
   const apps = new Map<string, Promise<{ app: AppLike } | { error: string }>>()
   const send = (id: unknown, output: unknown): void => {
     const responseId = safeResponseId(id)
     const encoded = serializeBoundedJson({ id: responseId, output }, CHILD_OUTPUT_MAX_BYTES - 1)
-    process.stdout.write(
+    protocol(
       `${encoded ?? JSON.stringify({ id: responseId, output: { error: "worker output exceeded the size limit" } })}\n`,
     )
   }
@@ -176,9 +265,7 @@ async function runWorker(cwd: string): Promise<void> {
       continue
     }
     try {
-      send(id, {
-        results: await runApp(app.app, requests as Parameters<typeof runApp>[1]),
-      })
+      send(id, { results: await runCaptured(cwd, app.app, requests) })
     } catch (err) {
       send(id, { error: errString(err) })
     }
@@ -189,8 +276,9 @@ async function runWorker(cwd: string): Promise<void> {
 // this only executes when run directly (not when imported by a test).
 if (import.meta.main) {
   const cwd = process.argv[2] ?? process.cwd()
+  const protocol = reserveStdout()
   if (process.argv.includes("--worker")) {
-    await runWorker(cwd)
+    await runWorker(cwd, protocol)
     process.exit(0)
   }
   let output: unknown
@@ -208,7 +296,7 @@ if (import.meta.main) {
       output = { error: "invalid input: expected JSON { requests: [...] }" }
     }
   }
-  process.stdout.write(
+  protocol(
     serializeBoundedJson(output, CHILD_OUTPUT_MAX_BYTES, 2) ??
       JSON.stringify({ error: `output exceeded ${CHILD_OUTPUT_MAX_BYTES} bytes` }),
   )

@@ -10,7 +10,7 @@
 import { performance } from "node:perf_hooks"
 import { createDevDiagnostics, type DevDiagnostics } from "./dev-diagnostics.ts"
 import {
-  type CoreLogEntry,
+  captureInto,
   createDevFeed,
   createDevToken,
   DEV_ERROR_CATEGORIES,
@@ -23,9 +23,6 @@ import {
   type DevFeed,
   type DevPipeline,
   type DevServerIdentity,
-  errorFromCoreLog,
-  installCapture,
-  isDevLogLevel,
   removeDevServerRecord,
   runWithDevRequest,
   writeDevServerRecord,
@@ -193,11 +190,6 @@ export function buildFailureError(err: unknown, label: string): Error {
   return error
 }
 
-const structuredText = (entry: CoreLogEntry): string => {
-  const { level: _level, message, time: _time, ...fields } = entry
-  return Object.keys(fields).length === 0 ? message : `${message} ${JSON.stringify(fields)}`
-}
-
 /** Create the session a dev server owns from construction to `stop()`. */
 export function createDevSession(options: DevSessionOptions): DevSession {
   const { root, pipeline } = options
@@ -221,24 +213,7 @@ export function createDevSession(options: DevSessionOptions): DevSession {
     (err, request) => feed.recordError(err, { category: "ssr", request }).diagnostic,
   )
 
-  const detachCapture = installCapture({
-    feedId: feed.id,
-    line: (level, message, request) =>
-      feed.recordLog(level, message, { requestId: request?.requestId }),
-    structured: (entry, request) => {
-      const level = isDevLogLevel(entry.level) ? entry.level : "log"
-      feed.recordLog(level, structuredText(entry), { requestId: request?.requestId })
-      const error = errorFromCoreLog(entry)
-      if (error === undefined) return
-      const method = typeof entry.method === "string" ? entry.method : request?.method
-      const path = typeof entry.path === "string" ? entry.path : request?.path
-      feed.recordError(error, {
-        category: "api",
-        requestId: request?.requestId,
-        request: method !== undefined && path !== undefined ? { method, url: path } : undefined,
-      })
-    },
-  })
+  const detachCapture = captureInto(feed)
 
   // Observes without changing what a crash does: the process still dies exactly as it would have.
   const onCrash = (err: unknown): void => {

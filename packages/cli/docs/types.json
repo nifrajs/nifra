@@ -3247,6 +3247,13 @@
     "signature": "export interface CaptureIncidentOptions {\n    readonly id?: string;\n    readonly capturedAt?: string;\n    /** Header names to keep on the capsule (lowercased match). Default: only `content-type`. */\n    readonly headerAllowList?: readonly string[];\n    readonly note?: string;\n}"
   },
   {
+    "name": "captureInto",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function captureInto(feed: DevFeed): () => void;",
+    "doc": "/**\n * Record the process's console and stream output into `feed`: every line as a log entry, and core's\n * `unhandled request error` line additionally as an `api` error with a full Diagnostic. The one sink\n * both dev servers and `nifra_run` use. Returns the detach function.\n */"
+  },
+  {
     "name": "CaptureSink",
     "kind": "interface",
     "package": "@nifrajs/web",

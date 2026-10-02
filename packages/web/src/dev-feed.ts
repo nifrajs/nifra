@@ -1087,3 +1087,34 @@ function patchProcess(): CaptureState {
   }
   return state
 }
+
+const structuredText = (entry: CoreLogEntry): string => {
+  const { level: _level, message, time: _time, ...fields } = entry
+  return Object.keys(fields).length === 0 ? message : `${message} ${JSON.stringify(fields)}`
+}
+
+/**
+ * Record the process's console and stream output into `feed`: every line as a log entry, and core's
+ * `unhandled request error` line additionally as an `api` error with a full Diagnostic. The one sink
+ * both dev servers and `nifra_run` use. Returns the detach function.
+ */
+export function captureInto(feed: DevFeed): () => void {
+  return installCapture({
+    feedId: feed.id,
+    line: (level, message, request) =>
+      feed.recordLog(level, message, { requestId: request?.requestId }),
+    structured: (entry, request) => {
+      const level = isDevLogLevel(entry.level) ? entry.level : "log"
+      feed.recordLog(level, structuredText(entry), { requestId: request?.requestId })
+      const error = errorFromCoreLog(entry)
+      if (error === undefined) return
+      const method = typeof entry.method === "string" ? entry.method : request?.method
+      const path = typeof entry.path === "string" ? entry.path : request?.path
+      feed.recordError(error, {
+        category: "api",
+        requestId: request?.requestId,
+        request: method !== undefined && path !== undefined ? { method, url: path } : undefined,
+      })
+    },
+  })
+}
