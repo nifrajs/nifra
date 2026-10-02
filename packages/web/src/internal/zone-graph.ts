@@ -536,7 +536,8 @@ export function formatClientGraphVerdict(verdict: ClientGraphVerdict): string | 
   }
   if (verdict.misplacedExports.length > 0) {
     sections.push(
-      `[nifra/web] route frontend files export server-only names:\n${indent(verdict.misplacedExports)}`,
+      `[nifra/web] route frontend files export server-only names:\n${indent(verdict.misplacedExports)}\n` +
+        "`nifra migrate layout` splits every route of an app into its two halves.",
     )
   }
   if (verdict.gaps.length > 0) {

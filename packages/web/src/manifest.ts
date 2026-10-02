@@ -607,7 +607,7 @@ function assertFrontendHalf(file: string, front: Readonly<Record<string, unknown
   for (const name of Object.keys(front)) {
     if (BACKEND_ROUTE_EXPORTS.has(name)) {
       throw routeError(
-        `"${file}" exports "${name}", which runs on the server only. Move it to "${backendFileFor(file)}": a route's frontend file ships to the browser whole`,
+        `"${file}" exports "${name}", which runs on the server only. Move it to "${backendFileFor(file)}": a route's frontend file ships to the browser whole (\`nifra migrate layout\` splits every route of an app)`,
       )
     }
   }
