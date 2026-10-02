@@ -130,36 +130,52 @@ function sensitiveKeys(
   return found
 }
 
+export interface MissingOutputSchema {
+  readonly name: "loader" | "action"
+  readonly schema: "loaderOutput" | "actionOutput"
+  readonly line: number
+}
+
+let transpiler: Bun.Transpiler | undefined
+
+/** The loader and action a route's backend half exports, may return data from, and gives no schema. */
+export function missingOutputSchemas(content: string): MissingOutputSchema[] {
+  const mask = codePositionMask(content)
+  const missing: MissingOutputSchema[] = []
+  let js: string | undefined
+  for (const [name, schema] of [
+    ["loader", "loaderOutput"],
+    ["action", "actionOutput"],
+  ] as const) {
+    const fn = exported(mask, name)
+    if (fn === null || exported(mask, schema) !== null) continue
+    try {
+      transpiler ??= new Bun.Transpiler({ loader: "ts" })
+      js ??= transpiler.transformSync(content)
+    } catch {
+      js = content
+    }
+    if (mayReturnData(js, name)) missing.push({ name, schema, line: lineAt(content, fn.index) })
+  }
+  return missing
+}
+
 export const missingOutputRule: CheckRule = {
   code: "NF-C030",
   title: "Route data without an output schema",
   async scan(ctx) {
     const findings: Diagnostic[] = []
-    const transpiler = new Bun.Transpiler({ loader: "ts" })
     for (const { file, classification } of zonedFiles(ctx).files) {
       if (classification.zone !== "route-backend") continue
       const content = ctx.sources.read(file)
       if (content === undefined) continue
-      const mask = codePositionMask(content)
-      let js: string | undefined
-      for (const [name, schema] of [
-        ["loader", "loaderOutput"],
-        ["action", "actionOutput"],
-      ] as const) {
-        const fn = exported(mask, name)
-        if (fn === null || exported(mask, schema) !== null) continue
-        try {
-          js ??= transpiler.transformSync(content)
-        } catch {
-          js = content
-        }
-        if (!mayReturnData(js, name)) continue
+      for (const { name, schema, line } of missingOutputSchemas(content)) {
         findings.push(
           diagnostic({
             code: "NF-C030",
             severity: "warn",
             file,
-            line: lineAt(content, fn.index),
+            line,
             message: `${file} exports a ${name} but no ${schema}. Data it returns fails the request: everything sent to the browser needs an output schema. Export one: export const ${schema} = t.object({ ... })`,
             evidence: [`export: ${name}`, `missing: ${schema}`],
             verify: "nifra check",

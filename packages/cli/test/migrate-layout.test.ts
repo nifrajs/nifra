@@ -256,4 +256,89 @@ describe("migrateLayout", () => {
     expect(read(dir, "routes/about.vue")).not.toContain("async function loader")
     expect(read(dir, "routes/about.backend.ts")).toContain("return { n: 2 }")
   })
+
+  test("retired names: .server modules move under backend/, the marker and type are renamed", async () => {
+    const dir = app({
+      "routes/index.tsx": [
+        'import { rows } from "../lib/db.server.ts"',
+        'import { audit } from "./audit.server.ts"',
+        'import type { ServerOnly } from "@nifrajs/web"',
+        "export async function loader() { audit(); return { n: rows().length } }",
+        "export const loaderOutput = { n: 0 }",
+        "export type Rows = ServerOnly<number[]>",
+        "export default function Page() { return null }",
+        "",
+      ].join("\n"),
+      "lib/db.server.ts":
+        'import "@nifrajs/web/server-only"\nimport type { ServerOnly as Secret } from "@nifrajs/web"\nexport const rows = (): Secret<number[]> => []\n',
+      "routes/audit.server.ts": "export const audit = () => {}\n",
+      "frontend/legacy.server.ts": "export const legacy = 1\n",
+      "vite.config.ts":
+        'import { viteServerOnlyEmpty } from "@nifrajs/web/plugins/vite-server-only"\nexport default { plugins: [viteServerOnlyEmpty()] }\n',
+    })
+    const result = await migrateLayout(dir, { typescript: ts, write: true })
+    expect(result.moves).toEqual([
+      { from: "frontend/legacy.server.ts", to: "backend/legacy.ts" },
+      { from: "lib/db.server.ts", to: "backend/lib/db.ts" },
+      { from: "routes/audit.server.ts", to: "backend/audit.ts" },
+    ])
+    const db = read(dir, "backend/lib/db.ts")
+    expect(db).toContain('import "@nifrajs/web/backend-only"')
+    expect(db).toContain("import type { BackendOnly as Secret }")
+    expect(db).toContain("Secret<number[]>")
+    const backendHalf = read(dir, "routes/index.backend.ts")
+    expect(backendHalf).toContain('from "../backend/lib/db.ts"')
+    expect(backendHalf).toContain('from "../backend/audit.ts"')
+    expect(read(dir, "routes/index.tsx")).toContain("BackendOnly<number[]>")
+    expect(read(dir, "routes/index.tsx")).not.toContain("ServerOnly")
+    expect(result.issues.map((issue) => issue.file)).toEqual(["vite.config.ts"])
+  })
+
+  test("a .server module the browser still imports, or whose new home is taken, is reported", async () => {
+    const dir = app({
+      "routes/index.tsx":
+        'import { label } from "../lib/label.server.ts"\nexport default function Page() { return label }\n',
+      "lib/label.server.ts": 'export const label = "x"\n',
+      "lib/db.server.ts": "export const db = 1\n",
+      "backend/lib/db.ts": 'import { db } from "../../lib/db.server.ts"\nexport const rows = db\n',
+    })
+    const result = await migrateLayout(dir, { typescript: ts })
+    expect(result.issues).toContainEqual({
+      file: "lib/label.server.ts",
+      reason:
+        'a route frontend still imports it at runtime, where it ran empty as a ".server" module; move that use into the route\'s backend half before it moves to backend/lib/label.ts',
+    })
+    expect(result.issues).toContainEqual({
+      file: "lib/db.server.ts",
+      reason: 'would move to "backend/lib/db.ts", which already exists; move it by hand',
+    })
+    expect(result.moves.map((move) => move.from)).not.toContain("lib/db.server.ts")
+  })
+
+  test("a loader or action that returns data without an output schema is reported", async () => {
+    const dir = app({
+      "routes/index.tsx": [
+        "export async function loader() { return { n: 1 } }",
+        "export async function action() { return null }",
+        "export default function Page() { return null }",
+        "",
+      ].join("\n"),
+      "routes/typed.tsx": [
+        'import { t } from "@nifrajs/schema"',
+        "export const loader = () => ({ n: 1 })",
+        "export const loaderOutput = t.object({ n: t.number() })",
+        "export default function Page() { return null }",
+        "",
+      ].join("\n"),
+    })
+    const result = await migrateLayout(dir, { typescript: ts })
+    expect(result.ok).toBe(false)
+    expect(result.issues).toEqual([
+      {
+        file: "routes/index.backend.ts",
+        reason:
+          "exports a loader but no loaderOutput, so data it returns fails the request. Declare what the browser may see: export const loaderOutput = t.object({ ... })",
+      },
+    ])
+  })
 })

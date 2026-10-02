@@ -7,12 +7,15 @@
  *      `import type` for any moved name it still mentions in a type;
  *   2. folds each `_middleware.ts` into its directory's `_layout.backend.ts` as `middleware`;
  *   3. moves `backend.ts` to `backend/app.ts` and `framework.ts` to `backend/framework.ts`;
- *   4. zones every other module by who imports it at runtime: only route frontends -> `frontend/`, only
- *      the server side -> `backend/`, both -> `shared/`;
- *   5. rewrites every relative import in the app to the new locations.
+ *   4. moves each `x.server.ts` under `backend/` without the retired suffix, and zones every other module
+ *      by who imports it at runtime: only route frontends -> `frontend/`, only the server side ->
+ *      `backend/`, both -> `shared/`;
+ *   5. rewrites every relative import in the app to the new locations, `@nifrajs/web/server-only` to
+ *      `@nifrajs/web/backend-only`, and `ServerOnly` to `BackendOnly`.
  *
  * It is a dry run unless `write` is set, and it reports what it could not decide (a frontend that uses
- * a moved name at runtime, a helper both halves need) instead of guessing.
+ * a moved name at runtime, a helper both halves need, a loader with no output schema) instead of
+ * guessing.
  */
 import {
   existsSync,
@@ -27,6 +30,7 @@ import { dirname, extname, join, posix, relative, resolve } from "node:path"
 import { BACKEND_ROUTE_EXPORTS } from "@nifrajs/web/route-manifest"
 import type * as TS from "typescript"
 import { importTypeScript } from "./internal/typescript-import.ts"
+import { missingOutputSchemas } from "./rules/data-guard.ts"
 
 /** Exports only the server or the build reads: `@nifrajs/web`'s route-pair contract. */
 const BACKEND_EXPORTS = BACKEND_ROUTE_EXPORTS
@@ -46,6 +50,10 @@ const RESOLVE_EXTENSIONS = [
   ".css",
   ".json",
 ]
+const LEGACY_SERVER = /\.server(\.(?:[cm]?[jt]sx?|svelte|vue|mdx))$/
+const RETIRED_SPECIFIERS: Readonly<Record<string, string>> = {
+  "@nifrajs/web/server-only": "@nifrajs/web/backend-only",
+}
 const SKIP_DIRS = new Set(["node_modules", "dist", "build", "coverage", ".git", ".vite", "public"])
 const ZONE_DIRS = new Set(["frontend", "backend", "shared", "routes", "public"])
 
@@ -770,6 +778,54 @@ function rewriteImports(
   return out
 }
 
+/** `ServerOnly` imported from `@nifrajs/web` becomes `BackendOnly`, along with every use of it. */
+function renameRetiredTypes(ts: typeof TS, file: string, text: string): string {
+  if (!text.includes("ServerOnly")) return text
+  const edits: Array<{ start: number; end: number; text: string }> = []
+  const scan = (code: string, offset: number, kind: TS.ScriptKind): void => {
+    const sf = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true, kind)
+    const rename = (node: TS.Node): void => {
+      edits.push({
+        start: offset + node.getStart(sf),
+        end: offset + node.getEnd(),
+        text: "BackendOnly",
+      })
+    }
+    let unaliased = false
+    for (const statement of sf.statements) {
+      if (
+        !ts.isImportDeclaration(statement) ||
+        !ts.isStringLiteral(statement.moduleSpecifier) ||
+        statement.moduleSpecifier.text !== "@nifrajs/web"
+      )
+        continue
+      const bindings = statement.importClause?.namedBindings
+      if (bindings === undefined || !ts.isNamedImports(bindings)) continue
+      for (const element of bindings.elements) {
+        if (element.propertyName?.text === "ServerOnly") rename(element.propertyName)
+        else if (element.propertyName === undefined && element.name.text === "ServerOnly")
+          unaliased = true
+      }
+    }
+    if (!unaliased) return
+    const visit = (node: TS.Node): void => {
+      if (ts.isIdentifier(node) && node.text === "ServerOnly") rename(node)
+      ts.forEachChild(node, visit)
+    }
+    visit(sf)
+  }
+  if (/\.(?:svelte|vue)$/.test(file)) {
+    for (const block of scriptBlocks(text))
+      scan(text.slice(block.start, block.end), block.start, ts.ScriptKind.TS)
+  } else if (/\.[cm]?[jt]sx?$/.test(file)) {
+    scan(text, 0, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS)
+  }
+  let out = text
+  for (const edit of edits.sort((a, b) => b.start - a.start))
+    out = out.slice(0, edit.start) + edit.text + out.slice(edit.end)
+  return out
+}
+
 // ---------------------------------------------------------------------------------------------------
 // The migration
 // ---------------------------------------------------------------------------------------------------
@@ -871,6 +927,13 @@ export async function migrateLayout(
   for (const [file, text] of next) {
     const refs: Array<{ target: string; typeOnly: boolean }> = []
     for (const ref of importsOf(ts, file, text)) {
+      if (ref.specifier === "@nifrajs/web/plugins/vite-server-only") {
+        issues.push({
+          file,
+          reason:
+            "imports the retired @nifrajs/web/plugins/vite-server-only; remove it: nifra's Vite builds and dev server enforce the zones themselves (a hand-built Vite config uses viteLeakGuard from @nifrajs/web/plugins/vite-leak-guard)",
+        })
+      }
       const target = resolveIn(known, file, ref.specifier)
       if (target !== undefined) refs.push({ target, typeOnly: ref.typeOnly })
       else if (/^[@~]\//.test(ref.specifier))
@@ -910,6 +973,20 @@ export async function migrateLayout(
   const appServer = reach(
     backendRoots.filter((f) => f.includes("/") || ROOT_MOVES[f] !== undefined),
   )
+  // A `.server` module ran empty in the browser, so only server code used it: it moves under backend/.
+  for (const file of files) {
+    if (!LEGACY_SERVER.test(file) || isTestFile(file)) continue
+    const parts = file.replace(LEGACY_SERVER, "$1").split("/")
+    if (parts.length > 1 && ZONE_DIRS.has(parts[0] ?? "")) parts.shift()
+    const to = `backend/${parts.join("/")}`
+    moveMap.set(file, to)
+    if (browser.has(file)) {
+      issues.push({
+        file,
+        reason: `a route frontend still imports it at runtime, where it ran empty as a ".server" module; move that use into the route's backend half before it moves to ${to}`,
+      })
+    }
+  }
   const zoneOf = (file: string): "frontend" | "backend" | "shared" =>
     browser.has(file) && server.has(file) ? "shared" : browser.has(file) ? "frontend" : "backend"
   for (const file of files) {
@@ -927,6 +1004,19 @@ export async function migrateLayout(
     } else if (!browser.has(file) && !appServer.has(file)) continue
     moveMap.set(file, `${zoneOf(file)}/${file}`)
   }
+  const claimed = new Map<string, string>()
+  for (const [from, to] of moveMap) {
+    const holder = claimed.get(to) ?? (known.has(to) && !moveMap.has(to) ? to : undefined)
+    if (holder === undefined) {
+      claimed.set(to, from)
+      continue
+    }
+    issues.push({
+      file: from,
+      reason: `would move to "${to}", which ${holder === to ? "already exists" : `"${holder}" moves to as well`}; move it by hand`,
+    })
+    moveMap.delete(from)
+  }
   for (const [from, to] of moveMap) {
     if (to.startsWith("shared/") && /from\s+["'](?:node:|bun:)/.test(next.get(from) ?? "")) {
       issues.push({
@@ -941,13 +1031,16 @@ export async function migrateLayout(
   const final: Files = new Map()
   const rewritten: string[] = []
   for (const [file, text] of next) {
-    const updated = rewriteImports(ts, file, text, (specifier) => {
+    const imports = rewriteImports(ts, file, text, (specifier) => {
+      const retired = RETIRED_SPECIFIERS[specifier]
+      if (retired !== undefined) return retired
       const target = resolveIn(known, file, specifier)
       // Outside the app (or a skipped dir): the target stays put, so only a moved importer re-bases it.
       if (target === undefined) return rebase(specifier, file, newPath(file))
       if (newPath(target) === target && newPath(file) === file) return undefined
       return respecify(specifier, target, newPath(file), newPath(target))
     })
+    const updated = renameRetiredTypes(ts, file, imports)
     final.set(newPath(file), updated)
     if (updated !== text && !moveMap.has(file) && original.get(file) === text) rewritten.push(file)
   }
@@ -962,6 +1055,18 @@ export async function migrateLayout(
         ...text.matchAll(new RegExp(`(?<![\\w.-])${escapeRegExp(from)}(?![\\w])`, "g")),
       ].some((match) => newPrefix === undefined || !text.slice(0, match.index).endsWith(newPrefix))
       if (stale) issues.push({ file, reason: `mentions "${from}" by path; it moved to "${to}"` })
+    }
+  }
+
+  // The server refuses data a loader or action returns without an output schema; only the author
+  // knows which fields the browser may see.
+  for (const [file, text] of final) {
+    if (!file.startsWith("routes/") || !/\.backend\.[cm]?[jt]s$/.test(file)) continue
+    for (const { name, schema } of missingOutputSchemas(text)) {
+      issues.push({
+        file,
+        reason: `exports ${name === "action" ? "an" : "a"} ${name} but no ${schema}, so data it returns fails the request. Declare what the browser may see: export const ${schema} = t.object({ ... })`,
+      })
     }
   }
 
