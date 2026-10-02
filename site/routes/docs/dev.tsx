@@ -8,7 +8,7 @@ export const meta = docsMeta(
 )
 
 const BUN_DEV = `// doc-check: skip - fragment: routesDir/outDir/clientModule/createApp are your app's dev config.
-// dev.ts - Bun-native HMR, no Vite in the process
+// backend/dev-server.ts - Bun-native HMR, no Vite in the process
 import { createDevServer } from "@nifrajs/web/dev"
 // Bun.serve bundles + hot-reloads the client; Bun's runtime resolves SSR. An edit reloads the
 // changed module graph - with React Fast Refresh (state preserved) applied natively by Bun, no plugin.
@@ -16,18 +16,19 @@ import { createDevServer } from "@nifrajs/web/dev"
 // caller, pass the production CSS Modules plugin through your own bunfig (nifra dev --bun does it for you).
 const server = await createDevServer({ routesDir, outDir, clientModule, createApp })`
 
-const VITE_DEV = `// doc-check: skip - needs the third-party @vitejs/plugin-react + your ./backend; install it to run this.
-// dev.ts - state-preserving HMR for supported UI adapters
+const VITE_DEV = `// doc-check: skip - needs the third-party @vitejs/plugin-react + your ./app; install it to run this.
+// backend/dev-server.ts - state-preserving HMR for supported UI adapters
 import react from "@vitejs/plugin-react"            // your framework's official Vite plugin
 import { createWebApp } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { createViteDevServer } from "@nifrajs/web/vite"
 import { reactAdapter } from "@nifrajs/web-react"
-import { backend } from "./backend"
+import { backend } from "./app"
 
-const routesDir = \`\${import.meta.dir}/routes\`
+const root = \`\${import.meta.dir}/..\`
+const routesDir = \`\${root}/routes\`
 const server = await createViteDevServer({
-  root: import.meta.dir,
+  root,
   routesDir,
   clientModule: "@nifrajs/web-react/client",
   plugins: [react()],                                // Vue: @vitejs/plugin-vue, Svelte: …, etc.
@@ -41,15 +42,17 @@ const server = await createViteDevServer({
     }),
 })`
 
-const BOUNDARY = `// routes/index.tsx - NOT a Fast Refresh boundary (exports loader/meta), so a save
+const BOUNDARY = `// routes/index.tsx - NOT a Fast Refresh boundary (exports meta beside the page), so a save
 //                     here does a clean full reload. Keep the view in a child component:
+import { Counter } from "../frontend/counter"
+import type { Route } from "./+types/index"
+
 export const meta = { title: "Home" }
-export async function loader({ api }) { /* … */ }
-export default function Home(props) {
-  return <Counter message={props.data.message} />   // ← edit Counter.tsx for state-preserving HMR
+export default function Home({ data }: Route.ComponentProps) {
+  return <Counter message={data.message} />   // ← edit counter.tsx for state-preserving HMR
 }
 
-// components/Counter.tsx - component-only module → a Fast Refresh boundary. Editing this file's
+// frontend/counter.tsx - component-only module → a Fast Refresh boundary. Editing this file's
 // JSX hot-swaps it with useState/useReducer state PRESERVED (no reload).
 import { useState } from "react"
 export function Counter(props: { message: string }) {
@@ -92,8 +95,8 @@ export default {
   // Keeps a bare built-in (\`fs/promises\`) named instead of an empty stub, so the guard sees it.
   plugins: [viteBareBuiltinExternal()],
   build: {
-    // The SAME two client-leak guards Nifra's Bun build runs - server-only code or a node: builtin
-    // reaching the browser fails the build, with the identical error message. A second production
+    // The SAME client-leak guards Nifra's Bun build runs - backend code (a route's .backend.ts half,
+    // backend/) or a node: builtin reaching the browser fails the build, with the identical message. A second production
     // pipeline must not ship without them. \`node:\` stays external so the guard can name it.
     rollupOptions: { external: [/^node:/], plugins: [viteLeakGuard()] },
   },
@@ -355,9 +358,10 @@ export default function Dev() {
       <h2>The Fast Refresh boundary rule</h2>
       <p>
         React Fast Refresh (and the other frameworks' equivalents) only hot-swap a module when{" "}
-        <em>every</em> export is a component. Nifra route files co-locate <code>loader</code>,{" "}
-        <code>action</code>, and <code>meta</code> next to the component - so a route file isn't a
-        refresh boundary, and saving it does a clean full reload. Keep the view in a child component
+        <em>every</em> export is a component. A Nifra page exports <code>meta</code> (and{" "}
+        <code>handle</code>, <code>searchSchema</code>, ...) next to the component - so a page file
+        isn't a refresh boundary, and saving it does a clean full reload. Its <code>loader</code> and{" "}
+        <code>action</code> live in the <code>.backend.ts</code> half, which the browser never loads. Keep the view in a child component
         and edits hot-swap with state intact.
       </p>
       <CodeBlock code={BOUNDARY} />
@@ -430,10 +434,11 @@ export default function Dev() {
         <code>nifra build</code>): faster, Bun-native, and the profile Nifra is tuned for. If an app
         genuinely needs a <strong>Vite-only transform</strong> with no Bun equivalent, you can run a
         Vite/Rollup production client build instead - but it must carry the same client-leak guards the
-        Bun build enforces, or a second pipeline becomes a way for server-only code to reach the
-        browser unnoticed. Add <code>viteLeakGuard()</code>: it runs the <em>same</em> detection and
+        Bun build enforces, or a second pipeline becomes a way for backend code to reach the browser
+        unnoticed. Add <code>viteLeakGuard()</code>: it runs the <em>same</em> detection and
         emits the <em>same</em> error as the Bun build (one implementation, adapted to Rollup's graph),
-        so <code>node:</code> builtins and <code>server-only</code> modules fail the build either way.
+        so a refused import - a <code>node:</code> builtin, <code>backend/</code>, a route's{" "}
+        <code>.backend.ts</code> half - fails the build either way.
       </p>
       <CodeBlock code={VITE_PROD} />
       <p>

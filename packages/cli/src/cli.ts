@@ -147,7 +147,7 @@ Usage:
                                          no arg for the step index, a number for one step's goal/do/verify.
   nifra check   [--json] [--sarif] [--lints-only]
                                          Gate: typecheck + lints (hand-rolled fetch(), untyped client("…"),
-                                         server-only imports in routes/). Run as "done"; --json for agents;
+                                         backend code in browser code). Run as "done"; --json for agents;
                                          --sarif emits the same stable diagnostics as SARIF 2.1.0 for external
                                          review tools; --lints-only skips tsc for a near-instant inner-loop pass.
   nifra verify   [--release] [--json]    Run the shared repository verification gate. --release runs the

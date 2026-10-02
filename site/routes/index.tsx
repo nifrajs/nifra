@@ -458,7 +458,7 @@ const AGENT_LOOP = [
 const GATES = [
   {
     command: "nifra check",
-    body: "Typecheck plus contract rules: hand-rolled fetch to your own API, interpolated SQL, server-only imports in a route module.",
+    body: "Typecheck plus contract rules: hand-rolled fetch to your own API, interpolated SQL, backend code imported by a page.",
   },
   {
     command: "nifra assure",

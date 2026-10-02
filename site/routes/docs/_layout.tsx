@@ -140,7 +140,7 @@ const NAV_SCRIPT = `(function(){
         "1. Never hand-roll fetch() wrappers. Always communicate via the typed client: client<typeof app>(url).\\n" +
         "2. Define schemas (t) at request boundaries to reject bad queries/bodies with 422s before route handlers run.\\n" +
         "3. Route loaders run in-process on the server during SSR (no network/HTTP required). Keep endpoints decoupled.\\n" +
-        "4. Never import server-only code (e.g. Bun, Drizzle backend instances) at the top-level of client page routes.\\n\\n" +
+        "4. A route is x.tsx (the page) + x.backend.ts (loader, action, loaderOutput). Server code lives in backend/ and backend halves; pages and frontend/ may not import it, shared/ holds what both sides need.\\n\\n" +
         "Documentation and Reference Code:\\n" +
         "=================================\\n" +
         proseText;

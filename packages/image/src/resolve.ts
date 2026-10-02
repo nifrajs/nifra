@@ -40,8 +40,8 @@ export interface SelfHostedLoaderOptions {
    * HMAC secret for **signed URLs**. When set, each URL gets a stable `&s=` signature and the handler
    * must be configured with the SAME `signing.secret` - it then rejects any unsigned/forged `(src, w, q)`,
    * shutting down resize-bombing. ⚠️ The signer holds the secret, so a loader created with it is
-   * **server-only** - inject it like a session secret (from `env`), never import this config into a
-   * route/client module. Signatures are stable (no expiry), so SSR-signed URLs hydrate + cache identically.
+   * **server-only** - inject it like a session secret (from `env`) in backend code, never a page or
+   * `frontend/` module. Signatures are stable (no expiry), so SSR-signed URLs hydrate + cache identically.
    */
   readonly secret?: string
 }

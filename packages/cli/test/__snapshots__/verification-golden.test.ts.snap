@@ -6,7 +6,7 @@ exports[`verification golden output: nifra check full assurance project: human r
 ⚠ typecheck SKIPPED - no tsconfig.json (the contract gate did not run)
 ✓ hand-rolled fetch()/EventSource/WebSocket to your own API: none
 ✓ client("…") missing its <typeof app> type argument: none
-✓ server-only import in a route module: none
+✓ backend code in browser code: none
 ✓ SQL built by interpolating a value into the statement: none
 ✓ route returns a raw Response (typed client → data: never): none
 ✓ undeclared dependency in package.json: none
@@ -39,7 +39,7 @@ exports[`verification golden output: nifra check plain project (no config): huma
 ⚠ typecheck SKIPPED - no tsconfig.json (the contract gate did not run)
 ✓ hand-rolled fetch()/EventSource/WebSocket to your own API: none
 ✓ client("…") missing its <typeof app> type argument: none
-✓ server-only import in a route module: none
+✓ backend code in browser code: none
 ✓ SQL built by interpolating a value into the statement: none
 ✓ route returns a raw Response (typed client → data: never): none
 ✓ undeclared dependency in package.json: none
@@ -68,7 +68,7 @@ exports[`verification golden output: nifra check dirty project: human report wit
       - Create \`const api = client<typeof app>(baseUrl)\` from \`@nifrajs/client\`.
       - Replace the relative \`fetch()\` call with the generated \`api...get/post/...\` call and branch on \`{ ok, data, error }\`.
 ✓ client("…") missing its <typeof app> type argument: none
-✗ server-only import in a route module: 1
+✗ backend code in browser code: 1
     routes/notes.tsx:1  import { db } from "../db" - server-only "../db" reaches the browser bundle via routes/notes.tsx → ../db (direct edge - couldn't resolve the transitive chain precisely); server-only code in browser code (a route's frontend half, frontend/ or shared/) - reach it from the route's backend half (x.backend.ts) or a *.fn.ts server function; a dynamic import() is bundled too
       fix: Move server-only code behind the route's backend half
       - Remove the import of "../db" from this module: it is browser code, bundled for the browser.

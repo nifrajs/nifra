@@ -7,34 +7,58 @@ export const meta = docsMeta(
   "Render critical HTML first, stream deferred data progressively, prerender static routes, and cache rendered pages with stale-while-revalidate - on every runtime including the edge.",
 )
 
-const PROGRESSIVE = `import { defer } from "@nifrajs/web"
+const PROGRESSIVE = `// routes/products/[id].backend.ts
+import { t } from "@nifrajs/schema"
+import { defer } from "@nifrajs/web"
+import type { Route } from "./+types/[id]"
 
-export async function loader({ api }: LoaderArgs<typeof app>) {
+const Review = t.object({ author: t.string(), body: t.string() })
+declare function loadReviews(productId: string): Promise<{ author: string; body: string }[]>
+
+// A deferred value is held to the same output contract as the rest of the data.
+export const loaderOutput = t.object({
+  product: t.object({ name: t.string() }),
+  reviews: t.deferred(t.array(Review)),
+})
+
+export async function loader({ api, params }: Route.LoaderArgs) {
+  const product = await api.products({ id: params.id }).get()
   return {
-    product: (await api.products.get()).data, // critical: rendered in the first shell
-    reviews: defer(api.reviews.get()),        // non-critical: streamed when ready
+    product: { name: product.ok ? product.data.name : "" }, // critical: in the first shell
+    reviews: defer(loadReviews(params.id)),                  // non-critical: streamed when ready
   }
-}
+}`
 
-export default function Product(props: { data: LoaderData<typeof loader> }) {
+const PROGRESSIVE_PAGE = `// routes/products/[id].tsx
+import type { Route } from "./+types/[id]"
+
+export default function Product({ data }: Route.ComponentProps) {
   return (
     <>
-      <ProductSummary product={props.data.product} />
-      <Await resolve={props.data.reviews} fallback={<p>Loading reviews…</p>}>
+      <ProductSummary product={data.product} />
+      <Await resolve={data.reviews} fallback={<p>Loading reviews…</p>}>
         {(reviews) => <Reviews items={reviews} />}
       </Await>
     </>
   )
 }`
 
-const PRERENDER = `// A static route: render it to a static index.html at build time.
+const PRERENDER = `// routes/blog/index.backend.ts - a static route: render it to index.html at build time.
+import { t } from "@nifrajs/schema"
+import type { Route } from "./+types/index"
+
 export const prerender = true
 
-export async function loader({ api }: LoaderArgs<typeof app>) {
-  return { posts: (await api.posts.get()).data } // runs at BUILD (no per-request secrets)
+export const loaderOutput = t.object({
+  posts: t.array(t.object({ slug: t.string(), title: t.string() })),
+})
+
+export async function loader({ api }: Route.LoaderArgs) {
+  const res = await api.posts.get() // runs at BUILD (no per-request secrets)
+  return { posts: res.ok ? res.data : [] }
 }`
 
-const STATIC_PATHS = `// A dynamic route (/posts/:slug): enumerate which pages to prerender.
+const STATIC_PATHS = `// routes/posts/[slug].backend.ts - a dynamic route: enumerate which pages to prerender.
 export async function getStaticPaths(): Promise<StaticPaths> {
   const slugs = await loadAllSlugs()
   return {
@@ -72,7 +96,7 @@ const store = new MemoryCacheStore() // dev / single-instance only
 const isr = withISR(app, { store, revalidate: 60, now: () => Date.now() })
 Bun.serve({ fetch: (req) => isr(req) })`
 
-const REVALIDATE = `// A per-route freshness window (seconds) - overrides the wrapper default.
+const REVALIDATE = `// routes/pricing.backend.ts - a per-route freshness window (seconds), overriding the wrapper's.
 export const revalidate = 300 // this page is fresh for 5 min, then regenerates on the next hit`
 
 const KV = `// doc-check: skip - Workers entry: \`Env\`/\`ExecutionContext\` globals + your \`app\` from server.ts.
@@ -107,9 +131,9 @@ app.get("/api/preview/exit", (c) => (disableDraft(c), redirect("/")))
 // Gating it yourself instead? Use enableDraft(c, env.DRAFT_SECRET) AFTER your own check - and
 // compare the token in constant time, since === leaks it one character at a time.
 
-// 2. Loaders branch on ctx.draft to load unpublished content.
-export async function loader({ api, draft }: LoaderArgs<typeof app>) {
-  return { post: (await api.posts.get({ query: { slug, includeDrafts: draft } })).data }
+// 2. Loaders (in a route's .backend.ts) branch on draft to load unpublished content.
+export async function loader({ api, draft, params }: Route.LoaderArgs) {
+  return { post: (await api.posts.get({ query: { slug: params.slug, includeDrafts: draft } })).data }
 }
 
 // 3. Wire the SAME secret so loaders see ctx.draft + editors bypass the ISR cache.
@@ -163,7 +187,8 @@ export default function Rendering() {
         fetch. The same protocol works for actions and soft navigations, including NDJSON on the client
         side.
       </p>
-      <CodeBlock code={PROGRESSIVE} />
+      <CodeBlock code={PROGRESSIVE} lang="ts" />
+      <CodeBlock code={PROGRESSIVE_PAGE} />
       <p>
         This is request-time progressive SSR/partial rendering. It is distinct from build-time SSG:
         the shell is not a precomputed PPR artifact, and deferred values remain request-scoped.
@@ -171,8 +196,8 @@ export default function Rendering() {
 
       <h2>SSG - prerender at build</h2>
       <p>
-        Opt a static route into prerendering with <code>export const prerender = true</code>. Its
-        loader runs at <i>build</i> time (build-safe data only - no per-request cookies or secrets),
+        Opt a static route into prerendering with <code>export const prerender = true</code> in its{" "}
+        <code>.backend.ts</code>. Its loader runs at <i>build</i> time (build-safe data only - no per-request cookies or secrets),
         and the route is baked to a static <code>index.html</code> plus a <code>_data.json</code> the
         client fetches on soft-navigation.
       </p>
@@ -211,7 +236,8 @@ export default function Rendering() {
         <code>revalidateEndpoint</code> the same <code>query</code> so purges match.
       </p>
       <p>
-        Set a route's freshness with <code>export const revalidate</code> (seconds) - Nifra emits it as
+        Set a route's freshness with <code>export const revalidate</code> (seconds) in its{" "}
+        <code>.backend.ts</code> - Nifra emits it as
         the <code>x-nifra-isr-revalidate</code> header, which the wrapper reads to set that page's TTL.
       </p>
       <CodeBlock code={REVALIDATE} />

@@ -33,12 +33,13 @@ const FRAMEWORKS: ReadonlyArray<{
 const VANILLA = `import { html, vanillaAdapter } from "@nifrajs/web-vanilla"
 
 // routes/hotels.ts - a route file, no .tsx needed.
-export const hydrate = false
-
 export default function Hotels({ data }: { data: { hotels: Array<{ name: string }> } }) {
   // Interpolated values are escaped; wrap trusted markup in raw() to opt out deliberately.
   return html\`<ul>\${data.hotels.map((h) => html\`<li>\${h.name}</li>\`)}</ul>\`
-}`
+}
+
+// routes/hotels.backend.ts - its backend half; hydrate = false ships the page with no JavaScript.
+export const hydrate = false`
 
 const SWAP = `// Server - pick an adapter. Everything else is identical across all five frameworks:
 // the same routes, loaders, actions, streaming, <Await>, fetchers, query cache.
@@ -69,12 +70,8 @@ bun create nifra my-app --framework svelte --target vercel`
 
 const VUE_SFC = `<!-- routes/index.vue - a Nifra route authored as a Vue Single-File Component -->
 <script lang="ts">
-// The plain <script> carries Nifra's route convention (server-only named exports):
+// The plain <script> carries the page's named exports (meta, handle, ...):
 export const meta = { title: "Home" }
-export async function loader({ api }) {
-  const res = await api.count.get()
-  return { count: res.data?.count ?? 0 }
-}
 </script>
 
 <script setup lang="ts">
@@ -83,7 +80,17 @@ defineProps(["data"])          // Nifra passes the loader data in as \`data\`
 
 <template>
   <h1>Count: {{ data.count }}</h1>
-</template>`
+</template>
+
+<!-- routes/index.backend.ts - the loader, the same file for every framework -->
+import { t } from "@nifrajs/schema"
+import type { Route } from "./+types/index"
+
+export const loaderOutput = t.object({ count: t.number() })
+export async function loader({ api }: Route.LoaderArgs) {
+  const res = await api.count.get()
+  return { count: res.ok ? res.data.count : 0 }
+}`
 
 export default function Frameworks() {
   return (
@@ -144,7 +151,8 @@ export default function Frameworks() {
       <p>
         Everything that lives in <code>@nifrajs/web</code> rather than the view layer works unchanged:
         loaders, actions, ISR, SSG, head management, streaming. What you give up is hydration - these
-        are server-rendered documents, so set <code>export const hydrate = false</code> and reach for{" "}
+        are server-rendered documents, so set <code>export const hydrate = false</code> in the route's{" "}
+        <code>.backend.ts</code> half and reach for{" "}
         <a href="/docs/hydration">islands</a> where a page needs interactivity.
       </p>
       <p>
@@ -154,13 +162,13 @@ export default function Frameworks() {
 
       <h2>Authoring routes</h2>
       <p>
-        A route's <code>default</code> export is the component; its <code>loader</code>/
-        <code>action</code>/<code>meta</code> are named exports. Most adapters write <code>.tsx</code>,
-        but the compiled frameworks use their native single-file format - <b>Svelte</b>{" "}
-        <code>.svelte</code> (loader/meta in <code>&lt;script module&gt;</code>) and <b>Vue</b>{" "}
-        <code>.vue</code> SFCs (loader/meta in the plain <code>&lt;script&gt;</code>; the component in{" "}
-        <code>&lt;script setup&gt;</code> + <code>&lt;template&gt;</code>) - each compiled by its
-        package's Bun plugin (<code>@nifrajs/web-vue/plugin</code>, <code>@nifrajs/web-svelte/plugin</code>).
+        A page's <code>default</code> export is the component and <code>meta</code> is a named export;
+        its <code>loader</code> and <code>action</code> live in the route's <code>.backend.ts</code>{" "}
+        half, the same file whatever the framework. Most adapters write <code>.tsx</code>, but the
+        compiled frameworks use their native single-file format - <b>Svelte</b> <code>.svelte</code>{" "}
+        (meta in <code>&lt;script module&gt;</code>) and <b>Vue</b> <code>.vue</code> SFCs (meta in
+        the plain <code>&lt;script&gt;</code>; the component in <code>&lt;script setup&gt;</code> +{" "}
+        <code>&lt;template&gt;</code>) - each compiled by its package's Bun plugin (<code>@nifrajs/web-vue/plugin</code>, <code>@nifrajs/web-svelte/plugin</code>).
       </p>
       <CodeBlock code={VUE_SFC} />
       <div className="caveat">

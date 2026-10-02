@@ -106,7 +106,8 @@ export default function Islands() {
 
       <h2>Why islands, not hydration</h2>
       <p>
-        Vanilla routes set <code>export const hydrate = false</code> - there is no client framework
+        Vanilla routes set <code>export const hydrate = false</code> in their{" "}
+        <code>.backend.ts</code> half - there is no client framework
         to hydrate with, and that is the point. The five framework adapters give you a reactive
         runtime and pay for it in client JS and in the subtle failure modes (stale closures,
         hydration mismatch, what-re-runs-when) that trip up generated code. Islands take the other
@@ -118,8 +119,8 @@ export default function Islands() {
       <h2>Mount an island</h2>
       <p>
         Render a <code>&lt;nifra-island&gt;</code> marker in your page (props are inline JSON), then
-        bundle one entry that calls <code>mountIslands</code>. Load it via the route&apos;s{" "}
-        <code>islandScripts</code>.
+        bundle one entry (in <code>frontend/</code>) that calls <code>mountIslands</code>. Load it
+        with the <code>islandScripts</code> export of the route&apos;s <code>.backend.ts</code> half.
       </p>
       <CodeBlock code={MARKER} />
       <CodeBlock code={COUNTER} />

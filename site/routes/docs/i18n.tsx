@@ -7,7 +7,7 @@ export const meta = docsMeta(
   "One locale registry, locale-prefixed routing, negotiation and a tiny ICU message formatter on the platform Intl.",
 )
 
-const LOCALES = `// lib/i18n.ts - each locale declared once; routing, alternates and <html lang>/<html dir> read it.
+const LOCALES = `// shared/i18n.ts - each locale declared once; routing, alternates and <html lang>/<html dir> read it.
 import { defineLocales } from "@nifrajs/i18n"
 import { defineI18nRouting } from "@nifrajs/i18n/routing"
 
@@ -25,7 +25,7 @@ export const urls = defineI18nRouting(locales)
 urls.localizePathname("/kundli", "hi") // "/hi/kundli"
 locales.chain("hi") // ["hi", "en"] - the catalog fallback order`
 
-const GUARD = `// routes/[lang]/_middleware.ts - 404 unknown and draft locales, redirect /en/... to /...
+const GUARD = `// routes/[lang]/_layout.backend.ts - 404 unknown and draft locales, redirect /en/... to /...
 import { defineLocales } from "@nifrajs/i18n"
 import { defineI18nRouting } from "@nifrajs/i18n/routing"
 import { notFound, type RouteMiddleware, redirect } from "@nifrajs/web"
@@ -34,14 +34,13 @@ const urls = defineI18nRouting(
   defineLocales({ default: "en", locales: { en: {}, hi: {}, gu: { draft: true } } }),
 )
 
-const guard: RouteMiddleware = (ctx) => {
+export const middleware: RouteMiddleware = (ctx) => {
   const { pathname, search } = new URL(ctx.request.url)
   const match = urls.matchSegment(ctx.params.lang, pathname + search)
   if (match.kind === "not-found") notFound()
   if (match.kind === "redirect") return redirect(match.location, { status: 308 })
   return undefined
-}
-export default guard`
+}`
 
 const ALTERNATES = `// routes/[lang]/kundli.tsx - canonical + hreflang links and the document language.
 import { defineLocales } from "@nifrajs/i18n"
@@ -66,11 +65,15 @@ export function meta({ params, origin }: MetaArgs): Meta {
   }
 }`
 
-const NEGOTIATE = `// In a loader: resolve the locale + return only that catalog's messages.
+const NEGOTIATE = `// routes/index.backend.ts - resolve the locale + return only that catalog's messages.
 import { negotiateLocale } from "@nifrajs/i18n"
-import { catalogs, locales } from "../catalogs"
+import { t } from "@nifrajs/schema"
+import { catalogs, locales } from "../shared/catalogs"
+import type { Route } from "./+types/index"
 
-export async function loader({ request }: { request: Request }) {
+// A catalog is open-ended, so its schema is the explicit opt-out of the strict default.
+export const loaderOutput = t.object({ locale: t.string(), messages: t.looseObject({}) })
+export async function loader({ request }: Route.LoaderArgs) {
   const locale = negotiateLocale(request, { locales, defaultLocale: "en", queryParam: "lang", cookie: "lang" })
   return { locale, messages: catalogs[locale] }   // ?lang= → cookie → Accept-Language → default
 }`
@@ -116,7 +119,7 @@ function Body() {
   </>
 }`
 
-const RICH = `// messages/en.ts: terms: "Read the <link>terms</link> and <b>privacy notice</b>,<br/>{name}."
+const RICH = `// shared/messages/en.ts: terms: "Read the <link>terms</link> and <b>privacy notice</b>,<br/>{name}."
 import { rich, useT } from "@nifrajs/web-react/i18n"
 
 function Terms({ name }: { name: string }) {
@@ -138,9 +141,9 @@ const RICH_SVELTE = `<!-- Svelte: each tag is a snippet that renders its content
 <p><Rich key="terms" tags={{ link, b }} vars={{ name }} /></p>`
 
 const CHECK_ENTRY = `// doc-check: skip - imports the app's own catalog files.
-// lib/i18n.ts - the module \`nifra i18n check\` imports.
+// shared/i18n.ts - the module \`nifra i18n check\` imports.
 import { defineLocales } from "@nifrajs/i18n"
-import en from "../messages/en.json"
+import en from "./messages/en.json"
 
 export const locales = defineLocales({
   default: "en",
@@ -148,8 +151,8 @@ export const locales = defineLocales({
 })
 export const catalogs = {
   en,
-  hi: () => import("../messages/hi.json"),
-  gu: () => import("../messages/gu.json"),
+  hi: () => import("./messages/hi.json"),
+  gu: () => import("./messages/gu.json"),
 }
 // Keys a check skips: exact, a prefix ending in ".*", or "*".
 export const ignore = { script: ["languages.*"], untranslated: ["brand"] }`
@@ -169,7 +172,7 @@ test("catalogs are consistent", () => {
   expect(findings.filter((finding) => finding.severity === "error")).toEqual([])
 })`
 
-const CATALOG = `// messages/en.ts - the default locale's catalog: ICU strings, lists and nested blocks.
+const CATALOG = `// shared/messages/en.ts - the default locale's catalog: ICU strings, lists and nested blocks.
 import { createFormatter, type PartialMessages } from "@nifrajs/i18n"
 
 export const en = {
@@ -195,7 +198,7 @@ const questions = t.get("faq")?.map((item) => item.q)
 console.log(questions)`
 
 const REGISTER = `// doc-check: skip - declares the app-wide catalog type, which would retype every other sample here.
-// Once, anywhere in the app: every t() key, useT() included, and every other catalog is checked.
+// shared/register.ts - once per app: every t() key, useT() included, and every other catalog is checked.
 import type { en } from "./messages/en"
 
 declare module "@nifrajs/i18n" {
@@ -233,8 +236,8 @@ export default function I18n() {
         first path segment and the default is unprefixed (or prefixed too, with{" "}
         <code>prefixDefaultLocale</code>). A <code>[lang]</code> route segment matches any string, so
         guard it: <code>matchSegment</code> answers not-found for an unknown or draft value and a
-        redirect for the default's prefix or a wrong case, and a <code>_middleware.ts</code> in the{" "}
-        <code>[lang]</code> directory turns that into a 404 through your <code>_404</code> page or a
+        redirect for the default's prefix or a wrong case, and the <code>middleware</code> export of
+        a <code>_layout.backend.ts</code> in the <code>[lang]</code> directory turns that into a 404 through your <code>_404</code> page or a
         permanent redirect - on full page loads, client navigations and form posts alike.
       </p>
       <CodeBlock code={GUARD} lang="ts" />
@@ -367,7 +370,7 @@ export default function I18n() {
       <h2>Notes</h2>
       <ul>
         <li>For many locales, load catalogs <b>lazily</b> per request - don't bundle every catalog. A
-          loader that does <code>{"await import(`../messages/${locale}.ts`)"}</code> ships only the
+          loader that does <code>{"await import(`../shared/messages/${locale}.ts`)"}</code> ships only the
           requested locale's table to the page, typed inline tables included.</li>
         <li>The supported ICU subset is interpolation + <code>plural</code>/<code>selectordinal</code>/<code>select</code>; use
           <code> n()</code>/<code>d()</code> for inline numbers/dates (no <code>{`{n, number}`}</code>

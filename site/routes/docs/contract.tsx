@@ -17,43 +17,55 @@ interface LoaderContext {
   set:     LoaderResponseControls  // response headers + cookies for this page request (see below)
 }
 
-// api + env are typed per-route via @nifrajs/client's LoaderArgs<Api, Env>; the agnostic core
-// keeps them \`unknown\`. Branch on \`draft\` to load unpublished content for preview/editors.`
+// api + env are typed per route by the generated Route.LoaderArgs (./+types/<name>); the agnostic
+// core keeps them \`unknown\`. Branch on \`draft\` to load unpublished content for preview/editors.`
 
-const SIGNATURES = `// routes/users/[id].tsx - a route module's full contract (every export optional but \`default\`).
-// doc-check: skip - full-contract sketch; ctx.api's routes and meta's loader-data shape come from
-// the reader's own backend type, so it can't compile standalone (see the typed examples elsewhere).
-import type { LoaderContext } from "@nifrajs/web"
-
-// GET → data for the page. Runs in-process on the server during SSR (no HTTP hop).
-export async function loader(ctx: LoaderContext) {
-  return { user: await ctx.api.users.get({ id: ctx.params.id }) }
-}
-
-// POST → a mutation. Same context. Return a Response (e.g. a redirect - passed straight
-// through) OR data, which reaches the component as \`actionData\`.
-export async function action(ctx: LoaderContext) {
-  const form = await ctx.request.formData()
-  return { ok: true }
-}
+const SIGNATURES = `// routes/users/[id].tsx - the page: it ships to the browser whole. Only \`default\` is required.
+// doc-check: skip - full-contract sketch across two files; the data shape comes from the reader's
+// own backend, so it can't compile standalone (see the typed examples elsewhere).
+import type { Route } from "./+types/[id]"
 
 // Static OR a function of { data, params, origin }. Static meta is serialized once; function meta
 // recomputes per request (its content can vary with loader data). \`origin\` is the request's
 // scheme+host (server-resolved, matches the client's location.origin) - use it for ABSOLUTE
 // canonical / og:url / og:image URLs without threading siteUrl through loader data.
 export const meta = ({ data, params, origin }) => ({
-  title: \`User \${data.user.name}\`,
-  meta: [{ name: "description", content: data.user.bio }],
+  title: \`User \${data.name}\`,
+  meta: [{ name: "description", content: data.bio }],
   link: [{ rel: "canonical", href: \`\${origin}/users/\${params.id}\` }],
 })
 
-export const hydrate = false   // opt out of full-document hydration (static / island pages)
-export default function User(props) { /* props.data, props.actionData, props.params */ }`
+export default function User({ data, actionData, params }: Route.ComponentProps) { /* … */ }
 
-const RESPONSE_CONTROLS = `// routes/account.tsx - response headers and cookies, from a loader or an action.
+// routes/users/[id].backend.ts - the server half: it never reaches the browser.
+import { t } from "@nifrajs/schema"
+
+// GET → data for the page. Runs in-process on the server during SSR (no HTTP hop). Only what
+// loaderOutput declares reaches the page as \`data\`.
+export const loaderOutput = t.object({ name: t.string(), bio: t.string() })
+export async function loader({ api, params }: Route.LoaderArgs) {
+  const res = await api.users({ id: params.id }).get()
+  return { name: res.data.name, bio: res.data.bio }
+}
+
+// POST → a mutation. Same context. Return a Response (e.g. a redirect - passed straight
+// through) OR data, which reaches the page as \`actionData\`, bounded by actionOutput.
+export const actionOutput = t.object({ ok: t.boolean() })
+export async function action({ request }: Route.ActionArgs) {
+  const form = await request.formData()
+  return { ok: true }
+}
+
+export const hydrate = false   // opt out of full-document hydration (static / island pages)`
+
+const RESPONSE_CONTROLS = `// routes/account.backend.ts - response headers and cookies, from a loader or an action.
+import { t } from "@nifrajs/schema"
 import { type LoaderContext, redirect } from "@nifrajs/web"
 
 declare function signIn(email: string, password: string): Promise<{ token: string } | null>
+
+export const loaderOutput = t.object({ plan: t.string() })
+export const actionOutput = t.object({ error: t.string() })
 
 export async function loader(ctx: LoaderContext) {
   // Headers land on the rendered document.
@@ -100,19 +112,21 @@ const BOUNDARY = `// What runs WHERE:
 //   SSR of the layout chain        hydration + Fast Refresh (dev)
 //   backend (api, env, draft)      -
 //
-// The client gets the loader's RETURN VALUE (serialized into the document), never the loader
-// itself, the api, or env. So:
-//  1. Never import server-only modules (Bun, a DB client, secrets) at the top level of a route
-//     file - the bundler pulls it into the client chunk and it crashes / leaks. (The build now
-//     FAILS with a named error if a \`node:\` built-in reaches a client chunk - see below.)
+// The client gets the loader's OUTPUT - its return value projected through loaderOutput and
+// serialized into the document - never the loader itself, the api, or env. So:
+//  1. Server code lives in a route's x.backend.ts and in backend/. The page file, frontend/ and
+//     shared/ ship to the browser, and the build FAILS with the import chain if they reach backend
+//     code, a database driver or a \`node:\` built-in (see /docs/structure).
 //  2. A client soft-nav re-runs the loader over the network (X-Nifra-Data) and re-merges the
 //     same layout-chain head, so sitewide tags persist across navigation - no page-only flash.`
 
 const DUAL_API = `// TWO ways to handle a request - pick by who is calling.
+import { t } from "@nifrajs/schema"
 import type { LoaderContext } from "@nifrajs/web"
 
-// (1) A page's own data + mutations → route exports. A PUBLIC POST is a route ACTION
-//     (routes/contact.tsx) - the browser POSTs the route's own URL, Nifra runs \`action\`:
+// (1) A page's own data + mutations → its backend half's exports. A PUBLIC POST is a route ACTION
+//     (routes/contact.backend.ts) - the browser POSTs the route's own URL, Nifra runs \`action\`:
+export const actionOutput = t.object({ ok: t.boolean(), body: t.string() })
 export async function action(ctx: LoaderContext) {
   const form = await ctx.request.formData()        // the browser POSTed this route
   return { ok: true, body: String(form.get("body")) } // → props.actionData on re-render
@@ -120,19 +134,23 @@ export async function action(ctx: LoaderContext) {
 
 // (2) ctx.api is the IN-PROCESS backend client (the inProcessClient(server) the app was given).
 //     It is LOADERS-ONLY: the SSR backend registers GET handlers, so a .post() to ctx.api 405s.
+export const loaderOutput = t.object({ id: t.string() })
 export async function loader(ctx: LoaderContext) {
   // ✅ a GET in-process - no HTTP hop. (A .post() to ctx.api would 405; write an \`action\` instead.)
-  return { id: ctx.params.id }
+  return { id: ctx.params.id ?? "" }
 }
 
 // Rule of thumb: data INTO a page → loader + ctx.api (GET). A mutation FROM the browser
 // (a form/fetch POST) → an \`action\` export on the route. Don't \`inProcessClient(api).post()\`.`
 
-const PARAM_404 = `// routes/users/[id].tsx - plain SSR runs the loader for ANY :id value. \`fallback: "404"\`
+const PARAM_404 = `// routes/users/[id].backend.ts - plain SSR runs the loader for ANY :id value. \`fallback: "404"\`
 // only takes effect under prerender/CDN, so on on-demand SSR you MUST guard and 404 yourself.
+import { t } from "@nifrajs/schema"
 import type { LoaderContext } from "@nifrajs/web"
 
 declare function lookupUser(id: string): Promise<{ id: string } | null>
+
+export const loaderOutput = t.object({ user: t.object({ id: t.string() }) })
 
 export async function loader(ctx: LoaderContext) {
   // ctx.params.id is \`string | undefined\` (an optional segment) - default it before the lookup.
@@ -181,7 +199,8 @@ await buildClient({ routesDir: "./routes", outDir: "./dist", clientModule: "@nif
 
 // 2. Drive the app's own fetch to render each opted-in route → dist/<path>/index.html + _data.json.
 //    Static routes opt in with \`export const prerender = true\`; dynamic routes enumerate concrete
-//    params with \`export const getStaticPaths\` (+ a \`fallback: "ssr" | "404"\`).
+//    params with \`export const getStaticPaths\` (+ a \`fallback: "ssr" | "404"\`) - both in the
+//    route's .backend.ts.
 const { app } = await import("./server")
 const { prerendered } = await prerenderRoutes({
   app,                                       // the built createWebApp (a { fetch } is enough)
@@ -294,8 +313,8 @@ const BUILD_OUTPUT = `// buildClient() writes a browser bundle + manifest.json f
 //    build mode; every other \`process.env.X\` becomes undefined - EXCEPT names you opt in with the
 //    PUBLIC_ prefix (Vite/Next convention), which are baked in with their value (see below). No
 //    \`process is not defined\` crash, and no unprefixed (secret) env leaking into the client bundle.
-//  • A \`node:\` built-in in the CLIENT bundle FAILS the build with a named error (move it behind a
-//    loader/action - server-only). It builds via a browser polyfill otherwise, then breaks at runtime.
+//  • A \`node:\` built-in in the CLIENT bundle FAILS the build with a named error (move it into
+//    backend code - a route's .backend.ts or backend/). A browser polyfill would build, then break.
 //  • Assets are content-hashed + immutable. Serve /assets/* with a long-lived cache header.`
 
 const REUSABLE_ROUTER = `// A PUBLISHABLE router - contract-first, so its types survive \`.d.ts\` emit for consumers.
@@ -359,11 +378,15 @@ export default function Contract() {
 
       <h2>Loader, action &amp; meta signatures</h2>
       <p>
-        A route module co-locates its data, mutation, head, and view. Only the{" "}
-        <code>default</code> export (the component) is required; <code>loader</code>,{" "}
-        <code>action</code>, <code>meta</code>, and <code>hydrate</code> are all optional. A{" "}
-        <code>loader</code> runs on <strong>GET</strong> and feeds <code>props.data</code>; an{" "}
-        <code>action</code> runs on <strong>POST</strong> and feeds <code>props.actionData</code>.
+        A route is two files. The page (<code>x.tsx</code>) holds the view and its head:{" "}
+        <code>default</code> (required) and <code>meta</code>. Its backend half (
+        <code>x.backend.ts</code>) holds everything that runs only on the server:{" "}
+        <code>loader</code> + <code>loaderOutput</code>, <code>action</code> +{" "}
+        <code>actionOutput</code>, <code>hydrate</code>, <code>prerender</code>,{" "}
+        <code>revalidate</code>. A <code>loader</code> runs on <strong>GET</strong> and feeds{" "}
+        <code>props.data</code>; an <code>action</code> runs on <strong>POST</strong> and feeds{" "}
+        <code>props.actionData</code>. A server-only export in the page file is a build error - see{" "}
+        <a href="/docs/structure">Project structure</a>.
       </p>
       <CodeBlock code={SIGNATURES} />
       <blockquote>
@@ -561,8 +584,10 @@ export default function Contract() {
       <h2>The client ↔ server boundary</h2>
       <p>
         Loaders, actions, and head resolution run on the server. The client receives the loader's{" "}
-        <em>return value</em> (serialized into the document), never the loader, the <code>api</code>,
-        or <code>env</code>. Keep server-only imports out of a route file's top level.
+        <em>output</em> - its return value projected through <code>loaderOutput</code> - never the
+        loader, the <code>api</code>, or <code>env</code>. Server code lives in a route's{" "}
+        <code>.backend.ts</code> half and in <code>backend/</code>, and the build refuses a frontend
+        file that reaches it.
       </p>
       <CodeBlock code={BOUNDARY} />
 
@@ -587,8 +612,9 @@ export default function Contract() {
 
       <h2>Static emit (prerender)</h2>
       <p>
-        Opt a static route into SSG with <code>export const prerender = true</code> (or a dynamic
-        route with <code>export const getStaticPaths</code>), then call <code>prerenderRoutes</code> -{" "}
+        Opt a static route into SSG with <code>export const prerender = true</code> in its{" "}
+        <code>.backend.ts</code> (or a dynamic route with <code>export const getStaticPaths</code>),
+        then call <code>prerenderRoutes</code> -{" "}
         a <strong>public</strong> export of <code>@nifrajs/web/build</code>. It drives the app's own{" "}
         <code>fetch</code> to write <code>index.html</code> + <code>_data.json</code> per route;{" "}
         <code>cloudflarePagesRoutes</code> emits the <code>_routes.json</code> for a hybrid CDN +

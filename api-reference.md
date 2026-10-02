@@ -4838,7 +4838,7 @@ _No named exports (side-effect entrypoint)._
 - **RouteMatch** _(interface)_ - `interface RouteMatch`
   A URL matched against the manifest patterns: which route + its extracted params.
 - **RouteMiddleware** _(type)_ - `type RouteMiddleware<Ctx = LoaderContext> = ( ctx: Ctx, ) => MiddlewareOutcome | Promise<MiddlewareOutcome>`
-  The default export of a `_middleware.ts` file. It runs on the server before the layouts, loaders and action of every route in its directory and below - on a document request, a client navigation and a form post alike - and before a nested `_404` there. Middleware higher in the tree runs first.
+  The `middleware` export of a `_layout.backend.ts` file. It runs on the server before the layouts, loaders and action of every route in its directory and below - on a document request, a client navigation and a form post alike - and before a nested `_404` there. Middleware higher in the tree runs fi…
 - **RouteModule** _(interface)_ - `interface RouteModule`
   A route module - the default component + optional loader / action / meta.
 - **RoutePattern** _(interface)_ - `interface RoutePattern`

@@ -17,7 +17,7 @@ export default function Onboard() {
 1. Tech Stack: Nifra (Bun-native TS framework), Adapter: @nifrajs/web-${adapter}, Env: ${env === "workers" ? "Cloudflare Workers/Pages" : env}, Database: ${db}.
 2. Use the end-to-end typed client (\`client<typeof app>("")\`) to fetch API endpoints. Never use raw fetch() for internal APIs.
 3. Validate boundaries using \`t.object({ ... })\` (Standard Schema) in your server routes.
-4. Keep all server-only code (DB, secrets, node modules) inside \`*.server.ts\` files, or mark with \`import "@nifrajs/web/server-only"\`. Never top-level import them in route page components.
+4. Keep server code (DB, secrets, node modules) in \`backend/\` or a route's \`x.backend.ts\` half (loader, action, loaderOutput). Pages and \`frontend/\` may not import it - the build refuses; code both sides need goes in \`shared/\`.
 5. Run \`nifra check\` and typecheck after completing edits to verify contract alignment. Do not skip checks.`
 
   const handleCopy = () => {

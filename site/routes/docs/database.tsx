@@ -44,7 +44,7 @@ const app = server<Env>().get("/users/:id", async (c) => {
   return user ?? new Response("Not found", { status: 404 })
 })`
 
-const DRIZZLE = `// schema.ts - define your schema (source of truth)
+const DRIZZLE = `// backend/db/schema.ts - define your schema (source of truth)
 import { pgTable, serial, text, timestamp } from "drizzle-orm/pg-core"
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -56,33 +56,41 @@ export const users = pgTable("users", {
 // drizzle.config.ts - drizzle-kit config
 import { defineConfig } from "drizzle-kit"
 export default defineConfig({
-  schema: "./schema.ts",
-  out: "./migrations",
+  schema: "./backend/db/schema.ts",
+  out: "./backend/db/migrations",
   dialect: "postgresql",
 })
 
-// db.ts - initialize and migrate
+// backend/db/index.ts - initialize and migrate
 import { drizzle } from "drizzle-orm/postgres-js"
 import postgres from "postgres"
 import { migrate } from "drizzle-orm/postgres-js/migrator"
 const sql = postgres(process.env.DATABASE_URL!)
 export const db = drizzle(sql, { schema: import("./schema") })
-await migrate(db, { migrationsFolder: "./migrations" })  // on app start
+await migrate(db, { migrationsFolder: "./backend/db/migrations" })  // on app start
 
-// routes/users.ts - use your typed schema in a loader
-import { type LoaderArgs } from "@nifrajs/web"
+// routes/users/[id].backend.ts - use your typed schema in a loader (backend code may import backend/)
+import { t } from "@nifrajs/schema"
+import { notFound } from "@nifrajs/web"
 import { eq } from "drizzle-orm"
-import { db } from "../db"
-import { users } from "../db/schema"
+import { db } from "../../backend/db"
+import { users } from "../../backend/db/schema"
+import type { Route } from "./+types/[id]"
 
-export async function loader({ params }: LoaderArgs) {
+export const loaderOutput = t.object({ name: t.string() })   // email stays on the server
+export async function loader({ params }: Route.LoaderArgs) {
   const [user] = await db.select().from(users).where(eq(users.id, Number(params.id)))
-  return { user }
+  if (!user) throw notFound()
+  return user
 }
-export default function UserPage({ data }: any) { return <h1>{data.user?.name}</h1> }`
 
-const LOADER = `// In a full-stack app the same query runs in a route loader - typed end-to-end to the page.
-export async function loader({ params }: LoaderArgs<typeof app>) {
+// routes/users/[id].tsx - the page sees only { name }
+export default function UserPage({ data }: Route.ComponentProps) { return <h1>{data.name}</h1> }`
+
+const LOADER = `// routes/posts/[slug].backend.ts - in a full-stack app the same query runs in a route's loader,
+// typed end-to-end to the page. loaderOutput decides which columns leave the server.
+export const loaderOutput = t.object({ post: t.object({ title: t.string(), body: t.string() }) })
+export async function loader({ params }: Route.LoaderArgs) {
   const post = await db.query("SELECT * FROM posts WHERE slug = ?").get(params.slug)
   if (!post) throw new Response("Not found", { status: 404 })
   return { post }
@@ -93,18 +101,19 @@ bun create nifra notes-api --db drizzle-libsql     # SQLite everywhere incl. the
 bun create nifra notes-api --db drizzle-postgres   # Postgres (postgres.js) on Bun/Node/Deno
 bun create nifra notes-api --db drizzle-sqlite     # Bun's built-in bun:sqlite, local file`
 
-const DECORATE = `import { server } from "@nifrajs/core/server"
+const DECORATE = `// backend/app.ts
+import { server } from "@nifrajs/core/server"
 import { desc } from "drizzle-orm"
 import { db, notes } from "./db"   // your Drizzle client + schema (what the scaffold generates)
 
 // decorate() hangs the client on the context ONCE - every handler then reads it as \`c.db\`, fully typed.
-export const app = server()
+export const backend = server()
   .decorate("db", db)
   .get("/notes", async (c) => c.db.select().from(notes).orderBy(desc(notes.createdAt)))
 
-export type App = typeof app`
+export type Backend = typeof backend`
 
-const RLS = `// rls.ts - request-scoped Postgres RLS for Drizzle. Drizzle reuses pooled connections and won't carry
+const RLS = `// backend/db/rls.ts - request-scoped Postgres RLS for Drizzle. Drizzle reuses pooled connections and won't carry
 // a per-request setting, so each tenant query runs in a tx that first sets a GUC the RLS policy reads.
 import { AsyncLocalStorage } from "node:async_hooks"
 import { sql } from "drizzle-orm"
@@ -236,8 +245,9 @@ export default function Database() {
       <h2>In a loader</h2>
       <p>
         Full-stack? The same query goes in a route loader, and its result is typed straight into your
-        page during SSR. The loader is server-only, so the database client is tree-shaken out of the
-        browser bundle.
+        page during SSR. The loader lives in the route's <code>.backend.ts</code> half, so the database
+        client never reaches the browser bundle - a page that imported it would fail the build - and{" "}
+        <code>loaderOutput</code> decides which columns are sent.
       </p>
       <CodeBlock code={LOADER} />
 

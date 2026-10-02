@@ -12,15 +12,21 @@ const SCAFFOLD = `bun create nifra taskboard --template site --framework react
 cd taskboard && bun install
 bun run dev`
 
-const BACKEND = `// backend.ts - the composition root. Routes declared here are typed
+const SHARED = `// shared/task.ts - the task's shape, imported by the backend and the page alike.
+import { t } from "@nifrajs/schema"
+
+export const Task = t.object({ id: t.string(), title: t.string(), done: t.boolean() })`
+
+const BACKEND = `// backend/app.ts - the composition root. Routes declared here are typed
 // all the way into the frontend, with zero codegen.
 import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
+import { Task } from "../shared/task"
 
 const tasks: Array<{ id: string; title: string; done: boolean }> = []
 
 export const backend = server()
-  .get("/api/tasks", () => tasks)
+  .get("/api/tasks", { response: t.array(Task) }, () => tasks)
   .post(
     "/api/tasks",
     { body: t.object({ title: t.string({ minLength: 1 }) }) },
@@ -31,25 +37,33 @@ export const backend = server()
     },
   )`
 
-const LOADER = `// routes/index.tsx - a page with a typed loader. The loader runs on the
-// server, calls the backend in-process (no HTTP hop), and its return value
-// flows to the component - typed against the backend contract.
-export async function loader({ api }: LoaderArgs<typeof backend>) {
+const LOADER = `// routes/index.backend.ts - the page's backend half. The loader runs on the
+// server, calls the backend in-process (no HTTP hop), and loaderOutput declares
+// exactly what reaches the page.
+import { t } from "@nifrajs/schema"
+import { Task } from "../shared/task"
+import type { Route } from "./+types/index"
+
+export const loaderOutput = t.object({ tasks: t.array(Task) })
+export async function loader({ api }: Route.LoaderArgs) {
   const res = await api.api.tasks.get()
-  return { tasks: res.data }
+  return { tasks: res.ok ? res.data : [] }
 }
 
-export default function Home(props: { data: LoaderData<typeof loader> }) {
+// routes/index.tsx - the page, typed by what loaderOutput lets through.
+import type { Route } from "./+types/index"
+
+export default function Home({ data }: Route.ComponentProps) {
   return (
     <ul>
-      {props.data.tasks.map((t) => (
+      {data.tasks.map((t) => (
         <li key={t.id}>{t.title}</li>
       ))}
     </ul>
   )
 }`
 
-const DRIFT = `// Rename \`title\` to \`name\` in backend.ts and the frontend fails to COMPILE:
+const DRIFT = `// Rename \`title\` to \`name\` in shared/task.ts and the page fails to COMPILE:
 //
 //   routes/index.tsx: Property 'title' does not exist on type
 //     '{ id: string; name: string; done: boolean }'
@@ -76,13 +90,15 @@ export default function FullstackBunGuide() {
       <CodeBlock code={SCAFFOLD} lang="bash" />
       <p>
         The <code>site</code> template is the full-stack shape: file-based routes under{" "}
-        <code>routes/</code>, a backend composition root at <code>backend.ts</code>, SSR with
-        hydration, and a typed client wiring them together. Swap <code>react</code> for{" "}
-        <code>vue</code>, <code>solid</code>, <code>svelte</code>, or <code>preact</code> - same
+        <code>routes/</code> (each page beside its <code>.backend.ts</code> half), a backend
+        composition root at <code>backend/app.ts</code>, <code>shared/</code> for what both sides
+        import, SSR with hydration, and a typed client wiring them together. Swap <code>react</code>{" "}
+        for <code>vue</code>, <code>solid</code>, <code>svelte</code>, or <code>preact</code> - same
         framework underneath, same typed contract.
       </p>
 
       <h2>A typed backend in one file</h2>
+      <CodeBlock code={SHARED} lang="ts" />
       <CodeBlock code={BACKEND} lang="ts" />
       <p>
         Two things are load-bearing here. The <code>body</code> schema is not documentation - it is

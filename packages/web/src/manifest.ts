@@ -60,7 +60,7 @@ export interface LoaderContext {
 export type Loader = (ctx: LoaderContext) => unknown | Promise<unknown>
 
 /**
- * The default export of a `_middleware.ts` file. It runs on the server before the layouts, loaders and
+ * The `middleware` export of a `_layout.backend.ts` file. It runs on the server before the layouts, loaders and
  * action of every route in its directory and below - on a document request, a client navigation and a
  * form post alike - and before a nested `_404` there. Middleware higher in the tree runs first.
  *
@@ -72,7 +72,7 @@ export type Loader = (ctx: LoaderContext) => unknown | Promise<unknown>
  * - `ctx.params` holds the params of the directory's own URL prefix, as a layout's loader sees them.
  *
  * It does not run for a prerendered page, an ISR cache hit, a mounted API or a static file. For
- * middleware on every request, export `use` from `framework.ts`. Pass a typed context to type
+ * middleware on every request, export `use` from `backend/framework.ts`. Pass a typed context to type
  * `ctx.api` and `ctx.env`: `RouteMiddleware<LoaderArgs<typeof app, Env>>`.
  */
 export type RouteMiddleware<Ctx = LoaderContext> = (

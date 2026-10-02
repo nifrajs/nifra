@@ -8,25 +8,26 @@ export const meta = docsMeta(
 )
 
 const BETTERAUTH = `// doc-check: skip - needs the third-party \`better-auth\` package + your \`db\`; install it to run this.
-// auth.ts - your configured Better Auth instance (database, providers, …):
+// backend/auth.ts - your configured Better Auth instance (database, providers, …):
 import { betterAuth as createBetterAuth } from "better-auth"
 export const auth = createBetterAuth({ database: db, emailAndPassword: { enabled: true } })
 
-// server.ts - ONE use() mounts every Better Auth endpoint at /api/auth/*:
+// backend/app.ts - ONE use() mounts every Better Auth endpoint at /api/auth/*:
 import { betterAuth, getSession, requireSession } from "@nifrajs/better-auth"
-const app = server()
+export const backend = server()
   .use(betterAuth(auth))                                       // sign-in/up/out, OAuth, 2FA, session…
   .get("/me", async (c) => (await requireSession(auth, c.req)).user)  // typed; 401 when signed out
 
-// In a loader/action, read the session from the raw Request:
-export async function loader({ request }) {
+// routes/account.backend.ts - a loader or action reads the session from the raw Request:
+export const loaderOutput = t.object({ user: t.object({ id: t.string(), name: t.string() }) })
+export async function loader({ request }: Route.LoaderArgs) {
   const session = await getSession(auth, request)              // { user, session } | null - typed
   const { user } = await requireSession(auth, request, { redirectTo: "/login" })  // or guard it
   return { user }
 }`
 
 const AUTHJS = `// doc-check: skip - needs \`@auth/core\` providers + AUTH_SECRET; install them to run this.
-// auth.ts - your Auth.js config (any @auth/core provider: GitHub, Google, Credentials, …):
+// backend/auth.ts - your Auth.js config (any @auth/core provider: GitHub, Google, Credentials, …):
 import { authjs, getSession, requireAuthUser } from "@nifrajs/authjs"
 import GitHub from "@auth/core/providers/github"
 export const authConfig = {
@@ -35,13 +36,14 @@ export const authConfig = {
   trustHost: true, // or authUrl behind a proxy
 }
 
-// server.ts - ONE use() mounts every Auth.js endpoint at /api/auth/*:
-export const app = server()
+// backend/app.ts - ONE use() mounts every Auth.js endpoint at /api/auth/*:
+export const backend = server()
   .use(authjs(authConfig))                                     // sign-in, OAuth callbacks, session…
   .get("/me", async (c) => ({ user: (await getSession(c.req, authConfig))?.user ?? null }))
 
-// Guard it - or read it in a loader from the raw Request:
-export async function loader({ request }) {
+// routes/account.backend.ts - guard it, or read it in a loader from the raw Request:
+export const loaderOutput = t.object({ user: t.object({ name: t.string() }) })
+export async function loader({ request }: Route.LoaderArgs) {
   const user = await requireAuthUser(request, authConfig, { redirectTo: "/login" })
   return { user }
 }
@@ -51,8 +53,8 @@ export async function loader({ request }) {
 // await createAuthClient().signIn("github")
 // import { AuthSessionProvider, useAuthSession } from "@nifrajs/web-react/auth"`
 
-const SETUP = `// auth.ts - one session manager. LAZY so a route module can import it without shipping it to the
-// browser (see the warning below). Store mode keeps data server-side; cookie mode (no store) is stateless.
+const SETUP = `// backend/auth.ts - one session manager, created on first use so the secret is read at request time.
+// Store mode keeps data server-side; cookie mode (no store) is stateless.
 import { createSessions, MemorySessionStore } from "@nifrajs/auth"
 
 let manager: ReturnType<typeof createSessions> | undefined
@@ -62,7 +64,7 @@ export const getSessions = () => (manager ??= createSessions({
   // cookie: { secure: false },                 // local http dev only
 }))`
 
-const LOGIN = `// server.ts - login/logout are plain nifra routes (full Context → they can WRITE the cookie).
+const LOGIN = `// backend/app.ts - login/logout are plain nifra routes (full Context → they can WRITE the cookie).
 const sessions = getSessions()
 app.use(csrf())                                          // Origin check on unsafe methods
 
@@ -79,18 +81,18 @@ app.post("/api/login", async (c) => {
 app.post("/api/logout", async (c) => {
   await sessions.destroy(c, await sessions.get(c))
   return redirect("/login")
-})
+})`
 
-createWebApp({ /* … */ api: sessions })                  // inject the manager into loaders as ctx.api`
+const GUARD = `// routes/account.backend.ts - a protected route's loader reads the session and redirects when absent.
+import { requireUser } from "@nifrajs/auth"
+import { t } from "@nifrajs/schema"
+import { getSessions } from "../backend/auth"   // backend code: a backend half imports it directly
+import type { Route } from "./+types/account"
 
-const GUARD = `// doc-check: skip - fragment: \`api\` is the session manager createWebApp injected (see setup above).
-// A protected route's loader - reads the session and redirects when absent.
-import { requireUser } from "@nifrajs/auth"   // browser-safe; OK to import in a route module
-
-export async function loader({ request, api }) {
-  const sessions = api                       // the manager injected via createWebApp's \`api\`
-  const session = await sessions.read(request)
-  // requireUser throws a 302 to /login when there's no session; Nifra returns the thrown Response.
+export const loaderOutput = t.object({ userId: t.string() })
+export async function loader({ request }: Route.LoaderArgs) {
+  const session = await getSessions().read(request)
+  // requireUser throws a 302 to /login when there's no session, and the loader stops there.
   const userId = requireUser(session, "userId", { redirectTo: "/login" })
   return { userId }
 }`
@@ -171,20 +173,20 @@ export default function Auth() {
         (a 302 to <code>redirectTo</code>, or a 401) when the session is missing - Nifra renders a
         thrown control-flow value as-is, so the guard short-circuits the loader. It is plain data, not
         a <code>Response</code>: same bytes on the wire, on the lane an ordinary return takes. To guard
-        every page under a directory, run the same check in that directory's{" "}
-        <code>_middleware.ts</code> - see <a href="/docs/routing#middleware">Route middleware</a>.
+        every page under a directory, run the same check in the <code>middleware</code> export of that
+        directory's <code>_layout.backend.ts</code> - see <a href="/docs/routing#middleware">Route middleware</a>.
       </p>
       <CodeBlock code={GUARD} />
 
-      <h2 id="server-only">⚠️ Never import server-only code into a route module</h2>
+      <h2 id="server-only">Session code stays in the backend</h2>
       <p>
-        A route's <code>loader</code> runs only on the server, but its module is <b>also bundled for the
-        browser</b> (for the component) - and the loader is <b>not</b> stripped from that bundle. So a
-        top-level <code>import</code> of the session manager (or a DB client, or anything touching{" "}
-        <code>process.env</code>) would ship server code to the client and crash hydration. Reach server
-        resources through <code>ctx.api</code> / <code>ctx.env</code> instead (inject them via{" "}
-        <code>createWebApp</code>) - exactly how the manager is passed as <code>api</code> above.{" "}
-        <code>requireUser</code> is fine to import: it only builds a <code>Response</code>, no secrets.
+        The session manager, an auth instance and their secrets live in <code>backend/</code>, and only
+        backend code imports them: a route's <code>.backend.ts</code> half, <code>backend/app.ts</code>.
+        A page or a <code>frontend/</code> component that imported <code>backend/auth.ts</code> fails
+        the build with the import chain that reached it, so a secret cannot ride into the browser
+        bundle. A page that needs the user reads it from its loader data, which{" "}
+        <code>loaderOutput</code> narrows to the fields it declares - see{" "}
+        <a href="/docs/structure">Project structure</a>.
       </p>
 
       <h2>CSRF</h2>

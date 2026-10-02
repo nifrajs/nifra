@@ -21,10 +21,10 @@ export const ignore = { untranslated: ["brand"] }
 let root = ""
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "nifra-i18n-check-"))
-  await mkdir(join(root, "lib"))
-  await writeFile(join(root, "lib", "i18n.ts"), ENTRY)
+  await mkdir(join(root, "shared"))
+  await writeFile(join(root, "shared", "i18n.ts"), ENTRY)
   await writeFile(
-    join(root, "lib", "fr.json"),
+    join(root, "shared", "fr.json"),
     JSON.stringify({ home: { title: "Bienvenue" }, brand: "nifra", old: "Ancien" }),
   )
   // Written up front: Bun caches a directory's entries once a module in it has been resolved.
@@ -35,7 +35,7 @@ afterAll(() => rm(root, { recursive: true, force: true }))
 describe("nifra i18n check", () => {
   test("finds the default entry, loads lazy and module catalogs, and checks them", async () => {
     const out = await runI18nCheck(root)
-    expect(out.entry).toBe(join("lib", "i18n.ts"))
+    expect(out.entry).toBe(join("shared", "i18n.ts"))
     const findings = out.result.findings.map(
       (f) => `${f.severity} ${f.locale} ${f.code} ${f.key ?? ""}`,
     )
@@ -50,7 +50,7 @@ describe("nifra i18n check", () => {
     expect(out.result.ok).toBe(false)
     expect(i18nCheckPassed(out, false)).toBe(false)
     const text = renderI18nCheck(out).join("\n")
-    expect(text).toContain("nifra i18n check - lib/i18n.ts")
+    expect(text).toContain("nifra i18n check - shared/i18n.ts")
     expect(text).toContain("  en      default  3 messages\n  fr               2/3 (66.7%)\n")
     expect(text).toContain("  gu               3/3 (100%)\n  hi      draft    1/3 (33.3%)")
     expect(text).toContain("✖ fr  placeholder: home.title drops {name} that en's message shows")
@@ -88,7 +88,7 @@ describe("nifra i18n check", () => {
     const failing = await run("check", "--json")
     expect(failing.exit).toBe(1)
     const json = JSON.parse(failing.stdout) as { entry: string; result: { ok: boolean } }
-    expect(json.entry).toBe(join("lib", "i18n.ts"))
+    expect(json.entry).toBe(join("shared", "i18n.ts"))
     expect(json.result.ok).toBe(false)
 
     await writeFile(
@@ -111,7 +111,7 @@ export const catalogs = { en: { a: "Hello", b: "Bye" }, fr: { a: "Bonjour" } }
 
 test("the report escapes control and bidi characters from catalog keys", () => {
   const text = renderI18nCheck({
-    entry: "lib/i18n.ts",
+    entry: "shared/i18n.ts",
     result: {
       ok: false,
       coverage: [],

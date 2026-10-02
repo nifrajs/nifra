@@ -12,6 +12,7 @@ import type { MessageTree } from "@nifrajs/i18n"
 import type { CatalogCheckOptions, CatalogCheckResult, CatalogFinding } from "@nifrajs/i18n/check"
 
 export const DEFAULT_ENTRIES = [
+  "shared/i18n.ts",
   "i18n.ts",
   "lib/i18n.ts",
   "src/i18n.ts",

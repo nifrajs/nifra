@@ -99,21 +99,34 @@ const { data, error } = await api.users({ id: "7" }).get()
 
 ### Loaders & the full stack
 
-In the `site` template, route loaders call your backend in-process during SSR;
-`actions` handle mutations. Add streaming, `defer()`, optimistic UI,
-and a keyed query cache as you grow. The data model is framework-agnostic, so the renderer
-stays replaceable.
+In the `site` template, a route is two files: the page, and a
+`.backend.ts` half whose loader calls your backend in-process during SSR and
+whose `actions` handle mutations. Only what the loader's output schema declares
+reaches the browser. Add streaming, `defer()`, optimistic UI, and a keyed query
+cache as you grow. The data model is framework-agnostic, so the renderer stays replaceable.
+See [Project structure](/docs/structure) for where code lives.
 
 ```ts
-// A route's loader runs on the server (in-process during SSR, no network),
-// fully typed against your contract.
-export async function loader({ api }: LoaderArgs<typeof app>) {
-  const res = await api.users({ id: "7" }).get()
-  return { user: res.data }
-}
+// routes/index.backend.ts - the loader runs on the server (in-process during SSR, no network),
+// fully typed against your contract. This file never reaches the browser.
+import { t } from "@nifrajs/schema"
+import type { Route } from "./+types/index"
 
-export default function Page(props: { data: LoaderData<typeof loader> }) {
-  return <h1>{props.data.user?.id}</h1>
+// The page receives exactly this shape; anything else the loader returns stays on the server.
+export const loaderOutput = t.object({ id: t.string() })
+
+export async function loader({ api }: Route.LoaderArgs) {
+  const res = await api.users({ id: "7" }).get()
+  return { id: res.ok ? res.data.id : "unknown" }
+}
+```
+
+```ts
+// routes/index.tsx - the page, typed from loaderOutput.
+import type { Route } from "./+types/index"
+
+export default function Page({ data }: Route.ComponentProps) {
+  return <h1>{data.id}</h1>
 }
 ```
 
@@ -377,6 +390,11 @@ chain (so `n` optionals → `2ⁿ` patterns).
 (this docs sidebar is a nested layout).
 
 -
+`x.backend.ts` beside a page or layout is its server half: `loader`,
+`action`, their output schemas, and the other server-only exports. It never
+reaches the browser - see [Project structure](/docs/structure).
+
+-
 `_404.tsx` renders unmatched paths, and whatever a loader answers with
 `notFound()`. At the routes root it renders on its own. In a directory below (
 `admin/_404.tsx`) it answers for that part of the app: the unmatched URLs under
@@ -414,19 +432,23 @@ receives the serialized error as `{ data: { name, message } }` (never the
 stack); a thrown control-flow value (e.g. a guard `redirect`) passes through.
 
 -
-`_middleware.ts` runs on the server before the layouts, loaders and actions of
-every route in its directory and below - see [Route middleware](#middleware).
+A `_layout.backend.ts` that exports `middleware` runs it on the
+server before the layouts, loaders and actions of every route in its directory and below,
+with or without a `_layout.tsx` beside it - see
+[Route middleware](#middleware).
 
 ```ts
 routes/
   _layout.tsx        wraps every page (chain: outer → inner)
+  _layout.backend.ts its loader, and middleware for every page below it
   _error.tsx         error boundary (a loader throws → renders here, 500)
   _loading.tsx       the page slot while a client navigation loads
-  _middleware.ts     runs on the server before every page below it
   index.tsx          →  /
+  index.backend.ts       its loader + action - never reaches the browser
   about.tsx          →  /about
   users/
     [id].tsx         →  /users/:id          dynamic segment
+    [id].backend.ts
   files/
     [...path].tsx    →  /files/*path         catch-all (the rest of the path)
   [[lang]]/          optional segment - matches WITH and WITHOUT it
@@ -438,37 +460,50 @@ routes/
 
 ### A route
 
-Each route default-exports a component; an optional `meta` export drives
-`<head>` (applied on SSR and on client navigation). Add a
-`loader` for data - see [Loaders & actions](/docs/data).
+Each page default-exports a component; an optional `meta` export drives
+`<head>` (applied on SSR and on client navigation). Its data comes from a
+`loader` in its `.backend.ts` half - see
+[Loaders & actions](/docs/data).
 
 ```ts
 // routes/users/[id].tsx
+import type { Route } from "./+types/[id]"
+
 export const meta = { title: "User" }   // injected into <head> (SSR + client nav)
 
-export default function User(props: { data: LoaderData<typeof loader> }) {
-  return <h1>User {props.data.id}</h1>
+export default function User({ data }: Route.ComponentProps) {
+  return <h1>User {data.name}</h1>
+}
+```
+
+```ts
+// routes/users/[id].backend.ts - its server half
+import { t } from "@nifrajs/schema"
+import type { Route } from "./+types/[id]"
+
+export const loaderOutput = t.object({ name: t.string() })
+
+export async function loader({ params }: Route.LoaderArgs) {
+  return { name: `User ${params.id}` }
 }
 ```
 
 ### Route middleware
 
-A `_middleware.ts` default-exports a function that runs on the server before
-everything under its directory: the layouts' loaders, gates included, then the page's loader
+A directory's `_layout.backend.ts` exports `middleware`, a function
+that runs on the server before everything under its directory: the layouts' loaders, gates included, then the page's loader
 or action. It runs for a document request, a client navigation and a form post alike, and
 before a nested `_404` there. Middleware higher in the tree runs first.
 
 ```ts
-// routes/account/_middleware.ts - runs before every page under /account
+// routes/account/_layout.backend.ts - runs before every page under /account
 import { type RouteMiddleware, redirect } from "@nifrajs/web"
 
-const middleware: RouteMiddleware = ({ request, set }) => {
+export const middleware: RouteMiddleware = ({ request, set }) => {
   set.headers["cache-control"] = "private, no-store"
   const signedIn = request.headers.get("cookie")?.includes("session=") ?? false
   return signedIn ? undefined : redirect("/login")
 }
-
-export default middleware
 ```
 
 -
@@ -484,17 +519,24 @@ the same name wins. `params` holds the params of the directory's URL prefix.
 -
 It covers pages only: a prerendered page, an ISR cache hit, a mounted API and a static file
 are served without it. For middleware on every request, export `use` from
-`framework.ts`: `export const use = (app) => app.use(securityHeaders())`.
+`backend/framework.ts`: `export const use = (app) => app.use(securityHeaders())`.
 
 ### Catch-all routes
 
-A `[...name].tsx` segment matches the rest of the path and hands it to your loader as
-a single string param - ideal for docs/CMS trees, file browsers, or a custom fallback. It must
+A `[...name].tsx` segment matches the rest of the path and hands it to the loader in
+`[...name].backend.ts` as a single string param - ideal for docs/CMS trees, file browsers, or a custom fallback. It must
 be the final segment.
 
 ```ts
-// routes/files/[...path].tsx  →  matches /files/a, /files/a/b/c.txt, …
-export async function loader({ params }) {
+// routes/files/[...path].backend.ts - the page is routes/files/[...path].tsx, and together they
+// match /files/a, /files/a/b/c.txt, …
+import { t } from "@nifrajs/schema"
+
+declare function read(path: string): Promise<string>
+
+export const loaderOutput = t.object({ file: t.string() })
+
+export async function loader({ params }: { params: { path: string } }) {
   const path = params.path          // "a/b/c.txt" - the matched tail, as one string
   return { file: await read(path) }
 }
@@ -513,26 +555,32 @@ a canvas, or a browser-only library while it renders.
 
 ```ts
 // routes/map.tsx - a page whose component needs a browser to render.
-export const ssr = false
+import type { Route } from "./+types/map"
 
-export async function loader({ api }) {
-  return { pins: await api.pins.get() }   // still runs on the server
-}
+export const ssr = false
 
 // What the server puts in the page slot, and what the browser shows until the component renders.
 // Same props as the component - the loader data is already there.
-export function HydrateFallback({ data }) {
+export function HydrateFallback({ data }: Route.ComponentProps) {
   return <p>Loading {data.pins.length} pins…</p>
 }
 
-export default function MapPage({ data }) {
+export default function MapPage({ data }: Route.ComponentProps) {
   const width = window.innerWidth         // fine: this never runs on the server
   return <Canvas width={width} pins={data.pins} />
 }
+
+// routes/map.backend.ts - the loader still runs on the server, and its data is embedded.
+export const loaderOutput = t.object({ pins: t.array(Pin) })
+export async function loader({ api }: Route.LoaderArgs) {
+  const res = await api.pins.get()
+  return { pins: res.ok ? res.data : [] }
+}
 ```
 
-The module is still imported on the server, for its loader and its options. An import that
-needs a browser at load time therefore belongs inside the component - a dynamic
+The page module is still imported on the server, for its options (its loader lives in the
+`.backend.ts` half). An import that needs a browser at load time therefore belongs
+inside the component - a dynamic
 `import()` - not at the top of the file. `ssr = false` cannot be
 combined with `hydrate = false`: nothing would ever render the page.
 
@@ -550,6 +598,7 @@ client navigation - so a query-reading page hydrates with no mismatch and never 
 // routes/reports.tsx - a typed, validated ?page=&sort= query.
 import { useSearch } from "@nifrajs/web-react/router"
 import * as v from "valibot" // any Standard Schema works (valibot, zod, arktype)
+import type { Route } from "./+types/reports"
 
 // The route's search contract. Invalid or hostile input fails closed to these defaults - never a 500.
 export const searchSchema = v.object({
@@ -557,16 +606,19 @@ export const searchSchema = v.object({
   sort: v.optional(v.picklist(["new", "top"]), "new"),
 })
 
-// The loader receives the validated query as ctx.search, typed by the third LoaderArgs argument.
-export async function loader({ search, api }: LoaderArgs<typeof backend, unknown, typeof searchSchema>) {
-  return { rows: await api.reports.list(search).get() } // search.page is a number
-}
-
 // The component reads the SAME value - SSR-correct, so page/sort hydrate with no mismatch and you
 // never parse window.location.search by hand.
-export default function Reports({ data }: { data: LoaderData<typeof loader> }) {
+export default function Reports({ data }: Route.ComponentProps) {
   const { page, sort } = useSearch<typeof searchSchema>() // { page: number; sort: "new" | "top" }
   return <Pager page={page} sort={sort} rows={data.rows} />
+}
+
+// routes/reports.backend.ts - the loader receives the validated query as `search`, typed from
+// the page's searchSchema by the generated Route.LoaderArgs.
+export const loaderOutput = t.object({ rows: t.array(Report) })
+export async function loader({ search, api }: Route.LoaderArgs) {
+  const res = await api.reports.list(search).get() // search.page is a number
+  return { rows: res.ok ? res.data : [] }
 }
 ```
 
@@ -1216,20 +1268,41 @@ The same client runs in the browser and on the server. During SSR, a route's
 
 > Typed loaders and actions in Nifra: data on the server, mutations, revalidation.
 
-Loaders fetch data on the server; actions mutate it. Both are typed against your contract,
-and the client never throws - it returns `{ data, error }`.
+Loaders fetch data on the server; actions mutate it. Both live in a route's
+`.backend.ts` half, never in the page, and both are typed against your contract -
+the client never throws, it returns `{ data, error }`.
 
 ### Loaders
 
 A route's `loader` runs on the server and calls your backend in-process during
-SSR - no network hop. Its return type flows to the component as `LoaderData`.
+SSR - no network hop. Its `loaderOutput` schema is the contract with the page:
+the page receives that shape as `data`, and nothing else the loader returns
+leaves the server. A loader without one is flagged by `nifra check`. See
+[Project structure](/docs/structure) for the route pair.
 
 ```ts
-// A loader runs on the server - in-process during SSR (no network round-trip),
-// fully typed against your backend contract.
-export async function loader({ api }: LoaderArgs<typeof app>) {
-  const res = await api.users({ id: "7" }).get()
-  return { user: res.data }            // serialized to the client for hydration
+// routes/users/[id].backend.ts - a loader runs on the server: in-process during SSR (no network
+// round-trip), typed against your backend contract. This file never reaches the browser.
+import { t } from "@nifrajs/schema"
+import { notFound } from "@nifrajs/web"
+import type { Route } from "./+types/[id]"
+
+// The page receives exactly this shape. Anything else the loader returns stays on the server.
+export const loaderOutput = t.object({ id: t.string(), name: t.string() })
+
+export async function loader({ params, api }: Route.LoaderArgs) {
+  const res = await api.users({ id: params.id }).get()
+  if (!res.ok) throw notFound()
+  return res.data
+}
+```
+
+```ts
+// routes/users/[id].tsx - the page. `data` is typed from loaderOutput.
+import type { Route } from "./+types/[id]"
+
+export default function User({ data }: Route.ComponentProps) {
+  return <h1>{data.name}</h1>
 }
 ```
 
@@ -1237,18 +1310,26 @@ export async function loader({ api }: LoaderArgs<typeof app>) {
 
 An `action` handles the route's POST. After a client-side submit the page's
 loader **revalidates** (no full reload); with JS disabled the native form POST re-renders
-- progressive enhancement, same code.
+- progressive enhancement, same code. What the action returns reaches the page as
+`actionData`, bounded by `actionOutput`.
 
 ```ts
-// An action handles a mutation (a POST). Progressive-enhancement: works with JS
-// off (native form POST) and as a client submit (no full reload) with JS on.
-export async function action({ api, request }: ActionArgs<typeof app>) {
+// routes/users/new.backend.ts - an action handles the route's POST.
+import { t } from "@nifrajs/schema"
+import type { Route } from "./+types/new"
+
+export const actionOutput = t.object({ ok: t.boolean() })
+
+export async function action({ api, request }: Route.ActionArgs) {
   const form = await request.formData()
   await api.users.post({ name: String(form.get("name")) })
-  return { ok: true }                  // the loader revalidates automatically
+  return { ok: true }                  // the page's loaders revalidate automatically
 }
+```
 
-export default function Page(props: { data: LoaderData<typeof loader> }) {
+```ts
+// routes/users/new.tsx - works with JS off (a native form POST) and on (a client submit, no reload).
+export default function NewUser() {
   return (
     <form method="post">
       <input name="name" />
@@ -1260,14 +1341,14 @@ export default function Page(props: { data: LoaderData<typeof loader> }) {
 
 ### Layout loaders on navigation
 
-A `_layout` can have a `loader` too; its return reaches the layout
-component as `data`. On a client navigation that keeps the layout on screen, the
+A `_layout.backend.ts` can have a `loader` too; its output reaches the
+layout component as `data`. On a client navigation that keeps the layout on screen, the
 browser already holds that data, so the loader runs again only when a param the layout owns
 changes (`org` for `orgs/[org]/_layout.tsx`) or the query changes. After
 an action, every loader runs. A layout that exports `gate = true` runs on every
 request; a layout loader without it is not an authorization boundary. A
-`_middleware.ts` guards a directory the same way without a layout - see
-[Route middleware](/docs/routing#middleware).
+`_layout.backend.ts` that exports `middleware` guards a directory, with
+or without a layout component - see [Route middleware](/docs/routing#middleware).
 
 A layout's `shouldRevalidate` overrides that default. It runs on the server and
 receives `defaultShouldRevalidate` with the URL and params being left and the ones
@@ -1277,12 +1358,16 @@ query keys a page never reads belong in its `searchClientKeys`, which skips the
 request.
 
 ```ts
-// routes/orgs/[org]/_layout.tsx
+// routes/orgs/[org]/_layout.backend.ts
+import { t } from "@nifrajs/schema"
 import type { ShouldRevalidate } from "@nifrajs/web"
+
+export const loaderOutput = t.object({ name: t.string() })
 
 export async function loader({ params }: { params: { org: string } }) {
   const res = await fetch("https://api.example.com/orgs/" + encodeURIComponent(params.org))
-  return { org: await res.json() }
+  const org = (await res.json()) as { name: string }
+  return { name: org.name }
 }
 
 // The org sidebar ignores the query: filtering a list beneath it keeps the org data,
@@ -1298,12 +1383,13 @@ source - no hand-rolled `readdir` + frontmatter parsing.
 `defineCollection` (from `@nifrajs/content/fs`) validates each file's
 frontmatter against a `t` schema (a typo'd field fails the build, not production) and
 renders the Markdown body to HTML; `all()` / `get(slug)` return
-fully-typed entries you read in a loader. Framework-agnostic - the rendered `html`
+fully-typed entries you read in a loader. The collection lives in `backend/`: it
+reads the filesystem, so a page cannot import it. Framework-agnostic - the rendered `html`
 drops into any adapter (React `dangerouslySetInnerHTML`, Vue `v-html`,
 Svelte `{@html}`).
 
 ```ts
-// content.config.ts - a typed, validated collection over a folder of Markdown.
+// backend/content.ts - a typed, validated collection over a folder of Markdown.
 import { defineCollection } from "@nifrajs/content/fs"
 import { t } from "@nifrajs/schema"
 
@@ -1312,12 +1398,16 @@ export const blog = defineCollection({
   schema: t.object({ title: t.string(), date: t.string(), draft: t.boolean() }),
 })
 
-// a loader - typed + validated entries, no manual fs/frontmatter parsing:
+// routes/blog/index.backend.ts - typed + validated entries, no manual fs/frontmatter parsing:
+export const loaderOutput = t.object({
+  posts: t.array(t.object({ slug: t.string(), title: t.string(), html: t.string() })),
+})
+
 export async function loader() {
   const posts = (await blog.all()).filter((p) => !p.frontmatter.draft)
-  return { posts: posts.sort((a, b) => b.frontmatter.date.localeCompare(a.frontmatter.date)) }
+  posts.sort((a, b) => b.frontmatter.date.localeCompare(a.frontmatter.date))
+  return { posts: posts.map((p) => ({ slug: p.slug, title: p.frontmatter.title, html: p.html })) }
 }
-// posts[0].frontmatter is { title; date; draft } (typed); posts[0].html is the rendered Markdown
 ```
 
 For optimistic UI, concurrent fetchers, and a keyed query cache, the same primitives compose
@@ -1580,20 +1670,38 @@ fetch. The same protocol works for actions and soft navigations, including NDJSO
 side.
 
 ```ts
+// routes/products/[id].backend.ts
+import { t } from "@nifrajs/schema"
 import { defer } from "@nifrajs/web"
+import type { Route } from "./+types/[id]"
 
-export async function loader({ api }: LoaderArgs<typeof app>) {
+const Review = t.object({ author: t.string(), body: t.string() })
+declare function loadReviews(productId: string): Promise<{ author: string; body: string }[]>
+
+// A deferred value is held to the same output contract as the rest of the data.
+export const loaderOutput = t.object({
+  product: t.object({ name: t.string() }),
+  reviews: t.deferred(t.array(Review)),
+})
+
+export async function loader({ api, params }: Route.LoaderArgs) {
+  const product = await api.products({ id: params.id }).get()
   return {
-    product: (await api.products.get()).data, // critical: rendered in the first shell
-    reviews: defer(api.reviews.get()),        // non-critical: streamed when ready
+    product: { name: product.ok ? product.data.name : "" }, // critical: in the first shell
+    reviews: defer(loadReviews(params.id)),                  // non-critical: streamed when ready
   }
 }
+```
 
-export default function Product(props: { data: LoaderData<typeof loader> }) {
+```ts
+// routes/products/[id].tsx
+import type { Route } from "./+types/[id]"
+
+export default function Product({ data }: Route.ComponentProps) {
   return (
     <>
-      <ProductSummary product={props.data.product} />
-      <Await resolve={props.data.reviews} fallback={<p>Loading reviews…</p>}>
+      <ProductSummary product={data.product} />
+      <Await resolve={data.reviews} fallback={<p>Loading reviews…</p>}>
         {(reviews) => <Reviews items={reviews} />}
       </Await>
     </>
@@ -1606,17 +1714,25 @@ the shell is not a precomputed PPR artifact, and deferred values remain request-
 
 ### SSG - prerender at build
 
-Opt a static route into prerendering with `export const prerender = true`. Its
-loader runs at _build_ time (build-safe data only - no per-request cookies or secrets),
+Opt a static route into prerendering with `export const prerender = true` in its
+`.backend.ts`. Its loader runs at _build_ time (build-safe data only - no per-request cookies or secrets),
 and the route is baked to a static `index.html` plus a `_data.json` the
 client fetches on soft-navigation.
 
 ```ts
-// A static route: render it to a static index.html at build time.
+// routes/blog/index.backend.ts - a static route: render it to index.html at build time.
+import { t } from "@nifrajs/schema"
+import type { Route } from "./+types/index"
+
 export const prerender = true
 
-export async function loader({ api }: LoaderArgs<typeof app>) {
-  return { posts: (await api.posts.get()).data } // runs at BUILD (no per-request secrets)
+export const loaderOutput = t.object({
+  posts: t.array(t.object({ slug: t.string(), title: t.string() })),
+})
+
+export async function loader({ api }: Route.LoaderArgs) {
+  const res = await api.posts.get() // runs at BUILD (no per-request secrets)
+  return { posts: res.ok ? res.data : [] }
 }
 ```
 
@@ -1626,7 +1742,7 @@ list: `"ssr"` renders it on-demand (the natural hybrid), `"404"` means
 only the listed paths exist.
 
 ```ts
-// A dynamic route (/posts/:slug): enumerate which pages to prerender.
+// routes/posts/[slug].backend.ts - a dynamic route: enumerate which pages to prerender.
 export async function getStaticPaths(): Promise<StaticPaths> {
   const slugs = await loadAllSlugs()
   return {
@@ -1690,11 +1806,12 @@ each store a page. To cache a paginated or sorted list, name the parameters:
 other parameter still skips. `query: "all"` keys on the whole query string. Give
 `revalidateEndpoint` the same `query` so purges match.
 
-Set a route's freshness with `export const revalidate` (seconds) - Nifra emits it as
+Set a route's freshness with `export const revalidate` (seconds) in its
+`.backend.ts` - Nifra emits it as
 the `x-nifra-isr-revalidate` header, which the wrapper reads to set that page's TTL.
 
 ```ts
-// A per-route freshness window (seconds) - overrides the wrapper default.
+// routes/pricing.backend.ts - a per-route freshness window (seconds), overriding the wrapper's.
 export const revalidate = 300 // this page is fresh for 5 min, then regenerates on the next hit
 ```
 
@@ -1762,9 +1879,9 @@ app.get("/api/preview/exit", (c) => (disableDraft(c), redirect("/")))
 // Gating it yourself instead? Use enableDraft(c, env.DRAFT_SECRET) AFTER your own check - and
 // compare the token in constant time, since === leaks it one character at a time.
 
-// 2. Loaders branch on ctx.draft to load unpublished content.
-export async function loader({ api, draft }: LoaderArgs<typeof app>) {
-  return { post: (await api.posts.get({ query: { slug, includeDrafts: draft } })).data }
+// 2. Loaders (in a route's .backend.ts) branch on draft to load unpublished content.
+export async function loader({ api, draft, params }: Route.LoaderArgs) {
+  return { post: (await api.posts.get({ query: { slug: params.slug, includeDrafts: draft } })).data }
 }
 
 // 3. Wire the SAME secret so loaders see ctx.draft + editors bypass the ISR cache.
@@ -1912,7 +2029,8 @@ hidden reactivity - the shape an AI agent (or a human) gets right on the first t
 
 ### Why islands, not hydration
 
-Vanilla routes set `export const hydrate = false` - there is no client framework
+Vanilla routes set `export const hydrate = false` in their
+`.backend.ts` half - there is no client framework
 to hydrate with, and that is the point. The five framework adapters give you a reactive
 runtime and pay for it in client JS and in the subtle failure modes (stale closures,
 hydration mismatch, what-re-runs-when) that trip up generated code. Islands take the other
@@ -1923,8 +2041,8 @@ islands for widgets on an otherwise-static page.
 ### Mount an island
 
 Render a `<nifra-island>` marker in your page (props are inline JSON), then
-bundle one entry that calls `mountIslands`. Load it via the route&apos;s
-`islandScripts`.
+bundle one entry (in `frontend/`) that calls `mountIslands`. Load it
+with the `islandScripts` export of the route&apos;s `.backend.ts` half.
 
 ```ts
 // doc-check: skip - server-rendered island marker (HTML, not a checkable module).
@@ -2283,19 +2401,36 @@ Wrap slow data in `defer()` in the loader and render it through
 resolution, then hydrates - no waterfall, no blank screen.
 
 ```ts
-// Send the page shell immediately; stream the slow part in when it resolves.
-export async function loader({ api }: LoaderArgs<typeof app>) {
+// routes/index.backend.ts - send the page shell immediately; stream the slow part when it resolves.
+import { t } from "@nifrajs/schema"
+import { defer } from "@nifrajs/web"
+import type { Route } from "./+types/index"
+
+declare function loadFeed(userId: string): Promise<string[]>
+
+export const loaderOutput = t.object({
+  name: t.string(),                                   // awaited - in the shell
+  feed: t.deferred(t.array(t.string())),              // deferred - streamed later
+})
+
+export async function loader({ api }: Route.LoaderArgs) {
+  const user = await api.users({ id: "7" }).get()
   return {
-    user: (await api.users({ id: "7" }).get()).data,   // awaited - in the shell
-    feed: defer(api.feed.get()),                        // deferred - streamed later
+    name: user.ok ? user.data.name : "",
+    feed: defer(loadFeed("7")),
   }
 }
+```
 
-export default function Page(props: { data: LoaderData<typeof loader> }) {
+```ts
+// routes/index.tsx
+import type { Route } from "./+types/index"
+
+export default function Page({ data }: Route.ComponentProps) {
   return (
     <>
-      <h1>{props.data.user?.id}</h1>
-      <Await resolve={props.data.feed} fallback={<p>Loading feed…</p>}>
+      <h1>{data.name}</h1>
+      <Await resolve={data.feed} fallback={<p>Loading feed…</p>}>
         {(feed) => <Feed items={feed} />}
       </Await>
     </>
@@ -2431,17 +2566,19 @@ than small.
 import { html, vanillaAdapter } from "@nifrajs/web-vanilla"
 
 // routes/hotels.ts - a route file, no .tsx needed.
-export const hydrate = false
-
 export default function Hotels({ data }: { data: { hotels: Array<{ name: string }> } }) {
   // Interpolated values are escaped; wrap trusted markup in raw() to opt out deliberately.
   return html`<ul>${data.hotels.map((h) => html`<li>${h.name}</li>`)}</ul>`
 }
+
+// routes/hotels.backend.ts - its backend half; hydrate = false ships the page with no JavaScript.
+export const hydrate = false
 ```
 
 Everything that lives in `@nifrajs/web` rather than the view layer works unchanged:
 loaders, actions, ISR, SSG, head management, streaming. What you give up is hydration - these
-are server-rendered documents, so set `export const hydrate = false` and reach for
+are server-rendered documents, so set `export const hydrate = false` in the route's
+`.backend.ts` half and reach for
 [islands](/docs/hydration) where a page needs interactivity.
 
 Worth it for the surfaces where HTML is the product: landing pages, listings, docs, comparison
@@ -2449,23 +2586,19 @@ tables. This documentation site renders that way.
 
 ### Authoring routes
 
-A route's `default` export is the component; its `loader`/
-`action`/`meta` are named exports. Most adapters write `.tsx`,
-but the compiled frameworks use their native single-file format - **Svelte**
-`.svelte` (loader/meta in `<script module>`) and **Vue**
-`.vue` SFCs (loader/meta in the plain `<script>`; the component in
-`<script setup>` + `<template>`) - each compiled by its
-package's Bun plugin (`@nifrajs/web-vue/plugin`, `@nifrajs/web-svelte/plugin`).
+A page's `default` export is the component and `meta` is a named export;
+its `loader` and `action` live in the route's `.backend.ts`
+half, the same file whatever the framework. Most adapters write `.tsx`, but the
+compiled frameworks use their native single-file format - **Svelte** `.svelte`
+(meta in `<script module>`) and **Vue** `.vue` SFCs (meta in
+the plain `<script>`; the component in `<script setup>` +
+`<template>`) - each compiled by its package's Bun plugin (`@nifrajs/web-vue/plugin`, `@nifrajs/web-svelte/plugin`).
 
 ```ts
 <!-- routes/index.vue - a Nifra route authored as a Vue Single-File Component -->
 <script lang="ts">
-// The plain <script> carries Nifra's route convention (server-only named exports):
+// The plain <script> carries the page's named exports (meta, handle, ...):
 export const meta = { title: "Home" }
-export async function loader({ api }) {
-  const res = await api.count.get()
-  return { count: res.data?.count ?? 0 }
-}
 </script>
 
 <script setup lang="ts">
@@ -2475,6 +2608,16 @@ defineProps(["data"])          // Nifra passes the loader data in as `data`
 <template>
   <h1>Count: {{ data.count }}</h1>
 </template>
+
+<!-- routes/index.backend.ts - the loader, the same file for every framework -->
+import { t } from "@nifrajs/schema"
+import type { Route } from "./+types/index"
+
+export const loaderOutput = t.object({ count: t.number() })
+export async function loader({ api }: Route.LoaderArgs) {
+  const res = await api.count.get()
+  return { count: res.ok ? res.data.count : 0 }
+}
 ```
 
 Component `<style scoped>` (Vue) and `<style>` (Svelte -
@@ -4013,18 +4156,19 @@ your tests need no database - and your Better Auth types flow through by inferen
 
 ```ts
 // doc-check: skip - needs the third-party `better-auth` package + your `db`; install it to run this.
-// auth.ts - your configured Better Auth instance (database, providers, …):
+// backend/auth.ts - your configured Better Auth instance (database, providers, …):
 import { betterAuth as createBetterAuth } from "better-auth"
 export const auth = createBetterAuth({ database: db, emailAndPassword: { enabled: true } })
 
-// server.ts - ONE use() mounts every Better Auth endpoint at /api/auth/*:
+// backend/app.ts - ONE use() mounts every Better Auth endpoint at /api/auth/*:
 import { betterAuth, getSession, requireSession } from "@nifrajs/better-auth"
-const app = server()
+export const backend = server()
   .use(betterAuth(auth))                                       // sign-in/up/out, OAuth, 2FA, session…
   .get("/me", async (c) => (await requireSession(auth, c.req)).user)  // typed; 401 when signed out
 
-// In a loader/action, read the session from the raw Request:
-export async function loader({ request }) {
+// routes/account.backend.ts - a loader or action reads the session from the raw Request:
+export const loaderOutput = t.object({ user: t.object({ id: t.string(), name: t.string() }) })
+export async function loader({ request }: Route.LoaderArgs) {
   const session = await getSession(auth, request)              // { user, session } | null - typed
   const { user } = await requireSession(auth, request, { redirectTo: "/login" })  // or guard it
   return { user }
@@ -4048,7 +4192,7 @@ the user, or throws a 401/redirect). The frontend half is a framework-agnostic c
 
 ```ts
 // doc-check: skip - needs `@auth/core` providers + AUTH_SECRET; install them to run this.
-// auth.ts - your Auth.js config (any @auth/core provider: GitHub, Google, Credentials, …):
+// backend/auth.ts - your Auth.js config (any @auth/core provider: GitHub, Google, Credentials, …):
 import { authjs, getSession, requireAuthUser } from "@nifrajs/authjs"
 import GitHub from "@auth/core/providers/github"
 export const authConfig = {
@@ -4057,13 +4201,14 @@ export const authConfig = {
   trustHost: true, // or authUrl behind a proxy
 }
 
-// server.ts - ONE use() mounts every Auth.js endpoint at /api/auth/*:
-export const app = server()
+// backend/app.ts - ONE use() mounts every Auth.js endpoint at /api/auth/*:
+export const backend = server()
   .use(authjs(authConfig))                                     // sign-in, OAuth callbacks, session…
   .get("/me", async (c) => ({ user: (await getSession(c.req, authConfig))?.user ?? null }))
 
-// Guard it - or read it in a loader from the raw Request:
-export async function loader({ request }) {
+// routes/account.backend.ts - guard it, or read it in a loader from the raw Request:
+export const loaderOutput = t.object({ user: t.object({ name: t.string() }) })
+export async function loader({ request }: Route.LoaderArgs) {
   const user = await requireAuthUser(request, authConfig, { redirectTo: "/login" })
   return { user }
 }
@@ -4088,8 +4233,8 @@ Stores mirror the ISR discipline: `MemorySessionStore` is prod-guarded;
 `KVSessionStore` is the durable, shared production store.
 
 ```ts
-// auth.ts - one session manager. LAZY so a route module can import it without shipping it to the
-// browser (see the warning below). Store mode keeps data server-side; cookie mode (no store) is stateless.
+// backend/auth.ts - one session manager, created on first use so the secret is read at request time.
+// Store mode keeps data server-side; cookie mode (no store) is stateless.
 import { createSessions, MemorySessionStore } from "@nifrajs/auth"
 
 let manager: ReturnType<typeof createSessions> | undefined
@@ -4107,7 +4252,7 @@ Nifra routes that have the full `Context`. `regenerate()` rotates the
 session id on login to defend against fixation; the `Set-Cookie` rides the redirect.
 
 ```ts
-// server.ts - login/logout are plain nifra routes (full Context → they can WRITE the cookie).
+// backend/app.ts - login/logout are plain nifra routes (full Context → they can WRITE the cookie).
 const sessions = getSessions()
 app.use(csrf())                                          // Origin check on unsafe methods
 
@@ -4125,8 +4270,6 @@ app.post("/api/logout", async (c) => {
   await sessions.destroy(c, await sessions.get(c))
   return redirect("/login")
 })
-
-createWebApp({ /* … */ api: sessions })                  // inject the manager into loaders as ctx.api
 ```
 
 ### Guard a route
@@ -4135,32 +4278,34 @@ createWebApp({ /* … */ api: sessions })                  // inject the manager
 (a 302 to `redirectTo`, or a 401) when the session is missing - Nifra renders a
 thrown control-flow value as-is, so the guard short-circuits the loader. It is plain data, not
 a `Response`: same bytes on the wire, on the lane an ordinary return takes. To guard
-every page under a directory, run the same check in that directory's
-`_middleware.ts` - see [Route middleware](/docs/routing#middleware).
+every page under a directory, run the same check in the `middleware` export of that
+directory's `_layout.backend.ts` - see [Route middleware](/docs/routing#middleware).
 
 ```ts
-// doc-check: skip - fragment: `api` is the session manager createWebApp injected (see setup above).
-// A protected route's loader - reads the session and redirects when absent.
-import { requireUser } from "@nifrajs/auth"   // browser-safe; OK to import in a route module
+// routes/account.backend.ts - a protected route's loader reads the session and redirects when absent.
+import { requireUser } from "@nifrajs/auth"
+import { t } from "@nifrajs/schema"
+import { getSessions } from "../backend/auth"   // backend code: a backend half imports it directly
+import type { Route } from "./+types/account"
 
-export async function loader({ request, api }) {
-  const sessions = api                       // the manager injected via createWebApp's `api`
-  const session = await sessions.read(request)
-  // requireUser throws a 302 to /login when there's no session; Nifra returns the thrown Response.
+export const loaderOutput = t.object({ userId: t.string() })
+export async function loader({ request }: Route.LoaderArgs) {
+  const session = await getSessions().read(request)
+  // requireUser throws a 302 to /login when there's no session, and the loader stops there.
   const userId = requireUser(session, "userId", { redirectTo: "/login" })
   return { userId }
 }
 ```
 
-### ⚠️ Never import server-only code into a route module
+### Session code stays in the backend
 
-A route's `loader` runs only on the server, but its module is **also bundled for the
-browser** (for the component) - and the loader is **not** stripped from that bundle. So a
-top-level `import` of the session manager (or a DB client, or anything touching
-`process.env`) would ship server code to the client and crash hydration. Reach server
-resources through `ctx.api` / `ctx.env` instead (inject them via
-`createWebApp`) - exactly how the manager is passed as `api` above.
-`requireUser` is fine to import: it only builds a `Response`, no secrets.
+The session manager, an auth instance and their secrets live in `backend/`, and only
+backend code imports them: a route's `.backend.ts` half, `backend/app.ts`.
+A page or a `frontend/` component that imported `backend/auth.ts` fails
+the build with the import chain that reached it, so a secret cannot ride into the browser
+bundle. A page that needs the user reads it from its loader data, which
+`loaderOutput` narrows to the fields it declares - see
+[Project structure](/docs/structure).
 
 ### CSRF
 
@@ -4408,8 +4553,8 @@ const url = signImageUrl("/_image", { src: "/private/a.jpg", width: 800 }, {
 
 Signatures over `(src, w, q)` are **stable** (no expiry), so an SSR-rendered
 `<Image>` srcset hydrates and caches identically. The secret makes a loader
-config **server-only** - inject it from `env` and never import it into a route/client
-module (same discipline as a [session secret](/docs/auth)). For time-limited links to
+config **server-only** - inject it from `env` in backend code, never a page or
+`frontend/` module (same discipline as a [session secret](/docs/auth)). For time-limited links to
 private images, `signImageUrl(…, { expiresIn })` adds an `&exp=` the
 handler enforces.
 
@@ -4471,7 +4616,7 @@ URL. Bad tags, unsafe segments and two locales sharing an `hreflang` throw at
 definition.
 
 ```ts
-// lib/i18n.ts - each locale declared once; routing, alternates and <html lang>/<html dir> read it.
+// shared/i18n.ts - each locale declared once; routing, alternates and <html lang>/<html dir> read it.
 import { defineLocales } from "@nifrajs/i18n"
 import { defineI18nRouting } from "@nifrajs/i18n/routing"
 
@@ -4496,12 +4641,12 @@ locales.chain("hi") // ["hi", "en"] - the catalog fallback order
 first path segment and the default is unprefixed (or prefixed too, with
 `prefixDefaultLocale`). A `[lang]` route segment matches any string, so
 guard it: `matchSegment` answers not-found for an unknown or draft value and a
-redirect for the default's prefix or a wrong case, and a `_middleware.ts` in the
-`[lang]` directory turns that into a 404 through your `_404` page or a
+redirect for the default's prefix or a wrong case, and the `middleware` export of
+a `_layout.backend.ts` in the `[lang]` directory turns that into a 404 through your `_404` page or a
 permanent redirect - on full page loads, client navigations and form posts alike.
 
 ```ts
-// routes/[lang]/_middleware.ts - 404 unknown and draft locales, redirect /en/... to /...
+// routes/[lang]/_layout.backend.ts - 404 unknown and draft locales, redirect /en/... to /...
 import { defineLocales } from "@nifrajs/i18n"
 import { defineI18nRouting } from "@nifrajs/i18n/routing"
 import { notFound, type RouteMiddleware, redirect } from "@nifrajs/web"
@@ -4510,14 +4655,13 @@ const urls = defineI18nRouting(
   defineLocales({ default: "en", locales: { en: {}, hi: {}, gu: { draft: true } } }),
 )
 
-const guard: RouteMiddleware = (ctx) => {
+export const middleware: RouteMiddleware = (ctx) => {
   const { pathname, search } = new URL(ctx.request.url)
   const match = urls.matchSegment(ctx.params.lang, pathname + search)
   if (match.kind === "not-found") notFound()
   if (match.kind === "redirect") return redirect(match.location, { status: 308 })
   return undefined
 }
-export default guard
 ```
 
 `alternates(path, { origin, locales })` gives the page's canonical URL and its
@@ -4563,11 +4707,15 @@ base-subtag fallback), else your default. The answer is always drawn from your
 locale's messages.
 
 ```ts
-// In a loader: resolve the locale + return only that catalog's messages.
+// routes/index.backend.ts - resolve the locale + return only that catalog's messages.
 import { negotiateLocale } from "@nifrajs/i18n"
-import { catalogs, locales } from "../catalogs"
+import { t } from "@nifrajs/schema"
+import { catalogs, locales } from "../shared/catalogs"
+import type { Route } from "./+types/index"
 
-export async function loader({ request }: { request: Request }) {
+// A catalog is open-ended, so its schema is the explicit opt-out of the strict default.
+export const loaderOutput = t.object({ locale: t.string(), messages: t.looseObject({}) })
+export async function loader({ request }: Route.LoaderArgs) {
   const locale = negotiateLocale(request, { locales, defaultLocale: "en", queryParam: "lang", cookie: "lang" })
   return { locale, messages: catalogs[locale] }   // ?lang= → cookie → Accept-Language → default
 }
@@ -4617,7 +4765,7 @@ return the key. `timeZone` and `numberingSystem` set defaults for every
 options, so pass a stable `onMissing`.
 
 ```ts
-// messages/en.ts - the default locale's catalog: ICU strings, lists and nested blocks.
+// shared/messages/en.ts - the default locale's catalog: ICU strings, lists and nested blocks.
 import { createFormatter, type PartialMessages } from "@nifrajs/i18n"
 
 export const en = {
@@ -4649,7 +4797,7 @@ checked against its shape.
 
 ```ts
 // doc-check: skip - declares the app-wide catalog type, which would retype every other sample here.
-// Once, anywhere in the app: every t() key, useT() included, and every other catalog is checked.
+// shared/register.ts - once per app: every t() key, useT() included, and every other catalog is checked.
 import type { en } from "./messages/en"
 
 declare module "@nifrajs/i18n" {
@@ -4711,7 +4859,7 @@ interpolated values are always text, so a value containing `<b>` cannot
 open a tag. `t()` is unchanged and returns the markers as written.
 
 ```ts
-// messages/en.ts: terms: "Read the <link>terms</link> and <b>privacy notice</b>,<br/>{name}."
+// shared/messages/en.ts: terms: "Read the <link>terms</link> and <b>privacy notice</b>,<br/>{name}."
 import { rich, useT } from "@nifrajs/web-react/i18n"
 
 function Terms({ name }: { name: string }) {
@@ -4770,9 +4918,9 @@ the locale's script. Latin words (brands, units) stay allowed.
 
 ```ts
 // doc-check: skip - imports the app's own catalog files.
-// lib/i18n.ts - the module `nifra i18n check` imports.
+// shared/i18n.ts - the module `nifra i18n check` imports.
 import { defineLocales } from "@nifrajs/i18n"
-import en from "../messages/en.json"
+import en from "./messages/en.json"
 
 export const locales = defineLocales({
   default: "en",
@@ -4780,8 +4928,8 @@ export const locales = defineLocales({
 })
 export const catalogs = {
   en,
-  hi: () => import("../messages/hi.json"),
-  gu: () => import("../messages/gu.json"),
+  hi: () => import("./messages/hi.json"),
+  gu: () => import("./messages/gu.json"),
 }
 // Keys a check skips: exact, a prefix ending in ".*", or "*".
 export const ignore = { script: ["languages.*"], untranslated: ["brand"] }
@@ -4811,7 +4959,7 @@ test("catalogs are consistent", () => {
 ### Notes
 
 - For many locales, load catalogs **lazily** per request - don't bundle every catalog. A
-loader that does `await import(`../messages/${locale}.ts`)` ships only the
+loader that does `await import(`../shared/messages/${locale}.ts`)` ships only the
 requested locale's table to the page, typed inline tables included.
 
 - The supported ICU subset is interpolation + `plural`/`selectordinal`/`select`; use
@@ -5655,7 +5803,7 @@ diagnostics, each carrying its own fix, so a failure is a work item rather than 
 
 It catches the drift that types alone miss: a hand-rolled `fetch()` to your own API
 instead of the typed client, a `client(...)` missing its type argument, a
-server-only import reaching a route module, a route manifest that no longer matches
+page or `frontend/` file importing backend code, a route manifest that no longer matches
 `routes/`.
 
 ### Knowing when to stop
@@ -5976,18 +6124,19 @@ without a full page reload. Pass the official plugin for your UI framework, keep
 Nifra routes and loaders, and run the dev server during local development.
 
 ```ts
-// doc-check: skip - needs the third-party @vitejs/plugin-react + your ./backend; install it to run this.
-// dev.ts - state-preserving HMR for supported UI adapters
+// doc-check: skip - needs the third-party @vitejs/plugin-react + your ./app; install it to run this.
+// backend/dev-server.ts - state-preserving HMR for supported UI adapters
 import react from "@vitejs/plugin-react"            // your framework's official Vite plugin
 import { createWebApp } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { createViteDevServer } from "@nifrajs/web/vite"
 import { reactAdapter } from "@nifrajs/web-react"
-import { backend } from "./backend"
+import { backend } from "./app"
 
-const routesDir = `${import.meta.dir}/routes`
+const root = `${import.meta.dir}/..`
+const routesDir = `${root}/routes`
 const server = await createViteDevServer({
-  root: import.meta.dir,
+  root,
   routesDir,
   clientModule: "@nifrajs/web-react/client",
   plugins: [react()],                                // Vue: @vitejs/plugin-vue, Svelte: …, etc.
@@ -6056,21 +6205,24 @@ resolve condition. Working examples for all five live in `examples/hmr-*`.
 ### The Fast Refresh boundary rule
 
 React Fast Refresh (and the other frameworks' equivalents) only hot-swap a module when
-_every_ export is a component. Nifra route files co-locate `loader`,
-`action`, and `meta` next to the component - so a route file isn't a
-refresh boundary, and saving it does a clean full reload. Keep the view in a child component
+_every_ export is a component. A Nifra page exports `meta` (and
+`handle`, `searchSchema`, ...) next to the component - so a page file
+isn't a refresh boundary, and saving it does a clean full reload. Its `loader` and
+`action` live in the `.backend.ts` half, which the browser never loads. Keep the view in a child component
 and edits hot-swap with state intact.
 
 ```ts
-// routes/index.tsx - NOT a Fast Refresh boundary (exports loader/meta), so a save
+// routes/index.tsx - NOT a Fast Refresh boundary (exports meta beside the page), so a save
 //                     here does a clean full reload. Keep the view in a child component:
+import { Counter } from "../frontend/counter"
+import type { Route } from "./+types/index"
+
 export const meta = { title: "Home" }
-export async function loader({ api }) { /* … */ }
-export default function Home(props) {
-  return <Counter message={props.data.message} />   // ← edit Counter.tsx for state-preserving HMR
+export default function Home({ data }: Route.ComponentProps) {
+  return <Counter message={data.message} />   // ← edit counter.tsx for state-preserving HMR
 }
 
-// components/Counter.tsx - component-only module → a Fast Refresh boundary. Editing this file's
+// frontend/counter.tsx - component-only module → a Fast Refresh boundary. Editing this file's
 // JSX hot-swaps it with useState/useReducer state PRESERVED (no reload).
 import { useState } from "react"
 export function Counter(props: { message: string }) {
@@ -6142,7 +6294,7 @@ source. A divergence between the loops is treated as a bug, not a caveat.
 
 ```ts
 // doc-check: skip - fragment: routesDir/outDir/clientModule/createApp are your app's dev config.
-// dev.ts - Bun-native HMR, no Vite in the process
+// backend/dev-server.ts - Bun-native HMR, no Vite in the process
 import { createDevServer } from "@nifrajs/web/dev"
 // Bun.serve bundles + hot-reloads the client; Bun's runtime resolves SSR. An edit reloads the
 // changed module graph - with React Fast Refresh (state preserved) applied natively by Bun, no plugin.
@@ -6157,10 +6309,11 @@ Production builds default to **Bun** (`buildClient` /
 `nifra build`): faster, Bun-native, and the profile Nifra is tuned for. If an app
 genuinely needs a **Vite-only transform** with no Bun equivalent, you can run a
 Vite/Rollup production client build instead - but it must carry the same client-leak guards the
-Bun build enforces, or a second pipeline becomes a way for server-only code to reach the
-browser unnoticed. Add `viteLeakGuard()`: it runs the _same_ detection and
+Bun build enforces, or a second pipeline becomes a way for backend code to reach the browser
+unnoticed. Add `viteLeakGuard()`: it runs the _same_ detection and
 emits the _same_ error as the Bun build (one implementation, adapted to Rollup's graph),
-so `node:` builtins and `server-only` modules fail the build either way.
+so a refused import - a `node:` builtin, `backend/`, a route's
+`.backend.ts` half - fails the build either way.
 
 ```ts
 // vite.config.ts - a Vite/Rollup PRODUCTION client build (the escape hatch, not the default).
@@ -6172,8 +6325,8 @@ export default {
   // Keeps a bare built-in (`fs/promises`) named instead of an empty stub, so the guard sees it.
   plugins: [viteBareBuiltinExternal()],
   build: {
-    // The SAME two client-leak guards Nifra's Bun build runs - server-only code or a node: builtin
-    // reaching the browser fails the build, with the identical error message. A second production
+    // The SAME client-leak guards Nifra's Bun build runs - backend code (a route's .backend.ts half,
+    // backend/) or a node: builtin reaching the browser fails the build, with the identical message. A second production
     // pipeline must not ship without them. `node:` stays external so the guard can name it.
     rollupOptions: { external: [/^node:/], plugins: [viteLeakGuard()] },
   },
@@ -6395,7 +6548,7 @@ path, never an absolute one. A selector written against a generated name behaves
 
 ## Nifra - Troubleshooting
 
-> Fixes keyed on the literal error strings Nifra prints: `reached the client bundle` (a node:/native import in the browser bundle), `server-only module reached the client bundle` (the server-only marker), `resolveDispatcher` / `Invalid hook call` (duplicate React), and `@nifrajs/core is loaded 2 times` (duplicate core).
+> Fixes keyed on the literal error strings Nifra prints: `may not ship to a browser` (backend code, a node: built-in or a server package reached a browser build), `resolveDispatcher` / `Invalid hook call` (duplicate React), and `@nifrajs/core is loaded 2 times` (duplicate core).
 
 Hit an error? Search this page for the literal message. Each section is keyed on the exact
 string Nifra prints, with what it means and the fix. The build, `nifra check`, and
@@ -6754,7 +6907,7 @@ does no path stripping). Loaders call it _in-process_ during SSR; the browser ca
 _over HTTP_. Both run the identical lifecycle - validation, middleware, contracts.
 
 ```ts
-// backend.ts - a normal @nifrajs/core server. Routes live at the full /api/... path.
+// backend/app.ts - a normal @nifrajs/core server. Routes live at the full /api/... path.
 import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
@@ -6774,12 +6927,13 @@ Inside a loader or action, `ctx.api` is that typed client, and a call goes
 port, the full real lifecycle. This is the SSR data path; it never touches the HTTP mount.
 
 ```ts
-// routes/index.tsx - a loader calls the backend IN-PROCESS via ctx.api (no network).
-import type { LoaderContext } from "@nifrajs/web"
+// routes/index.backend.ts - the loader calls the backend IN-PROCESS via api (no network).
+import { t } from "@nifrajs/schema"
+import type { Route } from "./+types/index"
 
-export async function loader(ctx: LoaderContext) {
-  const api = ctx.api as { me: { get(): Promise<{ data: { id: string | null } }> } }
-  const res = await api.me.get() // in-process: full validation/middleware, no HTTP round-trip
+export const loaderOutput = t.object({ me: t.object({ id: t.union([t.string(), t.null()]) }) })
+export async function loader({ api }: Route.LoaderArgs) {
+  const res = await api.api.me.get() // in-process: full validation/middleware, no HTTP round-trip
   return { me: res.data }
 }
 ```
@@ -6797,12 +6951,13 @@ interface **before** page routing. The backend receives the same Workers
 `Response` is returned untouched (the request body is passed through, never pre-read).
 
 ```ts
-// server.ts (prod) - createWebApp serves pages AND auto-mounts the backend at /api/*.
+// backend/server.ts - a hand-written server: createWebApp serves pages AND auto-mounts the
+// backend at /api/*. (`nifra build` emits this wiring for you; write it only for a custom host.)
 import { inProcessClient } from "@nifrajs/client"
 import { createWebApp } from "@nifrajs/web"
 import { reactAdapter } from "@nifrajs/web-react"
-import { backend } from "./backend"
-import { clientEntry, manifest } from "./server-manifest"
+import { backend } from "./app"
+import { clientEntry, manifest } from "../server-manifest"
 
 export const app = createWebApp({
   adapter: reactAdapter,
@@ -6831,14 +6986,14 @@ stops, and `nifra check` reports `NF-C027`. The same holds for every other
 mount in front of the page router.
 
 An app run by `nifra dev` and `nifra build` sets these options from
-`framework.ts`: `apiPrefix`, `apiStrip`, `mounts`,
+`backend/framework.ts`: `apiPrefix`, `apiStrip`, `mounts`,
 `csp` and `nonce`. The generated server entry imports them from there, so
 export them from `framework.ts` (and re-export from `nifra.config.ts` when
 both exist). A `mounts` entry hands a path to another app; a single extra URL
 outside the prefix, such as a sitemap, is a plain route registered in `use`:
 
 ```ts
-// framework.ts - the backend moves to /rpc, a webhook handler mounts at /hooks,
+// backend/framework.ts - the backend moves to /rpc, a webhook handler mounts at /hooks,
 // and one extra URL outside both is a plain route on the web app.
 import { reactAdapter } from "@nifrajs/web-react"
 
@@ -6938,7 +7093,7 @@ it. Whether a route was defined inline, merged in from a group, or reached throu
 mount, the pathname it observes is the request's own.
 
 ```ts
-// backend.ts - compose domains with .merge(). Each group owns its FULL absolute paths.
+// backend/app.ts - compose domains with .merge(). Each group owns its FULL absolute paths.
 import { server } from "@nifrajs/core/server"
 
 const listings = server().get("/api/listings", (c) => {
@@ -6969,11 +7124,13 @@ With the routes mounted, a client island or component hits them with the same ty
 `client<typeof backend>` - same-origin, no separate API server.
 
 ```ts
-// A browser island / client component hits the mounted HTTP routes with the typed client.
+// doc-check: skip - imports your backend/app.ts (the BACKEND sample above).
+// frontend/sync.ts - browser code hits the mounted HTTP routes with the typed client.
+// A type-only import of the backend is allowed anywhere: it is erased before bundling.
 import { client } from "@nifrajs/client"
-import type { backend } from "./backend"
+import type { Backend } from "../backend/app"
 
-const api = client<typeof backend>("") // same-origin: /api/sync is served by createWebApp's mount
+const api = client<Backend>("") // same-origin: /api/sync is served by createWebApp's mount
 export async function runSync(cursor: string) {
   const { data, error } = await api.api.sync.post({ cursor })
   return error ? { applied: 0 } : data
@@ -7249,48 +7406,60 @@ interface LoaderContext {
   set:     LoaderResponseControls  // response headers + cookies for this page request (see below)
 }
 
-// api + env are typed per-route via @nifrajs/client's LoaderArgs<Api, Env>; the agnostic core
-// keeps them `unknown`. Branch on `draft` to load unpublished content for preview/editors.
+// api + env are typed per route by the generated Route.LoaderArgs (./+types/<name>); the agnostic
+// core keeps them `unknown`. Branch on `draft` to load unpublished content for preview/editors.
 ```
 
 ### Loader, action & meta signatures
 
-A route module co-locates its data, mutation, head, and view. Only the
-`default` export (the component) is required; `loader`,
-`action`, `meta`, and `hydrate` are all optional. A
-`loader` runs on **GET** and feeds `props.data`; an
-`action` runs on **POST** and feeds `props.actionData`.
+A route is two files. The page (`x.tsx`) holds the view and its head:
+`default` (required) and `meta`. Its backend half (
+`x.backend.ts`) holds everything that runs only on the server:
+`loader` + `loaderOutput`, `action` +
+`actionOutput`, `hydrate`, `prerender`,
+`revalidate`. A `loader` runs on **GET** and feeds
+`props.data`; an `action` runs on **POST** and feeds
+`props.actionData`. A server-only export in the page file is a build error - see
+[Project structure](/docs/structure).
 
 ```ts
-// routes/users/[id].tsx - a route module's full contract (every export optional but `default`).
-// doc-check: skip - full-contract sketch; ctx.api's routes and meta's loader-data shape come from
-// the reader's own backend type, so it can't compile standalone (see the typed examples elsewhere).
-import type { LoaderContext } from "@nifrajs/web"
-
-// GET → data for the page. Runs in-process on the server during SSR (no HTTP hop).
-export async function loader(ctx: LoaderContext) {
-  return { user: await ctx.api.users.get({ id: ctx.params.id }) }
-}
-
-// POST → a mutation. Same context. Return a Response (e.g. a redirect - passed straight
-// through) OR data, which reaches the component as `actionData`.
-export async function action(ctx: LoaderContext) {
-  const form = await ctx.request.formData()
-  return { ok: true }
-}
+// routes/users/[id].tsx - the page: it ships to the browser whole. Only `default` is required.
+// doc-check: skip - full-contract sketch across two files; the data shape comes from the reader's
+// own backend, so it can't compile standalone (see the typed examples elsewhere).
+import type { Route } from "./+types/[id]"
 
 // Static OR a function of { data, params, origin }. Static meta is serialized once; function meta
 // recomputes per request (its content can vary with loader data). `origin` is the request's
 // scheme+host (server-resolved, matches the client's location.origin) - use it for ABSOLUTE
 // canonical / og:url / og:image URLs without threading siteUrl through loader data.
 export const meta = ({ data, params, origin }) => ({
-  title: `User ${data.user.name}`,
-  meta: [{ name: "description", content: data.user.bio }],
+  title: `User ${data.name}`,
+  meta: [{ name: "description", content: data.bio }],
   link: [{ rel: "canonical", href: `${origin}/users/${params.id}` }],
 })
 
+export default function User({ data, actionData, params }: Route.ComponentProps) { /* … */ }
+
+// routes/users/[id].backend.ts - the server half: it never reaches the browser.
+import { t } from "@nifrajs/schema"
+
+// GET → data for the page. Runs in-process on the server during SSR (no HTTP hop). Only what
+// loaderOutput declares reaches the page as `data`.
+export const loaderOutput = t.object({ name: t.string(), bio: t.string() })
+export async function loader({ api, params }: Route.LoaderArgs) {
+  const res = await api.users({ id: params.id }).get()
+  return { name: res.data.name, bio: res.data.bio }
+}
+
+// POST → a mutation. Same context. Return a Response (e.g. a redirect - passed straight
+// through) OR data, which reaches the page as `actionData`, bounded by actionOutput.
+export const actionOutput = t.object({ ok: t.boolean() })
+export async function action({ request }: Route.ActionArgs) {
+  const form = await request.formData()
+  return { ok: true }
+}
+
 export const hydrate = false   // opt out of full-document hydration (static / island pages)
-export default function User(props) { /* props.data, props.actionData, props.params */ }
 ```
 
 [!NOTE] An `action` may return a control-flow value - a `redirect()` or a
@@ -7304,10 +7473,14 @@ loader or action writes response headers on `ctx.set.headers` and queues cookies
 with `ctx.set.cookie()` / `ctx.set.deleteCookie()`.
 
 ```ts
-// routes/account.tsx - response headers and cookies, from a loader or an action.
+// routes/account.backend.ts - response headers and cookies, from a loader or an action.
+import { t } from "@nifrajs/schema"
 import { type LoaderContext, redirect } from "@nifrajs/web"
 
 declare function signIn(email: string, password: string): Promise<{ token: string } | null>
+
+export const loaderOutput = t.object({ plan: t.string() })
+export const actionOutput = t.object({ error: t.string() })
 
 export async function loader(ctx: LoaderContext) {
   // Headers land on the rendered document.
@@ -7402,10 +7575,12 @@ call.
 
 ```ts
 // TWO ways to handle a request - pick by who is calling.
+import { t } from "@nifrajs/schema"
 import type { LoaderContext } from "@nifrajs/web"
 
-// (1) A page's own data + mutations → route exports. A PUBLIC POST is a route ACTION
-//     (routes/contact.tsx) - the browser POSTs the route's own URL, Nifra runs `action`:
+// (1) A page's own data + mutations → its backend half's exports. A PUBLIC POST is a route ACTION
+//     (routes/contact.backend.ts) - the browser POSTs the route's own URL, Nifra runs `action`:
+export const actionOutput = t.object({ ok: t.boolean(), body: t.string() })
 export async function action(ctx: LoaderContext) {
   const form = await ctx.request.formData()        // the browser POSTed this route
   return { ok: true, body: String(form.get("body")) } // → props.actionData on re-render
@@ -7413,9 +7588,10 @@ export async function action(ctx: LoaderContext) {
 
 // (2) ctx.api is the IN-PROCESS backend client (the inProcessClient(server) the app was given).
 //     It is LOADERS-ONLY: the SSR backend registers GET handlers, so a .post() to ctx.api 405s.
+export const loaderOutput = t.object({ id: t.string() })
 export async function loader(ctx: LoaderContext) {
   // ✅ a GET in-process - no HTTP hop. (A .post() to ctx.api would 405; write an `action` instead.)
-  return { id: ctx.params.id }
+  return { id: ctx.params.id ?? "" }
 }
 
 // Rule of thumb: data INTO a page → loader + ctx.api (GET). A mutation FROM the browser
@@ -7430,11 +7606,14 @@ CDN layer, never by the on-demand worker. So a loader that can't find its record
 **must** 404 itself. The mechanism is the throw contract:
 
 ```ts
-// routes/users/[id].tsx - plain SSR runs the loader for ANY :id value. `fallback: "404"`
+// routes/users/[id].backend.ts - plain SSR runs the loader for ANY :id value. `fallback: "404"`
 // only takes effect under prerender/CDN, so on on-demand SSR you MUST guard and 404 yourself.
+import { t } from "@nifrajs/schema"
 import type { LoaderContext } from "@nifrajs/web"
 
 declare function lookupUser(id: string): Promise<{ id: string } | null>
+
+export const loaderOutput = t.object({ user: t.object({ id: t.string() }) })
 
 export async function loader(ctx: LoaderContext) {
   // ctx.params.id is `string | undefined` (an optional segment) - default it before the lookup.
@@ -7637,8 +7816,10 @@ export const handler = withISR(app, {
 ### The client ↔ server boundary
 
 Loaders, actions, and head resolution run on the server. The client receives the loader's
-_return value_ (serialized into the document), never the loader, the `api`,
-or `env`. Keep server-only imports out of a route file's top level.
+_output_ - its return value projected through `loaderOutput` - never the
+loader, the `api`, or `env`. Server code lives in a route's
+`.backend.ts` half and in `backend/`, and the build refuses a frontend
+file that reaches it.
 
 ```ts
 // What runs WHERE:
@@ -7650,11 +7831,11 @@ or `env`. Keep server-only imports out of a route file's top level.
 //   SSR of the layout chain        hydration + Fast Refresh (dev)
 //   backend (api, env, draft)      -
 //
-// The client gets the loader's RETURN VALUE (serialized into the document), never the loader
-// itself, the api, or env. So:
-//  1. Never import server-only modules (Bun, a DB client, secrets) at the top level of a route
-//     file - the bundler pulls it into the client chunk and it crashes / leaks. (The build now
-//     FAILS with a named error if a `node:` built-in reaches a client chunk - see below.)
+// The client gets the loader's OUTPUT - its return value projected through loaderOutput and
+// serialized into the document - never the loader itself, the api, or env. So:
+//  1. Server code lives in a route's x.backend.ts and in backend/. The page file, frontend/ and
+//     shared/ ship to the browser, and the build FAILS with the import chain if they reach backend
+//     code, a database driver or a `node:` built-in (see /docs/structure).
 //  2. A client soft-nav re-runs the loader over the network (X-Nifra-Data) and re-merges the
 //     same layout-chain head, so sitewide tags persist across navigation - no page-only flash.
 ```
@@ -7684,8 +7865,8 @@ The programmatic `buildClient()` API emits a content-hashed directory plus a
 //    build mode; every other `process.env.X` becomes undefined - EXCEPT names you opt in with the
 //    PUBLIC_ prefix (Vite/Next convention), which are baked in with their value (see below). No
 //    `process is not defined` crash, and no unprefixed (secret) env leaking into the client bundle.
-//  • A `node:` built-in in the CLIENT bundle FAILS the build with a named error (move it behind a
-//    loader/action - server-only). It builds via a browser polyfill otherwise, then breaks at runtime.
+//  • A `node:` built-in in the CLIENT bundle FAILS the build with a named error (move it into
+//    backend code - a route's .backend.ts or backend/). A browser polyfill would build, then break.
 //  • Assets are content-hashed + immutable. Serve /assets/* with a long-lived cache header.
 ```
 
@@ -7720,8 +7901,9 @@ await buildClient({
 
 ### Static emit (prerender)
 
-Opt a static route into SSG with `export const prerender = true` (or a dynamic
-route with `export const getStaticPaths`), then call `prerenderRoutes` -
+Opt a static route into SSG with `export const prerender = true` in its
+`.backend.ts` (or a dynamic route with `export const getStaticPaths`),
+then call `prerenderRoutes` -
 a **public** export of `@nifrajs/web/build`. It drives the app's own
 `fetch` to write `index.html` + `_data.json` per route;
 `cloudflarePagesRoutes` emits the `_routes.json` for a hybrid CDN +
@@ -7738,7 +7920,8 @@ await buildClient({ routesDir: "./routes", outDir: "./dist", clientModule: "@nif
 
 // 2. Drive the app's own fetch to render each opted-in route → dist/<path>/index.html + _data.json.
 //    Static routes opt in with `export const prerender = true`; dynamic routes enumerate concrete
-//    params with `export const getStaticPaths` (+ a `fallback: "ssr" | "404"`).
+//    params with `export const getStaticPaths` (+ a `fallback: "ssr" | "404"`) - both in the
+//    route's .backend.ts.
 const { app } = await import("./server")
 const { prerendered } = await prerenderRoutes({
   app,                                       // the built createWebApp (a { fetch } is enough)
@@ -7861,16 +8044,17 @@ server, and every handler reads it as a typed `c.db`. This is how the scaffold w
 it - and it keeps the client out of each handler's imports.
 
 ```ts
+// backend/app.ts
 import { server } from "@nifrajs/core/server"
 import { desc } from "drizzle-orm"
 import { db, notes } from "./db"   // your Drizzle client + schema (what the scaffold generates)
 
 // decorate() hangs the client on the context ONCE - every handler then reads it as `c.db`, fully typed.
-export const app = server()
+export const backend = server()
   .decorate("db", db)
   .get("/notes", async (c) => c.db.select().from(notes).orderBy(desc(notes.createdAt)))
 
-export type App = typeof app
+export type Backend = typeof backend
 ```
 
 ### SQLite
@@ -7900,7 +8084,7 @@ builder. Define your schema once, run `bunx drizzle-kit generate` to create
 migrations, and Nifra's loaders use fully-typed queries:
 
 ```ts
-// schema.ts - define your schema (source of truth)
+// backend/db/schema.ts - define your schema (source of truth)
 import { pgTable, serial, text, timestamp } from "drizzle-orm/pg-core"
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -7912,30 +8096,36 @@ export const users = pgTable("users", {
 // drizzle.config.ts - drizzle-kit config
 import { defineConfig } from "drizzle-kit"
 export default defineConfig({
-  schema: "./schema.ts",
-  out: "./migrations",
+  schema: "./backend/db/schema.ts",
+  out: "./backend/db/migrations",
   dialect: "postgresql",
 })
 
-// db.ts - initialize and migrate
+// backend/db/index.ts - initialize and migrate
 import { drizzle } from "drizzle-orm/postgres-js"
 import postgres from "postgres"
 import { migrate } from "drizzle-orm/postgres-js/migrator"
 const sql = postgres(process.env.DATABASE_URL!)
 export const db = drizzle(sql, { schema: import("./schema") })
-await migrate(db, { migrationsFolder: "./migrations" })  // on app start
+await migrate(db, { migrationsFolder: "./backend/db/migrations" })  // on app start
 
-// routes/users.ts - use your typed schema in a loader
-import { type LoaderArgs } from "@nifrajs/web"
+// routes/users/[id].backend.ts - use your typed schema in a loader (backend code may import backend/)
+import { t } from "@nifrajs/schema"
+import { notFound } from "@nifrajs/web"
 import { eq } from "drizzle-orm"
-import { db } from "../db"
-import { users } from "../db/schema"
+import { db } from "../../backend/db"
+import { users } from "../../backend/db/schema"
+import type { Route } from "./+types/[id]"
 
-export async function loader({ params }: LoaderArgs) {
+export const loaderOutput = t.object({ name: t.string() })   // email stays on the server
+export async function loader({ params }: Route.LoaderArgs) {
   const [user] = await db.select().from(users).where(eq(users.id, Number(params.id)))
-  return { user }
+  if (!user) throw notFound()
+  return user
 }
-export default function UserPage({ data }: any) { return <h1>{data.user?.name}</h1> }
+
+// routes/users/[id].tsx - the page sees only { name }
+export default function UserPage({ data }: Route.ComponentProps) { return <h1>{data.name}</h1> }
 ```
 
 **Workflow:**
@@ -7965,7 +8155,7 @@ policy reads. This `scoped()` + `tenantDb()` helper (≈30 lines) wires it up;
 of silently reading every tenant's rows.
 
 ```ts
-// rls.ts - request-scoped Postgres RLS for Drizzle. Drizzle reuses pooled connections and won't carry
+// backend/db/rls.ts - request-scoped Postgres RLS for Drizzle. Drizzle reuses pooled connections and won't carry
 // a per-request setting, so each tenant query runs in a tx that first sets a GUC the RLS policy reads.
 import { AsyncLocalStorage } from "node:async_hooks"
 import { sql } from "drizzle-orm"
@@ -8031,12 +8221,15 @@ export const app = server().get("/users/:id", async (c) => {
 ### In a loader
 
 Full-stack? The same query goes in a route loader, and its result is typed straight into your
-page during SSR. The loader is server-only, so the database client is tree-shaken out of the
-browser bundle.
+page during SSR. The loader lives in the route's `.backend.ts` half, so the database
+client never reaches the browser bundle - a page that imported it would fail the build - and
+`loaderOutput` decides which columns are sent.
 
 ```ts
-// In a full-stack app the same query runs in a route loader - typed end-to-end to the page.
-export async function loader({ params }: LoaderArgs<typeof app>) {
+// routes/posts/[slug].backend.ts - in a full-stack app the same query runs in a route's loader,
+// typed end-to-end to the page. loaderOutput decides which columns leave the server.
+export const loaderOutput = t.object({ post: t.object({ title: t.string(), body: t.string() }) })
+export async function loader({ params }: Route.LoaderArgs) {
   const post = await db.query("SELECT * FROM posts WHERE slug = ?").get(params.slug)
   if (!post) throw new Response("Not found", { status: 404 })
   return { post }
@@ -8720,7 +8913,8 @@ File routes (`pages/`, `app/`, `routes/`)
 
 `getServerSideProps` · `load` · `createAsync` · `asyncData`
 
-`export async function loader()` - runs on the server, typed into the page
+`export async function loader()` in the route's `.backend.ts`
+half - runs on the server, typed into the page through `loaderOutput`
 
 API routes (`pages/api`, `+server.ts`, route handlers)
 
@@ -8762,29 +8956,34 @@ export default async function Page({ params }) {
   return <h1>{user.name}</h1>
 }
 
-// Nifra - routes/users/[id].tsx
-export async function loader({ params, api }: LoaderArgs<typeof backend>) {
+// Nifra - routes/users/[id].backend.ts: the loader, which never reaches the browser
+export const loaderOutput = t.object({ name: t.string() })   // the only fields the page receives
+export async function loader({ params, api }: Route.LoaderArgs) {
   const res = await api.users({ id: params.id }).get()   // typed, in-process during SSR
-  return { user: res.data }
+  if (!res.ok) throw notFound()
+  return res.data
 }
-export default function User({ data }: { data: LoaderData<typeof loader> }) {
-  return <h1>{data.user?.name}</h1>
+
+// Nifra - routes/users/[id].tsx: the page
+export default function User({ data }: Route.ComponentProps) {
+  return <h1>{data.name}</h1>
 }
 ```
 
 ### Svelte / Solid / Vue
 
-Identical shape - only the page file's extension and component syntax change. The
-`loader`/`action`/`meta` exports are the same on every
-framework (that's Nifra's render seam). SvelteKit's `+page.server.ts` load, for
-example:
+Identical shape - only the page file's extension and component syntax change. The route's
+`.backend.ts` half (`loader`, `action`,
+`loaderOutput`) is the same file on every framework (that's Nifra's render seam).
+SvelteKit's `+page.server.ts` maps onto it one to one:
 
 ```ts
 // SvelteKit - +page.server.ts + +page.svelte
 export async function load({ params }) { return { post: await getPost(params.slug) } }
 
-// Nifra - routes/blog/[slug].svelte (loader is a module export, page is the .svelte)
-export async function loader({ params }) { return { post: await getPost(params.slug) } }
+// Nifra - routes/blog/[slug].backend.ts + routes/blog/[slug].svelte
+export const loaderOutput = t.object({ post: t.object({ title: t.string(), html: t.string() }) })
+export async function loader({ params }: Route.LoaderArgs) { return { post: await getPost(params.slug) } }
 ```
 
 ### What Nifra adds
@@ -9286,6 +9485,180 @@ hardening primitives first-party, and lets `nifra assure` prove in CI that every
 route is guarded. For the full capability and throughput comparison, see
 [vs other frameworks](/docs/comparison) and the
 [per-framework pages](/compare).
+
+## Nifra - Project structure
+
+> Where code lives in a Nifra app: routes/, frontend/, backend/, shared/ and public/, the route pair, and the import rules the build enforces so server code never reaches the browser.
+
+Every file a Nifra build loads belongs to one side: the browser, the server, or both. The
+folder says which, and the build refuses an import that crosses the wrong way - so server
+code and secrets cannot ship to the browser by accident.
+
+```ts
+my-app/
+  routes/                 the URL tree: each page and its backend half
+    _layout.tsx             wraps every page below it
+    _layout.backend.ts      its middleware (runs on the server first)
+    index.tsx               /            ships to the browser
+    index.backend.ts                     its loader and action - never does
+    users/
+      [id].tsx              /users/:id
+      [id].backend.ts
+  frontend/               components, hooks, browser-only code
+  backend/                app.ts (the API), framework.ts, db/, auth.ts
+  shared/                 schemas, types and pure helpers both sides import
+  public/                 static files, served as they are
+  nifra.config.ts         tooling: the deploy target, the client module
+```
+
+### The zones
+
+Where
+Holds
+Reaches the browser
+
+`routes/x.tsx` (`.svelte`, `.vue`, `.mdx`)
+
+a page: the component, `meta`
+
+yes
+
+`routes/x.backend.ts`
+
+that page's `loader`, `action`, `loaderOutput`,
+`actionOutput`, `hydrate`, `revalidate`,
+`middleware` (in `_layout.backend.ts`)
+
+never
+
+`frontend/`
+
+components, hooks, browser-only code
+yes
+
+`backend/`
+
+`app.ts` (the API), `framework.ts`, the database, auth, secrets
+
+never
+
+`shared/`
+
+schemas, types, pure helpers both sides import
+yes
+
+`public/`
+
+static files
+yes
+
+A file outside those folders joins a side with a suffix: `x.frontend.ts`,
+`x.backend.ts` or `x.shared.ts`. A workspace package declares its side
+in its `package.json`:
+`{'"nifra": { "environment": "frontend" | "backend" | "shared" | "library" }'}`.
+A file in no zone is a build error, so nothing is ever classified by accident.
+
+### A route is two files
+
+The page renders; its backend half loads. A server-only export (`loader`,
+`action`, `hydrate`, ...) in the page file is a build error that names
+the backend file it belongs in.
+
+```ts
+// routes/users/[id].tsx - the page. It ships to the browser whole.
+import type { Route } from "./+types/[id]"
+import { Avatar } from "../../frontend/avatar"
+
+export const meta = { title: "User" }
+
+export default function User({ data }: Route.ComponentProps) {
+  return (
+    <main>
+      <Avatar url={data.avatarUrl} />
+      <h1>{data.name}</h1>
+    </main>
+  )
+}
+```
+
+```ts
+// routes/users/[id].backend.ts - the page's server half. It never reaches the browser.
+import { t } from "@nifrajs/schema"
+import { notFound } from "@nifrajs/web"
+import type { Route } from "./+types/[id]"
+
+// What the page receives - and the ONLY fields that leave the server. A field the loader returns
+// but the schema does not declare is dropped before rendering.
+export const loaderOutput = t.object({ name: t.string(), avatarUrl: t.string() })
+
+export async function loader({ params, api }: Route.LoaderArgs) {
+  const res = await api.users({ id: params.id }).get()
+  if (!res.ok) throw notFound()
+  return res.data
+}
+```
+
+Both halves import `Route` from the generated `./+types/[id]`:
+`Route.LoaderArgs` carries the typed `params` and `api`,
+and `Route.ComponentProps` types `data` as exactly what
+`loaderOutput` lets through. `nifra dev`, `nifra build`,
+`nifra check` and `nifra types` write these files under
+`.nifra/types`; the app's `tsconfig.json` resolves them with
+`{'"rootDirs": [".", "./.nifra/types"]'}`.
+
+### What may import what
+
+From
+May import
+
+a page, `frontend/`
+
+frontend code, `shared/`, a `*.fn.ts` server function (the
+browser gets its RPC stub)
+
+a backend half, `backend/`
+
+backend code, `shared/` - not frontend code (keep what both need in
+`shared/`)
+
+`shared/`
+
+`shared/` only
+
+Third-party packages are allowed on any side, except that browser code may not reach a
+server-only package (a database driver, a `node:` built-in). A type-only import (
+`import type`) is allowed anywhere: it is erased before bundling. A refused
+import fails the build with the chain that led to it:
+
+```ts
+[nifra/web] the browser build reached code that may not ship to a browser:
+  - backend/db/index.ts: routes/users/[id].tsx (a route's frontend half) imports
+    backend/db/index.ts (backend code): frontend code may not import backend code; reach it
+    through a loader, an action or a *.fn.ts server function. A type-only import
+    (`import type`) is allowed
+      via routes/users/[id].tsx → backend/db/index.ts
+```
+
+### Data and secrets
+
+-
+**Every loader and action declares what it sends** with `loaderOutput` /
+`actionOutput`. Only declared fields reach the browser, and
+`nifra check` flags a loader without one.
+
+-
+**Browser code reads only public environment variables** - `NODE_ENV` and
+names with the `PUBLIC_` prefix. Any other `process.env` read in a
+page, `frontend/` or `shared/` fails the build.
+
+-
+**The build scans what it emits.** A client bundle, a public file or a prerendered page
+that contains what looks like a credential fails the build.
+
+The same rules run in `nifra dev` (a refused module is answered with a 403 before
+its source is sent), in both bundlers, for every framework, and in `nifra check`.
+An app on the older layout moves with `nifra migrate layout`: a dry run that
+reports every move, then `--write`.
 
 ## Nifra - Contract-derived adversarial testing
 

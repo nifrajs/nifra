@@ -4,7 +4,7 @@ import { docsMeta } from "../../shared/meta"
 export const meta = docsMeta(
   "/docs/troubleshooting",
   "Nifra - Troubleshooting",
-  "Fixes keyed on the literal error strings Nifra prints: `reached the client bundle` (a node:/native import in the browser bundle), `server-only module reached the client bundle` (the server-only marker), `resolveDispatcher` / `Invalid hook call` (duplicate React), and `@nifrajs/core is loaded 2 times` (duplicate core).",
+  "Fixes keyed on the literal error strings Nifra prints: `may not ship to a browser` (backend code, a node: built-in or a server package reached a browser build), `resolveDispatcher` / `Invalid hook call` (duplicate React), and `@nifrajs/core is loaded 2 times` (duplicate core).",
 )
 
 // The backend-only marker, for server code whose location does not already say so. This snippet

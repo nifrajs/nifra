@@ -52,11 +52,11 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
     symptom:
       "A client component crashes at build or runtime with a missing Node built-in, a leaked secret, or 'module not found in the browser'.",
     cause:
-      "A server-only module (the DB, a secret, `node:*`, the backend file) is imported at the top level of a component, so the bundler tries to ship it to the browser.",
-    fix: "Move the access into a server-only `loader`/`action` and read the result in the component. Reach the backend through the typed `api` argument, never a top-level server-only import.",
+      "Browser code (a page, `frontend/` or `shared/`) imports backend code - `backend/`, a route's `.backend.ts` half, the DB, a secret, `node:*` - so the browser build refuses it.",
+    fix: "Move the access into the route's `.backend.ts` half (`loader`/`action` with `loaderOutput`/`actionOutput`) and read the result as `data` in the page. Reach the backend through the typed `api` argument; put code both sides need in `shared/`.",
     verify:
       "nifra_check - its transitive server-import scan flags the exact import chain into a client module.",
-    seeAlso: "loader action server-only import boundary",
+    seeAlso: "project structure route backend half import rules",
   },
   {
     id: "hydration-mismatch",

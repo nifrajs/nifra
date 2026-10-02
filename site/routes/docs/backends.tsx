@@ -28,7 +28,7 @@ export function receive(input: unknown): string | undefined {
   return parsed.success ? parsed.envelope.payload.title : undefined
 }`
 
-const BACKEND = `// backend.ts - a normal @nifrajs/core server. Routes live at the full /api/... path.
+const BACKEND = `// backend/app.ts - a normal @nifrajs/core server. Routes live at the full /api/... path.
 import { server } from "@nifrajs/core/server"
 import { t } from "@nifrajs/schema"
 
@@ -41,12 +41,13 @@ export const backend = server()
 
 // inProcessClient(backend) is BOTH the typed loader client (ctx.api) AND the mount target: createWebApp
 // auto-serves it at apiPrefix (default /api). One backend, two call paths, zero hand-dispatch.
-const WIRE = `// server.ts (prod) - createWebApp serves pages AND auto-mounts the backend at /api/*.
+const WIRE = `// backend/server.ts - a hand-written server: createWebApp serves pages AND auto-mounts the
+// backend at /api/*. (\`nifra build\` emits this wiring for you; write it only for a custom host.)
 import { inProcessClient } from "@nifrajs/client"
 import { createWebApp } from "@nifrajs/web"
 import { reactAdapter } from "@nifrajs/web-react"
-import { backend } from "./backend"
-import { clientEntry, manifest } from "./server-manifest"
+import { backend } from "./app"
+import { clientEntry, manifest } from "../server-manifest"
 
 export const app = createWebApp({
   adapter: reactAdapter,
@@ -59,7 +60,7 @@ export const app = createWebApp({
 // Bun: Bun.serve({ fetch: app.fetch }). No \`if (pathname.startsWith("/api/")) …\` branch needed -
 // POST /api/sync, GET /api/me, etc. are dispatched to the backend BEFORE the page router sees them.`
 
-const FRAMEWORK_OPTIONS = `// framework.ts - the backend moves to /rpc, a webhook handler mounts at /hooks,
+const FRAMEWORK_OPTIONS = `// backend/framework.ts - the backend moves to /rpc, a webhook handler mounts at /hooks,
 // and one extra URL outside both is a plain route on the web app.
 import { reactAdapter } from "@nifrajs/web-react"
 
@@ -76,21 +77,24 @@ export const use = (app: { get(path: string, handler: () => Response): unknown }
 }`
 
 // The loader path: ctx.api is the SAME inProcessClient, called in-process during SSR (no HTTP hop).
-const LOADER = `// routes/index.tsx - a loader calls the backend IN-PROCESS via ctx.api (no network).
-import type { LoaderContext } from "@nifrajs/web"
+const LOADER = `// routes/index.backend.ts - the loader calls the backend IN-PROCESS via api (no network).
+import { t } from "@nifrajs/schema"
+import type { Route } from "./+types/index"
 
-export async function loader(ctx: LoaderContext) {
-  const api = ctx.api as { me: { get(): Promise<{ data: { id: string | null } }> } }
-  const res = await api.me.get() // in-process: full validation/middleware, no HTTP round-trip
+export const loaderOutput = t.object({ me: t.object({ id: t.union([t.string(), t.null()]) }) })
+export async function loader({ api }: Route.LoaderArgs) {
+  const res = await api.api.me.get() // in-process: full validation/middleware, no HTTP round-trip
   return { me: res.data }
 }`
 
 // The browser path: the client calls the SAME /api/* routes over HTTP - now that they're mounted.
-const CLIENT = `// A browser island / client component hits the mounted HTTP routes with the typed client.
+const CLIENT = `// doc-check: skip - imports your backend/app.ts (the BACKEND sample above).
+// frontend/sync.ts - browser code hits the mounted HTTP routes with the typed client.
+// A type-only import of the backend is allowed anywhere: it is erased before bundling.
 import { client } from "@nifrajs/client"
-import type { backend } from "./backend"
+import type { Backend } from "../backend/app"
 
-const api = client<typeof backend>("") // same-origin: /api/sync is served by createWebApp's mount
+const api = client<Backend>("") // same-origin: /api/sync is served by createWebApp's mount
 export async function runSync(cursor: string) {
   const { data, error } = await api.api.sync.post({ cursor })
   return error ? { applied: 0 } : data
@@ -100,7 +104,7 @@ export async function runSync(cursor: string) {
 // one shared path space - no base path is added, nothing is stripped - and `c.req.url` inside a merged
 // (or /api-mounted) route is the ORIGINAL request URL, full path included. So groups own their absolute
 // paths (`/api/listings`), and the mount only SELECTS which requests reach the backend; it never rewrites.
-const COMPOSE = `// backend.ts - compose domains with .merge(). Each group owns its FULL absolute paths.
+const COMPOSE = `// backend/app.ts - compose domains with .merge(). Each group owns its FULL absolute paths.
 import { server } from "@nifrajs/core/server"
 
 const listings = server().get("/api/listings", (c) => {
@@ -175,7 +179,7 @@ export default function Backends() {
       </p>
       <p>
         An app run by <code>nifra dev</code> and <code>nifra build</code> sets these options from{" "}
-        <code>framework.ts</code>: <code>apiPrefix</code>, <code>apiStrip</code>, <code>mounts</code>,{" "}
+        <code>backend/framework.ts</code>: <code>apiPrefix</code>, <code>apiStrip</code>, <code>mounts</code>,{" "}
         <code>csp</code> and <code>nonce</code>. The generated server entry imports them from there, so
         export them from <code>framework.ts</code> (and re-export from <code>nifra.config.ts</code> when
         both exist). A <code>mounts</code> entry hands a path to another app; a single extra URL

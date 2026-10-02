@@ -165,11 +165,11 @@ export interface LocalizedRouter<K extends string = string> {
    * `pathname` is the request's path (query allowed), used to build a redirect.
    *
    * ```ts
-   * // routes/[lang]/_middleware.ts
-   * import { notFound, redirect } from "@nifrajs/web"
-   * import { urls } from "../../lib/i18n"
+   * // routes/[lang]/_layout.backend.ts
+   * import { notFound, type RouteMiddleware, redirect } from "@nifrajs/web"
+   * import { urls } from "../../shared/i18n"
    *
-   * export default (ctx) => {
+   * export const middleware: RouteMiddleware = (ctx) => {
    *   const { pathname, search } = new URL(ctx.request.url)
    *   const match = urls.matchSegment(ctx.params.lang, pathname + search)
    *   if (match.kind === "not-found") notFound()

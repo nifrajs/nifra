@@ -399,7 +399,7 @@ const REPORT_SECTIONS = [
   ["typecheck", "typecheck"],
   ["typed-client", "hand-rolled fetch()/EventSource/WebSocket to your own API"],
   ["untyped-client", 'client("…") missing its <typeof app> type argument'],
-  ["server-only-import", "server-only import in a route module"],
+  ["server-only-import", "backend code in browser code"],
   ["interpolated-sql", "SQL built by interpolating a value into the statement"],
   ["response-route", "route returns a raw Response (typed client → data: never)"],
   ["undeclared-dependency", "undeclared dependency in package.json"],

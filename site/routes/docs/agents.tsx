@@ -265,7 +265,7 @@ export default function Agents() {
       <p>
         It catches the drift that types alone miss: a hand-rolled <code>fetch()</code> to your own API
         instead of the typed client, a <code>client(...)</code> missing its type argument, a
-        server-only import reaching a route module, a route manifest that no longer matches{" "}
+        page or <code>frontend/</code> file importing backend code, a route manifest that no longer matches{" "}
         <code>routes/</code>.
       </p>
 

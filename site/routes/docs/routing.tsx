@@ -9,13 +9,15 @@ export const meta = docsMeta(
 
 const TREE = `routes/
   _layout.tsx        wraps every page (chain: outer → inner)
+  _layout.backend.ts its loader, and middleware for every page below it
   _error.tsx         error boundary (a loader throws → renders here, 500)
   _loading.tsx       the page slot while a client navigation loads
-  _middleware.ts     runs on the server before every page below it
   index.tsx          →  /
+  index.backend.ts       its loader + action - never reaches the browser
   about.tsx          →  /about
   users/
     [id].tsx         →  /users/:id          dynamic segment
+    [id].backend.ts
   files/
     [...path].tsx    →  /files/*path         catch-all (the rest of the path)
   [[lang]]/          optional segment - matches WITH and WITHOUT it
@@ -25,51 +27,74 @@ const TREE = `routes/
     pricing.tsx      →  /pricing`
 
 const ROUTE = `// routes/users/[id].tsx
+import type { Route } from "./+types/[id]"
+
 export const meta = { title: "User" }   // injected into <head> (SSR + client nav)
 
-export default function User(props: { data: LoaderData<typeof loader> }) {
-  return <h1>User {props.data.id}</h1>
+export default function User({ data }: Route.ComponentProps) {
+  return <h1>User {data.name}</h1>
 }`
 
-const MIDDLEWARE = `// routes/account/_middleware.ts - runs before every page under /account
+const ROUTE_BACKEND = `// routes/users/[id].backend.ts - its server half
+import { t } from "@nifrajs/schema"
+import type { Route } from "./+types/[id]"
+
+export const loaderOutput = t.object({ name: t.string() })
+
+export async function loader({ params }: Route.LoaderArgs) {
+  return { name: \`User \${params.id}\` }
+}`
+
+const MIDDLEWARE = `// routes/account/_layout.backend.ts - runs before every page under /account
 import { type RouteMiddleware, redirect } from "@nifrajs/web"
 
-const middleware: RouteMiddleware = ({ request, set }) => {
+export const middleware: RouteMiddleware = ({ request, set }) => {
   set.headers["cache-control"] = "private, no-store"
   const signedIn = request.headers.get("cookie")?.includes("session=") ?? false
   return signedIn ? undefined : redirect("/login")
-}
+}`
 
-export default middleware`
+const CATCHALL = `// routes/files/[...path].backend.ts - the page is routes/files/[...path].tsx, and together they
+// match /files/a, /files/a/b/c.txt, …
+import { t } from "@nifrajs/schema"
 
-const CATCHALL = `// routes/files/[...path].tsx  →  matches /files/a, /files/a/b/c.txt, …
-export async function loader({ params }) {
+declare function read(path: string): Promise<string>
+
+export const loaderOutput = t.object({ file: t.string() })
+
+export async function loader({ params }: { params: { path: string } }) {
   const path = params.path          // "a/b/c.txt" - the matched tail, as one string
   return { file: await read(path) }
 }
 // A catch-all needs ≥1 segment (/files alone won't match) and must be the last segment.`
 
 const CLIENT_ONLY = `// routes/map.tsx - a page whose component needs a browser to render.
-export const ssr = false
+import type { Route } from "./+types/map"
 
-export async function loader({ api }) {
-  return { pins: await api.pins.get() }   // still runs on the server
-}
+export const ssr = false
 
 // What the server puts in the page slot, and what the browser shows until the component renders.
 // Same props as the component - the loader data is already there.
-export function HydrateFallback({ data }) {
+export function HydrateFallback({ data }: Route.ComponentProps) {
   return <p>Loading {data.pins.length} pins…</p>
 }
 
-export default function MapPage({ data }) {
+export default function MapPage({ data }: Route.ComponentProps) {
   const width = window.innerWidth         // fine: this never runs on the server
   return <Canvas width={width} pins={data.pins} />
+}
+
+// routes/map.backend.ts - the loader still runs on the server, and its data is embedded.
+export const loaderOutput = t.object({ pins: t.array(Pin) })
+export async function loader({ api }: Route.LoaderArgs) {
+  const res = await api.pins.get()
+  return { pins: res.ok ? res.data : [] }
 }`
 
 const SEARCH = `// routes/reports.tsx - a typed, validated ?page=&sort= query.
 import { useSearch } from "@nifrajs/web-react/router"
 import * as v from "valibot" // any Standard Schema works (valibot, zod, arktype)
+import type { Route } from "./+types/reports"
 
 // The route's search contract. Invalid or hostile input fails closed to these defaults - never a 500.
 export const searchSchema = v.object({
@@ -77,16 +102,19 @@ export const searchSchema = v.object({
   sort: v.optional(v.picklist(["new", "top"]), "new"),
 })
 
-// The loader receives the validated query as ctx.search, typed by the third LoaderArgs argument.
-export async function loader({ search, api }: LoaderArgs<typeof backend, unknown, typeof searchSchema>) {
-  return { rows: await api.reports.list(search).get() } // search.page is a number
-}
-
 // The component reads the SAME value - SSR-correct, so page/sort hydrate with no mismatch and you
 // never parse window.location.search by hand.
-export default function Reports({ data }: { data: LoaderData<typeof loader> }) {
+export default function Reports({ data }: Route.ComponentProps) {
   const { page, sort } = useSearch<typeof searchSchema>() // { page: number; sort: "new" | "top" }
   return <Pager page={page} sort={sort} rows={data.rows} />
+}
+
+// routes/reports.backend.ts - the loader receives the validated query as \`search\`, typed from
+// the page's searchSchema by the generated Route.LoaderArgs.
+export const loaderOutput = t.object({ rows: t.array(Report) })
+export async function loader({ search, api }: Route.LoaderArgs) {
+  const res = await api.reports.list(search).get() // search.page is a number
+  return { rows: res.ok ? res.data : [] }
 }`
 
 const BLOCKER = `// routes/posts/[id]/edit.tsx - don't lose a half-finished edit to a stray click.
@@ -186,6 +214,11 @@ export default function Routing() {
           (this docs sidebar is a nested layout).
         </li>
         <li>
+          <code>x.backend.ts</code> beside a page or layout is its server half: <code>loader</code>,{" "}
+          <code>action</code>, their output schemas, and the other server-only exports. It never
+          reaches the browser - see <a href="/docs/structure">Project structure</a>.
+        </li>
+        <li>
           <code>_404.tsx</code> renders unmatched paths, and whatever a loader answers with{" "}
           <code>notFound()</code>. At the routes root it renders on its own. In a directory below (
           <code>admin/_404.tsx</code>) it answers for that part of the app: the unmatched URLs under{" "}
@@ -223,8 +256,10 @@ export default function Routing() {
           stack); a thrown control-flow value (e.g. a guard <code>redirect</code>) passes through.
         </li>
         <li>
-          <code>_middleware.ts</code> runs on the server before the layouts, loaders and actions of
-          every route in its directory and below - see <a href="#middleware">Route middleware</a>.
+          A <code>_layout.backend.ts</code> that exports <code>middleware</code> runs it on the
+          server before the layouts, loaders and actions of every route in its directory and below,
+          with or without a <code>_layout.tsx</code> beside it - see{" "}
+          <a href="#middleware">Route middleware</a>.
         </li>
       </ul>
 
@@ -232,16 +267,18 @@ export default function Routing() {
 
       <h2>A route</h2>
       <p>
-        Each route default-exports a component; an optional <code>meta</code> export drives{" "}
-        <code>&lt;head&gt;</code> (applied on SSR and on client navigation). Add a{" "}
-        <code>loader</code> for data - see <a href="/docs/data">Loaders &amp; actions</a>.
+        Each page default-exports a component; an optional <code>meta</code> export drives{" "}
+        <code>&lt;head&gt;</code> (applied on SSR and on client navigation). Its data comes from a{" "}
+        <code>loader</code> in its <code>.backend.ts</code> half - see{" "}
+        <a href="/docs/data">Loaders &amp; actions</a>.
       </p>
       <CodeBlock code={ROUTE} />
+      <CodeBlock code={ROUTE_BACKEND} lang="ts" />
 
       <h2 id="middleware">Route middleware</h2>
       <p>
-        A <code>_middleware.ts</code> default-exports a function that runs on the server before
-        everything under its directory: the layouts' loaders, gates included, then the page's loader
+        A directory's <code>_layout.backend.ts</code> exports <code>middleware</code>, a function
+        that runs on the server before everything under its directory: the layouts' loaders, gates included, then the page's loader
         or action. It runs for a document request, a client navigation and a form post alike, and
         before a nested <code>_404</code> there. Middleware higher in the tree runs first.
       </p>
@@ -260,14 +297,14 @@ export default function Routing() {
         <li>
           It covers pages only: a prerendered page, an ISR cache hit, a mounted API and a static file
           are served without it. For middleware on every request, export <code>use</code> from{" "}
-          <code>framework.ts</code>: <code>{"export const use = (app) => app.use(securityHeaders())"}</code>.
+          <code>backend/framework.ts</code>: <code>{"export const use = (app) => app.use(securityHeaders())"}</code>.
         </li>
       </ul>
 
       <h2>Catch-all routes</h2>
       <p>
-        A <code>[...name].tsx</code> segment matches the rest of the path and hands it to your loader as
-        a single string param - ideal for docs/CMS trees, file browsers, or a custom fallback. It must
+        A <code>[...name].tsx</code> segment matches the rest of the path and hands it to the loader in{" "}
+        <code>[...name].backend.ts</code> as a single string param - ideal for docs/CMS trees, file browsers, or a custom fallback. It must
         be the final segment.
       </p>
       <CodeBlock code={CATCHALL} />
@@ -284,8 +321,9 @@ export default function Routing() {
       </p>
       <CodeBlock code={CLIENT_ONLY} lang="tsx" />
       <p>
-        The module is still imported on the server, for its loader and its options. An import that
-        needs a browser at load time therefore belongs inside the component - a dynamic{" "}
+        The page module is still imported on the server, for its options (its loader lives in the{" "}
+        <code>.backend.ts</code> half). An import that needs a browser at load time therefore belongs
+        inside the component - a dynamic{" "}
         <code>import()</code> - not at the top of the file. <code>ssr = false</code> cannot be
         combined with <code>hydrate = false</code>: nothing would ever render the page.
       </p>
