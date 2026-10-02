@@ -31,6 +31,7 @@ import {
   detectServerOnlyInClient,
   formatNodeBuiltinLeak,
   formatServerOnlyLeak,
+  parseBuildTarget,
   parseManifestClientEntry,
   parseManifestCssLoading,
   parseManifestRouteStyles,
@@ -280,7 +281,7 @@ function collapsibleDirs(
 }
 
 /**
- * Build the cf-pages `_routes.json` rules for a set of copied public files, within Cloudflare's budget.
+ * Build the cloudflare `_routes.json` rules for a set of copied public files, within Cloudflare's budget.
  *
  * `exclude` is what Pages serves straight from the CDN instead of invoking the worker, so naming every
  * public file is ideal - and impossible past ~99 of them. A `public/` of icons, fonts and share images
@@ -1216,7 +1217,7 @@ export type ServerEntryOptionImports = Readonly<Partial<Record<ServerEntryOption
  * the app's `adapter` (from `framework.ts`), the optional `backend` (from `backend.ts`), and the
  * generated `{ manifest, clientEntry }` (from `./server-manifest`), builds `createWebApp`, then wires
  * the right host:
- *   - `cf-pages` / `vercel`: `export default` the fetch handler (the platform serves /assets/* itself).
+ *   - `cloudflare` / `vercel`: `export default` the fetch handler (the platform serves /assets/* itself).
  *   - `deno`: same fetch-handler default, plus `Deno.serve` self-host when run directly.
  *   - `bun` / `node`: a self-hosting server that ALSO serves the client bundle from disk (those
  *     runtimes have a filesystem; the static `/assets/*` sit next to the entry).
@@ -1276,8 +1277,8 @@ export function generateServerEntry(options: {
   lines.push(
     'import { clientEntry, cssLoading, manifest, styles, routeStyles } from "./server-manifest"',
   )
-  // cf-pages/vercel/deno need the fetch-handler shape; bun/node call app.fetch directly.
-  const usesToFetch = target === "cf-pages" || target === "vercel" || target === "deno"
+  // cloudflare/vercel/deno need the fetch-handler shape; bun/node call app.fetch directly.
+  const usesToFetch = target === "cloudflare" || target === "vercel" || target === "deno"
   if (usesToFetch) lines.push('import { toFetchHandler } from "@nifrajs/core/server"')
   if (target === "node") lines.push('import { serve } from "@nifrajs/node"')
   lines.push(
@@ -1297,7 +1298,7 @@ export function generateServerEntry(options: {
     "",
   )
 
-  if (target === "cf-pages") {
+  if (target === "cloudflare") {
     // Cloudflare Pages advanced mode: `_routes.json` keeps static paths off the worker entirely, and
     // everything else falls through to this handler (SSR).
     //
@@ -1517,7 +1518,7 @@ export interface BuildTargetResult {
  * `<outDir>/assets/*`, then per target:
  *   - `static`: prerenders opted-in routes (`prerenderRoutes`) to `<outDir>/<path>/index.html` (+
  *     `_data.json`); needs `prerenderApp`. No server.
- *   - `cf-pages`: a `_worker.js` (edge bundle) + a `_routes.json` excluding /assets/* from the worker.
+ *   - `cloudflare`: a `_worker.js` (edge bundle) + a `_routes.json` excluding /assets/* from the worker.
  *   - `vercel`: a `.vercel/output`-shaped function isn't emitted here - `vercel` emits the bundled edge
  *     entry as `<outDir>/index.js` (the CLI's docs point at `vercel`'s Build Output wrapper). [see note]
  *   - `deno`/`node`/`bun`: the self-hosting server bundle (`server.js`) next to the assets.
@@ -1591,7 +1592,7 @@ export async function buildTargetWith(
     options.cssCodeSplit === undefined ? undefined : normalizeCssCodeSplit(options.cssCodeSplit)
   const requestedCssLoading =
     options.cssLoading === undefined ? undefined : normalizeCssLoading(options.cssLoading)
-  const targetPlan = planBuildTarget(target, outDir)
+  const targetPlan = planBuildTarget(parseBuildTarget(target), outDir)
   const { rmSync } = await import("node:fs")
   rmSync(outDir, { recursive: true, force: true })
   rmSync(workDir, { recursive: true, force: true })
@@ -1725,7 +1726,7 @@ export async function buildTargetWith(
 
   // (3) Assemble the deploy dir for the target.
   const { cpSync } = await import("node:fs")
-  if (targetPlan.target === "cf-pages") {
+  if (targetPlan.target === "cloudflare") {
     cpSync(worker, `${outDir}/${targetPlan.outputFile}`)
     // The app's real patterns, so a directory is only collapsed into a glob once the route table
     // proves nothing can be served beneath it.

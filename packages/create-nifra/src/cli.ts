@@ -83,7 +83,7 @@ const DEPLOY: Record<string, DeployPreset> = {
       "bun run deploy       # deployctl (install: deno install -A jsr:@deno/deployctl)",
     ],
   },
-  "cf-pages": {
+  cloudflare: {
     label: "Cloudflare Pages",
     build: "bun run build.ts",
     deploy: "wrangler pages deploy dist",
@@ -140,7 +140,7 @@ const CI_DEPLOY: Record<string, CiDeploy> = {
           project: NAME
           entrypoint: dist-deno/server-deno.js`,
   },
-  "cf-pages": {
+  cloudflare: {
     permissions: "  contents: read",
     secrets: ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"],
     step: `      - name: Publish to Cloudflare Pages
@@ -530,7 +530,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   }
 }
 
-const USAGE = `usage: bun create nifra <directory> [--template api|site|isr|batteries] [--framework react|preact|vue|solid|svelte] [--deploy bun|node|deno|cf-pages|vercel] [--ci github] [--db ${DB_CHOICES.join("|")}] [--auth ${AUTH_CHOICES.join("|")}] [--force] [--link <path-to-nifra-repo>]`
+const USAGE = `usage: bun create nifra <directory> [--template api|site|isr|batteries] [--framework react|preact|vue|solid|svelte] [--deploy bun|node|deno|cloudflare|vercel] [--ci github] [--db ${DB_CHOICES.join("|")}] [--auth ${AUTH_CHOICES.join("|")}] [--force] [--link <path-to-nifra-repo>]`
 
 /**
  * Run the CLI for `argv` and return the exit code + the message to print - no `process.exit`, `console`,

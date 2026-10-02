@@ -209,9 +209,9 @@ describe("diffManifestRoutes + formatManifestDrift", () => {
 // --- Generated server entry (per-target) --------------------------------------------------------------
 
 describe("generateServerEntry", () => {
-  test("cf-pages → a fetch handler that delegates static paths to ASSETS, never to disk", () => {
+  test("cloudflare → a fetch handler that delegates static paths to ASSETS, never to disk", () => {
     const src = generateServerEntry({
-      target: "cf-pages",
+      target: "cloudflare",
       adapterImport: "../framework.ts",
       backendImport: "../backend.ts",
       title: "my site",
@@ -451,12 +451,12 @@ describe("cloudflareRouteRules", () => {
   })
 })
 
-describe("generateServerEntry - cf-pages static fallback", () => {
+describe("generateServerEntry - cloudflare static fallback", () => {
   test("serves an allowlisted public path through ASSETS instead of 404ing in the router", () => {
     // `_routes.json` cannot always name every public file, so a static request CAN reach the worker.
     // Correctness must not depend on how much of that list fit.
     const src = generateServerEntry({
-      target: "cf-pages",
+      target: "cloudflare",
       adapterImport: "../framework.ts",
       publicFiles: ["/robots.txt"],
     })

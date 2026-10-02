@@ -338,6 +338,22 @@ interface MigrateInput {
   readonly dir?: string | undefined
 }
 
+interface TargetInput {
+  readonly target?: string | undefined
+  readonly json?: boolean | undefined
+  readonly dir?: string | undefined
+}
+
+interface TargetOutput {
+  readonly ok: boolean
+  readonly target: string
+  /** The target before this run, when it switched one; `undefined` when none was declared. */
+  readonly previous?: string | undefined
+  readonly changed: boolean
+  /** What `nifra build` now emits, and how it deploys. */
+  readonly run: string
+}
+
 interface TypesInput {
   readonly check?: boolean | undefined
   readonly json?: boolean | undefined
@@ -704,6 +720,19 @@ const MIGRATE_SCHEMA = input<MigrateInput>(
     if (from !== "tailwind") throw new TypeError("from must be tailwind")
     if (to !== "stylex") throw new TypeError("to must be stylex")
     return { from, to, ...flags }
+  },
+)
+
+const TARGET_SCHEMA = input<TargetInput>(
+  objectSchema({ target: { type: "string" }, json: { type: "boolean" }, dir: { type: "string" } }),
+  (value) => {
+    const raw = withDir(record(value))
+    const target = optionalString(raw.target, "target")
+    return {
+      ...parseBooleanFlags(raw, ["json"]),
+      ...(raw.dir === undefined ? {} : { dir: raw.dir }),
+      ...(target === undefined ? {} : { target }),
+    }
   },
 )
 
@@ -1423,6 +1452,59 @@ const migrateSpec: CommandSpec<MigrateInput, MigrateCommandOutput> = {
   success: (out) => out.ok,
 }
 
+const targetSpec: CommandSpec<TargetInput, TargetOutput> = {
+  name: "target",
+  summary:
+    "Show the app's deploy target, or switch it (`nifra target cloudflare`): the `target` `nifra build` emits, kept in nifra.config.ts.",
+  input: TARGET_SCHEMA,
+  output: output({
+    type: "object",
+    properties: {
+      ok: { type: "boolean" },
+      target: { type: "string" },
+      previous: { type: "string" },
+      changed: { type: "boolean" },
+      run: { type: "string" },
+    },
+    required: ["ok", "target", "changed", "run"],
+  }),
+  transports: ["cli"],
+  stability: "stable",
+  argv: {
+    positionals: ["target"],
+    flags: [
+      { name: "json", field: "json", type: "boolean" },
+      { name: "dir", field: "dir", type: "string" },
+    ],
+  },
+  async run(value, ctx) {
+    const dir = resolve(ctx.cwd, value.dir ?? ".")
+    const { parseBuildTarget, planBuildTarget } = await import("@nifrajs/web/build")
+    const { readConfigTarget, writeConfigTarget } = await import("./config-target.ts")
+    const current = readConfigTarget(dir)
+    const target = parseBuildTarget(
+      value.target ?? current ?? "bun",
+      value.target === undefined ? "target in nifra.config.ts" : "target",
+    )
+    const changed = value.target !== undefined && value.target !== current
+    if (changed) writeConfigTarget(dir, target)
+    return {
+      ok: true,
+      target,
+      ...(changed && current !== undefined ? { previous: current } : {}),
+      changed,
+      run: planBuildTarget(target, "dist").run,
+    }
+  },
+  render: (out) => [
+    out.changed
+      ? `✓ target: ${out.target}${out.previous === undefined ? "" : ` (was ${out.previous})`}`
+      : `target: ${out.target}`,
+    `  nifra build → ${out.run}`,
+  ],
+  success: (out) => out.ok,
+}
+
 const typesSpec: CommandSpec<TypesInput, RouteTypesReport> = {
   name: "types",
   summary:
@@ -1709,7 +1791,7 @@ const portSpec: CommandSpec<PortInput, PortResult> = {
       return [
         report,
         "",
-        "[nifra] --ci needs a deploy target to gate against, and none was detected. Pass --target <bun|node|deno|cf-pages|vercel>.",
+        "[nifra] --ci needs a deploy target to gate against, and none was detected. Pass --target <bun|node|deno|cloudflare|vercel>.",
       ]
     return [report]
   },
@@ -1762,6 +1844,7 @@ export const commandSpecs = Object.freeze([
   doctorSpec,
   fixSpec,
   migrateSpec,
+  targetSpec,
   typesSpec,
   snapshotSpec,
   diffSpec,

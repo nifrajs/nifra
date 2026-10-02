@@ -37,8 +37,9 @@ export interface Flags {
   readonly port: number
   readonly out: string
   readonly poll: boolean
-  /** `nifra build --target <t>`: emit a full deploy dir for this target. Defaults to `bun`. */
-  readonly target: string
+  /** `nifra build --target <t>`: emit a full deploy dir for this target. Without it, the `target` that
+   * `nifra.config.ts` exports, else `bun`. */
+  readonly target: string | undefined
   /** `nifra build --report`: print a per-chunk size + gzip table after the build. */
   readonly report: boolean
   /** `nifra build --vite`: force the client + server through Vite/Rollup. Without a flag the pipeline is
@@ -89,7 +90,7 @@ Usage:
                                          while you fix the resolution. Dev only - \`nifra build\` still fails.
   nifra build   [--out <dir>] [--report]  Emit a complete deploy directory.
                 [--target <t>]             Target a FULL deploy dir for <t>:
-                                         bun | node | deno | cf-pages | vercel | static. Packages
+                                         bun | node | deno | cloudflare | vercel | static. Packages
                                          buildClient + buildServer (+ prerender for static) so an app
                                          no longer hand-writes build-<target>.ts + _worker.ts +
                                          _routes.json. The server entry is generated from your
@@ -628,11 +629,16 @@ async function assertFreshWorkspaceDists(cwd: string): Promise<void> {
   )
 }
 
-async function buildForTarget(app: LoadedApp, target: string, flags: Flags): Promise<void> {
-  const { isBuildTarget, renderSizeReport, BUILD_TARGETS } = await import("@nifrajs/web/build")
-  if (!isBuildTarget(target)) {
-    throw new Error(`[nifra] unknown --target "${target}". Valid: ${BUILD_TARGETS.join(", ")}.`)
-  }
+async function buildForTarget(
+  app: LoadedApp,
+  flag: string | undefined,
+  flags: Flags,
+): Promise<void> {
+  const { parseBuildTarget, renderSizeReport } = await import("@nifrajs/web/build")
+  const target = parseBuildTarget(
+    flag ?? app.framework.target ?? "bun",
+    flag === undefined ? "target in nifra.config.ts" : "--target",
+  )
   if (flags.vite && flags.bun) {
     throw new Error("[nifra] `nifra build` takes `--vite` or `--bun`, not both.")
   }
@@ -765,7 +771,7 @@ async function start(app: LoadedApp, flags: Flags): Promise<void> {
   const serverFile = resolve(app.outDir, "server.js")
   if (!existsSync(serverFile)) {
     // A Cloudflare Pages build emits `_worker.js` (a Workers bundle), not a self-hosting `server.js` - so
-    // `nifra start` on a dir built for cf-pages would otherwise fail with a bare "no server.js". Name the
+    // `nifra start` on a dir built for cloudflare would otherwise fail with a bare "no server.js". Name the
     // actual mismatch and the fix.
     if (existsSync(resolve(app.outDir, "_worker.js"))) {
       throw new Error(
@@ -788,7 +794,7 @@ export function parseFlags(args: readonly string[]): Flags {
   let port = Number(Bun.env.PORT ?? DEFAULT_DEV_PORT)
   let out = "dist"
   let poll = Bun.env.CHOKIDAR_USEPOLLING === "1"
-  let target = "bun"
+  let target: string | undefined
   let report = false
   let vite = false
   let bun = false

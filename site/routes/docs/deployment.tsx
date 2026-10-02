@@ -8,7 +8,7 @@ export const meta = docsMeta(
 )
 
 const SCAFFOLD = `# Scaffold the multi-target site with a chosen default deploy target:
-bun create nifra my-app --deploy vercel     # or: bun | node | deno | cf-pages
+bun create nifra my-app --deploy vercel     # or: bun | node | deno | cloudflare
 # add --framework to pick the UI too (react default):
 bun create nifra my-app --framework svelte --deploy vercel
 
@@ -18,7 +18,7 @@ bun run build     # builds for the chosen target
 bun run deploy    # runs that target's deploy CLI (you stay logged-in to the vendor)
 
 # Or add --ci github to also emit a deploy-on-push GitHub Actions workflow:
-bun create nifra my-app --deploy cf-pages --ci github
+bun create nifra my-app --deploy cloudflare --ci github
 #   → .github/workflows/deploy.yml (builds on every push/PR, deploys on push to main)`
 
 const SW = `// build.ts - after buildClient(), write the worker to the ORIGIN ROOT.
@@ -206,7 +206,7 @@ export default function Deployment() {
       <p>
         Add <code>--ci github</code> to emit a <code>.github/workflows/deploy.yml</code> tuned to the
         chosen target - it builds on every push/PR and deploys on a push to <code>main</code>.{" "}
-        <b>cf-pages</b> uses <code>cloudflare/wrangler-action</code>, <b>vercel</b> the prebuilt{" "}
+        <b>cloudflare</b> uses <code>cloudflare/wrangler-action</code>, <b>vercel</b> the prebuilt{" "}
         <code>vercel deploy</code>, <b>deno</b> <code>deployctl</code> (OIDC). The workflow's header
         comment lists the exact repo secrets to set (e.g. <code>CLOUDFLARE_API_TOKEN</code>,{" "}
         <code>VERCEL_TOKEN</code>). Self-hosted <b>bun</b>/<b>node</b> have no universal push-to-deploy,

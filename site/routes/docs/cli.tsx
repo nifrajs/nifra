@@ -11,7 +11,7 @@ const COMMANDS = `nifra dev      # true-HMR dev server (Bun native HMR + Nifra S
 nifra dev --vite   # the Vite middleware pipeline instead (automatic when vitePlugins are your ONLY transforms)
 nifra build    # full Bun deploy → dist/server.js + content-hashed dist/assets/ (default target: bun)
 nifra start    # run dist/server.js on Bun
-nifra build --target cf-pages  # also: node | deno | vercel | static; add --report for chunk sizes
+nifra build --target cloudflare  # also: node | deno | vercel | static; add --report for chunk sizes
 
 # dev + start share the default port 4321. Override per run: --port <n> (alias -p) or the PORT env var.
 # flags: --port <n> (dev/start) · --out <dir> (build/start) · --target <t> (build) · --poll (dev)
@@ -145,7 +145,7 @@ nifra migrate --from tailwind --to stylex --dir src`}
       <h2>Scope</h2>
       <p>
         <code>nifra build</code> defaults to a self-hosted Bun server. Use <code>--target node</code>,{" "}
-        <code>deno</code>, <code>cf-pages</code>, <code>vercel</code>, or <code>static</code> for another
+        <code>deno</code>, <code>cloudflare</code>, <code>vercel</code>, or <code>static</code> for another
         complete deploy shape (see <a href="/docs/deployment">Deployment</a>). Run non-Bun outputs with
         the command printed by the build.
       </p>

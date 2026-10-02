@@ -53,12 +53,22 @@ export interface ServerBuild {
 // ===================================================================================================
 
 /** A deploy target `nifra build --target <t>` can emit. `static` is pure SSG (no server). */
-export const BUILD_TARGETS = ["bun", "node", "deno", "cf-pages", "vercel", "static"] as const
+export const BUILD_TARGETS = ["bun", "node", "deno", "cloudflare", "vercel", "static"] as const
 export type BuildTarget = (typeof BUILD_TARGETS)[number]
 
 /** A type guard narrowing an arbitrary string to a {@link BuildTarget}. */
 export function isBuildTarget(value: string): value is BuildTarget {
   return (BUILD_TARGETS as readonly string[]).includes(value)
+}
+
+/** `value` as a {@link BuildTarget}, or throw naming the valid ones (and the renamed `cf-pages`). */
+export function parseBuildTarget(value: string, label = "target"): BuildTarget {
+  if (isBuildTarget(value)) return value
+  throw new Error(
+    value === "cf-pages"
+      ? `[nifra] the ${label} "cf-pages" is now "cloudflare"`
+      : `[nifra] unknown ${label} "${value}". Valid: ${BUILD_TARGETS.join(", ")}`,
+  )
 }
 
 export type ServerBuildTarget = "browser" | "node" | "bun"
@@ -111,7 +121,7 @@ export function planBuildTarget(target: BuildTarget, outDir: string): BuildTarge
       run: `static site → ${outDir} (serve the directory with any static host)`,
     }
   }
-  if (target === "cf-pages") {
+  if (target === "cloudflare") {
     return {
       target,
       kind: "server",

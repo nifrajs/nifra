@@ -5017,7 +5017,7 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web/build`
 
-- **BUILD_TARGETS** _(const)_ - `BUILD_TARGETS: readonly ["bun", "node", "deno", "cf-pages", "vercel", "static"]`
+- **BUILD_TARGETS** _(const)_ - `BUILD_TARGETS: readonly ["bun", "node", "deno", "cloudflare", "vercel", "static"]`
   A deploy target `nifra build --target <t>` can emit. `static` is pure SSG (no server).
 - **BuildClientOptions** _(interface)_ - `interface BuildClientOptions`
 - **BuildManifest** _(interface)_ - `interface BuildManifest`
@@ -5080,7 +5080,7 @@ _No named exports (side-effect entrypoint)._
 - **cloudflarePagesRoutes** _(function)_ - `cloudflarePagesRoutes: (options: CloudflarePagesRoutesOptions) => CloudflarePagesRoutes`
   Build a Cloudflare Pages `_routes.json` for a HYBRID SSG deploy: the prerendered HTML + their static `_data.json` + the asset bundle are `exclude`d (CDN serves them directly), and everything else falls through to the SSR `_worker.js`. Write the result to `dist/_routes.json`.
 - **cloudflareRouteRules** _(function)_ - `cloudflareRouteRules: (publicFiles: readonly string[], routePatterns: readonly string[]) => CloudflareRouteRules`
-  Build the cf-pages `_routes.json` rules for a set of copied public files, within Cloudflare's budget.
+  Build the cloudflare `_routes.json` rules for a set of copied public files, within Cloudflare's budget.
 - **copyPublicDir** _(function)_ - `copyPublicDir: (from: string, to: string) => Promise<string[]>`
   Copy `from` into `to`, returning the URL paths copied (sorted).
 - **dataFileFor** _(function)_ - `dataFileFor: (pattern: string) => string`
@@ -5107,6 +5107,8 @@ _No named exports (side-effect entrypoint)._
   A type guard narrowing an arbitrary string to a {@link BuildTarget}.
 - **isManifestInSync** _(function)_ - `isManifestInSync: (drift: ManifestDrift) => boolean`
   True when a drift report is clean (no missing + no extra routes).
+- **parseBuildTarget** _(function)_ - `parseBuildTarget: (value: string, label?: string) => BuildTarget`
+  `value` as a {@link BuildTarget}, or throw naming the valid ones (and the renamed `cf-pages`).
 - **parseManifestClientEntry** _(function)_ - `parseManifestClientEntry: (source: string) => string | undefined`
   The baked `clientEntry` URL in a committed server-manifest, or `undefined` if absent. Pure.
 - **parseManifestCssLoading** _(function)_ - `parseManifestCssLoading: (source: string) => CssLoadingMode | undefined`

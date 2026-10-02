@@ -17,9 +17,10 @@
 import { join } from "node:path"
 import { Glob } from "bun"
 import { stripComments } from "./check.ts"
+import { readConfigTarget } from "./config-target.ts"
 
 /** The five deploy targets a nifra `site` app can build for (mirrors create-nifra's DEPLOY presets). */
-export const TARGETS = ["bun", "node", "deno", "cf-pages", "vercel"] as const
+export const TARGETS = ["bun", "node", "deno", "cloudflare", "vercel"] as const
 export type Target = (typeof TARGETS)[number]
 
 const isTarget = (value: string): value is Target => (TARGETS as readonly string[]).includes(value)
@@ -56,14 +57,14 @@ const inMemoryVerdicts: Readonly<Record<Target, Verdict>> = {
   bun: "caveat",
   node: "caveat",
   deno: "caveat",
-  "cf-pages": "unsupported",
+  cloudflare: "unsupported",
   vercel: "unsupported",
 }
 const inMemoryReasons = (shared: string): Readonly<Record<Target, string>> => ({
   bun: "ok single-instance; state is lost on restart and not shared across instances",
   node: "ok single-instance; state is lost on restart and not shared across instances",
   deno: "ok single-instance; state is lost on restart and not shared across instances",
-  "cf-pages": shared,
+  cloudflare: shared,
   vercel: shared,
 })
 
@@ -105,14 +106,14 @@ export const FEATURES: Readonly<Record<FeatureId, FeatureSpec>> = {
       bun: "ok",
       node: "ok",
       deno: "ok",
-      "cf-pages": "caveat",
+      cloudflare: "caveat",
       vercel: "unsupported",
     },
     reasons: {
       bun: "long-lived process runs the scheduler loop",
       node: "long-lived process runs the scheduler loop",
       deno: "long-lived process runs the scheduler loop",
-      "cf-pages":
+      cloudflare:
         "no long-lived loop on Workers - use the platform `scheduled` trigger via toFetchHandler(app, { scheduled }) and a wrangler [triggers] cron",
       vercel: "no long-lived process - use a Vercel Cron Job hitting an endpoint",
     },
@@ -124,14 +125,14 @@ export const FEATURES: Readonly<Record<FeatureId, FeatureSpec>> = {
       bun: "ok",
       node: "ok",
       deno: "ok",
-      "cf-pages": "caveat",
+      cloudflare: "caveat",
       vercel: "unsupported",
     },
     reasons: {
       bun: "all sockets live in one process; app.publish broadcasts to every client",
       node: "all sockets live in one process; app.publish broadcasts to every client",
       deno: "all sockets live in one process; app.publish broadcasts to every client",
-      "cf-pages":
+      cloudflare:
         "a stateless fetch can't broadcast across isolates - wrap the app in createWebSocketHub (a Durable Object) from @nifrajs/workers",
       vercel: "Vercel's serverless functions don't hold long-lived WebSocket connections",
     },
@@ -143,14 +144,14 @@ export const FEATURES: Readonly<Record<FeatureId, FeatureSpec>> = {
       bun: "ok",
       node: "unsupported",
       deno: "unsupported",
-      "cf-pages": "unsupported",
+      cloudflare: "unsupported",
       vercel: "unsupported",
     },
     reasons: {
       bun: "the Bun runtime provides the Bun global",
       node: "no Bun global on Node - use the node: / Web equivalents",
       deno: "no Bun global on Deno - use the Deno / Web equivalents",
-      "cf-pages": "no Bun global in the Workers runtime",
+      cloudflare: "no Bun global in the Workers runtime",
       vercel: "no Bun global in the Vercel runtime",
     },
   },
@@ -161,14 +162,14 @@ export const FEATURES: Readonly<Record<FeatureId, FeatureSpec>> = {
       bun: "unsupported",
       node: "unsupported",
       deno: "ok",
-      "cf-pages": "unsupported",
+      cloudflare: "unsupported",
       vercel: "unsupported",
     },
     reasons: {
       bun: "no Deno global on Bun - use the Bun / Web equivalents",
       node: "no Deno global on Node - use the node: / Web equivalents",
       deno: "the Deno runtime provides the Deno global",
-      "cf-pages": "no Deno global in the Workers runtime",
+      cloudflare: "no Deno global in the Workers runtime",
       vercel: "no Deno global in the Vercel runtime",
     },
   },
@@ -179,14 +180,14 @@ export const FEATURES: Readonly<Record<FeatureId, FeatureSpec>> = {
       bun: "ok",
       node: "ok",
       deno: "ok",
-      "cf-pages": "caveat",
+      cloudflare: "caveat",
       vercel: "caveat",
     },
     reasons: {
       bun: "Bun implements the node: builtins",
       node: "native node: builtins",
       deno: "Deno implements the node: builtins",
-      "cf-pages":
+      cloudflare:
         'Workers needs `compatibility_flags = ["nodejs_compat"]` in wrangler.toml (and not every builtin is covered)',
       vercel: "needs the Node.js runtime (not the Edge runtime) so node: builtins resolve",
     },
@@ -358,12 +359,18 @@ export async function detectFeatures(cwd: string): Promise<DetectedFeature[]> {
 export interface ResolvedTarget {
   readonly target: Target
   /** How the target was determined - surfaced so the report explains itself. */
-  readonly source: "flag" | "package-json-build" | "package-json-deploy" | "wrangler" | "vercel"
+  readonly source:
+    | "flag"
+    | "config"
+    | "package-json-build"
+    | "package-json-deploy"
+    | "wrangler"
+    | "vercel"
 }
 
 const BUILD_SCRIPT_TARGET: ReadonlyArray<readonly [RegExp, Target]> = [
   // create-nifra's canonical per-target build scripts (build-bun.ts / build-node.ts / build-deno.ts /
-  // build-vercel.ts), plus the bare `build.ts` the cf-pages preset uses.
+  // build-vercel.ts), plus the bare `build.ts` the cloudflare preset uses.
   [/build-vercel\.[cm]?[jt]s\b/, "vercel"],
   [/build-deno\.[cm]?[jt]s\b/, "deno"],
   [/build-node\.[cm]?[jt]s\b/, "node"],
@@ -372,7 +379,7 @@ const BUILD_SCRIPT_TARGET: ReadonlyArray<readonly [RegExp, Target]> = [
 const DEPLOY_SCRIPT_TARGET: ReadonlyArray<readonly [RegExp, Target]> = [
   [/\bvercel\s+deploy\b/, "vercel"],
   [/\bdeployctl\b/, "deno"],
-  [/wrangler\s+pages\s+deploy\b/, "cf-pages"],
+  [/wrangler\s+pages\s+deploy\b/, "cloudflare"],
   [/\bdocker\s+build\b/, "node"],
 ]
 
@@ -381,8 +388,9 @@ interface PackageJsonScripts {
 }
 
 /**
- * Resolve the app's deploy target. `--target` (validated) always wins. Otherwise infer it, in priority
- * order, from: the canonical `build` script (create-nifra's `build-<target>.ts`), the `deploy` script
+ * Resolve the app's deploy target. `--target` (validated) always wins, then the `target` that
+ * `nifra.config.ts` exports. Otherwise infer it, in priority order, from: the canonical `build` script
+ * (an older create-nifra's `build-<target>.ts`), the `deploy` script
  * (the vendor CLI it shells out to), a `wrangler.toml` (Cloudflare Pages), or a `vercel.json`. Returns
  * `undefined` when nothing signals a target (the matrix still prints; CI gating needs an explicit one).
  */
@@ -390,11 +398,18 @@ export async function resolveTarget(
   cwd: string,
   override?: string,
 ): Promise<ResolvedTarget | undefined> {
-  if (override !== undefined) {
-    if (!isTarget(override)) {
-      throw new Error(`[nifra] invalid --target "${override}". options: ${TARGETS.join(", ")}`)
-    }
-    return { target: override, source: "flag" }
+  const checked = (value: string, label: string): Target => {
+    if (isTarget(value)) return value
+    throw new Error(
+      value === "cf-pages"
+        ? `[nifra] the ${label} "cf-pages" is now "cloudflare"`
+        : `[nifra] invalid ${label} "${value}". options: ${TARGETS.join(", ")}`,
+    )
+  }
+  if (override !== undefined) return { target: checked(override, "--target"), source: "flag" }
+  const configured = readConfigTarget(cwd)
+  if (configured !== undefined && configured !== "static") {
+    return { target: checked(configured, "target in nifra.config.ts"), source: "config" }
   }
 
   const pkg = await readJson<PackageJsonScripts>(join(cwd, "package.json"))
@@ -411,7 +426,7 @@ export async function resolveTarget(
   }
 
   if (await Bun.file(join(cwd, "wrangler.toml")).exists()) {
-    return { target: "cf-pages", source: "wrangler" }
+    return { target: "cloudflare", source: "wrangler" }
   }
   if (
     (await Bun.file(join(cwd, "vercel.json")).exists()) ||
@@ -518,7 +533,7 @@ export async function collectPortResult(
 // --- Rendering ----------------------------------------------------------------------------------------
 
 const CELL: Readonly<Record<Verdict, string>> = { ok: "✓", caveat: "⚠", unsupported: "✗" }
-const COL_WIDTH = 9 // widest target header ("cf-pages") + padding
+const COL_WIDTH = 12 // widest target header ("cloudflare") + padding
 
 const padCell = (s: string, width: number): string => {
   // Pad accounting for the symbol's display width (✓/⚠/✗ render as 1 cell in a monospace terminal).
@@ -535,7 +550,7 @@ export function renderReport(result: PortResult, opts: { readonly strict?: boole
     out.push(`target: ${resolved.target} (detected from ${describeSource(resolved.source)})`)
   } else {
     out.push(
-      "target: not detected - pass --target <bun|node|deno|cf-pages|vercel> to gate against one",
+      "target: not detected - pass --target <bun|node|deno|cloudflare|vercel> to gate against one",
     )
   }
   out.push("")
@@ -615,6 +630,8 @@ function describeSource(source: ResolvedTarget["source"]): string {
   switch (source) {
     case "flag":
       return "--target"
+    case "config":
+      return "nifra.config.ts"
     case "package-json-build":
       return "the package.json build script"
     case "package-json-deploy":
@@ -660,7 +677,7 @@ export async function runPort(cwd: string, opts: RunPortOptions = {}): Promise<b
   if (result.resolved === undefined) {
     if (!opts.json) {
       console.error(
-        "\n[nifra] --ci needs a deploy target to gate against, and none was detected. Pass --target <bun|node|deno|cf-pages|vercel>.",
+        "\n[nifra] --ci needs a deploy target to gate against, and none was detected. Pass --target <bun|node|deno|cloudflare|vercel>.",
       )
     }
     return false

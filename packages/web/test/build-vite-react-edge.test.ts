@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { buildTargetVite } from "../src/build-vite.ts"
 import { linkWorkspacePackages } from "./workspace-link.ts"
 
-// The Vite production build's highest-risk claim: an EDGE server bundle (cf-pages / vercel) resolves
+// The Vite production build's highest-risk claim: an EDGE server bundle (cloudflare / vercel) resolves
 // react-dom/server's EDGE build under Vite, so a React app SSRs on workerd. The Bun path needs a shim for
 // this (its `bun` condition contaminates react-dom's export map); Vite resolves it via the
 // workerd/edge-light conditions instead, and THIS test is what proves that actually happens rather than
@@ -86,11 +86,11 @@ const reactPluginPath = (() => {
 })()
 
 test.skipIf(reactPluginPath === undefined)(
-  "cf-pages: the Vite edge worker SSRs React (edge react-dom/server + hook + CSS module)",
+  "cloudflare: the Vite edge worker SSRs React (edge react-dom/server + hook + CSS module)",
   async () => {
     const app = scaffoldReactApp()
     const react = ((await import(reactPluginPath as string)) as { default: () => unknown }).default
-    const result = await buildTargetVite("cf-pages", {
+    const result = await buildTargetVite("cloudflare", {
       routesDir: app.routesDir,
       outDir: app.outDir,
       workDir: app.workDir,
@@ -101,7 +101,7 @@ test.skipIf(reactPluginPath === undefined)(
       // biome-ignore lint/suspicious/noExplicitAny: same
       serverPlugins: [react()] as any,
     })
-    expect(result.target).toBe("cf-pages")
+    expect(result.target).toBe("cloudflare")
 
     const { status, html } = await ssrThroughWorker(join(app.outDir, "_worker.js"))
     expect(status).toBe(200)

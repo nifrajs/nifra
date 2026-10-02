@@ -203,7 +203,7 @@ describe("scaffold - --deploy preset", () => {
   })
 
   test("each known target yields a build + deploy script", async () => {
-    for (const target of ["bun", "deno", "cf-pages"]) {
+    for (const target of ["bun", "deno", "cloudflare"]) {
       const dir = await freshDir(`t-${target}`)
       const pkg = await scaffold({ target: dir, template: "site", deploy: target }).then(() =>
         readPkg(dir),
@@ -444,11 +444,11 @@ describe("CI workflows (--ci github)", () => {
       deploy: "vercel",
       ci: "github",
     })
-    expect(parseArgs(["x", "-d", "cf-pages", "-c", "github"])).toMatchObject({ ci: "github" })
+    expect(parseArgs(["x", "-d", "cloudflare", "-c", "github"])).toMatchObject({ ci: "github" })
   })
 
-  test("githubDeployWorkflow: cf-pages uses wrangler-action + names the project + lists secrets", () => {
-    const yml = githubDeployWorkflow("cf-pages", "my-app")
+  test("githubDeployWorkflow: cloudflare uses wrangler-action + names the project + lists secrets", () => {
+    const yml = githubDeployWorkflow("cloudflare", "my-app")
     expect(yml).toContain("cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd")
     expect(yml).toContain("command: pages deploy dist --project-name=my-app")
     expect(yml).toContain("CLOUDFLARE_API_TOKEN")
@@ -478,7 +478,12 @@ describe("CI workflows (--ci github)", () => {
 
   test("scaffold writes .github/workflows/deploy.yml for the chosen target", async () => {
     const dir = await freshDir("ci-app")
-    const res = await scaffold({ target: dir, template: "site", deploy: "cf-pages", ci: "github" })
+    const res = await scaffold({
+      target: dir,
+      template: "site",
+      deploy: "cloudflare",
+      ci: "github",
+    })
     expect(res.ci).toBe("github")
     expect(res.ciSecrets).toEqual(["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"])
     const wf = await readFile(join(dir, ".github/workflows/deploy.yml"), "utf8")
@@ -498,7 +503,7 @@ describe("CI workflows (--ci github)", () => {
     const { code, message } = await run([
       await freshDir("ci-run"),
       "-d",
-      "cf-pages",
+      "cloudflare",
       "-c",
       "github",
     ])

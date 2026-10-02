@@ -62,6 +62,9 @@ export interface NifraFramework {
   readonly conditions?: readonly string[]
   /** Compile-time `define` replacements, e.g. Vue's `__VUE_*` flags. */
   readonly define?: Readonly<Record<string, string>>
+  /** The deploy target `nifra build` emits without `--target` (default `"bun"`); `nifra target <t>`
+   * rewrites it. */
+  readonly target?: string
   /** Static files directory. Defaults to `<app>/public`; `false` disables it. */
   readonly publicDir?: string | false
   /** Client-visible environment prefix (default `"PUBLIC_"`; empty disables exposure). */
@@ -118,6 +121,9 @@ function assertFrameworkWebOptions(fw: Partial<NifraFramework>, configFile: stri
   }
   if (fw.secretExemptions !== undefined && !Array.isArray(fw.secretExemptions)) {
     wrong("secretExemptions", "an array of { rule, file, reason } entries")
+  }
+  if (fw.target !== undefined && typeof fw.target !== "string") {
+    wrong("target", 'a deploy target name such as "bun"')
   }
 }
 

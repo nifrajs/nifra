@@ -62,12 +62,12 @@ afterEach(() => {
   rmSync(projectRoot, { recursive: true, force: true })
 })
 
-test("--target cf-pages → _worker.js + _routes.json + /assets bundle", async () => {
+test("--target cloudflare → _worker.js + _routes.json + /assets bundle", async () => {
   const outDir = join(projectRoot, "dist")
   mkdirSync(join(projectRoot, "public", ".well-known", "acme-challenge"), { recursive: true })
   writeFileSync(join(projectRoot, "public", "robots.txt"), "User-agent: *")
   writeFileSync(join(projectRoot, "public", ".well-known", "acme-challenge", "token"), "challenge")
-  const result = await buildTarget("cf-pages", {
+  const result = await buildTarget("cloudflare", {
     routesDir,
     outDir,
     workDir: join(projectRoot, ".work"),
@@ -75,7 +75,7 @@ test("--target cf-pages → _worker.js + _routes.json + /assets bundle", async (
     adapterImport: join(projectRoot, "backend/framework.ts"),
   })
 
-  expect(result.target).toBe("cf-pages")
+  expect(result.target).toBe("cloudflare")
   // The three artifacts the Cloudflare Pages deploy needs.
   expect(existsSync(join(outDir, "_worker.js"))).toBe(true)
   expect(existsSync(join(outDir, "_routes.json"))).toBe(true)

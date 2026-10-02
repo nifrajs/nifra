@@ -209,18 +209,18 @@ test("buildTargetVite('node') wires aggregate CSS and deferred activation end to
   }
 }, 120_000)
 
-test("buildTargetVite('cf-pages') emits _worker.js + _routes.json (edge deploy shape)", async () => {
+test("buildTargetVite('cloudflare') emits _worker.js + _routes.json (edge deploy shape)", async () => {
   const { root, routesDir, outDir, workDir } = scaffoldApp()
   mkdirSync(join(root, "public", ".well-known", "acme-challenge"), { recursive: true })
   writeFileSync(join(root, "public", ".well-known", "acme-challenge", "token"), "challenge")
-  const result = await buildTargetVite("cf-pages", {
+  const result = await buildTargetVite("cloudflare", {
     routesDir,
     outDir,
     workDir,
     clientModule: join(root, "frontend/client-stub.ts"),
     adapterImport: join(root, "framework.ts"),
   })
-  expect(result.target).toBe("cf-pages")
+  expect(result.target).toBe("cloudflare")
   expect(existsSync(join(outDir, "_worker.js"))).toBe(true)
   expect(existsSync(join(outDir, "_routes.json"))).toBe(true)
   expect(existsSync(join(outDir, "assets"))).toBe(true)
@@ -237,7 +237,7 @@ test("buildTargetVite('cf-pages') emits _worker.js + _routes.json (edge deploy s
   expect(routes.exclude).toContain("/.well-known/acme-challenge/token")
 }, 120_000)
 
-test("buildTargetVite('cf-pages') rejects a reachable node: builtin in server-only code", async () => {
+test("buildTargetVite('cloudflare') rejects a reachable node: builtin in server-only code", async () => {
   const { root, routesDir, outDir, workDir } = scaffoldApp()
   writeFileSync(
     join(root, "framework.ts"),
@@ -251,7 +251,7 @@ test("buildTargetVite('cf-pages') rejects a reachable node: builtin in server-on
   )
 
   await expect(
-    buildTargetVite("cf-pages", {
+    buildTargetVite("cloudflare", {
       routesDir,
       outDir,
       workDir,

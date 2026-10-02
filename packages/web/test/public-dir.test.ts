@@ -179,7 +179,7 @@ test("copyPublicDir mirrors the tree and reports URL paths", async () => {
   })
 })
 
-// The reported paths are an ALLOWLIST: the generated server entry and cf-pages `_routes.json` match a
+// The reported paths are an ALLOWLIST: the generated server entry and cloudflare `_routes.json` match a
 // request's `URL.pathname` against them by exact string. So the encoding has to be the one a browser
 // actually sends, not merely "an" encoding. `encodeURIComponent` escapes the sub-delimiters (`, @ + = &
 // ; $`) that browsers send raw, which would make every such file a production-only 404.

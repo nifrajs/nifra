@@ -74,7 +74,7 @@ afterEach(() => {
 test("a built worker mounts the backend at the imported apiPrefix and serves the imported mounts", async () => {
   const outDir = join(projectRoot, "dist")
   const frameworkFile = join(projectRoot, "backend/framework.ts")
-  await buildTarget("cf-pages", {
+  await buildTarget("cloudflare", {
     routesDir: join(projectRoot, "routes"),
     outDir,
     workDir: join(projectRoot, ".work"),

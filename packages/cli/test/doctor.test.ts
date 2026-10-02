@@ -517,14 +517,14 @@ describe("doctor production readiness", () => {
         join(dir, "backend.ts"),
         'const app = server().get("/users", () => ({ ok: true }))\nexport { app }\n',
       )
-      const advisory = await collectDoctorResult(dir, { target: "cf-pages" })
+      const advisory = await collectDoctorResult(dir, { target: "cloudflare" })
       expect(advisory.ok).toBe(true)
       expect(advisory.readiness?.items.filter((item) => item.status === "absent")).toHaveLength(5)
       expect(
         advisory.readiness?.items.find((item) => item.id === "graceful-lifecycle")?.status,
       ).toBe("not-applicable")
 
-      const strict = await collectDoctorResult(dir, { target: "cf-pages", strict: true })
+      const strict = await collectDoctorResult(dir, { target: "cloudflare", strict: true })
       expect(strict.ok).toBe(false)
       expect(strict.readiness?.ok).toBe(false)
     } finally {

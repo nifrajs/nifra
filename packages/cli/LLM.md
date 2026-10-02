@@ -34,7 +34,7 @@ _…and 67 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) fo
 ## Footguns
 
 - `nifra check` (`--json` for agents) is the **done-gate**: typecheck + typed-client drift + server-only-import-in-a-route (with the transitive import chain) + raw-`Response`-from-a-route + undeclared dependency.
-- One rule picks the bundler for BOTH `nifra dev` and `nifra build`: Bun, unless `vitePlugins` are the app's ONLY transforms (the Bun pipeline cannot run those), in which case Vite - so dev and prod never disagree. `--vite`/`--bun` force it. `nifra build` emits a complete deploy (`--target` selects node/deno/cf-pages/vercel/static). Keep the deploy-safe adapter in `framework.ts` and Vite/compiler tooling in CLI-only `nifra.config.ts`.
+- One rule picks the bundler for BOTH `nifra dev` and `nifra build`: Bun, unless `vitePlugins` are the app's ONLY transforms (the Bun pipeline cannot run those), in which case Vite - so dev and prod never disagree. `--vite`/`--bun` force it. `nifra build` emits a complete deploy (`--target` selects node/deno/cloudflare/vercel/static). Keep the deploy-safe adapter in `framework.ts` and Vite/compiler tooling in CLI-only `nifra.config.ts`.
 - `nifra mcp` exposes live project tools (`nifra_docs`, `nifra_example`, `nifra_check`) to an agent.
 
 ## Stable project commands
@@ -51,6 +51,7 @@ _…and 67 more - see [`api-reference.md`](../../api-reference.md#nifrajscli) fo
 - nifra doctor [--json] [--auto-fix] [--strict] [--target <value>] - Find undeclared imports, duplicate identity installs, and pipeline readiness drift.
 - nifra fix [--code <value>] [--json] - Apply registered mechanical diagnostic recipes and return remaining findings.
 - nifra migrate <kind> [--from <value>] [--to <value>] [--write] [--json] [--dir <value>] - Move an app onto the frontend/backend split (`migrate layout`), or migrate static Tailwind utilities to StyleX.
+- nifra target <target> [--json] [--dir <value>] - Show the app's deploy target, or switch it (`nifra target cloudflare`): the `target` `nifra build` emits, kept in nifra.config.ts.
 - nifra types [--check] [--json] [--dir <value>] - Generate each route's `./+types` module (params, schema-typed data, typed `api`); `--check` fails when one is stale.
 - nifra snapshot [--out <value>] [--json] - Write the backend API contract as a versioned JSON baseline.
 - nifra diff <baseline> [--json] - Compare the current backend contract with a baseline and fail on breaking changes.

@@ -143,7 +143,7 @@ const TARGET_CAPABILITIES: Readonly<Record<string, readonly RouteCapability[]>> 
   bun: ["server"],
   node: ["server"],
   deno: ["server"],
-  "cf-pages": ["server"],
+  cloudflare: ["server"],
   vercel: ["server"],
   static: [],
 }

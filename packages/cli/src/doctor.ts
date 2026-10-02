@@ -630,7 +630,7 @@ async function collectDoctorReadiness(
   await walkSource(cwd, (file, source) => {
     files.push({ file, source, code: codePositionMask(source) })
   })
-  const edgeTarget = /^(?:cf-pages|vercel|workers|edge|static)$/.test(resolved?.target ?? "")
+  const edgeTarget = /^(?:cloudflare|vercel|workers|edge|static)$/.test(resolved?.target ?? "")
   const configured = (
     id: DoctorReadinessItem["id"],
     label: string,

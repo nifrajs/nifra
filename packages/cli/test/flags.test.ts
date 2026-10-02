@@ -13,7 +13,7 @@ afterEach(() => {
 test("parseFlags defaults to the shared uncommon DEFAULT_DEV_PORT (no flag, no env)", () => {
   delete Bun.env.PORT
   expect(parseFlags([]).port).toBe(DEFAULT_DEV_PORT)
-  expect(parseFlags([]).target).toBe("bun")
+  expect(parseFlags([]).target).toBeUndefined()
   expect(DEFAULT_DEV_PORT).not.toBe(3000) // the whole point: not the colliding default
 })
 

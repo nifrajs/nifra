@@ -5136,7 +5136,7 @@ per-target `build:*`/`deploy:*` scripts stay, so you can switch any time.
 
 ```ts
 # Scaffold the multi-target site with a chosen default deploy target:
-bun create nifra my-app --deploy vercel     # or: bun | node | deno | cf-pages
+bun create nifra my-app --deploy vercel     # or: bun | node | deno | cloudflare
 # add --framework to pick the UI too (react default):
 bun create nifra my-app --framework svelte --deploy vercel
 
@@ -5146,7 +5146,7 @@ bun run build     # builds for the chosen target
 bun run deploy    # runs that target's deploy CLI (you stay logged-in to the vendor)
 
 # Or add --ci github to also emit a deploy-on-push GitHub Actions workflow:
-bun create nifra my-app --deploy cf-pages --ci github
+bun create nifra my-app --deploy cloudflare --ci github
 #   → .github/workflows/deploy.yml (builds on every push/PR, deploys on push to main)
 ```
 
@@ -5254,7 +5254,7 @@ an offline page you have not written is not better than a browser error.
 
 Add `--ci github` to emit a `.github/workflows/deploy.yml` tuned to the
 chosen target - it builds on every push/PR and deploys on a push to `main`.
-**cf-pages** uses `cloudflare/wrangler-action`, **vercel** the prebuilt
+**cloudflare** uses `cloudflare/wrangler-action`, **vercel** the prebuilt
 `vercel deploy`, **deno** `deployctl` (OIDC). The workflow's header
 comment lists the exact repo secrets to set (e.g. `CLOUDFLARE_API_TOKEN`,
 `VERCEL_TOKEN`). Self-hosted **bun**/**node** have no universal push-to-deploy,
@@ -5374,7 +5374,7 @@ nifra dev      # true-HMR dev server (Bun native HMR + Nifra SSR) - http://local
 nifra dev --vite   # the Vite middleware pipeline instead (automatic when vitePlugins are your ONLY transforms)
 nifra build    # full Bun deploy → dist/server.js + content-hashed dist/assets/ (default target: bun)
 nifra start    # run dist/server.js on Bun
-nifra build --target cf-pages  # also: node | deno | vercel | static; add --report for chunk sizes
+nifra build --target cloudflare  # also: node | deno | vercel | static; add --report for chunk sizes
 
 # dev + start share the default port 4321. Override per run: --port <n> (alias -p) or the PORT env var.
 # flags: --port <n> (dev/start) · --out <dir> (build/start) · --target <t> (build) · --poll (dev)
@@ -5488,7 +5488,7 @@ export const vitePlugins = [react(), stylexVite()]
 ### Scope
 
 `nifra build` defaults to a self-hosted Bun server. Use `--target node`,
-`deno`, `cf-pages`, `vercel`, or `static` for another
+`deno`, `cloudflare`, `vercel`, or `static` for another
 complete deploy shape (see [Deployment](/docs/deployment)). Run non-Bun outputs with
 the command printed by the build.
 
@@ -6395,119 +6395,73 @@ Hit an error? Search this page for the literal message. Each section is keyed on
 string Nifra prints, with what it means and the fix. The build, `nifra check`, and
 the runtime all use the same wording so you can grep for it.
 
-### `reached the client bundle` - a `node:` / native import leaked to the browser
+### `may not ship to a browser` - backend code reached a browser build
 
-The client build refuses to ship a Node built-in (`node:fs`, `node:crypto`,
-`bun:sqlite`, a native driver like `pg`) to the browser. Bun would
-silently substitute a polyfill that breaks - or leaks server code - at runtime, so Nifra fails
-the build instead. The message names the offending builtin and the **import chain**
-that pulled it in:
+Every browser build (Bun and Vite, production and dev) refuses code that belongs to the server:
+anything under `backend/`, a route's `x.backend.ts` half, a
+`node:` or `bun:` built-in, a server package (a database driver, a server
+SDK), and any module that imports `@nifrajs/web/backend-only`. The message names the
+module, why it may not ship, and the **import chain** that reached it:
 
-[nifra/web] Node built-in(s) in the client bundle - move them behind a server-only path
+[nifra/web] the browser build reached code that may not ship to a browser:
 
-- node:crypto reached the client bundle via routes/x.tsx → ../data.ts → ../db.ts
-(chunk: x-abc123.js)
+- backend/db.ts: it is backend code
 
-Read the chain right-to-left: `../db.ts` imports `node:crypto`, and a
-top-level import in `routes/x.tsx` dragged it into the browser. **Fix it one
-of two ways:**
+via routes/notes.tsx → backend/db.ts
 
--
-**Move the code into a `*.server.ts` module** (the recommended
-default). The client build empties `*.server` modules, so their `node:`
-/ native imports never reach the browser. Import the server module only from a loader/action
-(which run on the server).
+Read the chain left to right: the page `routes/notes.tsx` imports
+`backend/db.ts`. **Fix it by where the code runs:**
 
 -
-**Reach the server code from a loader/action, not a route's top level.** A
-loader runs on the server during SSR; importing the `node:` module inside (or via)
-a loader keeps it out of the client graph.
+**Data for the page** comes from the route's backend half: a
+`loader` in `routes/notes.backend.ts`, with the output schema that
+declares what the browser may see.
+
+-
+**A call from the browser** goes through a `*.fn.ts` server
+function, which the browser build replaces with a fetch stub.
+
+-
+**Code both sides need** (types, formatting, validation) moves to
+`shared/`, which may import only shared code.
 
 ```ts
-// doc-check: skip - illustrative two-file layout (a relative cross-file import).
-// db.server.ts - the `.server` convention: the client build EMPTIES this module, so its
-// `node:` / native imports never ship to the browser. No marker import needed - the filename is it.
+// doc-check: skip - illustrative three-file layout (relative cross-file imports).
+// backend/db.ts - backend code: no browser build may load it.
 import { Database } from "bun:sqlite"
 export const db = new Database("app.db")
 
-// routes/notes.tsx - import the server module from a loader; it runs only on the server during SSR.
-import type { LoaderContext } from "@nifrajs/web"
-import { db } from "../db.server"
-export async function loader(_ctx: LoaderContext) {
-  return { notes: db.query("select * from notes").all() }
+// routes/notes.backend.ts - the route's backend half: loader, action, output schemas.
+import { t } from "@nifrajs/schema"
+import { db } from "../backend/db.ts"
+export const loaderOutput = t.object({ notes: t.array(t.object({ title: t.string() })) })
+export const loader = () => ({ notes: db.query("select title from notes").all() })
+
+// routes/notes.tsx - the page: it renders the loader's data and imports nothing from backend/.
+export default function Notes({ data }) {
+  return data.notes.map((note) => <p>{note.title}</p>)
 }
+```
+
+Server code whose location does not say so - say, a workspace package both sides import - opts
+out of every browser build with the marker import:
+
+```ts
+// packages/billing/src/keys.ts - a workspace package both sides import, holding one server value.
+import "@nifrajs/web/backend-only"             // ← a browser build that reaches this module fails
+import type { BackendOnly } from "@nifrajs/web" // ← type-level intent: this value stays on the server
+
+// `BackendOnly<string>` is structurally `string` (the brand is an optional phantom field), so it
+// stays assignment-compatible - it documents intent without obstructing real use.
+export const apiKey: BackendOnly<string> = process.env.SECRET_API_KEY!
 ```
 
 [!TIP]
 
 Run `nifra check` (or `nifra check --json` for agents) to catch this
-_before_ the build: it reports the same transitive chain (
-`routes/x → ../data → ./db → node:crypto`) by walking the local module graph, so
-you see the leak as a lint result, not a failed build.
-
-### `server-only module reached the client bundle` - the server-only marker fired
-
-This is the companion guard for **pure server logic that carries no `node:`
-import** - a secret-bearing constant, a server-only API call - so the node-builtin guard
-above has nothing to catch and the `.server` convention needs the file to be
-_named_ `*.server`. You opt a module in with a side-effect import, and the
-client build fails loud (with the import chain) if it ever lands in a browser chunk:
-
-[nifra/web] server-only module(s) in the client bundle - a module marked
-`import "@nifrajs/web/server-only"` reached the browser.
-
-- server-only module reached the client bundle via routes/x.tsx → ./secrets.ts (marked
-server-only)
-
-There are three markers; reach for them by intent:
-
-marker
-enforcement
-use when
-
-`*.server.ts` filename
-
-client build auto-empties the module
-
-a dedicated server module (a DB client, a `node:` helper) you can name
-`*.server`
-
-`import "@nifrajs/web/server-only"`
-
-client build fails loud, with the chain, if it leaks
-
-pure server logic with **no `node:` import to catch** (a secret,
-a server-only call) that you can't / don't want to rename
-
-`ServerOnly` type
-
-type-level intent only - does NOT keep it out of the bundle
-
-documenting that a value must not cross to the browser; pair it with one of the two
-runtime markers
-
-A worked example - a secret with no `node:` import, marked so a leak fails the build
-rather than shipping the key to every visitor:
-
-```ts
-// secrets.ts - pure server logic: a secret constant, no `node:` import to catch.
-import "@nifrajs/web/server-only"             // ← fails the CLIENT build (loud, with the import chain)
-import type { ServerOnly } from "@nifrajs/web" // ← type-level intent: this value is server-only
-
-// `ServerOnly<string>` is structurally `string` (the brand is an optional phantom field), so it
-// stays assignment-compatible - it documents intent without obstructing real use.
-export const apiKey: ServerOnly<string> = process.env.SECRET_API_KEY!
-
-// If this module ever reaches a browser chunk, buildClient fails with:
-//   server-only module reached the client bundle via routes/x.tsx → ./secrets.ts (marked server-only)
-// Reach it from a loader/action (server-only) instead, and the secret never ships to the client.
-```
-
-**Fix:** reach the module from a loader/action (server-only), or rename it
-`*.server.ts` so the client build empties it. `nifra check` reports the
-same transitive chain pre-build. The `ServerOnly` brand on its own is purely
-type-level (it erases at build), so always back it with the import marker or the
-`.server` filename.
+_before_ the build: it reports the same chain from source. An app still on
+`*.server.ts` files and `@nifrajs/web/server-only` moves over with
+`nifra migrate layout`.
 
 ### `resolveDispatcher` / `Invalid hook call` - duplicate React
 

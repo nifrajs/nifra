@@ -2551,7 +2551,7 @@
     "name": "BUILD_TARGETS",
     "kind": "const",
     "package": "@nifrajs/web",
-    "signature": "export declare const BUILD_TARGETS: readonly [\"bun\", \"node\", \"deno\", \"cf-pages\", \"vercel\", \"static\"];",
+    "signature": "export declare const BUILD_TARGETS: readonly [\"bun\", \"node\", \"deno\", \"cloudflare\", \"vercel\", \"static\"];",
     "doc": "/** A deploy target `nifra build --target <t>` can emit. `static` is pure SSG (no server). */"
   },
   {
@@ -3835,7 +3835,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function cloudflareRouteRules(publicFiles: readonly string[], \n/**\n * Every route pattern the app serves. Required, not defaulted: an empty list means \"this app serves\n * no routes\", which makes every directory collapsible - a defensible answer to state deliberately and\n * a dangerous one to arrive at by forgetting the argument.\n */\nroutePatterns: readonly string[]): CloudflareRouteRules;",
-    "doc": "/**\n * Build the cf-pages `_routes.json` rules for a set of copied public files, within Cloudflare's budget.\n *\n * `exclude` is what Pages serves straight from the CDN instead of invoking the worker, so naming every\n * public file is ideal - and impossible past ~99 of them. A `public/` of icons, fonts and share images\n * clears 100 easily, and the rejection lands at `wrangler pages deploy`, long after the build reported\n * success.\n *\n * A glob is emitted only where it cannot be wrong. `/assets/*` always is: the build owns that prefix\n * outright, since it is where the hashed bundle is written. A `public/` subdirectory is different - the\n * name is the author's, and a `/blog/*` rule would hand Pages every future path under `/blog/`, so a\n * `/blog/:slug` route would 404 from the CDN in production only. {@link collapsibleDirs} therefore\n * collapses a directory only after checking it against the app's real route patterns, which is what\n * makes the compaction safe rather than merely smaller. Everything else stays an exact path, and a name\n * containing `*` is dropped rather than escaped, since the rule would become a wildcard.\n *\n * What still does not fit is dropped, which is safe because the list is only an optimization: the\n * generated worker serves any allowlisted path it receives through the ASSETS binding, so an omitted\n * file costs one worker invocation, not a 404.\n */"
+    "doc": "/**\n * Build the cloudflare `_routes.json` rules for a set of copied public files, within Cloudflare's budget.\n *\n * `exclude` is what Pages serves straight from the CDN instead of invoking the worker, so naming every\n * public file is ideal - and impossible past ~99 of them. A `public/` of icons, fonts and share images\n * clears 100 easily, and the rejection lands at `wrangler pages deploy`, long after the build reported\n * success.\n *\n * A glob is emitted only where it cannot be wrong. `/assets/*` always is: the build owns that prefix\n * outright, since it is where the hashed bundle is written. A `public/` subdirectory is different - the\n * name is the author's, and a `/blog/*` rule would hand Pages every future path under `/blog/`, so a\n * `/blog/:slug` route would 404 from the CDN in production only. {@link collapsibleDirs} therefore\n * collapses a directory only after checking it against the app's real route patterns, which is what\n * makes the compaction safe rather than merely smaller. Everything else stays an exact path, and a name\n * containing `*` is dropped rather than escaped, since the rule would become a wildcard.\n *\n * What still does not fit is dropped, which is safe because the list is only an optimization: the\n * generated worker serves any allowlisted path it receives through the ASSETS binding, so an omitted\n * file costs one worker invocation, not a 404.\n */"
   },
   {
     "name": "CloudflareRouteRules",
@@ -8037,7 +8037,7 @@
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function generateServerEntry(options: {\n    readonly target: BuildTarget;\n    /** Import specifier for the module exporting `adapter` (e.g. `\"../framework.ts\"`). */\n    readonly adapterImport: string;\n    /** Import specifier for the module exporting `backend`, or `undefined` for a frontend-only app. */\n    readonly backendImport?: string;\n    /** Import specifier for the module exporting `use`, or `undefined`. Must resolve to the\n     * same edge-safe module as `adapterImport`. */\n    readonly useImport?: string;\n    /** `createWebApp` options to import by name, each mapped to the specifier of the edge-safe module\n     * that exports it. */\n    readonly optionImports?: ServerEntryOptionImports;\n    /** Document `<title>` passed to `createWebApp`. */\n    readonly title?: string;\n    /** Encoded root-relative public file paths copied into the deploy directory. */\n    readonly publicFiles?: readonly string[];\n}): string;",
-    "doc": "/**\n * Codegen the per-target **server entry** module (source text) for `buildServer` to bundle. It imports\n * the app's `adapter` (from `framework.ts`), the optional `backend` (from `backend.ts`), and the\n * generated `{ manifest, clientEntry }` (from `./server-manifest`), builds `createWebApp`, then wires\n * the right host:\n *   - `cf-pages` / `vercel`: `export default` the fetch handler (the platform serves /assets/* itself).\n *   - `deno`: same fetch-handler default, plus `Deno.serve` self-host when run directly.\n *   - `bun` / `node`: a self-hosting server that ALSO serves the client bundle from disk (those\n *     runtimes have a filesystem; the static `/assets/*` sit next to the entry).\n * `adapterImport`/`backendImport` are the specifiers the entry uses (relative to where it's written) -\n * `buildServer` writes the entry next to `serverEntry`, so they're resolved from there. Pure (string in,\n * string out) so the generation is unit-testable without a real build.\n */"
+    "doc": "/**\n * Codegen the per-target **server entry** module (source text) for `buildServer` to bundle. It imports\n * the app's `adapter` (from `framework.ts`), the optional `backend` (from `backend.ts`), and the\n * generated `{ manifest, clientEntry }` (from `./server-manifest`), builds `createWebApp`, then wires\n * the right host:\n *   - `cloudflare` / `vercel`: `export default` the fetch handler (the platform serves /assets/* itself).\n *   - `deno`: same fetch-handler default, plus `Deno.serve` self-host when run directly.\n *   - `bun` / `node`: a self-hosting server that ALSO serves the client bundle from disk (those\n *     runtimes have a filesystem; the static `/assets/*` sit next to the entry).\n * `adapterImport`/`backendImport` are the specifiers the entry uses (relative to where it's written) -\n * `buildServer` writes the entry next to `serverEntry`, so they're resolved from there. Pure (string in,\n * string out) so the generation is unit-testable without a real build.\n */"
   },
   {
     "name": "generateServerManifest",
@@ -12756,6 +12756,13 @@
     "package": "@nifrajs/coding-agent",
     "signature": "export declare function parseArtifactRef(value: unknown): ArtifactRef;",
     "doc": "/** Parse a content-free artifact reference. Rejects any non-schema or content key. */"
+  },
+  {
+    "name": "parseBuildTarget",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function parseBuildTarget(value: string, label?: string): BuildTarget;",
+    "doc": "/** `value` as a {@link BuildTarget}, or throw naming the valid ones (and the renamed `cf-pages`). */"
   },
   {
     "name": "parseByteRange",

@@ -7,36 +7,31 @@ export const meta = docsMeta(
   "Fixes keyed on the literal error strings Nifra prints: `reached the client bundle` (a node:/native import in the browser bundle), `server-only module reached the client bundle` (the server-only marker), `resolveDispatcher` / `Invalid hook call` (duplicate React), and `@nifrajs/core is loaded 2 times` (duplicate core).",
 )
 
-// The server-only marker - the new opt-in client-leak guard. A pure-server module with no `node:`
-// import (so the node-builtin guard can't catch it) opts in with the side-effect import; the type
-// brand documents intent. This snippet imports from @nifrajs/web, so `check:docs` typechecks it.
-const SERVER_ONLY_MARKER = `// secrets.ts - pure server logic: a secret constant, no \`node:\` import to catch.
-import "@nifrajs/web/server-only"             // ← fails the CLIENT build (loud, with the import chain)
-import type { ServerOnly } from "@nifrajs/web" // ← type-level intent: this value is server-only
+// The backend-only marker, for server code whose location does not already say so. This snippet
+// imports from @nifrajs/web, so `check:docs` typechecks it against the live API.
+const BACKEND_ONLY_MARKER = `// packages/billing/src/keys.ts - a workspace package both sides import, holding one server value.
+import "@nifrajs/web/backend-only"             // ← a browser build that reaches this module fails
+import type { BackendOnly } from "@nifrajs/web" // ← type-level intent: this value stays on the server
 
-// \`ServerOnly<string>\` is structurally \`string\` (the brand is an optional phantom field), so it
+// \`BackendOnly<string>\` is structurally \`string\` (the brand is an optional phantom field), so it
 // stays assignment-compatible - it documents intent without obstructing real use.
-export const apiKey: ServerOnly<string> = process.env.SECRET_API_KEY!
+export const apiKey: BackendOnly<string> = process.env.SECRET_API_KEY!`
 
-// If this module ever reaches a browser chunk, buildClient fails with:
-//   server-only module reached the client bundle via routes/x.tsx → ./secrets.ts (marked server-only)
-// Reach it from a loader/action (server-only) instead, and the secret never ships to the client.`
-
-// The .server.ts convention - the auto-empty alternative. No marker import needed: the filename is
-// the signal, and the client build replaces the module with an empty one. Multi-file by design
-// (db.server.ts + routes/notes.tsx with a relative import), so it opts out of the single-file
-// doc-check; the marker snippet above is the one check:docs typechecks against the live API.
-const SERVER_CONVENTION = `// doc-check: skip - illustrative two-file layout (a relative cross-file import).
-// db.server.ts - the \`.server\` convention: the client build EMPTIES this module, so its
-// \`node:\` / native imports never ship to the browser. No marker import needed - the filename is it.
+// The route split: the page ships to the browser whole, its backend half never does.
+const ROUTE_SPLIT = `// doc-check: skip - illustrative three-file layout (relative cross-file imports).
+// backend/db.ts - backend code: no browser build may load it.
 import { Database } from "bun:sqlite"
 export const db = new Database("app.db")
 
-// routes/notes.tsx - import the server module from a loader; it runs only on the server during SSR.
-import type { LoaderContext } from "@nifrajs/web"
-import { db } from "../db.server"
-export async function loader(_ctx: LoaderContext) {
-  return { notes: db.query("select * from notes").all() }
+// routes/notes.backend.ts - the route's backend half: loader, action, output schemas.
+import { t } from "@nifrajs/schema"
+import { db } from "../backend/db.ts"
+export const loaderOutput = t.object({ notes: t.array(t.object({ title: t.string() })) })
+export const loader = () => ({ notes: db.query("select title from notes").all() })
+
+// routes/notes.tsx - the page: it renders the loader's data and imports nothing from backend/.
+export default function Notes({ data }) {
+  return data.notes.map((note) => <p>{note.title}</p>)
 }`
 
 // The single-copy declaration. Static, in package.json, because `nifra check` must be able to read it
@@ -111,123 +106,58 @@ export default function Troubleshooting() {
         the runtime all use the same wording so you can grep for it.
       </p>
 
-      <h2><code>reached the client bundle</code> - a <code>node:</code> / native import leaked to the browser</h2>
+      <h2><code>may not ship to a browser</code> - backend code reached a browser build</h2>
       <p>
-        The client build refuses to ship a Node built-in (<code>node:fs</code>, <code>node:crypto</code>,{" "}
-        <code>bun:sqlite</code>, a native driver like <code>pg</code>) to the browser. Bun would
-        silently substitute a polyfill that breaks - or leaks server code - at runtime, so Nifra fails
-        the build instead. The message names the offending builtin and the <strong>import chain</strong>{" "}
-        that pulled it in:
+        Every browser build (Bun and Vite, production and dev) refuses code that belongs to the server:
+        anything under <code>backend/</code>, a route's <code>x.backend.ts</code> half, a{" "}
+        <code>node:</code> or <code>bun:</code> built-in, a server package (a database driver, a server
+        SDK), and any module that imports <code>@nifrajs/web/backend-only</code>. The message names the
+        module, why it may not ship, and the <strong>import chain</strong> that reached it:
       </p>
       <blockquote>
         <p>
-          [nifra/web] Node built-in(s) in the client bundle - move them behind a server-only path
+          [nifra/web] the browser build reached code that may not ship to a browser:
           <br />
-          {"  "}- node:crypto reached the client bundle via routes/x.tsx → ../data.ts → ../db.ts
-          (chunk: x-abc123.js)
+          {"  "}- backend/db.ts: it is backend code
+          <br />
+          {"      "}via routes/notes.tsx → backend/db.ts
         </p>
       </blockquote>
       <p>
-        Read the chain right-to-left: <code>../db.ts</code> imports <code>node:crypto</code>, and a
-        top-level import in <code>routes/x.tsx</code> dragged it into the browser. <strong>Fix it one
-        of two ways:</strong>
+        Read the chain left to right: the page <code>routes/notes.tsx</code> imports{" "}
+        <code>backend/db.ts</code>. <strong>Fix it by where the code runs:</strong>
       </p>
       <ul>
         <li>
-          <strong>Move the code into a <code>*.server.ts</code> module</strong> (the recommended
-          default). The client build empties <code>*.server</code> modules, so their <code>node:</code>{" "}
-          / native imports never reach the browser. Import the server module only from a loader/action
-          (which run on the server).
+          <strong>Data for the page</strong> comes from the route's backend half: a{" "}
+          <code>loader</code> in <code>routes/notes.backend.ts</code>, with the output schema that
+          declares what the browser may see.
         </li>
         <li>
-          <strong>Reach the server code from a loader/action, not a route's top level.</strong> A
-          loader runs on the server during SSR; importing the <code>node:</code> module inside (or via)
-          a loader keeps it out of the client graph.
+          <strong>A call from the browser</strong> goes through a <code>*.fn.ts</code> server
+          function, which the browser build replaces with a fetch stub.
+        </li>
+        <li>
+          <strong>Code both sides need</strong> (types, formatting, validation) moves to{" "}
+          <code>shared/</code>, which may import only shared code.
         </li>
       </ul>
-      <CodeBlock code={SERVER_CONVENTION} />
+      <CodeBlock code={ROUTE_SPLIT} />
+      <p>
+        Server code whose location does not say so - say, a workspace package both sides import - opts
+        out of every browser build with the marker import:
+      </p>
+      <CodeBlock code={BACKEND_ONLY_MARKER} />
       <blockquote>
         <p>
           [!TIP]
           <br />
           Run <code>nifra check</code> (or <code>nifra check --json</code> for agents) to catch this{" "}
-          <em>before</em> the build: it reports the same transitive chain (
-          <code>routes/x → ../data → ./db → node:crypto</code>) by walking the local module graph, so
-          you see the leak as a lint result, not a failed build.
+          <em>before</em> the build: it reports the same chain from source. An app still on{" "}
+          <code>*.server.ts</code> files and <code>@nifrajs/web/server-only</code> moves over with{" "}
+          <code>nifra migrate layout</code>.
         </p>
       </blockquote>
-
-      <h2><code>server-only module reached the client bundle</code> - the server-only marker fired</h2>
-      <p>
-        This is the companion guard for <strong>pure server logic that carries no <code>node:</code>{" "}
-        import</strong> - a secret-bearing constant, a server-only API call - so the node-builtin guard
-        above has nothing to catch and the <code>.server</code> convention needs the file to be{" "}
-        <em>named</em> <code>*.server</code>. You opt a module in with a side-effect import, and the
-        client build fails loud (with the import chain) if it ever lands in a browser chunk:
-      </p>
-      <blockquote>
-        <p>
-          [nifra/web] server-only module(s) in the client bundle - a module marked{" "}
-          <code>import "@nifrajs/web/server-only"</code> reached the browser.
-          <br />
-          {"  "}- server-only module reached the client bundle via routes/x.tsx → ./secrets.ts (marked
-          server-only)
-        </p>
-      </blockquote>
-      <p>There are three markers; reach for them by intent:</p>
-      <table>
-        <thead>
-          <tr>
-            <th>marker</th>
-            <th>enforcement</th>
-            <th>use when</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>
-              <code>*.server.ts</code> filename
-            </td>
-            <td>client build auto-empties the module</td>
-            <td>
-              a dedicated server module (a DB client, a <code>node:</code> helper) you can name{" "}
-              <code>*.server</code>
-            </td>
-          </tr>
-          <tr>
-            <td>
-              <code>import "@nifrajs/web/server-only"</code>
-            </td>
-            <td>client build fails loud, with the chain, if it leaks</td>
-            <td>
-              pure server logic with <strong>no <code>node:</code> import to catch</strong> (a secret,
-              a server-only call) that you can't / don't want to rename
-            </td>
-          </tr>
-          <tr>
-            <td>
-              <code>{"ServerOnly<T>"}</code> type
-            </td>
-            <td>type-level intent only - does NOT keep it out of the bundle</td>
-            <td>
-              documenting that a value must not cross to the browser; pair it with one of the two
-              runtime markers
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <p>
-        A worked example - a secret with no <code>node:</code> import, marked so a leak fails the build
-        rather than shipping the key to every visitor:
-      </p>
-      <CodeBlock code={SERVER_ONLY_MARKER} />
-      <p>
-        <strong>Fix:</strong> reach the module from a loader/action (server-only), or rename it{" "}
-        <code>*.server.ts</code> so the client build empties it. <code>nifra check</code> reports the
-        same transitive chain pre-build. The <code>{"ServerOnly<T>"}</code> brand on its own is purely
-        type-level (it erases at build), so always back it with the import marker or the{" "}
-        <code>.server</code> filename.
-      </p>
 
       <h2><code>resolveDispatcher</code> / <code>Invalid hook call</code> - duplicate React</h2>
       <p>

@@ -552,6 +552,12 @@
     "code": "import { testClient } from \"@nifrajs/client\"\nimport { app } from \"./app\"\n\n// Every JSON response is checked against the route's declared schema for its status:\n// `response` for 2xx, `errors[status]` for declared failures. A mismatch THROWS.\nconst api = testClient<typeof app>(app, { validateResponses: true })\n\nconst res = await api.me.get()   // ResponseContractViolation if the payload drifted"
   },
   {
+    "name": "BACKEND_ONLY_MARKER",
+    "topic": "Nifra - Troubleshooting",
+    "slug": "troubleshooting",
+    "code": "// packages/billing/src/keys.ts - a workspace package both sides import, holding one server value.\nimport \"@nifrajs/web/backend-only\"             // ← a browser build that reaches this module fails\nimport type { BackendOnly } from \"@nifrajs/web\" // ← type-level intent: this value stays on the server\n\n// `BackendOnly<string>` is structurally `string` (the brand is an optional phantom field), so it\n// stays assignment-compatible - it documents intent without obstructing real use.\nexport const apiKey: BackendOnly<string> = process.env.SECRET_API_KEY!"
+  },
+  {
     "name": "CONTRACT_FIRST",
     "topic": "Nifra - Troubleshooting",
     "slug": "troubleshooting",
@@ -562,12 +568,6 @@
     "topic": "Nifra - Troubleshooting",
     "slug": "troubleshooting",
     "code": "import { server } from \"@nifrajs/core\"\n\n// Each domain is its OWN short server() chain, kept well under the ~95-route ceiling.\nconst users = server()\n  .get(\"/users/:id\", (c) => ({ id: c.params.id }))\n  .post(\"/users\", () => ({ created: true }))\n\nconst orders = server()\n  .get(\"/orders/:id\", (c) => ({ id: c.params.id }))\n  .post(\"/orders\", () => ({ placed: true }))\n\n// merge() adds ONE R & R2 intersection per group - no per-call context recompute - so the whole\n// app stays inside tsc's budget no matter how many groups (or routes) you compose.\nexport const app = server()\n  .get(\"/health\", () => ({ ok: true }))\n  .merge(users)\n  .merge(orders)"
-  },
-  {
-    "name": "SERVER_ONLY_MARKER",
-    "topic": "Nifra - Troubleshooting",
-    "slug": "troubleshooting",
-    "code": "// secrets.ts - pure server logic: a secret constant, no `node:` import to catch.\nimport \"@nifrajs/web/server-only\"             // ← fails the CLIENT build (loud, with the import chain)\nimport type { ServerOnly } from \"@nifrajs/web\" // ← type-level intent: this value is server-only\n\n// `ServerOnly<string>` is structurally `string` (the brand is an optional phantom field), so it\n// stays assignment-compatible - it documents intent without obstructing real use.\nexport const apiKey: ServerOnly<string> = process.env.SECRET_API_KEY!\n\n// If this module ever reaches a browser chunk, buildClient fails with:\n//   server-only module reached the client bundle via routes/x.tsx → ./secrets.ts (marked server-only)\n// Reach it from a loader/action (server-only) instead, and the secret never ships to the client."
   },
   {
     "name": "CLIENT",
