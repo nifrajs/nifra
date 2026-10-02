@@ -10742,7 +10742,7 @@ an agent can act on the project, not just read about it. Core tools:
 - **`nifra_context`** - the same project surface as above.
 - **`nifra_routes`** / **`nifra_openapi`** - structured API route contracts and an OpenAPI 3.1 document.
 - **`nifra_docs`** / **`nifra_example`** - token-efficient docs slices and verified code snippets.
-- **`nifra_scaffold`** - map a URL to the correct `routes/` file; optionally write safe JSX stubs.
+- **`nifra_scaffold`** - map a URL to the correct `routes/` files and a route pair (the page + its `.backend.ts` loader with an output schema); optionally write them.
 - **`nifra_run`** - run HTTP requests through this project's backend and get structured results
   (status, headers, parsed body, and any thrown error). The backend is re-loaded in a fresh process
   each call by default, so it reflects the agent's latest edits - the write → run → see-the-failure

@@ -574,7 +574,7 @@ export function projectTools(
     {
       name: "nifra_scaffold",
       description:
-        'Map a URL path to the CORRECT routes/ file and get a contract-correct page stub. Agents routinely place file routes wrong - this applies the convention for you: ":id"/"[id]" → [id], "*rest" → [...rest], "/" → index. Pass path (e.g. "/users/:id"). Returns the file to create + the route-module contract (loader/action/meta/default) + a stub (ready-to-write for react/preact/solid; path+contract for vue/svelte/vanilla - use nifra_example for those bodies).',
+        'Map a URL path to the CORRECT routes/ files and get a contract-correct route pair: the page and its .backend.ts half (loader + output schema). Agents routinely place file routes wrong - this applies the convention for you: ":id"/"[id]" → [id], "*rest" → [...rest], "/" → index. Pass path (e.g. "/users/:id"). Returns both files + the route contract + stubs (the page is ready-to-write for react/preact/solid/vanilla; for vue/svelte use nifra_example for the page body).',
       inputSchema: {
         type: "object",
         properties: {
@@ -585,7 +585,7 @@ export function projectTools(
           write: {
             type: "boolean",
             description:
-              "When true, create the file if a verified ready-to-write stub exists. Refuses overwrite.",
+              "When true, create both files if a verified ready-to-write page stub exists. Refuses overwrite.",
           },
           variant: {
             type: "string",
@@ -613,7 +613,7 @@ export function projectTools(
         if (write !== true) return renderScaffold(path, framework, flavour)
         const result = await writeScaffoldRoute(cwd, path, framework, flavour)
         const status = result.written
-          ? `Written: \`${result.file}\``
+          ? `Written: \`${result.file}\` and \`${result.backend.file}\``
           : `Not written: ${result.reason ?? "no write performed"}`
         return `${status}\n\n${renderScaffold(path, framework, flavour)}`
       },
