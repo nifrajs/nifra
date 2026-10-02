@@ -6,6 +6,7 @@ import { join, resolve } from "node:path"
 import { server } from "@nifrajs/core"
 import type { AssuranceConfig } from "@nifrajs/core/assurance"
 import ts from "typescript"
+import { packCurrentSource, pinToPacked } from "../../../scripts/packed-tree.ts"
 import { collectCapabilityProjectReport } from "../../cli/src/capabilities-tool.ts"
 import { materializeAll } from "./_scaffold-fixtures.ts"
 
@@ -16,7 +17,7 @@ import { materializeAll } from "./_scaffold-fixtures.ts"
 //
 // Two tiers:
 //   - static tier (always runs): asserts the template sources carry both fixes;
-//   - live tier (SMOKE_SCAFFOLD=1): scaffolds with --link against this monorepo, installs,
+//   - live tier (SMOKE_SCAFFOLD=1): scaffolds, installs the packages packed from this checkout,
 //     and runs the real `nifra check` - the full done-gate, too slow for every unit run.
 
 const TEMPLATES_DIR = resolve(import.meta.dir, "..")
@@ -133,21 +134,24 @@ afterAll(async () => {
   await Promise.all(roots.map((r) => rm(r, { recursive: true, force: true })))
 })
 
-// EXPECT THIS TO FAIL DURING A RELEASE THAT ADDS API THE TEMPLATES USE. The tier deliberately pairs
-// local templates with the LAST PUBLISHED packages, so a template using something introduced in the
-// release being prepared cannot typecheck until that release is out. It self-resolves on publish -
-// `scripts/version.ts` rewrites every template pin to the new version. Before "fixing" a template by
-// removing what it uses, check whether the missing symbol is simply unpublished: scaffold once with
-// `node_modules/@nifrajs/core` symlinked to `packages/core` and see whether it passes against HEAD.
-//
-// Live tier scaffolds from the LOCAL template sources but installs PUBLISHED @nifrajs/*
-// packages - the exact combination a user gets, and the one that shipped broken (template
-// stale vs published client types). --link is deliberately not used: linked source packages
-// carry workspace:* interdeps that can't resolve outside this monorepo.
+// Live tier scaffolds from the LOCAL template sources and installs the @nifrajs tree packed from this
+// checkout (needs `bun run build`) - the pairing a release ships, see scripts/packed-tree.ts. The
+// registry's last release would make every in-flight change to a package the templates call look like
+// a broken template. --link is not used: linked source packages carry workspace:* interdeps that can't
+// resolve outside this monorepo.
 describe.if(SMOKE)(
   "templates: fresh scaffold passes `nifra check` (live, SMOKE_SCAFFOLD=1)",
   () => {
     const CLI = join(import.meta.dir, "../src/cli.ts")
+    let packed: Promise<Map<string, string>> | undefined
+    const tarballs = (): Promise<Map<string, string>> => {
+      packed ??= mkdtemp(join(tmpdir(), "nifra-smoke-packed-")).then(async (tmp) => {
+        const dir = await realpath(tmp)
+        roots.push(dir)
+        return packCurrentSource(dir)
+      })
+      return packed
+    }
 
     const cases: Array<{ label: string; args: string[] }> = [
       { label: "site-react", args: ["--template", "site", "--framework", "react"] },
@@ -156,7 +160,7 @@ describe.if(SMOKE)(
 
     for (const { label, args } of cases) {
       test(
-        `${label}: scaffold --link → install → nifra check`,
+        `${label}: scaffold → install packed tree → nifra check`,
         async () => {
           // realpath: macOS tmpdir is a symlink (/var/folders → /private/var/folders); bun
           // resolves file: deps against the real path, so the app must live at its real spelling.
@@ -169,6 +173,7 @@ describe.if(SMOKE)(
             stderr: "pipe",
           })
           expect(await scaffoldProc.exited).toBe(0)
+          pinToPacked(app, await tarballs())
 
           const install = Bun.spawn(["bun", "install"], {
             cwd: app,

@@ -24,7 +24,7 @@
  *   bun run scripts/check-cold-start.ts
  */
 
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { $ } from "bun"
@@ -32,6 +32,7 @@ import { scaffold } from "../packages/create-nifra/src/cli.ts"
 import { FRAMEWORK_IDS, FRAMEWORK_SPECS } from "../packages/create-nifra/src/scaffold/frameworks.ts"
 import { renderPackageJson } from "../packages/create-nifra/src/scaffold/site-files.ts"
 import { DEPLOY_TARGETS } from "../packages/create-nifra/src/scaffold/targets.ts"
+import { packCurrentSource, pinToPacked } from "./packed-tree.ts"
 
 const ROOT = resolve(import.meta.dir, "..")
 const PKGS_DIR = join(ROOT, "packages")
@@ -40,7 +41,6 @@ const CREATE_NIFRA = join(PKGS_DIR, "create-nifra")
 interface Manifest {
   name?: string
   version?: string
-  private?: boolean
   dependencies?: Record<string, string>
   devDependencies?: Record<string, string>
 }
@@ -48,7 +48,6 @@ const readJson = (p: string): Manifest => JSON.parse(readFileSync(p, "utf8")) as
 
 // ── The monorepo's current versions, keyed by published package name. ──
 const versionByName = new Map<string, string>()
-const publishable: Array<{ name: string; dir: string }> = []
 for (const entry of readdirSync(PKGS_DIR, { withFileTypes: true })) {
   if (!entry.isDirectory()) continue
   const dir = join(PKGS_DIR, entry.name)
@@ -58,10 +57,7 @@ for (const entry of readdirSync(PKGS_DIR, { withFileTypes: true })) {
   } catch {
     continue
   }
-  if (m.name && m.version) {
-    versionByName.set(m.name, m.version)
-    if (m.private !== true) publishable.push({ name: m.name, dir })
-  }
+  if (m.name && m.version) versionByName.set(m.name, m.version)
 }
 
 const isInternal = (dep: string): boolean =>
@@ -131,52 +127,20 @@ for (const { label: tpl, manifest: m } of manifests) {
 console.log("\n=== cold-start: functional scaffold → install → build → check (site + ISR) ===")
 const work = mkdtempSync(join(tmpdir(), "nifra-cold-start-"))
 try {
-  const tarballs = join(work, "tarballs")
-  await $`mkdir -p ${tarballs}`.quiet()
-
-  // Pack every publishable package from the current (built) source. `bun pm pack` rewrites `workspace:`
-  // → the concrete version, exactly as publish would - so we're testing the would-be-published artifacts.
-  const tarballByName = new Map<string, string>()
-  let packFailed = false
-  for (const { name, dir } of publishable) {
-    const packed = await $`bun pm pack --destination ${tarballs}`.cwd(dir).nothrow().quiet()
-    if (packed.exitCode !== 0) {
-      console.error(
-        `✗ pack ${name} failed - did you run \`bun run build\` first? (exit ${packed.exitCode})`,
-      )
-      packFailed = true
-      break
-    }
-  }
-  // Map each package name → its tarball (filename is `<name-with-+>-<version>.tgz` for scoped pkgs).
-  if (!packFailed) {
-    const files = (await $`ls ${tarballs}`.text()).trim().split("\n").filter(Boolean)
-    for (const { name } of publishable) {
-      const slug = name.replace("@", "").replace("/", "-")
-      // The char right after `<slug>-` must be a digit (the version) - else `nifrajs-web-` would also
-      // match `nifrajs-web-react-….tgz` and `@nifrajs/web` would get the wrong tarball.
-      const file = files.find(
-        (f) =>
-          f.startsWith(`${slug}-`) && /\d/.test(f.charAt(slug.length + 1)) && f.endsWith(".tgz"),
-      )
-      if (file) tarballByName.set(name, join(tarballs, file))
-    }
-  }
-
-  if (packFailed) {
+  let tarballs: Map<string, string> | undefined
+  try {
+    tarballs = await packCurrentSource(join(work, "tarballs"))
+  } catch (error) {
     failures += 1
-  } else {
+    console.error(`✗ ${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  if (tarballs !== undefined) {
     for (const template of ["site", "isr"] as const) {
       const app = join(work, template)
       await scaffold({ target: app, template })
-
       // Pin the entire Nifra tree to the artifacts being verified, including transitive dependencies.
-      const appPkg = readJson(join(app, "package.json")) as Manifest & {
-        overrides?: Record<string, string>
-      }
-      appPkg.overrides = appPkg.overrides ?? {}
-      for (const [name, tgz] of tarballByName) appPkg.overrides[name] = `file:${tgz}`
-      writeFileSync(join(app, "package.json"), `${JSON.stringify(appPkg, null, 2)}\n`)
+      pinToPacked(app, tarballs)
 
       const install = await $`bun install`.cwd(app).nothrow()
       if (install.exitCode !== 0) {

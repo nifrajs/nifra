@@ -1268,7 +1268,7 @@
     "scripts/check-agent-boundary.ts": 3,
     "scripts/check-agent-isolation.ts": 2,
     "scripts/check-changeset-coverage.ts": 3,
-    "scripts/check-cold-start.ts": 3,
+    "scripts/check-cold-start.ts": 2,
     "scripts/check-consumer-matrix.ts": 3,
     "scripts/check-deno-tarball.ts": 2,
     "scripts/check-doc-samples.ts": 2,
