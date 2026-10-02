@@ -1,3 +1,5 @@
+// build.ts writes ./server-manifest.ts; this types its import before the first build.
+/// <reference types="@nifrajs/web/server-manifest" />
 import { inProcessClient } from "@nifrajs/client"
 import { toFetchHandler } from "@nifrajs/core/server"
 import { createWebApp } from "@nifrajs/web"

@@ -10,6 +10,8 @@
  *
  * The ONLY difference from server.ts is the store: MemoryCacheStore → KVCacheStore(env.ISR_CACHE).
  */
+// build.ts writes ./server-manifest.ts; this types its import before the first build.
+/// <reference types="@nifrajs/web/server-manifest" />
 import { inProcessClient } from "@nifrajs/client"
 import {
   createWebApp,

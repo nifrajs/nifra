@@ -7,8 +7,8 @@
   the component through a signal, so a new version destroys the old branch and creates a fresh one.
   Frameworks whose HMR keeps component state (React, Vue, Solid) do preserve it in the sibling examples.
 -->
-<script>
-  let { message } = $props()
+<script lang="ts">
+  let { message }: { message: string } = $props()
   let count = $state(0)
 </script>
 

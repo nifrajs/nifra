@@ -1,0 +1,9 @@
+{
+  // Checked by vue-tsc, which reads `.vue` files through this include.
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "jsx": "preserve",
+    "jsxImportSource": "vue"
+  },
+  "include": ["${configDir}/**/*.ts", "${configDir}/**/*.tsx", "${configDir}/**/*.vue"]
+}

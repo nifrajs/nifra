@@ -1,3 +1,5 @@
+// build.ts writes ../server-manifest.ts; this types its import before the first build.
+/// <reference types="@nifrajs/web/server-manifest" />
 import { inProcessClient } from "@nifrajs/client"
 import { createWebApp } from "@nifrajs/web"
 import { reactAdapter } from "@nifrajs/web-react"

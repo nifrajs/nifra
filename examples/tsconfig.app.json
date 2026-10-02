@@ -1,0 +1,13 @@
+{
+  // Shared by every web example under examples/<name>/tsconfig.json (via a framework config). Each is
+  // its own program: an app's generated `.nifra/types` declares its routes and registers its backend,
+  // which two apps in one program would collide on. `${configDir}` is the extending example's directory.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    // Merges the generated tree in, so a route imports its types as `./+types/<name>`.
+    "rootDirs": ["${configDir}", "${configDir}/.nifra/types"]
+  },
+  "include": ["${configDir}/**/*.ts", "${configDir}/**/*.tsx"],
+  "exclude": ["${configDir}/node_modules", "${configDir}/dist", "${configDir}/public"]
+}

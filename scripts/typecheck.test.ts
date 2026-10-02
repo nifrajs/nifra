@@ -1,7 +1,12 @@
 import { expect, test } from "bun:test"
-import { existsSync } from "node:fs"
+import { existsSync, readdirSync } from "node:fs"
 import { join, resolve } from "node:path"
-import { TYPECHECK_PROJECTS, uncoveredTypecheckConfigs } from "./typecheck.ts"
+import {
+  exampleTypecheckConfigs,
+  TYPECHECK_PROJECTS,
+  uncheckedExampleSources,
+  uncoveredTypecheckConfigs,
+} from "./typecheck.ts"
 
 const ROOT = resolve(import.meta.dir, "..")
 
@@ -22,4 +27,20 @@ test("every listed typecheck project exists on disk", () => {
 
 test("the root corpus is checked first", () => {
   expect(TYPECHECK_PROJECTS[0]).toBe("tsconfig.json")
+})
+
+// The examples' blind spot is a source no program includes: an example excluded from the root program
+// with no tsconfig of its own, or one whose `include` misses a file.
+test("every tracked example source is in some typecheck project", () => {
+  expect(uncheckedExampleSources()).toEqual([])
+})
+
+test("every web example with routes has its own project", () => {
+  const projects = new Set(exampleTypecheckConfigs())
+  const examples = join(ROOT, "examples")
+  for (const entry of readdirSync(examples, { withFileTypes: true })) {
+    if (entry.isDirectory() && existsSync(join(examples, entry.name, "routes"))) {
+      expect(projects.has(`examples/${entry.name}/tsconfig.json`)).toBe(true)
+    }
+  }
 })
