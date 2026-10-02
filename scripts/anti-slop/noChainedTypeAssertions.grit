@@ -1,0 +1,27 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+// Reports each chain once, at its innermost pair; chains made only of `as const` are allowed.
+or {
+  TsAsExpression(expression=$inner, ty=$outer_type),
+  TsTypeAssertionExpression(expression=$inner, ty=$outer_type)
+} as $outer where {
+  $inner <: or {
+    TsAsExpression(expression=$root, ty=$inner_type),
+    TsTypeAssertionExpression(expression=$root, ty=$inner_type),
+    JsParenthesizedExpression(expression=or {
+      TsAsExpression(expression=$root, ty=$inner_type),
+      TsTypeAssertionExpression(expression=$root, ty=$inner_type)
+    })
+  },
+  $root <: not or {
+    TsAsExpression(),
+    TsTypeAssertionExpression(),
+    JsParenthesizedExpression(expression=or {
+      TsAsExpression(),
+      TsTypeAssertionExpression()
+    })
+  },
+  not and { $outer_type <: r"const", $inner_type <: r"const" },
+  register_diagnostic(span=$outer, message="This assertion chain discards type evidence. Keep the original precise type, or parse untrusted input at its boundary before narrowing it.", severity="info")
+}

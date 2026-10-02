@@ -1,0 +1,14 @@
+engine biome(1.0)
+language js(typescript, jsx)
+
+pattern empty_object() { JsObjectExpression(members=[]) }
+
+JsObjectExpression(members=$members) where {
+  $members <: some JsSpread(argument=$argument) as $spread,
+  $argument <: or {
+    JsConditionalExpression(consequent=$consequent, alternate=$alternate),
+    JsParenthesizedExpression(expression=JsConditionalExpression(consequent=$consequent, alternate=$alternate))
+  },
+  or { $consequent <: empty_object(), $alternate <: empty_object() },
+  register_diagnostic(span=$spread, message="This conditional spread hides property omission behind an empty object. Build the object in separate statements and add the property only when present.", severity="info")
+}
