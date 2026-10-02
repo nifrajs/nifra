@@ -254,28 +254,20 @@ export function defineCdnProvider(
     scheduled = false
     const states = new Map<string, TagState>()
     const background: Promise<void>[] = []
-    try {
-      for (let i = 0; i < batch.length; i += definition.tagsPerCall) {
-        const chunk = batch.slice(i, i + definition.tagsPerCall)
-        const result = await attempt(chunk)
-        let state: TagState
-        if (result.ok) state = { state: "accepted" }
-        else if (result.retryable && maxAttempts > 1) {
-          refusal(chunk, result, false)
-          background.push(retry(chunk, result))
-          state = { state: "queued" }
-        } else {
-          refusal(chunk, result, true)
-          state = { state: "failed", retryable: result.retryable, reason: result.reason }
-        }
-        for (const tag of chunk) states.set(tag, state)
+    for (let i = 0; i < batch.length; i += definition.tagsPerCall) {
+      const chunk = batch.slice(i, i + definition.tagsPerCall)
+      const result = await attempt(chunk)
+      let state: TagState
+      if (result.ok) state = { state: "accepted" }
+      else if (result.retryable && maxAttempts > 1) {
+        refusal(chunk, result, false)
+        background.push(retry(chunk, result))
+        state = { state: "queued" }
+      } else {
+        refusal(chunk, result, true)
+        state = { state: "failed", retryable: result.retryable, reason: result.reason }
       }
-    } catch {
-      // Nothing above should throw; if something does, every caller must still hear back.
-      for (const tag of batch) {
-        if (!states.has(tag))
-          states.set(tag, { state: "failed", retryable: true, reason: "internal_error" })
-      }
+      for (const tag of chunk) states.set(tag, state)
     }
     const retries = background.length === 0 ? undefined : Promise.all(background)
     for (const waiter of settled) {

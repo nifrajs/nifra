@@ -597,3 +597,105 @@ describe("@nifrajs/web/cdn stays on the server", () => {
 
 const _typecheck: CdnProvider | undefined = undefined
 void _typecheck
+
+describe("edges", () => {
+  test("Retry-After as seconds or an HTTP date; a 5xx is retryable with it", async () => {
+    const { retryAfterMs, attemptFromStatus } = await import("../src/internal/cdn/core.ts")
+    expect(retryAfterMs("12")).toBe(12_000)
+    expect(
+      retryAfterMs(new Date(Date.UTC(2030, 0, 1, 0, 0, 30)).toUTCString(), Date.UTC(2030, 0, 1)),
+    ).toBe(30_000)
+    expect(retryAfterMs("soon")).toBeUndefined()
+    expect(retryAfterMs(null)).toBeUndefined()
+    const res = new Response(null, { status: 503, headers: { "retry-after": "2" } })
+    expect(attemptFromStatus(res, "x")).toEqual({
+      ok: false,
+      retryable: true,
+      reason: "x_503",
+      retryAfterMs: 2000,
+    })
+  })
+
+  test("the default reporter names the code, provider and count, never the tags", async () => {
+    const lines: string[] = []
+    const error = console.error
+    console.error = (line: string) => lines.push(line)
+    try {
+      const provider = defineCdnProvider(
+        {
+          name: "loud",
+          tagsPerCall: 10,
+          maxResponseTags: 10,
+          cacheHeaders: () => ({}),
+          noStoreHeaders: () => ({}),
+          purgeTags: async () => ({ ok: false, retryable: false, reason: "loud_401" }),
+        },
+        { debounceMs: 0 },
+      )
+      await provider.purge({ tags: ["customer-acme"] })
+    } finally {
+      console.error = error
+    }
+    expect(lines).toEqual([
+      "[nifra/web/cdn] NIFRA_CDN_PURGE_FAILED: loud refused a purge of 1 tag(s) (loud_401)",
+    ])
+  })
+
+  test("bad options are refused at construction", () => {
+    const { provider } = recording()
+    expect(() => withCdn(() => new Response(), { provider, staleWhileRevalidate: -1 })).toThrow(
+      RangeError,
+    )
+    expect(() => withCdn(() => new Response(), { provider, staleIfError: 1.5 })).toThrow(RangeError)
+    expect(() => defineCdnProvider({} as never, { debounceMs: Number.NaN })).toThrow(RangeError)
+    expect(() => fastly({ serviceId: "a/b", apiToken: "t" })).toThrow(/serviceId/)
+    expect(() => fastly({ serviceId: "abc", apiToken: "" })).toThrow(/apiToken is empty/)
+    expect(() => vercel({ token: "", projectId: "p" })).toThrow(/token is empty/)
+    expect(() => vercel({ token: "t", projectId: "" })).toThrow(/projectId/)
+    expect(() => cloudflareWorkersCache({ cache: {} as never })).toThrow(/cloudflare:workers/)
+  })
+
+  test("a store that cannot invalidate by tag is refused before anything is purged", async () => {
+    const store = new MemoryCacheStore()
+    const tagless = {
+      get: store.get.bind(store),
+      set: store.set.bind(store),
+      delete: store.delete.bind(store),
+    }
+    const { invalidate } = createInvalidator({ store: tagless, origin: "https://x.test" })
+    await expect(invalidate({ tags: ["a"] })).rejects.toThrow(/cannot invalidate by tag/)
+  })
+})
+
+test("each provider's no-store header is the one its CDN reads first", () => {
+  const cache = { purge: async () => ({ success: true }) }
+  expect(cloudflareZone({ zoneId: ZONE, apiToken: "t" }).noStoreHeaders()).toEqual({
+    "cloudflare-cdn-cache-control": "no-store",
+  })
+  const workers = cloudflareWorkersCache({ cache })
+  expect(workers.noStoreHeaders()).toEqual({ "cloudflare-cdn-cache-control": "no-store" })
+  expect(workers.cacheHeaders({ tags: ["a"], maxAge: 1, staleWhileRevalidate: 2 })).toEqual({
+    "cache-tag": "a",
+    "cloudflare-cdn-cache-control": "max-age=1, stale-while-revalidate=2",
+  })
+  expect(vercel({ token: "t", projectId: "p" }).noStoreHeaders()).toEqual({
+    "vercel-cdn-cache-control": "no-store",
+  })
+  expect(fastly({ serviceId: "abc", apiToken: "t" }).noStoreHeaders()).toEqual({
+    "surrogate-control": "no-store",
+  })
+})
+
+test("a 200 from Cloudflare that is not its JSON envelope is not a success", async () => {
+  const cf = cloudflareZone({
+    zoneId: ZONE,
+    apiToken: "t",
+    fetch: (async () => new Response("<html>proxy page</html>")) as unknown as typeof fetch,
+    queue: QUICK,
+  })
+  expect(await cf.purge({ tags: ["a"] })).toEqual({
+    cdn: "failed",
+    retryable: false,
+    error: "cloudflare_unsuccessful",
+  })
+})

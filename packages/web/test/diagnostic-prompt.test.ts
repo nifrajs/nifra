@@ -199,3 +199,18 @@ describe("browser safety", () => {
     expect(code).not.toContain("readFileSync")
   })
 })
+
+describe("buildDiagnostic without a root", () => {
+  test("scopes the codeframe to the working directory", () => {
+    const file = `${process.cwd()}/routes/cwd-page.tsx`
+    const err = new Error("boom")
+    err.stack = `Error: boom\n    at Page (${file}:2:1)`
+    const diagnostic = buildDiagnostic(err, {
+      read: (path) => (path === file ? "a\nb\nc" : undefined),
+    })
+    expect(diagnostic.codeframe?.file).toBe(file)
+    expect(buildFixPrompt(diagnostic, { surface: "cli", root: process.cwd() })).toContain(
+      "routes/cwd-page.tsx:2:1",
+    )
+  })
+})
