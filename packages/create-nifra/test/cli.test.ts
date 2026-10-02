@@ -124,9 +124,12 @@ describe("scaffold - templates", () => {
     const toml = await readFile(join(dir, "wrangler.toml"), "utf8")
     expect(toml).toContain('name = "my-site"')
     expect(toml).toContain('pages_build_output_dir = "dist"')
-    expect(await readFile(join(dir, "nifra.config.ts"), "utf8")).toContain(
-      'export const target = "cloudflare"',
-    )
+    // Earlier dates leave process.env empty, so backend/app.ts could never see its rate-limit opt-in.
+    expect(toml).toContain('compatibility_date = "2025-04-01"')
+    const config = await readFile(join(dir, "nifra.config.ts"), "utf8")
+    expect(config).toContain('export const target = "cloudflare"')
+    // The shared backend rate-limits per caller, which an edge build can only key on the platform header.
+    expect(config).toContain('export const clientIp = "platform"')
   })
 
   test("ships an AGENTS.md with the core rules, tailored to the template", async () => {
@@ -223,7 +226,7 @@ describe("scaffold - --target and --docker", () => {
         files: ["deno.json"],
       },
       cloudflare: {
-        start: "wrangler pages dev dist",
+        start: "wrangler pages dev dist --binding NIFRA_ALLOW_MEMORY_RATE_LIMIT=true",
         deploy: "wrangler pages deploy dist",
         files: ["wrangler.toml"],
       },

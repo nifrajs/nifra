@@ -65,6 +65,12 @@ export interface NifraFramework {
   /** The deploy target `nifra build` emits without `--target` (default `"bun"`); `nifra target <t>`
    * rewrites it. */
   readonly target?: string
+  /** `"platform"` makes a `cloudflare` / `vercel` build read `c.clientIp` from the header that
+   * platform's edge overwrites (`cf-connecting-ip` / `x-real-ip`). Left out, an edge build has no
+   * caller address, so a per-caller `rateLimit` refuses every request. Declare it only while that edge
+   * is the sole way in: served any other way the header is whatever the client sent. Self-hosting
+   * targets use the socket peer either way. */
+  readonly clientIp?: "platform"
   /** Static files directory. Defaults to `<app>/public`; `false` disables it. */
   readonly publicDir?: string | false
   /** Client-visible environment prefix (default `"PUBLIC_"`; empty disables exposure). */
@@ -124,6 +130,9 @@ function assertFrameworkWebOptions(fw: Partial<NifraFramework>, configFile: stri
   }
   if (fw.target !== undefined && typeof fw.target !== "string") {
     wrong("target", 'a deploy target name such as "bun"')
+  }
+  if (fw.clientIp !== undefined && fw.clientIp !== "platform") {
+    wrong("clientIp", '"platform" (trust the edge platform\'s client-address header), or left out')
   }
 }
 

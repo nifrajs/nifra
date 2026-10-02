@@ -5057,6 +5057,8 @@ _No named exports (side-effect entrypoint)._
   The built worker bundle - point your `wrangler.toml`'s `main` at `worker`.
 - **ServerBuildTarget** _(type)_ - `type ServerBuildTarget = "browser" | "node" | "bun"`
 - **ServerBuildTargetPlan** _(interface)_ - `interface ServerBuildTargetPlan`
+- **ServerEntryClientIp** _(type)_ - `type ServerEntryClientIp = "platform"`
+  Where `c.clientIp` comes from in a generated server entry. Left out (the default), an edge target has no caller address at all and a self-hosting target uses the socket peer. `"platform"` also trusts the header an edge target's platform overwrites at its edge (see {@link PLATFORM_CLIENT_IP_HEADERS}…
 - **ServerEntryOption** _(type)_ - `type ServerEntryOption = (typeof SERVER_ENTRY_OPTIONS)[number]`
 - **ServerEntryOptionImports** _(type)_ - `type ServerEntryOptionImports = Readonly<Partial<Record<ServerEntryOption, string>>>`
   Each importable option mapped to the specifier of the module that exports it.

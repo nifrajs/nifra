@@ -46,6 +46,8 @@ describe("loadApp validates the forwarded fields", () => {
     ["export const mounts = { path: '/a' }", "`mounts` must be an array"],
     ["export const csp = 'default-src self'", "`csp` must be the policy"],
     ["export const nonce = 'abc'", "`nonce` must be a nonce resolver function"],
+    // A misspelled trust declaration must not quietly build an edge app with no caller address.
+    ["export const clientIp = 'cf-connecting-ip'", '`clientIp` must be "platform"'],
   ]
   for (const [line, message] of cases) {
     test(line, async () => {

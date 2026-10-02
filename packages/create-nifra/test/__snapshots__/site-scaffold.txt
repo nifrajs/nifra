@@ -29,6 +29,13 @@ export const adapter = reactAdapter
 export { adapter } from "./backend/framework"
 export const clientModule = "@nifrajs/web-react/client"
 
+// Cloudflare and Vercel expose no socket: the caller's address arrives in a header their edge
+// overwrites (`cf-connecting-ip` / `x-real-ip`), and this trusts it so backend/app.ts's rate limit can
+// tell visitors apart. Without it an edge build has no caller address and the limit refuses every
+// request. It holds only while that edge is the one way in - served any other way (`wrangler pages
+// dev`, your own workerd) the header is whatever the client sent. Bun, Node and Deno use the socket.
+export const clientIp = "platform"
+
 // The deploy target `nifra build` emits; `nifra target <t>` switches it.
 export const target = "bun"
 
@@ -135,6 +142,13 @@ export const adapter = preactAdapter
 
 export { adapter } from "./backend/framework"
 export const clientModule = "@nifrajs/web-preact/client"
+
+// Cloudflare and Vercel expose no socket: the caller's address arrives in a header their edge
+// overwrites (`cf-connecting-ip` / `x-real-ip`), and this trusts it so backend/app.ts's rate limit can
+// tell visitors apart. Without it an edge build has no caller address and the limit refuses every
+// request. It holds only while that edge is the one way in - served any other way (`wrangler pages
+// dev`, your own workerd) the header is whatever the client sent. Bun, Node and Deno use the socket.
+export const clientIp = "platform"
 
 // The deploy target `nifra build` emits; `nifra target <t>` switches it.
 export const target = "bun"
@@ -247,6 +261,13 @@ export const clientPlugins = [solidBunPlugin("dom")]
 export const serverPlugins = [solidBunPlugin("ssr")]
 export const conditions = ["solid"]
 
+// Cloudflare and Vercel expose no socket: the caller's address arrives in a header their edge
+// overwrites (`cf-connecting-ip` / `x-real-ip`), and this trusts it so backend/app.ts's rate limit can
+// tell visitors apart. Without it an edge build has no caller address and the limit refuses every
+// request. It holds only while that edge is the one way in - served any other way (`wrangler pages
+// dev`, your own workerd) the header is whatever the client sent. Bun, Node and Deno use the socket.
+export const clientIp = "platform"
+
 // The deploy target `nifra build` emits; `nifra target <t>` switches it.
 export const target = "bun"
 
@@ -357,6 +378,13 @@ export const vitePlugins = [svelte()]
 // `nifra build` (client) + `nifra start`/`nifra dev` (Bun-side SSR) compile .svelte via these.
 export const clientPlugins = [svelteBunPlugin("dom")]
 export const serverPlugins = [svelteBunPlugin("ssr")]
+
+// Cloudflare and Vercel expose no socket: the caller's address arrives in a header their edge
+// overwrites (`cf-connecting-ip` / `x-real-ip`), and this trusts it so backend/app.ts's rate limit can
+// tell visitors apart. Without it an edge build has no caller address and the limit refuses every
+// request. It holds only while that edge is the one way in - served any other way (`wrangler pages
+// dev`, your own workerd) the header is whatever the client sent. Bun, Node and Deno use the socket.
+export const clientIp = "platform"
 
 // The deploy target `nifra build` emits; `nifra target <t>` switches it.
 export const target = "bun"
@@ -472,6 +500,13 @@ export const define = {
   __VUE_PROD_DEVTOOLS__: "false",
   __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: "false",
 }
+
+// Cloudflare and Vercel expose no socket: the caller's address arrives in a header their edge
+// overwrites (`cf-connecting-ip` / `x-real-ip`), and this trusts it so backend/app.ts's rate limit can
+// tell visitors apart. Without it an edge build has no caller address and the limit refuses every
+// request. It holds only while that edge is the one way in - served any other way (`wrangler pages
+// dev`, your own workerd) the header is whatever the client sent. Bun, Node and Deno use the socket.
+export const clientIp = "platform"
 
 // The deploy target `nifra build` emits; `nifra target <t>` switches it.
 export const target = "bun"

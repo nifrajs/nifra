@@ -726,6 +726,7 @@ async function buildForTarget(
     ...(fw.secretExemptions !== undefined ? { secretExemptions: fw.secretExemptions } : {}),
     ...(fw.cssCodeSplit !== undefined ? { cssCodeSplit: fw.cssCodeSplit } : {}),
     ...(fw.cssLoading !== undefined ? { cssLoading: fw.cssLoading } : {}),
+    ...(fw.clientIp !== undefined ? { clientIp: fw.clientIp } : {}),
     // The static target needs a built app to drive prerendering - only build it when targeting static.
     ...(target === "static" ? { prerenderApp: await buildPrerenderApp(app) } : {}),
   })

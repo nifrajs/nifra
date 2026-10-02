@@ -5351,6 +5351,15 @@ none (Build Output API v3)
 The Bun, Node and Deno entries serve the client bundle from disk next to themselves; on
 Cloudflare and Vercel the platform serves it.
 
+The Bun, Node and Deno entries pass the socket peer as `c.clientIp`. Cloudflare
+and Vercel expose no socket, so an edge build has no caller address unless
+`nifra.config.ts` declares `export const clientIp = "platform"`: then
+the entry trusts the header that platform's edge overwrites (`cf-connecting-ip`,
+`x-real-ip`), and per-caller middleware such as `rateLimit` works there.
+The scaffold declares it. The trust holds only while that edge is the one way in: the same
+bundle served by `wrangler pages dev` or a self-hosted workerd takes the header from
+the client, so drop the line before serving it publicly any other way.
+
 Nifra never runs the deploy or enters your cloud credentials - it scaffolds the config + a
 `deploy` script that shells out to the vendor CLI you've already authed.
 

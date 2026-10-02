@@ -1213,6 +1213,25 @@ export type ServerEntryOption = (typeof SERVER_ENTRY_OPTIONS)[number]
 export type ServerEntryOptionImports = Readonly<Partial<Record<ServerEntryOption, string>>>
 
 /**
+ * Where `c.clientIp` comes from in a generated server entry. Left out (the default), an edge target has
+ * no caller address at all and a self-hosting target uses the socket peer. `"platform"` also trusts the
+ * header an edge target's platform overwrites at its edge (see {@link PLATFORM_CLIENT_IP_HEADERS}); it
+ * changes nothing on a self-hosting target, whose socket peer is already the platform's answer.
+ */
+export type ServerEntryClientIp = "platform"
+
+/**
+ * The header each edge platform sets to the caller's address, replacing any value the client sent.
+ * That replacement is the whole trust: the same bundle served without the platform's edge in front
+ * (`wrangler pages dev`, a self-hosted workerd) hands the header straight from the client, which is
+ * why it is only believed on an explicit `clientIp: "platform"`.
+ */
+const PLATFORM_CLIENT_IP_HEADERS: Readonly<Partial<Record<BuildTarget, string>>> = {
+  cloudflare: "cf-connecting-ip",
+  vercel: "x-real-ip",
+}
+
+/**
  * Codegen the per-target **server entry** module (source text) for `buildServer` to bundle. It imports
  * the app's `adapter` (from `framework.ts`), the optional `backend` (from `backend.ts`), and the
  * generated `{ manifest, clientEntry }` (from `./server-manifest`), builds `createWebApp`, then wires
@@ -1241,6 +1260,8 @@ export function generateServerEntry(options: {
   readonly title?: string
   /** Encoded root-relative public file paths copied into the deploy directory. */
   readonly publicFiles?: readonly string[]
+  /** Trust the edge platform's client-address header for `c.clientIp`. See {@link ServerEntryClientIp}. */
+  readonly clientIp?: ServerEntryClientIp
 }): string {
   const {
     target,
@@ -1250,7 +1271,14 @@ export function generateServerEntry(options: {
     optionImports = {},
     title = "nifra",
     publicFiles = [],
+    clientIp,
   } = options
+  if (clientIp !== undefined && clientIp !== "platform") {
+    throw new Error(
+      `[nifra/web] generateServerEntry: clientIp must be "platform" or left out, got ${JSON.stringify(clientIp)}`,
+    )
+  }
+  const clientIpHeader = clientIp === "platform" ? PLATFORM_CLIENT_IP_HEADERS[target] : undefined
   // Identifiers come only from the fixed list, never from the caller's keys, so generated code names
   // nothing the list does not.
   const importedOptions = SERVER_ENTRY_OPTIONS.filter((name) => optionImports[name] !== undefined)
@@ -1293,6 +1321,10 @@ export function generateServerEntry(options: {
     "  cssLoading,",
     ...(backendImport !== undefined ? ["  api: inProcessClient(backend),"] : []),
     `  title: ${JSON.stringify(title)},`,
+    // Core's own `{ header }` trust, so the mounted backend and every loader see the derived caller.
+    ...(clientIpHeader !== undefined
+      ? [`  server: { clientIp: { header: ${JSON.stringify(clientIpHeader)} } },`]
+      : []),
     "})",
     "",
   )
@@ -1496,6 +1528,9 @@ export interface BuildTargetOptions {
   readonly cssLoading?: CssLoadingMode
   /** Document `<title>` for the generated server entry. */
   readonly title?: string
+  /** Trust the edge platform's client-address header for `c.clientIp` (`cloudflare`, `vercel`). Off by
+   * default, leaving an edge app with no caller address. See {@link ServerEntryClientIp}. */
+  readonly clientIp?: ServerEntryClientIp
 }
 
 /** Minimal app surface `buildTarget`'s static path needs - a fetch handler (a built `createWebApp`). */
@@ -1708,6 +1743,7 @@ export async function buildTargetWith(
       ...(options.backendImport !== undefined ? { backendImport: options.backendImport } : {}),
       ...(options.title !== undefined ? { title: options.title } : {}),
       ...(publicFiles.length > 0 ? { publicFiles } : {}),
+      ...(options.clientIp !== undefined ? { clientIp: options.clientIp } : {}),
     }),
   )
   const { worker } = await bundler.buildServer({

@@ -164,6 +164,16 @@ export default function Deployment() {
         Cloudflare and Vercel the platform serves it.
       </p>
       <p>
+        The Bun, Node and Deno entries pass the socket peer as <code>c.clientIp</code>. Cloudflare
+        and Vercel expose no socket, so an edge build has no caller address unless{" "}
+        <code>nifra.config.ts</code> declares <code>export const clientIp = "platform"</code>: then
+        the entry trusts the header that platform's edge overwrites (<code>cf-connecting-ip</code>,{" "}
+        <code>x-real-ip</code>), and per-caller middleware such as <code>rateLimit</code> works there.
+        The scaffold declares it. The trust holds only while that edge is the one way in: the same
+        bundle served by <code>wrangler pages dev</code> or a self-hosted workerd takes the header from
+        the client, so drop the line before serving it publicly any other way.
+      </p>
+      <p>
         Nifra never runs the deploy or enters your cloud credentials - it scaffolds the config + a{" "}
         <code>deploy</code> script that shells out to the vendor CLI you've already authed.
       </p>

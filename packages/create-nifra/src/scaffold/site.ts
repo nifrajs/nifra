@@ -73,9 +73,21 @@ export function generatedSiteFiles(
   return files
 }
 
+/**
+ * Declared for every target, not just the edge ones, so `nifra target cloudflare` later keeps the
+ * shared backend's rate limit working without a second edit.
+ */
+const CLIENT_IP_DECLARATION = `// Cloudflare and Vercel expose no socket: the caller's address arrives in a header their edge
+// overwrites (\`cf-connecting-ip\` / \`x-real-ip\`), and this trusts it so backend/app.ts's rate limit can
+// tell visitors apart. Without it an edge build has no caller address and the limit refuses every
+// request. It holds only while that edge is the one way in - served any other way (\`wrangler pages
+// dev\`, your own workerd) the header is whatever the client sent. Bun, Node and Deno use the socket.
+export const clientIp = "platform"
+`
+
 /** The framework's `nifra.config.ts`, declaring the target `nifra build` emits. */
 export function withTarget(config: string, site: SiteTarget): string {
-  return `${config.replace(/\n*$/, "\n")}\n// The deploy target \`nifra build\` emits; \`nifra target <t>\` switches it.\nexport const target = "${site.target}"\n`
+  return `${config.replace(/\n*$/, "\n")}\n${CLIENT_IP_DECLARATION}\n// The deploy target \`nifra build\` emits; \`nifra target <t>\` switches it.\nexport const target = "${site.target}"\n`
 }
 
 export interface MaterializeOptions extends SiteTarget {

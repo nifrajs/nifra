@@ -95,3 +95,67 @@ test("a built worker mounts the backend at the imported apiPrefix and serves the
   expect((await call("/api/ping")).status).toBe(404)
   expect((await call("/")).status).toBe(200)
 }, 60_000)
+
+test('clientIp "platform": a built edge entry keys the backend rate limit on the platform header', async () => {
+  writeFileSync(
+    join(projectRoot, "backend/limited.ts"),
+    [
+      'import { server } from "@nifrajs/core/server"',
+      'import { MemoryStore, rateLimit } from "@nifrajs/middleware"',
+      "export const backend = server()",
+      "  .use(rateLimit({ store: new MemoryStore({ allowInProduction: true }), max: 1, windowMs: 60_000 }))",
+      '  .get("/api/ip", (c) => ({ ip: c.clientIp ?? null }))',
+    ].join("\n"),
+  )
+  const build = async (target: "cloudflare" | "vercel", clientIp?: "platform") => {
+    const outDir = join(projectRoot, `dist-${target}-${clientIp ?? "default"}`)
+    await buildTarget(target, {
+      routesDir: join(projectRoot, "routes"),
+      outDir,
+      workDir: join(projectRoot, `.work-${target}-${clientIp ?? "default"}`),
+      clientModule: join(projectRoot, "frontend/client-stub.ts"),
+      adapterImport: join(projectRoot, "backend/framework.ts"),
+      backendImport: join(projectRoot, "backend/limited.ts"),
+      ...(clientIp !== undefined ? { clientIp } : {}),
+    })
+    return outDir
+  }
+  const cloudflare = async (clientIp?: "platform") => {
+    const worker = (await import(join(await build("cloudflare", clientIp), "_worker.js"))) as {
+      default: { fetch(request: Request, env: unknown, ctx: unknown): Promise<Response> }
+    }
+    return (headers: Record<string, string>) =>
+      worker.default.fetch(new Request("http://x/api/ip", { headers }), {}, { waitUntil() {} })
+  }
+  const keyUnavailable = { ok: false, error: "rate_limit_key_unavailable" }
+
+  const trusting = await cloudflare("platform")
+  const first = await trusting({ "cf-connecting-ip": "203.0.113.7" })
+  expect(first.status).toBe(200)
+  expect(await first.json()).toEqual({ ip: "203.0.113.7" })
+  // One bucket per visitor: the same address is limited, a different one is not.
+  expect((await trusting({ "cf-connecting-ip": "203.0.113.7" })).status).toBe(429)
+  expect((await trusting({ "cf-connecting-ip": "198.51.100.4" })).status).toBe(200)
+  // Only Cloudflare's own header counts; without it the limit still fails closed.
+  const vercelHeader = await trusting({ "x-real-ip": "192.0.2.1" })
+  expect(vercelHeader.status).toBe(500)
+  expect(await vercelHeader.json()).toEqual(keyUnavailable)
+
+  // Undeclared, the header is never believed.
+  const untrusting = await cloudflare()
+  const refused = await untrusting({ "cf-connecting-ip": "203.0.113.7" })
+  expect(refused.status).toBe(500)
+  expect(await refused.json()).toEqual(keyUnavailable)
+
+  const fn = (await import(
+    join(await build("vercel", "platform"), "functions/index.func/index.js")
+  )) as {
+    default(request: Request): Promise<Response>
+  }
+  const viaVercel = (headers: Record<string, string>) =>
+    fn.default(new Request("http://x/api/ip", { headers }))
+  expect(await (await viaVercel({ "x-real-ip": "203.0.113.9" })).json()).toEqual({
+    ip: "203.0.113.9",
+  })
+  expect((await viaVercel({ "cf-connecting-ip": "203.0.113.10" })).status).toBe(500)
+}, 120_000)

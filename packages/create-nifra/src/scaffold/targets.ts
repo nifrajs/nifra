@@ -31,7 +31,8 @@ export const TARGETS: Readonly<Record<DeployTarget, TargetSpec>> = {
   },
   cloudflare: {
     label: "Cloudflare Pages",
-    start: "wrangler pages dev dist",
+    // `pages dev` is only ever one local process - the single instance the memory rate limit allows.
+    start: "wrangler pages dev dist --binding NIFRA_ALLOW_MEMORY_RATE_LIMIT=true",
     deploy: "wrangler pages deploy dist",
     docker: false,
   },
@@ -109,7 +110,12 @@ export const DENO_JSON = `${JSON.stringify(
 /** `wrangler.toml` for the Cloudflare target; `NAME` is the Pages project. */
 export const WRANGLER_TOML = `name = "NAME"
 pages_build_output_dir = "dist"
-compatibility_date = "2025-01-01"
+# 2025-04-01 or later: from that date \`nodejs_compat\` fills \`process.env\` from the project's variables,
+# where backend/app.ts reads NIFRA_ALLOW_MEMORY_RATE_LIMIT; until that variable is "true" the worker
+# refuses to start. Set it (a Pages variable, or a [vars] table here) only if a per-isolate rate limit
+# will do: Cloudflare runs many isolates and each counts alone. \`bun run start\` sets it for its one
+# local process.
+compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 `
 

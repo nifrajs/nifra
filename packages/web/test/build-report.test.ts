@@ -275,6 +275,49 @@ describe("generateServerEntry", () => {
     ).toThrow(/static/)
   })
 
+  test("no target trusts a client-address header unless the app declares clientIp", () => {
+    for (const target of BUILD_TARGETS.filter((t) => t !== "static")) {
+      const src = generateServerEntry({ target, adapterImport: "../framework.ts" })
+      expect(src).not.toContain("server:")
+      expect(src).not.toContain("clientIp: {")
+      expect(src).not.toContain("cf-connecting-ip")
+      expect(src).not.toContain("x-real-ip")
+      expect(src).not.toContain("x-forwarded-for")
+    }
+  })
+
+  test('clientIp "platform" trusts exactly the header each edge platform overwrites', () => {
+    const header = (target: "cloudflare" | "vercel") =>
+      generateServerEntry({ target, adapterImport: "../framework.ts", clientIp: "platform" })
+    // Core's `{ header }` trust on the page app, so the /api mount and loaders get the derived caller.
+    expect(header("cloudflare")).toContain(
+      '  server: { clientIp: { header: "cf-connecting-ip" } },\n})',
+    )
+    expect(header("vercel")).toContain('  server: { clientIp: { header: "x-real-ip" } },\n})')
+    // One header each - nothing a client could append to (`x-forwarded-for`) is consulted.
+    expect(header("cloudflare")).not.toContain("x-real-ip")
+    expect(header("cloudflare")).not.toContain("x-forwarded-for")
+    expect(header("vercel")).not.toContain("cf-connecting-ip")
+    expect(header("vercel")).not.toContain("x-forwarded-for")
+  })
+
+  test('clientIp "platform" leaves self-hosting targets on the socket peer', () => {
+    for (const target of ["bun", "node", "deno"] as const) {
+      const base = { target, adapterImport: "../framework.ts", backendImport: "../backend.ts" }
+      expect(generateServerEntry({ ...base, clientIp: "platform" })).toBe(generateServerEntry(base))
+    }
+  })
+
+  test("an unknown clientIp value is refused, not silently ignored", () => {
+    expect(() =>
+      generateServerEntry({
+        target: "cloudflare",
+        adapterImport: "../framework.ts",
+        clientIp: "cf-connecting-ip" as "platform",
+      }),
+    ).toThrow(/clientIp must be "platform"/)
+  })
+
   test("imports + passes styles/routeStyles to createWebApp (so the SSR head links CSS)", () => {
     const src = generateServerEntry({ target: "bun", adapterImport: "../framework.ts" })
     expect(src).toContain(
