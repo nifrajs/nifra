@@ -69,12 +69,12 @@ exports[`verification golden output: nifra check dirty project: human report wit
       - Replace the relative \`fetch()\` call with the generated \`api...get/post/...\` call and branch on \`{ ok, data, error }\`.
 ✓ client("…") missing its <typeof app> type argument: none
 ✗ server-only import in a route module: 1
-    routes/notes.tsx:1  import { db } from "../db" - server-only "../db" reaches the browser bundle via routes/notes.tsx → ../db (direct edge - couldn't resolve the transitive chain precisely); server-only import in a route module (bundled for the browser) - reach it via c.db / ctx.api inside a loader, or move it into a *.server.ts module the client build empties; a dynamic import() is bundled too
-      fix: Move server-only code behind the route server boundary
-      - Remove the import of "../db" from this route module (it's bundled for the browser).
-      - Access backend/data work through the route \`loader\`/\`action\` context (\`api\`, \`env\`, or project server context), or a server function (\`*.fn.ts\`).
-      - Or move it into a \`*.server.ts\` module and import that from a loader or action: the client build replaces it with an empty module, so nothing in it reaches the browser.
-      - A dynamic \`import()\` does not keep code off the client: the build bundles its target as a lazy chunk, even from inside a loader.
+    routes/notes.tsx:1  import { db } from "../db" - server-only "../db" reaches the browser bundle via routes/notes.tsx → ../db (direct edge - couldn't resolve the transitive chain precisely); server-only code in browser code (a route's frontend half, frontend/ or shared/) - reach it from the route's backend half (x.backend.ts) or a *.fn.ts server function; a dynamic import() is bundled too
+      fix: Move server-only code behind the route's backend half
+      - Remove the import of "../db" from this module: it is browser code, bundled for the browser.
+      - Do the backend work in the route's backend half (\`x.backend.ts\` - its \`loader\` or \`action\`) and pass the result as loader data, or call a server function (\`*.fn.ts\`).
+      - Code both sides need belongs in \`shared/\`, which may import only shared code and third-party packages.
+      - A dynamic \`import()\` does not keep code off the client: the build bundles its target as a lazy chunk.
 ✓ SQL built by interpolating a value into the statement: none
 ✓ route returns a raw Response (typed client → data: never): none
 ✓ undeclared dependency in package.json: none
@@ -120,20 +120,20 @@ exports[`verification golden output: nifra check dirty project: --json 1`] = `
       "severity": "error",
       "file": "routes/notes.tsx",
       "line": 1,
-      "message": "import { db } from \\"../db\\" - server-only \\"../db\\" reaches the browser bundle via routes/notes.tsx → ../db (direct edge - couldn't resolve the transitive chain precisely); server-only import in a route module (bundled for the browser) - reach it via c.db / ctx.api inside a loader, or move it into a *.server.ts module the client build empties; a dynamic import() is bundled too",
-      "fix": "server-only import in a route module (bundled for the browser) - reach it via c.db / ctx.api inside a loader, or move it into a *.server.ts module the client build empties; a dynamic import() is bundled too",
+      "message": "import { db } from \\"../db\\" - server-only \\"../db\\" reaches the browser bundle via routes/notes.tsx → ../db (direct edge - couldn't resolve the transitive chain precisely); server-only code in browser code (a route's frontend half, frontend/ or shared/) - reach it from the route's backend half (x.backend.ts) or a *.fn.ts server function; a dynamic import() is bundled too",
+      "fix": "server-only code in browser code (a route's frontend half, frontend/ or shared/) - reach it from the route's backend half (x.backend.ts) or a *.fn.ts server function; a dynamic import() is bundled too",
       "chain": [
         "routes/notes.tsx",
         "../db"
       ],
       "suggestion": {
         "kind": "manual",
-        "title": "Move server-only code behind the route server boundary",
+        "title": "Move server-only code behind the route's backend half",
         "steps": [
-          "Remove the import of \\"../db\\" from this route module (it's bundled for the browser).",
-          "Access backend/data work through the route \`loader\`/\`action\` context (\`api\`, \`env\`, or project server context), or a server function (\`*.fn.ts\`).",
-          "Or move it into a \`*.server.ts\` module and import that from a loader or action: the client build replaces it with an empty module, so nothing in it reaches the browser.",
-          "A dynamic \`import()\` does not keep code off the client: the build bundles its target as a lazy chunk, even from inside a loader."
+          "Remove the import of \\"../db\\" from this module: it is browser code, bundled for the browser.",
+          "Do the backend work in the route's backend half (\`x.backend.ts\` - its \`loader\` or \`action\`) and pass the result as loader data, or call a server function (\`*.fn.ts\`).",
+          "Code both sides need belongs in \`shared/\`, which may import only shared code and third-party packages.",
+          "A dynamic \`import()\` does not keep code off the client: the build bundles its target as a lazy chunk."
         ]
       }
     }

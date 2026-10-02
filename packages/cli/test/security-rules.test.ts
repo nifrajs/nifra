@@ -237,27 +237,33 @@ describe("NF-S002 severity by file role", () => {
   const compare = "if (token === expected) deny()"
 
   test("server-side comparisons fail the gate", async () => {
-    for (const file of ["auth.server.ts", "server/verify.ts", "backend.ts", "lib/hmac.ts"]) {
+    for (const file of [
+      "backend/verify.ts",
+      "routes/login.backend.ts",
+      "shared/hmac.ts",
+      "lib/hmac.ts",
+      "routes/legacy.server.ts",
+    ]) {
       const findings = await scan(file, compare)
       expect(findings.find((f) => f.code === "NF-S002")?.severity).toBe("error")
     }
   })
 
-  test("client-bundled comparisons are advisory", async () => {
-    for (const file of ["routes/login.ts", "components/Login.tsx", "app/Form.jsx"]) {
+  test("browser code comparisons are advisory", async () => {
+    for (const file of ["routes/login.tsx", "frontend/Login.tsx", "app/Form.frontend.jsx"]) {
       const findings = await scan(file, compare)
       expect(findings.find((f) => f.code === "NF-S002")?.severity).toBe("warn")
     }
   })
 
-  test("a server marker beats a client location (routes/x.server.ts is server)", async () => {
-    const findings = await scan("routes/session.server.ts", compare)
+  test("a route's backend half is server code although it sits in routes/", async () => {
+    const findings = await scan("routes/session.backend.ts", compare)
     expect(findings.find((f) => f.code === "NF-S002")?.severity).toBe("error")
   })
 
   test("treats client-side password confirmation pairs as local validation", async () => {
     const findings = await scan(
-      "components/ConfirmPassword.tsx",
+      "frontend/ConfirmPassword.tsx",
       [
         "if (password !== confirm) return false",
         "if (password !== confirmPassword) return false",
@@ -272,7 +278,7 @@ describe("NF-S002 severity by file role", () => {
 
   test("does not weaken confirmation comparisons on the server", async () => {
     const findings = await scan(
-      "routes/auth.server.ts",
+      "routes/auth.backend.ts",
       "if (password !== confirmPassword) return false\nif (password === expectedPassword) return false",
     )
 

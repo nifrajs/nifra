@@ -380,3 +380,5 @@ export function importRuleMessage(fromFile: string, from: Zone, toFile: string, 
         : "frontend code may not import backend code; reach it through a loader, an action or a *.fn.ts server function"
   return `${fromFile} (${side(from)}) imports ${toFile} (${side(to)}): ${hint}. A type-only import (\`import type\`) is allowed`
 }
+
+export { privateEnvReads, privateEnvReason } from "./internal/private-env.ts"

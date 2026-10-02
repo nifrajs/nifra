@@ -24,6 +24,8 @@ export const RULE_CODES = Object.freeze({
   "NF-C025": "Route overlap analysis budget check",
   "NF-C026": "Route param modifier check",
   "NF-C027": "Page route under the backend mount",
+  "NF-C028": "Zone import check",
+  "NF-C029": "Private environment read in browser code",
   "NF-C020": "Island enhancer cleanup check",
   "NF-C021": "nano binding cleanup check",
   "NF-C022": "nano bindList key check",

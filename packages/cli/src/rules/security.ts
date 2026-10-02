@@ -1,4 +1,5 @@
 import type * as TSApi from "typescript"
+import { isBrowserSource } from "../check-scan.ts"
 import { type Diagnostic, diagnostic } from "../diagnostics.ts"
 import { commentBlockHasMarker } from "./comment-markers.ts"
 import type { CheckRule, SourceIndex } from "./index.ts"
@@ -42,17 +43,16 @@ function reviewedEvidence(lines: readonly string[], line: number): readonly stri
 
 /**
  * NF-S002 severity by file role. Server-side code compares real secret material - a timing oracle
- * there is exploitable, so it fails the gate. Client-bundled code (route modules, .tsx/.jsx)
+ * there is exploitable, so it fails the gate. Browser code (a route's frontend half, `frontend/`)
  * compares values the client already holds, so the same shape is advisory rather than a gate
- * failure. A server marker beats a client marker (`routes/x.server.ts` is server), and a plain .ts
- * that cannot be classified is treated as server - fail closed.
+ * failure. `shared/` also runs on the server, and a file that cannot be classified is treated as
+ * server - fail closed.
  */
 function secretComparisonSeverity(file: string): "error" | "warn" {
   const path = file.replaceAll("\\", "/")
-  if (/\.server\.[cm]?[tj]sx?$/.test(path)) return "error"
-  if (/(?:^|\/)server\//.test(path) || /(?:^|\/)backend\.[cm]?[tj]s$/.test(path)) return "error"
-  if (/\.[tj]sx$/.test(path) || /(?:^|\/)routes\//.test(path)) return "warn"
-  return "error"
+  if (!isBrowserSource(path) || /\.server\.[cm]?[tj]sx?$/.test(path)) return "error"
+  if (/\.shared\.[^/]+$/.test(path) || /(?:^|\/)shared\//.test(path)) return "error"
+  return "warn"
 }
 
 const CONFIRMATION_NAME =

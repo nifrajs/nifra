@@ -28,6 +28,10 @@ the public prefix (`PUBLIC_` unless `publicEnvPrefix` says otherwise). Any other
 `import.meta.env`, `Bun.env` or `Deno.env` read fails the build and the dev request, naming the
 variable. Strings, comments, JSX text and Markdown code samples that mention a variable are not reads.
 
+`@nifrajs/web/zones` exports the classifier and the rules every build, dev server and `nifra check`
+share: `createZoneClassifier`, `browserDenial`, `importAllowed`, `importRuleMessage`,
+`privateEnvReads` and `privateEnvReason`.
+
 Removed: the `*.server` file convention, the `@nifrajs/web/plugins/vite-server-only` export and
 `SERVER_ONLY_MODULE`. The opt-in marker import is `@nifrajs/web/backend-only`, its brand type is
 `BackendOnly<T>`, and the dev diagnostics are `NIFRA_BACKEND_ONLY_IN_CLIENT` and

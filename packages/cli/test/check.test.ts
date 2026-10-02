@@ -1101,6 +1101,15 @@ describe("scanServerManifestDrift", () => {
     await rm(dir, { recursive: true, force: true })
   })
 
+  test("a route's backend half is a route file too", async () => {
+    const dir = await manifestApp(
+      ["index.backend.ts", "index.tsx"],
+      ["index.backend.ts", "index.tsx"],
+    )
+    expect(await scanServerManifestDrift(dir)).toEqual([])
+    await rm(dir, { recursive: true, force: true })
+  })
+
   test("a deleted route still imported by the manifest → reported as extra", async () => {
     const dir = await manifestApp(["index.tsx", "gone.tsx"], ["index.tsx"])
     const findings = await scanServerManifestDrift(dir)
@@ -1212,26 +1221,30 @@ describe("walkServerOnlyChain - bounded transitive walk over a fake module graph
     expect(chain).toBeUndefined()
   })
 
-  test("a *.server dependency is a boundary the walk never enters", () => {
-    // The client build empties a `.server` module, so neither it nor what it imports ships.
+  test("backend code is a sink; a *.fn.ts module ships as its stub, so the walk never enters it", () => {
     const g: Record<string, string> = {
       "/app/routes/z.tsx":
-        'import { secret } from "../auth.server.ts"\nexport default () => secret',
-      "/app/auth.server.ts": 'import { createHmac } from "node:crypto"\nexport const secret = 1',
+        'import { secret } from "../backend/auth.ts"\nexport default () => secret',
+      "/app/backend/auth.ts": 'import { createHmac } from "node:crypto"\nexport const secret = 1',
+      "/app/routes/f.tsx":
+        'import { save } from "../backend/notes.fn.ts"\nexport default () => save',
+      "/app/backend/notes.fn.ts": 'import pg from "pg"\nexport const save = 1',
     }
-    const chain = walkServerOnlyChain(
-      "/app/routes/z.tsx",
-      g["/app/routes/z.tsx"] as string,
-      (from, spec) => resolve(from, spec),
-      (abs) => g[abs],
-    )
-    expect(chain).toBeUndefined()
+    const walk = (file: string) =>
+      walkServerOnlyChain(
+        file,
+        g[file] as string,
+        (from, spec) => resolve(from, spec),
+        (abs) => g[abs],
+      )
+    expect(walk("/app/routes/z.tsx")).toEqual(["/app/routes/z.tsx", "../backend/auth.ts"])
+    expect(walk("/app/routes/f.tsx")).toBeUndefined()
   })
 
   test("a server-only-marked dependency terminates the chain", () => {
     const g: Record<string, string> = {
       "/app/routes/m.tsx": 'import { key } from "../secrets.ts"\nexport default () => key',
-      "/app/secrets.ts": 'import "@nifrajs/web/server-only"\nexport const key = "x"',
+      "/app/secrets.ts": 'import "@nifrajs/web/backend-only"\nexport const key = "x"',
     }
     const chain = walkServerOnlyChain(
       "/app/routes/m.tsx",
@@ -2363,33 +2376,39 @@ describe("server-only-import follows literal dynamic import()", () => {
     await rm(dir, { recursive: true, force: true })
   })
 
-  test("a dynamic import inside a dependency is followed too, and a .server target is a boundary", async () => {
+  test("a dynamic import inside a dependency is followed too, and backend code is a sink", async () => {
     const dir = await project({
-      "routes/a.tsx": 'import { load } from "../lib/load"\nexport default () => load()\n',
-      "lib/load.ts": 'export const load = () => import("./pool")\n',
-      "lib/pool.ts": 'import pg from "pg"\nexport default pg\n',
-      "lib/db.server.ts": 'import pg from "pg"\nexport default pg\n',
+      "routes/a.tsx": 'import { load } from "../frontend/load"\nexport default () => load()\n',
+      "frontend/load.ts": 'export const load = () => import("./pool")\n',
+      "frontend/pool.ts": 'import pg from "pg"\nexport default pg\n',
+      "backend/db.ts": 'import pg from "pg"\nexport default pg\n',
       "routes/b.tsx":
-        'export const view = () => import("../lib/db.server")\nexport default () => null\n',
-      "lib/reads.ts": 'export const reads = () => import("./db.server")\n',
-      "routes/c.tsx": 'import { reads } from "../lib/reads"\nexport default () => reads()\n',
+        'export const view = () => import("../backend/db")\nexport default () => null\n',
+      "frontend/reads.ts": 'export const reads = () => import("../backend/db")\n',
+      "routes/c.tsx": 'import { reads } from "../frontend/reads"\nexport default () => reads()\n',
     })
     const result = await collectCheckResult(dir, { lintsOnly: true })
     const chains = result.diagnostics
-      .filter((d) => d.rule === "server-only-import")
+      .filter((d) => d.rule === "server-only-import" && d.file?.startsWith("routes/"))
       .map((d) => d.chain)
-    expect(chains).toEqual([["routes/a.tsx", "../lib/load", "./pool", "pg"]])
+    expect(chains).toEqual([
+      ["routes/a.tsx", "../frontend/load", "./pool", "pg"],
+      ["routes/b.tsx", "../backend/db"],
+      ["routes/c.tsx", "../frontend/reads", "../backend/db"],
+    ])
     await rm(dir, { recursive: true, force: true })
   })
 
-  test("a loader reading a *.server module, as the troubleshooting guide shows, is clean", async () => {
+  test("a loader in the route's backend half reading backend code is clean", async () => {
     const dir = await project({
-      "db.server.ts":
+      "backend/db.ts":
         'import { Database } from "bun:sqlite"\nexport const db = new Database("app.db")\n',
-      "routes/notes.tsx":
-        'import type { LoaderContext } from "@nifrajs/web"\nimport { db } from "../db.server"\n' +
+      "routes/notes.backend.ts":
+        'import type { LoaderContext } from "@nifrajs/web"\nimport { db } from "../backend/db"\n' +
         "export async function loader(_ctx: LoaderContext) {\n" +
-        '  return { notes: db.query("select * from notes").all() }\n}\nexport default () => null\n',
+        '  return { notes: db.query("select * from notes").all() }\n}\n',
+      "routes/notes.tsx":
+        'import type { loader } from "./notes.backend"\nexport default () => null\n',
     })
     const result = await collectCheckResult(dir, { lintsOnly: true })
     expect(result.diagnostics.filter((d) => d.rule === "server-only-import")).toEqual([])
@@ -2404,6 +2423,79 @@ describe("server-only-import follows literal dynamic import()", () => {
     })
     const result = await collectCheckResult(dir, { lintsOnly: true })
     expect(result.diagnostics.find((d) => d.rule === "server-only-import")).toBeUndefined()
+    await rm(dir, { recursive: true, force: true })
+  })
+})
+
+describe("zone rules from source (NF-C028, NF-C029)", () => {
+  const project = async (files: Record<string, string>): Promise<string> => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-zones-"))
+    for (const [file, content] of Object.entries(files)) {
+      await mkdir(join(dir, file, ".."), { recursive: true })
+      await writeFile(join(dir, file), content)
+    }
+    return dir
+  }
+  const findings = async (dir: string, code: string) =>
+    (await collectCheckResult(dir, { lintsOnly: true })).diagnostics
+      .filter((d) => d.code === code)
+      .map((d) => `${d.file}:${d.line} ${d.message}`)
+
+  test("unzoned code, backend importing frontend, shared importing frontend", async () => {
+    const dir = await project({
+      "lib/format.ts": "export const format = (n: number) => String(n)\n",
+      "frontend/theme.ts": 'export const theme = "dark"\n',
+      "routes/index.tsx":
+        'import { format } from "../lib/format"\nexport default () => format(1)\n',
+      "backend/report.ts":
+        'import { theme } from "../frontend/theme"\nexport const report = theme\n',
+      "shared/ui.ts": 'import { theme } from "../frontend/theme"\nexport const ui = theme\n',
+      "shared/types.ts":
+        'import type { theme } from "../frontend/theme"\nexport type T = typeof theme\n',
+      "routes/index.backend.ts":
+        'import { ui } from "../shared/ui"\nexport const loader = () => ui\n',
+    })
+    const found = await findings(dir, "NF-C028")
+    expect(found).toHaveLength(3)
+    expect(found[0]).toStartWith(
+      "backend/report.ts:1 backend/report.ts (backend code) imports frontend/theme.ts",
+    )
+    expect(found[1]).toStartWith(
+      'routes/index.tsx:1 routes/index.tsx imports lib/format.ts: "lib/format.ts" is in no zone',
+    )
+    expect(found[2]).toContain(
+      "shared/ui.ts (shared code) imports frontend/theme.ts (frontend code)",
+    )
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("a zoned app is clean", async () => {
+    const dir = await project({
+      "shared/format.ts": "export const format = (n: number) => String(n)\n",
+      "frontend/card.tsx":
+        'import { format } from "../shared/format"\nexport const Card = () => format(1)\n',
+      "backend/db.ts": 'import { format } from "../shared/format"\nexport const db = format(2)\n',
+      "routes/index.tsx": 'import { Card } from "../frontend/card"\nexport default Card\n',
+      "routes/index.backend.ts":
+        'import { db } from "../backend/db"\nexport const loader = () => db\n',
+    })
+    expect(await findings(dir, "NF-C028")).toEqual([])
+    expect(await findings(dir, "NF-C029")).toEqual([])
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("browser code reading a private variable, under the app's declared prefix", async () => {
+    const dir = await project({
+      "backend/framework.ts": 'export const publicEnvPrefix = "APP_PUBLIC_"\n',
+      "routes/index.tsx":
+        "export default () => [process.env.APP_PUBLIC_URL, process.env.PUBLIC_URL]\n",
+      "shared/config.ts": "// process.env.COMMENT\nexport const db = Bun.env.DATABASE_URL\n",
+      "routes/index.backend.ts": "export const loader = () => process.env.DATABASE_URL\n",
+    })
+    expect(await findings(dir, "NF-C029")).toEqual([
+      "routes/index.tsx:1 routes/index.tsx it reads private environment variable process.env.PUBLIC_URL. Browser code may read only NODE_ENV and variables named APP_PUBLIC_*; read the rest in a loader, an action or under backend/",
+      "shared/config.ts:2 shared/config.ts it reads private environment variable Bun.env.DATABASE_URL. Browser code may read only NODE_ENV and variables named APP_PUBLIC_*; read the rest in a loader, an action or under backend/",
+    ])
     await rm(dir, { recursive: true, force: true })
   })
 })

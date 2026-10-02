@@ -52,8 +52,33 @@ const IGNORED = new RegExp(`${IGNORED_DIR.source}|${TEST_FILE.source}`)
  * them stable across runtimes so rules, diagnostics, ignore globs, and import chains have one shape. */
 const normalizeProjectPath = (path: string): string => path.replaceAll("\\", "/")
 
-// A file under `routes/` - a page module bundled for the browser, where a server-only import is unsafe.
-const ROUTE_FILE = /(^|\/)routes\//
+// Browser code by path, mirroring `@nifrajs/web/zones`: a suffix decides first, then the folder. A
+// route's backend half (`x.backend.ts`), `backend/` and `*.fn.ts` run on the server only.
+const BACKEND_SUFFIX = /\.backend\.[cm]?[jt]sx?$/
+const BROWSER_SUFFIX = /\.(?:frontend|shared)\.[^/]+$/
+const BROWSER_FOLDER = /(^|\/)(?:routes|frontend|shared)\//
+const BACKEND_FOLDER = /(^|\/)backend\//
+const SERVER_FN_FILE = /\.fn\.[cm]?[jt]sx?$/
+
+/** Whether a project file is browser code: a route's frontend half, `frontend/` or `shared/`. Pure. */
+export function isBrowserSource(file: string): boolean {
+  const path = normalizeProjectPath(file)
+  if (BACKEND_SUFFIX.test(path) || SERVER_FN_FILE.test(path)) return false
+  if (BROWSER_SUFFIX.test(path)) return true
+  return BROWSER_FOLDER.test(path) && !BACKEND_FOLDER.test(path)
+}
+
+/** Whether a resolved module is backend code a browser import may not reach (a `*.fn.ts` module ships
+ * as its generated stub, so it is not). A legacy `*.server` module counts: the build refuses it. */
+function isBackendModule(file: string): boolean {
+  const path = normalizeProjectPath(file)
+  if (SERVER_FN_FILE.test(path)) return false
+  return (
+    BACKEND_SUFFIX.test(path) ||
+    LEGACY_SERVER_FILE.test(path) ||
+    (BACKEND_FOLDER.test(path) && !BROWSER_SUFFIX.test(path))
+  )
+}
 
 // Module specifiers that must never be VALUE-imported into a route module: node:/bun: builtins, common
 // DB drivers/ORМ server entrypoints, and the conventional `./db` module the scaffold generates.
@@ -1467,6 +1492,18 @@ export const REMOVED_IMPORTS: ReadonlyArray<{
       'import from "@nifrajs/core/budget" - the package folded into core and npm `latest` is still 1.13.0, so a `^2` range resolves to nothing',
   },
   {
+    specifier: "@nifrajs/web/server-only",
+    since: "4.0",
+    replacement:
+      'import "@nifrajs/web/backend-only" - and keep backend code under backend/ or in a route\'s x.backend.ts, where no browser build reaches it',
+  },
+  {
+    specifier: "@nifrajs/web/plugins/vite-server-only",
+    since: "4.0",
+    replacement:
+      "nothing - buildClientVite and the Vite dev server enforce the frontend/backend zones themselves; for a hand-built Vite config use viteLeakGuard from @nifrajs/web/plugins/vite-leak-guard",
+  },
+  {
     specifier: "@nifrajs/core/ws",
     since: "2.0",
     sideEffectOnly: true,
@@ -1591,16 +1628,15 @@ export function rewriteMovedExports(content: string): string {
   return out
 }
 
-/** Scan a route module for server-only imports, static or a literal dynamic `import()`. Returns `[]`
- * for non-route files (only `routes/` modules are browser-bundled, so a server-only import elsewhere is
- * fine). Each finding carries the offending `specifier` so the diagnostic can render the
- * `routeFile → specifier` chain. Pure. */
+/** Scan a browser module for server-only imports, static or a literal dynamic `import()`. Returns `[]`
+ * for server code ({@link isBrowserSource}), where a server-only import is fine. Each finding carries
+ * the offending `specifier` so the diagnostic can render the `file → specifier` chain. Pure. */
 export function scanServerOnlyImports(
   file: string,
   content: string,
   facts?: SourceFacts,
 ): ServerImportFinding[] {
-  if (!ROUTE_FILE.test(file)) return []
+  if (!isBrowserSource(file)) return []
   const out: ServerImportFinding[] = []
   const lines = content.split("\n")
   // Inline `import { type X } from "…"` is erased just like `import type` and is not an edge; a parse
@@ -1628,12 +1664,11 @@ export function scanServerOnlyImports(
 // as SERVER_ONLY, minus the relative `../db` arm - a relative `db` module IS local source we resolve.)
 const SERVER_ONLY_SINK =
   /^(?:node:|bun:)|^(?:postgres|pg|mysql2|ioredis|redis|better-sqlite3|mongodb|@libsql\/client)$|^drizzle-orm\/(?:node-postgres|postgres-js|bun-sqlite|libsql|mysql2|pglite)\b/
-// The `.server` convention: both client pipelines replace a `*.server` module with an empty one, so it
-// is the boundary the build recommends, not a leak. Nothing at or past it reaches the browser.
-const SERVER_MODULE_FILE = /\.server(\.[cm]?[jt]sx?)?$/
-// The explicit poison-import marker (`@nifrajs/web/server-only`) - a module opting into the client-leak
-// guard. A resolved file whose source carries this side-effect import is a server-only sink.
-const SERVER_ONLY_MARKER_IMPORT = /import\s+["']@nifrajs\/web\/server-only["']/
+// The retired `*.server` convention. Builds refuse such a module in browser code rather than empty it.
+const LEGACY_SERVER_FILE = /\.server(\.[cm]?[jt]sx?)?$/
+// The explicit poison-import marker (`@nifrajs/web/backend-only`, or its retired `server-only` name) - a
+// module opting into the client-leak guard. A resolved file carrying this side-effect import is a sink.
+const BACKEND_ONLY_MARKER_IMPORT = /import\s+["']@nifrajs\/web\/(?:backend|server)-only["']/
 // Depth/visited caps keep the walk linear + cycle-safe. A route's server-only dependency sits within a
 // few hops in practice; the bound stops a pathological graph from blowing up the per-file scan.
 const TRANSITIVE_MAX_DEPTH = 8
@@ -1727,6 +1762,17 @@ function importEdges(
   )
 }
 
+/** The runtime imports of a module with the line each sits on, in source order. Pure. */
+export function importSites(
+  content: string,
+  file?: string,
+): Array<{ readonly specifier: string; readonly line: number }> {
+  return importEdges(content, undefined, file).map(({ specifier, index }) => ({
+    specifier,
+    line: lineAt(content, index),
+  }))
+}
+
 /** The specifiers {@link importEdges} finds, static and literal dynamic, in source order. Pure. */
 export function parseImports(content: string, facts?: SourceFacts, file?: string): string[] {
   return importEdges(content, facts, file).map((e) => e.specifier)
@@ -1800,13 +1846,14 @@ export function walkServerOnlyChain(
         if (!isRelativeSpecifier(spec)) continue
         const abs = resolve(node.abs, spec)
         if (abs === undefined || seen.has(abs)) continue
-        // (c) A resolved `*.server` module is emptied in the client build: not a sink, and its own
-        // imports never ship, so the walk does not enter it.
-        if (SERVER_MODULE_FILE.test(abs)) continue
+        // (c) Backend code is a sink: the browser build refuses it. A `*.fn.ts` module ships as its
+        // generated stub, so its imports never reach the browser and the walk does not enter it.
+        if (isBackendModule(abs)) return [...node.chain, spec]
+        if (SERVER_FN_FILE.test(abs)) continue
         const content = read(abs)
         if (content === undefined) continue // unreadable → can't walk; treat as a leaf
-        // (d) A resolved module that opts into the `server-only` marker is a sink too.
-        if (SERVER_ONLY_MARKER_IMPORT.test(content)) return [...node.chain, spec]
+        // (d) A resolved module that opts into the `backend-only` marker is a sink too.
+        if (BACKEND_ONLY_MARKER_IMPORT.test(content)) return [...node.chain, spec]
         if (visited >= TRANSITIVE_MAX_VISITED) continue
         visited++
         seen.add(abs)
@@ -1833,7 +1880,7 @@ export function resolveServerOnlyChains(
   read: ModuleReader,
   facts?: SourceFacts,
 ): TransitiveServerImportFinding[] {
-  if (!ROUTE_FILE.test(file)) return []
+  if (!isBrowserSource(file)) return []
   const lines = content.split("\n")
   const out: TransitiveServerImportFinding[] = []
   const flaggedSpecifiers = new Set<string>()
@@ -1865,11 +1912,16 @@ export function resolveServerOnlyChains(
         }
         continue
       }
-      // A `*.server` first hop is the boundary itself; a marked module is a sink.
-      if (SERVER_MODULE_FILE.test(abs)) continue
+      // A backend first hop and a marked module are sinks; a `*.fn.ts` hop ships as its stub.
+      if (isBackendModule(abs)) {
+        flaggedSpecifiers.add(specifier)
+        out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: false })
+        continue
+      }
+      if (SERVER_FN_FILE.test(abs)) continue
       const depContent = read(abs)
       if (depContent === undefined) continue
-      if (SERVER_ONLY_MARKER_IMPORT.test(depContent)) {
+      if (BACKEND_ONLY_MARKER_IMPORT.test(depContent)) {
         flaggedSpecifiers.add(specifier)
         out.push({ file, line, snippet, specifier, chain: [file, specifier], fallback: false })
         continue
@@ -2027,8 +2079,9 @@ const GENERATED_MARKER = "GENERATED by @nifrajs/web generateServerManifest"
 // locate the routes dir relative to the manifest, and to strip to route-relative keys.
 const ROUTES_PREFIX = /["'](\.{1,2}(?:\/[^"'/]+)*?\/routes\/)[^"']+["']/
 // The files route discovery collects (mirrors `@nifrajs/web/fs`'s filter): route files by extension,
-// plus `_middleware` modules.
+// each route's backend half, and `_middleware` modules.
 const ROUTE_FILE_EXT = /\.(tsx|jsx|svelte|vue|mdx)$/
+const ROUTE_BACKEND_HALF = /\.backend\.(?:[cm]?[jt]s)$/
 const MIDDLEWARE_FILE = /(?:^|\/)_middleware\.(?:ts|js)$/
 
 export interface ManifestDriftFinding {
@@ -2073,7 +2126,9 @@ export async function scanServerManifestDrift(cwd: string): Promise<ManifestDrif
         )
       )
         .map((f) => f.replaceAll("\\", "/"))
-        .filter((f) => ROUTE_FILE_EXT.test(f) || MIDDLEWARE_FILE.test(f))
+        .filter(
+          (f) => ROUTE_FILE_EXT.test(f) || ROUTE_BACKEND_HALF.test(f) || MIDDLEWARE_FILE.test(f),
+        )
     } catch {
       continue // routes dir gone/unreadable - not a drift we can assess
     }

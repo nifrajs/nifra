@@ -1895,6 +1895,13 @@
     "doc": "/**\n * Hand-written types for `Await.svelte` (svelte-package would generate this from the component). The\n * internal build resolves `*.svelte` via the ambient `svelte-shim.d.ts`; this file is what *consumers*\n * resolve through the `./await` export's `types` condition.\n */"
   },
   {
+    "name": "BACKEND_ONLY_MARKER",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const BACKEND_ONLY_MARKER = \"@nifrajs/web/backend-only\";",
+    "doc": "/** The nifra marker a module imports to refuse the browser outright. */"
+  },
+  {
     "name": "BackendEvidenceProvider",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -2504,6 +2511,20 @@
     "package": "@nifrajs/mcp",
     "signature": "export declare function bridgeScript(): string;",
     "doc": "/** The bridge source, as a string for inlining in a `<script>`. Self-contained, no imports. */"
+  },
+  {
+    "name": "BROWSER_ZONES",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const BROWSER_ZONES: ReadonlySet<Zone>;",
+    "doc": "/** Zones whose code may ship to a browser. `fn` is listed because its stub is what ships. */"
+  },
+  {
+    "name": "browserDenial",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function browserDenial(classification: Classification, specifier?: string): string | undefined;",
+    "doc": "/**\n * Why a classified file may not ship to a browser, or `undefined` when it may. A `drizzle-orm` driver\n * entry is recognized by the import as written (`specifier`) or by the file's path in the package.\n */"
   },
   {
     "name": "BrowserNavigate",
@@ -3627,6 +3648,12 @@
     "kind": "class",
     "package": "@nifrajs/coding-agent",
     "signature": "export declare class CiDeploymentAdapter extends DeterministicDeploymentAdapter {\n    constructor();\n}"
+  },
+  {
+    "name": "Classification",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type Classification = {\n    readonly zone: Zone;\n    /** The package a `library` file belongs to. */\n    readonly packageName?: string;\n    /** A `library` package's own declaration, when it made one. */\n    readonly declared?: PackageEnvironment;\n    /** A third-party file's path inside `node_modules`: `drizzle-orm/node-postgres/index.js`. */\n    readonly modulePath?: string;\n} | {\n    readonly zone: \"error\";\n    readonly reason: string;\n};"
   },
   {
     "name": "classificationAtLeast",
@@ -5136,6 +5163,13 @@
     "package": "@nifrajs/workers",
     "signature": "export declare function createWebSocketHub<Env = unknown>(app: WebSocketHubApp<Env>): WebSocketHubClass<Env>;",
     "doc": "/**\n * Build a Durable Object class that serves an app's `app.ws()` routes with **cross-connection\n * broadcast**. Every WebSocket accepted here lives in the DO's isolate, and the app's `TopicRegistry`\n * lives there too - so `ws.subscribe(topic)` and `app.publish(topic, data)` (called from the WS\n * lifecycle) reach every connected client. Route upgrades to it via\n * `toFetchHandler(app, { webSocketHub: (env) => env.YOUR_BINDING })`.\n *\n * Single hub: all connections route to one DO instance, so topics are app-global (matching nifra's\n * in-process semantics). Shard by room later by giving the hub a room-derived id.\n */"
+  },
+  {
+    "name": "createZoneClassifier",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function createZoneClassifier(options: ZoneClassifierOptions): ZoneClassifier;",
+    "doc": "/**\n * Create a classifier for one app. Cheap to create; it caches per file and per package directory,\n * so build plugins and dev servers keep one for the life of a build or a session.\n */"
   },
   {
     "name": "CronError",
@@ -8847,6 +8881,13 @@
     "doc": "/**\n * Bind handlers to a contract, producing a real {@link Server} you can `.listen()`\n * or `.fetch()`. Each op is registered through the same path as the inline\n * builder, so the result is identical to writing the routes inline - handlers\n * lift over **unchanged** (\"graduation\"), and body/query schemas validate at the\n * request boundary exactly as in inline mode.\n *\n * Pass a pre-configured `app` to give the contract's routes a middleware chain. A route captures the\n * server's `derive`/`decorate`/assurance chain **at registration**, so anything applied to the\n * returned server afterwards reaches the contract's routes not at all - the app must already carry it:\n *\n * ```ts\n * const app = implement(contract, handlers, server().use(auth).derive(sessionOf))\n * ```\n *\n * That is also the seam that lets `nifra assure` prove rather than merely classify a contract-first\n * app: the plugin that installs the enforcement is what declares the evidence\n * ({@link withRouteAssurance}), and only a plugin installed *before* registration is captured. Handlers\n * then see the app's `Ctx`, and the returned server keeps any routes the app already had.\n */"
   },
   {
+    "name": "importAllowed",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function importAllowed(from: Zone, to: Zone): boolean;",
+    "doc": "/** Whether a module in `from` may import (with a value import) a module in `to`. */"
+  },
+  {
     "name": "ImportedApiInventory",
     "kind": "interface",
     "package": "@nifrajs/schema",
@@ -8876,6 +8917,13 @@
     "kind": "interface",
     "package": "@nifrajs/schema",
     "signature": "export interface ImportOpenAPIOptions {\n    /** Maximum entries under `paths`. Default 5000. */\n    readonly maxPaths?: number;\n    /** Maximum operations on one path item. Default 8. */\n    readonly maxOperationsPerPath?: number;\n    /** Maximum merged parameters per operation. Default 100. */\n    readonly maxParameters?: number;\n}"
+  },
+  {
+    "name": "importRuleMessage",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function importRuleMessage(fromFile: string, from: Zone, toFile: string, to: Zone): string;",
+    "doc": "/** The message for an import {@link importAllowed} refuses. */"
   },
   {
     "name": "IncidentCapsule",
@@ -12579,6 +12627,12 @@
     "signature": "export interface OwnedEffectTransitions<T> {\n    intent?(context: OwnedEffectContext): void | PromiseLike<void>;\n    executing?(context: OwnedEffectContext): void | PromiseLike<void>;\n    committed?(context: OwnedEffectContext, result: T): void | PromiseLike<void>;\n    failed?(context: OwnedEffectContext, input: {\n        readonly began: boolean;\n        readonly errorCode: string;\n        readonly error: unknown;\n    }): void | PromiseLike<void>;\n}"
   },
   {
+    "name": "PackageEnvironment",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type PackageEnvironment = \"frontend\" | \"backend\" | \"shared\" | \"library\";"
+  },
+  {
     "name": "Page",
     "kind": "interface",
     "package": "@nifrajs/schema",
@@ -13542,6 +13596,20 @@
     "package": "@nifrajs/better-auth",
     "signature": "export type PrincipalFor<User, RequireTenant extends boolean> = RequireTenant extends true ? Principal<User> & {\n    readonly tenantId: string;\n} : Principal<User>;",
     "doc": "/**\n * The principal type for a given `requireTenant` flag: `tenantId` narrows to a required `string` when\n * `requireTenant` is `true`, otherwise stays optional (`string | undefined`). The flag is captured as a\n * literal `const` type parameter at the call sites so `{ requireTenant: true }` selects the narrowed branch.\n */"
+  },
+  {
+    "name": "privateEnvReads",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function privateEnvReads(file: string, source: string, publicPrefix: string): string[];",
+    "doc": "/**\n * The private environment reads in one browser-reachable file, as written (`process.env.SECRET`).\n * `publicPrefix` is the app's public-env prefix; `\"\"` makes every variable but `NODE_ENV` private.\n */"
+  },
+  {
+    "name": "privateEnvReason",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function privateEnvReason(reads: readonly string[], publicPrefix: string): string;",
+    "doc": "/** The denial reason for a file's private environment reads. */"
   },
   {
     "name": "problemDetails",
@@ -15822,6 +15890,13 @@
     "doc": "/** Marker attribute used to find a non-default hydration container. */"
   },
   {
+    "name": "ROUTE_BACKEND_FILE",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const ROUTE_BACKEND_FILE: RegExp;",
+    "doc": "/** A route's backend half: `x.backend.ts`. Script extensions only; JSX belongs to the frontend half. */"
+  },
+  {
     "name": "ROUTE_GLOBAL",
     "kind": "const",
     "package": "@nifrajs/web",
@@ -17417,6 +17492,13 @@
     "doc": "/** The marker specifier an author imports to opt a module into the client-leak guard. Matched on the\n * import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed,\n * before Bun resolves it to `src/backend-only.ts` / `dist/backend-only.js`). */"
   },
   {
+    "name": "SERVER_PACKAGES",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const SERVER_PACKAGES: readonly string[];",
+    "doc": "/**\n * Third-party packages that never belong in a browser bundle: database drivers, ORMs' server\n * entries, mailers and server SDKs. A package reaching a `node:` builtin is caught separately; this\n * list covers the ones that bundle \"fine\" and leak credentials or query code instead.\n */"
+  },
+  {
     "name": "ServerBuild",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -18240,6 +18322,13 @@
     "package": "@nifrajs/otel",
     "signature": "export type SpanStatus = \"unset\" | \"ok\" | \"error\";",
     "doc": "/**\n * The span model + exporter seam. Attribute names follow OpenTelemetry HTTP semantic conventions\n * (`http.request.method`, `url.path`, `http.response.status_code`, …) so a span maps cleanly onto an\n * OTel `Span` when bridged - but nothing here depends on the OTel SDK. You supply an\n * {@link ObservationAdapter}\n * (a ~10-line adapter to `@opentelemetry/api`, or the bundled {@link consoleSpanExporter}).\n */"
+  },
+  {
+    "name": "specifierPackage",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function specifierPackage(specifier: string): string | undefined;",
+    "doc": "/** The package name a bare specifier names, or `undefined` for a relative path, a builtin, a\n * subpath import (`#x`) or a bundler-virtual id. */"
   },
   {
     "name": "SQLiteClient",
@@ -21220,6 +21309,24 @@
     "package": "@nifrajs/testing",
     "signature": "export declare function zodJsonSchema(schema: unknown): JsonSchema | undefined;",
     "doc": "/**\n * Convert a zod schema to a JSON Schema the mock/mutation generators understand, or `undefined` when the\n * value is not a convertible zod schema. Options chosen for this consumer:\n *   - target \"draft-7\" → the keyword set `@nifrajs/mock` + the laboratory's `candidateMutations` read\n *   - io \"input\"       → the request-side constraints a hostile payload must violate (pre-transform)\n *   - reused \"inline\"  → no `$ref`/`$defs`; the mock generator fails closed on `$ref`\n *\n * Fail-safe: a non-zod value, or an unconvertible schema, returns `undefined` → the schema stays opaque\n * (NO_WITNESS / `{}`), exactly as before this bridge existed.\n */"
+  },
+  {
+    "name": "Zone",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type Zone = \n/** A page or special file under `routes/` - the frontend half of a route. */\n\"route-frontend\"\n/** A route's `x.backend.ts` twin. */\n | \"route-backend\" | \"frontend\" | \"backend\" | \"shared\"\n/** A server-function module (`*.fn.ts`); the browser only ever receives its generated RPC stub. */\n | \"fn\"\n/** Framework output (the client entry, the server composition, generated types). */\n | \"generated\"\n/** A third-party package, or a workspace package declaring `\"nifra\": { \"environment\": \"library\" }`. */\n | \"library\";"
+  },
+  {
+    "name": "ZoneClassifier",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ZoneClassifier {\n    readonly appRoot: string;\n    /** Classify a file by its absolute (or appRoot-relative) path. Results are cached per path. */\n    classify(file: string): Classification;\n}"
+  },
+  {
+    "name": "ZoneClassifierOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ZoneClassifierOptions {\n    /** The app root: the directory holding `routes/`, `frontend/`, `backend/` and `shared/`. */\n    readonly appRoot: string;\n    /** The routes directory (default `<appRoot>/routes`). */\n    readonly routesDir?: string;\n    /** Extra absolute files treated as `generated` - a build's own entry modules. */\n    readonly generatedFiles?: readonly string[];\n}"
   },
   {
     "name": "zoneGuardPlugin",

@@ -18,6 +18,14 @@ test("flags every import of a package that no longer publishes", () => {
   expect(linesFlagged('import { B } from "@nifrajs/budget/types"')).toEqual([1])
 })
 
+test("flags the retired backend-only marker and Vite server-only plugin paths", () => {
+  expect(linesFlagged('import "@nifrajs/web/server-only"')).toEqual([1])
+  expect(
+    linesFlagged('import { viteServerOnly } from "@nifrajs/web/plugins/vite-server-only"'),
+  ).toEqual([1])
+  expect(linesFlagged('import "@nifrajs/web/backend-only"')).toEqual([])
+})
+
 test("a type-only import is left to tsc", () => {
   // The shared import scanner skips `import type` on purpose: it is erased at compile time and so
   // cannot cause a runtime failure, which is what these lints exist to catch. An unresolvable

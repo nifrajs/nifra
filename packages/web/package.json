@@ -82,6 +82,11 @@
       "types": "./dist/pwa-manifest.d.ts",
       "default": "./dist/pwa-manifest.js"
     },
+    "./zones": {
+      "bun": "./src/zones.ts",
+      "types": "./dist/zones.d.ts",
+      "default": "./dist/zones.js"
+    },
     "./backend-only": {
       "bun": "./src/backend-only.ts",
       "types": "./dist/backend-only.d.ts",

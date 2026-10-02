@@ -17,7 +17,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs"
-import { dirname, isAbsolute, join } from "node:path"
+import { dirname, isAbsolute, join, relative } from "node:path"
 import { BACKEND_APP_FILE } from "./app-files.ts"
 import {
   type CheckAssuranceContext,
@@ -51,6 +51,7 @@ export type {
 
 import {
   createProjectSqlImports,
+  isBrowserSource,
   type ModuleReader,
   type ModuleResolver,
   resolveServerOnlyChains,
@@ -70,7 +71,6 @@ import {
 
 export * from "./check-scan.ts"
 
-const ROUTE_FILE = /(^|\/)routes\//
 interface TypecheckResult {
   readonly ran: boolean
   readonly ok: boolean
@@ -273,7 +273,7 @@ async function buildProjectScan(
   const serverImports: TransitiveServerImportFinding[] = []
   const responseRoutes: SourceFinding[] = []
   const interpolatedSql: SourceFinding[] = []
-  const routeModules: Array<{ rel: string; content: string }> = []
+  const browserModules: Array<{ rel: string; content: string }> = []
   const sourceFiles: Array<{ file: string; content: string }> = []
   const {
     config: checkConfig,
@@ -290,7 +290,7 @@ async function buildProjectScan(
       streams.push(...scanStreamText(rel, content, checkConfig.externalMounts))
       untypedClients.push(...scanUntypedClient(rel, content))
       removedImports.push(...scanRemovedImports(rel, content))
-      if (ROUTE_FILE.test(rel)) routeModules.push({ rel, content })
+      if (isBrowserSource(rel)) browserModules.push({ rel, content })
     }),
     import("./doctor.ts").then((m) => m.collectDoctorResult(cwd)),
     scanServerManifestDrift(cwd),
@@ -313,22 +313,26 @@ async function buildProjectScan(
         interpolatedSql.push(...scanInterpolatedSql(file, content, sqlCompiler, sqlImports))
     }
 
+    // Resolved modules stay project-relative, as the scanned files are: the zone of a path is read
+    // from its folders, and a checkout under a folder named `backend/` must not make it all backend.
     const resolveModule: ModuleResolver = (fromFile, specifier) => {
       try {
         const fromAbs = isAbsolute(fromFile) ? fromFile : join(cwd, fromFile)
-        return Bun.resolveSync(specifier, dirname(fromAbs))
+        const resolved = Bun.resolveSync(specifier, dirname(fromAbs))
+        const rel = relative(cwd, resolved).replaceAll("\\", "/")
+        return rel.startsWith("../") || isAbsolute(rel) ? resolved : rel
       } catch {
         return undefined
       }
     }
-    const readModule: ModuleReader = (absPath) => {
+    const readModule: ModuleReader = (path) => {
       try {
-        return readFileSync(absPath, "utf8")
+        return readFileSync(isAbsolute(path) ? path : join(cwd, path), "utf8")
       } catch {
         return undefined
       }
     }
-    for (const { rel, content } of routeModules) {
+    for (const { rel, content } of browserModules) {
       serverImports.push(
         ...resolveServerOnlyChains(rel, content, resolveModule, readModule, sourceFacts),
       )

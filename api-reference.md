@@ -5546,6 +5546,36 @@ _No named exports (side-effect entrypoint)._
 - **pipeWebBodyToNode** _(function)_ - `pipeWebBodyToNode: (body: ReadableStream<Uint8Array> | null, res: NodeResLike) => Promise<void>`
   Stream a Web `Response` body to a Node response chunk-by-chunk. Buffering the whole body (e.g. `arrayBuffer()`) waits for the stream to END - which an open-ended SSE (`text/event-stream`) body never does, so it hung `nifra dev` (the Bun production server streamed it fine). This flushes each chunk a…
 
+### `@nifrajs/web/zones`
+
+- **BACKEND_ONLY_MARKER** _(const)_ - `BACKEND_ONLY_MARKER: "@nifrajs/web/backend-only"`
+  The nifra marker a module imports to refuse the browser outright.
+- **BROWSER_ZONES** _(const)_ - `BROWSER_ZONES: ReadonlySet<Zone>`
+  Zones whose code may ship to a browser. `fn` is listed because its stub is what ships.
+- **Classification** _(type)_ - `type Classification`
+- **PackageEnvironment** _(type)_ - `type PackageEnvironment = "frontend" | "backend" | "shared" | "library"`
+- **ROUTE_BACKEND_FILE** _(const)_ - `ROUTE_BACKEND_FILE: RegExp`
+  A route's backend half: `x.backend.ts`. Script extensions only; JSX belongs to the frontend half.
+- **SERVER_PACKAGES** _(const)_ - `SERVER_PACKAGES: readonly string[]`
+  Third-party packages that never belong in a browser bundle: database drivers, ORMs' server entries, mailers and server SDKs. A package reaching a `node:` builtin is caught separately; this list covers the ones that bundle "fine" and leak credentials or query code instead.
+- **Zone** _(type)_ - `type Zone`
+- **ZoneClassifier** _(interface)_ - `interface ZoneClassifier`
+- **ZoneClassifierOptions** _(interface)_ - `interface ZoneClassifierOptions`
+- **browserDenial** _(function)_ - `browserDenial: (classification: Classification, specifier?: string) => string | undefined`
+  Why a classified file may not ship to a browser, or `undefined` when it may. A `drizzle-orm` driver entry is recognized by the import as written (`specifier`) or by the file's path in the package.
+- **createZoneClassifier** _(function)_ - `createZoneClassifier: (options: ZoneClassifierOptions) => ZoneClassifier`
+  Create a classifier for one app. Cheap to create; it caches per file and per package directory, so build plugins and dev servers keep one for the life of a build or a session.
+- **importAllowed** _(function)_ - `importAllowed: (from: Zone, to: Zone) => boolean`
+  Whether a module in `from` may import (with a value import) a module in `to`.
+- **importRuleMessage** _(function)_ - `importRuleMessage: (fromFile: string, from: Zone, toFile: string, to: Zone) => string`
+  The message for an import {@link importAllowed} refuses.
+- **privateEnvReads** _(function)_ - `privateEnvReads: (file: string, source: string, publicPrefix: string) => string[]`
+  The private environment reads in one browser-reachable file, as written (`process.env.SECRET`). `publicPrefix` is the app's public-env prefix; `""` makes every variable but `NODE_ENV` private.
+- **privateEnvReason** _(function)_ - `privateEnvReason: (reads: readonly string[], publicPrefix: string) => string`
+  The denial reason for a file's private environment reads.
+- **specifierPackage** _(function)_ - `specifierPackage: (specifier: string) => string | undefined`
+  The package name a bare specifier names, or `undefined` for a relative path, a builtin, a subpath import (`#x`) or a bundler-virtual id.
+
 ## @nifrajs/web-preact
 
 ### `@nifrajs/web-preact`

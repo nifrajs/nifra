@@ -27,6 +27,7 @@ import { nanoRules } from "./rules/nano.ts"
 import { pageRules } from "./rules/pages.ts"
 import { routeRules } from "./rules/routes.ts"
 import { securityRules } from "./rules/security.ts"
+import { zoneRules } from "./rules/zones.ts"
 
 /** A single machine-readable check failure - the unit an agent (or CI) acts on. */
 export interface CheckDiagnostic {
@@ -434,6 +435,7 @@ export async function collectCheckDiagnostics(
     ...securityRules,
     ...routeRules,
     ...pageRules,
+    ...zoneRules,
     ...islandRules,
     ...nanoRules,
   ]
