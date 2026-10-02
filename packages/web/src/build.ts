@@ -83,6 +83,7 @@ import { type ClientModuleGraph, fromBunMetafile } from "./module-graph.ts"
 import { zoneGuardPlugin } from "./plugins/zone-guard.ts"
 // `buildTarget(static)` drives the SSG prerender engine directly (it's also re-exported below).
 import { prerenderRoutes } from "./prerender.ts"
+import { CONTENT_TYPES, IMMUTABLE, ONE_DAY } from "./public-dir.ts"
 import { createZoneClassifier } from "./zones.ts"
 
 export * from "./build-plan.ts"
@@ -1379,7 +1380,14 @@ export function generateServerEntry(options: {
     '    segment !== "." && segment !== ".." && /^[A-Za-z0-9._-]+$/.test(segment)',
     "  return segments.every(safe) ? '.' + pathname : undefined",
     "}",
-    'const TYPES = { js: "text/javascript", css: "text/css", map: "application/json" }',
+    // The type table and cache policy `servePublicDir` uses. Without a known type, Bun answers a file
+    // as an `application/octet-stream` attachment, which a browser downloads instead of showing.
+    `const TYPES: Record<string, string> = ${JSON.stringify(CONTENT_TYPES)}`,
+    "const staticHeaders = (pathname: string): Record<string, string> => ({",
+    '  "content-type": TYPES[pathname.slice(pathname.lastIndexOf(".")).toLowerCase()] ?? "application/octet-stream",',
+    `  "cache-control": pathname.startsWith("/assets/") ? ${JSON.stringify(IMMUTABLE)} : ${JSON.stringify(ONE_DAY)},`,
+    '  "x-content-type-options": "nosniff",',
+    "})",
   )
   // Bun.serve and Deno.serve delimit the body themselves, so its declared length is the transport
   // frame - the guarantee core's own listen() and the Deno adapter mark (see markTrustedBodyFraming).
@@ -1395,8 +1403,7 @@ export function generateServerEntry(options: {
       "    if (filePath !== undefined) {",
       "      const file = Bun.file(new URL(filePath, STATIC_ROOT))",
       '      if (!(await file.exists())) return new Response("not found", { status: 404 })',
-      '      const ext = pathname.slice(pathname.lastIndexOf(".") + 1)',
-      '      return new Response(file, { headers: { "content-type": TYPES[ext] ?? "application/octet-stream" } })',
+      "      return new Response(file, { headers: staticHeaders(pathname) })",
       "    }",
       `    ${markFramed}`,
       "    // The socket peer, looked up only when something reads it (as core's own listen() does).",
@@ -1420,8 +1427,7 @@ export function generateServerEntry(options: {
       "      if (filePath !== undefined) {",
       "        try {",
       "          const body = await readFile(new URL(filePath, STATIC_ROOT))",
-      '          const ext = pathname.slice(pathname.lastIndexOf(".") + 1)',
-      '          return new Response(body, { headers: { "content-type": TYPES[ext] ?? "application/octet-stream" } })',
+      "          return new Response(body, { headers: staticHeaders(pathname) })",
       "        } catch {",
       '          return new Response("not found", { status: 404 })',
       "        }",
@@ -1444,8 +1450,7 @@ export function generateServerEntry(options: {
     "    try {",
     "      // @ts-ignore - Deno.readFile is present on the Deno runtime.",
     "      const body = await Deno.readFile(new URL(filePath, STATIC_ROOT))",
-    '      const ext = pathname.slice(pathname.lastIndexOf(".") + 1)',
-    '      return new Response(body, { headers: { "content-type": TYPES[ext] ?? "application/octet-stream" } })',
+    "      return new Response(body, { headers: staticHeaders(pathname) })",
     "    } catch {",
     '      return new Response("not found", { status: 404 })',
     "    }",

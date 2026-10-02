@@ -38,8 +38,8 @@ export interface ServePublicDirOptions {
   readonly files?: ReadonlySet<string>
 }
 
-const IMMUTABLE = "public, max-age=31536000, immutable"
-const ONE_DAY = "public, max-age=86400"
+export const IMMUTABLE = "public, max-age=31536000, immutable"
+export const ONE_DAY = "public, max-age=86400"
 
 /**
  * Media types by extension. A table rather than `Bun.file(path).type`: this handler also runs on the
@@ -47,7 +47,7 @@ const ONE_DAY = "public, max-age=86400"
  * (and extensionless files such as ACME tokens) are served as `application/octet-stream`, which
  * together with `nosniff` keeps the browser from guessing a more dangerous type.
  */
-const CONTENT_TYPES: Readonly<Record<string, string>> = {
+export const CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".html": "text/html; charset=utf-8",
   ".htm": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",

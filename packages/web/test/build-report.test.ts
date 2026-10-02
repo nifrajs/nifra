@@ -239,6 +239,36 @@ describe("generateServerEntry", () => {
     expect(src).not.toContain("api:")
   })
 
+  test("every self-hosting entry serves static files with a real type, nosniff and a cache policy", async () => {
+    for (const target of ["bun", "node", "deno"] as const) {
+      const src = generateServerEntry({ target, adapterImport: "../framework.ts" })
+      expect(src).toContain("headers: staticHeaders(pathname)")
+      expect(src).not.toContain("TYPES[ext]")
+      // Evaluate the generated helper itself rather than pattern-match its text.
+      const helper = src.slice(
+        src.indexOf("const TYPES"),
+        src.indexOf("\n})\n", src.indexOf("const staticHeaders")) + 3,
+      )
+      const staticHeaders = new Function(
+        `${new Bun.Transpiler({ loader: "ts" }).transformSync(helper)}; return staticHeaders`,
+      )() as (pathname: string) => Record<string, string>
+      expect(staticHeaders("/robots.txt")).toEqual({
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "public, max-age=86400",
+        "x-content-type-options": "nosniff",
+      })
+      expect(staticHeaders("/logo.SVG")["content-type"]).toBe("image/svg+xml")
+      expect(staticHeaders("/assets/page-1a2b3c.js")).toEqual({
+        "content-type": "text/javascript; charset=utf-8",
+        "cache-control": "public, max-age=31536000, immutable",
+        "x-content-type-options": "nosniff",
+      })
+      expect(staticHeaders("/.well-known/acme-challenge/token")["content-type"]).toBe(
+        "application/octet-stream",
+      )
+    }
+  })
+
   test("node → @nifrajs/node serve + node:fs readFile", () => {
     const src = generateServerEntry({
       target: "node",
