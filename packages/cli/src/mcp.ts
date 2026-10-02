@@ -23,6 +23,10 @@
  *   - `nifra_errors`  - the running dev server's errors (SSR, loader, API, build, browser, hydration,
  *     crash), each a structured diagnostic tagged with its request; `since` cursors, stale flags.
  *   - `nifra_logs`    - the dev server's console output, server and browser, tagged by request.
+ *   - `nifra_db_schema` / `nifra_db_query` / `nifra_db_role` - the development database declared as
+ *     `devDatabase` in nifra.config.ts: its schema, one read-only query (or plan) per call in a fresh
+ *     subprocess killed at the deadline, and the SQL for a read-only role. Separate tools, so a client
+ *     can allow reading the schema without allowing queries.
  *   - `nifra_explain` - resolve an error (pasted, or the dev server's latest) into a structured
  *     diagnostic: stable code, a codeframe in the user's source, and the recognised cause + fix.
  *   - `nifra_inspect` - read the running dev server's recent request traces (method/path/status/

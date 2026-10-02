@@ -74,6 +74,7 @@
     "@nifrajs/agent-review": "workspace:*",
     "@nifrajs/i18n": "workspace:*",
     "@nifrajs/mcp": "workspace:*",
+    "@nifrajs/mcp-db": "workspace:*",
     "@nifrajs/runner": "workspace:*",
     "@nifrajs/schema": "workspace:*",
     "@nifrajs/testing": "workspace:*",

@@ -42,6 +42,10 @@ test("the stable catalog is the public command allowlist", () => {
     "errors",
     "logs",
     "cdn-check",
+    "db-schema",
+    "db-query",
+    "db-role",
+    "db-audit",
   ])
   expect(names).not.toContain("verify")
 })

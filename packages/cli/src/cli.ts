@@ -126,6 +126,13 @@ Usage:
                                          internal or CDN-only headers reaching the visitor, and soft
                                          navigations get page data, not the cached document. Exits 1
                                          on a failure.
+  nifra db schema [<table>]              The development database declared as \`devDatabase\` in
+                                         nifra.config.ts: tables, columns, keys, indexes.
+  nifra db query "<sql>" [--explain [--analyze]]  One read-only SELECT (or its plan), in a fresh
+                                         process killed at devDatabase.timeoutMs. Rows capped, secrets
+                                         masked. Postgres: a superuser connection is refused.
+  nifra db role                          Print the SQL for a read-only Postgres role. Runs nothing.
+  nifra db audit [--limit <n>]           What nifra db ran (.nifra/db-audit.jsonl), never the rows.
   nifra build   [--out <dir>] [--report]  Emit a complete deploy directory.
                 [--target <t>]             Target a FULL deploy dir for <t>:
                                          bun | node | deno | cloudflare | vercel | static. Packages
@@ -177,8 +184,10 @@ Usage:
                                          nifra_example (verified snippets), nifra_scaffold (route→file),
                                          nifra_check (drift gate + fixes), nifra_levels (verification
                                          ladder), nifra_doctor (deps), nifra_errors + nifra_logs (what
-                                         the running dev server saw), nifra_explain (structured errors),
-                                         nifra_inspect (request traces), nifra_learn (guided build path).
+                                         the running dev server saw), nifra_db_schema + nifra_db_query +
+                                         nifra_db_role (the declared dev database, read-only),
+                                         nifra_explain (structured errors), nifra_inspect (request
+                                         traces), nifra_learn (guided build path).
   nifra docs-mcp [--port <n>]            Serve the PUBLIC docs MCP over HTTP (nifra_docs + nifra_example) -
                                          self-host on a VPS so any remote agent can learn nifra. Default :8787.
   nifra learn   [<step>]                 Print the guided build-an-app path (the human view of nifra_learn):
@@ -991,11 +1000,20 @@ async function main(): Promise<void> {
     )
     return
   }
-  const catalogSpec = command === undefined ? undefined : findCommandSpec(command)
+  // `nifra db <sub>` is the catalog's `db-<sub>` command, projected to MCP as `nifra_db_<sub>`.
+  const dbSub =
+    command === "db" && argv[1] !== undefined && !argv[1].startsWith("-") ? argv[1] : undefined
+  if (command === "db" && (dbSub === undefined || findCommandSpec(`db-${dbSub}`) === undefined)) {
+    throw new Error("[nifra] usage: nifra db schema|query|role|audit - see `nifra help`")
+  }
+  const catalogSpec =
+    command === undefined
+      ? undefined
+      : findCommandSpec(dbSub === undefined ? command : `db-${dbSub}`)
   if (catalogSpec?.transports.includes("cli")) {
     const markReflecting = installReflectionExitHint()
     try {
-      const input = bindCommandArgv(catalogSpec, argv.slice(1))
+      const input = bindCommandArgv(catalogSpec, argv.slice(dbSub === undefined ? 1 : 2))
       markReflecting(command)
       const output = await catalogSpec.run(input, { cwd: process.cwd(), cliVersion: CLI_VERSION })
       markReflecting(undefined)
@@ -1204,6 +1222,7 @@ function isCliCommandToken(value: string): boolean {
     value === "mcp" ||
     value === "init-agents" ||
     value === "upgrade" ||
+    value === "db" ||
     value === "help" ||
     value === "--help" ||
     value === "-h" ||

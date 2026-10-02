@@ -16,6 +16,7 @@ import type {
 import { cdnCheckSpec } from "./cdn-check.ts"
 import { type CheckResult, renderCheckReport } from "./check.ts"
 import type { ContractsLock } from "./contracts.ts"
+import { dbAuditSpec, dbQuerySpec, dbRoleSpec, dbSchemaSpec } from "./db-tool.ts"
 import { errorsSpec, logsSpec } from "./dev-feed-tool.ts"
 import { type Diagnostic, diagnostic, normalizeSeverity, toSarifLog } from "./diagnostics.ts"
 import type { DoctorResult } from "./doctor.ts"
@@ -1864,6 +1865,10 @@ export const commandSpecs = Object.freeze([
   errorsSpec,
   logsSpec,
   cdnCheckSpec,
+  dbSchemaSpec,
+  dbQuerySpec,
+  dbRoleSpec,
+  dbAuditSpec,
 ] as const)
 
 const commandByName = new Map(commandSpecs.map((spec) => [spec.name, spec]))
