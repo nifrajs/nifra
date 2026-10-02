@@ -5988,7 +5988,9 @@ URL
 none
 
 tables a query may not read (`name`, or `schema.name` on Postgres),
-also through views, CTEs, partitions and child tables
+also through views, CTEs, partitions and child tables. On Postgres the check reads the
+query plan, so a function that reads the table inside its own body is not seen; the
+`REVOKE` that `nifra db role` prints is what closes that
 
 `query`
 

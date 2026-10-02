@@ -389,7 +389,9 @@ export default function Agents() {
             <td>none</td>
             <td>
               tables a query may not read (<code>name</code>, or <code>schema.name</code> on Postgres),
-              also through views, CTEs, partitions and child tables
+              also through views, CTEs, partitions and child tables. On Postgres the check reads the
+              query plan, so a function that reads the table inside its own body is not seen; the{" "}
+              <code>REVOKE</code> that <code>nifra db role</code> prints is what closes that
             </td>
           </tr>
           <tr>
