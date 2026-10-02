@@ -85,8 +85,13 @@ export interface RevalidateTagsInput {
   readonly url: URL
 }
 
-/** A route's `revalidateTags`: a fixed list, or one computed per request from its params and URL. */
-export type RevalidateTags = readonly string[] | ((input: RevalidateTagsInput) => readonly string[])
+/**
+ * A route's `revalidateTags`: a fixed list, or one computed per request from its params and URL. The
+ * function is declared as a method so a route may annotate its own params (`{ params: { id: string } }`).
+ */
+export type RevalidateTags =
+  | readonly string[]
+  | { tags(input: RevalidateTagsInput): readonly string[] }["tags"]
 
 const warnedTagRoutes = new Set<string>()
 
@@ -102,9 +107,10 @@ export function routeTags(
 ): readonly string[] {
   if (typeof declared !== "function") return declared
   const result: unknown = declared(input)
+  const listed: readonly unknown[] = Array.isArray(result) ? result : []
   const kept = new Set<string>()
   let dropped = 0
-  for (const tag of Array.isArray(result) ? (result as unknown[]) : []) {
+  for (const tag of listed) {
     if (typeof tag === "string" && ISR_TAG_PATTERN.test(tag) && kept.size < MAX_ISR_TAGS) {
       kept.add(tag)
     } else dropped++
@@ -435,7 +441,7 @@ export const CACHE_CHANNEL: unique symbol = Symbol.for("nifra.web.cacheChannel")
 
 /** Ask `app` to emit its ISR headers; an app without the channel emits whatever it emits. */
 export function openCacheChannel(app: object): void {
-  const open = (app as Record<symbol, unknown>)[CACHE_CHANNEL]
+  const open: unknown = Reflect.get(app, CACHE_CHANNEL)
   if (typeof open === "function") open()
 }
 
@@ -964,16 +970,14 @@ export function revalidateEndpoint(
       outcome = { cdn: "failed", retryable: true, error: "cdn_purge_threw" }
     }
     if (outcome.cdn === "failed") {
-      return Response.json(
-        {
-          ok: false,
-          error: "cdn_purge_failed",
-          origin: "done",
-          retryable: outcome.retryable,
-          ...(outcome.error === undefined ? {} : { reason: outcome.error }),
-        },
-        { status: 502 },
-      )
+      const failure: Record<string, unknown> = {
+        ok: false,
+        error: "cdn_purge_failed",
+        origin: "done",
+        retryable: outcome.retryable,
+      }
+      if (outcome.error !== undefined) failure.reason = outcome.error
+      return Response.json(failure, { status: 502 })
     }
     return Response.json(
       { ...done, cdn: outcome.cdn },

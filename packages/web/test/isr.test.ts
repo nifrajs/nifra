@@ -595,6 +595,7 @@ import { createWebApp } from "../src/index.ts"
 import {
   type CdnPurgeOutcome,
   openCacheChannel,
+  type RevalidateTags,
   revalidateEndpoint,
   withoutCacheChannel,
 } from "../src/isr.ts"
@@ -602,7 +603,7 @@ import {
 describe("a route's ISR freshness and tags never reach a visitor", () => {
   const adapter: RenderAdapter = {
     renderToString: () => "<p>page</p>",
-    renderToStream: () => new Response("<p>page</p>").body as ReadableStream<Uint8Array>,
+    renderToStream: () => new Blob(["<p>page</p>"]).stream(),
     hydrationHead: () => "",
   }
   const manifest: Manifest = {
@@ -1013,10 +1014,10 @@ describe("withISR over KVCacheStore (the production store path)", () => {
 describe("tags per request, and freshness handed to an outer cache", () => {
   const adapter: RenderAdapter = {
     renderToString: () => "<p>page</p>",
-    renderToStream: () => new Response("<p>page</p>").body as ReadableStream<Uint8Array>,
+    renderToStream: () => new Blob(["<p>page</p>"]).stream(),
     hydrationHead: () => "",
   }
-  const appWith = (revalidateTags: unknown) =>
+  const appWith = (revalidateTags: RevalidateTags) =>
     createWebApp({
       adapter,
       clientEntry: "/c.js",
@@ -1031,7 +1032,7 @@ describe("tags per request, and freshness handed to an outer cache", () => {
           },
         ],
         layouts: {},
-      } as Manifest,
+      },
     })
   const outer = <T extends object>(handler: T): T => {
     openCacheChannel(handler)

@@ -42,14 +42,15 @@ export function fastly(options: FastlyOptions): CdnProvider {
       }),
       noStoreHeaders: () => ({ "surrogate-control": "no-store" }),
       async purgeTags(tags) {
+        const headers: Record<string, string> = {
+          "fastly-key": options.apiToken,
+          "content-type": "application/json",
+          accept: "application/json",
+        }
+        if (soft) headers["fastly-soft-purge"] = "1"
         const res = await send(endpoint, {
           method: "POST",
-          headers: {
-            "fastly-key": options.apiToken,
-            "content-type": "application/json",
-            accept: "application/json",
-            ...(soft ? { "fastly-soft-purge": "1" } : {}),
-          },
+          headers,
           body: JSON.stringify({ surrogate_keys: tags }),
         })
         await res.body?.cancel()

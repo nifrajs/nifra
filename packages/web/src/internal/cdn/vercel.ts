@@ -72,7 +72,7 @@ export function vercel(options: VercelOptions): CdnProvider {
       const res = await send(endpoint, {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-        body: JSON.stringify({ tags, ...(target === undefined ? {} : { target }) }),
+        body: JSON.stringify(target === undefined ? { tags } : { tags, target }),
       })
       await res.body?.cancel()
       return attemptFromStatus(res, "vercel")

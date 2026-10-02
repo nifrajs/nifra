@@ -49,9 +49,20 @@ const CDN_ONLY = [
   "surrogate-control",
 ]
 
+const field = (from: unknown, name: string): unknown =>
+  typeof from === "object" && from !== null ? Reflect.get(from, name) : undefined
+
+function isCdnCheckOutput(value: unknown): value is CdnCheckOutput {
+  return (
+    typeof field(value, "url") === "string" &&
+    typeof field(value, "cdn") === "string" &&
+    Array.isArray(field(value, "requests")) &&
+    Array.isArray(field(value, "findings"))
+  )
+}
+
 function parseInput(value: unknown): CdnCheckInput {
-  const raw = (typeof value === "object" && value !== null ? value : {}) as Record<string, unknown>
-  const url = raw.url
+  const url = field(value, "url")
   if (typeof url !== "string" || url === "") throw new TypeError("cdn-check needs a page URL")
   let parsed: URL
   try {
@@ -65,7 +76,7 @@ function parseInput(value: unknown): CdnCheckInput {
   if (parsed.username !== "" || parsed.password !== "") {
     throw new TypeError("cdn-check: leave credentials out of the URL")
   }
-  return { url: parsed.href, ...(raw.json === true ? { json: true } : {}) }
+  return field(value, "json") === true ? { url: parsed.href, json: true } : { url: parsed.href }
 }
 
 /** The CDN a response came through, from the status header each one sets. */
@@ -240,15 +251,8 @@ export const cdnCheckSpec: CommandSpec<CdnCheckInput, CdnCheckOutput> = {
       required: ["url", "cdn", "requests", "findings"],
     },
     parse: (value) => {
-      const out = value as Partial<CdnCheckOutput> | null
-      if (
-        typeof out?.url !== "string" ||
-        !Array.isArray(out.requests) ||
-        !Array.isArray(out.findings)
-      ) {
-        throw new TypeError("cdn-check output must carry url, cdn, requests and findings")
-      }
-      return out as CdnCheckOutput
+      if (isCdnCheckOutput(value)) return value
+      throw new TypeError("cdn-check output must carry url, cdn, requests and findings")
     },
   },
   transports: ["cli"],

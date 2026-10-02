@@ -99,9 +99,13 @@ export function promptPath(file: string, root: string | undefined): string {
 }
 
 function homeDirectory(): string | undefined {
-  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
-    ?.env
-  return env?.HOME ?? env?.USERPROFILE
+  // Read through Reflect: a browser bundle has no `process`, and a bundler must not inline one.
+  const proc: unknown = Reflect.get(globalThis, "process")
+  const env: unknown =
+    typeof proc === "object" && proc !== null ? Reflect.get(proc, "env") : undefined
+  if (typeof env !== "object" || env === null) return undefined
+  const home: unknown = Reflect.get(env, "HOME") ?? Reflect.get(env, "USERPROFILE")
+  return typeof home === "string" ? home : undefined
 }
 
 /** `text` with the project root and the home directory taken out of any absolute path it names. */

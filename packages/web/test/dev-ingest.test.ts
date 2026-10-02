@@ -108,7 +108,7 @@ test("pages carry the script first in <head>; its batches land as browser entrie
   })
   // The page gets back the errors it just reported, for its in-page indicator.
   expect(sent.status).toBe(200)
-  const answered = (await sent.json()) as { issues: { code: string; category: string }[] }
+  const answered: { issues: { code: string; category: string }[] } = await sent.json()
   expect(answered.issues.map((issue) => [issue.code, issue.category])).toEqual([
     ["NIFRA_UNHANDLED", "browser"],
     ["NIFRA_UNHANDLED", "browser"],
@@ -169,9 +169,10 @@ test("hydration mismatches are their own category, whether thrown or logged", as
     true,
   )
   // The indicator gets each with the recognised fix and a prompt naming its entry.
-  const { issues } = (await sent.json()) as {
-    issues: { id: string; category: string; fix?: string; prompts: { prompt: string }[] }[]
-  }
+  const {
+    issues,
+  }: { issues: { id: string; category: string; fix?: string; prompts: { prompt: string }[] }[] } =
+    await sent.json()
   expect(issues.map((issue) => issue.category)).toEqual(["hydration", "hydration", "hydration"])
   expect(issues[0]?.fix).toContain("nifra_hydrate")
   expect(issues[0]?.prompts[0]?.prompt).toContain("Reload the page named under Request")
@@ -320,9 +321,11 @@ test("the indicator: own errors back, logs alone get 204, and the module is serv
     token,
     events: [{ kind: "error", name: "Error", message: "second", stack: "", page: "/" }],
   })
-  const [a, b] = (await Promise.all([first.json(), second.json()])) as {
+  type Answer = {
     issues: { id: string; message: string; prompts: { label: string; prompt: string }[] }[]
-  }[]
+  }
+  const a: Answer = await first.json()
+  const b: Answer = await second.json()
   expect(a?.issues.map((issue) => issue.message)).toEqual(["Error: first"])
   expect(b?.issues.map((issue) => issue.message)).toEqual(["Error: second"])
   const prompt = b?.issues[0]?.prompts[0]?.prompt ?? ""

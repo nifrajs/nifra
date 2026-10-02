@@ -250,7 +250,7 @@ export function buildDiagnostic(err: unknown, options: BuildDiagnosticOptions = 
     cause,
     fix,
     docsAnchor,
-    ...(fixOptions === undefined ? {} : { fixOptions }),
+    fixOptions,
   }
 }
 

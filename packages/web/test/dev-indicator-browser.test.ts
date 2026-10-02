@@ -82,7 +82,8 @@ describe.skipIf(chrome === undefined)("dev issues indicator in a browser", () =>
   let page: ChromePage
   // Chrome's cold start and shutdown can each pass the 5s hook default while the rest of the suite runs.
   beforeAll(async () => {
-    page = await launchChrome(chrome as string)
+    if (chrome === undefined) throw new Error("unreachable: the suite is skipped without Chrome")
+    page = await launchChrome(chrome)
   }, 30_000)
   afterAll(async () => {
     await page?.close()

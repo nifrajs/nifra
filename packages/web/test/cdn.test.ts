@@ -16,7 +16,7 @@ import {
   withCdn,
 } from "../src/cdn.ts"
 import { createWebApp, type Manifest, type RenderAdapter } from "../src/index.ts"
-import { MemoryCacheStore, withISR } from "../src/isr.ts"
+import { MemoryCacheStore, type RevalidateTagsInput, withISR } from "../src/isr.ts"
 import { fromBunMetafile } from "../src/module-graph.ts"
 
 const ZONE = "0123456789abcdef0123456789abcdef"
@@ -24,7 +24,7 @@ const TAG = /^[A-Za-z][A-Za-z0-9._:/-]{0,127}$/
 
 const adapter: RenderAdapter = {
   renderToString: () => "<p>page</p>",
-  renderToStream: () => new Response("<p>page</p>").body as ReadableStream<Uint8Array>,
+  renderToStream: () => new Blob(["<p>page</p>"]).stream(),
   hydrationHead: () => "",
 }
 
@@ -38,7 +38,7 @@ const routes: Manifest = {
       load: async () => ({
         default: "p",
         revalidate: 60,
-        revalidateTags: ({ params }: { params: { id: string } }) => [`product:${params.id}`],
+        revalidateTags: ({ params }: RevalidateTagsInput) => [`product:${params.id}`],
       }),
     },
     {
@@ -64,7 +64,7 @@ const routes: Manifest = {
     },
   ],
   layouts: {},
-} as unknown as Manifest
+}
 
 /** A provider whose API calls are recorded, answering each with the next scripted result. */
 function recording(script: PurgeAttempt[] = [], name = "test", tagsPerCall = 100) {
@@ -351,7 +351,7 @@ describe("purge queue", () => {
 /** A fetch that records each call and answers from `reply`. */
 function fakeFetch(reply: (url: string, init: RequestInit) => Response) {
   const seen: { url: string; headers: Record<string, string>; body: unknown }[] = []
-  const fn = (async (input: string | URL | Request, init?: RequestInit) => {
+  const call = async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input)
     seen.push({
       url,
@@ -359,8 +359,16 @@ function fakeFetch(reply: (url: string, init: RequestInit) => Response) {
       body: JSON.parse(String(init?.body ?? "null")),
     })
     return reply(url, init ?? {})
-  }) as typeof fetch
+  }
+  // `typeof fetch` also carries Bun's `preconnect`; the providers only ever call it.
+  const fn: typeof fetch = Object.assign(call, { preconnect: () => {} })
   return { fn, seen }
+}
+
+/** A list field of a recorded JSON body. */
+const listIn = (body: unknown, key: string): readonly unknown[] => {
+  const value = typeof body === "object" && body !== null ? Reflect.get(body, key) : undefined
+  return Array.isArray(value) ? value : []
 }
 
 const QUICK = { debounceMs: 0, sleep: async () => {}, onError: () => {} }
@@ -371,7 +379,7 @@ describe("providers", () => {
     const cf = cloudflareZone({ zoneId: ZONE, apiToken: "tok", fetch: api.fn, queue: QUICK })
     const tags = Array.from({ length: 101 }, (_, i) => `t${i}`)
     expect((await cf.purge({ tags })).cdn).toBe("accepted")
-    expect(api.seen.map((s) => (s.body as { tags: string[] }).tags.length)).toEqual([100, 1])
+    expect(api.seen.map((s) => listIn(s.body, "tags").length)).toEqual([100, 1])
     expect(api.seen[0]?.url).toBe(`https://api.cloudflare.com/client/v4/zones/${ZONE}/purge_cache`)
     expect(api.seen[0]?.headers.authorization).toBe("Bearer tok")
     expect(cf.cacheHeaders({ tags: ["a", "b"], maxAge: 60, staleWhileRevalidate: 30 })).toEqual({
@@ -416,12 +424,12 @@ describe("providers", () => {
       queue: QUICK,
     })
     await v.purge({ tags: Array.from({ length: 17 }, (_, i) => `t${i}`) })
-    expect(api.seen.map((s) => (s.body as { tags: string[] }).tags.length)).toEqual([16, 1])
+    expect(api.seen.map((s) => listIn(s.body, "tags").length)).toEqual([16, 1])
     expect(api.seen[0]?.url).toBe(
       "https://api.vercel.com/v1/edge-cache/invalidate-by-tags?projectIdOrName=prj&teamId=team",
     )
     expect(api.seen[0]?.body).toEqual({
-      tags: api.seen[0]?.body && (api.seen[0].body as { tags: string[] }).tags,
+      tags: Array.from({ length: 16 }, (_, i) => `t${i}`),
       target: "production",
     })
     expect(api.seen[0]?.headers.authorization).toBe("Bearer tok")
@@ -472,9 +480,7 @@ describe("providers", () => {
       queue: QUICK,
     })
     await f.purge({ tags: Array.from({ length: 257 }, (_, i) => `t${i}`) })
-    expect(
-      api.seen.map((s) => (s.body as { surrogate_keys: string[] }).surrogate_keys.length),
-    ).toEqual([256, 1])
+    expect(api.seen.map((s) => listIn(s.body, "surrogate_keys").length)).toEqual([256, 1])
     expect(api.seen[0]?.url).toBe("https://api.fastly.com/service/SU1Z0isxPaozGVKXdv0eY/purge")
     expect(api.seen[0]?.headers["fastly-key"]).toBe("tok")
     expect(api.seen[0]?.headers["fastly-soft-purge"]).toBe("1")
@@ -589,7 +595,7 @@ describe("@nifrajs/web/cdn stays on the server", () => {
       conditions: ["bun"],
       metafile: true,
     })
-    const found = detectServerOnlyInClient(fromBunMetafile(result.metafile as never))
+    const found = detectServerOnlyInClient(fromBunMetafile(result.metafile))
     expect(found.length).toBeGreaterThan(0)
     expect(found[0]?.chain.at(-1)).toContain("marked backend-only")
   })
@@ -647,12 +653,26 @@ describe("edges", () => {
       RangeError,
     )
     expect(() => withCdn(() => new Response(), { provider, staleIfError: 1.5 })).toThrow(RangeError)
-    expect(() => defineCdnProvider({} as never, { debounceMs: Number.NaN })).toThrow(RangeError)
+    expect(() =>
+      defineCdnProvider(
+        {
+          name: "x",
+          tagsPerCall: 1,
+          maxResponseTags: 1,
+          cacheHeaders: () => ({}),
+          noStoreHeaders: () => ({}),
+          purgeTags: async () => ({ ok: true }),
+        },
+        { debounceMs: Number.NaN },
+      ),
+    ).toThrow(RangeError)
     expect(() => fastly({ serviceId: "a/b", apiToken: "t" })).toThrow(/serviceId/)
     expect(() => fastly({ serviceId: "abc", apiToken: "" })).toThrow(/apiToken is empty/)
     expect(() => vercel({ token: "", projectId: "p" })).toThrow(/token is empty/)
     expect(() => vercel({ token: "t", projectId: "" })).toThrow(/projectId/)
-    expect(() => cloudflareWorkersCache({ cache: {} as never })).toThrow(/cloudflare:workers/)
+    // A plain JS caller can pass anything; the runtime check is what is under test.
+    const wrongShape: Parameters<typeof cloudflareWorkersCache>[0] = JSON.parse('{"cache":{}}')
+    expect(() => cloudflareWorkersCache(wrongShape)).toThrow(/cloudflare:workers/)
   })
 
   test("a store that cannot invalidate by tag is refused before anything is purged", async () => {
@@ -690,7 +710,7 @@ test("a 200 from Cloudflare that is not its JSON envelope is not a success", asy
   const cf = cloudflareZone({
     zoneId: ZONE,
     apiToken: "t",
-    fetch: (async () => new Response("<html>proxy page</html>")) as unknown as typeof fetch,
+    fetch: fakeFetch(() => new Response("<html>proxy page</html>")).fn,
     queue: QUICK,
   })
   expect(await cf.purge({ tags: ["a"] })).toEqual({

@@ -552,7 +552,7 @@ export function createDevSession(options: DevSessionOptions): DevSession {
     return {
       ingestPath: DEV_FEED_PATHS.clientEvent,
       pageToken,
-      ...(indicator ? { indicatorPath: DEV_FEED_PATHS.indicator } : {}),
+      indicatorPath: indicator ? DEV_FEED_PATHS.indicator : undefined,
       requestId: requestId ?? undefined,
       documentPath: `${url.pathname}${url.search}`,
     }

@@ -4917,8 +4917,8 @@ _No named exports (side-effect entrypoint)._
 - **RevalidateEndpointOptions** _(interface)_ - `interface RevalidateEndpointOptions`
 - **RevalidateResult** _(interface)_ - `interface RevalidateResult<T>`
   The wrapper `revalidate()` returns: the action's `data` plus the paths it changed. A plain tagged shape (not a class) so `@nifrajs/client`'s `ActionData` can unwrap it structurally without importing from `@nifrajs/web`. `createWebApp` strips the wrapper - the client receives `data` as the body and …
-- **RevalidateTags** _(type)_ - `type RevalidateTags = readonly string[] | ((input: RevalidateTagsInput) => readonly string[])`
-  A route's `revalidateTags`: a fixed list, or one computed per request from its params and URL.
+- **RevalidateTags** _(type)_ - `type RevalidateTags = | readonly string[] | { tags(input: RevalidateTagsInput): readonly string[] }["tags"]`
+  A route's `revalidateTags`: a fixed list, or one computed per request from its params and URL. The function is declared as a method so a route may annotate its own params (`{ params: { id: string } }`).
 - **RevalidateTagsInput** _(interface)_ - `interface RevalidateTagsInput`
   What a `revalidateTags` function is given: the URL and route params only, both already public.
 - **RouteEntry** _(interface)_ - `interface RouteEntry`
@@ -5465,7 +5465,7 @@ _No named exports (side-effect entrypoint)._
   Resolve any thrown value into a `Diagnostic`: parse the (already source-mapped) stack, locate the top user frame, attach a codeframe, and classify the failure for a cause/fix. The caller is responsible for running Vite's `ssrFixStacktrace` first so the frames point at real source.
 - **buildFixPrompt** _(function)_ - `buildFixPrompt: (diagnostic: Diagnostic, context: FixPromptContext, option?: FixOption) => string`
   The prompt for one way of fixing `diagnostic` (its default `fix` when `option` is left out).
-- **classify** _(function)_ - `classify: (name: string, message: string) => { code: string; cause?: string; fix?: string; docsAnchor?: string; fixOptions?: readonly FixOption[]; }`
+- **classify** _(function)_ - `classify: (name: string, message: string) => { code: string; cause?: string; fix?: string; docsAnchor?: string; fixOptions?: readonly FixOption[] | undefined; }`
   Classify an error name+message against the catalog; falls back to the generic unhandled code.
 - **fixPrompts** _(function)_ - `fixPrompts: (diagnostic: Diagnostic, context: FixPromptContext) => readonly FixPrompt[]`
   One prompt per labeled fix option, or a single prompt when the failure has one fix (or none).

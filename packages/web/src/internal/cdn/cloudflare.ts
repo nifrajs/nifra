@@ -69,12 +69,12 @@ export function cloudflareZone(options: CloudflareZoneOptions): CdnProvider {
           return attempt
         }
         // A 200 can still carry `success: false`; only `true` means the purge was received.
-        const body = (await res.json().catch(() => null)) as {
-          success?: unknown
-          errors?: { code?: unknown }[]
-        } | null
-        if (body?.success === true) return attempt
-        const code = body?.errors?.[0]?.code
+        const body: unknown = await res.json().catch(() => null)
+        const field = (from: unknown, name: string): unknown =>
+          typeof from === "object" && from !== null ? Reflect.get(from, name) : undefined
+        if (field(body, "success") === true) return attempt
+        const errors = field(body, "errors")
+        const code = field(Array.isArray(errors) ? errors[0] : undefined, "code")
         return {
           ok: false,
           retryable: false,

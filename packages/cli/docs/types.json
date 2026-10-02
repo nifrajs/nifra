@@ -3838,7 +3838,7 @@
     "name": "classify",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function classify(name: string, message: string): {\n    code: string;\n    cause?: string;\n    fix?: string;\n    docsAnchor?: string;\n    fixOptions?: readonly FixOption[];\n};",
+    "signature": "export declare function classify(name: string, message: string): {\n    code: string;\n    cause?: string;\n    fix?: string;\n    docsAnchor?: string;\n    fixOptions?: readonly FixOption[] | undefined;\n};",
     "doc": "/** Classify an error name+message against the catalog; falls back to the generic unhandled code. */"
   },
   {
@@ -16353,8 +16353,8 @@
     "name": "RevalidateTags",
     "kind": "type",
     "package": "@nifrajs/web",
-    "signature": "export type RevalidateTags = readonly string[] | ((input: RevalidateTagsInput) => readonly string[]);",
-    "doc": "/** A route's `revalidateTags`: a fixed list, or one computed per request from its params and URL. */"
+    "signature": "export type RevalidateTags = readonly string[] | {\n    tags(input: RevalidateTagsInput): readonly string[];\n}[\"tags\"];",
+    "doc": "/**\n * A route's `revalidateTags`: a fixed list, or one computed per request from its params and URL. The\n * function is declared as a method so a route may annotate its own params (`{ params: { id: string } }`).\n */"
   },
   {
     "name": "RevalidateTagsInput",

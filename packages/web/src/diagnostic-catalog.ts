@@ -226,7 +226,7 @@ export function classify(
   cause?: string
   fix?: string
   docsAnchor?: string
-  fixOptions?: readonly FixOption[]
+  fixOptions?: readonly FixOption[] | undefined
 } {
   const hit = DIAGNOSTIC_CATALOG.find((e) => e.match(name, message))
   if (hit === undefined) return { code: "NIFRA_UNHANDLED" }
@@ -235,6 +235,6 @@ export function classify(
     cause: hit.cause,
     fix: hit.fix,
     docsAnchor: hit.docsAnchor,
-    ...(hit.options === undefined ? {} : { fixOptions: hit.options }),
+    fixOptions: hit.options,
   }
 }
