@@ -263,8 +263,8 @@ export function otelBridge(options: OtelBridgeOptions): OtelBridge {
       isRemote: false,
     }
 
-  const contextWith = (spanContext: () => OtelSpanContext): unknown =>
-    api.trace.setSpan(api.context.active(), new ContextSpan(spanContext))
+  const contextWith = (active: unknown, spanContext: () => OtelSpanContext): unknown =>
+    api.trace.setSpan(active, new ContextSpan(spanContext))
 
   const adapter: ObservationAdapter = {
     onStart(span: NifraSpan) {
@@ -338,17 +338,18 @@ export function otelBridge(options: OtelBridgeOptions): OtelBridge {
 
   const scope: ObservationScope = (trace: ObservationContext, run) =>
     api.context.with(
-      contextWith(() => contextOf(trace)),
+      contextWith(api.context.active(), () => contextOf(trace)),
       run,
     )
 
   const apply = <S extends AnyServer>(app: S): S => {
     app.around((c, next) => {
-      const outer = api.trace.getSpan(api.context.active())
+      const active = api.context.active()
+      const outer = api.trace.getSpan(active)
       // The request span opens in `tracing()`'s derive, which runs inside this wrapper, so the
       // context is resolved lazily when an instrumentation starts a child.
       return api.context.with(
-        contextWith(() => {
+        contextWith(active, () => {
           const trace = traceOfContext(c)
           return trace === null ? (outer?.spanContext() ?? INVALID) : contextOf(trace)
         }),

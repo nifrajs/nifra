@@ -228,8 +228,8 @@ export default function Capabilities() {
         <code>useCapability</code> is passed in rather than imported by those packages, so all three
         keep their zero dependencies - a cache should not pull the server into a bundle that only
         wanted a cache. Nothing changes for existing code: only the <code>for(context)</code> path
-        announces anything, and asking for it without a configured beacon throws rather than handing
-        back something that silently proves nothing.
+        announces anything, and asking for it with neither a beacon nor a tracing observer configured
+        throws rather than handing back something that silently proves nothing.
       </p>
       <p>
         The two are complements. Static provenance is total and runs in CI; a beacon is exact but only
