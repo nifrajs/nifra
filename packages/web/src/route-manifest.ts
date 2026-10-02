@@ -124,7 +124,8 @@ export function deriveRouteEntry(
     requires: readonly RouteCapability[]
   } = { id, pattern, mode, hydrate: module.hydrate !== false, requires }
   if (mode === "isr" && module.revalidate !== undefined) entry.revalidate = module.revalidate
-  if (mode === "isr" && module.revalidateTags !== undefined) {
+  // A function's tags exist per request; the manifest records only a fixed list.
+  if (mode === "isr" && Array.isArray(module.revalidateTags)) {
     entry.revalidateTags = module.revalidateTags
   }
   if (prerenderedPaths !== undefined) entry.prerenderedPaths = prerenderedPaths

@@ -3471,6 +3471,55 @@
     "doc": "/** Optional OpenTelemetry anchor for the nearest observed ancestor. */"
   },
   {
+    "name": "CDN_BROWSER_CACHE_CONTROL",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const CDN_BROWSER_CACHE_CONTROL = \"public, max-age=0, must-revalidate\";",
+    "doc": "/** What browsers are told about a page the CDN may store: revalidate every time. */"
+  },
+  {
+    "name": "CdnCacheInput",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface CdnCacheInput {\n    readonly tags: readonly string[];\n    /** Seconds the CDN may serve the page as fresh. */\n    readonly maxAge: number;\n    /** Seconds past `maxAge` the CDN may serve it while it refetches. */\n    readonly staleWhileRevalidate: number;\n    /** Seconds past `maxAge` the CDN may serve it while the origin errors. */\n    readonly staleIfError?: number | undefined;\n}",
+    "doc": "/** What a cacheable page tells the CDN: its tags and how long the CDN may serve it. */"
+  },
+  {
+    "name": "CdnProvider",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface CdnProvider extends CdnPurgeTarget {\n    readonly name: string;\n    /** Most tags one response may carry on this CDN. */\n    readonly maxResponseTags: number;\n    /** Headers that let the CDN store a page under `input.tags` (consumed by the CDN, not the browser). */\n    cacheHeaders(input: CdnCacheInput): Readonly<Record<string, string>>;\n    /** Headers that keep the CDN from storing a page, whatever its rules say. */\n    noStoreHeaders(): Readonly<Record<string, string>>;\n}",
+    "doc": "/** A CDN nifra can tag pages for and purge. Build one with {@link defineCdnProvider}. */"
+  },
+  {
+    "name": "CdnProviderDefinition",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface CdnProviderDefinition {\n    readonly name: string;\n    /** Most tags one purge API call may name. */\n    readonly tagsPerCall: number;\n    readonly maxResponseTags: number;\n    cacheHeaders(input: CdnCacheInput): Readonly<Record<string, string>>;\n    noStoreHeaders(): Readonly<Record<string, string>>;\n    purgeTags(tags: readonly string[]): Promise<PurgeAttempt>;\n}",
+    "doc": "/** What a provider file supplies; {@link defineCdnProvider} adds the queue. */"
+  },
+  {
+    "name": "CdnPurgeError",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface CdnPurgeError {\n    readonly code: \"NIFRA_CDN_PURGE_FAILED\" | \"NIFRA_CDN_RATE_LIMITED\";\n    readonly provider: string;\n    readonly reason: string;\n    /** How many tags the refused call named (never the tags or the credentials). */\n    readonly tags: number;\n    /** Whether the queue gave up on them. */\n    readonly final: boolean;\n}",
+    "doc": "/** A purge that did not go through, as reported to {@link PurgeQueueOptions.onError}. */"
+  },
+  {
+    "name": "CdnPurgeOutcome",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface CdnPurgeOutcome {\n    readonly cdn: \"accepted\" | \"queued\" | \"failed\";\n    /** Whether the same purge may succeed if sent again. */\n    readonly retryable: boolean;\n    /** A short reason when it did not succeed (never the provider's credentials). */\n    readonly error?: string;\n}",
+    "doc": "/** What a CDN purge came to: sent and accepted, queued behind a rate limit or retry, or refused. */"
+  },
+  {
+    "name": "CdnPurgeTarget",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface CdnPurgeTarget {\n    purge(target: {\n        readonly tags?: readonly string[];\n        readonly paths?: readonly string[];\n    }, platform?: ISRPlatform): Promise<CdnPurgeOutcome>;\n}",
+    "doc": "/** A CDN a revalidation purges after the origin store; every `@nifrajs/web/cdn` provider is one. */"
+  },
+  {
     "name": "CertifiableCacheEntry",
     "kind": "interface",
     "package": "@nifrajs/testing",
@@ -3883,6 +3932,32 @@
     "kind": "interface",
     "package": "@nifrajs/web",
     "signature": "export interface CloudflareRouteRules {\n    readonly include: readonly string[];\n    readonly exclude: readonly string[];\n    /** Public files the budget could not name, so the build can say so instead of capping silently. */\n    readonly omitted: readonly string[];\n}"
+  },
+  {
+    "name": "cloudflareWorkersCache",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function cloudflareWorkersCache(options: CloudflareWorkersCacheOptions): CdnProvider;",
+    "doc": "/** Workers Cache in front of the Worker serving the app. Purges are scoped to the calling entrypoint. */"
+  },
+  {
+    "name": "CloudflareWorkersCacheOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface CloudflareWorkersCacheOptions {\n    /** `import { cache } from \"cloudflare:workers\"` (needs `[cache] enabled = true` in wrangler). */\n    readonly cache: WorkersCacheLike;\n    /**\n     * Whether the Worker serves different content per hostname. Workers Cache keys entries by path, not\n     * host, so such an app would serve one host's page to another: `true` is refused.\n     */\n    readonly hostRouted?: boolean;\n    readonly queue?: PurgeQueueOptions;\n}"
+  },
+  {
+    "name": "cloudflareZone",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function cloudflareZone(options: CloudflareZoneOptions): CdnProvider;",
+    "doc": "/**\n * A Cloudflare zone proxying the origin. HTML is only cached by a Cache Rule that makes it eligible,\n * and the zone's cache ignores `Vary`: the rule must also bypass the cache when the request carries\n * `x-nifra-data` (soft navigations fetch the page URL with that header). `nifra cdn check` tests both.\n */"
+  },
+  {
+    "name": "CloudflareZoneOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface CloudflareZoneOptions {\n    /** The zone id (32 hex characters, on the zone's Overview page). */\n    readonly zoneId: string;\n    /** An API token scoped to Zone > Cache Purge for this zone. Keep it in an env binding. */\n    readonly apiToken: string;\n    readonly queue?: PurgeQueueOptions;\n    /** The fetch purge calls go through; tests pass their own. */\n    readonly fetch?: typeof fetch;\n}"
   },
   {
     "name": "Codeframe",
@@ -4851,6 +4926,13 @@
     "package": "@nifrajs/image",
     "signature": "export declare function createImageHandler(options?: ImageHandlerOptions): (req: Request) => Promise<Response>;",
     "doc": "/**\n * Build the resize request handler. Mount its return value at the `selfHostedLoader` endpoint:\n *\n * ```ts\n * const image = createImageHandler({ root: \"./public\", allowedOrigins: [\"https://cdn.example\"] })\n * // inside your router: if (url.pathname === \"/_image\") return image(req)\n * ```\n */"
+  },
+  {
+    "name": "createInvalidator",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function createInvalidator(options: InvalidatorOptions): {\n    invalidate(target: {\n        readonly tags?: readonly string[];\n        readonly paths?: readonly string[];\n    }, platform?: ISRPlatform): Promise<InvalidateResult>;\n};",
+    "doc": "/**\n * Purge pages after a mutation, from app code: `await invalidate({ tags: [\"product:42\"] })`. The\n * origin store goes first, so a CDN refetch cannot repopulate from a stale origin entry. At most 32\n * tags and 100 paths a call.\n */"
   },
   {
     "name": "createIslandBus",
@@ -5831,6 +5913,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function defineCapabilityPolicy(policy: CapabilityPolicy): CapabilityPolicy;",
     "doc": "/** Validate and freeze a capability/provenance policy. */"
+  },
+  {
+    "name": "defineCdnProvider",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function defineCdnProvider(definition: CdnProviderDefinition, options?: PurgeQueueOptions): CdnProvider;",
+    "doc": "/**\n * A {@link CdnProvider} from a provider's API calls, with the purge queue in front: tags arriving\n * within `debounceMs` go out together, chunked to the provider's per-call limit and sent one call at\n * a time; a 429 or 5xx is retried with capped exponential backoff that honors `Retry-After`. A\n * `purge` resolves once its tags' first attempt is answered: `accepted`, `queued` (a retry is\n * pending, kept alive with `platform.waitUntil` on edge runtimes), or `failed`.\n */"
   },
   {
     "name": "defineCertificationProfile",
@@ -7764,6 +7853,18 @@
     "signature": "export interface FakeModelGatewayOptions {\n    readonly responses: readonly ModelGatewayRawResult[];\n}"
   },
   {
+    "name": "fastly",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function fastly(options: FastlyOptions): CdnProvider;"
+  },
+  {
+    "name": "FastlyOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface FastlyOptions {\n    readonly serviceId: string;\n    /** A Fastly API token with the `purge_select` scope. Keep it in an env var. */\n    readonly apiToken: string;\n    /** Mark purged pages stale instead of dropping them. Default `true`. */\n    readonly soft?: boolean;\n    readonly queue?: PurgeQueueOptions;\n    /** The fetch purge calls go through; tests pass their own. */\n    readonly fetch?: typeof fetch;\n}"
+  },
+  {
     "name": "FaultInjectionView",
     "kind": "interface",
     "package": "@nifrajs/agent-app",
@@ -9546,6 +9647,18 @@
     "signature": "export type InterceptBoundary<Data, UI> = BoundaryBase<Data, UI> & {\n    readonly mode: {\n        readonly intercept: string;\n    };\n    readonly load?: (ctx: BoundaryRequestCtx) => Data | Promise<Data>;\n};"
   },
   {
+    "name": "InvalidateResult",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface InvalidateResult {\n    readonly origin: \"done\" | \"skipped\";\n    readonly cdn: CdnPurgeOutcome[\"cdn\"] | \"skipped\";\n    readonly retryable: boolean;\n    readonly error?: string;\n}"
+  },
+  {
+    "name": "InvalidatorOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface InvalidatorOptions {\n    /** The ISR store to purge first. */\n    readonly store?: CacheStore;\n    /** The CDN to purge after the store. */\n    readonly cdn?: CdnPurgeTarget;\n    /**\n     * The site's public origin (`https://example.com`), for the store keys of purged paths under\n     * `withISR`'s default key. Not needed with `key`, or without a store.\n     */\n    readonly origin?: string;\n    /** A store key for a path; must match the `withISR` `key`. Return `null` for a path never cached. */\n    readonly key?: (path: string) => string | null;\n    /** The `query` policy given to `withISR`. Default `\"bypass\"`. Ignored with `key`. */\n    readonly query?: ISRQuery;\n}"
+  },
+  {
     "name": "InvariantExecutor",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -9598,6 +9711,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function isBuildTarget(value: string): value is BuildTarget;",
     "doc": "/** A type guard narrowing an arbitrary string to a {@link BuildTarget}. */"
+  },
+  {
+    "name": "isCacheablePage",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const isCacheablePage: (req: Request, res: Response) => boolean;",
+    "doc": "/**\n * Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a\n * full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond\n * the data header, and, for a request carrying a cookie or Authorization, an explicit `public`.\n * The one rule both `withISR` and `@nifrajs/web/cdn` cache by.\n */"
   },
   {
     "name": "isDataClassification",
@@ -13537,6 +13657,13 @@
     "signature": "export declare function pathnameOf(url: string): string;"
   },
   {
+    "name": "pathTag",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function pathTag(path: string): Promise<string>;",
+    "doc": "/**\n * The tag every page a CDN stores carries for its own path, so a path purge works on CDNs that only\n * purge by tag. It hashes the normalized pathname alone: the query and the host stay out, so one purge\n * reaches every query variant and needs no knowledge of the public origin. Two hosts serving the same\n * path share the tag, which can only make a purge reach more than asked, never serve a wrong page.\n */"
+  },
+  {
     "name": "PendingApprovalView",
     "kind": "interface",
     "package": "@nifrajs/agent-app",
@@ -14377,6 +14504,19 @@
     "package": "@nifrajs/web",
     "signature": "export declare function publicScanFiles(dir: string, label: string): SecretScanFile[];",
     "doc": "/** Every file under a `public/` directory, named as the app sees it (`public/robots.txt`). */"
+  },
+  {
+    "name": "PurgeAttempt",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type PurgeAttempt = {\n    readonly ok: true;\n} | {\n    readonly ok: false;\n    readonly retryable: boolean;\n    readonly reason: string;\n    readonly retryAfterMs?: number | undefined;\n    readonly rateLimited?: boolean | undefined;\n};",
+    "doc": "/** One purge API call's result. A refusal is `retryable` when sending it again may succeed. */"
+  },
+  {
+    "name": "PurgeQueueOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface PurgeQueueOptions {\n    /** Tags arriving within this window go out in one call (ms). Default 250. */\n    readonly debounceMs?: number;\n    /** Attempts per call before a retryable refusal is given up on. Default 5. */\n    readonly maxAttempts?: number;\n    /** Longest wait between attempts, `Retry-After` included (ms). Default 60000. */\n    readonly maxBackoffMs?: number;\n    /** Most tags waiting or retrying at once; a purge past it is refused as retryable. Default 5000. */\n    readonly maxQueuedTags?: number;\n    /** Where a refused purge is reported. Default: one `console.error` line per refusal. */\n    readonly onError?: (error: CdnPurgeError) => void;\n    /** Timer for the debounce and the backoff; tests pass their own. */\n    readonly sleep?: (ms: number) => Promise<void>;\n}"
   },
   {
     "name": "PutOptions",
@@ -15987,14 +16127,14 @@
     "name": "revalidateEndpoint",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function revalidateEndpoint(options: RevalidateEndpointOptions): (req: Request) => Promise<Response>;",
-    "doc": "/**\n * An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops a path's cached entry\n * or invalidates every entry carrying a tag. `POST` with the secret in the token header and either\n * `?path=/blog/x`, `?tag=products`, or a JSON `{ \"path\": \"/blog/x\" }` / `{ \"tag\": \"products\" }` body.\n * The token is checked in **constant time** (wrong/missing → `401`); malformed targets → `400`;\n * non-POST → `405`. A store without tag support returns `501` for tag requests. Mount it on a nifra route, e.g.\n * `app.post(\"/__nifra/revalidate\", (c) => handler(c.req))`.\n */"
+    "signature": "export declare function revalidateEndpoint(options: RevalidateEndpointOptions): (req: Request, platform?: ISRPlatform) => Promise<Response>;",
+    "doc": "/**\n * An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops cached pages by path\n * or invalidates every entry carrying a tag. `POST` with the secret in the token header and either\n * `?path=/blog/x`, `?tag=products`, a JSON `{ \"path\": \"/blog/x\" }` / `{ \"tag\": \"products\" }` body, or a\n * batch `{ \"paths\": [...], \"tags\": [...] }` of at most 100 paths and 32 tags.\n * The token is checked in **constant time** (wrong/missing → `401`); malformed targets → `400`;\n * non-POST → `405`. A store without tag support returns `501` for tag requests. Mount it on a nifra route, e.g.\n * `app.post(\"/__nifra/revalidate\", (c) => handler(c.req))`.\n */"
   },
   {
     "name": "RevalidateEndpointOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RevalidateEndpointOptions {\n    readonly store: CacheStore;\n    /** Shared secret; the request's token must match it (constant-time). */\n    readonly secret: string;\n    /** Header carrying the secret. Default `x-nifra-revalidate-token`. */\n    readonly tokenHeader?: string;\n    /** Map a to-purge path → its cache key - MUST match the `withISR` `key` fn. The default uses the\n     * revalidation request's origin plus the purged path, matching `withISR`'s default host-aware key. */\n    readonly key?: (path: string, req: Request) => string;\n    /** The `query` policy given to `withISR`, so a purged path's query string is keyed the same way.\n     * Default `\"bypass\"`. A path whose query `withISR` never caches is refused with `400`. Ignored\n     * when `key` is supplied. */\n    readonly query?: ISRQuery;\n}"
+    "signature": "export interface RevalidateEndpointOptions {\n    readonly store: CacheStore;\n    /** Shared secret; the request's token must match it (constant-time). */\n    readonly secret: string;\n    /** Header carrying the secret. Default `x-nifra-revalidate-token`. */\n    readonly tokenHeader?: string;\n    /** Map a to-purge path → its cache key - MUST match the `withISR` `key` fn. The default uses the\n     * revalidation request's origin plus the purged path, matching `withISR`'s default host-aware key. */\n    readonly key?: (path: string, req: Request) => string;\n    /** The `query` policy given to `withISR`, so a purged path's query string is keyed the same way.\n     * Default `\"bypass\"`. A path whose query `withISR` never caches is refused with `400`. Ignored\n     * when `key` is supplied. */\n    readonly query?: ISRQuery;\n    /**\n     * A CDN to purge after the origin store (a `@nifrajs/web/cdn` provider). The origin goes first so a\n     * CDN refetch cannot repopulate from a stale origin entry. The reply is `200` when the CDN accepted\n     * the purge, `202` when it is queued (rate limit or retry), and `502` when the CDN refused it.\n     */\n    readonly cdn?: CdnPurgeTarget;\n}"
   },
   {
     "name": "RevalidateResult",
@@ -16002,6 +16142,20 @@
     "package": "@nifrajs/web",
     "signature": "export interface RevalidateResult<T> {\n    readonly __nifraRevalidate: readonly string[];\n    readonly data: T;\n}",
     "doc": "/** The wrapper `revalidate()` returns: the action's `data` plus the paths it changed. A plain tagged\n * shape (not a class) so `@nifrajs/client`'s `ActionData` can unwrap it structurally without importing\n * from `@nifrajs/web`. `createWebApp` strips the wrapper - the client receives `data` as the body and\n * the paths via the `X-Nifra-Revalidate` header. */"
+  },
+  {
+    "name": "RevalidateTags",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type RevalidateTags = readonly string[] | ((input: RevalidateTagsInput) => readonly string[]);",
+    "doc": "/** A route's `revalidateTags`: a fixed list, or one computed per request from its params and URL. */"
+  },
+  {
+    "name": "RevalidateTagsInput",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface RevalidateTagsInput {\n    readonly params: Readonly<Record<string, string>>;\n    readonly url: URL;\n}",
+    "doc": "/** What a `revalidateTags` function is given: the URL and route params only, both already public. */"
   },
   {
     "name": "REVIEW_MAX_ARRAY_ITEMS",
@@ -16630,7 +16784,7 @@
     "name": "RouteModule",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface RouteModule {\n    readonly default: unknown;\n    readonly loader?: Loader;\n    readonly action?: Action;\n    /**\n     * Backend half only: the schema of what {@link loader} sends to the browser. Required whenever the\n     * loader returns data. Keys it does not declare are dropped before the page renders; a declared\n     * field of the wrong shape fails the request with a 500 naming the field's path.\n     */\n    readonly loaderOutput?: StandardSchemaV1;\n    /** Backend half only: the schema of what {@link action} sends back, held to the same rule. */\n    readonly actionOutput?: StandardSchemaV1;\n    /** Optional client-only loader. It runs after hydration and on client navigations. */\n    readonly clientLoader?: ClientLoader;\n    /** Optional client-only submit wrapper. The server action remains mandatory for mutations. */\n    readonly clientAction?: ClientAction;\n    /** Named async boundaries owned by this route. The adapter renders their neutral state seam. A\n     * boundary's `load` comes from {@link boundaryLoaders} in the route's backend half; the frontend\n     * file declares only how it renders. */\n    readonly boundaries?: readonly BoundaryRegistration[];\n    /** Backend half only: each boundary's server loader, keyed by boundary name. */\n    readonly boundaryLoaders?: Readonly<Record<string, BoundaryLoaderEntry>>;\n    /** A Standard Schema validating this route's URL search params. When present, `ctx.search` is parsed +\n     * validated against it (failing closed to the schema's defaults on invalid input); type it into the\n     * loader with `LoaderArgs<Api, Env, typeof searchSchema>`. */\n    readonly searchSchema?: StandardSchemaV1<unknown, Record<string, unknown>>;\n    /** Search keys that are purely client-side UI (`\"tab\"`, a client-side `\"sort\"`, `\"modal\"`) and do NOT\n     * affect this route's loader. When a client navigation stays on the same route + pathname and changes\n     * ONLY these keys, the router updates the URL (so `useSearch` re-renders) WITHOUT re-running the loader.\n     * Any other key change revalidates as usual - so omitting a data-affecting key here can never serve\n     * stale data, it only forgoes the optimization. Client-only: the server always renders fresh. */\n    readonly searchClientKeys?: readonly string[];\n    readonly meta?: MetaInput;\n    /**\n     * Opt this route out of nifra's full-document client hydration. The server still renders the full\n     * HTML document, loaders/actions still run, and native links/forms still work; the generated app\n     * client, route chunks, and loader globals are omitted for hard navigations. Intended for static or\n     * island-hydrated pages where interactivity is mounted by smaller, explicit client entries.\n     */\n    readonly hydrate?: boolean;\n    /**\n     * `false` renders this route's component in the browser only. The server still matches the route,\n     * runs its gates and loaders, renders the layouts around it and embeds the data - it skips the\n     * component alone, putting {@link HydrateFallback} (or nothing) in the page slot. The browser\n     * hydrates against that, then renders the component. For a component that cannot render on a\n     * server: one that reads `window` or a browser-only API while it renders.\n     *\n     * The module itself is still imported on the server, for its loader and options - so an import\n     * that needs a browser at load time belongs inside the component (a dynamic `import()`), not at the\n     * top of the file. Cannot be combined with `hydrate = false`: nothing would ever render the page.\n     */\n    readonly ssr?: boolean;\n    /**\n     * What the server renders in the page slot of an `ssr = false` route, and what the browser hydrates\n     * before the component takes over - a skeleton, a spinner. Receives the same props as the\n     * component, loader `data` included. Omitted ⇒ the slot is empty until the component renders.\n     */\n    readonly HydrateFallback?: unknown;\n    /**\n     * Any value to report through `useMatches` - a breadcrumb label, a render function, a flag a layout\n     * reads about the page inside it. Layouts, pages, and status pages may export one. It is read from\n     * the module on the server and in the browser, so it must be the same value on both.\n     */\n    readonly handle?: unknown;\n    /**\n     * Opt a **static** route (no `:param`/`*`) into build-time prerendering (SSG): `prerenderRoutes`\n     * (from `@nifrajs/web/build`) renders it to a static `index.html` at build. The loader runs at build\n     * with the in-process `api` (build-safe data only - no per-request cookies/secrets); `defer()` on a\n     * prerendered route resolves at build. For **dynamic** routes use {@link getStaticPaths} instead.\n     */\n    readonly prerender?: boolean;\n    /**\n     * Enumerate the concrete params to prerender for a **dynamic** (`:param`) route - the SSG path list\n     * (blogs/docs/etc.). Runs at build; `prerenderRoutes` renders one `index.html` per returned path.\n     */\n    readonly getStaticPaths?: GetStaticPaths;\n    /**\n     * ISR freshness for this route, in **seconds**. `createWebApp` emits it as an\n     * `x-nifra-isr-revalidate` response header that `withISR` reads to set the page's cache TTL\n     * (overriding the wrapper's default). Older-than-`revalidate` cached pages are served stale while\n     * regenerating. (Distinct from the action-revalidation `x-nifra-revalidate` header - a CSV path\n     * list the client parses to refetch - so the two channels never alias.)\n     */\n    readonly revalidate?: number;\n    /** Optional bounded tags used by ISR on-demand invalidation (`?tag=...`). */\n    readonly revalidateTags?: readonly string[];\n    /**\n     * No-framework island bundles (`@nifrajs/web/islands`) to load on this route, as `<script\n     * type=\"module\">` in the document tail. Loaded **regardless of `hydrate`** - pair with\n     * `export const hydrate = false` for a static page that ships zero framework JS and mounts\n     * interactivity through `<Island>` markers + `mountIslands` enhancers instead.\n     */\n    readonly islandScripts?: readonly string[];\n}",
+    "signature": "export interface RouteModule {\n    readonly default: unknown;\n    readonly loader?: Loader;\n    readonly action?: Action;\n    /**\n     * Backend half only: the schema of what {@link loader} sends to the browser. Required whenever the\n     * loader returns data. Keys it does not declare are dropped before the page renders; a declared\n     * field of the wrong shape fails the request with a 500 naming the field's path.\n     */\n    readonly loaderOutput?: StandardSchemaV1;\n    /** Backend half only: the schema of what {@link action} sends back, held to the same rule. */\n    readonly actionOutput?: StandardSchemaV1;\n    /** Optional client-only loader. It runs after hydration and on client navigations. */\n    readonly clientLoader?: ClientLoader;\n    /** Optional client-only submit wrapper. The server action remains mandatory for mutations. */\n    readonly clientAction?: ClientAction;\n    /** Named async boundaries owned by this route. The adapter renders their neutral state seam. A\n     * boundary's `load` comes from {@link boundaryLoaders} in the route's backend half; the frontend\n     * file declares only how it renders. */\n    readonly boundaries?: readonly BoundaryRegistration[];\n    /** Backend half only: each boundary's server loader, keyed by boundary name. */\n    readonly boundaryLoaders?: Readonly<Record<string, BoundaryLoaderEntry>>;\n    /** A Standard Schema validating this route's URL search params. When present, `ctx.search` is parsed +\n     * validated against it (failing closed to the schema's defaults on invalid input); type it into the\n     * loader with `LoaderArgs<Api, Env, typeof searchSchema>`. */\n    readonly searchSchema?: StandardSchemaV1<unknown, Record<string, unknown>>;\n    /** Search keys that are purely client-side UI (`\"tab\"`, a client-side `\"sort\"`, `\"modal\"`) and do NOT\n     * affect this route's loader. When a client navigation stays on the same route + pathname and changes\n     * ONLY these keys, the router updates the URL (so `useSearch` re-renders) WITHOUT re-running the loader.\n     * Any other key change revalidates as usual - so omitting a data-affecting key here can never serve\n     * stale data, it only forgoes the optimization. Client-only: the server always renders fresh. */\n    readonly searchClientKeys?: readonly string[];\n    readonly meta?: MetaInput;\n    /**\n     * Opt this route out of nifra's full-document client hydration. The server still renders the full\n     * HTML document, loaders/actions still run, and native links/forms still work; the generated app\n     * client, route chunks, and loader globals are omitted for hard navigations. Intended for static or\n     * island-hydrated pages where interactivity is mounted by smaller, explicit client entries.\n     */\n    readonly hydrate?: boolean;\n    /**\n     * `false` renders this route's component in the browser only. The server still matches the route,\n     * runs its gates and loaders, renders the layouts around it and embeds the data - it skips the\n     * component alone, putting {@link HydrateFallback} (or nothing) in the page slot. The browser\n     * hydrates against that, then renders the component. For a component that cannot render on a\n     * server: one that reads `window` or a browser-only API while it renders.\n     *\n     * The module itself is still imported on the server, for its loader and options - so an import\n     * that needs a browser at load time belongs inside the component (a dynamic `import()`), not at the\n     * top of the file. Cannot be combined with `hydrate = false`: nothing would ever render the page.\n     */\n    readonly ssr?: boolean;\n    /**\n     * What the server renders in the page slot of an `ssr = false` route, and what the browser hydrates\n     * before the component takes over - a skeleton, a spinner. Receives the same props as the\n     * component, loader `data` included. Omitted ⇒ the slot is empty until the component renders.\n     */\n    readonly HydrateFallback?: unknown;\n    /**\n     * Any value to report through `useMatches` - a breadcrumb label, a render function, a flag a layout\n     * reads about the page inside it. Layouts, pages, and status pages may export one. It is read from\n     * the module on the server and in the browser, so it must be the same value on both.\n     */\n    readonly handle?: unknown;\n    /**\n     * Opt a **static** route (no `:param`/`*`) into build-time prerendering (SSG): `prerenderRoutes`\n     * (from `@nifrajs/web/build`) renders it to a static `index.html` at build. The loader runs at build\n     * with the in-process `api` (build-safe data only - no per-request cookies/secrets); `defer()` on a\n     * prerendered route resolves at build. For **dynamic** routes use {@link getStaticPaths} instead.\n     */\n    readonly prerender?: boolean;\n    /**\n     * Enumerate the concrete params to prerender for a **dynamic** (`:param`) route - the SSG path list\n     * (blogs/docs/etc.). Runs at build; `prerenderRoutes` renders one `index.html` per returned path.\n     */\n    readonly getStaticPaths?: GetStaticPaths;\n    /**\n     * ISR freshness for this route, in **seconds**. `createWebApp` emits it as an\n     * `x-nifra-isr-revalidate` response header that `withISR` reads to set the page's cache TTL\n     * (overriding the wrapper's default). Older-than-`revalidate` cached pages are served stale while\n     * regenerating. (Distinct from the action-revalidation `x-nifra-revalidate` header - a CSV path\n     * list the client parses to refetch - so the two channels never alias.)\n     */\n    readonly revalidate?: number;\n    /**\n     * Bounded tags ISR on-demand invalidation (`?tag=...`) and a CDN purge reach this page by. A list, or\n     * a function of the route's params and URL (`({ params }) => [\\`product:${params.id}\\`]`) for tags\n     * per page. Tags travel to the CDN and reach anyone reading the origin: never put personal data in one.\n     */\n    readonly revalidateTags?: RevalidateTags;\n    /**\n     * No-framework island bundles (`@nifrajs/web/islands`) to load on this route, as `<script\n     * type=\"module\">` in the document tail. Loaded **regardless of `hydrate`** - pair with\n     * `export const hydrate = false` for a static page that ships zero framework JS and mounts\n     * interactivity through `<Island>` markers + `mountIslands` enhancers instead.\n     */\n    readonly islandScripts?: readonly string[];\n}",
     "doc": "/** A route module - the default component + optional loader / action / meta. */"
   },
   {
@@ -21350,6 +21504,12 @@
     "doc": "/**\n * Monotonic child-vector check: a newly opened boundary must advance strictly past the run's last\n * allocated vector. A non-advancing vector is a replay and is refused. `last` is `-1` before any\n * boundary has opened for the run.\n */"
   },
   {
+    "name": "vercel",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function vercel(options: VercelOptions): CdnProvider;"
+  },
+  {
     "name": "VercelHandler",
     "kind": "type",
     "package": "@nifrajs/core",
@@ -21360,6 +21520,12 @@
     "kind": "type",
     "package": "nifra",
     "signature": "export type VercelHandler = (request: Request) => MaybePromise<Response>;"
+  },
+  {
+    "name": "VercelOptions",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type VercelOptions = ({\n    /** `invalidateByTag` from `@vercel/functions`: inside a Vercel Function, no token needed. */\n    readonly invalidateByTag: TagPurge;\n    /** `dangerouslyDeleteByTag` from `@vercel/functions`, for `mode: \"delete\"`. */\n    readonly dangerouslyDeleteByTag?: TagPurge;\n} | {\n    /** A Vercel access token for the REST API. Keep it in an env var. */\n    readonly token: string;\n    readonly projectId: string;\n    readonly teamId?: string;\n    /** Purge one environment only; default both. */\n    readonly target?: \"production\" | \"preview\";\n    /** The fetch purge calls go through; tests pass their own. */\n    readonly fetch?: typeof fetch;\n}) & {\n    /**\n     * `invalidate` (default) marks tagged pages stale: the next visitor gets the old page while Vercel\n     * refetches. `delete` drops them, so the next visitors wait on the origin together.\n     */\n    readonly mode?: \"invalidate\" | \"delete\";\n    readonly queue?: PurgeQueueOptions;\n};"
   },
   {
     "name": "VerificationCompletedView",
@@ -21773,6 +21939,19 @@
     "doc": "/**\n * Wrap an adapter so `for(context)` announces each operation's capability.\n *\n * Forwarding is by Proxy rather than by enumeration, and that is the whole point: a wrapper that lists\n * the methods it knows about is a wrapper that silently deletes the ones it does not, and an adapter's\n * optional capabilities are precisely the methods a hand-written list forgets.\n */"
   },
   {
+    "name": "withCdn",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function withCdn(app: ISRApp | Handler, options: WithCdnOptions): (req: Request, platform?: ISRPlatform) => Promise<Response>;",
+    "doc": "/**\n * Wrap `app` (a `createWebApp` app or a `withISR` handler) so a CDN stores exactly the pages a shared\n * cache may serve to anyone, tagged for purging, for as long as the route's `revalidate` allows.\n * Non-HTML responses (assets, JSON, navigation data) pass through with the app's own headers.\n */"
+  },
+  {
+    "name": "WithCdnOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface WithCdnOptions {\n    readonly provider: CdnProvider;\n    /**\n     * Seconds the CDN may keep serving a page past its freshness while it refetches. Default: the page's\n     * own freshness window. With `withISR` underneath, a page can be this much older than ISR's own.\n     */\n    readonly staleWhileRevalidate?: number;\n    /** Seconds the CDN may serve a page past its freshness while the origin errors. Default: unset. */\n    readonly staleIfError?: number;\n    /** The draft secret given to `createWebApp`: a draft render is never stored by the CDN. */\n    readonly draftSecret?: string;\n}"
+  },
+  {
     "name": "withDeadlineHeader",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -21818,6 +21997,13 @@
     "kind": "interface",
     "package": "@nifrajs/jobs",
     "signature": "export interface WorkerOptions {\n    /** Max jobs in flight at once. Default 1. */\n    readonly concurrency?: number;\n    /** How often to poll the store for due jobs (ms). Default 250. */\n    readonly pollIntervalMs?: number;\n    /** How long a leased job is hidden before it's considered abandoned and re-leased (ms). Default 30_000. */\n    readonly leaseMs?: number;\n}"
+  },
+  {
+    "name": "WorkersCacheLike",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface WorkersCacheLike {\n    purge(options: {\n        tags?: string[];\n        pathPrefixes?: string[];\n    }): Promise<{\n        success: boolean;\n        errors?: readonly {\n            code?: number;\n            message?: string;\n        }[];\n    }>;\n}",
+    "doc": "/** The Worker's cache binding: `import { cache } from \"cloudflare:workers\"`, or `ctx.cache`. */"
   },
   {
     "name": "WorkflowContext",

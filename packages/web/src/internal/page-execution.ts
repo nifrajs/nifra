@@ -16,6 +16,7 @@ import type { CspPolicy } from "../csp.ts"
 import { type CssLoadingMode, DEFAULT_CSS_LOADING, normalizeCssLoading } from "../css-contract.ts"
 import { defer, ndjsonStream, prepareDeferred } from "../deferred.ts"
 import { isDraftEnabled } from "../draft.ts"
+import { routeTags } from "../isr.ts"
 import type {
   LayoutEntry,
   LoaderContext,
@@ -856,7 +857,13 @@ export function createPageRequestExecutor<Env = unknown>(
         ...(mod.revalidateTags !== undefined &&
         !personalized &&
         options.cacheChannel?.enabled === true
-          ? { revalidateTags: mod.revalidateTags }
+          ? {
+              revalidateTags: routeTags(
+                mod.revalidateTags,
+                { params, url: new URL(req.url) },
+                route.id,
+              ),
+            }
           : {}),
         ...(mod.islandScripts !== undefined ? { islandScripts: mod.islandScripts } : {}),
         ...(nonce === undefined ? {} : { nonce }),

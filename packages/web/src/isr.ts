@@ -51,7 +51,7 @@ function normalizeTag(tag: string): string {
   return tag
 }
 
-function normalizeTags(tags: readonly string[] | undefined): readonly string[] {
+export function normalizeTags(tags: readonly string[] | undefined): readonly string[] {
   if (tags === undefined) return []
   if (!Array.isArray(tags) || tags.length > MAX_ISR_TAGS) {
     throw new TypeError("[nifra/web] ISR tags must contain at most 32 bounded tokens")
@@ -61,7 +61,8 @@ function normalizeTags(tags: readonly string[] | undefined): readonly string[] {
   return Object.freeze([...unique])
 }
 
-function tagsFromHeader(value: string | null): readonly string[] {
+/** The route tags a response carries on {@link ISR_REVALIDATE_TAGS_HEADER}; malformed means none. */
+export function tagsFromHeader(value: string | null): readonly string[] {
   if (value === null || value.trim() === "") return []
   try {
     return normalizeTags(value.split(",").map((tag) => tag.trim()))
@@ -76,6 +77,45 @@ function tagsFromHeader(value: string | null): readonly string[] {
 export function serializeISRTags(tags: readonly string[]): string | undefined {
   const normalized = normalizeTags(tags)
   return normalized.length === 0 ? undefined : normalized.join(",")
+}
+
+/** What a `revalidateTags` function is given: the URL and route params only, both already public. */
+export interface RevalidateTagsInput {
+  readonly params: Readonly<Record<string, string>>
+  readonly url: URL
+}
+
+/** A route's `revalidateTags`: a fixed list, or one computed per request from its params and URL. */
+export type RevalidateTags = readonly string[] | ((input: RevalidateTagsInput) => readonly string[])
+
+const warnedTagRoutes = new Set<string>()
+
+/**
+ * The tags `declared` gives this request. A fixed list is returned as declared (it is validated when
+ * the header is written). A function's result keeps its valid, distinct tags, at most 32; anything
+ * else is dropped with one warning per route, naming the route but never the tag.
+ */
+export function routeTags(
+  declared: RevalidateTags,
+  input: RevalidateTagsInput,
+  routeId: string,
+): readonly string[] {
+  if (typeof declared !== "function") return declared
+  const result: unknown = declared(input)
+  const kept = new Set<string>()
+  let dropped = 0
+  for (const tag of Array.isArray(result) ? (result as unknown[]) : []) {
+    if (typeof tag === "string" && ISR_TAG_PATTERN.test(tag) && kept.size < MAX_ISR_TAGS) {
+      kept.add(tag)
+    } else dropped++
+  }
+  if ((dropped > 0 || !Array.isArray(result)) && !warnedTagRoutes.has(routeId)) {
+    warnedTagRoutes.add(routeId)
+    console.warn(
+      `[nifra/web] NIFRA_CDN_TAG_INVALID: revalidateTags of route "${routeId}" returned ${Array.isArray(result) ? `${dropped} tag(s) that are not a letter followed by up to 127 of A-Z a-z 0-9 . _ : / -, or past the first 32` : "something other than an array"}; those were dropped.`,
+    )
+  }
+  return [...kept]
 }
 
 export interface MemoryCacheStoreOptions {
@@ -455,7 +495,7 @@ const MAX_UNCACHEABLE_KEYS = 1024
 export type ISRQuery = "bypass" | "all" | readonly string[]
 
 /** The default key for a URL under a `query` policy, or `null` when the URL must bypass the cache. */
-const urlKeyOf = (query: ISRQuery = "bypass"): ((url: URL) => string | null) => {
+export const urlKeyOf = (query: ISRQuery = "bypass"): ((url: URL) => string | null) => {
   if (query === "all") return (url) => url.origin + url.pathname + url.search
   if (query !== "bypass" && !Array.isArray(query)) {
     throw new TypeError(
@@ -526,7 +566,13 @@ const responseDeclaresVary = (res: Response): boolean => {
   return false
 }
 
-const isCacheablePage = (req: Request, res: Response): boolean => {
+/**
+ * Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a
+ * full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond
+ * the data header, and, for a request carrying a cookie or Authorization, an explicit `public`.
+ * The one rule both `withISR` and `@nifrajs/web/cdn` cache by.
+ */
+export const isCacheablePage = (req: Request, res: Response): boolean => {
   if (req.method !== "GET") return false
   if (req.headers.get("x-nifra-data") !== null) return false
   if (res.status !== 200) return false
@@ -625,6 +671,24 @@ export function withISR(
   const draftSecret = options.draftSecret
   const regenerating = new Set<string>()
   openCacheChannel(app)
+  // An outer cache layer (`withCdn`) opens this wrapper's own channel: cached responses then carry how
+  // much freshness they have left and their tags, so the CDN never holds a page longer than ISR would.
+  let channelOpen = false
+  const advertise = (headers: Headers, remainingMs: number, tags: readonly string[]): void => {
+    if (!channelOpen) return
+    headers.set(ISR_REVALIDATE_HEADER, String(Math.max(0, Math.floor(remainingMs / 1000))))
+    const serialized = tags.length === 0 ? undefined : tags.join(",")
+    if (serialized !== undefined) headers.set(ISR_REVALIDATE_TAGS_HEADER, serialized)
+  }
+  const served = (entry: CachedResponse, status: "hit" | "stale"): Response => {
+    const res = responseFrom(entry, status)
+    advertise(
+      res.headers,
+      status === "stale" ? 0 : entry.revalidate - (now() - entry.storedAt),
+      entry.tags ?? [],
+    )
+    return res
+  }
   if ((app as unknown as Record<symbol, unknown>)[DOCUMENT_POLICY] === "nonce") {
     console.warn(
       "[nifra/web] withISR wraps an app whose every document carries a CSP nonce. Such documents are " +
@@ -675,10 +739,12 @@ export function withISR(
       ...(tags.length === 0 ? {} : { tags }),
     }
     await store.set(key, entry)
-    return new Response(body, {
+    const fresh = new Response(body, {
       status: res.status,
       headers: { ...entry.headers, [ISR_STATUS_HEADER]: "miss" },
     })
+    advertise(fresh.headers, entry.revalidate, tags)
+    return fresh
   }
 
   // Background regeneration (single-flight per key) - a failed regen keeps the stale entry; the next
@@ -717,7 +783,7 @@ export function withISR(
     }
   }
 
-  return async (req, platform) => {
+  const handler = async (req: Request, platform?: ISRPlatform): Promise<Response> => {
     // A data-mode soft-nav GET bypasses the cache entirely: entries are full HTML documents keyed
     // by URL, and serving one to a loader-data fetch would hand the client HTML where it expects
     // the loader payload. (The write path already refuses to cache data-mode responses.)
@@ -738,19 +804,46 @@ export function withISR(
 
     const hit = await store.get(key)
     if (hit !== undefined) {
-      if (now() - hit.storedAt < hit.revalidate) return responseFrom(hit, "hit")
+      if (now() - hit.storedAt < hit.revalidate) return served(hit, "hit")
       // Stale: serve it now, regenerate behind it (waitUntil keeps the edge worker alive for the regen).
       const task = regenerate(req, platform, key)
       if (typeof platform?.waitUntil === "function") platform.waitUntil(task)
       else void task.catch(() => {})
-      return responseFrom(hit, "stale")
+      return served(hit, "stale")
     }
     return render(req, platform, key)
   }
+  Object.defineProperty(handler, CACHE_CHANNEL, {
+    value: () => {
+      channelOpen = true
+    },
+  })
+  return handler
 }
 
 const jsonError = (status: number, error: string): Response =>
   Response.json({ ok: false, error }, { status })
+
+/** What a CDN purge came to: sent and accepted, queued behind a rate limit or retry, or refused. */
+export interface CdnPurgeOutcome {
+  readonly cdn: "accepted" | "queued" | "failed"
+  /** Whether the same purge may succeed if sent again. */
+  readonly retryable: boolean
+  /** A short reason when it did not succeed (never the provider's credentials). */
+  readonly error?: string
+}
+
+/** A CDN a revalidation purges after the origin store; every `@nifrajs/web/cdn` provider is one. */
+export interface CdnPurgeTarget {
+  purge(
+    target: { readonly tags?: readonly string[]; readonly paths?: readonly string[] },
+    platform?: ISRPlatform,
+  ): Promise<CdnPurgeOutcome>
+}
+
+/** Most paths and tags one revalidation request may name, so a leaked token cannot fan out. */
+export const MAX_REVALIDATE_PATHS = 100
+export const MAX_REVALIDATE_TAGS = MAX_ISR_TAGS
 
 export interface RevalidateEndpointOptions {
   readonly store: CacheStore
@@ -765,19 +858,32 @@ export interface RevalidateEndpointOptions {
    * Default `"bypass"`. A path whose query `withISR` never caches is refused with `400`. Ignored
    * when `key` is supplied. */
   readonly query?: ISRQuery
+  /**
+   * A CDN to purge after the origin store (a `@nifrajs/web/cdn` provider). The origin goes first so a
+   * CDN refetch cannot repopulate from a stale origin entry. The reply is `200` when the CDN accepted
+   * the purge, `202` when it is queued (rate limit or retry), and `502` when the CDN refused it.
+   */
+  readonly cdn?: CdnPurgeTarget
+}
+
+const stringList = (value: unknown): string[] | null | undefined => {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) return null
+  return value
 }
 
 /**
- * An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops a path's cached entry
+ * An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops cached pages by path
  * or invalidates every entry carrying a tag. `POST` with the secret in the token header and either
- * `?path=/blog/x`, `?tag=products`, or a JSON `{ "path": "/blog/x" }` / `{ "tag": "products" }` body.
+ * `?path=/blog/x`, `?tag=products`, a JSON `{ "path": "/blog/x" }` / `{ "tag": "products" }` body, or a
+ * batch `{ "paths": [...], "tags": [...] }` of at most 100 paths and 32 tags.
  * The token is checked in **constant time** (wrong/missing → `401`); malformed targets → `400`;
  * non-POST → `405`. A store without tag support returns `501` for tag requests. Mount it on a nifra route, e.g.
  * `app.post("/__nifra/revalidate", (c) => handler(c.req))`.
  */
 export function revalidateEndpoint(
   options: RevalidateEndpointOptions,
-): (req: Request) => Promise<Response> {
+): (req: Request, platform?: ISRPlatform) => Promise<Response> {
   // An empty secret matches a request that omits the header (`"" === ""`), so an unset env var passed
   // through `?? ""` would open the purge to anyone. Refuse it at construction instead.
   assertTokenSecret(options.secret, "revalidateEndpoint")
@@ -787,7 +893,7 @@ export function revalidateEndpoint(
   const keyOf =
     options.key ??
     ((path: string, req: Request) => urlKey?.(new URL(new URL(req.url).origin + path)) ?? null)
-  return async (req) => {
+  return async (req, platform) => {
     if (req.method !== "POST") return jsonError(405, "method_not_allowed")
     if (!timingSafeEqual(req.headers.get(tokenHeader) ?? "", options.secret)) {
       return jsonError(401, "unauthorized")
@@ -795,31 +901,83 @@ export function revalidateEndpoint(
     const url = new URL(req.url)
     let path = url.searchParams.get("path")
     let tag = url.searchParams.get("tag")
+    let batch: { paths: string[]; tags: string[] } | undefined
     if (path === null && tag === null) {
       const body: unknown = await req.json().catch(() => null)
       if (typeof body === "object" && body !== null) {
-        const candidate = body as { path?: unknown; tag?: unknown }
-        path = typeof candidate.path === "string" ? candidate.path : null
-        tag = typeof candidate.tag === "string" ? candidate.tag : null
+        const candidate = body as { path?: unknown; tag?: unknown; paths?: unknown; tags?: unknown }
+        if (candidate.paths !== undefined || candidate.tags !== undefined) {
+          const paths = stringList(candidate.paths)
+          const tags = stringList(candidate.tags)
+          if (paths === null || tags === null) return jsonError(400, "invalid_batch")
+          if ((paths?.length ?? 0) > MAX_REVALIDATE_PATHS) return jsonError(400, "too_many_paths")
+          if ((tags?.length ?? 0) > MAX_REVALIDATE_TAGS) return jsonError(400, "too_many_tags")
+          batch = { paths: paths ?? [], tags: tags ?? [] }
+          if (batch.paths.length + batch.tags.length === 0) return jsonError(400, "empty_batch")
+        } else {
+          path = typeof candidate.path === "string" ? candidate.path : null
+          tag = typeof candidate.tag === "string" ? candidate.tag : null
+        }
       }
     }
-    if (path !== null && tag !== null) return jsonError(400, "choose_path_or_tag")
-    if (tag !== null) {
+    if (batch === undefined) {
+      if (path !== null && tag !== null) return jsonError(400, "choose_path_or_tag")
+      if (path === null && tag === null) return jsonError(400, "invalid_path")
+      batch = { paths: path === null ? [] : [path], tags: tag === null ? [] : [tag] }
+    }
+
+    const tags = [...new Set(batch.tags)]
+    for (const candidate of tags) {
       try {
-        normalizeTag(tag)
+        normalizeTag(candidate)
       } catch {
         return jsonError(400, "invalid_tag")
       }
-      if (options.store.invalidateTag === undefined) {
-        return jsonError(501, "tag_invalidation_not_supported")
-      }
-      await options.store.invalidateTag(tag)
-      return Response.json({ revalidatedTag: tag })
     }
-    if (path === null || !path.startsWith("/")) return jsonError(400, "invalid_path")
-    const key = keyOf(path, req)
-    if (key === null) return jsonError(400, "uncached_query")
-    await options.store.delete(key)
-    return Response.json({ revalidated: path })
+    const paths = [...new Set(batch.paths)]
+    const keys: string[] = []
+    for (const candidate of paths) {
+      if (!candidate.startsWith("/")) return jsonError(400, "invalid_path")
+      const key = keyOf(candidate, req)
+      if (key === null) return jsonError(400, "uncached_query")
+      keys.push(key)
+    }
+    const invalidateTag = options.store.invalidateTag
+    if (tags.length > 0 && invalidateTag === undefined) {
+      return jsonError(501, "tag_invalidation_not_supported")
+    }
+
+    for (const key of keys) await options.store.delete(key)
+    for (const candidate of tags) await invalidateTag?.call(options.store, candidate)
+    const done =
+      path !== null
+        ? { revalidated: path }
+        : tag !== null
+          ? { revalidatedTag: tag }
+          : { revalidated: paths, revalidatedTags: tags }
+    if (options.cdn === undefined) return Response.json(done)
+
+    let outcome: CdnPurgeOutcome
+    try {
+      outcome = await options.cdn.purge({ tags, paths }, platform)
+    } catch {
+      outcome = { cdn: "failed", retryable: true, error: "cdn_purge_threw" }
+    }
+    if (outcome.cdn === "failed") {
+      return Response.json(
+        {
+          ok: false,
+          error: "cdn_purge_failed",
+          origin: "done",
+          retryable: outcome.retryable,
+          ...(outcome.error === undefined ? {} : { reason: outcome.error }),
+        },
+        { status: 502 },
+      )
+    }
+    return Response.json(
+      { ...done, cdn: outcome.cdn },
+      { status: outcome.cdn === "queued" ? 202 : 200 },
+    )
   }
 }

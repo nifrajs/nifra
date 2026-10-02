@@ -181,6 +181,62 @@ export default function Errors() {
         search params, or request body). Parse, don't cast: the shape must match exactly.
       </p>
       <FixPrompts code="NIFRA_SCHEMA_PARSE" />
+
+      <h2>CDN caching</h2>
+
+      <h3 id="cdn-host-routed">NIFRA_CDN_HOST_ROUTED</h3>
+      <p>
+        <code>cloudflareWorkersCache</code> was given <code>hostRouted: true</code>. Workers Cache keys
+        pages by path, not by host, so a Worker that serves different content per hostname would serve
+        one host's page to another.
+      </p>
+      <p>
+        <strong>Fix:</strong> put a Cloudflare zone in front instead (<code>cloudflareZone</code>), or
+        serve each hostname from its own Worker.
+      </p>
+
+      <FixPrompts code="NIFRA_CDN_HOST_ROUTED" />
+
+      <h3 id="cdn-tag-invalid">NIFRA_CDN_TAG_INVALID</h3>
+      <p>
+        A route's <code>revalidateTags</code> function returned a tag outside the allowed form (a letter,
+        then up to 127 of <code>A-Z a-z 0-9 . _ : / -</code>), more than 32 tags, or something other than
+        an array. Those tags were dropped, so a purge by them reaches nothing. The warning names the
+        route, never the tag.
+      </p>
+      <p>
+        <strong>Fix:</strong> build tags from route params (<code>product:$&#123;params.id&#125;</code>),
+        keep to the allowed characters, and return at most 32.
+      </p>
+
+      <FixPrompts code="NIFRA_CDN_TAG_INVALID" />
+
+      <h3 id="cdn-rate-limited">NIFRA_CDN_RATE_LIMITED</h3>
+      <p>
+        The CDN's purge API answered 429. Cloudflare's Free plan allows 5 purge calls a minute, and
+        Workers Cache always has Free-plan limits.
+      </p>
+      <p>
+        <strong>Fix:</strong> nothing while the line says <em>retrying</em>: the queue waits out{" "}
+        <code>Retry-After</code>. If purges keep hitting the limit, send several tags in one revalidate
+        call or raise <code>debounceMs</code>.
+      </p>
+
+      <FixPrompts code="NIFRA_CDN_RATE_LIMITED" />
+
+      <h3 id="cdn-purge-failed">NIFRA_CDN_PURGE_FAILED</h3>
+      <p>
+        The CDN refused a purge, or could not be reached. The origin store was purged; the CDN may keep
+        serving the old page until its freshness runs out. The revalidate endpoint answers{" "}
+        <code>502</code> with <code>retryable</code> in this case, never success.
+      </p>
+      <p>
+        <strong>Fix:</strong> read the reason in the line. A 401 or 403 means the token lacks purge
+        permission for this zone, project or service; a 5xx or <code>network_error</code> is retried on
+        its own.
+      </p>
+
+      <FixPrompts code="NIFRA_CDN_PURGE_FAILED" />
     </div>
   )
 }

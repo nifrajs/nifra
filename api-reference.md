@@ -4618,6 +4618,10 @@ _No named exports (side-effect entrypoint)._
   Pluggable ISR cache backend. **Production deploys MUST use a shared/durable store** (Workers KV, Redis, the platform Cache API) so cached pages *and* revalidation hold across instances; {@link MemoryCacheStore} is dev / single-instance only. Implementations are async so a network store (KV/Redis) f…
 - **CachedResponse** _(interface)_ - `interface CachedResponse`
   A cached SSR response - the bytes + metadata a {@link CacheStore} persists.
+- **CdnPurgeOutcome** _(interface)_ - `interface CdnPurgeOutcome`
+  What a CDN purge came to: sent and accepted, queued behind a rate limit or retry, or refused.
+- **CdnPurgeTarget** _(interface)_ - `interface CdnPurgeTarget`
+  A CDN a revalidation purges after the origin store; every `@nifrajs/web/cdn` provider is one.
 - **ClientAction** _(type)_ - `type ClientAction = ( args: ClientActionArgs, ) => ClientActionResult | undefined | Promise<ClientActionResult | undefined>`
   A client-only action wrapper; it never replaces the server action.
 - **ClientActionArgs** _(interface)_ - `interface ClientActionArgs`
@@ -4833,6 +4837,10 @@ _No named exports (side-effect entrypoint)._
 - **RevalidateEndpointOptions** _(interface)_ - `interface RevalidateEndpointOptions`
 - **RevalidateResult** _(interface)_ - `interface RevalidateResult<T>`
   The wrapper `revalidate()` returns: the action's `data` plus the paths it changed. A plain tagged shape (not a class) so `@nifrajs/client`'s `ActionData` can unwrap it structurally without importing from `@nifrajs/web`. `createWebApp` strips the wrapper - the client receives `data` as the body and …
+- **RevalidateTags** _(type)_ - `type RevalidateTags = readonly string[] | ((input: RevalidateTagsInput) => readonly string[])`
+  A route's `revalidateTags`: a fixed list, or one computed per request from its params and URL.
+- **RevalidateTagsInput** _(interface)_ - `interface RevalidateTagsInput`
+  What a `revalidateTags` function is given: the URL and route params only, both already public.
 - **RouteEntry** _(interface)_ - `interface RouteEntry`
   One matched route: pattern, nested layout ids (outermost → innermost), source file, loader.
 - **RouteMatch** _(interface)_ - `interface RouteMatch`
@@ -4939,6 +4947,8 @@ _No named exports (side-effect entrypoint)._
   Render a terminal page at status **410 Gone**. `throw` it from a loader for a record that existed and was deliberately removed - a withdrawn listing, a deleted post.
 - **hashQueryKey** _(function)_ - `hashQueryKey: (key: unknown) => string`
   Hash a query key to a stable cache string. Object keys are sorted (so `{a,b}` ≡ `{b,a}`); arrays keep order. Keys must be serializable - a function/symbol in the key throws (it can't be a stable identity). Mirrors TanStack Query's structural hashing.
+- **isCacheablePage** _(const)_ - `isCacheablePage: (req: Request, res: Response) => boolean`
+  Whether `res` may be stored by a shared cache and served to anyone requesting `req`'s URL: a full-document `GET` 200 `text/html` with no Set-Cookie, no `private`/`no-store`, no `Vary` beyond the data header, and, for a request carrying a cookie or Authorization, an explicit `public`. The one rule b…
 - **isDraftEnabled** _(function)_ - `isDraftEnabled: (request: Request, secret: string) => Promise<boolean>`
   Whether `request` carries a **valid** signed draft cookie (constant-time verify via `unsignValue`). `createWebApp` uses it to set `ctx.draft`; `withISR` uses it to bypass the cache for editors. A missing, forged, or tampered cookie returns `false`.
 - **jsonLd** _(function)_ - `jsonLd: (data: Record<string, unknown>) => ScriptDescriptor`
@@ -4974,8 +4984,8 @@ _No named exports (side-effect entrypoint)._
   Resolve only explicitly annotated static boundaries with a request-free build context. Dynamic and intercepting boundaries remain unresolved. Values are cached by boundary object identity in the supplied in-memory cache, so a worker instance does not repeat a build-safe computation per request. A r…
 - **revalidate** _(function)_ - `revalidate: <T>(paths: readonly string[], data: T) => RevalidateResult<T>`
   Return this from an action to declare which routes the mutation changed (alongside the action's `data`). `createWebApp` sets the `X-Nifra-Revalidate` response header; after the submit the client marks those cached routes stale - refetching the active one and any mounted fetcher showing them - so a …
-- **revalidateEndpoint** _(function)_ - `revalidateEndpoint: (options: RevalidateEndpointOptions) => (req: Request) => Promise<Response>`
-  An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops a path's cached entry or invalidates every entry carrying a tag. `POST` with the secret in the token header and either `?path=/blog/x`, `?tag=products`, or a JSON `{ "path": "/blog/x" }` / `{ "tag": "products" }` body. Th…
+- **revalidateEndpoint** _(function)_ - `revalidateEndpoint: (options: RevalidateEndpointOptions) => (req: Request, platform?: ISRPlatform) => Promise<Response>`
+  An **on-demand revalidation** (purge) endpoint - a `fetch` handler that drops cached pages by path or invalidates every entry carrying a tag. `POST` with the secret in the token header and either `?path=/blog/x`, `?tag=products`, a JSON `{ "path": "/blog/x" }` / `{ "tag": "products" }` body, or a b…
 - **sanitizeHtml** _(function)_ - `sanitizeHtml: (value: string, sanitizer: HtmlSanitizer) => SanitizedHtml`
   Run untrusted markup through an explicit sanitizer before it reaches a raw-HTML adapter.
 - **sanitizedHtml** _(const)_ - `sanitizedHtml: (value: string, sanitizer: HtmlSanitizer) => SanitizedHtml`
@@ -5153,6 +5163,49 @@ _No named exports (side-effect entrypoint)._
   Build a full deploy dir for `target` using the Vite/Rollup pipeline - the escape hatch for apps that need a Vite-only transform in production. Identical output shape to {@link import ("./build.ts").buildTarget} (same deploy dir, same server entry, same prerender + size report), because both delegat…
 - **viteBundler** _(const)_ - `viteBundler: Bundler`
   The Vite build STRATEGY - plugged into `buildTargetWith`. `plugins` arriving through the shared orchestrator are the app's Vite plugins (the escape hatch's whole reason), cast to Vite's plugin type.
+
+### `@nifrajs/web/cdn`
+
+- **CDN_BROWSER_CACHE_CONTROL** _(const)_ - `CDN_BROWSER_CACHE_CONTROL: "public, max-age=0, must-revalidate"`
+  What browsers are told about a page the CDN may store: revalidate every time.
+- **CdnCacheInput** _(interface)_ - `interface CdnCacheInput`
+  What a cacheable page tells the CDN: its tags and how long the CDN may serve it.
+- **CdnProvider** _(interface)_ - `interface CdnProvider`
+  A CDN nifra can tag pages for and purge. Build one with {@link defineCdnProvider}.
+- **CdnProviderDefinition** _(interface)_ - `interface CdnProviderDefinition`
+  What a provider file supplies; {@link defineCdnProvider} adds the queue.
+- **CdnPurgeError** _(interface)_ - `interface CdnPurgeError`
+  A purge that did not go through, as reported to {@link PurgeQueueOptions.onError}.
+- **CdnPurgeOutcome** _(interface)_ - `interface CdnPurgeOutcome`
+  What a CDN purge came to: sent and accepted, queued behind a rate limit or retry, or refused.
+- **CdnPurgeTarget** _(interface)_ - `interface CdnPurgeTarget`
+  A CDN a revalidation purges after the origin store; every `@nifrajs/web/cdn` provider is one.
+- **CloudflareWorkersCacheOptions** _(interface)_ - `interface CloudflareWorkersCacheOptions`
+- **CloudflareZoneOptions** _(interface)_ - `interface CloudflareZoneOptions`
+- **FastlyOptions** _(interface)_ - `interface FastlyOptions`
+- **InvalidateResult** _(interface)_ - `interface InvalidateResult`
+- **InvalidatorOptions** _(interface)_ - `interface InvalidatorOptions`
+- **PurgeAttempt** _(type)_ - `type PurgeAttempt`
+  One purge API call's result. A refusal is `retryable` when sending it again may succeed.
+- **PurgeQueueOptions** _(interface)_ - `interface PurgeQueueOptions`
+- **VercelOptions** _(type)_ - `type VercelOptions`
+- **WithCdnOptions** _(interface)_ - `interface WithCdnOptions`
+- **WorkersCacheLike** _(interface)_ - `interface WorkersCacheLike`
+  The Worker's cache binding: `import { cache } from "cloudflare:workers"`, or `ctx.cache`.
+- **cloudflareWorkersCache** _(function)_ - `cloudflareWorkersCache: (options: CloudflareWorkersCacheOptions) => CdnProvider`
+  Workers Cache in front of the Worker serving the app. Purges are scoped to the calling entrypoint.
+- **cloudflareZone** _(function)_ - `cloudflareZone: (options: CloudflareZoneOptions) => CdnProvider`
+  A Cloudflare zone proxying the origin. HTML is only cached by a Cache Rule that makes it eligible, and the zone's cache ignores `Vary`: the rule must also bypass the cache when the request carries `x-nifra-data` (soft navigations fetch the page URL with that header). `nifra cdn check` tests both.
+- **createInvalidator** _(function)_ - `createInvalidator: (options: InvalidatorOptions) => { invalidate(target: { readonly tags?: readonly string[]; readonly paths?: readonly string[]; }, platform?: ISRPlatform): Promise<InvalidateResult>; }`
+  Purge pages after a mutation, from app code: `await invalidate({ tags: ["product:42"] })`. The origin store goes first, so a CDN refetch cannot repopulate from a stale origin entry. At most 32 tags and 100 paths a call.
+- **defineCdnProvider** _(function)_ - `defineCdnProvider: (definition: CdnProviderDefinition, options?: PurgeQueueOptions) => CdnProvider`
+  A {@link CdnProvider} from a provider's API calls, with the purge queue in front: tags arriving within `debounceMs` go out together, chunked to the provider's per-call limit and sent one call at a time; a 429 or 5xx is retried with capped exponential backoff that honors `Retry-After`. A `purge` res…
+- **fastly** _(function)_ - `fastly: (options: FastlyOptions) => CdnProvider`
+- **pathTag** _(function)_ - `pathTag: (path: string) => Promise<string>`
+  The tag every page a CDN stores carries for its own path, so a path purge works on CDNs that only purge by tag. It hashes the normalized pathname alone: the query and the host stay out, so one purge reaches every query variant and needs no knowledge of the public origin. Two hosts serving the same …
+- **vercel** _(function)_ - `vercel: (options: VercelOptions) => CdnProvider`
+- **withCdn** _(function)_ - `withCdn: (app: ISRApp | Handler, options: WithCdnOptions) => (req: Request, platform?: ISRPlatform) => Promise<Response>`
+  Wrap `app` (a `createWebApp` app or a `withISR` handler) so a CDN stores exactly the pages a shared cache may serve to anyone, tagged for purging, for as long as the route's `revalidate` allows. Non-HTML responses (assets, JSON, navigation data) pass through with the app's own headers.
 
 ### `@nifrajs/web/client`
 

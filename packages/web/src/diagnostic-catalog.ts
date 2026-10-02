@@ -160,6 +160,38 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
     docsAnchor: "errors#hydration-mismatch",
   },
   {
+    code: "NIFRA_CDN_HOST_ROUTED",
+    match: (_n, m) => m.includes("NIFRA_CDN_HOST_ROUTED"),
+    cause:
+      "cloudflareWorkersCache was told the Worker serves different content per hostname. Workers Cache keys pages by path, not host, so it would serve one host's page to another.",
+    fix: "Put a Cloudflare zone in front instead (cloudflareZone), or serve each hostname from its own Worker.",
+    docsAnchor: "errors#cdn-host-routed",
+  },
+  {
+    code: "NIFRA_CDN_TAG_INVALID",
+    match: (_n, m) => m.includes("NIFRA_CDN_TAG_INVALID"),
+    cause:
+      "A route's revalidateTags function returned a tag that is not a letter followed by up to 127 of A-Z a-z 0-9 . _ : / -, more than 32 tags, or something other than an array. Those tags were dropped, so a purge by them reaches nothing.",
+    fix: "Build tags from route params only (`product:${params.id}`), keep to the allowed characters, and return at most 32.",
+    docsAnchor: "errors#cdn-tag-invalid",
+  },
+  {
+    code: "NIFRA_CDN_RATE_LIMITED",
+    match: (_n, m) => m.includes("NIFRA_CDN_RATE_LIMITED"),
+    cause:
+      "The CDN's purge API refused a purge with 429. Cloudflare's Free plan allows 5 purge calls a minute, and Workers Cache always has Free-plan limits.",
+    fix: "Nothing, if the line says retrying: the queue waits out Retry-After. If purges keep hitting the limit, batch them (one revalidate call with several tags) or raise debounceMs.",
+    docsAnchor: "errors#cdn-rate-limited",
+  },
+  {
+    code: "NIFRA_CDN_PURGE_FAILED",
+    match: (_n, m) => m.includes("NIFRA_CDN_PURGE_FAILED"),
+    cause:
+      "The CDN's purge API refused a purge, or could not be reached. The origin store was purged; the CDN may keep serving the old page until its freshness runs out.",
+    fix: "Read the reason in the line: a 401 or 403 means the token lacks purge permission for this zone, project or service; a 5xx or network_error is retried on its own.",
+    docsAnchor: "errors#cdn-purge-failed",
+  },
+  {
     code: "NIFRA_SCHEMA_PARSE",
     match: (n, m) =>
       n === "SchemaError" ||

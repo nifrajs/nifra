@@ -1870,6 +1870,78 @@ curl -X POST 'https://example.com/__nifra/revalidate?path=/posts/hello' \
 # → { "revalidated": "/posts/hello" }   (the token is checked in constant time)
 ```
 
+`revalidateTags` names what a purge by tag reaches. A list tags every page of the
+route alike; a function of the route's params and URL tags each page on its own. Tags travel to
+the CDN and to anyone reading the origin, so build them from params, never from loader data.
+
+```ts
+// routes/products/[id].backend.ts - tags per page, from the route's params (never from loader data).
+export const revalidate = 300
+export const revalidateTags = ({ params }: { params: { id: string } }) => [`product:${params.id}`, "catalog"]
+```
+
+### A CDN in front
+
+`withCdn` from `@nifrajs/web/cdn` lets a CDN serve your pages near the
+visitor and purges it by tag. On every page a shared cache may hold (the same rule ISR caches
+by: a `GET` 200 HTML document with no `Set-Cookie`, no
+`private` or `no-store`, and an explicit `public` when the
+request carries a cookie), it sets the CDN's tag header (the route's tags plus one for the
+page's path) and the CDN's TTL from the route's `revalidate`. Browsers get
+`max-age=0, must-revalidate`, because a purge reaches the CDN, never a browser.
+Every other HTML response is marked no-store for the CDN, drafts included. Over
+`withISR`, the CDN is only given the freshness the page has left.
+
+```ts
+// doc-check: skip - server entry: your `app`, `store` and env vars.
+import { withISR } from "@nifrajs/web"
+import { cloudflareZone, withCdn } from "@nifrajs/web/cdn"
+import { revalidateEndpoint } from "@nifrajs/web"
+
+const cdn = cloudflareZone({ zoneId: env.CF_ZONE_ID, apiToken: env.CF_PURGE_TOKEN })
+// The CDN stores the pages ISR would, tagged, for the route's `revalidate`; browsers revalidate.
+const handler = withCdn(withISR(app, { store, revalidate: 60, now: () => Date.now() }), { provider: cdn })
+// One purge reaches the origin store first, then the CDN: 200 done, 202 queued, 502 refused.
+const revalidate = revalidateEndpoint({ store, secret: env.REVALIDATE_SECRET, cdn })
+```
+
+-
+**Cloudflare zone** (`cloudflareZone`): needs a Cache Rule that makes HTML
+eligible for cache, and, because the zone cache ignores `Vary`, that bypasses the
+cache when the request has an `x-nifra-data` header (soft navigations fetch the
+page URL with it). The Free plan allows 5 purge calls a minute; purges arriving together go
+out as one call.
+
+-
+**Workers Cache** (`cloudflareWorkersCache`): for an app deployed as a Worker
+with `[cache] enabled = true`. Pass `cache` from
+`cloudflare:workers`. It keys by path, not host, so a Worker serving different
+content per hostname must not use it. Local `wrangler dev` does not run it.
+
+-
+**Vercel** (`vercel`): pass `invalidateByTag` from
+`@vercel/functions` inside a Vercel Function, or a token and project id for the
+REST API. Purges mark pages stale by default; `mode: "delete"` drops them.
+
+-
+**Fastly** (`fastly`): `Surrogate-Key` and soft purge by default.
+
+A purge is sent after the origin store is purged, coalesced for 250 ms, chunked to the
+provider's per-call limit, and retried on 429 or 5xx honoring `Retry-After`. The
+endpoint never reports a purge that did not happen: `202` while it is queued,
+`502` with `retryable` when the CDN refused it. After a mutation in app
+code, `createInvalidator(&#123; store, cdn, origin &#125;).invalidate(&#123; tags &#125;)`
+does the same. Staleness compounds: a page can be up to the CDN's
+`stale-while-revalidate` older than ISR's own window.
+
+```ts
+# Several paths and tags in one call (at most 100 paths and 32 tags).
+curl -X POST https://example.com/__nifra/revalidate \
+  -H "x-nifra-revalidate-token: $REVALIDATE_SECRET" -H 'content-type: application/json' \
+  -d '{ "paths": ["/products/42"], "tags": ["catalog"] }'
+# → { "revalidated": ["/products/42"], "revalidatedTags": ["catalog"], "cdn": "accepted" }
+```
+
 ### Draft / preview mode
 
 Let an editor preview unpublished content without exposing it to the world.
@@ -8529,6 +8601,46 @@ Data crossing a boundary did not match its declared schema.
 **Fix:** check the value against the schema at the failing boundary (loader input,
 search params, or request body). Parse, don't cast: the shape must match exactly.
 
+### CDN caching
+
+#### NIFRA_CDN_HOST_ROUTED
+
+`cloudflareWorkersCache` was given `hostRouted: true`. Workers Cache keys
+pages by path, not by host, so a Worker that serves different content per hostname would serve
+one host's page to another.
+
+**Fix:** put a Cloudflare zone in front instead (`cloudflareZone`), or
+serve each hostname from its own Worker.
+
+#### NIFRA_CDN_TAG_INVALID
+
+A route's `revalidateTags` function returned a tag outside the allowed form (a letter,
+then up to 127 of `A-Z a-z 0-9 . _ : / -`), more than 32 tags, or something other than
+an array. Those tags were dropped, so a purge by them reaches nothing. The warning names the
+route, never the tag.
+
+**Fix:** build tags from route params (`product:$&#123;params.id&#125;`),
+keep to the allowed characters, and return at most 32.
+
+#### NIFRA_CDN_RATE_LIMITED
+
+The CDN's purge API answered 429. Cloudflare's Free plan allows 5 purge calls a minute, and
+Workers Cache always has Free-plan limits.
+
+**Fix:** nothing while the line says _retrying_: the queue waits out
+`Retry-After`. If purges keep hitting the limit, send several tags in one revalidate
+call or raise `debounceMs`.
+
+#### NIFRA_CDN_PURGE_FAILED
+
+The CDN refused a purge, or could not be reached. The origin store was purged; the CDN may keep
+serving the old page until its freshness runs out. The revalidate endpoint answers
+`502` with `retryable` in this case, never success.
+
+**Fix:** read the reason in the line. A 401 or 403 means the token lacks purge
+permission for this zone, project or service; a 5xx or `network_error` is retried on
+its own.
+
 ## Nifra - Failure laboratory
 
 > Replayable durable-failure schedules on virtual time: crash after commit, duplicate delivery, reordering, budget expiry, and checkpoint contention.
@@ -14343,7 +14455,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/web
 
-`Action`, `ACTION_GLOBAL`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BOUNDARY_GLOBAL`, `BoundaryDescriptor`, `boundaryDescriptors`, `BoundaryError`, `BoundaryMode`, `boundaryModeKey`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createCspPolicy`, `CreateCspPolicyOptions`, `createMatcher`, `createMutation`, `createNonceResolver`, `CreateNonceResolverOptions`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateRouteSearchTypes`, `GenerateRouteSearchTypesOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `gone`, `HANDOVER_ID`, `hashQueryKey`, `HtmlSanitizer`, `IDLE_BLOCKER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `mergeHeads`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `nifraScriptHashes`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `normalizeCssLoading`, `notFound`, `NotFoundEntry`, `NotFoundScope`, `openGraph`, `OpenGraphInput`, `PendingBoundary`, `PRE_HYDRATION_GUARD`, `PrefetchMode`, `previewEndpoint`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `registerBlocker`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderedPage`, `renderPage`, `RenderPageInput`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `RenderStreamOptions`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `RETAIN_HEADER`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouterState`, `RouteSearch`, `sanitizedHtml`, `SanitizedHtml`, `sanitizeHtml`, `ScriptDescriptor`, `searchOf`, `SearchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `ServePublicDirOptions`, `SERVER_FN_MODULE`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `ssrModuleLoader`, `SsrModuleLoader`, `startDynamicBoundaries`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `STATUS_HEADER`, `statusPage`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `trustHtml`, `UIMatch`, `unsafeInlineScript`, `UnsafeScriptDescriptor`, `webProjectEvidence`, `withISR`
+`Action`, `ACTION_GLOBAL`, `assertCssLoadingCompatible`, `assertRenderAdapterConformance`, `assertStaticBoundaryImports`, `BackendOnly`, `Blocker`, `BlockerController`, `BlockerFunction`, `BlockerLocation`, `BlockerState`, `Boundary`, `BOUNDARY_GLOBAL`, `BoundaryDescriptor`, `boundaryDescriptors`, `BoundaryError`, `BoundaryMode`, `boundaryModeKey`, `BoundaryRegistration`, `BoundaryRequestCtx`, `BoundaryState`, `BoundaryStates`, `BoundaryStatus`, `BrowserNavigate`, `buildManifest`, `CachedResponse`, `CacheStore`, `canonical`, `CdnPurgeOutcome`, `CdnPurgeTarget`, `ClientAction`, `ClientActionArgs`, `ClientActionResult`, `ClientLoader`, `ClientLoaderArgs`, `ClientRequestBody`, `ClientRouteHooks`, `ClientRouter`, `ClientRouterOptions`, `createClientRouter`, `createCspPolicy`, `CreateCspPolicyOptions`, `createMatcher`, `createMutation`, `createNonceResolver`, `CreateNonceResolverOptions`, `createQueryClient`, `createWebApp`, `CreateWebAppOptions`, `CspHeaderContext`, `CspPolicy`, `CssLoadingMode`, `DATA_GLOBAL`, `DATA_HEADER`, `DEFAULT_CSS_LOADING`, `DEFAULT_DEV_PORT`, `defer`, `Deferred`, `DehydratedState`, `disableDraft`, `DRAFT_COOKIE`, `DraftCookieControls`, `DynamicBoundary`, `DynamicBoundaryBatch`, `enableDraft`, `EnableDraftOptions`, `enumerateStaticRoutes`, `Fetcher`, `FetcherState`, `FetchRouteData`, `filePathToPattern`, `filePathToPatterns`, `FontDisplay`, `fontFace`, `FontFace`, `fontPreload`, `FontPreloadInput`, `FontSource`, `generateClientEntry`, `GenerateClientEntryOptions`, `generateRouteSearchTypes`, `GenerateRouteSearchTypesOptions`, `generateServerManifest`, `GenerateServerManifestOptions`, `getBrowserNavigate`, `GetStaticPaths`, `gone`, `HANDOVER_ID`, `hashQueryKey`, `HtmlSanitizer`, `IDLE_BLOCKER`, `InertScriptType`, `InfiniteData`, `InfiniteQueryHandle`, `InfiniteQueryOptions`, `InterceptBoundary`, `isCacheablePage`, `isDraftEnabled`, `ISR_REVALIDATE_HEADER`, `ISR_REVALIDATE_TAGS_HEADER`, `ISR_STATUS_HEADER`, `ISRApp`, `ISROptions`, `ISRPlatform`, `ISRQuery`, `jsonLd`, `KVCacheStore`, `KVCacheStoreOptions`, `KVNamespaceLike`, `LAYOUT_DATA_GLOBAL`, `LayoutEntry`, `LinkDescriptor`, `Loader`, `LoaderContext`, `LoaderResponseControls`, `LoadingEntry`, `Manifest`, `MatchChain`, `MemoryCacheStore`, `MemoryCacheStoreOptions`, `MemoryStaticBoundaryCache`, `mergeHeads`, `Meta`, `MetaArgs`, `MetaDescriptor`, `MetaInput`, `MiddlewareOutcome`, `MountRouterOptions`, `MutationCallbacks`, `MutationHandle`, `MutationState`, `MutationStatus`, `NAV_FROM_HEADER`, `NavigateFunction`, `NavigateOptions`, `NavigateSearchOf`, `NavigateTargetInput`, `nifraScriptHashes`, `NonceContext`, `NonceGenerator`, `NonceHeader`, `NonceHeaderContext`, `NonceResolver`, `normalizeCssLoading`, `notFound`, `NotFoundEntry`, `NotFoundScope`, `openGraph`, `OpenGraphInput`, `PendingBoundary`, `PRE_HYDRATION_GUARD`, `PrefetchMode`, `previewEndpoint`, `PreviewEndpointOptions`, `PublicDirCache`, `QueryClient`, `QueryClientOptions`, `QueryHandle`, `QueryOptions`, `QueryState`, `QueryStatus`, `redirect`, `REDIRECT_HEADER`, `RedirectOptions`, `registerBlocker`, `RenderAdapter`, `RenderAdapterConformanceError`, `RenderAdapterConformanceFixture`, `RenderAssemblyCache`, `RenderedPage`, `renderPage`, `RenderPageInput`, `RenderPageOptions`, `renderPageResult`, `RenderProps`, `RenderStreamOptions`, `resolveDynamicBoundaries`, `resolveMeta`, `resolveNavigate`, `resolvePublicPath`, `resolveStaticBoundaries`, `RETAIN_HEADER`, `revalidate`, `REVALIDATE_HEADER`, `revalidateEndpoint`, `RevalidateEndpointOptions`, `RevalidateResult`, `RevalidateTags`, `RevalidateTagsInput`, `ROOT_ATTRIBUTE`, `ROUTE_GLOBAL`, `RouteEntry`, `RouteMatch`, `RouteMiddleware`, `RouteModule`, `RoutePattern`, `RouterState`, `RouteSearch`, `sanitizedHtml`, `SanitizedHtml`, `sanitizeHtml`, `ScriptDescriptor`, `searchOf`, `SearchOf`, `searchOfChain`, `serializeData`, `serializeSearch`, `servePublicDir`, `ServePublicDirOptions`, `SERVER_FN_MODULE`, `setBlockerController`, `setBrowserNavigate`, `setSsrModuleLoader`, `ShouldRevalidate`, `ShouldRevalidateArgs`, `ssrModuleLoader`, `SsrModuleLoader`, `startDynamicBoundaries`, `StaticBoundary`, `StaticBoundaryCache`, `StaticBoundaryImportEdge`, `StaticBoundaryRoot`, `StaticCtx`, `StaticPath`, `StaticPaths`, `StaticRoutes`, `STATUS_HEADER`, `statusPage`, `StatusPageOptions`, `Submission`, `SubmitOptions`, `TrustedHtml`, `trustHtml`, `UIMatch`, `unsafeInlineScript`, `UnsafeScriptDescriptor`, `webProjectEvidence`, `withISR`
 
 ## @nifrajs/web-preact
 

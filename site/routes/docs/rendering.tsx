@@ -120,6 +120,27 @@ curl -X POST 'https://example.com/__nifra/revalidate?path=/posts/hello' \\
   -H 'x-nifra-revalidate-token: $REVALIDATE_SECRET'
 # → { "revalidated": "/posts/hello" }   (the token is checked in constant time)`
 
+const TAGS = `// routes/products/[id].backend.ts - tags per page, from the route's params (never from loader data).
+export const revalidate = 300
+export const revalidateTags = ({ params }: { params: { id: string } }) => [\`product:\${params.id}\`, "catalog"]`
+
+const CDN = `// doc-check: skip - server entry: your \`app\`, \`store\` and env vars.
+import { withISR } from "@nifrajs/web"
+import { cloudflareZone, withCdn } from "@nifrajs/web/cdn"
+import { revalidateEndpoint } from "@nifrajs/web"
+
+const cdn = cloudflareZone({ zoneId: env.CF_ZONE_ID, apiToken: env.CF_PURGE_TOKEN })
+// The CDN stores the pages ISR would, tagged, for the route's \`revalidate\`; browsers revalidate.
+const handler = withCdn(withISR(app, { store, revalidate: 60, now: () => Date.now() }), { provider: cdn })
+// One purge reaches the origin store first, then the CDN: 200 done, 202 queued, 502 refused.
+const revalidate = revalidateEndpoint({ store, secret: env.REVALIDATE_SECRET, cdn })`
+
+const CDN_PURGE = `# Several paths and tags in one call (at most 100 paths and 32 tags).
+curl -X POST https://example.com/__nifra/revalidate \\
+  -H "x-nifra-revalidate-token: $REVALIDATE_SECRET" -H 'content-type: application/json' \\
+  -d '{ "paths": ["/products/42"], "tags": ["catalog"] }'
+# → { "revalidated": ["/products/42"], "revalidatedTags": ["catalog"], "cdn": "accepted" }`
+
 const DRAFT = `// doc-check: skip - fragment spanning three files: your \`app\`, \`env\`, \`redirect\`, and route \`slug\`.
 // 1. Mount the preview entry point your CMS links to. It checks the token in CONSTANT TIME,
 //    sets the signed HttpOnly cookie, and refuses an off-site ?to= (an open redirect otherwise).
@@ -264,6 +285,59 @@ export default function Rendering() {
         <code>401</code>, a missing or relative path is <code>400</code>.
       </p>
       <CodeBlock code={PURGE} />
+      <p>
+        <code>revalidateTags</code> names what a purge by tag reaches. A list tags every page of the
+        route alike; a function of the route's params and URL tags each page on its own. Tags travel to
+        the CDN and to anyone reading the origin, so build them from params, never from loader data.
+      </p>
+      <CodeBlock code={TAGS} />
+
+      <h2>A CDN in front</h2>
+      <p>
+        <code>withCdn</code> from <code>@nifrajs/web/cdn</code> lets a CDN serve your pages near the
+        visitor and purges it by tag. On every page a shared cache may hold (the same rule ISR caches
+        by: a <code>GET</code> 200 HTML document with no <code>Set-Cookie</code>, no{" "}
+        <code>private</code> or <code>no-store</code>, and an explicit <code>public</code> when the
+        request carries a cookie), it sets the CDN's tag header (the route's tags plus one for the
+        page's path) and the CDN's TTL from the route's <code>revalidate</code>. Browsers get{" "}
+        <code>max-age=0, must-revalidate</code>, because a purge reaches the CDN, never a browser.
+        Every other HTML response is marked no-store for the CDN, drafts included. Over{" "}
+        <code>withISR</code>, the CDN is only given the freshness the page has left.
+      </p>
+      <CodeBlock code={CDN} />
+      <ul>
+        <li>
+          <b>Cloudflare zone</b> (<code>cloudflareZone</code>): needs a Cache Rule that makes HTML
+          eligible for cache, and, because the zone cache ignores <code>Vary</code>, that bypasses the
+          cache when the request has an <code>x-nifra-data</code> header (soft navigations fetch the
+          page URL with it). The Free plan allows 5 purge calls a minute; purges arriving together go
+          out as one call.
+        </li>
+        <li>
+          <b>Workers Cache</b> (<code>cloudflareWorkersCache</code>): for an app deployed as a Worker
+          with <code>[cache] enabled = true</code>. Pass <code>cache</code> from{" "}
+          <code>cloudflare:workers</code>. It keys by path, not host, so a Worker serving different
+          content per hostname must not use it. Local <code>wrangler dev</code> does not run it.
+        </li>
+        <li>
+          <b>Vercel</b> (<code>vercel</code>): pass <code>invalidateByTag</code> from{" "}
+          <code>@vercel/functions</code> inside a Vercel Function, or a token and project id for the
+          REST API. Purges mark pages stale by default; <code>mode: "delete"</code> drops them.
+        </li>
+        <li>
+          <b>Fastly</b> (<code>fastly</code>): <code>Surrogate-Key</code> and soft purge by default.
+        </li>
+      </ul>
+      <p>
+        A purge is sent after the origin store is purged, coalesced for 250 ms, chunked to the
+        provider's per-call limit, and retried on 429 or 5xx honoring <code>Retry-After</code>. The
+        endpoint never reports a purge that did not happen: <code>202</code> while it is queued,{" "}
+        <code>502</code> with <code>retryable</code> when the CDN refused it. After a mutation in app
+        code, <code>createInvalidator(&#123; store, cdn, origin &#125;).invalidate(&#123; tags &#125;)</code>{" "}
+        does the same. Staleness compounds: a page can be up to the CDN's{" "}
+        <code>stale-while-revalidate</code> older than ISR's own window.
+      </p>
+      <CodeBlock code={CDN_PURGE} />
 
       <h2>Draft / preview mode</h2>
       <p>

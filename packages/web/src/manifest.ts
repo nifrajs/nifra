@@ -9,6 +9,7 @@ import { paramConstraint } from "@nifrajs/core/pattern"
 import type { CookieOptions, ResponseResult, StandardSchemaV1 } from "@nifrajs/core/server"
 import type { BoundaryDescriptor, BoundaryRegistration } from "./boundary.ts"
 import { guardChannel, outputGuard } from "./internal/output-guard.ts"
+import type { RevalidateTags } from "./isr.ts"
 
 /**
  * Response controls a loader or action reaches as `ctx.set` - the page counterpart of a route
@@ -398,8 +399,12 @@ export interface RouteModule {
    * list the client parses to refetch - so the two channels never alias.)
    */
   readonly revalidate?: number
-  /** Optional bounded tags used by ISR on-demand invalidation (`?tag=...`). */
-  readonly revalidateTags?: readonly string[]
+  /**
+   * Bounded tags ISR on-demand invalidation (`?tag=...`) and a CDN purge reach this page by. A list, or
+   * a function of the route's params and URL (`({ params }) => [\`product:${params.id}\`]`) for tags
+   * per page. Tags travel to the CDN and reach anyone reading the origin: never put personal data in one.
+   */
+  readonly revalidateTags?: RevalidateTags
   /**
    * No-framework island bundles (`@nifrajs/web/islands`) to load on this route, as `<script
    * type="module">` in the document tail. Loaded **regardless of `hydrate`** - pair with

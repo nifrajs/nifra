@@ -592,7 +592,12 @@ describe("withISR", () => {
 
 import type { Manifest, RenderAdapter } from "../src/index.ts"
 import { createWebApp } from "../src/index.ts"
-import { revalidateEndpoint, withoutCacheChannel } from "../src/isr.ts"
+import {
+  type CdnPurgeOutcome,
+  openCacheChannel,
+  revalidateEndpoint,
+  withoutCacheChannel,
+} from "../src/isr.ts"
 
 describe("a route's ISR freshness and tags never reach a visitor", () => {
   const adapter: RenderAdapter = {
@@ -1002,5 +1007,209 @@ describe("withISR over KVCacheStore (the production store path)", () => {
     const afterPurge = await handler(new Request("http://x/p"))
     expect(afterPurge.headers.get("x-nifra-isr")).toBe("miss") // re-rendered after the purge
     expect(calls()).toBe(2)
+  })
+})
+
+describe("tags per request, and freshness handed to an outer cache", () => {
+  const adapter: RenderAdapter = {
+    renderToString: () => "<p>page</p>",
+    renderToStream: () => new Response("<p>page</p>").body as ReadableStream<Uint8Array>,
+    hydrationHead: () => "",
+  }
+  const appWith = (revalidateTags: unknown) =>
+    createWebApp({
+      adapter,
+      clientEntry: "/c.js",
+      manifest: {
+        routes: [
+          {
+            id: "product",
+            pattern: "/p/:id",
+            layoutIds: [],
+            file: "p.tsx",
+            load: async () => ({ default: "p", revalidate: 60, revalidateTags }),
+          },
+        ],
+        layouts: {},
+      } as Manifest,
+    })
+  const outer = <T extends object>(handler: T): T => {
+    openCacheChannel(handler)
+    return handler
+  }
+
+  test("a tag function sees the route's params and URL, per request", async () => {
+    const seen: string[] = []
+    const app = appWith(({ params, url }: { params: { id: string }; url: URL }) => {
+      seen.push(url.pathname)
+      return [`product:${params.id}`, "catalog"]
+    })
+    openCacheChannel(app)
+    const res = await app.fetch(new Request("http://x/p/42"))
+    expect(res.headers.get("x-nifra-isr-tags")).toBe("product:42,catalog")
+    expect(seen).toEqual(["/p/42"])
+  })
+
+  test("invalid tags from a function are dropped, with one warning naming the route only", async () => {
+    const warnings: string[] = []
+    const warn = console.warn
+    console.warn = (message: string) => warnings.push(message)
+    try {
+      const app = appWith(() => ["ok", "has space", "secret value!", "x".repeat(200)])
+      openCacheChannel(app)
+      for (let i = 0; i < 2; i++) {
+        const res = await app.fetch(new Request("http://x/p/1"))
+        expect(res.headers.get("x-nifra-isr-tags")).toBe("ok")
+      }
+    } finally {
+      console.warn = warn
+    }
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('NIFRA_CDN_TAG_INVALID: revalidateTags of route "product"')
+    expect(warnings[0]).not.toContain("secret value")
+  })
+
+  test("withISR hands an outer layer the freshness left and the tags, never more", async () => {
+    let clock = 0
+    const handler = outer(
+      withISR(appWith(["catalog"]), {
+        store: new MemoryCacheStore(),
+        revalidate: 30,
+        now: () => clock,
+      }),
+    )
+    const advertised = (res: Response) => [
+      res.headers.get("x-nifra-isr"),
+      res.headers.get("x-nifra-isr-revalidate"),
+      res.headers.get("x-nifra-isr-tags"),
+    ]
+    expect(advertised(await handler(new Request("http://x/p/1")))).toEqual([
+      "miss",
+      "60",
+      "catalog",
+    ])
+    clock = 45_500
+    expect(advertised(await handler(new Request("http://x/p/1")))).toEqual(["hit", "14", "catalog"])
+    clock = 61_000
+    expect(advertised(await handler(new Request("http://x/p/1")))).toEqual([
+      "stale",
+      "0",
+      "catalog",
+    ])
+    const bypass = await handler(new Request("http://x/p/1?q=1"))
+    expect([
+      bypass.headers.get("x-nifra-isr-revalidate"),
+      bypass.headers.get("x-nifra-isr-tags"),
+    ]).toEqual([null, null])
+  })
+})
+
+describe("revalidateEndpoint batches and the CDN after it", () => {
+  const post = (handler: (req: Request) => Promise<Response>, body: unknown) =>
+    handler(
+      new Request("http://x/__nifra/revalidate", {
+        method: "POST",
+        headers: { "x-nifra-revalidate-token": "s3cret", "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    )
+  const cdnThat = (outcome: CdnPurgeOutcome, log: string[] = []) => ({
+    async purge(target: { tags?: readonly string[]; paths?: readonly string[] }) {
+      log.push(`cdn ${JSON.stringify(target)}`)
+      return outcome
+    },
+  })
+
+  test("a batch purges every path and tag, origin first, then the CDN", async () => {
+    const log: string[] = []
+    const store = new MemoryCacheStore()
+    await store.set("http://x/a", entry("A"))
+    await store.set("http://x/b", { ...entry("B"), tags: ["catalog"] })
+    const originDelete = store.delete.bind(store)
+    store.delete = async (key: string) => {
+      log.push(`origin ${key}`)
+      return originDelete(key)
+    }
+    const handler = revalidateEndpoint({
+      store,
+      secret: "s3cret",
+      cdn: cdnThat({ cdn: "accepted", retryable: false }, log),
+    })
+    const res = await post(handler, { paths: ["/a", "/a"], tags: ["catalog"] })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      revalidated: ["/a"],
+      revalidatedTags: ["catalog"],
+      cdn: "accepted",
+    })
+    expect(log).toEqual(["origin http://x/a", 'cdn {"tags":["catalog"],"paths":["/a"]}'])
+    expect(await store.get("http://x/a")).toBeUndefined()
+    expect(await store.get("http://x/b")).toBeUndefined()
+  })
+
+  test("a queued CDN purge answers 202; a refused one 502, after the origin purge held", async () => {
+    const store = new MemoryCacheStore()
+    const queued = revalidateEndpoint({
+      store,
+      secret: "s3cret",
+      cdn: cdnThat({ cdn: "queued", retryable: true }),
+    })
+    const accepted = await post(queued, { path: "/a" })
+    expect([accepted.status, await accepted.json()]).toEqual([
+      202,
+      { revalidated: "/a", cdn: "queued" },
+    ])
+    await store.set("http://x/a", entry("A"))
+    const refused = revalidateEndpoint({
+      store,
+      secret: "s3cret",
+      cdn: cdnThat({ cdn: "failed", retryable: false, error: "unauthorized" }),
+    })
+    const res = await post(refused, { path: "/a" })
+    expect(res.status).toBe(502)
+    expect(await res.json()).toEqual({
+      ok: false,
+      error: "cdn_purge_failed",
+      origin: "done",
+      retryable: false,
+      reason: "unauthorized",
+    })
+    expect(await store.get("http://x/a")).toBeUndefined()
+  })
+
+  test("a CDN purge that throws is a retryable 502, not a success", async () => {
+    const handler = revalidateEndpoint({
+      store: new MemoryCacheStore(),
+      secret: "s3cret",
+      cdn: {
+        purge: async () => {
+          throw new Error("network down")
+        },
+      },
+    })
+    const res = await post(handler, { tag: "catalog" })
+    expect(res.status).toBe(502)
+    expect((await res.json()).retryable).toBe(true)
+  })
+
+  test("a batch is capped, typed and non-empty, and nothing is purged when it is refused", async () => {
+    const store = new MemoryCacheStore()
+    await store.set("http://x/a", entry("A"))
+    const handler = revalidateEndpoint({ store, secret: "s3cret" })
+    const paths = Array.from({ length: 101 }, (_, i) => `/p${i}`)
+    const tags = Array.from({ length: 33 }, (_, i) => `t${i}`)
+    const refusals = [
+      [{ paths }, "too_many_paths"],
+      [{ tags }, "too_many_tags"],
+      [{ paths: "/a" }, "invalid_batch"],
+      [{ paths: [] }, "empty_batch"],
+      [{ paths: ["/a", "nope"] }, "invalid_path"],
+      [{ paths: ["/a"], tags: ["bad tag"] }, "invalid_tag"],
+    ] as const
+    for (const [body, error] of refusals) {
+      const res = await post(handler, body)
+      expect([res.status, (await res.json()).error]).toEqual([400, error])
+    }
+    expect((await store.get("http://x/a"))?.body).toBe("A")
   })
 })
