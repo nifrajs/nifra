@@ -5,6 +5,17 @@ import { RenderPropsProvider, SearchProvider } from "./router.ts"
 // Frozen empty search so a render with no search context has a stable provider value.
 const EMPTY_SEARCH: Readonly<Record<string, unknown>> = Object.freeze({})
 
+// What the router hooks read through the provider. A page that does not declare one would get it as an
+// attribute on its root element, and Vue renders an object-valued attribute on the client
+// ("[object Object]") but not on the server - a hydration mismatch.
+const ROUTER_PROPS = ["path", "search", "params"] as const
+
+function declaredProps(component: unknown): ReadonlySet<string> {
+  const declared = (component as { props?: unknown } | null)?.props
+  if (Array.isArray(declared)) return new Set(declared as string[])
+  return new Set(typeof declared === "object" && declared !== null ? Object.keys(declared) : [])
+}
+
 /**
  * Fold a layout chain (outermost layout → page) into a single Vue VNode: the page (innermost)
  * receives `props` (the loader data); each layout wraps the child via its default slot. The whole tree
@@ -17,7 +28,9 @@ export function compose(chain: readonly unknown[], props: RenderProps): VNode {
   const last = chain.length - 1
   // `matchChain` feeds `useMatches` through the provider below; on the page it would fall through as
   // an attribute on the page's root element.
-  const { matchChain: _chain, ...pageProps } = props
+  const { matchChain: _chain, ...pageProps } = props as RenderProps & Record<string, unknown>
+  const declared = declaredProps(chain[last])
+  for (const name of ROUTER_PROPS) if (!declared.has(name)) delete pageProps[name]
   let node: VNode = h(chain[last] as Component, pageProps)
   for (let i = last - 1; i >= 0; i--) {
     const child = node

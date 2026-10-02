@@ -19,8 +19,7 @@ const Report = (where: string) =>
     },
   })
 
-// Vue escapes text content, so `{"a":1}` arrives as `{&quot;a&quot;:1}`. The page's root element also
-// carries its fallthrough attributes (`path`), so each report is read by its text alone.
+// Vue escapes text content, so `{"a":1}` arrives as `{&quot;a&quot;:1}`.
 const render = async (props: RenderProps): Promise<string> =>
   (
     await renderToString(
@@ -60,6 +59,22 @@ test("the mounted router reports what the server rendered", async () => {
   }
   const out = await render(routeProps(state, undefined, { "orgs/[org]": matchChain }))
   expect(out).toContain(`">${expected}<!----></div>`)
+})
+
+test("router props reach the page only when it declares them", async () => {
+  const props = { data: null, path: "/p?q=1", search: { q: "1" }, params: { id: "7" } }
+  const Plain = defineComponent({ props: ["data"], setup: () => () => h("main", "plain") })
+  const plain = await renderToString(createSSRApp({ render: () => compose([Plain], props) }))
+  // Undeclared, they would be root attributes - and an object one renders on the client only.
+  expect(plain).toContain("<main>plain</main>")
+  const Reader = defineComponent({
+    props: { path: String, search: Object },
+    setup: (p) => () => h("main", `${p.path} ${JSON.stringify(p.search)}`),
+  })
+  const read = await renderToString(createSSRApp({ render: () => compose([Reader], props) }))
+  expect(read.replaceAll("&quot;", String.fromCharCode(34))).toContain(
+    '<main>/p?q=1 {"q":"1"}</main>',
+  )
 })
 
 test("a render without a chain reports nothing", async () => {
