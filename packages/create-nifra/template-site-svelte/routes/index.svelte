@@ -6,7 +6,9 @@ export const meta = {
 </script>
 
 <script lang="ts">
-  let { data } = $props()
+  import type { Route } from "./+types/index"
+
+  let { data }: Route.ComponentProps = $props()
 </script>
 
 <section class="hero">

@@ -1,12 +1,11 @@
-import type { loader } from "./index.backend.ts"
-import type { LoaderData } from "@nifrajs/client"
+import type { Route } from "./+types/index"
 
 export const meta = {
   title: "nifra site",
   meta: [{ name: "description", content: "A nifra + Solid SSR site, deployable to every runtime." }],
 }
 
-export default function Home(props: { data: LoaderData<typeof loader> }) {
+export default function Home(props: Route.ComponentProps) {
   return (
     <div>
       <section class="hero">

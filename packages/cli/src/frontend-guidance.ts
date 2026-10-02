@@ -88,10 +88,10 @@ export const FRONTEND_GUIDANCE: readonly GuidanceEntry[] = [
       "Loader data is typed `any` in the page, or a hand-written interface silently drifts from what the loader actually returns.",
     cause:
       "The component types its props by hand instead of inferring them from the loader, so a change to the loader is not a type error at the use site.",
-    fix: "Type the page from the loader: `props: { data: LoaderData<typeof loader> }`. Call the backend through the typed `api` so the request/response shape is inferred, not restated.",
+    fix: 'Type the page from its generated route types: `import type { Route } from "./+types/<name>"` and `props: Route.ComponentProps`. Its `data` is the `loaderOutput` schema\'s type - what actually reaches the browser - while `LoaderData<typeof loader>` also types fields the schema strips. Call the backend through the typed `api` (`Route.LoaderArgs`) so the request/response shape is inferred, not restated.',
     verify:
       "nifra_context prints the exact loader shape and typed call form; nifra_check fails on drift.",
-    seeAlso: "LoaderData typed client loader inference",
+    seeAlso: "route types Route.ComponentProps loaderOutput typed client",
   },
   {
     id: "list-key",

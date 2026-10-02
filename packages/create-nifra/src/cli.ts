@@ -27,6 +27,7 @@ import {
 } from "./auth.ts"
 import { DB_CHOICES, DB_PRESETS, type DbChoice, writeDbFiles } from "./db.ts"
 import { applyFeatures, type FeatureContribution } from "./scaffold/features.ts"
+import { starterRouteTypes } from "./scaffold/route-types.ts"
 import { materializeSite } from "./scaffold/site.ts"
 import { DEPLOY_TARGETS, type DeployTarget, isDeployTarget, TARGETS } from "./scaffold/targets.ts"
 
@@ -323,6 +324,12 @@ export async function scaffold(opts: ScaffoldOptions): Promise<ScaffoldResult> {
       recursive: true,
       ...(opts.force ? { force: true } : { errorOnExist: true, force: false }),
     })
+    if (template === "isr") {
+      for (const [file, contents] of starterRouteTypes("tsx")) {
+        await mkdir(dirname(join(opts.target, file)), { recursive: true })
+        await writeFile(join(opts.target, file), contents)
+      }
+    }
   }
 
   // The template ships its ignore file as `gitignore` (npm strips a literal `.gitignore`); restore the dot.

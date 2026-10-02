@@ -15,6 +15,7 @@ import { cp, mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { type FrameworkSpec, frameworkSpec } from "./frameworks.ts"
+import { starterRouteTypes } from "./route-types.ts"
 import {
   renderFrameworkModule,
   renderPackageJson,
@@ -70,6 +71,7 @@ export function generatedSiteFiles(
   files.set("package.json", renderPackageJson(framework, site))
   files.set("tsconfig.json", renderTsconfig(framework))
   for (const [file, text] of targetFiles(site.target, site.name, site.docker)) files.set(file, text)
+  for (const [file, text] of starterRouteTypes(routeExtension(framework))) files.set(file, text)
   return files
 }
 
@@ -119,6 +121,7 @@ export async function materializeSite(
   for (const dir of ["routes", "backend"]) await mkdir(join(target, dir), { recursive: true })
   for (const file of SHARED_SITE_FILES) await copy(join(SITE_BASE_DIR, file), join(target, file))
   for (const [file, contents] of generatedSiteFiles(framework, options)) {
+    await mkdir(dirname(join(target, file)), { recursive: true })
     await emit(join(target, file), contents)
   }
   await copy(join(overlay, "README.md"), join(target, "README.md"))
