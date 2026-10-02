@@ -24,8 +24,13 @@ export interface DevDiagnostics {
 }
 
 /** One diagnostics surface per dev server. `root` is the resolved project root; it scopes the codeframe
- * to the project (see buildDiagnostic). Both dev servers resolve a concrete root before calling this. */
-export function createDevDiagnostics(root: string): DevDiagnostics {
+ * to the project (see buildDiagnostic). Both dev servers resolve a concrete root before calling this.
+ * `build` replaces the default Diagnostic builder: the dev session passes one that also records the
+ * failure in its feed (redacted), so the overlay, this endpoint and the feed show the same object. */
+export function createDevDiagnostics(
+  root: string,
+  build?: (err: unknown, request: { readonly method: string; readonly url: string }) => Diagnostic,
+): DevDiagnostics {
   let last: Diagnostic | undefined
   const zones = createZoneClassifier({ appRoot: root })
   const showSource = (file: string): boolean => browserDenial(zones.classify(file)) === undefined
@@ -43,7 +48,7 @@ export function createDevDiagnostics(root: string): DevDiagnostics {
       },
     }),
     capture: (err, request) => {
-      last = buildDiagnostic(err, { root, request, showSource })
+      last = build?.(err, request) ?? buildDiagnostic(err, { root, request, showSource })
       return renderDiagnosticOverlay(last)
     },
   }

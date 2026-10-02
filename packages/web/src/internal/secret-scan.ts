@@ -465,6 +465,40 @@ export function scanForSecrets(input: SecretScanInput): SecretFinding[] {
   )
 }
 
+const AUTH_SCHEME = /\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{16,}/g
+const CREDENTIAL_HEADER =
+  /\b(cookie|set-cookie|authorization|proxy-authorization|x-api-key|api-key)(["']?\s*(?:=>|:|=)\s*["'`]?)[^"'`\r\n,}]{8,}/gi
+
+/**
+ * A scrubber for text a dev tool hands to a person or an agent: logs, error messages, stacks,
+ * codeframes. Broader than the build scan because a log line is not a published artifact: every JWT
+ * (a session token is a credential), an `Authorization`/`Cookie` value, and every non-public env
+ * value in each encoding the build scan matches. Each hit becomes `[redacted:<what>]`.
+ */
+export function createRedactor(
+  env: Readonly<Record<string, string | undefined>>,
+  publicEnvPrefix = "PUBLIC_",
+): (text: string) => string {
+  const needles = envNeedles(env, publicEnvPrefix).sort((a, b) => b.needle.length - a.needle.length)
+  return (text) => {
+    if (text.length < 8) return text
+    let out = text
+    for (const { env: name, needle } of needles) {
+      if (out.includes(needle)) out = out.replaceAll(needle, `[redacted:${name}]`)
+    }
+    out = out.replace(PRIVATE_KEY, "[redacted:private key]")
+    for (const { what, pattern } of KEY_FORMATS) out = out.replace(pattern, `[redacted:${what}]`)
+    out = out.replace(JWT, "[redacted:JWT]")
+    out = out.replace(CREDENTIAL_URL, (match, user: string, password: string) =>
+      PLACEHOLDER.test(password) || password === user
+        ? match
+        : match.replace(`:${password}@`, ":[redacted]@"),
+    )
+    out = out.replace(AUTH_SCHEME, "$1 [redacted]")
+    return out.replace(CREDENTIAL_HEADER, "$1$2[redacted]")
+  }
+}
+
 /** The build environment: Bun's, else Node's. */
 export const buildEnvironment = (): Readonly<Record<string, string | undefined>> =>
   (typeof Bun !== "undefined" ? Bun.env : undefined) ?? process.env

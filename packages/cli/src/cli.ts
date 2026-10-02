@@ -61,16 +61,43 @@ export interface Flags {
 async function forwardChildOutput(
   stream: ReadableStream<Uint8Array>,
   sink: { write(chunk: Uint8Array): unknown },
+  observe?: (chunk: Uint8Array) => void,
 ): Promise<void> {
   const reader = stream.getReader()
   try {
     for (;;) {
       const { done, value } = await reader.read()
       if (done) return
+      observe?.(value)
       await sink.write(value)
     }
   } finally {
     reader.releaseLock()
+  }
+}
+
+/** The last `max` bytes of a stream, decoded: what a crashed child printed last. */
+function streamTail(max: number): { push(chunk: Uint8Array): void; text(): string } {
+  let chunks: Uint8Array[] = []
+  let size = 0
+  return {
+    push(chunk) {
+      chunks.push(chunk)
+      size += chunk.length
+      while (size - (chunks[0]?.length ?? 0) >= max && chunks.length > 1) {
+        size -= chunks.shift()?.length ?? 0
+      }
+    },
+    text() {
+      const all = new Uint8Array(size)
+      let offset = 0
+      for (const chunk of chunks) {
+        all.set(chunk, offset)
+        offset += chunk.length
+      }
+      chunks = [all]
+      return new TextDecoder().decode(all.subarray(Math.max(0, size - max)))
+    },
   }
 }
 
@@ -383,16 +410,30 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
           },
         },
       )
+      // The child's last words, kept so a crash leaves a record `nifra errors` can read after the fact.
+      const stderrTail = streamTail(16 * 1024)
       const forwarded = Promise.all([
         forwardChildOutput(child.stdout as ReadableStream<Uint8Array>, Bun.stdout),
-        forwardChildOutput(child.stderr as ReadableStream<Uint8Array>, Bun.stderr),
+        forwardChildOutput(child.stderr as ReadableStream<Uint8Array>, Bun.stderr, stderrTail.push),
       ])
-      const forward = (): void => child.kill("SIGINT")
+      let interrupted = false
+      const forward = (): void => {
+        interrupted = true
+        child.kill("SIGINT")
+      }
       process.on("SIGINT", forward)
       process.on("SIGTERM", forward)
       try {
         const [code] = await Promise.all([child.exited, forwarded])
         process.exitCode = code
+        if (code !== 0 && !interrupted) {
+          try {
+            const { recordDevCrash } = await import("@nifrajs/web/dev-feed")
+            recordDevCrash(app.cwd, code, stderrTail.text())
+          } catch {
+            // The crash is already on the terminal; failing to persist it must not mask the exit code.
+          }
+        }
       } finally {
         process.off("SIGINT", forward)
         process.off("SIGTERM", forward)
@@ -441,12 +482,13 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
       ...(fw.publicDir !== undefined ? { publicDir: fw.publicDir } : {}),
       ...(fw.conditions ? { conditions: fw.conditions } : {}),
       ...(fw.define ? { define: fw.define } : {}),
-      createApp: (clientEntry, importQuery) =>
+      createApp: (clientEntry, importQuery, dev) =>
         createWebApp({
           adapter: asAdapter(fw.adapter),
           manifest: discoverRoutes(routesDir, { importQuery }),
           clientEntry,
           ...frameworkWebAppOptions(fw, backend),
+          onLoaderError: dev.onLoaderError,
         }),
     })
     console.log(`nifra dev (bun) → http://localhost:${server.port}`)
@@ -501,12 +543,13 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
     // `load` resolves route modules through VITE, not through Bun. That is what makes the Vite
     // pipeline own the whole phase: the client and the server now agree on every specifier, so
     // `resolve.dedupe` finally governs SSR and the dual-React crash cannot occur.
-    createApp: (clientEntry, load) =>
+    createApp: (clientEntry, load, dev) =>
       createWebApp({
         adapter: asAdapter(fw.adapter),
         manifest: discoverRoutes(routesDir, { load }),
         clientEntry,
         ...frameworkWebAppOptions(fw, backend),
+        onLoaderError: dev.onLoaderError,
       }),
   })
   console.log(`nifra dev (vite) → http://localhost:${server.port}`)

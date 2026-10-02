@@ -3247,6 +3247,12 @@
     "signature": "export interface CaptureIncidentOptions {\n    readonly id?: string;\n    readonly capturedAt?: string;\n    /** Header names to keep on the capsule (lowercased match). Default: only `content-type`. */\n    readonly headerAllowList?: readonly string[];\n    readonly note?: string;\n}"
   },
   {
+    "name": "CaptureSink",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface CaptureSink {\n    /** The feed this sink records into; a line logged inside one of its requests reaches only it. */\n    readonly feedId: string;\n    line(level: DevLogLevel, message: string, request: DevRequestContext | undefined): void;\n    /** A structured line from core's JSON logger (`{ level, message, ... }`). */\n    structured?(entry: CoreLogEntry, request: DevRequestContext | undefined): void;\n}"
+  },
+  {
     "name": "CaseComparison",
     "kind": "interface",
     "package": "@nifrajs/testing",
@@ -4596,6 +4602,12 @@
     "doc": "/**\n * Copy `from` into `to`, returning the URL paths copied (sorted).\n *\n * Lives here, not beside `servePublicDir`, because it is BUILD-time: it reaches for `Bun.Glob` and\n * `node:fs`, and `public-dir.ts` is reachable from the client bundle graph through the package\n * entry - a dynamic `import(\"bun\")` there fails the browser build outright.\n */"
   },
   {
+    "name": "CoreLogEntry",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface CoreLogEntry {\n    readonly level: string;\n    readonly message: string;\n    readonly [field: string]: unknown;\n}"
+  },
+  {
     "name": "cors",
     "kind": "function",
     "package": "@nifrajs/middleware",
@@ -4719,11 +4731,25 @@
     "signature": "export declare function createDeploymentAuthority(input: {\n    readonly workspaceMaxBytes: number;\n    readonly deadlineAt?: number;\n    readonly cancellation?: DeploymentCancellation;\n    readonly hostileCodeIsolation?: HostileCodeIsolation;\n}): DeploymentAuthority;"
   },
   {
+    "name": "createDevFeed",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function createDevFeed(options: DevFeedOptions): DevFeed;",
+    "doc": "/** Create the store a dev server records into. */"
+  },
+  {
     "name": "createDevServer",
     "kind": "function",
     "package": "@nifrajs/web",
     "signature": "export declare function createDevServer(options: DevServerOptions): Promise<DevServer>;",
     "doc": "/** Start the Bun dev server: generate → bundle → serve → watch → hot-reload on change. */"
+  },
+  {
+    "name": "createDevToken",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function createDevToken(): string;",
+    "doc": "/** A fresh 256-bit token. */"
   },
   {
     "name": "createDurableEffectJournal",
@@ -5294,6 +5320,13 @@
     "doc": "/** `ctx.set` carrying the lazy backings (`_headers`, `_cookies`) so `toResponse` can skip allocating\n * anything when no handler touched `c.set.*`. Server-internal. */"
   },
   {
+    "name": "currentDevRequest",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function currentDevRequest(): DevRequestContext | undefined;",
+    "doc": "/** The request being handled on this async path, if any. */"
+  },
+  {
     "name": "currentDocumentNonce",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -5662,6 +5695,12 @@
     "package": "@nifrajs/web",
     "signature": "export declare const DEFAULT_CSS_LOADING: CssLoadingMode;",
     "doc": "/** The default remains the ordinary render-blocking stylesheet link. */"
+  },
+  {
+    "name": "DEFAULT_DEV_FEED_LIMITS",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const DEFAULT_DEV_FEED_LIMITS: DevFeedLimits;"
   },
   {
     "name": "DEFAULT_DEV_PORT",
@@ -6225,11 +6264,51 @@
     "doc": "/**\n * Scan a build's metafile for any module that opts into the `server-only` marker (a side-effect\n * `import \"@nifrajs/web/backend-only\"`) yet landed in a CLIENT output chunk, returning a sorted, deduped\n * list of {@link ServerOnlyFinding}s. Mirrors {@link detectNodeBuiltinsInClient}: it reads the SAME\n * graph facts - which inputs import the marker (the \"marked\" modules), which chunk each landed in (the\n * per-output `inputs`), and the shortest import chain from a user entry to it. The marker module ITSELF\n * (which imports nothing) is excluded - only the modules that *opt in* are flagged. Pure + exported for\n * unit testing. Empty ⇒ clean.\n */"
   },
   {
+    "name": "DEV_ERROR_CATEGORIES",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const DEV_ERROR_CATEGORIES: readonly DevErrorCategory[];"
+  },
+  {
+    "name": "DEV_FEED_HEADER",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const DEV_FEED_HEADER = \"x-nifra-dev-feed\";",
+    "doc": "/** Response header marking a body as dev-feed JSON (so a tool can tell it from an app route). */"
+  },
+  {
+    "name": "DEV_FEED_PATHS",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const DEV_FEED_PATHS: Readonly<{\n    identity: \"/__nifra/dev\";\n    errors: \"/__nifra/errors\";\n    logs: \"/__nifra/logs\";\n    requests: \"/__nifra/requests\";\n    clientEvent: \"/__nifra/client-event\";\n}>;",
+    "doc": "/** The dev server's agent-facing endpoints. All live under `/__nifra/`, which no route can produce. */"
+  },
+  {
+    "name": "DEV_FEED_SCHEMA",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const DEV_FEED_SCHEMA = 1;",
+    "doc": "/** Version of the HTTP + record contract between a dev server and the tools that read it. */"
+  },
+  {
     "name": "DEV_HMR_ENV",
     "kind": "const",
     "package": "@nifrajs/web",
     "signature": "export declare const DEV_HMR_ENV = \"NIFRA_DEV_HMR\";",
     "doc": "/**\n * Env flag a nifra dev server sets for its own lifetime, so a framework compiler plugin can tell a dev\n * compile from a `nifra build` one. Exported for the dev server that sets it; plugins ask\n * {@link devServerCompile} instead of reading it.\n */"
+  },
+  {
+    "name": "DEV_LOG_LEVELS",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const DEV_LOG_LEVELS: readonly DevLogLevel[];"
+  },
+  {
+    "name": "DEV_REQUEST_ID_HEADER",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const DEV_REQUEST_ID_HEADER = \"x-nifra-request-id\";",
+    "doc": "/** Response header naming the request id every entry recorded during that request carries. */"
   },
   {
     "name": "DEV_ROOT_ENV",
@@ -6243,6 +6322,81 @@
     "kind": "const",
     "package": "@nifrajs/web",
     "signature": "export declare const DEV_ROUTES_ENV = \"NIFRA_DEV_ROUTES\";"
+  },
+  {
+    "name": "DEV_SERVER_LOG_FILE",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const DEV_SERVER_LOG_FILE = \".nifra/dev-server.log\";"
+  },
+  {
+    "name": "DEV_SERVER_RECORD_FILE",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const DEV_SERVER_RECORD_FILE = \".nifra/dev-server.json\";",
+    "doc": "/** Discovery record and persisted log, relative to the project root. `.nifra/` is gitignored. */"
+  },
+  {
+    "name": "DEV_TOKEN_HEADER",
+    "kind": "const",
+    "package": "@nifrajs/web",
+    "signature": "export declare const DEV_TOKEN_HEADER = \"x-nifra-dev-token\";",
+    "doc": "/** Request header carrying the agent token from the discovery record. */"
+  },
+  {
+    "name": "DevAppHooks",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DevAppHooks {\n    /** Pass to `createWebApp({ onLoaderError })`: failures an `_error` boundary renders reach the feed. */\n    readonly onLoaderError: (err: unknown, ctx: {\n        readonly request: Request;\n        readonly route: string;\n        readonly params?: unknown;\n    }) => void;\n}",
+    "doc": "/** What a dev server hands `createApp` so the app reports into the session. */"
+  },
+  {
+    "name": "DevEntrySource",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type DevEntrySource = \"server\" | \"browser\";"
+  },
+  {
+    "name": "DevErrorCategory",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type DevErrorCategory = \n/** A failure that escaped the app entirely; the dev overlay rendered it. */\n\"ssr\"\n/** A loader, action or render failure an `_error` boundary (or a soft-nav 500) answered. */\n | \"page\"\n/** An unhandled backend route error (a bare 500). */\n | \"api\"\n/** A client bundle, leak-guard, transform or app-construction failure. */\n | \"build\"\n/** An uncaught error or rejection in a browser tab. */\n | \"browser\"\n/** A hydration mismatch reported by the browser. */\n | \"hydration\"\n/** The dev server process itself crashed. */\n | \"process\";"
+  },
+  {
+    "name": "DevErrorEntry",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DevErrorEntry {\n    /** Sequence number of the latest occurrence; query with `since` to see only newer entries. */\n    readonly seq: number;\n    /** Stable across repeats of the same failure. */\n    readonly id: string;\n    readonly category: DevErrorCategory;\n    readonly source: DevEntrySource;\n    readonly diagnostic: Diagnostic;\n    readonly count: number;\n    readonly firstAt: string;\n    readonly lastAt: string;\n    /** The file-change generation of the latest occurrence. */\n    readonly generation: number;\n    /** True when a file changed after the latest occurrence: re-run the request to confirm it persists. */\n    readonly stale: boolean;\n    readonly requestId?: string;\n    /** The route pattern, when a page loader/action/render failed. */\n    readonly route?: string;\n    /** The page path a browser entry came from. */\n    readonly page?: string;\n    /** Set when a later success cleared it (build errors). */\n    readonly resolvedAt?: string;\n}"
+  },
+  {
+    "name": "DevErrorsQuery",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DevErrorsQuery {\n    readonly since?: number | undefined;\n    readonly categories?: readonly DevErrorCategory[] | undefined;\n    /** Default true. */\n    readonly includeStale?: boolean | undefined;\n    /** Default false. */\n    readonly includeResolved?: boolean | undefined;\n    readonly requestId?: string | undefined;\n    readonly limit?: number | undefined;\n}"
+  },
+  {
+    "name": "DevErrorsResult",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DevErrorsResult extends PageInfo {\n    readonly errors: readonly DevErrorEntry[];\n}"
+  },
+  {
+    "name": "DevFeed",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DevFeed {\n    /** Identifies this feed's requests to the process-wide capture. */\n    readonly id: string;\n    readonly root: string;\n    readonly generation: number;\n    readonly cursor: number;\n    recordError(error: unknown, meta: ErrorMeta): DevErrorEntry;\n    recordDiagnostic(diagnostic: Diagnostic, meta: ErrorMeta): DevErrorEntry;\n    recordLog(level: DevLogLevel, message: string, meta?: LogMeta): void;\n    startRequest(requestId: string, method: string, path: string): void;\n    finishRequest(requestId: string, response: {\n        readonly status: number;\n        readonly bytes?: number | undefined;\n        readonly isr?: string | undefined;\n    }, durationMs: number): void;\n    /** A watched file changed: everything recorded so far becomes stale. */\n    markChange(): void;\n    /** A later success cleared every open error of `category`. */\n    resolve(category: DevErrorCategory): void;\n    errors(query?: DevErrorsQuery): DevErrorsResult;\n    logs(query?: DevLogsQuery): DevLogsResult;\n    requests(query?: DevRequestsQuery): DevRequestsResult;\n    counts(): DevServerIdentity[\"counts\"];\n    redact(text: string): string;\n    /** Flush persisted entries; the feed stays usable. */\n    flush(): void;\n    /** Flush and stop persisting. */\n    close(): void;\n}"
+  },
+  {
+    "name": "DevFeedLimits",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DevFeedLimits {\n    readonly errors: number;\n    readonly logs: number;\n    readonly logBytes: number;\n    readonly requests: number;\n    readonly message: number;\n    readonly stack: number;\n}"
+  },
+  {
+    "name": "DevFeedOptions",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DevFeedOptions {\n    readonly root: string;\n    readonly publicEnvPrefix?: string | undefined;\n    /** The environment whose non-public values are redacted (default `process.env`). */\n    readonly env?: Readonly<Record<string, string | undefined>> | undefined;\n    /** Append redacted entries to {@link DEV_SERVER_LOG_FILE} (default true). */\n    readonly persist?: boolean | undefined;\n    /** Whether a file's source may appear in a codeframe. Dev servers pass the zone check. */\n    readonly showSource?: ((file: string) => boolean) | undefined;\n    readonly limits?: Partial<DevFeedLimits> | undefined;\n}"
   },
   {
     "name": "devHotComponent",
@@ -6259,6 +6413,60 @@
     "doc": "/**\n * The throwaway HTML document. Its only job is to make Bun bundle the entry and assign it a URL - it is\n * never shown to a user, so it carries no app markup. The `<div id=\"root\">` is there purely so the\n * document stands on its own if someone opens the probe path directly while debugging.\n */"
   },
   {
+    "name": "DevLogEntry",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DevLogEntry {\n    readonly seq: number;\n    readonly at: string;\n    readonly level: DevLogLevel;\n    readonly source: DevEntrySource;\n    readonly message: string;\n    readonly requestId?: string;\n    readonly page?: string;\n}"
+  },
+  {
+    "name": "DevLogLevel",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type DevLogLevel = \"debug\" | \"info\" | \"log\" | \"warn\" | \"error\";"
+  },
+  {
+    "name": "DevLogsQuery",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DevLogsQuery {\n    readonly since?: number | undefined;\n    readonly levels?: readonly DevLogLevel[] | undefined;\n    readonly source?: DevEntrySource | undefined;\n    readonly requestId?: string | undefined;\n    /** Case-insensitive substring. */\n    readonly grep?: string | undefined;\n    readonly limit?: number | undefined;\n}"
+  },
+  {
+    "name": "DevLogsResult",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DevLogsResult extends PageInfo {\n    readonly logs: readonly DevLogEntry[];\n    /** Lines evicted from the ring since the server started. */\n    readonly dropped: number;\n}"
+  },
+  {
+    "name": "DevPipeline",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type DevPipeline = \"bun\" | \"vite\";"
+  },
+  {
+    "name": "DevRequestContext",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DevRequestContext {\n    readonly feedId: string;\n    readonly requestId: string;\n    readonly method: string;\n    readonly path: string;\n}"
+  },
+  {
+    "name": "DevRequestsQuery",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DevRequestsQuery {\n    readonly since?: number | undefined;\n    /** Path prefix. */\n    readonly path?: string | undefined;\n    readonly requestId?: string | undefined;\n    readonly limit?: number | undefined;\n}"
+  },
+  {
+    "name": "DevRequestsResult",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DevRequestsResult extends PageInfo {\n    readonly requests: readonly DevRequestTrace[];\n}"
+  },
+  {
+    "name": "DevRequestTrace",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DevRequestTrace {\n    readonly seq: number;\n    readonly requestId: string;\n    readonly method: string;\n    readonly path: string;\n    readonly at: string;\n    /** Undefined while the request has not produced its response yet. */\n    readonly status?: number;\n    /** Until the response started (a streamed body keeps flowing after). */\n    readonly durationMs?: number;\n    readonly bytes?: number;\n    readonly isr?: string;\n    readonly errorIds: readonly string[];\n    readonly logCount: number;\n}"
+  },
+  {
     "name": "DevServer",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -6272,10 +6480,24 @@
     "doc": "/**\n * True while a nifra dev server is running, i.e. the compile may emit HMR wiring (and, where the\n * framework couples the two, dev-mode runtime output).\n *\n * The phase cannot be a plugin constructor argument: an app builds its `clientPlugins` once in\n * `nifra.config.ts` and the same plugin objects serve both `nifra dev` and `nifra build`. Guarding the\n * emitted code with `if (import.meta.hot)` is not sufficient either - `Bun.build` keeps the branch, so\n * the HMR calls were measured shipping in production client chunks. The dev server announces itself in\n * the environment instead, and `nifra build` never sets it. Read per compile (not captured at\n * registration) so the flag is honoured however late the server sets it.\n */"
   },
   {
+    "name": "DevServerIdentity",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DevServerIdentity {\n    readonly schema: number;\n    readonly pid: number;\n    readonly port: number;\n    readonly pipeline: DevPipeline;\n    readonly root: string;\n    readonly startedAt: string;\n    readonly cursor: number;\n    readonly generation: number;\n    readonly counts: {\n        readonly errors: number;\n        readonly logs: number;\n        readonly requests: number;\n    };\n}",
+    "doc": "/** The identity a dev server reports at {@link DEV_FEED_PATHS.identity}. */"
+  },
+  {
     "name": "DevServerOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface DevServerOptions extends Omit<BuildClientOptions, \"minify\"> {\n    /**\n     * Build the nifra app for the current client entry. `importQuery` changes on every reload - pass it to\n     * `discoverRoutes(routesDir, { importQuery })` so SSR re-imports edited route modules instead of Bun's\n     * cached copies.\n     */\n    readonly createApp: (clientEntry: string, importQuery: string) => FetchApp | Promise<FetchApp>;\n    /** Directories to watch (default: `[routesDir]`). */\n    readonly watch?: readonly string[];\n    /** Port to listen on (default {@link DEFAULT_DEV_PORT}). */\n    readonly port?: number;\n    /** Directory of user-authored static files served at the root (default `\"public\"`). The SAME\n     * option the production build copies and serves, so dev and prod cannot drift. */\n    readonly publicDir?: string | false;\n    /**\n     * Run the client-leak guards on each change (default `true`).\n     *\n     * `buildClient` is what runs them - server-only code reaching the browser, `node:` builtins in client\n     * code - and Bun's dev server does its own bundling, so nothing would run them otherwise. They are\n     * security guards; a dev loop that stops enforcing them is how a leak reaches a deploy unnoticed. The\n     * pass runs in the background off the hot path, so HMR is never waiting on it, and only reports.\n     */\n    readonly guardLeaks?: boolean;\n}"
+    "signature": "export interface DevServerOptions extends Omit<BuildClientOptions, \"minify\"> {\n    /**\n     * Build the nifra app for the current client entry. `importQuery` changes on every reload - pass it to\n     * `discoverRoutes(routesDir, { importQuery })` so SSR re-imports edited route modules instead of Bun's\n     * cached copies. Pass `dev.onLoaderError` to `createWebApp` so failures an `_error` boundary renders\n     * still reach the dev feed (`nifra errors`).\n     */\n    readonly createApp: (clientEntry: string, importQuery: string, dev: DevAppHooks) => FetchApp | Promise<FetchApp>;\n    /** Directories to watch (default: `[routesDir]`). */\n    readonly watch?: readonly string[];\n    /** Port to listen on (default {@link DEFAULT_DEV_PORT}). */\n    readonly port?: number;\n    /** Directory of user-authored static files served at the root (default `\"public\"`). The SAME\n     * option the production build copies and serves, so dev and prod cannot drift. */\n    readonly publicDir?: string | false;\n    /**\n     * Run the client-leak guards on each change (default `true`).\n     *\n     * `buildClient` is what runs them - server-only code reaching the browser, `node:` builtins in client\n     * code - and Bun's dev server does its own bundling, so nothing would run them otherwise. They are\n     * security guards; a dev loop that stops enforcing them is how a leak reaches a deploy unnoticed. The\n     * pass runs in the background off the hot path, so HMR is never waiting on it, and only reports.\n     */\n    readonly guardLeaks?: boolean;\n    /**\n     * Write `.nifra/dev-server.json` (how `nifra errors`/`nifra logs` and the MCP tools find this server)\n     * and the persisted dev log beside it (default `true`).\n     */\n    readonly record?: boolean;\n}"
+  },
+  {
+    "name": "DevServerRecord",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface DevServerRecord {\n    readonly schema: number;\n    readonly pid: number;\n    readonly port: number;\n    readonly url: string;\n    readonly pipeline: DevPipeline;\n    readonly root: string;\n    readonly startedAt: string;\n    /** Sent as {@link DEV_TOKEN_HEADER}. Only a reader of this file (mode 0600) can present it. */\n    readonly token: string;\n}",
+    "doc": "/** What a running dev server writes to {@link DEV_SERVER_RECORD_FILE} so tools can find it. */"
   },
   {
     "name": "devtools",
@@ -7070,6 +7292,19 @@
     "doc": "/**\n * Build an error-boundary chain element bound to `fallback` (a route's `_error` component). nifra's\n * client codegen inserts it before the page in the matched chain; a render error in the subtree is\n * captured (`onErrorCaptured`) and renders `fallback` with `{ data: { name, message } }` instead of\n * crashing. DOM-transparent (renders the default slot directly), so it never disturbs hydration.\n */"
   },
   {
+    "name": "errorFromCoreLog",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function errorFromCoreLog(entry: CoreLogEntry): Error | undefined;",
+    "doc": "/** The thrown error core's `unhandled request error` log line describes, rebuilt for a Diagnostic. */"
+  },
+  {
+    "name": "ErrorMeta",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface ErrorMeta {\n    readonly category: DevErrorCategory;\n    readonly source?: DevEntrySource | undefined;\n    readonly requestId?: string | undefined;\n    readonly route?: string | undefined;\n    readonly page?: string | undefined;\n    readonly request?: {\n        readonly method: string;\n        readonly url: string;\n    } | undefined;\n}"
+  },
+  {
     "name": "etag",
     "kind": "function",
     "package": "@nifrajs/middleware",
@@ -7856,6 +8091,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function formatBytes(bytes: number): string;",
     "doc": "/** Human-readable byte count: `B`/`KB`/`MB` with one decimal above 1 KB (e.g. `12.3 KB`). Pure. */"
+  },
+  {
+    "name": "formatConsoleArgs",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function formatConsoleArgs(args: readonly unknown[]): string;",
+    "doc": "/** Format console arguments the way the console itself would, without color. */"
   },
   {
     "name": "formatManifestDrift",
@@ -9204,6 +9446,13 @@
     "signature": "export declare function inspectBuildFreshness(cwd: string): Promise<BuildFreshness>;"
   },
   {
+    "name": "installCapture",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function installCapture(sink: CaptureSink): () => void;",
+    "doc": "/**\n * Tee the process's console and stdout/stderr into `sink`, leaving the real output untouched. Global\n * and reference-counted: several dev servers (tests start many) share one patch, and the originals come\n * back when the last sink detaches. Returns the detach function.\n */"
+  },
+  {
     "name": "installForms",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -9288,6 +9537,20 @@
     "package": "@nifrajs/core",
     "signature": "export declare function isDataClassification(value: unknown): value is DataClassification;",
     "doc": "/** Whether `value` is a known classification token. */"
+  },
+  {
+    "name": "isDevErrorCategory",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function isDevErrorCategory(value: unknown): value is DevErrorCategory;",
+    "doc": "/** Narrow a string to a {@link DevErrorCategory}. */"
+  },
+  {
+    "name": "isDevLogLevel",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function isDevLogLevel(value: unknown): value is DevLogLevel;",
+    "doc": "/** Narrow a string to a {@link DevLogLevel}. */"
   },
   {
     "name": "isDraftEnabled",
@@ -9456,6 +9719,13 @@
     "package": "@nifrajs/mcp",
     "signature": "export type IsolationClass = \"inherit\" | \"process\" | \"sandbox\";",
     "doc": "/** Isolation the host must provide to invoke the capability. */"
+  },
+  {
+    "name": "isProcessAlive",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function isProcessAlive(pid: number): boolean;",
+    "doc": "/** Whether a process with `pid` exists (EPERM means it exists but is not ours). */"
   },
   {
     "name": "ISR_REVALIDATE_HEADER",
@@ -10317,6 +10587,12 @@
     "kind": "interface",
     "package": "@nifrajs/middleware",
     "signature": "export interface LoggerOptions {\n    /** Sink for each line. Default: `console.log(JSON.stringify(fields))`. Route to your own logger here. */\n    readonly log?: (fields: RequestLogFields) => void;\n}"
+  },
+  {
+    "name": "LogMeta",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface LogMeta {\n    readonly source?: DevEntrySource | undefined;\n    readonly requestId?: string | undefined;\n    readonly page?: string | undefined;\n}"
   },
   {
     "name": "LoopDelayHistogram",
@@ -12880,6 +13156,13 @@
     "doc": "/** Parse a request `Cookie` header into a name→value map (values URL-decoded). Unparseable pairs are\n * skipped rather than throwing - a junk `Cookie` header shouldn't fail the request.\n *\n * Hand-rolled index walk instead of `split(\";\")` + `trim()` chains: those allocated an array + up\n * to three substrings per pair and showed up at ~6% of a realistic (auth + cookie) request. Same\n * semantics, two slices per pair, no intermediate array. Duplicate names use the first value\n * deterministically; security-sensitive callers can use {@link hasDuplicateCookie} and fail closed. */"
   },
   {
+    "name": "parseCoreLogLine",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function parseCoreLogLine(line: string): CoreLogEntry | undefined;",
+    "doc": "/** Parse a line core's default JSON logger wrote, or undefined for anything else. */"
+  },
+  {
     "name": "parseCron",
     "kind": "function",
     "package": "@nifrajs/cron",
@@ -14294,11 +14577,25 @@
     "doc": "/** Parse the public header convention without ever throwing on hostile input. */"
   },
   {
+    "name": "readDevServerRecord",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function readDevServerRecord(root: string): DevServerRecord | undefined;",
+    "doc": "/** The record at `root`, or undefined when absent or malformed. Says nothing about liveness. */"
+  },
+  {
     "name": "readImageDimensions",
     "kind": "function",
     "package": "@nifrajs/image",
     "signature": "export declare function readImageDimensions(source: {\n    arrayBuffer(): Promise<ArrayBuffer>;\n    stream?: () => ReadableStream<Uint8Array>;\n}, maxBytes?: number): Promise<ImageInfo | null>;",
     "doc": "/**\n * Read just the leading bytes of an image file (via the platform `Bun.file`/`fetch` blob) and parse its\n * dimensions. Build-time tooling: pre-read dimensions into a manifest so `<Image>` is CLS-safe without\n * hardcoding sizes. Reads at most `maxBytes` (default 64 KB - enough for any header).\n */"
+  },
+  {
+    "name": "readPersistedFeed",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function readPersistedFeed(root: string, limit?: number): {\n    readonly errors: DevErrorEntry[];\n    readonly logs: DevLogEntry[];\n};",
+    "doc": "/** The persisted record of a dev server that may no longer be running: newest last. */"
   },
   {
     "name": "readProjectDiff",
@@ -14418,6 +14715,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function recordCapabilityOutcome(context: object, capability: string, options: CapabilityOutcomeOptions): void;",
     "doc": "/** Record the terminal outcome of an already-admitted capability without debiting admission twice. */"
+  },
+  {
+    "name": "recordDevCrash",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function recordDevCrash(root: string, exitCode: number | null, stderrTail: string): void;",
+    "doc": "/**\n * Record a dev server process that died, from the process that supervised it (`nifra dev` re-execs the\n * Bun pipeline and pipes the child's stderr). The child's own monitor never sees an unhandled rejection\n * on Bun, and a native crash print bypasses the console, so the supervisor's view of stderr is the\n * record that survives. Persisted only: there is no live server left to serve it.\n */"
   },
   {
     "name": "recordProof",
@@ -14741,6 +15045,13 @@
     "kind": "interface",
     "package": "@nifrajs/agent-protocol",
     "signature": "export interface ReloadResult {\n    readonly revision: string;\n    readonly loaded: readonly string[];\n    readonly disabled: readonly string[];\n    readonly rolledBack: boolean;\n    readonly error?: AgentError;\n}"
+  },
+  {
+    "name": "removeDevServerRecord",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function removeDevServerRecord(root: string, token: string): void;",
+    "doc": "/** Remove the record only while it is still this server's: a newer server may have replaced it. */"
   },
   {
     "name": "RenderAdapter",
@@ -17046,6 +17357,13 @@
     "package": "@nifrajs/agent-app",
     "signature": "export interface RunView {\n    readonly runId: string;\n    readonly planId: string;\n    readonly planDigest: string;\n    readonly nodeCount: number;\n    readonly state: RunSnapshot[\"state\"];\n    readonly cursor: number;\n    readonly total: number;\n    readonly completed: number;\n    readonly failed: number;\n    readonly updatedAt: number;\n    readonly failureCode?: string;\n}",
     "doc": "/** A run reduced to plan reference, lifecycle state, and progress counters - no node payloads. */"
+  },
+  {
+    "name": "runWithDevRequest",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function runWithDevRequest<T>(ctx: DevRequestContext, fn: () => T): T;",
+    "doc": "/** Run `fn` as the handling of one request: entries recorded inside it carry `ctx.requestId`. */"
   },
   {
     "name": "runWorkGraph",
@@ -21106,7 +21424,7 @@
     "name": "ViteDevServerOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ViteDevServerOptions {\n    /** Absolute (or cwd-relative) path to the `routes/` dir. */\n    readonly routesDir: string;\n    /** Client runtime module providing `mountRouter` (e.g. `\"@nifrajs/web-react/client\"`). */\n    readonly clientModule: string;\n    /**\n     * Build the nifra app for the given dev client-entry URL.\n     *\n     * `load` resolves a route module through **Vite's** graph (`ssrLoadModule`). Pass it to\n     * `discoverRoutes(routesDir, { load })` so SSR and the client are resolved by the SAME toolchain.\n     * Without it SSR resolves through Bun while the client resolves through Vite - two resolvers, one\n     * process - which is what makes `resolve.dedupe` fail to reach SSR and produces the dual-React\n     * crash. Vite re-evaluates on change, so no `importQuery` cache-buster is needed alongside it.\n     */\n    readonly createApp: (clientEntry: string, load: (absolutePath: string) => Promise<unknown>) => FetchApp | Promise<FetchApp>;\n    /** Vite plugins - inject your framework's official plugin, e.g. `[react()]`. */\n    readonly plugins?: readonly unknown[];\n    /**\n     * Extra `resolve.conditions` prepended ahead of nifra's defaults - some frameworks need their own\n     * (e.g. Solid's `\"solid\"` condition routes `solid-js` to its source/JSX-dev build).\n     */\n    readonly conditions?: readonly string[];\n    /**\n     * Compile-time `define` replacements (e.g. Vue's `__VUE_OPTIONS_API__` flags). Vite already sets\n     * `process.env.NODE_ENV` in dev; this is for framework feature flags the plugin doesn't inject.\n     */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Vite project root (default `process.cwd()`). */\n    readonly root?: string;\n    /** Port (default {@link DEFAULT_DEV_PORT}). */\n    readonly port?: number;\n    /**\n     * Use polling for the file watcher. Native fs events (fsevents/inotify) are unreliable inside\n     * containers, networked filesystems, and some sandboxes - there, HMR silently never fires. Set\n     * `true` (or the env var `CHOKIDAR_USEPOLLING=1`) to poll instead. Default: off (native events).\n     */\n    readonly poll?: boolean;\n    /** Vite public directory. Defaults to `<root>/public`; `false` disables it. */\n    readonly publicDir?: string | false;\n    /** Client-visible environment prefix (default `\"PUBLIC_\"`; empty disables exposure). */\n    readonly publicEnvPrefix?: string;\n    /**\n     * Downgrade the startup identity-parity check from a hard failure to a loud warning (dev only).\n     * The check catches two physical copies of an identity-sensitive package (e.g. React) resolving in\n     * one process, which reliably breaks hydration and framework context. When a duplicate comes from a\n     * linked sibling repo you cannot fix in the moment, set this to keep the dev server running while you\n     * resolve it; `nifra build` never honors it. Wired to `nifra dev --allow-duplicate-identity`.\n     */\n    readonly allowDuplicateIdentity?: boolean;\n}"
+    "signature": "export interface ViteDevServerOptions {\n    /** Absolute (or cwd-relative) path to the `routes/` dir. */\n    readonly routesDir: string;\n    /** Client runtime module providing `mountRouter` (e.g. `\"@nifrajs/web-react/client\"`). */\n    readonly clientModule: string;\n    /**\n     * Build the nifra app for the given dev client-entry URL.\n     *\n     * `load` resolves a route module through **Vite's** graph (`ssrLoadModule`). Pass it to\n     * `discoverRoutes(routesDir, { load })` so SSR and the client are resolved by the SAME toolchain.\n     * Without it SSR resolves through Bun while the client resolves through Vite - two resolvers, one\n     * process - which is what makes `resolve.dedupe` fail to reach SSR and produces the dual-React\n     * crash. Vite re-evaluates on change, so no `importQuery` cache-buster is needed alongside it.\n     *\n     * Pass `dev.onLoaderError` to `createWebApp` so failures an `_error` boundary renders still reach the\n     * dev feed (`nifra errors`).\n     */\n    readonly createApp: (clientEntry: string, load: (absolutePath: string) => Promise<unknown>, dev: DevAppHooks) => FetchApp | Promise<FetchApp>;\n    /** Vite plugins - inject your framework's official plugin, e.g. `[react()]`. */\n    readonly plugins?: readonly unknown[];\n    /**\n     * Extra `resolve.conditions` prepended ahead of nifra's defaults - some frameworks need their own\n     * (e.g. Solid's `\"solid\"` condition routes `solid-js` to its source/JSX-dev build).\n     */\n    readonly conditions?: readonly string[];\n    /**\n     * Compile-time `define` replacements (e.g. Vue's `__VUE_OPTIONS_API__` flags). Vite already sets\n     * `process.env.NODE_ENV` in dev; this is for framework feature flags the plugin doesn't inject.\n     */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Vite project root (default `process.cwd()`). */\n    readonly root?: string;\n    /** Port (default {@link DEFAULT_DEV_PORT}). */\n    readonly port?: number;\n    /**\n     * Use polling for the file watcher. Native fs events (fsevents/inotify) are unreliable inside\n     * containers, networked filesystems, and some sandboxes - there, HMR silently never fires. Set\n     * `true` (or the env var `CHOKIDAR_USEPOLLING=1`) to poll instead. Default: off (native events).\n     */\n    readonly poll?: boolean;\n    /** Vite public directory. Defaults to `<root>/public`; `false` disables it. */\n    readonly publicDir?: string | false;\n    /** Client-visible environment prefix (default `\"PUBLIC_\"`; empty disables exposure). */\n    readonly publicEnvPrefix?: string;\n    /**\n     * Downgrade the startup identity-parity check from a hard failure to a loud warning (dev only).\n     * The check catches two physical copies of an identity-sensitive package (e.g. React) resolving in\n     * one process, which reliably breaks hydration and framework context. When a duplicate comes from a\n     * linked sibling repo you cannot fix in the moment, set this to keep the dev server running while you\n     * resolve it; `nifra build` never honors it. Wired to `nifra dev --allow-duplicate-identity`.\n     */\n    readonly allowDuplicateIdentity?: boolean;\n    /**\n     * Write `.nifra/dev-server.json` (how `nifra errors`/`nifra logs` and the MCP tools find this server)\n     * and the persisted dev log beside it (default `true`).\n     */\n    readonly record?: boolean;\n}"
   },
   {
     "name": "viteLeakGuard",
@@ -21517,6 +21835,13 @@
     "package": "@nifrajs/web",
     "signature": "export declare function writeDevFiles(options: WriteDevFilesOptions): void;",
     "doc": "/**\n * Generate the client entry + the HTML route that carries it.\n *\n * Route specifiers are written **relative to the entry file**, not root-relative as the Vite path writes\n * them: Vite resolves `/routes/x.tsx` against its configured root, while Bun's bundler resolves an import\n * the way the runtime does, so a leading slash there would mean the filesystem root.\n */"
+  },
+  {
+    "name": "writeDevServerRecord",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function writeDevServerRecord(root: string, record: DevServerRecord): void;",
+    "doc": "/** Write the record atomically (temp file + rename) and owner-only. */"
   },
   {
     "name": "writeRouteTypes",

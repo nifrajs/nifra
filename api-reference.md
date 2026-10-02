@@ -5206,6 +5206,8 @@ _No named exports (side-effect entrypoint)._
 
 - **CLIENT_ENTRY_PATH** _(const)_ - `CLIENT_ENTRY_PATH: "/__nifra/client.js"`
   The stable URL every SSR'd page points its client entry at.
+- **DevAppHooks** _(interface)_ - `interface DevAppHooks`
+  What a dev server hands `createApp` so the app reports into the session.
 - **DevServer** _(interface)_ - `interface DevServer`
 - **DevServerOptions** _(interface)_ - `interface DevServerOptions`
 - **LAST_ERROR_PATH** _(const)_ - `LAST_ERROR_PATH: "/__nifra/last-error"`
@@ -5222,6 +5224,82 @@ _No named exports (side-effect entrypoint)._
   `<link rel="stylesheet">` tags for Bun's extracted CSS, injected into each SSR'd page's `<head>`.
 - **writeDevFiles** _(function)_ - `writeDevFiles: (options: WriteDevFilesOptions) => void`
   Generate the client entry + the HTML route that carries it.
+
+### `@nifrajs/web/dev-feed`
+
+- **CaptureSink** _(interface)_ - `interface CaptureSink`
+- **CoreLogEntry** _(interface)_ - `interface CoreLogEntry`
+- **DEFAULT_DEV_FEED_LIMITS** _(const)_ - `DEFAULT_DEV_FEED_LIMITS: DevFeedLimits`
+- **DEV_ERROR_CATEGORIES** _(const)_ - `DEV_ERROR_CATEGORIES: readonly DevErrorCategory[]`
+- **DEV_FEED_HEADER** _(const)_ - `DEV_FEED_HEADER: "x-nifra-dev-feed"`
+  Response header marking a body as dev-feed JSON (so a tool can tell it from an app route).
+- **DEV_FEED_PATHS** _(const)_ - `DEV_FEED_PATHS: Readonly<{ identity: "/__nifra/dev"; errors: "/__nifra/errors"; logs: "/__nifra/logs"; requests: "/__nifra/requests"; clientEvent: "/__nifra/client-event"; }>`
+  The dev server's agent-facing endpoints. All live under `/__nifra/`, which no route can produce.
+- **DEV_FEED_SCHEMA** _(const)_ - `DEV_FEED_SCHEMA: 1`
+  Version of the HTTP + record contract between a dev server and the tools that read it.
+- **DEV_LOG_LEVELS** _(const)_ - `DEV_LOG_LEVELS: readonly DevLogLevel[]`
+- **DEV_REQUEST_ID_HEADER** _(const)_ - `DEV_REQUEST_ID_HEADER: "x-nifra-request-id"`
+  Response header naming the request id every entry recorded during that request carries.
+- **DEV_SERVER_LOG_FILE** _(const)_ - `DEV_SERVER_LOG_FILE: ".nifra/dev-server.log"`
+- **DEV_SERVER_RECORD_FILE** _(const)_ - `DEV_SERVER_RECORD_FILE: ".nifra/dev-server.json"`
+  Discovery record and persisted log, relative to the project root. `.nifra/` is gitignored.
+- **DEV_TOKEN_HEADER** _(const)_ - `DEV_TOKEN_HEADER: "x-nifra-dev-token"`
+  Request header carrying the agent token from the discovery record.
+- **DevEntrySource** _(type)_ - `type DevEntrySource = "server" | "browser"`
+- **DevErrorCategory** _(type)_ - `type DevErrorCategory`
+- **DevErrorEntry** _(interface)_ - `interface DevErrorEntry`
+- **DevErrorsQuery** _(interface)_ - `interface DevErrorsQuery`
+- **DevErrorsResult** _(interface)_ - `interface DevErrorsResult`
+- **DevFeed** _(interface)_ - `interface DevFeed`
+- **DevFeedLimits** _(interface)_ - `interface DevFeedLimits`
+- **DevFeedOptions** _(interface)_ - `interface DevFeedOptions`
+- **DevLogEntry** _(interface)_ - `interface DevLogEntry`
+- **DevLogLevel** _(type)_ - `type DevLogLevel = "debug" | "info" | "log" | "warn" | "error"`
+- **DevLogsQuery** _(interface)_ - `interface DevLogsQuery`
+- **DevLogsResult** _(interface)_ - `interface DevLogsResult`
+- **DevPipeline** _(type)_ - `type DevPipeline = "bun" | "vite"`
+- **DevRequestContext** _(interface)_ - `interface DevRequestContext`
+- **DevRequestTrace** _(interface)_ - `interface DevRequestTrace`
+- **DevRequestsQuery** _(interface)_ - `interface DevRequestsQuery`
+- **DevRequestsResult** _(interface)_ - `interface DevRequestsResult`
+- **DevServerIdentity** _(interface)_ - `interface DevServerIdentity`
+  The identity a dev server reports at {@link DEV_FEED_PATHS.identity}.
+- **DevServerRecord** _(interface)_ - `interface DevServerRecord`
+  What a running dev server writes to {@link DEV_SERVER_RECORD_FILE} so tools can find it.
+- **ErrorMeta** _(interface)_ - `interface ErrorMeta`
+- **LogMeta** _(interface)_ - `interface LogMeta`
+- **createDevFeed** _(function)_ - `createDevFeed: (options: DevFeedOptions) => DevFeed`
+  Create the store a dev server records into.
+- **createDevToken** _(function)_ - `createDevToken: () => string`
+  A fresh 256-bit token.
+- **currentDevRequest** _(function)_ - `currentDevRequest: () => DevRequestContext | undefined`
+  The request being handled on this async path, if any.
+- **errorFromCoreLog** _(function)_ - `errorFromCoreLog: (entry: CoreLogEntry) => Error | undefined`
+  The thrown error core's `unhandled request error` log line describes, rebuilt for a Diagnostic.
+- **formatConsoleArgs** _(function)_ - `formatConsoleArgs: (args: readonly unknown[]) => string`
+  Format console arguments the way the console itself would, without color.
+- **installCapture** _(function)_ - `installCapture: (sink: CaptureSink) => () => void`
+  Tee the process's console and stdout/stderr into `sink`, leaving the real output untouched. Global and reference-counted: several dev servers (tests start many) share one patch, and the originals come back when the last sink detaches. Returns the detach function.
+- **isDevErrorCategory** _(function)_ - `isDevErrorCategory: (value: unknown) => value is DevErrorCategory`
+  Narrow a string to a {@link DevErrorCategory}.
+- **isDevLogLevel** _(function)_ - `isDevLogLevel: (value: unknown) => value is DevLogLevel`
+  Narrow a string to a {@link DevLogLevel}.
+- **isProcessAlive** _(function)_ - `isProcessAlive: (pid: number) => boolean`
+  Whether a process with `pid` exists (EPERM means it exists but is not ours).
+- **parseCoreLogLine** _(function)_ - `parseCoreLogLine: (line: string) => CoreLogEntry | undefined`
+  Parse a line core's default JSON logger wrote, or undefined for anything else.
+- **readDevServerRecord** _(function)_ - `readDevServerRecord: (root: string) => DevServerRecord | undefined`
+  The record at `root`, or undefined when absent or malformed. Says nothing about liveness.
+- **readPersistedFeed** _(function)_ - `readPersistedFeed: (root: string, limit?: number) => { readonly errors: DevErrorEntry[]; readonly logs: DevLogEntry[]; }`
+  The persisted record of a dev server that may no longer be running: newest last.
+- **recordDevCrash** _(function)_ - `recordDevCrash: (root: string, exitCode: number | null, stderrTail: string) => void`
+  Record a dev server process that died, from the process that supervised it (`nifra dev` re-execs the Bun pipeline and pipes the child's stderr). The child's own monitor never sees an unhandled rejection on Bun, and a native crash print bypasses the console, so the supervisor's view of stderr is the…
+- **removeDevServerRecord** _(function)_ - `removeDevServerRecord: (root: string, token: string) => void`
+  Remove the record only while it is still this server's: a newer server may have replaced it.
+- **runWithDevRequest** _(function)_ - `runWithDevRequest: <T>(ctx: DevRequestContext, fn: () => T) => T`
+  Run `fn` as the handling of one request: entries recorded inside it carry `ctx.requestId`.
+- **writeDevServerRecord** _(function)_ - `writeDevServerRecord: (root: string, record: DevServerRecord) => void`
+  Write the record atomically (temp file + rename) and owner-only.
 
 ### `@nifrajs/web/diagnostic`
 
@@ -5572,6 +5650,8 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/web/vite`
 
+- **DevAppHooks** _(interface)_ - `interface DevAppHooks`
+  What a dev server hands `createApp` so the app reports into the session.
 - **LAST_ERROR_PATH** _(const)_ - `LAST_ERROR_PATH: "/__nifra/last-error"`
   Shared endpoint name used by both dev pipelines and the agent-facing MCP tools.
 - **ViteDevServer** _(interface)_ - `interface ViteDevServer`

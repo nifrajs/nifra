@@ -10,7 +10,7 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 
 ## Public entrypoints
 
-`@nifrajs/web` · `@nifrajs/web/backend-only` · `@nifrajs/web/build` · `@nifrajs/web/build-vite` · `@nifrajs/web/client` · `@nifrajs/web/conformance` · `@nifrajs/web/dev` · `@nifrajs/web/diagnostic` · `@nifrajs/web/fn` · `@nifrajs/web/fn-state` · `@nifrajs/web/fonts` · `@nifrajs/web/forms` · `@nifrajs/web/fs` · `@nifrajs/web/islands` · `@nifrajs/web/nano` · `@nifrajs/web/plugins/css-modules` · `@nifrajs/web/plugins/kit` · `@nifrajs/web/plugins/postcss` · `@nifrajs/web/plugins/scss` · `@nifrajs/web/plugins/stylex` · `@nifrajs/web/plugins/svg` · `@nifrajs/web/plugins/vite-leak-guard` · `@nifrajs/web/plugins/vite-server-fn` · `@nifrajs/web/pwa-manifest` · `@nifrajs/web/route-manifest` · `@nifrajs/web/route-types` · `@nifrajs/web/service-worker` · `@nifrajs/web/vitals` · `@nifrajs/web/vite` · `@nifrajs/web/zones`
+`@nifrajs/web` · `@nifrajs/web/backend-only` · `@nifrajs/web/build` · `@nifrajs/web/build-vite` · `@nifrajs/web/client` · `@nifrajs/web/conformance` · `@nifrajs/web/dev` · `@nifrajs/web/dev-feed` · `@nifrajs/web/diagnostic` · `@nifrajs/web/fn` · `@nifrajs/web/fn-state` · `@nifrajs/web/fonts` · `@nifrajs/web/forms` · `@nifrajs/web/fs` · `@nifrajs/web/islands` · `@nifrajs/web/nano` · `@nifrajs/web/plugins/css-modules` · `@nifrajs/web/plugins/kit` · `@nifrajs/web/plugins/postcss` · `@nifrajs/web/plugins/scss` · `@nifrajs/web/plugins/stylex` · `@nifrajs/web/plugins/svg` · `@nifrajs/web/plugins/vite-leak-guard` · `@nifrajs/web/plugins/vite-server-fn` · `@nifrajs/web/pwa-manifest` · `@nifrajs/web/route-manifest` · `@nifrajs/web/route-types` · `@nifrajs/web/service-worker` · `@nifrajs/web/vitals` · `@nifrajs/web/vite` · `@nifrajs/web/zones`
 
 ## Key exports
 
@@ -29,7 +29,7 @@ Framework-agnostic SSR core for nifra - the render seam + HTML document orchestr
 - **browserDenial** _(function)_ - `browserDenial: (classification: Classification, specifier?: string) => string | undefined` · from `@nifrajs/web/zones`
 - **buildClient** _(function)_ - `buildClient: (options: BuildClientOptions) => Promise<BuildManifest>` · from `@nifrajs/web/build`
 
-_…and 492 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
+_…and 542 more - see [`api-reference.md`](../../api-reference.md#nifrajsweb) for the complete list._
 
 ## Footguns
 

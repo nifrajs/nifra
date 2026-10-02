@@ -217,6 +217,55 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
     docsAnchor: "errors#node-builtin-in-client",
   },
   {
+    code: "NIFRA_OUTPUT_SENSITIVE_FIELD",
+    match: (n, m) => n === "OutputGuardError" && m.includes("declares sensitive field(s)"),
+    cause:
+      "An output schema declares a field whose name marks it as a credential (password, token, secret, ...), so the route refuses to send it to the browser.",
+    fix: "Remove the field from loaderOutput/actionOutput. If it truly must reach the browser, wrap it in t.declassified(reason, schema). `nifra check` reports the same as NF-C031.",
+    docsAnchor: "errors#output-sensitive-field",
+  },
+  {
+    code: "NIFRA_OUTPUT_UNDECLARED_DEFERRED",
+    match: (n, m) => n === "OutputGuardError" && m.includes("deferred value its output schema"),
+    cause: "The loader returns a deferred (streamed) value its output schema does not declare.",
+    fix: "Declare the field with t.deferred(schema) in loaderOutput, or stop deferring it.",
+    docsAnchor: "errors#output-undeclared-deferred",
+  },
+  {
+    code: "NIFRA_OUTPUT_RAW_RESPONSE",
+    match: (n, m) => n === "OutputGuardError" && /returned a \d+ Response/.test(m),
+    cause:
+      "A loader or action returned a successful Response; its body would reach the browser without passing the output schema.",
+    fix: "Return the data itself so the schema projects it, or serve the raw response from a backend/app.ts route.",
+    docsAnchor: "errors#output-raw-response",
+  },
+  {
+    code: "NIFRA_OUTPUT_SCHEMA_MISMATCH",
+    match: (n, m) => n === "OutputGuardError" && m.includes("does not match its output schema"),
+    cause:
+      "Data a loader or action returned does not match its declared output schema, so it was refused before rendering.",
+    fix: "Make the returned value match loaderOutput/actionOutput at the listed paths, or update the schema if the shape changed on purpose.",
+    docsAnchor: "errors#output-schema-mismatch",
+  },
+  {
+    code: "NIFRA_OUTPUT_GUARD",
+    match: (n) => n === "OutputGuardError",
+    cause:
+      "Route data failed the output guard that stands between loaders/actions and the browser.",
+    fix: "Declare loaderOutput/actionOutput as a Standard Schema that describes exactly the fields the page needs; `nifra check` flags routes without one (NF-C030).",
+    docsAnchor: "errors#output-guard",
+  },
+  {
+    code: "NIFRA_HYDRATION_MISMATCH",
+    match: (_n, m) =>
+      /hydrat(?:ion|ed|e)\b[^\n]*(?:mismatch|failed|did not match|didn't match)/i.test(m) ||
+      /hydration_mismatch/.test(m),
+    cause:
+      "The browser rendered different markup than the server sent, so the framework discarded or patched the server HTML.",
+    fix: "Look for values that differ between server and browser during render (Date.now(), Math.random(), locale formatting, window/localStorage reads, invalid HTML nesting). Run nifra_hydrate to reproduce it with a stable diagnostic.",
+    docsAnchor: "errors#hydration-mismatch",
+  },
+  {
     code: "NIFRA_SCHEMA_PARSE",
     match: (n, m) =>
       n === "SchemaError" ||

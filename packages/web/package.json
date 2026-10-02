@@ -52,6 +52,11 @@
       "types": "./dist/diagnostic.d.ts",
       "default": "./dist/diagnostic.js"
     },
+    "./dev-feed": {
+      "bun": "./src/dev-feed.ts",
+      "types": "./dist/dev-feed.d.ts",
+      "default": "./dist/dev-feed.js"
+    },
     "./forms": {
       "bun": "./src/forms.ts",
       "types": "./dist/forms.d.ts",

@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import {
+  DEV_FEED_PATHS,
+  DEV_REQUEST_ID_HEADER,
+  DEV_TOKEN_HEADER,
+  readDevServerRecord,
+} from "../src/dev-feed.ts"
+import type { DevAppHooks } from "../src/dev-session.ts"
 import { createViteDevServer, LAST_ERROR_PATH, type ViteDevServer } from "../src/vite.ts"
 
 /**
@@ -11,6 +18,9 @@ import { createViteDevServer, LAST_ERROR_PATH, type ViteDevServer } from "../src
  * overlay that says what broke. Both are invisible to a route-discovery test, which is all this file's
  * sibling covers - it never sends a body and never throws.
  */
+
+/** A JSON body, typed by the caller (`json()` is untyped). */
+const readJson = async <T>(response: Response): Promise<T> => response.json()
 
 const TMP_BASE = `${import.meta.dir}/.tmp-vite-dev-request-`
 let root: string
@@ -32,7 +42,7 @@ afterEach(async () => {
 })
 
 const start = async (
-  fetchImpl: (request: Request) => Response | Promise<Response>,
+  fetchImpl: (request: Request, dev: DevAppHooks) => Response | Promise<Response>,
   plugins: readonly unknown[] = [],
 ): Promise<string> => {
   server = await createViteDevServer({
@@ -40,7 +50,7 @@ const start = async (
     routesDir,
     clientModule: join(root, "client.ts"),
     port: 0,
-    createApp: () => ({ fetch: fetchImpl }),
+    createApp: (_entry, _load, dev) => ({ fetch: (request) => fetchImpl(request, dev) }),
     plugins,
   })
   return `http://127.0.0.1:${server.port}`
@@ -278,3 +288,45 @@ test("a bind failure names the port and leaves nothing running", async () => {
     held.stop(true)
   }
 }, 60_000)
+
+test("the Vite dev server feeds the same agent surface as the Bun one", async () => {
+  const origin = await start((request, dev) => {
+    const path = new URL(request.url).pathname
+    console.warn(`vite saw ${path}`)
+    if (path === "/broken") {
+      dev.onLoaderError(new Error("vite loader failed"), { request, route: "/broken" })
+      return new Response("<html><head></head><body>boundary</body></html>", {
+        status: 500,
+        headers: { "content-type": "text/html" },
+      })
+    }
+    if (path === "/thrown") throw new Error("vite render threw")
+    return Response.json({ ok: true })
+  })
+  const record = readDevServerRecord(root)
+  expect(record?.pipeline).toBe("vite")
+  expect(`http://127.0.0.1:${record?.port}`).toBe(origin)
+  const headers = { [DEV_TOKEN_HEADER]: record?.token ?? "" }
+
+  const api = await fetch(`${origin}/api/ok`)
+  expect(api.headers.get(DEV_REQUEST_ID_HEADER)).toMatch(/^r\d+$/)
+  const broken = await fetch(`${origin}/broken`)
+  const brokenId = broken.headers.get(DEV_REQUEST_ID_HEADER)
+  expect(brokenId).toMatch(/^r\d+$/)
+  await fetch(`${origin}/thrown`)
+
+  const { errors } = await readJson<{
+    errors: Array<{ category: string; requestId?: string; route?: string }>
+  }>(await fetch(`${origin}${DEV_FEED_PATHS.errors}`, { headers }))
+  expect(errors.map((e) => e.category)).toEqual(["page", "ssr"])
+  expect(errors[0]).toEqual(expect.objectContaining({ route: "/broken", requestId: brokenId }))
+  const { logs } = await readJson<{ logs: Array<{ message: string; level: string }> }>(
+    await fetch(`${origin}${DEV_FEED_PATHS.logs}?requestId=${brokenId}`, { headers }),
+  )
+  expect(logs).toContainEqual(
+    expect.objectContaining({ level: "warn", message: "vite saw /broken" }),
+  )
+  expect((await fetch(`${origin}${DEV_FEED_PATHS.requests}`)).status).toBe(401)
+  // Paths under /__nifra/ that are not the session's still reach Vite and the app.
+  expect((await fetch(`${origin}/__nifra/unknown`)).status).toBe(200)
+})
