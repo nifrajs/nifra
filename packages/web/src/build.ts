@@ -51,6 +51,18 @@ import {
 } from "./internal/parity.ts"
 import { privateEnvCheck } from "./internal/private-env.ts"
 import {
+  assertNoSecrets,
+  buildEnvironment,
+  emittedScanFiles,
+  formatSecretFindings,
+  graphScanInput,
+  originName,
+  publicScanFiles,
+  type SecretExemption,
+  scanForSecrets,
+  textOf,
+} from "./internal/secret-scan.ts"
+import {
   generateServerFnStub,
   SERVER_FN_MODULE,
   serverFnNamespace,
@@ -95,6 +107,8 @@ interface BunMetafile {
   >
 }
 
+// The secret scan every client build, `public/` copy and prerender runs.
+export type { SecretExemption, SecretRule } from "./internal/secret-scan.ts"
 // Build-time SSG: prerender opted-in static + dynamic routes to `index.html` (+ static `_data.json`),
 // run after `buildClient`.
 export {
@@ -148,6 +162,12 @@ export interface BuildClientOptions {
    * wins over an auto-exposed var (it's layered last). Sourced from `Bun.env` (falls back to
    * `process.env`) at build time. */
   readonly publicEnvPrefix?: string
+  /**
+   * Reviewed false positives of the secret scan, which fails the build when a bundle, source map or
+   * `public/` file carries what looks like a credential or the value of a non-public environment
+   * variable. Each names its rule, its file (or, for an environment value, its variable) and a reason.
+   */
+  readonly secretExemptions?: readonly SecretExemption[]
 }
 
 /**
@@ -531,8 +551,12 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
   const emitted: EmittedFile[] = await Promise.all(
     result.outputs.map(async (out): Promise<EmittedFile> => {
       if (out.kind === "sourcemap") return { name: out.path, kind: "map", text: await out.text() }
-      if (out.kind === "asset")
-        return { name: out.path, kind: out.path.endsWith(".css") ? "css" : "asset" }
+      if (out.kind === "asset") {
+        if (out.path.endsWith(".css"))
+          return { name: out.path, kind: "css", text: await out.text() }
+        const text = textOf(new Uint8Array(await out.arrayBuffer()))
+        return { name: out.path, kind: "asset", ...(text === undefined ? {} : { text }) }
+      }
       return { name: out.path, kind: "code", text: await out.text() }
     }),
   )
@@ -579,6 +603,28 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
     }),
   )
   if (unaccounted !== undefined) throw new Error(unaccounted)
+
+  const publicDir = options.publicDir === false ? undefined : (options.publicDir ?? "public")
+  const { sources, originsOf } = graphScanInput(clientGraph, bunModuleSource(cwd), classifier)
+  const secrets = formatSecretFindings(
+    scanForSecrets({
+      sources,
+      artifacts: [
+        ...emitted.flatMap((file) => {
+          if (file.text === undefined) return []
+          const name = file.name.replace(/^\.\//, "")
+          return emittedScanFiles(name, file.text, originsOf(name))
+        }),
+        ...(publicDir !== undefined && existsSync(publicDir)
+          ? publicScanFiles(publicDir, originName(root, resolvePath(publicDir)))
+          : []),
+      ],
+      env: buildEnv,
+      publicEnvPrefix: options.publicEnvPrefix ?? "PUBLIC_",
+      ...(options.secretExemptions ? { exemptions: options.secretExemptions } : {}),
+    }),
+  )
+  if (secrets !== undefined) throw new Error(secrets)
 
   const outputs = await Promise.all(
     result.outputs.map(async (out) => {
@@ -689,7 +735,6 @@ export async function buildClient(options: BuildClientOptions): Promise<BuildMan
 
   // Copy `public/` into the output next to the hashed assets. A missing directory is normal (most
   // apps have none) and must not fail the build.
-  const publicDir = options.publicDir === false ? undefined : (options.publicDir ?? "public")
   const publicFiles =
     publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
 
@@ -1427,6 +1472,8 @@ export interface BuildTargetOptions {
   readonly publicDir?: string | false
   /** Prefix of environment variables allowed into the client bundle (default `"PUBLIC_"`). */
   readonly publicEnvPrefix?: string
+  /** Reviewed false positives of the secret scan over the bundle, `public/` and prerendered pages. */
+  readonly secretExemptions?: readonly SecretExemption[]
   /**
    * Vite-only CSS output policy. `false` emits one aggregate stylesheet. The native Bun build does not
    * support this switch and fails closed if it is supplied instead of silently ignoring it.
@@ -1497,6 +1544,7 @@ export const bunBundler: Bundler = {
       ...(input.cssCodeSplit !== undefined ? { cssCodeSplit } : {}),
       ...(input.publicDir !== undefined ? { publicDir: input.publicDir } : {}),
       ...(input.publicEnvPrefix !== undefined ? { publicEnvPrefix: input.publicEnvPrefix } : {}),
+      ...(input.secretExemptions !== undefined ? { secretExemptions: input.secretExemptions } : {}),
     })
   },
   buildServer: (input) =>
@@ -1559,6 +1607,9 @@ export async function buildTargetWith(
     define: { "process.env.NODE_ENV": '"production"', ...(options.define ?? {}) },
     publicDir: false,
     ...(options.publicEnvPrefix !== undefined ? { publicEnvPrefix: options.publicEnvPrefix } : {}),
+    ...(options.secretExemptions !== undefined
+      ? { secretExemptions: options.secretExemptions }
+      : {}),
     ...(requestedCssCodeSplit !== undefined ? { cssCodeSplit: requestedCssCodeSplit } : {}),
     ...(requestedCssLoading !== undefined ? { cssLoading: requestedCssLoading } : {}),
     root: resolvePath(dirname(routesDir)),
@@ -1573,6 +1624,17 @@ export async function buildTargetWith(
     options.publicDir === false
       ? undefined
       : resolvePath(options.publicDir ?? join(dirname(routesDir), "public"))
+  const secretScan = {
+    env: buildEnvironment(),
+    publicEnvPrefix: options.publicEnvPrefix ?? "PUBLIC_",
+    ...(options.secretExemptions !== undefined ? { exemptions: options.secretExemptions } : {}),
+  }
+  if (publicDir !== undefined && existsSync(publicDir)) {
+    assertNoSecrets({
+      ...secretScan,
+      artifacts: publicScanFiles(publicDir, originName(dirname(routesDir), publicDir)),
+    })
+  }
   const publicFiles =
     publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
   if (publicFiles.length > 0) {
@@ -1600,6 +1662,7 @@ export async function buildTargetWith(
       app,
       routes: manifest.routes,
       outDir,
+      secrets: secretScan,
     })
     if (result.prerendered.length === 0) {
       // A static build that renders nothing is almost always a misconfig (no `prerender = true` / no

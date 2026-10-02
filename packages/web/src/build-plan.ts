@@ -1,6 +1,7 @@
 import { basename as pathBasename } from "node:path"
 import type { CssLoadingMode } from "./css-contract.ts"
 import { isBareNodeBuiltin } from "./internal/node-builtins.ts"
+import type { SecretExemption } from "./internal/secret-scan.ts"
 import type { ClientModuleGraph } from "./module-graph.ts"
 
 export interface BuildManifest {
@@ -162,6 +163,8 @@ export interface Bundler {
     readonly cssLoading?: CssLoadingMode
     /** Project root (Vite needs it; the Bun strategy ignores it). */
     readonly root?: string
+    /** Reviewed false positives of the secret scan. */
+    readonly secretExemptions?: readonly SecretExemption[]
   }): Promise<BuildManifest>
   /** Build the server worker → the shared {@link ServerBuild}. */
   buildServer(input: {

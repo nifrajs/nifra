@@ -209,6 +209,7 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
   // A worker is bundled by its own sub-build the main graph never sees, so it gets its own guard; the
   // main guard then accepts the worker chunks that guard verified.
   const verified = new Set<string>()
+  const exemptions = options.secretExemptions
   const guardOptions = {
     appRoot: dirname(routesDir),
     routesDir,
@@ -217,8 +218,14 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     generatedFiles: [entryFile],
     verified,
     ...(options.publicEnvPrefix !== undefined ? { publicEnvPrefix: options.publicEnvPrefix } : {}),
+    secrets: { env: buildEnv, ...(exemptions ? { exemptions } : {}) },
   }
-  const leakGuard = viteLeakGuard(guardOptions)
+  // nifra copies `public/` after the build; the main guard scans it with the bundle.
+  const publicDir = options.publicDir === false ? undefined : (options.publicDir ?? "public")
+  const leakGuard = viteLeakGuard({
+    ...guardOptions,
+    secrets: { ...guardOptions.secrets, ...(publicDir !== undefined ? { publicDir } : {}) },
+  })
   const workerGuards: ReturnType<typeof viteLeakGuard>[] = []
   try {
     await withSerializedNodeEnv(mode, () =>
@@ -379,7 +386,6 @@ export async function buildClientVite(options: BuildClientViteOptions): Promise<
     for (const asset of entry.assets ?? []) assets.add(url(asset))
   }
 
-  const publicDir = options.publicDir === false ? undefined : (options.publicDir ?? "public")
   const publicFiles =
     publicDir !== undefined && existsSync(publicDir) ? await copyPublicDir(publicDir, outDir) : []
 
@@ -626,6 +632,7 @@ export const viteBundler: Bundler = {
       ...(input.cssLoading !== undefined ? { cssLoading: input.cssLoading } : {}),
       ...(input.publicDir !== undefined ? { publicDir: input.publicDir } : {}),
       ...(input.publicEnvPrefix !== undefined ? { publicEnvPrefix: input.publicEnvPrefix } : {}),
+      ...(input.secretExemptions !== undefined ? { secretExemptions: input.secretExemptions } : {}),
       ...(input.root ? { root: input.root } : {}),
     }),
   buildServer: (input) =>

@@ -710,6 +710,7 @@ async function buildForTarget(app: LoadedApp, target: string, flags: Flags): Pro
     ...(fw.define ? { define: fw.define } : {}),
     ...(fw.publicDir !== undefined ? { publicDir: fw.publicDir } : {}),
     ...(fw.publicEnvPrefix !== undefined ? { publicEnvPrefix: fw.publicEnvPrefix } : {}),
+    ...(fw.secretExemptions !== undefined ? { secretExemptions: fw.secretExemptions } : {}),
     ...(fw.cssCodeSplit !== undefined ? { cssCodeSplit: fw.cssCodeSplit } : {}),
     ...(fw.cssLoading !== undefined ? { cssLoading: fw.cssLoading } : {}),
     // The static target needs a built app to drive prerendering - only build it when targeting static.

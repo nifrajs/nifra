@@ -27,6 +27,7 @@ import { LEGACY_RULE_CODES, LEGACY_RULE_ORDER, legacyRules } from "./rules/legac
 import { nanoRules } from "./rules/nano.ts"
 import { pageRules } from "./rules/pages.ts"
 import { routeRules } from "./rules/routes.ts"
+import { secretRules } from "./rules/secrets.ts"
 import { securityRules } from "./rules/security.ts"
 import { zoneRules } from "./rules/zones.ts"
 
@@ -438,6 +439,7 @@ export async function collectCheckDiagnostics(
     ...pageRules,
     ...zoneRules,
     ...dataGuardRules,
+    ...secretRules,
     ...islandRules,
     ...nanoRules,
   ]

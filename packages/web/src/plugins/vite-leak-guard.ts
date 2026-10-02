@@ -48,6 +48,17 @@ import {
 import { isBareNodeBuiltin } from "../internal/node-builtins.ts"
 import { privateEnvCheck } from "../internal/private-env.ts"
 import {
+  emittedScanFiles,
+  formatSecretFindings,
+  graphScanInput,
+  originName,
+  publicScanFiles,
+  type SecretExemption,
+  type SecretScanFile,
+  scanForSecrets,
+  textOf,
+} from "../internal/secret-scan.ts"
+import {
   accountEmittedFiles,
   type EmittedFile,
   formatClientGraphVerdict,
@@ -120,6 +131,17 @@ export interface LeakGuardOptions {
   readonly verified?: Set<string>
   /** The public-env prefix browser code may read (default `"PUBLIC_"`; `""` exposes nothing). */
   readonly publicEnvPrefix?: string
+  /** The secret scan of what the bundle publishes. */
+  readonly secrets?: LeakGuardSecretOptions
+}
+
+export interface LeakGuardSecretOptions {
+  /** The build environment whose non-public values must not ship (default `process.env`). */
+  readonly env?: Readonly<Record<string, string | undefined>>
+  /** Reviewed false positives; each names its rule, its file (or env variable) and a reason. */
+  readonly exemptions?: readonly SecretExemption[]
+  /** A `public/` directory whose files ship beside the bundle, scanned with it. */
+  readonly publicDir?: string
 }
 
 /** The minimal Rollup plugin shape this returns - `generateBundle` bound to the plugin context. */
@@ -184,7 +206,8 @@ export function viteLeakGuard(options: LeakGuardOptions = {}): LeakGuardPlugin {
             ...sources,
             outDir,
           }),
-        )
+        ) ??
+        secretLeak(outputs, graph, classifier, appRoot, options)
       if (leak === undefined) return
       // Record before throwing: the throw is what fails the build for a standalone user of this plugin,
       // and the record is what lets a caller that owns the build re-raise the real message (see `leak`).
@@ -193,6 +216,47 @@ export function viteLeakGuard(options: LeakGuardOptions = {}): LeakGuardPlugin {
     },
   }
   return plugin
+}
+
+/** The secret scan over a finished bundle and the `public/` files that ship beside it. */
+function secretLeak(
+  outputs: readonly RollupOutputLike[],
+  graph: ClientModuleGraph,
+  classifier: ReturnType<typeof createZoneClassifier>,
+  appRoot: string,
+  options: LeakGuardOptions,
+): string | undefined {
+  const { sources, originsOf } = graphScanInput(graph, rollupModuleSource, classifier)
+  const artifacts: SecretScanFile[] = []
+  for (const output of outputs) {
+    const name = output.fileName
+    if (name === undefined || name.startsWith(".vite/")) continue
+    if (output.type === "chunk") {
+      artifacts.push(...emittedScanFiles(name, output.code ?? "", originsOf(name)))
+      if (output.map) artifacts.push({ name: `${name}.map`, text: JSON.stringify(output.map) })
+      continue
+    }
+    const text =
+      typeof output.source === "string"
+        ? output.source
+        : output.source === undefined
+          ? undefined
+          : textOf(output.source)
+    if (text !== undefined) artifacts.push({ name, text })
+  }
+  const publicDir = options.secrets?.publicDir
+  if (publicDir !== undefined && existsSync(publicDir)) {
+    artifacts.push(...publicScanFiles(publicDir, originName(appRoot, resolve(publicDir))))
+  }
+  return formatSecretFindings(
+    scanForSecrets({
+      sources,
+      artifacts,
+      env: options.secrets?.env ?? process.env,
+      publicEnvPrefix: options.publicEnvPrefix ?? "PUBLIC_",
+      ...(options.secrets?.exemptions ? { exemptions: options.secrets.exemptions } : {}),
+    }),
+  )
 }
 
 /** What {@link viteServerZoneGuard} needs: the zones of the app, nothing about the output. */

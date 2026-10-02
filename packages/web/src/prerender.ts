@@ -10,6 +10,7 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs"
 import { dirname, resolve, sep } from "node:path"
+import { assertNoSecrets, buildEnvironment, type SecretExemption } from "./internal/secret-scan.ts"
 import { fillRoutePattern, type RouteEntry } from "./manifest.ts"
 import { DATA_HEADER } from "./router.ts"
 
@@ -30,6 +31,15 @@ export interface PrerenderOptions {
   /** Origin for the synthetic request URL. Default `http://localhost`. Only the path is meaningful;
    * loaders see this as `request.url`, so set it if a loader builds absolute URLs from the origin. */
   readonly origin?: string
+  /** The secret scan every page and `_data.json` passes before it is written: what looks like a
+   * credential, or the value of a non-public build environment variable, fails the prerender. */
+  readonly secrets?: {
+    /** Default: the build environment (`Bun.env`, else `process.env`). */
+    readonly env?: Readonly<Record<string, string | undefined>>
+    /** Default `"PUBLIC_"`. */
+    readonly publicEnvPrefix?: string
+    readonly exemptions?: readonly SecretExemption[]
+  }
 }
 
 export interface PrerenderEntry {
@@ -91,8 +101,17 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
   const fallbacks: Record<string, "ssr" | "404"> = {}
   const outRoot = resolve(options.outDir)
 
+  const secretScan = {
+    env: options.secrets?.env ?? buildEnvironment(),
+    publicEnvPrefix: options.secrets?.publicEnvPrefix ?? "PUBLIC_",
+    ...(options.secrets?.exemptions ? { exemptions: options.secrets.exemptions } : {}),
+  }
+  const assertClean = (name: string, text: string): void =>
+    assertNoSecrets({ ...secretScan, artifacts: [{ name, text }] })
+
   // Render one concrete path → drain the streamed document to bytes → write its index.html. Shared by
-  // static (one path) and dynamic (one path per getStaticPaths entry) routes; never throws.
+  // static (one path) and dynamic (one path per getStaticPaths entry) routes. A failed render is a skip;
+  // a credential in the output fails the whole prerender.
   const renderPath = async (path: string): Promise<void> => {
     const res = await options.app.fetch(new Request(`${origin}${path}`))
     if (!res.ok) {
@@ -107,6 +126,7 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
       skipped.push({ path, reason: "unsafe output path" })
       return
     }
+    assertClean(file, html)
     mkdirSync(dirname(abs), { recursive: true })
     writeFileSync(abs, html)
 
@@ -128,7 +148,9 @@ export async function prerenderRoutes(options: PrerenderOptions): Promise<Preren
         await dataRes.body?.cancel()
         dataFile = undefined
       } else {
-        writeFileSync(dataAbs, await dataRes.text())
+        const data = await dataRes.text()
+        assertClean(dataFile, data)
+        writeFileSync(dataAbs, data)
       }
     } else {
       await dataRes.body?.cancel() // not emitting (non-OK or NDJSON) - release the stream

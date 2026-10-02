@@ -16,6 +16,7 @@
 import { existsSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
 import type { CreateWebAppOptions, CssLoadingMode } from "@nifrajs/web"
+import type { SecretExemption } from "@nifrajs/web/build"
 import { assertCurrentLayout, BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
 import { checkPipelineSeparation } from "./pipeline-guard.ts"
 
@@ -65,6 +66,9 @@ export interface NifraFramework {
   readonly publicDir?: string | false
   /** Client-visible environment prefix (default `"PUBLIC_"`; empty disables exposure). */
   readonly publicEnvPrefix?: string
+  /** Reviewed false positives of `nifra build`'s secret scan, each `{ rule, file, reason }` (or
+   * `{ rule: "private-env-value", env, reason }`). There is no exemption by value. */
+  readonly secretExemptions?: readonly SecretExemption[]
   /** Vite production CSS output policy. `false` emits one aggregate stylesheet for the whole client. */
   readonly cssCodeSplit?: boolean
   /** Framework-owned SSR stylesheet activation. Deferred mode is intended for aggregate CSS. */
@@ -111,6 +115,9 @@ function assertFrameworkWebOptions(fw: Partial<NifraFramework>, configFile: stri
   }
   if (fw.nonce !== undefined && typeof fw.nonce !== "function") {
     wrong("nonce", "a nonce resolver function, such as createNonceResolver() returns")
+  }
+  if (fw.secretExemptions !== undefined && !Array.isArray(fw.secretExemptions)) {
+    wrong("secretExemptions", "an array of { rule, file, reason } entries")
   }
 }
 

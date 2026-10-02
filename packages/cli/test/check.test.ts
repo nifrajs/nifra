@@ -2578,3 +2578,60 @@ describe("data guard from source (NF-C030, NF-C031)", () => {
     await rm(dir, { recursive: true, force: true })
   })
 })
+
+describe("credentials in browser code (NF-C032)", () => {
+  // Assembled at runtime so this file carries no credential-shaped literal.
+  const STRIPE = ["sk_", "live_", "4eC39HqLyjWDarjtT1zdp7dc"].join("")
+  const AWS = ["AKIA", "IOSFODNN7EXAMPLE"].join("")
+  const project = async (files: Record<string, string>): Promise<string> => {
+    const dir = await mkdtemp(join(tmpdir(), "nifra-check-secrets-"))
+    for (const [file, content] of Object.entries(files)) {
+      await mkdir(join(dir, file, ".."), { recursive: true })
+      await writeFile(join(dir, file), content)
+    }
+    return dir
+  }
+  const findings = async (dir: string) =>
+    (await collectCheckResult(dir, { lintsOnly: true })).diagnostics
+      .filter((d) => d.code === "NF-C032")
+      .map((d) => `${d.file}:${d.line ?? "-"} ${d.evidence?.[0] ?? d.message}`)
+
+  test("browser code and public/ files, never backend code", async () => {
+    const dir = await project({
+      "routes/index.tsx": `export const key = "${STRIPE}"\nexport default () => null\n`,
+      "routes/index.backend.ts": `export const key = "${STRIPE}"\nexport const loader = () => null\n`,
+      "shared/config.ts": 'export const config = { apiKey: "Zq8mW2vX9pLr4TbN7yKc3HdF" }\n',
+      "backend/aws.ts": `export const id = "${AWS}"\n`,
+      "public/keys.txt": `${AWS}\n`,
+    })
+    expect(await findings(dir)).toEqual([
+      "public/keys.txt:1 rule: key-format",
+      "routes/index.tsx:1 rule: key-format",
+      "shared/config.ts:1 rule: assigned-secret",
+    ])
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test("nifra.config.ts exemptions apply, and a malformed one is reported", async () => {
+    const dir = await project({
+      "routes/index.tsx": `export const key = "${STRIPE}"\nexport default () => null\n`,
+      "nifra.config.ts": [
+        "export const secretExemptions = [",
+        '  { rule: "key-format", file: "routes/index.tsx", reason: "a published test fixture" },',
+        "]",
+        "",
+      ].join("\n"),
+    })
+    expect(await findings(dir)).toEqual([])
+    await writeFile(
+      join(dir, "nifra.config.ts"),
+      'export const secretExemptions = [{ rule: "key-format", file: "routes/index.tsx", reason: "" }]\n',
+    )
+    expect(await findings(dir)).toEqual([
+      expect.stringContaining(
+        "nifra.config.ts:- [nifra/web] secretExemptions[0] needs a reason",
+      ) as unknown as string,
+    ])
+    await rm(dir, { recursive: true, force: true })
+  })
+})

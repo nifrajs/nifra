@@ -188,6 +188,9 @@ async function buildHydrationApp(cwd: string): Promise<BuiltHydrationApp | { ski
       ...(loaded.framework.publicEnvPrefix === undefined
         ? {}
         : { publicEnvPrefix: loaded.framework.publicEnvPrefix }),
+      ...(loaded.framework.secretExemptions === undefined
+        ? {}
+        : { secretExemptions: loaded.framework.secretExemptions }),
     })
     if (client.entry.trim() === "" || client.assets.length === 0) {
       await rm(workDir, { recursive: true, force: true })

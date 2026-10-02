@@ -383,3 +383,12 @@ export function importRuleMessage(fromFile: string, from: Zone, toFile: string, 
 
 export { isSensitiveFieldName } from "./internal/output-guard.ts"
 export { privateEnvReads, privateEnvReason } from "./internal/private-env.ts"
+export {
+  publicScanFiles,
+  type SecretExemption,
+  type SecretFinding,
+  type SecretRule,
+  type SecretScanFile,
+  type SecretScanInput,
+  scanForSecrets,
+} from "./internal/secret-scan.ts"

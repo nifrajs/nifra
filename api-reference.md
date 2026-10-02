@@ -5050,6 +5050,9 @@ _No named exports (side-effect entrypoint)._
   The `createWebApp` options a generated server entry can import from the app's framework module.
 - **SERVER_ONLY_MARKER** _(const)_ - `SERVER_ONLY_MARKER: "@nifrajs/web/backend-only"`
   The marker specifier an author imports to opt a module into the client-leak guard. Matched on the import edge's *as-written* `original` first (the robust signal: it's exactly what the author typed, before Bun resolves it to `src/backend-only.ts` / `dist/backend-only.js`).
+- **SecretExemption** _(interface)_ - `interface SecretExemption`
+  One reviewed false positive. It names the rule, where the finding is and why it may ship: there is no exemption by value, so a credential that turns up somewhere else still fails the build.
+- **SecretRule** _(type)_ - `type SecretRule`
 - **ServerBuild** _(interface)_ - `interface ServerBuild`
   The built worker bundle - point your `wrangler.toml`'s `main` at `worker`.
 - **ServerBuildTarget** _(type)_ - `type ServerBuildTarget = "browser" | "node" | "bun"`
@@ -5466,6 +5469,7 @@ _No named exports (side-effect entrypoint)._
 - **LeakGuardOptions** _(interface)_ - `interface LeakGuardOptions`
 - **LeakGuardPlugin** _(interface)_ - `interface LeakGuardPlugin`
   The minimal Rollup plugin shape this returns - `generateBundle` bound to the plugin context.
+- **LeakGuardSecretOptions** _(interface)_ - `interface LeakGuardSecretOptions`
 - **ServerZoneGuardOptions** _(type)_ - `type ServerZoneGuardOptions = Pick< LeakGuardOptions, "appRoot" | "routesDir" | "generatedFiles" | "publicEnvPrefix" >`
   What {@link viteServerZoneGuard} needs: the zones of the app, nothing about the output.
 - **viteBareBuiltinExternal** _(function)_ - `viteBareBuiltinExternal: () => BareBuiltinPlugin`
@@ -5589,6 +5593,12 @@ _No named exports (side-effect entrypoint)._
   A route's backend half: `x.backend.ts`. Script extensions only; JSX belongs to the frontend half.
 - **SERVER_PACKAGES** _(const)_ - `SERVER_PACKAGES: readonly string[]`
   Third-party packages that never belong in a browser bundle: database drivers, ORMs' server entries, mailers and server SDKs. A package reaching a `node:` builtin is caught separately; this list covers the ones that bundle "fine" and leak credentials or query code instead.
+- **SecretExemption** _(interface)_ - `interface SecretExemption`
+  One reviewed false positive. It names the rule, where the finding is and why it may ship: there is no exemption by value, so a credential that turns up somewhere else still fails the build.
+- **SecretFinding** _(interface)_ - `interface SecretFinding`
+- **SecretRule** _(type)_ - `type SecretRule`
+- **SecretScanFile** _(interface)_ - `interface SecretScanFile`
+- **SecretScanInput** _(interface)_ - `interface SecretScanInput`
 - **Zone** _(type)_ - `type Zone`
 - **ZoneClassifier** _(interface)_ - `interface ZoneClassifier`
 - **ZoneClassifierOptions** _(interface)_ - `interface ZoneClassifierOptions`
@@ -5606,6 +5616,10 @@ _No named exports (side-effect entrypoint)._
   The private environment reads in one browser-reachable file, as written (`process.env.SECRET`). `publicPrefix` is the app's public-env prefix; `""` makes every variable but `NODE_ENV` private.
 - **privateEnvReason** _(function)_ - `privateEnvReason: (reads: readonly string[], publicPrefix: string) => string`
   The denial reason for a file's private environment reads.
+- **publicScanFiles** _(function)_ - `publicScanFiles: (dir: string, label: string) => SecretScanFile[]`
+  Every file under a `public/` directory, named as the app sees it (`public/robots.txt`).
+- **scanForSecrets** _(function)_ - `scanForSecrets: (input: SecretScanInput) => SecretFinding[]`
+  Scan what a build publishes. Sources are scanned first: a match there is reported at its source location, and the same text in an emitted file (where names are hashed) is not reported again, exempted or not.
 - **specifierPackage** _(function)_ - `specifierPackage: (specifier: string) => string | undefined`
   The package name a bare specifier names, or `undefined` for a relative path, a builtin, a subpath import (`#x`) or a bundler-virtual id.
 
