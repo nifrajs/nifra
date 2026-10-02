@@ -883,7 +883,7 @@ Every public export of every package and documented subpath - name, kind, signat
 
 - **ActionArgs** _(type)_ - `type ActionArgs<Api, Env = unknown, Search = undefined> = LoaderArgs<Api, Env, Search>`
   Context a route `action` (a mutation, run on POST) receives - identical to a loader's: route params, the request (read the form/JSON body off this), and the typed in-process `api` + platform `env`. An action returns either data (surfaced to the page as `actionData`) or a `Response` (e.g. a `redirec…
-- **ActionData** _(type)_ - `type ActionData<A> = A extends (...args: never[]) => infer R ? Awaited<R> extends { readonly __nifraRevalidate: readonly string[]; readonly data: infer D } ? Exclude<D, Response> : Exclude<Awaited<R>, Response> : never`
+- **ActionData** _(type)_ - `type ActionData<A>`
   The (awaited) data return of an `action`, for typing a page component's `actionData` prop. A `Response` return (redirect/custom) is excluded - it never reaches the component. A `revalidate(paths, data)` wrapper (from `@nifrajs/web`) is transparent: matched structurally (so this stays decoupled from…
 - **ApiError** _(interface)_ - `interface ApiError`
   A structured API error, mirroring the server's `{ ok: false, error, issues }`.

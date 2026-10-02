@@ -132,3 +132,21 @@ const _aok: _AData = { ok: true, name: "Ada" }
 const _abad: _AData = new Response()
 void _aok
 void _abad
+
+// An action mixing a revalidate wrapper (structurally @nifrajs/web's `revalidate()`) with plain returns
+// unwraps the wrapper branch alone.
+async function actMixed({ request }: ActionArgs<typeof backend>) {
+  const body = await request.formData()
+  if (body.get("bump"))
+    return { __nifraRevalidate: ["/todos"] as const, data: { ok: true as const } }
+  return { ok: false as const, error: "rejected" as const }
+}
+type _MixedData = ActionData<typeof actMixed>
+const _mok: _MixedData = { ok: true }
+const _mfail: _MixedData = { ok: false, error: "rejected" }
+// @ts-expect-error the wrapper itself never reaches the page
+const _mwrapped: _MixedData = { __nifraRevalidate: ["/todos"], data: { ok: true } }
+void _mok
+void _mfail
+void _mwrapped
+void actMixed

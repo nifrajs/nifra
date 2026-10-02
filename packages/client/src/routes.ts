@@ -131,9 +131,13 @@ export type ActionArgs<Api, Env = unknown, Search = undefined> = LoaderArgs<Api,
  * stays decoupled from `@nifrajs/web`) and unwrapped to its inner `data` - what the component receives.
  */
 export type ActionData<A> = A extends (...args: never[]) => infer R
-  ? Awaited<R> extends { readonly __nifraRevalidate: readonly string[]; readonly data: infer D }
-    ? Exclude<D, Response>
-    : Exclude<Awaited<R>, Response>
+  ? // `infer D` makes the check distribute, so an action mixing `revalidate(...)` and plain returns
+    // unwraps each branch.
+    Awaited<R> extends infer D
+    ? D extends { readonly __nifraRevalidate: readonly string[]; readonly data: infer W }
+      ? Exclude<W, Response>
+      : Exclude<D, Response>
+    : never
   : never
 
 // Why a type annotation, not a `createRoutes()` factory: a module-level factory call defeats

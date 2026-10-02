@@ -75,7 +75,7 @@
     "name": "ActionData",
     "kind": "type",
     "package": "@nifrajs/client",
-    "signature": "export type ActionData<A> = A extends (...args: never[]) => infer R ? Awaited<R> extends {\n    readonly __nifraRevalidate: readonly string[];\n    readonly data: infer D;\n} ? Exclude<D, Response> : Exclude<Awaited<R>, Response> : never;",
+    "signature": "export type ActionData<A> = A extends (...args: never[]) => infer R ? Awaited<R> extends infer D ? D extends {\n    readonly __nifraRevalidate: readonly string[];\n    readonly data: infer W;\n} ? Exclude<W, Response> : Exclude<D, Response> : never : never;",
     "doc": "/**\n * The (awaited) data return of an `action`, for typing a page component's `actionData` prop.\n * A `Response` return (redirect/custom) is excluded - it never reaches the component. A\n * `revalidate(paths, data)` wrapper (from `@nifrajs/web`) is transparent: matched structurally (so this\n * stays decoupled from `@nifrajs/web`) and unwrapped to its inner `data` - what the component receives.\n */"
   },
   {
