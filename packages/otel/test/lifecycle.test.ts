@@ -83,4 +83,21 @@ describe("observation lifecycle", () => {
     observation.end()
     expect(seen).toEqual(["start", "end"])
   })
+
+  test("records work after it settled from an explicit start time and duration", () => {
+    const clock = { wallTime: () => 5_000, monotonicTime: () => 77 }
+    const lifecycle = createObservationLifecycle({ clock })
+    const recorded = lifecycle
+      .start({ name: "cache get", startTime: 1_000 })
+      .end({ durationMs: 2.5 })
+    expect(recorded).toMatchObject({ startTime: 1_000, endTime: 1_002.5, durationMs: 2.5 })
+
+    const negative = lifecycle.start({ name: "skewed", startTime: 1_000 }).end({ durationMs: -3 })
+    expect(negative).toMatchObject({ startTime: 1_000, endTime: 1_000, durationMs: 0 })
+
+    const invalid = lifecycle
+      .start({ name: "bad", startTime: Number.NaN })
+      .end({ durationMs: Number.POSITIVE_INFINITY })
+    expect(invalid).toMatchObject({ startTime: 5_000, endTime: 5_000, durationMs: 0 })
+  })
 })

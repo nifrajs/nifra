@@ -14,13 +14,18 @@ Typed KV cache for nifra - TTL, stale-while-revalidate, tag invalidation, and si
 - **MemoryCache** _(class)_ - `class MemoryCache`
 - **Cache** _(interface)_ - `interface Cache`
 - **CacheCapabilities** _(interface)_ - `interface CacheCapabilities`
+- **CacheEvent** _(interface)_ - `interface CacheEvent`
 - **CacheOptions** _(interface)_ - `interface CacheOptions`
 - **CacheStore** _(interface)_ - `interface CacheStore`
 - **MemoryCacheOptions** _(interface)_ - `interface MemoryCacheOptions`
 - **SetOptions** _(interface)_ - `interface SetOptions`
 - **StoredEntry** _(interface)_ - `interface StoredEntry`
+- **CacheObserver** _(type)_ - `type CacheObserver = (event: CacheEvent) => void`
+- **CacheOperation** _(type)_ - `type CacheOperation = | "get" | "has" | "set" | "wrap" | "delete" | "invalidateTag" | "clear" | "revalidate"`
+- **CacheOutcome** _(type)_ - `type CacheOutcome = "hit" | "stale" | "miss" | "ok" | "error"`
 - **CapabilityBeacon** _(type)_ - `type CapabilityBeacon = (context: object, capability: string) => void`
-- **WrapOptions** _(type)_ - `type WrapOptions = SetOptions`
+
+_…and 1 more - see [`api-reference.md`](../../api-reference.md#nifrajscache) for the complete list._
 
 ## Footguns
 

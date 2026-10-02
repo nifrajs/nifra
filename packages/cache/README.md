@@ -48,10 +48,36 @@ const cache = createCache({ store: new RedisCacheStore(redis) })
 On **Cloudflare Workers** the in-memory cache is per-isolate and short-lived - back it with **CF KV** (or
 the Cache API) via a `CacheStore` for anything that should survive across requests/instances.
 
+## Observing operations and tracing
+
+`observer` receives one event per operation after it settles: `{ op, outcome, startedAt, durationMs,
+key, tag, tagCount, context }`. `outcome` is `hit`, `stale` or `miss` for reads, `ok` for writes and a
+finished background refresh (`op: "revalidate"`), `error` when the store or loader threw. An observer
+that throws is swallowed; it never changes a result. Without an observer the cache reads no extra clock.
+
+`cache.for(c)` binds a request (or job) context, and every event carries it. That is how
+`cacheTracing()` from `@nifrajs/otel/cache` turns each operation into a child span of `c.trace`:
+
+```ts
+import { cacheTracing } from "@nifrajs/otel/cache"
+
+const cache = createCache({ observer: cacheTracing({ exporter }) })
+app.use(tracing({ exporter })).get("/orders/:user", (c) =>
+  cache.for(c).wrap(`orders:${c.params.user}`, () => loadOrders(c.params.user)), // span "cache wrap"
+)
+```
+
+The raw key goes to the in-process observer only. `cacheTracing` exports the key prefix (the token
+before the first `:`, when it is a short lowercase name) unless `keyAttribute` says otherwise
+(`"none"`, or a function that owns the redaction). A stale read's background refresh is its own trace,
+linked to the request span. `for(c)` needs a `beacon`, an `observer`, or both; the beacon is enforced
+whenever it is set.
+
 ## API
 
-- `createCache(options?)` → `Cache` - `{ store?, defaultTtlMs?, now?, onError? }`.
+- `createCache(options?)` → `Cache` - `{ store?, defaultTtlMs?, now?, onError?, observer?, beacon?, capabilities? }`.
 - `cache.wrap(key, loader, { ttlMs?, swrMs?, tags? })` · `get` · `has` · `set` · `delete` · `invalidateTag` · `clear`.
+- `cache.for(context)` → the same surface bound to a request or job context.
 - `MemoryCache({ maxEntries?, now? })` - the default store; implement `CacheStore` for your own.
 
 ## For AI agents

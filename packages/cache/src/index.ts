@@ -13,7 +13,11 @@ export { MemoryCache, type MemoryCacheOptions } from "./memory-cache.ts"
 export type {
   Cache,
   CacheCapabilities,
+  CacheEvent,
+  CacheObserver,
+  CacheOperation,
   CacheOptions,
+  CacheOutcome,
   CacheStore,
   CapabilityBeacon,
   SetOptions,

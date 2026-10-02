@@ -524,6 +524,7 @@
       "name": "@nifrajs/otel",
       "version": "3.5.0",
       "devDependencies": {
+        "@nifrajs/cache": "workspace:*",
         "@nifrajs/core": "workspace:*",
       },
       "peerDependencies": {

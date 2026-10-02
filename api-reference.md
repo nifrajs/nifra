@@ -751,7 +751,15 @@ Every public export of every package and documented subpath - name, kind, signat
 - **Cache** _(interface)_ - `interface Cache`
 - **CacheCapabilities** _(interface)_ - `interface CacheCapabilities`
   Capability tokens this cache announces. Defaults: `cache.read` and `cache.write`.
+- **CacheEvent** _(interface)_ - `interface CacheEvent`
+  One settled cache operation, as an observer sees it.
+- **CacheObserver** _(type)_ - `type CacheObserver = (event: CacheEvent) => void`
+  Called once per operation after it settles, never before the caller sees the result. A throwing (or rejecting) observer is swallowed: it cannot change a cache result.
+- **CacheOperation** _(type)_ - `type CacheOperation = | "get" | "has" | "set" | "wrap" | "delete" | "invalidateTag" | "clear" | "revalidate"`
+  A cache operation reported to a {@link CacheObserver}. `revalidate` is the background SWR refresh.
 - **CacheOptions** _(interface)_ - `interface CacheOptions`
+- **CacheOutcome** _(type)_ - `type CacheOutcome = "hit" | "stale" | "miss" | "ok" | "error"`
+  How an operation ended. Reads report `hit`, `stale` (served from the SWR window) or `miss`; writes and a completed revalidation report `ok`; `error` means the store or the loader threw.
 - **CacheStore** _(interface)_ - `interface CacheStore`
   Raw key→entry storage. The default {@link MemoryCache} is in-process; implement this over CF KV / Redis / etc. for a cache shared across instances. All methods may be sync or async - the cache awaits them.
 - **CapabilityBeacon** _(type)_ - `type CapabilityBeacon = (context: object, capability: string) => void`
@@ -3999,6 +4007,18 @@ _No named exports (side-effect entrypoint)._
   Spread into an outgoing `fetch`/`ctx.api` call's headers to continue the trace downstream: `fetch(url, { headers: traceHeaders(c.trace) })`.
 - **tracing** _(function)_ - `tracing: (options?: TracingOptions) => ContextPlugin<TracingContext>`
   Distributed-tracing plugin. Each request continues the inbound trace (or starts one), opens a server span, and ends it on response with the status + HTTP attributes. Idempotent.
+
+### `@nifrajs/otel/cache`
+
+- **CacheKeyAttribute** _(type)_ - `type CacheKeyAttribute = "prefix" | "none" | ((key: string) => string | undefined)`
+  What of a key (or an invalidated tag) a span carries: - `"prefix"` (default): the leading token before the first `:`, exported as `nifra.cache.key_prefix` only when it matches `^[a-z][a-z0-9_-]{0,31}$` - `user:42` gives `user`, a key with no `:` gives nothing; - `"none"`: nothing; - a function: its…
+- **CacheTracingEvent** _(interface)_ - `interface CacheTracingEvent`
+  The `CacheEvent` of `@nifrajs/cache`, declared structurally so this package does not depend on it.
+- **CacheTracingObserver** _(type)_ - `type CacheTracingObserver = (event: CacheTracingEvent) => void`
+  Pass as `createCache({ observer })`.
+- **CacheTracingOptions** _(interface)_ - `interface CacheTracingOptions`
+- **cacheTracing** _(function)_ - `cacheTracing: (options?: CacheTracingOptions) => CacheTracingObserver`
+  Spans for cache operations on views bound with `for(context)`. A bound operation becomes a child of the context's trace; an operation on the unbound cache, or under a context with no trace, is not traced. A stale `wrap` that starts a background refresh gets a separate `cache revalidate` span in its…
 
 ### `@nifrajs/otel/effects`
 

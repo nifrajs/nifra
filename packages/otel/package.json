@@ -37,6 +37,11 @@
       "bun": "./src/effects.ts",
       "types": "./dist/effects.d.ts",
       "default": "./dist/effects.js"
+    },
+    "./cache": {
+      "bun": "./src/cache.ts",
+      "types": "./dist/cache.d.ts",
+      "default": "./dist/cache.js"
     }
   },
   "files": [
@@ -55,6 +60,7 @@
     "@nifrajs/core": "workspace:^"
   },
   "devDependencies": {
+    "@nifrajs/cache": "workspace:*",
     "@nifrajs/core": "workspace:*"
   },
   "repository": {
