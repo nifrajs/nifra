@@ -381,4 +381,5 @@ export function importRuleMessage(fromFile: string, from: Zone, toFile: string, 
   return `${fromFile} (${side(from)}) imports ${toFile} (${side(to)}): ${hint}. A type-only import (\`import type\`) is allowed`
 }
 
+export { isSensitiveFieldName } from "./internal/output-guard.ts"
 export { privateEnvReads, privateEnvReason } from "./internal/private-env.ts"

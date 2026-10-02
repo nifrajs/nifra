@@ -15,14 +15,25 @@ import { SERVER_FN_PREFIX, serverFn, serverFunctions } from "../src/fn.ts"
 let received: unknown
 
 const fns = {
-  echo: serverFn({ input: t.object({ text: t.string({ minLength: 1 }) }) }, (input) => {
-    received = input
-    return { echoed: input.text }
-  }),
-  ping: serverFn({}, () => ({ pong: true })),
-  writes: serverFn({ input: t.object({ v: t.string() }), capabilities: ["db.write"] }, () => ({
-    ok: true,
-  })),
+  echo: serverFn(
+    {
+      input: t.object({ text: t.string({ minLength: 1 }) }),
+      output: t.object({ echoed: t.string() }),
+    },
+    (input) => {
+      received = input
+      return { echoed: input.text }
+    },
+  ),
+  ping: serverFn({ output: t.object({ pong: t.boolean() }) }, () => ({ pong: true })),
+  writes: serverFn(
+    {
+      input: t.object({ v: t.string() }),
+      output: t.object({ ok: t.boolean() }),
+      capabilities: ["db.write"],
+    },
+    () => ({ ok: true }),
+  ),
   // Not a server function: mounting must ignore it rather than expose it.
   helper: (x: number): number => x + 1,
 }
@@ -99,10 +110,13 @@ describe("input is never trusted", () => {
     let stripped: unknown
     const zodApp = server().use(
       serverFunctions("ns", {
-        f: serverFn({ input: z.object({ text: z.string() }) }, (input) => {
-          stripped = input
-          return { ok: true }
-        }),
+        f: serverFn(
+          { input: z.object({ text: z.string() }), output: z.object({ ok: z.boolean() }) },
+          (input) => {
+            stripped = input
+            return { ok: true }
+          },
+        ),
       }),
     )
     const res = await zodApp.fetch(

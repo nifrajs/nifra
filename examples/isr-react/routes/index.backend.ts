@@ -1,4 +1,5 @@
 import type { LoaderArgs } from "@nifrajs/client"
+import { t } from "@nifrajs/schema"
 import type { backend } from "../backend/app"
 
 // ISR: the `withISR` wrapper (server.ts / worker.ts) caches this page's rendered document and serves
@@ -6,6 +7,8 @@ import type { backend } from "../backend/app"
 // emits it as the `x-nifra-isr-revalidate` response header, which the wrapper reads to set this page's
 // TTL (overriding the wrapper default). 2s keeps the demo snappy.
 export const revalidate = 2
+
+export const loaderOutput = t.object({ renders: t.number() })
 
 export async function loader({ api }: LoaderArgs<typeof backend>) {
   const res = await api.page.get()

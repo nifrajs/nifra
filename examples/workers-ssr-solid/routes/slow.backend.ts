@@ -1,4 +1,7 @@
+import { t } from "@nifrajs/schema"
 import { defer } from "@nifrajs/web"
+
+export const loaderOutput = t.object({ feed: t.deferred(t.string()) })
 
 // Deferred data: the shell + the <Await fallback> flush immediately, then `feed` streams in behind
 // <Suspense> ~400ms later and hydrates with no client re-fetch - streaming SSR on workerd. On a

@@ -1,19 +1,41 @@
 import {
   type ArrayOptions,
+  CloneType,
   type IntegerOptions,
+  Kind,
   type NumberOptions,
   type ObjectOptions,
+  type Static,
   type StringOptions,
   type TArray,
   type TLiteralValue,
   type TSchema,
   type TUnion,
+  type TUnsafe,
   Type,
+  TypeRegistry,
 } from "@sinclair/typebox"
 import { fromTypeBox, type NifraSchema } from "./adapter.ts"
 import { fileOps, refuseFile } from "./file-kind.ts"
 
 type Props = Record<string, NifraSchema>
+
+/** A value `defer()` from `@nifrajs/web` marked to stream in after the page shell. */
+export interface DeferredValue<T> {
+  readonly __nifra_deferred: true
+  readonly id: number
+  readonly promise: Promise<T>
+}
+
+const DEFERRED_KIND = "NifraDeferred"
+/** Where `@nifrajs/web`'s output guard finds the inner schema's validate. Registered for two copies. */
+const DEFERRED_VALIDATE = Symbol.for("nifra.schema.deferredValidate")
+
+const isDeferredValue = (_: unknown, value: unknown): boolean =>
+  typeof value === "object" &&
+  value !== null &&
+  (value as { readonly __nifra_deferred?: unknown }).__nifra_deferred === true &&
+  typeof (value as { readonly promise?: { readonly then?: unknown } }).promise?.then === "function"
 
 /**
  * Pull each property's raw TypeBox schema out of its `NifraSchema` wrapper. `where` names the calling
@@ -156,4 +178,36 @@ export const t = {
    * cookie the site has set - analytics, consent, other routes' sessions - so a strict allowlist
    * would 422 real traffic. Declare the cookies the route reads; the rest pass through. */
   cookies: textFields("t.cookies"),
+
+  /**
+   * A loader value marked with `defer()`, streamed in after the shell. `inner` describes what the
+   * promise resolves to; `@nifrajs/web` projects and validates the resolved value by it before it
+   * streams, so a deferred value is held to the same output contract as the rest of the data.
+   */
+  deferred: <T extends TSchema>(
+    inner: NifraSchema<T>,
+  ): NifraSchema<TUnsafe<DeferredValue<Static<T>>>> => {
+    refuseFile("t.deferred", inner.jsonSchema)
+    if (!TypeRegistry.Has(DEFERRED_KIND)) TypeRegistry.Set(DEFERRED_KIND, isDeferredValue)
+    return fromTypeBox(
+      Type.Unsafe<DeferredValue<Static<T>>>({
+        [Kind]: DEFERRED_KIND,
+        "x-nifra-deferred": true,
+        inner: inner.jsonSchema,
+        [DEFERRED_VALIDATE]: inner["~standard"].validate,
+      }),
+    )
+  },
+  /**
+   * Allow a field with a sensitive name (`token`, `password`, `apiKey`, ...) in an output schema.
+   * An output schema that declares one without this fails at route load; `reason` records why this
+   * value may reach the browser, for the reviewer who finds it later.
+   */
+  declassified: <T extends TSchema>(reason: string, schema: NifraSchema<T>): NifraSchema<T> => {
+    if (typeof reason !== "string" || reason.trim() === "") {
+      throw new TypeError("t.declassified: give the reason this field may reach the browser")
+    }
+    refuseFile("t.declassified", schema.jsonSchema)
+    return fromTypeBox(CloneType(schema.jsonSchema, { "x-nifra-declassified": reason }) as T)
+  },
 } as const

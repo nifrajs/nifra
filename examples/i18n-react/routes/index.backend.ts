@@ -1,5 +1,8 @@
 import { negotiateLocale } from "@nifrajs/i18n"
+import { t } from "@nifrajs/schema"
 import { catalogs, locales } from "../backend/catalogs"
+
+export const loaderOutput = t.object({ locale: t.string(), messages: t.record(t.string()) })
 
 // Locale resolution: an explicit `?lang=` (the switcher) wins, else negotiate from Accept-Language
 // (a cookie could persist the choice). All browser-safe - negotiateLocale is pure + the catalogs are

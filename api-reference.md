@@ -4085,6 +4085,8 @@ _No named exports (side-effect entrypoint)._
 
 ### `@nifrajs/schema`
 
+- **DeferredValue** _(interface)_ - `interface DeferredValue<T>`
+  A value `defer()` from `@nifrajs/web` marked to stream in after the page shell.
 - **ImportOpenAPIOptions** _(interface)_ - `interface ImportOpenAPIOptions`
 - **ImportedApiInventory** _(interface)_ - `interface ImportedApiInventory`
 - **ImportedRoute** _(interface)_ - `interface ImportedRoute`
@@ -5573,6 +5575,8 @@ _No named exports (side-effect entrypoint)._
   Whether a module in `from` may import (with a value import) a module in `to`.
 - **importRuleMessage** _(function)_ - `importRuleMessage: (fromFile: string, from: Zone, toFile: string, to: Zone) => string`
   The message for an import {@link importAllowed} refuses.
+- **isSensitiveFieldName** _(function)_ - `isSensitiveFieldName: (name: string) => boolean`
+  A field name that usually holds a credential or personal identifier.
 - **privateEnvReads** _(function)_ - `privateEnvReads: (file: string, source: string, publicPrefix: string) => string[]`
   The private environment reads in one browser-reachable file, as written (`process.env.SECRET`). `publicPrefix` is the app's public-env prefix; `""` makes every variable but `NODE_ENV` private.
 - **privateEnvReason** _(function)_ - `privateEnvReason: (reads: readonly string[], publicPrefix: string) => string`

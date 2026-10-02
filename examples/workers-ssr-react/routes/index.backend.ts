@@ -1,5 +1,8 @@
 import type { ActionArgs, LoaderArgs } from "@nifrajs/client"
+import { t } from "@nifrajs/schema"
 import type { backend } from "../backend/app"
+
+export const loaderOutput = t.object({ count: t.number() })
 
 // Typed loader + action against the contract - the SAME code that runs on Bun/Node/Deno, now on
 // workerd. The loader reads the count; the action increments it. After a client submit the loader
@@ -8,6 +11,8 @@ export async function loader({ api }: LoaderArgs<typeof backend>) {
   const res = await api.count.get()
   return { count: res.data?.count ?? 0 }
 }
+
+export const actionOutput = t.object({ ok: t.boolean() })
 
 export async function action({ api }: ActionArgs<typeof backend>) {
   await api.count.post()

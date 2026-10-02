@@ -25,11 +25,11 @@ Built-in schema builder `t` - TypeBox-backed (free JSON Schema + compiled valida
 - **toOpenAPI** _(function)_ - `toOpenAPI: (input: ContractShape | Server, options?: ToOpenAPIOptions) => OpenAPIDocument` · from `@nifrajs/schema`
 - **toOpenAPIFromEvidence** _(function)_ - `toOpenAPIFromEvidence: (evidence: ProjectEvidenceSnapshot, options?: Omit<ToOpenAPIOptions, "evidence">) => OpenAPIDocument` · from `@nifrajs/schema`
 - **OpenAPIImportError** _(class)_ - `class OpenAPIImportError` · from `@nifrajs/schema`
+- **DeferredValue** _(interface)_ - `interface DeferredValue<T>` · from `@nifrajs/schema`
 - **FileOptions** _(interface)_ - `interface FileOptions` · from `@nifrajs/schema/form`
 - **FormOptions** _(interface)_ - `interface FormOptions` · from `@nifrajs/schema/form`
-- **ImportedApiInventory** _(interface)_ - `interface ImportedApiInventory` · from `@nifrajs/schema`
 
-_…and 12 more - see [`api-reference.md`](../../api-reference.md#nifrajsschema) for the complete list._
+_…and 13 more - see [`api-reference.md`](../../api-reference.md#nifrajsschema) for the complete list._
 
 ## Footguns
 

@@ -8,6 +8,7 @@ import { routePatternOverlap } from "@nifrajs/core"
 import { paramConstraint } from "@nifrajs/core/pattern"
 import type { CookieOptions, ResponseResult, StandardSchemaV1 } from "@nifrajs/core/server"
 import type { BoundaryDescriptor, BoundaryRegistration } from "./boundary.ts"
+import { guardChannel, outputGuard } from "./internal/output-guard.ts"
 
 /**
  * Response controls a loader or action reaches as `ctx.set` - the page counterpart of a route
@@ -317,6 +318,14 @@ export interface RouteModule {
   readonly default: unknown
   readonly loader?: Loader
   readonly action?: Action
+  /**
+   * Backend half only: the schema of what {@link loader} sends to the browser. Required whenever the
+   * loader returns data. Keys it does not declare are dropped before the page renders; a declared
+   * field of the wrong shape fails the request with a 500 naming the field's path.
+   */
+  readonly loaderOutput?: StandardSchemaV1
+  /** Backend half only: the schema of what {@link action} sends back, held to the same rule. */
+  readonly actionOutput?: StandardSchemaV1
   /** Optional client-only loader. It runs after hydration and on client navigations. */
   readonly clientLoader?: ClientLoader
   /** Optional client-only submit wrapper. The server action remains mandatory for mutations. */
@@ -403,6 +412,8 @@ export interface RouteModule {
 /** A boundary's server loader, declared in the route's backend half under `boundaryLoaders`. */
 export interface BoundaryLoaderEntry {
   readonly load: NonNullable<BoundaryRegistration["load"]>
+  /** The boundary data's output schema. Required whenever `load` returns data. */
+  readonly output?: StandardSchemaV1
 }
 
 /** A layout (or `_404`/`_error`) entry: its source file (for client codegen) + a lazy loader.
@@ -672,13 +683,43 @@ export function mergeRouteHalves(
     return front
   }
   assertBackendHalf(file, backend, back, stripExt(baseName(file)) === "_layout")
-  const { middleware: _middleware, boundaryLoaders, ...server } = back
+  const {
+    middleware: _middleware,
+    boundaryLoaders,
+    loader,
+    action,
+    loaderOutput,
+    actionOutput,
+    ...server
+  } = back
+  const guarded: { loader?: unknown; action?: unknown } = {}
+  for (const [name, fn, schema, schemaName] of [
+    ["loader", loader, loaderOutput, "loaderOutput"],
+    ["action", action, actionOutput, "actionOutput"],
+  ] as const) {
+    if (fn === undefined) {
+      if (schema !== undefined) {
+        throw routeError(`"${backend}" exports ${schemaName} but no ${name} for it to describe`)
+      }
+      continue
+    }
+    if (typeof fn !== "function")
+      throw routeError(`"${backend}" exports a ${name} that is not a function`)
+    guarded[name] = guardChannel(fn as (...args: unknown[]) => unknown, {
+      label: `the ${name} of "${file}"`,
+      guard: schema === undefined ? undefined : outputGuard(schema, `"${backend}"`, schemaName),
+      missing: `export const ${schemaName} = t.object({ ... }) from "${backend}"`,
+      revalidate: name === "action",
+    })
+  }
   let boundaries = front.boundaries
   if (boundaryLoaders !== undefined) {
     if (typeof boundaryLoaders !== "object" || boundaryLoaders === null) {
       throw routeError(`"${backend}" exports boundaryLoaders that is not an object of loaders`)
     }
-    const loaders = boundaryLoaders as Readonly<Record<string, { readonly load?: unknown }>>
+    const loaders = boundaryLoaders as Readonly<
+      Record<string, { readonly load?: unknown; readonly output?: unknown }>
+    >
     const declared = new Set((front.boundaries ?? []).map((boundary) => boundary.name))
     for (const [name, entry] of Object.entries(loaders)) {
       if (!declared.has(name)) {
@@ -692,14 +733,23 @@ export function mergeRouteHalves(
     }
     boundaries = front.boundaries?.map((boundary) => {
       const entry = loaders[boundary.name]
-      return entry === undefined
-        ? boundary
-        : ({ ...boundary, load: entry.load } as BoundaryRegistration)
+      if (entry === undefined) return boundary
+      const key = `boundaryLoaders["${boundary.name}"]`
+      const load = guardChannel(entry.load as (...args: unknown[]) => unknown, {
+        label: `${key} of "${backend}"`,
+        guard:
+          entry.output === undefined
+            ? undefined
+            : outputGuard(entry.output, `"${backend}"`, `${key}.output`),
+        missing: `${key}.output in "${backend}"`,
+      })
+      return { ...boundary, load } as BoundaryRegistration
     })
   }
   const module = {
     ...front,
     ...server,
+    ...guarded,
     ...(boundaries === undefined ? {} : { boundaries }),
   } as RouteModule
   mergedHalves.set(front, { back, module })

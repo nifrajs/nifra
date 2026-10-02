@@ -1,11 +1,18 @@
 import type { ActionArgs, LoaderArgs } from "@nifrajs/client"
+import { t } from "@nifrajs/schema"
 import { revalidate } from "@nifrajs/web"
 import type { backend } from "../backend/app"
+
+export const loaderOutput = t.object({
+  todos: t.array(t.object({ id: t.integer(), text: t.string() })),
+})
 
 export async function loader({ api }: LoaderArgs<typeof backend>) {
   const res = await api.todos.get()
   return { todos: res.data?.todos ?? [] }
 }
+
+export const actionOutput = t.object({ ok: t.boolean() })
 
 // On POST: a per-row "bump" (a fetcher submit) appends "!" to one todo, then declares /todos changed
 // via revalidate() → the list refreshes. A plain "add" creates a todo (the active loader revalidates).

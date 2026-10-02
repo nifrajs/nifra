@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { t } from "@nifrajs/schema"
 import { defineLocales } from "../../i18n/src/locales.ts"
 import { defineI18nRouting } from "../../i18n/src/routing.ts"
 import {
@@ -52,7 +53,10 @@ const modules: Record<string, Partial<RouteModule> & { default?: unknown; middle
     "[lang]/about.tsx": {
       meta: ({ params }) => urls.locales.documentMeta(urls.localeOf(`/${params.lang}`)),
     },
-    "[lang]/about.backend.ts": { loader: (ctx) => ({ lang: ctx.params.lang }) },
+    "[lang]/about.backend.ts": {
+      loader: (ctx) => ({ lang: ctx.params.lang }),
+      loaderOutput: t.object({ lang: t.string() }),
+    },
   }
 
 const app = createWebApp({

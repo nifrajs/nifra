@@ -29,4 +29,4 @@ export {
 } from "./openapi-import.ts"
 // Cursor-pagination runtime helpers - pair with `t.paginated` / `t.pageQuery`.
 export { decodeCursor, encodeCursor, type Page, paginate } from "./pagination.ts"
-export { t } from "./t.ts"
+export { type DeferredValue, t } from "./t.ts"

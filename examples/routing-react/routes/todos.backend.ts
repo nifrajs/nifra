@@ -1,6 +1,11 @@
 import type { ActionArgs, LoaderArgs } from "@nifrajs/client"
+import { t } from "@nifrajs/schema"
 import { revalidate } from "@nifrajs/web"
 import type { backend } from "../backend/app"
+
+export const loaderOutput = t.object({
+  todos: t.array(t.object({ id: t.integer(), text: t.string() })),
+})
 
 // The list loader - reads the current todos via the in-process api. After a client submit the loader
 // REVALIDATES (unless the form opts out), so the reconciled list reflects what the server accepted.
@@ -8,6 +13,12 @@ export async function loader({ api }: LoaderArgs<typeof backend>) {
   const res = await api.todos.get()
   return { todos: res.data?.todos ?? [] }
 }
+
+export const actionOutput = t.object({
+  ok: t.boolean(),
+  created: t.optional(t.union([t.object({ id: t.integer(), text: t.string() }), t.null()])),
+  error: t.optional(t.literal("rejected")),
+})
 
 // The mutation handles two flows on POST /todos:
 //   • per-row "bump" (a fetcher submit, F16): append "!" to one todo, then declare /todos changed via

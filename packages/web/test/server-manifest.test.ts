@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { t } from "@nifrajs/schema"
 import { buildManifest, createWebApp, type RenderAdapter, type RouteModule } from "../src/index.ts"
 import { splitRouteHalves } from "./_route-halves.ts"
 
@@ -55,7 +56,10 @@ test("the lazy runtime pattern round-trips through createWebApp (loaders called 
   const loaders: Record<string, () => Promise<RouteModule>> = {
     "_layout.tsx": make({ default: "layout" }),
     "index.tsx": make({ default: "home" }),
-    "index.backend.ts": make({ loader: () => ({ hi: "lazy" }) } as unknown as RouteModule),
+    "index.backend.ts": make({
+      loader: () => ({ hi: "lazy" }),
+      loaderOutput: t.object({ hi: t.string() }),
+    } as unknown as RouteModule),
     "_404.tsx": make({ default: "nf" }),
   }
   const manifest = buildManifest(

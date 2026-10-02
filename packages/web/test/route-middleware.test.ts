@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { t } from "@nifrajs/schema"
 import { discoverRoutes } from "../src/fs.ts"
 import {
   buildManifest,
@@ -125,6 +126,7 @@ const orgApp = () => {
         calls.push("gate")
         return { layout: true }
       },
+      loaderOutput: t.object({ layout: t.boolean() }),
     },
     "orgs/[org]/projects/[id].tsx": {},
     "orgs/[org]/projects/[id].backend.ts": {
@@ -133,10 +135,12 @@ const orgApp = () => {
         if (query(ctx, "page") === "header") ctx.set.headers["x-middleware"] = "page"
         return { id: ctx.params.id }
       },
+      loaderOutput: t.object({ id: t.string() }),
       action: () => {
         calls.push("action")
         return { saved: true }
       },
+      actionOutput: t.object({ saved: t.boolean() }),
     },
   })
   return { app, manifest, calls, seen }
@@ -362,7 +366,10 @@ describe("route middleware - requests", () => {
   test("a layout backend half without middleware is layout data only: the request runs on", async () => {
     const { app } = appOf({
       "_layout.tsx": {},
-      "_layout.backend.ts": { loader: () => ({ shell: true }) },
+      "_layout.backend.ts": {
+        loader: () => ({ shell: true }),
+        loaderOutput: t.object({ shell: t.boolean() }),
+      },
       "index.tsx": {},
     })
     const res = await get(app, "/")

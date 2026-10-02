@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { t } from "@nifrajs/schema"
 import ts from "typescript"
 import { type BuildServerOptions, buildServer } from "../src/build.ts"
 import { createMatcher } from "../src/client.ts"
@@ -384,6 +385,7 @@ test("a loader's notFound() hydrates the _404 the server rendered, not the match
           ? ({
               loader: ({ params }: { params: Record<string, string> }) =>
                 params.slug === "intro" ? { title: "Intro" } : notFound(),
+              loaderOutput: t.object({ title: t.string() }),
             } as unknown as RouteModule)
           : { default: "the-404-page" },
   )

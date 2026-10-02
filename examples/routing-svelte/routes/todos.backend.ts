@@ -1,9 +1,16 @@
+import { t } from "@nifrajs/schema"
 import { revalidate } from "@nifrajs/web"
+
+export const loaderOutput = t.object({
+  todos: t.array(t.object({ id: t.integer(), text: t.string() })),
+})
 
 export async function loader({ api }) {
   const res = await api.todos.get()
   return { todos: res.data?.todos ?? [] }
 }
+
+export const actionOutput = t.object({ ok: t.boolean() })
 
 export async function action({ request, api }) {
   const form = await request.formData()

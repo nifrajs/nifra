@@ -1,3 +1,4 @@
+import { t } from "@nifrajs/schema"
 import { defer } from "@nifrajs/web"
 
 // SSG: prerender this static route to dist/index.html at build (build.ts → prerenderRoutes). Proves
@@ -5,10 +6,14 @@ import { defer } from "@nifrajs/web"
 // only in the action, so the prerendered GET is clean.
 export const prerender = true
 
+export const loaderOutput = t.object({ count: t.number() })
+
 export async function loader({ api }) {
   const res = await api.count.get()
   return { count: res.data?.count ?? 0 }
 }
+
+export const actionOutput = t.object({ ok: t.boolean(), receipt: t.deferred(t.string()) })
 
 export async function action({ api }) {
   await api.count.post()

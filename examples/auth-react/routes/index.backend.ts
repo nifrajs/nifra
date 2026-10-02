@@ -1,5 +1,8 @@
 import { requireUser, type SessionManager } from "@nifrajs/auth"
+import { t } from "@nifrajs/schema"
 import type { SessionData } from "../auth"
+
+export const loaderOutput = t.object({ userId: t.string() })
 
 // Protected page. The session manager is injected as `ctx.api` (server.ts) - NOT imported here, since
 // route modules are bundled for the browser and a server-only import would ship `Bun.env`/the store to

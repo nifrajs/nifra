@@ -1,4 +1,5 @@
 import type { ActionArgs, LoaderArgs } from "@nifrajs/client"
+import { t } from "@nifrajs/schema"
 import { defer } from "@nifrajs/web"
 import type { backend } from "../backend/app"
 
@@ -7,12 +8,16 @@ import type { backend } from "../backend/app"
 // only in the action, so the prerendered GET has no unresolved deferreds.
 export const prerender = true
 
+export const loaderOutput = t.object({ count: t.number() })
+
 // Loader reads the count; the action increments it. After a client submit the loader REVALIDATES,
 // so the count updates with no full reload (progressive enhancement with JS off).
 export async function loader({ api }: LoaderArgs<typeof backend>) {
   const res = await api.count.get()
   return { count: res.data?.count ?? 0 }
 }
+
+export const actionOutput = t.object({ ok: t.boolean(), receipt: t.deferred(t.string()) })
 
 export async function action({ api }: ActionArgs<typeof backend>) {
   await api.count.post()

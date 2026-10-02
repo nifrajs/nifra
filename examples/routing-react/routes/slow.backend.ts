@@ -1,4 +1,10 @@
+import { t } from "@nifrajs/schema"
 import { defer } from "@nifrajs/web"
+
+export const loaderOutput = t.object({
+  feed: t.deferred(t.string()),
+  panels: t.array(t.object({ id: t.string(), chart: t.deferred(t.array(t.number())) })),
+})
 
 // The loader DEFERS slow data: the shell (the <h1> + the fallback) renders immediately, then `feed`
 // streams in behind <Await> and hydrates without a client re-fetch. The 400ms delay stands in for

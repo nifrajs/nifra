@@ -53,6 +53,7 @@ import {
   type RouteSchema,
   type StandardSchemaV1,
 } from "@nifrajs/core/server"
+import { guardChannel, outputGuard } from "./internal/output-guard.ts"
 
 /** The URL prefix every mounted function lives under. Namespaced per mount, then by export name. */
 export const SERVER_FN_PREFIX = "/_nifra/fn"
@@ -66,6 +67,11 @@ export interface ServerFnConfig<Input> {
    * the caller controls this value completely, so an unvalidated one is an open door.
    */
   readonly input?: StandardSchemaV1<unknown, Input>
+  /**
+   * Describes what the function returns to the browser. Required whenever it returns data: keys the
+   * schema does not declare are dropped, and a declared field of the wrong shape fails the call.
+   */
+  readonly output?: StandardSchemaV1
   /** Effect tokens, forwarded to the route so `nifra assure` and the effect ledger see them. */
   readonly capabilities?: readonly string[]
 }
@@ -172,6 +178,13 @@ export function serverFunctions(namespace: string, module: ServerFnModule): Iden
         )
       }
       const config = fn[SERVER_FN]
+      const label = `server function "${namespace}.${name}"`
+      const guarded = guardChannel(fn, {
+        label,
+        guard:
+          config.output === undefined ? undefined : outputGuard(config.output, label, "output"),
+        missing: "an output schema in its serverFn({ output }) config",
+      })
       const schema: RouteSchema = {
         ...(config.input !== undefined ? { body: config.input } : {}),
         ...(config.capabilities !== undefined ? { capabilities: config.capabilities } : {}),
@@ -195,7 +208,7 @@ export function serverFunctions(namespace: string, module: ServerFnModule): Iden
         if (origin !== null && !sameOrigin(origin, request)) {
           return c.json({ ok: false, error: "forbidden_origin" }, 403)
         }
-        return fn(config.input === undefined ? (undefined as never) : (c.body as never), c)
+        return guarded(config.input === undefined ? undefined : c.body, c)
       }) as (context: never) => unknown)
     }
     return app

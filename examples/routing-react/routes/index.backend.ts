@@ -1,4 +1,5 @@
 import type { ActionArgs, LoaderArgs } from "@nifrajs/client"
+import { t } from "@nifrajs/schema"
 import { defer } from "@nifrajs/web"
 import type { backend } from "../backend/app"
 
@@ -8,6 +9,8 @@ import type { backend } from "../backend/app"
 // prerendered GET), so the static document has no unresolved deferreds.
 export const prerender = true
 
+export const loaderOutput = t.object({ count: t.number() })
+
 // The full write-side loop, typed against the contract: the loader reads the count via the
 // in-process api; the action increments it. After a client submit the loader REVALIDATES, so the
 // count updates with no full reload. With JS off, the native POST re-renders the page with the
@@ -16,6 +19,8 @@ export async function loader({ api }: LoaderArgs<typeof backend>) {
   const res = await api.count.get()
   return { count: res.data?.count ?? 0 }
 }
+
+export const actionOutput = t.object({ ok: t.boolean(), receipt: t.deferred(t.string()) })
 
 export async function action({ api }: ActionArgs<typeof backend>) {
   await api.count.post()

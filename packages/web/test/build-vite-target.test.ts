@@ -36,11 +36,16 @@ function scaffoldApp(): { root: string; routesDir: string; outDir: string; workD
      }\n`,
   )
   w("routes/index.tsx", "export default function Index() { return null }\n")
-  w("routes/index.backend.ts", `export function loader() { return { hello: "from-loader" } }\n`)
+  w(
+    "routes/index.backend.ts",
+    `import { t } from "@nifrajs/schema"
+export const loaderOutput = t.object({ hello: t.string() })
+export function loader() { return { hello: "from-loader" } }\n`,
+  )
   w("frontend/client-stub.ts", "export function mountRouter() {}\n")
   // The generated server entry imports `@nifrajs/web`, `@nifrajs/core/server` and (for `node`)
   // `@nifrajs/node` by bare specifier, which a real app resolves from its own node_modules.
-  linkWorkspacePackages(root, ["web", "core", "node", "client"])
+  linkWorkspacePackages(root, ["web", "core", "node", "client", "schema"])
   return {
     root,
     routesDir: join(root, "routes"),
@@ -262,7 +267,9 @@ test("buildTargetVite('static') prerenders opted-in routes with no server", asyn
   writeFileSync(join(routesDir, "index.tsx"), "export default function Index() { return null }\n")
   writeFileSync(
     join(routesDir, "index.backend.ts"),
-    `export const prerender = true
+    `import { t } from "@nifrajs/schema"
+     export const prerender = true
+     export const loaderOutput = t.object({ hello: t.string() })
      export function loader() { return { hello: "from-loader" } }\n`,
   )
   const { createWebApp } = await import("../src/index.ts")

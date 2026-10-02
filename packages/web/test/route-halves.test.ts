@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { t } from "@nifrajs/schema"
 import {
   BACKEND_ROUTE_EXPORTS,
   backendFileFor,
@@ -139,8 +140,8 @@ describe("export placement", () => {
 describe("boundaries", () => {
   const render = () => null
 
-  test("a boundary's loader comes from boundaryLoaders in the backend half", async () => {
-    const load = () => ({ stock: 3 })
+  test("a boundary's loader comes from boundaryLoaders in the backend half, behind its output", async () => {
+    const load = () => ({ stock: 3, supplierCost: 1 })
     const merged = mergeRouteHalves(
       "page.tsx",
       asModule({
@@ -148,9 +149,10 @@ describe("boundaries", () => {
         boundaries: [{ name: "stock", mode: "dynamic", render }],
       }),
       "page.backend.ts",
-      { boundaryLoaders: { stock: { load } } },
+      { boundaryLoaders: { stock: { load, output: t.object({ stock: t.number() }) } } },
     )
-    expect(merged.boundaries?.[0]?.load).toBe(load)
+    const guarded = merged.boundaries?.[0]?.load as (ctx: unknown) => unknown
+    expect(await guarded({})).toEqual({ stock: 3 })
     expect(merged).not.toHaveProperty("boundaryLoaders")
   })
 
