@@ -2508,6 +2508,13 @@
     "doc": "/** A data port bound to one request context; every operation emits capability evidence first. */"
   },
   {
+    "name": "boundedSqliteQuery",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function boundedSqliteQuery(query: string, maxRows: number): string;",
+    "doc": "/** Wrap a gated query so SQLite materializes at most one row beyond `maxRows`. */"
+  },
+  {
     "name": "BoundedSubagentRunner",
     "kind": "class",
     "package": "@nifrajs/coding-agent",
@@ -4351,6 +4358,20 @@
     "signature": "export interface ConditionalResponseOptions {\n    /** Entity tag to attach and compare using HTTP weak comparison for GET/HEAD. */\n    readonly etag?: string;\n    /** Last-modified validator to attach and compare at one-second HTTP date precision. */\n    readonly lastModified?: Date;\n}"
   },
   {
+    "name": "connectPostgres",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function connectPostgres(target: PostgresTarget, options: ConnectPostgresOptions): PostgresClient | DbRefusal;",
+    "doc": "/**\n * Open a one-connection `Bun.SQL` client for `target` after the host gate. Every session starts\n * read-only with `standard_conforming_strings` on (the statement tokenizer reads strings that way).\n */"
+  },
+  {
+    "name": "ConnectPostgresOptions",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface ConnectPostgresOptions {\n    readonly timeoutMs: number;\n    readonly allowHosts?: readonly string[];\n}",
+    "doc": "/** Options for {@link connectPostgres}. */"
+  },
+  {
     "name": "consoleAgentExporter",
     "kind": "function",
     "package": "@nifrajs/agent-telemetry",
@@ -4784,6 +4805,13 @@
     "package": "@nifrajs/otel",
     "signature": "export declare class Counter {\n    readonly name: string;\n    readonly help: string;\n    private readonly series;\n    constructor(name: string, help: string);\n    inc(labels?: Labels, by?: number): void;\n    render(): string;\n}",
     "doc": "/** A monotonically increasing counter (requests, errors). */"
+  },
+  {
+    "name": "countSqliteQuery",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function countSqliteQuery(query: string): string;",
+    "doc": "/** Wrap a gated query to count its rows (re-executes it). */"
   },
   {
     "name": "createAdmissionController",
@@ -5741,6 +5769,83 @@
     "package": "@nifrajs/core",
     "signature": "export type DataScope = RlsScope;",
     "doc": "/** Backward-compatible name for the request scope carried by every data operation. */"
+  },
+  {
+    "name": "DbPlan",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface DbPlan {\n    readonly plan: unknown;\n    /** True when the plan carries actual timings (Postgres `EXPLAIN ANALYZE`). */\n    readonly analyzed: boolean;\n    readonly truncated: boolean;\n}",
+    "doc": "/** A plan for a statement, as the engine reports it. */"
+  },
+  {
+    "name": "DbRedaction",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface DbRedaction {\n    /** True for a column (or a key inside a JSON value) whose values must not leave the process. */\n    readonly column?: (name: string) => boolean;\n    /** Scrub one string value: key formats, tokens, environment values. */\n    readonly text?: (value: string) => string;\n}",
+    "doc": "/** What keeps secrets out of a result: which columns to mask, and how to scrub text. */"
+  },
+  {
+    "name": "dbRefusal",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function dbRefusal(code: DbRefusalCode, message: string): DbRefusal;",
+    "doc": "/** Build a {@link DbRefusal} for `code` with its fix and docs anchor. */"
+  },
+  {
+    "name": "DbRefusal",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface DbRefusal {\n    readonly code: DbRefusalCode;\n    readonly message: string;\n    readonly fix: string;\n    readonly docsAnchor: string;\n}",
+    "doc": "/** A refused or failed call: what happened, the fix, and its anchor under `https://nifra.dev/docs/`. */"
+  },
+  {
+    "name": "DbRefusalCode",
+    "kind": "type",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export type DbRefusalCode = \"NIFRA_DB_NOT_DECLARED\" | \"NIFRA_DB_CONFIG\" | \"NIFRA_DB_OUTSIDE_ROOT\" | \"NIFRA_DB_REMOTE_HOST\" | \"NIFRA_DB_SUPERUSER\" | \"NIFRA_DB_EXTENSION\" | \"NIFRA_DB_QUERY_OFF\" | \"NIFRA_DB_WRITE_REFUSED\" | \"NIFRA_DB_FUNCTION_REFUSED\" | \"NIFRA_DB_TABLE_EXCLUDED\" | \"NIFRA_DB_TIMEOUT\" | \"NIFRA_DB_QUERY_FAILED\" | \"NIFRA_DB_DRIVER\";",
+    "doc": "/** Every reason a database call is refused or fails, as a stable code. */"
+  },
+  {
+    "name": "DbRows",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface DbRows {\n    readonly columns: readonly string[];\n    readonly rows: readonly (readonly unknown[])[];\n    readonly rowCount: number;\n    /** More rows exist than `rows` carries (the row cap or the byte cap cut them). */\n    readonly truncated: boolean;\n    /** Columns whose values were replaced by {@link REDACTED_CELL}. */\n    readonly redactedColumns: readonly string[];\n}",
+    "doc": "/** Rows ready to leave the process: capped, masked and JSON-safe. */"
+  },
+  {
+    "name": "DbSchemaColumn",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface DbSchemaColumn {\n    readonly name: string;\n    readonly type: string;\n    readonly nullable: boolean;\n    readonly default: string | null;\n    readonly primaryKey: boolean;\n    /** Query results mask this column's values. */\n    readonly redacted: boolean;\n}",
+    "doc": "/** A column in {@link DbSchemaTable}. */"
+  },
+  {
+    "name": "DbSchemaForeignKey",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface DbSchemaForeignKey {\n    readonly columns: readonly string[];\n    readonly references: {\n        readonly schema?: string;\n        readonly table: string;\n        readonly columns: readonly string[];\n    };\n}",
+    "doc": "/** A foreign key in {@link DbSchemaTable}. */"
+  },
+  {
+    "name": "DbSchemaIndex",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface DbSchemaIndex {\n    readonly name: string;\n    readonly columns: readonly string[];\n    readonly unique: boolean;\n}",
+    "doc": "/** An index in {@link DbSchemaTable}. */"
+  },
+  {
+    "name": "DbSchemaReport",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface DbSchemaReport {\n    readonly tables: readonly DbSchemaTable[];\n    /** Relations left out: named in `exclude`, or (Postgres) inheriting from or reading one. */\n    readonly excludedCount: number;\n}",
+    "doc": "/** The exposed schema, built only from catalog queries the engine writes itself. */"
+  },
+  {
+    "name": "DbSchemaTable",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface DbSchemaTable {\n    readonly schema?: string;\n    readonly name: string;\n    readonly kind: \"table\" | \"view\" | \"materialized view\" | \"foreign table\" | \"partitioned table\";\n    /** Rows, estimated by the engine's statistics; `null` when it keeps none. */\n    readonly rowEstimate: number | null;\n    readonly columns: readonly DbSchemaColumn[];\n    readonly foreignKeys: readonly DbSchemaForeignKey[];\n    readonly indexes: readonly DbSchemaIndex[];\n}",
+    "doc": "/** One exposed table or view. */"
   },
   {
     "name": "DeadLetterRecord",
@@ -7752,6 +7857,20 @@
     "doc": "/**\n * The concrete patterns an optional-parameter pattern stands for, shortest first.\n *\n * A path may END in a run of whole-segment optional parameters, `:name?` or, with a constraint,\n * `:name{[0-9]+}?`. It is shorthand for one\n * route per prefix of that run: `/users/:id?` is `/users` and `/users/:id`, and `/a/:b?/:c?` is `/a`,\n * `/a/:b`, and `/a/:b/:c`. A later parameter is only present when every earlier one is, so a run of\n * `n` parameters is `n + 1` patterns, never `2^n`.\n *\n * Every other pattern comes back unchanged as the only element. That includes a `?` anywhere but the\n * trailing run (`/a/:b?/c`) or inside a mixed segment (`/files/:name.:ext?`): there it is literal\n * text, as it always was.\n *\n * Expansion happens before compilation, so each result is an ordinary pattern for\n * {@link compileRoutePattern} and a matcher never learns that a parameter was optional.\n */"
   },
   {
+    "name": "explainPostgres",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function explainPostgres(client: PostgresClient, sql: string, options: PostgresQueryOptions & {\n    readonly analyze?: boolean;\n}): Promise<DbPlan | DbRefusal>;",
+    "doc": "/** `EXPLAIN (FORMAT JSON)` for one query, after the same layers as {@link queryPostgres}. */"
+  },
+  {
+    "name": "explainSqlite",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function explainSqlite(db: Pick<Database, \"prepare\">, sql: string, options: Pick<SqliteQueryOptions, \"exclude\" | \"maxResultBytes\">): DbPlan | DbRefusal;",
+    "doc": "/** `EXPLAIN QUERY PLAN` for one statement, after the same gates as {@link querySqlite}. */"
+  },
+  {
     "name": "exponentialBackoff",
     "kind": "function",
     "package": "@nifrajs/jobs",
@@ -8200,6 +8319,13 @@
     "doc": "/** Walk up from a source file to the nearest directory that has a `routes/` folder - the app root. */"
   },
   {
+    "name": "fitToBytes",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function fitToBytes<T>(count: number, build: (shown: number) => T, maxBytes: number): {\n    readonly value: T;\n    readonly serialized: string;\n    readonly shown: number;\n} | undefined;",
+    "doc": "/**\n * Serialize `build(shown)` for the largest `shown <= count` (halving from `count`) whose JSON fits\n * `maxBytes`. `undefined` when even `build(0)` does not fit.\n */"
+  },
+  {
     "name": "fixedBackoff",
     "kind": "const",
     "package": "@nifrajs/jobs",
@@ -8497,6 +8623,13 @@
     "kind": "interface",
     "package": "@nifrajs/cli",
     "signature": "export interface GateResult {\n    readonly gate: \"check\" | \"doctor\" | \"render\" | \"hydration\" | \"contracts\" | \"size\" | \"tests\" | string;\n    readonly status: \"pass\" | \"fail\" | \"skip\";\n    readonly skipReason?: string;\n    readonly durationMs: number;\n    readonly diagnostics: readonly Diagnostic[];\n    readonly replay?: string;\n}"
+  },
+  {
+    "name": "gateSqliteStatement",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function gateSqliteStatement(input: string, exposed: (relation: string) => boolean): SqliteGate;",
+    "doc": "/**\n * Gate one statement before SQLite sees it: non-empty, a single statement, SELECT/WITH only, and every\n * relation it names after `FROM`/`JOIN` exposed. Returns the statement without its terminator, ready\n * to wrap. Relation names are checked here as well as in the plan because SQLite's plan names an\n * alias as the scan target (`users AS habits` plans as `SCAN habits`).\n */"
   },
   {
     "name": "gatewayCertificationProfile",
@@ -9690,6 +9823,13 @@
     "signature": "export declare function inspectBuildFreshness(cwd: string): Promise<BuildFreshness>;"
   },
   {
+    "name": "inspectPostgresRole",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function inspectPostgresRole(client: PostgresClient, options: {\n    readonly timeoutMs: number;\n}): Promise<PostgresRoleReport | DbRefusal>;",
+    "doc": "/** Read the connected role's privileges, in a read-only transaction. */"
+  },
+  {
     "name": "installCapture",
     "kind": "function",
     "package": "@nifrajs/web",
@@ -9800,6 +9940,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function isDataClassification(value: unknown): value is DataClassification;",
     "doc": "/** Whether `value` is a known classification token. */"
+  },
+  {
+    "name": "isDbRefusal",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function isDbRefusal(value: unknown): value is DbRefusal;",
+    "doc": "/** True for a value {@link dbRefusal} built. */"
   },
   {
     "name": "isDevErrorCategory",
@@ -9937,6 +10084,13 @@
     "package": "@nifrajs/web",
     "signature": "export type IslandStrategy = \"load\" | \"idle\" | \"visible\" | {\n    readonly media: string;\n};",
     "doc": "/** When an island's enhancer runs. An object strategy is intentionally limited to media queries. */"
+  },
+  {
+    "name": "isLocalPostgresHost",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function isLocalPostgresHost(host: string): boolean;",
+    "doc": "/** True for `localhost`, `*.localhost`, 127.0.0.0/8 and `::1` (also as an IPv4-mapped address). */"
   },
   {
     "name": "isManifestInSync",
@@ -10630,6 +10784,13 @@
     "package": "@nifrajs/web-react",
     "signature": "export interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, \"href\"> {\n    /** Same-origin destination path (e.g. `/users/7?tab=posts`). Rendered as the `<a href>`. */\n    readonly to: string;\n    /** Replace the current history entry instead of pushing. */\n    readonly replace?: boolean;\n    /** When the link warms its route ahead of a click - rendered as `data-nifra-prefetch`. Unset, the\n     * nearest ancestor's `data-nifra-prefetch` decides, else `intent` (hover or focus). */\n    readonly prefetch?: PrefetchMode;\n}",
     "doc": "/** {@link Link} props: every `<a>` attribute except `href` (set from `to`), plus `to`, `replace` and\n * `prefetch`. */"
+  },
+  {
+    "name": "lintPostgresStatement",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function lintPostgresStatement(sql: string): DbRefusal | undefined;",
+    "doc": "/** Refuse what the tokenizer layer refuses: a non-query, several statements, a denied function. */"
   },
   {
     "name": "ListenTlsOptions",
@@ -13213,6 +13374,13 @@
     "signature": "export interface OpenHandoffInput {\n    readonly runId: string;\n    readonly nodeId: string;\n    readonly capability: string;\n    readonly requestId: string;\n    /** Opaque origin role. */\n    readonly from: string;\n    /** Milliseconds until the boundary expires closed. Falls back to the coordinator default. */\n    readonly expiresInMs?: number;\n    /** When true, a paired approval is opened on the composed {@link ApprovalManager}, if present. */\n    readonly requireApproval?: boolean;\n    readonly sessionId?: string;\n}"
   },
   {
+    "name": "openReadOnlySqlite",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function openReadOnlySqlite(file: string): Promise<Database>;",
+    "doc": "/**\n * Open a SQLite file read-only: the `readonly` flag plus `PRAGMA query_only = ON`.\n *\n * Trap: a read-only connection cannot create a WAL database's `-wal` file, so while no writer has the\n * database open (no `-wal` on disk) the first read fails with SQLITE_CANTOPEN. Only in that case the\n * file is reopened read-write with `query_only` on, which creates the WAL files the way any client\n * would and still rejects every write at the engine. With a live writer the `-wal` exists and the\n * read-only open works.\n */"
+  },
+  {
     "name": "OperationDef",
     "kind": "interface",
     "package": "@nifrajs/core",
@@ -13716,6 +13884,13 @@
     "doc": "/** Parse the detached sidecar before selecting its operator-controlled public key. */"
   },
   {
+    "name": "parsePostgresUrl",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function parsePostgresUrl(url: string): PostgresTarget | DbRefusal;",
+    "doc": "/**\n * Parse a `postgres://` (or `postgresql://`) URL. Only the host, port, user, password, database and\n * `sslmode` are read - any other parameter (`options=-c ...` included) is ignored, so a URL cannot\n * switch off the read-only session settings.\n */"
+  },
+  {
     "name": "parseReplayFile",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -13874,6 +14049,20 @@
     "package": "@nifrajs/web",
     "signature": "export interface PendingBoundary {\n    readonly name: string;\n    readonly mode: BoundaryMode;\n    readonly errorId?: string;\n    readonly promise: Promise<unknown>;\n}",
     "doc": "/** A dynamic load that has started but is not part of the initial render barrier. */"
+  },
+  {
+    "name": "PgConnection",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface PgConnection {\n    (strings: TemplateStringsArray, ...values: unknown[]): PgQuery;\n    unsafe(text: string): PgQuery;\n    release(): void;\n}",
+    "doc": "/** One connection reserved from the pool (`Bun.SQL`'s `ReservedSQL`, structurally). */"
+  },
+  {
+    "name": "PgQuery",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface PgQuery extends PromiseLike<readonly unknown[]> {\n    values(): PromiseLike<readonly unknown[]>;\n}",
+    "doc": "/** A pending query: awaitable for object rows, or `.values()` for array rows (checked by readers). */"
   },
   {
     "name": "PiBackend",
@@ -14109,6 +14298,13 @@
     "signature": "export interface PostgresClient {\n    query(sql: string, values?: readonly unknown[]): Promise<PostgresQueryResult>;\n}"
   },
   {
+    "name": "PostgresClient",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface PostgresClient {\n    reserve(): Promise<PgConnection>;\n    close(options?: {\n        readonly timeout?: number;\n    }): Promise<void>;\n}",
+    "doc": "/** A Postgres client (`Bun.SQL`, structurally): the engine reserves one connection per call. */"
+  },
+  {
     "name": "PostgresDurableExecutionAdapter",
     "kind": "class",
     "package": "@nifrajs/core",
@@ -14121,10 +14317,80 @@
     "signature": "export declare class PostgresDurableRecordBackend implements DurableRecordBackend {\n    private readonly client;\n    readonly recordsTable: string;\n    readonly leasesTable: string;\n    constructor(client: PostgresClient, options?: {\n        readonly tablePrefix?: string;\n    });\n    migrate(): Promise<void>;\n    create(kind: DurableRecordKind, id: string, record: {\n        readonly version: number;\n        readonly state?: string;\n        readonly updatedAt?: number;\n    }): Promise<boolean>;\n    get<T extends {\n        readonly version: number;\n    }>(kind: DurableRecordKind, id: string): Promise<T | undefined>;\n    compareAndSet(kind: DurableRecordKind, id: string, expectedVersion: number, record: {\n        readonly version: number;\n        readonly state?: string;\n        readonly updatedAt?: number;\n    }): Promise<boolean>;\n    scan<T extends {\n        readonly state: string;\n        readonly updatedAt: number;\n    }>(kind: DurableRecordKind, input: ReconciliationScanOptions<string>): Promise<ReconciliationScanPage<T>>;\n    acquireLease(input: Parameters<DurableRecordBackend[\"acquireLease\"]>[0]): Promise<ReconciliationLease | undefined>;\n    renewLease(input: Parameters<DurableRecordBackend[\"renewLease\"]>[0]): Promise<boolean>;\n    checkpointLease(input: Parameters<DurableRecordBackend[\"checkpointLease\"]>[0]): Promise<boolean>;\n    releaseLease(input: Parameters<DurableRecordBackend[\"releaseLease\"]>[0]): Promise<boolean>;\n}"
   },
   {
+    "name": "postgresHostRefusal",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function postgresHostRefusal(target: PostgresTarget, allowHosts?: readonly string[]): DbRefusal | undefined;",
+    "doc": "/** Refuse a TCP host that is neither local nor named in `allowHosts`. */"
+  },
+  {
+    "name": "PostgresQueryOptions",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface PostgresQueryOptions extends ShapeRowsOptions, PostgresScope {\n    readonly timeoutMs: number;\n    /** Extensions or untrusted languages to accept although the role can use them. */\n    readonly allowExtensions?: readonly string[];\n}",
+    "doc": "/** Options for {@link queryPostgres}. */"
+  },
+  {
     "name": "PostgresQueryResult",
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface PostgresQueryResult {\n    readonly rows: readonly Record<string, unknown>[];\n    readonly rowCount?: number;\n}"
+  },
+  {
+    "name": "postgresRoleRefusal",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function postgresRoleRefusal(report: PostgresRoleReport, options?: {\n    readonly allowExtensions?: readonly string[];\n}): DbRefusal | undefined;",
+    "doc": "/** The role gate and the extension gate, as one decision over a {@link PostgresRoleReport}. */"
+  },
+  {
+    "name": "PostgresRoleReport",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface PostgresRoleReport {\n    readonly role: string;\n    readonly superuser: boolean;\n    readonly serverVersionNum: number;\n    /** Superuser roles the role is a member of. */\n    readonly superuserRoles: readonly string[];\n    /** Server-file and server-program roles the role is a member of. */\n    readonly serverRoles: readonly string[];\n    /** Server-file functions the role may execute. */\n    readonly fileFunctions: readonly string[];\n    /** `dblink`, `postgres_fdw`, `file_fdw`: installed and usable by the role. */\n    readonly extensions: readonly string[];\n    /** Untrusted procedural languages the role can use or call functions in. */\n    readonly languages: readonly string[];\n}",
+    "doc": "/** What the role gate and extension gate read about the connected role. */"
+  },
+  {
+    "name": "postgresRoleSql",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function postgresRoleSql(client: PostgresClient, options: PostgresRoleSqlOptions): Promise<PostgresRoleSql | DbRefusal>;",
+    "doc": "/**\n * Write the SQL for a login role that can read the allowed schemas and nothing else: `pg_read_all_data`\n * on Postgres 14+ when nothing is excluded; otherwise `GRANT SELECT` per schema plus default\n * privileges, and a `REVOKE` for each excluded table and its partitions (`pg_read_all_data` would\n * override a REVOKE, so it is not used then). Nothing is executed.\n */"
+  },
+  {
+    "name": "PostgresRoleSql",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface PostgresRoleSql {\n    readonly role: string;\n    readonly database: string;\n    readonly serverVersionNum: number;\n    readonly statements: readonly string[];\n}",
+    "doc": "/** The SQL that creates a read-only role for this database, for the developer to run themselves. */"
+  },
+  {
+    "name": "PostgresRoleSqlOptions",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface PostgresRoleSqlOptions extends PostgresScope {\n    readonly timeoutMs: number;\n    /** The role to create (default `nifra_dev_reader`). */\n    readonly role?: string;\n}",
+    "doc": "/** Options for {@link postgresRoleSql}. */"
+  },
+  {
+    "name": "PostgresSchemaOptions",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface PostgresSchemaOptions extends PostgresScope {\n    readonly timeoutMs: number;\n    /** Describe only this table (`name` or `schema.name`). */\n    readonly table?: string | undefined;\n    readonly redaction?: DbRedaction;\n}",
+    "doc": "/** Options for {@link readPostgresSchema}. */"
+  },
+  {
+    "name": "PostgresScope",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface PostgresScope {\n    /** Schemas a query may read (default `[\"public\"]`). */\n    readonly schemas?: readonly string[];\n    /** Tables a query may not read: `name` in any allowed schema, or `schema.name`. */\n    readonly exclude?: readonly string[];\n}",
+    "doc": "/** Which relations a query may read. */"
+  },
+  {
+    "name": "PostgresTarget",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface PostgresTarget {\n    /** TCP host; absent for a unix socket. */\n    readonly host?: string;\n    /** Unix socket file path. */\n    readonly socket?: string;\n    readonly port: number;\n    readonly username: string;\n    readonly password?: string;\n    readonly database: string;\n    readonly tls?: \"disable\" | \"allow\" | \"prefer\" | \"require\" | \"verify-ca\" | \"verify-full\";\n}",
+    "doc": "/** Where to connect, parsed from a `postgres://` URL. */"
   },
   {
     "name": "poweredBy",
@@ -14783,6 +15049,20 @@
     "doc": "/** Per-query overrides passed alongside the fetcher. */"
   },
   {
+    "name": "queryPostgres",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function queryPostgres(client: PostgresClient, sql: string, options: PostgresQueryOptions): Promise<DbRows | DbRefusal>;",
+    "doc": "/** Run one read-only query through every layer and return capped, masked rows. */"
+  },
+  {
+    "name": "querySqlite",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function querySqlite(db: Pick<Database, \"prepare\">, sql: string, options: SqliteQueryOptions): DbRows | DbRefusal;",
+    "doc": "/**\n * Run one read-only query: the statement gates, the check that every table its bytecode opens is\n * exposed (every table and view minus `exclude`), then at most `maxRows + 1` rows through\n * {@link shapeRows}. Synchronous: run it where the caller can stop the process (the CLI runs each\n * call in its own subprocess, killed at the deadline).\n */"
+  },
+  {
     "name": "QueryState",
     "kind": "interface",
     "package": "@nifrajs/web",
@@ -15026,6 +15306,13 @@
     "doc": "/** The persisted record of a dev server that may no longer be running: newest last. */"
   },
   {
+    "name": "readPostgresSchema",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function readPostgresSchema(client: PostgresClient, options: PostgresSchemaOptions): Promise<DbSchemaReport | DbRefusal>;",
+    "doc": "/**\n * Describe the readable tables and views in the allowed schemas from `pg_catalog`, with queries this\n * module writes (no caller SQL runs), so it works on any role: columns, primary keys, foreign keys,\n * indexes and the planner's row estimate.\n */"
+  },
+  {
     "name": "readProjectDiff",
     "kind": "function",
     "package": "@nifrajs/coding-agent",
@@ -15058,6 +15345,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function readSingleCopyStrict(cwd: string): boolean;",
     "doc": "/** Whether the declaration's object form asks for strict mode (`\"strict\": true`). */"
+  },
+  {
+    "name": "readSqliteSchema",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function readSqliteSchema(db: Pick<Database, \"prepare\">, options?: SqliteSchemaOptions): DbSchemaReport | DbRefusal;",
+    "doc": "/**\n * Describe the exposed tables and views from SQLite's own catalog (`sqlite_master` and the\n * `pragma_*` table functions, each bound by parameter): columns, primary key, foreign keys, indexes,\n * and a row count per table.\n */"
   },
   {
     "name": "reconcileEffects",
@@ -15182,6 +15476,13 @@
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
     "signature": "export interface RecoveryProcessResult {\n    readonly leased: number;\n    readonly completed: number;\n    readonly retried: number;\n    readonly deadLettered: number;\n    readonly cancelled: number;\n}"
+  },
+  {
+    "name": "REDACTED_CELL",
+    "kind": "const",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare const REDACTED_CELL = \"[redacted]\";",
+    "doc": "/** The value a masked cell carries. */"
   },
   {
     "name": "redactForEmission",
@@ -15974,6 +16275,13 @@
     "package": "@nifrajs/ts-plugin",
     "signature": "export declare function resolveRouteFile(path: string, routes: readonly RouteLocation[]): string | undefined;",
     "doc": "/**\n * Resolve a route path literal to the first route whose pattern matches it. Query/hash are ignored\n * (a link's `?tab=x` does not change which route file serves it). Returns the route's `file`, or\n * undefined when the value is not a path or matches no route.\n */"
+  },
+  {
+    "name": "resolveSqliteFile",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function resolveSqliteFile(root: string, file: string, allowFiles?: readonly string[]): string | DbRefusal;",
+    "doc": "/**\n * Resolve a database file against the project root. The file must exist and its real path (symlinks\n * followed) must sit inside the root's real path, unless `allowFiles` names it.\n */"
   },
   {
     "name": "resolveStaticBoundaries",
@@ -18925,6 +19233,20 @@
     "doc": "/** A stable structural fingerprint: keys + value *types*, not values. Used for the optional shape check. */"
   },
   {
+    "name": "shapeRows",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function shapeRows(columns: readonly string[], rows: readonly (readonly unknown[])[], options: ShapeRowsOptions): DbRows;",
+    "doc": "/**\n * Cap, mask and normalize rows fetched as arrays (at most `maxRows + 1`, so truncation is known\n * without counting). The byte cap halves the row count until the JSON fits.\n */"
+  },
+  {
+    "name": "ShapeRowsOptions",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface ShapeRowsOptions {\n    readonly maxRows: number;\n    readonly maxResultBytes: number;\n    readonly redaction?: DbRedaction;\n}",
+    "doc": "/** Options for {@link shapeRows}. */"
+  },
+  {
     "name": "SharedKey",
     "kind": "type",
     "package": "@nifrajs/content",
@@ -19337,10 +19659,38 @@
     "signature": "export declare class SQLiteDurableRecordBackend implements DurableRecordBackend {\n    private readonly client;\n    readonly recordsTable: string;\n    readonly leasesTable: string;\n    constructor(client: SQLiteClient, options?: {\n        readonly tablePrefix?: string;\n    });\n    migrate(): void;\n    create(kind: DurableRecordKind, id: string, record: {\n        readonly version: number;\n        readonly state?: string;\n        readonly updatedAt?: number;\n    }): Promise<boolean>;\n    get<T extends {\n        readonly version: number;\n    }>(kind: DurableRecordKind, id: string): Promise<T | undefined>;\n    compareAndSet(kind: DurableRecordKind, id: string, expectedVersion: number, record: {\n        readonly version: number;\n        readonly state?: string;\n        readonly updatedAt?: number;\n    }): Promise<boolean>;\n    scan<T extends {\n        readonly state: string;\n        readonly updatedAt: number;\n    }>(kind: DurableRecordKind, input: ReconciliationScanOptions<string>): Promise<ReconciliationScanPage<T>>;\n    acquireLease(input: Parameters<DurableRecordBackend[\"acquireLease\"]>[0]): Promise<ReconciliationLease | undefined>;\n    renewLease(input: Parameters<DurableRecordBackend[\"renewLease\"]>[0]): Promise<boolean>;\n    checkpointLease(input: Parameters<DurableRecordBackend[\"checkpointLease\"]>[0]): Promise<boolean>;\n    releaseLease(input: Parameters<DurableRecordBackend[\"releaseLease\"]>[0]): Promise<boolean>;\n}"
   },
   {
+    "name": "SqliteGate",
+    "kind": "type",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export type SqliteGate = {\n    readonly ok: true;\n    readonly query: string;\n} | {\n    readonly ok: false;\n    readonly reason: \"empty\" | \"multiple\" | \"not-read\" | \"unexposed\";\n    readonly text: string;\n    readonly relation?: string;\n};",
+    "doc": "/** The outcome of {@link gateSqliteStatement}. A refusal's `text` is the message `run_query` returns. */"
+  },
+  {
+    "name": "SqliteQueryOptions",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface SqliteQueryOptions extends ShapeRowsOptions {\n    /** Tables and views the query may not read (case-insensitive). */\n    readonly exclude?: readonly string[];\n}",
+    "doc": "/** Options for {@link querySqlite} and {@link explainSqlite}. */"
+  },
+  {
+    "name": "sqliteRelations",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function sqliteRelations(db: Pick<Database, \"prepare\">, exclude?: readonly string[]): {\n    readonly all: ReadonlySet<string>;\n    readonly exposed: ReadonlySet<string>;\n};",
+    "doc": "/** The tables and views of a SQLite database, lowercased: all of them, and those not excluded. */"
+  },
+  {
     "name": "SQLiteRunResult",
     "kind": "interface",
     "package": "@nifrajs/core",
     "signature": "export interface SQLiteRunResult {\n    readonly changes: number;\n}"
+  },
+  {
+    "name": "SqliteSchemaOptions",
+    "kind": "interface",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export interface SqliteSchemaOptions {\n    readonly exclude?: readonly string[];\n    /** Describe only this table or view. */\n    readonly table?: string | undefined;\n    readonly redaction?: DbRedaction;\n}",
+    "doc": "/** Options for {@link readSqliteSchema}. */"
   },
   {
     "name": "SQLiteStatement",
@@ -20340,6 +20690,13 @@
     "doc": "/**\n * Map a {@link ResolvedImage} to plain lowercase HTML `<img>` attribute names - `srcset` (not React's\n * `srcSet`), `fetchpriority` (not `fetchPriority`) - dropping unset optionals. For the adapters that\n * spread attributes straight onto a host element (Solid / Vue / Svelte / Preact); React consumes\n * `ResolvedImage` directly because it requires the camelCased prop names.\n */"
   },
   {
+    "name": "toJsonCell",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function toJsonCell(value: unknown, redaction?: DbRedaction, depth?: number): unknown;",
+    "doc": "/**\n * One database value as JSON: bytes become `<n bytes>`, a bigint outside the safe range a string,\n * a date an ISO string, a non-finite number a string. Strings go through `redaction.text`, and a\n * key inside a JSON value that `redaction.column` matches is masked.\n */"
+  },
+  {
     "name": "toLambdaHandler",
     "kind": "function",
     "package": "@nifrajs/core",
@@ -21122,6 +21479,13 @@
     "kind": "interface",
     "package": "@nifrajs/proxy",
     "signature": "export interface UndiciTransportOptions {\n    /**\n     * Connection pool to dial through - an undici `Agent`, `Pool`, or any other `Dispatcher`. Omit to\n     * use undici's global dispatcher. Supply one to tune `connections` per origin, which is the knob\n     * that matters under load. It must not compose a redirect interceptor: this proxy relays 3xx\n     * rather than following it, and a dispatcher that follows would hand the upstream the next hop.\n     */\n    readonly dispatcher?: Dispatcher;\n    /**\n     * Milliseconds of silence tolerated *within* the response body before undici destroys it.\n     * `createProxy`'s own `timeoutMs` only covers the wait for response headers - after the status is\n     * relayed a `504` is no longer sendable - so this is what protects against a body that starts and\n     * then stalls. Default `30_000`; `0` disables it.\n     */\n    readonly bodyTimeoutMs?: number;\n}"
+  },
+  {
+    "name": "unexposedPlanRelation",
+    "kind": "function",
+    "package": "@nifrajs/mcp-db",
+    "signature": "export declare function unexposedPlanRelation(planRows: readonly {\n    readonly detail?: unknown;\n}[], exposed: (relation: string) => boolean): string | undefined;",
+    "doc": "/**\n * The first relation an `EXPLAIN QUERY PLAN` result scans or searches that `exposed` rejects, as the\n * plan spells it, or `undefined` when every scanned relation is exposed.\n */"
   },
   {
     "name": "UnlocalizedPath",
