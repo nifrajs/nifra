@@ -31,6 +31,7 @@ import { $ } from "bun"
 import { scaffold } from "../packages/create-nifra/src/cli.ts"
 import { FRAMEWORK_IDS, FRAMEWORK_SPECS } from "../packages/create-nifra/src/scaffold/frameworks.ts"
 import { renderPackageJson } from "../packages/create-nifra/src/scaffold/site-files.ts"
+import { DEPLOY_TARGETS } from "../packages/create-nifra/src/scaffold/targets.ts"
 
 const ROOT = resolve(import.meta.dir, "..")
 const PKGS_DIR = join(ROOT, "packages")
@@ -79,13 +80,18 @@ for (const entry of readdirSync(CREATE_NIFRA, { withFileTypes: true })) {
   const file = join(CREATE_NIFRA, entry.name, "package.json")
   if (existsSync(file)) manifests.push({ label: entry.name, manifest: readJson(file) })
 }
+// Each deploy target adds its own runtime packages, so every framework x target pair is checked.
 for (const id of FRAMEWORK_IDS) {
   const spec = FRAMEWORK_SPECS[id]
   if (spec === undefined) continue
-  manifests.push({
-    label: `site scaffold (--framework ${id})`,
-    manifest: JSON.parse(renderPackageJson(spec)) as Manifest,
-  })
+  for (const target of DEPLOY_TARGETS) {
+    manifests.push({
+      label: `site scaffold (--framework ${id} --target ${target})`,
+      manifest: JSON.parse(
+        renderPackageJson(spec, { target, docker: false, name: "app" }),
+      ) as Manifest,
+    })
+  }
 }
 
 for (const { label: tpl, manifest: m } of manifests) {

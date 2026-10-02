@@ -184,7 +184,7 @@ async function main(): Promise<void> {
   const bunOut = join(root, "bun")
   const viteOut = join(root, "vite")
   const routesDir = join(fixture, "routes")
-  const clientModule = join(fixture, "client-stub.ts")
+  const clientModule = join(fixture, "frontend/client-stub.ts")
   const publicDir = join(fixture, "public")
   try {
     const [bun, vite] = await Promise.all([
@@ -205,10 +205,10 @@ async function main(): Promise<void> {
         publicDir,
       }),
     ])
-    const cssSource = readFileSync(join(fixture, "styles.module.css"), "utf8")
+    const cssSource = readFileSync(join(fixture, "frontend/styles.module.css"), "utf8")
     const allCssMap = transformCssModule(
       cssSource,
-      reproduciblePath(join(fixture, "styles.module.css")),
+      reproduciblePath(join(fixture, "frontend/styles.module.css")),
     ).exports
     // CSS Modules also exposes keyframe names in the Bun transform. The parity contract here is the
     // class-name map, so keep the fixture's keyframe in the stylesheet but compare only class exports.

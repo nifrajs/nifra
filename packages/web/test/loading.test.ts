@@ -43,6 +43,12 @@ describe("buildManifest", () => {
     expect(manifest.loadings?.["admin/_loading"]?.file).toBe("admin/_loading.tsx")
   })
 
+  test("an entry loads its page module", async () => {
+    const page: RouteModule = { default: () => null }
+    const manifest = buildManifest(["_loading.tsx", "index.tsx"], () => async () => page)
+    expect(await manifest.loadings?._loading?.load()).toBe(page)
+  })
+
   test("a route lists the _loading pages above it, outermost first", () => {
     const manifest = manifestOf([
       "_loading.tsx",

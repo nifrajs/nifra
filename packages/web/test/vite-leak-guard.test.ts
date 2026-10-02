@@ -100,6 +100,7 @@ afterAll(() => {
 /** Run `vite build` (write:false) over `files` with the guard plugin; return {ok, error}. */
 async function buildWithGuard(
   files: Record<string, string>,
+  buildOptions: Record<string, unknown> = {},
 ): Promise<{ ok: boolean; error?: string }> {
   const root = mkdtempSync(TMP_BASE)
   tmpDirs.push(root)
@@ -119,6 +120,7 @@ async function buildWithGuard(
       write: false,
       lib: { entry: join(root, "frontend/entry.ts"), formats: ["es"], fileName: "entry" },
       rollupOptions: { external: [/^node:/], plugins: [viteLeakGuard({ appRoot: root })] },
+      ...buildOptions,
     },
   }
   // rolldown-vite's native (napi) bindings can race across repeated in-process builds and throw a
@@ -199,6 +201,26 @@ test("real vite build PASSES for a clean client (no false positive)", async () =
   })
   expect(result.error).toBeUndefined()
   expect(result.ok).toBe(true)
+}, 60_000)
+
+test("real vite build scans the source maps it emits", async () => {
+  const files = {
+    "frontend/entry.ts": "document.title = 'hi'\n",
+  }
+  expect(await buildWithGuard(files, { sourcemap: true })).toEqual({ ok: true })
+  // A dependency's comment is gone from the minified chunk but kept in the map's sourcesContent, and
+  // only first-party source is scanned before bundling - so the map is where it is caught.
+  const leaky = await buildWithGuard(
+    {
+      "node_modules/chatty-lib/package.json": '{ "name": "chatty-lib", "main": "index.js" }\n',
+      "node_modules/chatty-lib/index.js":
+        "// postgres://admin:Zq8vR2nLx4Tw@db.internal:5432/app\nexport const hi = () => document.referrer\n",
+      "frontend/entry.ts": "import { hi } from 'chatty-lib'\ndocument.title = hi()\n",
+    },
+    { sourcemap: true, minify: true },
+  )
+  expect(leaky.ok).toBe(false)
+  expect(leaky.error).toContain("entry.js.map:1 URL with a password")
 }, 60_000)
 
 test("real vite build FAILS on a node: builtin reached only via dynamic import()", async () => {
