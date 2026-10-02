@@ -203,15 +203,15 @@ describe.if(SMOKE)(
 )
 
 /**
- * The api and batteries templates keep their app in `src/app.ts`, and it has to stay a composition for
- * the same reason: `provenance.imports` is armed in every template, so a root that registers routes
+ * The api and batteries templates keep their app in `backend/app.ts`, and it has to stay a composition
+ * for the same reason: `provenance.imports` is armed in every template, so a root that registers routes
  * would taint them with the reach of everything it merges - including, the moment a database arrives,
  * a domain write that its GET routes cannot legally declare.
  */
 describe("templates: the app root composes rather than registers", () => {
   for (const dir of ["template", "template-batteries"]) {
-    test(`${dir}/src/app.ts registers no routes of its own`, async () => {
-      const src = await readFile(join(TEMPLATES_DIR, dir, "src/app.ts"), "utf8")
+    test(`${dir}/backend/app.ts registers no routes of its own`, async () => {
+      const src = await readFile(join(TEMPLATES_DIR, dir, "backend/app.ts"), "utf8")
       expect(src).toContain(".merge(")
       expect(src).not.toMatch(/\.(get|post|put|patch|delete)\s*\(/)
     })
@@ -220,8 +220,8 @@ describe("templates: the app root composes rather than registers", () => {
 
 describe("templates: declared responses are enforced at runtime", () => {
   const appFiles = [
-    "template/src/app.ts",
-    "template-batteries/src/app.ts",
+    "template/backend/app.ts",
+    "template-batteries/backend/app.ts",
     "template-site/backend/app.ts",
     "template-isr/backend/app.ts",
   ]

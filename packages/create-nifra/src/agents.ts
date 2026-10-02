@@ -124,8 +124,8 @@ the client and crashes hydration. Reach server resources through \`ctx.api\` / \
 /** Per-ORM body of the DB rules: the query idiom, schema location, and migrate story all differ. */
 function dbRulesBody(orm: DbPreset["orm"]): string {
   if (orm === "prisma") {
-    return `A Prisma data layer is wired: \`prisma/schema.prisma\` (a starter \`Note\` model) + \`db/index.ts\` (a
-singleton \`PrismaClient\`).
+    return `A Prisma data layer is wired: \`prisma/schema.prisma\` (a starter \`Note\` model) +
+\`backend/db/index.ts\` (a singleton \`PrismaClient\`).
 
 - **Wire it into the backend once**, then read \`c.db\` in handlers:
   \`\`\`ts
@@ -144,9 +144,9 @@ singleton \`PrismaClient\`).
   applies the migration and regenerates the client). \`bun run db:studio\` opens a DB browser.`
   }
   if (orm === "kysely") {
-    return `A Kysely typed query builder is wired in \`db/\`: \`db/schema.ts\` (the DB-shape interface - keep it in
-sync with your migrations) + \`db/index.ts\` (the typed client). You own the migrations (\`db/migrations/\`,
-run by \`db/migrate.ts\`).
+    return `A Kysely typed query builder is wired in \`backend/db/\`: \`backend/db/schema.ts\` (the DB-shape
+interface - keep it in sync with your migrations) + \`backend/db/index.ts\` (the typed client). You own the
+migrations (\`backend/db/migrations/\`, run by \`backend/db/migrate.ts\`).
 
 - **Wire it into the backend once**, then read \`c.db\` in handlers:
   \`\`\`ts
@@ -161,11 +161,11 @@ run by \`db/migrate.ts\`).
     .post("/notes", { body: t.object({ title: t.string({ minLength: 1 }) }) }, async (c) =>
       c.db.insertInto("notes").values({ title: c.body.title }).returningAll().executeTakeFirstOrThrow())
   \`\`\`
-- **Migrations:** add a file to \`db/migrations/\` (copy the \`0001_create_notes.ts\` shape), update the
-  \`db/schema.ts\` interface to match, then \`bun run db:migrate\`.`
+- **Migrations:** add a file to \`backend/db/migrations/\` (copy the \`0001_create_notes.ts\` shape),
+  update the \`backend/db/schema.ts\` interface to match, then \`bun run db:migrate\`.`
   }
-  return `A Drizzle data layer is wired in \`db/\`: \`db/schema.ts\` (a starter \`notes\` table) + \`db/index.ts\` (the
-typed client).
+  return `A Drizzle data layer is wired in \`backend/db/\`: \`backend/db/schema.ts\` (a starter \`notes\`
+table) + \`backend/db/index.ts\` (the typed client).
 
 - **Wire it into the backend once**, then read \`c.db\` in handlers:
   \`\`\`ts
@@ -180,8 +180,8 @@ typed client).
       (await c.db.insert(notes).values({ title: c.body.title }).returning())[0],
     )
   \`\`\`
-- **Migrations:** edit \`db/schema.ts\`, then \`bun run db:generate\` (writes SQL to \`db/migrations\`) +
-  \`bun run db:migrate\` (applies it). \`bun run db:studio\` opens a DB browser.`
+- **Migrations:** edit \`backend/db/schema.ts\`, then \`bun run db:generate\` (writes SQL to
+  \`backend/db/migrations\`) + \`bun run db:migrate\` (applies it). \`bun run db:studio\` opens a DB browser.`
 }
 
 /** DB rules - only when scaffolded with `--db`. Teaches the wired data layer + the `c.db` seam. */
@@ -200,8 +200,8 @@ ${dbRulesBody(p.orm)} ${p.note}
 function authRules(_auth: AuthChoice): string {
   return `## Authentication (better-auth)
 
-better-auth is configured in \`auth.ts\` (email/password + sessions, backed by your scaffolded database via
-its ORM adapter). nifra mounts it and gives you typed session guards via \`@nifrajs/better-auth\`.
+better-auth is configured in \`backend/auth.ts\` (email/password + sessions, backed by your scaffolded
+database via its ORM adapter). nifra mounts it and gives you typed session guards via \`@nifrajs/better-auth\`.
 
 - **Mount it once** on the backend - it serves every auth endpoint under \`/api/auth/*\`:
   \`\`\`ts
@@ -210,9 +210,10 @@ its ORM adapter). nifra mounts it and gives you typed session guards via \`@nifr
   import { auth } from "./auth"
   export const app = server().use(betterAuth(auth))
   \`\`\`
-- **Generate the auth tables** once, and after changing the config: \`bunx @better-auth/cli@latest generate\`
-  writes them into your schema (\`db/schema.ts\` for Drizzle, \`prisma/schema.prisma\` for Prisma); then
-  \`bun run db:migrate\`.
+- **Generate the auth tables** once, and after changing the config:
+  \`bunx @better-auth/cli@latest generate --config backend/auth.ts\` writes their schema (Prisma: into
+  \`prisma/schema.prisma\`; Drizzle: a \`schema.ts\` at the root unless \`--output\` names a file under
+  \`backend/db/\`); then \`bun run db:migrate\`.
 - **Read / require a session** with the typed guards (pass the raw \`Request\` - \`c.req\` in a handler, or a
   loader's \`request\`):
   \`\`\`ts

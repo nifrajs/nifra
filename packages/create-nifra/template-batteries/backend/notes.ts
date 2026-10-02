@@ -10,7 +10,7 @@ import { MemoryStorage } from "@nifrajs/storage"
 //
 // A full-stack starter: cursor pagination (@nifrajs/schema), background jobs (@nifrajs/jobs), a typed
 // cache (@nifrajs/cache), and blob storage (@nifrajs/storage) - over an in-memory "notes" store you'd
-// swap for your database. Everything is exported so `app.test.ts` can drive it via `app.fetch`.
+// swap for your database. Everything is exported so `app.test.ts` can drive it via `backend.fetch`.
 
 export interface Note {
   id: number

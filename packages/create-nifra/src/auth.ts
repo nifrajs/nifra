@@ -2,9 +2,10 @@
  * `--auth better-auth` - wire authentication into a scaffolded app, the same "bundle the right tool,
  * correctly" move as `--db`. nifra owns the *mount* (`@nifrajs/better-auth` plugs better-auth's handler
  * into a `server()` and gives typed `getSession`/`requireSession` guards); better-auth owns the auth
- * logic. Auth needs a database, so this composes with `--db`: the generated `auth.ts` reuses the client
- * from `./db` via better-auth's adapter for the chosen ORM (`drizzleAdapter` / `prismaAdapter`). The
- * agent then runs `bunx @better-auth/cli generate` to add the auth tables and migrates.
+ * logic. Auth needs a database, so this composes with `--db`: the generated `backend/auth.ts` reuses
+ * the client from `./db` via better-auth's adapter for the chosen ORM (`drizzleAdapter` /
+ * `prismaAdapter`). The agent then runs `bunx @better-auth/cli generate` to add the auth tables and
+ * migrates.
  *
  * `--auth` therefore requires `--db` (the CLI enforces it). better-auth's clean adapters cover Drizzle
  * and Prisma; Kysely is rejected (it has no drop-in adapter - wire better-auth's own dialect manually).
@@ -31,7 +32,7 @@ export function assertAuthableDb(db: DbChoice): void {
   if (!AUTHABLE_ORMS.has(orm)) {
     throw new Error(
       `--auth better-auth doesn't scaffold for --db ${db} (${orm} has no drop-in better-auth adapter). ` +
-        "Use a drizzle-* or prisma-* preset, or wire better-auth's database dialect manually in auth.ts.",
+        "Use a drizzle-* or prisma-* preset, or wire better-auth's database dialect manually in backend/auth.ts.",
     )
   }
 }
@@ -45,7 +46,7 @@ export interface AuthPreset {
 export const AUTH_PRESETS: Readonly<Record<AuthChoice, AuthPreset>> = {
   "better-auth": {
     label: "better-auth",
-    note: "email/password + sessions, mounted at /api/auth/* - add OAuth providers in auth.ts.",
+    note: "email/password + sessions, mounted at /api/auth/* - add OAuth providers in backend/auth.ts.",
     // @nifrajs/better-auth mounts it; better-auth is the implementation (peer-installed alongside).
     deps: { "@nifrajs/better-auth": "^3.5.0", "better-auth": "^1.2.0" },
   },
@@ -70,14 +71,14 @@ function adapterFor(db: DbChoice): { importLine: string; database: string } {
   }
 }
 
-/** The generated `auth.ts` - a better-auth instance backed by the scaffolded DB client. */
+/** The generated `backend/auth.ts` - a better-auth instance backed by the scaffolded DB client. */
 function authModule(db: DbChoice): string {
   const { importLine, database } = adapterFor(db)
   return `import { betterAuth as createBetterAuth } from "better-auth"
 ${importLine}
 import { db } from "./db"
 
-// better-auth stores users + sessions in your database (the same one in db/). After editing the config
+// better-auth stores users + sessions in your database (backend/db/). After editing the config
 // (e.g. adding OAuth providers), generate its tables: \`bunx @better-auth/cli generate\` writes the auth
 // schema for your ORM, then \`bun run db:migrate\` applies it.
 export const auth = createBetterAuth({
@@ -98,14 +99,14 @@ BETTER_AUTH_SECRET="change-me-before-production"
 BETTER_AUTH_URL="http://localhost:3000"
 `
 
-/** Write `auth.ts` and append the auth env vars to the (db-preset-created) `.env.example`. */
+/** Write `backend/auth.ts` and append the auth env vars to the (db-preset-created) `.env.example`. */
 export async function writeAuthFiles(
   target: string,
   _auth: AuthChoice,
   db: DbChoice,
 ): Promise<void> {
   assertAuthableDb(db) // defensive: the CLI already checks, but never emit a broken adapter import
-  await writeFile(join(target, "auth.ts"), authModule(db))
+  await writeFile(join(target, "backend/auth.ts"), authModule(db))
   // .env.example already exists (the DB preset wrote it; `--auth` requires `--db`); append, don't clobber.
   await appendFile(join(target, ".env.example"), ENV)
 }

@@ -317,10 +317,10 @@ import {
   defineAssuranceConfig,
   NIFRA_ASSURANCE,
 } from "@nifrajs/core/assurance"
-import { app } from "./src/app"
+import { backend } from "./backend/app"
 
 export default defineAssuranceConfig({
-  source: app,
+  source: backend,
   capabilities: {
     definitions: [{ id: "db.write", zone: "domain", access: "write" }],
     provenance: {

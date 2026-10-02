@@ -1,10 +1,10 @@
 import { testClient } from "@nifrajs/client"
 import { expect, test } from "bun:test"
-import { app } from "./app.ts"
+import { backend } from "./app.ts"
 
 // The typed in-process client: no server, no port, the full real lifecycle (validation,
 // middleware), and `res.data` typed from the route's schemas. Calls never throw - branch on `ok`.
-const api = testClient<typeof app>(app)
+const api = testClient<typeof backend>(backend)
 
 test("GET /users/:id echoes the id", async () => {
   const res = await api.users({ id: "42" }).get()

@@ -16,7 +16,7 @@ const client = await buildClient({
 
 const { worker } = await buildServer({
   routesDir: `${dir}/routes`,
-  serverEntry: `${dir}/worker.ts`,
+  serverEntry: `${dir}/backend/worker.ts`,
   outDir: `${dir}/dist-server`,
   clientEntry: client.entry,
 })

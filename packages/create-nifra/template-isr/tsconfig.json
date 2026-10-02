@@ -21,9 +21,9 @@
     ".build",
     ".nifra",
     ".wrangler",
-    "server-manifest.ts",
-    "server.ts",
-    "worker.ts",
+    "backend/server-manifest.ts",
+    "backend/dev-server.ts",
+    "backend/worker.ts",
     "build.ts"
   ]
 }

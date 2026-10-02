@@ -613,11 +613,13 @@ describe("scaffold - --db (Drizzle presets)", () => {
     const res = await scaffold({ target: dir, db: "drizzle-libsql" })
     expect(res.db).toBe("drizzle-libsql")
 
-    expect(await readFile(join(dir, "db/schema.ts"), "utf8")).toContain("sqliteTable")
-    const client = await readFile(join(dir, "db/index.ts"), "utf8")
+    expect(await readFile(join(dir, "backend/db/schema.ts"), "utf8")).toContain("sqliteTable")
+    const client = await readFile(join(dir, "backend/db/index.ts"), "utf8")
     expect(client).toContain("@libsql/client")
     expect(client).toContain("export const db")
-    expect(await readFile(join(dir, "drizzle.config.ts"), "utf8")).toContain('dialect: "turso"')
+    const drizzleConfig = await readFile(join(dir, "drizzle.config.ts"), "utf8")
+    expect(drizzleConfig).toContain('dialect: "turso"')
+    expect(drizzleConfig).toContain('schema: "./backend/db/schema.ts"')
     expect(await readFile(join(dir, ".env.example"), "utf8")).toContain("DATABASE_URL")
 
     const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as {
@@ -639,7 +641,7 @@ describe("scaffold - --db (Drizzle presets)", () => {
   test("drizzle-postgres uses the pg dialect + postgres driver", async () => {
     const dir = await freshDir("my-pg")
     await scaffold({ target: dir, db: "drizzle-postgres" })
-    expect(await readFile(join(dir, "db/schema.ts"), "utf8")).toContain("pgTable")
+    expect(await readFile(join(dir, "backend/db/schema.ts"), "utf8")).toContain("pgTable")
     expect(await readFile(join(dir, "drizzle.config.ts"), "utf8")).toContain(
       'dialect: "postgresql"',
     )
@@ -652,7 +654,7 @@ describe("scaffold - --db (Drizzle presets)", () => {
   test("drizzle-sqlite uses bun:sqlite (no extra driver dependency)", async () => {
     const dir = await freshDir("my-sqlite")
     await scaffold({ target: dir, db: "drizzle-sqlite" })
-    expect(await readFile(join(dir, "db/index.ts"), "utf8")).toContain("bun:sqlite")
+    expect(await readFile(join(dir, "backend/db/index.ts"), "utf8")).toContain("bun:sqlite")
     const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as {
       dependencies: Record<string, string>
     }
@@ -665,10 +667,25 @@ describe("scaffold - --db (Drizzle presets)", () => {
     await expect(scaffold({ target: dir, db: "mongo" })).rejects.toThrow(/unknown --db/)
   })
 
-  test("without --db the app stays db-free (no db/ directory)", async () => {
+  // Config and tooling at the root are out of scope (no build loads them); every module is zoned.
+  for (const template of ["site", "api"] as const) {
+    test(`a ${template} scaffold with --db and --auth keeps every module in a zone`, async () => {
+      const dir = await freshDir(`zoned-${template}`)
+      await scaffold({ target: dir, template, db: "drizzle-libsql", auth: "better-auth" })
+      const { createZoneClassifier } = await import("../../web/src/zones.ts")
+      const zones = createZoneClassifier({ appRoot: dir })
+      const tooling = new Set(["nifra.config.ts", "nifra.assurance.ts", "drizzle.config.ts"])
+      const unzoned = [...new Bun.Glob("**/*.{ts,tsx}").scanSync({ cwd: dir })].filter(
+        (file) => !tooling.has(file) && zones.classify(file).zone === "error",
+      )
+      expect(unzoned).toEqual([])
+    })
+  }
+
+  test("without --db the app stays db-free (no backend/db/ directory)", async () => {
     const dir = await freshDir("plain")
     await scaffold({ target: dir })
-    const dbDirExists = await stat(join(dir, "db")).then(
+    const dbDirExists = await stat(join(dir, "backend/db")).then(
       () => true,
       () => false,
     )
@@ -686,7 +703,7 @@ describe("scaffold - --db (Prisma + Kysely presets)", () => {
     expect(schema).toContain('provider = "postgresql"')
     expect(schema).toContain("model Note")
     expect(schema).toContain("@db.Timestamptz") // production-grade PG stamps
-    const client = await readFile(join(dir, "db/index.ts"), "utf8")
+    const client = await readFile(join(dir, "backend/db/index.ts"), "utf8")
     expect(client).toContain("PrismaClient")
     expect(client).toContain("globalForPrisma") // dev hot-reload guard
 
@@ -717,13 +734,15 @@ describe("scaffold - --db (Prisma + Kysely presets)", () => {
     const dir = await freshDir("my-kysely")
     await scaffold({ target: dir, db: "kysely-postgres" })
 
-    expect(await readFile(join(dir, "db/schema.ts"), "utf8")).toContain("export interface DB")
-    const client = await readFile(join(dir, "db/index.ts"), "utf8")
-    expect(client).toContain("PostgresDialect")
-    expect(await readFile(join(dir, "db/migrate.ts"), "utf8")).toContain("Migrator")
-    expect(await readFile(join(dir, "db/migrations/0001_create_notes.ts"), "utf8")).toContain(
-      "createTable",
+    expect(await readFile(join(dir, "backend/db/schema.ts"), "utf8")).toContain(
+      "export interface DB",
     )
+    const client = await readFile(join(dir, "backend/db/index.ts"), "utf8")
+    expect(client).toContain("PostgresDialect")
+    expect(await readFile(join(dir, "backend/db/migrate.ts"), "utf8")).toContain("Migrator")
+    expect(
+      await readFile(join(dir, "backend/db/migrations/0001_create_notes.ts"), "utf8"),
+    ).toContain("createTable")
 
     const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as {
       dependencies: Record<string, string>
@@ -731,7 +750,7 @@ describe("scaffold - --db (Prisma + Kysely presets)", () => {
     }
     expect(pkg.dependencies.kysely).toBeDefined()
     expect(pkg.dependencies.pg).toBeDefined()
-    expect(pkg.scripts["db:migrate"]).toBe("bun run db/migrate.ts")
+    expect(pkg.scripts["db:migrate"]).toBe("bun run backend/db/migrate.ts")
 
     const md = await readFile(join(dir, "AGENTS.md"), "utf8")
     expect(md).toContain("## Database (Kysely + Postgres)")
@@ -753,7 +772,7 @@ describe("scaffold - --auth (better-auth, composes with --db)", () => {
     const res = await scaffold({ target: dir, db: "drizzle-libsql", auth: "better-auth" })
     expect(res.auth).toBe("better-auth")
 
-    const authTs = await readFile(join(dir, "auth.ts"), "utf8")
+    const authTs = await readFile(join(dir, "backend/auth.ts"), "utf8")
     expect(authTs).toContain("better-auth/adapters/drizzle")
     expect(authTs).toContain('provider: "sqlite"') // libsql → sqlite dialect
     expect(authTs).toContain('import { db } from "./db"')
@@ -777,13 +796,13 @@ describe("scaffold - --auth (better-auth, composes with --db)", () => {
   test("maps the Drizzle dialect to better-auth's provider (postgres → pg)", async () => {
     const dir = await freshDir("pg-auth")
     await scaffold({ target: dir, db: "drizzle-postgres", auth: "better-auth" })
-    expect(await readFile(join(dir, "auth.ts"), "utf8")).toContain('provider: "pg"')
+    expect(await readFile(join(dir, "backend/auth.ts"), "utf8")).toContain('provider: "pg"')
   })
 
   test("uses the Prisma adapter for a Prisma DB (provider: postgresql, not Drizzle's pg)", async () => {
     const dir = await freshDir("prisma-auth")
     await scaffold({ target: dir, db: "prisma-postgres", auth: "better-auth" })
-    const authTs = await readFile(join(dir, "auth.ts"), "utf8")
+    const authTs = await readFile(join(dir, "backend/auth.ts"), "utf8")
     expect(authTs).toContain("better-auth/adapters/prisma")
     expect(authTs).toContain('provider: "postgresql"')
   })

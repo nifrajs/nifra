@@ -6,7 +6,7 @@
   "scripts": {
     "build": "bun run build.ts",
     "dev": "bunx wrangler dev",
-    "dev:bun": "bun run server.ts",
+    "dev:bun": "bun run backend/dev-server.ts",
     "check": "nifra check && nifra assure"
   },
   "dependencies": {

@@ -564,9 +564,12 @@ export async function run(argv: readonly string[]): Promise<{ code: 0 | 1; messa
       `cp .env.example .env # then set DATABASE_URL${result.auth ? " + BETTER_AUTH_SECRET" : ""}`,
     )
     if (result.auth !== undefined) {
-      steps.push("bunx @better-auth/cli@latest generate # writes auth tables into db/schema.ts")
+      steps.push("bunx @better-auth/cli@latest generate --config backend/auth.ts # the auth tables")
     }
-    steps.push("bun run db:generate  # SQL from db/schema.ts", "bun run db:migrate   # apply it")
+    steps.push(
+      "bun run db:generate  # SQL from backend/db/schema.ts",
+      "bun run db:migrate   # apply it",
+    )
   }
   // Tag the chosen framework + deploy target + db + auth, e.g. "(Vue, Drizzle + libSQL, better-auth)".
   const tags = [

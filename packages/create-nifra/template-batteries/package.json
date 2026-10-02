@@ -4,8 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun --watch run src/index.ts",
-    "start": "bun run src/index.ts",
+    "dev": "bun --watch run backend/index.ts",
+    "start": "bun run backend/index.ts",
     "check": "nifra check && nifra assure",
     "test": "bun test",
     "typecheck": "tsc --noEmit"

@@ -59,11 +59,11 @@ const UNCONFINED = `$ nifra check
     GET / can reach domain write capability db.write without declaring it, and a safe method
     may not declare one - move the route or the effect so the write is not in its module's reach`
 
-const ROOT = `// src/app.ts - composition only. It merges route modules and registers none of its own.
+const ROOT = `// backend/app.ts - composition only. It merges route modules and registers none of its own.
 import { server } from "@nifrajs/core/server"
 import { routes } from "./routes.ts"
 
-export const app = server().merge(routes)`
+export const backend = server().merge(routes)`
 
 const SEAM = `db/
   index.ts        the connection - no route module imports this

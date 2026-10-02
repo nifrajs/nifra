@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test"
-import { app, queue, wasIndexed } from "./app.ts"
+import { backend, queue, wasIndexed } from "./app.ts"
 
-// `listen()` tells the app who is calling; a bare `app.fetch` does not, and `rateLimit()` refuses a
+// `listen()` tells the app who is calling; a bare `backend.fetch` does not, and `rateLimit()` refuses a
 // request it cannot attribute. Each test request therefore arrives from a local peer, as it would
 // through a socket.
 const send = (path: string, init?: RequestInit) =>
-  app.fetch(new Request(`http://localhost${path}`, init), { clientIp: "127.0.0.1" })
+  backend.fetch(new Request(`http://localhost${path}`, init), { clientIp: "127.0.0.1" })
 
 const post = (body: unknown) =>
   send("/notes", {

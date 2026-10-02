@@ -24,19 +24,23 @@ rate-limit store intentionally refuses production unless `NIFRA_ALLOW_MEMORY_RAT
 shared store for a multi-instance deployment. If you add cookie sessions, install the signed CSRF
 middleware and keep authenticated mutation routes covered by both authenticated and CSRF assurance.
 
-- `src/app.ts` - routes + the `notes` domain, exported (without `listen`) so tests drive it via `app.fetch`.
-- `src/index.ts` - boots the server and starts the job worker (`queue.start()`).
-- `src/app.test.ts` - exercises pagination, the background job (`queue.drain()`), the cache, and storage.
+- `backend/app.ts` - exports `backend`, your API: it composes the route modules (exported without
+  `listen`, so tests drive it via `backend.fetch`). `nifra contracts` and `nifra sdk` read it from
+  here.
+- `backend/notes.ts` - the `notes` domain: routes, the job queue, the cache and storage.
+- `backend/index.ts` - boots the server and starts the job worker (`queue.start()`).
+- `backend/app.test.ts` - exercises pagination, the background job (`queue.drain()`), the cache, and
+  storage.
 
 Swap the in-memory `notes` array for your database, the `MemoryStorage` for `FileStorage`/`R2Storage`, and
 the default in-memory cache/job stores for shared (Redis / CF KV) ones when you go multi-process.
 
-Add a typed client from `typeof app`:
+Add a typed client from `typeof backend`:
 
 ```ts
 import { client } from "@nifrajs/client"
-import type { App } from "./src/app.ts"
+import type { Backend } from "./backend/app.ts"
 
-const api = client<App>("http://localhost:3000")
+const api = client<Backend>("http://localhost:3000")
 const { data } = await api.notes.get({ query: { limit: 20 } })
 ```

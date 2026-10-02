@@ -11,10 +11,10 @@
  * Rules are first-match-wins, so order matters: put narrow exemptions above the general rule.
  */
 import { defineAssuranceConfig, NIFRA_ASSURANCE } from "@nifrajs/core/assurance"
-import { app } from "./src/app.ts"
+import { backend } from "./backend/app.ts"
 
 export default defineAssuranceConfig({
-  source: app,
+  source: backend,
   // What each effect IS, so the policy below can be written about a CLASS of effect rather than a list
   // of token names: `{ access: "write", zone: "domain" }` covers `payments.charge` the day someone adds
   // it, where a rule naming `db.write` would not.

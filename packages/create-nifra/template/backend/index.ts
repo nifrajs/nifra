@@ -1,5 +1,5 @@
-import { app } from "./app.ts"
+import { backend } from "./app.ts"
 
 const port = Number(process.env.PORT ?? 3000)
-app.listen(port)
+backend.listen(port)
 console.log(`▲ nifra listening on http://localhost:${port}`)

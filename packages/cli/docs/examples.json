@@ -123,7 +123,7 @@
     "name": "ROOT",
     "topic": "Nifra - Effect provenance",
     "slug": "capabilities",
-    "code": "// src/app.ts - composition only. It merges route modules and registers none of its own.\nimport { server } from \"@nifrajs/core/server\"\nimport { routes } from \"./routes.ts\"\n\nexport const app = server().merge(routes)"
+    "code": "// backend/app.ts - composition only. It merges route modules and registers none of its own.\nimport { server } from \"@nifrajs/core/server\"\nimport { routes } from \"./routes.ts\"\n\nexport const backend = server().merge(routes)"
   },
   {
     "name": "CONTINUE",

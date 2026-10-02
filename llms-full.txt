@@ -3827,11 +3827,11 @@ modules and declares routes of its own, those routes inherit the reach of everyt
 there.
 
 ```ts
-// src/app.ts - composition only. It merges route modules and registers none of its own.
+// backend/app.ts - composition only. It merges route modules and registers none of its own.
 import { server } from "@nifrajs/core/server"
 import { routes } from "./routes.ts"
 
-export const app = server().merge(routes)
+export const backend = server().merge(routes)
 ```
 
 **A feature is a module,** owning its store, its adapters and the routes over
@@ -13474,11 +13474,11 @@ bun create nifra my-app
 
 `--template <name>` (default `api`):
 
-- **`api`** - a typed nifra server (`src/app.ts` + `src/index.ts`) with an example test and
+- **`api`** - a typed nifra server (`backend/app.ts` + `backend/index.ts`) with an example test and
   `dev`/`start`/`test`/`typecheck` scripts.
 - **`site`** - the full-stack template: a nifra + React SSR site (file-routed frontend + typed
-  `backend/app.ts`), one source deployable to Cloudflare Pages, Node, Deno, or Vercel Edge. Pick the
-  frontend with `--framework react|preact|vue|solid|svelte`.
+  `backend/app.ts`) for one deploy target, `--target bun|node|deno|cloudflare|vercel` (default `bun`).
+  Pick the frontend with `--framework react|preact|vue|solid|svelte`.
 - **`isr`** - a nifra + React app with **Incremental Static Regeneration** on Cloudflare Workers + KV
   (pages cached + served stale-while-revalidate; on-demand purge endpoint).
 - **`batteries`** - the `api` starter plus the batteries a real API needs: background jobs

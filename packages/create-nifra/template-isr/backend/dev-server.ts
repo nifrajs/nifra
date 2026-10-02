@@ -1,6 +1,6 @@
 /**
  * Local Bun dev server (no wrangler) - the same app with an in-memory ISR store. `bun run dev:bun`
- * after `bun run build`. Production uses Workers KV (worker.ts); the only line that changes is the
+ * after `bun run build`. Production uses Workers KV (backend/worker.ts); the only line that changes is the
  * store. Watch the `x-nifra-isr` response header: miss → hit → stale.
  */
 import { inProcessClient } from "@nifrajs/client"
@@ -8,9 +8,9 @@ import { createWebApp, MemoryCacheStore, revalidateEndpoint, withISR } from "@ni
 import type { BuildManifest } from "@nifrajs/web/build"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { reactAdapter } from "@nifrajs/web-react"
-import { backend } from "./backend/app"
+import { backend } from "./app"
 
-const publicDir = `${import.meta.dir}/public`
+const publicDir = `${import.meta.dir}/../public`
 const assets = JSON.parse(
   await Bun.file(`${publicDir}/assets/manifest.json`)
     .text()
@@ -19,7 +19,7 @@ const assets = JSON.parse(
 
 const app = createWebApp({
   adapter: reactAdapter,
-  manifest: discoverRoutes(`${import.meta.dir}/routes`),
+  manifest: discoverRoutes(`${import.meta.dir}/../routes`),
   clientEntry: assets.entry,
   routePreload: assets.routes,
   api: inProcessClient(backend),
