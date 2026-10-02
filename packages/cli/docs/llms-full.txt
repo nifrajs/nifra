@@ -4108,8 +4108,8 @@ export const write = async (c: object): Promise<void> => {
 `useCapability` is passed in rather than imported by those packages, so all three
 keep their zero dependencies - a cache should not pull the server into a bundle that only
 wanted a cache. Nothing changes for existing code: only the `for(context)` path
-announces anything, and asking for it without a configured beacon throws rather than handing
-back something that silently proves nothing.
+announces anything, and asking for it with neither a beacon nor a tracing observer configured
+throws rather than handing back something that silently proves nothing.
 
 The two are complements. Static provenance is total and runs in CI; a beacon is exact but only
 speaks for code that actually executed.
@@ -9429,6 +9429,168 @@ handler. Pass its fetch-compatible function directly. For a Workers-style handle
 platform argument carries bindings and `waitUntil`; mounted code remains responsible
 for its own framework-specific request and response conventions.
 
+## Nifra - Tracing & observability
+
+> One trace from the request through the cache, the job queue and the worker, plus the OpenTelemetry SDK's own database and HTTP spans, without bundling the SDK.
+
+`@nifrajs/otel` traces each request with W3C trace context and OpenTelemetry
+semantic conventions, and ships no SDK. Cache operations, background jobs and event consumers
+join the request's trace through the context you bind them to, and a small bridge puts the
+OpenTelemetry SDK's own database and HTTP spans under the same tree.
+
+### Request spans
+
+```ts
+// doc-check: skip - the collector URL and handler are app-specific.
+import { otlpExporter, traceHeaders, tracing } from "@nifrajs/otel"
+
+const exporter = otlpExporter({ url: "http://localhost:4318/v1/traces", serviceName: "orders-api" })
+
+app.use(tracing({ exporter })).get("/orders/:id", async (c) => {
+  // c.trace is the request span; forward it to keep one trace across services.
+  const stock = await fetch(INVENTORY_URL, { headers: traceHeaders(c.trace) })
+  return { id: c.params.id, inStock: (await stock.json()).ok }
+})
+```
+
+`tracing()` continues an inbound `traceparent` or starts a trace, and
+ends one `server` span per request with the HTTP attributes. Spans go to any
+`ObservationAdapter`: `otlpExporter()` posts OTLP/JSON to a collector
+from Bun, Node, Deno or Workers.
+
+### Cache and jobs
+
+```ts
+// doc-check: skip - @nifrajs/otel subpaths are outside the doc sandbox; store and loaders are app-specific.
+import { createCache } from "@nifrajs/cache"
+import { createQueue } from "@nifrajs/jobs"
+import { cacheTracing } from "@nifrajs/otel/cache"
+import { jobTracing } from "@nifrajs/otel/jobs"
+
+const cache = createCache({ observer: cacheTracing({ exporter }) })
+const queue = createQueue({ store, instrument: jobTracing({ exporter }) })
+
+const email = queue.define("email-job", {
+  async handler(payload: { to: string }, ctx) {
+    // ctx.trace is this attempt's span: the cache span below is its child.
+    const template = await cache.for(ctx).wrap("tmpl:welcome", loadTemplate)
+    await send(payload.to, template)
+  },
+})
+
+app.use(tracing({ exporter })).get("/orders", async (c) => {
+  const orders = await cache.for(c).wrap("orders:recent", loadOrders) // span "cache wrap"
+  await email.for(c).enqueue({ to: "ada@example.com" })            // span "send email-job"
+  return orders
+})
+```
+
+An operation is traced when it runs through a view bound to a context:
+`cache.for(c)` and `job.for(c)`. The cache reports each operation to its
+observer after it settles, and `cacheTracing()` turns it into a
+`cache <op>` span with the outcome (`hit`, `stale`,
+`miss`). Keys often hold ids or emails, so a span carries only the key prefix (
+`orders:recent` gives `orders`) unless you choose otherwise. A stale
+read's background refresh outlives the request, so it is its own trace, linked to the request
+span.
+
+`jobTracing()` follows the OpenTelemetry messaging conventions: a
+`send <job>` producer span per enqueue, whose context is stored with the job,
+and a `process <job>` consumer span per attempt. The process span is a child
+of the send span, plus a link to it, so one trace runs from the request to the worker even when
+the worker is another process. Retries are separate spans, and the attempt that dead-letters a
+job says so. A job store persists the trace context as an optional field;
+`jobStoreCertificationProfile(&#123; traceparent: true &#125;)` checks it.
+
+### Event consumers
+
+```ts
+// doc-check: skip - @nifrajs/otel subpaths are outside the doc sandbox; the contract is app-specific.
+import { continueCausality } from "@nifrajs/core/causality"
+import { traceEventConsumer } from "@nifrajs/otel/events"
+
+// Producer: the event's causality starts from the request, so the consumer can link back to it.
+app.post("/pay", (c) => {
+  const id = `evt_${crypto.randomUUID()}`
+  const { context } = continueCausality(c.causality, "event", id, { relation: "emitted" })
+  outbox.push(orderPaid.create({ orderId: "o-1" }, { id, causality: context }))
+  return { ok: true }
+})
+
+// Consumer: one "process order.paid" span per envelope, linked to the request above.
+const consume = traceEventConsumer(orderPaid, (event, ctx) => fulfil(event.payload), { exporter })
+const result = await consume(message) // { success: false, issueCount } for input that does not parse
+```
+
+nifra defines event contracts but does not deliver events, so it cannot trace them on its own.
+One wrapper does: each envelope gets a consumer span linked to the producer through its
+causality, and input that fails to parse becomes an error span that carries an issue count,
+never the payload.
+
+### The OpenTelemetry SDK bridge
+
+```ts
+// doc-check: skip - @opentelemetry/* packages are not installed in the doc sandbox.
+import * as api from "@opentelemetry/api"
+import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks"
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http"
+import { BasicTracerProvider, BatchSpanProcessor } from "@opentelemetry/sdk-trace-base"
+import { otelBridge } from "@nifrajs/otel/sdk-bridge"
+
+const bridge = otelBridge({ api })
+api.trace.setGlobalTracerProvider(
+  new BasicTracerProvider({
+    idGenerator: bridge.idGenerator, // mirrored spans keep nifra's exact ids
+    spanProcessors: [new BatchSpanProcessor(new OTLPTraceExporter())],
+  }),
+)
+api.context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable())
+
+app.use(tracing({ adapters: [bridge.adapter] })).use(bridge.plugin)
+const cache = createCache({ observer: cacheTracing({ adapters: [bridge.adapter] }) })
+const queue = createQueue({
+  store,
+  instrument: jobTracing({ adapters: [bridge.adapter], scope: bridge.scope }),
+})
+```
+
+The SDK's instrumentations for pg, mysql2, ioredis, undici and prisma read the active span
+from the OpenTelemetry context. `bridge.plugin` puts the request span there with
+one `around()` frame per request, `bridge.scope` does the same for job
+and event handlers, and `bridge.adapter` mirrors nifra's spans into the SDK so one
+pipeline exports everything. The app passes its own `@opentelemetry/api`;
+`@nifrajs/otel` takes no dependency on it.
+
+Context propagation was checked on Node 26, Bun 1.4, Deno 2.9 and workerd with
+`nodejs_compat`: a span started in a handler after an `await` is a child
+of the request span on all four. The SDK's undici instrumentation records `fetch`
+only on Node, where `fetch` is undici.
+
+### One trace, end to end
+
+`GET /orders` reads through the cache, enqueues a job into a Postgres-backed store,
+and a separate worker process runs it. In Jaeger it is one trace:
+
+```ts
+GET /orders                         orders-api     server
+  pg.query SELECT orders            orders-api     client    (the cache loader)
+  cache wrap                        orders-api     internal  outcome=miss
+  pg.query INSERT                   orders-api     client    (the job store)
+  send email-job                    orders-api     producer
+    process email-job               orders-worker  consumer  (child of send, plus a link)
+      pg.query SELECT orders        orders-worker  client    (the job handler)
+      pg.query DELETE               orders-worker  client    (the job completing)
+```
+
+The cache span is reported after the loader settles, so the loader's own query is the request
+span's child, next to the cache span rather than under it.
+
+### What stays out
+
+No span carries a request body, a job payload, an event payload, a raw cache key or error text.
+Without a tracer configured, the cache and the queue run the code they ran before: no clock
+reads, no events, no extra frames.
+
 ## Nifra security posture vs Hono, Fastify, Express, Elysia
 
 > A dimension-by-dimension security comparison of Nifra against the current releases of Hono, Fastify, Express, and Elysia - which hardening each framework ships by default, which is opt-in, and which is left to third-party packages.
@@ -11330,10 +11492,36 @@ const cache = createCache({ store: new RedisCacheStore(redis) })
 On **Cloudflare Workers** the in-memory cache is per-isolate and short-lived - back it with **CF KV** (or
 the Cache API) via a `CacheStore` for anything that should survive across requests/instances.
 
+## Observing operations and tracing
+
+`observer` receives one event per operation after it settles: `{ op, outcome, startedAt, durationMs,
+key, tag, tagCount, context }`. `outcome` is `hit`, `stale` or `miss` for reads, `ok` for writes and a
+finished background refresh (`op: "revalidate"`), `error` when the store or loader threw. An observer
+that throws is swallowed; it never changes a result. Without an observer the cache reads no extra clock.
+
+`cache.for(c)` binds a request (or job) context, and every event carries it. That is how
+`cacheTracing()` from `@nifrajs/otel/cache` turns each operation into a child span of `c.trace`:
+
+```ts
+import { cacheTracing } from "@nifrajs/otel/cache"
+
+const cache = createCache({ observer: cacheTracing({ exporter }) })
+app.use(tracing({ exporter })).get("/orders/:user", (c) =>
+  cache.for(c).wrap(`orders:${c.params.user}`, () => loadOrders(c.params.user)), // span "cache wrap"
+)
+```
+
+The raw key goes to the in-process observer only. `cacheTracing` exports the key prefix (the token
+before the first `:`, when it is a short lowercase name) unless `keyAttribute` says otherwise
+(`"none"`, or a function that owns the redaction). A stale read's background refresh is its own trace,
+linked to the request span. `for(c)` needs a `beacon`, an `observer`, or both; the beacon is enforced
+whenever it is set.
+
 ## API
 
-- `createCache(options?)` → `Cache` - `{ store?, defaultTtlMs?, now?, onError? }`.
+- `createCache(options?)` → `Cache` - `{ store?, defaultTtlMs?, now?, onError?, observer?, beacon?, capabilities? }`.
 - `cache.wrap(key, loader, { ttlMs?, swrMs?, tags? })` · `get` · `has` · `set` · `delete` · `invalidateTag` · `clear`.
+- `cache.for(context)` → the same surface bound to a request or job context.
 - `MemoryCache({ maxEntries?, now? })` - the default store; implement `CacheStore` for your own.
 
 ## For AI agents
@@ -12652,11 +12840,46 @@ const q = createQueue({ store: new RedisJobStore(redis) })
 Leasing is at-least-once: a leased job is hidden for `leaseMs`; a worker that dies mid-job releases it
 back automatically. Make handlers **idempotent**.
 
+`enqueue` may pass an optional `traceparent` (the producer's W3C trace context); a store should persist
+it and hand it back on every `lease`. A store that drops it still runs every job - a traced run only
+loses its link to the producer. `jobStoreCertificationProfile({ traceparent: true })` from
+`@nifrajs/testing/certification` checks the round trip as an optional capability.
+
 The queue remains agent-agnostic. `@nifrajs/coding-agent` can place content-free run-dispatch
 identities in a dedicated `JobStore`, but this package does not import or define agent concepts. A
 `MemoryJobStore` is disposable single-process storage; production durability, authorization,
 retention, reconciliation, and worker coordination belong to the caller's operated adapter. No
 exactly-once delivery guarantee is implied by a lease.
+
+## Tracing
+
+`instrument` takes around-hooks for each enqueue and each attempt. `jobTracing()` from
+`@nifrajs/otel/jobs` fills them with OpenTelemetry messaging spans:
+
+```ts
+import { jobTracing } from "@nifrajs/otel/jobs"
+
+const q = createQueue({ store, instrument: jobTracing({ exporter }) })
+const email = q.define("send-email", {
+  async handler({ to }, ctx) {
+    await cache.for(ctx).wrap(`tmpl:welcome`, loadTemplate) // ctx.trace keeps the cache span in the trace
+    await send(to)
+  },
+})
+
+app.post("/signup", async (c) => ({ id: await email.for(c).enqueue({ to: c.body.email }) }))
+```
+
+- `email.for(c).enqueue()` stores `c.trace.traceparent` with the job. Outside a request, pass
+  `{ traceparent }` to `enqueue`. A value that is not a well-formed traceparent is dropped.
+- Each enqueue is a `send send-email` producer span; each attempt a `process send-email` consumer span,
+  a child of the send span (plus a link to it). Retries are separate process spans; the attempt that
+  dead-letters the job is marked `nifra.job.dead_lettered`.
+- The handler sees `ctx.trace` (the process span), so `cache.for(ctx)` and a nested
+  `job.for(ctx).enqueue()` stay in the same trace.
+- `for(context)` needs a `beacon`, an `instrument`, or both.
+
+A hook that throws, or never calls `next`, cannot change behavior: the work still runs, uninstrumented.
 
 ## Cloudflare Workers
 
@@ -12667,16 +12890,20 @@ the consumer:
 ```ts
 export default {
   async queue(_batch, env) {
-    const q = createQueue({ store: new D1JobStore(env.DB) })
+    const q = createQueue({ store: new D1JobStore(env.DB), instrument: jobTracing({ exporter }) })
     await q.process() // one round; the platform schedules invocations
   },
 }
 ```
 
+When a CF Queue message carries the job itself rather than a pointer into the store, put the
+`traceparent` in the message body next to the payload and hand it back as `StoredJob.traceparent`, so
+the run stays in the producer's trace.
+
 ## API
 
-- `createQueue(options?)` → `Queue` - `{ store?, onError?, now?, defaultAttempts?, backoff? }`.
-- `queue.define(name, { handler, input?, retries? })` → typed `JobHandle` with `.enqueue(payload, { delayMs? | runAt? })`.
+- `createQueue(options?)` → `Queue` - `{ store?, onError?, now?, defaultAttempts?, backoff?, beacon?, capabilities?, instrument? }`.
+- `queue.define(name, { handler, input?, retries? })` → typed `JobHandle` with `.enqueue(payload, { delayMs? | runAt?, traceparent? })` and `.for(context)`.
 - `queue.enqueue(name, payload, options?)` - enqueue by name.
 - `queue.start({ concurrency?, pollIntervalMs?, leaseMs? })` → `Worker` (`.stop()` drains gracefully).
 - `queue.process()` - run one poll round (for Workers / custom drivers). `queue.drain()` - process until empty.
@@ -13108,9 +13335,96 @@ interface ObservationAdapter {
 - `consoleSpanExporter()` - logs each completed span as one structured line (dev / starting point).
 - `tracing({ adapters: [devtoolsAdapter, privateAdapter] })` - fan out the same lifecycle; adapter
   failures are isolated and never alter the response.
-- **OpenTelemetry SDK bridge** - a ~10-line adapter maps `NifraSpan` onto a real OTel `Span` from a
-  `Tracer` (the attribute names already follow OTel conventions, so they pass straight through). Your
-  app depends on `@opentelemetry/*`; `@nifrajs/otel` does not.
+- **OpenTelemetry SDK bridge** - `otelBridge()` from `@nifrajs/otel/sdk-bridge` (below). Your app
+  depends on `@opentelemetry/*`; `@nifrajs/otel` does not.
+
+Every span carries an OTel `kind`: request spans are `server`, capability and cache spans
+`internal`, job enqueues `producer`, job runs and event consumers `consumer`. `otlpExporter()` sends
+it as the OTLP enum; a span without one goes out as `SERVER`.
+
+## Cache, jobs and events
+
+Work that runs through a context bound to the request joins the request's trace. Each tracer takes
+the same `exporter` / `adapters` options as `tracing()`; pass the same adapters to all of them.
+
+```ts
+import { cacheTracing } from "@nifrajs/otel/cache"
+import { jobTracing } from "@nifrajs/otel/jobs"
+
+const cache = createCache({ observer: cacheTracing({ exporter }) })
+const queue = createQueue({ store, instrument: jobTracing({ exporter }) })
+const email = queue.define("email-job", {
+  async handler(payload, ctx) {
+    await cache.for(ctx).wrap("tmpl:welcome", loadTemplate) // ctx.trace: the process span
+  },
+})
+
+app.use(tracing({ exporter })).get("/orders", async (c) => {
+  const orders = await cache.for(c).wrap("orders:recent", loadOrders) // "cache wrap", outcome miss/hit
+  await email.for(c).enqueue({ to: c.query.to }) // "send email-job", producer
+  return orders
+})
+```
+
+- **Cache** (`@nifrajs/otel/cache`): one `cache <op>` span per operation on a `cache.for(c)` view,
+  with `nifra.cache.operation`, `nifra.cache.outcome` (`hit`, `stale`, `miss`, `ok`, `error`) and
+  `nifra.cache.tag_count`. Raw keys stay in the process: the span carries the key prefix (`user:42`
+  gives `user`) unless `keyAttribute` is `"none"` or a function. A stale read's background refresh is a
+  separate `cache revalidate` trace, linked to the request span. The unbound cache is not traced.
+- **Jobs** (`@nifrajs/otel/jobs`): `send <job>` (producer) per enqueue and `process <job>` (consumer)
+  per attempt, with the OTel messaging attributes (`messaging.system = "nifra.jobs"`,
+  `messaging.operation.type` / `.name`, `messaging.destination.name`, `messaging.message.id`). The
+  send span's context is stored with the job; each attempt is its child, plus a link to it, so one
+  trace runs from the request to the worker. A failed attempt is an error span, and the one that
+  dead-letters the job carries `nifra.job.dead_lettered = true`. A malformed stored traceparent starts
+  a new trace.
+- **Events** (`@nifrajs/otel/events`): nifra does not deliver events, so wrap the consumer once.
+  `traceEventConsumer(contractOrRegistry, handler, { exporter })` gives each envelope a
+  `process <type>` span linked to the producer through its causality. Input that fails to parse is an
+  error span with an issue count and never reaches the handler. To give an envelope that link, build
+  its causality from the request: `contract.create(payload, { id, causality:
+  continueCausality(c.causality, "event", id, { relation: "emitted" }).context })`.
+
+Error text and payloads never enter a span.
+
+## OpenTelemetry SDK bridge
+
+The SDK's own instrumentations (pg, mysql2, ioredis, undici, prisma) read the active span from the
+OTel context. `otelBridge()` puts nifra's spans there; the app passes its own `@opentelemetry/api`.
+
+```ts
+import * as api from "@opentelemetry/api"
+import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks"
+import { otelBridge } from "@nifrajs/otel/sdk-bridge"
+
+const bridge = otelBridge({ api })
+const provider = new BasicTracerProvider({
+  idGenerator: bridge.idGenerator, // mirrored spans keep nifra's ids
+  spanProcessors: [new BatchSpanProcessor(new OTLPTraceExporter())],
+})
+api.trace.setGlobalTracerProvider(provider)
+api.context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable())
+
+app.use(tracing({ adapters: [bridge.adapter] })).use(bridge.plugin)
+const queue = createQueue({ store, instrument: jobTracing({ adapters: [bridge.adapter], scope: bridge.scope }) })
+```
+
+- `bridge.plugin` runs each subsequent route with its request span active, so a pg query or `fetch`
+  inside the handler is a child of the request span. It costs one `around()` frame per request, only
+  when installed.
+- `bridge.adapter` mirrors nifra spans into SDK spans (kind, parent, links, attributes, status,
+  timing), so one SDK pipeline exports everything. Leave it out and keep `otlpExporter()` if nifra's
+  own exporter ships nifra's spans; the SDK spans still nest under them.
+- `bridge.idGenerator` makes mirrored spans keep nifra's exact trace and span ids, so the
+  `traceparent` nifra forwards and the trace context a job stores name real spans. Without it the
+  adapter warns once.
+- `bridge.scope` runs code with any nifra span active: pass it to `jobTracing()` and
+  `traceEventConsumer()` so queries inside a job or event handler nest under it.
+
+Context propagation needs the SDK's AsyncLocalStorage context manager. Checked on Node 26, Bun 1.4,
+Deno 2.9 and workerd (`nodejs_compat`): a span started in a handler, after an `await`, is a child of
+the request span on all four. The SDK's undici instrumentation records `fetch` only on Node, where
+`fetch` is undici; Bun's and Deno's `fetch` produce no undici span.
 
 ## Connect your collector
 
@@ -14327,7 +14641,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/cache
 
-`Cache`, `CacheCapabilities`, `CacheOptions`, `CacheStore`, `CapabilityBeacon`, `createCache`, `MemoryCache`, `MemoryCacheOptions`, `SetOptions`, `StoredEntry`, `WrapOptions`
+`Cache`, `CacheCapabilities`, `CacheEvent`, `CacheObserver`, `CacheOperation`, `CacheOptions`, `CacheOutcome`, `CacheStore`, `CapabilityBeacon`, `createCache`, `MemoryCache`, `MemoryCacheOptions`, `SetOptions`, `StoredEntry`, `WrapOptions`
 
 ## @nifrajs/client
 
@@ -14391,7 +14705,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/jobs
 
-`Backoff`, `CapabilityBeacon`, `createQueue`, `DeadLetterRecord`, `DeadLetterView`, `EnqueueOptions`, `exponentialBackoff`, `ExponentialOptions`, `fixedBackoff`, `JobContext`, `JobCounts`, `JobDefinition`, `JobError`, `JobHandle`, `JobHandler`, `JobStore`, `JobValidationError`, `MemoryJobStore`, `noBackoff`, `Queue`, `QueueHealth`, `QueueOptions`, `RetryPolicy`, `StandardResult`, `StandardSchemaV1`, `StoredJob`, `toDeadLetterView`, `toQueueHealth`, `Worker`, `WorkerOptions`
+`Backoff`, `CapabilityBeacon`, `createQueue`, `DeadLetterRecord`, `DeadLetterView`, `EnqueueOptions`, `exponentialBackoff`, `ExponentialOptions`, `fixedBackoff`, `JobContext`, `JobCounts`, `JobDefinition`, `JobEnqueueInfo`, `JobError`, `JobHandle`, `JobHandler`, `JobRunInfo`, `JobRunOutcome`, `JobStore`, `JobTraceContext`, `JobValidationError`, `MemoryJobStore`, `noBackoff`, `Queue`, `QueueHealth`, `QueueInstrument`, `QueueOptions`, `RetryPolicy`, `StandardResult`, `StandardSchemaV1`, `StoredJob`, `toDeadLetterView`, `toQueueHealth`, `Worker`, `WorkerOptions`
 
 ## @nifrajs/mcp
 
@@ -14415,7 +14729,7 @@ done-gate, or `nifra mcp` to give the agent live project tools.
 
 ## @nifrajs/otel
 
-`ActiveObservation`, `AttributeValue`, `causalitySpanLink`, `combineObservationAdapters`, `consoleSpanExporter`, `createObservationLifecycle`, `effectTracing`, `EffectTracingOptions`, `EffectTracingPlugin`, `EndObservation`, `formatTraceparent`, `generateSpanId`, `generateTraceId`, `NifraSpan`, `ObservationAdapter`, `ObservationClock`, `ObservationContext`, `ObservationLifecycle`, `ObservationLifecycleOptions`, `ObservationLink`, `ObservationParent`, `otlpExporter`, `OtlpExporter`, `OtlpExporterOptions`, `ParsedTraceparent`, `parseTraceparent`, `SpanStatus`, `StartObservation`, `TraceContext`, `traceHeaders`, `tracing`, `TracingOptions`
+`ActiveObservation`, `AttributeValue`, `causalitySpanLink`, `combineObservationAdapters`, `consoleSpanExporter`, `createObservationLifecycle`, `effectTracing`, `EffectTracingOptions`, `EffectTracingPlugin`, `EndObservation`, `formatTraceparent`, `generateSpanId`, `generateTraceId`, `NifraSpan`, `ObservationAdapter`, `ObservationClock`, `ObservationContext`, `ObservationLifecycle`, `ObservationLifecycleOptions`, `ObservationLink`, `ObservationParent`, `ObservationScope`, `otlpExporter`, `OtlpExporter`, `OtlpExporterOptions`, `ParsedTraceparent`, `parseTraceparent`, `SpanKind`, `SpanStatus`, `StartObservation`, `TraceContext`, `traceHeaders`, `tracing`, `TracingOptions`
 
 ## @nifrajs/pi
 

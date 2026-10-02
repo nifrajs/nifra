@@ -2837,7 +2837,7 @@
     "name": "Cache",
     "kind": "interface",
     "package": "@nifrajs/cache",
-    "signature": "export interface Cache {\n    /** The cached value for `key`, or `undefined` if missing/expired. Pass `T` for the value type. */\n    get<T = unknown>(key: string): Promise<T | undefined>;\n    /** Whether a live (non-expired) entry exists. */\n    has(key: string): Promise<boolean>;\n    /** Store `value` under `key`. */\n    set<T>(key: string, value: T, options?: SetOptions): Promise<void>;\n    delete(key: string): Promise<void>;\n    /** Drop every entry tagged `tag`. */\n    invalidateTag(tag: string): Promise<void>;\n    clear(): Promise<void>;\n    /**\n     * Cache-aside: return the cached value, or run `loader`, store the result, and return it. Stampede-safe\n     * (concurrent misses for one key share a single `loader` call) and SWR-aware (a stale-but-live value is\n     * returned immediately while a deduped background refresh runs). A throwing `loader` is NOT cached.\n     */\n    wrap<T>(key: string, loader: () => T, options?: WrapOptions): Promise<Awaited<T>>;\n    /**\n     * A view bound to a request context: every operation announces its capability first, and fails closed\n     * when the route did not declare it.\n     *\n     * `wrap` announces BOTH read and write, because a miss writes and which one happens is not known\n     * before the call. A declaration describes what a route may do, so the conservative answer is the\n     * correct one.\n     *\n     * Requires `beacon`. Without one this throws rather than handing back a cache that quietly produces\n     * no evidence - a beacon nobody notices is missing is the exact failure the beacon exists to prevent.\n     */\n    for(context: object): Cache;\n}"
+    "signature": "export interface Cache {\n    /** The cached value for `key`, or `undefined` if missing/expired. Pass `T` for the value type. */\n    get<T = unknown>(key: string): Promise<T | undefined>;\n    /** Whether a live (non-expired) entry exists. */\n    has(key: string): Promise<boolean>;\n    /** Store `value` under `key`. */\n    set<T>(key: string, value: T, options?: SetOptions): Promise<void>;\n    delete(key: string): Promise<void>;\n    /** Drop every entry tagged `tag`. */\n    invalidateTag(tag: string): Promise<void>;\n    clear(): Promise<void>;\n    /**\n     * Cache-aside: return the cached value, or run `loader`, store the result, and return it. Stampede-safe\n     * (concurrent misses for one key share a single `loader` call) and SWR-aware (a stale-but-live value is\n     * returned immediately while a deduped background refresh runs). A throwing `loader` is NOT cached.\n     */\n    wrap<T>(key: string, loader: () => T, options?: WrapOptions): Promise<Awaited<T>>;\n    /**\n     * A view bound to a request (or job) context. With a `beacon`, every operation announces its\n     * capability first and fails closed when the route did not declare it. With an `observer`, every\n     * event carries `context`, which is how a tracer parents the span to `context.trace`.\n     *\n     * `wrap` announces BOTH read and write, because a miss writes and which one happens is not known\n     * before the call. A declaration describes what a route may do, so the conservative answer is the\n     * correct one.\n     *\n     * Requires `beacon` or `observer`. With neither this throws rather than handing back a view that\n     * quietly does nothing - a beacon nobody notices is missing is the exact failure the beacon exists\n     * to prevent.\n     */\n    for(context: object): Cache;\n}"
   },
   {
     "name": "CacheCapabilities",
@@ -2873,16 +2873,51 @@
     "doc": "/** A cached SSR response - the bytes + metadata a {@link CacheStore} persists. */"
   },
   {
+    "name": "CacheEvent",
+    "kind": "interface",
+    "package": "@nifrajs/cache",
+    "signature": "export interface CacheEvent {\n    readonly op: CacheOperation;\n    readonly outcome: CacheOutcome;\n    /** Epoch ms the operation started. */\n    readonly startedAt: number;\n    /** Monotonic duration in ms. */\n    readonly durationMs: number;\n    /**\n     * The raw key. Keys often hold ids or emails: this value is for in-process use, and an exporter\n     * decides what (if anything) of it leaves the process. Absent for `clear` and `invalidateTag`.\n     */\n    readonly key: string | undefined;\n    /** The tag passed to `invalidateTag`, with the same caution as `key`. */\n    readonly tag: string | undefined;\n    /** Tags written by `set`, `wrap` and `revalidate`; 1 for `invalidateTag`; otherwise 0. */\n    readonly tagCount: number;\n    /**\n     * The context bound with `for(context)`, or `undefined` for the unbound cache. For `revalidate` it is\n     * the context whose read found the stale entry.\n     */\n    readonly context: object | undefined;\n}",
+    "doc": "/** One settled cache operation, as an observer sees it. */"
+  },
+  {
+    "name": "CacheKeyAttribute",
+    "kind": "type",
+    "package": "@nifrajs/otel",
+    "signature": "export type CacheKeyAttribute = \"prefix\" | \"none\" | ((key: string) => string | undefined);",
+    "doc": "/**\n * What of a key (or an invalidated tag) a span carries:\n * - `\"prefix\"` (default): the leading token before the first `:`, exported as `nifra.cache.key_prefix`\n *   only when it matches `^[a-z][a-z0-9_-]{0,31}$` - `user:42` gives `user`, a key with no `:` gives\n *   nothing;\n * - `\"none\"`: nothing;\n * - a function: its result is exported as `nifra.cache.key` (return `undefined` to omit). It runs on\n *   raw keys, so it owns the redaction.\n */"
+  },
+  {
+    "name": "CacheObserver",
+    "kind": "type",
+    "package": "@nifrajs/cache",
+    "signature": "export type CacheObserver = (event: CacheEvent) => void;",
+    "doc": "/**\n * Called once per operation after it settles, never before the caller sees the result. A throwing (or\n * rejecting) observer is swallowed: it cannot change a cache result.\n */"
+  },
+  {
+    "name": "CacheOperation",
+    "kind": "type",
+    "package": "@nifrajs/cache",
+    "signature": "export type CacheOperation = \"get\" | \"has\" | \"set\" | \"wrap\" | \"delete\" | \"invalidateTag\" | \"clear\" | \"revalidate\";",
+    "doc": "/** A cache operation reported to a {@link CacheObserver}. `revalidate` is the background SWR refresh. */"
+  },
+  {
     "name": "CacheOptions",
     "kind": "interface",
     "package": "@nifrajs/cache",
-    "signature": "export interface CacheOptions {\n    /** Storage adapter. Default: a fresh {@link MemoryCache}. */\n    readonly store?: CacheStore;\n    /**\n     * Make cache operations produce capability evidence:\n     *\n     *   import { useCapability } from \"@nifrajs/core/capabilities\"\n     *   const cache = createCache({ beacon: useCapability })\n     *\n     * Then `cache.for(context)` announces its capability before each operation. Evidence from the CALL is\n     * per-route and exact, where evidence from an import is per-module and therefore as broad as the\n     * module - which is why a beacon can say something a provenance rule cannot.\n     */\n    readonly beacon?: CapabilityBeacon;\n    /** Override the announced tokens when the app names its capabilities differently. */\n    readonly capabilities?: CacheCapabilities;\n    /** Default TTL (ms) for `set`/`wrap` when none is given. Default 60_000. */\n    readonly defaultTtlMs?: number;\n    /** Injectable clock (tests). Default `() => Date.now()`. */\n    readonly now?: () => number;\n    /** Called when a background SWR revalidation throws. Default: `console.error`. */\n    readonly onError?: (error: unknown, key: string) => void;\n}"
+    "signature": "export interface CacheOptions {\n    /** Storage adapter. Default: a fresh {@link MemoryCache}. */\n    readonly store?: CacheStore;\n    /**\n     * Make cache operations produce capability evidence:\n     *\n     *   import { useCapability } from \"@nifrajs/core/capabilities\"\n     *   const cache = createCache({ beacon: useCapability })\n     *\n     * Then `cache.for(context)` announces its capability before each operation. Evidence from the CALL is\n     * per-route and exact, where evidence from an import is per-module and therefore as broad as the\n     * module - which is why a beacon can say something a provenance rule cannot.\n     */\n    readonly beacon?: CapabilityBeacon;\n    /** Override the announced tokens when the app names its capabilities differently. */\n    readonly capabilities?: CacheCapabilities;\n    /** Default TTL (ms) for `set`/`wrap` when none is given. Default 60_000. */\n    readonly defaultTtlMs?: number;\n    /** Injectable clock (tests). Default `() => Date.now()`. */\n    readonly now?: () => number;\n    /** Called when a background SWR revalidation throws. Default: `console.error`. */\n    readonly onError?: (error: unknown, key: string) => void;\n    /**\n     * Receives one {@link CacheEvent} per operation - the seam `cacheTracing()` from `@nifrajs/otel/cache`\n     * plugs into. Without one the cache reads no extra clock and allocates no event.\n     */\n    readonly observer?: CacheObserver;\n}"
   },
   {
     "name": "CacheOptions",
     "kind": "interface",
     "package": "@nifrajs/middleware",
     "signature": "export interface CacheOptions {\n    readonly store: ResponseCacheStore;\n    /** Time to live in milliseconds. */\n    readonly ttlMs: number;\n    /** Methods cached. Default `[\"GET\", \"HEAD\"]`. */\n    readonly methods?: readonly string[];\n    /** Status predicate. Default: `200` only. */\n    readonly status?: (status: number) => boolean;\n    /** Header names included in the cache key and emitted in `Vary`. */\n    readonly vary?: readonly string[];\n    /** Custom cache key. Receives the normalized `vary` headers through the request itself. */\n    readonly key?: (request: Request) => string;\n    /** Maximum response bytes to store. Default `1_000_000`. Larger responses pass through. */\n    readonly maxBytes?: number;\n    /** Respect request `Cache-Control: no-cache/no-store`. Default `true`. */\n    readonly respectRequestCacheControl?: boolean;\n    /** Respect response `Cache-Control: private/no-store`. Default `true`. */\n    readonly respectResponseCacheControl?: boolean;\n    /** Cache responses with `Set-Cookie`. Default `false`. */\n    readonly cacheSetCookie?: boolean;\n    /** Cache responses to requests bearing `Authorization` or `Cookie` even when the response is not\n     * explicitly `Cache-Control: public` (or `s-maxage`). Default `false`: a shared cache must not store a\n     * personalized response (RFC 9111 §3.5), or it would be replayed to other users. Leave this off unless\n     * the cached route is genuinely the same for every caller. */\n    readonly cacheAuthenticated?: boolean;\n    /** Credential headers that make a request private. Defaults to Authorization, Cookie, and x-api-key. */\n    readonly authenticatedHeaders?: readonly string[];\n    /** Response header for cache status. Default `\"x-nifra-cache\"`; set `false` to disable. */\n    readonly cacheStatusHeader?: string | false;\n}"
+  },
+  {
+    "name": "CacheOutcome",
+    "kind": "type",
+    "package": "@nifrajs/cache",
+    "signature": "export type CacheOutcome = \"hit\" | \"stale\" | \"miss\" | \"ok\" | \"error\";",
+    "doc": "/**\n * How an operation ended. Reads report `hit`, `stale` (served from the SWR window) or `miss`; writes and\n * a completed revalidation report `ok`; `error` means the store or the loader threw.\n */"
   },
   {
     "name": "CacheStore",
@@ -2903,6 +2938,33 @@
     "kind": "function",
     "package": "@nifrajs/testing",
     "signature": "export declare function cacheStoreCertificationProfile(): AdapterCertificationProfile<CertifiableCacheStore>;"
+  },
+  {
+    "name": "cacheTracing",
+    "kind": "function",
+    "package": "@nifrajs/otel",
+    "signature": "export declare function cacheTracing(options?: CacheTracingOptions): CacheTracingObserver;",
+    "doc": "/**\n * Spans for cache operations on views bound with `for(context)`. A bound operation becomes a child of\n * the context's trace; an operation on the unbound cache, or under a context with no trace, is not\n * traced. A stale `wrap` that starts a background refresh gets a separate `cache revalidate` span in its\n * own trace, LINKED to the request span: the refresh outlives the request, so it is not its child.\n */"
+  },
+  {
+    "name": "CacheTracingEvent",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface CacheTracingEvent {\n    readonly op: string;\n    readonly outcome: string;\n    readonly startedAt: number;\n    readonly durationMs: number;\n    readonly key: string | undefined;\n    readonly tag: string | undefined;\n    readonly tagCount: number;\n    readonly context: object | undefined;\n}",
+    "doc": "/** The `CacheEvent` of `@nifrajs/cache`, declared structurally so this package does not depend on it. */"
+  },
+  {
+    "name": "CacheTracingObserver",
+    "kind": "type",
+    "package": "@nifrajs/otel",
+    "signature": "export type CacheTracingObserver = (event: CacheTracingEvent) => void;",
+    "doc": "/** Pass as `createCache({ observer })`. */"
+  },
+  {
+    "name": "CacheTracingOptions",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface CacheTracingOptions {\n    readonly exporter?: ObservationAdapter;\n    readonly adapters?: readonly ObservationAdapter[];\n    readonly keyAttribute?: CacheKeyAttribute;\n}"
   },
   {
     "name": "canAttempt",
@@ -3566,7 +3628,7 @@
     "name": "CertifiableJobStore",
     "kind": "interface",
     "package": "@nifrajs/testing",
-    "signature": "export interface CertifiableJobStore {\n    enqueue(job: {\n        name: string;\n        payload: unknown;\n        runAt: number;\n        maxAttempts: number;\n    }): string | Promise<string>;\n    lease(now: number, limit: number, leaseMs: number): CertifiableStoredJob[] | Promise<CertifiableStoredJob[]>;\n    complete(id: string): void | Promise<void>;\n    retry(id: string, runAt: number): void | Promise<void>;\n    deadLetter(id: string, error: string): void | Promise<void>;\n    counts(): {\n        pending: number;\n        active: number;\n        dead: number;\n    } | Promise<{\n        pending: number;\n        active: number;\n        dead: number;\n    }>;\n}"
+    "signature": "export interface CertifiableJobStore {\n    enqueue(job: {\n        name: string;\n        payload: unknown;\n        runAt: number;\n        maxAttempts: number;\n        traceparent?: string;\n    }): string | Promise<string>;\n    lease(now: number, limit: number, leaseMs: number): CertifiableStoredJob[] | Promise<CertifiableStoredJob[]>;\n    complete(id: string): void | Promise<void>;\n    retry(id: string, runAt: number): void | Promise<void>;\n    deadLetter(id: string, error: string): void | Promise<void>;\n    counts(): {\n        pending: number;\n        active: number;\n        dead: number;\n    } | Promise<{\n        pending: number;\n        active: number;\n        dead: number;\n    }>;\n}"
   },
   {
     "name": "CertifiableModelGateway",
@@ -3602,7 +3664,7 @@
     "name": "CertifiableStoredJob",
     "kind": "interface",
     "package": "@nifrajs/testing",
-    "signature": "export interface CertifiableStoredJob {\n    readonly id: string;\n    readonly name: string;\n    readonly payload: unknown;\n    readonly attempt: number;\n    readonly maxAttempts: number;\n}"
+    "signature": "export interface CertifiableStoredJob {\n    readonly id: string;\n    readonly name: string;\n    readonly payload: unknown;\n    readonly attempt: number;\n    readonly maxAttempts: number;\n    readonly traceparent?: string;\n}"
   },
   {
     "name": "CertificationCapabilityEvidence",
@@ -7330,13 +7392,13 @@
     "name": "EndObservation",
     "kind": "interface",
     "package": "@nifrajs/otel",
-    "signature": "export interface EndObservation {\n    readonly statusCode?: number;\n    /** Explicit status wins over status-code and recorded-error classification. */\n    readonly status?: Exclude<SpanStatus, \"unset\">;\n    readonly attributes?: Readonly<Record<string, AttributeValue>>;\n}"
+    "signature": "export interface EndObservation {\n    readonly statusCode?: number;\n    /** Explicit status wins over status-code and recorded-error classification. */\n    readonly status?: Exclude<SpanStatus, \"unset\">;\n    readonly attributes?: Readonly<Record<string, AttributeValue>>;\n    /** Measured duration in ms, for work recorded after it settled. The end time becomes start + duration. */\n    readonly durationMs?: number;\n}"
   },
   {
     "name": "EnqueueOptions",
     "kind": "interface",
     "package": "@nifrajs/jobs",
-    "signature": "export interface EnqueueOptions {\n    /** Delay before the job becomes eligible. Ignored if `runAt` is set. */\n    readonly delayMs?: number;\n    /** Absolute epoch-ms eligibility time. Overrides `delayMs`. */\n    readonly runAt?: number;\n}"
+    "signature": "export interface EnqueueOptions {\n    /** Delay before the job becomes eligible. Ignored if `runAt` is set. */\n    readonly delayMs?: number;\n    /** Absolute epoch-ms eligibility time. Overrides `delayMs`. */\n    readonly runAt?: number;\n    /**\n     * The producer's W3C `traceparent`, for an enqueue outside a request (a cron tick, a script).\n     * Overrides the bound context's trace. A value that is not a well-formed traceparent is dropped.\n     */\n    readonly traceparent?: string;\n}"
   },
   {
     "name": "Entry",
@@ -7468,6 +7530,13 @@
     "doc": "/** Evaluate reflected route evidence against the first matching policy rule. */"
   },
   {
+    "name": "EventConsumerContext",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface EventConsumerContext {\n    readonly trace: ObservationContext;\n}",
+    "doc": "/** What the wrapped handler receives next to the envelope: the consumer span's trace context. */"
+  },
+  {
     "name": "EventContract",
     "kind": "interface",
     "package": "@nifrajs/events",
@@ -7504,6 +7573,12 @@
     "kind": "interface",
     "package": "@nifrajs/events",
     "signature": "export interface EventRegistry {\n    readonly contracts: readonly EventContract[];\n    /** Look up a contract by type + version (defaults to version 0). */\n    get(type: string, version?: number): EventContract | undefined;\n    /** Dispatch untrusted input to its contract by `type`/`version` and parse. Never throws. */\n    parse(input: unknown): RegistryParseResult;\n}"
+  },
+  {
+    "name": "EventTracingOptions",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface EventTracingOptions {\n    readonly exporter?: ObservationAdapter;\n    readonly adapters?: readonly ObservationAdapter[];\n    /** `messaging.system`: the transport the envelopes arrive on. Default `\"nifra.events\"`. */\n    readonly system?: string;\n    /** Runs the handler with the consumer span active in an ambient context (see `ObservationScope`). */\n    readonly scope?: ObservationScope;\n}"
   },
   {
     "name": "EVIDENCE_MAX_BYTES",
@@ -10037,7 +10112,7 @@
     "name": "JobContext",
     "kind": "interface",
     "package": "@nifrajs/jobs",
-    "signature": "export interface JobContext {\n    readonly id: string;\n    readonly name: string;\n    /** 1 on the first run, 2 on the first retry, … */\n    readonly attempt: number;\n}",
+    "signature": "export interface JobContext {\n    readonly id: string;\n    readonly name: string;\n    /** 1 on the first run, 2 on the first retry, … */\n    readonly attempt: number;\n    /** Set when the queue's `instrument.run` opened a span for this attempt (see `jobTracing()`). */\n    readonly trace?: JobTraceContext;\n}",
     "doc": "/** What a handler receives alongside the payload: identity + which attempt this is (1-based). */"
   },
   {
@@ -10054,6 +10129,13 @@
     "doc": "/** A job definition registered on a queue. */"
   },
   {
+    "name": "JobEnqueueInfo",
+    "kind": "interface",
+    "package": "@nifrajs/jobs",
+    "signature": "export interface JobEnqueueInfo {\n    readonly name: string;\n    /** The producer's `traceparent` (bound context or {@link EnqueueOptions.traceparent}), if any. */\n    readonly traceparent: string | undefined;\n}",
+    "doc": "/** What `instrument.enqueue` sees. */"
+  },
+  {
     "name": "JobError",
     "kind": "class",
     "package": "@nifrajs/jobs",
@@ -10064,7 +10146,7 @@
     "name": "JobHandle",
     "kind": "interface",
     "package": "@nifrajs/jobs",
-    "signature": "export interface JobHandle<Payload> {\n    readonly name: string;\n    enqueue(payload: Payload, options?: EnqueueOptions): Promise<string>;\n    /**\n     * A handle bound to a request context: `enqueue` announces its capability first, and fails closed\n     * when the route did not declare it. Evidence from the CALL is per-route and exact, where evidence\n     * from an import is as broad as the module that holds it.\n     *\n     * Requires `beacon` on the queue. Without one this throws rather than handing back a handle that\n     * quietly produces no evidence.\n     */\n    for(context: object): JobHandle<Payload>;\n}",
+    "signature": "export interface JobHandle<Payload> {\n    readonly name: string;\n    enqueue(payload: Payload, options?: EnqueueOptions): Promise<string>;\n    /**\n     * A handle bound to a request (or job) context. With a `beacon` on the queue, `enqueue` announces its\n     * capability first and fails closed when the route did not declare it - evidence from the CALL is\n     * per-route and exact, where evidence from an import is as broad as the module that holds it. The\n     * context's `trace.traceparent` (from `tracing()`, or `JobContext.trace`) is stored with the job, so\n     * the run continues the producer's trace.\n     *\n     * Requires `beacon` or `instrument` on the queue. With neither this throws rather than handing back a\n     * handle that quietly produces no evidence.\n     */\n    for(context: object): JobHandle<Payload>;\n}",
     "doc": "/** A typed handle to enqueue a defined job. */"
   },
   {
@@ -10075,17 +10157,73 @@
     "doc": "/** A job processor. A throw/rejection routes to `onError` and triggers retry/dead-letter - never crashes the worker. */"
   },
   {
+    "name": "JobRunInfo",
+    "kind": "interface",
+    "package": "@nifrajs/jobs",
+    "signature": "export interface JobRunInfo {\n    readonly id: string;\n    readonly name: string;\n    /** 1-based, as on {@link JobContext}. */\n    readonly attempt: number;\n    readonly maxAttempts: number;\n    /** The `traceparent` stored with the job. It came back from the store: parse it before trusting it. */\n    readonly traceparent: string | undefined;\n}",
+    "doc": "/** What `instrument.run` sees for one attempt. */"
+  },
+  {
+    "name": "JobRunOutcome",
+    "kind": "type",
+    "package": "@nifrajs/jobs",
+    "signature": "export type JobRunOutcome = \"completed\" | \"retried\" | \"dead-lettered\";",
+    "doc": "/** How an attempt ended: removed, rescheduled, or moved to the dead-letter set. */"
+  },
+  {
     "name": "JobStore",
     "kind": "interface",
     "package": "@nifrajs/jobs",
-    "signature": "export interface JobStore {\n    /** Persist a new job; return its id. */\n    enqueue(job: {\n        name: string;\n        payload: unknown;\n        runAt: number;\n        maxAttempts: number;\n    }): string | Promise<string>;\n    /** Atomically claim up to `limit` jobs due at/before `now`, hiding them for `leaseMs`. */\n    lease(now: number, limit: number, leaseMs: number): StoredJob[] | Promise<StoredJob[]>;\n    /** A job finished successfully - remove it. */\n    complete(id: string): void | Promise<void>;\n    /** A job failed but has attempts left - bump its attempt count and reschedule for `runAt`. */\n    retry(id: string, runAt: number): void | Promise<void>;\n    /** A job exhausted its attempts - move it to the dead-letter set with the last error. */\n    deadLetter(id: string, error: string): void | Promise<void>;\n    /** Snapshot counts (observability + tests). */\n    counts(): JobCounts | Promise<JobCounts>;\n}",
+    "signature": "export interface JobStore {\n    /** Persist a new job; return its id. Hand `traceparent` back on {@link StoredJob} when present. */\n    enqueue(job: {\n        name: string;\n        payload: unknown;\n        runAt: number;\n        maxAttempts: number;\n        traceparent?: string;\n    }): string | Promise<string>;\n    /** Atomically claim up to `limit` jobs due at/before `now`, hiding them for `leaseMs`. */\n    lease(now: number, limit: number, leaseMs: number): StoredJob[] | Promise<StoredJob[]>;\n    /** A job finished successfully - remove it. */\n    complete(id: string): void | Promise<void>;\n    /** A job failed but has attempts left - bump its attempt count and reschedule for `runAt`. */\n    retry(id: string, runAt: number): void | Promise<void>;\n    /** A job exhausted its attempts - move it to the dead-letter set with the last error. */\n    deadLetter(id: string, error: string): void | Promise<void>;\n    /** Snapshot counts (observability + tests). */\n    counts(): JobCounts | Promise<JobCounts>;\n}",
     "doc": "/**\n * Persistence + leasing for the queue. The default {@link MemoryJobStore} is single-process (dev / a\n * single long-running server); implement this over Redis/Postgres/etc. for durability or multiple\n * workers. All methods may be sync or async - the queue awaits them.\n */"
   },
   {
     "name": "jobStoreCertificationProfile",
     "kind": "function",
     "package": "@nifrajs/testing",
-    "signature": "export declare function jobStoreCertificationProfile(): AdapterCertificationProfile<CertifiableJobStore>;"
+    "signature": "export declare function jobStoreCertificationProfile(options?: {\n    readonly traceparent?: boolean;\n}): AdapterCertificationProfile<CertifiableJobStore>;",
+    "doc": "/**\n * The job-store profile. `traceparent: true` adds the optional `traceparent-roundtrip` capability: the\n * trace context given to `enqueue` comes back on every lease, including after a retry. A store without\n * it still runs jobs; traced runs just lose their link to the producer.\n */"
+  },
+  {
+    "name": "JobTraceContext",
+    "kind": "interface",
+    "package": "@nifrajs/jobs",
+    "signature": "export interface JobTraceContext {\n    readonly traceId: string;\n    readonly spanId: string;\n    readonly sampled: boolean;\n    /** W3C `traceparent` of the attempt's span. */\n    readonly traceparent: string;\n}",
+    "doc": "/**\n * The trace an instrumented attempt runs in. It has the shape of `c.trace` from `@nifrajs/otel`, so\n * `cache.for(ctx)` and a nested `job.for(ctx).enqueue()` inside the handler stay in the same trace.\n */"
+  },
+  {
+    "name": "jobTracing",
+    "kind": "function",
+    "package": "@nifrajs/otel",
+    "signature": "export declare function jobTracing(options?: JobTracingOptions): JobTracingInstrument;",
+    "doc": "/**\n * The queue instrument. Span names are `send <job name>` (kind producer) and `process <job name>` (kind\n * consumer), with `messaging.system = \"nifra.jobs\"`, `messaging.operation.type`/`.name`,\n * `messaging.destination.name` (the job name) and `messaging.message.id`. A process span also carries\n * `nifra.job.attempt` and `nifra.job.outcome`; an attempt that failed is an error span, and one that\n * dead-lettered the job adds `nifra.job.dead_lettered = true`. Error text is never exported.\n *\n * The stored traceparent is untrusted: a malformed one starts the process span as a new trace. The\n * sampled flag travels with it.\n */"
+  },
+  {
+    "name": "JobTracingEnqueueInfo",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface JobTracingEnqueueInfo {\n    readonly name: string;\n    readonly traceparent: string | undefined;\n}",
+    "doc": "/** `JobEnqueueInfo` from `@nifrajs/jobs`, declared structurally so this package does not depend on it. */"
+  },
+  {
+    "name": "JobTracingInstrument",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface JobTracingInstrument {\n    enqueue(info: JobTracingEnqueueInfo, next: (scope?: {\n        readonly traceparent?: string;\n    }) => Promise<string>): Promise<string>;\n    run(info: JobTracingRunInfo, next: (scope?: {\n        readonly trace?: ObservationContext;\n    }) => Promise<string>): Promise<string>;\n}",
+    "doc": "/** Structurally a `QueueInstrument` from `@nifrajs/jobs`: pass it as `createQueue({ instrument })`. */"
+  },
+  {
+    "name": "JobTracingOptions",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface JobTracingOptions {\n    readonly exporter?: ObservationAdapter;\n    readonly adapters?: readonly ObservationAdapter[];\n    /**\n     * Runs each attempt with its process span active in an ambient context. Pass `otelBridge().scope`\n     * from `@nifrajs/otel/sdk-bridge` so OpenTelemetry instrumentations (pg, undici) inside the handler\n     * nest under the process span.\n     */\n    readonly scope?: ObservationScope;\n}"
+  },
+  {
+    "name": "JobTracingRunInfo",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface JobTracingRunInfo {\n    readonly id: string;\n    readonly name: string;\n    readonly attempt: number;\n    readonly maxAttempts: number;\n    readonly traceparent: string | undefined;\n}",
+    "doc": "/** `JobRunInfo` from `@nifrajs/jobs`, declared structurally. */"
   },
   {
     "name": "JobValidationError",
@@ -11383,7 +11521,7 @@
     "name": "MemoryJobStore",
     "kind": "class",
     "package": "@nifrajs/jobs",
-    "signature": "export declare class MemoryJobStore implements JobStore {\n    private readonly jobs;\n    private readonly dead;\n    private seq;\n    private readonly idFor;\n    constructor(options?: {\n        idFor?: () => string;\n    });\n    enqueue(job: {\n        name: string;\n        payload: unknown;\n        runAt: number;\n        maxAttempts: number;\n    }): string;\n    lease(now: number, limit: number, leaseMs: number): StoredJob[];\n    complete(id: string): void;\n    retry(id: string, runAt: number): void;\n    deadLetter(id: string, error: string): void;\n    counts(now?: number): JobCounts;\n    /** The dead-letter queue - inspect/requeue failed jobs (not part of the {@link JobStore} contract). */\n    deadLetters(): DeadRecord[];\n}",
+    "signature": "export declare class MemoryJobStore implements JobStore {\n    private readonly jobs;\n    private readonly dead;\n    private seq;\n    private readonly idFor;\n    constructor(options?: {\n        idFor?: () => string;\n    });\n    enqueue(job: {\n        name: string;\n        payload: unknown;\n        runAt: number;\n        maxAttempts: number;\n        traceparent?: string;\n    }): string;\n    lease(now: number, limit: number, leaseMs: number): StoredJob[];\n    complete(id: string): void;\n    retry(id: string, runAt: number): void;\n    deadLetter(id: string, error: string): void;\n    counts(now?: number): JobCounts;\n    /** The dead-letter queue - inspect/requeue failed jobs (not part of the {@link JobStore} contract). */\n    deadLetters(): DeadRecord[];\n}",
     "doc": "/** Construct an in-memory job store. `idFor` is injectable for deterministic tests. */"
   },
   {
@@ -12573,7 +12711,7 @@
     "name": "NifraSpan",
     "kind": "interface",
     "package": "@nifrajs/otel",
-    "signature": "export interface NifraSpan {\n    /** 32-hex W3C trace id - shared across every span/service in the trace. */\n    readonly traceId: string;\n    /** 16-hex id of this span. */\n    readonly spanId: string;\n    /** The inbound span's id, if this request continued an upstream trace. */\n    readonly parentSpanId?: string;\n    /** Whether the trace is sampled (the W3C flag). */\n    readonly sampled: boolean;\n    /** Span name - `\"<METHOD> <path>\"`. */\n    readonly name: string;\n    /** Wall-clock start (epoch ms). */\n    readonly startTime: number;\n    /** Wall-clock end (epoch ms) - set on completion. */\n    endTime?: number;\n    /** Duration in ms (monotonic). */\n    durationMs?: number;\n    status: SpanStatus;\n    /** OTel-semantic-convention attributes. */\n    readonly attributes: Record<string, AttributeValue>;\n    /** Durable/asynchronous parents that are related but are not this span's single trace parent. */\n    readonly links?: readonly ObservationLink[];\n}",
+    "signature": "export interface NifraSpan {\n    /** 32-hex W3C trace id - shared across every span/service in the trace. */\n    readonly traceId: string;\n    /** 16-hex id of this span. */\n    readonly spanId: string;\n    /** The inbound span's id, if this request continued an upstream trace. */\n    readonly parentSpanId?: string;\n    /** Whether the trace is sampled (the W3C flag). */\n    readonly sampled: boolean;\n    /** Span name - `\"<METHOD> <path>\"` for a request. */\n    readonly name: string;\n    /** OTel span kind. Absent means `server`. */\n    readonly kind?: SpanKind;\n    /** Wall-clock start (epoch ms). */\n    readonly startTime: number;\n    /** Wall-clock end (epoch ms) - set on completion. */\n    endTime?: number;\n    /** Duration in ms (monotonic). */\n    durationMs?: number;\n    status: SpanStatus;\n    /** OTel-semantic-convention attributes. */\n    readonly attributes: Record<string, AttributeValue>;\n    /** Durable/asynchronous parents that are related but are not this span's single trace parent. */\n    readonly links?: readonly ObservationLink[];\n}",
     "doc": "/** A completed (or in-flight) server span for one request. */"
   },
   {
@@ -12934,6 +13072,13 @@
     "signature": "export interface ObservationParent {\n    readonly traceId: string;\n    readonly spanId: string;\n    readonly sampled: boolean;\n}"
   },
   {
+    "name": "ObservationScope",
+    "kind": "type",
+    "package": "@nifrajs/otel",
+    "signature": "export type ObservationScope = <T>(trace: ObservationContext, run: () => T) => T;",
+    "doc": "/**\n * Runs `run` with a span active in an ambient context (OpenTelemetry's, for one), so code that only\n * sees that context - a pg or undici instrumentation - nests under the span. `otelBridge().scope` from\n * `@nifrajs/otel/sdk-bridge` is one.\n */"
+  },
+  {
     "name": "OgImageOptions",
     "kind": "interface",
     "package": "@nifrajs/image",
@@ -13140,6 +13285,60 @@
     "package": "@nifrajs/agent-app",
     "signature": "export declare class OrderedEventBuffer {\n    private next;\n    private readonly pending;\n    private readonly maxPending;\n    private droppedCount;\n    /**\n     * @param options.from Last already-delivered seq; the next expected event is `from + 1`. Omit for a\n     *   fresh buffer that adopts the first offered event's seq as its starting point.\n     * @param options.maxPending Out-of-order events held before the buffer skips a gap. Default 256.\n     */\n    constructor(options?: {\n        readonly from?: number;\n        readonly maxPending?: number;\n    });\n    /** Count of events skipped to recover from an unfilled gap. */\n    get dropped(): number;\n    /** Seq the buffer will emit next, or `undefined` before the first event is seen. */\n    get expected(): number | undefined;\n    offer(view: AgentEventView): readonly AgentEventView[];\n    private drain;\n}",
     "doc": "/**\n * Orders events by their sequence number and suppresses duplicates before they reach the UI.\n *\n * A live SSE stream can redeliver an event after a reconnect, or hand two frames to a consumer out of\n * order. {@link offer} returns only the events that are newly deliverable, in sequence order. Events\n * whose seq was already delivered, or is already buffered, are dropped as duplicates. A bounded\n * `maxPending` guards against an unbounded hole: once more than `maxPending` out-of-order events are\n * held waiting for a missing seq, the buffer skips the gap to the lowest pending seq and records the\n * skipped count on {@link dropped}, so a permanently lost event cannot stall the view forever.\n */"
+  },
+  {
+    "name": "OtelApi",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface OtelApi {\n    readonly ROOT_CONTEXT: unknown;\n    readonly context: {\n        active(): unknown;\n        with<A extends unknown[], F extends (...args: A) => ReturnType<F>>(context: unknown, fn: F, thisArg?: ThisParameterType<F>, ...args: A): ReturnType<F>;\n    };\n    readonly trace: {\n        setSpan(context: unknown, span: unknown): unknown;\n        getSpan(context: unknown): {\n            spanContext(): OtelSpanContext;\n        } | undefined;\n        getTracer(name: string, version?: string): OtelTracer;\n    };\n}",
+    "doc": "/** The part of `@opentelemetry/api` the bridge uses: pass `import * as api from \"@opentelemetry/api\"`. */"
+  },
+  {
+    "name": "otelBridge",
+    "kind": "function",
+    "package": "@nifrajs/otel",
+    "signature": "export declare function otelBridge(options: OtelBridgeOptions): OtelBridge;",
+    "doc": "/** Build the bridge. See {@link OtelBridge} for what each part does. */"
+  },
+  {
+    "name": "OtelBridge",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface OtelBridge {\n    /**\n     * Mirrors nifra spans into SDK spans: name, kind, parent, links, attributes, status and timing. Add it\n     * to `tracing({ adapters })` and to `cacheTracing` / `jobTracing` / `traceEventConsumer`.\n     */\n    readonly adapter: ObservationAdapter;\n    /**\n     * `app.use(bridge.plugin)`: each subsequent route runs with its request span active in the OTel\n     * context, so the SDK's own instrumentations (pg, mysql2, ioredis, undici, prisma) nest under it.\n     * Costs one `around()` frame per request, and only when installed.\n     */\n    readonly plugin: IdentityPlugin;\n    /** Runs code with a nifra span active in the OTel context: `jobTracing({ scope: bridge.scope })`. */\n    readonly scope: ObservationScope;\n    /**\n     * Pass as the SDK provider's `idGenerator` so mirrored spans keep nifra's exact trace and span ids:\n     * the `traceparent` nifra forwards downstream and the trace context a job stores then name real\n     * spans. Outside a mirrored start it generates random ids.\n     */\n    readonly idGenerator: OtelIdGenerator;\n}"
+  },
+  {
+    "name": "OtelBridgeOptions",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface OtelBridgeOptions {\n    /** The app's own `@opentelemetry/api` module. */\n    readonly api: OtelApi;\n    /** Tracer that mirrored spans start on. Default `api.trace.getTracer(\"@nifrajs/otel\")`, at first use. */\n    readonly tracer?: OtelTracer;\n    /** Maximum mirrored spans in flight at once; the oldest is ended past it. Default 10,000. */\n    readonly maxActive?: number;\n    /** Opportunistically end mirrored spans in flight longer than this many ms. Default 5 min. */\n    readonly maxActiveAgeMs?: number;\n    /** Injectable wall clock for deterministic retention tests. */\n    readonly now?: () => number;\n    /**\n     * Called once when the SDK gave a mirrored span different ids from the nifra span, which means\n     * `idGenerator` is not wired. Default: one `console.warn`.\n     */\n    readonly onIdMismatch?: () => void;\n}"
+  },
+  {
+    "name": "OtelIdGenerator",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface OtelIdGenerator {\n    generateTraceId(): string;\n    generateSpanId(): string;\n}",
+    "doc": "/** The SDK's `IdGenerator`. */"
+  },
+  {
+    "name": "OtelSpan",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface OtelSpan {\n    spanContext(): OtelSpanContext;\n    setAttributes(attributes: Record<string, AttributeValue>): unknown;\n    setStatus(status: {\n        code: number;\n    }): unknown;\n    end(endTime?: number): void;\n    isRecording(): boolean;\n}",
+    "doc": "/** The part of an OTel `Span` the bridge uses. Every `Span` from `@opentelemetry/api` has it. */"
+  },
+  {
+    "name": "OtelSpanContext",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface OtelSpanContext {\n    readonly traceId: string;\n    readonly spanId: string;\n    readonly traceFlags: number;\n    readonly isRemote?: boolean;\n}",
+    "doc": "/** The OTel `SpanContext` shape. */"
+  },
+  {
+    "name": "OtelTracer",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface OtelTracer {\n    startSpan(name: string, options?: {\n        kind?: number;\n        startTime?: number;\n        attributes?: Record<string, AttributeValue>;\n        links?: Array<{\n            context: OtelSpanContext;\n            attributes?: Record<string, AttributeValue>;\n        }>;\n    }, context?: unknown): OtelSpan;\n}",
+    "doc": "/** The part of an OTel `Tracer` the bridge uses. */"
   },
   {
     "name": "otlpExporter",
@@ -14632,10 +14831,17 @@
     "doc": "/** Queue health counters. A straight passthrough of `JobStore.counts()` - counters are safe. */"
   },
   {
+    "name": "QueueInstrument",
+    "kind": "interface",
+    "package": "@nifrajs/jobs",
+    "signature": "export interface QueueInstrument {\n    /**\n     * Wraps one enqueue (payload validation + the store write). `next({ traceparent })` stores that trace\n     * context with the job instead of the producer's - the producer span's own context, so the run can\n     * be its child - and resolves to the job id.\n     */\n    enqueue?(info: JobEnqueueInfo, next: (scope?: {\n        readonly traceparent?: string;\n    }) => Promise<string>): Promise<unknown>;\n    /**\n     * Wraps one attempt. `next({ trace })` runs the handler with `ctx.trace` set, settles the job in the\n     * store, and resolves to the outcome; it rejects only when the store itself fails.\n     */\n    run?(info: JobRunInfo, next: (scope?: {\n        readonly trace?: JobTraceContext;\n    }) => Promise<JobRunOutcome>): Promise<unknown>;\n}",
+    "doc": "/**\n * Around-hooks for tracing (or timing) the queue - the seam `jobTracing()` from `@nifrajs/otel/jobs`\n * plugs into. Each hook calls `next` once and returns what it resolves to. A hook that throws, or never\n * calls `next`, cannot change behavior: the work still runs, uninstrumented.\n */"
+  },
+  {
     "name": "QueueOptions",
     "kind": "interface",
     "package": "@nifrajs/jobs",
-    "signature": "export interface QueueOptions {\n    /** Persistence. Default: a fresh {@link MemoryJobStore} (single-process). */\n    readonly store?: JobStore;\n    /** Called when a handler throws (before retry/dead-letter). Default: `console.error`. A throwing handler here is swallowed. */\n    readonly onError?: (error: unknown, jobName: string) => void;\n    /** Injectable clock (tests). Default `() => Date.now()`. */\n    readonly now?: () => number;\n    /** Default attempts for jobs that don't set `retries`. Default 3. */\n    readonly defaultAttempts?: number;\n    /** Default backoff for jobs that don't set one. Default {@link exponentialBackoff}. */\n    readonly backoff?: Backoff;\n    /**\n     * Make `enqueue` produce capability evidence:\n     *\n     *   import { useCapability } from \"@nifrajs/core/capabilities\"\n     *   const queue = createQueue({ beacon: useCapability })\n     *   await indexNote.for(c).enqueue({ id })\n     */\n    readonly beacon?: CapabilityBeacon;\n    /** Override the announced token. Default `jobs.enqueue`. */\n    readonly capabilities?: {\n        readonly enqueue?: string;\n    };\n}"
+    "signature": "export interface QueueOptions {\n    /** Persistence. Default: a fresh {@link MemoryJobStore} (single-process). */\n    readonly store?: JobStore;\n    /** Called when a handler throws (before retry/dead-letter). Default: `console.error`. A throwing handler here is swallowed. */\n    readonly onError?: (error: unknown, jobName: string) => void;\n    /** Injectable clock (tests). Default `() => Date.now()`. */\n    readonly now?: () => number;\n    /** Default attempts for jobs that don't set `retries`. Default 3. */\n    readonly defaultAttempts?: number;\n    /** Default backoff for jobs that don't set one. Default {@link exponentialBackoff}. */\n    readonly backoff?: Backoff;\n    /**\n     * Make `enqueue` produce capability evidence:\n     *\n     *   import { useCapability } from \"@nifrajs/core/capabilities\"\n     *   const queue = createQueue({ beacon: useCapability })\n     *   await indexNote.for(c).enqueue({ id })\n     */\n    readonly beacon?: CapabilityBeacon;\n    /** Override the announced token. Default `jobs.enqueue`. */\n    readonly capabilities?: {\n        readonly enqueue?: string;\n    };\n    /**\n     * Around-hooks for each enqueue and each attempt - pass `jobTracing()` from `@nifrajs/otel/jobs` for a\n     * `send <job>` producer span and a `process <job>` consumer span per attempt.\n     */\n    readonly instrument?: QueueInstrument;\n}"
   },
   {
     "name": "R2BucketLike",
@@ -19085,6 +19291,13 @@
     "doc": "/** Reads a source file's text, or returns undefined if it cannot (missing, binary, permission). */"
   },
   {
+    "name": "SpanKind",
+    "kind": "type",
+    "package": "@nifrajs/otel",
+    "signature": "export type SpanKind = \"server\" | \"client\" | \"producer\" | \"consumer\" | \"internal\";",
+    "doc": "/**\n * The OTel span kind. A span without one is exported as `server`, the kind of the request spans that\n * predate this field.\n */"
+  },
+  {
     "name": "SpanStatus",
     "kind": "type",
     "package": "@nifrajs/otel",
@@ -19400,7 +19613,7 @@
     "name": "StartObservation",
     "kind": "interface",
     "package": "@nifrajs/otel",
-    "signature": "export interface StartObservation {\n    readonly name: string;\n    /** Explicit parent. `null` forces a root span; `undefined` falls back to `traceparent`. */\n    readonly parent?: ObservationParent | null;\n    /** Inbound W3C header used when `parent` is undefined. */\n    readonly traceparent?: string | null;\n    readonly attributes?: Readonly<Record<string, AttributeValue>>;\n    /** Non-parent causal relationships, for example an outbox event that resumed this workflow. */\n    readonly links?: readonly ObservationLink[];\n}"
+    "signature": "export interface StartObservation {\n    readonly name: string;\n    /** OTel span kind. Omitted, the span exports as `server`. */\n    readonly kind?: SpanKind;\n    /** Explicit parent. `null` forces a root span; `undefined` falls back to `traceparent`. */\n    readonly parent?: ObservationParent | null;\n    /** Inbound W3C header used when `parent` is undefined. */\n    readonly traceparent?: string | null;\n    readonly attributes?: Readonly<Record<string, AttributeValue>>;\n    /** Non-parent causal relationships, for example an outbox event that resumed this workflow. */\n    readonly links?: readonly ObservationLink[];\n    /** Epoch ms the work began, for work recorded after it settled. Default: now. */\n    readonly startTime?: number;\n}"
   },
   {
     "name": "StaticBoundary",
@@ -19650,7 +19863,7 @@
     "name": "StoredJob",
     "kind": "interface",
     "package": "@nifrajs/jobs",
-    "signature": "export interface StoredJob {\n    readonly id: string;\n    readonly name: string;\n    readonly payload: unknown;\n    readonly attempt: number;\n    readonly maxAttempts: number;\n}",
+    "signature": "export interface StoredJob {\n    readonly id: string;\n    readonly name: string;\n    readonly payload: unknown;\n    readonly attempt: number;\n    readonly maxAttempts: number;\n    /**\n     * The producer's W3C `traceparent`, as given to {@link JobStore.enqueue}. A store that does not\n     * persist it still runs every job; only the link between the producer's and the run's spans is lost.\n     */\n    readonly traceparent?: string;\n}",
     "doc": "/** A job as handed back by {@link JobStore.lease}. `attempt` is the count of PRIOR attempts (0 the first time). */"
   },
   {
@@ -20531,6 +20744,40 @@
     "package": "@nifrajs/otel",
     "signature": "export type TraceContext = ObservationContext;",
     "doc": "/** The trace context exposed on the handler `c.trace` (typed, threaded via `derive`). */"
+  },
+  {
+    "name": "TracedEventConsumer",
+    "kind": "type",
+    "package": "@nifrajs/otel",
+    "signature": "export type TracedEventConsumer<Value> = (input: unknown, parent?: ObservationContext) => Promise<TracedEventResult<Value>>;",
+    "doc": "/** The traced consumer. `parent` is an ambient trace (`c.trace` in a webhook route), if there is one. */"
+  },
+  {
+    "name": "TracedEventEnvelope",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface TracedEventEnvelope {\n    readonly id: string;\n    readonly type: string;\n    readonly version: number;\n    readonly causality?: CausalityContext;\n}",
+    "doc": "/** The envelope fields a consumer span reads. `EventEnvelope` from `@nifrajs/events` has them. */"
+  },
+  {
+    "name": "TracedEventResult",
+    "kind": "type",
+    "package": "@nifrajs/otel",
+    "signature": "export type TracedEventResult<Value> = {\n    readonly success: true;\n    readonly value: Value;\n} | {\n    readonly success: false;\n    readonly issueCount: number;\n};"
+  },
+  {
+    "name": "TracedEventSource",
+    "kind": "interface",
+    "package": "@nifrajs/otel",
+    "signature": "export interface TracedEventSource<Envelope extends TracedEventEnvelope> {\n    /** A contract's own type, used to name the span of an envelope that failed to parse. */\n    readonly type?: string;\n    parse(input: unknown): {\n        readonly success: true;\n        readonly envelope: Envelope;\n    } | {\n        readonly success: false;\n        readonly issues?: readonly unknown[];\n        readonly reason?: string;\n    };\n}",
+    "doc": "/**\n * An event contract or a registry from `@nifrajs/events`, declared structurally: anything whose\n * `parse(input)` never throws and reports success with an envelope, or failure with `issues` (a contract)\n * or a `reason` (a registry).\n */"
+  },
+  {
+    "name": "traceEventConsumer",
+    "kind": "function",
+    "package": "@nifrajs/otel",
+    "signature": "export declare function traceEventConsumer<Envelope extends TracedEventEnvelope, Result>(source: TracedEventSource<Envelope>, handler: (envelope: Envelope, context: EventConsumerContext) => Result, options?: EventTracingOptions): TracedEventConsumer<Awaited<Result>>;",
+    "doc": "/**\n * Wrap an event consumer so each envelope is one `process <type>` span (kind consumer), linked to the\n * producer's span through `causalitySpanLink(envelope.causality)`. With a `parent`, the span is that\n * span's child; otherwise it starts its own trace. Attributes: `nifra.event.type`, `nifra.event.version`,\n * `messaging.message.id` (the envelope id), and the messaging operation.\n *\n * Input that fails to parse never reaches the handler: it becomes an error span carrying only an issue\n * count (and a registry's bounded reason), resolves `{ success: false }`, and exports no payload. A\n * throwing handler ends its span as an error and rejects.\n */"
   },
   {
     "name": "traceHeaders",
