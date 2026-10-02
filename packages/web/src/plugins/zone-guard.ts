@@ -25,10 +25,9 @@ const SOURCE_EXTENSIONS =
 const SOURCE_FILE = new RegExp(`\\.(?:${SOURCE_EXTENSIONS})$`)
 /**
  * A relative or absolute import whose last segment has an extension, other than a source file.
- * Source files are excluded by the FILTER, not declined by the handler: when a `[serve.static]`
- * `onResolve` filter matches an HTML page's `<script src>`, Bun's dev server writes that raw
- * specifier into the page's HMR module table even if the handler declines, so the browser fails with
- * "Failed to load bundled module './entry.tsx'" and the client never boots (Bun 1.3.14 - 1.4.2).
+ * Source files are excluded by the FILTER, not declined by the handler: on Bun's dev server a filter
+ * match alone changes how the import resolves, even when the handler declines (see
+ * `internal/dev-reserved.ts`), and a source file is the onLoad hook's to judge anyway.
  */
 const NON_SOURCE_PATH = new RegExp(
   `^(?:\\.|\\/|[A-Za-z]:[\\\\/])(?![^?#]*\\.(?:${SOURCE_EXTENSIONS})(?:[?#]|$)).*\\.[^./\\\\?#]+(?:[?#].*)?$`,

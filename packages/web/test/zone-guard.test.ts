@@ -245,9 +245,9 @@ describe("zoneGuardPlugin in throw mode (dev)", () => {
     )
   })
 
-  // A path `onResolve` filter that matches the dev probe page's `<script src="./entry.tsx">` makes
-  // Bun's dev server key that page's import by its raw specifier, and the client never boots - even
-  // when the handler declines. The browser-level proof is packages/cli/test/bun-dev-browser-boot.
+  // A path `onResolve` filter that matches the dev probe page's `<script src>` makes Bun's dev server
+  // key that page's import by its raw specifier, and the client never boots - even when the handler
+  // declines. The browser-level proof is packages/cli/test/bun-dev-browser-boot.
   test("no path resolve filter matches a source file, so the dev entry script stays Bun's", () => {
     const filters: RegExp[] = []
     // biome-ignore lint/plugin/requireSafetyCommentForTypeAssertion: the guard's setup calls only onResolve and onLoad, both present

@@ -3,7 +3,7 @@
  *
  * ## Why this file exists at all
  *
- * Bun's dev server bundles an HTML route and rewrites its `<script src="./entry.tsx">` into a
+ * Bun's dev server bundles an HTML route and rewrites its `<script src="./nifra-dev-entry.tsx">` into a
  * content-hashed URL under `/_bun/client/`. That rewrite is the whole point: the hash changes per build,
  * so the URL cannot be predicted or hard-coded.
  *

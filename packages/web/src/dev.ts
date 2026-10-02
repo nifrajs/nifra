@@ -62,6 +62,7 @@ import { createDevSession, type DevAppHooks, type DevSession } from "./dev-sessi
 import { createSsrGraph, type SsrGraph } from "./dev-ssr-graph.ts"
 import { discoverRoutes } from "./fs.ts"
 import { DEFAULT_DEV_PORT, generateClientEntry } from "./index.ts"
+import { DEV_ENTRY_FILE } from "./internal/dev-reserved.ts"
 import { DEV_HMR_ENV, DEV_ROOT_ENV, DEV_ROUTES_ENV } from "./plugins/kit.ts"
 import { servePublicDir } from "./public-dir.ts"
 
@@ -324,7 +325,7 @@ export async function createDevServer(options: DevServerOptions): Promise<DevSer
   const ssrGraph = createSsrGraph({ root })
   ;(await import("bun")).plugin(ssrGraph.plugin)
   const devDir = resolve(root, DEV_DIR)
-  const entryPath = resolve(devDir, "entry.tsx")
+  const entryPath = resolve(devDir, DEV_ENTRY_FILE)
   const htmlPath = resolve(devDir, "entry.html")
   const publicDir = options.publicDir === false ? undefined : (options.publicDir ?? "public")
   // Route dev's `public/` through the SAME handler production uses. Dev previously inherited this

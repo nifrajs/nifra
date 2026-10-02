@@ -15,6 +15,7 @@ import {
   DEV_TOKEN_HEADER,
   readDevServerRecord,
 } from "../src/dev-feed.ts"
+import { DEV_ENTRY_FILE } from "../src/internal/dev-reserved.ts"
 
 // Integration coverage for the Bun-pipeline dev server. The temp app lives INSIDE the workspace so the
 // generated entry's `@nifrajs/web/client` import resolves through node_modules hoisting, exactly as a real
@@ -164,15 +165,15 @@ test("an unchanged app is NOT rebuilt on every request (the query is stable)", a
 
 test("stop() removes the generated dev directory", async () => {
   const dev = await boot()
-  expect(await Bun.file(join(projectRoot, ".nifra-bun", "entry.tsx")).exists()).toBe(true)
+  expect(await Bun.file(join(projectRoot, ".nifra-bun", DEV_ENTRY_FILE)).exists()).toBe(true)
   dev.stop()
   server = undefined
-  expect(await Bun.file(join(projectRoot, ".nifra-bun", "entry.tsx")).exists()).toBe(false)
+  expect(await Bun.file(join(projectRoot, ".nifra-bun", DEV_ENTRY_FILE)).exists()).toBe(false)
 })
 
 test("route additions and removals regenerate the Bun client entry without restart", async () => {
   await boot()
-  const entry = join(projectRoot, ".nifra-bun", "entry.tsx")
+  const entry = join(projectRoot, ".nifra-bun", DEV_ENTRY_FILE)
   const about = join(routesDir, "about.tsx")
   writeFileSync(about, "export default function About() { return null }\n")
 

@@ -188,6 +188,11 @@
       "types": "./dist/fn-state.d.ts",
       "default": "./dist/fn-state.js"
     },
+    "./internal/dev-reserved": {
+      "bun": "./src/internal/dev-reserved.ts",
+      "types": "./dist/internal/dev-reserved.d.ts",
+      "default": "./dist/internal/dev-reserved.js"
+    },
     "./internal/parity": {
       "bun": "./src/internal/parity.ts",
       "types": "./dist/internal/parity.d.ts",

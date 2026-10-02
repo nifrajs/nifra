@@ -7,6 +7,7 @@ import {
   renderBoundaryPluginModule,
   renderDevBunfig,
   serializeBunfig,
+  userServePlugins,
   writeBunDevConfig,
 } from "../src/dev-bun-config.ts"
 import { createFixtureRoot, removeFixtureRoot } from "./fixture-root.ts"
@@ -95,9 +96,9 @@ test("the user's ENTIRE bunfig round-trips - not just the two fields the merge t
   expect(toml).toContain('factory = "h"')
   expect(toml).toContain('"process.env.FLAG" = "true"')
   expect(toml).toContain('registry = "https://registry.example.com"')
-  expect(toml).toContain(
-    'plugins = ["/app/.nifra/dev-bun/boundary-plugin.ts", "bun-plugin-tailwind"]',
-  )
+  // The app's own plugin is composed by the boundary module instead (see userServePlugins).
+  expect(toml).toContain('plugins = ["/app/.nifra/dev-bun/boundary-plugin.ts"]')
+  expect(userServePlugins(user, "/app")).toEqual(["bun-plugin-tailwind"])
   // And the emitted TOML parses back to the same data (plus the plugin merge).
   const reparsed = parseUserBunfig(toml)
   expect((reparsed.jsx as Record<string, unknown>).factory).toBe("h")
@@ -119,9 +120,28 @@ test("the generated plugin module composes the PRODUCTION boundary plugins, not 
   expect(source).toContain('from "@nifrajs/web/plugins/css-modules"')
   expect(source).toContain("serverFnStubPlugin")
   expect(source).toContain("zoneGuardPlugin")
-  expect(source.indexOf("zones.setup(build)")).toBeLessThan(source.indexOf("fn.setup(build)"))
+  expect(source.indexOf("zones.setup(guarded)")).toBeLessThan(source.indexOf("fn.setup(guarded)"))
   expect(source).toContain('cssModulesBunPlugin("dom")')
-  expect(source).toContain("cssModules.setup(build)")
+  expect(source).toContain("cssModules.setup(guarded)")
+})
+
+test("every plugin the generated module composes registers through the reserved-specifier view", () => {
+  const source = renderBoundaryPluginModule("/app/nifra.config.ts", "/app/.nifra/dev-bun", [
+    "/app/plugins/first.ts",
+    "bun-plugin-tailwind",
+  ])
+  expect(source).toContain('from "@nifrajs/web/internal/dev-reserved"')
+  const view = source.indexOf("const guarded = reserveDevSpecifiers(build)")
+  expect(view).toBeGreaterThan(-1)
+  expect(view).toBeLessThan(source.indexOf("zones.setup(guarded)"))
+  expect(source).toContain("for (const p of appPlugins) await p.setup(guarded)")
+  // The app's own bunfig plugins come last, in their order, through the same view.
+  expect(source).toContain(
+    'for (const specifier of ["/app/plugins/first.ts","bun-plugin-tailwind"])',
+  )
+  expect(source.indexOf("appPlugins")).toBeLessThan(source.indexOf("bun-plugin-tailwind"))
+  expect(source).not.toMatch(/\.setup\(build\)/)
+  expect(renderBoundaryPluginModule()).not.toContain("for (const specifier of")
 })
 
 test("the generated plugin module composes the app's own clientPlugins, by relative specifier", () => {
@@ -344,15 +364,19 @@ test("writeBunDevConfig merges the app's own bunfig", async () => {
   try {
     writeFileSync(
       join(root, "bunfig.toml"),
-      ["[serve.static]", 'plugins = ["bun-plugin-tailwind"]'].join("\n"),
+      ["[serve.static]", 'plugins = ["bun-plugin-tailwind", "./plugins/local.ts"]'].join("\n"),
     )
     const { bunfigPath } = await writeBunDevConfig(root)
     const generated = await Bun.file(bunfigPath).text()
-    expect(generated).toContain("boundary-plugin.ts")
-    expect(generated).toContain("bun-plugin-tailwind")
-    // Ours must come first so the boundary is stripped before any user transform runs.
-    expect(generated.indexOf("boundary-plugin.ts")).toBeLessThan(
-      generated.indexOf("bun-plugin-tailwind"),
+    // The bundler is handed the boundary module alone; it composes the app's entries after its own
+    // plugins, so the boundary still runs before any user transform.
+    expect(generated).toContain(
+      `plugins = [${JSON.stringify(join(dirname(bunfigPath), "boundary-plugin.ts"))}]`,
+    )
+    const module = await Bun.file(join(dirname(bunfigPath), "boundary-plugin.ts")).text()
+    // A relative entry is re-rooted at the app, as bunfig would have resolved it from there.
+    expect(module).toContain(
+      JSON.stringify(["bun-plugin-tailwind", resolve(root, "plugins/local.ts")]),
     )
     expect(dirname(bunfigPath)).toBe(resolve(root, ".nifra", "dev-bun"))
   } finally {
