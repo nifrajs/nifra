@@ -398,7 +398,12 @@ test("Vite pages carry the browser-capture script, and its batches reach the fee
       ],
     }),
   )
-  expect(sent.status).toBe(204)
+  // The page gets back what it just reported, for the issues badge.
+  expect(sent.status).toBe(200)
+  const { issues } = await readJson<{ issues: Array<{ code: string; message: string }> }>(sent)
+  expect(issues).toEqual([
+    expect.objectContaining({ code: "NIFRA_UNHANDLED", message: "TypeError: vite page broke" }),
+  ])
   const record = readDevServerRecord(root)
   const { errors } = await readJson<{ errors: Array<{ category: string; page?: string }> }>(
     await fetch(`${origin}${DEV_FEED_PATHS.errors}`, {

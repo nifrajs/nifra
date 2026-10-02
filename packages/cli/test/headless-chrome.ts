@@ -103,7 +103,18 @@ export async function launchChrome(executable: string): Promise<ChromePage> {
   )
   const cleanup = async (): Promise<void> => {
     proc.kill()
-    await proc.exited.catch(() => 0)
+    // A busy machine can leave Chrome ignoring SIGTERM long enough to time a test hook out.
+    const exited = await Promise.race([
+      proc.exited.then(
+        () => true,
+        () => true,
+      ),
+      Bun.sleep(3000).then(() => false),
+    ])
+    if (!exited) {
+      proc.kill("SIGKILL")
+      await proc.exited.catch(() => 0)
+    }
     rmSync(profile, { recursive: true, force: true })
   }
   try {

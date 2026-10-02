@@ -49,6 +49,7 @@ export const DEV_FEED_PATHS = Object.freeze({
   logs: "/__nifra/logs",
   requests: "/__nifra/requests",
   clientEvent: "/__nifra/client-event",
+  indicator: "/__nifra/dev-indicator.js",
 })
 
 /** Request header carrying the agent token from the discovery record. */

@@ -22,9 +22,10 @@ interface Running {
 const start = (
   page = '<!doctype html><html><head><meta charset="utf-8"><title>t</title></head><body>hi</body></html>',
   pageHeaders: Record<string, string> = {},
+  indicator = true,
 ): Running => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "nifra-dev-ingest-")))
-  const session = createDevSession({ root, pipeline: "bun", record: false })
+  const session = createDevSession({ root, pipeline: "bun", record: false, indicator })
   const files = new Map<string, string>()
   const server = Bun.serve({
     port: 0,
@@ -105,7 +106,14 @@ test("pages carry the script first in <head>; its batches land as browser entrie
       { kind: "resource", tag: "script", url: "/missing.js", page: "/" },
     ],
   })
-  expect(sent.status).toBe(204)
+  // The page gets back the errors it just reported, for its in-page indicator.
+  expect(sent.status).toBe(200)
+  const answered = (await sent.json()) as { issues: { code: string; category: string }[] }
+  expect(answered.issues.map((issue) => [issue.code, issue.category])).toEqual([
+    ["NIFRA_UNHANDLED", "browser"],
+    ["NIFRA_UNHANDLED", "browser"],
+    ["NIFRA_UNHANDLED", "browser"],
+  ])
 
   const errors = app.session.feed.errors().errors
   expect(errors.map((entry) => [entry.category, entry.source, entry.diagnostic.name])).toEqual([
@@ -131,7 +139,7 @@ test("pages carry the script first in <head>; its batches land as browser entrie
 test("hydration mismatches are their own category, whether thrown or logged", async () => {
   const app = start()
   const { token } = await pageTokenOf(app)
-  await post(app, {
+  const sent = await post(app, {
     token,
     events: [
       {
@@ -160,6 +168,13 @@ test("hydration mismatches are their own category, whether thrown or logged", as
   expect(hydration.every((entry) => entry.diagnostic.code === "NIFRA_HYDRATION_MISMATCH")).toBe(
     true,
   )
+  // The indicator gets each with the recognised fix and a prompt naming its entry.
+  const { issues } = (await sent.json()) as {
+    issues: { id: string; category: string; fix?: string; prompts: { prompt: string }[] }[]
+  }
+  expect(issues.map((issue) => issue.category)).toEqual(["hydration", "hydration", "hydration"])
+  expect(issues[0]?.fix).toContain("nifra_hydrate")
+  expect(issues[0]?.prompts[0]?.prompt).toContain("Reload the page named under Request")
 })
 
 test("console.error(err) is an error entry too: frameworks report caught errors that way", async () => {
@@ -276,7 +291,60 @@ test("a page whose CSP forbids scripts gets no script; a nonce page gets the scr
   const strict = start(undefined, { "content-security-policy": "script-src 'nonce-abc'" })
   const response = await fetch(`${strict.origin}/`)
   expect(await response.text()).toContain("data-nifra-dev")
-  expect(response.headers.get("content-security-policy")).toMatch(
-    /^script-src 'nonce-abc' 'sha256-[A-Za-z0-9+/=]+'$/,
+  expect(response.headers.get("content-security-policy")).toBe(
+    `script-src 'nonce-abc' ${/'sha256-[A-Za-z0-9+/=]+'/.exec(response.headers.get("content-security-policy") ?? "")?.[0]} ${strict.origin}${DEV_FEED_PATHS.indicator}`,
   )
+
+  // 'strict-dynamic' ignores URL sources and trusts what the trusted script loads, so none is added.
+  const dynamic = start(undefined, {
+    "content-security-policy": "script-src 'nonce-abc' 'strict-dynamic'",
+  })
+  const dynamicPolicy = (await fetch(`${dynamic.origin}/`)).headers.get("content-security-policy")
+  expect(dynamicPolicy).not.toContain(DEV_FEED_PATHS.indicator)
+})
+
+test("the indicator: own errors back, logs alone get 204, and the module is served", async () => {
+  const app = start()
+  const { token } = await pageTokenOf(app)
+  const log = await post(app, {
+    token,
+    events: [{ kind: "console", level: "log", message: "hi", page: "/" }],
+  })
+  expect(log.status).toBe(204)
+
+  const first = await post(app, {
+    token,
+    events: [{ kind: "error", name: "Error", message: "first", stack: "", page: "/" }],
+  })
+  const second = await post(app, {
+    token,
+    events: [{ kind: "error", name: "Error", message: "second", stack: "", page: "/" }],
+  })
+  const [a, b] = (await Promise.all([first.json(), second.json()])) as {
+    issues: { id: string; message: string; prompts: { label: string; prompt: string }[] }[]
+  }[]
+  expect(a?.issues.map((issue) => issue.message)).toEqual(["Error: first"])
+  expect(b?.issues.map((issue) => issue.message)).toEqual(["Error: second"])
+  const prompt = b?.issues[0]?.prompts[0]?.prompt ?? ""
+  expect(prompt).toContain(`entry ${b?.issues[0]?.id} does not come back`)
+  expect(prompt).not.toContain(app.root)
+
+  const module = await fetch(`${app.origin}${DEV_FEED_PATHS.indicator}`)
+  expect(module.status).toBe(200)
+  expect(module.headers.get("content-type")).toContain("text/javascript")
+  expect(await module.text()).toContain("__nifraDevClient")
+})
+
+test("with the indicator off, errors get 204, pages do not name it, and it is not served", async () => {
+  const app = start(undefined, { "content-security-policy": "script-src 'nonce-abc'" }, false)
+  const page = await fetch(`${app.origin}/`)
+  expect(await page.text()).not.toContain('"i":')
+  expect(page.headers.get("content-security-policy")).not.toContain(DEV_FEED_PATHS.indicator)
+  const { token } = await pageTokenOf(app)
+  const sent = await post(app, {
+    token,
+    events: [{ kind: "error", name: "Error", message: "x", stack: "", page: "/" }],
+  })
+  expect(sent.status).toBe(204)
+  expect((await fetch(`${app.origin}${DEV_FEED_PATHS.indicator}`)).status).toBe(404)
 })

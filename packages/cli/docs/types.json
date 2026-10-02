@@ -2630,6 +2630,13 @@
     "doc": "/**\n * Format a client-build rejection for the guard's report. Bun.build rejects with an AggregateError\n * whose message is just \"Bundle failed\" - the actionable part (which file, which import) lives in\n * `.errors`. Surface it, or the guard reports a failure while hiding the reason.\n */"
   },
   {
+    "name": "buildFixPrompt",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function buildFixPrompt(diagnostic: Diagnostic, context: FixPromptContext, option?: FixOption): string;",
+    "doc": "/** The prompt for one way of fixing `diagnostic` (its default `fix` when `option` is left out). */"
+  },
+  {
     "name": "BuildFreshness",
     "kind": "interface",
     "package": "@nifrajs/cli",
@@ -3309,6 +3316,13 @@
     "signature": "export interface CatalogFinding {\n    readonly severity: CatalogCheckSeverity;\n    readonly code: CatalogCheckCode;\n    readonly locale: string;\n    /** The dotted key, when the finding is about one message. */\n    readonly key?: string;\n    readonly message: string;\n}"
   },
   {
+    "name": "catalogFixPrompts",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function catalogFixPrompts(code: string): readonly FixPrompt[];",
+    "doc": "/**\n * The prompts for a catalog code with no failure in hand (the error codes page): the agent looks the\n * newest entry up in the dev feed instead of being given its message and location.\n */"
+  },
+  {
     "name": "CatalogStep",
     "kind": "interface",
     "package": "@nifrajs/coding-agent",
@@ -3713,7 +3727,7 @@
     "name": "classify",
     "kind": "function",
     "package": "@nifrajs/web",
-    "signature": "export declare function classify(name: string, message: string): {\n    code: string;\n    cause?: string;\n    fix?: string;\n    docsAnchor?: string;\n};",
+    "signature": "export declare function classify(name: string, message: string): {\n    code: string;\n    cause?: string;\n    fix?: string;\n    docsAnchor?: string;\n    fixOptions?: readonly FixOption[];\n};",
     "doc": "/** Classify an error name+message against the catalog; falls back to the generic unhandled code. */"
   },
   {
@@ -6287,7 +6301,7 @@
     "name": "DEV_FEED_PATHS",
     "kind": "const",
     "package": "@nifrajs/web",
-    "signature": "export declare const DEV_FEED_PATHS: Readonly<{\n    identity: \"/__nifra/dev\";\n    errors: \"/__nifra/errors\";\n    logs: \"/__nifra/logs\";\n    requests: \"/__nifra/requests\";\n    clientEvent: \"/__nifra/client-event\";\n}>;",
+    "signature": "export declare const DEV_FEED_PATHS: Readonly<{\n    identity: \"/__nifra/dev\";\n    errors: \"/__nifra/errors\";\n    logs: \"/__nifra/logs\";\n    requests: \"/__nifra/requests\";\n    clientEvent: \"/__nifra/client-event\";\n    indicator: \"/__nifra/dev-indicator.js\";\n}>;",
     "doc": "/** The dev server's agent-facing endpoints. All live under `/__nifra/`, which no route can produce. */"
   },
   {
@@ -6504,7 +6518,7 @@
     "name": "DevServerOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface DevServerOptions extends Omit<BuildClientOptions, \"minify\"> {\n    /**\n     * Build the nifra app for the current client entry. `importQuery` changes on every reload - pass it to\n     * `discoverRoutes(routesDir, { importQuery })` so SSR re-imports edited route modules instead of Bun's\n     * cached copies. Pass `dev.onLoaderError` to `createWebApp` so failures an `_error` boundary renders\n     * still reach the dev feed (`nifra errors`).\n     */\n    readonly createApp: (clientEntry: string, importQuery: string, dev: DevAppHooks) => FetchApp | Promise<FetchApp>;\n    /** Directories to watch (default: `[routesDir]`). */\n    readonly watch?: readonly string[];\n    /** Port to listen on (default {@link DEFAULT_DEV_PORT}). */\n    readonly port?: number;\n    /** Directory of user-authored static files served at the root (default `\"public\"`). The SAME\n     * option the production build copies and serves, so dev and prod cannot drift. */\n    readonly publicDir?: string | false;\n    /**\n     * Run the client-leak guards on each change (default `true`).\n     *\n     * `buildClient` is what runs them - server-only code reaching the browser, `node:` builtins in client\n     * code - and Bun's dev server does its own bundling, so nothing would run them otherwise. They are\n     * security guards; a dev loop that stops enforcing them is how a leak reaches a deploy unnoticed. The\n     * pass runs in the background off the hot path, so HMR is never waiting on it, and only reports.\n     */\n    readonly guardLeaks?: boolean;\n    /**\n     * Write `.nifra/dev-server.json` (how `nifra errors`/`nifra logs` and the MCP tools find this server)\n     * and the persisted dev log beside it (default `true`).\n     */\n    readonly record?: boolean;\n}"
+    "signature": "export interface DevServerOptions extends Omit<BuildClientOptions, \"minify\"> {\n    /**\n     * Build the nifra app for the current client entry. `importQuery` changes on every reload - pass it to\n     * `discoverRoutes(routesDir, { importQuery })` so SSR re-imports edited route modules instead of Bun's\n     * cached copies. Pass `dev.onLoaderError` to `createWebApp` so failures an `_error` boundary renders\n     * still reach the dev feed (`nifra errors`).\n     */\n    readonly createApp: (clientEntry: string, importQuery: string, dev: DevAppHooks) => FetchApp | Promise<FetchApp>;\n    /** Directories to watch (default: `[routesDir]`). */\n    readonly watch?: readonly string[];\n    /** Port to listen on (default {@link DEFAULT_DEV_PORT}). */\n    readonly port?: number;\n    /** Directory of user-authored static files served at the root (default `\"public\"`). The SAME\n     * option the production build copies and serves, so dev and prod cannot drift. */\n    readonly publicDir?: string | false;\n    /**\n     * Run the client-leak guards on each change (default `true`).\n     *\n     * `buildClient` is what runs them - server-only code reaching the browser, `node:` builtins in client\n     * code - and Bun's dev server does its own bundling, so nothing would run them otherwise. They are\n     * security guards; a dev loop that stops enforcing them is how a leak reaches a deploy unnoticed. The\n     * pass runs in the background off the hot path, so HMR is never waiting on it, and only reports.\n     */\n    readonly guardLeaks?: boolean;\n    /**\n     * Write `.nifra/dev-server.json` (how `nifra errors`/`nifra logs` and the MCP tools find this server)\n     * and the persisted dev log beside it (default `true`).\n     */\n    readonly record?: boolean;\n    /**\n     * Show the browser errors a dev page reports in a badge on that page, with a Copy prompt button per\n     * fix (default `true`). Off, the errors still reach the feed.\n     */\n    readonly indicator?: boolean;\n}"
   },
   {
     "name": "DevServerRecord",
@@ -6568,7 +6582,7 @@
     "name": "Diagnostic",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface Diagnostic {\n    /** Stable, greppable identifier, e.g. `NIFRA_BACKEND_IN_CLIENT`. `NIFRA_UNHANDLED` when unrecognised. */\n    readonly code: string;\n    readonly name: string;\n    readonly message: string;\n    readonly request?: {\n        readonly method: string;\n        readonly url: string;\n    } | undefined;\n    readonly frames: readonly DiagnosticFrame[];\n    readonly codeframe?: Codeframe | undefined;\n    /** Plain-language \"why this happened\", when the failure is recognised. */\n    readonly cause?: string | undefined;\n    /** Plain-language \"do this\", when the failure is recognised. */\n    readonly fix?: string | undefined;\n    /** Docs section anchor for the code, e.g. `errors#backend-in-client`. */\n    readonly docsAnchor?: string | undefined;\n}",
+    "signature": "export interface Diagnostic {\n    /** Stable, greppable identifier, e.g. `NIFRA_BACKEND_IN_CLIENT`. `NIFRA_UNHANDLED` when unrecognised. */\n    readonly code: string;\n    readonly name: string;\n    readonly message: string;\n    readonly request?: {\n        readonly method: string;\n        readonly url: string;\n    } | undefined;\n    readonly frames: readonly DiagnosticFrame[];\n    readonly codeframe?: Codeframe | undefined;\n    /** Plain-language \"why this happened\", when the failure is recognised. */\n    readonly cause?: string | undefined;\n    /** Plain-language \"do this\", when the failure is recognised. */\n    readonly fix?: string | undefined;\n    /** Docs section anchor for the code, e.g. `errors#backend-in-client`. */\n    readonly docsAnchor?: string | undefined;\n    /** The distinct ways to fix it, when more than one is right; `fix` covers them all in one line. */\n    readonly fixOptions?: readonly FixOption[] | undefined;\n}",
     "doc": "/** The structured failure. Serialisable as-is to JSON for the agent surfaces. */"
   },
   {
@@ -6604,6 +6618,13 @@
     "package": "@nifrajs/web",
     "signature": "export interface DiagnosticFrame {\n    readonly raw: string;\n    readonly file?: string;\n    readonly line?: number;\n    readonly column?: number;\n}",
     "doc": "/** One parsed stack frame. `file`/`line`/`column` are present only when the frame could be located. */"
+  },
+  {
+    "name": "diagnosticHeadline",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function diagnosticHeadline(diagnostic: Diagnostic): string;",
+    "doc": "/** The error's first line as a person reads it: `TypeError: x is undefined`, never the bare message. */"
   },
   {
     "name": "DiagnosticSuggestion",
@@ -8008,6 +8029,39 @@
     "package": "@nifrajs/jobs",
     "signature": "export declare const fixedBackoff: (ms: number) => Backoff;",
     "doc": "/** Fixed delay before every retry. */"
+  },
+  {
+    "name": "FixOption",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface FixOption {\n    readonly label: string;\n    readonly fix: string;\n}",
+    "doc": "/** One labeled way to fix a recognised failure. */"
+  },
+  {
+    "name": "FixPrompt",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface FixPrompt {\n    readonly label: string;\n    readonly prompt: string;\n}"
+  },
+  {
+    "name": "FixPromptContext",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface FixPromptContext {\n    readonly surface: FixPromptSurface;\n    /** Project root: paths under it print relative to it, anything else by its base name only. */\n    readonly root?: string | undefined;\n    /** The dev feed entry the failure was recorded as. */\n    readonly entry?: {\n        readonly id: string;\n        readonly seq: number;\n    } | undefined;\n    readonly requestId?: string | undefined;\n    /** The page a browser failure came from. */\n    readonly page?: string | undefined;\n    /** The feed category (`ssr`, `page`, `api`, `browser`, `hydration`, `build`, ...). */\n    readonly category?: string | undefined;\n}"
+  },
+  {
+    "name": "fixPrompts",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function fixPrompts(diagnostic: Diagnostic, context: FixPromptContext): readonly FixPrompt[];",
+    "doc": "/** One prompt per labeled fix option, or a single prompt when the failure has one fix (or none). */"
+  },
+  {
+    "name": "FixPromptSurface",
+    "kind": "type",
+    "package": "@nifrajs/web",
+    "signature": "export type FixPromptSurface = \"overlay\" | \"indicator\" | \"cli\" | \"docs\";",
+    "doc": "/** Where the prompt is shown; it decides how the agent is told to reproduce and verify. */"
   },
   {
     "name": "FixRecipe",
@@ -14182,6 +14236,13 @@
     "package": "@nifrajs/prompt",
     "signature": "export declare class PromptOutputError extends Error {\n    readonly issues: ReadonlyArray<StandardIssue>;\n    /** The raw model reply that failed, for logging/debugging. */\n    readonly raw: string;\n    constructor(issues: ReadonlyArray<StandardIssue>, \n    /** The raw model reply that failed, for logging/debugging. */\n    raw: string);\n}",
     "doc": "/** The model's reply did not satisfy the output schema (after any heal attempts). */"
+  },
+  {
+    "name": "promptPath",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function promptPath(file: string, root: string | undefined): string;",
+    "doc": "/** A path a reader of the prompt may see: project-relative, package-relative, or a base name. */"
   },
   {
     "name": "PromptRequest",
@@ -21445,7 +21506,7 @@
     "name": "ViteDevServerOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface ViteDevServerOptions {\n    /** Absolute (or cwd-relative) path to the `routes/` dir. */\n    readonly routesDir: string;\n    /** Client runtime module providing `mountRouter` (e.g. `\"@nifrajs/web-react/client\"`). */\n    readonly clientModule: string;\n    /**\n     * Build the nifra app for the given dev client-entry URL.\n     *\n     * `load` resolves a route module through **Vite's** graph (`ssrLoadModule`). Pass it to\n     * `discoverRoutes(routesDir, { load })` so SSR and the client are resolved by the SAME toolchain.\n     * Without it SSR resolves through Bun while the client resolves through Vite - two resolvers, one\n     * process - which is what makes `resolve.dedupe` fail to reach SSR and produces the dual-React\n     * crash. Vite re-evaluates on change, so no `importQuery` cache-buster is needed alongside it.\n     *\n     * Pass `dev.onLoaderError` to `createWebApp` so failures an `_error` boundary renders still reach the\n     * dev feed (`nifra errors`).\n     */\n    readonly createApp: (clientEntry: string, load: (absolutePath: string) => Promise<unknown>, dev: DevAppHooks) => FetchApp | Promise<FetchApp>;\n    /** Vite plugins - inject your framework's official plugin, e.g. `[react()]`. */\n    readonly plugins?: readonly unknown[];\n    /**\n     * Extra `resolve.conditions` prepended ahead of nifra's defaults - some frameworks need their own\n     * (e.g. Solid's `\"solid\"` condition routes `solid-js` to its source/JSX-dev build).\n     */\n    readonly conditions?: readonly string[];\n    /**\n     * Compile-time `define` replacements (e.g. Vue's `__VUE_OPTIONS_API__` flags). Vite already sets\n     * `process.env.NODE_ENV` in dev; this is for framework feature flags the plugin doesn't inject.\n     */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Vite project root (default `process.cwd()`). */\n    readonly root?: string;\n    /** Port (default {@link DEFAULT_DEV_PORT}). */\n    readonly port?: number;\n    /**\n     * Use polling for the file watcher. Native fs events (fsevents/inotify) are unreliable inside\n     * containers, networked filesystems, and some sandboxes - there, HMR silently never fires. Set\n     * `true` (or the env var `CHOKIDAR_USEPOLLING=1`) to poll instead. Default: off (native events).\n     */\n    readonly poll?: boolean;\n    /** Vite public directory. Defaults to `<root>/public`; `false` disables it. */\n    readonly publicDir?: string | false;\n    /** Client-visible environment prefix (default `\"PUBLIC_\"`; empty disables exposure). */\n    readonly publicEnvPrefix?: string;\n    /**\n     * Downgrade the startup identity-parity check from a hard failure to a loud warning (dev only).\n     * The check catches two physical copies of an identity-sensitive package (e.g. React) resolving in\n     * one process, which reliably breaks hydration and framework context. When a duplicate comes from a\n     * linked sibling repo you cannot fix in the moment, set this to keep the dev server running while you\n     * resolve it; `nifra build` never honors it. Wired to `nifra dev --allow-duplicate-identity`.\n     */\n    readonly allowDuplicateIdentity?: boolean;\n    /**\n     * Write `.nifra/dev-server.json` (how `nifra errors`/`nifra logs` and the MCP tools find this server)\n     * and the persisted dev log beside it (default `true`).\n     */\n    readonly record?: boolean;\n}"
+    "signature": "export interface ViteDevServerOptions {\n    /** Absolute (or cwd-relative) path to the `routes/` dir. */\n    readonly routesDir: string;\n    /** Client runtime module providing `mountRouter` (e.g. `\"@nifrajs/web-react/client\"`). */\n    readonly clientModule: string;\n    /**\n     * Build the nifra app for the given dev client-entry URL.\n     *\n     * `load` resolves a route module through **Vite's** graph (`ssrLoadModule`). Pass it to\n     * `discoverRoutes(routesDir, { load })` so SSR and the client are resolved by the SAME toolchain.\n     * Without it SSR resolves through Bun while the client resolves through Vite - two resolvers, one\n     * process - which is what makes `resolve.dedupe` fail to reach SSR and produces the dual-React\n     * crash. Vite re-evaluates on change, so no `importQuery` cache-buster is needed alongside it.\n     *\n     * Pass `dev.onLoaderError` to `createWebApp` so failures an `_error` boundary renders still reach the\n     * dev feed (`nifra errors`).\n     */\n    readonly createApp: (clientEntry: string, load: (absolutePath: string) => Promise<unknown>, dev: DevAppHooks) => FetchApp | Promise<FetchApp>;\n    /** Vite plugins - inject your framework's official plugin, e.g. `[react()]`. */\n    readonly plugins?: readonly unknown[];\n    /**\n     * Extra `resolve.conditions` prepended ahead of nifra's defaults - some frameworks need their own\n     * (e.g. Solid's `\"solid\"` condition routes `solid-js` to its source/JSX-dev build).\n     */\n    readonly conditions?: readonly string[];\n    /**\n     * Compile-time `define` replacements (e.g. Vue's `__VUE_OPTIONS_API__` flags). Vite already sets\n     * `process.env.NODE_ENV` in dev; this is for framework feature flags the plugin doesn't inject.\n     */\n    readonly define?: Readonly<Record<string, string>>;\n    /** Vite project root (default `process.cwd()`). */\n    readonly root?: string;\n    /** Port (default {@link DEFAULT_DEV_PORT}). */\n    readonly port?: number;\n    /**\n     * Use polling for the file watcher. Native fs events (fsevents/inotify) are unreliable inside\n     * containers, networked filesystems, and some sandboxes - there, HMR silently never fires. Set\n     * `true` (or the env var `CHOKIDAR_USEPOLLING=1`) to poll instead. Default: off (native events).\n     */\n    readonly poll?: boolean;\n    /** Vite public directory. Defaults to `<root>/public`; `false` disables it. */\n    readonly publicDir?: string | false;\n    /** Client-visible environment prefix (default `\"PUBLIC_\"`; empty disables exposure). */\n    readonly publicEnvPrefix?: string;\n    /**\n     * Downgrade the startup identity-parity check from a hard failure to a loud warning (dev only).\n     * The check catches two physical copies of an identity-sensitive package (e.g. React) resolving in\n     * one process, which reliably breaks hydration and framework context. When a duplicate comes from a\n     * linked sibling repo you cannot fix in the moment, set this to keep the dev server running while you\n     * resolve it; `nifra build` never honors it. Wired to `nifra dev --allow-duplicate-identity`.\n     */\n    readonly allowDuplicateIdentity?: boolean;\n    /**\n     * Write `.nifra/dev-server.json` (how `nifra errors`/`nifra logs` and the MCP tools find this server)\n     * and the persisted dev log beside it (default `true`).\n     */\n    readonly record?: boolean;\n    /**\n     * Show the browser errors a dev page reports in a badge on that page, with a Copy prompt button per\n     * fix (default `true`). Off, the errors still reach the feed.\n     */\n    readonly indicator?: boolean;\n}"
   },
   {
     "name": "viteLeakGuard",

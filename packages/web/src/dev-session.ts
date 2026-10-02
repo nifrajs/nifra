@@ -32,6 +32,7 @@ import {
   DEV_LOG_LEVELS,
   DEV_REQUEST_ID_HEADER,
   DEV_TOKEN_HEADER,
+  type DevErrorEntry,
   type DevFeed,
   type DevPipeline,
   type DevServerIdentity,
@@ -40,8 +41,10 @@ import {
   runWithDevRequest,
   writeDevServerRecord,
 } from "./dev-feed.ts"
+import { DEV_INDICATOR_MAX_ISSUES, DEV_INDICATOR_SOURCE, type DevIssue } from "./dev-indicator.ts"
 import { createSourceMapper } from "./dev-sourcemap.ts"
-import { isHydrationMismatch, LAST_ERROR_PATH } from "./diagnostic.ts"
+import { fixPrompts, isHydrationMismatch, LAST_ERROR_PATH, promptPath } from "./diagnostic.ts"
+import { diagnosticHeadline } from "./diagnostic-prompt.ts"
 import { timingSafeEqual } from "./internal/timing-safe-equal.ts"
 import { ISR_STATUS_HEADER } from "./isr.ts"
 import { browserDenial, createZoneClassifier } from "./zones.ts"
@@ -55,6 +58,8 @@ export interface DevSessionOptions {
    * running server through the record; turn it off only for a server nothing should discover.
    */
   readonly record?: boolean | undefined
+  /** Show browser errors in an in-page indicator with agent prompts (default true). */
+  readonly indicator?: boolean | undefined
 }
 
 /** What a dev server hands `createApp` so the app reports into the session. */
@@ -132,12 +137,20 @@ const AGENT_PATHS: ReadonlySet<string> = new Set([
   DEV_FEED_PATHS.logs,
   DEV_FEED_PATHS.requests,
   DEV_FEED_PATHS.clientEvent,
+  DEV_FEED_PATHS.indicator,
   LAST_ERROR_PATH,
 ])
 
 /** Whether `pathname` is one the session answers (so an adapter hands it over before its own routing). */
 export function isDevAgentPath(pathname: string): boolean {
   return AGENT_PATHS.has(pathname)
+}
+
+const INDICATOR_HEADERS: Readonly<Record<string, string>> = {
+  "content-type": "text/javascript; charset=utf-8",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff",
+  [DEV_FEED_HEADER]: "true",
 }
 
 const json = (body: unknown, status = 200): Response =>
@@ -258,6 +271,7 @@ async function readCapped(request: Request, max: number): Promise<string | undef
 export function createDevSession(options: DevSessionOptions): DevSession {
   const { root, pipeline } = options
   const record = options.record !== false
+  const indicator = options.indicator !== false
   const zones = createZoneClassifier({ appRoot: root })
   const showSource = (file: string): boolean => browserDenial(zones.classify(file)) === undefined
   const feed = createDevFeed({
@@ -275,10 +289,15 @@ export function createDevSession(options: DevSessionOptions): DevSession {
   let requestCounter = 0
   let stopped = false
 
-  const diagnostics = createDevDiagnostics(
-    root,
-    (err, request) => feed.recordError(err, { category: "ssr", request }).diagnostic,
-  )
+  const diagnostics = createDevDiagnostics(root, (err, request) => {
+    const entry = feed.recordError(err, { category: "ssr", request })
+    return {
+      diagnostic: entry.diagnostic,
+      entry: { id: entry.id, seq: entry.seq },
+      requestId: entry.requestId,
+      category: entry.category,
+    }
+  })
 
   const detachCapture = captureInto(feed)
   const mapper = createSourceMapper({
@@ -327,6 +346,10 @@ export function createDevSession(options: DevSessionOptions): DevSession {
       return new Response(body, { headers })
     }
     if (path === DEV_FEED_PATHS.clientEvent) return ingestClientEvents(request)
+    if (path === DEV_FEED_PATHS.indicator) {
+      if (!indicator) return json({ code: "NIFRA_DEV_NOT_FOUND", message: "indicator off" }, 404)
+      return new Response(DEV_INDICATOR_SOURCE, { headers: INDICATOR_HEADERS })
+    }
     if (request.method !== "GET" && request.method !== "HEAD") {
       return json({ code: "NIFRA_DEV_METHOD", message: "use GET" }, 405)
     }
@@ -384,8 +407,11 @@ export function createDevSession(options: DevSessionOptions): DevSession {
     return granted
   }
 
-  /** A browser error as an entry, its stack mapped back to source. Returns its `Name: message`. */
-  const recordBrowserError = async (error: BrowserError, meta: LogMeta): Promise<string> => {
+  /** A browser error as an entry, its stack mapped back to source. */
+  const recordBrowserError = async (
+    error: BrowserError,
+    meta: LogMeta,
+  ): Promise<{ readonly head: string; readonly entry: DevErrorEntry }> => {
     const head = `${error.name}: ${error.message}`
     // Chrome leads a stack with its message; Firefox and Safari send frames only. Rebuild one shape.
     const mapped = error.stack === "" ? "" : await mapper.mapStack(error.stack)
@@ -396,47 +422,82 @@ export function createDevSession(options: DevSessionOptions): DevSession {
     const rebuilt = new Error(error.message)
     rebuilt.name = error.name
     rebuilt.stack = frames === "" ? head : `${head}\n${frames}`
-    feed.recordError(rebuilt, {
+    const entry = feed.recordError(rebuilt, {
       ...meta,
       category: isHydrationMismatch(error.message) ? "hydration" : "browser",
     })
-    return head
+    return { head, entry }
   }
 
-  const recordClientEvent = async (event: ClientEvent): Promise<void> => {
+  /** Record one browser event; returns the error entry it produced, if any. */
+  const recordClientEvent = async (event: ClientEvent): Promise<DevErrorEntry | undefined> => {
     const meta: LogMeta = { source: "browser", page: event.page, requestId: event.requestId }
     if (event.kind === "console") {
       feed.recordLog(event.level, event.message, meta)
-      if (event.error !== undefined) {
-        await recordBrowserError(event.error, meta)
-        return
-      }
+      if (event.error !== undefined) return (await recordBrowserError(event.error, meta)).entry
       // React 18, Vue and Svelte report a mismatch through the console rather than by throwing.
       if (
         (event.level === "error" || event.level === "warn") &&
         isHydrationMismatch(event.message)
       ) {
-        await recordBrowserError(
+        const recorded = await recordBrowserError(
           { name: "HydrationMismatch", message: event.message, stack: "" },
           meta,
         )
+        return recorded.entry
       }
-      return
+      return undefined
     }
     if (event.kind === "resource") {
-      const head = await recordBrowserError(
+      const { head, entry } = await recordBrowserError(
         { name: "ResourceError", message: `failed to load <${event.tag}> ${event.url}`, stack: "" },
         meta,
       )
       feed.recordLog("error", head, meta)
-      return
+      return entry
     }
-    const head = await recordBrowserError(event, meta)
+    const { head, entry } = await recordBrowserError(event, meta)
     feed.recordLog(
       "error",
       `Uncaught ${event.kind === "rejection" ? "(in promise) " : ""}${head}`,
       meta,
     )
+    return entry
+  }
+
+  /** What the indicator shows for an entry: the redacted diagnostic, paths relative, and prompts. */
+  const issueOf = (entry: DevErrorEntry): DevIssue => {
+    const { diagnostic } = entry
+    const top = diagnostic.codeframe ?? diagnostic.frames.find((f) => f.file !== undefined)
+    return {
+      id: entry.id,
+      seq: entry.seq,
+      count: entry.count,
+      code: diagnostic.code,
+      category: entry.category,
+      message: diagnosticHeadline(diagnostic).slice(0, 2000),
+      page: entry.page,
+      at:
+        top?.file === undefined
+          ? undefined
+          : `${promptPath(top.file, root)}:${top.line ?? 0}${top.column === undefined ? "" : `:${top.column}`}`,
+      codeframe:
+        diagnostic.codeframe === undefined ? undefined : { lines: diagnostic.codeframe.lines },
+      cause: diagnostic.cause,
+      fix: diagnostic.fix,
+      docs:
+        diagnostic.docsAnchor === undefined
+          ? undefined
+          : `https://nifra.dev/docs/${diagnostic.docsAnchor}`,
+      prompts: fixPrompts(diagnostic, {
+        surface: "indicator",
+        root,
+        entry: { id: entry.id, seq: entry.seq },
+        requestId: entry.requestId,
+        page: entry.page,
+        category: entry.category,
+      }),
+    }
   }
 
   const ingestClientEvents = async (request: Request): Promise<Response> => {
@@ -460,7 +521,11 @@ export function createDevSession(options: DevSessionOptions): DevSession {
     if (!timingSafeEqual(batch.token, pageToken))
       return json({ code: "NIFRA_DEV_UNAUTHORIZED", message: "unknown page token" }, 401)
     const granted = admit(batch.events.length)
-    for (const event of batch.events.slice(0, granted)) await recordClientEvent(event)
+    const recorded: DevErrorEntry[] = []
+    for (const event of batch.events.slice(0, granted)) {
+      const entry = await recordClientEvent(event)
+      if (entry !== undefined) recorded.push(entry)
+    }
     if (granted < batch.events.length) {
       const now = performance.now()
       if (now - lastDropNotice > 10_000) {
@@ -471,6 +536,10 @@ export function createDevSession(options: DevSessionOptions): DevSession {
         )
       }
       return json({ code: "NIFRA_DEV_RATE_LIMITED", message: "slow down" }, 429)
+    }
+    // The page gets back only what it just reported, so this answer reveals nothing it did not send.
+    if (indicator && recorded.length > 0) {
+      return json({ issues: recorded.slice(-DEV_INDICATOR_MAX_ISSUES).map(issueOf) })
     }
     return new Response(null, { status: 204, headers: { [DEV_FEED_HEADER]: "true" } })
   }
@@ -483,6 +552,7 @@ export function createDevSession(options: DevSessionOptions): DevSession {
     return {
       ingestPath: DEV_FEED_PATHS.clientEvent,
       pageToken,
+      ...(indicator ? { indicatorPath: DEV_FEED_PATHS.indicator } : {}),
       requestId: requestId ?? undefined,
       documentPath: `${url.pathname}${url.search}`,
     }

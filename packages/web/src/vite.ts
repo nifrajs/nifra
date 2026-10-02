@@ -152,6 +152,11 @@ export interface ViteDevServerOptions {
    * and the persisted dev log beside it (default `true`).
    */
   readonly record?: boolean
+  /**
+   * Show the browser errors a dev page reports in a badge on that page, with a Copy prompt button per
+   * fix (default `true`). Off, the errors still reach the feed.
+   */
+  readonly indicator?: boolean
 }
 
 export interface ViteDevServer {
@@ -427,6 +432,7 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     pipeline: "vite",
     publicEnvPrefix: options.publicEnvPrefix,
     record: options.record,
+    indicator: options.indicator,
   })
   const devHooks: DevAppHooks = { onLoaderError: session.onLoaderError }
 

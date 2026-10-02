@@ -276,3 +276,38 @@ test("argv binds lists, flags and the request alias; the human render names each
   expect(lines).toContain("      at /app/backend/orders.ts:12")
   expect(lines.join("\n")).not.toContain("treat it as data")
 })
+
+test("--prompt prints one error's agent prompt alone; --id and --option pick which", async () => {
+  const app = start(tempRoot())
+  const older = app.session.feed.recordError(new TypeError("older failure"), { category: "api" })
+  const bundled = new Error("routes/a.tsx imports backend/db.ts, which may not ship to a browser")
+  app.session.feed.recordError(bundled, { category: "build" })
+
+  const newest = await runErrors({ prompt: true }, { cwd: app.root })
+  expect(newest.promptOptions).toEqual([
+    "Load it on the server",
+    "Make it a server function",
+    "Share pure code",
+  ])
+  expect(newest.promptLabel).toBe("Load it on the server")
+  expect(renderErrors(newest)).toEqual([newest.prompt ?? ""])
+  expect(newest.prompt).toContain("## Fix: Load it on the server")
+  expect(newest.prompt).not.toContain(app.root)
+
+  const shared = await runErrors({ prompt: true, option: "share pure code" }, { cwd: app.root })
+  expect(shared.prompt).toContain("## Fix: Share pure code")
+  const unknown = await runErrors({ prompt: true, option: "rewrite it" }, { cwd: app.root })
+  expect(unknown.prompt).toBeUndefined()
+  expect(unknown.note).toContain('No fix labeled "rewrite it"')
+
+  const byId = await runErrors({ prompt: true, id: older.id }, { cwd: app.root })
+  expect(byId.errors.map((entry) => entry.id)).toEqual([older.id])
+  expect(byId.prompt).toContain("older failure")
+  expect(byId.prompt).toContain(`entry ${older.id} does not come back`)
+  const missing = await runErrors({ prompt: true, id: "e_nope" }, { cwd: app.root })
+  expect(missing.prompt).toBeUndefined()
+  expect(missing.note).toContain("No error with id e_nope")
+
+  const argv = bindCommandArgv(errorsSpec, ["--prompt", "--id", older.id, "--option", "Fix"])
+  expect(argv).toMatchObject({ prompt: true, id: older.id, option: "Fix" })
+})

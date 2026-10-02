@@ -52,6 +52,11 @@
       "types": "./dist/diagnostic.d.ts",
       "default": "./dist/diagnostic.js"
     },
+    "./diagnostic-prompt": {
+      "bun": "./src/diagnostic-prompt.ts",
+      "types": "./dist/diagnostic-prompt.d.ts",
+      "default": "./dist/diagnostic-prompt.js"
+    },
     "./dev-feed": {
       "bun": "./src/dev-feed.ts",
       "types": "./dist/dev-feed.d.ts",

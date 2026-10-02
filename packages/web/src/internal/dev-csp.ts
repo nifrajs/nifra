@@ -117,12 +117,15 @@ const reaches = (sources: readonly string[], url: URL): boolean =>
  * Without a `hash` the caller nonces the script itself. Returns false when a policy forbids scripts
  * outright (`'none'`): such a page runs no code, so there is nothing to capture and the script stays
  * out. A directive that already admits every inline script is left alone, because adding a hash would
- * switch its `'unsafe-inline'` off.
+ * switch its `'unsafe-inline'` off. `module` is the one script the inline one may load; it is admitted
+ * by its exact URL, except under `'strict-dynamic'`, which ignores URLs and trusts what a trusted
+ * script loads anyway.
  */
 export function admitInlineScript(
   headers: Headers,
   hash: string | undefined,
   connect: URL,
+  module?: URL,
 ): boolean {
   const updates: [string, string][] = []
   let allowed = true
@@ -145,8 +148,16 @@ export function admitInlineScript(
         if (script !== undefined) {
           const sources = script.slice(1)
           if (sources.includes("'none'")) allowed = false
-          else if (hash !== undefined && !sources.includes(hash) && !allowsInline(sources))
-            script.push(hash)
+          else {
+            if (hash !== undefined && !sources.includes(hash) && !allowsInline(sources))
+              script.push(hash)
+            if (
+              module !== undefined &&
+              !sources.includes("'strict-dynamic'") &&
+              !reaches(sources, module)
+            )
+              script.push(module.href)
+          }
         }
         const connectDirective = governing(CONNECT_DIRECTIVES)
         if (connectDirective !== undefined && !reaches(connectDirective.slice(1), connect)) {

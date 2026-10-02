@@ -1,3 +1,4 @@
+import { catalogFixPrompts } from "@nifrajs/web/diagnostic-prompt"
 import { CodeBlock } from "../../shared/highlight"
 import { docsMeta } from "../../shared/meta"
 
@@ -17,6 +18,29 @@ const DIAGNOSTIC = `{
   "docsAnchor": "errors#output-sensitive-field"
 }`
 
+/** The catalog's paste-ready prompts for `code`, one per way to fix it. */
+function FixPrompts({ code }: { code: string }) {
+  const prompts = catalogFixPrompts(code)
+  if (prompts.length === 0) return null
+  return (
+    <details className="fix-prompts">
+      <summary>Prompt for your coding agent</summary>
+      {prompts.map((p) => (
+        <div key={p.label}>
+          {prompts.length > 1 ? (
+            <p>
+              <strong>{p.label}</strong>
+            </p>
+          ) : null}
+          <pre className="code">
+            <code className="language-prompt">{p.prompt}</code>
+          </pre>
+        </div>
+      ))}
+    </details>
+  )
+}
+
 export default function Errors() {
   return (
     <div className="prose">
@@ -29,6 +53,14 @@ export default function Errors() {
         in your source.
       </p>
       <CodeBlock code={DIAGNOSTIC} lang="json" />
+      <p>
+        Each code below comes with a prompt to paste into a coding agent: the cause, one fix, and steps
+        that end in a check the agent runs itself. For a failure in hand, the dev overlay and the issues
+        badge on a dev page offer the same prompt filled in with its message, codeframe and request, and{" "}
+        <code>nifra errors --prompt</code> prints it for the newest entry (<code>--id</code> picks one,{" "}
+        <code>--option</code> picks a fix by its label). The prompt fences everything the running app
+        supplied and names files relative to the project.
+      </p>
 
       <h2>Code that crossed into the browser</h2>
 
@@ -43,6 +75,7 @@ export default function Errors() {
         action) or a <code>*.fn.ts</code> server function, and put code both sides need in{" "}
         <code>shared/</code>. The message names the import chain that pulled it in.
       </p>
+      <FixPrompts code="NIFRA_BACKEND_IN_CLIENT" />
 
       <h3 id="backend-only-in-client">NIFRA_BACKEND_ONLY_IN_CLIENT</h3>
       <p>
@@ -54,6 +87,7 @@ export default function Errors() {
         <code>backend/</code>, reached from the route's <code>x.backend.ts</code> or a{" "}
         <code>*.fn.ts</code> server function.
       </p>
+      <FixPrompts code="NIFRA_BACKEND_ONLY_IN_CLIENT" />
 
       <h3 id="node-builtin-in-client">NIFRA_NODE_BUILTIN_IN_CLIENT</h3>
       <p>
@@ -63,6 +97,7 @@ export default function Errors() {
         <strong>Fix:</strong> move the code that uses it under <code>backend/</code> or into the route's{" "}
         <code>x.backend.ts</code>. The message lists the import chain.
       </p>
+      <FixPrompts code="NIFRA_NODE_BUILTIN_IN_CLIENT" />
 
       <h2>Data the output guard refused</h2>
       <p>
@@ -81,6 +116,7 @@ export default function Errors() {
         If it truly must reach the browser, wrap it in <code>t.declassified(reason, schema)</code>.{" "}
         <code>nifra check</code> reports the same as NF-C031.
       </p>
+      <FixPrompts code="NIFRA_OUTPUT_SENSITIVE_FIELD" />
 
       <h3 id="output-undeclared-deferred">NIFRA_OUTPUT_UNDECLARED_DEFERRED</h3>
       <p>The loader returns a deferred (streamed) value its output schema does not declare.</p>
@@ -88,6 +124,7 @@ export default function Errors() {
         <strong>Fix:</strong> declare the field with <code>t.deferred(schema)</code> in{" "}
         <code>loaderOutput</code>, or stop deferring it.
       </p>
+      <FixPrompts code="NIFRA_OUTPUT_UNDECLARED_DEFERRED" />
 
       <h3 id="output-raw-response">NIFRA_OUTPUT_RAW_RESPONSE</h3>
       <p>
@@ -98,6 +135,7 @@ export default function Errors() {
         <strong>Fix:</strong> return the data itself so the schema projects it, or serve the raw response
         from a <code>backend/app.ts</code> route.
       </p>
+      <FixPrompts code="NIFRA_OUTPUT_RAW_RESPONSE" />
 
       <h3 id="output-schema-mismatch">NIFRA_OUTPUT_SCHEMA_MISMATCH</h3>
       <p>
@@ -109,6 +147,7 @@ export default function Errors() {
         <code>actionOutput</code> at the listed paths, or update the schema if the shape changed on
         purpose.
       </p>
+      <FixPrompts code="NIFRA_OUTPUT_SCHEMA_MISMATCH" />
 
       <h3 id="output-guard">NIFRA_OUTPUT_GUARD</h3>
       <p>Route data failed the output guard that stands between loaders/actions and the browser.</p>
@@ -117,6 +156,7 @@ export default function Errors() {
         Schema that describes exactly the fields the page needs. <code>nifra check</code> flags routes
         without one (NF-C030).
       </p>
+      <FixPrompts code="NIFRA_OUTPUT_GUARD" />
 
       <h2>Rendering and data</h2>
 
@@ -132,6 +172,7 @@ export default function Errors() {
         <code>window</code> or <code>localStorage</code>, invalid HTML nesting. <code>nifra_hydrate</code>{" "}
         reproduces it with a stable diagnostic. See <a href="/docs/hydration">hydration</a>.
       </p>
+      <FixPrompts code="NIFRA_HYDRATION_MISMATCH" />
 
       <h3 id="schema-parse">NIFRA_SCHEMA_PARSE</h3>
       <p>Data crossing a boundary did not match its declared schema.</p>
@@ -139,6 +180,7 @@ export default function Errors() {
         <strong>Fix:</strong> check the value against the schema at the failing boundary (loader input,
         search params, or request body). Parse, don't cast: the shape must match exactly.
       </p>
+      <FixPrompts code="NIFRA_SCHEMA_PARSE" />
     </div>
   )
 }

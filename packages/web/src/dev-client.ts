@@ -20,12 +20,16 @@ export interface DevClientConfig {
   readonly requestId?: string | undefined
   /** The document's path + search, so a client-side navigation away stops claiming that request. */
   readonly documentPath?: string | undefined
+  /** The issues indicator module, loaded on the first error the server answers for; none when off. */
+  readonly indicatorPath?: string | undefined
 }
 
-// ES2017, no dependencies, no globals beyond one idempotence flag. Keep it small: it ships in every dev
-// page, and its hash goes into every CSP that needs one.
+// ES2017, no dependencies, one global: `__nifraDevClient`, the idempotence flag that also queues issues
+// for the indicator module. Keep it small: it ships in every dev page, and its hash goes into every CSP
+// that needs one.
 const CLIENT_SOURCE = String.raw`(function(C){
-if(window.__nifraDevClient)return;window.__nifraDevClient=1;
+if(window.__nifraDevClient)return;var S=window.__nifraDevClient={issues:[]};
+var nonce=document.currentScript&&document.currentScript.nonce,loading=0;
 var q=[],timer=0,inside=0,MSG=8000,STACK=16000;
 function cap(s,n){s=String(s);return s.length>n?s.slice(0,n)+"...":s}
 function where(){return location.pathname+location.search}
@@ -61,7 +65,13 @@ function send(keep){
 clearTimeout(timer);timer=0;
 while(q.length){
 var body=JSON.stringify({token:C.t,events:q.splice(0,50)});
-try{fetch(C.u,{method:"POST",body:body,keepalive:!!keep&&body.length<60000,headers:{"content-type":"application/json"},credentials:"same-origin"}).catch(function(){})}catch(e){}}}
+try{fetch(C.u,{method:"POST",body:body,keepalive:!!keep&&body.length<60000,headers:{"content-type":"application/json"},credentials:"same-origin"}).then(function(r){if(r.status===200&&C.i)return r.json().then(issues)}).catch(function(){})}catch(e){}}}
+function issues(j){
+var list=j&&j.issues;if(!list||!list.length)return;
+if(S.indicator){S.indicator.add(list);return}
+S.issues=S.issues.concat(list);if(loading)return;loading=1;
+var s=document.createElement("script");s.type="module";s.src=C.i;if(nonce)s.nonce=nonce;
+(document.head||document.documentElement).appendChild(s)}
 function push(e){
 e.page=cap(where(),2000);
 if(C.r&&e.page===C.p)e.requestId=C.r;
@@ -105,6 +115,7 @@ const scriptSafe = (json: string): string =>
 /** The script's text (without the `<script>` element). */
 export function devClientSource(config: DevClientConfig): string {
   const settings: Record<string, string> = { u: config.ingestPath, t: config.pageToken }
+  if (config.indicatorPath !== undefined) settings.i = config.indicatorPath
   if (config.requestId !== undefined && config.documentPath !== undefined) {
     settings.r = config.requestId
     settings.p = config.documentPath
@@ -138,7 +149,11 @@ export function devClientTag(
 ): string | undefined {
   const source = devClientSource(config)
   const hash = nonced ? undefined : scriptHash(source)
-  if (!admitInlineScript(headers, hash, new URL(config.ingestPath, origin))) return undefined
+  // A nonced client hands its nonce to the module it loads, so only a hashed one needs the URL admitted.
+  const indicator =
+    nonced || config.indicatorPath === undefined ? undefined : new URL(config.indicatorPath, origin)
+  if (!admitInlineScript(headers, hash, new URL(config.ingestPath, origin), indicator))
+    return undefined
   return `<script data-nifra-dev>${source}</script>`
 }
 

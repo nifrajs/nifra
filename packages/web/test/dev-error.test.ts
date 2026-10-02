@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { createHash } from "node:crypto"
 import { renderDiagnosticOverlay } from "../src/dev-error.ts"
-import type { Diagnostic } from "../src/diagnostic.ts"
+import { buildDiagnostic, type Diagnostic, fixPrompts } from "../src/diagnostic.ts"
 
 describe("renderDiagnosticOverlay", () => {
   test("renders the code badge, the codeframe with its caret, and the cause/fix callout", () => {
@@ -64,5 +65,53 @@ describe("renderDiagnosticOverlay", () => {
     expect(html).not.toContain("<img src=x onerror=alert(1)>")
     expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;")
     expect(html).toContain("/&lt;script&gt;")
+  })
+
+  test("one copy button per labeled fix, each prompt readable without JS", () => {
+    const err = new Error("routes/a.tsx imports backend/db.ts, which may not ship to a browser")
+    err.stack = `${err.name}: ${err.message}\n    at Page (/app/routes/a.tsx:2:3)`
+    const diagnostic = buildDiagnostic(err, { root: "/app", read: () => undefined })
+    const html = renderDiagnosticOverlay(
+      diagnostic,
+      fixPrompts(diagnostic, { surface: "overlay", root: "/app" }),
+    )
+    expect(html.match(/<button type="button" data-prompt="\d">/g)).toHaveLength(3)
+    expect(html).toContain("Copy prompt: Make it a server function")
+    expect(html.match(/<textarea id="nifra-prompt-\d" readonly/g)).toHaveLength(3)
+    expect(html).toContain('aria-live="polite"')
+  })
+
+  test("the overlay's CSP admits exactly its own copy script", () => {
+    const html = renderDiagnosticOverlay(
+      { code: "NIFRA_UNHANDLED", name: "Error", message: "boom", frames: [] },
+      [{ label: "Diagnose", prompt: "p" }],
+    )
+    const script = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1] ?? ""
+    const hash = createHash("sha256").update(script).digest("base64")
+    const csp = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(html)?.[1] ?? ""
+    expect(csp).toContain(`script-src 'sha256-${hash}';`)
+    expect(csp).toContain("default-src 'none'")
+    expect(html.indexOf("Content-Security-Policy")).toBeLessThan(html.indexOf("<script>"))
+  })
+
+  test("a prompt cannot close its textarea or start a script", () => {
+    const html = renderDiagnosticOverlay(
+      { code: "NIFRA_UNHANDLED", name: "Error", message: "boom", frames: [] },
+      [{ label: "<b>x</b>", prompt: "</textarea><script>alert(1)</script>" }],
+    )
+    expect(html).not.toContain("</textarea><script>alert(1)")
+    expect(html).toContain("&lt;/textarea&gt;&lt;script&gt;alert(1)&lt;/script&gt;")
+    expect(html).not.toContain("<b>x</b>")
+  })
+
+  test("no prompts, no copy script", () => {
+    const html = renderDiagnosticOverlay({
+      code: "NIFRA_UNHANDLED",
+      name: "E",
+      message: "m",
+      frames: [],
+    })
+    expect(html).not.toContain("<script>")
+    expect(html).not.toContain("Prompt for your coding agent")
   })
 })

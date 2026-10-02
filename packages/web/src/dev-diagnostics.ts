@@ -9,8 +9,16 @@
  * Vite once shipped without the `/__nifra/last-error` endpoint at all - the drift this module prevents.
  */
 import { renderDiagnosticOverlay } from "./dev-error.ts"
-import { buildDiagnostic, type Diagnostic, LAST_ERROR_PATH } from "./diagnostic.ts"
+import { buildDiagnostic, type Diagnostic, fixPrompts, LAST_ERROR_PATH } from "./diagnostic.ts"
 import { browserDenial, createZoneClassifier } from "./zones.ts"
+
+/** A failure as the dev feed recorded it: the entry and request let its agent prompt name a check. */
+export interface CapturedFailure {
+  readonly diagnostic: Diagnostic
+  readonly entry?: { readonly id: string; readonly seq: number } | undefined
+  readonly requestId?: string | undefined
+  readonly category?: string | undefined
+}
 
 export interface DevDiagnostics {
   /** True when a request path targets the structured last-error endpoint. */
@@ -29,7 +37,10 @@ export interface DevDiagnostics {
  * failure in its feed (redacted), so the overlay, this endpoint and the feed show the same object. */
 export function createDevDiagnostics(
   root: string,
-  build?: (err: unknown, request: { readonly method: string; readonly url: string }) => Diagnostic,
+  build?: (
+    err: unknown,
+    request: { readonly method: string; readonly url: string },
+  ) => CapturedFailure,
 ): DevDiagnostics {
   let last: Diagnostic | undefined
   const zones = createZoneClassifier({ appRoot: root })
@@ -48,8 +59,20 @@ export function createDevDiagnostics(
       },
     }),
     capture: (err, request) => {
-      last = build?.(err, request) ?? buildDiagnostic(err, { root, request, showSource })
-      return renderDiagnosticOverlay(last)
+      const captured = build?.(err, request) ?? {
+        diagnostic: buildDiagnostic(err, { root, request, showSource }),
+      }
+      last = captured.diagnostic
+      return renderDiagnosticOverlay(
+        last,
+        fixPrompts(last, {
+          surface: "overlay",
+          root,
+          entry: captured.entry,
+          requestId: captured.requestId,
+          category: captured.category ?? "ssr",
+        }),
+      )
     },
   }
 }

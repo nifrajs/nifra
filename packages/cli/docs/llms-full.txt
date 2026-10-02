@@ -6365,6 +6365,14 @@ reads it through `nifra_errors`, `nifra_logs` and
 hydration mismatches back to the dev server; the dev server writes `.nifra/dev-server.json`
 so the tools can find it. See [coding agents](/docs/agents).
 
+When a page reports an error, a badge appears in its corner. It lists that page's errors with
+their code, message, codeframe and fix, and a **Copy prompt** button per fix hands
+a coding agent the error, one fix and the steps to check it worked (the
+[error codes](/docs/errors) page has the same prompts). The badge lives in a closed
+shadow root, so the page's styles cannot reach it, and it loads under the page's CSP: by nonce,
+by its exact URL, or through `'strict-dynamic'`. A page that never errors never
+fetches it. Turn it off with `indicator: false`; the errors still reach the feed.
+
 ### Containers & sandboxes
 
 In Docker, networked volumes, and some sandboxes, pass
@@ -8418,6 +8426,13 @@ in your source.
   "docsAnchor": "errors#output-sensitive-field"
 }
 ```
+
+Each code below comes with a prompt to paste into a coding agent: the cause, one fix, and steps
+that end in a check the agent runs itself. For a failure in hand, the dev overlay and the issues
+badge on a dev page offer the same prompt filled in with its message, codeframe and request, and
+`nifra errors --prompt` prints it for the newest entry (`--id` picks one,
+`--option` picks a fix by its label). The prompt fences everything the running app
+supplied and names files relative to the project.
 
 ### Code that crossed into the browser
 

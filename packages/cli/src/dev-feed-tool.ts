@@ -45,6 +45,12 @@ export interface ErrorsInput {
   readonly limit?: number | undefined
   readonly json?: boolean | undefined
   readonly dir?: string | undefined
+  /** Only the entry with this id (stable across repeats of one failure). */
+  readonly id?: string | undefined
+  /** Return a paste-ready agent prompt for one error (the newest, or `id`) instead of the list. */
+  readonly prompt?: boolean | undefined
+  /** Which labeled fix the prompt carries; the first when left out. */
+  readonly option?: string | undefined
 }
 
 export interface LogsInput {
@@ -92,6 +98,10 @@ interface FeedOutput {
 
 export interface ErrorsOutput extends FeedOutput {
   readonly errors: readonly DevErrorEntry[]
+  /** With `prompt`: the prompt for the chosen error and fix, and the fixes it could carry. */
+  readonly prompt?: string | undefined
+  readonly promptLabel?: string | undefined
+  readonly promptOptions?: readonly string[] | undefined
   /** The last SSR failure an unverified (or older) server reports on its token-free endpoint. */
   readonly lastError?: Diagnostic | undefined
 }
@@ -200,6 +210,16 @@ const ERRORS_INPUT_SCHEMA = {
       type: "boolean",
       description: "Default false. Include build errors a later successful build cleared.",
     },
+    id: { type: "string", description: "Only the entry with this id." },
+    prompt: {
+      type: "boolean",
+      description:
+        "Return a paste-ready prompt for one error (the newest, or `id`) for a coding agent: the error, where, the recognised fix and steps that end in a check.",
+    },
+    option: {
+      type: "string",
+      description: "With `prompt`: the label of the fix to use when the error has several.",
+    },
   },
   additionalProperties: false,
 }
@@ -227,6 +247,9 @@ function parseErrorsInput(value: unknown): ErrorsInput {
     limit: count(raw, "limit", MAX_LIMIT),
     json: flag(raw, "json"),
     dir: text(raw, "dir"),
+    id: text(raw, "id"),
+    prompt: flag(raw, "prompt"),
+    option: text(raw, "option"),
   }
 }
 
@@ -391,6 +414,56 @@ function errorsNote(errors: readonly DevErrorEntry[], cursor: number): string {
 }
 
 export async function runErrors(input: ErrorsInput, ctx: CommandCtx): Promise<ErrorsOutput> {
+  // The feed cannot filter by id, so an id lookup reads everything it keeps.
+  const wide = input.id === undefined ? input : { ...input, limit: MAX_LIMIT }
+  const { out, root } = await collectErrors(wide, ctx)
+  const errors =
+    input.id === undefined ? out.errors : out.errors.filter((entry) => entry.id === input.id)
+  if (input.prompt !== true) return input.id === undefined ? out : { ...out, errors }
+  const entry = errors[errors.length - 1]
+  if (entry === undefined) {
+    return {
+      ...out,
+      errors,
+      note:
+        input.id === undefined
+          ? `No error to write a prompt for. ${out.note}`
+          : `No error with id ${input.id}. ${out.note}`,
+    }
+  }
+  const { fixPrompts } = await import("@nifrajs/web/diagnostic")
+  const prompts = fixPrompts(entry.diagnostic, {
+    surface: "cli",
+    root: out.server.status === "live" ? out.server.root : root,
+    entry: { id: entry.id, seq: entry.seq },
+    requestId: entry.requestId,
+    page: entry.page,
+    category: entry.category,
+  })
+  const wanted = input.option?.toLowerCase()
+  const chosen =
+    wanted === undefined ? prompts[0] : prompts.find((p) => p.label.toLowerCase() === wanted)
+  if (chosen === undefined) {
+    return {
+      ...out,
+      errors: [entry],
+      promptOptions: prompts.map((p) => p.label),
+      note: `No fix labeled "${input.option}". Its fixes: ${prompts.map((p) => p.label).join(", ")}.`,
+    }
+  }
+  return {
+    ...out,
+    errors: [entry],
+    prompt: chosen.prompt,
+    promptLabel: chosen.label,
+    promptOptions: prompts.map((p) => p.label),
+  }
+}
+
+async function collectErrors(
+  input: ErrorsInput,
+  ctx: CommandCtx,
+): Promise<{ readonly out: ErrorsOutput; readonly root: string }> {
   const { root, lookup } = await locate(input, ctx)
   if (lookup.status === "live") {
     const { DEV_FEED_PATHS } = await import("@nifrajs/web/dev-feed")
@@ -411,12 +484,15 @@ export async function runErrors(input: ErrorsInput, ctx: CommandCtx): Promise<Er
     if (!isErrorsResult(body))
       throw new Error("the dev server's errors feed answered an unexpected shape")
     return {
-      server: liveStatus(lookup.server),
-      from: "live",
-      cursor: body.cursor,
-      generation: body.generation,
-      errors: body.errors,
-      note: errorsNote(body.errors, body.cursor),
+      root,
+      out: {
+        server: liveStatus(lookup.server),
+        from: "live",
+        cursor: body.cursor,
+        generation: body.generation,
+        errors: body.errors,
+        note: errorsNote(body.errors, body.cursor),
+      },
     }
   }
   const { describeLookup } = await import("./dev-server-client.ts")
@@ -424,14 +500,17 @@ export async function runErrors(input: ErrorsInput, ctx: CommandCtx): Promise<Er
   if (lookup.status === "unverified") {
     const lastError = await lastErrorAt(lookup.origin, ctx.signal)
     return {
-      server: offlineStatus(lookup, undefined),
-      from: "none",
-      errors: [],
-      lastError,
-      note:
-        lastError === undefined
-          ? describe
-          : `${describe} Its last SSR failure is in \`lastError\`. ${UNTRUSTED_NOTE}`,
+      root,
+      out: {
+        server: offlineStatus(lookup, undefined),
+        from: "none",
+        errors: [],
+        lastError,
+        note:
+          lastError === undefined
+            ? describe
+            : `${describe} Its last SSR failure is in \`lastError\`. ${UNTRUSTED_NOTE}`,
+      },
     }
   }
   const persisted = persistedRoot(lookup, root)
@@ -446,10 +525,13 @@ export async function runErrors(input: ErrorsInput, ctx: CommandCtx): Promise<Er
       .slice(-(input.limit ?? 50))
   }
   return {
-    server: offlineStatus(lookup, persisted),
-    from: persisted === undefined ? "none" : "persisted",
-    errors,
-    note: `${offlineNote(lookup, describe, persisted, errors.length, "errors")}${errors.length > 0 ? ` ${UNTRUSTED_NOTE}` : ""}`,
+    root,
+    out: {
+      server: offlineStatus(lookup, persisted),
+      from: persisted === undefined ? "none" : "persisted",
+      errors,
+      note: `${offlineNote(lookup, describe, persisted, errors.length, "errors")}${errors.length > 0 ? ` ${UNTRUSTED_NOTE}` : ""}`,
+    },
   }
 }
 
@@ -544,6 +626,8 @@ function topFrame(diagnostic: Diagnostic): string | undefined {
 }
 
 export function renderErrors(out: ErrorsOutput): string[] {
+  // Printed alone, so `nifra errors --prompt | pbcopy` copies exactly the prompt.
+  if (out.prompt !== undefined) return [out.prompt]
   const lines = [serverLine(out.server)]
   for (const entry of out.errors) {
     const { diagnostic } = entry
@@ -648,6 +732,9 @@ export const errorsSpec: CommandSpec<ErrorsInput, ErrorsOutput> = {
       { name: "request", field: "requestId", type: "string" },
       { name: "include-stale", field: "includeStale", type: "boolean" },
       { name: "include-resolved", field: "includeResolved", type: "boolean" },
+      { name: "id", field: "id", type: "string" },
+      { name: "prompt", field: "prompt", type: "boolean" },
+      { name: "option", field: "option", type: "string" },
       { name: "limit", field: "limit", type: "number" },
       { name: "dir", field: "dir", type: "string" },
       { name: "json", field: "json", type: "boolean" },

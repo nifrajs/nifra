@@ -389,6 +389,15 @@ export default function Dev() {
         hydration mismatches back to the dev server; the dev server writes <code>.nifra/dev-server.json</code>{" "}
         so the tools can find it. See <a href="/docs/agents">coding agents</a>.
       </p>
+      <p>
+        When a page reports an error, a badge appears in its corner. It lists that page's errors with
+        their code, message, codeframe and fix, and a <strong>Copy prompt</strong> button per fix hands
+        a coding agent the error, one fix and the steps to check it worked (the{" "}
+        <a href="/docs/errors">error codes</a> page has the same prompts). The badge lives in a closed
+        shadow root, so the page's styles cannot reach it, and it loads under the page's CSP: by nonce,
+        by its exact URL, or through <code>'strict-dynamic'</code>. A page that never errors never
+        fetches it. Turn it off with <code>indicator: false</code>; the errors still reach the feed.
+      </p>
 
       <h2>Containers & sandboxes</h2>
       <p>

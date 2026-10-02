@@ -427,6 +427,13 @@ const css = `
   }
   .prose h2 { font-size: 25px; margin: 48px 0 12px; letter-spacing: -0.01em; scroll-margin-top: 88px; }
   .prose h3 { scroll-margin-top: 88px; }
+  .fix-prompts { margin: 12px 0 28px; }
+  .fix-prompts > summary {
+    display: inline-flex; align-items: center; min-height: 32px; cursor: pointer;
+    font-size: 14px; font-weight: 600; color: var(--color-accent-ink);
+  }
+  .fix-prompts > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; border-radius: 4px; }
+  .fix-prompts pre.code code { width: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
   .prose p, .prose ul { color: var(--soft); font-size: 15px; line-height: 1.72; }
   .prose ul { padding-left: 20px; }
   .prose li { margin: 8px 0; }

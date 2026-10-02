@@ -5233,7 +5233,7 @@ _No named exports (side-effect entrypoint)._
 - **DEV_ERROR_CATEGORIES** _(const)_ - `DEV_ERROR_CATEGORIES: readonly DevErrorCategory[]`
 - **DEV_FEED_HEADER** _(const)_ - `DEV_FEED_HEADER: "x-nifra-dev-feed"`
   Response header marking a body as dev-feed JSON (so a tool can tell it from an app route).
-- **DEV_FEED_PATHS** _(const)_ - `DEV_FEED_PATHS: Readonly<{ identity: "/__nifra/dev"; errors: "/__nifra/errors"; logs: "/__nifra/logs"; requests: "/__nifra/requests"; clientEvent: "/__nifra/client-event"; }>`
+- **DEV_FEED_PATHS** _(const)_ - `DEV_FEED_PATHS: Readonly<{ identity: "/__nifra/dev"; errors: "/__nifra/errors"; logs: "/__nifra/logs"; requests: "/__nifra/requests"; clientEvent: "/__nifra/client-event"; indicator: "/__nifra/dev-indicator.js"; }>`
   The dev server's agent-facing endpoints. All live under `/__nifra/`, which no route can produce.
 - **DEV_FEED_SCHEMA** _(const)_ - `DEV_FEED_SCHEMA: 1`
   Version of the HTTP + record contract between a dev server and the tools that read it.
@@ -5316,6 +5316,12 @@ _No named exports (side-effect entrypoint)._
   The structured failure. Serialisable as-is to JSON for the agent surfaces.
 - **DiagnosticFrame** _(interface)_ - `interface DiagnosticFrame`
   One parsed stack frame. `file`/`line`/`column` are present only when the frame could be located.
+- **FixOption** _(interface)_ - `interface FixOption`
+  One labeled way to fix a recognised failure.
+- **FixPrompt** _(interface)_ - `interface FixPrompt`
+- **FixPromptContext** _(interface)_ - `interface FixPromptContext`
+- **FixPromptSurface** _(type)_ - `type FixPromptSurface = "overlay" | "indicator" | "cli" | "docs"`
+  Where the prompt is shown; it decides how the agent is told to reproduce and verify.
 - **LAST_ERROR_PATH** _(const)_ - `LAST_ERROR_PATH: "/__nifra/last-error"`
   Shared endpoint name used by both dev pipelines and the agent-facing MCP tools.
 - **SourceReader** _(type)_ - `type SourceReader = (file: string) => string | undefined`
@@ -5324,14 +5330,37 @@ _No named exports (side-effect entrypoint)._
   Build a source codeframe: `radius` lines either side of `line`, each tagged with its 1-based number and whether it is the offending line. Returns undefined if the source can't be read or the line is out of range - a diagnostic without a codeframe is still useful, so this never throws.
 - **buildDiagnostic** _(function)_ - `buildDiagnostic: (err: unknown, options?: BuildDiagnosticOptions) => Diagnostic`
   Resolve any thrown value into a `Diagnostic`: parse the (already source-mapped) stack, locate the top user frame, attach a codeframe, and classify the failure for a cause/fix. The caller is responsible for running Vite's `ssrFixStacktrace` first so the frames point at real source.
-- **classify** _(function)_ - `classify: (name: string, message: string) => { code: string; cause?: string; fix?: string; docsAnchor?: string; }`
+- **buildFixPrompt** _(function)_ - `buildFixPrompt: (diagnostic: Diagnostic, context: FixPromptContext, option?: FixOption) => string`
+  The prompt for one way of fixing `diagnostic` (its default `fix` when `option` is left out).
+- **classify** _(function)_ - `classify: (name: string, message: string) => { code: string; cause?: string; fix?: string; docsAnchor?: string; fixOptions?: readonly FixOption[]; }`
   Classify an error name+message against the catalog; falls back to the generic unhandled code.
+- **fixPrompts** _(function)_ - `fixPrompts: (diagnostic: Diagnostic, context: FixPromptContext) => readonly FixPrompt[]`
+  One prompt per labeled fix option, or a single prompt when the failure has one fix (or none).
 - **isHydrationMismatch** _(function)_ - `isHydrationMismatch: (message: string) => boolean`
   True when `message` is a framework's report of a server/browser render mismatch.
 - **parseFrames** _(function)_ - `parseFrames: (stack: string) => DiagnosticFrame[]`
   Parse a V8/Node stack into structured frames. Handles the `at fn (path:line:col)`, bare `at path:line:col`, and `at async fn (...)` shapes; a frame that doesn't match keeps its raw text with no location (so nothing is silently dropped).
+- **promptPath** _(function)_ - `promptPath: (file: string, root: string | undefined) => string`
+  A path a reader of the prompt may see: project-relative, package-relative, or a base name.
 - **topUserFrame** _(function)_ - `topUserFrame: (frames: readonly DiagnosticFrame[], root: string | undefined) => DiagnosticFrame | undefined`
   The first frame that points at the user's own source - what the codeframe should show.
+
+### `@nifrajs/web/diagnostic-prompt`
+
+- **FixPrompt** _(interface)_ - `interface FixPrompt`
+- **FixPromptContext** _(interface)_ - `interface FixPromptContext`
+- **FixPromptSurface** _(type)_ - `type FixPromptSurface = "overlay" | "indicator" | "cli" | "docs"`
+  Where the prompt is shown; it decides how the agent is told to reproduce and verify.
+- **buildFixPrompt** _(function)_ - `buildFixPrompt: (diagnostic: Diagnostic, context: FixPromptContext, option?: FixOption) => string`
+  The prompt for one way of fixing `diagnostic` (its default `fix` when `option` is left out).
+- **catalogFixPrompts** _(function)_ - `catalogFixPrompts: (code: string) => readonly FixPrompt[]`
+  The prompts for a catalog code with no failure in hand (the error codes page): the agent looks the newest entry up in the dev feed instead of being given its message and location.
+- **diagnosticHeadline** _(function)_ - `diagnosticHeadline: (diagnostic: Diagnostic) => string`
+  The error's first line as a person reads it: `TypeError: x is undefined`, never the bare message.
+- **fixPrompts** _(function)_ - `fixPrompts: (diagnostic: Diagnostic, context: FixPromptContext) => readonly FixPrompt[]`
+  One prompt per labeled fix option, or a single prompt when the failure has one fix (or none).
+- **promptPath** _(function)_ - `promptPath: (file: string, root: string | undefined) => string`
+  A path a reader of the prompt may see: project-relative, package-relative, or a base name.
 
 ### `@nifrajs/web/fn`
 
