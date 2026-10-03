@@ -80,18 +80,20 @@ function nameOf(ts: typeof TSApi, node: TSApi.Node): string | undefined {
 
 /**
  * The operand name to match secret-like patterns against for NF-S002, or undefined when the operand
- * cannot hold runtime secret material. A property access to an uppercase-initial member
+ * cannot hold runtime secret material. A property access to a PascalCase member
  * (`ts.SyntaxKind.PlusToken`, `MediaKind.Audio`) reads an enum/type-constant discriminant, never a
  * secret string or byte buffer, so comparing against it is a kind check a timing oracle does not
- * apply to. Runtime secret fields follow the camelCase convention (`apiToken`, `signature`), so an
- * uppercase-initial member is a safe exclusion. Identifiers stay matched in every case, so an
- * `UPPER_SNAKE` secret constant still surfaces.
+ * apply to. An `UPPER_SNAKE` member is the configuration spelling (`process.env.API_TOKEN`,
+ * `env.WEBHOOK_SECRET`) and stays matched, as does a string-literal element access
+ * (`process.env["API_KEY"]`).
  */
 function secretName(ts: typeof TSApi, node: TSApi.Node): string | undefined {
   if (ts.isPropertyAccessExpression(node)) {
     const member = node.name.text
-    return /^[A-Z]/.test(member) ? undefined : member
+    return /^[A-Z]/.test(member) && !/^[A-Z][A-Z0-9_]*$/.test(member) ? undefined : member
   }
+  if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression))
+    return node.argumentExpression.text
   return nameOf(ts, node)
 }
 

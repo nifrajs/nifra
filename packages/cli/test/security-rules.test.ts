@@ -96,6 +96,22 @@ describe("built-in security rules", () => {
     expect(findings.filter((finding) => finding.code === "NF-S002").map((f) => f.line)).toEqual([3])
   })
 
+  test("NF-S002 flags a secret read from configuration by its UPPER_SNAKE name", async () => {
+    const findings = await scan(
+      "backend/webhook.ts",
+      [
+        "if (header === process.env.API_TOKEN) ok()",
+        "if (header === Bun.env.WEBHOOK_SECRET) ok()",
+        'if (header === process.env["API_KEY"]) ok()',
+        "if (header === env.HMAC_SECRET) ok()",
+        "if (kind === ts.SyntaxKind.PlusToken) ok()",
+      ].join("\n"),
+    )
+    expect(findings.filter((finding) => finding.code === "NF-S002").map((f) => f.line)).toEqual([
+      1, 2, 3, 4,
+    ])
+  })
+
   test("NF-S002 skips comparisons against a numeric literal (length/version, not a secret)", async () => {
     const findings = await scan(
       "manifest.server.ts",
