@@ -17,7 +17,7 @@ import type { ReflectedRoute } from "@nifrajs/core/reflection"
 import type { Manifest } from "@nifrajs/web"
 import { discoverRoutes } from "@nifrajs/web/fs"
 import { normalizeMountPath } from "@nifrajs/web/route-manifest"
-import type { AppSummary } from "./load.ts"
+import type { LoadedApp } from "./load.ts"
 import { chooseBuildPipeline, describePipeline } from "./pipeline-guard.ts"
 
 /** Read the backend's registered routes, if it's a `server()` with a `.routes()` method. */
@@ -273,7 +273,7 @@ export interface ContextFilter {
  * body/query/response shapes + the typed-client `call` form), and omits the conventions block (the agent
  * already has it from the index call).
  */
-export function describeProject(app: AppSummary, filter?: ContextFilter): string {
+export function describeProject(app: LoadedApp, filter?: ContextFilter): string {
   let manifest: Manifest | undefined
   try {
     manifest = discoverRoutes(app.routesDir)
@@ -367,7 +367,7 @@ export function routesToJsonFromEvidence(
 }
 
 export function routesToJson(
-  app: AppSummary,
+  app: LoadedApp,
   pathPrefix?: string,
   evidence?: ProjectEvidenceSnapshot,
 ): RouteJson[] {
@@ -682,7 +682,7 @@ interface MaybeActionModule {
  * text (default) or JSON (`--json`). The page-route load mirrors what SSR would do; a load failure
  * degrades to GET-only for that route (never throws the whole command).
  */
-async function collectRouteTable(app: AppSummary): Promise<RouteTableEntry[]> {
+async function collectRouteTable(app: LoadedApp): Promise<RouteTableEntry[]> {
   let manifest: Manifest | undefined
   try {
     manifest = discoverRoutes(app.routesDir)
@@ -710,7 +710,7 @@ async function collectRouteTable(app: AppSummary): Promise<RouteTableEntry[]> {
 }
 
 export async function describeRoutes(
-  app: AppSummary,
+  app: LoadedApp,
   opts: { readonly json?: boolean } = {},
 ): Promise<string> {
   const rows = await collectRouteTable(app)
@@ -719,7 +719,7 @@ export async function describeRoutes(
 
 /** Gather and render the public route graph for `nifra routes --graph`. */
 export async function describeRouteGraph(
-  app: AppSummary,
+  app: LoadedApp,
   opts: { readonly json?: boolean } = {},
 ): Promise<string> {
   const graph = buildRouteGraph(await collectRouteTable(app))

@@ -610,6 +610,7 @@ export async function runHydrationAssurance(
   const proc = Bun.spawn(
     [process.execPath, entry, root, "--nifra-hydration-child", JSON.stringify(options)],
     {
+      cwd: root,
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",

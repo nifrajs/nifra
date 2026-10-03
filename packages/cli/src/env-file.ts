@@ -15,7 +15,7 @@
  *   - A missing file is an error, never a silent no-op. `--env-file .env.prod` that quietly did nothing
  *     would make the command look like it verified an environment it never loaded.
  */
-import { readFile } from "node:fs/promises"
+import { readdir, readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 
 const ENV_FILE_FLAG = "--env-file"
@@ -118,4 +118,64 @@ export async function applyEnvFiles(
     if (process.env[key] === undefined) process.env[key] = value
   }
   return applied
+}
+
+/**
+ * Remove from `process.env` what Bun loaded from the `.env` files in `cwd` when this process started,
+ * keeping every variable the environment itself set. Returns the names removed. `nifra mcp` runs it
+ * first and, when anything was removed, serves from a `bun --no-env-file` copy of itself given the
+ * result: Bun hands the values it loaded to every subprocess whatever `process.env` says later. The
+ * server is long-lived and runs no project code, so it holds none of the project's `.env`; the project
+ * subprocesses it starts load those files again themselves.
+ *
+ * Bun applies the files under the environment (a variable already set wins) and expands `${NAME}`
+ * references, so Bun itself says which values came from a file: a subprocess with an empty
+ * environment reports what the files hold, and a variable with that value is removed. A value that
+ * differs is asked again with the rest of the environment, for an expansion that read it; one that
+ * still differs was set by the environment, and stays.
+ */
+export async function forgetAutoLoadedEnv(cwd = process.cwd()): Promise<readonly string[]> {
+  const names = await readdir(cwd).catch(() => [])
+  if (!names.some((name) => name.startsWith(".env"))) return []
+  const mode = process.env.NODE_ENV
+  const fromFiles = await envFromFiles(cwd, mode === undefined ? {} : { NODE_ENV: mode })
+  const removed: string[] = []
+  const differing: string[] = []
+  for (const [name, value] of Object.entries(fromFiles)) {
+    if (name === "NODE_ENV" || process.env[name] === undefined) continue
+    if (process.env[name] === value) removed.push(name)
+    else differing.push(name)
+  }
+  if (differing.length > 0) {
+    const rest = { ...process.env }
+    for (const name of differing) delete rest[name]
+    const expanded = await envFromFiles(cwd, rest)
+    for (const name of differing) if (process.env[name] === expanded[name]) removed.push(name)
+  }
+  for (const name of removed) delete process.env[name]
+  return removed
+}
+
+/** What `process.env` holds in a Bun process started in `cwd` with `env`: `env` plus its `.env` files. */
+async function envFromFiles(
+  cwd: string,
+  env: Record<string, string | undefined>,
+): Promise<Record<string, string>> {
+  const proc = Bun.spawn(
+    [process.execPath, "-e", "process.stdout.write(JSON.stringify(process.env))"],
+    { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "ignore" },
+  )
+  const [text] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
+  let value: unknown
+  try {
+    value = JSON.parse(text)
+  } catch {
+    return {}
+  }
+  if (typeof value !== "object" || value === null) return {}
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  )
 }

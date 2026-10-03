@@ -22,7 +22,7 @@ import { type Diagnostic, diagnostic, normalizeSeverity, toSarifLog } from "./di
 import type { DoctorResult } from "./doctor.ts"
 import { type I18nCheckOutput, i18nCheckPassed, renderI18nCheck } from "./i18n-check.ts"
 import type { VerificationLevelsResult } from "./levels-tool.ts"
-import type { AppSummary } from "./load.ts"
+import type { LoadedApp } from "./load.ts"
 import type { ManifestEmitCommandResult } from "./manifest-tool.ts"
 import type { LayoutMigrationResult } from "./migrate-layout.ts"
 import { collectPortResult, type PortResult, renderReport } from "./port.ts"
@@ -75,7 +75,7 @@ export interface CommandCtx {
   readonly progress?: (message: string) => void
   readonly cliVersion?: string
   /** Adapter-provided cache for commands that need the loaded web app. */
-  readonly loadApp?: () => Promise<AppSummary>
+  readonly loadApp?: () => Promise<LoadedApp>
 }
 
 export interface CommandSpec<Input, Output> {
@@ -913,8 +913,7 @@ const I18N_SCHEMA = input<I18nInput>(
   },
 )
 
-/** `nifra mcp` always passes `ctx.loadApp`, so only a CLI process evaluates the config here. */
-function loadAppFor(ctx: CommandCtx): Promise<AppSummary> {
+function loadAppFor(ctx: CommandCtx): Promise<LoadedApp> {
   if (ctx.loadApp !== undefined) return ctx.loadApp()
   return import("./load.ts").then(({ loadApp }) => loadApp(ctx.cwd))
 }

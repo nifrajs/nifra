@@ -7,7 +7,6 @@
  * - `backend/app.ts` - exports `backend`, the app's API (a `@nifrajs/core` server). Optional.
  */
 import { existsSync } from "node:fs"
-import { stat } from "node:fs/promises"
 import { resolve } from "node:path"
 
 export const CONFIG_FILE = "nifra.config.ts"
@@ -38,17 +37,4 @@ export function assertCurrentLayout(cwd: string): void {
 export function adapterFile(cwd: string): string {
   const framework = resolve(cwd, FRAMEWORK_FILE)
   return existsSync(framework) ? framework : resolve(cwd, CONFIG_FILE)
-}
-
-/** `mtime:size` of `path`, or `missing`: what a long-lived process compares to notice an edit. */
-export async function fileFingerprint(path: string): Promise<string> {
-  try {
-    const s = await stat(path)
-    return `${s.mtimeMs}:${s.size}`
-  } catch (err) {
-    if (typeof err === "object" && err !== null && "code" in err && err.code === "ENOENT") {
-      return "missing"
-    }
-    throw err
-  }
 }

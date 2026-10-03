@@ -198,22 +198,6 @@ export interface LoadedApp {
   readonly backend: unknown
 }
 
-/**
- * The part of a {@link LoadedApp} that crosses a process boundary: no render adapter, no plugin
- * objects. `nifra mcp` holds this, because its long-lived process never evaluates `nifra.config.ts`
- * (see `./app-summary.ts`); there each plugin is a `{ name }` descriptor, so only the count and the
- * names are meaningful. A {@link LoadedApp} is one.
- */
-export interface AppSummary {
-  readonly cwd: string
-  readonly configPath: string
-  readonly routesDir: string
-  readonly outDir: string
-  readonly framework: Pick<NifraFramework, "clientModule" | "apiPrefix" | "apiStrip">
-  readonly resolvedPlugins: ResolvedPlugins
-  readonly backend: unknown
-}
-
 export interface LoadAppOptions {
   /** Optional dynamic-import query used by long-lived MCP processes to bust Bun's module cache. */
   readonly importQuery?: string
@@ -238,23 +222,16 @@ export interface NifraMonorepoConfig {
   readonly apps: Readonly<Record<string, string>>
 }
 
-/** `cwd`'s `nifra.config.ts` when `cwd` may be a monorepo root (it has no `routes/`), else `null`. */
-export function monorepoConfigPath(cwd: string): string | null {
-  const configPath = resolve(cwd, CONFIG_FILE)
-  return existsSync(configPath) && !existsSync(resolve(cwd, "routes")) ? configPath : null
-}
-
 /**
  * Detect whether `cwd` is a monorepo root: has `nifra.config.ts` that exports `apps`, but no
  * `routes/` directory (so it's not itself a nifra app). Returns the `apps` map if so, else `null`.
- * Evaluates the config in this process; `nifra mcp` uses `detectMonorepoApps` (`./app-summary.ts`).
  */
 export async function detectMonorepo(
   cwd: string,
   options: LoadAppOptions = {},
 ): Promise<NifraMonorepoConfig | null> {
-  const configPath = monorepoConfigPath(cwd)
-  if (configPath === null) return null
+  const configPath = resolve(cwd, "nifra.config.ts")
+  if (!existsSync(configPath) || existsSync(resolve(cwd, "routes"))) return null
   const mod = (await import(
     options.importQuery ? `${configPath}?${options.importQuery}` : configPath
   ).catch(() => null)) as Partial<NifraMonorepoConfig> | null
@@ -293,12 +270,16 @@ export async function loadBackendApp(
     return loadApp(cwd, "dist", options)
   }
   assertCurrentLayout(cwd)
-  if (!existsSync(resolve(cwd, BACKEND_APP_FILE))) {
+  const backendPath = resolve(cwd, BACKEND_APP_FILE)
+  if (!existsSync(backendPath)) {
     throw new Error(
       `[nifra] no ${BACKEND_APP_FILE} in ${cwd}: the OpenAPI document describes its routes`,
     )
   }
-  return { cwd, backend: await importBackend(cwd, options.importQuery) }
+  const backend = (
+    (await importWithQuery(backendPath, options.importQuery)) as { backend?: unknown }
+  ).backend
+  return { cwd, backend }
 }
 
 /** Discover + validate the app conventions rooted at `cwd`. Prefers `nifra.config.ts`, falls back
@@ -310,33 +291,6 @@ export async function loadApp(
   outDirName = "dist",
   options: LoadAppOptions = {},
 ): Promise<LoadedApp> {
-  const config = await loadAppConfig(cwd, options)
-  return {
-    cwd,
-    configPath: config.configPath,
-    routesDir: resolve(cwd, "routes"),
-    outDir: resolve(cwd, outDirName),
-    framework: config.framework,
-    resolvedPlugins: config.resolvedPlugins,
-    backend: await importBackend(cwd, options.importQuery),
-  }
-}
-
-/** The `backend` export of `cwd`'s `backend/app.ts`, or `undefined` when there is no such file. */
-export async function importBackend(cwd: string, importQuery?: string): Promise<unknown> {
-  const backendPath = resolve(cwd, BACKEND_APP_FILE)
-  if (!existsSync(backendPath)) return undefined
-  return ((await importWithQuery(backendPath, importQuery)) as { backend?: unknown }).backend
-}
-
-/**
- * Which config {@link loadApp} reads in `cwd`, after the checks it makes before importing anything:
- * the current layout, a config file, a `routes/` directory. Throws the errors `loadApp` throws.
- */
-export function resolveAppConfig(cwd: string): {
-  readonly configFile: string
-  readonly configPath: string
-} {
   // nifra.config.ts is the CLI's config (it may import Vite plugins / the SFC compiler, which a
   // multi-target app keeps OUT of the edge-imported backend/framework.ts). backend/framework.ts is
   // the fallback for a simple single-target app that has no edge build.
@@ -357,15 +311,6 @@ export function resolveAppConfig(cwd: string): {
       `[nifra] no routes/ directory in ${cwd} - nifra apps are file-routed under routes/.`,
     )
   }
-  return { configFile, configPath }
-}
-
-/** The config half of {@link loadApp}: imports and validates the config, never `backend/app.ts`. */
-export async function loadAppConfig(
-  cwd: string,
-  options: LoadAppOptions = {},
-): Promise<Pick<LoadedApp, "configPath" | "framework" | "resolvedPlugins">> {
-  const { configFile, configPath } = resolveAppConfig(cwd)
   const fw = (await importWithQuery(configPath, options.importQuery)) as Partial<NifraFramework>
   if (!isAdapter(fw.adapter) || typeof fw.clientModule !== "string") {
     throw new Error(
@@ -411,5 +356,21 @@ export async function loadAppConfig(
   ])
   const resolvedPlugins = { vitePlugins, clientPlugins, serverPlugins }
   assertPipelineSeparation(resolvedPlugins, configFile)
-  return { configPath, framework: { ...fw, clientModule } as NifraFramework, resolvedPlugins }
+
+  let backend: unknown
+  const backendPath = resolve(cwd, BACKEND_APP_FILE)
+  if (existsSync(backendPath)) {
+    backend = ((await importWithQuery(backendPath, options.importQuery)) as { backend?: unknown })
+      .backend
+  }
+
+  return {
+    cwd,
+    configPath,
+    routesDir: resolve(cwd, "routes"),
+    outDir: resolve(cwd, outDirName),
+    framework: { ...fw, clientModule } as NifraFramework,
+    resolvedPlugins,
+    backend,
+  }
 }

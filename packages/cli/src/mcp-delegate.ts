@@ -79,11 +79,32 @@ export async function delegateToProjectCli(options: {
   const cli = await findProjectCli(options.root)
   if (cli === undefined || cli.version === options.version || cli.bin === undefined)
     return undefined
+  return handOffSession([cli.bin, "mcp", ...options.args], {
+    cwd: options.cwd,
+    env: { ...process.env, [MCP_DELEGATED_ENV]: "1" },
+    announce: `[nifra] mcp: this CLI is ${options.version}; the project installs @nifrajs/cli ${cli.version} - serving this session from ${cli.bin}`,
+  })
+}
+
+/**
+ * Hand this stdio session to `command`: the child inherits stdin, stdout and stderr and owns the
+ * whole conversation, and this process forwards signals and waits. Resolves to the child's exit code,
+ * or `undefined` when it could not start. Must run before anything reads stdin.
+ */
+export async function handOffSession(
+  command: readonly string[],
+  options: {
+    readonly cwd: string
+    readonly env: Record<string, string | undefined>
+    /** Written to stderr once the child runs. */
+    readonly announce?: string
+  },
+): Promise<number | undefined> {
   let child: ReturnType<typeof Bun.spawn>
   try {
-    child = Bun.spawn([cli.bin, "mcp", ...options.args], {
+    child = Bun.spawn([...command], {
       cwd: options.cwd,
-      env: { ...process.env, [MCP_DELEGATED_ENV]: "1" },
+      env: options.env,
       stdin: "inherit",
       stdout: "inherit",
       stderr: "inherit",
@@ -92,9 +113,7 @@ export async function delegateToProjectCli(options: {
     return undefined
   }
   // stderr only: stdout is the JSON-RPC channel, and it now belongs to the child.
-  process.stderr.write(
-    `[nifra] mcp: this CLI is ${options.version}; the project installs @nifrajs/cli ${cli.version} - serving this session from ${cli.bin}\n`,
-  )
+  if (options.announce !== undefined) process.stderr.write(`${options.announce}\n`)
   const forward = (signal: NodeJS.Signals) => () => child.kill(signal)
   const onTerm = forward("SIGTERM")
   const onInt = forward("SIGINT")

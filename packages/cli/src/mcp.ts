@@ -43,16 +43,16 @@
  * minimal-surface choice as the rest of nifra. The pure dispatch lives in `./mcp-protocol.ts`; this
  * module is the I/O shell (stdin loop, tool wiring, the run subprocess).
  *
- * This process never evaluates `nifra.config.ts`: it declares `devDatabase` and may read `.env`
- * secrets, so it runs only in short-lived subprocesses (`./app-summary.ts`, `./db-tool.ts`).
+ * This process runs no project code and holds none of the project's `.env`: the config, the backend
+ * and everything they import run in a fresh subprocess per call (`./mcp-isolate.ts`), and a session
+ * whose process Bun started with `.env` values moves to a copy that never loads them (`./cli.ts`).
  */
 
 import { stat } from "node:fs/promises"
 import { resolve } from "node:path"
-import { detectMonorepoApps } from "./app-summary.ts"
 import { loadDocsCorpus } from "./docs-search.ts"
 import { loadExamplesCorpus } from "./examples.ts"
-import type { AppSummary } from "./load.ts"
+import type { LoadedApp } from "./load.ts"
 import { loadMonorepoApps } from "./load.ts"
 import { delegateToProjectCli, refuseVersionSensitive } from "./mcp-delegate.ts"
 import { docsTools } from "./mcp-docs-tools.ts"
@@ -70,11 +70,6 @@ import {
   type McpTool,
   rpcError,
 } from "./mcp-protocol.ts"
-import {
-  extractBackendPrompts,
-  extractBackendResources,
-  extractBackendTools,
-} from "./mcp-reflect.ts"
 import { loadTypesCorpus } from "./types-search.ts"
 
 export {
@@ -113,7 +108,14 @@ export {
 } from "./mcp-io.ts"
 export { clientSupportsRoots, guardTools } from "./mcp-root.ts"
 
-import { createCachedAppLoader, projectTools } from "./mcp-exec.ts"
+import { projectTools } from "./mcp-exec.ts"
+import {
+  createAppSurface,
+  detectMonorepoIsolated,
+  type IsolatedSurface,
+  isolateResources,
+  isolateTools,
+} from "./mcp-isolate.ts"
 
 export type { CachedAppLoaderOptions } from "./mcp-exec.ts"
 export {
@@ -129,7 +131,7 @@ export {
   wsHandler,
 } from "./mcp-exec.ts"
 
-import { namespaceForApp, projectFeatures } from "./mcp-context.ts"
+import { namespaceForApp, projectPrompts, projectResources } from "./mcp-context.ts"
 
 export type { CommandMcpToolOptions } from "./mcp-context.ts"
 export {
@@ -141,35 +143,27 @@ export {
   resolveProjectDir,
 } from "./mcp-context.ts"
 
-async function backendFeatures(
-  loader: () => Promise<AppSummary>,
-  base: McpServerFeatures,
-): Promise<McpServerFeatures> {
-  const resources = [...(base.resources ?? [])]
-  const prompts = [...(base.prompts ?? [])]
-  try {
-    const app = await loader()
-    resources.push(...extractBackendResources(app.backend))
-    prompts.push(...extractBackendPrompts(app.backend))
-  } catch {
-    // Not loadable here (no web config, or the config itself throws). The server still serves.
-  }
-  return { resources, prompts }
-}
-
 /**
- * The MCP tools the app itself declares via `app.tool(...)`, or none when the app cannot be loaded.
- *
- * Same reasoning as {@link backendFeatures}, on the hotter path: this ran on EVERY JSON-RPC message,
- * so an unloadable project failed `initialize` itself with a `-32603` and the session never opened.
- * An app's own tools are an extension of the built-in set, so their absence must not withdraw the
- * built-ins - a backend-only project still gets docs, examples, types, check, doctor, levels and test.
+ * The loader the server builds its tool and resource lists with. It never loads: every handler that
+ * reaches the app runs in a project subprocess (`./mcp-isolate.ts`), so one that tried here fails.
  */
-async function appDeclaredTools(loader: () => Promise<AppSummary>): Promise<McpTool[]> {
-  try {
-    return extractBackendTools((await loader()).backend)
-  } catch {
-    return []
+const noAppInServer = (): Promise<LoadedApp> =>
+  Promise.reject(
+    new Error("[nifra] the MCP server does not load the app; project code runs in a subprocess"),
+  )
+
+/** The project's tools, each forwarded to a project subprocess unless it runs no project code. */
+const isolatedProjectTools = (cwd: string): McpTool[] =>
+  isolateTools(cwd, projectTools(cwd, noAppInServer))
+
+/** The project's resources and prompts, with the ones the app declares. */
+function appFeatures(cwd: string, surface: IsolatedSurface): McpServerFeatures {
+  return {
+    resources: [
+      ...isolateResources(cwd, projectResources(cwd, noAppInServer)),
+      ...surface.resources,
+    ],
+    prompts: [...projectPrompts(), ...surface.prompts],
   }
 }
 
@@ -177,50 +171,42 @@ const ROOTS_REQUEST_ID = "nifra:roots/list"
 const MAX_STDIO_MESSAGE_BYTES = 8 * 1024 * 1024
 const STDIO_ENCODER = new TextEncoder()
 
-interface MonorepoApp {
+interface ProjectApp {
   readonly name: string
   readonly cwd: string
-  readonly loader: () => Promise<AppSummary>
+  readonly surface: () => Promise<IsolatedSurface>
 }
 
 /** Everything derived from the project root - rebuilt wholesale when the root changes (adoption of a
  * client workspace root), so no per-tool state can keep pointing at the old directory. */
 interface ProjectContext {
-  /** A monorepo root's apps, each with the loader every dispatch reuses; `undefined` for one app. */
-  readonly apps: readonly MonorepoApp[] | undefined
+  /** A monorepo root's apps; `undefined` when the root is one app. */
+  readonly apps: readonly ProjectApp[] | undefined
   readonly features: McpServerFeatures
-  readonly loadAppCached: () => Promise<AppSummary>
+  readonly surface: () => Promise<IsolatedSurface>
 }
 
 async function createProjectContext(root: string): Promise<ProjectContext> {
-  const monorepo = await detectMonorepoApps(root)
+  const monorepo = await detectMonorepoIsolated(root)
   if (monorepo) {
     const apps = (await loadMonorepoApps(root, monorepo)).map(
-      ({ name, cwd }): MonorepoApp => ({ name, cwd, loader: createCachedAppLoader(cwd) }),
+      ({ name, cwd }): ProjectApp => ({ name, cwd, surface: createAppSurface(cwd) }),
     )
     const allResources: McpResource[] = []
     const allPrompts: McpPrompt[] = []
-    for (const { name, cwd: appCwd, loader } of apps) {
-      const ns = namespaceForApp(
-        name,
-        [],
-        await backendFeatures(loader, projectFeatures(appCwd, loader)),
-      )
+    for (const { name, cwd: appCwd, surface } of apps) {
+      const ns = namespaceForApp(name, [], appFeatures(appCwd, await surface()))
       allResources.push(...(ns.features.resources ?? []))
       allPrompts.push(...(ns.features.prompts ?? []))
     }
     return {
       apps,
       features: { resources: allResources, prompts: allPrompts },
-      loadAppCached: createCachedAppLoader(root),
+      surface: createAppSurface(root),
     }
   }
-  const loadAppCached = createCachedAppLoader(root)
-  return {
-    apps: undefined,
-    features: await backendFeatures(loadAppCached, projectFeatures(root, loadAppCached)),
-    loadAppCached,
-  }
+  const surface = createAppSurface(root)
+  return { apps: undefined, features: appFeatures(root, await surface()), surface }
 }
 
 /**
@@ -314,10 +300,10 @@ export async function runMcpServer(
     let activeTools: McpTool[]
     if (ctx.apps) {
       const allTools: McpTool[] = []
-      for (const { name, cwd: appCwd, loader } of ctx.apps) {
+      for (const { name, cwd: appCwd, surface } of ctx.apps) {
         const tools = [
-          ...refuseVersionSensitive(projectTools(appCwd, loader), drift),
-          ...(await appDeclaredTools(loader)),
+          ...refuseVersionSensitive(isolatedProjectTools(appCwd), drift),
+          ...(await surface()).tools,
         ]
         const ns = namespaceForApp(name, tools, { resources: [], prompts: [] })
         allTools.push(...ns.tools)
@@ -331,8 +317,8 @@ export async function runMcpServer(
       ]
     } else {
       activeTools = [
-        ...refuseVersionSensitive(projectTools(rootState.root, ctx.loadAppCached), drift),
-        ...(await appDeclaredTools(ctx.loadAppCached)),
+        ...refuseVersionSensitive(isolatedProjectTools(rootState.root), drift),
+        ...(await ctx.surface()).tools,
       ]
     }
     const verdict = await rootVerdict(rootState)

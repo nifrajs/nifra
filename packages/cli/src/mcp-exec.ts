@@ -10,7 +10,7 @@ import { stat } from "node:fs/promises"
 import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Glob } from "bun"
-import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE, fileFingerprint } from "./app-files.ts"
+import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
 import {
   type CommandCatalogEntry,
   type CommandCtx,
@@ -22,7 +22,7 @@ import {
 import { collectContractProof } from "./contract-proof.ts"
 import { loadDocsCorpus } from "./docs-search.ts"
 import { loadExamplesCorpus } from "./examples.ts"
-import type { AppSummary, LoadAppOptions } from "./load.ts"
+import type { LoadAppOptions, LoadedApp } from "./load.ts"
 import {
   type CommandMcpToolOptions,
   dirError,
@@ -103,11 +103,7 @@ export function toMcpTool(
         cwd: target,
         signal: context.signal,
         progress: () => context.reportProgress?.(0.5, 1),
-        // Always set: without it a command loads the app itself, evaluating the config in this process.
-        loadApp:
-          target === cwd
-            ? loadAppCached
-            : () => import("./app-summary.ts").then((mod) => mod.loadAppSummary(target)),
+        ...(target === cwd ? { loadApp: loadAppCached } : {}),
       }
       const output = await spec.run(input, commandContext)
       const value = spec.json?.(output, input) ?? output
@@ -118,7 +114,7 @@ export function toMcpTool(
 
 export function catalogProjectTools(
   cwd: string,
-  loadAppCached: () => Promise<AppSummary> = createCachedAppLoader(cwd),
+  loadAppCached: () => Promise<LoadedApp> = createCachedAppLoader(cwd),
 ): McpTool[] {
   return commandCatalog
     .filter((entry) => entry.transports.includes("mcp"))
@@ -131,7 +127,7 @@ export function catalogProjectTools(
 
 export function projectTools(
   cwd: string,
-  loadAppCached: (outDirName?: string) => Promise<AppSummary> = createCachedAppLoader(cwd),
+  loadAppCached: (outDirName?: string) => Promise<LoadedApp> = createCachedAppLoader(cwd),
 ): McpTool[] {
   const warmRun = createWarmHandler("mcp-run", cwd, "run")
   const warmRender = createWarmHandler("mcp-render", cwd, "render")
@@ -652,6 +648,7 @@ export async function spawnChild(
     return `${label} input exceeded ${CHILD_INPUT_MAX_BYTES} bytes.`
   if (signal?.aborted) return `${label} cancelled${cancellationSuffix(signal)}.`
   const proc = Bun.spawn(["bun", childPath(child), cwd], {
+    cwd,
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -769,6 +766,7 @@ export class WarmWorker {
     private readonly label: string,
   ) {
     this.proc = Bun.spawn(["bun", childPath(child), cwd, "--worker"], {
+      cwd,
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
@@ -1047,7 +1045,7 @@ type LoadAppForCache = (
   cwd: string,
   outDirName?: string,
   options?: LoadAppOptions,
-) => Promise<AppSummary>
+) => Promise<LoadedApp>
 
 export interface CachedAppLoaderOptions {
   readonly loadApp?: LoadAppForCache
@@ -1065,7 +1063,20 @@ function cacheToken(input: string): string {
   return `mcp=${(hash >>> 0).toString(36)}`
 }
 
-async function appFingerprint(cwd: string): Promise<string> {
+async function fileFingerprint(path: string): Promise<string> {
+  try {
+    const s = await stat(path)
+    return `${s.mtimeMs}:${s.size}`
+  } catch (err) {
+    if (err && typeof err === "object" && (err as { code?: string }).code === "ENOENT") {
+      return "missing"
+    }
+    throw err
+  }
+}
+
+/** `mtime:size` of the app's config, framework and backend entry files: what notices an edit. */
+export async function appFingerprint(cwd: string): Promise<string> {
   return (
     await Promise.all(
       APP_FINGERPRINT_FILES.map(
@@ -1075,26 +1086,23 @@ async function appFingerprint(cwd: string): Promise<string> {
   ).join("|")
 }
 
-/**
- * Cache an app's {@link AppSummary} inside one MCP server process, invalidating when config/backend
- * mtimes change. The default loader evaluates the config in a subprocess (`./app-summary.ts`).
- */
+/** Cache LoadedApp inside one MCP server process, invalidating when config/backend mtimes change. */
 export function createCachedAppLoader(
   cwd: string,
   options: CachedAppLoaderOptions = {},
-): (outDirName?: string) => Promise<AppSummary> {
+): (outDirName?: string) => Promise<LoadedApp> {
   const loadAppCached =
     options.loadApp ??
     (async (root: string, outDirName?: string, loadOptions?: LoadAppOptions) => {
-      const mod = await import("./app-summary.ts")
-      return mod.loadAppSummary(root, outDirName, loadOptions)
+      const mod = await import("./load.ts")
+      return mod.loadApp(root, outDirName, loadOptions)
     })
   const fingerprint = options.fingerprint ?? appFingerprint
   let cached:
     | {
         readonly outDirName: string
         readonly fingerprint: string
-        readonly app: AppSummary
+        readonly app: LoadedApp
       }
     | undefined
 

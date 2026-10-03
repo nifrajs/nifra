@@ -24,7 +24,7 @@ import { formatShadowedPages, shadowedPages } from "@nifrajs/web/route-manifest"
 import type { BunPlugin } from "bun"
 import { adapterFile, BACKEND_APP_FILE } from "./app-files.ts"
 import { bindCommandArgv, findCommandSpec, renderCommandCatalogHelp } from "./command-catalog.ts"
-import { applyEnvFiles, takeEnvFileFlags } from "./env-file.ts"
+import { applyEnvFiles, forgetAutoLoadedEnv, takeEnvFileFlags } from "./env-file.ts"
 import { FRAMEWORK_WEB_OPTIONS, type LoadedApp, loadApp, type NifraFramework } from "./load.ts"
 import { chooseBuildPipeline, describePipeline } from "./pipeline-guard.ts"
 import {
@@ -945,8 +945,17 @@ function installReflectionExitHint(): (command: string | undefined) => void {
   }
 }
 
+/** Set on the copy of `nifra mcp` that serves without `.env` files, so it does not restart again. */
+const MCP_WITHOUT_ENV_FILES = "NIFRA_MCP_WITHOUT_ENV_FILES"
+
 async function main(): Promise<void> {
   const { argv: rawArgv, files: envFiles } = takeEnvFileFlags(cliArgv())
+  // `nifra mcp` keeps none of the `.env` values Bun loaded at startup. Decided before the
+  // `--env-file`s below, which the caller names explicitly and which stay.
+  const forgotten =
+    rawArgv[0] === "mcp" && process.env[MCP_WITHOUT_ENV_FILES] !== "1"
+      ? await forgetAutoLoadedEnv()
+      : []
   // Applied before any command runs: a reflecting command imports the app on its first await, and the
   // app reads its environment at module scope, so the variables must already be in place by then.
   if (envFiles.length > 0) await applyEnvFiles(process.cwd(), envFiles)
@@ -969,6 +978,19 @@ async function main(): Promise<void> {
   // `mcp` runs a long-lived stdio server and loads the project lazily per-tool - it must not go through
   // the eager `loadApp` below (which would fail fast on a project that's API-only / not yet built).
   if (command === "mcp") {
+    // Bun passes what it loaded to every subprocess whatever `process.env` says now, so the session
+    // moves to a copy of this process that never loads `.env` files.
+    if (forgotten.length > 0) {
+      const { handOffSession } = await import("./mcp-delegate.ts")
+      const exitCode = await handOffSession(
+        [process.execPath, "--no-env-file", ...process.argv.slice(1)],
+        { cwd: process.cwd(), env: { ...process.env, [MCP_WITHOUT_ENV_FILES]: "1" } },
+      )
+      if (exitCode !== undefined) {
+        process.exitCode = exitCode
+        return
+      }
+    }
     const { runMcpServer } = await import("./mcp.ts")
     // `nifra mcp [dir]` - an explicit project directory pins the root (for clients configured outside
     // the project); otherwise the server resolves it from cwd + the client's MCP roots.
