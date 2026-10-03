@@ -437,7 +437,8 @@ export default function Dev() {
         programmatically, and a runtime <code>Bun.plugin</code> never reaches it (upstream ask:
         oven-sh/bun#36830). So <code>nifra dev --bun</code> generates a config under{" "}
         <code>.nifra/dev-bun/</code> carrying the <em>same</em> production boundary plugins, merges
-        your own bunfig's <code>[serve.static] plugins</code> and <code>preload</code> entries, and
+        your own bunfig's <code>[serve.static] plugins</code> and <code>preload</code> entries, adds
+        the <code>define</code> from <code>nifra.config.ts</code> to the client bundle and to SSR, and
         re-launches itself once with <code>--config=</code> pointing at it. Same stubs as{" "}
         <code>nifra build</code>, byte for byte - one implementation, three pipelines.
       </p>

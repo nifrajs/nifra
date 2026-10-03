@@ -112,6 +112,41 @@ test("serializeBunfig refuses a shape it cannot round-trip instead of dropping i
 test("renderDevBunfig without a user bunfig still emits the boundary plugin", () => {
   const toml = renderDevBunfig("/app/.nifra/dev-bun/boundary-plugin.ts", {}, "/app")
   expect(toml).toContain('plugins = ["/app/.nifra/dev-bun/boundary-plugin.ts"]')
+  expect(parseUserBunfig(toml).define).toBeUndefined()
+})
+
+test("the config's define reaches both halves and wins a clash with the app's bunfig", () => {
+  const user = parseUserBunfig(
+    [
+      "[define]",
+      '"process.env.KEPT" = "1"',
+      '__CLASH__ = "\\"bunfig\\""',
+      "[serve.static]",
+      'define = { __OWN__ = "2" }',
+    ].join("\n"),
+  )
+  const toml = renderDevBunfig("/p.ts", user, "/app", {
+    __CLASH__: '"config"',
+    "process.env.MODE": '"dev"',
+  })
+  const data = parseUserBunfig(toml)
+  expect(data.define).toEqual({
+    "process.env.KEPT": "1",
+    __CLASH__: '"config"',
+    "process.env.MODE": '"dev"',
+  })
+  expect(data.serve).toEqual({
+    static: {
+      plugins: ["/p.ts"],
+      define: { __OWN__: "2", __CLASH__: '"config"', "process.env.MODE": '"dev"' },
+    },
+  })
+})
+
+test("a define value that is not source text is refused by name", () => {
+  // Untyped, as a JavaScript config hands it over.
+  const define = JSON.parse('{ "__FLAG__": true }')
+  expect(() => renderDevBunfig("/p.ts", {}, "/app", define)).toThrow(/`__FLAG__` must be a string/)
 })
 
 test("the generated plugin module composes the PRODUCTION boundary plugins, not a re-implementation", () => {
@@ -275,6 +310,52 @@ test(
       expect(js).toContain("card_")
       expect(css).toContain(".card_")
       expect(css).toMatch(/(?:rebeccapurple|#639)/)
+    } finally {
+      proc?.kill()
+      removeFixtureRoot(root)
+    }
+  },
+  { timeout: 30_000 },
+)
+
+test(
+  "a dev server started with the generated bunfig applies the config's define to client and SSR",
+  async () => {
+    const root = createFixtureRoot("tmp-nifra-devbun-define-")
+    let proc: ReturnType<typeof Bun.spawn> | undefined
+    try {
+      const webPkg = resolve(import.meta.dir, "../../web")
+      mkdirSync(join(root, "node_modules", "@nifrajs"), { recursive: true })
+      symlinkSync(webPkg, join(root, "node_modules", "@nifrajs", "web"))
+      mkdirSync(join(root, "frontend"))
+      writeFileSync(join(root, "frontend/client.ts"), "console.log(__NIFRA_FLAG__)\n")
+      writeFileSync(
+        join(root, "frontend/flag.ts"),
+        'export const flag = typeof __NIFRA_FLAG__ === "undefined" ? "MISSING" : __NIFRA_FLAG__\n',
+      )
+      writeFileSync(join(root, "index.html"), htmlPage("./frontend/client.ts"))
+      writeFileSync(
+        join(root, "serve.ts"),
+        `import html from "./index.html"
+import { flag } from "./frontend/flag.ts"
+const s = Bun.serve({ hostname: "127.0.0.1", port: 0, routes: { "/": html, "/ssr": () => new Response(flag) }, development: true })
+console.log(\`PORT=\${s.port}\`)
+`,
+      )
+
+      const { bunfigPath } = await writeBunDevConfig(root, undefined, {
+        __NIFRA_FLAG__: '"DEFINED_BY_CONFIG"',
+      })
+      proc = Bun.spawn([process.execPath, `--config=${bunfigPath}`, join(root, "serve.ts")], {
+        cwd: root,
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const port = await readPort(proc)
+      const client = (await served(port, "/")).text
+      expect(client).toContain("DEFINED_BY_CONFIG")
+      expect(client).not.toContain("__NIFRA_FLAG__")
+      expect(await (await fetch(`http://127.0.0.1:${port}/ssr`)).text()).toBe("DEFINED_BY_CONFIG")
     } finally {
       proc?.kill()
       removeFixtureRoot(root)

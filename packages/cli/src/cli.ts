@@ -383,7 +383,11 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
             "launches; refusing to serve without the client-boundary plugins.",
         )
       }
-      const { bunfigPath, launchToken } = await writeBunDevConfig(app.cwd, app.configPath)
+      const { bunfigPath, launchToken } = await writeBunDevConfig(
+        app.cwd,
+        app.configPath,
+        app.framework.define,
+      )
       // Bun 1.4 on Windows may discard the script-relative portion of argv when `--config` is
       // present. Keep a second, authenticated copy of the user vector in the child's environment so
       // the configured process cannot silently fall back to `nifra`'s help and exit 0. The launch token
