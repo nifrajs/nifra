@@ -3247,6 +3247,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (!isRoutableMethod(req.method)) return WS_PASS
     // The handshake routes the path `fetch` would: dot segments resolved (see `fetch`).
     if (rawRequestTargets && hasDotSegment(req.url)) req = withResolvedTarget(req)
+    // The handshake's caller is the one `fetch` derives: hooks and `upgrade()` see the trusted IP.
+    platform = this.trustedPlatform(req, platform)
 
     const timeoutMs =
       this.wsUpgradeTimeoutMs === 0
@@ -3464,6 +3466,18 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     return { ...platform, clientIp: derived }
   }
 
+  private trustedPlatform(
+    source: RequestSource,
+    platform: Platform<EnvOf<Ctx>> | undefined,
+  ): Platform<EnvOf<Ctx>> | undefined {
+    return this.clientIpTrust === undefined ||
+      (platform as { [NIFRA_PLATFORM_CLIENT_IP_DERIVED]?: unknown } | undefined)?.[
+        NIFRA_PLATFORM_CLIENT_IP_DERIVED
+      ] === true
+      ? platform
+      : this.deriveClientIp(source, platform)
+  }
+
   private dispatch<T>(
     source: RequestSource,
     platform: Platform<EnvOf<Ctx>> | undefined,
@@ -3479,13 +3493,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // socket peer the adapter supplied passes through untouched (a one-property no-op on the hot path).
     // A platform an enclosing nifra server already resolved (an in-process call from an SSR loader)
     // keeps its `clientIp`: the synthesized request carries none of the visitor's forwarding headers.
-    const resolved =
-      this.clientIpTrust === undefined ||
-      (platform as { [NIFRA_PLATFORM_CLIENT_IP_DERIVED]?: unknown } | undefined)?.[
-        NIFRA_PLATFORM_CLIENT_IP_DERIVED
-      ] === true
-        ? platform
-        : this.deriveClientIp(source, platform)
+    const resolved = this.trustedPlatform(source, platform)
     // onRequest hooks may be async, so a hooked app takes the async path; with no hooks (the common
     // case) routing stays synchronous, letting a bare route resolve with no lifecycle promise at all.
     // A token no route can be registered under skips the hooks as well: it cannot match, so routing

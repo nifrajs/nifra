@@ -39,6 +39,35 @@ function makeApp() {
 // The `resolveWebSocketUpgrade` seam - no socket; this is exactly what the @nifrajs/node, @nifrajs/deno, and
 // Workers (toFetchHandler) bridges will call, so testing it here covers all adapters' upgrade logic.
 describe("resolveWebSocketUpgrade", () => {
+  test("a clientIp trust declaration reaches the handshake's hooks and upgrade()", async () => {
+    const hookSaw: (string | undefined)[] = []
+    let upgradeSaw: string | undefined
+    const app = server({ clientIp: { header: "x-real-ip" } })
+      .use(websocket())
+      .onRequest((_req, platform) => {
+        hookSaw.push(platform?.clientIp)
+        return platform?.clientIp === "6.6.6.6"
+          ? new Response("denied", { status: 403 })
+          : undefined
+      })
+      .ws("/sock", {
+        upgrade: (c) => {
+          upgradeSaw = c.clientIp
+          return {}
+        },
+      })
+    const handshake = (ip: string) =>
+      app.resolveWebSocketUpgrade(
+        new Request("http://t/sock", { headers: { upgrade: "websocket", "x-real-ip": ip } }),
+        { clientIp: "127.0.0.1" },
+      )
+    const denied = await handshake("6.6.6.6")
+    expect(denied.kind).toBe("reject")
+    expect((await handshake("1.1.1.1")).kind).toBe("upgrade")
+    expect(hookSaw).toEqual(["6.6.6.6", "1.1.1.1"])
+    expect(upgradeSaw).toBe("1.1.1.1")
+  })
+
   test("pass when there's no upgrade header", async () => {
     expect((await makeApp().resolveWebSocketUpgrade(new Request("http://t/echo"))).kind).toBe(
       "pass",
