@@ -331,6 +331,21 @@ describe("handleRpc - MCP Apps extensions", () => {
     })
     expect(JSON.stringify(toolResponse)).not.toContain(secretDetail)
 
+    // A transport that trusts its caller (a local stdio server) opts in to the message.
+    const exposed = await handleRpc(
+      { id: 10, method: "tools/call", params: { name: "failing" } },
+      [failingTool],
+      INFO,
+      {},
+      { exposeToolErrors: true },
+    )
+    expect(exposed).toMatchObject({
+      result: {
+        isError: true,
+        content: [{ type: "text", text: `Tool execution failed: ${secretDetail}` }],
+      },
+    })
+
     const promptResponse = await handleRpc(
       { id: 9, method: "prompts/get", params: { name: "failing-prompt" } },
       [],

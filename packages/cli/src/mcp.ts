@@ -348,6 +348,8 @@ export async function runMcpServer(
     const response = await handleRpc(message, activeTools, serverInfo, features, {
       state,
       sendNotification: send,
+      // The stdio caller is the developer's own agent: a failure it cannot read it cannot fix.
+      exposeToolErrors: true,
     })
     if (response) send(response)
     // Ask for the client's workspace roots once the handshake completes, and again whenever the

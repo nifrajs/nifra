@@ -180,7 +180,15 @@ export interface McpProtocolOptions {
   readonly state?: McpProtocolState
   readonly signal?: AbortSignal
   readonly sendNotification?: (notification: JsonRpcNotification) => void
+  /**
+   * Answer a throwing tool with its error message, not only "Tool execution failed". Only for a
+   * transport whose caller already has the project, such as a local stdio server: paths, SQL
+   * diagnostics and provider responses end up in error messages, so a remote caller never sees them.
+   */
+  readonly exposeToolErrors?: boolean
 }
+
+const MAX_TOOL_ERROR_CHARS = 16_384
 
 export function createMcpProtocolState(): McpProtocolState {
   return { activeRequests: new Map() }
@@ -530,7 +538,7 @@ export async function handleRpc(
         if (controller.signal.aborted) throw new DOMException("cancelled", "AbortError")
         reportProgress(1, 1)
         return reply(toolCallResult(result, tool))
-      } catch {
+      } catch (error) {
         if (controller.signal.aborted) {
           return reply({
             content: [{ type: "text", text: abortMessage(controller.signal) }],
@@ -539,8 +547,12 @@ export async function handleRpc(
         }
         // Handler errors are application-internal data. Never reflect their messages to a remote
         // MCP caller: paths, SQL diagnostics, provider responses, and secrets commonly end up there.
+        const detail =
+          options.exposeToolErrors === true && error instanceof Error && error.message !== ""
+            ? `: ${error.message.slice(0, MAX_TOOL_ERROR_CHARS)}`
+            : ""
         return reply({
-          content: [{ type: "text", text: "Tool execution failed" }],
+          content: [{ type: "text", text: `Tool execution failed${detail}` }],
           isError: true,
         })
       } finally {

@@ -11412,7 +11412,7 @@
     "name": "McpProtocolOptions",
     "kind": "interface",
     "package": "@nifrajs/mcp",
-    "signature": "export interface McpProtocolOptions {\n    readonly state?: McpProtocolState;\n    readonly signal?: AbortSignal;\n    readonly sendNotification?: (notification: JsonRpcNotification) => void;\n}"
+    "signature": "export interface McpProtocolOptions {\n    readonly state?: McpProtocolState;\n    readonly signal?: AbortSignal;\n    readonly sendNotification?: (notification: JsonRpcNotification) => void;\n    /**\n     * Answer a throwing tool with its error message, not only \"Tool execution failed\". Only for a\n     * transport whose caller already has the project, such as a local stdio server: paths, SQL\n     * diagnostics and provider responses end up in error messages, so a remote caller never sees them.\n     */\n    readonly exposeToolErrors?: boolean;\n}"
   },
   {
     "name": "McpProtocolState",

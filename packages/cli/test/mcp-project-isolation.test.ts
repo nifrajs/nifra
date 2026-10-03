@@ -281,6 +281,15 @@ describe("nifra mcp runs no project code in its own process", () => {
     expect(dig(whoami, "script")).toBe(PROJECT_CHILD)
   }, 60_000)
 
+  test("a project tool that fails tells the agent why", async () => {
+    const root = tempRoot()
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "app", private: true }))
+    writeApp(root, APP_CONFIG, 'throw new Error("backend-load-detail")\n')
+    const { byId } = await mcpRpc(root, [], [INITIALIZE, INITIALIZED, call(2, "nifra_routes")], [2])
+    expect(dig(byId[2], "result", "isError")).toBe(true)
+    expect(toolText(byId[2])).toBe("Tool execution failed: backend-load-detail")
+  }, 60_000)
+
   test("warm nifra_run calls in one session share one worker", async () => {
     const root = tempRoot()
     writeFileSync(join(root, "package.json"), JSON.stringify({ name: "app", private: true }))
