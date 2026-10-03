@@ -107,7 +107,8 @@ export interface ClientOptions {
    *
    * Bounds the two paths that build something in memory - a JSON body becoming an object graph, a text
    * body becoming a string - and it bounds them while streaming, cancelling the read the moment the
-   * total passes. A 2 GB string costs as much as a 2 GB object, so both answer to one number.
+   * total passes. A 2 GB string costs as much as a 2 GB object, so both answer to one number. Each
+   * event a `.subscribe()` stream assembles answers to it too.
    *
    * A BINARY body is deliberately not bounded by this. That is a download, and a size limit on a
    * download is a bug rather than a defence - the caller asked for the file. Bound one at the call site
@@ -142,9 +143,22 @@ function defaultBackoff(attempt: number): number {
   return Math.min(300 * 2 ** (attempt - 1), 3000) + Math.random() * 100
 }
 
-function delay(ms: number): Promise<void> {
+/** Resolves after `ms`, or as soon as `signal` aborts, and leaves no listener on the signal either way:
+ * a long-lived signal waited on once per reconnect otherwise collects one listener per wait. */
+function delay(ms: number, signal?: AbortSignal, unref = false): Promise<void> {
   return new Promise((resolve) => {
-    setTimeout(resolve, ms)
+    if (signal?.aborted === true) {
+      resolve()
+      return
+    }
+    const done = (): void => {
+      clearTimeout(timer)
+      signal?.removeEventListener("abort", done)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+    if (unref) (timer as { unref?: () => void }).unref?.()
+    signal?.addEventListener("abort", done, { once: true })
   })
 }
 
@@ -620,17 +634,25 @@ async function execute(
       // A contract violation is a test assertion (validateResponses), not a call outcome - let it
       // fail the test instead of degrading into a `Result` the test would happily branch on.
       if (error instanceof ResponseContractViolation) throw error
-      if (methodRetryable && attempt < maxRetries) {
+      // An aborted call (the caller's signal, or `timeoutMs` spent) fails every further attempt at once.
+      if (methodRetryable && attempt < maxRetries && signal?.aborted !== true) {
         attempt += 1
-        await delay(backoff(attempt))
+        await delay(backoff(attempt), signal)
         continue
       }
       const code = timeout?.aborted === true ? "timeout" : "network_error"
       return { ok: false, status: 0, data: null, error: { error: code } }
     }
-    if (methodRetryable && attempt < maxRetries && retryStatuses.has(response.status)) {
+    if (
+      methodRetryable &&
+      attempt < maxRetries &&
+      signal?.aborted !== true &&
+      retryStatuses.has(response.status)
+    ) {
+      // This answer is discarded; cancelling its body frees the connection now rather than at GC.
+      void response.body?.cancel().catch(() => {})
       attempt += 1
-      await delay(backoff(attempt))
+      await delay(backoff(attempt), signal)
       continue
     }
     break
@@ -676,18 +698,28 @@ interface SseFrame {
   retry?: number
 }
 
+// Past 2^31-1 ms a timer fires at once, so a larger `retry:` would turn into an immediate reconnect.
+const MAX_RETRY_MS = 2_147_483_647
+
 /**
  * Incrementally parse a `text/event-stream` body, invoking `onFrame` per dispatched event.
- * Implements the SSE wire format: `data:` accumulates multi-line, `id:`/`retry:` update stream
- * state, `:` lines are comments, a blank line dispatches.
+ * Implements the SSE wire format: CRLF, CR, and LF all end a line, `data:` accumulates multi-line,
+ * `id:`/`retry:` update stream state, `:` lines are comments, a blank line dispatches. An event
+ * still being assembled may hold at most `maxEventLength` characters.
  */
 async function readSseStream(
   body: ReadableStream<Uint8Array>,
   onFrame: (frame: SseFrame) => void,
+  maxEventLength: number,
 ): Promise<void> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
-  let buffer = ""
+  const lineEnd = /\r\n?|\n/g
+  // Only newly decoded text is scanned; the unfinished line is carried here, so a line that arrives
+  // over many small reads costs its length once rather than once per read.
+  let partial = ""
+  let afterCr = false
+  let held = 0
   let dataLines: string[] = []
   let frame: SseFrame = {}
 
@@ -697,6 +729,7 @@ async function readSseStream(
       onFrame(frame)
     }
     dataLines = []
+    held = 0
     frame = {}
   }
 
@@ -710,42 +743,66 @@ async function readSseStream(
     const field = colon === -1 ? line : line.slice(0, colon)
     let value = colon === -1 ? "" : line.slice(colon + 1)
     if (value.startsWith(" ")) value = value.slice(1)
-    if (field === "data") dataLines.push(value)
-    else if (field === "id") frame.id = value
-    else if (field === "retry") {
-      const parsed = Number(value)
-      if (Number.isFinite(parsed)) frame.retry = parsed
+    if (field === "data") {
+      dataLines.push(value)
+      held += value.length + 1
+    } else if (field === "id") {
+      // The grammar ignores an id with a NUL; it could never be sent back as `Last-Event-ID`.
+      if (!value.includes("\0")) frame.id = value
+    } else if (field === "retry") {
+      if (/^\d+$/.test(value)) frame.retry = Math.min(Number(value), MAX_RETRY_MS)
     }
     // `event:` names pass through untyped for now - the contract types the data payload.
+  }
+
+  const feed = (text: string): void => {
+    if (text === "") return
+    // An LF opening this read completes a CRLF whose CR closed the previous one.
+    let start = afterCr && text.charCodeAt(0) === 10 ? 1 : 0
+    lineEnd.lastIndex = start
+    for (let end = lineEnd.exec(text); end !== null; end = lineEnd.exec(text)) {
+      handleLine(partial + text.slice(start, end.index))
+      partial = ""
+      start = lineEnd.lastIndex
+    }
+    afterCr = text.charCodeAt(text.length - 1) === 13
+    partial += text.slice(start)
+    if (partial.length + held > maxEventLength) throw new Error("sse_event_too_large")
   }
 
   try {
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      for (;;) {
-        const newline = buffer.indexOf("\n")
-        if (newline === -1) break
-        const line = buffer.slice(0, newline).replace(/\r$/, "")
-        buffer = buffer.slice(newline + 1)
-        handleLine(line)
-      }
+      feed(decoder.decode(value, { stream: true }))
     }
-    buffer += decoder.decode()
-    if (buffer !== "") handleLine(buffer.replace(/\r$/, ""))
+    feed(decoder.decode())
+    if (partial !== "") handleLine(partial)
     dispatch() // an unterminated final frame still dispatches
+  } catch (error) {
+    // Stopping early must not leave the response open behind a released lock.
+    void reader.cancel(error).catch(() => {})
+    throw error
   } finally {
     reader.releaseLock()
   }
+}
+
+/** A `Last-Event-ID` value as EventSource sends it: a header carries bytes, so an id beyond ASCII goes
+ * as its UTF-8 bytes - a character past U+00FF would otherwise fail every reconnect before it left. */
+function lastEventIdHeader(id: string): string {
+  if (/^[\x20-\x7e]*$/.test(id)) return id
+  let bytes = ""
+  for (const byte of new TextEncoder().encode(id)) bytes += String.fromCharCode(byte)
+  return bytes
 }
 
 /**
  * The `.subscribe()` runtime for `app.sse()` routes. fetch-based (never `EventSource`), so it
  * streams over the configured fetcher - network, an in-process bridge, or a test mock - with
  * EventSource semantics where they matter: auto-reconnect with backoff + jitter (honoring the
- * server's `retry:` hint), `Last-Event-ID` resumption, JSON-parsed typed events. Never throws:
- * failures reach `onError`; a terminal end reaches `onClose`.
+ * server's `retry:` hint after a stream it served), `Last-Event-ID` resumption, JSON-parsed typed
+ * events. Never throws: failures reach `onError`; a terminal end reaches `onClose`.
  */
 function subscribeSse(
   base: string,
@@ -782,20 +839,8 @@ function subscribeSse(
   const query = callOptions?.query ? buildQuery(callOptions.query) : ""
   if (query !== "") url += `?${query}`
   const doFetch = options.fetch ?? fetch
-
-  const delay = (ms: number): Promise<void> =>
-    new Promise((resolve) => {
-      const timer = setTimeout(resolve, ms)
-      ;(timer as { unref?: () => void }).unref?.()
-      controller.signal.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(timer)
-          resolve()
-        },
-        { once: true },
-      )
-    })
+  // One event decodes into one value, so it answers to the same bound a decoded response body does.
+  const maxEventLength = options.transport?.maxBytes ?? options.maxDecodedBytes ?? 16 * 1024 * 1024
 
   void (async () => {
     if (hasDotSegment(path)) {
@@ -814,24 +859,30 @@ function subscribeSse(
           ...options.headers,
           ...callOptions?.headers,
           accept: "text/event-stream",
-          ...(lastEventId !== undefined ? { "last-event-id": lastEventId } : {}),
+          ...(lastEventId ? { "last-event-id": lastEventIdHeader(lastEventId) } : {}),
         }
         const response = await doFetch(url, { headers, signal: controller.signal })
         if (!response.ok || response.body === null) {
+          void response.body?.cancel().catch(() => {})
           throw new Error(`sse_http_${response.status}`)
         }
         attempt = 0 // a successful connect resets the backoff
-        await readSseStream(response.body, (frame) => {
-          if (frame.id !== undefined) lastEventId = frame.id
-          if (frame.retry !== undefined) serverRetryMs = frame.retry
-          if (frame.data !== undefined) {
-            try {
-              onEvent(JSON.parse(frame.data))
-            } catch (error) {
-              callOptions?.onError?.(error)
+        await readSseStream(
+          response.body,
+          (frame) => {
+            if (closed) return
+            if (frame.id !== undefined) lastEventId = frame.id
+            if (frame.retry !== undefined) serverRetryMs = frame.retry
+            if (frame.data !== undefined) {
+              try {
+                onEvent(JSON.parse(frame.data))
+              } catch (error) {
+                callOptions?.onError?.(error)
+              }
             }
-          }
-        })
+          },
+          maxEventLength,
+        )
         // Clean server-side end: a finite stream (`reconnect: false`) completes here.
         if (!reconnectEnabled) {
           close()
@@ -847,9 +898,18 @@ function subscribeSse(
       }
       if (closed) return
       const backoff = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt)
+      const jittered = backoff / 2 + Math.random() * (backoff / 2)
+      // The server's `retry:` times the reconnect after a stream it served (`attempt` is 0 only then),
+      // and is only a floor while reconnects keep failing: a hint of 0 must not become a request loop
+      // against a server that has started answering 503.
+      const wait =
+        serverRetryMs === undefined
+          ? jittered
+          : attempt === 0
+            ? serverRetryMs
+            : Math.max(serverRetryMs, jittered)
       attempt = Math.min(attempt + 1, 10)
-      const wait = serverRetryMs ?? backoff / 2 + Math.random() * (backoff / 2)
-      await delay(wait)
+      await delay(wait, controller.signal, true)
     }
   })()
 
