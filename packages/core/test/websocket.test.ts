@@ -74,6 +74,24 @@ describe("resolveWebSocketUpgrade", () => {
     expect(out.kind).toBe("pass")
   })
 
+  test("pass for a non-GET request with an upgrade header, so its HTTP route answers it", async () => {
+    let guardRan = 0
+    const app = server()
+      .use(websocket())
+      .ws("/both", {
+        upgrade: () => {
+          guardRan += 1
+          return {}
+        },
+      })
+      .post("/both", () => ({ posted: true }))
+    const post = () =>
+      new Request("http://t/both", { method: "POST", headers: { upgrade: "websocket" } })
+    expect((await app.resolveWebSocketUpgrade(post())).kind).toBe("pass")
+    expect(guardRan).toBe(0)
+    expect(await (await app.fetch(post())).json()).toEqual({ posted: true })
+  })
+
   test("no guard → upgrade with undefined data", async () => {
     const out = await makeApp().resolveWebSocketUpgrade(
       new Request("http://t/echo", { headers: { upgrade: "websocket" } }),

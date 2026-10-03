@@ -3244,8 +3244,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // costs a plain request measurably.
     if (this.wsRouteCount === 0 && !this.mountsTakeUpgrades()) return WS_PASS
     if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return WS_PASS
-    // Not a handshake this lane may act on: normal routing refuses the token before any hook sees it.
-    if (!isRoutableMethod(req.method)) return WS_PASS
+    // A WebSocket handshake is a GET (RFC 6455 section 4.1). Any other method with an Upgrade header
+    // is an ordinary request: its HTTP route answers it, and normal routing refuses an unknown token.
+    if (req.method !== "GET") return WS_PASS
     // The handshake routes the path `fetch` would: dot segments resolved (see `fetch`).
     if (rawRequestTargets && hasDotSegment(req.url)) req = withResolvedTarget(req)
     // The handshake's caller is the one `fetch` derives: hooks and `upgrade()` see the trusted IP.
