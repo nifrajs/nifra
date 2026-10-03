@@ -11,6 +11,16 @@ describe("standard string formats validate (not just annotate)", () => {
   test("email", async () => {
     expect(await accepts(t.string({ format: "email" }), "ada@example.com")).toBe(true)
     expect(await accepts(t.string({ format: "email" }), "not-an-email")).toBe(false)
+    expect(await accepts(t.string({ format: "email" }), "ada@mail.example.co.uk")).toBe(true)
+    expect(await accepts(t.string({ format: "email" }), "ada@example")).toBe(false)
+    expect(await accepts(t.string({ format: "email" }), "ada@example..com")).toBe(false)
+  })
+
+  test("email validates a hostile 200 KB value in linear time", async () => {
+    const hostile = `a@${".".repeat(200_000)}@`
+    const started = performance.now()
+    expect(await accepts(t.string({ format: "email" }), hostile)).toBe(false)
+    expect(performance.now() - started).toBeLessThan(200)
   })
 
   test("uuid", async () => {

@@ -14,7 +14,9 @@ import { FormatRegistry } from "@sinclair/typebox"
  * that registered its own validator first wins.
  */
 const DEFAULT_FORMATS: Readonly<Record<string, RegExp>> = {
-  email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+  // Dot-separated labels that cannot contain a dot: linear on any input (an overlapping `[^\s@]+\.`
+  // backtracks quadratically on a long run of dots).
+  email: /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/,
   uuid: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
   "date-time": /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$/,
   date: /^\d{4}-\d{2}-\d{2}$/,
