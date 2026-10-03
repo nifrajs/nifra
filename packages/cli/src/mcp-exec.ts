@@ -7,7 +7,7 @@
  */
 
 import { stat } from "node:fs/promises"
-import { resolve } from "node:path"
+import { relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Glob } from "bun"
 import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
@@ -41,6 +41,18 @@ import {
 import { mcpProjectPathError, resolveMcpProjectPath } from "./mcp-path.ts"
 import type { McpTool, McpToolContext } from "./mcp-protocol.ts"
 import { loadTypesCorpus } from "./types-search.ts"
+
+const CODEFRAME_SOURCE = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|mdx)$/i
+
+/** The files a stack the caller supplies may show a codeframe from: project source, never a dotfile
+ * or anything under a dot directory (`.env`, `.git/`, `.nifra/`). */
+function explainSourceGate(root: string): (file: string) => boolean {
+  return (file) =>
+    CODEFRAME_SOURCE.test(file) &&
+    !relative(root, file)
+      .split(/[\\/]/)
+      .some((segment) => segment.startsWith("."))
+}
 
 /** Path to a sibling child entry (`mcp-run` / `mcp-render` / `mcp-ws`), resolved next to this module (`.ts` in
  * dev, `.js` once built). Each runs in a FRESH subprocess per call so the project's current code loads. */
@@ -285,7 +297,11 @@ export function projectTools(
           const e = new Error(error ?? "")
           if (name !== undefined) e.name = name
           if (stack !== undefined) e.stack = stack
-          return JSON.stringify(buildDiagnostic(e, { root: cwd }), null, 2)
+          return JSON.stringify(
+            buildDiagnostic(e, { root: cwd, showSource: explainSourceGate(cwd) }),
+            null,
+            2,
+          )
         }
         const target = resolveProjectDir(cwd, dir)
         if (target === null) return dirError(dir)

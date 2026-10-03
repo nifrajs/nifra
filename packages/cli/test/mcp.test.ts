@@ -710,6 +710,34 @@ describe("monorepo detection + tool namespacing", () => {
     }
   })
 
+  test("nifra_explain shows a codeframe from project source only, never .env or a dot directory", async () => {
+    const root = realpathSync(await mkdtemp(join(tmpdir(), "nifra-explain-")))
+    try {
+      await writeFile(join(root, ".env"), "A=1\nDB_PASSWORD=hunter2\nB=2\n")
+      await mkdir(join(root, ".git"))
+      await writeFile(join(root, ".git/config"), "[remote]\n  token = secret-token\n")
+      await writeFile(join(root, "app.ts"), "const a = 1\nthrow new Error('boom')\n")
+      const explain = projectTools(root).find((tool) => tool.name === "nifra_explain")
+      const context = {
+        signal: new AbortController().signal,
+        requestId: 1,
+        reportProgress: () => {},
+      }
+      const run = async (file: string): Promise<{ codeframe?: unknown }> => {
+        const stack = `Error: boom\n    at x (${join(root, file)}:2:1)`
+        return JSON.parse(String(await explain?.handler({ error: "boom", stack }, context)))
+      }
+      for (const file of [".env", ".git/config"]) {
+        const result = await run(file)
+        expect(result.codeframe).toBeUndefined()
+        expect(JSON.stringify(result)).not.toMatch(/hunter2|secret-token/)
+      }
+      expect(JSON.stringify((await run("app.ts")).codeframe)).toContain("throw new Error")
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   test("projectTools exposes the joined contract proof tool", () => {
     const proof = projectTools("/fake").find((tool) => tool.name === "nifra_contract_proof")
     expect(proof).toBeDefined()
