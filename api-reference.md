@@ -670,7 +670,7 @@ Every public export of every package and documented subpath - name, kind, signat
 ### `@nifrajs/authjs`
 
 - **AuthGuardOptions** _(interface)_ - `interface AuthGuardOptions`
-  What a guard does when the check fails: 302 to `redirectTo` (same-origin path), else 401 JSON.
+  What a guard does when the check fails: 302 to `redirectTo` (same-origin path), else 401 JSON. Pass the `basePath`, `authUrl` and `trustProxy` the mount was given, so the session is read on the origin and path the mount serves it from.
 - **AuthJSConfig** _(type)_ - `type AuthJSConfig = Omit<AuthConfig, "raw">`
   The Auth.js config this integration drives - everything `@auth/core` accepts except `raw`.
 - **AuthJSOptions** _(interface)_ - `interface AuthJSOptions`

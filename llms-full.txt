@@ -4317,8 +4317,12 @@ export async function loader({ request }: Route.LoaderArgs) {
 
 Secrets resolve per request - explicit `secret`, then the `AUTH_SECRET`
 platform binding (edge-safe), then `process.env` - and a missing secret fails loud
-instead of signing with nothing. Behind a proxy, pass `authUrl` (or
-`trustHost`) so redirects and cookies use the public origin.
+instead of signing with nothing. Auth.js builds sign-in links, redirects and cookies from
+the request's origin, so in production it trusts the `Host` header only when
+told to: pass `authUrl` (or set `AUTH_URL`), which every request is
+rewritten onto, or set `trustHost` when a proxy you control fixes the host. Give
+`getSession` and `requireAuthUser` the same `authUrl`,
+`trustProxy` and `basePath` as the mount.
 
 ### Set up a session manager
 
@@ -11571,7 +11575,8 @@ export const app = server()
 
 - `authjs(config, options?)` - identity plugin mounting Auth.js at `/api/auth/*` (GET + POST).
   Secrets resolve per request (explicit → platform binding → `process.env`); missing fails loud.
-- `getSession(req, config)` - `Session | null`, usable in handlers and loaders.
+- `getSession(req, config, options?)` - `Session | null`, usable in handlers and loaders. Pass the
+  mount's `authUrl`, `trustProxy` and `basePath` so the session is read where the mount serves it.
 - `requireAuthUser(req, config, { redirectTo? })` - returns the user or throws a 401/redirect.
 - `@nifrajs/authjs/client` - `createAuthClient()` (session, sign-in, sign-out) for any frontend.
 - `@nifrajs/web-react/auth` - `<AuthSessionProvider>` + `useAuthSession()`.

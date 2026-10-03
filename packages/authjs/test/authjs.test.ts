@@ -131,6 +131,85 @@ describe("@nifrajs/authjs", () => {
     expect(location).not.toContain("evil.example")
   })
 
+  describe("in production", () => {
+    const { trustHost: _trustHost, ...untrusted } = config
+    async function inProduction<T>(
+      run: () => T | PromiseLike<T>,
+      extra: Record<string, string> = {},
+    ) {
+      const saved = { ...process.env }
+      Object.assign(process.env, { NODE_ENV: "production" }, extra)
+      try {
+        return await run()
+      } finally {
+        for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key]
+        Object.assign(process.env, saved)
+      }
+    }
+
+    test("an unset trustHost refuses a request whose Host header would name the origin", async () => {
+      const mounted = server().use(authjs(untrusted))
+      const response = await inProduction(() =>
+        mounted.fetch(new Request("http://evil.example/api/auth/providers")),
+      )
+      expect(response.status).toBe(500)
+      expect(await response.text()).not.toContain("evil.example")
+    })
+
+    test("a configured origin is trusted, and the Host header cannot replace it", async () => {
+      const viaOption = server().use(authjs(untrusted, { authUrl: "https://app.example.com" }))
+      const viaEnv = server().use(authjs(untrusted))
+      for (const [mounted, extra] of [
+        [viaOption, {}],
+        [viaEnv, { AUTH_URL: "https://app.example.com/api/auth" }],
+      ] as const) {
+        const response = await inProduction(
+          () => mounted.fetch(new Request("http://evil.example/api/auth/providers")),
+          extra,
+        )
+        expect(response.status).toBe(200)
+        const body = await response.text()
+        expect(body).toContain("https://app.example.com/api/auth/")
+        expect(body).not.toContain("evil.example")
+      }
+    })
+
+    test("getSession reads the session the mount set behind a configured https origin", async () => {
+      const options = { authUrl: "https://app.example.com" }
+      const mounted = server().use(authjs(untrusted, options))
+      const internal = (path: string, init?: RequestInit) =>
+        mounted.fetch(new Request(`http://10.0.0.5:3000${path}`, init))
+      const session = await inProduction(async () => {
+        const csrfRes = await internal("/api/auth/csrf")
+        const csrf: unknown = await csrfRes.json()
+        if (typeof csrf !== "object" || csrf === null || !("csrfToken" in csrf)) {
+          throw new Error("no csrf token")
+        }
+        const csrfToken = String(csrf.csrfToken)
+        const csrfCookies = csrfRes.headers
+          .getSetCookie()
+          .map((line) => line.split(";")[0])
+          .join("; ")
+        const callback = await internal("/api/auth/callback/credentials", {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded", cookie: csrfCookies },
+          body: new URLSearchParams({ csrfToken, username: "ada", password: "secret" }),
+        })
+        const jar = callback.headers
+          .getSetCookie()
+          .map((line) => line.split(";")[0])
+          .join("; ")
+        expect(jar).toContain("__Secure-authjs.session-token=")
+        return getSession(
+          new Request("http://10.0.0.5:3000/me", { headers: { cookie: jar } }),
+          untrusted,
+          options,
+        )
+      })
+      expect(session?.user?.name).toBe("Ada")
+    })
+  })
+
   test("getSession can resolve an edge platform secret", async () => {
     const jar = await loginJar("ada", "secret")
     const { secret, ...withoutSecret } = config

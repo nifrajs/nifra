@@ -145,8 +145,12 @@ export default function Auth() {
       <p>
         Secrets resolve per request - explicit <code>secret</code>, then the <code>AUTH_SECRET</code>{" "}
         platform binding (edge-safe), then <code>process.env</code> - and a missing secret fails loud
-        instead of signing with nothing. Behind a proxy, pass <code>authUrl</code> (or{" "}
-        <code>trustHost</code>) so redirects and cookies use the public origin.
+        instead of signing with nothing. Auth.js builds sign-in links, redirects and cookies from
+        the request's origin, so in production it trusts the <code>Host</code> header only when
+        told to: pass <code>authUrl</code> (or set <code>AUTH_URL</code>), which every request is
+        rewritten onto, or set <code>trustHost</code> when a proxy you control fixes the host. Give{" "}
+        <code>getSession</code> and <code>requireAuthUser</code> the same <code>authUrl</code>,{" "}
+        <code>trustProxy</code> and <code>basePath</code> as the mount.
       </p>
 
       <h2 id="sessions">Set up a session manager</h2>

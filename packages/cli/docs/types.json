@@ -1625,7 +1625,7 @@
     "name": "attachWebSocket",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function attachWebSocket<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined>(socket: StandardWebSocket, handler: WebSocketHandler<Data, Env, Schema, Send>, data: unknown, options: {\n    openNow: boolean;\n    pubsub: TopicRegistry;\n    maxPayloadBytes?: number;\n}): NifraWebSocket<Data>;",
+    "signature": "export declare function attachWebSocket<Data = unknown, Env = unknown, Schema extends StandardSchemaV1 | undefined = undefined, Send extends StandardSchemaV1 | undefined = undefined>(socket: StandardWebSocket, handler: WebSocketHandler<Data, Env, Schema, Send>, data: unknown, options: {\n    openNow: boolean;\n    pubsub: TopicRegistry;\n    maxPayloadBytes?: number | undefined;\n}): NifraWebSocket<Data>;",
     "doc": "/**\n * Wire a standard server-side `WebSocket` to a nifra {@link WebSocketHandler}, returning the portable\n * {@link NifraWebSocket}. Shared by the Deno and Workers bridges. `openNow` fires `open` immediately\n * (Workers, where the socket is already open after `accept()`); otherwise `open` waits for the socket's\n * `open` event (Deno). Lifecycle callbacks are error-isolated - a throw (or async rejection) routes to\n * `error()` and never tears the process down; binary frames are normalized to `Uint8Array`.\n */"
   },
   {
@@ -1752,8 +1752,8 @@
     "name": "AuthGuardOptions",
     "kind": "interface",
     "package": "@nifrajs/authjs",
-    "signature": "export interface AuthGuardOptions {\n    readonly redirectTo?: string;\n    /** Secret override for this call. */\n    readonly secret?: string | string[];\n    /** Platform binding object used when `config.secret` is not present. */\n    readonly env?: unknown;\n    /** Secret key in `env`; defaults to `AUTH_SECRET`. */\n    readonly secretEnv?: string;\n}",
-    "doc": "/** What a guard does when the check fails: 302 to `redirectTo` (same-origin path), else 401 JSON. */"
+    "signature": "export interface AuthGuardOptions extends Pick<AuthJSOptions, \"basePath\" | \"authUrl\" | \"trustProxy\"> {\n    readonly redirectTo?: string;\n    /** Secret override for this call. */\n    readonly secret?: string | string[];\n    /** Platform binding object used when `config.secret` is not present. */\n    readonly env?: unknown;\n    /** Secret key in `env`; defaults to `AUTH_SECRET`. */\n    readonly secretEnv?: string;\n}",
+    "doc": "/** What a guard does when the check fails: 302 to `redirectTo` (same-origin path), else 401 JSON.\n * Pass the `basePath`, `authUrl` and `trustProxy` the mount was given, so the session is read on\n * the origin and path the mount serves it from. */"
   },
   {
     "name": "AuthHeaders",
@@ -1787,7 +1787,7 @@
     "name": "AuthJSOptions",
     "kind": "interface",
     "package": "@nifrajs/authjs",
-    "signature": "export interface AuthJSOptions {\n    /** Mount path for Auth.js routes. Defaults to `config.basePath`, then `\"/api/auth\"`. */\n    readonly basePath?: string;\n    /** Public origin for deployments behind a proxy (e.g. `\"https://app.example.com\"`).\n     * When set, Auth.js URLs are rewritten onto it. Forwarded headers are ignored for this\n     * canonical origin. */\n    readonly authUrl?: string;\n    /** Trust proxy-provided `x-forwarded-*` headers when `authUrl` is absent. Default `false`.\n     * Enable only when the deployment strips and replaces those headers at a trusted proxy. */\n    readonly trustProxy?: boolean;\n    /** Session secret. Falls back to the `secretEnv` platform binding, then `process.env`. Missing\n     * everywhere fails loud (500) on first use - Auth.js cannot sign cookies without it. */\n    readonly secret?: string;\n    /** Platform-binding name carrying the secret on edge runtimes (no `process.env` there).\n     * Default `\"AUTH_SECRET\"`. */\n    readonly secretEnv?: string;\n}"
+    "signature": "export interface AuthJSOptions {\n    /** Mount path for Auth.js routes. Defaults to `config.basePath`, then `\"/api/auth\"`. */\n    readonly basePath?: string;\n    /** Public origin (e.g. `\"https://app.example.com\"`); falls back to the `AUTH_URL` variable.\n     * Every request is rewritten onto it, so Auth.js trusts it and neither the Host header nor\n     * forwarded headers can replace it. Without one, Auth.js trusts the Host header only when\n     * `trustHost` (or `AUTH_TRUST_HOST`) says so, or outside production. */\n    readonly authUrl?: string;\n    /** Trust proxy-provided `x-forwarded-*` headers when `authUrl` is absent. Default `false`.\n     * Enable only when the deployment strips and replaces those headers at a trusted proxy. */\n    readonly trustProxy?: boolean;\n    /** Session secret. Falls back to the `secretEnv` platform binding, then `process.env`. Missing\n     * everywhere fails loud (500) on first use - Auth.js cannot sign cookies without it. */\n    readonly secret?: string;\n    /** Platform-binding name carrying the secret on edge runtimes (no `process.env` there).\n     * Default `\"AUTH_SECRET\"`. */\n    readonly secretEnv?: string;\n}"
   },
   {
     "name": "AuthMaybePromise",
