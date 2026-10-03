@@ -3,6 +3,7 @@ import { defineIdentityPlugin, type IdentityPlugin } from "@nifrajs/core/server"
 import {
   base64UrlDecode,
   bearerToken,
+  guardName,
   jsonError,
   type MaybePromise,
   parseCookies,
@@ -325,7 +326,7 @@ export function jwt<C extends JwtClaims = JwtClaims>(options: JwtOptions): JwtPl
   const header = (options.header ?? "authorization").toLowerCase()
   const store = new WeakMap<Request, C>()
 
-  const plugin = defineIdentityPlugin("jwt", (app) =>
+  const plugin = defineIdentityPlugin(guardName("jwt"), (app) =>
     app.beforeHandle(async (c: { readonly req: Request }) => {
       const token = tokenFromRequest(c.req, header, options.cookie)
       if (token === null) return optional ? undefined : reject(realm)

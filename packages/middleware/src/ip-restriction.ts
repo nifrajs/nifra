@@ -1,7 +1,7 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import type { Middleware, Platform } from "@nifrajs/core/server"
 import { type ParsedIp, parseIp } from "./_ip.ts"
-import { jsonError, type MaybePromise } from "./_utils.ts"
+import { guardName, jsonError, type MaybePromise } from "./_utils.ts"
 
 export type IpMatcher = string | ((ip: string, request: Request) => MaybePromise<boolean>)
 
@@ -136,7 +136,7 @@ export function ipRestriction(options: IpRestrictionOptions): Middleware {
 
   return withRouteAssurance<Middleware>(
     {
-      name: "ip-restriction",
+      name: guardName("ip-restriction"),
       async onRequest(req, platform) {
         const ipText = await resolveClientIp(req, platform, options)
         if (ipText === null) return jsonError(403, error)

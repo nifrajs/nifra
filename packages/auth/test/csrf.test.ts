@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { server } from "@nifrajs/core"
 import { csrf } from "../src/index.ts"
 
 /** Resolve the middleware's onRequest once (it's always defined here). */
@@ -77,5 +78,18 @@ describe("csrf - same-origin default", () => {
     expect(downgrade.status).toBe(403)
     const other = (await run("POST", { origin: "https://evil.example" })) as Response
     expect(other.status).toBe(403)
+  })
+})
+
+describe("csrf - stacking", () => {
+  test("a stricter csrf() after a broader one applies too", async () => {
+    const app = server()
+      .use(csrf({ origins: ["https://app.example", "https://partner.example"] }))
+      .use(csrf({ origins: ["https://app.example"] }))
+      .post("/x", () => "ok")
+    const post = (origin: string) =>
+      app.fetch(new Request("https://app.example/x", { method: "POST", headers: { origin } }))
+    expect((await post("https://app.example")).status).toBe(200)
+    expect((await post("https://partner.example")).status).toBe(403)
   })
 })

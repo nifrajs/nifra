@@ -6,7 +6,7 @@ import type {
   Platform,
 } from "@nifrajs/core/server"
 import { ipBucket } from "./_ip.ts"
-import { setNodeHeader, withHeaders } from "./_utils.ts"
+import { guardName, setNodeHeader, withHeaders } from "./_utils.ts"
 
 export interface RateLimitResult {
   /** Hits recorded in the current window, including this one. */
@@ -285,7 +285,7 @@ export function rateLimit(options: RateLimitOptions): Middleware {
   }
 
   const middleware: Middleware = {
-    name: "rate-limit",
+    name: guardName("rate-limit"),
     async onRequest(req, platform) {
       const outcome = await hitStore(keyOf(req, platform))
       if (outcome instanceof Response) return outcome

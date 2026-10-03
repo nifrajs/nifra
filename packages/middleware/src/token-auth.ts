@@ -1,6 +1,6 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import { defineIdentityPlugin, type IdentityPlugin } from "@nifrajs/core/server"
-import { bearerToken } from "./_utils.ts"
+import { bearerToken, guardName } from "./_utils.ts"
 
 type MaybePromise<T> = T | Promise<T>
 
@@ -49,7 +49,7 @@ function createTokenAuth<P>(config: TokenAuthConfig<P>): AuthPlugin<P> {
         headers: config.challenge !== undefined ? { "www-authenticate": config.challenge } : {},
       },
     )
-  const plugin = defineIdentityPlugin(config.name, (app) =>
+  const plugin = defineIdentityPlugin(guardName(config.name), (app) =>
     app.beforeHandle(async (c: { readonly req: Request }) => {
       const token = config.extract(c.req)
       // Empty string is treated as "no credential" - never passed to verify.

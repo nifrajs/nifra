@@ -2801,10 +2801,11 @@ A **plugin** is `(app) => app` - it calls `use`/`derive`/
 `decorate` or registers routes, and returns the app. Because `derive` and
 `decorate` are type-threaded, any context a plugin adds is **typed on every handler
 defined after** `app.use(plugin)` - no extra generics. Wrap a plugin with
-`definePlugin(name, …)` to make it **idempotent**: the same plugin applied twice (e.g.
-because two plugins both depend on it) wires its hooks once. Two plugins built separately under one
-name - a second, stricter `bearer()` before admin routes - are two plugins, and both
-apply.
+`definePlugin(name, …)` to make it **idempotent**: applied twice (e.g. because two
+plugins both depend on it), it wires its hooks once, however each copy was configured. A plugin
+meant to stack needs a name per instance: nifra's guards (`bearer()`,
+`jwt()`, `ipRestriction()`, `rateLimit()` and the rest) have one,
+so a second, stricter guard before admin routes or inside a `group()` applies too.
 
 ```ts
 // doc-check: skip - fragment: the outer `app`, `verify`, and `db` are your application's.

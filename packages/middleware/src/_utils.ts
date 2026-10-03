@@ -18,6 +18,18 @@ export function jsonError(
   )
 }
 
+let guardInstances = 0
+
+/**
+ * A guard's plugin name, unique to each instance. `use()` skips a name it already applied, so one
+ * shared name would silently drop a second, stricter guard (another `bearer()` before admin routes,
+ * a tighter `rateLimit()` inside a `group()`). The same instance applied twice still dedupes.
+ */
+export function guardName(base: string): string {
+  guardInstances += 1
+  return `${base}#${guardInstances}`
+}
+
 /** Shared with core so auth/CSRF middleware gets the allocation-light cookie scanner too. */
 export const parseCookies = parseCoreCookies
 

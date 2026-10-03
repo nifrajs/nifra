@@ -560,16 +560,6 @@ const unroutedParam = (value: string | undefined): boolean =>
   value !== undefined &&
   (value.includes("\uFFFD") || value.includes("\\") || value === "." || value === "..")
 
-/**
- * The dedupe key of a named plugin or bundle. A framework capability (`nifra:` name) is configless, so
- * any copy of it is the same plugin. Any other name keys by the value itself: two separately built
- * guards (a second, stricter `bearer()`) are two plugins and both apply.
- */
-function appliedKey(name: string | undefined, value: object): unknown {
-  if (name === undefined) return undefined
-  return name.startsWith("nifra:") ? name : value
-}
-
 function hasUnroutedParam(params: Record<string, string>): boolean {
   for (const key in params) {
     if (unroutedParam(params[key])) return true
@@ -988,8 +978,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
   private readonly responseSources: WeakMap<object, Request>
   /** Memoized NodeRequestContext per plain-`Request` source - see {@link nodeRequestContextOf}. */
   private readonly nodeContexts: WeakMap<object, NodeRequestContext>
-  /** Plugins/middleware already applied via `use`, keyed by {@link appliedKey} - for idempotent dedupe. */
-  private readonly appliedPlugins: Set<unknown>
+  /** Names of plugins/middleware already applied via `use` - for idempotent dedupe. */
+  private readonly appliedPlugins: Set<string>
   /** Order-scoped evidence captured by routes registered after an assured plugin. */
   private readonly activeAssurance: AssuranceDeclaration[]
   /** App-wide evidence from global hooks; applies retroactively to every route. */
@@ -1515,8 +1505,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * Apply a **plugin function** - `(app) => app`, typically built with {@link definePlugin}. It's
    * called with `this` and its result is returned, so an inline plugin's `derive`/`decorate` thread
    * the added context to handlers defined after `use` (the overload is generic over the concrete
-   * `this`). Applying the same named plugin value again is a no-op (idempotent dedupe); a second value
-   * built separately - another `jwt()` call - applies too.
+   * `this`). A named plugin already applied is skipped (idempotent dedupe), however it was configured,
+   * so a plugin meant to stack - a second, stricter guard - needs a name of its own per instance.
    *
    * If the plugin's return type is unpinned - `Server<any, any>`, as a hand-rolled `(app) => app` or a
    * `NifraPlugin<AnyServer, AnyServer>` infers (e.g. an auth plugin whose own types collapsed) - this
@@ -1532,8 +1522,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
    * Apply a {@link Middleware} bundle - wire each hook it provides to its lifecycle point. Returns
    * `this` (no context-type merging); call it before the routes its `beforeHandle`/`afterHandle`
    * should cover (those are order-scoped; `onRequest`/`onResponse` are global). A bundle applied after
-   * the last route reaches nothing - {@link ServerOptions.unusedScopedHooks} logs that at seal. The same
-   * named bundle applied again is skipped (idempotent); a separately built one with that name applies.
+   * the last route reaches nothing - {@link ServerOptions.unusedScopedHooks} logs that at seal. A named
+   * bundle already applied is skipped (idempotent).
    */
   use<M extends Middleware>(mw: M): Server<R, Ctx, HookOutput | MiddlewareOutputOf<M>>
   use(mw: Middleware): this
@@ -1547,10 +1537,10 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const arg = input as Middleware | ((app: this) => AnyServer)
     this.assertConfigurable("use()")
     if (typeof arg === "function") {
-      const key = appliedKey((arg as { pluginName?: string }).pluginName, arg)
-      if (key !== undefined) {
-        if (this.appliedPlugins.has(key)) return this // idempotent: already applied
-        this.appliedPlugins.add(key)
+      const name = (arg as { pluginName?: string }).pluginName
+      if (name !== undefined) {
+        if (this.appliedPlugins.has(name)) return this // idempotent: already applied
+        this.appliedPlugins.add(name)
       }
       const evidence = assuranceDeclarationsOf(arg)
       const pluginOnly = evidence.filter((item) => item.scope === "plugin")
@@ -1568,10 +1558,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         }
       }
     }
-    const key = appliedKey(arg.name, arg)
-    if (key !== undefined) {
-      if (this.appliedPlugins.has(key)) return this
-      this.appliedPlugins.add(key)
+    if (arg.name !== undefined) {
+      if (this.appliedPlugins.has(arg.name)) return this
+      this.appliedPlugins.add(arg.name)
     }
     const evidence = assuranceDeclarationsOf(arg)
     if (evidence.some((item) => item.scope === "plugin")) {
@@ -2484,8 +2473,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     // plugin must still apply it to the parent's routes. The response observer is the exception: it
     // installs methods bound to the server it is applied to, so the scope must be free to install its
     // own (re-applying it registers no hook, so nothing can run twice).
-    for (const key of this.appliedPlugins) {
-      if (key !== "nifra:response-observer") scope.appliedPlugins.add(key)
+    for (const name of this.appliedPlugins) {
+      if (name !== "nifra:response-observer") scope.appliedPlugins.add(name)
     }
     let built: unknown
     try {

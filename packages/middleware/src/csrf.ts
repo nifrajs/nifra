@@ -2,6 +2,7 @@ import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
 import { isSameOriginRequest, METHODS, type Middleware } from "@nifrajs/core/server"
 import {
   base64UrlEncode,
+  guardName,
   hmacSha256,
   jsonError,
   parseCookies,
@@ -205,7 +206,7 @@ export function csrf(options: CsrfOptions): Middleware {
   const checkOrigin = options.checkOrigin !== false
 
   const middleware: Middleware = {
-    name: "csrf",
+    name: guardName("csrf"),
     async onRequest(req) {
       if (!protectedMethod(req.method, methods)) return undefined
       if (checkOrigin && !originAllowed(req, origins)) return jsonError(403, "csrf_failed")

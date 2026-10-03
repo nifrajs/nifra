@@ -8,6 +8,10 @@ import { isSameOriginRequest, type Middleware } from "@nifrajs/core/server"
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
 
+// A name per instance: `use()` skips a name it already applied, which would drop a second, stricter
+// `csrf()` inside a `group()`.
+let instances = 0
+
 export interface CsrfOptions {
   /**
    * Allowed origins (e.g. `["https://example.com"]`). When omitted, the request must be same-origin by
@@ -22,8 +26,9 @@ const forbidden = (): Response =>
 
 export function csrf(options: CsrfOptions = {}): Middleware {
   const configured = options.origins !== undefined ? new Set(options.origins) : undefined
+  instances += 1
   return {
-    name: "csrf",
+    name: `csrf#${instances}`,
     onRequest(req) {
       if (SAFE_METHODS.has(req.method)) return undefined
       // The same-origin default uses core's check, which accepts an `https:` page reaching an `http:`
