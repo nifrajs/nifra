@@ -670,17 +670,32 @@ export function guardValue(contract: ChannelContract, value: unknown): unknown {
 
 /**
  * Wrap a channel function so everything it returns passes {@link guardValue}. A scalar result stays
- * synchronous; an object result settles through a promise, as `await` would.
+ * synchronous; an object result settles through a promise, as `await` would. A thrown `Response` is
+ * the same answer as a returned one, so a thrown 2xx is refused as well.
  */
 export function guardChannel<Args extends unknown[]>(
   fn: (...args: Args) => unknown,
   contract: ChannelContract,
 ): (...args: Args) => unknown {
   const check = (value: unknown): unknown => guardValue(contract, value)
+  const checkThrown = (error: unknown): never => {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      (error instanceof Response || isResponseResult(error))
+    )
+      guardValue(contract, error)
+    throw error
+  }
   return (...args) => {
-    const value = fn(...args)
+    let value: unknown
+    try {
+      value = fn(...args)
+    } catch (error) {
+      return checkThrown(error)
+    }
     return value !== null && (typeof value === "object" || typeof value === "function")
-      ? Promise.resolve(value).then(check)
+      ? Promise.resolve(value).then(check, checkThrown)
       : check(value)
   }
 }

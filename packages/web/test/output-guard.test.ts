@@ -15,6 +15,7 @@ import {
 } from "../src/index.ts"
 import {
   type ChannelContract,
+  guardChannel,
   guardValue,
   isSensitiveFieldName,
   OutputGuardError,
@@ -263,6 +264,31 @@ describe("what passes without a schema, and what never does", () => {
     expect(json.message).toContain("returned a 200 Response")
     const result = await refusal(() => guard(schema, status(201, { id: "1" })))
     expect(result.message).toContain("returned a 201 Response")
+  })
+
+  test("a thrown 2xx Response is refused like a returned one; a thrown redirect passes", async () => {
+    const schema = t.object({ id: t.string() })
+    const leak = Response.json({ id: "1", passwordHash: "x" })
+    const sync = guardChannel(() => {
+      throw leak
+    }, contract(schema))
+    expect((await refusal(() => sync())).message).toContain("returned a 200 Response")
+    const async = guardChannel(async () => {
+      throw leak
+    }, contract(schema))
+    expect((await refusal(() => async())).message).toContain("returned a 200 Response")
+    const to = redirect("/login")
+    const redirecting = guardChannel(() => {
+      throw to
+    }, contract(schema))
+    expect(() => redirecting()).toThrow()
+    let thrown: unknown
+    try {
+      redirecting()
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBe(to)
   })
 
   test("an action's revalidate() wrapper is opened and its data guarded", async () => {
