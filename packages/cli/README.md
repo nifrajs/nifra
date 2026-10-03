@@ -179,6 +179,15 @@ to `./node_modules/.bin/nifra mcp`. When that is impossible, `nifra_check`, `nif
 `nifra_docs`, `nifra_example`, `nifra_assure` and `nifra_contracts` refuse with the fix instead of
 describing a different release.
 
+The server runs none of the project's code and keeps none of its `.env`. Every tool, resource and
+prompt that loads the app, including the ones the app declares with `.tool()`, runs in a fresh process
+started in the project's directory, which loads that directory's `.env` files, answers and exits; a
+config that exits or hangs fails only that call. Values from the environment and from
+`nifra mcp --env-file <path>` reach every such process. In a monorepo each app's tools see that app's
+`.env`, not the root's. A call that loads the app costs one process start, and `warm: true` on
+`nifra_run`/`nifra_render` keeps one worker with the app loaded until a source file changes. Details
+and limits: [Where your code and secrets run](https://nifra.dev/docs/agents#project-code).
+
 ## Structured verification
 
 `nifra check --json` returns stable diagnostic codes and machine-actionable evidence. `nifra assure --json --strict` returns one versioned bundle with explicit pass, fail, and skip gate results plus a `green` or `red` verdict. Use `nifra fix --code NF-...` for a registered fix recipe, and `nifra contracts snapshot` to opt into route contract drift detection.

@@ -725,6 +725,61 @@ export default function Agents() {
         and tenant policy remain application-owned ports.
       </p>
 
+      <h2 id="project-code">Where your code and secrets run</h2>
+      <p>
+        The server your client starts runs none of your project's code. Each tool that loads the app,
+        such as <code>nifra_context</code>, <code>nifra_routes</code>, <code>nifra_check</code> or{" "}
+        <code>nifra_openapi</code>, runs in a fresh process started in the project's directory, which
+        imports <code>nifra.config.ts</code> and the backend, answers and exits. So do the routes and
+        OpenAPI resources, and the tools, resources and prompts your app declares with{" "}
+        <code>.tool()</code>. <code>nifra_run</code>, <code>nifra_render</code>,{" "}
+        <code>nifra_ws</code>, <code>nifra_hydrate</code>, <code>nifra_test</code> and the database
+        tools start their own process the same way.
+      </p>
+      <ul>
+        <li>
+          <strong>Current code, contained failures.</strong> Each call sees the files as they are now,
+          wherever the client started the server. A config or backend that exits, throws or hangs
+          fails only that call: a resource or prompt that has not answered after 30 seconds is
+          killed, and a cancelled tool call kills its process.
+        </li>
+        <li>
+          <strong>Your environment reaches every process.</strong> Each one loads the{" "}
+          <code>.env</code> files of its own directory, by Bun's rules (the environment wins). Values
+          set in the environment the client started the server with, and <code>--env-file</code>{" "}
+          values (<code>nifra mcp --env-file .env.secrets</code>), reach all of them.
+        </li>
+        <li>
+          <strong>No <code>.env</code> in the server.</strong> When Bun loaded <code>.env</code>{" "}
+          values into the server at startup, the server hands the session to a copy of itself that
+          loads none, keeping the values from the environment and <code>--env-file</code>. The process
+          the client started stays to forward signals and the exit code: it still holds the values
+          Bun loaded, but runs no project code and reads no messages.
+        </li>
+        <li>
+          <strong>A process per call has a cost.</strong> A call that loads the app pays one process
+          start: tens of milliseconds, more when the config imports heavy plugins. The app's own
+          tools are listed once, and again only when <code>nifra.config.ts</code>,{" "}
+          <code>backend/framework.ts</code> or <code>backend/app.ts</code> changes.
+        </li>
+        <li>
+          <strong>Warm mode keeps one process.</strong> <code>nifra_run</code> and <code>nifra_render</code> with <code>warm: true</code> reuse one
+          worker with the app loaded, replaced when a source file changes. It holds your code and
+          environment until then or until the session ends, in its own process, not the server's.
+        </li>
+        <li>
+          <strong>The database tools read <code>.env</code> to mask it.</strong> The declaration is
+          evaluated in the call's process, but the server reads the project's <code>.env</code> files
+          while it formats an answer, so their values come back masked. It runs no project code to do
+          so.
+        </li>
+        <li>
+          <strong>The project's CLI decides.</strong> When the project installs its own{" "}
+          <code>@nifrajs/cli</code> at another version, the session is handed to it, and what this
+          section describes is what that version does.
+        </li>
+      </ul>
+
       <h2>Projects without a web config</h2>
       <p>
         A backend-only project - the shape <code>create-nifra</code>'s default template produces - has
@@ -739,7 +794,9 @@ export default function Agents() {
       <p>
         Point the server at the repository root and it discovers each workspace app, namespacing that
         app's own <code>.tool()</code> declarations so two apps exposing the same tool name stay
-        distinct.
+        distinct. Each app's tools run in that app's directory and see that app's <code>.env</code>,
+        not the root's; set values every app needs in the environment or pass{" "}
+        <code>--env-file</code>.
       </p>
     </div>
   )

@@ -6400,6 +6400,58 @@ resume. `@nifrajs/agent-telemetry` converts the same constrained evidence into
 fail-open OpenTelemetry run and step spans. Providers, credentials, durable storage, retention,
 and tenant policy remain application-owned ports.
 
+### Where your code and secrets run
+
+The server your client starts runs none of your project's code. Each tool that loads the app,
+such as `nifra_context`, `nifra_routes`, `nifra_check` or
+`nifra_openapi`, runs in a fresh process started in the project's directory, which
+imports `nifra.config.ts` and the backend, answers and exits. So do the routes and
+OpenAPI resources, and the tools, resources and prompts your app declares with
+`.tool()`. `nifra_run`, `nifra_render`,
+`nifra_ws`, `nifra_hydrate`, `nifra_test` and the database
+tools start their own process the same way.
+
+-
+**Current code, contained failures.** Each call sees the files as they are now,
+wherever the client started the server. A config or backend that exits, throws or hangs
+fails only that call: a resource or prompt that has not answered after 30 seconds is
+killed, and a cancelled tool call kills its process.
+
+-
+**Your environment reaches every process.** Each one loads the
+`.env` files of its own directory, by Bun's rules (the environment wins). Values
+set in the environment the client started the server with, and `--env-file`
+values (`nifra mcp --env-file .env.secrets`), reach all of them.
+
+-
+**No `.env` in the server.** When Bun loaded `.env`
+values into the server at startup, the server hands the session to a copy of itself that
+loads none, keeping the values from the environment and `--env-file`. The process
+the client started stays to forward signals and the exit code: it still holds the values
+Bun loaded, but runs no project code and reads no messages.
+
+-
+**A process per call has a cost.** A call that loads the app pays one process
+start: tens of milliseconds, more when the config imports heavy plugins. The app's own
+tools are listed once, and again only when `nifra.config.ts`,
+`backend/framework.ts` or `backend/app.ts` changes.
+
+-
+**Warm mode keeps one process.** `nifra_run` and `nifra_render` with `warm: true` reuse one
+worker with the app loaded, replaced when a source file changes. It holds your code and
+environment until then or until the session ends, in its own process, not the server's.
+
+-
+**The database tools read `.env` to mask it.** The declaration is
+evaluated in the call's process, but the server reads the project's `.env` files
+while it formats an answer, so their values come back masked. It runs no project code to do
+so.
+
+-
+**The project's CLI decides.** When the project installs its own
+`@nifrajs/cli` at another version, the session is handed to it, and what this
+section describes is what that version does.
+
 ### Projects without a web config
 
 A backend-only project - the shape `create-nifra`'s default template produces - has
@@ -6413,7 +6465,9 @@ rather than the session failing to open.
 
 Point the server at the repository root and it discovers each workspace app, namespacing that
 app's own `.tool()` declarations so two apps exposing the same tool name stay
-distinct.
+distinct. Each app's tools run in that app's directory and see that app's `.env`,
+not the root's; set values every app needs in the environment or pass
+`--env-file`.
 
 ## Nifra - Dev & HMR
 
@@ -11941,6 +11995,15 @@ a different version than the `nifra` the client spawned (a global install, say),
 to `./node_modules/.bin/nifra mcp`. When that is impossible, `nifra_check`, `nifra_types`,
 `nifra_docs`, `nifra_example`, `nifra_assure` and `nifra_contracts` refuse with the fix instead of
 describing a different release.
+
+The server runs none of the project's code and keeps none of its `.env`. Every tool, resource and
+prompt that loads the app, including the ones the app declares with `.tool()`, runs in a fresh process
+started in the project's directory, which loads that directory's `.env` files, answers and exits; a
+config that exits or hangs fails only that call. Values from the environment and from
+`nifra mcp --env-file <path>` reach every such process. In a monorepo each app's tools see that app's
+`.env`, not the root's. A call that loads the app costs one process start, and `warm: true` on
+`nifra_run`/`nifra_render` keeps one worker with the app loaded until a source file changes. Details
+and limits: [Where your code and secrets run](https://nifra.dev/docs/agents#project-code).
 
 ## Structured verification
 
