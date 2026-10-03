@@ -8,7 +8,7 @@
 import { realpathSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { basename, isAbsolute, relative, resolve } from "node:path"
-import type { LoadedApp } from "./load.ts"
+import type { AppSummary } from "./load.ts"
 import { createCachedAppLoader } from "./mcp-exec.ts"
 import { resolveMcpProjectPath } from "./mcp-path.ts"
 import type { McpPrompt, McpResource, McpServerFeatures, McpTool } from "./mcp-protocol.ts"
@@ -20,7 +20,7 @@ function openApiFormat(args: Record<string, unknown>): "json" | "yaml" {
 
 export async function openApiHandler(
   args: Record<string, unknown>,
-  loadAppCached: (outDirName?: string) => Promise<LoadedApp>,
+  loadAppCached: (outDirName?: string) => Promise<AppSummary>,
 ): Promise<string> {
   const { renderOpenApiWithTypes } = await import("./openapi-tool.ts")
   const pathPrefix = typeof args.path === "string" ? args.path : undefined
@@ -57,7 +57,7 @@ function promptText(
 
 export function projectResources(
   cwd: string,
-  loadAppCached: (outDirName?: string) => Promise<LoadedApp> = createCachedAppLoader(cwd),
+  loadAppCached: (outDirName?: string) => Promise<AppSummary> = createCachedAppLoader(cwd),
 ): McpResource[] {
   return [
     {
@@ -165,7 +165,7 @@ export function projectPrompts(): McpPrompt[] {
 
 export function projectFeatures(
   cwd: string,
-  loadAppCached: (outDirName?: string) => Promise<LoadedApp> = createCachedAppLoader(cwd),
+  loadAppCached: (outDirName?: string) => Promise<AppSummary> = createCachedAppLoader(cwd),
 ): McpServerFeatures {
   return { resources: projectResources(cwd, loadAppCached), prompts: projectPrompts() }
 }
@@ -218,7 +218,7 @@ export function dirError(dir: string | undefined): string {
 /** Build the project-scoped tools for `cwd`. */
 export interface CommandMcpToolOptions {
   readonly cwd: string
-  readonly loadAppCached?: () => Promise<LoadedApp>
+  readonly loadAppCached?: () => Promise<AppSummary>
 }
 
 /** Adapt one executable catalog spec to its MCP descriptor and project-scoped handler. */

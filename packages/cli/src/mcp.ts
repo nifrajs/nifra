@@ -42,14 +42,18 @@
  * standard MCP progress notifications and request cancellation - no SDK dependency, the same
  * minimal-surface choice as the rest of nifra. The pure dispatch lives in `./mcp-protocol.ts`; this
  * module is the I/O shell (stdin loop, tool wiring, the run subprocess).
+ *
+ * This process never evaluates `nifra.config.ts`: it declares `devDatabase` and may read `.env`
+ * secrets, so it runs only in short-lived subprocesses (`./app-summary.ts`, `./db-tool.ts`).
  */
 
 import { stat } from "node:fs/promises"
 import { resolve } from "node:path"
+import { detectMonorepoApps } from "./app-summary.ts"
 import { loadDocsCorpus } from "./docs-search.ts"
 import { loadExamplesCorpus } from "./examples.ts"
-import type { LoadedApp } from "./load.ts"
-import { detectMonorepo, loadMonorepoApps } from "./load.ts"
+import type { AppSummary } from "./load.ts"
+import { loadMonorepoApps } from "./load.ts"
 import { delegateToProjectCli, refuseVersionSensitive } from "./mcp-delegate.ts"
 import { docsTools } from "./mcp-docs-tools.ts"
 import {
@@ -138,7 +142,7 @@ export {
 } from "./mcp-context.ts"
 
 async function backendFeatures(
-  loader: () => Promise<LoadedApp>,
+  loader: () => Promise<AppSummary>,
   base: McpServerFeatures,
 ): Promise<McpServerFeatures> {
   const resources = [...(base.resources ?? [])]
@@ -161,7 +165,7 @@ async function backendFeatures(
  * An app's own tools are an extension of the built-in set, so their absence must not withdraw the
  * built-ins - a backend-only project still gets docs, examples, types, check, doctor, levels and test.
  */
-async function appDeclaredTools(loader: () => Promise<LoadedApp>): Promise<McpTool[]> {
+async function appDeclaredTools(loader: () => Promise<AppSummary>): Promise<McpTool[]> {
   try {
     return extractBackendTools((await loader()).backend)
   } catch {
@@ -173,22 +177,30 @@ const ROOTS_REQUEST_ID = "nifra:roots/list"
 const MAX_STDIO_MESSAGE_BYTES = 8 * 1024 * 1024
 const STDIO_ENCODER = new TextEncoder()
 
+interface MonorepoApp {
+  readonly name: string
+  readonly cwd: string
+  readonly loader: () => Promise<AppSummary>
+}
+
 /** Everything derived from the project root - rebuilt wholesale when the root changes (adoption of a
  * client workspace root), so no per-tool state can keep pointing at the old directory. */
 interface ProjectContext {
-  readonly monorepo: Awaited<ReturnType<typeof detectMonorepo>>
+  /** A monorepo root's apps, each with the loader every dispatch reuses; `undefined` for one app. */
+  readonly apps: readonly MonorepoApp[] | undefined
   readonly features: McpServerFeatures
-  readonly loadAppCached: () => Promise<LoadedApp>
+  readonly loadAppCached: () => Promise<AppSummary>
 }
 
 async function createProjectContext(root: string): Promise<ProjectContext> {
-  const monorepo = await detectMonorepo(root)
+  const monorepo = await detectMonorepoApps(root)
   if (monorepo) {
-    const appEntries = await loadMonorepoApps(root, monorepo)
+    const apps = (await loadMonorepoApps(root, monorepo)).map(
+      ({ name, cwd }): MonorepoApp => ({ name, cwd, loader: createCachedAppLoader(cwd) }),
+    )
     const allResources: McpResource[] = []
     const allPrompts: McpPrompt[] = []
-    for (const { name, cwd: appCwd } of appEntries) {
-      const loader = createCachedAppLoader(appCwd)
+    for (const { name, cwd: appCwd, loader } of apps) {
       const ns = namespaceForApp(
         name,
         [],
@@ -198,14 +210,14 @@ async function createProjectContext(root: string): Promise<ProjectContext> {
       allPrompts.push(...(ns.features.prompts ?? []))
     }
     return {
-      monorepo,
+      apps,
       features: { resources: allResources, prompts: allPrompts },
       loadAppCached: createCachedAppLoader(root),
     }
   }
   const loadAppCached = createCachedAppLoader(root)
   return {
-    monorepo,
+    apps: undefined,
     features: await backendFeatures(loadAppCached, projectFeatures(root, loadAppCached)),
     loadAppCached,
   }
@@ -300,11 +312,9 @@ export async function runMcpServer(
     }
 
     let activeTools: McpTool[]
-    if (ctx.monorepo) {
-      const appEntries = await loadMonorepoApps(rootState.root, ctx.monorepo)
+    if (ctx.apps) {
       const allTools: McpTool[] = []
-      for (const { name, cwd: appCwd } of appEntries) {
-        const loader = createCachedAppLoader(appCwd)
+      for (const { name, cwd: appCwd, loader } of ctx.apps) {
         const tools = [
           ...refuseVersionSensitive(projectTools(appCwd, loader), drift),
           ...(await appDeclaredTools(loader)),
