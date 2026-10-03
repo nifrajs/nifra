@@ -106,12 +106,6 @@ function formatMessage(m: SSEMessage): string {
   return `${frame}\n` // the blank line terminates the event
 }
 
-let neverAbort: AbortSignal | undefined
-function getNeverAbort(): AbortSignal {
-  neverAbort ??= new AbortController().signal
-  return neverAbort
-}
-
 export function sse(
   c: SSEContext,
   run: (stream: SSEStream) => void | Promise<void>,
@@ -119,6 +113,9 @@ export function sse(
 ): Response {
   const encoder = new TextEncoder()
   const requestSignal: AbortSignal | undefined = c.req?.signal
+  // The producer's signal also aborts when the runtime cancels the body: a writer that finds the
+  // client gone cancels the stream, and a request signal alone may never fire.
+  const stopped = new AbortController()
   let closed = false
   let heartbeat: ReturnType<typeof setInterval> | undefined
   let onAbort: (() => void) | undefined
@@ -147,16 +144,20 @@ export function sse(
           if (!closed) controller.enqueue(encoder.encode(formatMessage(message)))
         },
         close,
-        signal: requestSignal ?? getNeverAbort(),
+        signal: stopped.signal,
       }
 
       // Stop the moment the client goes away.
       if (requestSignal !== undefined) {
         if (requestSignal.aborted) {
+          stopped.abort()
           close()
           return
         }
-        onAbort = close
+        onAbort = () => {
+          stopped.abort()
+          close()
+        }
         requestSignal.addEventListener("abort", onAbort, { once: true })
       }
 
@@ -183,6 +184,7 @@ export function sse(
       // Consumer/runtime canceled (client gone) - pending sends become no-ops.
       closed = true
       teardown()
+      stopped.abort()
     },
   })
 
