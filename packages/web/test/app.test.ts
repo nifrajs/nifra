@@ -1359,3 +1359,56 @@ test("serves both generated machine-readable guidance routes", async () => {
   expect(short.headers.get("content-type")).toContain("text/plain")
   expect(full.headers.get("content-type")).toContain("text/plain")
 })
+
+test("llms.txt lists backend routes only when the backend is served over HTTP", async () => {
+  const backend = server().post("/internal/admin/impersonate", () => ({ ok: true }))
+  // The same backend both ways: its routes are reflected, and the bridge makes it HTTP-mountable.
+  const api = Object.assign(backend, inProcessBridge(backend))
+  const mounted = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+  })
+  expect(await (await mounted.fetch(new Request("http://x/llms.txt"))).text()).toContain(
+    "/internal/admin/impersonate",
+  )
+  const inProcess = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    api,
+    apiPrefix: "",
+  })
+  const text = await (await inProcess.fetch(new Request("http://x/llms-full.txt"))).text()
+  expect(text).not.toContain("impersonate")
+  expect(text).toContain("No API routes registered.")
+})
+
+test("llmsTxt: false serves neither guidance route, and an app's own /llms.txt page wins", async () => {
+  const off = createWebApp({
+    adapter: stub,
+    manifest: fullManifest(),
+    clientEntry: "/c.js",
+    llmsTxt: false,
+  })
+  expect(
+    (await off.fetch(new Request("http://x/llms.txt"))).headers.get("content-type"),
+  ).not.toContain("text/plain")
+  const own: Manifest = {
+    ...fullManifest(),
+    routes: [
+      ...fullManifest().routes,
+      {
+        id: "llms.txt",
+        pattern: "/llms.txt",
+        layoutIds: [],
+        file: "llms.txt.tsx",
+        load: async () => ({ default: "own" }),
+      },
+    ],
+  }
+  const app = createWebApp({ adapter: stub, manifest: own, clientEntry: "/c.js" })
+  const res = await app.fetch(new Request("http://x/llms.txt"))
+  expect(res.headers.get("content-type")).toContain("text/html")
+})

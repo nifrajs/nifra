@@ -188,6 +188,9 @@ export interface CreateWebAppOptions<Env = unknown> {
    * team - unreleased feature names, internal hostnames, and "don't touch X yet" notes live there
    * routinely. Turn it on only for a repo whose guidelines you would publish as a page. */
   readonly publishLocalGuidelines?: boolean
+  /** Serve `/llms.txt` and `/llms-full.txt` (default `true`): the page routes, and the backend routes
+   * when the backend is mounted over HTTP at {@link apiPrefix}. `false` registers neither path. */
+  readonly llmsTxt?: boolean
   /** SSG: per dynamic route pattern, its `getStaticPaths` `fallback` (from `enumerateStaticRoutes` or
    * the build's `prerendered.json`). A route mapped to `"404"` rejects any path NOT in
    * `prerenderedPaths` with the 404 page - the unlisted path simply doesn't exist. `"ssr"` (the
@@ -380,21 +383,30 @@ export function createWebApp<Env = unknown>(
     app.register("GET", route.pattern, undefined, pageExecutor.get(route))
     app.register("POST", route.pattern, undefined, pageExecutor.post(route))
   }
-  // Register llms.txt & llms-full.txt
-  const llmsOptions = { includeLocalGuidelines: options.publishLocalGuidelines === true }
-  app.register("GET", "/llms.txt", undefined, async () => {
-    const text = await generateLlmsTxt(false, manifest.routes, api, llmsOptions)
-    return new Response(text, {
-      headers: { "content-type": "text/plain; charset=utf-8" },
-    })
-  })
-
-  app.register("GET", "/llms-full.txt", undefined, async () => {
-    const text = await generateLlmsTxt(true, manifest.routes, api, llmsOptions)
-    return new Response(text, {
-      headers: { "content-type": "text/plain; charset=utf-8" },
-    })
-  })
+  // llms.txt & llms-full.txt describe what a visitor can reach: the pages, and the backend only when it
+  // is served over HTTP - a backend the loaders call in-process has no public surface to describe. An
+  // app route at either path takes precedence, and each text is built once per app.
+  if (options.llmsTxt !== false) {
+    const llmsOptions = { includeLocalGuidelines: options.publishLocalGuidelines === true }
+    const publicApi = mountedApi !== undefined && apiPrefix !== "" ? api : undefined
+    const ownPatterns = new Set(manifest.routes.map((route) => route.pattern))
+    for (const [path, full] of [
+      ["/llms.txt", false],
+      ["/llms-full.txt", true],
+    ] as const) {
+      if (ownPatterns.has(path)) continue
+      let text: Promise<string> | undefined
+      app.register("GET", path, undefined, async () => {
+        text ??= generateLlmsTxt(full, manifest.routes, publicApi, llmsOptions).catch((error) => {
+          text = undefined
+          throw error
+        })
+        return new Response(await text, {
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        })
+      })
+    }
+  }
 
   // Wildcard catch-all: unmatched paths render the nearest `_404` (404), or a plain text 404 if
   // absent.
