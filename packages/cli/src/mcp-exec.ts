@@ -649,6 +649,8 @@ export async function spawnChild(
   if (signal?.aborted) return `${label} cancelled${cancellationSuffix(signal)}.`
   const proc = Bun.spawn(["bun", childPath(child), cwd], {
     cwd,
+    // Explicit: without `env`, Bun passes the environment it started with, missing `--env-file` values.
+    env: process.env,
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -767,6 +769,8 @@ export class WarmWorker {
   ) {
     this.proc = Bun.spawn(["bun", childPath(child), cwd, "--worker"], {
       cwd,
+      // Explicit: without `env`, Bun passes the environment it started with, missing `--env-file` values.
+      env: process.env,
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",

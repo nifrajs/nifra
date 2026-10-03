@@ -115,6 +115,8 @@ export async function askProjectChild(
   try {
     proc = Bun.spawn([process.execPath, childPath(), cwd], {
       cwd,
+      // Explicit: without `env`, Bun passes the environment it started with, missing `--env-file` values.
+      env: process.env,
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",

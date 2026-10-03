@@ -611,6 +611,8 @@ export async function runHydrationAssurance(
     [process.execPath, entry, root, "--nifra-hydration-child", JSON.stringify(options)],
     {
       cwd: root,
+      // Explicit: without `env`, Bun passes the environment it started with, missing `--env-file` values.
+      env: process.env,
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",

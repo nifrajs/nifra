@@ -55,6 +55,7 @@ const BACKEND =
   "export const backend = server()\n" +
   "  .use(mcp())\n" +
   '  .get("/health", () => ({ ok: true }))\n' +
+  '  .get("/secret", () => ({ secret: process.env.NIFRA_PROBE_SECRET ?? null }))\n' +
   '  .tool("whoami", { description: "Who runs this tool", input: any }, () => ({\n' +
   "    pid: process.pid,\n" +
   `    script: ${SCRIPT},\n` +
@@ -223,6 +224,47 @@ describe("nifra mcp runs no project code in its own process", () => {
     const whoami: unknown = JSON.parse(toolText(byId[2]))
     expect(dig(whoami, "secret")).toBe("from-dotenv")
     expect(dig(whoami, "script")).toBe(PROJECT_CHILD)
+  }, 60_000)
+
+  test("--env-file values reach every subprocess: app tools, project tools and nifra_run", async () => {
+    const root = tempRoot()
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "app", private: true }))
+    writeFileSync(join(root, "secrets.env"), "NIFRA_PROBE_SECRET=from-env-file\n")
+    writeApp(root)
+    writeFileSync(
+      join(root, "secret.test.ts"),
+      'import { expect, test } from "bun:test"\n' +
+        'test("sees the secret", () => expect(process.env.NIFRA_PROBE_SECRET).toBe("from-env-file"))\n',
+    )
+    const run = (id: number, warm: boolean) =>
+      call(id, "nifra_run", { requests: [{ path: "/secret" }], warm })
+    const { byId } = await mcpRpc(
+      root,
+      ["--env-file", "secrets.env"],
+      [
+        INITIALIZE,
+        INITIALIZED,
+        call(2, "whoami"),
+        call(3, "nifra_context"),
+        run(4, false),
+        run(5, true),
+        call(6, "nifra_test", { pattern: "secret.test.ts" }),
+        call(7, "nifra_db_schema"),
+      ],
+      [1, 2, 3, 4, 5, 6, 7],
+    )
+    const whoami: unknown = JSON.parse(toolText(byId[2]))
+    expect(dig(whoami, "secret")).toBe("from-env-file")
+    expect(dig(whoami, "script")).toBe(PROJECT_CHILD)
+    expect(toolText(byId[3])).toContain("# nifra project")
+    for (const id of [4, 5]) {
+      const ran: unknown = JSON.parse(toolText(byId[id]))
+      expect(dig(ran, "results", 0, "body", "secret")).toBe("from-env-file")
+    }
+    expect(dig(JSON.parse(toolText(byId[6])), "ok")).toBe(true)
+    const configs = seen(root, "config.log")
+    expect(configs.map((entry) => entry.script)).toContain("db-child.ts")
+    for (const entry of configs) expect(entry.secret).toBe("from-env-file")
   }, 60_000)
 
   test("a monorepo root: the server forgets the root's .env and keeps what its environment set", async () => {

@@ -129,6 +129,8 @@ export async function runDbChild(
   const startupMs = options.startupMs ?? CHILD_TIMEOUT_MS
   const proc = Bun.spawn([process.execPath, "--no-env-file", childPath(), root], {
     cwd: root,
+    // Explicit: without `env`, Bun passes the environment it started with, missing `--env-file` values.
+    env: process.env,
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",

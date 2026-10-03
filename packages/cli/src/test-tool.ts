@@ -126,6 +126,8 @@ export async function collectTestResult(
   }
   const proc = Bun.spawn(command, {
     cwd,
+    // Explicit: without `env`, Bun passes the environment it started with, missing `--env-file` values.
+    env: process.env,
     stdout: "pipe",
     stderr: "pipe",
   })
