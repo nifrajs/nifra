@@ -34,6 +34,11 @@ loopback debugger, set `exposeErrorStacks: true` (or pass
 `--expose-error-stacks` to `nifra-agent --rpc`) to include bounded exception
 stacks. This option is rejected for remote binding.
 
+`nifra-agent` loads `.nifra/extensions/**` from `--cwd` only when started with
+`--extensions`. An extension module's top-level code runs as soon as it is
+imported, before its declared `capabilities` are checked, so pass the flag only
+for a repository you trust.
+
 `IsolatedExtensionWorker` is an opt-in process-backed crash-containment seam for
 extensions. It is not a hostile-code sandbox; use OS-level isolation before
 loading code you do not trust.
