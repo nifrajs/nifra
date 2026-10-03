@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { fixedBackoff } from "../src/backoff.ts"
 import { createQueue, JobError, JobValidationError } from "../src/index.ts"
+import { MemoryJobStore } from "../src/memory-store.ts"
 import type { StandardSchemaV1 } from "../src/types.ts"
 
 /** A mutable injectable clock so retry/backoff/delay tests are deterministic (no real timers). */
@@ -180,5 +181,34 @@ describe("createQueue - worker lifecycle (real timers)", () => {
     expect(finished).toBe(true)
     expect(worker.running).toBe(false)
     expect(await q.counts()).toEqual({ pending: 0, active: 0, dead: 0 })
+  })
+})
+
+describe("worker polling survives a failing store", () => {
+  test("a lease that throws is reported to onPollError and the next poll still runs jobs", async () => {
+    class FlakyStore extends MemoryJobStore {
+      failures = 1
+      override lease(now: number, limit: number, leaseMs: number) {
+        if (this.failures > 0) {
+          this.failures--
+          throw new Error("db connection reset")
+        }
+        return super.lease(now, limit, leaseMs)
+      }
+    }
+    const q = createQueue({ store: new FlakyStore() })
+    const ran = deferred()
+    const send = q.define("send", {
+      handler() {
+        ran.resolve()
+      },
+    })
+    await send.enqueue({})
+    const reported: unknown[] = []
+    const worker = q.start({ pollIntervalMs: 5, onPollError: (error) => reported.push(error) })
+    await ran.promise
+    await worker.stop()
+    expect(reported).toHaveLength(1)
+    expect(String(reported[0])).toContain("db connection reset")
   })
 })

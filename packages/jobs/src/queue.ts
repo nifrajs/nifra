@@ -92,6 +92,9 @@ export interface WorkerOptions {
   readonly pollIntervalMs?: number
   /** How long a leased job is hidden before it's considered abandoned and re-leased (ms). Default 30_000. */
   readonly leaseMs?: number
+  /** Called when a poll round fails (the store's `lease` threw); polling continues on the next tick.
+   * Default: `console.error`. A throwing handler here is swallowed. */
+  readonly onPollError?: (error: unknown) => void
 }
 
 export interface Worker {
@@ -395,7 +398,19 @@ export function createQueue(options: QueueOptions = {}): Queue {
     concurrency = opts.concurrency ?? 1
     leaseMs = opts.leaseMs ?? 30_000
     const intervalMs = opts.pollIntervalMs ?? 250
-    if (timer === undefined) timer = setInterval(() => void process(), intervalMs)
+    const onPollError =
+      opts.onPollError ?? ((error: unknown) => console.error("[nifra/jobs] poll failed:", error))
+    // A store outage must not become an unhandled rejection, which ends a Node process.
+    const poll = (): void => {
+      process().catch((error: unknown) => {
+        try {
+          onPollError(error)
+        } catch {
+          /* a throwing onPollError must not crash the worker */
+        }
+      })
+    }
+    if (timer === undefined) timer = setInterval(poll, intervalMs)
     return {
       get running() {
         return timer !== undefined
@@ -405,7 +420,8 @@ export function createQueue(options: QueueOptions = {}): Queue {
           clearInterval(timer)
           timer = undefined
         }
-        if (round !== undefined) await round
+        // A failed round was already reported to onPollError.
+        if (round !== undefined) await round.catch(() => {})
       },
     }
   }
