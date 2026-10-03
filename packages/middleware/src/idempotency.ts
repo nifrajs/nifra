@@ -1,5 +1,5 @@
 import { NIFRA_ASSURANCE, withRouteAssurance } from "@nifrajs/core/assurance"
-import { METHODS, type Middleware } from "@nifrajs/core/server"
+import { METHODS, type Middleware, replacedRequestOf } from "@nifrajs/core/server"
 
 /**
  * Idempotency keys for unsafe requests - a client retrying a `POST` (dropped connection, impatient
@@ -465,9 +465,16 @@ export function idempotency(options: IdempotencyOptions): Middleware {
       return undefined
     },
     async onResponse(res, req) {
-      const claim = claimed.get(req)
-      if (claim === undefined) return res // not a claimed request (safe method / no key / a replay)
-      claimed.delete(req)
+      // A later onRequest hook (methodOverride, a transport codec) may have replaced the request
+      // this one claimed; walk back to it.
+      let claimedReq: Request | undefined = req
+      let claim = claimed.get(req)
+      while (claim === undefined && claimedReq !== undefined) {
+        claimedReq = replacedRequestOf(claimedReq)
+        if (claimedReq !== undefined) claim = claimed.get(claimedReq)
+      }
+      if (claim === undefined || claimedReq === undefined) return res // not a claimed request
+      claimed.delete(claimedReq)
       if (!shouldCache(res)) {
         await store.release(claim.key, claim.reservation)
         return res

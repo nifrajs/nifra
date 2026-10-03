@@ -63,6 +63,19 @@ describe("metrics()", () => {
     expect(text).toContain('nifra_http_requests_in_flight{method="GET"} 0')
   })
 
+  test("a request a later hook rewrote is still counted and leaves the in-flight gauge", async () => {
+    const app = server()
+      .use(metrics())
+      .onRequest((req) => (req.method === "POST" ? new Request(req, { method: "PUT" }) : undefined))
+      .put("/items/:id", () => ({ ok: true }))
+    await app.fetch(new Request("http://t/items/1", { method: "POST" }))
+    const text = await scrape(app)
+    expect(text).toContain('nifra_http_requests_in_flight{method="POST"} 0')
+    expect(text).toContain(
+      'nifra_http_requests_total{method="POST",route="/items/:id",status="200"} 1',
+    )
+  })
+
   test("custom app metrics on a shared registry render at /metrics", async () => {
     const registry = createMetricsRegistry()
     const logins = registry.counter("app_logins_total", "Logins.")

@@ -99,6 +99,7 @@ import {
   RequestContext,
   readBodyFramed,
 } from "./request-context.ts"
+import { recordRequestReplacement } from "./request-lineage.ts"
 import { hasDotSegment, resolveDotSegments } from "./request-target.ts"
 import {
   applyStaticResponseHeaders,
@@ -3595,7 +3596,8 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     if (source !== originalRequest) this.responseSources.set(source as object, originalRequest)
     let current: RequestSource = source
     for (let i = 0; i < hooks.length; i++) {
-      const outcome = (hooks[i] as RawOnRequest)(requestOf(current), platform)
+      const seen = requestOf(current)
+      const outcome = (hooks[i] as RawOnRequest)(seen, platform)
       if (outcome instanceof Promise) {
         return outcome.then((early) =>
           this.continueOnRequest(
@@ -3612,6 +3614,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
         )
       }
       if (outcome instanceof Request) {
+        if (outcome !== seen) recordRequestReplacement(outcome, seen)
         current = outcome
         if (outcome !== originalRequest) this.responseRequests.set(originalRequest, outcome)
         continue
@@ -3635,17 +3638,20 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     webFast: boolean,
   ): Promise<T> {
     let current = sourceAtAwait
+    let seen = requestOf(sourceAtAwait)
     let early = first
     let index = nextIndex
     for (;;) {
       if (early instanceof Request) {
+        if (early !== seen) recordRequestReplacement(early, seen)
         current = early
         if (early !== originalRequest) this.responseRequests.set(originalRequest, early)
       } else if (early !== undefined) {
         return wrapResponse(early)
       }
       if (index >= this.onRequestHooks.length) break
-      const outcome = (this.onRequestHooks[index] as RawOnRequest)(requestOf(current), platform)
+      seen = requestOf(current)
+      const outcome = (this.onRequestHooks[index] as RawOnRequest)(seen, platform)
       early = outcome instanceof Promise ? await outcome : outcome
       index++
     }

@@ -1683,6 +1683,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **redactLogFields** _(function)_ - `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
 - **rejected** _(function)_ - `rejected: (reason?: AuthenticationFailureReason, response?: Response | ResponseResult) => AuthenticationFailure`
+- **replacedRequestOf** _(function)_ - `replacedRequestOf: (request: Request) => Request | undefined`
+  The request an `onRequest` hook returned this one in place of, or `undefined` for the request the exchange began with. Response hooks receive the request the route ran with, so a middleware that keyed state on the request its `onRequest` saw walks back from there to find it.
 - **routePatternOverlap** _(function)_ - `routePatternOverlap: (left: string, right: string) => string | undefined`
   Return a deterministic path accepted by both patterns, or `undefined` when their path languages are disjoint. A pattern ending in optional params is every concrete path it serves, so `/users/:id?` overlaps `/users` as well as `/users/me`.
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
@@ -2874,6 +2876,8 @@ Every public export of every package and documented subpath - name, kind, signat
 - **redactLogFields** _(function)_ - `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
 - **rejected** _(function)_ - `rejected: (reason?: AuthenticationFailureReason, response?: Response | ResponseResult) => AuthenticationFailure`
+- **replacedRequestOf** _(function)_ - `replacedRequestOf: (request: Request) => Request | undefined`
+  The request an `onRequest` hook returned this one in place of, or `undefined` for the request the exchange began with. Response hooks receive the request the route ran with, so a middleware that keyed state on the request its `onRequest` saw walks back from there to find it.
 - **routePatternOverlap** _(function)_ - `routePatternOverlap: (left: string, right: string) => string | undefined`
   Return a deterministic path accepted by both patterns, or `undefined` when their path languages are disjoint. A pattern ending in optional params is every concrete path it serves, so `/users/:id?` overlaps `/users` as well as `/users/me`.
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`
@@ -6942,6 +6946,8 @@ _No named exports (side-effect entrypoint)._
 - **redactLogFields** _(function)_ - `redactLogFields: (fields: LogFields, options?: RedactOptions) => LogFields`
   Deep-copy `fields`, replacing values under sensitive keys with the placeholder; cycle-safe. With `options.valuePatterns`, also scans string values for those patterns (opt-in). Without options, this is pure key-name redaction (the long-standing default).
 - **rejected** _(function)_ - `rejected: (reason?: AuthenticationFailureReason, response?: Response | ResponseResult) => AuthenticationFailure`
+- **replacedRequestOf** _(function)_ - `replacedRequestOf: (request: Request) => Request | undefined`
+  The request an `onRequest` hook returned this one in place of, or `undefined` for the request the exchange began with. Response hooks receive the request the route ran with, so a middleware that keyed state on the request its `onRequest` saw walks back from there to find it.
 - **routePatternOverlap** _(function)_ - `routePatternOverlap: (left: string, right: string) => string | undefined`
   Return a deterministic path accepted by both patterns, or `undefined` when their path languages are disjoint. A pattern ending in optional params is every concrete path it serves, so `/users/:id?` overlaps `/users` as well as `/users/me`.
 - **serializeCookie** _(function)_ - `serializeCookie: (name: string, value: string, options?: CookieOptions) => string`

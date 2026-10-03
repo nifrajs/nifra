@@ -15956,6 +15956,20 @@
     "signature": "export interface RepairRequiredView extends EventViewBase {\n    readonly kind: \"repair.required\";\n    readonly turnId?: string;\n    readonly taskId: string;\n    readonly verification: \"check\" | \"assure\" | \"test\";\n    readonly capabilities: readonly string[];\n}"
   },
   {
+    "name": "replacedRequestOf",
+    "kind": "function",
+    "package": "@nifrajs/core",
+    "signature": "export declare function replacedRequestOf(request: Request): Request | undefined;",
+    "doc": "/**\n * The request an `onRequest` hook returned this one in place of, or `undefined` for the request the\n * exchange began with. Response hooks receive the request the route ran with, so a middleware that\n * keyed state on the request its `onRequest` saw walks back from there to find it.\n */"
+  },
+  {
+    "name": "replacedRequestOf",
+    "kind": "function",
+    "package": "nifra",
+    "signature": "export declare function replacedRequestOf(request: Request): Request | undefined;",
+    "doc": "/**\n * The request an `onRequest` hook returned this one in place of, or `undefined` for the request the\n * exchange began with. Response hooks receive the request the route ran with, so a middleware that\n * keyed state on the request its `onRequest` saw walks back from there to find it.\n */"
+  },
+  {
     "name": "replayAgent",
     "kind": "function",
     "package": "@nifrajs/agent",

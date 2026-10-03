@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { server } from "@nifrajs/core"
-import { type IdempotencyOptions, idempotency, MemoryIdempotencyStore } from "../src/index.ts"
+import {
+  type IdempotencyOptions,
+  idempotency,
+  MemoryIdempotencyStore,
+  methodOverride,
+} from "../src/index.ts"
 
 function counterApp(
   options: Omit<IdempotencyOptions, "store"> & { store: MemoryIdempotencyStore },
@@ -39,6 +44,26 @@ describe("idempotency middleware", () => {
     expect(second.status).toBe(200)
     expect(second.headers.get("idempotent-replayed")).toBe("true")
     expect(calls()).toBe(1) // the side effect ran exactly once
+  })
+
+  test("a later hook rewriting the request does not lose the claim", async () => {
+    let executions = 0
+    const app = server()
+      .use(idempotency({ store: new MemoryIdempotencyStore() }))
+      .use(methodOverride())
+      .delete("/orders/1", () => ({ executions: ++executions }))
+    const send = () =>
+      app.fetch(
+        new Request("http://x/orders/1", {
+          method: "POST",
+          headers: { "x-http-method-override": "DELETE", "idempotency-key": "k1" },
+        }),
+      )
+    expect(await (await send()).json()).toEqual({ executions: 1 })
+    const retry = await send()
+    expect(retry.status).toBe(200)
+    expect(await retry.json()).toEqual({ executions: 1 })
+    expect(executions).toBe(1)
   })
 
   test("distinct keys run independently", async () => {

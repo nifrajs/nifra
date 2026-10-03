@@ -103,6 +103,7 @@ export type {
   RouteInfo,
   RouteInfoFor,
 } from "./server/registry.ts"
+export { replacedRequestOf } from "./server/request-lineage.ts"
 export {
   type PlainRender,
   type ResponseResult,
