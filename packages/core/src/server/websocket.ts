@@ -17,7 +17,7 @@ import type {
 } from "../schema/standard.ts"
 import { validateStandard } from "../schema/standard.ts"
 import { decodeTransportFrame, type TransportCodecRegistry } from "../transport-codec.ts"
-import { guardParsedValue, type ProtoPoisoning, parseJsonGuarded } from "./proto-guard.ts"
+import { guardDecodedValue, type ProtoPoisoning, parseJsonGuarded } from "./proto-guard.ts"
 
 type MaybePromise<T> = T | Promise<T>
 
@@ -459,7 +459,7 @@ export function wrapWebSocketMessageValidation(
       parsed =
         handler.transport === undefined
           ? parseJsonGuarded(text, protoPoisoning)
-          : guardParsedValue(
+          : guardDecodedValue(
               decodeTransportFrame(text, handler.transport.registry, {
                 ...(handler.transport.maxBytes === undefined
                   ? {}

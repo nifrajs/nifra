@@ -277,6 +277,78 @@ describe("transport lane edges", () => {
     expect(response.status).toBe(413)
     expect(await response.json()).toMatchObject({ error: "payload_too_large" })
   })
+
+  // A codec that keeps references decodes a graph, while everything after it walks a tree.
+  const cyclic = '{"r":{"$w":"ref","i":0},"n":[{"$w":"obj","v":{"self":{"$w":"ref","i":0}}}]}'
+  const amplified = JSON.stringify({
+    r: { $w: "ref", i: 0 },
+    n: Array.from({ length: 41 }, (_, i) =>
+      i === 40
+        ? { $w: "obj", v: { leaf: 1 } }
+        : {
+            $w: "arr",
+            v: [
+              { $w: "ref", i: i + 1 },
+              { $w: "ref", i: i + 1 },
+            ],
+          },
+    ),
+  })
+
+  test("a cyclic or reference-amplified body is a 400, never handler input", async () => {
+    let reached = false
+    const app = server()
+      .use(transportCodecs(registry()))
+      .post("/echo", () => {
+        reached = true
+        return { ok: true }
+      })
+    for (const body of [cyclic, amplified]) {
+      const response = await app.fetch(
+        new Request("http://test/echo", {
+          method: "POST",
+          headers: { "content-type": rich.mediaType },
+          body,
+        }),
+      )
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({ error: "invalid_transport_payload" })
+    }
+    expect(reached).toBe(false)
+  })
+
+  test("a shared reference within the bound still decodes", async () => {
+    const anyBody = {
+      "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) },
+    } as const
+    const app = server()
+      .use(transportCodecs(registry()))
+      .post("/echo", { body: anyBody }, (c) => c.body)
+    const shared = { id: 1 }
+    const response = await app.fetch(
+      new Request("http://test/echo", {
+        method: "POST",
+        headers: { "content-type": rich.mediaType, accept: "application/json" },
+        body: rich.encode({ a: shared, b: [shared, shared] }),
+      }),
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ a: { id: 1 }, b: [{ id: 1 }, { id: 1 }] })
+  })
+
+  test("the poisoning policy reaches into Map members", async () => {
+    const app = server()
+      .use(transportCodecs(registry()))
+      .post("/echo", () => ({ ok: true }))
+    const response = await app.fetch(
+      new Request("http://test/echo", {
+        method: "POST",
+        headers: { "content-type": rich.mediaType },
+        body: '{"r":{"$w":"ref","i":0},"n":[{"$w":"map","v":[["k",{"$w":"ref","i":1}]]},{"$w":"obj","v":{"__proto__":{"$w":"ref","i":2}}},{"$w":"obj","v":{"admin":true}}]}',
+      }),
+    )
+    expect(response.status).toBe(400)
+  })
 })
 
 // The cap is enforced on already-read text for callers that never stream (the typed client's

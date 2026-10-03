@@ -1324,6 +1324,41 @@ describe("WS messageSchema (contract-validated messages)", () => {
     expect(Object.hasOwn(ignored.seen[0] ?? {}, "__proto__")).toBe(true)
   })
 
+  test("a transport frame decoding to a cycle is an invalid message, never a walk that never ends", async () => {
+    const { richWireCodec } = await import("../src/transport-codec-rich.ts")
+    const { createTransportCodecRegistry, plainJsonCodec } = await import(
+      "../src/transport-codec.ts"
+    )
+    const passthrough: StandardSchemaV1<unknown, object> = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (v) =>
+          typeof v === "object" && v !== null
+            ? { value: v }
+            : { issues: [{ message: "expected an object" }] },
+      },
+    }
+    const seen: object[] = []
+    const invalid: string[] = []
+    const app = server()
+      .use(websocket())
+      .ws("/g", {
+        transport: { registry: createTransportCodecRegistry([plainJsonCodec, richWireCodec()]) },
+        messageSchema: passthrough,
+        message: (_ws, msg) => void seen.push(msg),
+        onInvalidMessage: (_ws, issues) => void invalid.push(issues[0]?.message ?? ""),
+      })
+    const out = await app.resolveWebSocketUpgrade(
+      new Request("http://t/g", { headers: { upgrade: "websocket" } }),
+    )
+    if (out.kind !== "upgrade") throw new Error("expected upgrade")
+    const payload = '{"r":{"$w":"ref","i":0},"n":[{"$w":"obj","v":{"self":{"$w":"ref","i":0}}}]}'
+    await out.handler.message?.(fakeWs(), JSON.stringify({ codec: "wire", version: 1, payload }))
+    expect(seen).toEqual([])
+    expect(invalid).toEqual(["invalid JSON"])
+  })
+
   test("an async schema is awaited before dispatch", async () => {
     const asyncSchema: StandardSchemaV1<unknown, number> = {
       "~standard": {
