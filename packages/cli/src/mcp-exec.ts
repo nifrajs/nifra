@@ -10,7 +10,7 @@ import { stat } from "node:fs/promises"
 import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Glob } from "bun"
-import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
+import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE, fileFingerprint } from "./app-files.ts"
 import {
   type CommandCatalogEntry,
   type CommandCtx,
@@ -1063,18 +1063,6 @@ function cacheToken(input: string): string {
     hash = Math.imul(hash, 16777619)
   }
   return `mcp=${(hash >>> 0).toString(36)}`
-}
-
-async function fileFingerprint(path: string): Promise<string> {
-  try {
-    const s = await stat(path)
-    return `${s.mtimeMs}:${s.size}`
-  } catch (err) {
-    if (err && typeof err === "object" && (err as { code?: string }).code === "ENOENT") {
-      return "missing"
-    }
-    throw err
-  }
 }
 
 async function appFingerprint(cwd: string): Promise<string> {

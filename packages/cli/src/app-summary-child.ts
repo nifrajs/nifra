@@ -25,13 +25,28 @@ export type AppSummaryAnswer =
   | { readonly ok: false; readonly message: string }
 
 const describePlugins = (plugins: readonly unknown[]): Array<{ readonly name?: string }> =>
-  plugins.map((plugin) => {
-    const name =
-      typeof plugin === "object" && plugin !== null
-        ? (plugin as { name?: unknown }).name
-        : undefined
-    return typeof name === "string" ? { name } : {}
-  })
+  plugins.map((plugin) =>
+    typeof plugin === "object" &&
+    plugin !== null &&
+    "name" in plugin &&
+    typeof plugin.name === "string"
+      ? { name: plugin.name }
+      : {},
+  )
+
+/** The framework fields an {@link AppSummary} keeps, from the loaded config or its answer. */
+export function frameworkFacts(source: {
+  readonly clientModule: string
+  readonly apiPrefix?: unknown
+  readonly apiStrip?: unknown
+}): AppSummary["framework"] {
+  const facts: { clientModule: string; apiPrefix?: string; apiStrip?: boolean } = {
+    clientModule: source.clientModule,
+  }
+  if (typeof source.apiPrefix === "string") facts.apiPrefix = source.apiPrefix
+  if (typeof source.apiStrip === "boolean") facts.apiStrip = source.apiStrip
+  return facts
+}
 
 /** Answer `request` for `cwd`. A config that fails to load answers `ok: false` with `loadApp`'s message. */
 export async function answerAppSummary(
@@ -47,11 +62,7 @@ export async function answerAppSummary(
       ok: true,
       config: {
         configPath,
-        framework: {
-          clientModule: framework.clientModule,
-          ...(framework.apiPrefix === undefined ? {} : { apiPrefix: framework.apiPrefix }),
-          ...(framework.apiStrip === undefined ? {} : { apiStrip: framework.apiStrip }),
-        },
+        framework: frameworkFacts(framework),
         resolvedPlugins: {
           vitePlugins: describePlugins(resolvedPlugins.vitePlugins),
           clientPlugins: describePlugins(resolvedPlugins.clientPlugins),
@@ -71,8 +82,9 @@ function parseRequest(text: string): (AppSummaryRequest & { readonly token: stri
   } catch {
     return undefined
   }
-  if (typeof value !== "object" || value === null) return undefined
-  const { token, kind } = value as { token?: unknown; kind?: unknown }
+  if (typeof value !== "object" || value === null || !("token" in value) || !("kind" in value))
+    return undefined
+  const { token, kind } = value
   if (typeof token !== "string" || !/^[0-9a-f-]{16,64}$/.test(token)) return undefined
   if (kind !== "app" && kind !== "monorepo") return undefined
   return { token, kind }

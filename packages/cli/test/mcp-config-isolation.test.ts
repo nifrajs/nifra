@@ -40,8 +40,7 @@ function pids(dir: string): string[] {
 
 const dig = (value: unknown, ...path: Array<string | number>): unknown =>
   path.reduce<unknown>(
-    (at, key) =>
-      typeof at === "object" && at !== null ? (at as Record<string, unknown>)[key] : undefined,
+    (at, key) => (typeof at === "object" && at !== null ? Reflect.get(at, key) : undefined),
     value,
   )
 
@@ -214,6 +213,25 @@ describe("loadAppSummary", () => {
     expect(pids(root)).not.toContain(String(process.pid))
   }, 30_000)
 
+  test("reuses the config answer across backend edits and rereads it after a config edit", async () => {
+    const root = tempRoot()
+    const config = `${APP_CONFIG}export const apiPrefix = "/api"\n`
+    writeApp(root, config)
+    mkdirSync(join(root, "backend"))
+    const backend = join(root, "backend", "app.ts")
+    writeFileSync(backend, "export const backend = 1\n")
+    expect((await loadAppSummary(root, "dist", { importQuery: "a" })).backend).toBe(1)
+    writeFileSync(backend, "export const backend = 22\n")
+    const afterBackendEdit = await loadAppSummary(root, "dist", { importQuery: "b" })
+    expect(afterBackendEdit.backend).toBe(22)
+    expect(afterBackendEdit.framework.apiPrefix).toBe("/api")
+    expect(pids(root)).toHaveLength(1)
+    writeFileSync(join(root, "nifra.config.ts"), config.replace('"/api"', '"/v2/api"'))
+    const afterConfigEdit = await loadAppSummary(root, "dist", { importQuery: "c" })
+    expect(afterConfigEdit.framework.apiPrefix).toBe("/v2/api")
+    expect(pids(root)).toHaveLength(2)
+  }, 30_000)
+
   test("throws loadApp's message for an invalid config", async () => {
     const root = tempRoot()
     writeApp(root, "export const adapter = {}\n")
@@ -226,6 +244,17 @@ describe("loadAppSummary", () => {
     const root = tempRoot()
     writeApp(root, "process.exit(7)\n")
     await expect(loadAppSummary(root)).rejects.toThrow("exited with code 7 before answering")
+  }, 30_000)
+
+  test("kills a config that never finishes loading at the deadline", async () => {
+    const root = tempRoot()
+    writeApp(root, `${RECORD_PID}await new Promise(() => setInterval(() => {}, 1_000))\n`)
+    await expect(loadAppSummary(root, "dist", { timeoutMs: 2_000 })).rejects.toThrow(
+      "did not load within 2s and its process was killed",
+    )
+    const [pid] = pids(root)
+    expect(pid).toBeDefined()
+    expect(() => process.kill(Number(pid), 0)).toThrow()
   }, 30_000)
 
   test("refuses a missing routes/ without starting a process", async () => {
@@ -260,12 +289,18 @@ describe("detectMonorepoApps", () => {
     const throws = tempRoot()
     writeFileSync(join(throws, "nifra.config.ts"), 'throw new Error("boom")\n')
     expect(await detectMonorepoApps(throws)).toBeNull()
+
+    const hangs = tempRoot()
+    writeFileSync(
+      join(hangs, "nifra.config.ts"),
+      'await new Promise(() => setInterval(() => {}, 1_000))\nexport const apps = { dash: "./apps/dash" }\n',
+    )
+    expect(await detectMonorepoApps(hangs, { timeoutMs: 1_000 })).toBeNull()
   }, 30_000)
 })
 
 describe("app summary child", () => {
-  const streamOf = (text: string): ReadableStream<Uint8Array> =>
-    new Response(text).body as ReadableStream<Uint8Array>
+  const streamOf = (text: string): ReadableStream<Uint8Array> => new Blob([text]).stream()
 
   test("answers a token-prefixed line and refuses a malformed request", async () => {
     const root = tempRoot()
