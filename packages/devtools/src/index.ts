@@ -222,15 +222,16 @@ export function devtools(options?: DevToolsOptions | undefined) {
         // One access-control gate for BOTH the live stream and the one-shot snapshot: a read of the
         // buffer exposes the same request data as watching it live, so it is guarded identically -
         // loopback-only unless `allowRemote`, origin-checked, and an optional `authorize` hook.
-        // A serving adapter's platform clientIp is the raw socket peer and is authoritative. When
-        // no adapter can provide one, retain the URL-host fallback for edge runtimes without sockets.
+        // Loopback means both: the URL host names this machine, and the socket peer (when the adapter
+        // knows it) is this machine. A loopback peer alone is what a DNS-rebound page looks like - its
+        // Host and Origin name the attacker's domain, and that origin counts as same-origin below.
+        const loopbackHost =
+          url.hostname === "localhost" ||
+          url.hostname === "127.0.0.1" ||
+          url.hostname === "[::1]" ||
+          url.hostname.endsWith(".localhost")
         const loopback =
-          platform?.clientIp !== undefined
-            ? isLoopbackPeer(platform.clientIp)
-            : url.hostname === "localhost" ||
-              url.hostname === "127.0.0.1" ||
-              url.hostname === "[::1]" ||
-              url.hostname.endsWith(".localhost")
+          loopbackHost && (platform?.clientIp === undefined || isLoopbackPeer(platform.clientIp))
         if (!allowRemote && !loopback) {
           return new Response("Nifra DevTools is restricted to loopback hosts", { status: 403 })
         }
