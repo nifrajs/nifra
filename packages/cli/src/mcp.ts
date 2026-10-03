@@ -152,9 +152,21 @@ const noAppInServer = (): Promise<LoadedApp> =>
     new Error("[nifra] the MCP server does not load the app; project code runs in a subprocess"),
   )
 
-/** The project's tools, each forwarded to a project subprocess unless it runs no project code. */
-const isolatedProjectTools = (cwd: string): McpTool[] =>
-  isolateTools(cwd, projectTools(cwd, noAppInServer))
+const isolatedToolsByDir = new Map<string, McpTool[]>()
+
+/**
+ * The project's tools, each forwarded to a project subprocess unless it runs no project code. Built
+ * once per directory: `nifra_run`/`nifra_render` hold their warm worker in the tool, so a list rebuilt
+ * per message started a fresh worker for every `warm: true` call.
+ */
+function isolatedProjectTools(cwd: string): McpTool[] {
+  let tools = isolatedToolsByDir.get(cwd)
+  if (tools === undefined) {
+    tools = isolateTools(cwd, projectTools(cwd, noAppInServer))
+    isolatedToolsByDir.set(cwd, tools)
+  }
+  return tools
+}
 
 /** The project's resources and prompts, with the ones the app declares. */
 function appFeatures(cwd: string, surface: IsolatedSurface): McpServerFeatures {

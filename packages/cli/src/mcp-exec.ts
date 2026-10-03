@@ -6,10 +6,10 @@
  * replaceable.
  */
 
-import { stat } from "node:fs/promises"
+import type { Dirent } from "node:fs"
+import { readdir, stat } from "node:fs/promises"
 import { relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { Glob } from "bun"
 import { BACKEND_APP_FILE, CONFIG_FILE, FRAMEWORK_FILE } from "./app-files.ts"
 import {
   type CommandCatalogEntry,
@@ -721,24 +721,38 @@ export async function spawnChild(
   }
 }
 
-const WARM_RUN_GLOB = new Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,json}")
-const WARM_RUN_IGNORED =
-  /(^|\/)(node_modules|dist(-[a-z0-9]+)?|build|\.nifra|\.git|\.wrangler|coverage)\//
+const WARM_RUN_SOURCE = /\.(?:[cm]?[jt]sx?|json)$/
+// Pruned while walking, not filtered after: a scan that descends into node_modules on every warm call
+// costs more than the cold start the worker saves.
+const WARM_RUN_SKIPPED_DIR = /^(?:\..*|node_modules|dist(?:-[a-z0-9]+)?|build|coverage)$/
 const WARM_RUN_EXTRA_FILES = ["bun.lock", "bun.lockb"] as const
 const MAX_WARM_PENDING = 64
 
 async function warmRunFingerprint(cwd: string): Promise<string> {
   const parts: string[] = []
-  for await (const rawRel of WARM_RUN_GLOB.scan({ cwd, dot: false })) {
-    const rel = rawRel.replaceAll("\\", "/")
-    if (WARM_RUN_IGNORED.test(rel)) continue
+  const walk = async (dir: string): Promise<void> => {
+    let entries: Dirent[]
     try {
-      const s = await stat(resolve(cwd, rel))
-      if (s.isFile()) parts.push(`${rel}:${s.mtimeMs}:${s.size}`)
+      entries = await readdir(resolve(cwd, dir), { withFileTypes: true })
     } catch {
-      // A file can disappear while an agent is editing. The next call will rescan the settled tree.
+      return
+    }
+    for (const entry of entries) {
+      const rel = dir === "" ? entry.name : `${dir}/${entry.name}`
+      if (entry.isDirectory()) {
+        if (!WARM_RUN_SKIPPED_DIR.test(entry.name)) await walk(rel)
+        continue
+      }
+      if (entry.name.startsWith(".") || !WARM_RUN_SOURCE.test(entry.name)) continue
+      try {
+        const s = await stat(resolve(cwd, rel))
+        if (s.isFile()) parts.push(`${rel}:${s.mtimeMs}:${s.size}`)
+      } catch {
+        // A file can disappear while an agent is editing. The next call will rescan the settled tree.
+      }
     }
   }
+  await walk("")
   for (const rel of WARM_RUN_EXTRA_FILES) {
     parts.push(`${rel}:${await fileFingerprint(resolve(cwd, rel))}`)
   }

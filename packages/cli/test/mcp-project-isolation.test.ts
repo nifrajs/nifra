@@ -281,6 +281,24 @@ describe("nifra mcp runs no project code in its own process", () => {
     expect(dig(whoami, "script")).toBe(PROJECT_CHILD)
   }, 60_000)
 
+  test("warm nifra_run calls in one session share one worker", async () => {
+    const root = tempRoot()
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "app", private: true }))
+    writeApp(root)
+    const run = (id: number) =>
+      call(id, "nifra_run", { requests: [{ path: "/health" }], warm: true })
+    const { byId } = await mcpRpc(
+      root,
+      [],
+      [INITIALIZE, INITIALIZED, run(2), run(3), run(4)],
+      [2, 3, 4],
+    )
+    for (const id of [2, 3, 4])
+      expect(dig(JSON.parse(toolText(byId[id])), "results", 0, "body", "ok")).toBe(true)
+    const workers = seen(root, "backend.log").filter((entry) => entry.script === "mcp-run.ts")
+    expect(new Set(workers.map((entry) => entry.pid)).size).toBe(1)
+  }, 60_000)
+
   test("--env-file values reach every subprocess: app tools, project tools, run, test, database and hydrate", async () => {
     const root = tempRoot()
     writeFileSync(join(root, "package.json"), JSON.stringify({ name: "app", private: true }))
