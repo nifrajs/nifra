@@ -7,6 +7,40 @@ const app = server()
   .get("/", () => ({ hello: "world" }))
   .post("/", () => ({ ok: true }))
 
+/** An endless event stream, one event every 20ms; the first event's arrival shows nothing buffers it. */
+function eventStream(headers: Record<string, string> = {}): Response {
+  let n = 0
+  let cancelled = false
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      pull: (controller) =>
+        new Promise<void>((resolve) =>
+          setTimeout(() => {
+            if (!cancelled) controller.enqueue(new TextEncoder().encode(`data: ${n++}\n\n`))
+            resolve()
+          }, 20),
+        ),
+      cancel: () => {
+        cancelled = true
+      },
+    }),
+    { headers: { "content-type": "text/event-stream", ...headers } },
+  )
+}
+
+async function firstChunk(response: Response, ms: number): Promise<string> {
+  const reader = response.body?.getReader()
+  if (reader === undefined) return "no body"
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<string>((resolve) => {
+    timer = setTimeout(() => resolve("nothing arrived"), ms)
+  })
+  const first = reader.read().then((chunk) => new TextDecoder().decode(chunk.value))
+  const outcome = await Promise.race([first, deadline]).finally(() => clearTimeout(timer))
+  await reader.cancel()
+  return outcome
+}
+
 describe("etag", () => {
   test("adds a weak ETag to GET 200 responses", async () => {
     const res = await app.fetch(new Request("http://x/"))
@@ -86,6 +120,20 @@ describe("etag", () => {
       .get("/", () => ({ stable: true }))
     const res = await app.fetch(new Request("http://x/"))
     expect(res.headers.get("etag")).toMatch(/^"[0-9a-f]{64}"$/)
+  })
+
+  test("an event stream, or a no-store stream, passes through as it is produced", async () => {
+    const app = server()
+      .use(etag())
+      .get("/events", () => eventStream())
+      .get("/live", () =>
+        eventStream({ "content-type": "text/plain", "cache-control": "no-store" }),
+      )
+    for (const path of ["/events", "/live"]) {
+      const response = await app.fetch(new Request(`http://x${path}`))
+      expect(response.headers.get("etag")).toBeNull()
+      expect(await firstChunk(response, 1000)).toBe("data: 0\n\n")
+    }
   })
 
   test("non-GET responses are untouched (no ETag)", async () => {

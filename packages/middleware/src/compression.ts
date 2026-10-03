@@ -11,8 +11,9 @@ export interface CompressionOptions {
 }
 
 // Text-like payloads benefit from gzip; binary media (images/video/archives) is already compressed.
+// Not an event stream: gzip holds each event until its window fills, so none would arrive on time.
 const COMPRESSIBLE =
-  /^(?:text\/|application\/(?:json|[\w.-]+\+json|javascript|xml|[\w.-]+\+xml|wasm|x-ndjson)|image\/svg\+xml)/i
+  /^(?:text\/(?!event-stream\b)|application\/(?:json|[\w.-]+\+json|javascript|xml|[\w.-]+\+xml|wasm|x-ndjson)|image\/svg\+xml)/i
 
 const defaultCompressible = (contentType: string): boolean => COMPRESSIBLE.test(contentType)
 
