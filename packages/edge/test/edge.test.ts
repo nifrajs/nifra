@@ -432,6 +432,26 @@ test("toFetchHandler yields a Workers { fetch } module handler", async () => {
   expect(await res.json()).toEqual({ id: "7" })
 })
 
+test("path params are decoded as core decodes them, and a malformed escape is a 400", async () => {
+  const edgeFiles = server()
+    .get("/files/:name", (c) => ({ name: c.params.name }))
+    .get("/w/*", (c) => ({ rest: c.params["*"] }))
+  const coreFiles = coreServer()
+    .get("/files/:name", (c) => ({ name: c.params.name }))
+    .get("/w/*", (c) => ({ rest: c.params["*"] }))
+  for (const path of ["/files/a%20b", "/w/a%2Fb", "/files/%E0%A4"]) {
+    const [onEdge, onCore] = await Promise.all([
+      edgeFiles.fetch(new Request(`http://x${path}`)),
+      coreFiles.fetch(new Request(`http://x${path}`)),
+    ])
+    expect(onEdge.status).toBe(onCore.status)
+    expect(await onEdge.text()).toBe(await onCore.text())
+  }
+  const decoded = await edgeFiles.fetch(new Request("http://x/files/a%20b"))
+  expect(await decoded.json()).toEqual({ name: "a b" })
+  expect((await edgeFiles.fetch(new Request("http://x/files/%E0%A4"))).status).toBe(400)
+})
+
 test("a path ending in optional params serves each shorter path too", async () => {
   const edge = server().get("/reports/:year?/:month?", (c) => ({
     year: c.params.year ?? null,

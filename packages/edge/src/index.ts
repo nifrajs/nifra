@@ -29,7 +29,7 @@ import {
   searchOf,
   toResponse,
 } from "@nifrajs/core/edge-kit"
-import { expandOptionalParams } from "@nifrajs/core/pattern"
+import { decodeRouteParams, expandOptionalParams } from "@nifrajs/core/pattern"
 import { Router } from "@nifrajs/core/router"
 import type { Method, Params, StandardIssue, StandardSchemaV1 } from "@nifrajs/core/server"
 
@@ -190,12 +190,16 @@ export class EdgeServer {
         ? render(plainError(404, "not_found"))
         : notFound(request, url.pathname)
     }
+    // Decoded as core decodes them, so a route answers the same on both: `a%20b` is `a b`, and a
+    // malformed escape is a 400 rather than a raw capture.
+    const params = decodeRouteParams(match.params)
+    if (params === null) return render(plainError(400, "malformed_path"))
     const { bodySchema, handler } = match.payload
 
     const dispatch = async (body: unknown): Promise<Response> => {
       const c: EdgeContext = {
         request,
-        params: match.params,
+        params,
         body,
         query: () => queryObjectOf(searchOf(request.url)),
         header: (name) => request.headers.get(name),
