@@ -27,6 +27,8 @@ export const PRE_DECODED_BODY = Symbol("nifra.body.preDecoded")
 /** The stash shape under {@link PRE_DECODED_BODY}. */
 export interface PreDecodedBody {
   readonly value: unknown
+  /** The encoded size, so the route's own body limit still applies to a body decoded before routing. */
+  readonly byteLength: number
 }
 
 /**

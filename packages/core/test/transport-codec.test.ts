@@ -70,6 +70,31 @@ describe("versioned transport codecs", () => {
     expect(await decodeTransportResponse(response, registry)).toEqual(value)
   })
 
+  test("a route's own bodyLimit applies to a body a codec decoded before routing", async () => {
+    const rich = richWireCodec()
+    const registry = createTransportCodecRegistry([plainJsonCodec, rich])
+    const bodySchema = {
+      "~standard": {
+        version: 1 as const,
+        vendor: "test",
+        validate: (value: unknown) => ({ value }),
+      },
+    }
+    const app = server()
+      .use(transportCodecs(registry))
+      .post("/small", { body: bodySchema, bodyLimit: 1024 }, () => "accepted")
+    const post = (text: string) =>
+      app.fetch(
+        new Request("http://test/small", {
+          method: "POST",
+          headers: { "content-type": rich.mediaType },
+          body: rich.encode({ s: text }),
+        }),
+      )
+    expect((await post("x".repeat(100))).status).toBe(200)
+    expect((await post("x".repeat(50_000))).status).toBe(413)
+  })
+
   test("transport hooks preserve response controls and enforce their own request cap", async () => {
     const rich = richWireCodec()
     const registry = createTransportCodecRegistry([plainJsonCodec, rich])

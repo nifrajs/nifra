@@ -53,9 +53,9 @@ export function readBoundedJsonSource<T>(
 ): Promise<unknown | ResponseResult | T> {
   const preDecoded = (req as { [PRE_DECODED_BODY]?: PreDecodedBody })[PRE_DECODED_BODY]
   if (preDecoded !== undefined) {
-    return onResult === undefined
-      ? Promise.resolve(preDecoded.value)
-      : Promise.resolve(preDecoded.value).then(onResult)
+    const value =
+      preDecoded.byteLength > maxBytes ? plainError(413, "payload_too_large") : preDecoded.value
+    return onResult === undefined ? Promise.resolve(value) : Promise.resolve(value).then(onResult)
   }
 
   const raw = ((req as { [RAW_BODY_READERS]?: RequestSource })[RAW_BODY_READERS] ??

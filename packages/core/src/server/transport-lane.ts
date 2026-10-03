@@ -14,7 +14,7 @@ interface TransportBodySource {
 
 export type TransportDecodeResult =
   | { readonly matched: false }
-  | { readonly matched: true; readonly value: unknown }
+  | { readonly matched: true; readonly value: unknown; readonly byteLength: number }
   | { readonly matched: true; readonly response: Response }
 
 export interface TransportRuntime {
@@ -85,6 +85,7 @@ export function transportCodecs(
         return {
           matched: true,
           value: guardParsedValue(codec.decode(text), protoPoisoning),
+          byteLength: read.bytes.byteLength,
         }
       } catch {
         return {
@@ -131,7 +132,7 @@ export function transportCodecs(
         body: "{}",
         signal: replacement.signal as never,
       })
-      const stash: PreDecodedBody = { value: decoded.value }
+      const stash: PreDecodedBody = { value: decoded.value, byteLength: decoded.byteLength }
       Object.defineProperty(normalized, PRE_DECODED_BODY, { value: stash })
       return normalized
     })
