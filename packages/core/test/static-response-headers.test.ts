@@ -523,3 +523,23 @@ describe("responseHeaders() - refusals", () => {
     }
   })
 })
+
+describe("response header views", () => {
+  test("only a real header answers - never a property every object inherits", async () => {
+    const seen: unknown[][] = []
+    const app = server({ logger: silentLogger })
+      .use(nodeDirect())
+      .use(responseObserver())
+      .onResponseHeaders((headers: ResponseHeadersView) => {
+        seen.push([headers.has("constructor"), headers.get("constructor"), headers.get("toString")])
+      })
+      .get("/json", () => ({ ok: true }))
+    await app.fetch(new Request("http://x/json"))
+    const outcome = await app.resolveNode(new Request("http://x/json"))
+    expect(outcome.kind === "response" ? outcome.response.status : outcome.status).toBe(200)
+    expect(seen).toEqual([
+      [false, null, null],
+      [false, null, null],
+    ])
+  })
+})
