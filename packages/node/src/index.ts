@@ -1229,8 +1229,15 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
       inFlight -= 1
     }
   }
+  const resolveWs = app.resolveWebSocketUpgrade?.bind(app)
+  // Only a WebSocket handshake leaves the HTTP parser; any other `Upgrade` (curl's h2c offer) is an
+  // ordinary request. Node versions without the option send every upgrade to the `upgrade` event.
+  const upgradeOptions =
+    resolveWs === undefined ? {} : { shouldUpgradeCallback: isWebSocketUpgrade }
   const server =
-    options.tls === undefined ? createServer(onRequest) : createHttpsServer(options.tls, onRequest)
+    options.tls === undefined
+      ? createServer(upgradeOptions, onRequest)
+      : createHttpsServer({ ...options.tls, ...upgradeOptions }, onRequest)
 
   server.on("clientError", (_error, socket) => {
     if (socket.destroyed) return
@@ -1249,7 +1256,6 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
   // WebSocket upgrades (a nifra app exposing the seam): handled on the http server's `upgrade` event via
   // the optional `ws` package - lazy-imported (and the server lazily built) on the FIRST real WS
   // upgrade, so a non-WS Node app never loads `ws`.
-  const resolveWs = app.resolveWebSocketUpgrade?.bind(app)
   if (resolveWs !== undefined) {
     let wssPromise: Promise<WsServer | undefined> | undefined
     server.on("upgrade", (nodeReq, socket, head) => {
@@ -1336,7 +1342,7 @@ function runNodeSource(
     }
   }
 
-  const request = toWebRequest(nodeReq, protocol, host)
+  const request = toWebRequest(nodeReq, protocol, host, nodeRes)
   const resolveNode = (app as Partial<NodeFastHandler>).resolveNode
   if (typeof resolveNode === "function") {
     try {
@@ -1435,7 +1441,7 @@ function handle(
   const resolveNodeSource = (app as Partial<NodeFastHandler>).resolveNodeSource
   const resolveNodeMount = (app as unknown as Record<symbol, unknown>)[RESOLVE_NODE_MOUNT]
   if (typeof resolveNodeSource === "function" || typeof resolveNodeMount === "function") {
-    const nodeSource = toNodeRequestSource(nodeReq, protocol, host)
+    const nodeSource = toNodeRequestSource(nodeReq, protocol, host, nodeRes)
 
     if (typeof resolveNodeMount === "function") {
       let selection: NodeNativeMountSelection | undefined
@@ -1481,7 +1487,7 @@ function handle(
     return runNodeSource(app, nodeSource, nodeReq, nodeRes, protocol, host, platform)
   }
 
-  const request = toWebRequest(nodeReq, protocol, host)
+  const request = toWebRequest(nodeReq, protocol, host, nodeRes)
   const resolveNode = (app as Partial<NodeFastHandler>).resolveNode
   if (typeof resolveNode === "function") {
     try {
@@ -1818,21 +1824,27 @@ function normalizeProtocol(value: string): RequestProtocol {
   )
 }
 
-function toWebRequest(req: IncomingMessage, protocol: RequestProtocol, host: string): Request {
+function toWebRequest(
+  req: IncomingMessage,
+  protocol: RequestProtocol,
+  host: string,
+  res?: ServerResponse,
+): Request {
   const url = `${protocol}://${host}${req.url ?? "/"}`
   const method = req.method ?? "GET"
-  return makeWebRequest(req, method, url, headerRecordFromNode(req.headers))
+  return makeWebRequest(req, method, url, headerRecordFromNode(req.headers), undefined, res)
 }
 
 function toNodeRequestSource(
   req: IncomingMessage,
   protocol: RequestProtocol,
   host: string,
+  res: ServerResponse,
 ): NodeRequestSource {
   const method = req.method ?? "GET"
   return method === "GET" || method === "HEAD"
-    ? new LeanNodeGetSource(req, method, protocol, host)
-    : new LazyNodeRequestSource(req, method, protocol, host)
+    ? new LeanNodeGetSource(req, method, protocol, host, res)
+    : new LazyNodeRequestSource(req, method, protocol, host, res)
 }
 
 function stripNodeMountPrefix(url: string, prefix: string): string {
@@ -1915,12 +1927,20 @@ class LazyNodeRequestSource implements NodeRequestSource {
   private readonly nodeReq: IncomingMessage
   private readonly protocol: RequestProtocol
   private readonly host: string
+  private readonly nodeRes: ServerResponse
 
-  constructor(nodeReq: IncomingMessage, method: string, protocol: RequestProtocol, host: string) {
+  constructor(
+    nodeReq: IncomingMessage,
+    method: string,
+    protocol: RequestProtocol,
+    host: string,
+    nodeRes: ServerResponse,
+  ) {
     this.nodeReq = nodeReq
     this.method = method
     this.protocol = protocol
     this.host = host
+    this.nodeRes = nodeRes
   }
 
   /** The absolute URL, built only when something reads it - routing uses `urlParts` instead. */
@@ -2055,13 +2075,14 @@ class LazyNodeRequestSource implements NodeRequestSource {
             this.url,
             headers,
             this.consumedBody,
+            this.nodeRes,
           )
           // Preserve one-shot body semantics if user code asks for `c.req` after nifra already
           // consumed it.
           void real.arrayBuffer().catch(() => {})
           return real
         }
-        return makeWebRequest(this.nodeReq, this.method, this.url, headers, this.body)
+        return makeWebRequest(this.nodeReq, this.method, this.url, headers, this.body, this.nodeRes)
       },
     ) as unknown as Request
     return this.requestValue
@@ -2132,12 +2153,20 @@ class LeanNodeGetSource implements NodeRequestSource {
   private readonly nodeReq: IncomingMessage
   private readonly protocol: RequestProtocol
   private readonly host: string
+  private readonly nodeRes: ServerResponse
 
-  constructor(nodeReq: IncomingMessage, method: string, protocol: RequestProtocol, host: string) {
+  constructor(
+    nodeReq: IncomingMessage,
+    method: string,
+    protocol: RequestProtocol,
+    host: string,
+    nodeRes: ServerResponse,
+  ) {
     this.nodeReq = nodeReq
     this.method = method
     this.protocol = protocol
     this.host = host
+    this.nodeRes = nodeRes
   }
 
   /** The absolute URL, built only when something reads it - routing uses `urlParts` instead. */
@@ -2178,7 +2207,7 @@ class LeanNodeGetSource implements NodeRequestSource {
       this.method,
       this.url,
       () => this.headersValue ?? headerRecordFromNode(this.nodeReq.headers),
-      (headers) => makeWebRequest(this.nodeReq, this.method, this.url, headers, null),
+      (headers) => makeWebRequest(this.nodeReq, this.method, this.url, headers, null, this.nodeRes),
     ) as unknown as Request
     return this.requestValue
   }
@@ -2210,8 +2239,19 @@ function makeWebRequest(
   url: string,
   headers: Headers | Record<string, string>,
   body?: ReadableStream<Uint8Array> | Uint8Array | null,
+  res?: ServerResponse,
 ): Request {
   const init: RequestInit & { duplex?: "half" } = { method, headers }
+  if (res !== undefined) {
+    // `signal` aborts when the client goes away before the response finished, as on Bun and Deno.
+    const disconnect = new AbortController()
+    init.signal = disconnect.signal
+    const onClose = (): void => {
+      if (!res.writableFinished) disconnect.abort()
+    }
+    if (res.closed) onClose()
+    else res.once("close", onClose)
+  }
   if (method !== "GET" && method !== "HEAD") {
     // Stream the body in; `duplex: "half"` is required for a streamed request body.
     init.body =
@@ -2619,6 +2659,8 @@ async function handleUpgrade(
   head: Buffer,
   getWss: (maxPayloadBytes?: number) => Promise<WsServer | undefined>,
 ): Promise<void> {
+  // A peer can reset the socket while the guard is awaited; with no listener that error ends the process.
+  socket.on("error", ignoreSocketError)
   resolveTarget(nodeReq)
   let outcome: WsUpgradeOutcome
   try {
@@ -2700,6 +2742,12 @@ function attachNodeWebSocket(
   })
   ws.on("error", (error) => reportError(error))
   safe(() => handler.open?.(nifra)) // open: the socket is already established here
+}
+
+function ignoreSocketError(): void {}
+
+function isWebSocketUpgrade(nodeReq: IncomingMessage): boolean {
+  return /\bwebsocket\b/i.test(nodeReq.headers.upgrade ?? "")
 }
 
 /** Write a minimal JSON error response to a raw upgrade socket, then close it. */
