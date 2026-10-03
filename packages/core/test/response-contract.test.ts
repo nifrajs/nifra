@@ -84,6 +84,34 @@ describe('responseContract: "warn"', () => {
     expect(String(warned?.detail)).toContain("passwordHash")
   })
 
+  test("a status() result keeps its status and headers", async () => {
+    const app = server()
+      .use(responseContract("warn"))
+      .post("/users", { response: STRIPPING }, () =>
+        status(201, LEAK, { headers: { "x-request": "r1" } }),
+      )
+      .get("/missing", { errors: { 404: STRIPPING } }, () => status(404, LEAK))
+    const created = await app.fetch(new Request("http://t/users", { method: "POST" }))
+    expect(created.status).toBe(201)
+    expect(created.headers.get("x-request")).toBe("r1")
+    expect(await created.json()).toEqual(LEAK)
+    const missing = await app.fetch(new Request("http://t/missing"))
+    expect(missing.status).toBe(404)
+    expect(await missing.json()).toEqual(LEAK)
+  })
+
+  test("a c.json reply is reported and served unchanged", async () => {
+    const { logger, records } = recorder()
+    const app = server({ logger })
+      .use(responseContract("warn"))
+      .get("/me", { response: STRIPPING }, (c) => c.json(LEAK, 203))
+    const res = await app.fetch(new Request("http://t/me"))
+    expect(res.status).toBe(203)
+    expect(await res.json()).toEqual(LEAK)
+    const warned = records.find((r) => r.message === "response contract")
+    expect(String(warned?.detail)).toContain("passwordHash")
+  })
+
   test("stays quiet when the payload already matches its contract", async () => {
     const { logger, records } = recorder()
     const app = server({ logger })
@@ -136,6 +164,29 @@ describe('responseContract: "enforce"', () => {
     const res = await app.fetch(new Request("http://t/redirect"))
     expect(res.status).toBe(302)
     expect(res.headers.get("location")).toBe("/")
+  })
+
+  test("a c.json reply is held to the contract like a returned value", async () => {
+    const app = server()
+      .use(responseContract("enforce"))
+      .get("/me", { response: STRIPPING }, (c) =>
+        c.json(LEAK, { status: 201, headers: { "x-request": "r1" } }),
+      )
+      .get("/strict", { response: STRICT }, (c) => c.json(LEAK))
+      .get("/missing", { errors: { 404: STRIPPING } }, (c) => c.json(LEAK, 404))
+    const res = await app.fetch(new Request("http://t/me"))
+    expect(res.status).toBe(201)
+    expect(res.headers.get("x-request")).toBe("r1")
+    expect(res.headers.get("content-type")).toContain("application/json")
+    const body = await res.text()
+    expect(JSON.parse(body)).toEqual({ id: "u1", name: "Ada" })
+    expect(body).not.toContain("SECRET")
+    const strict = await app.fetch(new Request("http://t/strict"))
+    expect(strict.status).toBe(500)
+    expect(await strict.text()).not.toContain("SECRET")
+    const missing = await app.fetch(new Request("http://t/missing"))
+    expect(missing.status).toBe(404)
+    expect(await missing.json()).toEqual({ id: "u1", name: "Ada" })
   })
 
   test("enforces a declared error contract on status() responses", async () => {

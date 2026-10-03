@@ -3787,8 +3787,8 @@
     "name": "checkRouteResponseContract",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function checkRouteResponseContract(definition: ResponseContractDefinition, result: unknown, mode: \"warn\" | \"enforce\"): ResponseContractOutcome | Promise<ResponseContractOutcome>;",
-    "doc": "/**\n * Check a route's success or status-specific error payload. Plain `status()` results retain their\n * status while enforcement replaces only the body with the validator's output. Raw `Response`\n * remains an explicit transport escape hatch because inspecting it would consume streams or alter\n * redirects; assurance/static checks must govern that path separately.\n */"
+    "signature": "export declare function checkRouteResponseContract(definition: ResponseContractDefinition, result: unknown, mode: \"warn\" | \"enforce\", jsonReply?: {\n    readonly body: unknown;\n}): ResponseContractOutcome | Promise<ResponseContractOutcome>;",
+    "doc": "/**\n * Check a route's success or status-specific error payload. Plain `status()` results retain their\n * status while enforcement replaces only the body with the validator's output. A `c.json(...)`\n * reply is held to the contract through the value it was built from (`jsonReply`). Any other raw\n * `Response` remains an explicit transport escape hatch because inspecting it would consume\n * streams or alter redirects; assurance/static checks must govern that path separately.\n */"
   },
   {
     "name": "CheckRule",
@@ -16432,7 +16432,7 @@
     "name": "ResponseContractRuntime",
     "kind": "interface",
     "package": "@nifrajs/core",
-    "signature": "export interface ResponseContractRuntime {\n    readonly mode: ResponseContractMode;\n    check(definition: ResponseContractDefinition, result: unknown): ResponseContractOutcome | Promise<ResponseContractOutcome>;\n}",
+    "signature": "export interface ResponseContractRuntime {\n    readonly mode: ResponseContractMode;\n    check(definition: ResponseContractDefinition, result: unknown, context?: {\n        readonly jsonReply?: Response | undefined;\n        readonly jsonBody?: unknown;\n    }): ResponseContractOutcome | Promise<ResponseContractOutcome>;\n}",
     "doc": "/**\n * What the server holds when the plugin is installed. The kernel calls `check` through this object and\n * never imports the implementation, so an app that does not install the plugin does not carry it.\n */"
   },
   {

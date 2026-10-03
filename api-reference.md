@@ -2588,8 +2588,8 @@ Every public export of every package and documented subpath - name, kind, signat
   What the server holds when the plugin is installed. The kernel calls `check` through this object and never imports the implementation, so an app that does not install the plugin does not carry it.
 - **checkResponseContract** _(function)_ - `checkResponseContract: (schema: StandardSchemaV1, result: unknown, mode: "warn" | "enforce") => ResponseContractOutcome | Promise<ResponseContractOutcome>`
   Check one result against the route's declared response schema.
-- **checkRouteResponseContract** _(function)_ - `checkRouteResponseContract: (definition: ResponseContractDefinition, result: unknown, mode: "warn" | "enforce") => ResponseContractOutcome | Promise<ResponseContractOutcome>`
-  Check a route's success or status-specific error payload. Plain `status()` results retain their status while enforcement replaces only the body with the validator's output. Raw `Response` remains an explicit transport escape hatch because inspecting it would consume streams or alter redirects; assu…
+- **checkRouteResponseContract** _(function)_ - `checkRouteResponseContract: (definition: ResponseContractDefinition, result: unknown, mode: "warn" | "enforce", jsonReply?: { readonly body: unknown; }) => ResponseContractOutcome | Promise<ResponseContractOutcome>`
+  Check a route's success or status-specific error payload. Plain `status()` results retain their status while enforcement replaces only the body with the validator's output. A `c.json(...)` reply is held to the contract through the value it was built from (`jsonReply`). Any other raw `Response` rema…
 - **responseContract** _(function)_ - `responseContract: (mode?: ResponseContractMode) => IdentityPlugin`
   Hold every route's declared `response` schema to what the handler actually returned.
 

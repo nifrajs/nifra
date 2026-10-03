@@ -3248,7 +3248,9 @@ keeps the lane out of your bundle rather than shipping a disabled branch to ever
 `"warn"` checks every response, logs the undeclared fields by name, and
 serves the payload **unchanged** - so turning it on in staging can never be the
 thing that broke production. `"enforce"` serializes the validated value
-instead of the raw result. Install it before the routes it should cover: like
+instead of the raw result. Both cover a returned value, a `status(...)` result and
+a `c.json(...)` reply alike; only a hand-built `Response` (a redirect, a
+stream) passes unchecked. Install it before the routes it should cover: like
 `idempotency()`, the decision is made per route at registration.
 
 Enforcement follows your schema&rsquo;s own semantics, because Standard Schema exposes

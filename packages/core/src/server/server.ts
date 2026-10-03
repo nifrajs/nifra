@@ -280,6 +280,9 @@ export interface RawContext {
   body: unknown
   readonly set: ResponseControls
   readonly [CONTEXT_SET]: () => CtxSet | undefined
+  /** The last `json()` reply and the value it was built from, for the response-contract lane. */
+  readonly jsonReply?: Response | undefined
+  readonly jsonBody?: unknown
   readonly [CONTEXT_SEARCH]: string
   readonly signal: AbortSignal
   readonly budget: RequestBudget
@@ -5918,7 +5921,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     try {
       const contract = entry.responseContract
       if (contract === undefined) return finalize(result, responseSet(ctx))
-      const checked = contract.runtime.check(contract.definition, result)
+      const checked = contract.runtime.check(contract.definition, result, ctx)
       if (checked instanceof Promise) {
         return checked.then(
           (outcome) => this.finishContractOutcome(ctx, finalize, wrapResponse, outcome),

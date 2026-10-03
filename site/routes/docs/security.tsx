@@ -377,7 +377,9 @@ export default function Security() {
         <code>&quot;warn&quot;</code> checks every response, logs the undeclared fields by name, and
         serves the payload <strong>unchanged</strong> - so turning it on in staging can never be the
         thing that broke production. <code>&quot;enforce&quot;</code> serializes the validated value
-        instead of the raw result. Install it before the routes it should cover: like{" "}
+        instead of the raw result. Both cover a returned value, a <code>status(...)</code> result and
+        a <code>c.json(...)</code> reply alike; only a hand-built <code>Response</code> (a redirect, a
+        stream) passes unchecked. Install it before the routes it should cover: like{" "}
         <code>idempotency()</code>, the decision is made per route at registration.
       </p>
       <p>

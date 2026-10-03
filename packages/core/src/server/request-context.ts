@@ -184,6 +184,8 @@ export class RequestContext implements RawContext {
   private declare queryReady: boolean
   private declare headersValue: Record<string, string> | undefined
   private declare cookiesValue: Readonly<Record<string, string>> | undefined
+  declare jsonReply: Response | undefined
+  declare jsonBody: unknown
   private declare readonly source: RequestSource
   private declare readonly maxBodyBytes: number
   private declare readonly protoPoisoning: ProtoPoisoning
@@ -326,19 +328,27 @@ export class RequestContext implements RawContext {
    */
   json(body: unknown, init?: ResponseInit | number): Response {
     const i = statusInit(init)
-    if (!DEFERS_RESPONSE) return Response.json(body, i)
-    const defer = deferredResponderFor()
-    if (defer === undefined) return Response.json(body, i)
-    // The same bytes `Response.json` would produce, kept one step short of it so the direct writer
-    // can have them. `JSON.stringify` returns `undefined` for a value with no JSON form (`undefined`,
-    // a function, a symbol) - exactly the case where `Response.json` throws, so hand it back the
-    // throw rather than inventing a body. The content-type is the runtime's own, read off
-    // `Response.json` once, so a deferred response carries the same one byte for byte.
-    const text = JSON.stringify(body) as string | undefined
-    if (text === undefined) return Response.json(body, i)
-    const headers = ownHeaderRecord(i?.headers, responseJsonContentType())
-    if (headers === undefined) return Response.json(body, i)
-    return defer(text, i?.status ?? 200, headers)
+    let reply: Response | undefined
+    if (DEFERS_RESPONSE) {
+      const defer = deferredResponderFor()
+      // The same bytes `Response.json` would produce, kept one step short of it so the direct
+      // writer can have them. `JSON.stringify` returns `undefined` for a value with no JSON form
+      // (`undefined`, a function, a symbol) - exactly the case where `Response.json` throws, so it
+      // gets the throw rather than an invented body. The content-type is the runtime's own, read
+      // off `Response.json` once, so a deferred response carries the same one byte for byte.
+      const text = defer === undefined ? undefined : (JSON.stringify(body) as string | undefined)
+      const headers =
+        text === undefined ? undefined : ownHeaderRecord(i?.headers, responseJsonContentType())
+      if (defer !== undefined && text !== undefined && headers !== undefined) {
+        reply = defer(text, i?.status ?? 200, headers)
+      }
+    }
+    reply ??= Response.json(body, i)
+    // Remembered so a response contract holds the value to the route's schema: this is the
+    // framework's JSON helper, not a raw-Response escape hatch.
+    this.jsonBody = body
+    this.jsonReply = reply
+    return reply
   }
 
   /**
