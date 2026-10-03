@@ -12,6 +12,11 @@ import { publishedPackages } from "./public-package-manifest.ts"
 
 const ROOT = resolve(import.meta.dir, "..")
 const SKIP = /(?:^|\/)(?:dist|node_modules|coverage)\//
+// The marker scan reads what a tarball can carry: built `dist/` output, framework templates, and
+// extensionless scaffold files (`gitignore`) included.
+const MARKER_SKIP = /(?:^|\/)(?:node_modules|coverage)\//
+const MARKER_SCANNED =
+  /(?:\.(?:[cm]?[jt]sx?|md|mdx|json|svelte|vue|astro|toml|ya?ml|txt|html|css|map)|(?:^|\/)[^./]+)$/
 const REFERENCE_KINDS = new Set(["memory", "local-file", "noop", "fake", "replay", "ci"])
 const AGENT_ROOTS = [
   "packages/agent",
@@ -143,15 +148,16 @@ export async function runPublicBoundary(
     .split(",")
     .map((marker) => marker.trim())
     .filter((marker) => marker.length > 0)
-  const release =
-    options.release === true || process.env.RELEASE_MODE === "1" || process.env.CI === "1"
+  // Release mode is asked for explicitly: a fork's pull request runs CI without repository secrets, so
+  // CI alone cannot demand the markers. The release and main-branch jobs set RELEASE_MODE.
+  const release = options.release === true || process.env.RELEASE_MODE === "1"
   if (release && markers.length === 0)
-    failures.push("PRIVATE_MARKERS must be non-empty in CI/release mode")
+    failures.push("PRIVATE_MARKERS must be non-empty in release mode")
   for (const marker of markers) {
     for (const dir of publicPackageDirs) {
       for (const rawFile of new Bun.Glob("**/*").scanSync(dir)) {
         const file = normalizeRelativePath(rawFile)
-        if (SKIP.test(file) || !/\.(?:ts|tsx|js|jsx|md|mdx|json)$/.test(file)) continue
+        if (MARKER_SKIP.test(file) || !MARKER_SCANNED.test(file)) continue
         const text = await Bun.file(`${dir}/${file}`).text()
         if (text.toLowerCase().includes(marker.toLowerCase()))
           failures.push(`${dir}/${file}: private marker present`)

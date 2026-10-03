@@ -80,12 +80,13 @@ jobs:
         run: bun run check:publish
 
       # The names to scan for are themselves private, so they arrive as a repository secret rather
-      # than living in the tree. Unset, the step still enforces the structural half (seams exported,
-      # no runtime builtins in an edge seam).
+      # than living in the tree. A fork's pull request has no secrets, so there the step enforces the
+      # structural half (seams exported, no runtime builtins in an edge seam); a push to main must scan.
       - name: Public boundary (seam exports, edge portability, private markers)
         run: bun run check:public-boundary
         env:
           PRIVATE_MARKERS: ${{ secrets.PRIVATE_MARKERS }}
+          RELEASE_MODE: ${{ github.event_name == 'push' && '1' || '' }}
 
       - name: Public product manifest (README package map is generated)
         run: bun run check:public-manifest

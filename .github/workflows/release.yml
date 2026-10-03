@@ -55,6 +55,9 @@ jobs:
 
       - name: Run full release verification
         run: bun run verify:release
+        env:
+          RELEASE_MODE: "1"
+          PRIVATE_MARKERS: ${{ secrets.PRIVATE_MARKERS }}
 
   publish:
     name: publish-release
