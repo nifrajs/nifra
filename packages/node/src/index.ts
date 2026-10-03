@@ -18,6 +18,7 @@ import {
   type IncomingHttpHeaders,
   type IncomingMessage,
   type ServerResponse,
+  STATUS_CODES,
 } from "node:http"
 import { createServer as createHttpsServer } from "node:https"
 import { extname, isAbsolute, relative, resolve, sep } from "node:path"
@@ -1186,6 +1187,9 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
   if (options.fastResponse === true) installFastResponse()
   let inFlight = 0
   let closed = false
+  // Upgrade sockets an HTTP route answers instead: Node's server no longer tracks them, so stop()
+  // drains and closes them itself.
+  const answering = new Set<Duplex>()
   const protocol = protocolResolver(
     options.protocol ?? (options.tls === undefined ? undefined : "https"),
   )
@@ -1260,6 +1264,8 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
     let wssPromise: Promise<WsServer | undefined> | undefined
     server.on("upgrade", (nodeReq, socket, head) => {
       void handleUpgrade(
+        app,
+        answering,
         resolveWs,
         protocol,
         hostPolicy,
@@ -1290,10 +1296,11 @@ export function serve(app: FetchHandler, options: ServeOptions): Promise<NodeSer
     }
     server.close() // stop accepting new connections; existing requests continue
     const deadline = Date.now() + drainMs
-    while (inFlight > 0 && Date.now() < deadline) {
+    while ((inFlight > 0 || answering.size > 0) && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, DRAIN_POLL_MS))
     }
     server.closeAllConnections() // force-close stragglers + idle keep-alive sockets
+    for (const socket of answering) socket.destroy()
   }
 
   return new Promise((resolve) => {
@@ -1837,11 +1844,18 @@ function normalizeProtocol(value: string): RequestProtocol {
   )
 }
 
+/** What a request's signal follows: the response it is answered on, or an upgrade's raw socket. */
+interface RequestEnd {
+  readonly writableFinished: boolean
+  readonly closed: boolean
+  once(event: "close", listener: () => void): unknown
+}
+
 function toWebRequest(
   req: IncomingMessage,
   protocol: RequestProtocol,
   host: string,
-  res?: ServerResponse,
+  res?: RequestEnd,
 ): Request {
   const url = `${protocol}://${host}${req.url ?? "/"}`
   const method = req.method ?? "GET"
@@ -2252,7 +2266,7 @@ function makeWebRequest(
   url: string,
   headers: Headers | Record<string, string>,
   body?: ReadableStream<Uint8Array> | Uint8Array | null,
-  res?: ServerResponse,
+  res?: RequestEnd,
 ): Request {
   const init: RequestInit & { duplex?: "half" } = { method, headers }
   if (res !== undefined) {
@@ -2376,7 +2390,16 @@ const LazyWebRequest = /* @__PURE__ */ (() => {
   return LazyWebRequest
 })()
 
-function waitForDrain(nodeRes: ServerResponse): Promise<boolean> {
+/** A writable end whose backpressure can be awaited: a response, or an upgrade socket answered as one. */
+interface DrainTarget {
+  readonly destroyed: boolean
+  readonly writableEnded: boolean
+  readonly writable: boolean
+  once(event: "drain" | "close" | "error", listener: () => void): unknown
+  removeListener(event: "drain" | "close" | "error", listener: () => void): unknown
+}
+
+function waitForDrain(nodeRes: DrainTarget): Promise<boolean> {
   if (nodeRes.destroyed || nodeRes.writableEnded || !nodeRes.writable) {
     return Promise.resolve(false)
   }
@@ -2661,6 +2684,8 @@ const WS_STATUS_TEXT: Readonly<Record<number, string>> = {
 /** Resolve a Node `upgrade` event: run the nifra upgrade guard, then either reject (write an HTTP error
  * to the raw socket) or perform the `ws` upgrade and wire the socket to the handler. */
 async function handleUpgrade(
+  app: FetchHandler,
+  answering: Set<Duplex>,
   resolveWs: (
     request: Request,
     platform?: NodePlatform,
@@ -2676,6 +2701,8 @@ async function handleUpgrade(
   socket.on("error", ignoreSocketError)
   resolveTarget(nodeReq)
   let outcome: WsUpgradeOutcome
+  let request: Request
+  let platform: NodePlatform | undefined
   try {
     const host = requestHost(nodeReq, hostPolicy)
     if (host === undefined) {
@@ -2683,14 +2710,36 @@ async function handleUpgrade(
       return
     }
     const peerAddress = nodeReq.socket.remoteAddress
-    const platform = peerAddress === undefined ? undefined : { clientIp: peerAddress }
-    outcome = await resolveWs(toWebRequest(nodeReq, getProtocol(nodeReq), host), platform)
+    platform = peerAddress === undefined ? undefined : { clientIp: peerAddress }
+    // Its signal follows the socket, so a route answered below stops when the client leaves.
+    request = toWebRequest(nodeReq, getProtocol(nodeReq), host, socket)
+    outcome = await resolveWs(request, platform)
   } catch {
     writeUpgradeRejection(socket, 500, "internal_error")
     return
   }
   if (outcome.kind === "pass") {
-    writeUpgradeRejection(socket, 404, "not_found") // upgrade to a path with no WS route
+    // No WS route here: the HTTP route answers, as on Bun. Only a bodiless request can be served from
+    // an upgrade socket - Node parses no body for one, so a POST here (Node without
+    // `shouldUpgradeCallback`) keeps the 404.
+    if (nodeReq.method !== "GET" && nodeReq.method !== "HEAD") {
+      writeUpgradeRejection(socket, 404, "not_found")
+      return
+    }
+    let response: Response
+    try {
+      response = await app.fetch(request, platform)
+    } catch {
+      writeUpgradeRejection(socket, 500, "internal_error")
+      return
+    }
+    answering.add(socket)
+    socket.once("close", () => answering.delete(socket))
+    // Detached from Node's HTTP handling, the socket comes paused and nothing ends it on the client's
+    // FIN. Reading it and ending on `end`, as Node's server does, lets a departure reach the signal.
+    socket.once("end", () => socket.end())
+    socket.resume()
+    await writeSocketResponse(socket, response, nodeReq.method)
     return
   }
   if (outcome.kind === "reject") {
@@ -2760,7 +2809,8 @@ function attachNodeWebSocket(
 function ignoreSocketError(): void {}
 
 function isWebSocketUpgrade(nodeReq: IncomingMessage): boolean {
-  return /\bwebsocket\b/i.test(nodeReq.headers.upgrade ?? "")
+  // A handshake is a GET (RFC 6455 section 4.1); any other method is an ordinary request with a body.
+  return nodeReq.method === "GET" && /\bwebsocket\b/i.test(nodeReq.headers.upgrade ?? "")
 }
 
 /** Write a minimal JSON error response to a raw upgrade socket, then close it. */
@@ -2785,4 +2835,40 @@ async function writeRejectionResponse(socket: Duplex, response: Response): Promi
   head += `Content-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n`
   socket.write(head + body)
   socket.destroy()
+}
+
+/** Answer an upgrade socket with an ordinary response: the body streams as produced, paced by the
+ * socket's backpressure and delimited by the close (RFC 9112 section 6.3), never buffered whole. */
+async function writeSocketResponse(
+  socket: Duplex,
+  response: Response,
+  method: string,
+): Promise<void> {
+  let head = `HTTP/1.1 ${response.status} ${response.statusText || STATUS_CODES[response.status] || "Unknown"}\r\n`
+  response.headers.forEach((value, key) => {
+    if (key !== "connection" && key !== "keep-alive" && key !== "transfer-encoding") {
+      head += `${key}: ${value}\r\n`
+    }
+  })
+  socket.write(`${head}Connection: close\r\n\r\n`)
+  if (response.body === null || method === "HEAD") {
+    await response.body?.cancel().catch(() => {})
+    socket.end()
+    return
+  }
+  const reader = response.body.getReader()
+  try {
+    for (;;) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      if (!socket.write(chunk.value) && !(await waitForDrain(socket))) {
+        await reader.cancel()
+        return
+      }
+    }
+    socket.end()
+  } catch {
+    socket.destroy()
+    await reader.cancel().catch(() => {})
+  }
 }
