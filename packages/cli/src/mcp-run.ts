@@ -296,8 +296,13 @@ if (import.meta.main) {
       output = { error: "invalid input: expected JSON { requests: [...] }" }
     }
   }
-  protocol(
+  // `Bun.write` to the fd, not the patched `process.stdout.write`, so the answer is flushed when it
+  // resolves. Then exit: the app's own handles (a pool, an interval) would keep this single-use
+  // process alive until the parent's timeout, and the parent waits for it to exit.
+  await Bun.write(
+    Bun.stdout,
     serializeBoundedJson(output, CHILD_OUTPUT_MAX_BYTES, 2) ??
       JSON.stringify({ error: `output exceeded ${CHILD_OUTPUT_MAX_BYTES} bytes` }),
   )
+  process.exit(0)
 }
