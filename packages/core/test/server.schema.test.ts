@@ -756,3 +756,38 @@ describe("drainCapped chunk shapes", () => {
     expect(res.status).toBe(413)
   })
 })
+
+describe("a 422 lists a bounded number of issues", () => {
+  test("a body with thousands of invalid items answers with the first 100", async () => {
+    const app = server().post(
+      "/ids",
+      { body: t.object({ ids: t.array(t.integer()) }) },
+      (c) => c.body,
+    )
+    const ids = Array.from({ length: 5_000 }, () => "x")
+    const res = await app.fetch(
+      new Request("http://h/ids", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ids }),
+      }),
+    )
+    expect(res.status).toBe(422)
+    expect(await res.json()).toHaveProperty("issues.length", 100)
+  })
+
+  test("a non-TypeBox validator's issue list is capped too", async () => {
+    const many = schema<unknown>(() => ({
+      issues: Array.from({ length: 1_000 }, (_, i) => ({ message: `bad ${i}` })),
+    }))
+    const app = server().post("/x", { body: many }, () => "ok")
+    const res = await app.fetch(
+      new Request("http://h/x", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }),
+    )
+    expect(await res.json()).toHaveProperty("issues.length", 100)
+  })
+})
