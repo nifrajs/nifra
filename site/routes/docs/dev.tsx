@@ -396,8 +396,10 @@ export default function Dev() {
         <a href="/docs/errors">error codes</a> page has the same prompts). The badge lives in a closed
         shadow root, so the page's styles cannot reach it, and it loads under the page's CSP: by nonce,
         by its exact URL, or through <code>'strict-dynamic'</code>. A page that never errors never
-        fetches it. Turn it off with <code>nifra dev --no-indicator</code> (or{" "}
-        <code>indicator: false</code> on <code>createDevServer</code>); the errors still reach the feed.
+        fetches it. Turn it off for one run with <code>nifra dev --no-indicator</code>, for every run
+        with <code>export const dev = {"{"} indicator: false {"}"}</code> in <code>nifra.config.ts</code>,
+        or with <code>indicator: false</code> on <code>createDevServer</code>; the errors still reach
+        the feed.
       </p>
 
       <h2>Containers & sandboxes</h2>

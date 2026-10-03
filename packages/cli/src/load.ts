@@ -71,6 +71,9 @@ export interface NifraFramework {
    * is the sole way in: served any other way the header is whatever the client sent. Self-hosting
    * targets use the socket peer either way. */
   readonly clientIp?: "platform"
+  /** `nifra dev` settings. `indicator: false` turns the in-page issues badge off for every run
+   * (`nifra dev --no-indicator` does it for one); browser errors still reach `nifra errors`. */
+  readonly dev?: { readonly indicator?: boolean }
   /** Static files directory. Defaults to `<app>/public`; `false` disables it. */
   readonly publicDir?: string | false
   /** Client-visible environment prefix (default `"PUBLIC_"`; empty disables exposure). */
@@ -133,6 +136,13 @@ function assertFrameworkWebOptions(fw: Partial<NifraFramework>, configFile: stri
   }
   if (fw.clientIp !== undefined && fw.clientIp !== "platform") {
     wrong("clientIp", '"platform" (trust the edge platform\'s client-address header), or left out')
+  }
+  if (fw.dev !== undefined) {
+    if (typeof fw.dev !== "object" || fw.dev === null)
+      wrong("dev", "an object such as { indicator: false }")
+    const indicator: unknown = Reflect.get(fw.dev, "indicator")
+    if (indicator !== undefined && typeof indicator !== "boolean")
+      wrong("dev.indicator", "a boolean")
   }
 }
 

@@ -506,7 +506,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
       ...(fw.publicDir !== undefined ? { publicDir: fw.publicDir } : {}),
       ...(fw.conditions ? { conditions: fw.conditions } : {}),
       ...(fw.define ? { define: fw.define } : {}),
-      indicator: !flags.noIndicator,
+      indicator: showsIndicator(flags, fw),
       createApp: (clientEntry, importQuery, dev) =>
         createWebApp({
           adapter: asAdapter(fw.adapter),
@@ -563,7 +563,7 @@ async function dev(app: LoadedApp, flags: Flags): Promise<void> {
     poll: flags.poll,
     port: flags.port,
     ...(flags.allowDuplicateIdentity ? { allowDuplicateIdentity: true } : {}),
-    indicator: !flags.noIndicator,
+    indicator: showsIndicator(flags, fw),
     ...(fw.conditions ? { conditions: fw.conditions } : {}),
     ...(fw.define ? { define: fw.define } : {}),
     // `load` resolves route modules through VITE, not through Bun. That is what makes the Vite
@@ -659,6 +659,14 @@ export async function assertFrameworkOptionsEdgeExported(
  * Read from the config and `routes/` alone; the server also checks its own mount table at startup,
  * which covers a mount added inside `use`.
  */
+/** `nifra dev` shows the in-page issues badge unless `--no-indicator` or `dev.indicator: false` turns it off. */
+export function showsIndicator(
+  flags: Pick<Flags, "noIndicator">,
+  fw: Pick<NifraFramework, "dev">,
+): boolean {
+  return !flags.noIndicator && fw.dev?.indicator !== false
+}
+
 export function assertNoShadowedPages(app: LoadedApp): void {
   const paths = frameworkMountPaths(app.framework, app.backend !== undefined)
   if (paths.length === 0) return

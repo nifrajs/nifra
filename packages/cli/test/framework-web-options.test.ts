@@ -1,7 +1,11 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { assertFrameworkOptionsEdgeExported, assertNoShadowedPages } from "../src/cli.ts"
+import {
+  assertFrameworkOptionsEdgeExported,
+  assertNoShadowedPages,
+  showsIndicator,
+} from "../src/cli.ts"
 import { buildRouteTable } from "../src/introspect.ts"
 import { type LoadedApp, loadApp, type NifraFramework } from "../src/load.ts"
 import { runRuleRegistry } from "../src/rules/index.ts"
@@ -48,6 +52,8 @@ describe("loadApp validates the forwarded fields", () => {
     ["export const nonce = 'abc'", "`nonce` must be a nonce resolver function"],
     // A misspelled trust declaration must not quietly build an edge app with no caller address.
     ["export const clientIp = 'cf-connecting-ip'", '`clientIp` must be "platform"'],
+    ["export const dev = 'quiet'", "`dev` must be an object"],
+    ["export const dev = { indicator: 'off' }", "`dev.indicator` must be a boolean"],
   ]
   for (const [line, message] of cases) {
     test(line, async () => {
@@ -72,6 +78,20 @@ describe("loadApp validates the forwarded fields", () => {
     expect(app.framework.apiPrefix).toBe("/rpc")
     expect(app.framework.apiStrip).toBe(true)
   })
+})
+
+test("dev.indicator and --no-indicator each turn the badge off", async () => {
+  const dir = project({
+    "backend/framework.ts": [...adapterSource, "export const dev = { indicator: false }"].join(
+      "\n",
+    ),
+    "routes/index.tsx": "export default () => null\n",
+  })
+  const app = await loadApp(dir)
+  expect(showsIndicator({ noIndicator: false }, app.framework)).toBe(false)
+  expect(showsIndicator({ noIndicator: false }, fw({}))).toBe(true)
+  expect(showsIndicator({ noIndicator: false }, fw({ dev: { indicator: true } }))).toBe(true)
+  expect(showsIndicator({ noIndicator: true }, fw({ dev: { indicator: true } }))).toBe(false)
 })
 
 describe("forwarding helpers", () => {
