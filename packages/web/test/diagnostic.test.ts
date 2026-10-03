@@ -4,6 +4,7 @@ import {
   buildDiagnostic,
   classify,
   DIAGNOSTIC_CATALOG,
+  isHydrationMismatch,
   parseFrames,
   type SourceReader,
   topUserFrame,
@@ -154,4 +155,22 @@ test("buildDiagnostic tolerates a non-Error throw and a stackless error", () => 
   expect(diag.message).toBe("no frames here")
   expect(diag.codeframe).toBeUndefined()
   expect(diag.frames).toEqual([])
+})
+
+test("hydration reports from each framework classify, and a flag name that only mentions one does not", () => {
+  for (const message of [
+    "Hydration failed because the server rendered text didn't match the client.",
+    "[Vue warn]: Hydration text content mismatch on <p#rendered>",
+    "Hydration completed but contains mismatches.",
+    "[svelte] hydration_mismatch\nHydration failed because the initial UI does not match",
+    "[svelte] hydration_html_changed\nThe value of an `{@html ...}` block changed between server and client renders",
+    "Unable to find DOM nodes for hydration key: 0-0-1",
+  ]) {
+    expect(isHydrationMismatch(message)).toBe(true)
+  }
+  expect(
+    isHydrationMismatch(
+      "Feature flags __VUE_OPTIONS_API__, __VUE_PROD_DEVTOOLS__, __VUE_PROD_HYDRATION_MISMATCH_DETAILS__ are not explicitly defined.",
+    ),
+  ).toBe(false)
 })

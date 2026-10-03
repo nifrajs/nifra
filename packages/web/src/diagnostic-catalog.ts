@@ -206,7 +206,10 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
 // React 19 / 18 (dev and minified #418/#423/#425), Vue, Svelte 5, Solid and preact/debug.
 const HYDRATION_MESSAGES: readonly RegExp[] = [
   /hydrat(?:ion|ed|e)\b[^\n]*(?:mismatch|failed|did not match|didn't match)/i,
-  /hydration_mismatch|hydration key/i,
+  // Svelte's warning codes. The lookbehind keeps one inside a longer name from matching: Vue's
+  // feature-flag warning names `__VUE_PROD_HYDRATION_MISMATCH_DETAILS__`.
+  /(?<!\w)hydration_(?:mismatch|html_changed|attribute_changed)\b/,
+  /hydration key/i,
   /error while hydrating|failed to hydrate|Text content did not match|Expected server HTML to contain/i,
   /caused by the SSR'd HTML/,
   /Minified React error #(?:418|423|425)\b/,
