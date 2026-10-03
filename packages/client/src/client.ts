@@ -77,7 +77,11 @@ export interface ClientRetryOptions {
 }
 
 export interface ClientOptions {
-  /** Headers sent on every request (a per-call `headers` option is merged on top). */
+  /**
+   * Headers sent on every HTTP request (a per-call `headers` option is merged on top). A WebSocket
+   * handshake carries none of them, on any runtime: a browser cannot set them, and a socket that
+   * authenticated under Bun but not in the browser would be worse than one that never did.
+   */
   readonly headers?: Record<string, string>
   /** Override the `fetch` implementation (tests, an in-process bridge, a custom agent, etc.). */
   readonly fetch?: FetchFn
@@ -513,7 +517,6 @@ function resolveSegment(
         base,
         path,
         {
-          headers: options.headers,
           ...wsOptions,
           ...(options.transport === undefined ? {} : { transport: options.transport }),
         },

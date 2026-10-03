@@ -20,8 +20,11 @@ import type { WsCallOptions, WsHandle } from "./treaty.ts"
 /** Internal handshake between `inProcessClient` and the proxy: in-process apps have no socket. */
 export const NO_SOCKET = Symbol.for("@nifrajs/client/no-socket")
 
+// `readyState` values, fixed by the WebSocket standard (an implementation's statics may be absent).
+const CONNECTING = 0
+const CLOSED = 3
+
 interface WsRuntimeOptions extends WsCallOptions {
-  headers?: Record<string, string> | undefined
   transport?: {
     readonly codec: TransportCodec
     readonly registry?: TransportCodecRegistry
@@ -96,6 +99,10 @@ export function openWebSocket(
     for (const frame of sendQueue) socket.send(frame)
     sendQueue.length = 0
   })
+  // A socket that closed before it opened will never send what was queued for it.
+  socket.addEventListener("close", () => {
+    sendQueue.length = 0
+  })
   socket.addEventListener("message", (event: MessageEvent) => {
     if (typeof event.data !== "string") return // binary frames live off the typed contract
     let parsed: unknown
@@ -112,9 +119,16 @@ export function openWebSocket(
     for (const listener of listeners) listener(parsed)
   })
 
-  if (callOptions?.signal !== undefined) {
-    if (callOptions.signal.aborted) socket.close()
-    else callOptions.signal.addEventListener("abort", () => socket.close(), { once: true })
+  const signal = callOptions?.signal
+  if (signal !== undefined) {
+    if (signal.aborted) socket.close()
+    else {
+      const abort = (): void => socket.close()
+      signal.addEventListener("abort", abort, { once: true })
+      socket.addEventListener("close", () => signal.removeEventListener("abort", abort), {
+        once: true,
+      })
+    }
   }
 
   const onMessage = (callback: (message: unknown) => void): (() => void) => {
@@ -131,7 +145,9 @@ export function openWebSocket(
           ? JSON.stringify(message)
           : encodeTransportFrame(message, transport.codec)
       if (socket.readyState === WebSocketImpl.OPEN) socket.send(frame)
-      else sendQueue.push(frame)
+      // Queued only while connecting: a closing or closed socket drops the frame, as
+      // `WebSocket.send` itself does, rather than holding it in a queue nothing will flush.
+      else if (socket.readyState === CONNECTING) sendQueue.push(frame)
     },
     close(code?: number, reason?: string): void {
       socket.close(code, reason)
@@ -141,6 +157,7 @@ export function openWebSocket(
       const buffered: unknown[] = []
       let pending: ((result: IteratorResult<unknown>) => void) | undefined
       let done = false
+      const signal = options?.signal
 
       const push = (message: unknown): void => {
         if (pending !== undefined) {
@@ -155,6 +172,9 @@ export function openWebSocket(
         if (done) return
         done = true
         unsubscribe()
+        socket.removeEventListener("close", end)
+        socket.removeEventListener("error", end)
+        signal?.removeEventListener("abort", end)
         pending?.({ value: undefined, done: true })
         pending = undefined
       }
@@ -162,7 +182,9 @@ export function openWebSocket(
       const unsubscribe = onMessage(push)
       socket.addEventListener("close", end, { once: true })
       socket.addEventListener("error", end, { once: true })
-      options?.signal?.addEventListener("abort", end, { once: true })
+      signal?.addEventListener("abort", end, { once: true })
+      // Already over: no close or abort event is coming to end the iteration.
+      if (socket.readyState === CLOSED || signal?.aborted === true) end()
 
       const iterator: AsyncIterableIterator<unknown> = {
         [Symbol.asyncIterator]() {
