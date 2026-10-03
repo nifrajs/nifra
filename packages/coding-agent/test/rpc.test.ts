@@ -195,6 +195,13 @@ describe("coding agent RPC", () => {
       })
       expect(throttled.status).toBe(429)
       expect(throttled.headers.get("retry-after")).toBeTruthy()
+      // Wrong guesses from another caller never lock out the one holding the token.
+      const during = await fetch(`${handle.url}/rpc`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${handle.token}`, "content-type": "application/json" },
+        body: "not-json",
+      })
+      expect(during.status).toBe(400)
       await new Promise((resolve) => setTimeout(resolve, 300))
       const headers = {
         authorization: `Bearer ${handle.token}`,
