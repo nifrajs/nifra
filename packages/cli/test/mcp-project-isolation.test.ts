@@ -281,7 +281,7 @@ describe("nifra mcp runs no project code in its own process", () => {
     expect(dig(whoami, "script")).toBe(PROJECT_CHILD)
   }, 60_000)
 
-  test("--env-file values reach every subprocess: app tools, project tools and nifra_run", async () => {
+  test("--env-file values reach every subprocess: app tools, project tools, run, test, database and hydrate", async () => {
     const root = tempRoot()
     writeFileSync(join(root, "package.json"), JSON.stringify({ name: "app", private: true }))
     writeFileSync(join(root, "secrets.env"), "NIFRA_PROBE_SECRET=from-env-file\n")
@@ -305,8 +305,9 @@ describe("nifra mcp runs no project code in its own process", () => {
         run(5, true),
         call(6, "nifra_test", { pattern: "secret.test.ts" }),
         call(7, "nifra_db_schema"),
+        call(8, "nifra_hydrate"),
       ],
-      [1, 2, 3, 4, 5, 6, 7],
+      [1, 2, 3, 4, 5, 6, 7, 8],
     )
     const whoami: unknown = JSON.parse(toolText(byId[2]))
     expect(dig(whoami, "secret")).toBe("from-env-file")
@@ -318,7 +319,10 @@ describe("nifra mcp runs no project code in its own process", () => {
     }
     expect(dig(JSON.parse(toolText(byId[6])), "ok")).toBe(true)
     const configs = seen(root, "config.log")
-    expect(configs.map((entry) => entry.script)).toContain("db-child.ts")
+    // nifra_hydrate loads the app before it needs happy-dom, which this project does not install.
+    expect(configs.map((entry) => entry.script)).toEqual(
+      expect.arrayContaining(["db-child.ts", "assure-hydration.ts"]),
+    )
     for (const entry of configs) expect(entry.secret).toBe("from-env-file")
   }, 60_000)
 
