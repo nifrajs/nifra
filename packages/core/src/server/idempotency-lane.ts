@@ -33,6 +33,10 @@ import { jsonError, urlPartsOf } from "./http.ts"
 import { INSTALL_IDEMPOTENCY } from "./install.ts"
 import type { AnyServer, IdentityPlugin } from "./server.ts"
 
+/** Requests whose route handler was entered. One rejected before it - by auth, validation, a guard -
+ * began no execution, so its key is released rather than stored. */
+const HANDLER_ENTERED = new WeakSet<Request>()
+
 /** Registration-resolved idempotency for a route: the config with its store + defaults pinned. */
 export interface ResolvedIdempotency {
   readonly store: IdempotencyStore
@@ -66,6 +70,10 @@ export interface IdempotencyRuntime {
     authenticated: boolean,
     maxBodyBytes: number,
   ): ResolvedIdempotency | undefined
+  /** Wrap an idempotent route's handler so the lane can tell a request rejected before it ran. */
+  wrapHandler<C extends { readonly req: Request }>(
+    handler: (context: C) => unknown,
+  ): (context: C) => unknown
   /** The dedupe lane: read the key, fingerprint the request, consult the store, run/replay/reject. */
   run<T>(
     config: ResolvedIdempotency,
@@ -121,6 +129,12 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
   return {
     trackEffect(context, committed) {
       markEffect(context, committed)
+    },
+    wrapHandler(handler) {
+      return (context) => {
+        HANDLER_ENTERED.add(context.req)
+        return handler(context)
+      }
     },
     resolve(schema, authenticated, maxBodyBytes) {
       const config = schema?.idempotency
@@ -263,6 +277,18 @@ export function createIdempotencyRuntime(options?: IdempotencyPluginOptions): Id
           response: await serializeResponse(response, { maxBytes: config.maxResponseBytes }),
         })
         if (!completed) {
+          return wrapResponse(
+            jsonError(503, "idempotency_reservation_lost", { "Retry-After": "1" }),
+          )
+        }
+        return wrapResponse(response)
+      }
+      if (!HANDLER_ENTERED.has(buffered) && !requestEffectEvidence(buffered).began) {
+        // Rejected before the handler ran: no execution began, so there is nothing a retry could
+        // duplicate and no result is saved - storing every rejection would let callers who never
+        // pass auth fill the store and lock everyone else out.
+        const abandoned = await config.store.abandon({ namespace, key, reservation })
+        if (!abandoned) {
           return wrapResponse(
             jsonError(503, "idempotency_reservation_lost", { "Retry-After": "1" }),
           )

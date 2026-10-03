@@ -2089,6 +2089,9 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
       lanes,
       routeAssurance,
     } = compiled
+    if (idempotent !== undefined && this.idempotencyRuntime !== undefined) {
+      handler = this.idempotencyRuntime.wrapHandler(handler)
+    }
     const { bare, fusedQuery, fusedBody } = lanes
     // Fused lifecycle lanes: derive + before (with or without an after), and body + the same shape.
     // The lane selectors in `selectRouteLanes` are exhaustive about the lifecycleHookLane /

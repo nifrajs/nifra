@@ -12,7 +12,7 @@ import {
   validIdempotencyKey,
 } from "../src/idempotency.ts"
 import { idempotency, markIdempotencySafeToRetry } from "../src/idempotency-plugin.ts"
-import { server } from "../src/index.ts"
+import { authenticated, rejected, server } from "../src/index.ts"
 import {
   beginRequestEffectTracking,
   markBeaconEffectBegan,
@@ -601,6 +601,56 @@ describe("server({ idempotency }) - request path", () => {
       ),
     )
     expect(response === "no response" ? response : response.status).toBe(413)
+  })
+
+  test("a request rejected before its handler runs releases its key instead of storing it", async () => {
+    const store = new MemoryIdempotencyStore({ maxEntries: 2 })
+    let runs = 0
+    const named = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (value: unknown) =>
+          typeof value === "object" && value !== null && "name" in value
+            ? { value }
+            : { issues: [{ message: "name is required" }] },
+      },
+    } as const
+    const app = server()
+      .authenticate({
+        id: "bearer",
+        mode: "sync",
+        run: (input) =>
+          input.headers.get("authorization") === "Bearer good"
+            ? authenticated({ userId: "u1" })
+            : rejected(),
+      })
+      .use(idempotency({ store }))
+      .post(
+        "/pay",
+        {
+          body: named,
+          idempotency: {
+            scope: "request",
+            namespace: (request) =>
+              request.headers.get("authorization") === "Bearer good"
+                ? "principal:u1"
+                : "principal:anonymous",
+          },
+        },
+        () => ({ run: ++runs }),
+      )
+    const order = (key: string, body: unknown, authorization?: string) =>
+      post(body, key, authorization === undefined ? {} : { authorization })
+    for (let i = 0; i < 5; i++) {
+      expect((await app.fetch(order(`anonymous-${i}`, { name: "x" }))).status).toBe(401)
+    }
+    expect((await app.fetch(order("bad-body", { nope: 1 }, "Bearer good"))).status).toBe(422)
+    expect(store.size).toBe(0)
+    const fresh = await app.fetch(order("bad-body", { name: "x" }, "Bearer good"))
+    expect(fresh.status).toBe(200)
+    expect(await fresh.json()).toEqual({ run: 1 })
+    expect(store.size).toBe(1)
   })
 
   test("registration rejects invalid TTL/header configuration and idempotent SSE", () => {
