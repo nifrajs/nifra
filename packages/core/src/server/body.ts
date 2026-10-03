@@ -82,7 +82,9 @@ export async function drainCapped(
     if (done) break
     total += value.byteLength
     if (total > maxBytes) {
-      await reader.cancel()
+      // Not awaited: on a teed body (a `clone()` taken first) the cancel settles only once the other
+      // branch is read or cancelled too, and nothing here ever reads it.
+      reader.cancel().catch(() => {})
       return { ok: false, status: 413 }
     }
     if (first === undefined) {

@@ -13,6 +13,36 @@ import {
 import { richWireCodec } from "../src/transport-codec-rich.ts"
 import { transportCodecs } from "../src/transport-plugin.ts"
 
+/** A POST whose length-less body is still producing when a cap trips: its last chunk is never
+ * pulled. */
+function overCapPost(url: string, headers: Record<string, string> = {}): Request {
+  let sent = 0
+  const init: RequestInit & { duplex: "half" } = {
+    method: "POST",
+    headers,
+    body: new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent++ >= 2) return controller.close()
+        controller.enqueue(new Uint8Array(65_536).fill(32))
+      },
+    }),
+    duplex: "half",
+  }
+  return new Request(url, init)
+}
+
+/** Resolves with the response, or with "no response" once `ms` pass without one. */
+function within(
+  ms: number,
+  response: Promise<Response> | Response,
+): Promise<Response | "no response"> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<"no response">((resolve) => {
+    timer = setTimeout(() => resolve("no response"), ms)
+  })
+  return Promise.race([Promise.resolve(response), deadline]).finally(() => clearTimeout(timer))
+}
+
 describe("versioned transport codecs", () => {
   test("negotiates versions and round-trips rich values across HTTP and frames", async () => {
     const rich = richWireCodec()
@@ -276,6 +306,17 @@ describe("transport lane edges", () => {
     )
     expect(response.status).toBe(413)
     expect(await response.json()).toMatchObject({ error: "payload_too_large" })
+  })
+
+  test("a length-less body over the cap is a 413, not a wait on an unread copy", async () => {
+    const app = server()
+      .use(transportCodecs(registry(), { maxBytes: 1024 }))
+      .post("/echo", () => ({ ok: true }))
+    const response = await within(
+      2000,
+      app.fetch(overCapPost("http://test/echo", { "content-type": rich.mediaType })),
+    )
+    expect(response === "no response" ? response : response.status).toBe(413)
   })
 
   // A codec that keeps references decodes a graph, while everything after it walks a tree.

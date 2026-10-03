@@ -240,7 +240,8 @@ export async function readBoundedBytes(
       if (done) break
       total += value.byteLength
       if (!Number.isSafeInteger(total) || total > maxBytes) {
-        await reader.cancel()
+        // Not awaited: a cancel on a teed body settles only once its other branch is consumed too.
+        reader.cancel().catch(() => {})
         throw new TransportCodecError("transport payload exceeds maxBytes")
       }
       chunks.push(value)

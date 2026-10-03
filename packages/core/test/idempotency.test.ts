@@ -24,6 +24,36 @@ import {
 } from "../src/internal/effect-execution.ts"
 import { createIdempotencyRuntime } from "../src/server/idempotency-lane.ts"
 
+/** A POST whose length-less body is still producing when a cap trips: its last chunk is never
+ * pulled. */
+function overCapPost(url: string, headers: Record<string, string> = {}): Request {
+  let sent = 0
+  const init: RequestInit & { duplex: "half" } = {
+    method: "POST",
+    headers,
+    body: new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent++ >= 2) return controller.close()
+        controller.enqueue(new Uint8Array(65_536).fill(32))
+      },
+    }),
+    duplex: "half",
+  }
+  return new Request(url, init)
+}
+
+/** Resolves with the response, or with "no response" once `ms` pass without one. */
+function within(
+  ms: number,
+  response: Promise<Response> | Response,
+): Promise<Response | "no response"> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<"no response">((resolve) => {
+    timer = setTimeout(() => resolve("no response"), ms)
+  })
+  return Promise.race([Promise.resolve(response), deadline]).finally(() => clearTimeout(timer))
+}
+
 const post = (body: unknown, key?: string, extra?: Record<string, string>): Request =>
   new Request("http://test/pay", {
     method: "POST",
@@ -553,6 +583,24 @@ describe("server({ idempotency }) - request path", () => {
     expect(await (await app.fetch(request("a"))).json()).toEqual({ run: 1 })
     expect(await (await app.fetch(request("b"))).json()).toEqual({ run: 2 })
     expect(await (await app.fetch(request("a"))).json()).toEqual({ run: 1 })
+  })
+
+  test("a namespace resolver does not hold up the 413 for a length-less body over the cap", async () => {
+    const app = server({ maxBodyBytes: 1024 })
+      .use(idempotency())
+      .post("/pay", { idempotency: { scope: "request", namespace: () => "tenant:a" } }, () => ({
+        ok: true,
+      }))
+    const response = await within(
+      2000,
+      app.fetch(
+        overCapPost("http://test/pay", {
+          "content-type": "application/json",
+          "idempotency-key": "key-1",
+        }),
+      ),
+    )
+    expect(response === "no response" ? response : response.status).toBe(413)
   })
 
   test("registration rejects invalid TTL/header configuration and idempotent SSE", () => {

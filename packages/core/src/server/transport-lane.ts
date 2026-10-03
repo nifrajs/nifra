@@ -111,7 +111,6 @@ export function transportCodecs(
       ) {
         return undefined
       }
-      const replacement = request.clone()
       const decoded = await runtime.decodeRequest(request, contentType, maxBytes)
       if (!decoded.matched) return undefined
       if ("response" in decoded) return decoded.response
@@ -120,17 +119,17 @@ export function transportCodecs(
       // the body lane takes the stash verbatim (this lane owns the cap and poisoning policy), so
       // the placeholder body is never parsed and codec machinery stays out of the kernel.
       const headers: Record<string, string> = {}
-      replacement.headers.forEach((value, name) => {
+      request.headers.forEach((value, name) => {
         headers[name] = value
       })
       headers["content-type"] = "application/json"
       headers["content-length"] = "2"
       delete headers["transfer-encoding"]
-      const normalized = new Request(replacement.url, {
-        method: replacement.method,
+      const normalized = new Request(request.url, {
+        method: request.method,
         headers,
         body: "{}",
-        signal: replacement.signal as never,
+        signal: request.signal as never,
       })
       const stash: PreDecodedBody = { value: decoded.value, byteLength: decoded.byteLength }
       Object.defineProperty(normalized, PRE_DECODED_BODY, { value: stash })

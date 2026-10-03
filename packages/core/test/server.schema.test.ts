@@ -4,6 +4,36 @@ import { RouteConfigError, server } from "../src/index.ts"
 import type { StandardResult, StandardSchemaV1, StandardTypes } from "../src/schema/standard.ts"
 import { isResponseResult, type ResponseResult } from "../src/server/runtime-core.ts"
 
+/** A POST whose length-less body is still producing when a cap trips: its last chunk is never
+ * pulled. */
+function overCapPost(url: string, headers: Record<string, string> = {}): Request {
+  let sent = 0
+  const init: RequestInit & { duplex: "half" } = {
+    method: "POST",
+    headers,
+    body: new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent++ >= 2) return controller.close()
+        controller.enqueue(new Uint8Array(65_536).fill(32))
+      },
+    }),
+    duplex: "half",
+  }
+  return new Request(url, init)
+}
+
+/** Resolves with the response, or with "no response" once `ms` pass without one. */
+function within(
+  ms: number,
+  response: Promise<Response> | Response,
+): Promise<Response | "no response"> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<"no response">((resolve) => {
+    timer = setTimeout(() => resolve("no response"), ms)
+  })
+  return Promise.race([Promise.resolve(response), deadline]).finally(() => clearTimeout(timer))
+}
+
 /**
  * A minimal Standard Schema, hand-rolled so these tests exercise the framework
  * against the *spec* rather than any one library. zod/valibot/arktype expose the
@@ -403,6 +433,14 @@ describe("c.boundedBody / c.boundedJson (schema-less body cap)", () => {
     const res = await app.fetch(streamRequest("/raw-direct", "x".repeat(100)))
     expect(res.status).toBe(413)
     expect(await res.json()).toEqual({ ok: false, error: "payload_too_large" })
+  })
+
+  test("a capped clone read over the cap answers, though the original is never read", async () => {
+    const app = server({ maxBodyBytes: 1024 }).post("/raw-clone", async (c) => ({
+      len: (await c.req.clone().text()).length,
+    }))
+    const res = await within(2000, app.fetch(overCapPost("http://localhost/raw-clone")))
+    expect(res === "no response" ? res : res.status).toBe(413)
   })
 
   test("a lying small Content-Length cannot bypass the transport cap", async () => {
