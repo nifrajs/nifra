@@ -28,7 +28,10 @@ afterAll(async () => {
 
 /** The handover block of the generated entry, as the browser runs it. */
 function handoverScript(): string {
-  const manifest = buildManifest(["index.tsx"], () => async (): Promise<RouteModule> => ({}))
+  const manifest = buildManifest(
+    ["index.tsx"],
+    () => async (): Promise<RouteModule> => ({ default: null }),
+  )
   const lines = generateClientEntry(manifest, {
     clientModule: "@nifrajs/web-vanilla/client",
     resolve: (file) => `/routes/${file}`,
