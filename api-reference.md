@@ -3081,7 +3081,7 @@ _No named exports (side-effect entrypoint)._
   Wire a standard server-side `WebSocket` to a nifra {@link WebSocketHandler}, returning the portable {@link NifraWebSocket}. Shared by the Deno and Workers bridges. `openNow` fires `open` immediately (Workers, where the socket is already open after `accept()`); otherwise `open` waits for the socket'…
 - **websocket** _(function)_ - `websocket: () => IdentityPlugin`
   Enable WebSocket routes on a server: `.use(websocket())` turns on `app.ws()`. Applying it twice is a no-op (named plugin dedupe).
-- **wrapWebSocketMessageValidation** _(function)_ - `wrapWebSocketMessageValidation: (handler: WebSocketHandler) => WebSocketHandler`
+- **wrapWebSocketMessageValidation** _(function)_ - `wrapWebSocketMessageValidation: (handler: WebSocketHandler, protoPoisoning?: ProtoPoisoning) => WebSocketHandler`
   If the handler declares a `messageSchema`, return a copy whose `message` validates each frame - parse as JSON, run the Standard Schema, then call the user's `message` with the typed value, or `onInvalidMessage` on failure. Returns the handler unchanged when no schema is set. Called once at `app.ws(…
 
 ## @nifrajs/cron

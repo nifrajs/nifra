@@ -1256,6 +1256,43 @@ describe("WS messageSchema (contract-validated messages)", () => {
     ])
   })
 
+  test("a __proto__ key in a frame gets the app's protoPoisoning policy, as a JSON body does", async () => {
+    const passthrough: StandardSchemaV1<unknown, object> = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (v) =>
+          typeof v === "object" && v !== null
+            ? { value: v }
+            : { issues: [{ message: "expected an object" }] },
+      },
+    }
+    const poisoned = '{"text":"x","__proto__":{"admin":true}}'
+    const run = async (protoPoisoning?: "reject" | "strip" | "ignore") => {
+      const seen: object[] = []
+      const invalid: string[] = []
+      const app = server(protoPoisoning === undefined ? {} : { protoPoisoning })
+        .use(websocket())
+        .ws("/p", {
+          messageSchema: passthrough,
+          message: (_ws, msg) => void seen.push(msg),
+          onInvalidMessage: (_ws, issues) => void invalid.push(issues[0]?.message ?? ""),
+        })
+      const out = await app.resolveWebSocketUpgrade(
+        new Request("http://t/p", { headers: { upgrade: "websocket" } }),
+      )
+      if (out.kind !== "upgrade") throw new Error("expected upgrade")
+      await out.handler.message?.(fakeWs(), poisoned)
+      return { seen, invalid }
+    }
+    expect(await run()).toEqual({ seen: [], invalid: ["invalid JSON"] })
+    const stripped = await run("strip")
+    expect(stripped.invalid).toEqual([])
+    expect(Object.hasOwn(stripped.seen[0] ?? {}, "__proto__")).toBe(false)
+    const ignored = await run("ignore")
+    expect(Object.hasOwn(ignored.seen[0] ?? {}, "__proto__")).toBe(true)
+  })
+
   test("an async schema is awaited before dispatch", async () => {
     const asyncSchema: StandardSchemaV1<unknown, number> = {
       "~standard": {

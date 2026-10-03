@@ -1947,7 +1947,7 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     this.topics ??= runtime.createTopics()
     // A `messageSchema` wraps `message` with validation once, here - every adapter then dispatches
     // already-validated, typed messages (Bun/Deno/Node/Workers) with no per-adapter code.
-    const entry = { handler: runtime.wrapHandler(handler as WebSocketHandler) }
+    const entry = { handler: runtime.wrapHandler(handler as WebSocketHandler, this.protoPoisoning) }
     for (const form of expandOptionalParams(path)) this.wsRouter.add("GET", form, entry)
     this.wsRouteCount += 1
     wsChanges += 1

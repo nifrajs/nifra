@@ -22733,8 +22733,8 @@
     "name": "wrapWebSocketMessageValidation",
     "kind": "function",
     "package": "@nifrajs/core",
-    "signature": "export declare function wrapWebSocketMessageValidation(handler: WebSocketHandler): WebSocketHandler;",
-    "doc": "/**\n * If the handler declares a `messageSchema`, return a copy whose `message` validates each frame -\n * parse as JSON, run the Standard Schema, then call the user's `message` with the typed value, or\n * `onInvalidMessage` on failure. Returns the handler unchanged when no schema is set. Called once at\n * `app.ws()` registration, so every adapter dispatches validated messages with no per-adapter code.\n */"
+    "signature": "export declare function wrapWebSocketMessageValidation(handler: WebSocketHandler, protoPoisoning?: ProtoPoisoning): WebSocketHandler;",
+    "doc": "/**\n * If the handler declares a `messageSchema`, return a copy whose `message` validates each frame -\n * parse as JSON, run the Standard Schema, then call the user's `message` with the typed value, or\n * `onInvalidMessage` on failure. Returns the handler unchanged when no schema is set. Called once at\n * `app.ws()` registration, so every adapter dispatches validated messages with no per-adapter code.\n * `protoPoisoning` is the app's body policy: a frame with a `__proto__` key gets what a JSON body\n * with one gets, and under `\"reject\"` reads as invalid JSON.\n */"
   },
   {
     "name": "writeDevFiles",

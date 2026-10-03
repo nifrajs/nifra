@@ -3353,13 +3353,14 @@ malformed JSON - indistinguishable on the wire, so a probe learns nothing.
 `"strip"` deletes the offending keys and hands the handler the cleaned
 value, siblings intact. `"ignore"` parses as-is, for a route you are sure
 never merges body input into another object. A string _value_ of `"__proto__"`
-is legal data and never triggers - only an own key of that name does.
+is legal data and never triggers - only an own key of that name does. A WebSocket route with a
+`messageSchema` parses each frame under the same policy; under
+`"reject"` a poisoned frame reaches `onInvalidMessage` as invalid
+JSON.
 
 The check is sound against escape smuggling: a `__proto__`-spelled key
-parses to the same own property, so it is caught the same way. And it is cheap on the common
-path - a clean body pays a substring pre-scan only; the deep walk runs solely when the raw text
-actually contains a suspect token, so an honest payload is never charged for the tree it does
-not have.
+parses to the same own property, so it is caught the same way. And it is cheap: one walk over the
+objects the parse already built, with no reviver and no pre-scan of the raw text.
 
 ### Forms and file uploads - `t.form`
 

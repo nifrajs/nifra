@@ -451,14 +451,15 @@ export default function Security() {
         <code>&quot;strip&quot;</code> deletes the offending keys and hands the handler the cleaned
         value, siblings intact. <code>&quot;ignore&quot;</code> parses as-is, for a route you are sure
         never merges body input into another object. A string <i>value</i> of <code>&quot;__proto__&quot;</code>{" "}
-        is legal data and never triggers - only an own key of that name does.
+        is legal data and never triggers - only an own key of that name does. A WebSocket route with a{" "}
+        <code>messageSchema</code> parses each frame under the same policy; under{" "}
+        <code>&quot;reject&quot;</code> a poisoned frame reaches <code>onInvalidMessage</code> as invalid
+        JSON.
       </p>
       <p>
         The check is sound against escape smuggling: a <code>__proto__</code>-spelled key
-        parses to the same own property, so it is caught the same way. And it is cheap on the common
-        path - a clean body pays a substring pre-scan only; the deep walk runs solely when the raw text
-        actually contains a suspect token, so an honest payload is never charged for the tree it does
-        not have.
+        parses to the same own property, so it is caught the same way. And it is cheap: one walk over the
+        objects the parse already built, with no reviver and no pre-scan of the raw text.
       </p>
 
       <h2>Forms and file uploads - <code>t.form</code></h2>
