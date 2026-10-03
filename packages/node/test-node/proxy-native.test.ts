@@ -165,3 +165,25 @@ test("global response middleware keeps a mounted proxy on the portable fallback"
     await hookedServer.stop({ drainMs: 0 })
   }
 })
+
+test("a mount() whose prefix covers a native mountFetch() still answers first, as on app.fetch", async () => {
+  const child = server()
+    .onRequest((req: Request) =>
+      req.headers.get("x-admin") === "yes"
+        ? undefined
+        : new Response("child guard", { status: 403 }),
+    )
+    .get("/public", () => "public")
+  const proxy = createProxy({ upstream: `http://127.0.0.1:${upstreamPort}` })
+  const app = server().mount({ path: "/api", app: child }).mountFetch("/api/v2", proxy)
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const viaFetch = await app.fetch(new Request("http://h/api/v2/secret"))
+    const viaNode = await exchange(running.port, "/api/v2/secret")
+    assert.equal(viaFetch.status, 403)
+    assert.equal(viaNode.status, 403)
+    assert.equal(viaNode.body, "child guard")
+  } finally {
+    await running.stop({ drainMs: 0 })
+  }
+})

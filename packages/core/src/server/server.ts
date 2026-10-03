@@ -2920,16 +2920,28 @@ export class Server<R extends Registry = EmptyRegistry, Ctx = EmptyContext, Hook
     const match = this.catalog.find(source.method, parts.pathname)
     if (match.found || !isRoutableMethod(source.method)) return undefined
 
+    // The mount the ordinary path reaches first: every `mount()` runs before any `mountFetch()`,
+    // whatever their prefix lengths. A 404 fallthrough chain stays on the ordinary path.
+    const mount =
+      this.firstMountUnder(parts.pathname, true) ?? this.firstMountUnder(parts.pathname, false)
+    if (mount === undefined || mount.fallbackOn404) return undefined
+    const candidate = (mount.handler as unknown as Record<symbol, unknown>)[NODE_NATIVE_MOUNT]
+    return typeof candidate === "function"
+      ? {
+          handler: candidate as NativeMountHandler,
+          path: mount.path,
+          stripPrefix: mount.stripPrefix,
+        }
+      : undefined
+  }
+
+  private firstMountUnder(
+    pathname: string,
+    beforeRoutes: boolean,
+  ): FetchMount<EnvOf<Ctx>> | undefined {
     for (const mount of this.fetchMounts) {
-      if (!underMountPrefix(parts.pathname, mount.path)) continue
-      const candidate = (mount.handler as unknown as Record<symbol, unknown>)[NODE_NATIVE_MOUNT]
-      return typeof candidate === "function"
-        ? {
-            handler: candidate as NativeMountHandler,
-            path: mount.path,
-            stripPrefix: mount.stripPrefix,
-          }
-        : undefined
+      if (mount.beforeRoutes === beforeRoutes && underMountPrefix(pathname, mount.path))
+        return mount
     }
     return undefined
   }
