@@ -329,6 +329,30 @@ export const piiLogRule: CheckRule = {
   },
 }
 
+/**
+ * A function's own name, or for an anonymous arrow/function expression the name it is bound to
+ * (`const requireAuth = async () => …`, `{ canEdit: () => … }`), which is how a gate is usually written.
+ */
+function functionName(ts: typeof TSApi, fn: TSApi.Node): string | undefined {
+  if (ts.isFunctionLike(fn) && fn.name !== undefined)
+    return ts.isIdentifier(fn.name) ? fn.name.text : undefined
+  let binding = fn.parent
+  while (
+    binding !== undefined &&
+    (ts.isParenthesizedExpression(binding) ||
+      ts.isAsExpression(binding) ||
+      ts.isSatisfiesExpression(binding))
+  )
+    binding = binding.parent
+  if (
+    binding !== undefined &&
+    (ts.isVariableDeclaration(binding) || ts.isPropertyAssignment(binding)) &&
+    ts.isIdentifier(binding.name)
+  )
+    return binding.name.text
+  return undefined
+}
+
 export const failOpenGateRule: CheckRule = {
   code: "NF-S001",
   title: "Fail-open gate",
@@ -346,10 +370,7 @@ export const failOpenGateRule: CheckRule = {
         if (ts.isCatchClause(node)) {
           let parent: TSApi.Node | undefined = node.parent
           while (parent !== undefined && !ts.isFunctionLike(parent)) parent = parent.parent
-          const name =
-            ts.isFunctionLike(parent) && parent.name && ts.isIdentifier(parent.name)
-              ? parent.name.text
-              : undefined
+          const name = parent === undefined ? undefined : functionName(ts, parent)
           // `can` only names a gate in camelCase (`canEdit`, `canAccess`) - matching it
           // case-insensitively swept in `canonicalize…`, `cancel…`, `candidate…`, none of them
           // authorization decisions. The other roots stay case-insensitive.

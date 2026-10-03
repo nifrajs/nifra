@@ -71,6 +71,23 @@ describe("built-in security rules", () => {
     expect(findings.map((finding) => `${finding.code}:${finding.line}`)).toEqual(["NF-S001:2"])
   })
 
+  test("NF-S001 names an arrow or function expression by the binding it is assigned to", async () => {
+    const findings = await scan(
+      "backend/gates.ts",
+      [
+        "const requireAuth = async () => { try { await check() } catch { return true } }",
+        "const canEdit = function () { try { check() } catch { return true } }",
+        "export const gates = { authorizeAdmin: (user) => { try { check(user) } catch {} } }",
+        "const loadProfile = async () => { try { await load() } catch { return null } }",
+      ].join("\n"),
+    )
+    expect(findings.map((finding) => `${finding.code}:${finding.line}`)).toEqual([
+      "NF-S001:1",
+      "NF-S001:2",
+      "NF-S001:3",
+    ])
+  })
+
   test("NF-S001 delegated denial: a catch that calls fail() is not fail-open", async () => {
     const findings = await scan(
       "routes/assert.server.ts",
