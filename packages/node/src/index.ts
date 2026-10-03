@@ -1380,9 +1380,22 @@ function runNodeSource(
  * routes `/users/../admin` to `/admin` on every runtime, and every later reader - static files,
  * mounts, the app, `c.req.url` - sees the one path.
  */
+const ABSOLUTE_FORM = /^[a-z][a-z\d+.-]*:\/\//i
+
 function resolveTarget(nodeReq: IncomingMessage): void {
-  const target = nodeReq.url
-  if (target !== undefined && hasDotSegment(target)) nodeReq.url = resolveDotSegments(target)
+  let target = nodeReq.url
+  if (target === undefined) return
+  // Absolute-form (`GET http://host/path`, RFC 9112 section 3.2.2) is routed as its origin-form path
+  // with the Host header, as Bun does. Kept whole, hooks saw `http://hosthttp://...` while the
+  // router matched the full URL against a `/*` route.
+  if (target.charCodeAt(0) !== 47 && ABSOLUTE_FORM.test(target)) {
+    let end = target.indexOf("//") + 2
+    while (end < target.length && target[end] !== "/" && target[end] !== "?") end++
+    const rest = target.slice(end)
+    target = rest.charCodeAt(0) === 47 ? rest : `/${rest}`
+    nodeReq.url = target
+  }
+  if (hasDotSegment(target)) nodeReq.url = resolveDotSegments(target)
 }
 
 function handle(

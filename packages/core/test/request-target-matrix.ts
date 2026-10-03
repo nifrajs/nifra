@@ -74,6 +74,20 @@ export const REQUEST_TARGET_CASES: readonly RequestTargetCase[] = [
   { method: "GET", target: "/users/.a", answer: { route: "GET /users/:id", id: ".a" } },
   // The query is not part of the path.
   { method: "GET", target: "/users/7?next=/../x", answer: { route: "GET /users/:id", id: "7" } },
+  // Absolute-form (RFC 9112 section 3.2.2) routes its path with the Host header, as Bun does: the
+  // target's authority never becomes part of the path the hooks and the router see.
+  {
+    method: "GET",
+    target: "http://other.example/users/7",
+    answer: { route: "GET /users/:id", id: "7" },
+  },
+  { method: "GET", target: "http://other.example", answer: { route: "GET /" } },
+  {
+    method: "POST",
+    target: "http://other.example/users/../echo?x=1",
+    body: '{"a":1}',
+    answer: { route: "POST /echo", url: "/echo", type: "application/json", body: '{"a":1}' },
+  },
 ]
 
 export interface RawAnswer {
