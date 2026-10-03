@@ -245,6 +245,66 @@ test("core's unhandled-error log line becomes an api error tied to its request",
   expect(line?.message).toContain('"detail":"cannot read x"')
 })
 
+// What core does with a route that throws: log the error, then answer a bare JSON 500.
+const failingApp =
+  (logged = true) =>
+  async (): Promise<Response> => {
+    if (logged) {
+      process.stderr.write(
+        `${JSON.stringify({
+          level: "error",
+          message: "unhandled request error",
+          method: "GET",
+          path: "/settings",
+          name: "SyntaxError",
+          detail: "JSON Parse error: Unexpected EOF",
+          stack:
+            "SyntaxError: JSON Parse error: Unexpected EOF\n    at Settings (/app/routes/settings.tsx:4:22)",
+          time: "now",
+        })}\n`,
+      )
+    }
+    return Response.json({ ok: false, error: "internal_error" }, { status: 500 })
+  }
+
+const pageLoad = (headers: Record<string, string>): Request =>
+  new Request("http://127.0.0.1:4000/settings", { headers })
+
+test("a page load the app answers with a bare 500 gets the overlay for the error it recorded", async () => {
+  const { session } = open()
+  const response = await session.track(
+    pageLoad({ accept: "text/html", "sec-fetch-dest": "document" }),
+    failingApp(),
+  )
+  expect(response.status).toBe(500)
+  expect(response.headers.get("content-type")).toContain("text/html")
+  expect(session.isOverlay(response)).toBe(true)
+  const requestId = response.headers.get(DEV_REQUEST_ID_HEADER)
+  const html = await response.text()
+  expect(html).toContain("JSON Parse error: Unexpected EOF")
+  expect(html).toContain("Copy prompt")
+  const errors = session.feed.errors().errors
+  expect(errors).toHaveLength(1)
+  expect(errors[0]?.requestId).toBe(requestId ?? "")
+  expect(html).toContain(`entry ${errors[0]?.id} does not come back`)
+  const last = await body(await get(session, LAST_ERROR_PATH))
+  expect(String(last.message)).toContain("JSON Parse error: Unexpected EOF")
+})
+
+test("a data request, a fetch, or a 500 with nothing recorded keeps the app's response", async () => {
+  const { session } = open()
+  for (const [headers, logged] of [
+    [{ accept: "text/html", "x-nifra-data": "1" }, true],
+    [{ accept: "application/json" }, true],
+    [{ accept: "text/html", "sec-fetch-dest": "empty" }, true],
+    [{ accept: "text/html" }, false],
+  ] as const) {
+    const response = await session.track(pageLoad(headers), failingApp(logged))
+    expect(session.isOverlay(response)).toBe(false)
+    expect(await response.json()).toEqual({ ok: false, error: "internal_error" })
+  }
+})
+
 test("failure() renders the overlay and records the same redacted diagnostic everywhere", async () => {
   const root = mkdtempSync(join(tmpdir(), "nifra-dev-session-"))
   roots.push(root)

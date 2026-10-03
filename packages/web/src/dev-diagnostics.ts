@@ -29,6 +29,8 @@ export interface DevDiagnostics {
   /** Capture a thrown SSR failure: store it for the endpoint and return the overlay HTML. The overlay a
    * person sees and the JSON an agent reads come from this one Diagnostic, so they can never disagree. */
   capture(err: unknown, request: { readonly method: string; readonly url: string }): string
+  /** The overlay HTML for a failure the feed already recorded, which also becomes the last error. */
+  show(captured: CapturedFailure): string
 }
 
 /** One diagnostics surface per dev server. `root` is the resolved project root; it scopes the codeframe
@@ -45,6 +47,19 @@ export function createDevDiagnostics(
   let last: Diagnostic | undefined
   const zones = createZoneClassifier({ appRoot: root })
   const showSource = (file: string): boolean => browserDenial(zones.classify(file)) === undefined
+  const show = (captured: CapturedFailure): string => {
+    last = captured.diagnostic
+    return renderDiagnosticOverlay(
+      last,
+      fixPrompts(last, {
+        surface: "overlay",
+        root,
+        entry: captured.entry,
+        requestId: captured.requestId,
+        category: captured.category ?? "ssr",
+      }),
+    )
+  }
   return {
     isLastErrorPath: (pathname) => pathname === LAST_ERROR_PATH,
     lastError: () => ({
@@ -58,21 +73,12 @@ export function createDevDiagnostics(
         "x-nifra-diagnostic": "true",
       },
     }),
-    capture: (err, request) => {
-      const captured = build?.(err, request) ?? {
-        diagnostic: buildDiagnostic(err, { root, request, showSource }),
-      }
-      last = captured.diagnostic
-      return renderDiagnosticOverlay(
-        last,
-        fixPrompts(last, {
-          surface: "overlay",
-          root,
-          entry: captured.entry,
-          requestId: captured.requestId,
-          category: captured.category ?? "ssr",
-        }),
-      )
-    },
+    capture: (err, request) =>
+      show(
+        build?.(err, request) ?? {
+          diagnostic: buildDiagnostic(err, { root, request, showSource }),
+        },
+      ),
+    show,
   }
 }

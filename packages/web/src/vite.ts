@@ -508,7 +508,7 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
           res.statusCode = nifraRes.status
           const requestId = nifraRes.headers.get(DEV_REQUEST_ID_HEADER)
           if (requestId !== null) res.setHeader(DEV_REQUEST_ID_HEADER, requestId)
-          if (overlay) {
+          if (overlay || session.isOverlay(nifraRes)) {
             res.setHeader("content-type", "text/html; charset=utf-8")
             res.end(await nifraRes.text())
             return

@@ -47,6 +47,7 @@ import { fixPrompts, isHydrationMismatch, LAST_ERROR_PATH, promptPath } from "./
 import { diagnosticHeadline } from "./diagnostic-prompt.ts"
 import { timingSafeEqual } from "./internal/timing-safe-equal.ts"
 import { ISR_STATUS_HEADER } from "./isr.ts"
+import { DATA_HEADER } from "./router.ts"
 import { browserDenial, createZoneClassifier } from "./zones.ts"
 
 export interface DevSessionOptions {
@@ -78,8 +79,13 @@ export interface DevSession {
   readonly diagnostics: DevDiagnostics
   /** Answer a `/__nifra/` agent path, or `undefined` for anything else. */
   handle(request: Request): Promise<Response | undefined>
-  /** Run one app request as a tracked request: id header, trace, and entries tagged with its id. */
+  /**
+   * Run one app request as a tracked request: id header, trace, and entries tagged with its id. A page
+   * load the app answers with a bare 5xx after recording an error comes back as the overlay instead.
+   */
   track(request: Request, handler: () => Promise<Response>): Promise<Response>
+  /** True for an overlay {@link track} returned: serve it as is, with no dev scripts added. */
+  isOverlay(response: Response): boolean
   /**
    * The page response with the browser-capture script first in its `<head>` (streamed, not buffered)
    * and its CSP admitting the script. Anything that is not an HTML page comes back untouched.
@@ -583,6 +589,41 @@ export function createDevSession(options: DevSessionOptions): DevSession {
     return tag === undefined ? html : injectIntoHtml(html, tag)
   }
 
+  const isDocumentRequest = (request: Request): boolean => {
+    if (request.method !== "GET" && request.method !== "HEAD") return false
+    if (request.headers.has(DATA_HEADER)) return false
+    const dest = request.headers.get("sec-fetch-dest")
+    if (dest !== null) return dest === "document" || dest === "iframe"
+    return (request.headers.get("accept") ?? "").includes("text/html")
+  }
+
+  const overlays = new WeakSet<Response>()
+  // Core answers a page render that throws with a bare JSON 500, and its log line has already put the
+  // error in the feed under this request. A browser loading that page gets the overlay for it instead.
+  const overlayFor = async (
+    request: Request,
+    requestId: string,
+    response: Response,
+  ): Promise<Response | undefined> => {
+    if (response.status < 500 || !isDocumentRequest(request)) return undefined
+    if ((response.headers.get("content-type") ?? "").includes("text/html")) return undefined
+    const entry = feed.errors({ requestId }).errors.at(-1)
+    if (entry === undefined) return undefined
+    await response.body?.cancel()
+    const html = diagnostics.show({
+      diagnostic: entry.diagnostic,
+      entry: { id: entry.id, seq: entry.seq },
+      requestId,
+      category: entry.category,
+    })
+    const overlay = new Response(html, {
+      status: response.status,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    })
+    overlays.add(overlay)
+    return overlay
+  }
+
   const track = async (request: Request, handler: () => Promise<Response>): Promise<Response> => {
     requestCounter += 1
     const requestId = `r${requestCounter}`
@@ -600,6 +641,7 @@ export function createDevSession(options: DevSessionOptions): DevSession {
       feed.finishRequest(requestId, { status: 500 }, performance.now() - started)
       throw err
     }
+    response = (await overlayFor(request, requestId, response)) ?? response
     const length = response.headers.get("content-length")
     feed.finishRequest(
       requestId,
@@ -631,6 +673,7 @@ export function createDevSession(options: DevSessionOptions): DevSession {
     diagnostics,
     handle,
     track,
+    isOverlay: (response) => overlays.has(response),
     decoratePage,
     decorateHtml,
     failure: (err, request) => diagnostics.capture(err, request),

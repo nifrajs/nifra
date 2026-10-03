@@ -104,6 +104,33 @@ test("a throwing app renders the dev overlay, not a blank 500", async () => {
   expect(html).toContain("loader exploded in dev")
 })
 
+test("a page whose render the app answers with a logged JSON 500 shows the overlay, without dev scripts", async () => {
+  // Core catches a throwing render, logs it and answers JSON; a browser loading the page needs the
+  // overlay. It must stay as rendered: the overlay's own CSP admits only its copy script.
+  const origin = await start(() => {
+    process.stderr.write(
+      `${JSON.stringify({
+        level: "error",
+        message: "unhandled request error",
+        method: "GET",
+        path: "/",
+        name: "TypeError",
+        detail: "render exploded under core",
+        stack: "TypeError: render exploded under core\n    at Page (/app/routes/index.tsx:2:3)",
+        time: "now",
+      })}\n`,
+    )
+    return Response.json({ ok: false, error: "internal_error" }, { status: 500 })
+  })
+  const res = await fetch(`${origin}/`, { headers: { accept: "text/html" } })
+  expect(res.status).toBe(500)
+  expect(res.headers.get("content-type")).toContain("text/html")
+  const html = await res.text()
+  expect(html).toContain("render exploded under core")
+  expect(html).not.toContain("/@vite/client")
+  expect(html).not.toContain("data-nifra-dev")
+})
+
 test("the Vite pipeline exposes the same structured last-error endpoint as Bun", async () => {
   const origin = await start(() => {
     throw new Error("vite loader exploded")
