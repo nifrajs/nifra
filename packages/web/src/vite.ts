@@ -449,15 +449,22 @@ export async function createViteDevServer(options: ViteDevServerOptions): Promis
     // Keep this before Vite's middleware: the agent endpoints are owned by nifra, not files or routes.
     if (isDevAgentPath((req.url ?? "/").split("?", 1)[0] ?? "/")) {
       void (async () => {
-        const body = await readAgentBody(req, CLIENT_BATCH_MAX_BYTES)
-        const agent = await session.handle(toWebRequest(req, body))
-        if (agent === undefined) {
-          handleWithVite(req, res)
-          return
+        try {
+          const body = await readAgentBody(req, CLIENT_BATCH_MAX_BYTES)
+          const agent = await session.handle(toWebRequest(req, body))
+          if (agent === undefined) {
+            handleWithVite(req, res)
+            return
+          }
+          res.statusCode = agent.status
+          applyResponseHeaders(agent.headers, res)
+          res.end(await agent.text())
+        } catch (err) {
+          // A client that aborts mid-body rejects the read; unhandled, that rejection ends the process.
+          if (!req.destroyed) console.error("[nifra/web/vite] dev endpoint failed:", err)
+          if (!res.headersSent) res.statusCode = 500
+          res.end()
         }
-        res.statusCode = agent.status
-        applyResponseHeaders(agent.headers, res)
-        res.end(await agent.text())
       })()
       return
     }

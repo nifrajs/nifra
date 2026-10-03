@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { connect } from "node:net"
 import { join } from "node:path"
 import {
   DEV_FEED_PATHS,
@@ -441,4 +442,23 @@ test("Vite pages carry the browser-capture script, and its batches reach the fee
   expect((await post(JSON.stringify({ token, events: [], pad: "x".repeat(200_000) }))).status).toBe(
     413,
   )
+})
+
+test("a client that aborts a dev-endpoint body mid-upload leaves the server up", async () => {
+  const origin = await start(() => new Response("ok"))
+  const { port } = new URL(origin)
+  await new Promise<void>((resolve, reject) => {
+    const socket = connect(Number(port), "127.0.0.1", () => {
+      socket.write(
+        `POST ${DEV_FEED_PATHS.clientEvent} HTTP/1.1\r\nhost: 127.0.0.1:${port}\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n\r\n{"token":`,
+      )
+      setTimeout(() => {
+        socket.destroy()
+        resolve()
+      }, 50)
+    })
+    socket.on("error", reject)
+  })
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  expect((await fetch(`${origin}${LAST_ERROR_PATH}`)).status).toBe(200)
 })
