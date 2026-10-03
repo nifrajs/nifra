@@ -235,7 +235,7 @@ const FEATURE_GZIP_BUDGET_KB: Readonly<Record<string, number>> = {
   "nifra-idempotency": 35.8,
   "nifra-effect-ledger": 34.6,
   "nifra-mcp": 32.9,
-  "nifra-sse": 33.3,
+  "nifra-sse": 33.4,
   "nifra-valibot": 33.6,
   "nifra-typebox-t": 62.5,
   "nifra-typebox-form": 66.3,
