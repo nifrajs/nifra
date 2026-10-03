@@ -93,7 +93,7 @@ registerFixRecipe({
     // Refusing is a result the caller has to see. Returning "changed nothing" made `nifra fix
     // --code NF-C010` a silent no-op on the only findings that produce it.
     if (!linked.ok) throw new Error(`[nifra] cannot rebuild ${packageName}: ${linked.reason}`)
-    const proc = Bun.spawn(["bun", "run", linked.buildScript], {
+    const proc = Bun.spawn([process.execPath, "run", linked.buildScript], {
       cwd: linked.dir,
       stdout: "ignore",
       stderr: "pipe",
@@ -157,11 +157,14 @@ registerFixRecipe({
     const changed = new Set<string>()
     const skipped: string[] = []
     for (let pass = 0; pass < RESERVED_SEGMENT_PASSES; pass += 1) {
-      const proc = Bun.spawn(["bun", tscBin, "--noEmit", "--pretty", "false", "-p", tsconfig], {
-        cwd: root,
-        stdout: "pipe",
-        stderr: "pipe",
-      })
+      const proc = Bun.spawn(
+        [process.execPath, tscBin, "--noEmit", "--pretty", "false", "-p", tsconfig],
+        {
+          cwd: root,
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      )
       const [stdout, stderr] = await Promise.all([
         new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),

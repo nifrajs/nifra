@@ -118,7 +118,7 @@ async function typecheck(cwd: string, signal?: AbortSignal): Promise<TypecheckRe
     }
   }
   if (signal?.aborted) return { ran: true, ok: false, cancelled: true, output: "cancelled" }
-  const proc = Bun.spawn(["bun", tscBin, "--noEmit", "-p", tsconfig], {
+  const proc = Bun.spawn([process.execPath, tscBin, "--noEmit", "-p", tsconfig], {
     cwd,
     stdout: "pipe",
     stderr: "pipe",

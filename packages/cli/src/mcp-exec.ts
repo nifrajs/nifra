@@ -664,7 +664,7 @@ export async function spawnChild(
   if (new TextEncoder().encode(encodedInput).byteLength > CHILD_INPUT_MAX_BYTES)
     return `${label} input exceeded ${CHILD_INPUT_MAX_BYTES} bytes.`
   if (signal?.aborted) return `${label} cancelled${cancellationSuffix(signal)}.`
-  const proc = Bun.spawn(["bun", childPath(child), cwd], {
+  const proc = Bun.spawn([process.execPath, childPath(child), cwd], {
     cwd,
     // Explicit: without `env`, Bun passes the environment it started with, missing `--env-file` values.
     env: process.env,
@@ -798,7 +798,7 @@ export class WarmWorker {
     readonly fingerprint: string,
     private readonly label: string,
   ) {
-    this.proc = Bun.spawn(["bun", childPath(child), cwd, "--worker"], {
+    this.proc = Bun.spawn([process.execPath, childPath(child), cwd, "--worker"], {
       cwd,
       // Explicit: without `env`, Bun passes the environment it started with, missing `--env-file` values.
       env: process.env,

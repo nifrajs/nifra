@@ -44,3 +44,35 @@ test("nifra_run and nifra_ws answer without waiting on the app's open handles", 
   // The child timeout is 30s; a child that did not exit on its own took all of it.
   expect(Date.now() - started).toBeLessThan(10_000)
 }, 70_000)
+
+test("project children start from the running Bun, not whatever `bun` PATH finds", async () => {
+  const script = join(root, "probe.ts")
+  writeFileSync(
+    script,
+    [
+      `import { spawnChild } from ${JSON.stringify(resolve(import.meta.dir, "../src/mcp-exec.ts"))}`,
+      `import { collectTestResult } from ${JSON.stringify(resolve(import.meta.dir, "../src/test-tool.ts"))}`,
+      `const ran = await spawnChild("mcp-run", ${JSON.stringify(root)}, { requests: [{ path: "/health" }] }, "run")`,
+      `const tested = await collectTestResult(${JSON.stringify(root)}, { pattern: "health.test.ts" })`,
+      "process.stdout.write(JSON.stringify({ ran: JSON.parse(ran), tested: tested.ok }))",
+      "process.exit(0)",
+      "",
+    ].join("\n"),
+  )
+  writeFileSync(
+    join(root, "health.test.ts"),
+    'import { expect, test } from "bun:test"\ntest("ok", () => expect(1).toBe(1))\n',
+  )
+  // An MCP client often launches the server with a minimal PATH that has no `bun` on it.
+  const proc = Bun.spawn([process.execPath, script], {
+    cwd: root,
+    env: { PATH: "/usr/bin:/bin", HOME: process.env.HOME ?? root },
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  const out = await new Response(proc.stdout).text()
+  await proc.exited
+  const result: unknown = JSON.parse(out)
+  expect(result).toHaveProperty("ran.results.0.body.ok", true)
+  expect(result).toHaveProperty("tested", true)
+}, 70_000)

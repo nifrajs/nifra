@@ -129,7 +129,8 @@ export async function collectTestResult(
           : "cancelled",
     }
   }
-  const proc = Bun.spawn(command, {
+  // The running Bun, not the first `bun` on PATH: an MCP client may start the server with no `bun` there.
+  const proc = Bun.spawn([process.execPath, ...command.slice(1)], {
     cwd,
     // Explicit: without `env`, Bun passes the environment it started with, missing `--env-file` values.
     env: process.env,
