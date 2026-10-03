@@ -111,6 +111,25 @@ describe("@nifrajs/events - parse (untrusted input)", () => {
     if (!result.success) expect(result.issues[0]?.path?.[0]).toBe("payload")
   })
 
+  test("a type or version no JSON can hold is an issue, not a throw", () => {
+    const cyclic: { self?: unknown } = {}
+    cyclic.self = cyclic
+    for (const [field, value, received] of [
+      ["version", 1n, "1n"],
+      ["version", cyclic, "an object"],
+      ["type", cyclic, "an object"],
+      ["type", "x".repeat(10_000), `"${"x".repeat(64)}..."`],
+    ] as const) {
+      const result = OrderPaid.parse({ ...valid, [field]: value })
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.issues.find((issue) => issue.path?.[0] === field)?.message).toEndWith(
+          `got ${received}`,
+        )
+      }
+    }
+  })
+
   test("is() is the boolean guard", () => {
     expect(OrderPaid.is(JSON.parse(JSON.stringify(valid)))).toBe(true)
     expect(OrderPaid.is({ ...valid, version: 9 })).toBe(false)

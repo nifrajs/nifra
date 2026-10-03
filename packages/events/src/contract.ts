@@ -76,6 +76,25 @@ function newId(): string {
   return `evt_${globalThis.crypto.randomUUID()}`
 }
 
+/** A received value for an issue message. Never throws - a bigint or a cyclic object arrives off a
+ * rich wire codec as readily as a string - and never echoes more than a short preview. */
+function describeReceived(value: unknown): string {
+  switch (typeof value) {
+    case "string":
+      return JSON.stringify(value.length > 64 ? `${value.slice(0, 64)}...` : value)
+    case "bigint":
+      return `${value}n`
+    case "object":
+      return value === null ? "null" : Array.isArray(value) ? "an array" : "an object"
+    case "function":
+      return "a function"
+    case "symbol":
+      return "a symbol"
+    default:
+      return String(value)
+  }
+}
+
 function structuralIssue(message: string, key?: string): StandardIssue {
   return key === undefined ? { message } : { message, path: [key] }
 }
@@ -151,7 +170,7 @@ export function defineEventContract<Schema extends StandardSchemaV1>(spec: {
       if (env.type !== type) {
         issues.push(
           structuralIssue(
-            `type must be ${JSON.stringify(type)}, got ${JSON.stringify(env.type)}`,
+            `type must be ${JSON.stringify(type)}, got ${describeReceived(env.type)}`,
             "type",
           ),
         )
@@ -159,7 +178,7 @@ export function defineEventContract<Schema extends StandardSchemaV1>(spec: {
       if (env.version !== version) {
         issues.push(
           structuralIssue(
-            `version must be ${version}, got ${JSON.stringify(env.version)}`,
+            `version must be ${version}, got ${describeReceived(env.version)}`,
             "version",
           ),
         )
