@@ -1125,7 +1125,7 @@ export function createPageRequestExecutor<Env = unknown>(
               ? undefined
               : resolveStaticBoundaries(
                   boundaryDefinitions,
-                  { phase: "build", origin: originOf(c.req) },
+                  { phase: "build" },
                   options.staticBoundaryCache,
                 )
           const pageResult = mod.loader ? mod.loader({ ...ctx, search: effectiveSearch }) : null
