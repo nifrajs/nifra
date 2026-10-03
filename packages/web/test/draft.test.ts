@@ -102,6 +102,46 @@ test("createWebApp sets ctx.draft=true only for a valid cookie when draftSecret 
   })
 })
 
+test("a draft render is private and never stored, whatever cache-control its loader sets", async () => {
+  const manifest: Manifest = {
+    routes: [
+      {
+        id: "post",
+        pattern: "/post",
+        layoutIds: [],
+        file: "post.tsx",
+        load: async () => ({
+          default: "post",
+          revalidate: 60,
+          loader: (ctx) => {
+            ctx.set.headers["cache-control"] = "public, max-age=60"
+            return { title: ctx.draft ? "UNPUBLISHED" : "Published" }
+          },
+        }),
+      },
+    ],
+    layouts: {},
+  }
+  const adapter: RenderAdapter = {
+    renderToString: (_chain, props) => `<p>${JSON.stringify(props.data)}</p>`,
+    renderToStream: () => new ReadableStream(),
+    hydrationHead: () => "",
+  }
+  const app = createWebApp({ adapter, manifest, clientEntry: "/c.js", draftSecret: SECRET })
+  // withISR is given no draftSecret: the draft render itself must refuse the cache.
+  const isr = withISR(app, { store: new MemoryCacheStore(), revalidate: 60, now: () => 1000 })
+  const cookie = `${DRAFT_COOKIE}=${await signValue("1", SECRET)}`
+  const editor = await isr(new Request("http://x/post", { headers: { cookie } }))
+  expect(editor.headers.get("cache-control")).toBe("private, no-store")
+  expect(await editor.text()).toContain("UNPUBLISHED")
+  const data = await app.fetch(
+    new Request("http://x/post", { headers: { cookie, "x-nifra-data": "1" } }),
+  )
+  expect(data.headers.get("cache-control")).toBe("private, no-store")
+  const visitor = await isr(new Request("http://x/post"))
+  expect(await visitor.text()).not.toContain("UNPUBLISHED")
+})
+
 test("createWebApp leaves ctx.draft=false when no draftSecret is set (even with a cookie)", async () => {
   const app = createWebApp({ adapter: stub, manifest: draftManifest(), clientEntry: "/c.js" })
   const signed = await signValue("1", SECRET)

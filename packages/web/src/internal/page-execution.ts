@@ -1079,6 +1079,8 @@ export function createPageRequestExecutor<Env = unknown>(
         }
         const mod = await route.load()
         const draft = await draftFlag(c.req)
+        // Unpublished content is the editor's alone: whatever cache-control a loader sets, no cache keeps it.
+        if (draft) controls.personalize()
         let data: unknown
         let layoutData: readonly unknown[] | undefined
         let boundaryStates: BoundaryStates | undefined
@@ -1201,6 +1203,7 @@ export function createPageRequestExecutor<Env = unknown>(
       withResponseControls(async (c, controls) => {
         const mod = await route.load()
         const draft = await draftFlag(c.req)
+        if (draft) controls.personalize()
         if (mod.action === undefined) {
           return new Response("Method Not Allowed", {
             status: 405,
@@ -1318,6 +1321,8 @@ export function createPageRequestExecutor<Env = unknown>(
         params[target.names[i] as string] = match.params[`p${i}`] as string
       }
       const mod = await target.page.load()
+      const draft = await draftFlag(c.req)
+      if (draft) controls.personalize()
       let run: LayoutRun
       try {
         const ctx: LoaderContext = {
@@ -1326,7 +1331,7 @@ export function createPageRequestExecutor<Env = unknown>(
           req: c.req,
           api: apiFor(c),
           env: c.env,
-          draft: await draftFlag(c.req),
+          draft,
           search: loaderSearch(mod.searchSchema, c.req),
           set: controls.scope(PAGE_SCOPE),
         }

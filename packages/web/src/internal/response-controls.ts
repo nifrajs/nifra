@@ -166,14 +166,17 @@ export class PageResponseControls {
   /** The serving app's controls, marked as carrying per-visitor state. Throws once sealed. */
   cookies(member: string): CoreResponseControls {
     this.assertOpen(member)
-    const set = this.#c.set
-    if (!this.#personalized) {
-      this.#personalized = true
-      // A redirect or status render merges the serving app's header record, so this keeps those
-      // outcomes out of shared caches too (a 301 is cacheable by default).
-      set.headers["cache-control"] = PRIVATE_NO_STORE
-    }
-    return set
+    this.personalize()
+    return this.#c.set
+  }
+
+  /** Mark the response as one visitor's - a queued cookie, or a draft render - so no cache stores it. */
+  personalize(): void {
+    if (this.#personalized) return
+    this.#personalized = true
+    // A redirect or status render merges the serving app's header record, so this keeps those
+    // outcomes out of shared caches too (a 301 is cacheable by default).
+    this.#c.set.headers["cache-control"] = PRIVATE_NO_STORE
   }
 
   assertOpen(member: string): void {
