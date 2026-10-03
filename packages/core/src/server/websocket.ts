@@ -224,7 +224,7 @@ export type WsAttach = (
   socket: StandardWebSocket,
   handler: WebSocketHandler,
   data: unknown,
-  options: { openNow: boolean; pubsub: TopicRegistry; maxPayloadBytes?: number },
+  options: { openNow: boolean; pubsub: TopicRegistry; maxPayloadBytes?: number | undefined },
 ) => NifraWebSocket
 
 /**
@@ -264,7 +264,7 @@ export function attachWebSocket<
   socket: StandardWebSocket,
   handler: WebSocketHandler<Data, Env, Schema, Send>,
   data: unknown,
-  options: { openNow: boolean; pubsub: TopicRegistry; maxPayloadBytes?: number },
+  options: { openNow: boolean; pubsub: TopicRegistry; maxPayloadBytes?: number | undefined },
 ): NifraWebSocket<Data> {
   const { pubsub } = options
   let ws!: NifraWebSocket<Data>

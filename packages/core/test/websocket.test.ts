@@ -1099,6 +1099,37 @@ describe("toFetchHandler WebSockets (Workers WebSocketPair)", () => {
     expect(opened).toBe(true)
   })
 
+  test("an accepted upgrade enforces wsMaxPayloadBytes on inbound frames", () => {
+    const listeners = new Map<string, (event: { readonly data: unknown }) => void>()
+    const closed: unknown[] = []
+    const received: unknown[] = []
+    const sock = {
+      ...fakeServerSocket(),
+      addEventListener(type: string, listener: (event: { readonly data: unknown }) => void) {
+        listeners.set(type, listener)
+      },
+      close(code?: number) {
+        closed.push(code)
+      },
+    }
+    const handler = toFetchHandler(
+      server({ wsMaxPayloadBytes: 8 })
+        .use(websocket())
+        .ws("/ws", { message: (_ws, data) => void received.push(data) }),
+    )
+    withMockedPair(sock, () => {
+      try {
+        handler.fetch(new Request("http://t/ws", { headers: { upgrade: "websocket" } }), {}, ctx)
+      } catch {
+        // `new Response(null, { status: 101 })` throws off-workerd - expected; accept()+wire already ran.
+      }
+    })
+    listeners.get("message")?.({ data: "short" })
+    listeners.get("message")?.({ data: "x".repeat(20) })
+    expect(received).toEqual(["short"])
+    expect(closed).toEqual([1009])
+  })
+
   // The `webSocketHub` option is the only way `app.publish` reaches every client on Workers: a
   // stateless isolate cannot hold connections, so upgrades have to be handed to one Durable Object.
   // Untested until now, because inside `server.ts` this branch hid inside a 3,200-line file's average.

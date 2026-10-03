@@ -140,6 +140,8 @@ export function toFetchHandler<Env = unknown>(
           outcome.attach(server, outcome.handler, outcome.data, {
             openNow: true,
             pubsub: outcome.pubsub,
+            // `wsMaxPayloadBytes`, as the Bun, Node, Deno and hub lanes enforce it.
+            maxPayloadBytes: outcome.maxPayloadBytes,
           })
           // `webSocket` is a Workers-only `ResponseInit` field (absent from the standard type), and a
           // 101 status is only valid on the Workers runtime - both gated by the `Pair` feature check.
