@@ -107,7 +107,7 @@ describe("sse", () => {
       })
       return new Promise<void>((resolve) => s.signal.addEventListener("abort", () => resolve()))
     })
-    await (res.body as ReadableStream<Uint8Array>).cancel()
+    await res.body?.cancel()
     expect(aborted).toBe(true)
   })
 
