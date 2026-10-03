@@ -143,8 +143,8 @@ export type DefinePluginResult<In extends AnyServer, Out extends AnyServer> =
 
 /**
  * Name + ergonomics for a plugin that **adds typed context** (`derive`/`decorate`). `app.use(myPlugin)`
- * applies it once; a second `use` of the same name is skipped (idempotent), so plugins can depend on each
- * other without double-registering hooks.
+ * applies it once; a second `use` of the same plugin value is skipped (idempotent), so plugins can depend
+ * on each other without double-registering hooks. A separately built plugin with the same name applies.
  *
  * ```ts
  * export const requestId = definePlugin("requestId", (app: typeof api) =>

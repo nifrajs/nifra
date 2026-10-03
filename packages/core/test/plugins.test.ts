@@ -129,3 +129,43 @@ describe("Middleware bundle (object form) still works", () => {
     expect(res.headers.get("x-mw")).toBe("1")
   })
 })
+
+describe("plugin dedupe keys by value, not by name", () => {
+  const guard = (allow: string): Middleware => ({
+    name: "guard",
+    beforeHandle: (c) =>
+      c.req.headers.get("x-role") === allow || c.req.headers.get("x-role") === "admin"
+        ? undefined
+        : new Response("denied", { status: 403 }),
+  })
+
+  test("a second, stricter guard with the same name still applies to later routes", async () => {
+    const app = server()
+      .use(guard("user"))
+      .get("/me", () => "me")
+      .use(guard("admin"))
+      .get("/admin", () => "admin")
+    const asUser = { headers: { "x-role": "user" } }
+    expect((await app.fetch(new Request("http://h/me", asUser))).status).toBe(200)
+    expect((await app.fetch(new Request("http://h/admin", asUser))).status).toBe(403)
+  })
+
+  test("a stricter guard inside a group applies to the group's routes", async () => {
+    const app = server()
+      .use(guard("user"))
+      .group("/admin", (g) => g.use(guard("admin")).get("/", () => "admin"))
+    const res = await app.fetch(new Request("http://h/admin", { headers: { "x-role": "user" } }))
+    expect(res.status).toBe(403)
+  })
+
+  test("a separately built named plugin function applies again", async () => {
+    let applied = 0
+    const make = () =>
+      defineContextPlugin<{ n: number }>("counted", (a) => {
+        applied++
+        return a.derive(() => ({ n: applied }))
+      })
+    server().use(make()).use(make())
+    expect(applied).toBe(2)
+  })
+})

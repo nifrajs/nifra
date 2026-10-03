@@ -178,8 +178,10 @@ export default function Plugins() {
         <code>decorate</code> or registers routes, and returns the app. Because <code>derive</code> and{" "}
         <code>decorate</code> are type-threaded, any context a plugin adds is <b>typed on every handler
         defined after</b> <code>app.use(plugin)</code> - no extra generics. Wrap a plugin with{" "}
-        <code>definePlugin(name, …)</code> to make it <b>idempotent</b>: applied twice (e.g. because two
-        plugins both depend on it), it wires its hooks once.
+        <code>definePlugin(name, …)</code> to make it <b>idempotent</b>: the same plugin applied twice (e.g.
+        because two plugins both depend on it) wires its hooks once. Two plugins built separately under one
+        name - a second, stricter <code>bearer()</code> before admin routes - are two plugins, and both
+        apply.
       </p>
       <CodeBlock code={PLUGIN} />
 
