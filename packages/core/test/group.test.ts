@@ -617,6 +617,22 @@ describe("group() - fail closed", () => {
         .group("/api", (api) => api.get("/x", () => "x")),
     ).not.toThrow()
   })
+
+  test("a group's use() of a plugin its parent applied is skipped, and development says so", async () => {
+    const warnings: string[] = []
+    const logger = { ...silentLogger, warn: (message: string) => void warnings.push(message) }
+    const tag = (value: string) => ({ name: "tag", responseHeaders: { "x-tag": value } })
+    const app = server({ logger })
+      .use(tag("parent"))
+      .group("/admin", (admin) => admin.use(tag("admin")).get("/panel", () => "ok"))
+      .group("/own", (own) =>
+        own.use({ name: "own", responseHeaders: { "x-own": "1" } }).get("/", () => "ok"),
+      )
+    expect((await get(app, "/admin/panel")).headers.get("x-tag")).toBe("parent")
+    expect((await get(app, "/own")).headers.get("x-own")).toBe("1")
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('group("/admin"): use() skipped "tag"')
+  })
 })
 
 describe("merge()/group() - stop hooks", () => {
