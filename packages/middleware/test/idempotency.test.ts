@@ -236,6 +236,28 @@ describe("idempotency middleware", () => {
     expect(calls).toBe(2) // transient 5xx must be retryable, not replayed
   })
 
+  test("a refusal that says the call never ran is not replayed", async () => {
+    for (const status of [401, 403, 408, 409, 425, 429]) {
+      let calls = 0
+      const app = server()
+        .use(idempotency({ store: new MemoryIdempotencyStore() }))
+        .post("/pay", () => {
+          calls += 1
+          return calls === 1 ? new Response("not now", { status }) : { paid: true }
+        })
+      const pay = (): Request =>
+        new Request("http://x/pay", {
+          method: "POST",
+          body: "{}",
+          headers: { "idempotency-key": "r" },
+        })
+
+      expect((await app.fetch(pay())).status).toBe(status)
+      const retry = await app.fetch(pay())
+      expect({ status, retried: retry.status, calls }).toEqual({ status, retried: 200, calls: 2 })
+    }
+  })
+
   test("Set-Cookie is not cached or replayed (avoids leaking a session to a second caller)", async () => {
     const app = server()
       .use(idempotency({ store: new MemoryIdempotencyStore() }))

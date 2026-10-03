@@ -3700,7 +3700,14 @@ caller still gets their cookie - replays just don't carry it.
 
 -
 Caching buffers the response body, so apply it to JSON/API routes, not streaming SSR responses.
-Transient `5xx` aren't cached, so a failed call stays retryable.
+Transient `5xx` aren't cached, and neither are `401`, `403`,
+`408`, `409`, `425`, or `429`: each says the call
+never ran, so it stays retryable under the same key.
+
+-
+The key is not bound to the body: a key reused with a different body replays the first answer. A
+route that needs that check declares `schema.idempotency`, which fingerprints the
+request and refuses a mismatched reuse with `409`.
 
 ### Edge gating - `jwt`, `csrf`, `ipRestriction`, `bodyLimit`
 

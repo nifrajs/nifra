@@ -670,7 +670,14 @@ export default function Security() {
         </li>
         <li>
           Caching buffers the response body, so apply it to JSON/API routes, not streaming SSR responses.
-          Transient <code>5xx</code> aren't cached, so a failed call stays retryable.
+          Transient <code>5xx</code> aren't cached, and neither are <code>401</code>, <code>403</code>,{" "}
+          <code>408</code>, <code>409</code>, <code>425</code>, or <code>429</code>: each says the call
+          never ran, so it stays retryable under the same key.
+        </li>
+        <li>
+          The key is not bound to the body: a key reused with a different body replays the first answer. A
+          route that needs that check declares <code>schema.idempotency</code>, which fingerprints the
+          request and refuses a mismatched reuse with <code>409</code>.
         </li>
       </ul>
 
