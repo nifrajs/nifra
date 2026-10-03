@@ -67,6 +67,46 @@ describe("project-scoped diagnostic paths", () => {
     expect(await readFile(join(root, "security.ts"), "utf8")).toContain("timingSafeEqual")
   })
 
+  test("fixes every secret comparison in a file whatever line a later diagnostic names", async () => {
+    const root = await project()
+    const source = [
+      '"use server"',
+      "export function verify(token: string, expected: string, count: number, limit: number, headers: { signature: string }) {",
+      "  if (count === limit) return false",
+      "  if (token === expected) return true",
+      "  if (count !== limit) return false",
+      "  return headers.signature !== expected",
+      "}",
+      "",
+    ].join("\n")
+    await writeFile(join(root, "verify.ts"), source)
+    // The line numbers one check run reports, applied in order the way `nifra fix` does.
+    const at = (line: number): Diagnostic => ({ ...diagnostic("verify.ts"), line })
+    expect(await applyDiagnosticRecipe(root, at(4))).toEqual(["verify.ts"])
+    expect(await applyDiagnosticRecipe(root, at(6))).toEqual([])
+    expect(await readFile(join(root, "verify.ts"), "utf8")).toBe(
+      [
+        '"use server"',
+        "",
+        'import { timingSafeEqual as nifraTimingSafeEqualBytes } from "node:crypto"',
+        "",
+        "function nifraTimingSafeEqual(left: string, right: string): boolean {",
+        "  const leftBytes = Buffer.from(left)",
+        "  const rightBytes = Buffer.from(right)",
+        "  return leftBytes.length === rightBytes.length && nifraTimingSafeEqualBytes(leftBytes, rightBytes)",
+        "}",
+        "",
+        "export function verify(token: string, expected: string, count: number, limit: number, headers: { signature: string }) {",
+        "  if (count === limit) return false",
+        "  if (nifraTimingSafeEqual(token, expected)) return true",
+        "  if (count !== limit) return false",
+        "  return !nifraTimingSafeEqual(headers.signature, expected)",
+        "}",
+        "",
+      ].join("\n"),
+    )
+  })
+
   test("rejects a symlink whose target leaves the project", async () => {
     const root = await project()
     const outside = await mkdtemp(join(tmpdir(), "nifra-outside-"))

@@ -31,35 +31,27 @@ registerFixRecipe({
   description: "Replace a direct secret comparison with a length check and timing-safe comparison.",
   verify: "nifra check --lints-only",
   async apply(root, diagnostic) {
-    if (diagnostic.file === undefined || diagnostic.line === undefined) return []
+    if (diagnostic.file === undefined) return []
     const path = await resolveInsideProject(root, diagnostic.file)
     if (path === undefined) return []
-    const lines = (await readFile(path, "utf8")).split("\n")
-    const index = diagnostic.line - 1
-    const original = lines[index]
-    if (original === undefined || original.includes("@nifra-gate-reviewed")) return []
-    const comparison = /\b([A-Za-z_$][\w$]*)\s*(===|!==|==|!=)\s*([A-Za-z_$][\w$]*)/.exec(original)
-    if (comparison === null) return []
-    const left = comparison[1] as string
-    const operator = comparison[2] as string
-    const right = comparison[3] as string
-    const expression = `nifraTimingSafeEqual(${left}, ${right})`
-    const replacement = operator === "!==" || operator === "!=" ? `!${expression}` : expression
-    lines[index] = original.replace(comparison[0], replacement)
-    if (!lines.some((line) => line.includes("function nifraTimingSafeEqual"))) {
-      lines.unshift(
-        'import { timingSafeEqual } from "node:crypto"',
-        "",
-        "function nifraTimingSafeEqual(left: string, right: string): boolean {",
-        "  const leftBytes = Buffer.from(left)",
-        "  const rightBytes = Buffer.from(right)",
-        "  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes)",
-        "}",
-        "",
+    const { loadProjectTypeScript } = await import("./internal/typescript-import.ts")
+    const loaded = await loadProjectTypeScript(root)
+    if (loaded.unsupported !== undefined) throw loaded.unsupported
+    if (loaded.compiler === undefined)
+      throw new Error(
+        "[nifra] the timing-safe fix finds each comparison in the syntax tree, so it needs TypeScript - run `bun add -d typescript`, then rerun the fix",
       )
+    try {
+      const { rewriteSecretComparisons } = await import("./rules/security.ts")
+      const source = await readFile(path, "utf8")
+      // Every site in the file at once, so the rest of that file's diagnostics find nothing left.
+      const rewritten = rewriteSecretComparisons(loaded.compiler, diagnostic.file, source)
+      if (rewritten === source) return []
+      await writeFile(path, rewritten, "utf8")
+      return [diagnostic.file]
+    } finally {
+      await loaded.session?.close()
     }
-    await writeFile(path, lines.join("\n"), "utf8")
-    return [diagnostic.file]
   },
 })
 
