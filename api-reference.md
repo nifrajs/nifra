@@ -1137,7 +1137,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **runNifraReview** _(function)_ - `runNifraReview: (options: ReviewOptions) => Promise<ReviewExecutionResult>`
   Run `nifra review --json` with the same bounded process discipline as the existing gates.
 - **runNifraVerification** _(function)_ - `runNifraVerification: (name: "check" | "assure" | "test", options: VerificationOptions) => Promise<VerificationResult>`
-  Run an existing Nifra gate without importing the large framework CLI into the agent runtime.
+  Run an existing Nifra gate without importing the large framework CLI into the agent runtime. `check` and `assure` are `nifra` commands; `test` is the project's own suite, run with `bun test` by the Bun this agent runs on.
 - **stableSessionEventCode** _(function)_ - `stableSessionEventCode: (type: string) => Promise<{ readonly code: string; readonly replaced: boolean; }>`
   Convert a legacy event type into a stable, content-free evidence code. Unknown event names are intentionally not copied to the target: their SHA-256 prefix gives a repeatable grouping key without disclosing an arbitrary source string.
 - **validateExtensionModule** _(function)_ - `validateExtensionModule: (path: string) => Promise<void>`
@@ -1383,7 +1383,7 @@ Every public export of every package and documented subpath - name, kind, signat
 - **runNifraReview** _(function)_ - `runNifraReview: (options: ReviewOptions) => Promise<ReviewExecutionResult>`
   Run `nifra review --json` with the same bounded process discipline as the existing gates.
 - **runNifraVerification** _(function)_ - `runNifraVerification: (name: "check" | "assure" | "test", options: VerificationOptions) => Promise<VerificationResult>`
-  Run an existing Nifra gate without importing the large framework CLI into the agent runtime.
+  Run an existing Nifra gate without importing the large framework CLI into the agent runtime. `check` and `assure` are `nifra` commands; `test` is the project's own suite, run with `bun test` by the Bun this agent runs on.
 
 ## @nifrajs/content
 

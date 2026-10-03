@@ -241,8 +241,8 @@ process.stdin.on("data", (chunk) => {
       registerTool(tool: { name: string; execute: Tool["execute"] }) {
         tools.set(tool.name, tool)
       },
-      exec: async (_command: string, args: readonly string[]) => ({
-        stdout: JSON.stringify({ args }),
+      exec: async (command: string, args: readonly string[]) => ({
+        stdout: JSON.stringify({ command, args }),
         code: 0,
       }),
     }
@@ -257,5 +257,12 @@ process.stdin.on("data", (chunk) => {
       (await tools.get("nifra_check")!.execute("call", {}, new AbortController().signal)).content[0]
         ?.text,
     ).toContain("--json")
+    // There is no `nifra test`: the test gate is the project's own suite.
+    expect(
+      JSON.parse(
+        (await tools.get("nifra_test")!.execute("call", {}, new AbortController().signal))
+          .content[0]?.text ?? "",
+      ),
+    ).toEqual({ command: "bun", args: ["test"] })
   })
 })

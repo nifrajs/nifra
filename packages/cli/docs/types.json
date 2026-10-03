@@ -17843,7 +17843,7 @@
     "kind": "function",
     "package": "@nifrajs/coding-agent",
     "signature": "export declare function runNifraVerification(name: \"check\" | \"assure\" | \"test\", options: VerificationOptions): Promise<VerificationResult>;",
-    "doc": "/** Run an existing Nifra gate without importing the large framework CLI into the agent runtime. */"
+    "doc": "/**\n * Run an existing Nifra gate without importing the large framework CLI into the agent runtime.\n * `check` and `assure` are `nifra` commands; `test` is the project's own suite, run with `bun test`\n * by the Bun this agent runs on.\n */"
   },
   {
     "name": "RunningServer",
