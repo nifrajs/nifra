@@ -15,6 +15,7 @@ import {
   askProjectChild,
   createAppSurface,
   detectMonorepoIsolated,
+  IN_PROCESS_TOOLS,
   isolateResources,
   isolateTools,
 } from "../src/mcp-isolate.ts"
@@ -172,7 +173,61 @@ const toolNames = (response: unknown): unknown[] => {
 const toolText = (response: unknown): string =>
   String(dig(response, "result", "content", 0, "text") ?? "")
 
+/** Arguments that take each tool kept in the server through its work on the app `writeApp` writes. */
+const IN_PROCESS_PROBES: Readonly<Record<string, Record<string, unknown>>> = {
+  nifra_run: { requests: [{ path: "/health" }] },
+  nifra_render: { requests: [{ path: "/" }] },
+  nifra_ws: { path: "/ws" },
+  nifra_hydrate: {},
+  nifra_test: { pattern: "probe.test.ts" },
+  nifra_db_schema: {},
+  nifra_db_query: { sql: "select 1" },
+  nifra_db_role: {},
+  nifra_errors: {},
+  nifra_logs: {},
+  nifra_inspect: {},
+  nifra_explain: { error: "TypeError: undefined is not a function" },
+  nifra_docs: { query: "loader" },
+  nifra_example: { query: "loader" },
+  nifra_types: { query: "server" },
+  nifra_learn: {},
+  nifra_frontend: { symptom: "hydration mismatch" },
+}
+
 describe("nifra mcp runs no project code in its own process", () => {
+  test("every tool kept in the server has a probe, and none evaluates project code there", async () => {
+    expect(Object.keys(IN_PROCESS_PROBES).sort()).toEqual([...IN_PROCESS_TOOLS].sort())
+    const root = tempRoot()
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "app", private: true }))
+    writeFileSync(
+      join(root, "probe.test.ts"),
+      'import { expect, test } from "bun:test"\ntest("runs", () => expect(1).toBe(1))\n',
+    )
+    writeApp(root)
+    const probes = Object.entries(IN_PROCESS_PROBES).map(([name, args], index) => ({
+      id: index + 2,
+      name,
+      args,
+    }))
+    // No .env here, so the server is not re-executed and its pid is the process under test.
+    const { pid, byId } = await mcpRpc(
+      root,
+      [],
+      [INITIALIZE, INITIALIZED, ...probes.map(({ id, name, args }) => call(id, name, args))],
+      [1, ...probes.map(({ id }) => id)],
+    )
+    for (const { id, name } of probes) {
+      expect({ name, answered: byId[id] !== undefined }).toEqual({ name, answered: true })
+    }
+    const entries = [...seen(root, "config.log"), ...seen(root, "backend.log")]
+    // The probes reached project code, in their own subprocesses.
+    expect(entries.length).toBeGreaterThan(0)
+    for (const entry of entries) {
+      expect(entry.pid).not.toBe(pid)
+      expect(entry.script).not.toBe("cli.ts")
+    }
+  }, 90_000)
+
   test("started in the project: every tool, resource and declared tool runs in a subprocess that loads .env", async () => {
     const root = tempRoot()
     writeFileSync(join(root, "package.json"), JSON.stringify({ name: "app", private: true }))

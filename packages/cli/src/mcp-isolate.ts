@@ -32,9 +32,10 @@ import type {
 /**
  * Project tools that stay in the server, because none runs project code in this process: each starts
  * its own subprocess (run, render, ws, hydrate, test, the database tools), or reads only the
- * framework's docs or the dev server's feed.
+ * framework's docs or the dev server's feed. `mcp-project-isolation.test.ts` calls each one and fails
+ * if the server evaluated project code, or if a name here has no probe there.
  */
-const IN_PROCESS_TOOLS: ReadonlySet<string> = new Set([
+export const IN_PROCESS_TOOLS: ReadonlySet<string> = new Set([
   "nifra_run",
   "nifra_render",
   "nifra_ws",
