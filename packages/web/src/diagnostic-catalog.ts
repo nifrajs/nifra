@@ -156,7 +156,7 @@ export const DIAGNOSTIC_CATALOG: readonly CatalogEntry[] = [
     match: (_n, m) => isHydrationMismatch(m),
     cause:
       "The browser rendered different markup than the server sent, so the framework discarded or patched the server HTML.",
-    fix: "Look for values that differ between server and browser during render (Date.now(), Math.random(), locale formatting, window/localStorage reads, invalid HTML nesting). Run nifra_hydrate to reproduce it with a stable diagnostic.",
+    fix: "Look for values that differ between server and browser during render (Date.now(), Math.random(), locale formatting, window/localStorage reads, invalid HTML nesting). With happy-dom installed in the project, nifra_hydrate reproduces it with a stable diagnostic.",
     docsAnchor: "errors#hydration-mismatch",
   },
   {

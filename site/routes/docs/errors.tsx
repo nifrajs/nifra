@@ -169,8 +169,9 @@ export default function Errors() {
       <p>
         <strong>Fix:</strong> look for values that differ between server and browser during render:{" "}
         <code>Date.now()</code>, <code>Math.random()</code>, locale formatting, reads of{" "}
-        <code>window</code> or <code>localStorage</code>, invalid HTML nesting. <code>nifra_hydrate</code>{" "}
-        reproduces it with a stable diagnostic. See <a href="/docs/hydration">hydration</a>.
+        <code>window</code> or <code>localStorage</code>, invalid HTML nesting. With happy-dom
+        installed in the project, <code>nifra_hydrate</code> reproduces it with a stable diagnostic.
+        See <a href="/docs/hydration">hydration</a>.
       </p>
       <FixPrompts code="NIFRA_HYDRATION_MISMATCH" />
 

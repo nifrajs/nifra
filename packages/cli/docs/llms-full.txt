@@ -8816,8 +8816,9 @@ patched the server HTML. In development the page reports it to the dev server as
 
 **Fix:** look for values that differ between server and browser during render:
 `Date.now()`, `Math.random()`, locale formatting, reads of
-`window` or `localStorage`, invalid HTML nesting. `nifra_hydrate`
-reproduces it with a stable diagnostic. See [hydration](/docs/hydration).
+`window` or `localStorage`, invalid HTML nesting. With happy-dom
+installed in the project, `nifra_hydrate` reproduces it with a stable diagnostic.
+See [hydration](/docs/hydration).
 
 #### NIFRA_SCHEMA_PARSE
 

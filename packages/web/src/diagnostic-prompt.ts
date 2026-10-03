@@ -143,9 +143,16 @@ export function diagnosticHeadline(diagnostic: Diagnostic): string {
     : `${diagnostic.name}: ${diagnostic.message}`
 }
 
+// Where a failure surfaced inside a package is not code the app can change.
+const inDependency = (file: string, root: string | undefined): boolean =>
+  promptPath(file, root).startsWith("node_modules/")
+
+const appFrame = (diagnostic: Diagnostic, root: string | undefined) =>
+  diagnostic.frames.find((f) => f.file !== undefined && !inDependency(f.file, root))
+
 function whereSection(diagnostic: Diagnostic, root: string | undefined): string | undefined {
   const cf = diagnostic.codeframe
-  if (cf !== undefined) {
+  if (cf !== undefined && !inDependency(cf.file, root)) {
     const width = String(cf.lines[cf.lines.length - 1]?.number ?? cf.line).length
     const body = cf.lines
       .map((l) => `${l.caret ? ">" : " "} ${String(l.number).padStart(width)} | ${l.text}`)
@@ -154,32 +161,67 @@ function whereSection(diagnostic: Diagnostic, root: string | undefined): string 
     const at = `${promptPath(cf.file, root)}:${cf.line}${cf.column === undefined ? "" : `:${cf.column}`}`
     return `## Where\n${at}\n${fence(scrub(body, root), lang)}`
   }
+  const app = appFrame(diagnostic, root)
+  if (app?.file !== undefined) return `## Where\n${promptPath(app.file, root)}:${app.line ?? 0}`
   const top = diagnostic.frames.find((f) => f.file !== undefined)
   if (top?.file === undefined) return undefined
-  return `## Where\n${promptPath(top.file, root)}:${top.line ?? 0}`
+  return `## Where\n${promptPath(top.file, root)}:${top.line ?? 0} (inside a dependency)`
 }
 
 function location(diagnostic: Diagnostic, root: string | undefined): string | undefined {
   const cf = diagnostic.codeframe
-  if (cf !== undefined) return `${promptPath(cf.file, root)} at line ${cf.line}`
-  const top = diagnostic.frames.find((f) => f.file !== undefined)
-  return top?.file === undefined
+  if (cf !== undefined && !inDependency(cf.file, root)) {
+    return `${promptPath(cf.file, root)} at line ${cf.line}`
+  }
+  const app = appFrame(diagnostic, root)
+  return app?.file === undefined
     ? undefined
-    : `${promptPath(top.file, root)} at line ${top.line ?? 0}`
+    : `${promptPath(app.file, root)} at line ${app.line ?? 0}`
 }
+
+function findStep(
+  diagnostic: Diagnostic,
+  root: string | undefined,
+  recognised: boolean,
+  inHand: boolean,
+): string {
+  const at = location(diagnostic, root)
+  if (at !== undefined) return `Open ${at}.`
+  if (diagnostic.frames.some((f) => f.file !== undefined)) {
+    return "The error surfaced inside a dependency, which is not the code to change: find the component or element the message names, or the app code that calls into it."
+  }
+  if (!inHand) {
+    return "Open the file the entry points at. If that is inside node_modules, find the component or element its message names instead."
+  }
+  return recognised
+    ? "Find the code the error points at."
+    : "Read the stack to find where it fails."
+}
+
+// nifra_render and nifra_run run the app in their own process: a failure there never reaches the dev
+// server's feed, so the feed check alone would pass a fix that did not work.
+const IN_PROCESS_CHECK =
+  "Its reply must not be a 5xx: these tools run the app in their own process, so a failure there shows in the reply, not in nifra_errors."
 
 function reproduceStep(diagnostic: Diagnostic, context: FixPromptContext): string {
   const request = diagnostic.request
   if (context.category === "browser" || context.category === "hydration") {
-    return context.page === undefined
-      ? "Reload the page in the browser; the page reports its errors to the dev server."
-      : "Reload the page named under Request; the page reports its errors to the dev server."
+    const reload =
+      context.page === undefined
+        ? "Reload the page in the browser"
+        : "Reload the page named under Request"
+    // A handler's error fires on the interaction, not on load: a bare reload proves nothing.
+    const repeat =
+      context.category === "browser"
+        ? " and repeat what set the error off (the click, input or timer the stack runs through)"
+        : ""
+    return `${reload}${repeat}; the page reports its errors to the dev server.`
   }
   if (context.category === "build") return "Save the file; the dev server rebuilds on its own."
   if (request !== undefined) {
     return request.method === "GET"
-      ? "Request the URL under Request again: nifra_render for a page, nifra_run for an API route."
-      : "Send the request under Request again with nifra_run."
+      ? `Request the URL under Request again: nifra_render for a page, nifra_run for an API route. ${IN_PROCESS_CHECK}`
+      : `Send the request under Request again with nifra_run. ${IN_PROCESS_CHECK}`
   }
   return "Reproduce the failure the same way it happened."
 }
@@ -187,7 +229,7 @@ function reproduceStep(diagnostic: Diagnostic, context: FixPromptContext): strin
 function verifySteps(diagnostic: Diagnostic, context: FixPromptContext): string[] {
   if (context.surface === "docs") {
     return [
-      "Reproduce it the way the entry shows: request its URL again (nifra_render for a page, nifra_run for an API route), reload the page it came from, or save the file for a build error.",
+      `Reproduce it the way the entry shows: request its URL again (nifra_render for a page, nifra_run for an API route), reload the page it came from, or save the file for a build error. ${IN_PROCESS_CHECK}`,
       `Call nifra_errors (or run \`nifra errors\`): no new ${diagnostic.code} entry may appear.`,
       "Run `nifra check`.",
     ]
@@ -249,20 +291,16 @@ export function buildFixPrompt(
   if (diagnostic.docsAnchor !== undefined) {
     sections.push(`Reference: ${DOCS_ORIGIN}${diagnostic.docsAnchor}`)
   }
-  const at = location(diagnostic, root)
+  const find = findStep(diagnostic, root, recognised, inHand)
   const steps = recognised
     ? [
-        at !== undefined
-          ? `Open ${at}.`
-          : inHand
-            ? "Find the code the error points at."
-            : "Open the file the entry points at.",
+        find,
         ...(diagnostic.docsAnchor === undefined ? [] : ["Read the reference above."]),
         "Apply the fix above, changing only what it needs.",
         ...verifySteps(diagnostic, context),
       ]
     : [
-        at === undefined ? "Read the stack to find where it fails." : `Open ${at}.`,
+        find,
         context.requestId === undefined
           ? "Call nifra_explain for the structured diagnostic if you need more context."
           : `Call nifra_logs with requestId=${context.requestId} for what the request printed.`,

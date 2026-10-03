@@ -59,6 +59,8 @@ describe("fixPrompts", () => {
     expect(first?.prompt).toContain("entry e_abc does not come back")
     expect(first?.prompt).toContain("nifra_logs with requestId=r7")
     expect(first?.prompt).toContain("Run `nifra check`.")
+    // nifra_render runs in its own process, so its reply is the check the feed cannot be.
+    expect(first?.prompt).toContain("Its reply must not be a 5xx")
   })
 
   test("an unrecognised failure asks for a diagnosis, not a canned fix", () => {
@@ -140,6 +142,63 @@ describe("buildFixPrompt", () => {
     expect(prompt).not.toContain("## Stack")
     expect(prompt.endsWith("\n[truncated]")).toBe(true)
     expect(prompt.length).toBe(8000 + "\n[truncated]".length)
+  })
+})
+
+describe("the reproduce step", () => {
+  test("a browser error asks for the interaction again; a hydration mismatch only for a reload", () => {
+    const diagnostic = failure("boom")
+    const browser = buildFixPrompt(diagnostic, {
+      surface: "indicator",
+      root,
+      category: "browser",
+      page: "/cart",
+    })
+    expect(browser).toContain(
+      "Reload the page named under Request and repeat what set the error off",
+    )
+    const hydration = buildFixPrompt(diagnostic, {
+      surface: "indicator",
+      root,
+      category: "hydration",
+      page: "/clock",
+    })
+    expect(hydration).toContain("Reload the page named under Request; the page reports")
+  })
+})
+
+describe("a failure that surfaces inside a dependency", () => {
+  const frameworkStack = (frames: string): Diagnostic => {
+    const err = new Error(
+      "Hydration failed because the server rendered text didn't match the client.",
+    )
+    err.stack = `Error: Hydration failed\n${frames}`
+    return buildDiagnostic(err, { root, read: () => undefined })
+  }
+
+  test("points at the first app frame, never at node_modules", () => {
+    const prompt = buildFixPrompt(
+      frameworkStack(
+        `    at throwOnHydrationMismatch (${root}/node_modules/react-dom/client.js:5238:11)\n    at Clock (${root}/routes/clock.tsx:2:10)`,
+      ),
+      { surface: "overlay", root },
+    )
+    expect(prompt).toContain("## Where\nroutes/clock.tsx:2")
+    expect(prompt).toContain("1. Open routes/clock.tsx at line 2.")
+  })
+
+  test("with no app frame, sends the agent to what the message names", () => {
+    const prompt = buildFixPrompt(
+      frameworkStack(
+        `    at throwOnHydrationMismatch (${root}/node_modules/react-dom/client.js:5238:11)\n    at completeWork (${root}/node_modules/react-dom/client.js:12743:26)`,
+      ),
+      { surface: "overlay", root },
+    )
+    expect(prompt).toContain(
+      "## Where\nnode_modules/react-dom/client.js:5238 (inside a dependency)",
+    )
+    expect(prompt).not.toContain("Open node_modules")
+    expect(prompt).toContain("find the component or element the message names")
   })
 })
 
