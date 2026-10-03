@@ -76,6 +76,21 @@ describe("metrics()", () => {
     )
   })
 
+  test("a method outside HTTP's own set is labeled _OTHER, not a series of its own", async () => {
+    // Deno passes extension methods through; Bun's Request folds them to GET, so one is made here.
+    const withMethod = (method: string) =>
+      new (class extends Request {
+        override get method(): string {
+          return method
+        }
+      })("http://t/users/1")
+    const app = makeApp()
+    for (let i = 0; i < 20; i++) await app.fetch(withMethod(`X-CUSTOM-${i}`))
+    const text = await scrape(app)
+    expect(text).not.toContain("X-CUSTOM")
+    expect(text).toContain('nifra_http_requests_in_flight{method="_OTHER"} 0')
+  })
+
   test("custom app metrics on a shared registry render at /metrics", async () => {
     const registry = createMetricsRegistry()
     const logins = registry.counter("app_logins_total", "Logins.")
