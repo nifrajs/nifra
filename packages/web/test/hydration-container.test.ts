@@ -148,11 +148,9 @@ test("the entry never bakes in an id other than the documented fallback", () => 
   const source = entrySource()
   // `getElementById("root")` is the fallback for an unmarked default document and is meant to be
   // here. A SECOND baked container id would be the same bug wearing a different name. The handover
-  // id is not a container: it is the fixed name every document's page-state script carries.
-  expect(source.match(/getElementById\("[^"]*"\)/g)).toEqual([
-    `getElementById("${HANDOVER_ID}")`,
-    'getElementById("root")',
-  ])
+  // is found by its script type as well as its id, so page content cannot stand in for it.
+  expect(source.match(/getElementById\("[^"]*"\)/g)).toEqual(['getElementById("root")'])
+  expect(source).toContain(`script[type=\\"application/json\\"][id=\\"${HANDOVER_ID}\\"]`)
   expect(source).toContain(`document.querySelector("body > div[${ROOT_ATTRIBUTE}]")`)
 })
 

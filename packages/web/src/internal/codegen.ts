@@ -10,7 +10,18 @@ import {
   ROOT_ATTRIBUTE,
   ROUTE_GLOBAL,
 } from "../render-seam.ts"
+import { PRERENDERED_GLOBAL } from "../router.ts"
 import { jsStringLiteral } from "./js-string.ts"
+
+/** The globals the page-state handover may set - nothing else in it reaches `window`. */
+const HANDOVER_GLOBALS = [
+  DATA_GLOBAL,
+  LAYOUT_DATA_GLOBAL,
+  ROUTE_GLOBAL,
+  ACTION_GLOBAL,
+  BOUNDARY_GLOBAL,
+  PRERENDERED_GLOBAL,
+]
 export interface GenerateClientEntryOptions {
   /**
    * Module specifier for the adapter's client runtime, e.g. `"@nifrajs/web-solid/client"`.
@@ -221,9 +232,17 @@ export function generateClientEntry(
     "  if (page.ssr === false) holds[id] = [...chains[id].slice(0, -1), page.HydrateFallback ?? (() => null)]",
     "}",
     // The server hands page state over as one inert JSON script; lift it onto the globals the
-    // router, the deferred mapper and the adapters read, before any of them runs.
-    `const handover = document.getElementById(${JSON.stringify(HANDOVER_ID)})`,
-    'if (handover !== null) Object.assign(window, JSON.parse(handover.textContent || "{}"))',
+    // router, the deferred mapper and the adapters read, before any of them runs. Only the LAST
+    // matching <script> counts, and only known keys: page HTML (sanitized user content) can carry an
+    // element with the same id, and arbitrary keys copied onto `window` include `location`.
+    `const handovers = document.querySelectorAll(${JSON.stringify(`script[type="application/json"][id="${HANDOVER_ID}"]`)})`,
+    "const handover = handovers[handovers.length - 1]",
+    "if (handover !== undefined) {",
+    '  const state = JSON.parse(handover.textContent || "{}")',
+    `  for (const key of ${JSON.stringify(HANDOVER_GLOBALS)}) {`,
+    "    if (Object.prototype.hasOwnProperty.call(state, key)) Reflect.set(window, key, state[key])",
+    "  }",
+    "}",
     "const patterns = [",
     ...patternRows,
     "]",

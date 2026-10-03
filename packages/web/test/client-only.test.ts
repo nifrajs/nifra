@@ -242,7 +242,7 @@ const runEntry = async (
     { mountRouter, ...adapter },
     (file: string) => Promise.resolve({ default: file, ...modules[file] }),
     {},
-    { querySelector: () => ({}), getElementById: () => ({}) },
+    { querySelector: () => ({}), querySelectorAll: () => [], getElementById: () => ({}) },
     { pathname: url.pathname, search: url.search, origin: url.origin },
     () => 0,
   )
