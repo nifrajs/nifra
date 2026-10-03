@@ -429,7 +429,9 @@ renders in its place, wrapped by the layouts at/above that segment, at status 50
 non-hydrated). On the **client** - a render error during navigation/interaction is caught by
 the nearest boundary, which renders `_error` in place (all five adapters). It
 receives the serialized error as `{ data: { name, message } }` (never the
-stack); a thrown control-flow value (e.g. a guard `redirect`) passes through.
+stack; on the server in production, a generic `Internal Server Error` rather
+than the error's own text); a thrown control-flow value (e.g. a guard
+`redirect`) passes through.
 
 -
 A `_layout.backend.ts` that exports `middleware` runs it on the

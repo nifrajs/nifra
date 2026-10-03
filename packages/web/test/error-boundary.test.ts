@@ -123,6 +123,24 @@ describe("agnostic loader-error rendering", () => {
     expect(html).not.toContain("stack")
   })
 
+  test("in production the _error page gets a generic message, never the error's own text", async () => {
+    const app = createWebApp({
+      adapter: stub,
+      manifest: errorManifest(new Error('password authentication failed for user "app_rw"')),
+      clientEntry: "/c.js",
+    })
+    const previous = process.env.NODE_ENV
+    process.env.NODE_ENV = "production"
+    try {
+      const html = await (await app.fetch(new Request("http://x/boom"))).text()
+      expect(html).toContain('{"name":"Error","message":"Internal Server Error"}')
+      expect(html).not.toContain("app_rw")
+    } finally {
+      if (previous === undefined) delete process.env.NODE_ENV
+      else process.env.NODE_ENV = previous
+    }
+  })
+
   test("nearest boundary keeps layouts at/above its segment, drops deeper ones", async () => {
     const app = createWebApp({
       adapter: stub,

@@ -253,7 +253,9 @@ export default function Routing() {
           non-hydrated). On the <b>client</b> - a render error during navigation/interaction is caught by
           the nearest boundary, which renders <code>_error</code> in place (all five adapters). It
           receives the serialized error as <code>{`{ data: { name, message } }`}</code> (never the
-          stack); a thrown control-flow value (e.g. a guard <code>redirect</code>) passes through.
+          stack; on the server in production, a generic <code>Internal Server Error</code> rather
+          than the error's own text); a thrown control-flow value (e.g. a guard{" "}
+          <code>redirect</code>) passes through.
         </li>
         <li>
           A <code>_layout.backend.ts</code> that exports <code>middleware</code> runs it on the

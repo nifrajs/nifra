@@ -662,10 +662,14 @@ export function createPageRequestExecutor<Env = unknown>(
     )
     const { default: errComp } = await (manifest.errors?.[errorId] as LayoutEntry).load()
     const e = err instanceof Error ? err : new Error(String(err))
+    // An error's text can carry a connection string or a query, so a production page gets neither.
+    const production = typeof process === "undefined" || process.env.NODE_ENV === "production"
     return renderPageResult({
       adapter,
       chain: [...layouts, errComp],
-      data: { name: e.name, message: e.message },
+      data: production
+        ? { name: "Error", message: "Internal Server Error" }
+        : { name: e.name, message: e.message },
       clientEntry,
       routeId: errorId,
       status: 500,
