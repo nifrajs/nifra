@@ -5751,8 +5751,12 @@ _No named exports (side-effect entrypoint)._
 - **DEV_ROUTES_ENV** _(const)_ - `DEV_ROUTES_ENV: "NIFRA_DEV_ROUTES"`
 - **PluginBuilder** _(type)_ - `type PluginBuilder = Parameters<BunPlugin["setup"]>[0]`
   The argument Bun passes to a plugin's `setup` - Bun doesn't export the type, so derive it.
+- **RawSourceMap** _(interface)_ - `interface RawSourceMap`
+  A source map as its v3 JSON object.
 - **StylesheetEmitter** _(interface)_ - `interface StylesheetEmitter`
   Records compiled CSS and wires it into the client bundle through a virtual `?<namespace>` module - the idiom the Vue plugin established (`?vue-css`). Register one per plugin `setup`; call `emit` per file to stash its CSS and get back the `import` line to append to the JS module.
+- **concatSourceMaps** _(function)_ - `concatSourceMaps: (parts: readonly { readonly code: string; readonly map?: RawSourceMap | undefined; }[]) => RawSourceMap`
+  One map over parts joined with no separator, each part either mapped by its own map or unmapped (generated glue). Sources are merged by name.
 - **createStylesheetEmitter** _(function)_ - `createStylesheetEmitter: (build: PluginBuilder, namespace: string) => StylesheetEmitter`
   Wire the virtual-CSS-module handlers onto `build` for `namespace`, returning an {@link StylesheetEmitter}. The `namespace` must be a plain identifier (letters/`-`); it's used verbatim as the import suffix and the Bun namespace. Only the `"dom"` build should emit CSS - the `"ssr"` build ships no sty…
 - **devHotComponent** _(function)_ - `devHotComponent: (path: string) => boolean`
@@ -5771,6 +5775,8 @@ _No named exports (side-effect entrypoint)._
   Load an optional peer compiler at build time, throwing a consistent, actionable install-hint error if it's absent - the `@vue/compiler-sfc` peer pattern, centralized. Build-time only, so the dynamic `import` (which keeps the peer out of the package's hard dependencies) is correct here.
 - **rewriteSsrImports** _(function)_ - `rewriteSsrImports: (contents: string, path: string, generate: "dom" | "ssr") => string`
   Re-key the app-owned imports of a module a **server-side** plugin just compiled. A plugin that claims a file extension is the only code that sees that file's source, so it is the only place its imports can be versioned; without this call every component in that language stays on the code it had at …
+- **withDevSourceMap** _(function)_ - `withDevSourceMap: (code: string, map: RawSourceMap | undefined, path: string, generate: "dom" | "ssr") => string`
+  A compiled module carrying its map back to the file it came from, during a dev server only. The client half gets it inline: Bun's bundler keeps a plugin's output as the bundle map's source, and the dev server's frame mapper follows the inline map from there. The SSR half goes in the process registr…
 
 ### `@nifrajs/web/plugins/postcss`
 

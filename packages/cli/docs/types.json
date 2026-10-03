@@ -2627,7 +2627,7 @@
     "name": "BuildDiagnosticOptions",
     "kind": "interface",
     "package": "@nifrajs/web",
-    "signature": "export interface BuildDiagnosticOptions {\n    readonly request?: {\n        readonly method: string;\n        readonly url: string;\n    };\n    /** Project root; frames outside it are treated as non-user. Defaults to `process.cwd()`. */\n    readonly root?: string;\n    /** Injectable source reader (tests pass a fake; production reads the filesystem). */\n    readonly read?: SourceReader;\n    /** Whether a file's source may appear in the codeframe. The overlay is served to a browser, so a dev\n     * server passes the zone check here and backend source never renders in it. */\n    readonly showSource?: (file: string) => boolean;\n}"
+    "signature": "export interface BuildDiagnosticOptions {\n    readonly request?: {\n        readonly method: string;\n        readonly url: string;\n    };\n    /** Project root; frames outside it are treated as non-user. Defaults to `process.cwd()`. */\n    readonly root?: string;\n    /** Injectable source reader (tests pass a fake; production reads the filesystem). */\n    readonly read?: SourceReader;\n    /** Whether a file's source may appear in the codeframe. The overlay is served to a browser, so a dev\n     * server passes the zone check here and backend source never renders in it. */\n    readonly showSource?: (file: string) => boolean;\n    /** A frame's authored position when its file was compiled by a plugin whose map the runtime did not\n     * apply (Bun ignores a plugin's inline map), so a compiled line never lands in the codeframe. */\n    readonly remap?: (file: string, line: number, column: number) => {\n        readonly line: number;\n        readonly column: number;\n    } | undefined;\n}"
   },
   {
     "name": "buildFailureDetail",
@@ -4343,6 +4343,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function computeIdempotencyFingerprint(method: string, path: string, body: Uint8Array, contentType?: string): Promise<string>;",
     "doc": "/**\n * SHA-256 fingerprint binding a key to one request: method, path (+ query), and the raw body bytes.\n * A collision-resistant hash matters - a weak hash would let a crafted body replay another's response.\n */"
+  },
+  {
+    "name": "concatSourceMaps",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function concatSourceMaps(parts: readonly {\n    readonly code: string;\n    readonly map?: RawSourceMap | undefined;\n}[]): RawSourceMap;",
+    "doc": "/**\n * One map over parts joined with no separator, each part either mapped by its own map or unmapped\n * (generated glue). Sources are merged by name.\n */"
   },
   {
     "name": "conditionalResponse",
@@ -15218,6 +15225,13 @@
     "doc": "/**\n * A raw `Response` whose JSON body a route declared as `T`. Returning a bare `Response` drops a route\n * out of the typed contract - the client reads its `data` as `never`, since a `Response`'s own\n * properties say nothing about the payload. {@link raw} brands the `Response` with the shape it\n * actually serializes, so `Jsonify` answers `Jsonify<T>` and the route stays inside the typed client.\n * The brand is a phantom: nothing is added at runtime.\n */"
   },
   {
+    "name": "RawSourceMap",
+    "kind": "interface",
+    "package": "@nifrajs/web",
+    "signature": "export interface RawSourceMap {\n    /** `3`; some compilers type it as the string. */\n    readonly version: number | string;\n    readonly sources: readonly string[];\n    readonly sourcesContent?: readonly (string | null)[] | undefined;\n    readonly names?: readonly string[] | undefined;\n    readonly mappings: string;\n    readonly file?: string | undefined;\n}",
+    "doc": "/** A source map as its v3 JSON object. */"
+  },
+  {
     "name": "reactAdapter",
     "kind": "const",
     "package": "@nifrajs/web-react",
@@ -22568,6 +22582,13 @@
     "package": "@nifrajs/core",
     "signature": "export declare function withDeadlineHeader(input: DeadlineHeadersInit, budget: RequestBudget, reserveMs?: number): Headers;",
     "doc": "/** Add this budget's absolute deadline to an outbound request. */"
+  },
+  {
+    "name": "withDevSourceMap",
+    "kind": "function",
+    "package": "@nifrajs/web",
+    "signature": "export declare function withDevSourceMap(code: string, map: RawSourceMap | undefined, path: string, generate: \"dom\" | \"ssr\"): string;",
+    "doc": "/**\n * A compiled module carrying its map back to the file it came from, during a dev server only. The client\n * half gets it inline: Bun's bundler keeps a plugin's output as the bundle map's source, and the dev\n * server's frame mapper follows the inline map from there. The SSR half goes in the process registry\n * instead, because Bun's runtime ignores a plugin's inline map when it reports a stack.\n */"
   },
   {
     "name": "withISR",

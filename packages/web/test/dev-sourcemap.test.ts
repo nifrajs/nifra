@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createSourceMapper, decodeMappings } from "../src/dev-sourcemap.ts"
+import { encodeMappings } from "../src/internal/source-map.ts"
 
 const roots: string[] = []
 afterEach(() => {
@@ -169,4 +170,62 @@ test("a module Vite serves from outside the root (/@fs/) maps to its real path",
   expect(await mapper.mapStack(`Error: x\n    at ${ORIGIN}${servedAt}?v=1:1:1`)).toBe(
     `Error: x\n    at ${join(tmpdir(), "elsewhere", "node_modules", "lib", "index.ts")}:1:1`,
   )
+})
+
+test("a plugin's own inline map is followed back to the file it compiled", async () => {
+  // What the SFC plugins do in dev: the compiled module carries its compile map inline, and Bun keeps
+  // that module (map comment included) as the bundle map's source content.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "nifra-sourcemap-")))
+  roots.push(root)
+  mkdirSync(join(root, "routes"))
+  const component = join(root, "routes", "cart.fake")
+  writeFileSync(component, "<script>\nfunction add() {\n  items.push(1) // the authored line\n}\n")
+  const compiled = [
+    "// 1",
+    "// 2",
+    "// 3",
+    "// 4",
+    "// 5",
+    'export function add() { throw new TypeError("MARKER push") }',
+  ].join("\n")
+  const inner = {
+    version: 3,
+    sources: ["cart.fake"],
+    // Generated line 5 (0-based), column 24 -> authored line 2, column 2.
+    mappings: encodeMappings([
+      Int32Array.of(),
+      Int32Array.of(),
+      Int32Array.of(),
+      Int32Array.of(),
+      Int32Array.of(),
+      Int32Array.of(24, 0, 2, 2),
+    ]),
+  }
+  const contents = `${compiled}\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(inner)).toString("base64")}\n`
+  const entry = join(root, "routes", "index.ts")
+  writeFileSync(entry, 'import { add } from "./cart.fake"\nadd()\n')
+  const result = await Bun.build({
+    entrypoints: [entry],
+    sourcemap: "linked",
+    outdir: join(root, "out"),
+    plugins: [
+      {
+        name: "fake-sfc",
+        setup(build) {
+          build.onLoad({ filter: /\.fake$/ }, () => ({ contents, loader: "js" }))
+        },
+      },
+    ],
+  })
+  const files = new Map<string, string>()
+  for (const output of result.outputs) {
+    files.set(`/out/${output.path.split("/").at(-1)}`, await output.text())
+  }
+  const [path, script] = [...files].find(([name]) => name.endsWith(".js")) ?? ["", ""]
+  const at = positionOf(script, "throw new TypeError")
+  const mapper = createSourceMapper({ root, origin: () => ORIGIN, ...serving(files) })
+  const mapped = await mapper.mapStack(
+    `TypeError: MARKER push\n    at add (http://localhost:4100${path}:${at.line}:${at.column})`,
+  )
+  expect(mapped).toContain(`at add (${component}:3:3)`)
 })

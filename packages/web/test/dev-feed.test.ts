@@ -1,5 +1,13 @@
 import { afterEach, expect, test } from "bun:test"
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -21,6 +29,7 @@ import {
   writeDevServerRecord,
 } from "../src/dev-feed.ts"
 import { createRedactor } from "../src/internal/secret-scan.ts"
+import { encodeMappings, ssrSourceMaps } from "../src/internal/source-map.ts"
 
 const roots: string[] = []
 const tempRoot = (): string => {
@@ -467,4 +476,35 @@ test("the redactor scrubs each rule and leaves ordinary text alone", () => {
   expect(
     redact("-----BEGIN PRIVATE KEY-----\n" + "A".repeat(80) + "\n-----END PRIVATE KEY-----"),
   ).toContain("[redacted:private key]")
+})
+
+test("a server frame in a file a dev plugin compiled is remapped to the line written; a browser one is not", () => {
+  const root = tempRoot()
+  const file = join(root, "routes", "settings.svelte")
+  mkdirSync(join(root, "routes"))
+  writeFileSync(file, "<script>\n  let prefs\n  prefs = JSON.parse(data)\n</script>\n")
+  // Compiled line 9 (0-based 8), column 22 came from authored line 3 (0-based 2), column 10.
+  const lines = Array.from({ length: 9 }, () => Int32Array.of())
+  lines[8] = Int32Array.of(0, 0, 2, 10)
+  ssrSourceMaps().set(file, {
+    version: 3,
+    sources: ["settings.svelte"],
+    mappings: encodeMappings(lines),
+  })
+  try {
+    const feed = feedAt(root)
+    const failure = (): Error => {
+      const err = new SyntaxError("JSON Parse error: Unexpected EOF")
+      err.stack = `SyntaxError: JSON Parse error: Unexpected EOF\n    at Settings (${file}:9:23)`
+      return err
+    }
+    const server = feed.recordError(failure(), { category: "page" })
+    expect(server.diagnostic.codeframe?.line).toBe(3)
+    expect(server.diagnostic.frames[0]?.raw).toBe(`at Settings (${file}:3:11)`)
+    const browser = feed.recordError(failure(), { category: "browser", source: "browser" })
+    expect(browser.diagnostic.frames[0]?.line).toBe(9)
+    feed.close()
+  } finally {
+    ssrSourceMaps().delete(file)
+  }
 })

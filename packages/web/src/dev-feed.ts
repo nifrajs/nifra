@@ -38,6 +38,7 @@ import {
   type DiagnosticFrame,
 } from "./diagnostic.ts"
 import { createRedactor } from "./internal/secret-scan.ts"
+import { originalPosition, ssrSourceMaps } from "./internal/source-map.ts"
 
 /** Version of the HTTP + record contract between a dev server and the tools that read it. */
 export const DEV_FEED_SCHEMA = 1
@@ -595,6 +596,7 @@ export function createDevFeed(options: DevFeedOptions): DevFeed {
       const diagnosticOptions: Writable<BuildDiagnosticOptions> = { root }
       if (meta.request !== undefined) diagnosticOptions.request = meta.request
       if (options.showSource !== undefined) diagnosticOptions.showSource = options.showSource
+      if (meta.source !== "browser") diagnosticOptions.remap = ssrRemap
       return recordDiagnostic(buildDiagnostic(error, diagnosticOptions), meta)
     },
     recordDiagnostic,
@@ -1097,6 +1099,16 @@ function patchProcess(): CaptureState {
 const structuredText = (entry: CoreLogEntry): string => {
   const { level: _level, message, time: _time, ...fields } = entry
   return Object.keys(fields).length === 0 ? message : `${message} ${JSON.stringify(fields)}`
+}
+
+/** A server frame's authored position, through the map a dev plugin registered for the file it compiled. */
+const ssrRemap = (
+  file: string,
+  line: number,
+  column: number,
+): { readonly line: number; readonly column: number } | undefined => {
+  const map = ssrSourceMaps().get(file.replaceAll("\\", "/"))
+  return map === undefined ? undefined : originalPosition(map, line, column)
 }
 
 /**

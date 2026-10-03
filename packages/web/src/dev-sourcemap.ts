@@ -9,6 +9,14 @@
 
 import { isAbsolute, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import {
+  decodeMappings,
+  inlineSourceMap,
+  lookupPosition,
+  type MappingLine,
+  originalPosition,
+  type RawSourceMap,
+} from "./internal/source-map.ts"
 
 export interface SourceMapperOptions {
   readonly root: string
@@ -55,98 +63,43 @@ function parseFrame(line: string): Frame | undefined {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// VLQ mappings
+// Lookup
 // ---------------------------------------------------------------------------------------------------
 
-const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-const BASE64_VALUE = new Int8Array(128).fill(-1)
-for (let i = 0; i < BASE64.length; i++) BASE64_VALUE[BASE64.charCodeAt(i)] = i
-
-/** One generated line's segments, flattened: [column, source, line, column] per segment, all absolute. */
-type Line = Int32Array
+export { decodeMappings } from "./internal/source-map.ts"
 
 interface DecodedMap {
   readonly sources: readonly string[]
-  readonly lines: readonly (Line | undefined)[]
+  readonly lines: readonly (MappingLine | undefined)[]
+  readonly sourcesContent: readonly unknown[]
+  /** Per source, the map its content carries inline (a plugin's compile map), read on first use. */
+  readonly inner: Map<number, RawSourceMap | undefined>
 }
 
-/** Decode a source map v3 `mappings` string. Segments without a source are dropped. */
-export function decodeMappings(mappings: string): Line[] {
-  const lines: Line[] = []
-  let segment: number[] = []
-  let current: number[] = []
-  let generatedColumn = 0
-  let source = 0
-  let sourceLine = 0
-  let sourceColumn = 0
-  let value = 0
-  let shift = 0
-  const endSegment = (): void => {
-    if (segment.length === 0) return
-    generatedColumn += segment[0] ?? 0
-    if (segment.length >= 4) {
-      source += segment[1] ?? 0
-      sourceLine += segment[2] ?? 0
-      sourceColumn += segment[3] ?? 0
-      current.push(generatedColumn, source, sourceLine, sourceColumn)
-    }
-    segment = []
-  }
-  for (let i = 0; i < mappings.length; i++) {
-    const code = mappings.charCodeAt(i)
-    if (code === 44 /* , */) {
-      endSegment()
-      continue
-    }
-    if (code === 59 /* ; */) {
-      endSegment()
-      lines.push(Int32Array.from(current))
-      current = []
-      generatedColumn = 0
-      continue
-    }
-    const digit = code < 128 ? (BASE64_VALUE[code] ?? -1) : -1
-    if (digit === -1) throw new Error(`invalid VLQ character at ${i}`)
-    value += (digit & 31) << shift
-    if (digit & 32) {
-      shift += 5
-      continue
-    }
-    segment.push(value & 1 ? -(value >>> 1) : value >>> 1)
-    value = 0
-    shift = 0
-  }
-  endSegment()
-  lines.push(Int32Array.from(current))
-  return lines
-}
-
-/** The source position for a 0-based generated line/column: the last segment at or before it. */
+/**
+ * The source position for a 0-based generated line/column. When the source is a plugin's output that
+ * carries its own map inline (a compiled `.svelte` or `.vue` file), that map is followed too: Bun's
+ * bundler keeps the plugin's output as the source, not the file it compiled.
+ */
 function lookup(
   map: DecodedMap,
   line: number,
   column: number,
 ): { source: string; line: number; column: number } | undefined {
-  const segments = map.lines[line]
-  if (segments === undefined || segments.length === 0) return undefined
-  let low = 0
-  let high = segments.length / 4 - 1
-  let found = -1
-  while (low <= high) {
-    const mid = (low + high) >>> 1
-    if ((segments[mid * 4] ?? 0) <= column) {
-      found = mid
-      low = mid + 1
-    } else high = mid - 1
-  }
-  if (found === -1) found = 0
-  const source = map.sources[segments[found * 4 + 1] ?? -1]
+  const found = lookupPosition(map.lines, line, column)
+  if (found === undefined) return undefined
+  const source = map.sources[found.source]
   if (source === undefined) return undefined
-  return {
-    source,
-    line: (segments[found * 4 + 2] ?? 0) + 1,
-    column: (segments[found * 4 + 3] ?? 0) + 1,
+  if (!map.inner.has(found.source)) {
+    const content = map.sourcesContent[found.source]
+    map.inner.set(found.source, typeof content === "string" ? inlineSourceMap(content) : undefined)
   }
+  const inner = map.inner.get(found.source)
+  const original =
+    inner === undefined ? undefined : originalPosition(inner, found.line, found.column)
+  return original === undefined
+    ? { source, line: found.line, column: found.column }
+    : { source, line: original.line, column: original.column }
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -241,6 +194,8 @@ export function createSourceMapper(options: SourceMapperOptions): SourceMapper {
         typeof source === "string" ? sourcePath(source, sourceRoot, scriptUrl.pathname, root) : "",
       ),
       lines: decodeMappings(raw.mappings),
+      sourcesContent: Array.isArray(raw.sourcesContent) ? raw.sourcesContent : [],
+      inner: new Map(),
     }
   }
 

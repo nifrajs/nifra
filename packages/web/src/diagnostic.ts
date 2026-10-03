@@ -217,6 +217,33 @@ export interface BuildDiagnosticOptions {
   /** Whether a file's source may appear in the codeframe. The overlay is served to a browser, so a dev
    * server passes the zone check here and backend source never renders in it. */
   readonly showSource?: (file: string) => boolean
+  /** A frame's authored position when its file was compiled by a plugin whose map the runtime did not
+   * apply (Bun ignores a plugin's inline map), so a compiled line never lands in the codeframe. */
+  readonly remap?: (
+    file: string,
+    line: number,
+    column: number,
+  ) => { readonly line: number; readonly column: number } | undefined
+}
+
+function remapFrames(
+  frames: DiagnosticFrame[],
+  remap: BuildDiagnosticOptions["remap"],
+): DiagnosticFrame[] {
+  if (remap === undefined) return frames
+  return frames.map((frame) => {
+    if (frame.file === undefined || frame.line === undefined || frame.column === undefined) {
+      return frame
+    }
+    const authored = remap(frame.file, frame.line, frame.column)
+    if (authored === undefined) return frame
+    const at = frame.raw.lastIndexOf(`:${frame.line}:${frame.column}`)
+    const raw =
+      at === -1
+        ? frame.raw
+        : `${frame.raw.slice(0, at)}:${authored.line}:${authored.column}${frame.raw.slice(at + `:${frame.line}:${frame.column}`.length)}`
+    return { raw, file: frame.file, line: authored.line, column: authored.column }
+  })
 }
 
 /**
@@ -228,7 +255,7 @@ export function buildDiagnostic(err: unknown, options: BuildDiagnosticOptions = 
   const error = err instanceof Error ? err : new Error(String(err))
   const root = options.root ?? safeCwd()
   const { message } = messageAndStack(error)
-  const frames = parseFrames(error.stack ?? "")
+  const frames = remapFrames(parseFrames(error.stack ?? ""), options.remap)
   const top = topUserFrame(frames, root)
   const codeframe =
     top?.file !== undefined && top.line !== undefined && (options.showSource?.(top.file) ?? true)

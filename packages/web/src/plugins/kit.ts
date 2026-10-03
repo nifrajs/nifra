@@ -8,6 +8,7 @@ import { existsSync } from "node:fs"
 import { dirname, join, relative } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import type { BunPlugin } from "bun"
+import { type RawSourceMap, ssrSourceMaps } from "../internal/source-map.ts"
 
 /** The argument Bun passes to a plugin's `setup` - Bun doesn't export the type, so derive it. */
 export type PluginBuilder = Parameters<BunPlugin["setup"]>[0]
@@ -121,6 +122,29 @@ export const DEV_HMR_ENV = "NIFRA_DEV_HMR"
  */
 export function devServerCompile(): boolean {
   return process.env[DEV_HMR_ENV] === "1"
+}
+
+export { concatSourceMaps, type RawSourceMap } from "../internal/source-map.ts"
+
+/**
+ * A compiled module carrying its map back to the file it came from, during a dev server only. The client
+ * half gets it inline: Bun's bundler keeps a plugin's output as the bundle map's source, and the dev
+ * server's frame mapper follows the inline map from there. The SSR half goes in the process registry
+ * instead, because Bun's runtime ignores a plugin's inline map when it reports a stack.
+ */
+export function withDevSourceMap(
+  code: string,
+  map: RawSourceMap | undefined,
+  path: string,
+  generate: "dom" | "ssr",
+): string {
+  if (map === undefined || !devServerCompile()) return code
+  if (generate === "ssr") {
+    ssrSourceMaps().set(portablePath(path), map)
+    return code
+  }
+  const encoded = Buffer.from(JSON.stringify(map)).toString("base64")
+  return `${code}\n//# sourceMappingURL=data:application/json;base64,${encoded}\n`
 }
 
 /**

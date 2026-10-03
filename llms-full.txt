@@ -6667,8 +6667,10 @@ a coding agent the error, one fix and the steps to check it worked (the
 [error codes](/docs/errors) page has the same prompts). The badge lives in a closed
 shadow root, so the page's styles cannot reach it, and it loads under the page's CSP: by nonce,
 by its exact URL, or through `'strict-dynamic'`. A page that never errors never
-fetches it. Turn it off with `nifra dev --no-indicator` (or
-`indicator: false` on `createDevServer`); the errors still reach the feed.
+fetches it. Turn it off for one run with `nifra dev --no-indicator`, for every run
+with `export const dev = { indicator: false }` in `nifra.config.ts`,
+or with `indicator: false` on `createDevServer`; the errors still reach
+the feed.
 
 ### Containers & sandboxes
 
