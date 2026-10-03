@@ -208,6 +208,40 @@ test("HEAD returns the headers of the GET with no body", async () => {
   assert.equal(rest.join("\r\n\r\n"), "")
 })
 
+test("HEAD to a streaming route cancels the body nothing will read", async () => {
+  let cancelled!: () => void
+  const cancel = new Promise<void>((resolve) => {
+    cancelled = resolve
+  })
+  const app = server().get(
+    "/stream",
+    () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull: (controller) =>
+            new Promise<void>((resolve) =>
+              setTimeout(() => {
+                controller.enqueue(new TextEncoder().encode("tick\n"))
+                resolve()
+              }, 10),
+            ),
+          cancel: () => cancelled(),
+        }),
+      ),
+  )
+  const running = await serve(app, { port: 0, hostname: "127.0.0.1" })
+  try {
+    const response = await fetch(`http://127.0.0.1:${running.port}/stream`, { method: "HEAD" })
+    assert.equal(response.status, 200)
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("the body was never cancelled")), 2000),
+    )
+    await Promise.race([cancel, timeout])
+  } finally {
+    await running.stop({ drainMs: 50 })
+  }
+})
+
 test("a 204 carries no body and does not wedge the connection", async () => {
   const transcript = await rawExchange(
     "GET /empty HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\nGET /hello HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",

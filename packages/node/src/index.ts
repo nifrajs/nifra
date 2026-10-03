@@ -2447,6 +2447,9 @@ function writeNodeResponse(
   if (isHead) {
     nodeRes.writeHead(response.status)
     nodeRes.end()
+    // Nothing reads a HEAD answer's body. Cancelled, its source learns the exchange is over, as on
+    // Bun and Deno; left alone, a streaming route's producer runs on with no reader.
+    response.body?.cancel().catch(() => {})
     return
   }
   const directBody = nodeResponseBody(response)
