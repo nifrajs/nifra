@@ -435,6 +435,27 @@ describe("c.boundedBody / c.boundedJson (schema-less body cap)", () => {
     expect(await res.json()).toEqual({ ok: false, error: "payload_too_large" })
   })
 
+  test("an auth-first schema route caps the direct c.req reads its hooks make", async () => {
+    let read: number | undefined
+    const app = server()
+      .derive(async (c) => {
+        read = (await c.req.text()).length
+        return {}
+      })
+      .post(
+        "/hook",
+        {
+          body: t.object({ a: t.string() }),
+          validationOrder: "auth-before-validation",
+          bodyLimit: 1024,
+        },
+        () => ({ ok: true }),
+      )
+    const res = await app.fetch(jsonRequest("POST", "/hook", { a: "x".repeat(100_000) }))
+    expect(res.status).toBe(413)
+    expect(read).toBeUndefined()
+  })
+
   test("a capped clone read over the cap answers, though the original is never read", async () => {
     const app = server({ maxBodyBytes: 1024 }).post("/raw-clone", async (c) => ({
       len: (await c.req.clone().text()).length,
